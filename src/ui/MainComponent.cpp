@@ -2060,6 +2060,25 @@ void MainComponent::syncStageUi (AudioEngine::Stage s)
     masteringStageBtn.setToggleState (s == AudioEngine::Stage::Mastering, juce::dontSendNotification);
 }
 
+void MainComponent::askBounceRealtime (std::function<void (bool realtime)> launch)
+{
+    if (! BounceEngine::anyHardwareInsertActive (session))
+    {
+        launch (false);
+        return;
+    }
+    // The confirm's callbacks fire later from the shared alert modal; launch
+    // captures raw `this` at every call site, so gate it on this component
+    // still being alive.
+    juce::Component::SafePointer<MainComponent> safe (this);
+    showDuskConfirm (*this, "Hardware inserts in session",
+                     "An offline bounce cannot run external gear, so hardware "
+                     "inserts print dry. A realtime bounce plays the session "
+                     "once through the interface and prints them.",
+                     "Realtime", [safe, launch] { if (safe != nullptr) launch (true); },
+                     "Offline",  [safe, launch] { if (safe != nullptr) launch (false); });
+}
+
 void MainComponent::doMixdown()
 {
     // One-shot bounce of the master mix to <sessionDir>/mixdown.wav, then
@@ -2068,29 +2087,35 @@ void MainComponent::doMixdown()
     // the explicit dialog flow for ad-hoc renders.
     auto target = session.getSessionDirectory().getChildFile ("mixdown.wav");
 
-    auto panel = std::make_unique<BounceDialog> (engine, session,
-                                                   engine.getDeviceManager(), target);
-    panel->setSize (520, 200);
-
-    // Close the modal, then hand off to Mastering once the bounce finishes
-    // successfully. The handoff is deferred so the heavy stage swap does not
-    // run re-entrantly from inside the dialog's close-button callback.
-    juce::Component::SafePointer<MainComponent> safeThis (this);
-    panel->onRequestClose = [safeThis] { if (safeThis != nullptr) safeThis->mixdownModal.close(); };
-    panel->onSuccessfulFinish = [safeThis] (juce::File rendered)
+    askBounceRealtime ([this, target] (bool realtime)
     {
-        juce::MessageManager::callAsync ([safeThis, rendered]
-        {
-            if (safeThis == nullptr) return;
-            safeThis->switchToStage (AudioEngine::Stage::Mastering);
-            if (safeThis->masteringView != nullptr)
-                safeThis->masteringView->loadFile (rendered);
-        });
-    };
+        auto panel = std::make_unique<BounceDialog> (engine, session,
+                                                       engine.getDeviceManager(), target,
+                                                       BounceEngine::Mode::MasterMix,
+                                                       BounceEngine::Format::Wav, 320, 0.0, 24,
+                                                       realtime);
+        panel->setSize (520, 200);
 
-    // A render in progress must not be dismissed by a stray click / Escape -
-    // only the dialog's own Cancel / Close buttons drive teardown.
-    mixdownModal.show (*this, std::move (panel), {}, false, false);
+        // Close the modal, then hand off to Mastering once the bounce finishes
+        // successfully. The handoff is deferred so the heavy stage swap does not
+        // run re-entrantly from inside the dialog's close-button callback.
+        juce::Component::SafePointer<MainComponent> safeThis (this);
+        panel->onRequestClose = [safeThis] { if (safeThis != nullptr) safeThis->mixdownModal.close(); };
+        panel->onSuccessfulFinish = [safeThis] (juce::File rendered)
+        {
+            juce::MessageManager::callAsync ([safeThis, rendered]
+            {
+                if (safeThis == nullptr) return;
+                safeThis->switchToStage (AudioEngine::Stage::Mastering);
+                if (safeThis->masteringView != nullptr)
+                    safeThis->masteringView->loadFile (rendered);
+            });
+        };
+
+        // A render in progress must not be dismissed by a stray click / Escape -
+        // only the dialog's own Cancel / Close buttons drive teardown.
+        mixdownModal.show (*this, std::move (panel), {}, false, false);
+    });
 }
 
 void MainComponent::launchStartupDialog()
@@ -3349,13 +3374,42 @@ void MainComponent::openBounceDialog()
             outFile = outFile.withFileExtension ("wav");
         const auto fmt = mp3 ? BounceEngine::Format::Mp3 : BounceEngine::Format::Wav;
 
-        auto panel = std::make_unique<BounceDialog> (engine, session,
-                                                       engine.getDeviceManager(), outFile,
-                                                       BounceEngine::Mode::MasterMix, fmt);
-        panel->setSize (520, 200);
-        juce::Component::SafePointer<MainComponent> safeThis (this);
-        panel->onRequestClose = [safeThis] { if (safeThis != nullptr) safeThis->bounceModal.close(); };
-        bounceModal.show (*this, std::move (panel), {}, false, false);
+        askBounceRealtime ([this, outFile, fmt] (bool realtime)
+        {
+            // A realtime capture is always WAV (BounceEngine forces the
+            // format), so a typed .mp3 name must follow - otherwise the file
+            // is WAV data under an .mp3 extension.
+            const auto target = realtime ? outFile.withFileExtension ("wav") : outFile;
+            const auto format = realtime ? BounceEngine::Format::Wav : fmt;
+
+            auto launchBounce = [this, target, format, realtime]
+            {
+                auto panel = std::make_unique<BounceDialog> (engine, session,
+                                                               engine.getDeviceManager(), target,
+                                                               BounceEngine::Mode::MasterMix, format,
+                                                               320, 0.0, 24, realtime);
+                panel->setSize (520, 200);
+                juce::Component::SafePointer<MainComponent> safeThis (this);
+                panel->onRequestClose = [safeThis] { if (safeThis != nullptr) safeThis->bounceModal.close(); };
+                bounceModal.show (*this, std::move (panel), {}, false, false);
+            };
+
+            // The .mp3 -> .wav retarget skips the file browser's overwrite
+            // check (it inspected the .mp3 name), so re-check the real target.
+            if (target != outFile && target.existsAsFile())
+            {
+                juce::Component::SafePointer<MainComponent> safe (this);
+                showDuskConfirm (*this, "Overwrite file?",
+                                 target.getFileName()
+                                   + " already exists (realtime bounces are written as WAV). "
+                                     "Overwrite it?",
+                                 "Overwrite",
+                                 [safe, launchBounce] { if (safe != nullptr) launchBounce(); },
+                                 "Cancel", {}, /*destructive*/ true);
+                return;
+            }
+            launchBounce();
+        });
     });
 }
 
@@ -3363,10 +3417,15 @@ void MainComponent::openBounceStemsDialog()
 {
     // Pick a base WAV; per-stem filenames derive from it via
     // BounceEngine::stemOutputFile (<base>_<NN>_<sanitized-track>.wav).
-    // Sit alongside the master mix so the user can find them together.
+    // Default into a stems/ subfolder - a full set is 20+ files and would
+    // bury session.json and mixdown.wav in the session root. The browser can
+    // still navigate anywhere.
     auto defaultDir = session.getSessionDirectory();
     if (! defaultDir.isDirectory())
         defaultDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+    else
+        defaultDir = defaultDir.getChildFile ("stems");
+    defaultDir.createDirectory();
     const auto defaultFile = defaultDir.getChildFile ("stems.wav");
 
     // Stems are WAV-only - MP3 encoder delay/padding would misalign them for
@@ -3387,28 +3446,22 @@ void MainComponent::openBounceStemsDialog()
             outFile = outFile.withFileExtension ("wav");
 
         // Preflight: the base WAV is never written for stems - the real
-        // targets are the derived <base>_<NN>_<track>.wav files. Compute
-        // them for the tracks that will actually render (same predicate
-        // as BounceEngine) and warn if any already exist, so the file
-        // browser's base-file overwrite check doesn't give false comfort.
+        // targets are the derived stem files. Ask BounceEngine for the exact
+        // set it would write (tracks + bus / aux stems) and warn if any
+        // already exist, so the file browser's base-file overwrite check
+        // doesn't give false comfort.
         juce::StringArray conflicts;
-        for (int t = 0; t < Session::kNumTracks; ++t)
-        {
-            const auto& tr = session.track (t);
-            const bool hasContent = ! tr.regions.empty()
-                                  || ! tr.midiRegions.current().empty();
-            const bool armed = tr.recordArmed.load (std::memory_order_relaxed);
-            if (! (hasContent || armed)) continue;
-            const auto sf = BounceEngine::stemOutputFile (outFile, t, tr.name);
-            if (sf.existsAsFile())
-                conflicts.add (sf.getFileName());
-        }
+        for (const auto& tgt : BounceEngine::collectStemTargets (session, outFile))
+            if (tgt.file.existsAsFile())
+                conflicts.add (tgt.file.getFileName());
 
-        auto launch = [this, outFile]
+        auto launch = [this, outFile] (bool realtime)
         {
             auto panel = std::make_unique<BounceDialog> (engine, session,
                                                            engine.getDeviceManager(), outFile,
-                                                           BounceEngine::Mode::Stems);
+                                                           BounceEngine::Mode::Stems,
+                                                           BounceEngine::Format::Wav,
+                                                           320, 0.0, 24, realtime);
             panel->setSize (520, 200);
             juce::Component::SafePointer<MainComponent> safeThis (this);
             panel->onRequestClose = [safeThis] { if (safeThis != nullptr) safeThis->bounceModal.close(); };
@@ -3417,7 +3470,7 @@ void MainComponent::openBounceStemsDialog()
 
         if (conflicts.isEmpty())
         {
-            launch();
+            askBounceRealtime (launch);
             return;
         }
 
@@ -3430,7 +3483,7 @@ void MainComponent::openBounceStemsDialog()
                          [safe, launch]() mutable
                          {
                              if (safe.getComponent() != nullptr)
-                                 launch();
+                                 safe->askBounceRealtime (launch);
                          },
                          "Cancel", {}, /*destructive*/ true);
     });

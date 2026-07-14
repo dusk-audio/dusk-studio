@@ -234,24 +234,30 @@ void HardwareInsertSlot::processStereoBlock (float* L, float* R, int numSamples,
     }
     // -------------------------------------------------------------------
 
-    // Bounds-check the device channel indices. An out-of-range routing
-    // (e.g. user picked output 7-8 but then switched to a 2-out device)
-    // falls through to a dry-only path so the user hears something
-    // sensible instead of silence + a crashed audio thread.
-    const bool outValid = routing.outputChL >= 0
-                       && routing.outputChR >= 0
-                       && routing.outputChL < numDeviceOutputs
-                       && routing.outputChR < numDeviceOutputs
-                       && deviceOutputs != nullptr
-                       && deviceOutputs[routing.outputChL] != nullptr
-                       && deviceOutputs[routing.outputChR] != nullptr;
-    const bool inValid  = routing.inputChL >= 0
-                       && routing.inputChR >= 0
-                       && routing.inputChL < numDeviceInputs
-                       && routing.inputChR < numDeviceInputs
-                       && deviceInputs != nullptr
-                       && deviceInputs[routing.inputChL] != nullptr
-                       && deviceInputs[routing.inputChR] != nullptr;
+    // Bounds-check the device channel indices per side. An out-of-range
+    // routing (e.g. user picked output 7-8 but then switched to a 2-out
+    // device) falls through to a dry-only path so the user hears something
+    // sensible instead of silence + a crashed audio thread. A -1 on the R
+    // side is MONO routing (single-channel outboard): the send goes out on
+    // L alone and the single return feeds both sides.
+    const bool outLValid = routing.outputChL >= 0
+                        && routing.outputChL < numDeviceOutputs
+                        && deviceOutputs != nullptr
+                        && deviceOutputs[routing.outputChL] != nullptr;
+    const bool outRValid = routing.outputChR >= 0
+                        && routing.outputChR < numDeviceOutputs
+                        && deviceOutputs != nullptr
+                        && deviceOutputs[routing.outputChR] != nullptr;
+    const bool inLValid  = routing.inputChL >= 0
+                        && routing.inputChL < numDeviceInputs
+                        && deviceInputs != nullptr
+                        && deviceInputs[routing.inputChL] != nullptr;
+    const bool inRValid  = routing.inputChR >= 0
+                        && routing.inputChR < numDeviceInputs
+                        && deviceInputs != nullptr
+                        && deviceInputs[routing.inputChR] != nullptr;
+    const bool outValid = outLValid || outRValid;
+    const bool inValid  = inLValid  || inRValid;
 
     for (int i = 0; i < numSamples; ++i)
     {
@@ -313,21 +319,23 @@ void HardwareInsertSlot::processStereoBlock (float* L, float* R, int numSamples,
         // (Phase 2), so multiple inserts sharing an output pair sum
         // naturally and the master overwrites its assigned channels
         // via memcpy at the end of the callback regardless.
-        if (outValid)
-        {
+        if (outLValid)
             deviceOutputs[routing.outputChL][i] += sendL;
+        if (outRValid)
             deviceOutputs[routing.outputChR][i] += sendR;
-        }
 
         // Read the RETURN. With invalid routing, the wet path is
         // silent - the user gets the dry signal back through the
         // dry/wet mix and a visible empty input dropdown in the
-        // editor modal.
+        // editor modal. A single-sided (mono) return feeds both
+        // channels, so the strip's mono fold-down stays at unity.
         float retL = 0.0f, retR = 0.0f;
         if (inValid)
         {
-            retL = deviceInputs[routing.inputChL][i];
-            retR = deviceInputs[routing.inputChR][i];
+            retL = inLValid ? deviceInputs[routing.inputChL][i]
+                            : deviceInputs[routing.inputChR][i];
+            retR = inRValid ? deviceInputs[routing.inputChR][i]
+                            : retL;
 
             // Ping capture: store the L-channel return into the ring.
             // We correlate against L only - the M/S decode hasn't run

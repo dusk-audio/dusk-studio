@@ -73,6 +73,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/McuController.cpp
     multisample_state_roundtrip.cpp
     bounce_stem_filename.cpp
+    bounce_stem_targets.cpp
     dp_importer_parse.cpp
     dp_aligner_align.cpp
     metronome_click.cpp

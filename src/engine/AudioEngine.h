@@ -281,6 +281,72 @@ public:
     void setOfflineRenderActive (bool active) noexcept
         { offlineRenderActive.store (active, std::memory_order_relaxed); }
 
+    // Stem capture for bus groups and aux lanes (the per-track taps live on
+    // ChannelStrip::setStemCapture). When set, the audio path accumulates the
+    // named unit's processed output - the exact signal it sums into the mix -
+    // into the given scratch each block. The caller clears the scratch per
+    // block, so a skipped (silent) bus or aux leaves silence. Message thread;
+    // atomic because a realtime bounce arms these against the live callback.
+    void setBusStemCapture (int bus, float* l, float* r) noexcept
+    {
+        // R first: the audio thread gates on L, so L's release-store publishes R.
+        stemBusCapR[(size_t) bus].store (r, std::memory_order_relaxed);
+        stemBusCapL[(size_t) bus].store (l, std::memory_order_release);
+    }
+    void setAuxStemCapture (int lane, float* l, float* r) noexcept
+    {
+        stemAuxCapR[(size_t) lane].store (r, std::memory_order_relaxed);
+        stemAuxCapL[(size_t) lane].store (l, std::memory_order_release);
+    }
+
+    // Realtime bounce: the live callback pushes each armed sink's source
+    // block into its ThreadedWriter after the mix is complete (post-master,
+    // pre-metronome, so the monitoring click never prints). srcL == nullptr
+    // means "the master mix bus". leadRemaining samples are dropped from the
+    // head on the audio thread (per-kind PDC trim); writing stops at cap so
+    // every file ends up exactly cap samples long. The sink array is owned by
+    // the caller and must stay alive until disarm + one poll interval after
+    // the transport has stopped (the callback may be mid-block at disarm).
+    struct RtBounceSink
+    {
+        juce::AudioFormatWriter::ThreadedWriter* writer = nullptr;
+        const float* srcL = nullptr;
+        const float* srcR = nullptr;
+        // Stem taps ACCUMULATE into their scratch, so after consuming a block
+        // the callback wipes it for the next one (offline renders clear from
+        // their drive loop instead). Null for the master-mix sink.
+        float* wipeL = nullptr;
+        float* wipeR = nullptr;
+        std::int64_t leadRemaining = 0;                 // audio thread only
+        std::int64_t cap = 0;
+        std::atomic<std::int64_t> written { 0 };
+        // Set when the FIFO push fails (disk can't keep up); the bounce
+        // worker fails the render instead of reporting dropped samples as
+        // written.
+        std::atomic<bool> writeFailed { false };
+    };
+    void armRealtimeBounce (RtBounceSink* sinks, int count) noexcept
+    {
+        rtBounceAborted.store (false, std::memory_order_relaxed);
+        rtBounceSinks.store (sinks, std::memory_order_relaxed);
+        rtBounceSinkCount.store (count, std::memory_order_release);
+    }
+    // True when a re-prepare (device change, buffer-size renegotiation) killed
+    // an armed realtime bounce: the capture scratches are sized at arm time,
+    // so a grown block would overrun them - prepare disarms instead and the
+    // bounce worker fails the render.
+    bool wasRealtimeBounceAborted() const noexcept
+    {
+        return rtBounceAborted.load (std::memory_order_acquire);
+    }
+    void disarmRealtimeBounce() noexcept
+    {
+        // Count alone is the gate; the pointer stays set so a callback that
+        // read a stale nonzero count never pairs it with a null pointer (the
+        // caller keeps the sink array alive past disarm - see above).
+        rtBounceSinkCount.store (0, std::memory_order_release);
+    }
+
     // Cross-track Plugin Delay Compensation. Reads each track's reported insert
     // latency (plugin OR hardware, gated by mode; MIDI tracks count 0 because
     // their instrument latency is already absorbed by the MIDI scheduling
@@ -540,6 +606,21 @@ private:
     // True only while an offline render drives the callback. See
     // setOfflineRenderActive.
     std::atomic<bool> offlineRenderActive { false };
+
+    // Stem-capture destinations for bus groups / aux lanes (see
+    // setBusStemCapture / setAuxStemCapture). nullptr when no stems bounce
+    // is running.
+    std::array<std::atomic<float*>, Session::kNumBuses>    stemBusCapL {};
+    std::array<std::atomic<float*>, Session::kNumBuses>    stemBusCapR {};
+    std::array<std::atomic<float*>, Session::kNumAuxLanes> stemAuxCapL {};
+    std::array<std::atomic<float*>, Session::kNumAuxLanes> stemAuxCapR {};
+
+    // Realtime-bounce sink array (see armRealtimeBounce). Count is the
+    // publish gate: the callback reads it acquire and touches the sinks only
+    // when nonzero.
+    std::atomic<AudioEngine::RtBounceSink*> rtBounceSinks { nullptr };
+    std::atomic<int> rtBounceSinkCount { 0 };
+    std::atomic<bool> rtBounceAborted { false };
 
     std::array<ChannelStrip, Session::kNumTracks> strips;
     std::array<BusStrip,  Session::kNumBuses> busStrips;

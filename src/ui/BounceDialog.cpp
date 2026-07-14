@@ -12,20 +12,23 @@ BounceDialog::BounceDialog (AudioEngine& e,
                               BounceEngine::Format format,
                               int mp3BitrateKbps,
                               double sampleRate,
-                              int bitDepth)
+                              int bitDepth,
+                              bool realtime)
     : engine (e), session (s), deviceManager (dm), outputFile (f),
       renderMode (mode), renderFormat (format), mp3Bitrate (mp3BitrateKbps),
       renderSampleRate (sampleRate), wavBitDepth (bitDepth),
+      renderRealtime (realtime),
       progressBar (progressValue)
 {
     titleLabel.setJustificationType (juce::Justification::centredLeft);
     titleLabel.setFont (juce::Font (juce::FontOptions (14.0f, juce::Font::bold)));
     titleLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe8e8e8));
     titleLabel.setText (renderMode == BounceEngine::Mode::MasteringChain
-                          ? "Exporting master..."
-                          : (renderMode == BounceEngine::Mode::Stems
-                              ? "Bouncing stems..."
-                              : "Bouncing master mix..."),
+                          ? juce::String ("Exporting master...")
+                          : juce::String (renderMode == BounceEngine::Mode::Stems
+                                            ? "Bouncing stems"
+                                            : "Bouncing master mix")
+                              + (renderRealtime ? " (realtime)..." : "..."),
                          juce::dontSendNotification);
     addAndMakeVisible (titleLabel);
 
@@ -33,6 +36,30 @@ BounceDialog::BounceDialog (AudioEngine& e,
     statusLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
     statusLabel.setText (outputFile.getFullPathName(), juce::dontSendNotification);
     addAndMakeVisible (statusLabel);
+
+    // Offline renders drive the engine detached from the audio device, so an
+    // external hardware-insert loop can't run: those inserts print dry (or
+    // silent at full wet). Mastering renders skip the strips, and a realtime
+    // bounce runs the loop for real, so only the offline strip-driven modes
+    // warn. A live solo gets its own note: stems print as heard, so a
+    // forgotten solo writes a mostly-silent set that still reports success.
+    // Components are visible by default, so hide first - resized() reserves
+    // the warning row off isVisible().
+    hwWarnLabel.setVisible (false);
+    juce::String warn;
+    if (! renderRealtime
+        && renderMode != BounceEngine::Mode::MasteringChain
+        && BounceEngine::anyHardwareInsertActive (session))
+        warn = "Hardware inserts are bypassed in an offline render and will print dry.";
+    else if (renderMode == BounceEngine::Mode::Stems && session.anyTrackSoloed())
+        warn = "Solo is active - unsoloed tracks will print silent stems.";
+    if (warn.isNotEmpty())
+    {
+        hwWarnLabel.setJustificationType (juce::Justification::centredLeft);
+        hwWarnLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe0b050));
+        hwWarnLabel.setText (warn, juce::dontSendNotification);
+        addAndMakeVisible (hwWarnLabel);
+    }
 
     progressBar.setColour (juce::ProgressBar::backgroundColourId, juce::Colour (0xff101012));
     progressBar.setColour (juce::ProgressBar::foregroundColourId, juce::Colour (0xff5fa8ff));
@@ -59,7 +86,8 @@ BounceDialog::BounceDialog (AudioEngine& e,
     // complexity of marshalling callbacks back to a Component that might be
     // closing.
     if (! bounceEngine->start (outputFile, renderSampleRate, 1024, 5.0,
-                                renderMode, renderFormat, mp3Bitrate, wavBitDepth))
+                                renderMode, renderFormat, mp3Bitrate, wavBitDepth,
+                                renderRealtime))
     {
         finished = true;
         succeeded = false;
@@ -101,6 +129,11 @@ void BounceDialog::resized()
     titleLabel.setBounds (area.removeFromTop (24));
     area.removeFromTop (4);
     statusLabel.setBounds (area.removeFromTop (20));
+    if (hwWarnLabel.isVisible())
+    {
+        area.removeFromTop (2);
+        hwWarnLabel.setBounds (area.removeFromTop (18));
+    }
     area.removeFromTop (12);
     progressBar.setBounds (area.removeFromTop (24));
     area.removeFromTop (16);
@@ -117,14 +150,15 @@ void BounceDialog::timerCallback()
     progressValue = (double) bounceEngine->getProgress();
     progressBar.repaint();
 
-    if (renderMode == BounceEngine::Mode::Stems && bounceEngine->isRendering())
+    if (renderMode == BounceEngine::Mode::Stems && bounceEngine->isRendering()
+        && ! stemsStatusShown)
     {
-        const int idx   = bounceEngine->getCurrentStemIndex();
         const int total = bounceEngine->getTotalStemsToRender();
-        if (idx > 0 && total > 0)
+        if (total > 0)
         {
-            statusLabel.setText ("Rendering stem " + juce::String (idx)
-                                  + " of " + juce::String (total)
+            stemsStatusShown = true;
+            statusLabel.setText ("Rendering " + juce::String (total) + " stem"
+                                  + juce::String (total == 1 ? "" : "s")
                                   + " -> " + outputFile.getParentDirectory().getFullPathName(),
                                   juce::dontSendNotification);
         }

@@ -143,7 +143,7 @@ std::int64_t BounceEngine::computeBounceLength (double sampleRate, double tail) 
 
 bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double tail,
                             Mode mode, Format format, int mp3BitrateKbps,
-                            int wavBitDepth)
+                            int wavBitDepth, bool realtimeCapture)
 {
     if (rendering.load (std::memory_order_relaxed)) return false;
 
@@ -157,6 +157,21 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
         return false;
     }
 
+    renderRealtime = realtimeCapture
+                       && (mode == Mode::MasterMix || mode == Mode::Stems);
+    if (renderRealtime)
+    {
+        // The live callback IS the render clock: it runs at the device rate,
+        // and a rolling transport would print from wherever it happens to be.
+        sr = 0.0;
+        if (! engine.getTransport().isStopped())
+        {
+            const juce::ScopedLock lock (lastErrorLock);
+            lastError = "Stop the transport before a realtime bounce";
+            return false;
+        }
+    }
+
     outputFile  = outFile;
     renderSampleRate = (sr > 0.0) ? sr : engine.getCurrentSampleRate();
     if (renderSampleRate <= 0.0) renderSampleRate = 48000.0;
@@ -165,12 +180,18 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
     renderMode      = mode;
     // Stems must stay WAV: MP3 encoder delay + frame padding shift each stem by
     // a different amount and change its length, breaking the sample-accurate
-    // alignment stems need for re-import. Force WAV at the engine boundary
-    // regardless of what the caller requested.
-    renderFormat    = (mode == Mode::Stems) ? Format::Wav : format;
+    // alignment stems need for re-import. Realtime is WAV too: the disk path
+    // is ThreadedWriter, which owns its writer outright, so the MP3 encoder's
+    // explicit finalize flush has no place to run. Force WAV at the engine
+    // boundary regardless of what the caller requested.
+    renderFormat    = (mode == Mode::Stems || renderRealtime) ? Format::Wav : format;
     renderBitrateKbps = mp3BitrateKbps;
     // Stems keep 24-bit regardless: they exist for re-import, not delivery.
-    renderWavBitDepth = (mode != Mode::Stems && wavBitDepth == 16) ? 16 : 24;
+    // Realtime does too: its disk path streams through ThreadedWriter with no
+    // dither stage, so a 16-bit realtime file would truncate undithered (the
+    // offline loop is where the TPDF dither lives).
+    renderWavBitDepth = (mode != Mode::Stems && ! renderRealtime && wavBitDepth == 16)
+                          ? 16 : 24;
 
     if (renderMode == Mode::MasterMix || renderMode == Mode::Stems)
     {
@@ -191,22 +212,13 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
         if (totalSamples <= 0) return false;  // no file loaded
     }
 
-    // Pre-compute stem count so the UI's "track N of M" label has its
+    // Pre-compute the stem-file count so the UI's "N stems" label has its
     // total available immediately (otherwise the dialog flashes 0 until
-    // the worker thread enters its loop). Tracks render only when they
-    // have audio / MIDI regions or are armed for recording - empty
-    // unarmed tracks would write silent stems.
+    // the worker thread enters its loop).
     int stems = 0;
     if (renderMode == Mode::Stems)
     {
-        for (int t = 0; t < Session::kNumTracks; ++t)
-        {
-            const auto& tr = session.track (t);
-            const bool hasContent = ! tr.regions.empty()
-                                  || ! tr.midiRegions.current().empty();
-            const bool armed = tr.recordArmed.load (std::memory_order_relaxed);
-            if (hasContent || armed) ++stems;
-        }
+        stems = (int) collectStemTargets (session, outputFile).size();
         if (stems == 0)
         {
             const juce::ScopedLock lock (lastErrorLock);
@@ -215,7 +227,6 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
         }
     }
     totalStemsToRender.store (stems, std::memory_order_relaxed);
-    currentStemIndex  .store (0,     std::memory_order_relaxed);
 
     cancelRequested.store (false, std::memory_order_relaxed);
     progress.store (0.0f, std::memory_order_relaxed);
@@ -233,6 +244,19 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
 void BounceEngine::run()
 {
     if (onStarted) onStarted();
+
+    if (renderRealtime)
+    {
+        const bool ok = runRealtimeMode();
+        rendering.store (false, std::memory_order_relaxed);
+        juce::String errSnapshot;
+        {
+            const juce::ScopedLock lock (lastErrorLock);
+            errSnapshot = lastError;
+        }
+        if (onFinished) onFinished (ok, errSnapshot);
+        return;
+    }
 
     if (renderMode == Mode::Stems)
     {
@@ -496,148 +520,63 @@ void BounceEngine::run()
     if (onFinished) onFinished (succeeded, errSnapshot);
 }
 
-bool BounceEngine::renderOneStem (const juce::File& outFile,
-                                    std::int64_t lenSamples,
-                                    float stemFractionStart,
-                                    float stemFractionWidth)
+std::unique_ptr<juce::AudioFormatWriter>
+BounceEngine::openWriterFor (const juce::File& outFile, juce::String& errOut) const
 {
     std::unique_ptr<juce::FileOutputStream> outStream (outFile.createOutputStream());
     if (outStream == nullptr)
     {
-        const juce::ScopedLock lock (lastErrorLock);
-        lastError = "Could not open stem output file " + outFile.getFullPathName();
-        return false;
+        errOut = "Could not open output file " + outFile.getFullPathName();
+        return nullptr;
     }
     outStream->setPosition (0);
     outStream->truncate();
-
-    constexpr int kNumChannels = 2;
-    juce::String writerErr;
-    std::unique_ptr<juce::AudioFormatWriter> writer = makeWriter (std::move (outStream), writerErr);
+    auto writer = makeWriter (std::move (outStream), errOut);
     if (writer == nullptr)
+        errOut += " (" + outFile.getFileName() + ")";
+    return writer;
+}
+
+void BounceEngine::armStemTap (const StemTarget& target, float* l, float* r)
+{
+    switch (target.kind)
     {
-        // Writer failed AFTER we truncated the file above - drop the now-zeroed
-        // file so we don't leave a 0-byte stem on disk.
-        outFile.deleteFile();
-        const juce::ScopedLock lock (lastErrorLock);
-        lastError = writerErr + " (stem " + outFile.getFileName() + ")";
-        return false;
+        case StemTarget::Kind::Track: engine.getStrip (target.index).setStemCapture (l, r); break;
+        case StemTarget::Kind::Bus:   engine.setBusStemCapture (target.index, l, r);        break;
+        case StemTarget::Kind::Aux:   engine.setAuxStemCapture (target.index, l, r);        break;
+        case StemTarget::Kind::Mix:   break;   // fed straight off the mix bus, no tap
     }
+}
 
-    constexpr int kNumIn = 16;
-    std::vector<std::vector<float>> inputs (kNumIn,
-                                              std::vector<float> ((size_t) renderBlockSize, 0.0f));
-    std::vector<const float*> inputPtrs (kNumIn);
-    for (int c = 0; c < kNumIn; ++c) inputPtrs[(size_t) c] = inputs[(size_t) c].data();
+void BounceEngine::clearAllStemTaps()
+{
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        engine.getStrip (t).setStemCapture (nullptr, nullptr);
+    for (int a = 0; a < Session::kNumBuses; ++a)
+        engine.setBusStemCapture (a, nullptr, nullptr);
+    for (int a = 0; a < Session::kNumAuxLanes; ++a)
+        engine.setAuxStemCapture (a, nullptr, nullptr);
+}
 
-    std::vector<std::vector<float>> outputs (kNumChannels,
-                                               std::vector<float> ((size_t) renderBlockSize, 0.0f));
-    std::vector<float*> outputPtrs (kNumChannels);
-    for (int c = 0; c < kNumChannels; ++c) outputPtrs[(size_t) c] = outputs[(size_t) c].data();
-
-    juce::AudioIODeviceCallbackContext ctx {};
-
-    auto& transport = engine.getTransport();
-    transport.setPlayhead (0);
-    transport.setState (Transport::State::Playing);
-    engine.getPlaybackEngine().preparePlayback();
-
-    // Same PDC lead-in trim as the master render: each stem runs the full strip
-    // path, so it's delayed by the deepest track latency plus the
-    // master-stage aux PDC. Drop those leading samples so all stems stay
-    // mutually aligned and start at sample 0.
-    const std::int64_t leadIn  = (std::int64_t) engine.getAggregatePdcLatencySamples()
-                                  + (std::int64_t) engine.getMasterDryPdcTargetSamples();
-    const std::int64_t toRender = lenSamples + leadIn;
-
-    std::int64_t done    = 0;
-    std::int64_t written = 0;
-    std::int64_t dropped = 0;
-    bool ok = true;
-    while (done < toRender && ! cancelRequested.load (std::memory_order_relaxed))
-    {
-        const int remaining = (int) juce::jmin ((std::int64_t) renderBlockSize,
-                                                  toRender - done);
-
-        for (auto& o : outputs) std::fill (o.begin(), o.end(), 0.0f);
-
-        engine.audioDeviceIOCallbackWithContext (inputPtrs.data(), kNumIn,
-                                                   outputPtrs.data(), kNumChannels,
-                                                   remaining, ctx);
-
-        int writeStart = 0;
-        if (dropped < leadIn)
-        {
-            writeStart = (int) juce::jmin ((std::int64_t) remaining, leadIn - dropped);
-            dropped += writeStart;
-        }
-        const int writeCount = remaining - writeStart;
-        std::array<float*, kNumChannels> offPtrs {};
-        for (int c = 0; c < kNumChannels; ++c) offPtrs[(size_t) c] = outputPtrs[(size_t) c] + writeStart;
-        if (writeCount > 0 && ! writer->writeFromFloatArrays (offPtrs.data(), kNumChannels, writeCount))
-        {
-            const juce::ScopedLock lock (lastErrorLock);
-            lastError = "Writer failed mid-stem at "
-                        + juce::String (written) + " samples in "
-                        + outFile.getFileName();
-            ok = false;
-            break;
-        }
-        written += juce::jmax (0, writeCount);
-
-        done += remaining;
-        renderedSamples.store (written, std::memory_order_relaxed);
-        const float withinStem = (float) ((double) written / (double) lenSamples);
-        const float overall    = stemFractionStart + withinStem * stemFractionWidth;
-        progress.store (overall, std::memory_order_relaxed);
-        if (onProgressUpdated) onProgressUpdated (overall);
-    }
-
-    engine.getPlaybackEngine().stopPlayback();
-    writer.reset();  // flush + close
-
-    if (cancelRequested.load (std::memory_order_relaxed) || ! ok)
-    {
-        // Drop the partial stem - a half-rendered file is more
-        // confusing than no file when the user cancels or the writer
-        // fails mid-render. Delete is performed AFTER writer.reset()
-        // above so the file handle is closed before we unlink.
-        outFile.deleteFile();
-        return false;
-    }
-    return ok;
+std::int64_t BounceEngine::leadInFor (StemTarget::Kind kind) const
+{
+    const auto trackLead = (std::int64_t) engine.getAggregatePdcLatencySamples();
+    if (kind == StemTarget::Kind::Track || kind == StemTarget::Kind::Bus)
+        return trackLead;
+    return trackLead + (std::int64_t) engine.getMasterDryPdcTargetSamples();
 }
 
 bool BounceEngine::runStemsMode()
 {
-    // Build the list of tracks to render. Mirrors the predicate in
-    // start()'s pre-count so we render exactly the same set.
-    std::vector<int> tracksToRender;
-    tracksToRender.reserve ((size_t) Session::kNumTracks);
-    for (int t = 0; t < Session::kNumTracks; ++t)
-    {
-        const auto& tr = session.track (t);
-        const bool hasContent = ! tr.regions.empty()
-                              || ! tr.midiRegions.current().empty();
-        const bool armed = tr.recordArmed.load (std::memory_order_relaxed);
-        if (hasContent || armed) tracksToRender.push_back (t);
-    }
-    if (tracksToRender.empty())
+    const auto targets = collectStemTargets (session, outputFile);
+    if (targets.empty())
     {
         const juce::ScopedLock lock (lastErrorLock);
         lastError = "No tracks with content or armed for recording";
         return false;
     }
+    totalStemsToRender.store ((int) targets.size(), std::memory_order_relaxed);
 
-    // Snapshot solo state so we can restore EXACTLY what the user had
-    // before the bounce, regardless of how we exit.
-    std::array<bool, (size_t) Session::kNumTracks> savedSolo {};
-    for (int t = 0; t < Session::kNumTracks; ++t)
-        savedSolo[(size_t) t] = session.track (t).strip.solo
-                                  .load (std::memory_order_relaxed);
-
-    // Detach engine + prepare for offline rate just once. Each stem
-    // re-uses the same prepared state.
     ScopedOfflineRender offlineGuard (engine);
     // Detach + re-prepare on the message thread (plugin (de)activate must not run
     // on this worker - see runOnMessageThread). Stems render through the full
@@ -661,40 +600,153 @@ bool BounceEngine::runStemsMode()
     // master-stage aux PDC - latch it while the callback is detached.
     engine.applyMasterPdcTargetsNow();
 
+    const int numStems = (int) targets.size();
+
+    // One stereo capture scratch per stem, registered as taps below. The
+    // strips / engine accumulate into them; we clear them before each driven
+    // block, so a skipped (silent) unit leaves silence.
+    std::vector<std::vector<float>> capL ((size_t) numStems,
+                                            std::vector<float> ((size_t) renderBlockSize, 0.0f));
+    std::vector<std::vector<float>> capR ((size_t) numStems,
+                                            std::vector<float> ((size_t) renderBlockSize, 0.0f));
+
+    // Open every writer up front so a full disk / bad path fails before any
+    // rendering.
     bool succeeded = true;
-    const int  numStems = (int) tracksToRender.size();
-    const float widthPerStem = (numStems > 0) ? (1.0f / (float) numStems) : 1.0f;
-
-    for (int i = 0; i < numStems; ++i)
+    std::vector<std::unique_ptr<juce::AudioFormatWriter>> writers;
+    writers.reserve ((size_t) numStems);
+    for (const auto& tgt : targets)
     {
-        if (cancelRequested.load (std::memory_order_relaxed)) { succeeded = false; break; }
-
-        const int trackIdx = tracksToRender[(size_t) i];
-
-        // Solo exclusively: clear every track's solo, then engage the
-        // current one. Using setTrackSoloed keeps soloTrackCount in
-        // sync so the audio thread's anyTrackSoloed check fires right
-        // away on the next block.
-        for (int t = 0; t < Session::kNumTracks; ++t)
-            if (t != trackIdx) session.setTrackSoloed (t, false);
-        session.setTrackSoloed (trackIdx, true);
-
-        currentStemIndex.store (i + 1, std::memory_order_relaxed);
-
-        const auto outFile = stemOutputFile (outputFile, trackIdx,
-                                               session.track (trackIdx).name);
-        if (! renderOneStem (outFile, totalSamples,
-                             (float) i * widthPerStem,
-                             widthPerStem))
+        juce::String writerErr;
+        auto writer = openWriterFor (tgt.file, writerErr);
+        if (writer == nullptr)
         {
+            {
+                const juce::ScopedLock lock (lastErrorLock);
+                lastError = writerErr;
+            }
             succeeded = false;
             break;
         }
+        writers.push_back (std::move (writer));
     }
 
-    // Restore everything - solo, transport, stage, device callback.
-    for (int t = 0; t < Session::kNumTracks; ++t)
-        session.setTrackSoloed (t, savedSolo[(size_t) t]);
+    if (succeeded)
+    {
+        for (int i = 0; i < numStems; ++i)
+            armStemTap (targets[(size_t) i],
+                        capL[(size_t) i].data(), capR[(size_t) i].data());
+
+        constexpr int kNumChannels = 2;
+        constexpr int kNumIn = 16;
+        std::vector<std::vector<float>> inputs (kNumIn,
+                                                  std::vector<float> ((size_t) renderBlockSize, 0.0f));
+        std::vector<const float*> inputPtrs (kNumIn);
+        for (int c = 0; c < kNumIn; ++c) inputPtrs[(size_t) c] = inputs[(size_t) c].data();
+
+        std::vector<std::vector<float>> outputs (kNumChannels,
+                                                   std::vector<float> ((size_t) renderBlockSize, 0.0f));
+        std::vector<float*> outputPtrs (kNumChannels);
+        for (int c = 0; c < kNumChannels; ++c) outputPtrs[(size_t) c] = outputs[(size_t) c].data();
+
+        juce::AudioIODeviceCallbackContext ctx {};
+
+        transport.setPlayhead (0);
+        transport.setState (Transport::State::Playing);
+        engine.getPlaybackEngine().preparePlayback();
+
+        // Per-kind PDC lead-in trim (see leadInFor). Trimming each stem by
+        // its own offset keeps the whole set mutually sample-aligned at
+        // sample 0 without cutting real head content off track / bus stems.
+        std::vector<std::int64_t> leadIn     ((size_t) numStems, 0);
+        std::vector<std::int64_t> droppedFor ((size_t) numStems, 0);
+        std::vector<std::int64_t> writtenFor ((size_t) numStems, 0);
+        std::int64_t maxLead = 0;
+        for (int i = 0; i < numStems; ++i)
+        {
+            leadIn[(size_t) i] = leadInFor (targets[(size_t) i].kind);
+            maxLead = juce::jmax (maxLead, leadIn[(size_t) i]);
+        }
+        const std::int64_t toRender = totalSamples + maxLead;
+
+        std::int64_t done = 0;
+        while (done < toRender && ! cancelRequested.load (std::memory_order_relaxed))
+        {
+            const int remaining = (int) juce::jmin ((std::int64_t) renderBlockSize,
+                                                      toRender - done);
+
+            for (auto& o : outputs) std::fill (o.begin(), o.end(), 0.0f);
+            for (int i = 0; i < numStems; ++i)
+            {
+                juce::FloatVectorOperations::clear (capL[(size_t) i].data(), remaining);
+                juce::FloatVectorOperations::clear (capR[(size_t) i].data(), remaining);
+            }
+
+            engine.audioDeviceIOCallbackWithContext (inputPtrs.data(), kNumIn,
+                                                       outputPtrs.data(), kNumChannels,
+                                                       remaining, ctx);
+
+            std::int64_t minWritten = totalSamples;
+            for (int i = 0; i < numStems; ++i)
+            {
+                int writeStart = 0;
+                if (droppedFor[(size_t) i] < leadIn[(size_t) i])
+                {
+                    writeStart = (int) juce::jmin ((std::int64_t) remaining,
+                                                     leadIn[(size_t) i] - droppedFor[(size_t) i]);
+                    droppedFor[(size_t) i] += writeStart;
+                }
+                // Shorter-lead stems run out of file before the render loop
+                // ends; cap each writer at totalSamples so lengths stay equal.
+                const int writeCount = (int) juce::jmin ((std::int64_t) (remaining - writeStart),
+                                                           totalSamples - writtenFor[(size_t) i]);
+                if (writeCount > 0)
+                {
+                    const float* ptrs[kNumChannels] = { capL[(size_t) i].data() + writeStart,
+                                                        capR[(size_t) i].data() + writeStart };
+                    if (! writers[(size_t) i]->writeFromFloatArrays (ptrs, kNumChannels, writeCount))
+                    {
+                        const juce::ScopedLock lock (lastErrorLock);
+                        lastError = "Writer failed mid-stem at "
+                                    + juce::String (writtenFor[(size_t) i]) + " samples in "
+                                    + targets[(size_t) i].file.getFileName();
+                        succeeded = false;
+                        break;
+                    }
+                    writtenFor[(size_t) i] += writeCount;
+                }
+                minWritten = juce::jmin (minWritten, writtenFor[(size_t) i]);
+            }
+            if (! succeeded) break;
+
+            done += remaining;
+            renderedSamples.store (minWritten, std::memory_order_relaxed);
+            const float overall = (float) ((double) minWritten / (double) totalSamples);
+            progress.store (overall, std::memory_order_relaxed);
+            if (onProgressUpdated) onProgressUpdated (overall);
+        }
+
+        engine.getPlaybackEngine().stopPlayback();
+    }
+
+    clearAllStemTaps();
+    const size_t writersOpened = writers.size();
+    writers.clear();  // flush + close before any delete below
+
+    if (cancelRequested.load (std::memory_order_relaxed))
+        succeeded = false;
+    if (! succeeded)
+    {
+        // Drop the partial set - half-rendered files are more confusing than
+        // no files when the user cancels or a writer fails mid-render. Only
+        // files this run actually opened (truncated): targets past a failed
+        // open still hold the previous bounce's good stems.
+        const size_t touched = juce::jmin (targets.size(), writersOpened + 1);
+        for (size_t i = 0; i < touched; ++i)
+            targets[i].file.deleteFile();
+    }
+
+    // Restore everything - transport, stage, device callback.
     transport.setState (savedTransportState);
     transport.setPlayhead (savedPlayhead);
     engine.setStage (savedStage);
@@ -713,6 +765,228 @@ bool BounceEngine::runStemsMode()
         lastError = kCancelledError;
         succeeded = false;
     }
+    return succeeded;
+}
+
+bool BounceEngine::runRealtimeMode()
+{
+    // Realtime capture: the engine stays attached and the session PLAYS.
+    // The audio callback pushes the capture taps (or the master mix) into
+    // ThreadedWriters (see AudioEngine::RtBounceSink); this worker only
+    // orchestrates transport state and polls progress. Hardware inserts run
+    // their external loop for real - the whole point of this mode.
+    std::vector<StemTarget> files;
+    if (renderMode == Mode::Stems)
+    {
+        files = collectStemTargets (session, outputFile);
+        if (files.empty())
+        {
+            const juce::ScopedLock lock (lastErrorLock);
+            lastError = "No tracks with content or armed for recording";
+            return false;
+        }
+        totalStemsToRender.store ((int) files.size(), std::memory_order_relaxed);
+    }
+    else
+    {
+        files.push_back ({ StemTarget::Kind::Mix, -1, outputFile });
+    }
+    const int numFiles = (int) files.size();
+
+    juce::TimeSliceThread diskThread ("Dusk Studio bounce disk");
+    diskThread.startThread();
+
+    // Capture scratches sized to the live block; the callback never hands the
+    // strips more than the prepared block size (oversized host blocks are
+    // guarded upstream).
+    const int scratchLen = juce::jmax (engine.getCurrentBlockSize(), 4096);
+    std::vector<std::vector<float>> capL, capR;
+    if (renderMode == Mode::Stems)
+    {
+        capL.assign ((size_t) numFiles, std::vector<float> ((size_t) scratchLen, 0.0f));
+        capR.assign ((size_t) numFiles, std::vector<float> ((size_t) scratchLen, 0.0f));
+    }
+
+    bool succeeded = true;
+    std::vector<std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter>> writers;
+    writers.reserve ((size_t) numFiles);
+    for (const auto& f : files)
+    {
+        juce::String writerErr;
+        auto writer = openWriterFor (f.file, writerErr);
+        if (writer == nullptr)
+        {
+            {
+                const juce::ScopedLock lock (lastErrorLock);
+                lastError = writerErr;
+            }
+            succeeded = false;
+            break;
+        }
+        writers.push_back (std::make_unique<juce::AudioFormatWriter::ThreadedWriter> (
+            writer.release(), diskThread, 1 << 17));
+    }
+
+    auto& transport = engine.getTransport();
+    const auto savedPlayhead = transport.getPlayhead();
+    const bool savedLoop     = transport.isLoopEnabled();
+
+    if (succeeded)
+    {
+        auto sinks = std::make_unique<AudioEngine::RtBounceSink[]> ((size_t) numFiles);
+        for (int i = 0; i < numFiles; ++i)
+        {
+            auto& sink = sinks[(size_t) i];
+            sink.writer = writers[(size_t) i].get();
+            sink.cap    = totalSamples;
+            sink.leadRemaining = leadInFor (files[(size_t) i].kind);
+            if (files[(size_t) i].kind != StemTarget::Kind::Mix)
+            {
+                auto* l = capL[(size_t) i].data();
+                auto* r = capR[(size_t) i].data();
+                sink.srcL = l;
+                sink.srcR = r;
+                sink.wipeL = l;
+                sink.wipeR = r;
+                armStemTap (files[(size_t) i], l, r);
+            }
+            // Mix sinks keep srcL null - the callback feeds them the mix bus.
+        }
+
+        engine.armRealtimeBounce (sinks.get(), numFiles);
+
+        // Re-check the transport INSIDE the marshaled start: start()'s
+        // stopped-gate ran when the dialog opened, but MCU / MIDI-binding
+        // transport commands can start playback in the gap - yanking a live
+        // take to sample 0 here would corrupt it.
+        bool transportWasBusy = false;
+        if (! runOnMessageThread ([this, &transport, &transportWasBusy]
+            {
+                if (! transport.isStopped())
+                {
+                    transportWasBusy = true;
+                    return;
+                }
+                transport.setLoopEnabled (false);
+                transport.setPlayhead (0);
+                engine.play();
+            }))
+        {
+            engine.disarmRealtimeBounce();
+            succeeded = false;
+        }
+        else if (transportWasBusy)
+        {
+            engine.disarmRealtimeBounce();
+            {
+                const juce::ScopedLock lock (lastErrorLock);
+                lastError = "Transport started before the realtime bounce could begin";
+            }
+            succeeded = false;
+        }
+
+        if (succeeded)
+        {
+            // Poll until every sink has its full length, the user cancels, or
+            // the transport stops from under us (device change, user Stop).
+            std::int64_t minWritten = 0;
+            std::int64_t lastProgressCount = -1;
+            juce::uint32 lastProgressMs = juce::Time::getMillisecondCounter();
+            while (! cancelRequested.load (std::memory_order_relaxed))
+            {
+                minWritten = totalSamples;
+                bool anyWriteFailed = false;
+                for (int i = 0; i < numFiles; ++i)
+                {
+                    minWritten = juce::jmin (minWritten,
+                                             sinks[(size_t) i].written.load (std::memory_order_acquire));
+                    anyWriteFailed = anyWriteFailed
+                                   || sinks[(size_t) i].writeFailed.load (std::memory_order_acquire);
+                }
+                if (anyWriteFailed)
+                {
+                    const juce::ScopedLock lock (lastErrorLock);
+                    lastError = "Realtime bounce overran the disk writer (disk too slow)";
+                    succeeded = false;
+                    break;
+                }
+                if (engine.wasRealtimeBounceAborted())
+                {
+                    // A re-prepare (device change, buffer renegotiation)
+                    // invalidated the armed scratches; the engine disarmed.
+                    const juce::ScopedLock lock (lastErrorLock);
+                    lastError = "Audio device changed during the realtime bounce";
+                    succeeded = false;
+                    break;
+                }
+                renderedSamples.store (minWritten, std::memory_order_relaxed);
+                const float p = (float) ((double) minWritten / (double) totalSamples);
+                progress.store (p, std::memory_order_relaxed);
+                if (onProgressUpdated) onProgressUpdated (p);
+
+                if (minWritten >= totalSamples) break;
+
+                const auto nowMs = juce::Time::getMillisecondCounter();
+                if (minWritten != lastProgressCount)
+                {
+                    lastProgressCount = minWritten;
+                    lastProgressMs = nowMs;
+                }
+                else if (nowMs - lastProgressMs > 5000)
+                {
+                    const juce::ScopedLock lock (lastErrorLock);
+                    lastError = transport.isPlaying()
+                                  ? "Realtime bounce stalled (no audio callbacks)"
+                                  : "Transport stopped during the realtime bounce";
+                    succeeded = false;
+                    break;
+                }
+                wait (50);
+            }
+
+            runOnMessageThread ([this] { engine.stop(); });
+        }
+
+        engine.disarmRealtimeBounce();
+        clearAllStemTaps();
+        // A callback that loaded the sink count before the disarm can still
+        // be mid-loop over the sinks; the process gate waits for in-flight
+        // callbacks to drain, so after this fence nothing references the
+        // sink array or the scratches. A fixed sleep can't guarantee that -
+        // a device period or scheduler stall can exceed any constant.
+        runOnMessageThread ([this]
+        {
+            engine.suspendProcessing();
+            engine.resumeProcessing();
+        });
+    }
+
+    // ThreadedWriter destructors flush their queues to disk.
+    const size_t writersOpened = writers.size();
+    writers.clear();
+    diskThread.stopThread (2000);
+
+    runOnMessageThread ([&transport, savedPlayhead, savedLoop]
+    {
+        transport.setLoopEnabled (savedLoop);
+        transport.setPlayhead (savedPlayhead);
+    });
+
+    if (cancelRequested.load (std::memory_order_relaxed))
+    {
+        succeeded = false;
+        const juce::ScopedLock lock (lastErrorLock);
+        lastError = kCancelledError;
+    }
+    if (! succeeded)
+    {
+        // Only files this run actually opened (truncated): targets past a
+        // failed open still hold the previous bounce's good stems.
+        const size_t touched = juce::jmin (files.size(), writersOpened + 1);
+        for (size_t i = 0; i < touched; ++i)
+            files[i].file.deleteFile();
+    }
+
     return succeeded;
 }
 

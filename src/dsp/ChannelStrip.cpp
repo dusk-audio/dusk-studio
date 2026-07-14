@@ -966,16 +966,40 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         if (isFrozen)
         {
             // Frozen track: inL/inR are the pre-rendered (instrument + EQ +
-            // comp) audio. Copy it in as the source; the instrument plugin and
-            // the EQ/comp stage below are skipped (baked into the WAV). PDC and
-            // fader/pan/sends still run. Keep the insert-gate smoother ticking
-            // so an un-freeze mid-session resumes click-free.
+            // comp) audio. Copy it in as the source; the baked plugin and the
+            // EQ/comp stage below stay skipped. A HARDWARE insert still runs -
+            // it is only ever engaged by an explicit post-freeze user action,
+            // and the frozen WAV is an audio source like any other. A plugin
+            // slot cannot run here: the strip can't tell a newly added effect
+            // from a still-loaded baked native instrument, which would render
+            // silence over the WAV. PDC and fader/pan/sends still run.
             if (inL != nullptr) std::memcpy (L, inL, sizeof (float) * (size_t) numSamples);
             else                juce::FloatVectorOperations::clear (L, numSamples);
             if (inR != nullptr) std::memcpy (R, inR, sizeof (float) * (size_t) numSamples);
             else                std::memcpy (R, L,   sizeof (float) * (size_t) numSamples);
-            for (int i = 0; i < numSamples; ++i)
-                activeInsertGain.getNextValue();
+
+            if (activeInsertMode == kInsertHardware)
+            {
+                jassert (numSamples <= (int) insertScratchL.size());
+                std::memcpy (insertScratchL.data(), L, sizeof (float) * (size_t) numSamples);
+                std::memcpy (insertScratchR.data(), R, sizeof (float) * (size_t) numSamples);
+                hardwareSlot.processStereoBlock (L, R, numSamples,
+                                                  deviceInputs, numDeviceInputs,
+                                                  deviceOutputs, numDeviceOutputs);
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    const float g = activeInsertGain.getNextValue();
+                    L[i] = (1.0f - g) * insertScratchL[(size_t) i] + g * L[i];
+                    R[i] = (1.0f - g) * insertScratchR[(size_t) i] + g * R[i];
+                }
+            }
+            else
+            {
+                // Keep the insert-gate smoother ticking so an un-freeze or a
+                // hardware engage mid-session resumes click-free.
+                for (int i = 0; i < numSamples; ++i)
+                    activeInsertGain.getNextValue();
+            }
         }
         else if (isMidi)
         {
@@ -1203,6 +1227,12 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     // during playback). It's the level BEFORE the master/bus routing split, so
     // it reflects the track's contribution regardless of where it's routed.
     float outPeakL = 0.0f, outPeakR = 0.0f;
+    // Both sides or neither: a live disarm (realtime bounce) nulls the pair
+    // non-atomically, so one load can land each side of it.
+    float* scL = stemCapL.load (std::memory_order_acquire);
+    float* scR = stemCapR.load (std::memory_order_acquire);
+    if (scL == nullptr || scR == nullptr)
+        scL = scR = nullptr;
     const auto publishOutMeter = [this] (float pL, float pR)
     {
         currentOutLDb.store (pL > 1e-5f ? dusk::audio::gainToDecibels (pL, -100.0f) : -100.0f,
@@ -1227,6 +1257,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             const float oR = srcR[i] * gR;
             masterL[i] += oL;
             masterR[i] += oR;
+            if (scL != nullptr) { scL[i] += oL; scR[i] += oR; }
             outPeakL = juce::jmax (outPeakL, std::abs (oL));
             outPeakR = juce::jmax (outPeakR, std::abs (oR));
         }
@@ -1251,6 +1282,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         const float wetRPre = sR * pR;
         const float wetL = sL * gL;
         const float wetR = sR * gR;
+        if (scL != nullptr) { scL[i] += wetL; scR[i] += wetR; }
         outPeakL = juce::jmax (outPeakL, std::abs (wetL));
         outPeakR = juce::jmax (outPeakR, std::abs (wetR));
 

@@ -590,6 +590,7 @@ This block is visible in the RECORDING stage, alongside a small **I/O** button t
 - **FREEZE** (MIDI tracks, and audio tracks once recorded): the same button reads **FREEZE**. Click it to render the track to an audio file and bypass the DSP that produced it, to reclaim CPU — the frozen track plays back from the rendered audio with the fader, pan, and aux sends still live so you can keep mixing. The button turns to a snowflake while frozen; click it again to unfreeze (the rendered file is discarded). Frozen state is saved with the session, and a frozen track is locked — unfreeze first to edit, re-record, or change its mode.
   - On a **MIDI track** freeze bakes the instrument plugin plus the channel EQ and compressor — the way to reclaim CPU from a heavy synth or sample library once you're happy with a part.
   - On an **audio track** the PRINT button becomes FREEZE once the track holds a recorded take. Freeze bakes the recorded audio through its insert, EQ, and compressor — a large CPU saving when you run high effect oversampling, since the oversampled processing no longer runs on playback.
+  - A frozen track still accepts a **hardware insert**: the baked audio is a source like any other, so you can route it through outboard gear (its measured loop latency is compensated as usual). The insert picker on a frozen MIDI track offers effects rather than instruments — the instrument is baked into the audio. A plugin insert added while frozen doesn't process until you unfreeze (the frozen audio plays through untouched).
 
 ## Insert slot
 
@@ -1507,7 +1508,7 @@ The configuration panel has six controls:
 - **Input volume**: a level trim on the return side, 0.0 to 1.0.
 - **Latency samples**: the round-trip delay through the external gear, in samples. Determines the dry-path delay applied to the rest of the mix so the hardware insert remains time-aligned.
 - **Dry/Wet**: 0.0 plays only the dry signal (insert bypassed), 1.0 plays only the returned wet signal. Useful for parallel processing.
-- **Format**: **Stereo** or **Mid/Side**. Mid/Side encodes the signal so that the hardware EQ processes the mid and side components independently.
+- **Format**: **Stereo** or **Mid/Side**. Mid/Side encodes the signal so that the hardware EQ processes the mid and side components independently. On a **mono track** a third option, **Mono**, patches a single output and a single return — the natural hookup for one-channel outboard like a mono compressor or a pedal — and the channel dropdowns list individual channels instead of pairs.
 
 ## Auto-measuring latency
 
@@ -1747,7 +1748,13 @@ The File menu has three bounce commands:
 
 - **Bounce…** — render the full master mix to a WAV you choose.
 - **Mixdown** — one-shot render to `mixdown.wav` in the session folder, then automatically switch to the MASTERING stage with that file loaded.
-- **Bounce stems…** — render one WAV per track (named `<base>_<NN>_<track>.wav`); warns before overwriting any existing stem files.
+- **Bounce stems…** — render every stem in a single offline pass: one WAV per track with content (named `<base>_<NN>_<track>.wav`), plus one per bus group any of those tracks route into (`<base>_bus<N>_<name>.wav`) and one per aux lane they send to (`<base>_aux<N>_<name>.wav`). The file browser opens in a `stems/` subfolder of the session so a full set doesn't crowd the session root; pick any other location if you prefer. Warns before overwriting any existing stem files.
+
+  A track stem is that track's post-fader output — its full processed signal, without master-strip processing — so the whole set is mutually sample-aligned and track + bus + aux stems together reconstruct the pre-master mix. A track routed to a bus appears both as its own stem and (processed) inside the bus stem; re-import one or the other, not both. Mute and solo print as heard, so a muted track writes a silent stem.
+
+If a session uses **hardware inserts**, an offline render cannot run the external loop (it is detached from the audio interface), so those inserts would print dry. Bounce and stem flows therefore ask whether to run a **realtime bounce** instead: the session plays once through the interface at normal speed and the capture streams to disk, printing the hardware exactly as you hear it (minus the monitoring click, which never prints). Realtime bounces are always WAV, render at the device sample rate, and need the transport stopped to start; choosing **Offline** keeps the fast render with the dry-insert warning. Because the transport genuinely rolls, MIDI Clock / MTC keep transmitting during a realtime bounce — chase-synced external gear starts with it, which is exactly what you want when that gear is part of the sound.
+
+The metronome never prints in any bounce: it is a monitoring aid, mixed in after the point every render captures.
 
 ## Bouncing the master vs the mastering chain
 

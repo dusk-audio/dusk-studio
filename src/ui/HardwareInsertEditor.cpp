@@ -9,14 +9,20 @@ using outputpair::encodePair;
 using outputpair::decodePairL;
 using outputpair::decodePairR;
 
+// Combo ids for Mono format's single-channel rows; offset clear of every
+// encodePair id (chL * 1000 + chR + 1 with device channel counts far below).
+constexpr int kMonoChannelIdBase = 1000000;
+
 HardwareInsertEditor::HardwareInsertEditor (HardwareInsertParams& paramsRef,
                                                 juce::AudioDeviceManager& dm,
                                                 std::function<void()> onDone,
-                                                bool embedded)
+                                                bool embedded,
+                                                bool allowMono)
     : params (paramsRef),
       deviceManager (dm),
       onDoneCallback (std::move (onDone)),
-      isEmbedded (embedded)
+      isEmbedded (embedded),
+      monoAllowed (allowMono)
 {
     setSize (kPanelW, kPanelH);
 
@@ -136,15 +142,22 @@ HardwareInsertEditor::HardwareInsertEditor (HardwareInsertParams& paramsRef,
 
     formatStereoButton.setRadioGroupId (8001);
     formatMidSideButton.setRadioGroupId (8001);
+    formatMonoButton.setRadioGroupId (8001);
     {
         const auto routing = currentRouting();
         formatStereoButton .setToggleState (routing.format == 0, juce::dontSendNotification);
         formatMidSideButton.setToggleState (routing.format == 1, juce::dontSendNotification);
+        formatMonoButton   .setToggleState (routing.format == 2, juce::dontSendNotification);
     }
-    formatStereoButton .onClick = [this] { publishRoutingFromUi(); };
-    formatMidSideButton.onClick = [this] { publishRoutingFromUi(); };
+    // Flipping to or from Mono changes the channel lists from pairs to
+    // singles, so the dropdowns rebuild along with the publish.
+    formatStereoButton .onClick = [this] { populateDropdowns(); publishRoutingFromUi(); };
+    formatMidSideButton.onClick = [this] { populateDropdowns(); publishRoutingFromUi(); };
+    formatMonoButton   .onClick = [this] { populateDropdowns(); publishRoutingFromUi(); };
     addAndMakeVisible (formatStereoButton);
     addAndMakeVisible (formatMidSideButton);
+    if (monoAllowed)
+        addAndMakeVisible (formatMonoButton);
 
     // Cancel + Done are popup-modal vestiges. When embedded inline in
     // the AUX lane, the X (remove) button on the slot header handles
@@ -245,6 +258,7 @@ void HardwareInsertEditor::populateDropdowns()
     const auto inNames  = device->getInputChannelNames();
     const auto routing = currentRouting();
 
+    const bool monoFormat = formatMonoButton.getToggleState();
     auto addPairs = [] (juce::ComboBox& cb, const juce::StringArray& names)
     {
         // Pair adjacent channels - typical interface convention is
@@ -258,19 +272,35 @@ void HardwareInsertEditor::populateDropdowns()
             cb.addItem (label, encodePair (i, i + 1));
         }
     };
-    addPairs (outChCombo, outNames);
-    addPairs (inChCombo,  inNames);
+    auto addSingles = [] (juce::ComboBox& cb, const juce::StringArray& names)
+    {
+        cb.addItem ("(none)", 1);
+        for (int i = 0; i < names.size(); ++i)
+            cb.addItem (juce::String (i + 1) + "  " + names[i],
+                        kMonoChannelIdBase + i);
+    };
+    if (monoFormat)
+    {
+        addSingles (outChCombo, outNames);
+        addSingles (inChCombo,  inNames);
+    }
+    else
+    {
+        addPairs (outChCombo, outNames);
+        addPairs (inChCombo,  inNames);
+    }
 
     // Preselect the routing the params currently hold. Falls back to
     // "(none)" if the stored pair isn't in the menu (device hot-swap).
-    auto selectMatching = [] (juce::ComboBox& cb, int chL, int chR)
+    auto selectMatching = [monoFormat] (juce::ComboBox& cb, int chL, int chR)
     {
-        if (chL < 0 || chR < 0)
+        if (chL < 0 || (chR < 0 && ! monoFormat))
         {
             cb.setSelectedId (1, juce::dontSendNotification);
             return;
         }
-        const int targetId = encodePair (chL, chR);
+        const int targetId = monoFormat ? kMonoChannelIdBase + chL
+                                        : encodePair (chL, chR);
         for (int i = 0; i < cb.getNumItems(); ++i)
         {
             if (cb.getItemId (i) == targetId)
@@ -294,32 +324,18 @@ void HardwareInsertEditor::publishRoutingFromUi()
 {
     auto fresh = std::make_unique<HardwareInsertRouting> (currentRouting());
 
-    const int outId = outChCombo.getSelectedId();
-    if (outId == 1 || outId == 0)
+    auto decodeSelection = [] (int id, int& chL, int& chR)
     {
-        fresh->outputChL = -1;
-        fresh->outputChR = -1;
-    }
-    else
-    {
-        fresh->outputChL = decodePairL (outId);
-        fresh->outputChR = decodePairR (outId);
-    }
-
-    const int inId = inChCombo.getSelectedId();
-    if (inId == 1 || inId == 0)
-    {
-        fresh->inputChL = -1;
-        fresh->inputChR = -1;
-    }
-    else
-    {
-        fresh->inputChL = decodePairL (inId);
-        fresh->inputChR = decodePairR (inId);
-    }
+        if (id == 1 || id == 0)          { chL = -1; chR = -1; }
+        else if (id >= kMonoChannelIdBase) { chL = id - kMonoChannelIdBase; chR = -1; }
+        else                              { chL = decodePairL (id); chR = decodePairR (id); }
+    };
+    decodeSelection (outChCombo.getSelectedId(), fresh->outputChL, fresh->outputChR);
+    decodeSelection (inChCombo.getSelectedId(),  fresh->inputChL,  fresh->inputChR);
 
     fresh->latencySamples = (int) latencySlider.getValue();
-    fresh->format = formatMidSideButton.getToggleState() ? 1 : 0;
+    fresh->format = formatMonoButton.getToggleState() ? 2
+                   : formatMidSideButton.getToggleState() ? 1 : 0;
 
     params.routing.publish (std::move (fresh));
 }
@@ -379,6 +395,11 @@ void HardwareInsertEditor::resized()
         formatStereoButton .setBounds (row.removeFromLeft (110));
         row.removeFromLeft (8);
         formatMidSideButton.setBounds (row.removeFromLeft (110));
+        if (monoAllowed)
+        {
+            row.removeFromLeft (8);
+            formatMonoButton.setBounds (row.removeFromLeft (90));
+        }
     }
 
     // Footer row, pinned to the bottom. Skip layout when embedded -

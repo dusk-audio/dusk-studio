@@ -28,10 +28,14 @@ class HardwareInsertEditor final : public juce::Component,
                                        private juce::Timer
 {
 public:
+    // allowMono adds a Mono format (single-channel send + return) to the
+    // format row - offered on mono tracks, where single-channel outboard
+    // (a mono compressor, a guitar pedal) is the natural patch.
     HardwareInsertEditor (HardwareInsertParams& params,
                           juce::AudioDeviceManager& deviceManager,
                           std::function<void()> onDone,
-                          bool embedded = false);
+                          bool embedded = false,
+                          bool allowMono = false);
     ~HardwareInsertEditor() override;
 
     void paint (juce::Graphics&) override;
@@ -50,6 +54,7 @@ private:
     juce::AudioDeviceManager& deviceManager;
     std::function<void()> onDoneCallback;
     bool isEmbedded = false;
+    bool monoAllowed = false;
 
     juce::Label headerLabel;
 
@@ -79,6 +84,7 @@ private:
     juce::Label       formatLabel;
     juce::ToggleButton formatStereoButton  { "Stereo" };
     juce::ToggleButton formatMidSideButton { "Mid/Side" };
+    juce::ToggleButton formatMonoButton    { "Mono" };
 
     juce::TextButton cancelButton { "Cancel" };
     juce::TextButton doneButton   { "Done" };

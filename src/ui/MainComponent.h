@@ -71,6 +71,9 @@ private:
     void openAudioSettings();
     void openBounceDialog();
     void openBounceStemsDialog();
+    // Hardware inserts print dry offline; when the session has any, ask
+    // whether to bounce in realtime instead. launch receives the choice.
+    void askBounceRealtime (std::function<void (bool realtime)> launch);
     void cleanOutUnreferencedFiles();
     void launchStartupDialog();
     void switchToStage (AudioEngine::Stage);

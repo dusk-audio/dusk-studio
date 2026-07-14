@@ -2,13 +2,15 @@
 
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_formats/juce_audio_formats.h>
+#include "../session/Session.h"
+#include <array>
 #include <atomic>
 #include <functional>
+#include <vector>
 
 namespace duskstudio
 {
 class AudioEngine;
-class Session;
 
 // Offline bounce. Detaches the engine from AudioDeviceManager and drives
 // audioDeviceIOCallbackWithContext in a tight loop on its own worker
@@ -19,16 +21,17 @@ class BounceEngine final : private juce::Thread
 public:
     // MasterMix   : full track / aux / master path. Length = longest
     //               region end + tail.
-    // Stems       : one WAV per track with content or armed. Each
-    //               renders through the full chain with every other
-    //               track soloed-off, so a stem carries the same
-    //               per-track processing as the mix. Nonlinear master
-    //               stages (bus comp, tape) react to the soloed track
-    //               alone, so stems are NOT guaranteed to null-sum
-    //               against the master mix. Files written as
-    //               `<base>_<NN>_<sanitized-name>.wav` next to base.
-    //               Original solo state restored on finish / cancel /
-    //               error.
+    // Stems       : single offline pass, one WAV per stem target. A track
+    //               stem is the track's post-fader / post-pan output (its
+    //               full wet contribution, before the master-vs-bus routing
+    //               split); bus groups and aux lanes with anything routed /
+    //               sent print as additional stems of their own processed
+    //               output. Mute / solo state prints as heard. Stems carry
+    //               no master-strip processing, so track+bus+aux stems sum
+    //               to the PRE-master mix; a bus-routed track appears both
+    //               in its own stem and (processed) in the bus stem. Track
+    //               files: `<base>_<NN>_<name>.wav`; units:
+    //               `<base>_bus<N>_<name>.wav` / `<base>_aux<N>_<name>.wav`.
     // MasteringChain : MasteringPlayer -> MasteringChain. Length =
     //               player's source file + tail. Engine stage forced
     //               to Mastering for the render.
@@ -71,6 +74,114 @@ public:
         return dir.getChildFile (stem + "_" + idx + "_" + safeName + ".wav");
     }
 
+    // <dir>/<base>_<tag>_<safe>.wav for bus / aux stems (tag = "bus1".."aux4").
+    // Falls back to the tag alone when the unit has no usable name.
+    static juce::File namedStemOutputFile (const juce::File& base,
+                                             const juce::String& tag,
+                                             const juce::String& unitName)
+    {
+        auto dir  = base.getParentDirectory();
+        auto stem = base.getFileNameWithoutExtension();
+        if (stem.isEmpty()) stem = "bounce";
+
+        auto safeName = juce::File::createLegalFileName (unitName.trim());
+        return dir.getChildFile (safeName.isEmpty()
+                                    ? stem + "_" + tag + ".wav"
+                                    : stem + "_" + tag + "_" + safeName + ".wav");
+    }
+
+    // The stem files a Stems bounce against `base` would write, in render
+    // order: tracks with content or armed, then buses any of those tracks
+    // route into, then aux lanes any of them send to. Message-thread safe
+    // (atomic reads only). Used by the render itself and by the UI's
+    // overwrite-conflict check so the two can't drift.
+    struct StemTarget
+    {
+        // Mix is never produced by collectStemTargets; the realtime
+        // master-mix bounce uses it so its sink is not mistaken for a track.
+        enum class Kind { Track, Bus, Aux, Mix };
+        Kind kind;
+        int  index;        // track / bus / aux index, zero-based (-1 for Mix)
+        juce::File file;
+    };
+    static std::vector<StemTarget> collectStemTargets (const Session& session,
+                                                         const juce::File& base)
+    {
+        std::vector<StemTarget> targets;
+
+        // The per-track send fan-out indexes the per-lane array below.
+        static_assert (ChannelStripParams::kNumAuxSends == Session::kNumAuxLanes,
+                       "aux-send count must match the aux-lane count");
+
+        std::array<bool, (size_t) Session::kNumBuses>    busActive {};
+        std::array<bool, (size_t) Session::kNumAuxLanes> auxActive {};
+
+        for (int t = 0; t < Session::kNumTracks; ++t)
+        {
+            const auto& tr = session.track (t);
+            const bool hasContent = ! tr.regions.empty()
+                                  || ! tr.midiRegions.current().empty();
+            const bool armed = tr.recordArmed.load (std::memory_order_relaxed);
+            if (! (hasContent || armed)) continue;
+
+            targets.push_back ({ StemTarget::Kind::Track, t,
+                                 stemOutputFile (base, t, tr.name) });
+
+            for (int a = 0; a < Session::kNumBuses; ++a)
+                if (tr.strip.busAssign[(size_t) a].load (std::memory_order_relaxed))
+                    busActive[(size_t) a] = true;
+            for (int a = 0; a < ChannelStripParams::kNumAuxSends; ++a)
+            {
+                // The audio thread follows liveAuxSendDb, which automation
+                // can raise even when the knob rests at the off sentinel -
+                // a send lane with points makes the aux potentially audible.
+                const bool manualOn =
+                    tr.strip.auxSendDb[(size_t) a].load (std::memory_order_relaxed)
+                        > ChannelStripParams::kAuxSendOffDb;
+                const auto param = (AutomationParam) ((int) AutomationParam::AuxSend1 + a);
+                const bool automated =
+                    ! tr.automationLanes[(size_t) param].pointsForRead().empty();
+                if (manualOn || automated)
+                    auxActive[(size_t) a] = true;
+            }
+        }
+
+        for (int a = 0; a < Session::kNumBuses; ++a)
+            if (busActive[(size_t) a])
+                targets.push_back ({ StemTarget::Kind::Bus, a,
+                                     namedStemOutputFile (base, "bus" + juce::String (a + 1),
+                                                            session.bus (a).name) });
+        for (int a = 0; a < Session::kNumAuxLanes; ++a)
+            if (auxActive[(size_t) a])
+                targets.push_back ({ StemTarget::Kind::Aux, a,
+                                     namedStemOutputFile (base, "aux" + juce::String (a + 1),
+                                                            session.auxLane (a).name) });
+        return targets;
+    }
+
+    // True when any rendered track's strip or any aux lane has a hardware
+    // insert routed. Offline renders can't run the external loop (the device
+    // callback is detached), so the insert returns dry or silence - the UI
+    // warns before an offline bounce of such a session.
+    static bool anyHardwareInsertActive (const Session& session)
+    {
+        for (int t = 0; t < Session::kNumTracks; ++t)
+        {
+            const auto& tr = session.track (t);
+            const bool hasContent = ! tr.regions.empty()
+                                  || ! tr.midiRegions.current().empty();
+            const bool armed = tr.recordArmed.load (std::memory_order_relaxed);
+            if ((hasContent || armed)
+                && tr.hardwareInsert.enabled.load (std::memory_order_relaxed))
+                return true;
+        }
+        for (int a = 0; a < Session::kNumAuxLanes; ++a)
+            for (const auto& hw : session.auxLane (a).hardwareInserts)
+                if (hw.enabled.load (std::memory_order_relaxed))
+                    return true;
+        return false;
+    }
+
     BounceEngine (AudioEngine& engine, Session& session,
                    juce::AudioDeviceManager& deviceManager) noexcept;
     ~BounceEngine() override;
@@ -80,6 +191,13 @@ public:
     // realtime. tail = silence appended so reverb/comp tails decay.
     // wavBitDepth: 24 (default) or 16 - 16 gets TPDF dither at ±1 LSB
     // before the truncation (CD / distribution target).
+    //
+    // realtimeCapture (MasterMix / Stems only): instead of detaching the
+    // engine, the session PLAYS live and the callback streams the capture
+    // taps to disk - the only path that prints hardware inserts, since the
+    // external loop needs the device rolling. Renders at the device rate,
+    // always WAV, at the user's live oversampling (it prints what you hear,
+    // minus the monitoring click). The transport must be stopped to start.
     bool start (const juce::File& outputFile,
                 double sampleRate = 0.0,
                 int blockSize = 1024,
@@ -87,7 +205,8 @@ public:
                 Mode mode = Mode::MasterMix,
                 Format format = Format::Wav,
                 int mp3BitrateKbps = 320,
-                int wavBitDepth = 24);
+                int wavBitDepth = 24,
+                bool realtimeCapture = false);
 
     void cancel() noexcept { cancelRequested.store (true, std::memory_order_relaxed); }
 
@@ -112,10 +231,6 @@ public:
 
     bool         isRendering() const noexcept { return rendering.load (std::memory_order_relaxed); }
     float        getProgress() const noexcept { return progress.load (std::memory_order_relaxed); }
-    // Stems mode: 1-based current stem (1..total). 0 before first stem
-    // or in Master / Mastering modes.
-    int          getCurrentStemIndex() const noexcept
-        { return currentStemIndex.load (std::memory_order_relaxed); }
     int          getTotalStemsToRender() const noexcept
         { return totalStemsToRender.load (std::memory_order_relaxed); }
     juce::String getLastError() const
@@ -162,6 +277,7 @@ private:
     std::int64_t  totalSamples     = 0;
     Mode         renderMode       = Mode::MasterMix;
     Format       renderFormat     = Format::Wav;
+    bool         renderRealtime   = false;
     int          renderBitrateKbps = 320;
     int          renderWavBitDepth = 24;
     int          freezeTrackIndex = -1;   // Mode::FreezeTrack target
@@ -171,7 +287,6 @@ private:
     std::atomic<bool>  cancelRequested  { false };
     std::atomic<float> progress         { 0.0f };
     std::atomic<std::int64_t> renderedSamples { 0 };
-    std::atomic<int>   currentStemIndex   { 0 };
     std::atomic<int>   totalStemsToRender { 0 };
     juce::String lastError;
     juce::CriticalSection lastErrorLock;
@@ -184,13 +299,23 @@ private:
     std::unique_ptr<juce::AudioFormatWriter>
         makeWriter (std::unique_ptr<juce::FileOutputStream> outStream, juce::String& errOut) const;
 
-    // Always restores original solo state before returning.
+    // Open + truncate outFile, then wrap it in the configured format writer.
+    // Null + errOut on failure - the file may already be truncated by then,
+    // so failure paths that must preserve prior content delete it.
+    std::unique_ptr<juce::AudioFormatWriter>
+        openWriterFor (const juce::File& outFile, juce::String& errOut) const;
+
+    // Stem-tap registry plumbing shared by the offline and realtime stem
+    // renders. Arm and clear must cover the same tap set or a render leaves
+    // the audio thread accumulating into a freed scratch.
+    void armStemTap (const StemTarget& target, float* l, float* r);
+    void clearAllStemTaps();
+
+    // Per-kind PDC lead-in: track / bus taps sit before the master-stage dry
+    // delay; aux taps and the mix carry it too.
+    std::int64_t leadInFor (StemTarget::Kind kind) const;
+
     bool runStemsMode();
-    // stemFractionStart + stemFractionWidth slice the progress bar so
-    // the UI sees monotonic 0..1 across all stems.
-    bool renderOneStem (const juce::File& outFile,
-                          std::int64_t lenSamples,
-                          float stemFractionStart,
-                          float stemFractionWidth);
+    bool runRealtimeMode();
 };
 } // namespace duskstudio

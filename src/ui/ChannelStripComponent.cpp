@@ -1654,15 +1654,20 @@ void ChannelStripComponent::setMixingMode (bool mixing)
 //   - Click while the OTHER popup is open -> close the other, open this one
 // The mutual-exclusion path lets the user move quickly between EQ and COMP
 // without first having to dismiss the open dialog manually.
-void ChannelStripComponent::openPluginPicker (bool useChooser)
+void ChannelStripComponent::openPluginPicker()
 {
     // MIDI tracks need an instrument plugin (synth / sampler) - the strip
     // routes per-track MIDI events into the slot. Mono / Stereo tracks
     // route audio through the slot, which only makes sense for effect
     // plugins; instrument plugins ignore the audio input entirely and
     // (in the case of some VSTGUI-based instruments) fail to render
-    // their UI when loaded as an audio insert.
-    const auto kind = (track.mode.load (std::memory_order_relaxed) == (int) Track::Mode::Midi)
+    // their UI when loaded as an audio insert. A FROZEN MIDI track is an
+    // audio source (the baked WAV), so its slot takes effects and the
+    // hardware insert - the instrument is baked in and stays bypassed.
+    const bool isMidiTrack =
+        track.mode.load (std::memory_order_relaxed) == (int) Track::Mode::Midi;
+    const bool frozenNow = track.frozen.load (std::memory_order_relaxed);
+    const auto kind = (isMidiTrack && ! frozenNow)
                         ? pluginpicker::PluginKind::Instruments
                         : pluginpicker::PluginKind::Effects;
 
@@ -1676,9 +1681,7 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
     // Two-step flow: chooser modal first (Hardware / Soundfont / Plugin)
     // so the plugin list isn't the user's only path. Picking "Plugin"
     // from the chooser routes to the existing openPickerMenu - same
-    // callbacks below. The right-click "Replace plugin..." path passes
-    // useChooser=false: the user is already committed to a plugin, so
-    // skip the chooser and jump straight to the plugin list.
+    // callbacks below.
     auto onChange = [safe]
                                     {
                                         auto* self = safe.getComponent();
@@ -1803,33 +1806,14 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
     };
 #endif
 
-    if (useChooser)
-    {
-        pluginpicker::openInsertChooser (pluginSlot,
-                                          pluginSlotButton,
-                                          std::move (onChange),
-                                          kind,
-                                          std::move (openHwEditor),
-                                          std::move (onClap),
-                                          std::move (onLv2),
-                                          std::move (onVst3));
-    }
-    else
-    {
-        // Replace-plugin path: skip the chooser, suppress the picker's
-        // own secondary buttons (HW + Soundfont) since the user has
-        // already committed to "this is a plugin".
-        pluginpicker::openPickerMenu (pluginSlot,
-                                       pluginSlotButton,
-                                       std::move (onChange),
-                                       kind,
-                                       { -1, -1 },
-                                       /*onPickHardwareInsert*/ {},
-                                       /*suppressSecondaryButtons*/ true,
-                                       std::move (onClap),
-                                       std::move (onLv2),
-                                       std::move (onVst3));
-    }
+    pluginpicker::openInsertChooser (pluginSlot,
+                                      pluginSlotButton,
+                                      std::move (onChange),
+                                      kind,
+                                      std::move (openHwEditor),
+                                      std::move (onClap),
+                                      std::move (onLv2),
+                                      std::move (onVst3));
 }
 
 void ChannelStripComponent::openHardwareInsertEditor()
@@ -1854,11 +1838,24 @@ void ChannelStripComponent::openHardwareInsertEditor()
                 self->hardwareInsertModal.close();
                 self->refreshPluginSlotButton();
             }
-        });
+        },
+        /*embedded*/ false,
+        /*allowMono*/ track.mode.load (std::memory_order_relaxed)
+                          == (int) Track::Mode::Mono);
 
     auto* parent = findParentComponentOfClass<juce::Component>();
     if (parent == nullptr) parent = this;
     hardwareInsertModal.show (*parent, std::move (editor));
+}
+
+void ChannelStripComponent::removeHardwareInsert()
+{
+    // The crossfade gate ramps the insert out click-free on the mode flip;
+    // enabled=false parks the params so a later re-engage starts clean.
+    engine.getChannelStrip (trackIndex)
+        .insertMode.store (ChannelStrip::kInsertEmpty, std::memory_order_release);
+    track.hardwareInsert.enabled.store (false, std::memory_order_relaxed);
+    refreshPluginSlotButton();
 }
 
 void ChannelStripComponent::unloadPluginSlot()
@@ -1940,7 +1937,7 @@ void ChannelStripComponent::showPluginSlotMenu()
         const bool editorOpen = isPluginEditorOpen();
         menu.addItem (2001, editorOpen ? "Close editor" : "Open editor");
         menu.addSeparator();
-        menu.addItem (2002, "Replace plugin...");
+        menu.addItem (2002, "Replace insert...");
         menu.addItem (2003, "Remove plugin");
         // Crash/auto-bypass recovery is a JUCE-slot concept (native hosts run
         // in-process without the watchdog).
@@ -1964,9 +1961,17 @@ void ChannelStripComponent::showPluginSlotMenu()
                            lastParam >= 0);
         }
     }
+    else if (engine.getChannelStrip (trackIndex).insertMode.load (std::memory_order_acquire)
+                 == ChannelStrip::kInsertHardware)
+    {
+        menu.addItem (2006, "Edit hardware insert...");
+        menu.addSeparator();
+        menu.addItem (2002, "Replace insert...");
+        menu.addItem (2007, "Remove hardware insert");
+    }
     else
     {
-        menu.addItem (2010, "Pick plugin...");
+        menu.addItem (2010, "Add insert...");
     }
 
     juce::Component::SafePointer<ChannelStripComponent> safe (this);
@@ -1978,8 +1983,10 @@ void ChannelStripComponent::showPluginSlotMenu()
             switch (result)
             {
                 case 2001: self->togglePluginEditor();             break;
-                case 2002: self->openPluginPicker (/*useChooser*/ false); break;
+                case 2002: self->openPluginPicker(); break;
                 case 2003: self->unloadPluginSlot();               break;
+                case 2006: self->openHardwareInsertEditor();       break;
+                case 2007: self->removeHardwareInsert();           break;
                 case 2004: self->pluginSlot.clearAutoBypass();     break;
                 case 2005:
                     // Fire the MIDI Learn workflow targeting THIS
@@ -1994,7 +2001,7 @@ void ChannelStripComponent::showPluginSlotMenu()
                         MidiBindingTarget::TrackPluginParam,
                         self->trackIndex);
                     break;
-                case 2010: self->openPluginPicker (/*useChooser*/ false); break;
+                case 2010: self->openPluginPicker(); break;
                 default: break;
             }
         });
@@ -4197,17 +4204,15 @@ void ChannelStripComponent::showColourMenu()
     menu.addSeparator();
     menu.addItem (1001, "Rename track...");
 
-    // Plugin slot menu items, only meaningful when a plugin is loaded.
-    // Replace/Remove live here (rather than on the slot button itself) so
-    // the slot button's primary click stays as a toggle for the editor.
-    if (pluginSlot.isLoaded()
-        || engine.getChannelStrip (trackIndex).isNativeClapLoaded()
-        || engine.getChannelStrip (trackIndex).isNativeLv2Loaded()
-        || engine.getChannelStrip (trackIndex).isNativeVst3Loaded())
+    // Insert slot menu items, only meaningful when the slot is occupied
+    // (plugin, native, or hardware). Replace/Remove live here (rather than
+    // on the slot button itself) so the slot button's primary click stays
+    // as a toggle for the editor.
+    if (insertSlotOccupied())
     {
         menu.addSeparator();
-        menu.addItem (1010, "Replace plugin...");
-        menu.addItem (1011, "Remove plugin");
+        menu.addItem (1010, "Replace insert...");
+        menu.addItem (1011, "Remove insert");
         if (pluginSlot.wasCrashed())
             menu.addItem (1012, "Re-enable plugin (crashed)");
         else if (pluginSlot.wasAutoBypassed())
@@ -4259,8 +4264,16 @@ void ChannelStripComponent::showColourMenu()
                 self->nameLabel.showEditor();
                 return;
             }
-            if (result == 1010) { self->openPluginPicker (/*useChooser*/ false); return; }
-            if (result == 1011) { self->unloadPluginSlot();      return; }
+            if (result == 1010) { self->openPluginPicker(); return; }
+            if (result == 1011)
+            {
+                const bool hw = self->engine.getChannelStrip (self->trackIndex)
+                                    .insertMode.load (std::memory_order_acquire)
+                                        == ChannelStrip::kInsertHardware;
+                if (hw) self->removeHardwareInsert();
+                else    self->unloadPluginSlot();
+                return;
+            }
             if (result == 1012) { self->pluginSlot.clearAutoBypass(); return; }
             if (result >= 2000 && result < 2000 + Session::kNumTracks)
             {

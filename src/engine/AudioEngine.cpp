@@ -703,13 +703,19 @@ void AudioEngine::recomputePdc() noexcept
         // their output is timeline-aligned as if zero-latency.
         const bool midi = session.track (t).mode.load (std::memory_order_relaxed)
                               == (int) Track::Mode::Midi;
-        // A frozen track plays its baked WAV with the insert bypassed, so its
-        // plugin / hardware latency must not count toward PDC - it's a zero-latency
-        // disk source (the bake was captured pre-PDC; see ChannelStrip freeze tap).
+        // A frozen track plays its baked WAV with the baked plugin bypassed, so
+        // PLUGIN latency must not count toward PDC - it's a zero-latency disk
+        // source (the bake was captured pre-PDC; see ChannelStrip freeze tap).
+        // A HARDWARE insert is different: the frozen strip path still runs it
+        // on the WAV audio, so its measured loop latency counts.
         const bool frozen = session.track (t).frozen.load (std::memory_order_relaxed);
-        if (! midi && ! frozen)
+        const int  mode   = strip.insertMode.load (std::memory_order_relaxed);
+        if (mode == ChannelStrip::kInsertHardware && (frozen || ! midi))
         {
-            const int mode = strip.insertMode.load (std::memory_order_relaxed);
+            lat = strip.getHardwareInsertSlot().getLatencySamples();
+        }
+        else if (! midi && ! frozen)
+        {
             if (mode == ChannelStrip::kInsertPlugin)
             {
                 lat = strip.getPluginSlot().getLatencySamples();
@@ -733,8 +739,6 @@ void AudioEngine::recomputePdc() noexcept
                         lat = inst->getLatencySamples();
 #endif
             }
-            else if (mode == ChannelStrip::kInsertHardware)
-                lat = strip.getHardwareInsertSlot().getLatencySamples();
         }
         latency[t] = juce::jlimit (0, ChannelStrip::kMaxPdcSamples, lat);
     }
@@ -2124,6 +2128,20 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
         ~ResumeGuard() { e.resumeProcessing(); }
     };
     const ResumeGuard resumeGuard { *this };
+
+    // A re-prepare invalidates an armed realtime bounce: its capture
+    // scratches were sized for the old block, so a grown one would overrun
+    // them from the audio thread (the mixL guard tracks the NEW size and
+    // passes). The gate above guarantees no callback is mid-sink-loop; kill
+    // the arming here and let the bounce worker fail the render cleanly.
+    if (rtBounceSinkCount.load (std::memory_order_relaxed) > 0)
+    {
+        rtBounceSinkCount.store (0, std::memory_order_relaxed);
+        rtBounceAborted.store (true, std::memory_order_release);
+        for (auto& s : strips) s.setStemCapture (nullptr, nullptr);
+        for (int a = 0; a < Session::kNumBuses; ++a)    setBusStemCapture (a, nullptr, nullptr);
+        for (int a = 0; a < Session::kNumAuxLanes; ++a) setAuxStemCapture (a, nullptr, nullptr);
+    }
 
     currentSampleRate.store (sr, std::memory_order_relaxed);
     currentBlockSize.store  (bs, std::memory_order_relaxed);
@@ -3927,9 +3945,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         {
             monoIn = deviceInput;
         }
-        else if (! isFrozen
-                 && (strips[(size_t) t].getPluginSlot().isLoaded()
-                     || session.track (t).hardwareInsert.pingPending.load (std::memory_order_acquire)))
+        else if ((! isFrozen && strips[(size_t) t].getPluginSlot().isLoaded())
+                 || session.track (t).hardwareInsert.pingPending.load (std::memory_order_acquire))
         {
             // Generator-style insert with no input source: feed a
             // pre-zeroed buffer so the chain runs and the plugin can
@@ -3938,7 +3955,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             // Same feed while a hardware-insert ping is in flight -
             // with transport stopped and IN off the track has no
             // source, and the slot needs to be serviced to run the
-            // chirp + capture.
+            // chirp + capture. The ping feed ignores frozen state: the
+            // frozen strip path runs the hardware slot too, and a
+            // stopped frozen track otherwise has no input at all.
             monoIn = silentInputScratch.data();
         }
 
@@ -4575,6 +4594,15 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         busStrips[(size_t) a].processInPlace (busL[(size_t) a].data(),
                                               busR[(size_t) a].data(),
                                               numSamples);
+        auto* capBusL = stemBusCapL[(size_t) a].load (std::memory_order_acquire);
+        auto* capBusR = stemBusCapR[(size_t) a].load (std::memory_order_relaxed);
+        if (capBusL != nullptr && capBusR != nullptr)
+        {
+            juce::FloatVectorOperations::add (capBusL,
+                                                busL[(size_t) a].data(), numSamples);
+            juce::FloatVectorOperations::add (capBusR,
+                                                busR[(size_t) a].data(), numSamples);
+        }
         // SIMD'd mix accumulate - hot inner loop, runs once per active aux
         // per callback. JUCE picks the right SSE/NEON path based on the
         // platform; cheaper than scalar [i]+= even with -O3.
@@ -4768,6 +4796,15 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                 wR[i] = dR.popSample (0);
             }
         }
+        auto* capAuxL = stemAuxCapL[(size_t) a].load (std::memory_order_acquire);
+        auto* capAuxR = stemAuxCapR[(size_t) a].load (std::memory_order_relaxed);
+        if (capAuxL != nullptr && capAuxR != nullptr)
+        {
+            juce::FloatVectorOperations::add (capAuxL,
+                                                auxLaneL[(size_t) a].data(), numSamples);
+            juce::FloatVectorOperations::add (capAuxR,
+                                                auxLaneR[(size_t) a].data(), numSamples);
+        }
         juce::FloatVectorOperations::add (mixL.data(),
                                             auxLaneL[(size_t) a].data(),
                                             numSamples);
@@ -4791,6 +4828,53 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     perfLap (PerfSections::kAuxes);
 
     master.processInPlace (mixL.data(), mixR.data(), numSamples);
+
+    // Realtime bounce: push each armed sink's block to its disk writer.
+    // Post-master, pre-metronome, so the monitoring click never prints.
+    // Writes are gated on the transport actually rolling - the sinks are
+    // armed while stopped, and capturing the pre-roll would front-pad every
+    // file with silence. The scratch WIPES are not gated: the taps
+    // accumulate during stopped callbacks too (input monitoring runs the
+    // strips), and an unwiped pre-roll prints as a summed burst at sample 0.
+    // ThreadedWriter::write is a lock-free FIFO push (its TimeSliceThread
+    // drains to disk), so this stays RT-safe.
+    if (const int nSinks = rtBounceSinkCount.load (std::memory_order_acquire);
+        nSinks > 0)
+    {
+        auto* sinks = rtBounceSinks.load (std::memory_order_relaxed);
+        for (int s = 0; sinks != nullptr && s < nSinks; ++s)
+        {
+            auto& sink = sinks[s];
+            if (isPlaying)
+            {
+                const float* srcL = sink.srcL != nullptr ? sink.srcL : mixL.data();
+                const float* srcR = sink.srcR != nullptr ? sink.srcR : mixR.data();
+
+                int offset = 0;
+                if (sink.leadRemaining > 0)
+                {
+                    offset = (int) juce::jmin ((std::int64_t) numSamples, sink.leadRemaining);
+                    sink.leadRemaining -= offset;
+                }
+                const auto already = sink.written.load (std::memory_order_relaxed);
+                const int n = (int) juce::jmin ((std::int64_t) (numSamples - offset),
+                                                  sink.cap - already);
+                if (n > 0)
+                {
+                    const float* chans[2] = { srcL + offset, srcR + offset };
+                    if (sink.writer->write (chans, n))
+                        sink.written.store (already + n, std::memory_order_release);
+                    else
+                        sink.writeFailed.store (true, std::memory_order_release);
+                }
+            }
+            if (sink.wipeL != nullptr)
+            {
+                juce::FloatVectorOperations::clear (sink.wipeL, numSamples);
+                juce::FloatVectorOperations::clear (sink.wipeR, numSamples);
+            }
+        }
+    }
 
     // Metronome - push session BPM + enable into the click generator each
     // block (cheap atomic loads), then mix the click into the post-master
@@ -4841,6 +4925,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                               : (wantWhileRec && ! onlyCountIn);
         else if (isPlaying)
             clickRolling = wantWhilePlay;
+
+        // The click is a monitoring aid and must never print: an offline
+        // bounce captures the mix it is about to be added to, so suppress it
+        // for the render. (Realtime bounces capture pre-click, upstream.)
+        if (offlineRenderActive.load (std::memory_order_relaxed))
+            clickRolling = false;
 
         // The click mixes post-master, AFTER the master-stage aux PDC delayed
         // the program by masterDryPdcApplied - reference the click to the
