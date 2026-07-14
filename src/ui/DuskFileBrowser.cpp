@@ -99,8 +99,9 @@ public:
             newFolderName.onEscapeKey = [this] { toggleNewFolderRow(); };
             newFolderName.onTextChange = [this]
             {
-                newFolderName.setColour (juce::TextEditor::outlineColourId,
-                                          findColour (juce::TextEditor::outlineColourId));
+                // Drop the error override so the LookAndFeel default applies
+                // again (a copied findColour value would freeze the theme).
+                newFolderName.removeColour (juce::TextEditor::outlineColourId);
                 newFolderName.repaint();
             };
             addChildComponent (newFolderName);
@@ -238,7 +239,15 @@ private:
     {
         if (browser == nullptr) return;
         const auto name = juce::File::createLegalFileName (newFolderName.getText().trim());
-        if (name.isEmpty()) return;
+        if (name.isEmpty())
+        {
+            // Same feedback as a failed create - a silent return reads as a
+            // dead Create button when the name was all whitespace.
+            newFolderName.setColour (juce::TextEditor::outlineColourId,
+                                      juce::Colour (0xffcc4444));
+            newFolderName.repaint();
+            return;
+        }
 
         const auto dir = browser->getRoot().getChildFile (name);
         if (! dir.isDirectory() && ! dir.createDirectory())
