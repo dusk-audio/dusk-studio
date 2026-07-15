@@ -291,6 +291,24 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
     numOutputChannels = countActiveChannels (outputChannels);
     numInputChannels  = countActiveChannels (inputChannels);
 
+    // The device selector activates a fixed wide channel mask; clamp to the
+    // interface's real port count (from enumeration) so we don't create dead
+    // ports the graph can't link, and the active set the callback/UI see matches
+    // what actually exists. deviceOutChannels == 0 means the count is unknown
+    // (leave the request as-is).
+    if (deviceOutChannels > 0 && numOutputChannels > deviceOutChannels)
+    {
+        currentOutputChannels.setRange (deviceOutChannels,
+            currentOutputChannels.getHighestBit() + 1 - deviceOutChannels, false);
+        numOutputChannels = countActiveChannels (currentOutputChannels);
+    }
+    if (deviceInChannels > 0 && numInputChannels > deviceInChannels)
+    {
+        currentInputChannels.setRange (deviceInChannels,
+            currentInputChannels.getHighestBit() + 1 - deviceInChannels, false);
+        numInputChannels = countActiveChannels (currentInputChannels);
+    }
+
     const bool wantOutput = numOutputChannels > 0 && outputId.isNotEmpty();
     const bool wantInput  = numInputChannels  > 0 && inputId.isNotEmpty();
     if (! wantOutput && ! wantInput)
@@ -610,8 +628,14 @@ int PipeWireAudioIODevice::linkToHardware()
     const auto srcOut = sourceNode != (juce::uint32) SPA_ID_INVALID ? orderedPortIds (s, sourceNode, true)
                                                                     : juce::Array<juce::uint32>();
 
-    const int wantLinks = std::min (ourOut.size(), sinkIn.size())
-                        + std::min (srcOut.size(), ourIn.size());
+    // Every port we created must have a matching device port, or routing would
+    // be partial. numOut/InChannels were clamped to the device's real port count
+    // in open(), so this holds exactly unless the device changed between the
+    // enumeration and now - in which case fail rather than half-wire it.
+    if (sinkIn.size() < ourOut.size() || srcOut.size() < ourIn.size())
+        return -1;
+
+    const int wantLinks = ourOut.size() + ourIn.size();
 
     int made = 0;
     pw_thread_loop_lock (threadLoop);
@@ -631,16 +655,15 @@ int PipeWireAudioIODevice::linkToHardware()
             pw_properties_free (lp);
             if (proxy != nullptr) { linkProxies.add (proxy); ++made; }
         };
-        for (int i = 0; i < std::min (ourOut.size(), sinkIn.size()); ++i)
+        for (int i = 0; i < ourOut.size(); ++i)
             makeLink (ourNode, ourOut.getUnchecked (i), sinkNode,   sinkIn.getUnchecked (i));
-        for (int j = 0; j < std::min (srcOut.size(), ourIn.size()); ++j)
+        for (int j = 0; j < ourIn.size(); ++j)
             makeLink (sourceNode, srcOut.getUnchecked (j), ourNode, ourIn.getUnchecked (j));
     }
     pw_thread_loop_unlock (threadLoop);
 
-    // A partial link set (a proxy failed, or no ports matched) would route only
-    // some channels; signal failure so open() rejects it rather than opening a
-    // half-wired device.
+    // A partial link set (a proxy failed to create) would route only some
+    // channels; signal failure so open() rejects it rather than half-wiring.
     return (wantLinks > 0 && made == wantLinks) ? made : -1;
 }
 
