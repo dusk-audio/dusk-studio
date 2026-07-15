@@ -20,46 +20,88 @@ void ensurePipeWireInit()
     std::call_once (once, [] { pw_init (nullptr, nullptr); });
 }
 
-// Collected during a single synchronous registry roundtrip. The *Chans arrays
-// are index-aligned with the corresponding *Names / *Ids arrays.
-struct ScanResult
+// Collected during a single synchronous registry roundtrip. Nodes and their
+// audio ports arrive as separate globals; channel counts come from counting the
+// ports (audio.channels is not in the node's registry props - it lives in the
+// node info, which the registry roundtrip doesn't fetch). Finalised into the
+// index-aligned *Names / *Ids / *Chans arrays by finalizeScan().
+struct NodeRec
 {
-    juce::StringArray inNames, outNames, inIds, outIds;
-    juce::Array<int>  inChans, outChans;
-    pw_main_loop*     loop = nullptr;
-    int               syncSeq = 0;
-    bool              haveSync = false;
+    juce::uint32 gid = 0;
+    juce::String name, label;
+    bool isSink = false, isSource = false;
 };
 
-void onRegistryGlobal (void* data, uint32_t /*id*/, uint32_t /*permissions*/,
+struct ScanResult
+{
+    juce::Array<NodeRec>      nodes;
+    juce::Array<juce::uint32> portNodeId;   // parallel with portIsOutput
+    juce::Array<bool>         portIsOutput;
+
+    juce::StringArray inNames, outNames, inIds, outIds;
+    juce::Array<int>  inChans, outChans;
+
+    pw_main_loop* loop = nullptr;
+    int  syncSeq = 0;
+    bool haveSync = false;
+};
+
+void onRegistryGlobal (void* data, uint32_t id, uint32_t /*permissions*/,
                         const char* type, uint32_t /*version*/,
                         const struct spa_dict* props)
 {
     auto& r = *static_cast<ScanResult*> (data);
-    if (props == nullptr || std::strcmp (type, PW_TYPE_INTERFACE_Node) != 0)
+    if (props == nullptr)
         return;
 
-    const char* mediaClass = spa_dict_lookup (props, PW_KEY_MEDIA_CLASS);
-    const char* nodeName    = spa_dict_lookup (props, PW_KEY_NODE_NAME);
-    if (mediaClass == nullptr || nodeName == nullptr)
-        return;
+    if (std::strcmp (type, PW_TYPE_INTERFACE_Node) == 0)
+    {
+        const char* mediaClass = spa_dict_lookup (props, PW_KEY_MEDIA_CLASS);
+        const char* nodeName   = spa_dict_lookup (props, PW_KEY_NODE_NAME);
+        if (mediaClass == nullptr || nodeName == nullptr)
+            return;
+        const bool isSink   = std::strcmp (mediaClass, "Audio/Sink")   == 0;
+        const bool isSource = std::strcmp (mediaClass, "Audio/Source") == 0;
+        const bool isDuplex = std::strcmp (mediaClass, "Audio/Duplex") == 0;
+        if (! (isSink || isSource || isDuplex))
+            return;
+        const char* desc = spa_dict_lookup (props, PW_KEY_NODE_DESCRIPTION);
+        NodeRec n;
+        n.gid      = id;
+        n.name     = juce::String::fromUTF8 (nodeName);
+        n.label    = desc != nullptr ? juce::String::fromUTF8 (desc) : n.name;
+        n.isSink   = isSink   || isDuplex;
+        n.isSource = isSource || isDuplex;
+        r.nodes.add (n);
+    }
+    else if (std::strcmp (type, PW_TYPE_INTERFACE_Port) == 0)
+    {
+        const char* nodeIdStr = spa_dict_lookup (props, PW_KEY_NODE_ID);
+        const char* dir       = spa_dict_lookup (props, PW_KEY_PORT_DIRECTION);
+        // Audio channels carry audio.channel; skip control / non-audio ports so
+        // the count reflects real channels.
+        if (nodeIdStr == nullptr || dir == nullptr
+            || spa_dict_lookup (props, PW_KEY_AUDIO_CHANNEL) == nullptr)
+            return;
+        r.portNodeId.add ((juce::uint32) juce::String (nodeIdStr).getLargeIntValue());
+        r.portIsOutput.add (std::strcmp (dir, "out") == 0);
+    }
+}
 
-    const char* desc = spa_dict_lookup (props, PW_KEY_NODE_DESCRIPTION);
-    const juce::String label = desc != nullptr ? juce::String::fromUTF8 (desc)
-                                               : juce::String::fromUTF8 (nodeName);
-    const juce::String id = juce::String::fromUTF8 (nodeName);
+// A sink's channel count is its INPUT ports (audio we send to it); a source's
+// is its OUTPUT ports. Build the index-aligned device lists from the port tally.
+void finalizeScan (ScanResult& r)
+{
+    for (const auto& n : r.nodes)
+    {
+        int inPorts = 0, outPorts = 0;
+        for (int k = 0; k < r.portNodeId.size(); ++k)
+            if (r.portNodeId.getUnchecked (k) == n.gid)
+                (r.portIsOutput.getUnchecked (k) ? outPorts : inPorts) += 1;
 
-    // audio.channels is the node's channel count; absent on some nodes, in which
-    // case 0 -> the device falls back to a stereo pair.
-    const char* chanStr = spa_dict_lookup (props, PW_KEY_AUDIO_CHANNELS);
-    const int chans = chanStr != nullptr ? juce::String (chanStr).getIntValue() : 0;
-
-    const bool isSink   = std::strcmp (mediaClass, "Audio/Sink")   == 0;
-    const bool isSource = std::strcmp (mediaClass, "Audio/Source") == 0;
-    const bool isDuplex = std::strcmp (mediaClass, "Audio/Duplex") == 0;
-
-    if (isSink || isDuplex)   { r.outNames.add (label); r.outIds.add (id); r.outChans.add (chans); }
-    if (isSource || isDuplex) { r.inNames.add  (label); r.inIds.add  (id); r.inChans.add  (chans); }
+        if (n.isSink)   { r.outNames.add (n.label); r.outIds.add (n.name); r.outChans.add (inPorts); }
+        if (n.isSource) { r.inNames.add  (n.label); r.inIds.add  (n.name); r.inChans.add  (outPorts); }
+    }
 }
 
 void onCoreDone (void* data, uint32_t id, int seq)
@@ -162,6 +204,8 @@ void enumerateNodes (ScanResult& result)
     pw_context_destroy (context);
     pw_main_loop_destroy (result.loop);
     result.loop = nullptr;
+
+    finalizeScan (result);
 }
 } // namespace
 
