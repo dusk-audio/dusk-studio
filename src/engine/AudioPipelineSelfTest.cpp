@@ -1234,6 +1234,102 @@ juce::String AudioPipelineSelfTest::testMidiPlayAlongMonitor()
         pass ? "" : "<-- live MIDI dropped (play-along must sound while rolling)");
 }
 
+juce::String AudioPipelineSelfTest::testAudioPlayAlongSends()
+{
+    // Regression guard for the audio twin of the MIDI play-along fix: an
+    // input-monitored (IN) audio track must feed its aux sends in every
+    // transport state. Playing forces the disk-playback source branch; the
+    // live-audio overlay merges the input on top of the disk take so the strip,
+    // and its sends, process both while rolling.
+    //
+    // Observable: aux lane 0's post meter. The lane is left empty (no plugin),
+    // so it dry-passes whatever the strip sends into it; a silent send makes
+    // the lane's input-silent skip engage and pin the meter at -100 dBFS, while
+    // any real send drives it well above the floor.
+    prepareCleanState();
+
+    const double sr = 48000.0;
+    const int    bs = 256;
+    const int    numIn = 2, numOut = 2;
+
+    engine.prepareForSelfTest (sr, bs);
+
+    auto& t0 = session.track (0);
+    auto& ts0 = t0.strip;
+    auto& aux0 = session.auxLane (0).params;
+
+    // Snapshot the atoms the outer runAll restore doesn't cover.
+    const float savedSend   = ts0.auxSendDb[0].load (std::memory_order_relaxed);
+    const bool  savedAuxMute = aux0.mute.load (std::memory_order_relaxed);
+
+    // Track 0: mono, input-monitored, listening to input channel 0, sending to
+    // aux lane 0 at unity. Other tracks muted so only track 0 can drive aux 0.
+    t0.mode.store         ((int) Track::Mode::Mono, std::memory_order_relaxed);
+    t0.inputSource.store  (0, std::memory_order_relaxed);
+    t0.inputMonitor.store (true, std::memory_order_relaxed);
+    t0.recordArmed.store  (false, std::memory_order_relaxed);
+    ts0.mute.store        (false, std::memory_order_relaxed);
+    ts0.faderDb.store     (0.0f, std::memory_order_relaxed);
+    ts0.auxSendDb[0].store (0.0f, std::memory_order_relaxed);
+    aux0.mute.store       (false, std::memory_order_relaxed);
+    for (int t = 1; t < Session::kNumTracks; ++t)
+    {
+        session.track (t).inputMonitor.store (false, std::memory_order_relaxed);
+        session.track (t).strip.mute.store (true, std::memory_order_relaxed);
+    }
+    session.recomputeRtCounters();
+
+    std::vector<std::vector<float>> inb ((size_t) numIn, std::vector<float> ((size_t) bs, 0.0f));
+    std::vector<const float*> inp ((size_t) numIn, nullptr);
+    for (int c = 0; c < numIn; ++c) inp[(size_t) c] = inb[(size_t) c].data();
+    std::vector<std::vector<float>> outb ((size_t) numOut, std::vector<float> ((size_t) bs, 0.0f));
+    std::vector<float*> outp ((size_t) numOut, nullptr);
+    for (int c = 0; c < numOut; ++c) outp[(size_t) c] = outb[(size_t) c].data();
+    juce::AudioIODeviceCallbackContext ctx {};
+
+    const double inc = 2.0 * juce::MathConstants<double>::pi * 1000.0 / sr;
+    double phase = 0.0;
+
+    auto probe = [&] (Transport::State st) -> float
+    {
+        engine.getTransport().setPlayhead (0);
+        engine.getTransport().setState (st);
+        // A few settle blocks so the send-gain / return smoothers reach the
+        // steady state before the meter is read.
+        for (int b = 0; b < 8; ++b)
+        {
+            for (int s = 0; s < bs; ++s)
+            {
+                inb[0][(size_t) s] = 0.5f * (float) std::sin (phase);
+                phase += inc;
+            }
+            for (auto& o : outb) std::fill (o.begin(), o.end(), 0.0f);
+            engine.audioDeviceIOCallbackWithContext (inp.data(), numIn, outp.data(),
+                                                      numOut, bs, ctx);
+        }
+        return aux0.meterPostL.load (std::memory_order_relaxed);
+    };
+
+    const float stoppedDb = probe (Transport::State::Stopped);
+    const float playingDb  = probe (Transport::State::Playing);
+
+    // Restore.
+    engine.getTransport().setState (Transport::State::Stopped);
+    ts0.auxSendDb[0].store (savedSend, std::memory_order_relaxed);
+    aux0.mute.store        (savedAuxMute, std::memory_order_relaxed);
+
+    constexpr float kFloorDb = -60.0f;
+    const bool stoppedOK = stoppedDb > kFloorDb;
+    const bool playingOK = playingDb  > kFloorDb;
+    const bool pass = stoppedOK && playingOK;
+    return juce::String::formatted (
+        "%s Audio play-along sends (IN audio track feeds aux 0 each state)\n"
+        "      stopped=%.1f dB  playing=%.1f dB  (floor %.0f dB) %s",
+        fmtPassFail (pass).toRawUTF8(),
+        (double) stoppedDb, (double) playingDb, (double) kFloorDb,
+        pass ? "" : "<-- monitored send dropped (must feed aux while rolling)");
+}
+
 juce::String AudioPipelineSelfTest::runAll()
 {
     juce::StringArray report;
@@ -1269,6 +1365,7 @@ juce::String AudioPipelineSelfTest::runAll()
     report.add (testCompPerTrack());
     report.add (testParallelMatchesSerial());
     report.add (testMidiPlayAlongMonitor());
+    report.add (testAudioPlayAlongSends());
     report.add ("");
 
    #if defined(__linux__)

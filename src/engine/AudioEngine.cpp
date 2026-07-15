@@ -3921,6 +3921,30 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             playbackEngine.readForTrack (t, blockStartSamples,
                                           playbackScratch[(size_t) t].data(), outR,
                                           numSamples, loopReadStart, loopReadEnd);
+
+            // Live-audio play-along overlay, the audio twin of the MIDI overlay
+            // below. Playing forces willReadFromDisk, so without this an
+            // IN-monitored audio track hears only the disk take and every send
+            // fed from its live input is silent while rolling. Sum the live input
+            // on top of the take so the strip, and its aux sends, process both,
+            // matching Record. Frozen (baked WAV, no live input), MIDI (served by
+            // its own overlay) and offline renders (deterministic) are excluded.
+            if (monitorEnabled && ! midiTrack && ! isFrozen && ! offlineRender
+                && deviceInput != nullptr)
+            {
+                juce::FloatVectorOperations::add (playbackScratch[(size_t) t].data(),
+                                                    deviceInput, numSamples);
+                if (stereoTrackInput)
+                {
+                    const int rIdxMon = session.resolveInputRForTrack (t);
+                    if (rIdxMon >= 0 && rIdxMon < numInputChannels
+                        && inputChannelData[(size_t) rIdxMon] != nullptr)
+                        juce::FloatVectorOperations::add (playbackScratchR[(size_t) t].data(),
+                                                            inputChannelData[(size_t) rIdxMon],
+                                                            numSamples);
+                }
+            }
+
             monoIn = playbackScratch[(size_t) t].data();
         }
         else if (deviceInput != nullptr && (armed || monitorEnabled) && ! isFrozen)
