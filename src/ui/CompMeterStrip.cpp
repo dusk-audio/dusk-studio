@@ -1,8 +1,16 @@
 #include "CompMeterStrip.h"
 #include "DuskStudioLookAndFeel.h"
 
+#include <algorithm>
+
 namespace duskstudio
 {
+namespace
+{
+// clamp with jlimit's argument order (lo, hi, value).
+template <typename T>
+inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
+} // namespace
 CompMeterStrip::CompMeterStrip (Source s) : src (std::move (s))
 {
     setOpaque (false);
@@ -23,24 +31,24 @@ CompMeterStrip::CompMeterStrip (Source s) : src (std::move (s))
 //           Matches ChannelCompEditor::writeThresholdToMode.
 void CompMeterStrip::writeThresholdForMode (Track& t, float threshDb)
 {
-    const int mode = juce::jlimit (0, 2, t.strip.compMode.load (std::memory_order_relaxed));
+    const int mode = jlimit (0, 2, t.strip.compMode.load (std::memory_order_relaxed));
     switch (mode)
     {
         case 0:
         {
-            const float peakRed = juce::jlimit (0.0f, 100.0f, -threshDb * (100.0f / 60.0f));
+            const float peakRed = jlimit (0.0f, 100.0f, -threshDb * (100.0f / 60.0f));
             t.strip.compOptoPeakRed.store (peakRed, std::memory_order_relaxed);
             break;
         }
         case 1:
         {
-            t.strip.compFetThresholdDb.store (juce::jlimit (-60.0f, 0.0f, threshDb),
+            t.strip.compFetThresholdDb.store (jlimit (-60.0f, 0.0f, threshDb),
                                                 std::memory_order_relaxed);
             break;
         }
         case 2:
         default:
-            t.strip.compVcaThreshDb.store (juce::jlimit (-38.0f, 12.0f, threshDb),
+            t.strip.compVcaThreshDb.store (jlimit (-38.0f, 12.0f, threshDb),
                                             std::memory_order_relaxed);
             break;
     }
@@ -48,7 +56,7 @@ void CompMeterStrip::writeThresholdForMode (Track& t, float threshDb)
 
 float CompMeterStrip::readThresholdForMode (const Track& t)
 {
-    const int mode = juce::jlimit (0, 2, t.strip.compMode.load (std::memory_order_relaxed));
+    const int mode = jlimit (0, 2, t.strip.compMode.load (std::memory_order_relaxed));
     switch (mode)
     {
         case 0:
@@ -74,7 +82,7 @@ float CompMeterStrip::readThresholdForMode (const Track& t)
 //           to its +12 dB ceiling (the range is -38..12 in Session.h).
 void CompMeterStrip::resetThresholdForMode (Track& t)
 {
-    const int mode = juce::jlimit (0, 2, t.strip.compMode.load (std::memory_order_relaxed));
+    const int mode = jlimit (0, 2, t.strip.compMode.load (std::memory_order_relaxed));
     switch (mode)
     {
         case 0:
@@ -115,12 +123,12 @@ CompMeterStrip::~CompMeterStrip() = default;
 
 float CompMeterStrip::dbToFrac (float db) const noexcept
 {
-    return juce::jlimit (0.0f, 1.0f, (db - src.floorDb) / (src.ceilingDb - src.floorDb));
+    return jlimit (0.0f, 1.0f, (db - src.floorDb) / (src.ceilingDb - src.floorDb));
 }
 
 float CompMeterStrip::fracToDb (float frac) const noexcept
 {
-    return juce::jlimit (src.floorDb, src.ceilingDb,
+    return jlimit (src.floorDb, src.ceilingDb,
                           src.floorDb + frac * (src.ceilingDb - src.floorDb));
 }
 
@@ -149,7 +157,7 @@ void CompMeterStrip::resized()
         b.removeFromTop (10.0f);
 
     const float W = b.getWidth();
-    const float gap = juce::jmax (1.0f, W * 0.04f);
+    const float gap = std::max (1.0f, W * 0.04f);
 
     if (! showInputBar)
     {
@@ -159,7 +167,7 @@ void CompMeterStrip::resized()
         // (master-strip-style).
         if (showHandle)
         {
-            const float handleW = juce::jlimit (10.0f, 18.0f, W * 0.38f);
+            const float handleW = jlimit (10.0f, 18.0f, W * 0.38f);
             if (handleOnRight)
             {
                 handleArea = b.removeFromRight (handleW);
@@ -181,10 +189,10 @@ void CompMeterStrip::resized()
         return;
     }
 
-    const float handleW = juce::jlimit (5.0f, 12.0f, W * 0.18f);
-    const float scaleW  = (W >= 32.0f) ? juce::jlimit (10.0f, 16.0f, W * 0.22f) : 0.0f;
+    const float handleW = jlimit (5.0f, 12.0f, W * 0.18f);
+    const float scaleW  = (W >= 32.0f) ? jlimit (10.0f, 16.0f, W * 0.22f) : 0.0f;
     const float barsW   = W - handleW - scaleW - gap * (scaleW > 0 ? 3.0f : 2.0f);
-    const float barW    = juce::jmax (4.0f, barsW / 2.0f);
+    const float barW    = std::max (4.0f, barsW / 2.0f);
     handleArea   = b.removeFromLeft (handleW);
     b.removeFromLeft (gap);
     inputBarArea = b.removeFromLeft (barW);
@@ -244,7 +252,7 @@ void CompMeterStrip::timerCallback()
     }
     else
     {
-        inputPeakHoldDb = juce::jmax (src.floorDb, inputPeakHoldDb - 1.5f);
+        inputPeakHoldDb = std::max (src.floorDb, inputPeakHoldDb - 1.5f);
     }
 
     // Force the GR meter to read 0 whenever the compressor is bypassed.
@@ -286,7 +294,7 @@ void drawSegmentedBar (juce::Graphics& g,
     g.setColour (juce::Colour (0xff060608));
     g.fillRoundedRectangle (bar, 1.5f);
 
-    const float clamped = juce::jlimit (0.0f, 1.0f, frac);
+    const float clamped = jlimit (0.0f, 1.0f, frac);
     if (clamped > 0.001f)
     {
         const float fillH = (bar.getHeight() - 2.0f) * clamped;
@@ -302,7 +310,7 @@ void drawSegmentedBar (juce::Graphics& g,
 
     const int segments = (forcedSegments > 0)
                             ? forcedSegments
-                            : juce::jlimit (8, 30, (int) (bar.getHeight() / 3.5f));
+                            : jlimit (8, 30, (int) (bar.getHeight() / 3.5f));
     const float segStep = bar.getHeight() / (float) segments;
     g.setColour (juce::Colour (0xff020203));
     for (int i = 1; i < segments; ++i)
@@ -354,7 +362,7 @@ void CompMeterStrip::paint (juce::Graphics& g)
         // (e.g. the 9-px master-style LED) the natural bar width can't
         // hold both letters, so widen the text rect (allowed to overflow
         // into adjacent transparent space) instead of truncating to "G".
-        const float grCaptionW = juce::jmax (grBarArea.getWidth() + 2.0f, 16.0f);
+        const float grCaptionW = std::max (grBarArea.getWidth() + 2.0f, 16.0f);
         g.drawText ("GR",
                      juce::Rectangle<float> (grBarArea.getCentreX() - grCaptionW * 0.5f,
                                                0.0f,
@@ -412,7 +420,7 @@ void CompMeterStrip::paint (juce::Graphics& g)
     }
 
     {
-        const float grAbs = juce::jlimit (0.0f, std::abs (kGrFloorDb),
+        const float grAbs = jlimit (0.0f, std::abs (kGrFloorDb),
                                             std::abs (displayedGrDb));
         const float frac = grAbs / std::abs (kGrFloorDb);
         // Force one segment per dB of reduction (24 segments for the

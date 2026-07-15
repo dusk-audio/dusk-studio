@@ -4,6 +4,7 @@
 #include "../engine/AudioEngine.h"
 
 #include <cmath>
+#include <algorithm>
 
 namespace duskstudio
 {
@@ -40,31 +41,31 @@ std::int64_t MiniTimelineStrip::songEndSamples() const noexcept
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         for (const auto& r : session.track (t).regions)
-            end = juce::jmax (end, r.timelineStart + r.lengthInSamples);
+            end = std::max (end, r.timelineStart + r.lengthInSamples);
         for (const auto& m : session.track (t).midiRegions.current())
-            end = juce::jmax (end, m.timelineStart + m.lengthInSamples);
+            end = std::max (end, m.timelineStart + m.lengthInSamples);
     }
     // Markers can sit past the last region (e.g. an "End" marker placed beyond
     // the audio). Extend the extent to cover them so they don't get clamped to
     // the right edge and mis-hit-test in the collapsed timeline.
     for (const auto& mk : session.getMarkers())
-        end = juce::jmax (end, mk.timelineSamples);
+        end = std::max (end, mk.timelineSamples);
     const double sr = engine.getCurrentSampleRate();
     const std::int64_t floorLen = (std::int64_t) ((sr > 0.0 ? sr : 48000.0) * 60.0);  // 60 s
-    return juce::jmax (end, floorLen);
+    return std::max (end, floorLen);
 }
 
 int MiniTimelineStrip::xForSample (std::int64_t s, std::int64_t end) const noexcept
 {
-    const int usable = juce::jmax (1, getWidth() - kPadL - kPadR);
-    const double frac = end > 0 ? juce::jlimit (0.0, 1.0, (double) s / (double) end) : 0.0;
+    const int usable = std::max (1, getWidth() - kPadL - kPadR);
+    const double frac = end > 0 ? std::clamp ((double) s / (double) end, 0.0, 1.0) : 0.0;
     return kPadL + (int) std::lround (frac * (double) usable);
 }
 
 std::int64_t MiniTimelineStrip::sampleForX (int x, std::int64_t end) const noexcept
 {
-    const int usable = juce::jmax (1, getWidth() - kPadL - kPadR);
-    const double frac = juce::jlimit (0.0, 1.0, (double) (x - kPadL) / (double) usable);
+    const int usable = std::max (1, getWidth() - kPadL - kPadR);
+    const double frac = std::clamp ((double) (x - kPadL) / (double) usable, 0.0, 1.0);
     return (std::int64_t) (frac * (double) end);
 }
 
@@ -142,12 +143,12 @@ void MiniTimelineStrip::paint (juce::Graphics& g)
                               ? xForSample (markers[(size_t) (i + 1)].timelineSamples, end)
                               : (int) b.getRight();
         const int   textX = mx + 5;
-        const int   avail = juce::jmin ((int) b.getRight() - textX - 3, nextX - textX - 2);
+        const int   avail = std::min ((int) b.getRight() - textX - 3, nextX - textX - 2);
         if (avail < 12) continue;
 
         const bool  active = (i == activeIdx);
         const auto  col = mk.colour.isTransparent() ? kMarkerDim : mk.colour;
-        const int   tw  = juce::jmin (avail, nameFont.getStringWidth (mk.name) + 6);
+        const int   tw  = std::min (avail, nameFont.getStringWidth (mk.name) + 6);
         const juce::Rectangle<int> ri (textX, (int) b.getY() + 2, tw, (int) b.getHeight() - 4);
         g.setColour (kBg.withAlpha (active ? 0.9f : 0.72f));
         g.fillRoundedRectangle (ri.toFloat(), 2.0f);

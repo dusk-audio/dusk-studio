@@ -4,6 +4,8 @@
  #include <lame/lame.h>
 #endif
 
+#include <algorithm>
+
 namespace duskstudio
 {
 namespace
@@ -20,7 +22,7 @@ int mp3BufferCapacity (int numSamples) noexcept
 LameMp3Writer::LameMp3Writer (juce::OutputStream* destStream, double sampleRate,
                                unsigned int numChannels, int bitrateKbps)
     : juce::AudioFormatWriter (destStream, "MP3 file", sampleRate,
-                                juce::jmax (1u, numChannels), 16),
+                                std::max (1u, numChannels), 16),
       bitrate (bitrateKbps)
 {
 #if DUSKSTUDIO_HAS_LAME
@@ -28,7 +30,7 @@ LameMp3Writer::LameMp3Writer (juce::OutputStream* destStream, double sampleRate,
     if (g == nullptr) return;
     lame_set_in_samplerate  (g, (int) sampleRate);
     lame_set_out_samplerate (g, (int) sampleRate);
-    lame_set_num_channels   (g, (int) juce::jlimit (1u, 2u, numChannels));
+    lame_set_num_channels   (g, (int) std::clamp (numChannels, 1u, 2u));
     lame_set_mode           (g, numChannels >= 2 ? JOINT_STEREO : MONO);
     lame_set_brate          (g, bitrate);
     lame_set_quality        (g, 2);   // 0 = best/slowest .. 9 = worst; 2 is high

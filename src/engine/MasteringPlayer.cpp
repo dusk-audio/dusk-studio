@@ -1,4 +1,5 @@
 #include "MasteringPlayer.h"
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -53,11 +54,11 @@ void MasteringPlayer::prepare (int maxBlockSize, double deviceSampleRate)
 {
     const bool drained = parkAndWaitForAudio();
     if (drained)
-        readScratch.setSize (2, juce::jmax (1, maxBlockSize),
+        readScratch.setSize (2, std::max (1, maxBlockSize),
                               /*keepExistingContent*/ false,
                               /*clearExtraSpace*/      false,
                               /*avoidReallocating*/    false);
-    preparedBlockSize  = juce::jmax (1, maxBlockSize);
+    preparedBlockSize  = std::max (1, maxBlockSize);
     preparedDeviceRate = deviceSampleRate;
     if (drained)
         updateResampleState();
@@ -73,8 +74,8 @@ void MasteringPlayer::updateResampleState()
     // Worst-case source samples one output block can consume, plus the
     // interpolator's history margin.
     const int inNeeded = (int) std::ceil ((double) preparedBlockSize
-                                           * juce::jmax (1.0, ratio)) + 8;
-    inScratch.setSize (2, juce::jmax (1, inNeeded), false, false, false);
+                                           * std::max (1.0, ratio)) + 8;
+    inScratch.setSize (2, std::max (1, inNeeded), false, false, false);
     interpL.reset();
     interpR.reset();
     speedRatio.store (ratio, std::memory_order_release);
@@ -177,7 +178,7 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
     const double ratio = speedRatio.load (std::memory_order_acquire);
     if (std::abs (ratio - 1.0) < 1.0e-9)
     {
-        const int  available = (int) juce::jmin ((std::int64_t) numSamples,
+        const int  available = (int) std::min ((std::int64_t) numSamples,
                                                   (std::int64_t) (r->lengthInSamples - start));
         if (available > readScratch.getNumSamples()) return;  // shouldn't happen
 
@@ -214,7 +215,7 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
     }
 
     // Read past-EOF input as silence so the interpolator can flush the tail.
-    const int inAvailable = (int) juce::jmin ((std::int64_t) inNeeded,
+    const int inAvailable = (int) std::min ((std::int64_t) inNeeded,
                                                (std::int64_t) (r->lengthInSamples - start));
     inScratch.clear();
     if (inAvailable > 0)
@@ -224,7 +225,7 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
     const int usedR = interpR.process (ratio, inScratch.getReadPointer (1), R, numSamples);
     juce::ignoreUnused (usedR);   // both consume identically for equal ratios
 
-    const std::int64_t consumed = juce::jmin ((std::int64_t) usedL,
+    const std::int64_t consumed = std::min ((std::int64_t) usedL,
                                               (std::int64_t) (r->lengthInSamples - start));
     playhead.fetch_add (consumed, std::memory_order_relaxed);
     resampleReadPos = start + consumed;

@@ -2,6 +2,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <algorithm>
+
 // Patreon credits live in the plugins repo (plugins/shared/PatreonBackers.h,
 // already on the include path when the donor DSP is discovered) so the DAW
 // and every plugin show the same list from one source of truth. Builds
@@ -39,7 +41,7 @@ public:
         addAndMakeVisible (closeBtn);
 
         // Natural height up to a cap; past that the viewport scrolls.
-        setSize (440, juce::jmin (620, kHeaderH + tierList.naturalHeight() + kFooterH));
+        setSize (440, std::min (620, kHeaderH + tierList.naturalHeight() + kFooterH));
     }
 
     void paint (juce::Graphics& g) override
@@ -96,7 +98,7 @@ private:
             for (const auto& t : tiers())
                 if (! t.names->empty())
                     h += 28 + (int) t.names->size() * 18 + 14;
-            return juce::jmax (h, 60);
+            return std::max (h, 60);
         }
 
         void paint (juce::Graphics& g) override

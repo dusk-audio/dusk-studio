@@ -359,8 +359,9 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
                 // PAN: 0 = centre, -1..+1 maps to LED 1..11. Use
                 // ModeBoost with centre-dot lit when pan == 0.
                 const float pan = trk.strip.pan.load (std::memory_order_relaxed);
-                const int led = juce::jlimit (1, mcu::vring::kLedCount,
-                    1 + (int) std::round ((pan + 1.0f) * 0.5f * (mcu::vring::kLedCount - 1)));
+                const int led = std::clamp (
+                    1 + (int) std::round ((pan + 1.0f) * 0.5f * (mcu::vring::kLedCount - 1)),
+                    1, mcu::vring::kLedCount);
                 ringValue = mcu::vring::ModeBoost | led
                               | (std::abs (pan) < 0.01f ? mcu::vring::DotCenter : 0);
                 break;
@@ -372,12 +373,14 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
                                     .load (std::memory_order_relaxed);
                 const float norm = (db <= ChannelStripParams::kFaderInfThreshDb)
                                       ? 0.0f
-                                      : juce::jlimit (0.0f, 1.0f,
+                                      : std::clamp (
                                           (db - ChannelStripParams::kAuxSendMinDb)
                                           / (ChannelStripParams::kAuxSendMaxDb
-                                             - ChannelStripParams::kAuxSendMinDb));
-                const int led = juce::jlimit (1, mcu::vring::kLedCount,
-                    (int) std::round (norm * mcu::vring::kLedCount));
+                                             - ChannelStripParams::kAuxSendMinDb),
+                                          0.0f, 1.0f);
+                const int led = std::clamp (
+                    (int) std::round (norm * mcu::vring::kLedCount),
+                    1, mcu::vring::kLedCount);
                 ringValue = mcu::vring::ModeWrap | led;
                 break;
             }

@@ -34,7 +34,7 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
     // layout, prepare it for the working SR/block size, and pre-size the
     // scratch buffer used to feed processBlock each callback. The bypass
     // APVTS atom is cached here so the audio thread can flip it lock-free.
-    tape.setPlayConfigDetails (2, 2, sampleRate, juce::jmax (1, blockSize));
+    tape.setPlayConfigDetails (2, 2, sampleRate, std::max (1, blockSize));
 
     // Drive TapeMachine's internal oversampling from the global Audio Settings
     // factor (Session::oversamplingFactor). The donor's "oversampling" param
@@ -53,9 +53,9 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
         *osParam = idx;
     }
 
-    tape.prepareToPlay (sampleRate, juce::jmax (1, blockSize));
-    tapeStereoBuffer.setSize (2, juce::jmax (1, blockSize), false, false, true);
-    tapeDryBuffer.setSize (2, juce::jmax (1, blockSize), false, false, true);
+    tape.prepareToPlay (sampleRate, std::max (1, blockSize));
+    tapeStereoBuffer.setSize (2, std::max (1, blockSize), false, false, true);
+    tapeDryBuffer.setSize (2, std::max (1, blockSize), false, false, true);
     tapeMidi.clear();
     tapeBypassAtom = tape.getAPVTS().getRawParameterValue ("bypass");
 
@@ -68,11 +68,11 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
     // Resolve the tape's engaged latency (0 at 1×) now that prepareToPlay has
     // set it from the factor above, and size the dry delay to match so the
     // crossfade is phase-coherent and bit-perfect.
-    tapeLatencySamples = juce::jmax (0, tape.getLatencySamples());
+    tapeLatencySamples = std::max (0, tape.getLatencySamples());
     {
-        const int maxDelay = juce::jmax (1, tapeLatencySamples);
+        const int maxDelay = std::max (1, tapeLatencySamples);
         const juce::dsp::ProcessSpec drySpec {
-            sampleRate, (std::uint32_t) juce::jmax (1, blockSize), 1 };
+            sampleRate, (std::uint32_t) std::max (1, blockSize), 1 };
         tapeDryDelayL.prepare (drySpec);
         tapeDryDelayR.prepare (drySpec);
         tapeDryDelayL.setMaximumDelayInSamples (maxDelay);
@@ -332,7 +332,7 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
         const int bufSize = tapeStereoBuffer.getNumSamples();
         for (int offset = 0; offset < numSamples; offset += bufSize)
         {
-            const int n = juce::jmin (bufSize, numSamples - offset);
+            const int n = std::min (bufSize, numSamples - offset);
             float* Lc = L + offset;
             float* Rc = R + offset;
 

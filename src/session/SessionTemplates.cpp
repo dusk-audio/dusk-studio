@@ -1,5 +1,7 @@
 #include "SessionTemplates.h"
 
+#include <algorithm>
+
 namespace duskstudio
 {
 namespace
@@ -79,7 +81,7 @@ void stampDefaults (Session& s, int firstFallbackTrack)
 template <std::size_t N>
 void applyTrackTemplate (Session& s, const TrackTemplate (&entries)[N])
 {
-    const int n = juce::jmin ((int) N, Session::kNumTracks);
+    const int n = std::min ((int) N, Session::kNumTracks);
     for (int i = 0; i < n; ++i)
     {
         auto& t = s.track (i);

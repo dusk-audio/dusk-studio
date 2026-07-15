@@ -47,6 +47,7 @@
 #include <cstring>
 #include <signal.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -280,8 +281,8 @@ class ChildParamListener final : public juce::AudioProcessorParameter::Listener
 public:
     explicit ChildParamListener (HostState& h, int numParams)
         : host (h),
-          lastSentValue ((std::size_t) juce::jmax (0, numParams)),
-          lastSentTimeNs ((std::size_t) juce::jmax (0, numParams))
+          lastSentValue ((std::size_t) std::max (0, numParams)),
+          lastSentTimeNs ((std::size_t) std::max (0, numParams))
     {
         // Seed both vectors to "never sent" sentinels. atomic<float>
         // has no value-init for non-trivial init, hence the explicit
@@ -620,8 +621,8 @@ std::uint32_t handleResizeEditor (HostState& host,
     std::memcpy (&p, payload.data(), sizeof (p));
     const juce::MessageManagerLock mml;
     if (host.editorWindow == nullptr) return 2;
-    host.editorWindow->setSize (juce::jmax (1, (int) p.width),
-                                  juce::jmax (1, (int) p.height));
+    host.editorWindow->setSize (std::max (1, (int) p.width),
+                                  std::max (1, (int) p.height));
     return 0;
 }
 
@@ -700,7 +701,7 @@ void audioWorkerLoop (HostState& host) noexcept
         }
         else
         {
-            const int bufCh = juce::jmax (ci, co);
+            const int bufCh = std::max (ci, co);
             for (int c = 0; c < bufCh; ++c)
             {
                 if (c < ci)

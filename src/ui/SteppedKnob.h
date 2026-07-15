@@ -4,6 +4,7 @@
 #include <functional>
 #include <vector>
 #include <cmath>
+#include <algorithm>
 
 namespace duskstudio
 {
@@ -57,7 +58,7 @@ inline void configureSteppedKnob (juce::Slider& s,
 
     s.textFromValueFunction = [labels] (double v)
     {
-        const int i = juce::jlimit (0, labels.size() - 1, (int) std::lround (v));
+        const int i = std::clamp ((int) std::lround (v), 0, labels.size() - 1);
         return labels[i];
     };
     s.valueFromTextFunction = [labels, sp = &s] (const juce::String& t)
@@ -69,8 +70,8 @@ inline void configureSteppedKnob (juce::Slider& s,
     };
     s.onValueChange = [sp = &s, values, store]
     {
-        const int i = juce::jlimit (0, (int) values.size() - 1,
-                                    (int) std::lround (sp->getValue()));
+        const int i = std::clamp ((int) std::lround (sp->getValue()),
+                                  0, (int) values.size() - 1);
         store (values[(size_t) i]);
     };
     // Normalise the atom to the chosen step so a legacy off-step value (e.g. a

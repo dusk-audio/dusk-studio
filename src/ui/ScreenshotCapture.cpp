@@ -32,6 +32,8 @@
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
+#include <algorithm>
+
 namespace duskstudio
 {
 namespace
@@ -321,8 +323,8 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
     auto modalShot = [&] (juce::Component& m, int w, int h, const juce::String& name, int settleMs)
     {
         addAndMakeVisible (m);
-        m.setBounds ((juce::jmax (w, getWidth())  - w) / 2,
-                     (juce::jmax (h, getHeight()) - h) / 2, w, h);
+        m.setBounds ((std::max (w, getWidth())  - w) / 2,
+                     (std::max (h, getHeight()) - h) / 2, w, h);
         snapshotComponent (&m, outDir, name, settleMs);
         removeChildComponent (&m);
     };

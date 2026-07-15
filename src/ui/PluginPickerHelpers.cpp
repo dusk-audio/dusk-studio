@@ -6,6 +6,7 @@
 #include "../engine/PluginManager.h"
 #include "../engine/PluginSlot.h"
 #include "../engine/hosting/NativePluginId.h"
+#include <algorithm>
 #if DUSKSTUDIO_HAS_MULTISAMPLE
  #include "../engine/multisample/AriaBank.h"
 #endif
@@ -694,7 +695,7 @@ public:
         // Cancel pinned to the bottom, slightly narrower so it reads as
         // secondary action vs the three big choice buttons above.
         auto cancelRow = area.removeFromTop (32);
-        const int cw = juce::jmin (120, cancelRow.getWidth());
+        const int cw = std::min (120, cancelRow.getWidth());
         cancelBtn.setBounds (cancelRow.withSizeKeepingCentre (cw, 32));
     }
 

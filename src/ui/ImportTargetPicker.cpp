@@ -420,6 +420,6 @@ void ImportTargetPicker::resized()
         rPtr->setBounds (0, y, rowW, kRowH);
         y += kRowH + kRowGap;
     }
-    listContainer.setSize (rowW, juce::jmax (y + kListPad, bounds.getHeight()));
+    listContainer.setSize (rowW, std::max (y + kListPad, bounds.getHeight()));
 }
 } // namespace duskstudio

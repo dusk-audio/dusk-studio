@@ -7,6 +7,7 @@
 #include "DuskStudioLookAndFeel.h"
 #include "SteppedKnob.h"
 #include "TapeMachineModalEditor.h"
+#include <algorithm>
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
   #include "PluginProcessor.h"   // TapeMachineAudioProcessor + createEditor
@@ -16,6 +17,8 @@ namespace duskstudio
 {
 namespace
 {
+template <typename T>
+inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
 void styleSmallKnob (juce::Slider& s, double minV, double maxV, double midPt,
                       double initialV, juce::Colour col, const juce::String& suffix,
                       int decimals)
@@ -204,7 +207,7 @@ public:
             k.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 80, 18);
             k.textFromValueFunction = [hz, count] (double v) -> juce::String
             {
-                const int idx = juce::jlimit (0, count - 1, (int) std::round (v));
+                const int idx = jlimit (0, count - 1, (int) std::round (v));
                 const int h = hz[idx];
                 return h >= 1000 ? juce::String (h / 1000) + " kHz"
                                   : juce::String (h)        + " Hz";
@@ -221,7 +224,7 @@ public:
             k.updateText();
             k.onValueChange = [&k, hz, count, &atom, arm]
             {
-                const int idx = juce::jlimit (0, count - 1, (int) std::round (k.getValue()));
+                const int idx = jlimit (0, count - 1, (int) std::round (k.getValue()));
                 atom.store ((float) hz[idx], std::memory_order_relaxed);
                 arm();
             };
@@ -291,7 +294,7 @@ public:
         // Combo cells: vertically centred 24-px height inside the knob slot.
         auto centredComboBounds = [] (juce::Rectangle<int> cell)
         {
-            return cell.withSizeKeepingCentre (juce::jmin (cell.getWidth() - 8, 160), 24);
+            return cell.withSizeKeepingCentre (std::min (cell.getWidth() - 8, 160), 24);
         };
 
         const int bandRowH = kEditorLabelRowH + kEditorKnobBlockH;
@@ -338,7 +341,7 @@ public:
         {
             auto rLbl  = area.removeFromTop (kEditorLabelRowH);
             auto rKnob = area.removeFromTop (kEditorKnobBlockH);
-            const int knobW = juce::jmin (rKnob.getWidth() / 3, 120);
+            const int knobW = std::min (rKnob.getWidth() / 3, 120);
             const int knobX = rKnob.getX() + (rKnob.getWidth() - knobW) / 2;
             hfBandwidthLbl.setBounds (knobX, rLbl .getY(), knobW, rLbl .getHeight());
             hfBandwidth   .setBounds (knobX, rKnob.getY(), knobW, rKnob.getHeight());
@@ -447,7 +450,7 @@ public:
             g.setColour (juce::Colour (0xff2a2a2e));
             g.drawRoundedRectangle (bar, 2.0f, 0.8f);
 
-            const float clamped = juce::jlimit (minDb, maxDb, dB);
+            const float clamped = jlimit (minDb, maxDb, dB);
             const float frac = (clamped - minDb) / (maxDb - minDb);
             if (frac > 0.001f)
             {
@@ -486,7 +489,7 @@ public:
 
         if (! inputMeterArea.isEmpty() && ! threshHandleArea.isEmpty())
         {
-            const float thresh = juce::jlimit (-60.0f, 0.0f,
+            const float thresh = jlimit (-60.0f, 0.0f,
                 params.compThreshDb.load (std::memory_order_relaxed));
             const float frac = (thresh - (-60.0f)) / 60.0f;
             const auto inBar = inputMeterArea.toFloat();
@@ -604,7 +607,7 @@ private:
     {
         const float l = params.meterPostMasterLDb.load (std::memory_order_relaxed);
         const float r = params.meterPostMasterRDb.load (std::memory_order_relaxed);
-        const float in = juce::jmax (l, r);
+        const float in = std::max (l, r);
         if (in > displayedInputDb) displayedInputDb = in;
         else                        displayedInputDb += (in - displayedInputDb) * 0.10f;
 
@@ -623,9 +626,9 @@ private:
         if (height <= 0) return;
         const float relY = (float) (inputMeterArea.getBottom() - 2 - y)
                             / (float) height;
-        const float dbOnInAxis = juce::jlimit (-60.0f, 0.0f,
-            -60.0f + juce::jlimit (0.0f, 1.0f, relY) * 60.0f);
-        params.compThreshDb.store (juce::jlimit (-60.0f, 0.0f, dbOnInAxis),
+        const float dbOnInAxis = jlimit (-60.0f, 0.0f,
+            -60.0f + jlimit (0.0f, 1.0f, relY) * 60.0f);
+        params.compThreshDb.store (jlimit (-60.0f, 0.0f, dbOnInAxis),
                                      std::memory_order_relaxed);
     }
 
@@ -761,7 +764,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
         // lambda stays valid after the setup helper returns.
         k.textFromValueFunction = [hz, count] (double v) -> juce::String
         {
-            const int idx = juce::jlimit (0, count - 1, (int) std::round (v));
+            const int idx = jlimit (0, count - 1, (int) std::round (v));
             const int h = hz[idx];
             return h >= 1000 ? juce::String (h / 1000) + " kHz"
                               : juce::String (h)        + " Hz";
@@ -779,7 +782,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
         k.updateText();
         k.onValueChange = [&k, hz, count, &atom, armMasterEq]
         {
-            const int idx = juce::jlimit (0, count - 1, (int) std::round (k.getValue()));
+            const int idx = jlimit (0, count - 1, (int) std::round (k.getValue()));
             atom.store ((float) hz[idx], std::memory_order_relaxed);
             armMasterEq();
         };
@@ -848,13 +851,13 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
                               {
                                   const float l = params.meterPostMasterLDb.load (std::memory_order_relaxed);
                                   const float r = params.meterPostMasterRDb.load (std::memory_order_relaxed);
-                                  return juce::jmax (l, r);
+                                  return std::max (l, r);
                               };
     compSrc.getGrDb        = [this] { return params.meterGrDb.load (std::memory_order_relaxed); };
     compSrc.getThresholdDb = [this] { return params.compThreshDb.load (std::memory_order_relaxed); };
     compSrc.setThresholdDb = [this] (float db)
                               {
-                                  params.compThreshDb.store (juce::jlimit (-60.0f, 0.0f, db),
+                                  params.compThreshDb.store (jlimit (-60.0f, 0.0f, db),
                                                               std::memory_order_relaxed);
                               };
     compSrc.resetThreshold = [this]
@@ -1215,7 +1218,7 @@ void MasterStripComponent::timerCallback()
 
         if (src >= peakHold) { peakHold = src; peakFrames = 18; }
         else if (peakFrames > 0) --peakFrames;
-        else peakHold = juce::jmax (-100.0f, peakHold - 1.5f);
+        else peakHold = std::max (-100.0f, peakHold - 1.5f);
     };
     const float outL = params.meterPostMasterLDb.load (std::memory_order_relaxed);
     const float outR = params.meterPostMasterRDb.load (std::memory_order_relaxed);
@@ -1224,7 +1227,7 @@ void MasterStripComponent::timerCallback()
 
     // Numeric readout shows the louder of the two channels (typical mixer
     // convention - we don't have room for two separate values).
-    const float maxHold = juce::jmax (outputPeakHoldLDb, outputPeakHoldRDb);
+    const float maxHold = std::max (outputPeakHoldLDb, outputPeakHoldRDb);
     if (maxHold <= -60.0f)
         outputPeakLabel.setText ("-inf", juce::dontSendNotification);
     else
@@ -1384,7 +1387,7 @@ void MasterStripComponent::captureFaderWritePoint (float denormDb)
 {
     const float lo = ChannelStripParams::kFaderMinDb;
     const float hi = ChannelStripParams::kFaderMaxDb;
-    const float v  = juce::jlimit (0.0f, 1.0f, (denormDb - lo) / (hi - lo));
+    const float v  = jlimit (0.0f, 1.0f, (denormDb - lo) / (hi - lo));
 
     auto& lane = params.automationLanes[(size_t) AutomationParam::FaderDb].mutableForWritePass();  // in-place; audio does not read this lane in Write/Touch-touched
     AutomationPoint pt;
@@ -1493,10 +1496,10 @@ void MasterStripComponent::paint (juce::Graphics& g)
             const juce::Colour kLedRed    (0xffff2020);
             auto fracForDb = [&] (float db)
             {
-                const double clamped = juce::jlimit ((double) faderRange.start,
+                const double clamped = jlimit ((double) faderRange.start,
                                                       (double) faderRange.end,
                                                       (double) db);
-                return (float) juce::jlimit (0.0, 1.0,
+                return (float) jlimit (0.0, 1.0,
                                               faderRange.convertTo0to1 (clamped));
             };
             auto colourForDb = [&] (float db) -> juce::Colour
@@ -1531,13 +1534,13 @@ void MasterStripComponent::paint (juce::Graphics& g)
                     g.setColour (col);
                     g.fillRect (juce::Rectangle<float> (x, top, w, bottom - top));
                 };
-                fillBand (juce::jmax (yFillTop, bar.getY()),
-                            juce::jmin (yRedTop, yFillBot),
+                fillBand (std::max (yFillTop, bar.getY()),
+                            std::min (yRedTop, yFillBot),
                             kLedRed);
-                fillBand (juce::jmax (yFillTop, yRedTop),
-                            juce::jmin (yYellowTop, yFillBot),
+                fillBand (std::max (yFillTop, yRedTop),
+                            std::min (yYellowTop, yFillBot),
                             kLedYellow);
-                fillBand (juce::jmax (yFillTop, yYellowTop),
+                fillBand (std::max (yFillTop, yYellowTop),
                             yFillBot,
                             kLedGreen);
             }
@@ -1564,7 +1567,7 @@ void MasterStripComponent::paint (juce::Graphics& g)
         g.drawRoundedRectangle (bar, 1.5f, 0.5f);
 
         constexpr float kGrFloorDb = 20.0f;
-        const float grAbs = juce::jlimit (0.0f, kGrFloorDb, std::abs (displayedGrDb));
+        const float grAbs = jlimit (0.0f, kGrFloorDb, std::abs (displayedGrDb));
         if (grAbs > 0.05f)
         {
             const float frac = grAbs / kGrFloorDb;
@@ -1596,7 +1599,7 @@ void MasterStripComponent::paint (juce::Graphics& g)
         const auto& range = faderSlider.getNormalisableRange();
         const auto sliderB = faderSlider.getBounds().toFloat();
         const float trackCx = sliderB.getCentreX();
-        const float trackW  = juce::jmin (4.0f, sliderB.getWidth() * 0.18f);
+        const float trackW  = std::min (4.0f, sliderB.getWidth() * 0.18f);
         const float trackLx = trackCx - trackW * 0.5f;
         constexpr float kSharedXOver = 24.0f;
         const float labelRight = trackLx - kSharedXOver - 6.0f;
@@ -1709,8 +1712,8 @@ void MasterStripComponent::resized()
         const int stripW = area.getWidth();
         const int heightDriver = compactVu ? stripW * 6 / 12 : stripW * 7 / 12;
         const int minH = compactVu ? 36 : 40;
-        const int vuH  = juce::jmax (minH, heightDriver);
-        const int vuW  = juce::jmax (1, stripW - 8);
+        const int vuH  = std::max (minH, heightDriver);
+        const int vuW  = std::max (1, stripW - 8);
         auto slot = area.removeFromTop (vuH);
         vuMeter->setBounds (slot.withSizeKeepingCentre (vuW, vuH));
         area.removeFromTop (4);
@@ -1730,7 +1733,7 @@ void MasterStripComponent::resized()
         auto labelRow = parent.removeFromTop (10);
         auto knobRow  = parent.removeFromTop (kKnobBlockH);
         const int totalW = n * kKnobBlockW;
-        const int leftPad = juce::jmax (0, (labelRow.getWidth() - totalW) / 2);
+        const int leftPad = std::max (0, (labelRow.getWidth() - totalW) / 2);
         labelRow.removeFromLeft (leftPad);
         knobRow .removeFromLeft (leftPad);
         return { labelRow, knobRow };
@@ -1892,7 +1895,7 @@ void MasterStripComponent::resized()
     // the cluster; lay it out L->R: fader, level meter, GR LED.
     const int kClusterW = kFaderColW + kFaderToMeterGap + kMeterW
                         + kMeterToGrGap + kGrLedW;
-    const int leftMargin = juce::jmax (0, (area.getWidth() - kClusterW) / 2);
+    const int leftMargin = std::max (0, (area.getWidth() - kClusterW) / 2);
     area.removeFromLeft (leftMargin);
 
     auto faderColArea = area.removeFromLeft (kFaderColW);

@@ -1,4 +1,5 @@
 #include "RecordManager.h"
+#include <algorithm>
 #include <thread>
 #include <unordered_map>
 
@@ -173,7 +174,7 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample)
         // case constant: ≈ 1.5 MB / track @ 48k stereo vs ≈ 3 MB @ 96k.
         // Floor at 65536 samples to guarantee a safety margin even on
         // exotic low-rate setups.
-        const int kThreadedWriterSamples = juce::jmax (65536, (int) (sampleRate * 4.0));
+        const int kThreadedWriterSamples = std::max (65536, (int) (sampleRate * 4.0));
 
         // ThreadedWriter ctor allocates its FIFO + worker queue and can
         // throw std::bad_alloc on a memory-starved system. We do NOT catch
@@ -314,7 +315,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
     // ordering doesn't matter, but doing MIDI first keeps the two paths
     // visibly separate and the failure cases isolated.
     const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
-    const std::int64_t totalSamples = juce::jmax ((std::int64_t) 1, endSample - recordStartSample);
+    const std::int64_t totalSamples = std::max ((std::int64_t) 1, endSample - recordStartSample);
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto& cap = midiCaptures[(size_t) t];
@@ -397,7 +398,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
                 n.velocity   = it->second.velocity;
                 n.startTick  = samplesToTicks (it->second.startSample, recordSampleRate, bpm);
                 const auto offTick = samplesToTicks (ev.samplePos, recordSampleRate, bpm);
-                n.lengthInTicks = juce::jmax ((std::int64_t) 1, offTick - n.startTick);
+                n.lengthInTicks = std::max ((std::int64_t) 1, offTick - n.startTick);
                 region.notes.push_back (n);
                 pending.erase (it);
             }
@@ -428,7 +429,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
             n.noteNumber = (key % 256);
             n.velocity   = pn.velocity;
             n.startTick  = samplesToTicks (pn.startSample, recordSampleRate, bpm);
-            n.lengthInTicks = juce::jmax ((std::int64_t) 1,
+            n.lengthInTicks = std::max ((std::int64_t) 1,
                 region.lengthInTicks - n.startTick);
             region.notes.push_back (n);
         }
@@ -521,8 +522,8 @@ void RecordManager::stopRecording (std::int64_t endSample)
             // by half the new take's length so a punch shorter than 128
             // samples still gets symmetric ramps that don't overlap.
             constexpr std::int64_t kPunchFadeSamples = 64;
-            const std::int64_t fadeSamples = juce::jmax (
-                (std::int64_t) 0, juce::jmin (kPunchFadeSamples, region.lengthInSamples / 2));
+            const std::int64_t fadeSamples = std::max (
+                (std::int64_t) 0, std::min (kPunchFadeSamples, region.lengthInSamples / 2));
 
             // Pass 1 - fully-contained takes get absorbed into the new
             // region's previousTakes (no audio overlap, just history).
@@ -588,8 +589,8 @@ void RecordManager::stopRecording (std::int64_t endSample)
                     // Right fragment ends at the original exEnd, so any fade-out
                     // the source region carried still applies. Clamp so the new
                     // shorter length still satisfies fadeIn + fadeOut <= length.
-                    right.fadeOutSamples  = juce::jmax ((std::int64_t) 0,
-                        juce::jmin (right.fadeOutSamples,
+                    right.fadeOutSamples  = std::max ((std::int64_t) 0,
+                        std::min (right.fadeOutSamples,
                                      right.lengthInSamples - right.fadeInSamples));
                     right.previousTakes.clear();  // history stays with the left half
                     spawnedFragments.push_back (std::move (right));

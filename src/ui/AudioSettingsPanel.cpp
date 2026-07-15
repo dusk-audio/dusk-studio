@@ -1,5 +1,6 @@
 #include "AudioSettingsPanel.h"
 #include "AppConfig.h"
+#include <algorithm>
 #include <limits>
 #include "MidiBindingsPanel.h"
 #include "SelfTestPanel.h"
@@ -88,7 +89,7 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
     oversamplingCombo.addItem (juce::CharPointer_UTF8 ("2×"),          2);
     oversamplingCombo.addItem (juce::CharPointer_UTF8 ("4×"),          4);
     {
-        const int current = juce::jlimit (1, 4, session.oversamplingFactor.load (std::memory_order_relaxed));
+        const int current = std::clamp (session.oversamplingFactor.load (std::memory_order_relaxed), 1, 4);
         oversamplingCombo.setSelectedId ((current == 2 || current == 4) ? current : 1,
                                           juce::dontSendNotification);
     }
@@ -121,7 +122,7 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
             case appconfig::MulticoreDspMode::Off:  selId = 1; break;
             case appconfig::MulticoreDspMode::Auto: selId = 2; break;
             case appconfig::MulticoreDspMode::Manual:
-                selId = (maxW > 0) ? 10 + juce::jlimit (1, maxW, appconfig::getMulticoreManualWorkers())
+                selId = (maxW > 0) ? 10 + std::clamp (appconfig::getMulticoreManualWorkers(), 1, maxW)
                                    : 2;   // no manual range on this host -> fall back to Auto
                 break;
         }
@@ -421,8 +422,8 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
         "Play recycles a region you just auditioned.");
     // Clamp the stored value so a stale/corrupt config can't select an ID the
     // combo doesn't have (which renders it blank).
-    const int storedStop = juce::jlimit (0, stopBehaviorCombo.getNumItems() - 1,
-                                         (int) appconfig::getStopBehavior());
+    const int storedStop = std::clamp ((int) appconfig::getStopBehavior(),
+                                         0, stopBehaviorCombo.getNumItems() - 1);
     stopBehaviorCombo.setSelectedId (storedStop + 1, juce::dontSendNotification);
     stopBehaviorCombo.onChange = [this]
     {

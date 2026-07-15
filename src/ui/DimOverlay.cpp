@@ -1,9 +1,11 @@
 #include "DimOverlay.h"
 
+#include <algorithm>
+
 namespace duskstudio
 {
 DimOverlay::DimOverlay (float alpha)
-    : fillAlpha (juce::jlimit (0.0f, 1.0f, alpha))
+    : fillAlpha (std::clamp (alpha, 0.0f, 1.0f))
 {
     setInterceptsMouseClicks (true, false);
     setWantsKeyboardFocus (false);

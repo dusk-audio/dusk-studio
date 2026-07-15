@@ -15,6 +15,8 @@ namespace duskstudio
 {
 namespace
 {
+template <typename T>
+inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
 // Process-wide static modal for the piano roll's text-input dialogs
 // (region label rename). Mirrors the sharedAlertModal pattern in
 // PluginPickerHelpers - one in-window EmbeddedModal at a time, no
@@ -522,7 +524,7 @@ int PianoRollComponent::noteNumberForY (int y) const
 {
     const int topBand = kToolbarHeight + kHeaderHeight;
     const int row = (y - topBand + scrollY) / kNoteHeight;
-    return juce::jlimit (0, kNumKeys - 1, kNumKeys - 1 - row);
+    return jlimit (0, kNumKeys - 1, kNumKeys - 1 - row);
 }
 
 int PianoRollComponent::xForTick (std::int64_t tick) const
@@ -535,7 +537,7 @@ std::int64_t PianoRollComponent::tickForX (int x) const
 {
     const auto t = (std::int64_t) std::round (
         (double) (x - kKeyboardWidth + scrollX) / pixelsPerTick);
-    return juce::jmax ((std::int64_t) 0, t);
+    return std::max ((std::int64_t) 0, t);
 }
 
 void PianoRollComponent::resized()
@@ -545,7 +547,7 @@ void PianoRollComponent::resized()
                                                 getWidth(), kStatusBarH));
     horizontalScrollBar.setBounds (kKeyboardWidth,
                                      getHeight() - kStatusBarH - kScrollBarH,
-                                     juce::jmax (1, getWidth() - kKeyboardWidth),
+                                     std::max (1, getWidth() - kKeyboardWidth),
                                      kScrollBarH);
     syncScrollBarRange();
     inheritCursorOnDescendants (*this);
@@ -557,11 +559,11 @@ void PianoRollComponent::syncScrollBarRange()
     // The piano roll has no hard end; grow the scrollable extent with
     // the largest x the user has scrolled to so the thumb shrinks as
     // they explore further.
-    const int gridW = juce::jmax (1, getWidth() - kKeyboardWidth);
+    const int gridW = std::max (1, getWidth() - kKeyboardWidth);
     const auto* r = region();
     const double regionTicks = (r != nullptr) ? (double) r->lengthInTicks : 0.0;
     const double regionPx    = regionTicks * pixelsPerTick;
-    const double total       = juce::jmax ((double) (scrollX + gridW),
+    const double total       = std::max ((double) (scrollX + gridW),
                                               regionPx + (double) gridW);
     horizontalScrollBar.setRangeLimits (0.0, total, juce::dontSendNotification);
     horizontalScrollBar.setCurrentRange ((double) scrollX, (double) gridW,
@@ -571,14 +573,14 @@ void PianoRollComponent::syncScrollBarRange()
 void PianoRollComponent::scrollBarMoved (juce::ScrollBar* bar, double newRangeStart)
 {
     if (bar != &horizontalScrollBar) return;
-    scrollX = juce::jmax (0, (int) std::round (newRangeStart));
+    scrollX = std::max (0, (int) std::round (newRangeStart));
     repaint();
 }
 
 void PianoRollComponent::layoutIconRow (juce::Rectangle<int> area)
 {
     auto inner = area.reduced (8, 3);
-    const int dia = juce::jmin (inner.getHeight(), 28);
+    const int dia = std::min (inner.getHeight(), 28);
     const int gap = 6;
 
     auto place = [&] (IconButton& b)
@@ -621,7 +623,7 @@ void PianoRollComponent::layoutIconRow (juce::Rectangle<int> area)
     if (editModeToolbar != nullptr && inner.getWidth() > 0)
     {
         constexpr int kToolbarWidth = 390;
-        const int w = juce::jmin (kToolbarWidth, inner.getWidth());
+        const int w = std::min (kToolbarWidth, inner.getWidth());
         editModeToolbar->setBounds (inner.removeFromLeft (w));
     }
 }
@@ -656,10 +658,10 @@ void PianoRollComponent::syncEditModeToolbar()
 juce::Rectangle<int> PianoRollComponent::noteGridArea() const noexcept
 {
     const int topBandH = kToolbarHeight + kHeaderHeight;
-    const int gridH    = juce::jmax (0,
+    const int gridH    = std::max (0,
                               getHeight() - topBandH - velocityStripH - ccStripH
                                 - kStatusBarH - kScrollBarH);
-    const int gridW    = juce::jmax (0, getWidth() - kKeyboardWidth);
+    const int gridW    = std::max (0, getWidth() - kKeyboardWidth);
     return { kKeyboardWidth, topBandH, gridW, gridH };
 }
 
@@ -690,15 +692,15 @@ void PianoRollComponent::layoutStatusBar (juce::Rectangle<int> area)
     inner.removeFromLeft (8);
 
     // Right cluster: track / channel readout, anchored to the right edge.
-    trackLabel.setBounds (inner.removeFromRight (juce::jmin (180, inner.getWidth())));
+    trackLabel.setBounds (inner.removeFromRight (std::min (180, inner.getWidth())));
 }
 
 juce::String PianoRollComponent::formatBarBeat (std::int64_t tick) const
 {
-    const int beatsPerBar = juce::jmax (1, session.beatsPerBar.load (std::memory_order_relaxed));
+    const int beatsPerBar = std::max (1, session.beatsPerBar.load (std::memory_order_relaxed));
     const auto ticksPerBeat = (std::int64_t) kMidiTicksPerQuarter;
     const auto ticksPerBar  = ticksPerBeat * beatsPerBar;
-    const auto safeTick = juce::jmax ((std::int64_t) 0, tick);
+    const auto safeTick = std::max ((std::int64_t) 0, tick);
     const auto bar  = safeTick / ticksPerBar;
     const auto rem  = safeTick % ticksPerBar;
     const auto beat = rem / ticksPerBeat;
@@ -721,7 +723,7 @@ int PianoRollComponent::activeVelocity() const noexcept
 void PianoRollComponent::refreshStatusBarReadouts()
 {
     const auto mode = (TimeDisplayMode) session.timeDisplayMode.load (std::memory_order_relaxed);
-    const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
+    const double sr  = std::max (1.0, engine.getCurrentSampleRate());
     const float  bpm = session.tempoBpm.load (std::memory_order_relaxed);
     const int    bpb = session.beatsPerBar.load (std::memory_order_relaxed);
     std::int64_t timelineSample = 0;
@@ -821,8 +823,8 @@ void PianoRollComponent::paint (juce::Graphics& g)
     paintLoopPunchBrackets (g, headerArea, gridArea);
     if (rangeActive)
     {
-        const auto a = juce::jmin (rangeStartTick, rangeEndTick);
-        const auto b = juce::jmax (rangeStartTick, rangeEndTick);
+        const auto a = std::min (rangeStartTick, rangeEndTick);
+        const auto b = std::max (rangeStartTick, rangeEndTick);
         const int xa = xForTick (a);
         const int xb = xForTick (b);
         if (xb > xa && xb > gridArea.getX() && xa < gridArea.getRight())
@@ -858,7 +860,7 @@ void PianoRollComponent::paintLoopPunchBrackets (juce::Graphics& g,
 {
     const auto* r = region();
     if (r == nullptr) return;
-    const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
+    const double sr  = std::max (1.0, engine.getCurrentSampleRate());
     auto& transport = engine.getTransport();
 
     const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
@@ -890,7 +892,7 @@ void PianoRollComponent::paintLoopPunchBrackets (juce::Graphics& g,
         if (xb < grid.getX() || xa > grid.getRight()) return;
         g.setColour (col.withAlpha (0.08f * alpha));
         g.fillRect (juce::Rectangle<int> (xa, grid.getY(),
-                                          juce::jmax (1, xb - xa), grid.getHeight()));
+                                          std::max (1, xb - xa), grid.getHeight()));
         g.setColour (col.withAlpha (0.9f * alpha));
         g.drawVerticalLine (xa, (float) ruler.getY(), (float) grid.getBottom());
         g.drawVerticalLine (xb, (float) ruler.getY(), (float) grid.getBottom());
@@ -967,7 +969,7 @@ void PianoRollComponent::paintNoteGrid (juce::Graphics& g, juce::Rectangle<int> 
     // when the model surfaces it more directly).
     const auto* r = region();
     if (r == nullptr || r->lengthInTicks <= 0) return;
-    const int beatsPerBar = juce::jmax (1, session.beatsPerBar.load (std::memory_order_relaxed));
+    const int beatsPerBar = std::max (1, session.beatsPerBar.load (std::memory_order_relaxed));
     const int ticksPerBeat = kMidiTicksPerQuarter;
     const int ticksPerBar  = ticksPerBeat * beatsPerBar;
     const int totalBars = (int) (r->lengthInTicks / ticksPerBar) + 1;
@@ -1030,7 +1032,7 @@ void PianoRollComponent::paintBeatRuler (juce::Graphics& g, juce::Rectangle<int>
 
     const auto* r = region();
     if (r == nullptr || r->lengthInTicks <= 0) return;
-    const int beatsPerBar = juce::jmax (1, session.beatsPerBar.load (std::memory_order_relaxed));
+    const int beatsPerBar = std::max (1, session.beatsPerBar.load (std::memory_order_relaxed));
     const int ticksPerBeat = kMidiTicksPerQuarter;
     const int ticksPerBar = ticksPerBeat * beatsPerBar;
     const int totalBars = (int) (r->lengthInTicks / ticksPerBar) + 1;
@@ -1085,7 +1087,7 @@ void PianoRollComponent::paintBeatRuler (juce::Graphics& g, juce::Rectangle<int>
     else
     {
         // Time mode - label every Nth second (5 / 10 / 30 by zoom).
-        const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
+        const double sr  = std::max (1.0, engine.getCurrentSampleRate());
         const float  bpm = session.tempoBpm.load (std::memory_order_relaxed);
         if (bpm <= 0.0f) return;
         const double samplesPerTick = sr * 60.0 / ((double) bpm * (double) kMidiTicksPerQuarter);
@@ -1172,7 +1174,7 @@ void PianoRollComponent::paintNotes (juce::Graphics& g, juce::Rectangle<int> are
         if (x2 < dirty.getX() || x > dirty.getRight()) continue;
         if (y + kNoteHeight < dirty.getY() || y > dirty.getBottom()) continue;
 
-        const auto rect = juce::Rectangle<int> (x, y + 1, juce::jmax (2, x2 - x), kNoteHeight - 2);
+        const auto rect = juce::Rectangle<int> (x, y + 1, std::max (2, x2 - x), kNoteHeight - 2);
         const bool selected = isNoteSelected (i);
         const auto fill = selected ? kNoteSelected : colourForNote (n);
         g.setColour (fill);
@@ -1284,7 +1286,7 @@ void PianoRollComponent::paintVelocityStrip (juce::Graphics& g, juce::Rectangle<
         // Cull against dirty rect with 8 px slack (lollipop head radius).
         if (nx < dirty.getX() - 8 || nx > dirty.getRight() + 8) continue;
 
-        const float frac   = juce::jlimit (0.0f, 1.0f, (float) n.velocity / 127.0f);
+        const float frac   = jlimit (0.0f, 1.0f, (float) n.velocity / 127.0f);
         const float headCY = baseY - span * frac;
 
         const bool selected = isNoteSelected (i);
@@ -1391,14 +1393,14 @@ void PianoRollComponent::applyGroupMove (std::int64_t deltaTicks, int deltaPitch
     int         maxPitch   = 0;
     for (const auto& s : dragSnapshots)
     {
-        minStart  = juce::jmin (minStart, s.startTick);
-        maxEnd    = juce::jmax (maxEnd,   s.startTick + s.lengthInTicks);
-        minPitch  = juce::jmin (minPitch, s.noteNumber);
-        maxPitch  = juce::jmax (maxPitch, s.noteNumber);
+        minStart  = std::min (minStart, s.startTick);
+        maxEnd    = std::max (maxEnd,   s.startTick + s.lengthInTicks);
+        minPitch  = std::min (minPitch, s.noteNumber);
+        maxPitch  = std::max (maxPitch, s.noteNumber);
     }
     const std::int64_t maxDeltaTickRight = r->lengthInTicks - maxEnd;
-    deltaTicks = juce::jlimit (-minStart, maxDeltaTickRight, deltaTicks);
-    deltaPitch = juce::jlimit (-minPitch, 127 - maxPitch, deltaPitch);
+    deltaTicks = jlimit (-minStart, maxDeltaTickRight, deltaTicks);
+    deltaPitch = jlimit (-minPitch, 127 - maxPitch, deltaPitch);
 
     for (size_t i = 0; i < selectedNotes.size(); ++i)
     {
@@ -1419,7 +1421,7 @@ void PianoRollComponent::transposeSelected (int semitones)
     {
         if (idx < 0 || idx >= (int) r->notes.size()) continue;
         auto& n = r->notes[(size_t) idx];
-        n.noteNumber = juce::jlimit (0, kNumKeys - 1, n.noteNumber + semitones);
+        n.noteNumber = jlimit (0, kNumKeys - 1, n.noteNumber + semitones);
     }
     pushNoteEdit (before, "Transpose notes");
 }
@@ -1429,7 +1431,7 @@ void PianoRollComponent::quantizeSelected (std::int64_t gridTicks, float strengt
     auto* r = region();
     if (r == nullptr || gridTicks <= 0) return;
     const MidiRegion before = *r;
-    strength = juce::jlimit (0.0f, 1.0f, strength);
+    strength = jlimit (0.0f, 1.0f, strength);
     // No selection -> quantize every note in the region. Matches Logic
     // and Reaper (Q on empty selection = quantize all).
     auto applyToOne = [gridTicks, strength] (MidiNote& n)
@@ -1438,7 +1440,7 @@ void PianoRollComponent::quantizeSelected (std::int64_t gridTicks, float strengt
         const auto snapped = ((orig + gridTicks / 2) / gridTicks) * gridTicks;
         const auto blended = orig + (std::int64_t) std::round (
             (double) (snapped - orig) * strength);
-        n.startTick = juce::jmax ((std::int64_t) 0, blended);
+        n.startTick = std::max ((std::int64_t) 0, blended);
     };
     if (selectedNotes.empty())
     {
@@ -1460,13 +1462,13 @@ void PianoRollComponent::humanizeVelocity (int rangePercent)
     auto* r = region();
     if (r == nullptr) return;
     const MidiRegion before = *r;
-    rangePercent = juce::jlimit (1, 100, rangePercent);
+    rangePercent = jlimit (1, 100, rangePercent);
     const int range = (int) std::round (127.0 * (double) rangePercent / 100.0);
     juce::Random rng;
     auto applyToOne = [&] (MidiNote& n)
     {
         const int delta = rng.nextInt ({ -range, range + 1 });
-        n.velocity = juce::jlimit (1, 127, n.velocity + delta);
+        n.velocity = jlimit (1, 127, n.velocity + delta);
     };
     if (selectedNotes.empty()) for (auto& n : r->notes) applyToOne (n);
     else
@@ -1481,7 +1483,7 @@ void PianoRollComponent::setVelocityFor (int value)
     auto* r = region();
     if (r == nullptr) return;
     const MidiRegion before = *r;
-    const int v = juce::jlimit (1, 127, value);
+    const int v = jlimit (1, 127, value);
     if (selectedNotes.empty()) for (auto& n : r->notes) n.velocity = v;
     else
         for (int idx : selectedNotes)
@@ -1535,7 +1537,7 @@ void PianoRollComponent::setChannelForSelected (int channel)
     auto* r = region();
     if (r == nullptr) return;
     const MidiRegion before = *r;
-    const int ch = juce::jlimit (1, 16, channel);
+    const int ch = jlimit (1, 16, channel);
     auto applyToOne = [ch] (MidiNote& n) { n.channel = ch; };
     if (selectedNotes.empty()) for (auto& n : r->notes) applyToOne (n);
     else
@@ -1555,8 +1557,8 @@ void PianoRollComponent::setLengthTicksForSelected (std::int64_t ticks)
     {
         // Clamp so the note can't extend past the region. Hard floor
         // is 1 tick - any positive length is valid.
-        const auto maxLen = juce::jmax ((std::int64_t) 1, r->lengthInTicks - n.startTick);
-        n.lengthInTicks = juce::jlimit ((std::int64_t) 1, maxLen, ticks);
+        const auto maxLen = std::max ((std::int64_t) 1, r->lengthInTicks - n.startTick);
+        n.lengthInTicks = jlimit ((std::int64_t) 1, maxLen, ticks);
     };
     if (selectedNotes.empty()) for (auto& n : r->notes) applyToOne (n);
     else
@@ -1684,7 +1686,7 @@ void PianoRollComponent::glueSelectedNotes()
             if (b.startTick <= aEnd)
             {
                 // Absorb b into a. New length = max-end - a.startTick.
-                a.lengthInTicks = juce::jmax (aEnd, bEnd) - a.startTick;
+                a.lengthInTicks = std::max (aEnd, bEnd) - a.startTick;
                 toErase.push_back (bIdx);
                 indices.erase (indices.begin() + (long) (i + 1));
                 // Don't advance i - the new merged a may now be
@@ -1727,8 +1729,8 @@ void PianoRollComponent::duplicateSelectedNotes()
     {
         if (idx < 0 || idx >= (int) r->notes.size()) continue;
         const auto& n = r->notes[(size_t) idx];
-        minStart = juce::jmin (minStart, n.startTick);
-        maxEnd   = juce::jmax (maxEnd,   n.startTick + n.lengthInTicks);
+        minStart = std::min (minStart, n.startTick);
+        maxEnd   = std::max (maxEnd,   n.startTick + n.lengthInTicks);
     }
     std::int64_t shift = maxEnd - minStart;
     if (shift <= 0) shift = kMidiTicksPerQuarter;
@@ -1798,8 +1800,8 @@ void PianoRollComponent::stepRecordNoteOn (int noteNumber, int velocity)
 
     MidiNote n;
     n.channel       = 1;
-    n.noteNumber    = juce::jlimit (0, kNumKeys - 1, noteNumber);
-    n.velocity      = juce::jlimit (1, 127, velocity);
+    n.noteNumber    = jlimit (0, kNumKeys - 1, noteNumber);
+    n.velocity      = jlimit (1, 127, velocity);
     n.startTick     = startTick;
     n.lengthInTicks = stepTicks;
     r->notes.push_back (n);
@@ -1839,10 +1841,10 @@ void PianoRollComponent::nudgeSelectedTicks (std::int64_t deltaTicks)
     {
         if (idx < 0 || idx >= (int) r->notes.size()) continue;
         const auto& n = r->notes[(size_t) idx];
-        minStart = juce::jmin (minStart, n.startTick);
-        maxEnd   = juce::jmax (maxEnd,   n.startTick + n.lengthInTicks);
+        minStart = std::min (minStart, n.startTick);
+        maxEnd   = std::max (maxEnd,   n.startTick + n.lengthInTicks);
     }
-    deltaTicks = juce::jlimit (-minStart,
+    deltaTicks = jlimit (-minStart,
                                   r->lengthInTicks - maxEnd,
                                   deltaTicks);
     if (deltaTicks == 0) return;
@@ -1890,7 +1892,7 @@ int PianoRollComponent::snapPitchToScale (int noteNumber) const noexcept
     // scale or toggle off -> identity. Any chromatic note is at most a couple of
     // semitones from a scale tone; search outward, preferring the lower on a tie.
     if (! keySnap || scale == Scale::Off) return noteNumber;
-    noteNumber = juce::jlimit (0, kNumKeys - 1, noteNumber);
+    noteNumber = jlimit (0, kNumKeys - 1, noteNumber);
     if (isInScale (noteNumber)) return noteNumber;
     for (int d = 1; d < 12; ++d)
     {
@@ -2034,14 +2036,14 @@ void PianoRollComponent::showCcControllerPopup()
         {
             auto* self = safe.getComponent();
             if (self == nullptr || chosen <= 0) return;
-            self->activeCcController = juce::jlimit (0, 127, chosen - 1);
+            self->activeCcController = jlimit (0, 127, chosen - 1);
             self->repaint();
         });
 }
 
 juce::Colour PianoRollComponent::colourForNote (const MidiNote& n) const noexcept
 {
-    const float velFactor = juce::jlimit (0.0f, 1.0f, (float) n.velocity / 127.0f);
+    const float velFactor = jlimit (0.0f, 1.0f, (float) n.velocity / 127.0f);
     const float bri = 0.55f + 0.45f * velFactor;   // 0.55..1.00 brightness from velocity
 
     switch (colorMode)
@@ -2055,7 +2057,7 @@ juce::Colour PianoRollComponent::colourForNote (const MidiNote& n) const noexcep
         {
             // 16-way hue cycle. Channels 1..16 -> hue 0..15/16. Modulo 16
             // so channel 0 (running-status / unset) doesn't divide-by-zero.
-            const int idx = juce::jlimit (1, 16, n.channel) - 1;
+            const int idx = jlimit (1, 16, n.channel) - 1;
             const float hue = (float) idx / 16.0f;
             return juce::Colour::fromHSV (hue, 0.65f, bri, 1.0f);
         }
@@ -2130,7 +2132,7 @@ void PianoRollComponent::paintCcStrip (juce::Graphics& g, juce::Rectangle<int> a
         // Cull against dirty rect with 4 px slack (CC bar half-width).
         if (nx < dirty.getX() - 4 || nx > dirty.getRight() + 4) continue;
 
-        const float frac = juce::jlimit (0.0f, 1.0f, (float) c.value / 127.0f);
+        const float frac = jlimit (0.0f, 1.0f, (float) c.value / 127.0f);
         const float top  = baseY - span * frac;
         const auto bar = juce::Rectangle<float> ((float) nx - kBarWidth * 0.5f,
                                                     top, kBarWidth, baseY - top);
@@ -2215,7 +2217,7 @@ int PianoRollComponent::hitTestVelocityBar (int x, juce::Rectangle<int> stripAre
 // (the region origin); 0 snapTicks is the "no snap" sentinel.
 static std::int64_t snapTick (std::int64_t t, std::int64_t step)
 {
-    if (step <= 0) return juce::jmax ((std::int64_t) 0, t);
+    if (step <= 0) return std::max ((std::int64_t) 0, t);
     if (t < 0) return 0;
     const auto half = step / 2;
     return ((t + half) / step) * step;
@@ -2317,7 +2319,7 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     // loop edges take priority over punch when both land under the cursor.
     if (rulerBand.contains (e.x, e.y) && ! e.mods.isPopupMenu())
     {
-        const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
+        const double sr  = std::max (1.0, engine.getCurrentSampleRate());
         auto& transport  = engine.getTransport();
         const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
         auto xForSample  = [&] (std::int64_t s)
@@ -2345,7 +2347,7 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     {
         // Plain ruler click seeks the transport playhead (Reaper / Ardour
         // muscle memory), parity with AudioRegionEditor.
-        const auto tickHere = juce::jmax<std::int64_t> (0, tickForX (e.x));
+        const auto tickHere = std::max<std::int64_t> (0, tickForX (e.x));
         const double sr  = engine.getCurrentSampleRate();
         const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
         const auto sampleOffset = session.ticksToSamples (regStartTick + tickHere, sr)
@@ -2402,10 +2404,10 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     // the clicked tick + value. Drag-y updates the value continuously.
     if (ccArea.contains (e.x, e.y))
     {
-        const float frac = juce::jlimit (0.0f, 1.0f,
+        const float frac = jlimit (0.0f, 1.0f,
             1.0f - ((float) (e.y - ccArea.getY())
-                      / (float) juce::jmax (1, ccArea.getHeight())));
-        const int value = juce::jlimit (0, 127, (int) std::round (frac * 127.0f));
+                      / (float) std::max (1, ccArea.getHeight())));
+        const int value = jlimit (0, 127, (int) std::round (frac * 127.0f));
 
         int hit = hitTestCcBar (e.x, ccArea);
         if (hit < 0)
@@ -2416,8 +2418,8 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
             c.controller = activeCcController;
             c.value      = value;
             const auto rawTick = tickForX (e.x);
-            c.atTick = juce::jlimit<std::int64_t> (0,
-                juce::jmax ((std::int64_t) 0, r->lengthInTicks - 1),
+            c.atTick = jlimit<std::int64_t> (0,
+                std::max ((std::int64_t) 0, r->lengthInTicks - 1),
                 snapTick (rawTick, effectiveSnapTicks()));
             r->ccs.push_back (c);
             hit = (int) r->ccs.size() - 1;
@@ -2439,11 +2441,11 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
             selectOnly (barIdx);
             dragAnchor = barIdx;
             dragMode = DragMode::EditVelocity;
-            const float frac = juce::jlimit (0.0f, 1.0f,
+            const float frac = jlimit (0.0f, 1.0f,
                 1.0f - ((float) (e.y - velocityArea.getY())
-                          / (float) juce::jmax (1, velocityArea.getHeight())));
+                          / (float) std::max (1, velocityArea.getHeight())));
             r->notes[(size_t) barIdx].velocity =
-                juce::jlimit (1, 127, (int) std::round (frac * 127.0f));
+                jlimit (1, 127, (int) std::round (frac * 127.0f));
             repaint();
         }
         return;
@@ -2505,8 +2507,8 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     // which sub-path runs next (box-select, note-create, or just an
     // anchor click). Step-record + future click-to-place actions key
     // off this position.
-    editCursorTick = juce::jlimit<std::int64_t> (0,
-        juce::jmax ((std::int64_t) 0, r->lengthInTicks),
+    editCursorTick = jlimit<std::int64_t> (0,
+        std::max ((std::int64_t) 0, r->lengthInTicks),
         snapTick (tickForX (e.x), effectiveSnapTicks()));
 
     if (extendSelection)
@@ -2541,7 +2543,7 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     if (session.editMode == EditMode::Range)
     {
         clearSelection();   // start a fresh time-range with no stale note selection (matches the ruler-start path)
-        rangeStartTick = juce::jmax<std::int64_t> (0, tickForX (e.x));
+        rangeStartTick = std::max<std::int64_t> (0, tickForX (e.x));
         rangeEndTick   = rangeStartTick;
         rangeActive    = false;
         dragMode       = DragMode::RangeSelect;
@@ -2569,8 +2571,8 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     n.channel = 1;
     n.noteNumber = snapPitchToScale (noteNumberForY (e.y));
     n.velocity = 100;
-    const auto rawStart = juce::jlimit<std::int64_t> (0,
-        juce::jmax ((std::int64_t) 0, r->lengthInTicks - 1), tickForX (e.x));
+    const auto rawStart = jlimit<std::int64_t> (0,
+        std::max ((std::int64_t) 0, r->lengthInTicks - 1), tickForX (e.x));
     // noteEntryMode reshapes the snap step for note CREATION only (Free skips
     // snap, Triplet / Dotted bend the grid) so the pencil can place off-grid
     // rhythms; move / resize go through the plain effectiveSnapTicks() so a
@@ -2584,10 +2586,10 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
         case NoteEntryMode::Dotted:  createSnap = (baseSnap * 3) / 2; break;
         case NoteEntryMode::Grid:    break;
     }
-    n.startTick = juce::jlimit<std::int64_t> (0,
-        juce::jmax ((std::int64_t) 0, r->lengthInTicks - 1),
+    n.startTick = jlimit<std::int64_t> (0,
+        std::max ((std::int64_t) 0, r->lengthInTicks - 1),
         snapTick (rawStart, createSnap));
-    n.lengthInTicks = juce::jmin ((std::int64_t) kMidiTicksPerQuarter,
+    n.lengthInTicks = std::min ((std::int64_t) kMidiTicksPerQuarter,
                                                   r->lengthInTicks - n.startTick);
     if (n.lengthInTicks <= 0) return;
     r->notes.push_back (n);
@@ -2618,11 +2620,11 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
     {
         const int dx = e.x - panStartMouseX;
         const int dy = e.y - panStartMouseY;
-        scrollX = juce::jmax (0, panStartScrollX - dx);
-        const int maxScrollY = juce::jmax (0,
+        scrollX = std::max (0, panStartScrollX - dx);
+        const int maxScrollY = std::max (0,
             kFullGridHeight - (getHeight() - kToolbarHeight - kHeaderHeight
                                   - velocityStripH - ccStripH - kStatusBarH));
-        scrollY = juce::jlimit (0, maxScrollY, panStartScrollY - dy);
+        scrollY = jlimit (0, maxScrollY, panStartScrollY - dy);
         repaint();
         return;
     }
@@ -2630,17 +2632,17 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
     if (dragMode == DragMode::LoopIn || dragMode == DragMode::LoopOut
         || dragMode == DragMode::PunchIn || dragMode == DragMode::PunchOut)
     {
-        const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
+        const double sr  = std::max (1.0, engine.getCurrentSampleRate());
         auto& transport  = engine.getTransport();
-        const auto tickHere = juce::jmax<std::int64_t> (0, tickForX (e.x));
+        const auto tickHere = std::max<std::int64_t> (0, tickForX (e.x));
         const auto tl = session.ticksToSamples (
             session.samplesToTicks (r->timelineStart, sr) + tickHere, sr);
         switch (dragMode)
         {
-            case DragMode::LoopIn:   transport.setLoopRange  (juce::jmin (tl, transport.getLoopEnd()),  transport.getLoopEnd());  break;
-            case DragMode::LoopOut:  transport.setLoopRange  (transport.getLoopStart(), juce::jmax (tl, transport.getLoopStart())); break;
-            case DragMode::PunchIn:  transport.setPunchRange (juce::jmin (tl, transport.getPunchOut()), transport.getPunchOut()); break;
-            case DragMode::PunchOut: transport.setPunchRange (transport.getPunchIn(),  juce::jmax (tl, transport.getPunchIn()));  break;
+            case DragMode::LoopIn:   transport.setLoopRange  (std::min (tl, transport.getLoopEnd()),  transport.getLoopEnd());  break;
+            case DragMode::LoopOut:  transport.setLoopRange  (transport.getLoopStart(), std::max (tl, transport.getLoopStart())); break;
+            case DragMode::PunchIn:  transport.setPunchRange (std::min (tl, transport.getPunchOut()), transport.getPunchOut()); break;
+            case DragMode::PunchOut: transport.setPunchRange (transport.getPunchIn(),  std::max (tl, transport.getPunchIn()));  break;
             default: break;
         }
         repaint();
@@ -2654,7 +2656,7 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
         // against each note's painted rect directly.
         const int x0 = e.getMouseDownX();
         const int y0 = e.getMouseDownY();
-        rubberBand = juce::Rectangle<int> (juce::jmin (x0, e.x), juce::jmin (y0, e.y),
+        rubberBand = juce::Rectangle<int> (std::min (x0, e.x), std::min (y0, e.y),
                                               std::abs (e.x - x0), std::abs (e.y - y0));
         repaint();
         return;
@@ -2662,15 +2664,15 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
 
     if (dragMode == DragMode::RangeSelect)
     {
-        rangeEndTick = juce::jmax<std::int64_t> (0, tickForX (e.x));
+        rangeEndTick = std::max<std::int64_t> (0, tickForX (e.x));
         rangeActive  = (rangeEndTick != rangeStartTick);
         // Live note auto-selection - rebuild from scratch each tick so
         // the user sees the selection grow / shrink with the drag.
         clearSelection();
         if (rangeActive)
         {
-            const auto a = juce::jmin (rangeStartTick, rangeEndTick);
-            const auto b = juce::jmax (rangeStartTick, rangeEndTick);
+            const auto a = std::min (rangeStartTick, rangeEndTick);
+            const auto b = std::max (rangeStartTick, rangeEndTick);
             for (int i = 0; i < (int) r->notes.size(); ++i)
             {
                 const auto t = r->notes[(size_t) i].startTick;
@@ -2688,11 +2690,11 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
         const auto ccArea = juce::Rectangle<int> (
             kKeyboardWidth, getHeight() - kStatusBarH - ccStripH,
             getWidth() - kKeyboardWidth, ccStripH);
-        const float frac = juce::jlimit (0.0f, 1.0f,
+        const float frac = jlimit (0.0f, 1.0f,
             1.0f - ((float) (e.y - ccArea.getY())
-                      / (float) juce::jmax (1, ccArea.getHeight())));
+                      / (float) std::max (1, ccArea.getHeight())));
         r->ccs[(size_t) draggedCcIdx].value =
-            juce::jlimit (0, 127, (int) std::round (frac * 127.0f));
+            jlimit (0, 127, (int) std::round (frac * 127.0f));
         repaint();
         return;
     }
@@ -2709,18 +2711,18 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
 
         if (dragMode == DragMode::ResizeVelocityStrip)
         {
-            const int maxAllowed = juce::jmax (kVelocityStripHMin,
+            const int maxAllowed = std::max (kVelocityStripHMin,
                 getHeight() - topBandH - ccStripH - kStatusBarH - kMinGridH);
-            velocityStripH = juce::jlimit (kVelocityStripHMin,
-                juce::jmin (kVelocityStripHMax, maxAllowed),
+            velocityStripH = jlimit (kVelocityStripHMin,
+                std::min (kVelocityStripHMax, maxAllowed),
                 resizeStartStripH + delta);
         }
         else
         {
-            const int maxAllowed = juce::jmax (kCcStripHMin,
+            const int maxAllowed = std::max (kCcStripHMin,
                 getHeight() - topBandH - velocityStripH - kStatusBarH - kMinGridH);
-            ccStripH = juce::jlimit (kCcStripHMin,
-                juce::jmin (kCcStripHMax, maxAllowed),
+            ccStripH = jlimit (kCcStripHMin,
+                std::min (kCcStripHMax, maxAllowed),
                 resizeStartStripH + delta);
         }
         repaint();
@@ -2736,7 +2738,7 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
         // same delta to every selected note via applyGroupMove. This
         // keeps relative spacing across the whole selection.
         const auto newAnchorStart = snapTick (tickForX (e.x) - dragOriginTick, effectiveSnapTicks());
-        const int  newAnchorPitch = snapPitchToScale (juce::jlimit (0, kNumKeys - 1, noteNumberForY (e.y)));
+        const int  newAnchorPitch = snapPitchToScale (jlimit (0, kNumKeys - 1, noteNumberForY (e.y)));
         const auto deltaTicks = newAnchorStart - dragNoteStartTick;
         const int  deltaPitch = newAnchorPitch - dragOriginNoteNum;
         applyGroupMove (deltaTicks, deltaPitch);
@@ -2753,10 +2755,10 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
         const auto velocityArea = juce::Rectangle<int> (
             kKeyboardWidth, getHeight() - kStatusBarH - ccStripH - velocityStripH,
             getWidth() - kKeyboardWidth, velocityStripH);
-        const float frac = juce::jlimit (0.0f, 1.0f,
+        const float frac = jlimit (0.0f, 1.0f,
             1.0f - ((float) (e.y - velocityArea.getY())
-                      / (float) juce::jmax (1, velocityArea.getHeight())));
-        anchor.velocity = juce::jlimit (1, 127, (int) std::round (frac * 127.0f));
+                      / (float) std::max (1, velocityArea.getHeight())));
+        anchor.velocity = jlimit (1, 127, (int) std::round (frac * 127.0f));
         repaint();
     }
     else if (dragMode == DragMode::ResizeNote)
@@ -2765,7 +2767,7 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
         // most DAWs match this behaviour.
         const auto rawEnd  = tickForX (e.x);
         const auto snapped = snapTick (rawEnd, effectiveSnapTicks());
-        const auto endTick = juce::jlimit<std::int64_t> (
+        const auto endTick = jlimit<std::int64_t> (
             anchor.startTick + 1, r->lengthInTicks, snapped);
         anchor.lengthInTicks = endTick - anchor.startTick;
         repaint();
@@ -2787,7 +2789,7 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
             if (idx < 0 || idx >= (int) r->notes.size()) continue;
             if (i >= dragSnapshots.size()) continue;
             r->notes[(size_t) idx].velocity =
-                juce::jlimit (1, 127, dragSnapshots[i].velocity + delta);
+                jlimit (1, 127, dragSnapshots[i].velocity + delta);
         }
         repaint();
     }
@@ -2858,7 +2860,7 @@ void PianoRollComponent::mouseMove (const juce::MouseEvent& e)
     {
         if (const auto* r = region())
         {
-            const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
+            const double sr  = std::max (1.0, engine.getCurrentSampleRate());
             auto& transport  = engine.getTransport();
             const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
             auto xForSample  = [&] (std::int64_t s)
@@ -2972,7 +2974,7 @@ void PianoRollComponent::mouseUp (const juce::MouseEvent&)
                 const int x1 = xForTick (n.startTick + n.lengthInTicks);
                 const int yy = yForNoteNumber (n.noteNumber);
                 const auto noteRect = juce::Rectangle<int> (x0, yy + 1,
-                                                              juce::jmax (2, x1 - x0),
+                                                              std::max (2, x1 - x0),
                                                               kNoteHeight - 2);
                 if (rubberBand.intersects (noteRect))
                     addToSelection (i);
@@ -3015,17 +3017,17 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
         const double regionPx = (r != nullptr)
                                  ? (double) r->lengthInTicks * pixelsPerTick
                                  : 0.0;
-        const double maxScroll = juce::jmax (0.0, regionPx - (double) gridW);
-        return (int) juce::jlimit (0.0,
+        const double maxScroll = std::max (0.0, regionPx - (double) gridW);
+        return (int) jlimit (0.0,
                                       (double) std::numeric_limits<int>::max(),
                                       maxScroll);
     };
     if (cmdOrCtrl && (k == juce::KeyPress::leftKey || k == juce::KeyPress::rightKey))
     {
-        const int gridW = juce::jmax (1, getWidth() - kKeyboardWidth);
-        const int step  = juce::jmax (1, gridW / 4);
+        const int gridW = std::max (1, getWidth() - kKeyboardWidth);
+        const int step  = std::max (1, gridW / 4);
         const int maxScroll = scrollUpperBound (gridW);
-        scrollX = juce::jlimit (0, maxScroll,
+        scrollX = jlimit (0, maxScroll,
                                    scrollX + (k == juce::KeyPress::leftKey ? -step : step));
         repaint();
         return true;
@@ -3038,7 +3040,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
     }
     if (k == juce::KeyPress::endKey)
     {
-        const int gridW = juce::jmax (1, getWidth() - kKeyboardWidth);
+        const int gridW = std::max (1, getWidth() - kKeyboardWidth);
         scrollX = scrollUpperBound (gridW);
         repaint();
         return true;
@@ -3143,13 +3145,13 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
             if (kc == 'P' && ! sh) { transport.setPunchEnabled (! transport.isPunchEnabled()); repaint(); return true; }
             if (const auto* r = region(); r != nullptr && (kc == '[' || kc == ']'))
             {
-                const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
+                const double sr  = std::max (1.0, engine.getCurrentSampleRate());
                 const auto cursorTl = session.ticksToSamples (
                     session.samplesToTicks (r->timelineStart, sr) + editCursorTick, sr);
-                if (kc == '[') { if (sh) transport.setPunchRange (cursorTl, juce::jmax (transport.getPunchOut(), cursorTl));
-                                 else    transport.setLoopRange  (cursorTl, juce::jmax (transport.getLoopEnd(),  cursorTl)); }
-                else { if (sh) transport.setPunchRange (juce::jmin (transport.getPunchIn(),   cursorTl), cursorTl);
-                       else    transport.setLoopRange  (juce::jmin (transport.getLoopStart(), cursorTl), cursorTl); }
+                if (kc == '[') { if (sh) transport.setPunchRange (cursorTl, std::max (transport.getPunchOut(), cursorTl));
+                                 else    transport.setLoopRange  (cursorTl, std::max (transport.getLoopEnd(),  cursorTl)); }
+                else { if (sh) transport.setPunchRange (std::min (transport.getPunchIn(),   cursorTl), cursorTl);
+                       else    transport.setLoopRange  (std::min (transport.getLoopStart(), cursorTl), cursorTl); }
                 repaint(); return true;
             }
         }
@@ -3181,7 +3183,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
             std::int64_t minTick = std::numeric_limits<std::int64_t>::max();
             for (int idx : selectedNotes)
                 if (idx >= 0 && idx < (int) r->notes.size())
-                    minTick = juce::jmin (minTick, r->notes[(size_t) idx].startTick);
+                    minTick = std::min (minTick, r->notes[(size_t) idx].startTick);
             for (int idx : selectedNotes)
             {
                 if (idx < 0 || idx >= (int) r->notes.size()) continue;
@@ -3202,7 +3204,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
             std::int64_t minTick = std::numeric_limits<std::int64_t>::max();
             for (int idx : selectedNotes)
                 if (idx >= 0 && idx < (int) r->notes.size())
-                    minTick = juce::jmin (minTick, r->notes[(size_t) idx].startTick);
+                    minTick = std::min (minTick, r->notes[(size_t) idx].startTick);
             for (int idx : selectedNotes)
             {
                 if (idx < 0 || idx >= (int) r->notes.size()) continue;
@@ -3396,20 +3398,20 @@ void PianoRollComponent::mouseWheelMove (const juce::MouseEvent& e,
 
         if (e.y >= velTop && e.y < ccTop)
         {
-            const int maxAllowed = juce::jmax (kVelocityStripHMin,
+            const int maxAllowed = std::max (kVelocityStripHMin,
                 getHeight() - topBandH - ccStripH - kStatusBarH - kMinGridH);
-            velocityStripH = juce::jlimit (kVelocityStripHMin,
-                juce::jmin (kVelocityStripHMax, maxAllowed),
+            velocityStripH = jlimit (kVelocityStripHMin,
+                std::min (kVelocityStripHMax, maxAllowed),
                 velocityStripH + delta);
             repaint();
             return;
         }
         if (e.y >= ccTop && e.y < ccTop + ccStripH)
         {
-            const int maxAllowed = juce::jmax (kCcStripHMin,
+            const int maxAllowed = std::max (kCcStripHMin,
                 getHeight() - topBandH - velocityStripH - kStatusBarH - kMinGridH);
-            ccStripH = juce::jlimit (kCcStripHMin,
-                juce::jmin (kCcStripHMax, maxAllowed),
+            ccStripH = jlimit (kCcStripHMin,
+                std::min (kCcStripHMax, maxAllowed),
                 ccStripH + delta);
             repaint();
             return;
@@ -3425,9 +3427,9 @@ void PianoRollComponent::mouseWheelMove (const juce::MouseEvent& e,
         // the cursor instead of resetting to tick 0.
         const auto cursorTickBefore = tickForX (e.x);
         const float factor = w.deltaY > 0.0f ? 1.15f : (1.0f / 1.15f);
-        pixelsPerTick = juce::jlimit (0.005f, 1.0f, pixelsPerTick * factor);
+        pixelsPerTick = jlimit (0.005f, 1.0f, pixelsPerTick * factor);
         const int newCursorPx = (int) std::round ((double) cursorTickBefore * pixelsPerTick);
-        scrollX = juce::jmax (0, newCursorPx - (e.x - kKeyboardWidth));
+        scrollX = std::max (0, newCursorPx - (e.x - kKeyboardWidth));
         repaint();
         return;
     }
@@ -3439,16 +3441,16 @@ void PianoRollComponent::mouseWheelMove (const juce::MouseEvent& e,
     {
         const float dx = std::abs (w.deltaX) > 0.001f ? w.deltaX : w.deltaY;
         const int dxPx = (int) (-dx * 120.0f);
-        scrollX = juce::jmax (0, scrollX + dxPx);
+        scrollX = std::max (0, scrollX + dxPx);
         repaint();
         return;
     }
     // Vertical scroll. wheel deltaY > 0 = scroll up (show higher notes).
     const int delta = (int) (-w.deltaY * 60.0f);
-    const int maxScroll = juce::jmax (0,
+    const int maxScroll = std::max (0,
         kFullGridHeight - (getHeight() - kToolbarHeight - kHeaderHeight
                               - velocityStripH - ccStripH - kStatusBarH));
-    scrollY = juce::jlimit (0, maxScroll, scrollY + delta);
+    scrollY = jlimit (0, maxScroll, scrollY + delta);
     repaint();
 }
 
@@ -3484,7 +3486,7 @@ void PianoRollComponent::IconButton::paintButton (juce::Graphics& g,
     {
         // Small open arrowhead pointing toward `tip` from `from`.
         const auto dir = (tip - from);
-        const auto len = juce::jmax (0.001f, dir.getDistanceFromOrigin());
+        const auto len = std::max (0.001f, dir.getDistanceFromOrigin());
         const auto u   = dir / len;
         const auto perp = juce::Point<float> (-u.y, u.x);
         const auto a = tip - u * size + perp * size * 0.6f;
@@ -3695,8 +3697,8 @@ void PianoRollComponent::zoomFit()
 {
     const auto* r = region();
     if (r == nullptr || r->lengthInTicks <= 0) return;
-    const int gridW = juce::jmax (200, getWidth() - kKeyboardWidth - 8);
-    pixelsPerTick = juce::jlimit (0.005f, 1.0f,
+    const int gridW = std::max (200, getWidth() - kKeyboardWidth - 8);
+    pixelsPerTick = jlimit (0.005f, 1.0f,
                                        (float) gridW / (float) r->lengthInTicks);
     scrollX = 0;
     repaint();
@@ -3707,12 +3709,12 @@ void PianoRollComponent::zoomByFactor (float factor)
     // Anchor zoom on the visible centre so the user's working area stays
     // under the eye across a step. Mirrors the Cmd+wheel ramp.
     const int gridLeft = kKeyboardWidth;
-    const int viewportW = juce::jmax (1, getWidth() - gridLeft);
+    const int viewportW = std::max (1, getWidth() - gridLeft);
     const int centreX = gridLeft + viewportW / 2;
     const auto centreTickBefore = tickForX (centreX);
-    pixelsPerTick = juce::jlimit (0.005f, 1.0f, pixelsPerTick * factor);
+    pixelsPerTick = jlimit (0.005f, 1.0f, pixelsPerTick * factor);
     const int newCentrePx = (int) std::round ((double) centreTickBefore * pixelsPerTick);
-    scrollX = juce::jmax (0, newCentrePx - (centreX - gridLeft));
+    scrollX = std::max (0, newCentrePx - (centreX - gridLeft));
     repaint();
 }
 
@@ -3839,7 +3841,7 @@ void PianoRollComponent::showRegionPropertiesPopup()
     // Read-only metadata footer.
     m.addSeparator();
     {
-        const int beats = juce::jmax (1, session.beatsPerBar.load (std::memory_order_relaxed));
+        const int beats = std::max (1, session.beatsPerBar.load (std::memory_order_relaxed));
         const auto bars = r->lengthInTicks / ((std::int64_t) kMidiTicksPerQuarter * beats);
         const int channel = r->notes.empty() ? 1 : r->notes.front().channel;
         const auto info = juce::String ((int) r->notes.size()) + " notes  -  "
@@ -3909,7 +3911,7 @@ int PianoRollComponent::transportPlayheadX (juce::Rectangle<int> gridArea) const
     const auto playheadSample = engine.getTransport().getPlayhead();
     const auto localSample = playheadSample - r->timelineStart;
     if (localSample < 0 || localSample > r->lengthInSamples) return -1;
-    const double sr = juce::jmax (1.0, engine.getCurrentSampleRate());
+    const double sr = std::max (1.0, engine.getCurrentSampleRate());
     // Fractional ticks so the playhead advances sub-tick smoothly. The integer
     // samplesToTicks quantises to whole ticks, so x would jump in tick-sized
     // steps (several pixels when zoomed in) - a glitchy line. xForTick's pixel
@@ -4001,17 +4003,17 @@ void PianoRollComponent::timerCallback()
             const auto localSample = playheadSample - r->timelineStart;
             if (localSample >= 0 && localSample <= r->lengthInSamples)
             {
-                const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
+                const double sr  = std::max (1.0, engine.getCurrentSampleRate());
                 const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
                 const auto localTick = session.samplesToTicks (localSample + r->timelineStart, sr) - regStartTick;
                 const double playheadPx = (double) localTick * pixelsPerTick;
-                const int gridW = juce::jmax (1, getWidth() - kKeyboardWidth);
+                const int gridW = std::max (1, getWidth() - kKeyboardWidth);
                 const int xRel  = (int) std::round (playheadPx) - scrollX;
                 if (xRel < 0 || xRel > gridW)
                 {
                     const double regionPx = (double) r->lengthInTicks * pixelsPerTick;
-                    const double maxScroll = juce::jmax (0.0, regionPx - (double) gridW);
-                    const int target = (int) juce::jlimit (0.0, maxScroll,
+                    const double maxScroll = std::max (0.0, regionPx - (double) gridW);
+                    const int target = (int) jlimit (0.0, maxScroll,
                                           playheadPx - (double) gridW * 0.25);
                     scrollX = target;
                     repaint (gridArea);

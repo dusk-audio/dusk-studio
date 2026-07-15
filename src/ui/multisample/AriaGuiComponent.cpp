@@ -1,6 +1,7 @@
 #include "AriaGuiComponent.h"
 #include "../DuskComboBox.h"
 #include "../../engine/multisample/DuskMultisampleProcessor.h"
+#include <algorithm>
 
 namespace duskstudio
 {
@@ -10,7 +11,7 @@ struct AriaGuiComponent::FilmstripKnobLAF : public juce::LookAndFeel_V4
 {
     FilmstripKnobLAF(juce::Image strip, int frameCount)
         : strip_(std::move(strip))
-        , frames_(juce::jmax(1, frameCount))
+        , frames_(std::max(1, frameCount))
     {
         // Detect frame orientation by aspect: vertical strip has
         // height / frames ~= width; horizontal has width / frames ~=
@@ -47,13 +48,13 @@ struct AriaGuiComponent::FilmstripKnobLAF : public juce::LookAndFeel_V4
     {
         if (! strip_.isValid() || frameW_ <= 0 || frameH_ <= 0)
             return;
-        const int idx = juce::jlimit(0, frames_ - 1,
-                                       (int) std::round(sliderPosProportional * (float) (frames_ - 1)));
+        const int idx = std::clamp((int) std::round(sliderPosProportional * (float) (frames_ - 1)),
+                                       0, frames_ - 1);
         const int sx = vertical_ ? 0 : idx * frameW_;
         const int sy = vertical_ ? idx * frameH_ : 0;
 
         // Scale the frame into the bounds while preserving aspect.
-        const float scale = juce::jmin((float) width  / (float) frameW_,
+        const float scale = std::min((float) width  / (float) frameW_,
                                          (float) height / (float) frameH_);
         const int dw = (int) std::round((float) frameW_ * scale);
         const int dh = (int) std::round((float) frameH_ * scale);
@@ -234,7 +235,7 @@ void AriaGuiComponent::buildChildren()
                 lbl->setInterceptsMouseClicks(false, false);
                 // ARIA labels are typically small; pick a sane default
                 // matching the bounds height.
-                const int fontH = juce::jmax(10, w.bounds.getHeight() - 4);
+                const int fontH = std::max(10, w.bounds.getHeight() - 4);
                 lbl->setFont(juce::Font(juce::FontOptions((float) fontH)));
                 addAndMakeVisible(*lbl);
                 children_.push_back(std::move(lbl));
@@ -306,7 +307,7 @@ void AriaGuiComponent::buildChildren()
                     auto&     img    = loadImageCached(w.image);
                     const int iw     = img.getWidth();
                     const int ih     = img.getHeight();
-                    const int frames = juce::jmax(1, w.frames);
+                    const int frames = std::max(1, w.frames);
                     int fw, fh;
                     if (frames > 1 && iw > ih)   // horizontal strip
                     {
@@ -318,12 +319,12 @@ void AriaGuiComponent::buildChildren()
                         fw = iw;
                         fh = ih / frames;
                     }
-                    b.setSize(juce::jmax(20, fw), juce::jmax(20, fh));
+                    b.setSize(std::max(20, fw), std::max(20, fh));
                 }
                 // Malformed widget (no size + no filmstrip): give it a
                 // sane default so it's still grabbable.
                 if (b.getWidth() == 0 || b.getHeight() == 0)
-                    b.setSize(juce::jmax(20, b.getWidth()), juce::jmax(20, b.getHeight()));
+                    b.setSize(std::max(20, b.getWidth()), std::max(20, b.getHeight()));
                 s->setBounds(b);
                 addAndMakeVisible(*s);
                 children_.push_back(std::move(s));

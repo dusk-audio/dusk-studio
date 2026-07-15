@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <algorithm>
 #include <functional>
 
 namespace duskstudio
@@ -39,7 +40,7 @@ public:
         // can give the widget a larger hit area than the dot - an 8 px
         // click target is unusable.
         auto r = getLocalBounds().toFloat();
-        const float d = juce::jmin (r.getWidth(), r.getHeight(), 10.0f);
+        const float d = std::min ({r.getWidth(), r.getHeight(), 10.0f});
         r = r.withSizeKeepingCentre (d, d);
         const bool on = isEnabledFn ? isEnabledFn() : false;
 

@@ -1,6 +1,8 @@
 #include "DuskAlerts.h"
 #include "EmbeddedModal.h"
 
+#include <algorithm>
+
 namespace duskstudio
 {
 namespace
@@ -171,7 +173,7 @@ public:
             buttons.push_back (std::move (btn));
         }
         setWantsKeyboardFocus (true);
-        const int w = juce::jmax (480, 60 + 120 * (int) actions.size());
+        const int w = std::max (480, 60 + 120 * (int) actions.size());
         setSize (w, 220);
     }
 

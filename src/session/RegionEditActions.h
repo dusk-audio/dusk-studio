@@ -2,6 +2,7 @@
 
 #include <juce_data_structures/juce_data_structures.h>
 #include "Session.h"
+#include <algorithm>
 
 namespace duskstudio
 {
@@ -303,7 +304,7 @@ public:
 
     bool perform() override;
     bool undo()    override;
-    int  getSizeInUnits() override { return juce::jmax (1, (int) diffs.size() * 4); }
+    int  getSizeInUnits() override { return std::max (1, (int) diffs.size() * 4); }
 
 private:
     Session& session;

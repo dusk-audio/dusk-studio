@@ -3,6 +3,7 @@
 #if defined(__linux__)
  #include "alsa/AlsaAudioIODevice.h"
 #endif
+#include <algorithm>
 #include <cmath>
 
 namespace duskstudio
@@ -20,7 +21,7 @@ constexpr float kRmsTol  = 0.010f;
 
 float ampToDb (float a, float ref = 1.0f)
 {
-    return 20.0f * std::log10 (juce::jmax (1.0e-9f, a) / juce::jmax (1.0e-9f, ref));
+    return 20.0f * std::log10 (std::max (1.0e-9f, a) / std::max (1.0e-9f, ref));
 }
 
 std::string fmtPassFail (bool pass) { return pass ? "[PASS]" : "[FAIL]"; }
@@ -478,7 +479,7 @@ std::string AudioPipelineSelfTest::testMasterTapeAddsGain()
 
     auto setNorm = [] (juce::AudioProcessorParameter* p, float n)
     {
-        if (p != nullptr) p->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, n));
+        if (p != nullptr) p->setValueNotifyingHost (std::clamp (n, 0.0f, 1.0f));
     };
     auto normFromGainDb = [] (float db) { return (db + 12.0f) / 24.0f; };
 
@@ -515,7 +516,7 @@ std::string AudioPipelineSelfTest::testMasterTapeAddsGain()
                 deltaAtDefault = deltaDb;
             if (ac)
             {
-                worstAutoOnDelta = juce::jmax (worstAutoOnDelta, std::abs (deltaDb));
+                worstAutoOnDelta = std::max (worstAutoOnDelta, std::abs (deltaDb));
                 if (std::abs (deltaDb) > 0.5f)
                     autoCompOnWithinHalfDb = false;
             }
@@ -860,8 +861,8 @@ std::string AudioPipelineSelfTest::testCompPerTrack()
     float minP = peaks[0], maxP = peaks[0];
     for (int t = 1; t < Session::kNumTracks; ++t)
     {
-        minP = juce::jmin (minP, peaks[t]);
-        maxP = juce::jmax (maxP, peaks[t]);
+        minP = std::min (minP, peaks[t]);
+        maxP = std::max (maxP, peaks[t]);
     }
     const float spreadDb = (minP > 0.0f)
                               ? std::abs (ampToDb (maxP) - ampToDb (minP))
@@ -986,8 +987,8 @@ std::string AudioPipelineSelfTest::testBackendsOpenCleanly()
 
 std::string AudioPipelineSelfTest::testParallelMatchesSerial()
 {
-    using juce::jmax;
-    using juce::jmin;
+    using std::max;
+    using std::min;
     constexpr int    bs = 256, numIn = 16, numOut = 2;
     constexpr double sr = 48000.0;
     // Long warmup so every strip's IIR transient (notably the low-freq HPF,
@@ -998,7 +999,7 @@ std::string AudioPipelineSelfTest::testParallelMatchesSerial()
 
     // Mirror the engine's own cap. 0 workers on hosts with < 3 cores - there the
     // parallel path is the serial path, so the comparison is trivially equal.
-    const int testWorkers = jmax (0, jmin (juce::SystemStats::getNumCpus() - 2, 15));
+    const int testWorkers = max (0, min (juce::SystemStats::getNumCpus() - 2, 15));
 
     // Active strips: monitor input (sine on every input channel), HPF + per-track-
     // distinct 4-band EQ + fader so each lane carries decorrelated, non-trivial DSP
@@ -1084,19 +1085,19 @@ std::string AudioPipelineSelfTest::testParallelMatchesSerial()
 
     auto maxAbsDiff = [] (const std::vector<float>& a, const std::vector<float>& b)
     {
-        const size_t m = juce::jmin (a.size(), b.size());
+        const size_t m = std::min (a.size(), b.size());
         float d = 0.0f;
-        for (size_t i = 0; i < m; ++i) d = juce::jmax (d, std::abs (a[i] - b[i]));
+        for (size_t i = 0; i < m; ++i) d = std::max (d, std::abs (a[i] - b[i]));
         return d;
     };
 
-    const size_t n = jmin (sL.size(), pL.size());
+    const size_t n = min (sL.size(), pL.size());
     float peak = 0.0f;
     for (size_t i = 0; i < n; ++i)
-        peak = jmax (peak, std::abs (sL[i]), std::abs (sR[i]));
+        peak = std::max ({peak, std::abs (sL[i]), std::abs (sR[i])});
 
-    const float serialDiff   = jmax (maxAbsDiff (sL, s2L), maxAbsDiff (sR, s2R));
-    const float parallelDiff = jmax (maxAbsDiff (sL, pL),  maxAbsDiff (sR, pR));
+    const float serialDiff   = max (maxAbsDiff (sL, s2L), maxAbsDiff (sR, s2R));
+    const float parallelDiff = max (maxAbsDiff (sL, pL),  maxAbsDiff (sR, pR));
 
     // The real invariant: enabling workers must not change the mix any more than
     // re-running serial does. We compare parallelDiff against the serial-vs-serial
@@ -1628,7 +1629,7 @@ std::string AudioPipelineSelfTest::runPerfSuite()
     // are the real speedup - e.g. a 4-core Pi 5 with 2 workers should roughly
     // halve the per-block strip-DSP time. Worker count 0 = serial; > 0 fans the
     // 24 strips across the pool.
-    const int parW = juce::jmax (0, juce::jmin (juce::SystemStats::getNumCpus() - 2, 15));
+    const int parW = std::max (0, std::min (juce::SystemStats::getNumCpus() - 2, 15));
     if (parW > 0)
     {
         report.push_back ("--- Multicore scaling (48k/256, 16ch + EQ + comp @1x) ---");

@@ -41,11 +41,14 @@
 #include "../engine/DpImporter.h"
 #include "../engine/DpAligner.h"
 #include <juce_audio_formats/juce_audio_formats.h>
+#include <algorithm>
 
 namespace duskstudio
 {
 namespace
 {
+template <typename T>
+inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
 // UTF-8-safe bridges across the RecentSessions (std::filesystem) boundary -
 // native narrow conversions lose non-ASCII paths on Windows.
 juce::File toFile (const std::filesystem::path& p)
@@ -121,7 +124,7 @@ public:
 
     void run() override
     {
-        const int n = juce::jmin ((int) scan.tracks.size(), Session::kNumTracks);
+        const int n = std::min ((int) scan.tracks.size(), Session::kNumTracks);
         placeAt.assign ((size_t) n, 0);
 
         // Timeline placement: song.sys clip offsets first, mixdown onset
@@ -202,7 +205,7 @@ public:
             else            out.skipReason = it.name + ": " + out.res.errorMessage;
             outcomes.push_back (std::move (out));
 
-            progress.store ((float) (i + 1) / (float) juce::jmax (1, n),
+            progress.store ((float) (i + 1) / (float) std::max (1, n),
                              std::memory_order_relaxed);
         }
 
@@ -775,14 +778,14 @@ MainComponent::MainComponent()
     if (auto* primary = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
     {
         const auto userArea = primary->userArea;
-        w = juce::jmin (kPreferredW, userArea.getWidth()  - 24);
-        h = juce::jmin (kPreferredH, userArea.getHeight() - 24);
+        w = std::min (kPreferredW, userArea.getWidth()  - 24);
+        h = std::min (kPreferredH, userArea.getHeight() - 24);
     }
 
     const int minContentW = ConsoleView::minimumContentWidth() + 16;  // + outer padding
     const int minContentH = 480 + kTopBarH;
-    w = juce::jmax (w, minContentW);
-    h = juce::jmax (h, minContentH);
+    w = std::max (w, minContentW);
+    h = std::max (h, minContentH);
 
     // Gate the startup plugin scan BEFORE setSize(): setSize drives a
     // synchronous resized() -> maybeStartStartupPluginScan(), and if the
@@ -1223,7 +1226,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
             const float  bpm  = session.tempoBpm.load (std::memory_order_relaxed);
             if (sr > 0.0 && bpm > 0.0f)
             {
-                const int beatsPerBar = juce::jmax (1,
+                const int beatsPerBar = std::max (1,
                     session.beatsPerBar.load (std::memory_order_relaxed));
                 const double beatSamples = sr * 60.0 / (double) bpm;
                 const double stepSamples = shift ? beatSamples * (double) beatsPerBar
@@ -1691,8 +1694,8 @@ void MainComponent::resized()
         const int menuRightPad = menuRow.getRight()
                                    - (systemStatusBar != nullptr ? 300 + 12 : 0);
         int stageX = menuRow.getX() + (menuRow.getWidth() - stageBlockW) / 2;
-        stageX = juce::jlimit (menuLeftPad,
-                                 juce::jmax (menuLeftPad, menuRightPad - stageBlockW),
+        stageX = jlimit (menuLeftPad,
+                                 std::max (menuLeftPad, menuRightPad - stageBlockW),
                                  stageX);
         stageCentreX = stageX + stageBlockW / 2;
         recordingStageBtn.setBounds (stageX,              menuStageY, stageW, kStageBtnH);
@@ -1701,13 +1704,13 @@ void MainComponent::resized()
         auxStageBtn      .setBounds (stageX + 3 * stageW, menuStageY, stageW, kStageBtnH);
 
         // Help text in the gap between the menu bar and the tabs.
-        const int statusW = juce::jmax (0, stageX - 12 - menuLeftPad);
+        const int statusW = std::max (0, stageX - 12 - menuLeftPad);
         statusLabel.setBounds (menuLeftPad, menuRow.getY(), statusW, menuRow.getHeight());
 
         // Parameter tooltips live in this same band; keep them off the tabs.
         lookAndFeel.setTooltipPlacement (
             juce::Rectangle<int> (menuLeftPad, menuRow.getY(),
-                                    juce::jmax (0, menuRightPad - menuLeftPad),
+                                    std::max (0, menuRightPad - menuLeftPad),
                                     menuRow.getHeight()),
             juce::Rectangle<int> (stageX, menuRow.getY(), stageBlockW, menuRow.getHeight()));
     }
@@ -1746,7 +1749,7 @@ void MainComponent::resized()
     if (wantToolbar)
     {
         const int combinedW = bankClusterW + (needsBanking ? kBankToolbarGap : 0) + kHdrClusterW;
-        const int gX = juce::jmax (clockRight + 12, stageCentreX - combinedW / 2);
+        const int gX = std::max (clockRight + 12, stageCentreX - combinedW / 2);
         if (gX + combinedW <= tunerLeft - 12)
         {
             toolbarVisible = true;
@@ -1755,7 +1758,7 @@ void MainComponent::resized()
     }
 
     // Centre the group under the stage selector, clamped past the clock.
-    const int groupX = juce::jmax (clockRight + 12, stageCentreX - groupW / 2);
+    const int groupX = std::max (clockRight + 12, stageCentreX - groupW / 2);
 
     if (needsBanking && consoleView != nullptr)
     {
@@ -1821,8 +1824,8 @@ void MainComponent::resized()
             // the rows scroll inside the strip. Console keeps a usable
             // minimum.
             const int wanted = tapeStrip->naturalHeight();
-            const int cap    = juce::jmax (120, area.getHeight() / 2);
-            tapeStrip->setBounds (area.removeFromTop (juce::jmin (wanted, cap)));
+            const int cap    = std::max (120, area.getHeight() / 2);
+            tapeStrip->setBounds (area.removeFromTop (std::min (wanted, cap)));
 
             area.removeFromTop (4);
             if (miniTimeline != nullptr) miniTimeline->setVisible (false);
@@ -1954,8 +1957,8 @@ void MainComponent::openAudioSettings()
     // overflows the visible canvas at the bottom and the Advanced
     // section gets clipped even though the host theoretically "fits"
     // inside MainComponent's bounds.
-    const int availH = juce::jmax (300, getHeight() - 200);
-    const int hostH  = juce::jmin (kPanelH, availH);
+    const int availH = std::max (300, getHeight() - 200);
+    const int hostH  = std::min (kPanelH, availH);
     const int sbW    = juce::Component().getLookAndFeel().getDefaultScrollbarWidth();
     auto host = std::make_unique<ScrollingHost> (std::move (panel),
                                                    kPanelW, kPanelH);
@@ -3227,7 +3230,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // syncStageUi unconditionally so the on-screen stage always matches
     // session.uiStage after load.
     {
-        const int loaded = juce::jlimit (0, 3, session.uiStage.load (std::memory_order_relaxed));
+        const int loaded = jlimit (0, 3, session.uiStage.load (std::memory_order_relaxed));
         const auto wantStage = (AudioEngine::Stage) loaded;
         if (engine.getStage() != wantStage)
             engine.setStage (wantStage);
@@ -3520,7 +3523,7 @@ void MainComponent::runAudioImportFlow (const juce::File& source,
     ImportTargetPicker::FileSummary summary;
     summary.file          = source;
     summary.sampleRate    = reader->sampleRate;
-    summary.numChannels   = juce::jmin (2, (int) reader->numChannels);
+    summary.numChannels   = std::min (2, (int) reader->numChannels);
     summary.lengthSamples = (std::int64_t) reader->lengthInSamples;
     summary.isMidi        = false;
     reader.reset();   // close before the picker calls FileImporter
@@ -3630,7 +3633,7 @@ void MainComponent::runMidiImportFlow (const juce::File& source,
             {
                 const auto& m = trk->getEventPointer (i)->message;
                 if (m.isNoteOn() && m.getVelocity() > 0) ++noteCount;
-                maxTick = juce::jmax (maxTick,
+                maxTick = std::max (maxTick,
                                         (std::int64_t) std::llround (m.getTimeStamp()));
             }
         }
@@ -3761,7 +3764,7 @@ juce::File makeStereoTempWav (const juce::File& left, const juce::File& right)
     std::unique_ptr<juce::AudioFormatReader> rr (fm.createReaderFor (right));
     if (rl == nullptr || rr == nullptr) return {};
 
-    const std::int64_t len = juce::jmin (rl->lengthInSamples, rr->lengthInSamples);
+    const std::int64_t len = std::min (rl->lengthInSamples, rr->lengthInSamples);
     if (len <= 0 || rl->sampleRate <= 0.0) return {};
 
     const auto tmp = juce::File::createTempFile (".wav");
@@ -3780,7 +3783,7 @@ juce::File makeStereoTempWav (const juce::File& left, const juce::File& right)
     juce::AudioBuffer<float> lbuf (1, kChunk), rbuf (1, kChunk), out (2, kChunk);
     for (std::int64_t pos = 0; pos < len; pos += kChunk)
     {
-        const int n = (int) juce::jmin ((std::int64_t) kChunk, len - pos);
+        const int n = (int) std::min ((std::int64_t) kChunk, len - pos);
         if (! rl->read (&lbuf, 0, n, pos, true, false)
             || ! rr->read (&rbuf, 0, n, pos, true, false))
         {
@@ -3946,31 +3949,31 @@ void MainComponent::finishDpImport()
             // Mid->LM or HM by frequency (the unused band stays flat).
             const auto& m = it.mixer;
             s.eqEnabled.store (m.eqOn, std::memory_order_relaxed);
-            s.lfGainDb.store (juce::jlimit (-15.0f, 15.0f, m.lowGainDb), std::memory_order_relaxed);
-            s.lfFreq  .store (juce::jlimit (20.0f, 400.0f, m.lowFreqHz), std::memory_order_relaxed);
+            s.lfGainDb.store (jlimit (-15.0f, 15.0f, m.lowGainDb), std::memory_order_relaxed);
+            s.lfFreq  .store (jlimit (20.0f, 400.0f, m.lowFreqHz), std::memory_order_relaxed);
             // DP has one mid band -> Dusk has two (LM/HM). Drive the band that
             // matches the frequency and reset the other to flat defaults, so an
             // import into a non-empty session doesn't leave stale EQ behind.
             if (m.midFreqHz < 1500.0f)
             {
-                s.lmGainDb.store (juce::jlimit (-15.0f, 15.0f, m.midGainDb), std::memory_order_relaxed);
-                s.lmFreq  .store (juce::jlimit (100.0f, 4000.0f, m.midFreqHz), std::memory_order_relaxed);
-                s.lmQ     .store (juce::jlimit (0.4f, 4.0f, m.midQ), std::memory_order_relaxed);
+                s.lmGainDb.store (jlimit (-15.0f, 15.0f, m.midGainDb), std::memory_order_relaxed);
+                s.lmFreq  .store (jlimit (100.0f, 4000.0f, m.midFreqHz), std::memory_order_relaxed);
+                s.lmQ     .store (jlimit (0.4f, 4.0f, m.midQ), std::memory_order_relaxed);
                 s.hmGainDb.store (0.0f, std::memory_order_relaxed);
                 s.hmFreq  .store (2000.0f, std::memory_order_relaxed);
                 s.hmQ     .store (0.7f, std::memory_order_relaxed);
             }
             else
             {
-                s.hmGainDb.store (juce::jlimit (-15.0f, 15.0f, m.midGainDb), std::memory_order_relaxed);
-                s.hmFreq  .store (juce::jlimit (600.0f, 13000.0f, m.midFreqHz), std::memory_order_relaxed);
-                s.hmQ     .store (juce::jlimit (0.4f, 4.0f, m.midQ), std::memory_order_relaxed);
+                s.hmGainDb.store (jlimit (-15.0f, 15.0f, m.midGainDb), std::memory_order_relaxed);
+                s.hmFreq  .store (jlimit (600.0f, 13000.0f, m.midFreqHz), std::memory_order_relaxed);
+                s.hmQ     .store (jlimit (0.4f, 4.0f, m.midQ), std::memory_order_relaxed);
                 s.lmGainDb.store (0.0f, std::memory_order_relaxed);
                 s.lmFreq  .store (600.0f, std::memory_order_relaxed);
                 s.lmQ     .store (0.7f, std::memory_order_relaxed);
             }
-            s.hfGainDb.store (juce::jlimit (-15.0f, 15.0f, m.highGainDb), std::memory_order_relaxed);
-            s.hfFreq  .store (juce::jlimit (1000.0f, 20000.0f, m.highFreqHz), std::memory_order_relaxed);
+            s.hfGainDb.store (jlimit (-15.0f, 15.0f, m.highGainDb), std::memory_order_relaxed);
+            s.hfFreq  .store (jlimit (1000.0f, 20000.0f, m.highFreqHz), std::memory_order_relaxed);
         }
         ++imported;
     }
@@ -3996,8 +3999,8 @@ void MainComponent::finishDpImport()
     {
         // Clamp to the same [1, 32] range SessionSerializer enforces so the
         // in-memory model can't hold a value the serializer would reject.
-        session.beatsPerBar.store (juce::jlimit (1, 32, scan.timeSigNum), std::memory_order_relaxed);
-        session.beatUnit   .store (juce::jlimit (1, 32, scan.timeSigDen), std::memory_order_relaxed);
+        session.beatsPerBar.store (jlimit (1, 32, scan.timeSigNum), std::memory_order_relaxed);
+        session.beatUnit   .store (jlimit (1, 32, scan.timeSigDen), std::memory_order_relaxed);
         // The ruler / grid read these on repaint, but the transport bar's
         // time-sig button caches its text and the 20 Hz refresh doesn't touch
         // it - re-sync it so it doesn't contradict the import.
@@ -4085,7 +4088,7 @@ void MainComponent::kickNextImport()
     // adjacent tracks so a drop on track 2 fills 2/3/4 unless the user
     // overrides each pick in the modal.
     const int hint = pendingImportLastCommitted >= 0
-                       ? juce::jmin (pendingImportLastCommitted + 1,
+                       ? std::min (pendingImportLastCommitted + 1,
                                        Session::kNumTracks - 1)
                        : pendingImportInitialHint;
 
@@ -4206,7 +4209,7 @@ void MainComponent::openMultiImportPicker (juce::Array<juce::File> files,
                         {
                             const auto& m = trk->getEventPointer (i)->message;
                             if (m.isNoteOn() && m.getVelocity() > 0) ++noteCount;
-                            maxTick = juce::jmax (maxTick,
+                            maxTick = std::max (maxTick,
                                 (std::int64_t) std::llround (m.getTimeStamp()));
                         }
                 s.numMidiNotes = noteCount;
@@ -4224,7 +4227,7 @@ void MainComponent::openMultiImportPicker (juce::Array<juce::File> files,
             if (reader == nullptr)
                 continue;
             s.sampleRate    = reader->sampleRate;
-            s.numChannels   = juce::jmin (2, (int) reader->numChannels);
+            s.numChannels   = std::min (2, (int) reader->numChannels);
             s.lengthSamples = (std::int64_t) reader->lengthInSamples;
         }
         summaries.push_back (std::move (s));
@@ -4785,7 +4788,7 @@ void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
     // modal). The inset shrinks on small windows so the roll always has
     // a workable surface even on a 1280-wide screen.
     const auto bounds = getLocalBounds();
-    const int inset = juce::jmax (24, juce::jmin (bounds.getWidth(), bounds.getHeight()) / 16);
+    const int inset = std::max (24, std::min (bounds.getWidth(), bounds.getHeight()) / 16);
     const auto rollBounds = bounds.reduced (inset);
 
     juce::Rectangle<int> startRect;
@@ -4925,7 +4928,7 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
     audioEditorDim = std::make_unique<DimOverlay> (0.80f);
 
     const auto bounds = getLocalBounds();
-    const int inset = juce::jmax (24, juce::jmin (bounds.getWidth(), bounds.getHeight()) / 16);
+    const int inset = std::max (24, std::min (bounds.getWidth(), bounds.getHeight()) / 16);
     const auto editorBounds = bounds.reduced (inset);
 
     juce::Rectangle<int> startRect;

@@ -2,6 +2,8 @@
 #include "EditCursors.h"
 #include "PlatformWindowing.h"
 
+#include <algorithm>
+
 namespace duskstudio
 {
 CursorOverlay::CursorOverlay()
@@ -39,7 +41,7 @@ void CursorOverlay::setMousePosition (juce::Component& source,
         const int y1 = getLocalPoint (&source,
                                         juce::Point<int> (localInSource.x,
                                                             cutLineYInSource.getEnd())).y;
-        myCutLine = juce::Range<int> (juce::jmin (y0, y1), juce::jmax (y0, y1));
+        myCutLine = juce::Range<int> (std::min (y0, y1), std::max (y0, y1));
     }
 
     // Only Grab / Cut / Draw paint a glyph at the cursor. Range / Grid draw
@@ -140,7 +142,7 @@ void CursorOverlay::paint (juce::Graphics& g)
                     g.setColour (col);
                     for (float y = y0; y < y1; y += kDash + kGap)
                     {
-                        const float yEnd = juce::jmin (y + kDash, y1);
+                        const float yEnd = std::min (y + kDash, y1);
                         g.drawLine (cx, y, cx, yEnd, thickness);
                     }
                 };

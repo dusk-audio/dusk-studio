@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../engine/DpImporter.h"
+#include <algorithm>
 #include <functional>
 
 namespace duskstudio
@@ -22,7 +23,7 @@ public:
                     std::function<void()> onCancel)
         : onCommitFn (std::move (onCommit)), onCancelFn (std::move (onCancel))
     {
-        const int shown = juce::jmin ((int) scan.tracks.size(), maxTracks);
+        const int shown = std::min ((int) scan.tracks.size(), maxTracks);
 
         title.setText ("Import DP Song", juce::dontSendNotification);
         title.setFont (juce::Font (juce::FontOptions (20.0f, juce::Font::bold)));

@@ -1,6 +1,8 @@
 #include "ChannelEqEditor.h"
 #include "DuskStudioLookAndFeel.h"
 
+#include <algorithm>
+
 namespace duskstudio
 {
 namespace
@@ -369,7 +371,7 @@ void ChannelEqEditor::resized()
 
         if (hasQ)
         {
-            const int qW = juce::jmin (colW, 80);
+            const int qW = std::min (colW, 80);
             const int qX = leftX + (colW - qW) / 2;
             const int qY = gainY + kKnobBlockH;
             rows[i].q->setBounds (qX, qY, qW, kQBlockH);

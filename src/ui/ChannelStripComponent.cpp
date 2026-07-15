@@ -26,6 +26,7 @@
 #include "PlatformWindowing.h"
 #include "../session/ParamEditAction.h"
 #include "../session/RegionEditActions.h"
+#include <algorithm>
 #include <cstdio>
 
 namespace duskstudio
@@ -33,6 +34,10 @@ namespace duskstudio
 
 namespace
 {
+// clamp with jlimit's argument order (lo, hi, value).
+template <typename T>
+inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
+
 struct BandSpec
 {
     const char* rowName;
@@ -278,7 +283,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
 
     refreshCompModeButtonState();
     refreshCompKnobVisibility();
-    lastAppliedCompMode = juce::jlimit (0, 2,
+    lastAppliedCompMode = jlimit (0, 2,
         track.strip.compMode.load (std::memory_order_relaxed));
 
     auto setupCompKnob = [this] (juce::Slider& k, juce::Label& label, const juce::String& labelText,
@@ -392,14 +397,14 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     enableValueLabel (fetRatioKnob, "", 0);
     fetRatioKnob.textFromValueFunction = [] (double v) -> juce::String
     {
-        const int idx = juce::jlimit (0, 4, (int) std::round (v));
+        const int idx = jlimit (0, 4, (int) std::round (v));
         const char* names[] = { "4:1", "8:1", "12:1", "20:1", "All" };
         return names[idx];
     };
     fetRatioKnob.onValueChange = [this]
     {
         track.strip.compFetRatio.store (
-            juce::jlimit (0, 4, (int) std::round (fetRatioKnob.getValue())),
+            jlimit (0, 4, (int) std::round (fetRatioKnob.getValue())),
             std::memory_order_relaxed);
         armCompOnUserEdit();
     };
@@ -686,7 +691,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
             for (int t = 0; t < Session::kNumTracks; ++t)
             {
                 if (t == trackIndex || ! peerActive[(size_t) t]) continue;
-                const float target = juce::jlimit (
+                const float target = jlimit (
                     ChannelStripParams::kFaderMinDb, ChannelStripParams::kFaderMaxDb,
                     peerAnchorsDb[(size_t) t] + delta);
                 session.track (t).strip.faderDb.store (target,
@@ -752,7 +757,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         faderSlider.setRange (-90.0, 6.0, 0.1);
         faderSlider.setSkewFactorFromMidPoint (-12.0);
         const float curDb = track.strip.faderDb.load (std::memory_order_relaxed);
-        faderSlider.setValue (juce::jlimit (-90.0, 6.0, (double) curDb),
+        faderSlider.setValue (jlimit (-90.0, 6.0, (double) curDb),
                                  juce::dontSendNotification);
 
         // Configure the standalone value readout.
@@ -2254,8 +2259,8 @@ void ChannelStripComponent::openPluginEditor()
                 (unsigned long) windowId,
                 /*wantsKeyboardFocus*/ true,
                 /*allowForeignWidgetToResizeComponent*/ false);
-            remoteEditorEmbed->setSize (juce::jmax (200, w),
-                                          juce::jmax (200, h));
+            remoteEditorEmbed->setSize (std::max (200, w),
+                                          std::max (200, h));
             // Tag so EmbeddedModal hides this XEmbed window for the
             // lifetime of any subsequent settings / quit modal - native
             // X11 z-order otherwise paints the plugin window above the
@@ -2329,7 +2334,7 @@ void ChannelStripComponent::openPluginEditor()
         }
         if (embed != nullptr)
         {
-            embed->setSize (juce::jmax (200, w), juce::jmax (200, h));
+            embed->setSize (std::max (200, w), std::max (200, h));
             // Tag so a later settings / quit modal hides the shell-editor
             // wrapper too (same reason as the Linux XEmbed + in-process
             // paths). Defensive today - createInProcessEditorHost is a Mac
@@ -2357,7 +2362,7 @@ void ChannelStripComponent::openPluginEditor()
         auto embed = duskstudio::platform::createForeignNativeWindowEmbed (windowId);
         if (embed != nullptr)
         {
-            embed->setSize (juce::jmax (200, w), juce::jmax (200, h));
+            embed->setSize (std::max (200, w), std::max (200, h));
             // Tag so a later settings / quit modal hides the reparented HWND
             // wrapper too - native window z-order otherwise paints the plugin
             // above the JUCE-rendered modal.
@@ -2785,12 +2790,12 @@ public:
         styleCaption (midiOutCaption,  "MIDI out",  11.0f);
         styleCaption (activityCaption, "activity",  10.0f);
 
-        setSize (kIoPopupW, ioConfigBodyHeight (juce::jlimit (0, 2, modeSelector.getSelectedId() - 1)));
+        setSize (kIoPopupW, ioConfigBodyHeight (jlimit (0, 2, modeSelector.getSelectedId() - 1)));
     }
 
     void resized() override
     {
-        const int mode = juce::jlimit (0, 2, modeSelector.getSelectedId() - 1);
+        const int mode = jlimit (0, 2, modeSelector.getSelectedId() - 1);
 
         inputSelector      .setVisible (mode == 0 || mode == 1);
         inputSelectorR     .setVisible (mode == 1);
@@ -2872,7 +2877,7 @@ void ChannelStripComponent::openIoConfigPopup()
                                                    modeSelector, inputSelector, inputSelectorR,
                                                    midiInputSelector, midiChannelSelector,
                                                    midiOutputSelector, midiActivityLed);
-    const int mode = juce::jlimit (0, 2, modeSelector.getSelectedId() - 1);
+    const int mode = jlimit (0, 2, modeSelector.getSelectedId() - 1);
     panel->setSize (kIoPopupW, ioConfigBodyHeight (mode));
 
     auto* topLevel = getTopLevelComponent();
@@ -2896,7 +2901,7 @@ void ChannelStripComponent::openIoConfigPopup()
 juce::Component* ChannelStripComponent::openIoConfigPopupForCapture (int mode)
 {
     if (ioConfigModal.isOpen()) ioConfigModal.close();
-    modeSelector.setSelectedId (juce::jlimit (0, 2, mode) + 1, juce::sendNotificationSync);
+    modeSelector.setSelectedId (jlimit (0, 2, mode) + 1, juce::sendNotificationSync);
     openIoConfigPopup();
     return ioConfigModal.getBody();
 }
@@ -3057,7 +3062,7 @@ void ChannelStripComponent::handleFreezeClick()
 
 void ChannelStripComponent::refreshIoConfigButton()
 {
-    const int mode = juce::jlimit (0, 2, track.mode.load (std::memory_order_relaxed));
+    const int mode = jlimit (0, 2, track.mode.load (std::memory_order_relaxed));
     juce::String text;
     if (mode == 0)        // Mono
     {
@@ -3254,7 +3259,7 @@ public:
                                                 colW, area.getHeight());
             indexLabels[(size_t) i].setBounds (col.removeFromTop (14));
             valueLabels[(size_t) i].setBounds (col.removeFromBottom (14));
-            const int knobSize = juce::jmin (col.getWidth() - 4, col.getHeight() - 4);
+            const int knobSize = std::min (col.getWidth() - 4, col.getHeight() - 4);
             const int kx = col.getCentreX() - knobSize / 2;
             const int ky = col.getCentreY() - knobSize / 2;
             knobs[(size_t) i].setBounds (kx, ky, knobSize, knobSize);
@@ -3290,7 +3295,7 @@ public:
                 // sentinel (-100) sits below the slider min (-60), so an
                 // unclamped compare never converges and refires setValue every
                 // tick while the send is off.
-                const float knobVal = (float) juce::jlimit (knobs[(size_t) i].getMinimum(),
+                const float knobVal = (float) jlimit (knobs[(size_t) i].getMinimum(),
                                                             knobs[(size_t) i].getMaximum(),
                                                             (double) rawVal);
                 if (std::abs ((float) knobs[(size_t) i].getValue() - knobVal) > 0.05f)
@@ -3439,7 +3444,7 @@ void ChannelStripComponent::timerCallback()
     // popup-menu callback).
     refreshCompModeButtonState();
     {
-        const int liveMode = juce::jlimit (0, 2,
+        const int liveMode = jlimit (0, 2,
             track.strip.compMode.load (std::memory_order_relaxed));
         if (liveMode != lastAppliedCompMode)
         {
@@ -3568,7 +3573,7 @@ void ChannelStripComponent::timerCallback()
             peakHoldFrames = 18;  // ~600 ms at 30 Hz
         }
         else if (peakHoldFrames > 0) --peakHoldFrames;
-        else peakHold = juce::jmax (-100.0f, peakHold - 1.5f);
+        else peakHold = std::max (-100.0f, peakHold - 1.5f);
     };
 
     const bool stereoMode = (track.mode.load (std::memory_order_relaxed)
@@ -3582,7 +3587,7 @@ void ChannelStripComponent::timerCallback()
     const float outL     = track.meterOutLDb.load (std::memory_order_relaxed);
     const float outR     = track.meterOutRDb.load (std::memory_order_relaxed);
     const float lDb = inputMon ? track.meterInputDb.load (std::memory_order_relaxed)
-                               : (stereoMode ? outL : juce::jmax (outL, outR));
+                               : (stereoMode ? outL : std::max (outL, outR));
     smoothMeter (lDb, displayedInputDb, inputPeakHoldDb, inputPeakHoldFrames);
 
     if (stereoMode)
@@ -3808,10 +3813,10 @@ void ChannelStripComponent::captureWritePoint (AutomationParam param, float deno
             {
                 const float lo = ChannelStripParams::kFaderMinDb;
                 const float hi = ChannelStripParams::kFaderMaxDb;
-                return juce::jlimit (0.0f, 1.0f, (v - lo) / (hi - lo));
+                return jlimit (0.0f, 1.0f, (v - lo) / (hi - lo));
             }
             case AutomationParam::Pan:
-                return juce::jlimit (0.0f, 1.0f, (v + 1.0f) * 0.5f);
+                return jlimit (0.0f, 1.0f, (v + 1.0f) * 0.5f);
             case AutomationParam::Mute:
             case AutomationParam::Solo:
                 return v >= 0.5f ? 1.0f : 0.0f;
@@ -3823,7 +3828,7 @@ void ChannelStripComponent::captureWritePoint (AutomationParam param, float deno
                 if (v <= ChannelStripParams::kAuxSendOffDb) return 0.0f;
                 const float lo = ChannelStripParams::kAuxSendMinDb;
                 const float hi = ChannelStripParams::kAuxSendMaxDb;
-                return juce::jlimit (0.0f, 1.0f, (v - lo) / (hi - lo));
+                return jlimit (0.0f, 1.0f, (v - lo) / (hi - lo));
             }
             case AutomationParam::kCount: break;
         }
@@ -4314,7 +4319,7 @@ void ChannelStripComponent::onTrackModeChanged()
     // ComboBox IDs: 1 = Mono, 2 = Stereo, 3 = MIDI. Stored as int on the
     // Track so the audio thread can read it lock-free.
     const int id = modeSelector.getSelectedId();
-    const int mode = juce::jlimit (0, 2, id - 1);  // 0..2 = Track::Mode
+    const int mode = jlimit (0, 2, id - 1);  // 0..2 = Track::Mode
 
     // A frozen track is locked to its current mode - its baked WAV + bypassed
     // DSP assume it. Block ANY change (restoring the selector to the track's
@@ -4398,7 +4403,7 @@ void ChannelStripComponent::MidiActivityLed::paint (juce::Graphics& g)
 
 void ChannelStripComponent::refreshInputSelectorVisibility()
 {
-    const int mode = juce::jlimit (0, 2, track.mode.load (std::memory_order_relaxed));
+    const int mode = jlimit (0, 2, track.mode.load (std::memory_order_relaxed));
     const bool isMono   = (mode == 0);
     const bool isStereo = (mode == 1);
     const bool isMidi   = (mode == 2);
@@ -4462,7 +4467,7 @@ void ChannelStripComponent::refreshCompModeButtonState()
     // clicking the mode menu. The LED on the left of the pill also shows
     // engaged state.
     const bool enabled = track.strip.compEnabled.load (std::memory_order_relaxed);
-    const int m = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
+    const int m = jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
     const char* names[] = { "OPTO", "FET", "VCA" };
     compModeButton->setLabelText (enabled ? juce::String ("COMP - ") + names[m]
                                           : juce::String ("COMP"));
@@ -4475,7 +4480,7 @@ void ChannelStripComponent::refreshCompKnobVisibility()
     // compCompactButton). Bail before touching per-mode knob visibility.
     if (compactMode) return;
 
-    const int m = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
+    const int m = jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
     const bool isOpto = (m == 0), isFet = (m == 1), isVca = (m == 2);
 
     // OPTO peak-reduction + FET input + VCA threshold are all set via
@@ -4538,7 +4543,7 @@ void ChannelStripComponent::showCompSectionMenu()
 {
     // Unified COMP section menu - mode items (OPTO / FET / VCA) + whole-
     // section reset + open editor. Bypass lives on the header's left-click.
-    const int m = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
+    const int m = jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
     juce::PopupMenu menu;
     menu.addItem (2, "OPTO - program-dependent, smooth",     true, m == 0);
     menu.addItem (3, "FET - fast attack, gritty under load", true, m == 1);
@@ -4770,10 +4775,10 @@ void ChannelStripComponent::paint (juce::Graphics& g)
     // at ~96 % - they read as two different scales for the same signal.
     const auto& faderRange = faderSlider.getNormalisableRange();
     auto dbToFrac = [&] (float db) {
-        const double clamped = juce::jlimit ((double) faderRange.start,
+        const double clamped = jlimit ((double) faderRange.start,
                                               (double) faderRange.end,
                                               (double) db);
-        return (float) juce::jlimit (0.0, 1.0,
+        return (float) jlimit (0.0, 1.0,
                                       faderRange.convertTo0to1 (clamped));
     };
 
@@ -4837,15 +4842,15 @@ void ChannelStripComponent::paint (juce::Graphics& g)
                     g.fillRect (juce::Rectangle<float> (x, top, w, bottom - top));
                 };
                 // Red band: fill top -> min(yRedTop, fillBot)
-                fillBand (juce::jmax (yFillTop, bar.getY()),
-                            juce::jmin (yRedTop, yFillBot),
+                fillBand (std::max (yFillTop, bar.getY()),
+                            std::min (yRedTop, yFillBot),
                             kLedRed);
                 // Yellow band: max(fillTop, yRedTop) -> min(yYellowTop, fillBot)
-                fillBand (juce::jmax (yFillTop, yRedTop),
-                            juce::jmin (yYellowTop, yFillBot),
+                fillBand (std::max (yFillTop, yRedTop),
+                            std::min (yYellowTop, yFillBot),
                             kLedYellow);
                 // Green band: max(fillTop, yYellowTop) -> fillBot
-                fillBand (juce::jmax (yFillTop, yYellowTop),
+                fillBand (std::max (yFillTop, yYellowTop),
                             yFillBot,
                             kLedGreen);
             }
@@ -4860,7 +4865,7 @@ void ChannelStripComponent::paint (juce::Graphics& g)
                                                       bar.getWidth() - 2.0f, 1.4f));
             }
 
-            const int segments = juce::jlimit (8, 30, (int) (bar.getHeight() / 3.5f));
+            const int segments = jlimit (8, 30, (int) (bar.getHeight() / 3.5f));
             const float segStep = bar.getHeight() / (float) segments;
             g.setColour (juce::Colour (0xff020203));
             for (int i = 1; i < segments; ++i)
@@ -4915,7 +4920,7 @@ void ChannelStripComponent::paint (juce::Graphics& g)
         const float trackCx = sliderB.getCentreX();
         // trackW = jmin(4, sliderW*0.18) inside the LookAndFeel; mirror so
         // labels sit just left of the tick stub.
-        const float trackW  = juce::jmin (4.0f, sliderB.getWidth() * 0.18f);
+        const float trackW  = std::min (4.0f, sliderB.getWidth() * 0.18f);
         const float trackLx = trackCx - trackW * 0.5f;
 
         for (const auto& t : kFaderTicks)
@@ -5204,7 +5209,7 @@ void ChannelStripComponent::resized()
 
             if (hasQ)
             {
-                const int qW    = juce::jmin (colW, 44);
+                const int qW    = std::min (colW, 44);
                 const int qX    = leftX + (colW - qW) / 2;
                 const int qY    = gainY + kKnobBlockH;
                 eqRows[i].q->setBounds (qX, qY, qW, kQBlockH);
@@ -5217,7 +5222,7 @@ void ChannelStripComponent::resized()
             if (i == 1)
             {
                 auto chipSlot = s.removeFromTop (kEqTypeChipH);
-                const int chipW  = juce::jmin (colW - 8, 28);
+                const int chipW  = std::min (colW - 8, 28);
                 const int chipX  = rightX + (colW - chipW) / 2;
                 eqTypeChip.setBounds (chipX, chipSlot.getY() + 1, chipW, kEqTypeChipH - 2);
             }
@@ -5291,7 +5296,7 @@ void ChannelStripComponent::resized()
             knob.setBounds  (cell.getX(), cell.getY(), cell.getWidth(), kCompKnobBlockH);
         };
 
-        const int currentMode = juce::jlimit (0, 2,
+        const int currentMode = jlimit (0, 2,
             track.strip.compMode.load (std::memory_order_relaxed));
 
         if (currentMode == 0)  // OPTO: GAIN knob top, LIMIT toggle bottom
@@ -5306,7 +5311,7 @@ void ChannelStripComponent::resized()
                 const int colW = row.getWidth() / 2;
                 auto gainCell  = row.removeFromLeft (colW);
                 layoutKnobCell (gainCell, optoGainKnob, optoGainLabel);
-                const int limW = juce::jmin (54, row.getWidth());
+                const int limW = std::min (54, row.getWidth());
                 optoLimitButton.setBounds (
                     row.getX() + (row.getWidth() - limW) / 2,
                     row.getY() + (row.getHeight() - 18) / 2,
@@ -5318,7 +5323,7 @@ void ChannelStripComponent::resized()
                 body.removeFromTop (kCompKnobGap);
                 auto row2 = body.removeFromTop (kCompKnobRowH);
                 layoutKnobCell (row1, optoGainKnob, optoGainLabel);
-                const int limW = juce::jmin (54, row2.getWidth());
+                const int limW = std::min (54, row2.getWidth());
                 optoLimitButton.setBounds (row2.getX() + (row2.getWidth() - limW) / 2,
                                             row2.getY() + (row2.getHeight() - 18) / 2,
                                             limW, 18);
@@ -5593,7 +5598,7 @@ void ChannelStripComponent::resized()
         const int clusterR = faderCompMeterCol.isEmpty() ? meterColumn.getRight()
                                                          : faderCompMeterCol.getRight();
         inputPeakLabel.setBounds (clusterX, peakRow.getY(),
-                                    juce::jmax (1, clusterR - clusterX),
+                                    std::max (1, clusterR - clusterX),
                                     peakRow.getHeight());
     }
 
@@ -5637,7 +5642,7 @@ void ChannelStripComponent::resized()
     auto panSlice = faderArea.removeFromTop (kPanLabelH + kPanBlockH);
     const int faderCentreX = panSlice.getCentreX();      // centre of fader column
     const int knobX        = faderCentreX - kPanBlockW / 2;
-    const int labelBlockW  = juce::jmax (kPanBlockW, 40);
+    const int labelBlockW  = std::max (kPanBlockW, 40);
     panLabel.setBounds (faderCentreX - labelBlockW / 2,
                           panSlice.getY(),
                           labelBlockW, kPanLabelH);
@@ -5679,7 +5684,7 @@ void ChannelStripComponent::resized()
         // (span - kNumBuses*H)/(kNumBuses-1).
         const int zeroY = (int) std::lround (duskstudio::faderYForDb (faderSlider, 0.0f));
         const int offY  = (int) std::lround (duskstudio::faderYForDb (faderSlider, -90.0f));
-        const int span  = juce::jmax (ChannelStripParams::kNumBuses * kBusButtonH, offY - zeroY);
+        const int span  = std::max (ChannelStripParams::kNumBuses * kBusButtonH, offY - zeroY);
         for (int i = 0; i < ChannelStripParams::kNumBuses; ++i)
         {
             const int top = zeroY + (int) std::lround (

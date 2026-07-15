@@ -1,4 +1,5 @@
 #include "AnalogVuMeter.h"
+#include <algorithm>
 #include <cmath>
 
 namespace duskstudio
@@ -161,9 +162,9 @@ float currentDisplayScale (const juce::Component& comp) noexcept
 {
     auto& displays = juce::Desktop::getInstance().getDisplays();
     if (auto* d = displays.getDisplayForRect (comp.getScreenBounds()))
-        return juce::jlimit (1.0f, 4.0f, (float) d->scale);
+        return std::clamp ((float) d->scale, 1.0f, 4.0f);
     if (auto* d = displays.getPrimaryDisplay())
-        return juce::jlimit (1.0f, 4.0f, (float) d->scale);
+        return std::clamp ((float) d->scale, 1.0f, 4.0f);
     return 1.0f;
 }
 } // namespace
@@ -196,7 +197,7 @@ void AnalogVuMeter::resized()
                               ? 4.0f
                               : (getWidth() >= kLabelMinWidth ? 14.0f : 2.0f);
     const float rByWidth  = (safe.getWidth() * 0.5f - lblMargin)
-                             / juce::jmax (0.001f, sinH);
+                             / std::max (0.001f, sinH);
     // The arc's TOP (angleFrac=0) is exactly arcRadius above pivot - it
     // is NOT divided by cosH. Earlier division by cosH let the dial
     // extend past the top edge whenever the face was short relative to
@@ -204,8 +205,8 @@ void AnalogVuMeter::resized()
     // numbered labels (master), smaller for the compact "−" / "+" face
     // on bus strips.
     const float topHeadroom = compactScale ? 6.0f : 14.0f;
-    const float rByHeight   = juce::jmax (1.0f, safe.getHeight() - topHeadroom);
-    arcRadius = juce::jmax (10.0f, juce::jmin (rByWidth, rByHeight));
+    const float rByHeight   = std::max (1.0f, safe.getHeight() - topHeadroom);
+    arcRadius = std::max (10.0f, std::min (rByWidth, rByHeight));
     rebuildCachedFace();
 }
 
@@ -223,11 +224,11 @@ void AnalogVuMeter::timerCallback()
     // to see a peak warning).
     auto rmsToVuDb = [this] (const std::atomic<float>* atom, float& outRawVuDb)
     {
-        const float rms = juce::jmax (1.0e-6f, atom->load (std::memory_order_relaxed));
+        const float rms = std::max (1.0e-6f, atom->load (std::memory_order_relaxed));
         const float dbFs = 20.0f * std::log10 (rms);
         const float rawVu = dbFs - referenceDbFs;
         outRawVuDb = rawVu;
-        return juce::jlimit (kVuMin, kVuMax, rawVu);
+        return std::clamp (rawVu, kVuMin, kVuMax);
     };
 
     auto tickChannel = [&] (const std::atomic<float>* atom, float& pos, float& vel, float& rawVu)
@@ -239,7 +240,7 @@ void AnalogVuMeter::timerCallback()
         vel += (springForce + dampingForce) * dt;
         pos += vel * dt;
         pos += vuCoeff * (target - pos) * 0.3f;
-        pos  = juce::jlimit (-1.0f, 1.0f, pos);
+        pos  = std::clamp (pos, -1.0f, 1.0f);
 
         if (std::abs (vel) < 0.001f && std::abs (target - pos) < 0.001f)
             vel = 0.0f;
@@ -250,7 +251,7 @@ void AnalogVuMeter::timerCallback()
     if (rightRms != nullptr)
         tickChannel (rightRms, needlePosR, needleVelR, rawR);
 
-    const float maxRaw = juce::jmax (rawL, rawR);
+    const float maxRaw = std::max (rawL, rawR);
     if (maxRaw >= kPeakTriggerVuDb)
         peakHoldUntilMs = juce::Time::getMillisecondCounter() + (std::uint32_t) kPeakHoldMs;
 
@@ -276,8 +277,8 @@ void AnalogVuMeter::rebuildCachedFace()
     // logical coords via a scale transform. paint() blits it back 1:1 so the
     // baked face (ticks, labels, gradients, glass) stays sharp on HiDPI.
     lastScale = currentDisplayScale (*this);
-    const int pw = juce::jmax (1, juce::roundToInt ((float) w * lastScale));
-    const int ph = juce::jmax (1, juce::roundToInt ((float) h * lastScale));
+    const int pw = std::max (1, juce::roundToInt ((float) w * lastScale));
+    const int ph = std::max (1, juce::roundToInt ((float) h * lastScale));
     cachedFace = juce::Image (juce::Image::ARGB, pw, ph, true);
     juce::Graphics g (cachedFace);
     g.addTransform (juce::AffineTransform::scale (lastScale));
@@ -285,7 +286,7 @@ void AnalogVuMeter::rebuildCachedFace()
 
     // Bezel + face. Two-tone outline + cream paper fill with a vertical
     // gradient so the face has a faint analog patina.
-    const float corner = juce::jmin (3.0f, juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.06f);
+    const float corner = std::min (3.0f, std::min (bounds.getWidth(), bounds.getHeight()) * 0.06f);
     g.setColour (kBezelOuter);
     g.fillRoundedRectangle (bounds, corner);
     g.setColour (kBezelInner);
@@ -350,7 +351,7 @@ void AnalogVuMeter::rebuildCachedFace()
     // face reads as the simpler member of the visual family. The
     // master VU keeps the full numbered scale.
     const bool  showLabels  = (! compactScale) && (w >= kLabelMinWidth);
-    const float labelFont   = juce::jlimit (6.0f, 11.0f, arcRadius * 0.13f);
+    const float labelFont   = std::clamp (arcRadius * 0.13f, 6.0f, 11.0f);
     const float tickLenMaj  = arcRadius * 0.12f;
     const float tickLenMin  = arcRadius * 0.06f;
     baselineRad             = arcRadius * 0.78f;
@@ -360,7 +361,7 @@ void AnalogVuMeter::rebuildCachedFace()
     // underneath gives the red a clean start without a rounded-end bulge
     // at the junction (which is what made the two-stroke version look
     // crooked at 0 VU).
-    const float arcStrokeW = juce::jmax (1.0f, arcRadius * 0.025f);
+    const float arcStrokeW = std::max (1.0f, arcRadius * 0.025f);
     const float angleZero  = vuDbToAngleFrac (0.0f);
     {
         juce::Path arcBlack;
@@ -429,7 +430,7 @@ void AnalogVuMeter::rebuildCachedFace()
     // sense-of-direction cue in place of full numbered scales.
     if (compactScale)
     {
-        const float glyphFont = juce::jlimit (7.0f, 12.0f, arcRadius * 0.18f);
+        const float glyphFont = std::clamp (arcRadius * 0.18f, 7.0f, 12.0f);
         g.setFont (juce::Font (juce::FontOptions (glyphFont, juce::Font::bold)));
         const float boxW = glyphFont * 1.6f;
         const float boxH = glyphFont * 1.2f;
@@ -456,7 +457,7 @@ void AnalogVuMeter::rebuildCachedFace()
     // of radius arcRadius * 0.10, so it scales with the dial without
     // dominating narrow bus faces.
     {
-        const float hubR = juce::jmax (4.0f, arcRadius * 0.10f);
+        const float hubR = std::max (4.0f, arcRadius * 0.10f);
         juce::Path hub;
         hub.startNewSubPath (pivot.x - hubR, pivot.y);
         hub.addArc (pivot.x - hubR, pivot.y - hubR,
@@ -489,8 +490,8 @@ void AnalogVuMeter::rebuildCachedFace()
     // self-explanatory in that corner and there's no clean room for text
     // without crowding the +3 label.
     {
-        const float ledR = juce::jmax (2.0f, arcRadius * 0.05f);
-        const float margin = juce::jmax (4.0f, arcRadius * 0.06f);
+        const float ledR = std::max (2.0f, arcRadius * 0.05f);
+        const float margin = std::max (4.0f, arcRadius * 0.06f);
         const float ledCx = faceRect.getRight()  - margin - ledR;
         const float ledCy = faceRect.getY()      + margin + ledR;
         peakLedRect = juce::Rectangle<float> (ledCx - ledR, ledCy - ledR,
@@ -511,12 +512,12 @@ void AnalogVuMeter::rebuildCachedFace()
     // badge would collide with the hub and the +3 label.
     if (showLabels)
     {
-        const float vuFont = juce::jlimit (10.0f, 18.0f, arcRadius * 0.18f);
+        const float vuFont = std::clamp (arcRadius * 0.18f, 10.0f, 18.0f);
         g.setFont (juce::Font (juce::FontOptions (vuFont, juce::Font::plain)));
         g.setColour (juce::Colours::black);
         const float vuBoxW = vuFont * 2.6f;
         const float vuBoxH = vuFont * 1.15f;
-        const float hubR   = juce::jmax (4.0f, arcRadius * 0.10f);
+        const float hubR   = std::max (4.0f, arcRadius * 0.10f);
         const float vuCx = pivot.x;
         const float vuCy = pivot.y - hubR - vuBoxH * 0.5f - arcRadius * 0.04f;
         g.drawText ("VU",
@@ -529,7 +530,7 @@ void AnalogVuMeter::rebuildCachedFace()
         // VU badge, matching the TEAC/Tascam face.
         if (richStyle)
         {
-            const float subFont = juce::jlimit (5.0f, 9.0f, arcRadius * 0.085f);
+            const float subFont = std::clamp (arcRadius * 0.085f, 5.0f, 9.0f);
             g.setFont (juce::Font (juce::FontOptions (subFont, juce::Font::plain)));
             g.setColour (kInkSoft);
             g.drawText ("OUTPUT LEVEL",
@@ -599,7 +600,7 @@ void AnalogVuMeter::paint (juce::Graphics& g)
     auto drawRichNeedle = [&] (float angleFrac, juce::Colour c)
     {
         const float tipR  = baselineRad - arcRadius * 0.02f;
-        const float halfW = juce::jmax (1.1f, arcRadius * 0.020f);
+        const float halfW = std::max (1.1f, arcRadius * 0.020f);
         const float px = pivot.x, py = pivot.y;
         needlePath.clear();
         needlePath.startNewSubPath (px, py - tipR);   // fine tip
@@ -623,7 +624,7 @@ void AnalogVuMeter::paint (juce::Graphics& g)
 
         // Chrome hub cap over the needle bases (dynamic counterpart of the
         // baked dome) so the bases tuck under a polished pivot.
-        const float capR = juce::jmax (3.0f, arcRadius * 0.085f);
+        const float capR = std::max (3.0f, arcRadius * 0.085f);
         juce::ColourGradient capG (kHubHi, pivot.x - capR * 0.4f, pivot.y - capR * 0.5f,
                                     kHubLo, pivot.x + capR * 0.5f, pivot.y, true);
         capG.addColour (0.55, kHubMid);

@@ -58,7 +58,7 @@ void conformChunk (const juce::AudioBuffer<float>& src,
         return;
     }
     // Pass-through: copy as many channels as both sides have.
-    const int common = juce::jmin (srcCh, targetChannels);
+    const int common = std::min (srcCh, targetChannels);
     for (int c = 0; c < common; ++c)
         dst.copyFrom (c, 0, src, c, 0, n);
 }
@@ -254,7 +254,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         std::int64_t pos = 0;
         while (pos < srcLength && wrote)
         {
-            const int n = (int) juce::jmin ((std::int64_t) kGrain, srcLength - pos);
+            const int n = (int) std::min ((std::int64_t) kGrain, srcLength - pos);
             srcChunk.clear();
             if (! reader->read (&srcChunk, 0, n, pos, true, srcChannels > 1))
             {
@@ -297,7 +297,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
             // Top up the carry from the source.
             while (carryLen < needIn && srcPos < srcLength)
             {
-                const int n = (int) juce::jmin ((std::int64_t) kGrain, srcLength - srcPos);
+                const int n = (int) std::min ((std::int64_t) kGrain, srcLength - srcPos);
                 srcChunk.clear();
                 if (! reader->read (&srcChunk, 0, n, srcPos, true, srcChannels > 1))
                 {
@@ -305,7 +305,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
                     break;
                 }
                 conformChunk (srcChunk, confChunk, req.targetChannels, n);
-                const int room = juce::jmin (n, carry.getNumSamples() - carryLen);
+                const int room = std::min (n, carry.getNumSamples() - carryLen);
                 for (int c = 0; c < req.targetChannels; ++c)
                     carry.copyFrom (c, carryLen, confChunk, c, 0, room);
                 carryLen += room;
@@ -320,22 +320,22 @@ AudioImportResult importAudio (const AudioImportRequest& req)
                 carryLen = needIn;
             }
 
-            const int nOut = (int) juce::jmin ((std::int64_t) kGrain,
-                                                (outLength - produced) + discard);
+            const int nOut = (int) std::min ((std::int64_t) kGrain,
+                                              (outLength - produced) + discard);
             int consumed = 0;
             for (int c = 0; c < req.targetChannels; ++c)
                 consumed = interp[(size_t) c].process (ratio,
                                                         carry.getReadPointer (c),
                                                         outChunk.getWritePointer (c),
                                                         nOut);
-            const int skip       = (int) juce::jmin ((std::int64_t) nOut, discard);
+            const int skip       = (int) std::min ((std::int64_t) nOut, discard);
             const int writeCount = nOut - skip;
             if (writeCount > 0)
                 wrote = writer->writeFromAudioSampleBuffer (outChunk, skip, writeCount);
             discard  -= skip;
             produced += writeCount;
 
-            consumed = juce::jlimit (0, carryLen, consumed);
+            consumed = std::clamp (consumed, 0, carryLen);
             for (int c = 0; c < req.targetChannels; ++c)
             {
                 auto* p = carry.getWritePointer (c);
@@ -492,9 +492,9 @@ MidiImportResult importMidi (const MidiImportRequest& req)
                     MidiNote n;
                     n.channel       = ch;
                     n.noteNumber    = note;
-                    n.velocity      = juce::jmax (1, open_.velocity);
+                    n.velocity      = std::max (1, open_.velocity);
                     n.startTick     = open_.startTick;
-                    n.lengthInTicks = juce::jmax<std::int64_t> (1, tick - open_.startTick);
+                    n.lengthInTicks = std::max<std::int64_t> (1, tick - open_.startTick);
                     notes.push_back (n);
                 }
             }
@@ -522,9 +522,9 @@ MidiImportResult importMidi (const MidiImportRequest& req)
             MidiNote n;
             n.channel       = ch;
             n.noteNumber    = note;
-            n.velocity      = juce::jmax (1, a.velocity);
+            n.velocity      = std::max (1, a.velocity);
             n.startTick     = a.startTick;
-            n.lengthInTicks = juce::jmax<std::int64_t> (1, maxTick - a.startTick);
+            n.lengthInTicks = std::max<std::int64_t> (1, maxTick - a.startTick);
             notes.push_back (n);
         }
     }
@@ -537,7 +537,7 @@ MidiImportResult importMidi (const MidiImportRequest& req)
 
     result.ok = true;
     result.region.timelineStart   = req.timelineStart;
-    result.region.lengthInTicks   = juce::jmax<std::int64_t> (1, maxTick);
+    result.region.lengthInTicks   = std::max<std::int64_t> (1, maxTick);
     result.region.lengthInSamples = duskstudio::ticksToSamples (result.region.lengthInTicks,
                                                               sessionSr,
                                                               req.sessionBpm);

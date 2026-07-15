@@ -1,6 +1,7 @@
 #include "DpAligner.h"
 
 #include <juce_dsp/juce_dsp.h>
+#include <algorithm>
 #include <cmath>
 
 namespace duskstudio::dp
@@ -33,7 +34,7 @@ std::vector<float> decodeMono (juce::AudioFormatManager& fm, const juce::File& f
     // flags), so mix from at most the first two. DP fragments are mono and
     // mixdowns are stereo, so this covers every real input; for a >2-channel
     // file we mix L+R and ignore the rest rather than averaging in zeros.
-    const int usedCh = juce::jmin (ch, 2);
+    const int usedCh = std::min (ch, 2);
     juce::AudioBuffer<float> buf (usedCh, (int) len);
     buf.clear();
     if (! reader->read (&buf, 0, (int) len, 0, true, usedCh > 1)) return out;

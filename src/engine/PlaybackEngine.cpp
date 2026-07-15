@@ -1,5 +1,6 @@
 #include "PlaybackEngine.h"
 #include "Transport.h"
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -48,7 +49,7 @@ void PlaybackEngine::prepare (int maxBlockSize)
     // Pre-allocate the stereo scratch buffer once. Channel 1 is unused for
     // mono regions but allocated so the audio-thread read path never has to
     // grow on a stereo region.
-    readScratch.setSize (2, juce::jmax (1, maxBlockSize),
+    readScratch.setSize (2, std::max (1, maxBlockSize),
                           /*keepExistingContent*/ false,
                           /*clearExtraSpace*/      false,
                           /*avoidReallocating*/    false);
@@ -80,7 +81,7 @@ void PlaybackEngine::refreshLiveRegionParams()
                     || region.timelineStart   != rs.timelineStart
                     || region.lengthInSamples != rs.lengthInSamples) continue;
                 rs.gainLinear = juce::Decibels::decibelsToGain (
-                    juce::jlimit (-60.0f, 24.0f, region.gainDb), -60.0f);
+                    std::clamp (region.gainDb, -60.0f, 24.0f), -60.0f);
                 rs.muted = region.muted;
                 break;
             }
@@ -135,18 +136,18 @@ void PlaybackEngine::preparePlayback()
             rs.timelineStart   = region.timelineStart;
             rs.lengthInSamples = region.lengthInSamples;
             rs.sourceOffset    = region.sourceOffset;
-            rs.fadeInSamples   = juce::jmax ((std::int64_t) 0, region.fadeInSamples);
-            rs.fadeOutSamples  = juce::jmax ((std::int64_t) 0, region.fadeOutSamples);
+            rs.fadeInSamples   = std::max ((std::int64_t) 0, region.fadeInSamples);
+            rs.fadeOutSamples  = std::max ((std::int64_t) 0, region.fadeOutSamples);
             rs.fadeInShape     = region.fadeInShape;
             rs.fadeOutShape    = region.fadeOutShape;
-            rs.numChannels     = juce::jlimit (1, 2, region.numChannels);
+            rs.numChannels     = std::clamp (region.numChannels, 1, 2);
             // Convert dB once on the message thread; the audio loop
             // multiplies by the linear factor per sample. Clamp the
             // dB at extreme values to avoid wild values from a hand-
             // edited session.json producing audible clip on first
             // play. The Alt-drag clamps tighter ([-24, +12]) at the UI.
             rs.gainLinear = juce::Decibels::decibelsToGain (
-                juce::jlimit (-60.0f, 24.0f, region.gainDb), -60.0f);
+                std::clamp (region.gainDb, -60.0f, 24.0f), -60.0f);
             rs.muted = region.muted;
             // Enforce non-overlap: if fadeIn + fadeOut > length the multiplied
             // ramps produce a gain-notch in the middle. Shrink proportionally
@@ -187,9 +188,9 @@ void PlaybackEngine::preparePlayback()
             const std::int64_t aEnd = a.timelineStart + a.lengthInSamples;
             if (aEnd > b.timelineStart)
             {
-                const std::int64_t overlap = juce::jmin (
+                const std::int64_t overlap = std::min (
                     aEnd - b.timelineStart,
-                    juce::jmin (a.lengthInSamples, b.lengthInSamples));
+                    std::min (a.lengthInSamples, b.lengthInSamples));
                 a.overlapNextLen = overlap;
                 b.overlapPrevLen = overlap;
             }
@@ -222,8 +223,8 @@ void PlaybackEngine::primeLoopCaches (std::int64_t loopStart, std::int64_t loopE
             rs.loopCacheLen           = 0;
 
             const std::int64_t regionEnd  = rs.timelineStart + rs.lengthInSamples;
-            const std::int64_t cacheStart = juce::jmax (loopStart, rs.timelineStart);
-            const std::int64_t cacheEnd   = juce::jmin (loopStart + (std::int64_t) kLoopCacheSamples,
+            const std::int64_t cacheStart = std::max (loopStart, rs.timelineStart);
+            const std::int64_t cacheEnd   = std::min (loopStart + (std::int64_t) kLoopCacheSamples,
                                                         regionEnd);
             if (cacheEnd <= cacheStart) continue;
 
@@ -334,7 +335,7 @@ void PlaybackEngine::readForTrack (int trackIndex,
             pos = loopStart + (pos - loopEnd) % loopLen;
             if (numSeams < 8) seamOffsets[numSeams++] = done;
         }
-        const int span = (int) juce::jmin ((std::int64_t) (numSamples - done),
+        const int span = (int) std::min ((std::int64_t) (numSamples - done),
                                             loopEnd - pos);
         readSpanForTrack (*slot, pos, outL, outR, done, span);
         done += span;
@@ -391,8 +392,8 @@ void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
         const std::int64_t regionEnd = r.timelineStart + r.lengthInSamples;
         if (regionEnd <= playheadSamples) continue;  // already past
 
-        const std::int64_t firstWithin = juce::jmax (playheadSamples, r.timelineStart);
-        const std::int64_t lastWithin  = juce::jmin (blockEnd, regionEnd);
+        const std::int64_t firstWithin = std::max (playheadSamples, r.timelineStart);
+        const std::int64_t lastWithin  = std::min (blockEnd, regionEnd);
         const int outOffset    = (int) (firstWithin - playheadSamples);
         const int withinSamples = (int) (lastWithin - firstWithin);
         if (withinSamples <= 0) continue;
@@ -420,8 +421,8 @@ void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
             && firstWithin < r.loopCacheTimelineStart + r.loopCacheLen
             && lastWithin  > r.loopCacheTimelineStart)
         {
-            const std::int64_t ovStart = juce::jmax (firstWithin, r.loopCacheTimelineStart);
-            const std::int64_t ovEnd   = juce::jmin (lastWithin,
+            const std::int64_t ovStart = std::max (firstWithin, r.loopCacheTimelineStart);
+            const std::int64_t ovEnd   = std::min (lastWithin,
                                                      r.loopCacheTimelineStart
                                                          + (std::int64_t) r.loopCacheLen);
             const int dstOff = (int) (ovStart - firstWithin);
@@ -447,8 +448,8 @@ void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
         const std::int64_t explicitOut = r.fadeOutSamples;
         const std::int64_t implicitIn  = r.overlapPrevLen;
         const std::int64_t implicitOut = r.overlapNextLen;
-        const std::int64_t fadeIn   = juce::jmax (explicitIn,  implicitIn);
-        const std::int64_t fadeOut  = juce::jmax (explicitOut, implicitOut);
+        const std::int64_t fadeIn   = std::max (explicitIn,  implicitIn);
+        const std::int64_t fadeOut  = std::max (explicitOut, implicitOut);
         const FadeShape fadeInShape  = (explicitIn  >= implicitIn)
                                          ? r.fadeInShape  : FadeShape::EqualPower;
         const FadeShape fadeOutShape = (explicitOut >= implicitOut)

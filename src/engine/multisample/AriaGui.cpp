@@ -1,5 +1,7 @@
 #include "AriaGui.h"
 
+#include <algorithm>
+
 namespace duskstudio
 {
 namespace
@@ -75,7 +77,7 @@ AriaWidget makeKnob(const juce::XmlElement& el)
     w.bounds   = readBounds(el);
     w.paramCC  = el.getIntAttribute("param", -1);
     w.image    = el.getStringAttribute("image");
-    w.frames   = juce::jmax(1, el.getIntAttribute("frames", 1));
+    w.frames   = std::max(1, el.getIntAttribute("frames", 1));
     return w;
 }
 
@@ -182,12 +184,12 @@ AriaGuiDoc AriaGuiDoc::buildAutoSkin(const juce::File& bgImage,
 
     // Knob grid geometry. Each cell: caption (16) above a 48px knob.
     constexpr int kCellW = 76, kKnobSz = 48, kCapH = 16, kCellH = kKnobSz + kCapH + 8;
-    const int gridW   = juce::jmax(imgW, 480);
-    const int perRow  = juce::jmax(1, gridW / kCellW);
+    const int gridW   = std::max(imgW, 480);
+    const int perRow  = std::max(1, gridW / kCellW);
     const int rows    = (int) ((ccLabels.size() + (size_t) perRow - 1) / (size_t) perRow);
     const int gridH   = rows * kCellH;
 
-    doc.width  = juce::jmax(gridW, imgW > 0 ? imgW : gridW);
+    doc.width  = std::max(gridW, imgW > 0 ? imgW : gridW);
     doc.height = (imgH > 0 ? imgH : 0) + gridH + 8;
 
     // Background image (if any) spanning the top.

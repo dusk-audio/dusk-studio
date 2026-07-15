@@ -2,6 +2,8 @@
 #include "EmbeddedModal.h"   // kPluginEditorTag
 #include "NativeEditorEmbedScale.h"
 
+#include <algorithm>
+
 namespace duskstudio
 {
 ClapPluginEditorComponent::ClapPluginEditorComponent()
@@ -93,7 +95,7 @@ void ClapPluginEditorComponent::tryEmbed()
         *this, getTopLevelComponent()->getLocalArea (this, getLocalBounds()));
     std::string err;
     if (editor.embed (parent, area.getX(), area.getY(),
-                      juce::jmax (1, area.getWidth()), juce::jmax (1, area.getHeight()), err))
+                      std::max (1, area.getWidth()), std::max (1, area.getHeight()), err))
     {
         embedded = true;
         // Re-sync unconditionally: a synchronous gui resize during embed can
@@ -126,7 +128,7 @@ void ClapPluginEditorComponent::pushBounds()
     const auto area = embedscale::toPhysical (
         *this, getTopLevelComponent()->getLocalArea (this, getLocalBounds()));
     editor.setBounds (area.getX(), area.getY(),
-                      juce::jmax (1, area.getWidth()), juce::jmax (1, area.getHeight()));
+                      std::max (1, area.getWidth()), std::max (1, area.getHeight()));
 }
 
 void ClapPluginEditorComponent::resized()              { if (embedded) pushBounds(); else tryEmbed(); }
@@ -184,7 +186,7 @@ void ClapPluginEditorComponent::verifyGeometry()
         return;
     }
     if (ax != area.getX() || ay != area.getY()
-        || aw != juce::jmax (1, area.getWidth()) || ah != juce::jmax (1, area.getHeight()))
+        || aw != std::max (1, area.getWidth()) || ah != std::max (1, area.getHeight()))
     {
         if (driftLogsLeft > 0)
         {

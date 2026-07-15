@@ -23,6 +23,8 @@
 #include "../session/MidiBindings.h"
 #include "../session/ParamEditAction.h"
 
+#include <algorithm>
+
 namespace duskstudio
 {
 namespace
@@ -121,7 +123,7 @@ public:
         g.drawText ("SEND SOURCES", header, juce::Justification::centredLeft, false);
         inner.removeFromTop (4);
 
-        const int rowH = juce::jmax (14, inner.getHeight() / Session::kNumTracks);
+        const int rowH = std::max (14, inner.getHeight() / Session::kNumTracks);
         g.setFont (juce::Font (juce::FontOptions (11.0f)));
 
         for (int i = 0; i < Session::kNumTracks; ++i)
@@ -150,7 +152,7 @@ public:
             // the colour swatch on the left already shows the index, so
             // promote those defaults to "Trk N" to avoid printing the same
             // digit twice. User-renamed tracks pass through verbatim.
-            auto nameArea = row.removeFromLeft (juce::jmax (60, row.getWidth() / 2));
+            auto nameArea = row.removeFromLeft (std::max (60, row.getWidth() / 2));
             g.setColour (sendOn ? juce::Colour (0xffe0e0e4) : juce::Colour (0xff606068));
             const auto rawName = tr.name.trim();
             const auto displayName = (rawName.isEmpty() || rawName == juce::String (i + 1))
@@ -568,7 +570,7 @@ void AuxLaneComponent::captureWritePoint (AutomationParam param, float denormVal
             {
                 const float lo = ChannelStripParams::kFaderMinDb;
                 const float hi = ChannelStripParams::kFaderMaxDb;
-                return juce::jlimit (0.0f, 1.0f, (v - lo) / (hi - lo));
+                return std::clamp ((v - lo) / (hi - lo), 0.0f, 1.0f);
             }
             case AutomationParam::Mute:
                 return v >= 0.5f ? 1.0f : 0.0f;
@@ -1288,8 +1290,8 @@ void AuxLaneComponent::layoutEditorForSlot (int slotIdx)
     const int prefH = body->getHeight();
     if (prefW <= 0 || prefH <= 0) return;
 
-    const int w = juce::jmin (prefW, center.getWidth());
-    const int h = juce::jmin (prefH, center.getHeight());
+    const int w = std::min (prefW, center.getWidth());
+    const int h = std::min (prefH, center.getHeight());
     const int x = center.getX() + (center.getWidth()  - w) / 2;
     const int y = center.getY() + (center.getHeight() - h) / 2;
     body->setBounds (x, y, w, h);
@@ -1661,8 +1663,8 @@ void AuxLaneComponent::childBoundsChanged (juce::Component* child)
 
             const int prefW = body->getWidth();
             const int prefH = body->getHeight();
-            const int w = juce::jmin (prefW, center.getWidth());
-            const int h = juce::jmin (prefH, center.getHeight());
+            const int w = std::min (prefW, center.getWidth());
+            const int h = std::min (prefH, center.getHeight());
             const int x = center.getX() + (center.getWidth()  - w) / 2;
             const int y = center.getY() + (center.getHeight() - h) / 2;
             if (body->getX() == x && body->getY() == y
