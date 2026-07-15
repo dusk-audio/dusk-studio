@@ -32,6 +32,12 @@ void onProcessTrampoline (void* data, struct spa_io_position* position)
     static_cast<PipeWireAudioIODevice*> (data)->onProcess (position);
 }
 
+void onStateChangedTrampoline (void* data, enum pw_filter_state /*old*/,
+                                enum pw_filter_state /*state*/, const char* /*error*/)
+{
+    static_cast<PipeWireAudioIODevice*> (data)->onFilterStateChanged();
+}
+
 // Zero-init + assignment rather than C99 designated initializers (a C++20
 // feature; the project is C++17 -Werror).
 pw_filter_events makeFilterEvents()
@@ -39,6 +45,7 @@ pw_filter_events makeFilterEvents()
     pw_filter_events e {};
     e.version = PW_VERSION_FILTER_EVENTS;
     e.process = onProcessTrampoline;
+    e.state_changed = onStateChangedTrampoline;
     return e;
 }
 
@@ -182,7 +189,7 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
                                     "Dusk Studio", props, &kFilterEvents, this);
     if (filter == nullptr)
     {
-        pw_properties_free (props);   // ownership only transfers on success
+        // props ownership is taken by pw_filter_new_simple even on failure.
         lastError = "pw_filter_new_simple failed";
         close();
         return lastError;
@@ -203,7 +210,7 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
                                           0, pp, nullptr, 0);
         if (port == nullptr)
         {
-            pw_properties_free (pp);   // ownership only transfers on success
+            // pp ownership is taken by pw_filter_add_port even on failure.
             lastError = "pw_filter_add_port (output) failed";
             close();
             return lastError;
@@ -223,7 +230,7 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
                                           0, pp, nullptr, 0);
         if (port == nullptr)
         {
-            pw_properties_free (pp);   // ownership only transfers on success
+            // pp ownership is taken by pw_filter_add_port even on failure.
             lastError = "pw_filter_add_port (input) failed";
             close();
             return lastError;
@@ -237,21 +244,61 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
     outputLatency = wantOutput ? quantum : 0;
     inputLatency  = wantInput  ? quantum : 0;
 
-    if (pw_filter_connect (filter, PW_FILTER_FLAG_RT_PROCESS, nullptr, 0) < 0)
+    // Initialise the RT-thread state before the data thread can run - once
+    // started, onProcess may read these on the very first cycle.
+    lastXrun = 0;
+    xrunCount.store (0, std::memory_order_relaxed);
+
+    if (const int rc = pw_thread_loop_start (threadLoop); rc < 0)
     {
-        lastError = "pw_filter_connect failed";
+        lastError = "pw_thread_loop_start failed (" + juce::String (rc) + ")";
         close();
         return lastError;
     }
-
-    // Start the RT data thread. All object creation above happened before start,
-    // so no thread-loop lock was needed; post-start pw_* calls (close) stop the
-    // loop first.
-    pw_thread_loop_start (threadLoop);
     threadLoopRunning = true;
 
-    lastXrun = 0;
-    xrunCount.store (0, std::memory_order_relaxed);
+    // Connect and wait for the async handshake to resolve, under the loop lock so
+    // no state_changed is missed. pw_filter_connect is scheduled on the loop and
+    // completes asynchronously - returning success before it lands would report a
+    // dead device as open when the target vanished or the server disconnected.
+    {
+        pw_thread_loop_lock (threadLoop);
+        if (pw_filter_connect (filter, PW_FILTER_FLAG_RT_PROCESS, nullptr, 0) < 0)
+        {
+            pw_thread_loop_unlock (threadLoop);
+            lastError = "pw_filter_connect failed";
+            close();
+            return lastError;
+        }
+
+        // A functioning graph resolves in milliseconds; the timeout backstops a
+        // wedged server so open() never blocks indefinitely. Each iteration is
+        // woken by state_changed (onFilterStateChanged signals the loop) or by
+        // the per-wait timeout.
+        const char* stateError = nullptr;
+        pw_filter_state state = pw_filter_get_state (filter, &stateError);
+        for (int tries = 0;
+             state != PW_FILTER_STATE_PAUSED
+             && state != PW_FILTER_STATE_STREAMING
+             && state != PW_FILTER_STATE_ERROR
+             && tries < 10;
+             ++tries)
+        {
+            if (pw_thread_loop_timed_wait (threadLoop, 2) != 0)
+                break;
+            state = pw_filter_get_state (filter, &stateError);
+        }
+        pw_thread_loop_unlock (threadLoop);
+
+        if (state != PW_FILTER_STATE_PAUSED && state != PW_FILTER_STATE_STREAMING)
+        {
+            lastError = juce::String ("PipeWire filter did not connect: ")
+                        + (stateError != nullptr ? stateError : "timeout");
+            close();
+            return lastError;
+        }
+    }
+
     isDeviceOpen.store (true, std::memory_order_release);
     lastError.clear();
 
@@ -371,6 +418,13 @@ void PipeWireAudioIODevice::onProcess (struct spa_io_position* position) noexcep
             callbackInPointers.getRawDataPointer(),  numInputChannels,
             callbackOutPointers.getRawDataPointer(), numOutputChannels,
             (int) n, {});
+}
+
+void PipeWireAudioIODevice::onFilterStateChanged() noexcept
+{
+    // Wake open()'s bounded wait; it re-reads pw_filter_get_state for the truth.
+    if (threadLoop != nullptr)
+        pw_thread_loop_signal (threadLoop, false);
 }
 
 // ----- self-test -------------------------------------------------------------

@@ -94,6 +94,10 @@ public:
     // callback lock.
     void onProcess (struct spa_io_position* position) noexcept;
 
+    // pw_filter state-change entry point (C trampoline in the .cpp). Runs on the
+    // thread loop; wakes open()'s bounded wait so it can read the resolved state.
+    void onFilterStateChanged() noexcept;
+
 private:
     const juce::String displayName;
 

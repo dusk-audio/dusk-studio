@@ -70,6 +70,15 @@ void onCoreDone (void* data, uint32_t id, int seq)
         pw_main_loop_quit (r.loop);
 }
 
+void onCoreError (void* data, uint32_t /*id*/, int /*seq*/, int /*res*/, const char* /*message*/)
+{
+    // A fatal core error means no matching done will arrive; quit the loop so the
+    // synchronous roundtrip can't hang waiting for a sync it will never get.
+    auto& r = *static_cast<ScanResult*> (data);
+    if (r.loop != nullptr)
+        pw_main_loop_quit (r.loop);
+}
+
 // Zero-init + field assignment rather than C99 designated initializers, which
 // are a C++20 feature (the project is C++17 -Werror).
 pw_registry_events makeRegistryEvents()
@@ -85,6 +94,7 @@ pw_core_events makeCoreEvents()
     pw_core_events e {};
     e.version = PW_VERSION_CORE_EVENTS;
     e.done    = onCoreDone;
+    e.error   = onCoreError;
     return e;
 }
 
@@ -109,6 +119,14 @@ void enumerateNodes (ScanResult& result)
     if (core == nullptr) { pw_context_destroy (context); pw_main_loop_destroy (result.loop); result.loop = nullptr; return; }
 
     auto* registry = pw_core_get_registry (core, PW_VERSION_REGISTRY, 0);
+    if (registry == nullptr)
+    {
+        pw_core_disconnect (core);
+        pw_context_destroy (context);
+        pw_main_loop_destroy (result.loop);
+        result.loop = nullptr;
+        return;
+    }
 
     spa_hook registryHook {};
     spa_hook coreHook {};

@@ -2018,7 +2018,7 @@ If the disconnect happened during a take, the WAV that was being written is comm
 
 If the interface saved in your settings is held by another application when Dusk Studio launches — PipeWire or the JACK/PipeWire server, another DAW (Ardour, Reaper), a screen recorder, or browser audio holding the device in exclusive mode — Dusk Studio can't open it. Rather than load a silent, dead session, it recovers and tells you what happened:
 
-- It tries the PipeWire backend (which reaches your interface through the graph even while the raw device is held), then the next available device.
+- It tries the PipeWire backend, then the next available device. PipeWire can still reach an interface that another PipeWire client is using, since they share the graph; but if something holds the raw ALSA device exclusively (a JACK server, or an app talking to the hardware directly), PipeWire is locked out too and the fallback moves on to the next device.
 - If that lands on a **different** working device, you keep working and see *"Your saved audio device … could not be opened … audio has switched to …"*. Your saved device is **not** changed — it's tried again on the next launch once you free it.
 - If nothing opens, you get a clear warning: the playhead and meters won't move and recording is disabled until a device is available.
 
