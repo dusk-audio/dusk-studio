@@ -28,17 +28,28 @@ jobs:
           persist-credentials: false
 
       - name: Install Linux build deps
+        # ports.ubuntu.com (the arm64 archive) is under-resourced and regularly
+        # unreachable from GitHub's ARM runners on both IPv6 and IPv4, redding
+        # the build on an otherwise-clean commit. Swap it for a high-bandwidth
+        # mirror (MIT), force IPv4, and retry so a mirror hiccup doesn't fail CI.
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config \
-            libasound2-dev libjack-jackd2-dev libmp3lame-dev \
-            ladspa-sdk \
-            libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev \
-            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
-            libxinerama-dev libxrandr-dev libxrender-dev libxss-dev \
-            libwebkit2gtk-4.0-dev libglu1-mesa-dev xvfb \
-            libwayland-dev libxkbcommon-dev libdecor-0-dev
+          sudo find /etc/apt/ -type f \( -name "*.list" -o -name "*.sources" \) \
+            -exec sed -i 's|ports.ubuntu.com|mirrors.mit.edu|g' {} +
+          echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4 >/dev/null
+          ok=0
+          for i in 1 2 3; do
+            sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+              build-essential cmake ninja-build pkg-config \
+              libasound2-dev libjack-jackd2-dev libmp3lame-dev \
+              ladspa-sdk \
+              libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev \
+              libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+              libxinerama-dev libxrandr-dev libxrender-dev libxss-dev \
+              libwebkit2gtk-4.0-dev libglu1-mesa-dev xvfb \
+              libwayland-dev libxkbcommon-dev libdecor-0-dev && { ok=1; break; }
+            echo "apt attempt $i failed; retrying in 20s"; sleep 20
+          done
+          [ "$ok" = 1 ] || { echo "apt failed after 3 attempts"; exit 1; }
 
       - name: Clone JUCE (Dusk-owned Wayland mirror, pinned)
         # Same pinned Dusk-owned mirror snapshot as linux-build.yml. The

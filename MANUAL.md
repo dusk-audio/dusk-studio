@@ -73,7 +73,7 @@ Open **Settings → Audio…**. Choose your interface, sample rate, and block si
 
 ![Audio device panel with a real interface selected.](docs/images/qg-02-audio-settings.png)
 
-On Linux, PipeWire and JACK both appear as "JACK"; pick whichever owns your interface. On macOS, both Core Audio devices and any AVB / aggregate devices show up. On Windows, ASIO drivers appear ahead of WASAPI.
+On Linux, the graph appears as "PipeWire" and raw hardware as "ALSA"; pick whichever owns your interface. On macOS, both Core Audio devices and any AVB / aggregate devices show up. On Windows, ASIO drivers appear ahead of WASAPI.
 
 If your interface has more than two inputs, the channel pickers on each track's input block will populate automatically; no extra routing dialog is needed.
 
@@ -318,7 +318,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 
 ## System requirements
 
-- **Linux**: PipeWire (recommended) or JACK or ALSA. JUCE 8's JACK backend drives PipeWire transparently. An X11 display is required: on a Wayland desktop this means XWayland (present and enabled by default on GNOME and KDE; compositors like sway, niri and labwc can run without it — enable it there, or Dusk Studio will refuse to start with a message pointing here).
+- **Linux**: PipeWire (recommended) or ALSA. Dusk Studio talks to the PipeWire graph directly through its own backend, so the client shows up as "Dusk Studio" and reports its node latency to the graph; ALSA reaches the raw hardware for exclusive low-latency use. An X11 display is required: on a Wayland desktop this means XWayland (present and enabled by default on GNOME and KDE; compositors like sway, niri and labwc can run without it — enable it there, or Dusk Studio will refuse to start with a message pointing here).
 - **macOS**: 14.4 (Sonoma) or later for the out-of-process plugin sandbox; older macOS still runs plugins in-process.
 - **Windows**: Windows 10 or later, ASIO driver recommended.
 
@@ -422,7 +422,7 @@ Open **Settings → Audio…** to choose your audio device. The panel is divided
 
 ### Audio
 
-- **Device**: lists every backend driver Dusk Studio detected. On Linux, PipeWire and JACK appear as "JACK"; ALSA devices appear separately. On Windows, ASIO is preferred and selected by default when an ASIO driver is present; if none is installed, Dusk Studio falls back to "Windows Audio (Exclusive Mode)" for low latency, then shared "Windows Audio", then "DirectSound". Install your interface's ASIO driver (or ASIO4ALL) for best latency. Changes apply immediately — there is no Save button — and the device you pick is remembered across restarts (per machine, not per session).
+- **Device**: lists every backend driver Dusk Studio detected. On Linux, PipeWire graph nodes appear under "PipeWire"; ALSA devices appear separately. On Windows, ASIO is preferred and selected by default when an ASIO driver is present; if none is installed, Dusk Studio falls back to "Windows Audio (Exclusive Mode)" for low latency, then shared "Windows Audio", then "DirectSound". Install your interface's ASIO driver (or ASIO4ALL) for best latency. Changes apply immediately — there is no Save button — and the device you pick is remembered across restarts (per machine, not per session).
 - **Sample rate**: any rate the device supports. 44.1 kHz, 48 kHz, 88.2 kHz, 96 kHz are common. A session remembers the rate its audio was made at: opening it tries to switch the device to that rate automatically, and Dusk Studio warns if it can't (or if you change the rate mid-session) — recorded tracks play at the wrong speed and pitch until the device runs at the session's rate.
 - **Block size**: smaller blocks give lower latency but cost more CPU per sample. 256 or 512 samples is a good starting point.
 - **Periods (Linux/ALSA only)**: how many buffers the ALSA driver keeps in flight. Two is the lowest-latency safe value; three or more is more robust on a busy machine.
@@ -2018,7 +2018,7 @@ If the disconnect happened during a take, the WAV that was being written is comm
 
 If the interface saved in your settings is held by another application when Dusk Studio launches — PipeWire or the JACK/PipeWire server, another DAW (Ardour, Reaper), a screen recorder, or browser audio holding the device in exclusive mode — Dusk Studio can't open it. Rather than load a silent, dead session, it recovers and tells you what happened:
 
-- It tries the JACK / PipeWire backend (which reaches your interface even while the raw device is held), then the next available device.
+- It tries the PipeWire backend, then the next available device. PipeWire can still reach an interface that another PipeWire client is using, since they share the graph; but if something holds the raw ALSA device exclusively (a JACK server, or an app talking to the hardware directly), PipeWire is locked out too and the fallback moves on to the next device.
 - If that lands on a **different** working device, you keep working and see *"Your saved audio device … could not be opened … audio has switched to …"*. Your saved device is **not** changed — it's tried again on the next launch once you free it.
 - If nothing opens, you get a clear warning: the playhead and meters won't move and recording is disabled until a device is available.
 
