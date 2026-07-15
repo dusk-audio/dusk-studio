@@ -76,11 +76,22 @@ jobs:
             modules/juce_dsp/native/juce_SIMDNativeOps_sse.h || {
             echo "ERROR: pinned JUCE missing the SIMDNativeOps<long long> alias." >&2; exit 1; }
 
-      - name: Clone Dusk plugins (donor DSP)
+      - name: Clone Dusk plugins (donor DSP, pinned)
+        # Pinned donor SHA (mirrors linux-release.yml). main consumes source
+        # files the donor's main HEAD has since relocated, so an unpinned
+        # clone breaks configure. Bump every workflow's DONOR_REV together.
+        env:
+          DONOR_REPO: https://github.com/dusk-audio/dusk-audio-plugins.git
+          DONOR_REV: 69f04318e3b7063e382c80ac1cde2388170e668b
         run: |
-          git clone --depth 1 \
-            https://github.com/dusk-audio/dusk-audio-plugins.git \
-            "${RUNNER_TEMP}/plugins-main"
+          set -euo pipefail
+          git init -q "${RUNNER_TEMP}/plugins-main"
+          cd "${RUNNER_TEMP}/plugins-main"
+          git remote add origin "${DONOR_REPO}"
+          git fetch --depth 1 origin "${DONOR_REV}"
+          git checkout -q "${DONOR_REV}"
+          [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
+            echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
 
       - name: Configure (Release)
         run: |
@@ -169,11 +180,22 @@ jobs:
             modules/juce_dsp/native/juce_SIMDNativeOps_sse.h || {
             echo "ERROR: pinned JUCE missing the SIMDNativeOps<long long> alias." >&2; exit 1; }
 
-      - name: Clone Dusk plugins (donor DSP)
+      - name: Clone Dusk plugins (donor DSP, pinned)
+        # Pinned donor SHA (mirrors linux-release.yml). main consumes source
+        # files the donor's main HEAD has since relocated, so an unpinned
+        # clone breaks configure. Bump every workflow's DONOR_REV together.
+        env:
+          DONOR_REPO: https://github.com/dusk-audio/dusk-audio-plugins.git
+          DONOR_REV: 69f04318e3b7063e382c80ac1cde2388170e668b
         run: |
-          git clone --depth 1 \
-            https://github.com/dusk-audio/dusk-audio-plugins.git \
-            "${RUNNER_TEMP}/plugins-main"
+          set -euo pipefail
+          git init -q "${RUNNER_TEMP}/plugins-main"
+          cd "${RUNNER_TEMP}/plugins-main"
+          git remote add origin "${DONOR_REPO}"
+          git fetch --depth 1 origin "${DONOR_REV}"
+          git checkout -q "${DONOR_REV}"
+          [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
+            echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
 
       - name: Configure tests
         run: |
