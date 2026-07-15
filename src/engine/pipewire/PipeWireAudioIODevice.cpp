@@ -127,13 +127,24 @@ void onGraphGlobal (void* data, uint32_t id, uint32_t /*perm*/, const char* type
         const char* dir       = spa_dict_lookup (props, PW_KEY_PORT_DIRECTION);
         if (nodeIdStr == nullptr || dir == nullptr)
             return;
+        const bool isOut = std::strcmp (dir, "out") == 0;
+        const bool isIn  = std::strcmp (dir, "in")  == 0;
+        if (! isOut && ! isIn)
+            return;
+        const char* ch = spa_dict_lookup (props, PW_KEY_AUDIO_CHANNEL);
+        const char* nm = spa_dict_lookup (props, PW_KEY_PORT_NAME);
+        const juce::String name = nm != nullptr ? juce::String::fromUTF8 (nm) : juce::String();
+        // Link only audio ports: device audio ports carry audio.channel; our own
+        // DSP ports don't but are named playback_/capture_. Everything else
+        // (MIDI / control / notify ports) must not be linked.
+        if (ch == nullptr && ! name.startsWith ("playback_") && ! name.startsWith ("capture_"))
+            return;
         GraphPort p;
         p.nodeId   = (juce::uint32) juce::String (nodeIdStr).getLargeIntValue();
         p.portId   = id;
-        p.isOutput = std::strcmp (dir, "out") == 0;
-        if (const char* nm = spa_dict_lookup (props, PW_KEY_PORT_NAME))
-            p.name = juce::String::fromUTF8 (nm);
-        if (const char* ch = spa_dict_lookup (props, PW_KEY_AUDIO_CHANNEL))
+        p.isOutput = isOut;
+        p.name     = name;
+        if (ch != nullptr)
             p.channel = juce::String::fromUTF8 (ch);
         s.ports.add (p);
     }
@@ -470,6 +481,12 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
     // chosen device ourselves. Once linked, the graph drives the node (STREAMING)
     // and onProcess starts firing.
     const int nLinks = linkToHardware();
+    if (nLinks <= 0)
+    {
+        lastError = "PipeWire: could not link all device ports";
+        close();
+        return lastError;
+    }
 
     // Wait for the links to drive the node to STREAMING - that state IS the
     // confirmation the links bound and the graph is running. If it never reaches
@@ -532,7 +549,12 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
 
 int PipeWireAudioIODevice::linkToHardware()
 {
+    // Filter accessors touch objects on the thread loop; briefly lock for them
+    // (but NOT across the registry roundtrip below, which would stall the RT
+    // thread for the whole sync).
+    pw_thread_loop_lock (threadLoop);
     const juce::uint32 ourNode = pw_filter_get_node_id (filter);
+    pw_thread_loop_unlock (threadLoop);
     if (ourNode == (juce::uint32) SPA_ID_INVALID)
         return 0;
 
@@ -588,31 +610,38 @@ int PipeWireAudioIODevice::linkToHardware()
     const auto srcOut = sourceNode != (juce::uint32) SPA_ID_INVALID ? orderedPortIds (s, sourceNode, true)
                                                                     : juce::Array<juce::uint32>();
 
-    auto* filterCore = pw_filter_get_core (filter);
-    if (filterCore == nullptr)
-        return 0;
+    const int wantLinks = std::min (ourOut.size(), sinkIn.size())
+                        + std::min (srcOut.size(), ourIn.size());
 
     int made = 0;
     pw_thread_loop_lock (threadLoop);
-    auto makeLink = [&] (juce::uint32 outNode, juce::uint32 outPort,
-                         juce::uint32 inNode,  juce::uint32 inPort)
+    auto* filterCore = pw_filter_get_core (filter);
+    if (filterCore != nullptr)
     {
-        auto* lp = pw_properties_new (nullptr, nullptr);
-        pw_properties_setf (lp, PW_KEY_LINK_OUTPUT_NODE, "%u", outNode);
-        pw_properties_setf (lp, PW_KEY_LINK_OUTPUT_PORT, "%u", outPort);
-        pw_properties_setf (lp, PW_KEY_LINK_INPUT_NODE,  "%u", inNode);
-        pw_properties_setf (lp, PW_KEY_LINK_INPUT_PORT,  "%u", inPort);
-        auto* proxy = (pw_proxy*) pw_core_create_object (filterCore, "link-factory",
-            PW_TYPE_INTERFACE_Link, PW_VERSION_LINK, &lp->dict, 0);
-        pw_properties_free (lp);
-        if (proxy != nullptr) { linkProxies.add (proxy); ++made; }
-    };
-    for (int i = 0; i < std::min (ourOut.size(), sinkIn.size()); ++i)
-        makeLink (ourNode, ourOut.getUnchecked (i), sinkNode,   sinkIn.getUnchecked (i));
-    for (int j = 0; j < std::min (srcOut.size(), ourIn.size()); ++j)
-        makeLink (sourceNode, srcOut.getUnchecked (j), ourNode, ourIn.getUnchecked (j));
+        auto makeLink = [&] (juce::uint32 outNode, juce::uint32 outPort,
+                             juce::uint32 inNode,  juce::uint32 inPort)
+        {
+            auto* lp = pw_properties_new (nullptr, nullptr);
+            pw_properties_setf (lp, PW_KEY_LINK_OUTPUT_NODE, "%u", outNode);
+            pw_properties_setf (lp, PW_KEY_LINK_OUTPUT_PORT, "%u", outPort);
+            pw_properties_setf (lp, PW_KEY_LINK_INPUT_NODE,  "%u", inNode);
+            pw_properties_setf (lp, PW_KEY_LINK_INPUT_PORT,  "%u", inPort);
+            auto* proxy = (pw_proxy*) pw_core_create_object (filterCore, "link-factory",
+                PW_TYPE_INTERFACE_Link, PW_VERSION_LINK, &lp->dict, 0);
+            pw_properties_free (lp);
+            if (proxy != nullptr) { linkProxies.add (proxy); ++made; }
+        };
+        for (int i = 0; i < std::min (ourOut.size(), sinkIn.size()); ++i)
+            makeLink (ourNode, ourOut.getUnchecked (i), sinkNode,   sinkIn.getUnchecked (i));
+        for (int j = 0; j < std::min (srcOut.size(), ourIn.size()); ++j)
+            makeLink (sourceNode, srcOut.getUnchecked (j), ourNode, ourIn.getUnchecked (j));
+    }
     pw_thread_loop_unlock (threadLoop);
-    return made;
+
+    // A partial link set (a proxy failed, or no ports matched) would route only
+    // some channels; signal failure so open() rejects it rather than opening a
+    // half-wired device.
+    return (wantLinks > 0 && made == wantLinks) ? made : -1;
 }
 
 void PipeWireAudioIODevice::close()

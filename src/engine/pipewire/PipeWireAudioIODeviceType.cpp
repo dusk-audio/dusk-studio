@@ -44,6 +44,7 @@ struct ScanResult
     pw_main_loop* loop = nullptr;
     int  syncSeq = 0;
     bool haveSync = false;
+    bool completed = false;   // the matching core.done arrived (scan is complete)
 };
 
 void onRegistryGlobal (void* data, uint32_t id, uint32_t /*permissions*/,
@@ -110,7 +111,10 @@ void onCoreDone (void* data, uint32_t id, int seq)
     // The graph delivers every existing registry global BEFORE answering our
     // sync, so once this matching done arrives the enumeration is complete.
     if (id == PW_ID_CORE && r.haveSync && seq == r.syncSeq)
+    {
+        r.completed = true;
         pw_main_loop_quit (r.loop);
+    }
 }
 
 void onCoreError (void* data, uint32_t /*id*/, int /*seq*/, int /*res*/, const char* /*message*/)
@@ -205,7 +209,10 @@ void enumerateNodes (ScanResult& result)
     pw_main_loop_destroy (result.loop);
     result.loop = nullptr;
 
-    finalizeScan (result);
+    // Only publish devices from a complete scan; a core error or the timeout
+    // quits the loop early with partial data, which would list wrong counts.
+    if (result.completed)
+        finalizeScan (result);
 }
 } // namespace
 
