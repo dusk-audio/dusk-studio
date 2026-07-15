@@ -184,6 +184,10 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
     // port target, older policy the node target, so we set both.
     if (wantOutput)      pw_properties_set (props, PW_KEY_TARGET_OBJECT, outputId.toRawUTF8());
     else if (wantInput)  pw_properties_set (props, PW_KEY_TARGET_OBJECT, inputId.toRawUTF8());
+    // Strict target: don't let the session manager fall back to a different node
+    // when the requested one is unavailable. The connect then fails to reach
+    // PAUSED (see open()'s wait below) instead of silently linking elsewhere.
+    pw_properties_set (props, PW_KEY_NODE_DONT_RECONNECT, "true");
 
     filter = pw_filter_new_simple (pw_thread_loop_get_loop (threadLoop),
                                     "Dusk Studio", props, &kFilterEvents, this);
@@ -246,7 +250,7 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
 
     // Initialise the RT-thread state before the data thread can run - once
     // started, onProcess may read these on the very first cycle.
-    lastXrun = 0;
+    lastXrunRecovering = false;
     xrunCount.store (0, std::memory_order_relaxed);
 
     if (const int rc = pw_thread_loop_start (threadLoop); rc < 0)
@@ -379,11 +383,16 @@ void PipeWireAudioIODevice::onProcess (struct spa_io_position* position) noexcep
     if (n == 0)
         return;
 
-    // Surface the graph's accumulated xrun as an event count for the UI.
+    // Count one xrun per recovery episode: increment on the rising edge of the
+    // XRUN_RECOVER flag, not on every cycle it stays set (a recovery can span
+    // several cycles). clock.xrun is only an estimated duration, so the flag is
+    // the reliable event signal.
     if (position != nullptr)
     {
-        const juce::uint64 x = position->clock.xrun;
-        if (x > lastXrun) { xrunCount.fetch_add (1, std::memory_order_relaxed); lastXrun = x; }
+        const bool recovering = (position->clock.flags & SPA_IO_CLOCK_FLAG_XRUN_RECOVER) != 0;
+        if (recovering && ! lastXrunRecovering)
+            xrunCount.fetch_add (1, std::memory_order_relaxed);
+        lastXrunRecovering = recovering;
     }
 
     // A cycle larger than our scratch ceiling can't be serviced safely without

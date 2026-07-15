@@ -318,7 +318,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 
 ## System requirements
 
-- **Linux**: PipeWire (recommended) or ALSA. Dusk Studio talks to the PipeWire graph directly through its own backend, so the client shows up as "Dusk Studio" with correct latency reporting; ALSA reaches the raw hardware for exclusive low-latency use. An X11 display is required: on a Wayland desktop this means XWayland (present and enabled by default on GNOME and KDE; compositors like sway, niri and labwc can run without it — enable it there, or Dusk Studio will refuse to start with a message pointing here).
+- **Linux**: PipeWire (recommended) or ALSA. Dusk Studio talks to the PipeWire graph directly through its own backend, so the client shows up as "Dusk Studio" and reports its node latency to the graph; ALSA reaches the raw hardware for exclusive low-latency use. An X11 display is required: on a Wayland desktop this means XWayland (present and enabled by default on GNOME and KDE; compositors like sway, niri and labwc can run without it — enable it there, or Dusk Studio will refuse to start with a message pointing here).
 - **macOS**: 14.4 (Sonoma) or later for the out-of-process plugin sandbox; older macOS still runs plugins in-process.
 - **Windows**: Windows 10 or later, ASIO driver recommended.
 

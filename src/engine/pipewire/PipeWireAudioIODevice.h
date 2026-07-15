@@ -126,7 +126,7 @@ private:
     int    inputLatency     = 0;
     int    numInputChannels  = 0;
     int    numOutputChannels = 0;
-    juce::uint64 lastXrun    = 0;     // last-seen clock.xrun (RT thread only)
+    bool         lastXrunRecovering = false;  // XRUN_RECOVER edge state (RT thread only)
 
     juce::BigInteger currentOutputChannels, currentInputChannels;
 

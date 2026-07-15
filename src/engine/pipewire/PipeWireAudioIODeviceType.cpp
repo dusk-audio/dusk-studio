@@ -6,6 +6,7 @@
 
 #include <mutex>
 #include <cstring>
+#include <ctime>
 
 namespace duskstudio
 {
@@ -79,6 +80,15 @@ void onCoreError (void* data, uint32_t /*id*/, int /*seq*/, int /*res*/, const c
         pw_main_loop_quit (r.loop);
 }
 
+void onEnumTimeout (void* data, uint64_t /*expirations*/)
+{
+    // Backstop the roundtrip: a server that neither answers our sync nor errors
+    // would otherwise block the message thread forever.
+    auto& r = *static_cast<ScanResult*> (data);
+    if (r.loop != nullptr)
+        pw_main_loop_quit (r.loop);
+}
+
 // Zero-init + field assignment rather than C99 designated initializers, which
 // are a C++20 feature (the project is C++17 -Werror).
 pw_registry_events makeRegistryEvents()
@@ -136,8 +146,15 @@ void enumerateNodes (ScanResult& result)
     result.syncSeq  = pw_core_sync (core, PW_ID_CORE, 0);
     result.haveSync = true;
 
+    auto* pwLoop = pw_main_loop_get_loop (result.loop);
+    auto* timer  = pw_loop_add_timer (pwLoop, onEnumTimeout, &result);
+    struct timespec timeout {};
+    timeout.tv_sec = 2;
+    pw_loop_update_timer (pwLoop, timer, &timeout, nullptr, false);
+
     pw_main_loop_run (result.loop);
 
+    pw_loop_destroy_source (pwLoop, timer);
     spa_hook_remove (&registryHook);
     spa_hook_remove (&coreHook);
     pw_proxy_destroy ((pw_proxy*) registry);
