@@ -28,11 +28,13 @@ jobs:
           persist-credentials: false
 
       - name: Install Linux build deps
-        # ports.ubuntu.com (the arm64 mirror) intermittently drops IPv6
-        # connectivity on GitHub's ARM runners, failing apt with "Network is
-        # unreachable" on the 2620:2d:: addresses. Force IPv4 to skip them and
-        # retry so a transient mirror hiccup doesn't red the whole build.
+        # ports.ubuntu.com (the arm64 archive) is under-resourced and regularly
+        # unreachable from GitHub's ARM runners on both IPv6 and IPv4, redding
+        # the build on an otherwise-clean commit. Swap it for a high-bandwidth
+        # mirror (MIT), force IPv4, and retry so a mirror hiccup doesn't fail CI.
         run: |
+          sudo find /etc/apt/ -type f \( -name "*.list" -o -name "*.sources" \) \
+            -exec sed -i 's|ports.ubuntu.com|mirrors.mit.edu|g' {} +
           echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4 >/dev/null
           ok=0
           for i in 1 2 3; do
