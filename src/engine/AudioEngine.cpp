@@ -3937,7 +3937,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                 if (stereoTrackInput)
                 {
                     const int rIdxMon = session.resolveInputRForTrack (t);
-                    if (rIdxMon >= 0 && rIdxMon < numInputChannels)
+                    if (rIdxMon >= 0 && rIdxMon < numInputChannels
+                        && inputChannelData[(size_t) rIdxMon] != nullptr)
                         juce::FloatVectorOperations::add (playbackScratchR[(size_t) t].data(),
                                                             inputChannelData[(size_t) rIdxMon],
                                                             numSamples);
