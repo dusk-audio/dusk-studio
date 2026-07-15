@@ -82,7 +82,14 @@ jobs:
             echo "Tag ${GITHUB_REF_NAME} != VERSION v$(tr -d '[:space:]' < VERSION)"; exit 1; }
 
       - name: Install Linux build deps + packaging tools
+        # The arm64 matrix arm pulls from ports.ubuntu.com, which is often
+        # unreachable from GitHub's ARM runners on both IPv6 and IPv4; swap it
+        # for the MIT mirror and force IPv4 (a no-op on the amd64 arm, which
+        # uses archive.ubuntu.com). Mirrors raspberry-pi-build.yml.
         run: |
+          sudo find /etc/apt/ -type f \( -name "*.list" -o -name "*.sources" \) \
+            -exec sed -i 's|ports.ubuntu.com|mirrors.mit.edu|g' {} +
+          echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4 >/dev/null
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkg-config \
