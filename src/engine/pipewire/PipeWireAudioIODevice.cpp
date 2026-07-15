@@ -500,11 +500,21 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
     // Adopt the graph's real quantum: PipeWire runs the graph at its own block
     // size (our request is only advisory), so the engine must prepare for what
     // onProcess actually delivers - otherwise its oversized-block guard clears
-    // every block to silence.
+    // every block to silence. A quantum above maxQuantum is itself dropped by
+    // onProcess, so treat "no usable quantum" as a failed open rather than
+    // silently keeping the requested size.
     for (int t = 0; t < 100 && negotiatedQuantum.load (std::memory_order_relaxed) == 0; ++t)
         std::this_thread::sleep_for (std::chrono::milliseconds (2));
-    if (const int nq = negotiatedQuantum.load (std::memory_order_relaxed); nq > 0)
-        currentBlockSize = nq;
+    const int nq = negotiatedQuantum.load (std::memory_order_relaxed);
+    if (nq <= 0 || nq > maxQuantum)
+    {
+        lastError = "PipeWire delivered no usable quantum (" + juce::String (nq) + ")";
+        close();
+        return lastError;
+    }
+    currentBlockSize = nq;
+    if (wantOutput) outputLatency = nq;
+    if (wantInput)  inputLatency  = nq;
 
     isDeviceOpen.store (true, std::memory_order_release);
     lastError.clear();
