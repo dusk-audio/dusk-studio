@@ -18,7 +18,7 @@ namespace duskstudio
 namespace
 {
 template <typename T>
-inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, hi); }
+inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
 }
 
 WaveformDisplay::WaveformDisplay (MasteringPlayer& p)

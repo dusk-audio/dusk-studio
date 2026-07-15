@@ -8,7 +8,7 @@ namespace duskstudio
 namespace
 {
 template <typename T>
-inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, hi); }
+inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
 constexpr float kFreqMinHz = 20.0f;
 constexpr float kFreqMaxHz = 20000.0f;
 constexpr float kCurveDbRange = 18.0f;   // ±18 dB on the vertical axis

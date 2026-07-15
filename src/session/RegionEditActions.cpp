@@ -867,7 +867,7 @@ bool ReverseRegionAction::perform()
         // numChannels and blow up the buffer allocation. Cap to 1-2 (the app is
         // stereo-max) and to what the reader actually has.
         const int chs = std::clamp ((int) beforeState.numChannels,
-                                     1, std::min (2, (int) rdr->numChannels));
+                                     1, std::max (1, std::min (2, (int) rdr->numChannels)));
         const std::int64_t len = std::clamp<std::int64_t> (
             beforeState.lengthInSamples, 1, std::numeric_limits<int>::max());
         const double sr   = rdr->sampleRate;

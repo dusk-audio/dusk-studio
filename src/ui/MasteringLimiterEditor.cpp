@@ -8,7 +8,7 @@ namespace duskstudio
 namespace
 {
 template <typename T>
-inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, hi); }
+inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
 constexpr float kThreshMinDb  = -20.0f;
 constexpr float kThreshMaxDb  =   0.0f;
 constexpr float kCeilingMinDb = -12.0f;

@@ -15,7 +15,7 @@ namespace
 {
 // clamp with jlimit's argument order (lo, hi, value).
 template <typename T>
-inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, hi); }
+inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
 
 void styleSmallKnob (juce::Slider& s, double minV, double maxV, double midPt,
                       double initialV, juce::Colour col, const juce::String& suffix,

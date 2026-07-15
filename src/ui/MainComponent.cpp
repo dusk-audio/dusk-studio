@@ -48,7 +48,7 @@ namespace duskstudio
 namespace
 {
 template <typename T>
-inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, hi); }
+inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
 // UTF-8-safe bridges across the RecentSessions (std::filesystem) boundary -
 // native narrow conversions lose non-ASCII paths on Windows.
 juce::File toFile (const std::filesystem::path& p)

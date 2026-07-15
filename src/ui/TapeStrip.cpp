@@ -19,7 +19,7 @@ namespace
 {
 // clamp with jlimit's argument order (lo, hi, value).
 template <typename T>
-inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, hi); }
+inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
 
 // Process-wide static modal for the tape strip's text-input dialogs
 // (marker rename, audio region label, MIDI region label). One in-

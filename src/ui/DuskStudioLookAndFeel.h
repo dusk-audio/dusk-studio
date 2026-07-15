@@ -150,7 +150,7 @@ public:
             // constrainedWithin only repositions (never resizes) - a resize
             // would shrink the box below the width wrappedHeight used and
             // re-introduce clipping.
-            w = std::clamp (w, 1, parentArea.getWidth());
+            w = std::clamp (w, 1, std::max (1, parentArea.getWidth()));
             const int h = std::min (wrappedHeight (w), parentArea.getHeight());
             // Single line: centre vertically in the row. Wrapped (taller than
             // the row): start at the row top and grow downward over the
@@ -165,7 +165,7 @@ public:
         // tip in a top band the height of the original menu row.
         constexpr int kMenuRowH = 28;
         const int w = std::clamp (std::min (textW, std::max (60, parentArea.getWidth() - 16)),
-                                   1, parentArea.getWidth());
+                                   1, std::max (1, parentArea.getWidth()));
         const int h = std::min (wrappedHeight (w), parentArea.getHeight());
         const int x = parentArea.getCentreX() - w / 2;
         const int y = parentArea.getY() + std::max (0, (kMenuRowH - h) / 2);

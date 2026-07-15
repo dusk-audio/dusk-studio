@@ -16,7 +16,7 @@ namespace duskstudio
 namespace
 {
 template <typename T>
-inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, hi); }
+inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
 // Process-wide static modal for the piano roll's text-input dialogs
 // (region label rename). Mirrors the sharedAlertModal pattern in
 // PluginPickerHelpers - one in-window EmbeddedModal at a time, no
