@@ -70,12 +70,24 @@ jobs:
             https://github.com/juce-framework/JUCE.git \
             "${RUNNER_TEMP}/JUCE"
 
-      - name: Clone Dusk plugins (donor DSP)
+      - name: Clone Dusk plugins (donor DSP, pinned)
+        # Pinned to a specific donor SHA, mirroring linux-release.yml. An
+        # unpinned clone of main HEAD makes old tags non-reproducible: a later
+        # donor commit relocated UniversalCompressorDSP.cpp and broke this
+        # tag's configure. To move the donor forward, bump DONOR_REV.
         shell: bash
+        env:
+          DONOR_REPO: https://github.com/dusk-audio/dusk-audio-plugins.git
+          DONOR_REV: 69f04318e3b7063e382c80ac1cde2388170e668b
         run: |
-          git clone --depth 1 \
-            https://github.com/dusk-audio/dusk-audio-plugins.git \
-            "${RUNNER_TEMP}/plugins"
+          set -euo pipefail
+          git init -q "${RUNNER_TEMP}/plugins"
+          cd "${RUNNER_TEMP}/plugins"
+          git remote add origin "${DONOR_REPO}"
+          git fetch --depth 1 origin "${DONOR_REV}"
+          git checkout -q "${DONOR_REV}"
+          [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
+            echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
 
       - name: Refresh Patreon supporters (best-effort)
         # See linux-release.yml for the rationale. Bakes the live list into the
