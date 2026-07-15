@@ -182,8 +182,9 @@ pw_core_events makeGraphCoreEvents()
 const pw_registry_events kGraphRegistryEvents = makeGraphRegistryEvents();
 const pw_core_events     kGraphCoreEvents     = makeGraphCoreEvents();
 
-// Registry ids of a node's ports in one direction, ordered by port id (which
-// follows creation / channel order), so link N maps our channel N to theirs.
+// Registry ids of a node's ports in one direction, ordered by channelOrderKey
+// (semantic audio.channel, else port-name index) so link N maps our channel N
+// to the device's channel N regardless of registry id assignment.
 juce::Array<juce::uint32> orderedPortIds (const GraphScan& s, juce::uint32 nodeId, bool isOutput)
 {
     juce::Array<GraphPort> matching;
@@ -325,7 +326,10 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
         PW_KEY_APP_NAME,         "Dusk Studio",
         PW_KEY_NODE_NAME,        "Dusk Studio",
         PW_KEY_NODE_LATENCY,     latency.toRawUTF8(),
-        PW_KEY_NODE_AUTOCONNECT, "true",
+        // We link to the target ourselves (linkToHardware), so keep the session
+        // manager's auto-link policy out of it - autoconnect would also try to
+        // link the node to the DEFAULT device, routing audio to the wrong place.
+        PW_KEY_NODE_AUTOCONNECT, "false",
         // A duplex filter is not a driver and, unlinked, is never scheduled -
         // it sits at PAUSED and on_process never fires. want-driver asks the
         // graph to group it with the hardware driver node so the cycle runs.
