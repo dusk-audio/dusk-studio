@@ -117,6 +117,7 @@ private:
     std::string testCompPerTrack();         // all 16 tracks under Opto produce identical output
     std::string testParallelMatchesSerial(); // worker-pool mix == serial mix within float-reassoc tol
     std::string testMidiPlayAlongMonitor();   // armed+IN MIDI track sounds live notes in Stopped AND Playing
+    std::string testAudioPlayAlongSends();    // IN audio track feeds its aux send in Stopped AND Playing
     std::string testBackendsOpenCleanly();
     std::string probeUMC1820AlsaFormat();   // explicitly open UMC1820 ALSA & report format
 
