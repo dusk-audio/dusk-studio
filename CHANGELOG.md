@@ -5,6 +5,21 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
+## [0.12.3] - 2026-07-15
+
+Beta patch on the 0.12 line: monitored inputs now feed their aux sends during
+playback.
+
+### Fixed
+
+- **Aux sends on a monitored input during playback.** With **IN** engaged an
+  audio track's live input reached the master dry but its aux sends went
+  silent the moment PLAY was pressed, returning only on Record - so a vocal
+  monitored with reverb lost the reverb while playing along, then got it back
+  on record. Live input now runs the full channel strip during playback, so
+  its sends (headphone reverb/delay while tracking) sound in every transport
+  state. The audio twin of the 0.12.1 live-play-along fix.
+
 ## [0.12.2] - 2026-07-12
 
 Beta patch on the 0.12 line: fixes a crash when bouncing, rendering stems,

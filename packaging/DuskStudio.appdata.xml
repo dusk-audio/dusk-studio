@@ -30,6 +30,11 @@
   <content_rating type="oars-1.1"/>
   <releases>
     <!-- scripts/bump-version.sh prepends new <release> entries here. -->
+    <release version="0.12.3" date="2026-07-15">
+      <description>
+        <p>Input monitoring now feeds aux sends during playback.</p>
+      </description>
+    </release>
     <release version="0.12.2" date="2026-07-12">
       <description>
         <p>Beta patch: fixes a mixdown/stems/freeze crash with CLAP (and VST3/LV2) plugin inserts.</p>
