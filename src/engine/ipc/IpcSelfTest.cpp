@@ -51,6 +51,10 @@ int runIpcSelfTest (const std::string& hostExecutablePath,
 
     for (int it = 0; it < iterations; ++it)
     {
+        // processBlockSync overwrites the buffer with the child's MIDI
+        // output; clear it so that never feeds back as the next input.
+        emptyMidi.clear();
+
         // Vary content so a buggy stub that returns a stale buffer
         // would fail the verify on subsequent iterations.
         for (int i = 0; i < numSamples; ++i)
@@ -211,6 +215,10 @@ int runIpcHostTest (const std::string& hostExecutablePath,
 
     for (int it = 0; it < iterations; ++it)
     {
+        // processBlockSync overwrites the buffer with the child's MIDI
+        // output; clear it so that never feeds back as the next input.
+        emptyMidi.clear();
+
         for (int i = 0; i < numSamples; ++i)
         {
             // White-ish content (low freq sine + small noise) so an EQ /
