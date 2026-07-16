@@ -194,7 +194,7 @@ bool DuskMultisampleProcessor::loadSf2File (const juce::File& sf2,
     // Cache the preset name list (cheap metadata parse, no sample
     // extraction) so the editor can offer a program switcher.
     sf2PresetNames.clear();
-    if (auto parsed = readSf2 (sf2); parsed.ok)
+    if (auto parsed = readSf2 (std::filesystem::u8path (sf2.getFullPathName().toStdString())); parsed.ok)
         for (const auto& p : parsed.presets)
             sf2PresetNames.add (p.name);
 

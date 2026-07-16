@@ -1,8 +1,7 @@
 #pragma once
 
-#include <juce_core/juce_core.h>
-
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -120,5 +119,5 @@ struct Sf2File
 // Parse an .sf2 file. On failure returns an Sf2File with ok=false and a
 // populated error string. Does NOT read sample PCM - only metadata + the
 // smpl chunk location.
-Sf2File readSf2(const juce::File& file);
+Sf2File readSf2(const std::filesystem::path& file);
 } // namespace duskstudio

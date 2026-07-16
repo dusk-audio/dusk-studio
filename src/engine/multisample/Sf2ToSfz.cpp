@@ -124,7 +124,7 @@ Sf2Conversion convertSf2Preset(const juce::File& sf2,
 {
     Sf2Conversion conv;
 
-    auto parsed = readSf2(sf2);
+    auto parsed = readSf2(std::filesystem::u8path(sf2.getFullPathName().toStdString()));
     if (! parsed.ok)
     {
         conv.error = parsed.error;
