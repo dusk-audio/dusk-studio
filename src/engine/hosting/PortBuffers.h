@@ -1,6 +1,8 @@
 #pragma once
 
-#include <juce_audio_basics/juce_audio_basics.h>   // MidiBuffer, AudioPlayHead::PositionInfo
+#include <juce_audio_basics/juce_audio_basics.h>   // AudioPlayHead::PositionInfo
+
+#include "../../foundation/MidiBuffer.h"
 
 namespace duskstudio::hosting
 {
@@ -10,7 +12,7 @@ namespace duskstudio::hosting
 // or locked on the audio thread. Channel arrays are `float* const*` (an array of
 // per-channel pointers), so mono / stereo / multi-out all use one shape.
 //
-// juce::MidiBuffer and AudioPlayHead::PositionInfo are the engine's existing
+// dusk::MidiBuffer and juce AudioPlayHead::PositionInfo are the engine's existing
 // currency for MIDI and transport; each host translates them into its own format
 // (VST3 Event, LV2 atom-midi, CLAP note events) internally.
 struct PortBuffers
@@ -35,8 +37,8 @@ struct PortBuffers
 
     // Optional MIDI. midiIn drives instrument / MIDI-effect inserts; midiOut
     // collects a plugin's emitted MIDI (null until a destination is wired).
-    const juce::MidiBuffer* midiIn  = nullptr;
-    juce::MidiBuffer*       midiOut = nullptr;
+    const dusk::MidiBuffer* midiIn  = nullptr;
+    dusk::MidiBuffer*       midiOut = nullptr;
 
     // Optional transport for tempo-synced plugins (null = not supplied).
     const juce::AudioPlayHead::PositionInfo* transport = nullptr;

@@ -39,7 +39,7 @@ public:
                   float* L, float* R, int numFrames,
                   const float* sidechainL = nullptr,
                   const float* sidechainR = nullptr,
-                  const juce::MidiBuffer* midiIn = nullptr,
+                  const dusk::MidiBuffer* midiIn = nullptr,
                   const juce::AudioPlayHead::PositionInfo* transport = nullptr) noexcept;
 
     int inputChannels()     const noexcept { return inChans; }

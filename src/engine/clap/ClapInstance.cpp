@@ -333,7 +333,7 @@ void ClapInstance::drainParamRing() noexcept
     }, (uint32_t) eventScratch.size());
 }
 
-void ClapInstance::appendMidiEvents (const juce::MidiBuffer& midi) noexcept
+void ClapInstance::appendMidiEvents (const dusk::MidiBuffer& midi) noexcept
 {
     if (! noteInPort) return;
     const uint32_t cap = (uint32_t) eventScratch.size();

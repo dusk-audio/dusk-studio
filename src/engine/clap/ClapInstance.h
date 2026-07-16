@@ -176,7 +176,7 @@ private:
 
     // Audio thread. Convert the block's MidiBuffer into note / raw-MIDI events
     // appended after the drained param changes.
-    void appendMidiEvents (const juce::MidiBuffer& midi) noexcept;
+    void appendMidiEvents (const dusk::MidiBuffer& midi) noexcept;
     uint32_t             eventCount = 0;
     clap_input_events_t  inEvents {};
 

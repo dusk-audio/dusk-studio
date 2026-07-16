@@ -29,10 +29,15 @@ private:
 };
 
 // One iterated event: the message view plus its sample offset within the block.
+// data / numBytes mirror JUCE's MidiMessageMetadata raw-byte fields so the same
+// iteration body (meta.data, meta.numBytes, meta.samplePosition) works over a
+// dusk::MidiBuffer - what the native plugin hosts read.
 struct MidiBufferMetadata
 {
-    MidiMessage message;
-    int         samplePosition = 0;
+    MidiMessage         message;
+    int                 samplePosition = 0;
+    const std::uint8_t* data           = nullptr;
+    int                 numBytes       = 0;
 
     const MidiMessage& getMessage() const noexcept { return message; }
 };
@@ -75,10 +80,12 @@ public:
     public:
         explicit Iterator (const std::uint8_t* p) noexcept : ptr (p) {}
         bool operator!= (const Iterator& o) const noexcept { return ptr != o.ptr; }
-        void operator++ ()                        noexcept { ptr += kHeader + readInt (ptr + 4); }
+        void operator++ ()                        noexcept { ptr += kHeader + (std::size_t) readInt (ptr + 4); }
         MidiBufferMetadata operator* () const noexcept
         {
-            return { MidiMessage (ptr + kHeader, readInt (ptr + 4)), readInt (ptr) };
+            const std::uint8_t* d = ptr + kHeader;
+            const int           n = readInt (ptr + 4);
+            return { MidiMessage (d, n), readInt (ptr), d, n };
         }
     private:
         const std::uint8_t* ptr;

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <juce_audio_basics/juce_audio_basics.h>   // JUCE MidiBuffer (audio path)
+#include "../../foundation/MidiBuffer.h"
 
 #include "InsertAdapter.h"
 #include "SpscRing.h"
@@ -140,7 +140,7 @@ public:
     // and MIDI-driven effects (null ok).
     void processStereo (const float* inL, const float* inR,
                         float* outL, float* outR, int numFrames,
-                        const juce::MidiBuffer* midiIn = nullptr) noexcept
+                        const dusk::MidiBuffer* midiIn = nullptr) noexcept
     {
         auto clearOutputs = [&]
         {

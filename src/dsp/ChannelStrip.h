@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 #include "../foundation/IntDelayLine.h"
+#include "../foundation/MidiBuffer.h"
 #include "../foundation/SmoothedValue.h"
 #include "../foundation/StereoOversampler.h"
 #include "../session/Session.h"
@@ -346,6 +347,11 @@ private:
     // processBlock requires a MidiBuffer& even when the insert is an
     // effect. Held as member so the audio thread never default-constructs.
     juce::MidiBuffer pluginMidiScratch;
+
+    // Native hosts (CLAP/LV2/VST3) consume dusk::MidiBuffer; the JUCE PluginSlot
+    // path keeps juce::MidiBuffer. This bridges the instrument block's MIDI into
+    // dusk once per block. Pre-sized in prepare() so the refill never allocates.
+    dusk::MidiBuffer nativeMidiScratch;
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
     duskaudio::FourKEQDSP eq;
