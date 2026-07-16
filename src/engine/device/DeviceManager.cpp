@@ -101,7 +101,6 @@ class JuceDeviceTypeAdapter final : public IODeviceType
 {
 public:
     explicit JuceDeviceTypeAdapter (juce::AudioIODeviceType* t) noexcept : type (t) {}
-    juce::AudioIODeviceType* juceType() const noexcept { return type; }
 
     std::string getTypeName() const override { return type->getTypeName().toStdString(); }
     void scanForDevices() override { type->scanForDevices(); }
@@ -158,13 +157,27 @@ struct DeviceManager::Impl : private juce::ChangeListener
     void changeListenerCallback (juce::ChangeBroadcaster*) override { if (onChange) onChange(); }
 
     juce::AudioDeviceManager mgr;
-    std::vector<std::unique_ptr<JuceDeviceTypeAdapter>> typeAdapters;
+    // Keyed by the juce type pointer (stable for the manager's lifetime), so an
+    // adapter is created once and never moved or destroyed while handed out - a
+    // returned IODeviceType* stays valid across later calls.
+    std::map<juce::AudioIODeviceType*, std::unique_ptr<JuceDeviceTypeAdapter>> typeAdapters;
     JuceDeviceAdapter currentDevice { nullptr };
     std::map<IODeviceCallback*, std::unique_ptr<CallbackBridge>> bridges;
     std::function<void()> onChange;
+    bool backendsRegistered = false;
+
+    JuceDeviceTypeAdapter* adapterFor (juce::AudioIODeviceType* t)
+    {
+        auto& slot = typeAdapters[t];
+        if (! slot) slot = std::make_unique<JuceDeviceTypeAdapter> (t);
+        return slot.get();
+    }
 
     void registerBackends()
     {
+        if (backendsRegistered) return;
+        backendsRegistered = true;
+
        #if defined(DUSKSTUDIO_HAS_PIPEWIRE)
         mgr.addAudioDeviceType (std::make_unique<PipeWireAudioIODeviceType>());
        #endif
@@ -200,14 +213,10 @@ DeviceManager::~DeviceManager() = default;
 
 std::vector<IODeviceType*> DeviceManager::getAvailableDeviceTypes()
 {
-    impl->typeAdapters.clear();
     std::vector<IODeviceType*> out;
     for (auto* t : impl->mgr.getAvailableDeviceTypes())
-    {
-        if (t == nullptr) continue;
-        impl->typeAdapters.push_back (std::make_unique<JuceDeviceTypeAdapter> (t));
-        out.push_back (impl->typeAdapters.back().get());
-    }
+        if (t != nullptr)
+            out.push_back (impl->adapterFor (t));
     return out;
 }
 
@@ -248,11 +257,7 @@ IODevice* DeviceManager::getCurrentDevice()
 IODeviceType* DeviceManager::getCurrentDeviceType()
 {
     auto* t = impl->mgr.getCurrentDeviceTypeObject();
-    if (t == nullptr) return nullptr;
-    for (auto& a : impl->typeAdapters)
-        if (a->juceType() == t) return a.get();
-    impl->typeAdapters.push_back (std::make_unique<JuceDeviceTypeAdapter> (t));
-    return impl->typeAdapters.back().get();
+    return t != nullptr ? impl->adapterFor (t) : nullptr;
 }
 
 void DeviceManager::setCurrentDeviceType (const std::string& typeName, bool treatAsChosen)
