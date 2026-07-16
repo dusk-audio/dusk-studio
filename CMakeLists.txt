@@ -330,6 +330,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/McuReceiver.cpp
     src/engine/McuController.cpp
     src/engine/MidiTimeCodeEmitter.cpp
+    src/engine/device/DeviceManager.cpp
     src/engine/midi/MidiDevices.cpp
     src/engine/PlaybackEngine.cpp
     src/engine/PluginManager.cpp

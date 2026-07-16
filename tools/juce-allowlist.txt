@@ -40,6 +40,8 @@ src/engine/alsa/AlsaAudioIODeviceType.cpp
 src/engine/alsa/AlsaAudioIODeviceType.h
 src/engine/alsa/AlsaPerformanceTest.cpp
 src/engine/alsa/AlsaPerformanceTest.h
+src/engine/device/DeviceManager.cpp
+src/engine/device/DeviceManager.h
 src/engine/hosting/NativePluginId.h
 src/engine/ipc/IpcSelfTest.cpp
 src/engine/ipc/PluginHostMain.cpp
