@@ -152,7 +152,17 @@ private:
 struct DeviceManager::Impl : private juce::ChangeListener
 {
     Impl() { mgr.addChangeListener (this); }
-    ~Impl() override { mgr.removeChangeListener (this); }
+    ~Impl() override
+    {
+        // Detach every bridge from mgr before the bridge objects die. Members
+        // destruct in reverse order (bridges before mgr), so a bridge left
+        // registered would leave mgr holding a dangling callback while the
+        // device is still streaming.
+        for (auto& entry : bridges)
+            mgr.removeAudioCallback (entry.second.get());
+        bridges.clear();
+        mgr.removeChangeListener (this);
+    }
 
     void changeListenerCallback (juce::ChangeBroadcaster*) override { if (onChange) onChange(); }
 
