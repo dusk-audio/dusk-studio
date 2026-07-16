@@ -65,8 +65,6 @@ src/engine/multisample/DuskMultisamplePluginFormat.cpp
 src/engine/multisample/DuskMultisamplePluginFormat.h
 src/engine/multisample/DuskMultisampleProcessor.cpp
 src/engine/multisample/DuskMultisampleProcessor.h
-src/engine/multisample/Sf2Reader.cpp
-src/engine/multisample/Sf2Reader.h
 src/engine/multisample/Sf2ToSfz.cpp
 src/engine/multisample/Sf2ToSfz.h
 src/engine/pipewire/PipeWireAudioIODevice.cpp

@@ -3,6 +3,7 @@
 #include "../../foundation/Text.h"
 
 #include <algorithm>
+#include <fstream>
 
 namespace duskstudio
 {
@@ -22,6 +23,12 @@ constexpr int kBagSize  = 4;
 constexpr int kGenSize  = 4;
 constexpr int kInstSize = 22;
 constexpr int kShdrSize = 46;
+
+// The pdta chunk is pure metadata (presets / instruments / samples + their
+// generator records); even a 140 MB GM bank's pdta is only a few MB. Cap it
+// well above that so a corrupt or hostile ckSize can't drive a huge
+// allocation from a correspondingly padded file.
+constexpr std::int64_t kMaxPdtaBytes = 64 * 1024 * 1024;
 
 // A cursor over an in-memory byte span. All SF2 multibyte fields are
 // little-endian.
@@ -101,16 +108,59 @@ std::vector<Sf2Zone> buildZones(int bagStart, int bagEnd,
     }
     return zones;
 }
+
+// Streaming byte cursor over the .sf2 file. Mirrors the slice of
+// JUCE's FileInputStream the parser used: read a count of bytes, a
+// little-endian int32, and the absolute file position (which the sample
+// offsets are recorded in). Streams so the large smpl PCM is skipped, not
+// slurped, exactly as before.
+struct FileCursor
+{
+    std::ifstream in;
+    std::int64_t  length = 0;
+
+    bool open(const std::filesystem::path& p)
+    {
+        in.open(p, std::ios::binary);
+        if (! in) return false;
+        in.seekg(0, std::ios::end);
+        length = (std::int64_t) in.tellg();
+        in.seekg(0, std::ios::beg);
+        return true;
+    }
+
+    int read(void* dst, int n)
+    {
+        in.read(reinterpret_cast<char*>(dst), n);
+        const int got = (int) in.gcount();
+        if (! in) in.clear();   // a short read at EOF must not wedge later seeks
+        return got;
+    }
+
+    // Little-endian int32, matching JUCE's InputStream::readInt.
+    std::int32_t readInt()
+    {
+        std::uint8_t b[4] { 0, 0, 0, 0 };
+        read(b, 4);
+        return (std::int32_t) ((std::uint32_t) b[0]        | ((std::uint32_t) b[1] << 8)
+                               | ((std::uint32_t) b[2] << 16) | ((std::uint32_t) b[3] << 24));
+    }
+
+    std::int64_t getPosition()               { return (std::int64_t) in.tellg(); }
+    void         setPosition(std::int64_t p) { in.clear(); in.seekg(p, std::ios::beg); }
+    std::int64_t getTotalLength() const      { return length; }
+    bool         isExhausted()               { return getPosition() >= length; }
+};
 } // namespace
 
-Sf2File readSf2(const juce::File& file)
+Sf2File readSf2(const std::filesystem::path& file)
 {
     Sf2File out;
 
-    juce::FileInputStream in (file);
-    if (! in.openedOk())
+    FileCursor in;
+    if (! in.open (file))
     {
-        out.error = ("Could not open " + file.getFileName()).toStdString();
+        out.error = "Could not open " + file.filename().string();
         return out;
     }
 
@@ -128,7 +178,7 @@ Sf2File readSf2(const juce::File& file)
         return out;
     }
 
-    juce::MemoryBlock pdtaBytes;
+    std::vector<uint8_t> pdtaBytes;
 
     // Walk the three top-level LIST chunks.
     while (! in.isExhausted())
@@ -179,19 +229,25 @@ Sf2File readSf2(const juce::File& file)
                 // for a 140 MB GM bank. Clamp to the bytes actually left in
                 // the file: a crafted ckSize (~2 GB) must not size an
                 // allocation the read can never fill.
-                const int bodyLen = (int) std::clamp (
+                const std::int64_t claimed = std::clamp (
                     (std::int64_t) ckSize - 4,   // minus the listType
                     (std::int64_t) 0,
                     (std::int64_t) (in.getTotalLength() - in.getPosition()));
+                if (claimed > kMaxPdtaBytes)
+                {
+                    out.error = "SF2 pdta chunk too large";
+                    return out;
+                }
+                const int bodyLen = (int) claimed;
                 if (bodyLen > 0)
                 {
-                    pdtaBytes.setSize((size_t) bodyLen);
-                    const int got = in.read(pdtaBytes.getData(), bodyLen);
+                    pdtaBytes.resize((size_t) bodyLen);
+                    const int got = in.read(pdtaBytes.data(), bodyLen);
                     // Truncated file: shrink to what we actually read so the
                     // sub-chunk parser never walks into uninitialised tail
-                    // bytes (setSize preserves the leading data on shrink).
+                    // bytes (resize preserves the leading data on shrink).
                     if (got < bodyLen)
-                        pdtaBytes.setSize((size_t) std::max(0, got));
+                        pdtaBytes.resize((size_t) std::max(0, got));
                 }
             }
         }
@@ -200,7 +256,7 @@ Sf2File readSf2(const juce::File& file)
         in.setPosition(ckBody + (std::int64_t) ckSize + ((ckSize & 1) ? 1 : 0));
     }
 
-    if (pdtaBytes.getSize() == 0)
+    if (pdtaBytes.empty())
     {
         out.error = "SF2 has no pdta chunk";
         return out;
@@ -209,7 +265,7 @@ Sf2File readSf2(const juce::File& file)
     // Split pdta into its named sub-chunks.
     SubChunk phdr, pbag, pgen, inst, ibag, igen, shdr;
     {
-        Cursor c { (const uint8_t*) pdtaBytes.getData(), pdtaBytes.getSize(), 0 };
+        Cursor c { pdtaBytes.data(), pdtaBytes.size(), 0 };
         while (c.canRead(8))
         {
             SubChunk sc;
