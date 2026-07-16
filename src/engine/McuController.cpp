@@ -68,8 +68,8 @@ void emitLcdRow (dusk::MidiBuffer& buf,
 {
     // Mackie LCD sysex: F0 00 00 66 14 12 <offset> <chars...> F7
     // Build the byte sequence into a small stack buffer (5 prefix + 1
-    // cmd + 1 offset + 56 chars + 1 end = 64 bytes max) and feed it
-    // to MidiMessage::createSysExMessage which copies internally.
+    // cmd + 1 offset + 56 chars + 1 end = 64 bytes max); addEvent copies
+    // the bytes into the buffer.
     std::array<std::uint8_t, 64> bytes;
     size_t n = 0;
     for (size_t i = 0; i < mcu::sysex::kPrefixLen; ++i)

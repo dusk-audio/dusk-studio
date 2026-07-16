@@ -2,14 +2,17 @@
 
 #include "foundation/MessageThread.h"
 
-#include <juce_events/juce_events.h>
+#include <juce_gui_basics/juce_gui_basics.h>
 
 #include <atomic>
 
 // The event seam is a thin wrapper over the platform message loop. These tests
-// drive a real JUCE MessageManager and pump it, verifying that dusk::Timer
+// drive a real JUCE message loop and pump it, verifying that dusk::Timer
 // actually fires on the message thread and that dusk::callAsync dispatches - the
 // behaviour the non-GUI engine code relies on after dropping its juce includes.
+// ScopedJuceInitialiser_GUI brings the platform loop up (NSApplication /
+// CFRunLoop on macOS, the message queue elsewhere) and tears it down when the
+// scope unwinds, including on a failed REQUIRE.
 
 namespace
 {
@@ -40,7 +43,7 @@ void pumpFor (int ms)
 
 TEST_CASE ("dusk::Timer fires while running and stops on request", "[foundation][events]")
 {
-    juce::MessageManager::getInstance();   // this thread becomes the message thread
+    juce::ScopedJuceInitialiser_GUI juceInit;
 
     CountingTimer timer;
     REQUIRE_FALSE (timer.isTimerRunning());
@@ -58,13 +61,11 @@ TEST_CASE ("dusk::Timer fires while running and stops on request", "[foundation]
     const int afterStop = timer.ticks.load();
     pumpFor (60);
     REQUIRE (timer.ticks.load() == afterStop);
-
-    juce::MessageManager::deleteInstance();
 }
 
 TEST_CASE ("dusk::callAsync runs its callback on the next dispatch", "[foundation][events]")
 {
-    juce::MessageManager::getInstance();
+    juce::ScopedJuceInitialiser_GUI juceInit;
 
     std::atomic<bool> ran { false };
     const bool queued = dusk::callAsync ([&ran] { ran.store (true, std::memory_order_relaxed); });
@@ -73,6 +74,4 @@ TEST_CASE ("dusk::callAsync runs its callback on the next dispatch", "[foundatio
 
     pumpFor (50);
     REQUIRE (ran.load());
-
-    juce::MessageManager::deleteInstance();
 }
