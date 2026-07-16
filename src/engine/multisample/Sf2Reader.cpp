@@ -24,6 +24,12 @@ constexpr int kGenSize  = 4;
 constexpr int kInstSize = 22;
 constexpr int kShdrSize = 46;
 
+// The pdta chunk is pure metadata (presets / instruments / samples + their
+// generator records); even a 140 MB GM bank's pdta is only a few MB. Cap it
+// well above that so a corrupt or hostile ckSize can't drive a huge
+// allocation from a correspondingly padded file.
+constexpr std::int64_t kMaxPdtaBytes = 64 * 1024 * 1024;
+
 // A cursor over an in-memory byte span. All SF2 multibyte fields are
 // little-endian.
 struct Cursor
@@ -223,10 +229,16 @@ Sf2File readSf2(const std::filesystem::path& file)
                 // for a 140 MB GM bank. Clamp to the bytes actually left in
                 // the file: a crafted ckSize (~2 GB) must not size an
                 // allocation the read can never fill.
-                const int bodyLen = (int) std::clamp (
+                const std::int64_t claimed = std::clamp (
                     (std::int64_t) ckSize - 4,   // minus the listType
                     (std::int64_t) 0,
                     (std::int64_t) (in.getTotalLength() - in.getPosition()));
+                if (claimed > kMaxPdtaBytes)
+                {
+                    out.error = "SF2 pdta chunk too large";
+                    return out;
+                }
+                const int bodyLen = (int) claimed;
                 if (bodyLen > 0)
                 {
                     pdtaBytes.resize((size_t) bodyLen);

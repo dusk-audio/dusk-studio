@@ -123,7 +123,9 @@ TEST_CASE("Sf2Reader: parses a hand-built minimal SF2", "[sf2]")
     REQUIRE(sf.samples.size()     == 1);
 
     // sdta smpl located via the streamed file position, PCM skipped not read.
-    REQUIRE(sf.smplOffset > 0);
+    // Offset is exact and file-absolute: RIFF header (12) + LIST/sdta header
+    // (12) + smpl id/size (8) = 32.
+    REQUIRE(sf.smplOffset == 32);
     REQUIRE(sf.smplSize   == 200);
 
     REQUIRE(sf.presets[0].name == "pre0");
