@@ -19,6 +19,9 @@
 #include "MidiClockEmitter.h"
 #include "MidiTimeCodeEmitter.h"
 #include "midi/MidiDevices.h"
+#include "device/DeviceManager.h"
+#include "device/IODevice.h"
+#include "device/IODeviceCallback.h"
 #include "../session/Session.h"
 #include "AudioWorkerPool.h"
 #include "MasteringPlayer.h"
@@ -32,9 +35,8 @@ namespace duskstudio
 {
 // input -> channel strip (live or playback source) -> aux/master.
 // Owns Transport, recording, playback, plugin host.
-class AudioEngine final : public juce::AudioIODeviceCallback,
-                            public juce::ChangeBroadcaster,
-                            public juce::ChangeListener
+class AudioEngine final : public device::IODeviceCallback,
+                            public juce::ChangeBroadcaster
 {
 public:
     // Recording / Mixing / Aux share the live track-to-master path; only
@@ -82,7 +84,15 @@ public:
     // between captures.
     void setWorkerCountForTest (int n);
 
-    juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager; }
+    // Escape hatch: the selector UI + MIDI input layer still drive the wrapped
+    // juce::AudioDeviceManager directly (flipped to the dusk API in a later phase).
+    juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager.juceManager(); }
+
+    // Detach / reattach the engine from the audio device. Offline render + self-
+    // test detach, then drive audioDeviceIOCallback directly. Reattach re-prepares
+    // the engine (the device manager fires audioDeviceAboutToStart). Message thread.
+    void detachAudioCallback();
+    void reattachAudioCallback();
 
     // Track FREEZE (message thread). The render is ASYNC (BounceEngine::
     // startFreeze on a worker thread) so a long render never wedges the UI, so
@@ -244,19 +254,19 @@ public:
     void jumpToZero();
     void jumpToLastRecordPoint();
 
-    void audioDeviceIOCallbackWithContext (const float* const* inputChannelData,
-                                           int numInputChannels,
-                                           float* const* outputChannelData,
-                                           int numOutputChannels,
-                                           int numSamples,
-                                           const juce::AudioIODeviceCallbackContext& context) override;
+    void audioDeviceIOCallback (const float* const* inputChannelData,
+                                int numInputChannels,
+                                float* const* outputChannelData,
+                                int numOutputChannels,
+                                int numSamples,
+                                const device::CallbackContext& context) override;
 
-    void audioDeviceAboutToStart (juce::AudioIODevice* device) override;
+    void audioDeviceAboutToStart (device::IODevice* device) override;
     void audioDeviceStopped() override;
-    // Fires when the backend can no longer service I/O. JUCE doesn't
+    // Fires when the backend can no longer service I/O. A backend may not
     // guarantee a follow-up audioDeviceStopped, so we do the same
     // flush-record-and-stop dance to keep recordings recoverable.
-    void audioDeviceError (const juce::String& errorMessage) override;
+    void audioDeviceError (const std::string& message) override;
 
     // Prepare without a real AudioIODevice. The self-test detaches the
     // engine and drives audioDeviceIOCallbackWithContext directly with
@@ -488,15 +498,14 @@ public:
         onRecordBlocked_ = std::move (sink);
     }
 
-    // juce::ChangeListener - fires on the message thread when
-    // AudioDeviceManager's device list / current device changes.
-    // We use it to detect hot-unplug (current device became nullptr
-    // while we had one). Message-thread-only.
-    void changeListenerCallback (juce::ChangeBroadcaster* source) override;
+    // Fires on the message thread when the device manager's device list /
+    // current device changes. We use it to detect hot-unplug (current device
+    // became nullptr while we had one). Message-thread-only.
+    void onDeviceManagerChanged();
 
 private:
     Session& session;
-    juce::AudioDeviceManager deviceManager;
+    device::DeviceManager deviceManager;
 
     // Last freezeTrack failure reason, surfaced via getLastFreezeError().
     // Message-thread-only.

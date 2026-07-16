@@ -811,7 +811,7 @@ void MasteringView::openExportBrowser (int preset)
         const auto fmt = mp3Preset ? BounceEngine::Format::Mp3 : BounceEngine::Format::Wav;
 
         auto panel = std::make_unique<BounceDialog> (engine, session,
-                                                       engine.getDeviceManager(), target,
+                                                       target,
                                                        BounceEngine::Mode::MasteringChain, fmt,
                                                        320, rate, depth);
         panel->setSize (520, 200);

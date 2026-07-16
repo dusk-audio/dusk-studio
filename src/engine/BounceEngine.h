@@ -184,8 +184,7 @@ public:
         return false;
     }
 
-    BounceEngine (AudioEngine& engine, Session& session,
-                   juce::AudioDeviceManager& deviceManager) noexcept;
+    BounceEngine (AudioEngine& engine, Session& session) noexcept;
     ~BounceEngine() override;
 
     // False if a render is already in flight. sampleRate <= 0 uses
@@ -271,7 +270,6 @@ private:
 
     AudioEngine& engine;
     Session&     session;
-    juce::AudioDeviceManager& deviceManager;
 
     juce::File   outputFile;
     double       renderSampleRate = 0.0;

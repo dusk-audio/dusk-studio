@@ -732,8 +732,8 @@ void AudioSettingsPanel::applyOversamplingChange()
     // audioDeviceAboutToStart -> prepareForSelfTest, rebuilding every
     // strip/bus/master oversampler at the new factor - all WITHOUT touching the
     // device or the window. Brief silence gap only.
-    deviceManager.removeAudioCallback (&engine);
-    deviceManager.addAudioCallback (&engine);
+    engine.detachAudioCallback();
+    engine.reattachAudioCallback();
 }
 
 void AudioSettingsPanel::applyMulticoreChange()
@@ -759,9 +759,9 @@ void AudioSettingsPanel::applyMulticoreChange()
     // stop+start safely; addAudioCallback re-prepares DSP and resumes. The pool
     // is changed ONLY here - prepare no longer touches it - so a routine
     // buffer-size change can never race the pool. Brief silence gap only.
-    deviceManager.removeAudioCallback (&engine);
+    engine.detachAudioCallback();
     engine.applyDesiredWorkers();
-    deviceManager.addAudioCallback (&engine);
+    engine.reattachAudioCallback();
 }
 
 AudioSettingsPanel::~AudioSettingsPanel()

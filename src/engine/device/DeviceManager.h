@@ -46,6 +46,11 @@ public:
     // caller writes it to disk and hands it back to initialise()).
     std::string getStateBlob() const;
 
+    // The output device name recorded in a saved state blob (falling back to the
+    // input device name), or empty. Reads the user's INTENDED device, which may
+    // differ from the one initialise() actually opened on failure.
+    std::string outputDeviceNameFromState (const std::string& savedState) const;
+
     // A view of the live device, repointed on each call - use it, don't cache it
     // (a later call reflects a different device through the same object).
     IODevice*     getCurrentDevice();

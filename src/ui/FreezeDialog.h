@@ -20,8 +20,7 @@ class FreezeDialog final : public juce::Component,
                             private juce::Timer
 {
 public:
-    FreezeDialog (AudioEngine& engine, Session& session,
-                  juce::AudioDeviceManager& deviceManager, int trackIndex);
+    FreezeDialog (AudioEngine& engine, Session& session, int trackIndex);
     ~FreezeDialog() override;
 
     void resized() override;
@@ -38,7 +37,6 @@ private:
 
     AudioEngine& engine;
     Session& session;
-    juce::AudioDeviceManager& deviceManager;
     int trackIndex;
     juce::File outFile;
     std::int64_t lenSamples = 0;

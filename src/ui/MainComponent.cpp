@@ -2093,7 +2093,7 @@ void MainComponent::doMixdown()
     askBounceRealtime ([this, target] (bool realtime)
     {
         auto panel = std::make_unique<BounceDialog> (engine, session,
-                                                       engine.getDeviceManager(), target,
+                                                       target,
                                                        BounceEngine::Mode::MasterMix,
                                                        BounceEngine::Format::Wav, 320, 0.0, 24,
                                                        realtime);
@@ -2391,7 +2391,7 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
     const bool reattachAudioAfter = ! engineDetached;
     if (! engineDetached)
     {
-        engine.getDeviceManager().removeAudioCallback (&engine);
+        engine.detachAudioCallback();
         engineDetached = true;   // tell publishPluginStateForSave to skip park sleeps
     }
 
@@ -2410,7 +2410,7 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
         // already called prepareToPlay on each plugin during state
         // capture (resume side of the suspend bracket), so each plugin
         // is ready for the next callback.
-        engine.getDeviceManager().addAudioCallback (&engine);
+        engine.reattachAudioCallback();
         engineDetached = false;
     }
 
@@ -2734,7 +2734,7 @@ void MainComponent::requestQuit()
             // I/O. stopTimer prevents the autosave timer from re-
             // entering a save mid-shutdown.
             self->stopTimer();
-            self->engine.getDeviceManager().removeAudioCallback (&self->engine);
+            self->engine.detachAudioCallback();
             self->engineDetached = true;
 
             self->saveSessionAndThen ([safeThis] (bool ok)
@@ -2790,7 +2790,7 @@ void MainComponent::beginSafeShutdown()
     if (! engineDetached)
     {
         markPhase ("phase 3: detach audio callback");
-        engine.getDeviceManager().removeAudioCallback (&engine);
+        engine.detachAudioCallback();
         engineDetached = true;
     }
     else
@@ -3388,7 +3388,7 @@ void MainComponent::openBounceDialog()
             auto launchBounce = [this, target, format, realtime]
             {
                 auto panel = std::make_unique<BounceDialog> (engine, session,
-                                                               engine.getDeviceManager(), target,
+                                                               target,
                                                                BounceEngine::Mode::MasterMix, format,
                                                                320, 0.0, 24, realtime);
                 panel->setSize (520, 200);
@@ -3461,7 +3461,7 @@ void MainComponent::openBounceStemsDialog()
         auto launch = [this, outFile] (bool realtime)
         {
             auto panel = std::make_unique<BounceDialog> (engine, session,
-                                                           engine.getDeviceManager(), outFile,
+                                                           outFile,
                                                            BounceEngine::Mode::Stems,
                                                            BounceEngine::Format::Wav,
                                                            320, 0.0, 24, realtime);

@@ -143,6 +143,9 @@ public:
 
     void audioDeviceStopped() override { cb->audioDeviceStopped(); }
 
+    void audioDeviceError (const juce::String& message) override
+        { cb->audioDeviceError (message.toStdString()); }
+
 private:
     IODeviceCallback* cb;
     JuceDeviceAdapter adapter { nullptr };
@@ -253,6 +256,15 @@ std::string DeviceManager::getStateBlob() const
 {
     if (auto xml = impl->mgr.createStateXml())
         return xml->toString().toStdString();
+    return {};
+}
+
+std::string DeviceManager::outputDeviceNameFromState (const std::string& savedState) const
+{
+    if (savedState.empty()) return {};
+    if (auto xml = juce::parseXML (juce::String (savedState)))
+        return xml->getStringAttribute ("audioOutputDeviceName",
+                   xml->getStringAttribute ("audioInputDeviceName")).toStdString();
     return {};
 }
 

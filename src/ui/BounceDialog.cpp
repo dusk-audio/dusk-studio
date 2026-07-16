@@ -6,7 +6,6 @@ namespace duskstudio
 {
 BounceDialog::BounceDialog (AudioEngine& e,
                               Session& s,
-                              juce::AudioDeviceManager& dm,
                               const juce::File& f,
                               BounceEngine::Mode mode,
                               BounceEngine::Format format,
@@ -14,7 +13,7 @@ BounceDialog::BounceDialog (AudioEngine& e,
                               double sampleRate,
                               int bitDepth,
                               bool realtime)
-    : engine (e), session (s), deviceManager (dm), outputFile (f),
+    : engine (e), session (s), outputFile (f),
       renderMode (mode), renderFormat (format), mp3Bitrate (mp3BitrateKbps),
       renderSampleRate (sampleRate), wavBitDepth (bitDepth),
       renderRealtime (realtime),
@@ -78,7 +77,7 @@ BounceDialog::BounceDialog (AudioEngine& e,
     addAndMakeVisible (cancelButton);
     addAndMakeVisible (closeButton);
 
-    bounceEngine = std::make_unique<BounceEngine> (engine, session, deviceManager);
+    bounceEngine = std::make_unique<BounceEngine> (engine, session);
 
     // BounceEngine fires its callbacks on the worker thread. We don't touch
     // UI state from there - instead each frame the timer reads the engine's
