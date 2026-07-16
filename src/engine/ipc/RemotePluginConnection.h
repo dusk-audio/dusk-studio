@@ -13,7 +13,7 @@
 #include <thread>
 #include <vector>
 
-#include <juce_audio_basics/juce_audio_basics.h>  // juce::MidiBuffer
+#include "../../foundation/MidiBuffer.h"
 
 namespace duskstudio::ipc
 {
@@ -62,8 +62,8 @@ public:
     // `timeoutMs`. Used by the supervisor heartbeat in Phase 4.
     bool ping (int timeoutMs, std::string& errorOut);
 
-    // Load a plugin from its `juce::PluginDescription::createXml()`
-    // string at the given sample rate / block size. Fills `numInOut`
+    // Load a plugin from its PluginDescription XML string at the given
+    // sample rate / block size. Fills `numInOut`
     // with the plugin's reported channel layout and `latencyOut` with
     // its reported latency in samples.
     bool loadPlugin (const std::string& pluginDescriptionXml,
@@ -108,7 +108,7 @@ public:
 
     // --- Parameter mirror (3c-3a, --ipc-host mode only) ------------------
     // Parent -> child one-shot SetParam send. The child applies the new
-    // value to its DSP-side instance via juce::MessageManager::callAsync.
+    // value to its DSP-side instance on the message thread.
     // No reply is expected; this returns false only if the socket write
     // itself fails (peer-closed, EBADF, etc.).
     //
@@ -153,9 +153,9 @@ public:
     //
     // RT-safe: only memcpy + futex syscalls, no allocation. The output
     // MIDI buffer is rebuilt via clear() + addEvent() into the caller's
-    // `midi`; juce::MidiBuffer::clear is RT-safe and addEvent only
-    // allocates when capacity is exceeded - the engine pre-sizes per-
-    // track scratch buffers so this stays allocation-free in practice.
+    // `midi`; dusk::MidiBuffer::clear is RT-safe and addEvent drops
+    // events over the reserved cap instead of allocating - the engine
+    // pre-sizes per-track scratch buffers so this stays allocation-free.
     // numOut is the plugin's output channel count (queried at scan/load
     // and stored in PluginSlot::remoteNumOut). The child copies its
     // plugin's processBlock output into the first `numOut` SHM channels;
@@ -165,7 +165,7 @@ public:
     // reads stale SHM.
     bool processBlockSync (const float* const* inChannels, int numIn, int numOut,
                             int numSamples,
-                            juce::MidiBuffer& midi,
+                            dusk::MidiBuffer& midi,
                             long long timeoutNs) noexcept;
 
     // Read the i'th output channel from SHM. Valid pointer for the life

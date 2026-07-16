@@ -54,7 +54,7 @@ TEST_CASE ("ipc-stub: connect, round-trip 32 blocks, byte-exact echo",
     std::vector<float> bufL ((std::size_t) kBlockSize);
     std::vector<float> bufR ((std::size_t) kBlockSize);
     const float* in[kNumChans] { bufL.data(), bufR.data() };
-    juce::MidiBuffer midi;  // empty in/out for stub mode
+    dusk::MidiBuffer midi;
 
     for (int it = 0; it < kIterations; ++it)
     {
@@ -66,7 +66,26 @@ TEST_CASE ("ipc-stub: connect, round-trip 32 blocks, byte-exact echo",
             bufR[(std::size_t) i] = 0.5f * std::cos (((float) (i + it)) * 0.1f);
         }
 
+        // The stub echoes midiIn -> midiOut, so a fed note-on must round-trip
+        // back byte-exact through the dusk serialise (in) / deserialise (out).
+        const std::uint8_t noteOn[3] { 0x90, (std::uint8_t) (0x40 + it % 8), 0x7F };
+        const int notePos = it % kBlockSize;
+        midi.clear();
+        midi.addEvent (noteOn, 3, notePos);
+
         REQUIRE (conn.processBlockSync (in, kNumChans, kNumChans, kBlockSize, midi, kTimeoutNs));
+
+        int midiEvents = 0;
+        for (const auto meta : midi)
+        {
+            REQUIRE (meta.numBytes       == 3);
+            REQUIRE (meta.samplePosition == notePos);
+            REQUIRE (meta.data[0]        == noteOn[0]);
+            REQUIRE (meta.data[1]        == noteOn[1]);
+            REQUIRE (meta.data[2]        == noteOn[2]);
+            ++midiEvents;
+        }
+        REQUIRE (midiEvents == 1);
 
         for (int c = 0; c < kNumChans; ++c)
         {
@@ -97,7 +116,7 @@ TEST_CASE ("ipc-stub: rejects oversize block", "[ipc]")
     // return false rather than overrun the SHM audio region.
     std::vector<float> oversize (4096, 0.0f);
     const float* in[1] { oversize.data() };
-    juce::MidiBuffer midi;
+    dusk::MidiBuffer midi;
     REQUIRE_FALSE (conn.processBlockSync (in, 1, 1, 4096, midi, 1'000'000LL));
     REQUIRE_FALSE (conn.isCrashed());  // bad-input rejection isn't a crash
 }

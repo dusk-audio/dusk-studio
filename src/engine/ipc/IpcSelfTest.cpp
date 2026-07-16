@@ -47,10 +47,14 @@ int runIpcSelfTest (const std::string& hostExecutablePath,
 
     int verifyFails = 0;
     constexpr long long kTimeoutNs = 100'000'000LL;  // 100 ms - generous
-    juce::MidiBuffer emptyMidi;
+    dusk::MidiBuffer emptyMidi;
 
     for (int it = 0; it < iterations; ++it)
     {
+        // processBlockSync overwrites the buffer with the child's MIDI
+        // output; clear it so that never feeds back as the next input.
+        emptyMidi.clear();
+
         // Vary content so a buggy stub that returns a stale buffer
         // would fail the verify on subsequent iterations.
         for (int i = 0; i < numSamples; ++i)
@@ -207,10 +211,14 @@ int runIpcHostTest (const std::string& hostExecutablePath,
 
     bool anyDifference = false;
     constexpr long long kTimeoutNs = 1'000'000'000LL;  // 1 s - plugins take time to warm up
-    juce::MidiBuffer emptyMidi;
+    dusk::MidiBuffer emptyMidi;
 
     for (int it = 0; it < iterations; ++it)
     {
+        // processBlockSync overwrites the buffer with the child's MIDI
+        // output; clear it so that never feeds back as the next input.
+        emptyMidi.clear();
+
         for (int i = 0; i < numSamples; ++i)
         {
             // White-ish content (low freq sine + small noise) so an EQ /

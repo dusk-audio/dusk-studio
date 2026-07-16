@@ -150,7 +150,7 @@ bool RemotePluginConnection::connect (const std::string& hostExecutablePath,
 
 bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
                                                  int numIn, int numOut, int numSamples,
-                                                 juce::MidiBuffer& midi,
+                                                 dusk::MidiBuffer& midi,
                                                  long long timeoutNs) noexcept
 {
     if (! shm.isMapped() || crashed.load (std::memory_order_acquire))
@@ -174,15 +174,16 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
         std::uint32_t written = 0;
         for (const auto meta : midi)
         {
-            const auto m = meta.getMessage();
-            const int len = m.getRawDataSize();
+            const int len = meta.numBytes;
             if (len <= 0) continue;
+            // The kMidiBytes bound (16 KB) caps len far below the uint16 wire
+            // limit, so the l16 cast below never truncates.
             if (written + 4 + 2 + (std::uint32_t) len > kMidiBytes) break;
             const int sample = meta.samplePosition;
             std::memcpy (out + written, &sample, 4);             written += 4;
             const std::uint16_t l16 = (std::uint16_t) len;
             std::memcpy (out + written, &l16, 2);                written += 2;
-            std::memcpy (out + written, m.getRawData(),
+            std::memcpy (out + written, meta.data,
                          (std::size_t) len);                      written += (std::uint32_t) len;
         }
         hdr->midiInBytes = written;
@@ -204,7 +205,6 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
         if (midiOutBytes == 0 || midiOutBytes > kMidiBytes) return;
         const std::uint8_t* base = midiOut (shm.data());
         std::uint32_t off = 0;
-        std::uint8_t evBuf[256];
         while (off + 6 <= midiOutBytes)
         {
             int sample = 0;
@@ -212,11 +212,13 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
             std::uint16_t l16 = 0;
             std::memcpy (&l16, base + off, 2); off += 2;
             const int eventLen = (int) l16;
-            if (eventLen <= 0 || eventLen > (int) sizeof (evBuf)) break;
-            if (off + (std::uint32_t) eventLen > midiOutBytes)   break;
-            std::memcpy (evBuf, base + off, (std::size_t) eventLen);
+            if (eventLen <= 0) break;
+            if (off + (std::uint32_t) eventLen > midiOutBytes) break;
+            // base + off points into the SHM midiOut region, bounded above by
+            // midiOutBytes; addEvent copies the bytes, so no local buffer and
+            // no size ceiling - larger SysEx events pass through intact.
+            midi.addEvent (base + off, eventLen, sample);
             off += (std::uint32_t) eventLen;
-            midi.addEvent (juce::MidiMessage (evBuf, eventLen), sample);
         }
     };
 
