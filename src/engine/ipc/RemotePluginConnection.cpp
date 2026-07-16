@@ -15,7 +15,7 @@
  #include <sys/socket.h>
 #endif
 
-#include <juce_events/juce_events.h>
+#include "../../foundation/MessageThread.h"
 
 namespace duskstudio::ipc
 {
@@ -582,8 +582,8 @@ void RemotePluginConnection::readerLoop()
 
         if (hdr.op == (std::uint32_t) OpCode::ParamChangedFromChild)
         {
-            // Async push from child. Marshal to the JUCE message thread
-            // via callAsync - never invoke the sink directly here (we're
+            // Async push from child. Marshal to the message thread via
+            // dusk::callAsync - never invoke the sink directly here (we're
             // on the reader thread, sink callers may touch UI / JUCE
             // listener state).
             //
@@ -600,7 +600,7 @@ void RemotePluginConnection::readerLoop()
                 ParamChangedPayload p {};
                 std::memcpy (&p, payload.data(), sizeof (p));
                 auto state = sinkState_;
-                juce::MessageManager::callAsync ([state, p]
+                dusk::callAsync ([state, p]
                 {
                     ParamChangedSink localSink;
                     {

@@ -25,8 +25,6 @@ src/engine/LameMp3Writer.cpp
 src/engine/LameMp3Writer.h
 src/engine/MasteringPlayer.cpp
 src/engine/MasteringPlayer.h
-src/engine/McuController.cpp
-src/engine/McuController.h
 src/engine/NativeScanRows.h
 src/engine/PlaybackEngine.cpp
 src/engine/PlaybackEngine.h
@@ -49,7 +47,6 @@ src/engine/hosting/PortBuffers.h
 src/engine/ipc/IpcSelfTest.cpp
 src/engine/ipc/PluginHostMain.cpp
 src/engine/ipc/PluginScanProtocol.h
-src/engine/ipc/RemotePluginConnection.cpp
 src/engine/midi/MidiDevices.cpp
 src/engine/midi/MidiDevices.h
 src/engine/multisample/AriaBank.cpp
@@ -66,6 +63,7 @@ src/engine/pipewire/PipeWireAudioIODevice.cpp
 src/engine/pipewire/PipeWireAudioIODevice.h
 src/engine/pipewire/PipeWireAudioIODeviceType.cpp
 src/engine/pipewire/PipeWireAudioIODeviceType.h
+src/foundation/MessageThread.cpp
 src/session/MarkerEditActions.h
 src/session/MidiBindings.cpp
 src/session/MidiBindings.h

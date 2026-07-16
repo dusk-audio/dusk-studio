@@ -69,8 +69,10 @@ add_executable(dusk-studio-tests
     mcu_receiver_decode.cpp
     mcu_controller_emit.cpp
     mcu_fader_taper.cpp
+    foundation_message_thread.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/McuReceiver.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/McuController.cpp
+    ${CMAKE_SOURCE_DIR}/src/foundation/MessageThread.cpp
     multisample_state_roundtrip.cpp
     bounce_stem_filename.cpp
     bounce_stem_targets.cpp

@@ -225,10 +225,14 @@ bool MidiOutputBank::sendJuce (int index, const juce::MidiBuffer& events, double
     return true;
 }
 
-bool MidiOutputBank::send (int index, const juce::MidiBuffer& events) noexcept
+bool MidiOutputBank::send (int index, const dusk::MidiBuffer& events) noexcept
 {
-    // sampleRate is for time stamps only - the direct send carries no offsets.
-    return sendJuce (index, events, 48000.0);
+    // Bridge the dusk boundary buffer to juce here (the seam owns the
+    // conversion). sampleRate is for time stamps only - the direct send carries
+    // no offsets.
+    juce::MidiBuffer juceEvents;
+    toJuceBuffer (events, juceEvents);
+    return sendJuce (index, juceEvents, 48000.0);
 }
 
 void MidiOutputBank::queueRt (int port, const dusk::MidiBuffer& events, double sampleRate) noexcept
