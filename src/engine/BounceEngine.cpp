@@ -27,9 +27,8 @@ struct ScopedOfflineRender
 };
 } // namespace
 
-BounceEngine::BounceEngine (AudioEngine& e, Session& s,
-                              juce::AudioDeviceManager& dm) noexcept
-    : juce::Thread ("Dusk Studio bounce"), engine (e), session (s), deviceManager (dm)
+BounceEngine::BounceEngine (AudioEngine& e, Session& s) noexcept
+    : juce::Thread ("Dusk Studio bounce"), engine (e), session (s)
 {}
 
 BounceEngine::~BounceEngine()
@@ -331,7 +330,7 @@ void BounceEngine::run()
     // cleared before the live re-prepare below.
     if (! runOnMessageThread ([this]
         {
-            deviceManager.removeAudioCallback (&engine);
+            engine.detachAudioCallback();
             engine.setRenderOversamplingOverride (kRenderOversamplingFactor);
             engine.prepareForSelfTest (renderSampleRate, renderBlockSize);
         }))
@@ -360,7 +359,7 @@ void BounceEngine::run()
     std::vector<float*> outputPtrs (kNumChannels);
     for (int c = 0; c < kNumChannels; ++c) outputPtrs[(size_t) c] = outputs[(size_t) c].data();
 
-    juce::AudioIODeviceCallbackContext ctx {};
+    duskstudio::device::CallbackContext ctx {};
 
     // Drive the transport / mastering player from sample 0. We don't go
     // through engine.play() because that's RT-safe-message-thread; we
@@ -419,7 +418,7 @@ void BounceEngine::run()
         // Reset outputs each block.
         for (auto& o : outputs) std::fill (o.begin(), o.end(), 0.0f);
 
-        engine.audioDeviceIOCallbackWithContext (inputPtrs.data(), kNumIn,
+        engine.audioDeviceIOCallback (inputPtrs.data(), kNumIn,
                                                    outputPtrs.data(), kNumChannels,
                                                    remaining, ctx);
 
@@ -509,7 +508,7 @@ void BounceEngine::run()
     runOnMessageThread ([this]
     {
         engine.setRenderOversamplingOverride (0);
-        deviceManager.addAudioCallback (&engine);
+        engine.reattachAudioCallback();
     });
 
     rendering.store (false, std::memory_order_relaxed);
@@ -585,7 +584,7 @@ bool BounceEngine::runStemsMode()
     // the live re-prepare below.
     if (! runOnMessageThread ([this]
         {
-            deviceManager.removeAudioCallback (&engine);
+            engine.detachAudioCallback();
             engine.setRenderOversamplingOverride (kRenderOversamplingFactor);
             engine.prepareForSelfTest (renderSampleRate, renderBlockSize);
         }))
@@ -650,7 +649,7 @@ bool BounceEngine::runStemsMode()
         std::vector<float*> outputPtrs (kNumChannels);
         for (int c = 0; c < kNumChannels; ++c) outputPtrs[(size_t) c] = outputs[(size_t) c].data();
 
-        juce::AudioIODeviceCallbackContext ctx {};
+        duskstudio::device::CallbackContext ctx {};
 
         transport.setPlayhead (0);
         transport.setState (Transport::State::Playing);
@@ -683,7 +682,7 @@ bool BounceEngine::runStemsMode()
                 juce::FloatVectorOperations::clear (capR[(size_t) i].data(), remaining);
             }
 
-            engine.audioDeviceIOCallbackWithContext (inputPtrs.data(), kNumIn,
+            engine.audioDeviceIOCallback (inputPtrs.data(), kNumIn,
                                                        outputPtrs.data(), kNumChannels,
                                                        remaining, ctx);
 
@@ -757,7 +756,7 @@ bool BounceEngine::runStemsMode()
     runOnMessageThread ([this]
     {
         engine.setRenderOversamplingOverride (0);
-        deviceManager.addAudioCallback (&engine);
+        engine.reattachAudioCallback();
     });
 
     if (cancelRequested.load (std::memory_order_relaxed))
@@ -1073,7 +1072,7 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
     ScopedOfflineRender offlineGuard (engine);
     if (! runOnMessageThread ([this]
         {
-            deviceManager.removeAudioCallback (&engine);
+            engine.detachAudioCallback();
             engine.setRenderOversamplingOverride (kRenderOversamplingFactor);
             engine.prepareForSelfTest (renderSampleRate, renderBlockSize);
         }))
@@ -1101,7 +1100,7 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
     std::vector<float> capL ((size_t) renderBlockSize, 0.0f);
     std::vector<float> capR ((size_t) renderBlockSize, 0.0f);
 
-    juce::AudioIODeviceCallbackContext ctx {};
+    duskstudio::device::CallbackContext ctx {};
 
     auto& transport = engine.getTransport();
     const auto savedTransportState = transport.getState();
@@ -1149,7 +1148,7 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
         std::fill (capL.begin(), capL.end(), 0.0f);
         std::fill (capR.begin(), capR.end(), 0.0f);
 
-        engine.audioDeviceIOCallbackWithContext (inputPtrs.data(), kNumIn,
+        engine.audioDeviceIOCallback (inputPtrs.data(), kNumIn,
                                                    outputPtrs.data(), kNumChannels,
                                                    remaining, ctx);
 
@@ -1196,7 +1195,7 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
     runOnMessageThread ([this]
     {
         engine.setRenderOversamplingOverride (0);
-        deviceManager.addAudioCallback (&engine);
+        engine.reattachAudioCallback();
     });
 
     if (! ok || cancelRequested.load (std::memory_order_relaxed))

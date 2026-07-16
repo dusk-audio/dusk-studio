@@ -418,7 +418,7 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         // on destruction. Done last so the offline-render device detach can't
         // disturb earlier snapshots.
         auto target = outDir.getChildFile ("_demo").getChildFile ("bounce.wav");
-        BounceDialog bd (engine, session, engine.getDeviceManager(), target,
+        BounceDialog bd (engine, session, target,
                          BounceEngine::Mode::MasterMix);
         modalShot (bd, 520, 200, "qg-07-bounce-dialog.png", 200);
     }

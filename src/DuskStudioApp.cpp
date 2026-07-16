@@ -486,7 +486,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
     // re-prepares), so detach FIRST - before prepareForSelfTest mutates DSP
     // state - so the device thread can't process the engine mid-re-prepare
     // (matches runHeadlessSessionPerf).
-    engine->getDeviceManager().removeAudioCallback (engine.get());
+    engine->detachAudioCallback();
     // Don't depend on a real device coming up - prepare directly.
     engine->prepareForSelfTest (sampleRate, blockSize);
 
@@ -655,7 +655,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
     for (int c = 0; c < numOutChannels; ++c)
         outputPtrs[(size_t) c] = outputs[(size_t) c].data();
 
-    juce::AudioIODeviceCallbackContext ctx {};
+    duskstudio::device::CallbackContext ctx {};
 
     // Two probes:
     //   - Master output peak/RMS - what the device would hear.
@@ -688,7 +688,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
         }
 
         for (auto& o : outputs) std::fill (o.begin(), o.end(), 0.0f);
-        engine->audioDeviceIOCallbackWithContext (
+        engine->audioDeviceIOCallback (
             inputPtrs.data(), numInChannels,
             outputPtrs.data(), numOutChannels,
             blockSize, ctx);
@@ -783,7 +783,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
                     engine->stageTestMidiInjection (midiInputIdx, std::move (midi));
                 }
                 for (auto& o : outs) std::fill (o.begin(), o.end(), 0.0f);
-                engine->audioDeviceIOCallbackWithContext (inP.data(), numInChannels,
+                engine->audioDeviceIOCallback (inP.data(), numInChannels,
                                                           outP.data(), numOutChannels, bs, ctx);
             }
             if (midiInputIdx >= 0)
@@ -793,7 +793,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
                     midi.addEvent (juce::MidiMessage::noteOff (1, n), 0);
                 engine->stageTestMidiInjection (midiInputIdx, std::move (midi));
                 for (auto& o : outs) std::fill (o.begin(), o.end(), 0.0f);
-                engine->audioDeviceIOCallbackWithContext (inP.data(), numInChannels,
+                engine->audioDeviceIOCallback (inP.data(), numInChannels,
                                                           outP.data(), numOutChannels, bs, ctx);
             }
             std::fprintf (stdout, "BS-CYCLE: %d samples OK\n", bs);
@@ -830,7 +830,7 @@ static void runHeadlessSessionPerf (const juce::String& sessionPath)
     // opened a real device). This perf path drives the callback MANUALLY below,
     // so detach FIRST - before prepareForSelfTest mutates DSP state - so the
     // device thread can't process the engine while that state is in flux.
-    engine->getDeviceManager().removeAudioCallback (engine.get());
+    engine->detachAudioCallback();
     engine->prepareForSelfTest (sampleRate, blockSize);
 
     juce::File f (sessionPath);
@@ -882,7 +882,7 @@ static void runHeadlessSessionPerf (const juce::String& sessionPath)
     for (int c = 0; c < numOutChannels; ++c)
         outputPtrs[(size_t) c] = outputs[(size_t) c].data();
 
-    juce::AudioIODeviceCallbackContext ctx {};
+    duskstudio::device::CallbackContext ctx {};
 
     const double blockMs = 1000.0 * blockSize / sampleRate;
     const auto   wall0   = juce::Time::getMillisecondCounterHiRes();
@@ -891,7 +891,7 @@ static void runHeadlessSessionPerf (const juce::String& sessionPath)
     for (int b = 0; b < numBlocks; ++b)
     {
         for (auto& o : outputs) std::fill (o.begin(), o.end(), 0.0f);
-        engine->audioDeviceIOCallbackWithContext (
+        engine->audioDeviceIOCallback (
             inputPtrs.data(), numInChannels,
             outputPtrs.data(), numOutChannels,
             blockSize, ctx);
@@ -1016,7 +1016,7 @@ struct DuskStudioApp::BounceTest : private juce::Timer
         // plugin load + offline render on a machine in active use. The offline
         // render never needs a device; the bounce re-attaches at the end, harmless
         // against a closed device.
-        engine->getDeviceManager().removeAudioCallback (engine.get());
+        engine->detachAudioCallback();
         engine->getDeviceManager().closeAudioDevice();
         engine->prepareForSelfTest (sr, bs);
 
@@ -1033,8 +1033,7 @@ struct DuskStudioApp::BounceTest : private juce::Timer
                       loadedFormat.toRawUTF8(), pluginPath.toRawUTF8());
         std::fflush (stdout);
 
-        bounce = std::make_unique<BounceEngine> (*engine, *session,
-                                                 engine->getDeviceManager());
+        bounce = std::make_unique<BounceEngine> (*engine, *session);
         bounce->onFinished = [this] (bool ok, std::string err)
         {
             // Worker thread. Record + let the poll timer pick it up on the message
@@ -1245,8 +1244,8 @@ private:
         std::vector<float*> outP ((size_t) kOut);
         for (int c = 0; c < kOut; ++c) outP[(size_t) c] = out[(size_t) c].data();
 
-        juce::AudioIODeviceCallbackContext ctx {};
-        engine->audioDeviceIOCallbackWithContext (inP.data(), kIn, outP.data(), kOut, bs, ctx);
+        duskstudio::device::CallbackContext ctx {};
+        engine->audioDeviceIOCallback (inP.data(), kIn, outP.data(), kOut, bs, ctx);
 
         for (int c = 0; c < kOut; ++c)
             for (int i = 0; i < bs; ++i)
@@ -1306,8 +1305,7 @@ private:
                 // out of it, so reassigning the target here would free it under the
                 // worker's feet. A fresh instance also isn't rendering, so
                 // startFreeze() starts on the first tick.
-                bounce = std::make_unique<BounceEngine> (*engine, *session,
-                                                         engine->getDeviceManager());
+                bounce = std::make_unique<BounceEngine> (*engine, *session);
                 bounce->onFinished = [this] (bool ok, std::string err)
                 {
                     freezeOk  = ok;
@@ -1373,8 +1371,7 @@ private:
                 for (const auto& tgt : BounceEngine::collectStemTargets (*session, stemsBase))
                     tgt.file.deleteFile();
 
-                bounce = std::make_unique<BounceEngine> (*engine, *session,
-                                                         engine->getDeviceManager());
+                bounce = std::make_unique<BounceEngine> (*engine, *session);
                 bounce->onFinished = [this] (bool ok, std::string err)
                 {
                     stemsOk  = ok;
@@ -1826,7 +1823,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         std::vector<const float*> inputPtrs { inputs[0].data(), inputs[1].data() };
         std::vector<std::vector<float>> outputs (2, std::vector<float> (blockSize, 0.0f));
         std::vector<float*> outputPtrs { outputs[0].data(), outputs[1].data() };
-        juce::AudioIODeviceCallbackContext ctx {};
+        duskstudio::device::CallbackContext ctx {};
 
         // Drive audio callbacks, then loadFromDescription with plugin B
         // mid-stream to swap. The previousInstance keep-alive in
@@ -1837,7 +1834,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         // thread has many chances to dereference a stale pointer.
         for (int b = 0; b < 200; ++b)
         {
-            engine->audioDeviceIOCallbackWithContext (
+            engine->audioDeviceIOCallback (
                 inputPtrs.data(), 2, outputPtrs.data(), 2, blockSize, ctx);
             if (b == 50)
             {

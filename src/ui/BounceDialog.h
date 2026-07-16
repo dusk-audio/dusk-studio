@@ -31,7 +31,6 @@ public:
     // print); MasterMix / Stems only.
     BounceDialog (AudioEngine& engine,
                    Session& session,
-                   juce::AudioDeviceManager& deviceManager,
                    const juce::File& outputFile,
                    BounceEngine::Mode mode = BounceEngine::Mode::MasterMix,
                    BounceEngine::Format format = BounceEngine::Format::Wav,
@@ -63,7 +62,6 @@ private:
 
     AudioEngine& engine;
     Session& session;
-    juce::AudioDeviceManager& deviceManager;
     juce::File outputFile;
     BounceEngine::Mode renderMode;
     BounceEngine::Format renderFormat;

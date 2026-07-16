@@ -40,5 +40,10 @@ public:
     // The stream has stopped; no further audioDeviceIOCallback will arrive until
     // the next aboutToStart.
     virtual void audioDeviceStopped() = 0;
+
+    // The backend can no longer service I/O (fatal error). A backend may not
+    // deliver a following audioDeviceStopped, so callers treat this as terminal.
+    // Default empty - most callbacks don't need it.
+    virtual void audioDeviceError (const std::string& message) { (void) message; }
 };
 } // namespace duskstudio::device

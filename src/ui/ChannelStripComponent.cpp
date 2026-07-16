@@ -3038,8 +3038,7 @@ void ChannelStripComponent::handleFreezeClick()
     // Freeze renders offline; run it async behind a progress + cancel modal so a
     // long render never wedges the UI. The dialog commits the freeze on success;
     // we just refresh the button (snowflake) when it closes.
-    auto dialog = std::make_unique<FreezeDialog> (engine, session,
-                                                   engine.getDeviceManager(), trackIndex);
+    auto dialog = std::make_unique<FreezeDialog> (engine, session, trackIndex);
     dialog->setSize (440, 150);
 
     juce::Component::SafePointer<ChannelStripComponent> safe (this);

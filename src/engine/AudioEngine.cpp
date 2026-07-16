@@ -8,13 +8,8 @@
 #include "FaderBindingMap.h"
 #include "../session/RegionEditActions.h"
 #include "DeviceFallbackMessage.h"
-#if defined(DUSKSTUDIO_HAS_ALSA)
-  #include "alsa/AlsaAudioIODeviceType.h"
-#endif
+#include "../foundation/MessageThread.h"
 #include <algorithm>
-#if defined(DUSKSTUDIO_HAS_PIPEWIRE)
-  #include "pipewire/PipeWireAudioIODeviceType.h"
-#endif
 #include <array>
 #include <cstdlib>
 #include <cstring>
@@ -430,76 +425,24 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     master.bind (session.master());
     masteringChain.bind (session.mastering());
 
-    // Linux: pre-register Dusk Studio's own backends BEFORE
-    // initialiseWithDefaultDevices so JUCE's createDeviceTypesIfNeeded branch is
-    // a no-op (it only auto-registers defaults when the type list is empty,
-    // which would re-add the stock ALSA path). Explicit scanForDevices so init's
-    // pickCurrentDeviceTypeWithDevices doesn't trip hasScanned assertions.
-    //
-    // Registration order = default-backend preference (the pick lands on the
-    // first registered type that has devices): native PipeWire first (correct
-    // graph latency, native node naming, no pipewire-jack shim), native ALSA as
-    // the hardware-direct fallback. JUCE's JACK backend is intentionally NOT
-    // registered - talking to libpipewire directly replaces it.
-    // macOS / Windows let JUCE auto-register natives - these gates aren't defined there.
-   #if defined(DUSKSTUDIO_HAS_PIPEWIRE)
-    deviceManager.addAudioDeviceType (std::make_unique<PipeWireAudioIODeviceType>());
-   #endif
-   #if defined(DUSKSTUDIO_HAS_ALSA)
-    deviceManager.addAudioDeviceType (std::make_unique<AlsaAudioIODeviceType>());
-   #endif
-   #if defined(DUSKSTUDIO_HAS_PIPEWIRE) || defined(DUSKSTUDIO_HAS_ALSA)
-    for (auto* t : deviceManager.getAvailableDeviceTypes())
-        if (t != nullptr) t->scanForDevices();
-   #endif
-
-   #if JUCE_WINDOWS
-    // Windows backend preference. initialiseWithDefaultDevices' default pick
-    // (AudioDeviceManager::pickCurrentDeviceTypeWithDevices) lands on the
-    // FIRST registered type that has devices, and createDeviceTypesIfNeeded
-    // only auto-registers JUCE's defaults when the list is empty. So
-    // pre-registering in preference order both chooses the default backend
-    // and prevents double-listing - same mechanism as the Linux block above.
-    //
-    // Order: ASIO (lowest latency; only compiled in when the SDK was present
-    // at build time) -> WASAPI exclusive (low-latency, no SDK needed: our
-    // fallback for machines with no ASIO driver) -> WASAPI shared -> DirectSound.
-    // ASIO with no installed driver enumerates zero devices, so the pick falls
-    // through to WASAPI exclusive automatically.
-   #if JUCE_ASIO
-    if (auto* asio = juce::AudioIODeviceType::createAudioIODeviceType_ASIO())
-        deviceManager.addAudioDeviceType (std::unique_ptr<juce::AudioIODeviceType> (asio));
-   #endif
-    if (auto* wasapiExclusive = juce::AudioIODeviceType::createAudioIODeviceType_WASAPI (
-            juce::WASAPIDeviceMode::exclusive))
-        deviceManager.addAudioDeviceType (std::unique_ptr<juce::AudioIODeviceType> (wasapiExclusive));
-    if (auto* wasapiShared = juce::AudioIODeviceType::createAudioIODeviceType_WASAPI (
-            juce::WASAPIDeviceMode::shared))
-        deviceManager.addAudioDeviceType (std::unique_ptr<juce::AudioIODeviceType> (wasapiShared));
-    if (auto* directSound = juce::AudioIODeviceType::createAudioIODeviceType_DirectSound())
-        deviceManager.addAudioDeviceType (std::unique_ptr<juce::AudioIODeviceType> (directSound));
-
-    for (auto* t : deviceManager.getAvailableDeviceTypes())
-        if (t != nullptr) t->scanForDevices();
-   #endif
-
-    // Restore the persisted device setup so the backend pick above only
-    // decides the FIRST launch. Without this, every start re-runs the
-    // default pick - on Windows that re-selects the first ASIO entry,
-    // re-instantiating app-shim "drivers" (JRiver et al) the user already
-    // switched away from. Null XML (fresh machine, unreadable file) makes
-    // initialise behave exactly like initialiseWithDefaultDevices.
-    std::unique_ptr<juce::XmlElement> savedDeviceState;
+    // The device manager registers the platform backends (native PipeWire/ALSA
+    // on Linux in preference order, WASAPI/ASIO/DirectSound on Windows) and does
+    // the initial pick. Restore the persisted per-machine setup so that pick only
+    // decides the FIRST launch - otherwise every start re-runs the default pick,
+    // which on Windows re-selects the first ASIO entry and re-instantiates app-shim
+    // drivers the user switched away from. An empty blob (fresh machine, unreadable
+    // file) makes initialise behave like a plain default-device open.
+    std::string savedDeviceState;
     if (const auto stateFile = audioDeviceStateFile(); stateFile.existsAsFile())
-        savedDeviceState = juce::parseXML (stateFile);
+        savedDeviceState = stateFile.loadFileAsString().toStdString();
 
-    if (const auto err = deviceManager.initialise (16, 2, savedDeviceState.get(),
-                                                   /*selectDefaultDeviceOnFailure*/ true);
-        err.isNotEmpty())
+    if (const auto err = deviceManager.initialise (16, 2, savedDeviceState,
+                                                   /*selectDefaultOnFailure*/ true);
+        ! err.empty())
     {
         std::fprintf (stderr,
                       "[Dusk Studio/AudioEngine] device-manager init reported: %s\n",
-                      err.toRawUTF8());
+                      err.c_str());
     }
 
    #if defined(DUSKSTUDIO_HAS_ALSA)
@@ -509,48 +452,46 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     // conflict - so it never falls through to the graph. Recover explicitly: the
     // native PipeWire backend (reaches the interface through the graph even while
     // the raw hw handle is held) -> the first ALSA device that opens -> give up
-    // and tell the user. This runs BEFORE addAudioCallback / addChangeListener: the audio
-    // thread isn't attached and the engine isn't a change listener yet, so the
+    // and tell the user. This runs BEFORE addCallback / setChangeCallback: the audio
+    // thread isn't attached and no change handler is wired yet, so the
     // setup-switch broadcasts reach no one (no re-entrancy, no fallback loop).
     {
         auto working = [this]
         {
-            auto* d = deviceManager.getCurrentAudioDevice();
+            auto* d = deviceManager.getCurrentDevice();
             // A started SR alone isn't enough: a per-device ALSA name can resolve
             // to 0 active outputs (see the silent-failure guard further down), so
             // require real output channels too.
             return d != nullptr && d->getCurrentSampleRate() > 0.0
-                && d->getActiveOutputChannels().countNumberOfSetBits() > 0;
+                && d->getActiveOutputChannels().count() > 0;
         };
 
-        const juce::String savedName = savedDeviceState != nullptr
-            ? savedDeviceState->getStringAttribute ("audioOutputDeviceName",
-                  savedDeviceState->getStringAttribute ("audioInputDeviceName"))
-            : juce::String();
+        // The restored setup's output device name (empty if nothing was restored).
+        const std::string savedName = deviceManager.getSetup().outputDeviceName;
 
         if (! working())
         {
             // Clear the pinned (busy) device name + use default channels, else
-            // setAudioDeviceSetup can short-circuit to a non-started, sr-0 setup.
-            auto openDefaultOnType = [this] (const char* typeName, const juce::String& devName)
+            // setSetup can short-circuit to a non-started, sr-0 setup.
+            auto openDefaultOnType = [this] (const char* typeName, const std::string& devName)
             {
-                deviceManager.setCurrentAudioDeviceType (typeName, /*treatAsChosen*/ true);
-                auto s = deviceManager.getAudioDeviceSetup();
+                deviceManager.setCurrentDeviceType (typeName, /*treatAsChosen*/ true);
+                auto s = deviceManager.getSetup();
                 s.inputDeviceName.clear();
                 s.outputDeviceName         = devName;   // empty = the type's default device
                 s.useDefaultInputChannels  = true;
                 s.useDefaultOutputChannels = true;
-                // Drop the failed device's rate/buffer so JUCE picks each fallback
-                // device's own defaults instead of carrying over unsupported values.
+                // Drop the failed device's rate/buffer so each fallback device
+                // picks its own defaults instead of carrying over unsupported values.
                 s.sampleRate = 0;
                 s.bufferSize = 0;
-                deviceManager.setAudioDeviceSetup (s, /*treatAsChosen*/ true);
+                deviceManager.setSetup (s, /*treatAsChosen*/ true);
             };
 
             // 1) Native PipeWire default (the graph reaches the interface even
             //    while another app holds the raw ALSA hw handle).
            #if defined(DUSKSTUDIO_HAS_PIPEWIRE)
-            openDefaultOnType ("PipeWire", juce::String());
+            openDefaultOnType ("PipeWire", {});
            #endif
 
             // 2) Walk ALSA device names; the busy one fails, the next (Built-in
@@ -570,14 +511,14 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
         }
 
         // Resolve the outcome unconditionally: this also catches the case where
-        // JUCE's own selectDefaultDeviceOnFailure SILENTLY moved us onto a
-        // different working device than the one saved - the user should still be
-        // told their interface wasn't available. startupDeviceMessage() returns
-        // empty when the saved device opened, so the normal path stays silent.
-        auto* dev = deviceManager.getCurrentAudioDevice();
+        // the default-on-failure pick SILENTLY moved us onto a different working
+        // device than the one saved - the user should still be told their
+        // interface wasn't available. startupDeviceMessage() returns empty when
+        // the saved device opened, so the normal path stays silent.
+        auto* dev = deviceManager.getCurrentDevice();
         const bool opened = working();
         startupDeviceMessage_ = duskstudio::startupDeviceMessage (
-            opened, savedName.toStdString(), opened ? dev->getName().toStdString() : std::string());
+            opened, savedName, opened ? dev->getName() : std::string());
     }
    #endif
 
@@ -585,17 +526,16 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     // callback iterates perInputMidi, so it must not be attachable while
     // rebuildMidiBanks sizes the vector. Empty deviceIdentifier = every
     // enabled input fans out to midiIn, routed there by source identifier.
-    midiIn.setDeviceManager (deviceManager);
+    midiIn.setDeviceManager (deviceManager.juceManager());
     rebuildMidiBanks();
     midiIn.attachCallback();
 
-    deviceManager.addAudioCallback (this);
+    deviceManager.addCallback (this);
 
-    // Subscribe to AudioDeviceManager change broadcasts so we can
-    // detect hot-unplug (current device becomes null while we had
-    // one). Fires on the message thread per JUCE's ChangeBroadcaster
-    // contract.
-    deviceManager.addChangeListener (this);
+    // Detect hot-unplug (current device becomes null while we had one). Fires on
+    // the message thread when the device manager's device list / current device
+    // changes.
+    deviceManager.setChangeCallback ([this] { onDeviceManagerChanged(); });
 }
 
 void AudioEngine::refreshMidiInputs()
@@ -604,7 +544,7 @@ void AudioEngine::refreshMidiInputs()
     // dispatch sides before returning. Cheapest correct sync for a
     // rare hot-plug event; lock-free vector mutation would cost more
     // throughout the audio path than it's worth.
-    deviceManager.removeAudioCallback (this);
+    deviceManager.removeCallback (this);
     midiIn.detachCallback();
 
     // Disable currently-enabled inputs before rebuilding so the device
@@ -660,7 +600,7 @@ void AudioEngine::refreshMidiInputs()
     openConfiguredMidiOutputs();
 
     midiIn.attachCallback();
-    deviceManager.addAudioCallback (this);
+    deviceManager.addCallback (this);
 
     sendChangeMessage();
 }
@@ -711,7 +651,7 @@ void AudioEngine::recomputePdc() noexcept
         auto& strip = strips[(size_t) t];
         int lat = 0;
         // MIDI tracks report 0: the instrument's latency is already absorbed by
-        // the MIDI scheduling pre-shift (audioDeviceIOCallbackWithContext), so
+        // the MIDI scheduling pre-shift (audioDeviceIOCallback), so
         // their output is timeline-aligned as if zero-latency.
         const bool midi = session.track (t).mode.load (std::memory_order_relaxed)
                               == (int) Track::Mode::Midi;
@@ -1088,16 +1028,19 @@ void AudioEngine::openConfiguredMidiOutputsSafely()
     // paths). Detach the callback for the brief open pass - same contract
     // refreshMidiInputs() relies on. The startup caller runs pre-attach and
     // uses openConfiguredMidiOutputs() directly.
-    deviceManager.removeAudioCallback (this);
+    deviceManager.removeCallback (this);
     openConfiguredMidiOutputs();
-    deviceManager.addAudioCallback (this);
+    deviceManager.addCallback (this);
 }
+
+void AudioEngine::detachAudioCallback()   { deviceManager.removeCallback (this); }
+void AudioEngine::reattachAudioCallback() { deviceManager.addCallback (this); }
 
 int AudioEngine::getBackendXRunCount() const noexcept
 {
-    // const_cast: getCurrentAudioDevice is non-const for historical
-    // reasons. Benign - getXRunCount is noexcept and returns a counter.
-    if (auto* dev = const_cast<juce::AudioDeviceManager&> (deviceManager).getCurrentAudioDevice())
+    // const_cast: getCurrentDevice is non-const (it repoints the adapter view).
+    // Benign - getXRunCount is noexcept and returns a counter.
+    if (auto* dev = const_cast<device::DeviceManager&> (deviceManager).getCurrentDevice())
         return std::max (0, dev->getXRunCount()
                                   - backendXrunBaseline.load (std::memory_order_relaxed));
     return 0;
@@ -1107,7 +1050,7 @@ void AudioEngine::resetXRunCounts() noexcept
 {
     xrunCount.store (0, std::memory_order_relaxed);
     int devCount = 0;
-    if (auto* dev = deviceManager.getCurrentAudioDevice())
+    if (auto* dev = deviceManager.getCurrentDevice())
         devCount = dev->getXRunCount();
     backendXrunBaseline.store (devCount, std::memory_order_relaxed);
 }
@@ -1142,10 +1085,10 @@ AudioEngine::~AudioEngine()
     diagTimer.stopTimer();
     if (transport.isRecording())
         recordManager.stopRecording (transport.getPlayhead());
-    deviceManager.removeChangeListener (this);
-    deviceManager.removeAudioCallback (this);
+    deviceManager.setChangeCallback ({});
+    deviceManager.removeCallback (this);
     midiIn.detachCallback();
-    deviceManager.closeAudioDevice();
+    deviceManager.closeDevice();
     // After the callback is gone - nothing pushes to the out-queue, the
     // pump drains or drops what's left, then the output bank can destruct.
     midiOut.stopPump();
@@ -2031,14 +1974,14 @@ void AudioEngine::consumePluginStateAfterLoad()
 #endif
 }
 
-void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
+void AudioEngine::audioDeviceAboutToStart (device::IODevice* device)
 {
     // Mark that a live device is present so the next
-    // changeListenerCallback observing a null current device can
+    // onDeviceManagerChanged observing a null current device can
     // distinguish hot-unplug from steady-state "device was never up".
     // Release ordering so the message-thread reader in
-    // changeListenerCallback sees the bump before it inspects
-    // getCurrentAudioDevice().
+    // onDeviceManagerChanged sees the bump before it inspects
+    // getCurrentDevice().
     hadLiveDevice_.store (true, std::memory_order_release);
 
     // Baseline the readout to the device's CURRENT xrun count, not 0: a reused
@@ -2054,18 +1997,19 @@ void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
     // engine writes the master mix to a non-existent destination, and the
     // user gets silence with no error). Loud stderr line + a flag the UI
     // surfaces so the failure is visible instead of mysterious.
-    const int activeIn  = device->getActiveInputChannels().countNumberOfSetBits();
-    const int activeOut = device->getActiveOutputChannels().countNumberOfSetBits();
+    const int activeIn  = device->getActiveInputChannels().count();
+    const int activeOut = device->getActiveOutputChannels().count();
     if (activeOut <= 0)
     {
+        auto* dt = deviceManager.getCurrentDeviceType();
+        const std::string devName  = device->getName();
+        const std::string typeName = dt != nullptr ? dt->getTypeName() : std::string();
         std::fprintf (stderr,
                       "[Dusk Studio/AudioEngine] WARNING: device \"%s\" (type %s) opened with "
                       "0 output channels (in=%d). Engine output will be silent. Pick a "
                       "different device - \"Default ALSA Output\" or another backend - or "
                       "stop PipeWire if you want raw ALSA on this interface.\n",
-                      device->getName().toRawUTF8(),
-                      deviceManager.getCurrentAudioDeviceType().toRawUTF8(),
-                      activeIn);
+                      devName.c_str(), typeName.c_str(), activeIn);
         usableOutputs.store (false, std::memory_order_relaxed);
     }
     else
@@ -2347,7 +2291,7 @@ void AudioEngine::setWorkerCountForTest (int n)
     reconcileWorkerPool (n);
 }
 
-void AudioEngine::audioDeviceError (const juce::String& errorMessage)
+void AudioEngine::audioDeviceError (const std::string& message)
 {
     // Fires from the audio thread (ALSA run() at fatal-recover exit;
     // macOS / Windows backends similar). stderr fprintf is RT-safe
@@ -2356,16 +2300,16 @@ void AudioEngine::audioDeviceError (const juce::String& errorMessage)
     // message-thread-only and gets dispatched via callAsync. Without
     // the dispatch we'd join the disk thread + flush a ThreadedWriter
     // on the audio thread - RecordManager's stopRecording contract
-    // forbids it. JUCE doesn't guarantee a follow-up
+    // forbids it. A backend may not deliver a follow-up
     // audioDeviceStopped after this callback, so we force it.
     std::fprintf (stderr, "[Dusk Studio/AudioEngine] audioDeviceError: %s\n",
-                  errorMessage.toRawUTF8());
+                  message.c_str());
 
-    juce::MessageManager::callAsync (
-        [this, errorMessage]
+    dusk::callAsync (
+        [this, message]
         {
-            juce::Logger::writeToLog ("[Dusk Studio/AudioEngine] audioDeviceError: "
-                                          + errorMessage);
+            juce::Logger::writeToLog (juce::String ("[Dusk Studio/AudioEngine] audioDeviceError: ")
+                                          + juce::String (message));
             audioDeviceStopped();
         });
 }
@@ -2419,43 +2363,39 @@ void AudioEngine::audioDeviceStopped()
     usableOutputs.store (true, std::memory_order_relaxed);
 }
 
-void AudioEngine::changeListenerCallback (juce::ChangeBroadcaster* source)
+void AudioEngine::onDeviceManagerChanged()
 {
-    // H5 hot-unplug detector. AudioDeviceManager broadcasts change
-    // messages whenever its device list / current-device state
-    // changes; we ignore broadcasts from any OTHER source (the
-    // engine itself broadcasts via its ChangeBroadcaster base; we
-    // don't want to react to our own messages).
-    if (source != &deviceManager) return;
+    // H5 hot-unplug detector. The device manager fires this whenever its device
+    // list / current-device state changes.
 
-    // Persist the chosen setup. createStateXml returns null until the
-    // user has explicitly picked something (treatAsChosenDevice), so the
-    // first-launch default pick is never frozen into the file - only
-    // deliberate choices survive a restart.
-    if (deviceManager.getCurrentAudioDevice() != nullptr)
-        if (const auto xml = deviceManager.createStateXml())
-            audioDeviceStateFile().replaceWithText (xml->toString());
+    // Persist the chosen setup. getStateBlob returns empty until the user has
+    // explicitly picked something (treatAsChosen), so the first-launch default
+    // pick is never frozen into the file - only deliberate choices survive a
+    // restart.
+    if (deviceManager.getCurrentDevice() != nullptr)
+        if (const auto blob = deviceManager.getStateBlob(); ! blob.empty())
+            audioDeviceStateFile().replaceWithText (juce::String (blob));
 
     // The hot-unplug signal is "we had a live device, now the
     // current device is null." User-driven settings changes also
-    // close the device, but they're followed by addAudioCallback /
+    // close the device, but they're followed by addCallback /
     // audioDeviceAboutToStart for the new selection within the same
     // dispatch loop tick - hadLiveDevice_ would still be true and
     // we'd false-alarm. To avoid that, we re-check after a one-shot
     // callAsync defer: if a new device came up in the meantime,
-    // hadLiveDevice_ is true AND getCurrentAudioDevice() is non-null,
+    // hadLiveDevice_ is true AND getCurrentDevice() is non-null,
     // so we bail. If still null, real loss; fire the alert.
     if (! hadLiveDevice_.load (std::memory_order_acquire)) return;
-    if (deviceManager.getCurrentAudioDevice() != nullptr) return;
+    if (deviceManager.getCurrentDevice() != nullptr) return;
 
     // Defer one tick so a settings-driven device swap can complete
     // before we decide it's a hot-unplug. The audioDeviceAboutToStart
     // for the new device will republish hadLiveDevice_ = true and
-    // the deferred check below sees getCurrentAudioDevice() != null,
+    // the deferred check below sees getCurrentDevice() != null,
     // bailing without spurious alert.
-    juce::MessageManager::callAsync ([this]
+    dusk::callAsync ([this]
     {
-        if (deviceManager.getCurrentAudioDevice() != nullptr) return;
+        if (deviceManager.getCurrentDevice() != nullptr) return;
         if (! hadLiveDevice_.load (std::memory_order_acquire)) return;
 
         // Confirmed loss. Clear the flag so a subsequent change
@@ -2570,12 +2510,12 @@ void AudioEngine::reduceLaneAccum (int numSamples) noexcept
     }
 }
 
-void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputChannelData,
-                                                    int numInputChannels,
-                                                    float* const* outputChannelData,
-                                                    int numOutputChannels,
-                                                    int numSamples,
-                                                    const juce::AudioIODeviceCallbackContext&)
+void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
+                                         int numInputChannels,
+                                         float* const* outputChannelData,
+                                         int numOutputChannels,
+                                         int numSamples,
+                                         const device::CallbackContext&)
 {
     juce::ScopedNoDenormals noDenormals;
 

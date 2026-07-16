@@ -4,9 +4,8 @@
 
 namespace duskstudio
 {
-FreezeDialog::FreezeDialog (AudioEngine& e, Session& s,
-                              juce::AudioDeviceManager& dm, int t)
-    : engine (e), session (s), deviceManager (dm), trackIndex (t),
+FreezeDialog::FreezeDialog (AudioEngine& e, Session& s, int t)
+    : engine (e), session (s), trackIndex (t),
       progressBar (progressValue)
 {
     titleLabel.setJustificationType (juce::Justification::centredLeft);
@@ -66,7 +65,7 @@ FreezeDialog::FreezeDialog (AudioEngine& e, Session& s,
 
     // Async render on the worker thread; the timer polls progress. No worker->UI
     // callbacks, so there's no lifetime race against a closing dialog.
-    bounceEngine = std::make_unique<BounceEngine> (engine, session, deviceManager);
+    bounceEngine = std::make_unique<BounceEngine> (engine, session);
     if (! bounceEngine->startFreeze (trackIndex, outFile, lenSamples,
                                       engine.getCurrentSampleRate()))
     {

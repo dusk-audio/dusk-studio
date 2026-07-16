@@ -196,7 +196,7 @@ AudioPipelineSelfTest::runSynthetic (double sampleRate, int blockSize,
     for (int c = 0; c < numOutChannels; ++c)
         outputPtrs[(size_t) c] = outputs[(size_t) c].data();
 
-    juce::AudioIODeviceCallbackContext ctx {};
+    duskstudio::device::CallbackContext ctx {};
 
     const double phaseInc = 2.0 * juce::MathConstants<double>::pi * (double) toneHz / sampleRate;
     double phase = 0.0;
@@ -220,7 +220,7 @@ AudioPipelineSelfTest::runSynthetic (double sampleRate, int blockSize,
         for (auto& o : outputs)
             std::fill (o.begin(), o.end(), 0.0f);
 
-        engine.audioDeviceIOCallbackWithContext (
+        engine.audioDeviceIOCallback (
             inputPtrs.data(), numInChannels,
             outputPtrs.data(), numOutChannels,
             blockSize, ctx);
@@ -410,7 +410,7 @@ std::string AudioPipelineSelfTest::testChannelRoutingFourOut()
     std::vector<float*> outputPtrs (4, nullptr);
     for (int c = 0; c < 4; ++c) outputPtrs[(size_t) c] = outputs[(size_t) c].data();
 
-    juce::AudioIODeviceCallbackContext ctx {};
+    duskstudio::device::CallbackContext ctx {};
     const double phaseInc = 2.0 * juce::MathConstants<double>::pi * (double) kToneHz / 48000.0;
     double phase = 0.0;
 
@@ -428,7 +428,7 @@ std::string AudioPipelineSelfTest::testChannelRoutingFourOut()
         }
         for (auto& o : outputs) std::fill (o.begin(), o.end(), 0.0f);
 
-        engine.audioDeviceIOCallbackWithContext (inputPtrs.data(), 16,
+        engine.audioDeviceIOCallback (inputPtrs.data(), 16,
                                                   outputPtrs.data(), 4, bs, ctx);
 
         if (b >= warmup)
@@ -591,7 +591,7 @@ void captureToneOutput (AudioEngine& engine, double sr, int blockSize,
     for (int c = 0; c < numOutChannels; ++c)
         outputPtrs[(size_t) c] = outputs[(size_t) c].data();
 
-    juce::AudioIODeviceCallbackContext ctx {};
+    duskstudio::device::CallbackContext ctx {};
     const double phaseInc = 2.0 * juce::MathConstants<double>::pi * (double) toneHz / sr;
     double phase = 0.0;
 
@@ -610,7 +610,7 @@ void captureToneOutput (AudioEngine& engine, double sr, int blockSize,
                 phase -= 2.0 * juce::MathConstants<double>::pi;
         }
         for (auto& o : outputs) std::fill (o.begin(), o.end(), 0.0f);
-        engine.audioDeviceIOCallbackWithContext (
+        engine.audioDeviceIOCallback (
             inputPtrs.data(), numInChannels,
             outputPtrs.data(), numOutChannels,
             blockSize, ctx);
@@ -1052,7 +1052,7 @@ std::string AudioPipelineSelfTest::testParallelMatchesSerial()
         std::vector<float*> outP ((size_t) numOut);
         for (int c = 0; c < numOut; ++c) outP[(size_t) c] = outs[(size_t) c].data();
 
-        juce::AudioIODeviceCallbackContext ctx {};
+        duskstudio::device::CallbackContext ctx {};
         const double inc = 2.0 * juce::MathConstants<double>::pi * (double) kToneHz / sr;
         std::vector<double> phase ((size_t) numIn, 0.0);
         outL.clear(); outR.clear();
@@ -1070,7 +1070,7 @@ std::string AudioPipelineSelfTest::testParallelMatchesSerial()
                 phase[(size_t) c] += inc * (double) bs;
             }
             for (auto& o : outs) std::fill (o.begin(), o.end(), 0.0f);
-            engine.audioDeviceIOCallbackWithContext (inP.data(), numIn, outP.data(), numOut, bs, ctx);
+            engine.audioDeviceIOCallback (inP.data(), numIn, outP.data(), numOut, bs, ctx);
             if (b >= warmup)
                 for (int s = 0; s < bs; ++s)
                 {
@@ -1178,12 +1178,12 @@ std::string AudioPipelineSelfTest::testMidiPlayAlongMonitor()
     std::vector<std::vector<float>> outb ((size_t) numOut, std::vector<float> ((size_t) bs, 0.0f));
     std::vector<float*> outp ((size_t) numOut, nullptr);
     for (int c = 0; c < numOut; ++c) outp[(size_t) c] = outb[(size_t) c].data();
-    juce::AudioIODeviceCallbackContext ctx {};
+    duskstudio::device::CallbackContext ctx {};
 
     auto runBlock = [&] ()
     {
         for (auto& o : outb) std::fill (o.begin(), o.end(), 0.0f);
-        engine.audioDeviceIOCallbackWithContext (inp.data(), numIn, outp.data(),
+        engine.audioDeviceIOCallback (inp.data(), numIn, outp.data(),
                                                   numOut, bs, ctx);
     };
 
@@ -1291,7 +1291,7 @@ std::string AudioPipelineSelfTest::testAudioPlayAlongSends()
     std::vector<std::vector<float>> outb ((size_t) numOut, std::vector<float> ((size_t) bs, 0.0f));
     std::vector<float*> outp ((size_t) numOut, nullptr);
     for (int c = 0; c < numOut; ++c) outp[(size_t) c] = outb[(size_t) c].data();
-    juce::AudioIODeviceCallbackContext ctx {};
+    duskstudio::device::CallbackContext ctx {};
 
     const double inc = 2.0 * juce::MathConstants<double>::pi * 1000.0 / sr;
     double phase = 0.0;
@@ -1310,7 +1310,7 @@ std::string AudioPipelineSelfTest::testAudioPlayAlongSends()
                 phase += inc;
             }
             for (auto& o : outb) std::fill (o.begin(), o.end(), 0.0f);
-            engine.audioDeviceIOCallbackWithContext (inp.data(), numIn, outp.data(),
+            engine.audioDeviceIOCallback (inp.data(), numIn, outp.data(),
                                                       numOut, bs, ctx);
         }
         return aux0.meterPostL.load (std::memory_order_relaxed);
@@ -1355,7 +1355,7 @@ std::string AudioPipelineSelfTest::runAll()
 
     // Save state, detach engine.
     const auto savedSession = saveState();
-    deviceManager.removeAudioCallback (&engine);
+    engine.detachAudioCallback();
 
     report.push_back ("--- Synthetic Engine Pipeline Tests (no hardware) ---");
     report.push_back (testPassThroughUnity());
@@ -1431,7 +1431,7 @@ std::string AudioPipelineSelfTest::runAll()
     // The synthetic tests force the engine serial (setWorkerCountForTest(0));
     // restore the live configured worker pool before re-attaching.
     engine.applyDesiredWorkers();
-    deviceManager.addAudioCallback (&engine);
+    engine.reattachAudioCallback();
 
     report.push_back (testBackendsOpenCleanly());
     report.push_back ("");
@@ -1509,7 +1509,7 @@ std::string AudioPipelineSelfTest::runPerfBenchmark (const std::string& label,
     for (int c = 0; c < kOutChannels; ++c)
         outputPtrs[(size_t) c] = outputs[(size_t) c].data();
 
-    juce::AudioIODeviceCallbackContext ctx {};
+    duskstudio::device::CallbackContext ctx {};
 
     std::vector<double> phase ((size_t) kInChannels, 0.0);
     std::vector<double> phaseInc ((size_t) kInChannels, 0.0);
@@ -1536,7 +1536,7 @@ std::string AudioPipelineSelfTest::runPerfBenchmark (const std::string& label,
         }
 
         const auto t0 = juce::Time::getHighResolutionTicks();
-        engine.audioDeviceIOCallbackWithContext (
+        engine.audioDeviceIOCallback (
             inputPtrs.data(), kInChannels,
             outputPtrs.data(), kOutChannels,
             blockSize, ctx);
@@ -1580,12 +1580,12 @@ std::string AudioPipelineSelfTest::runPerfSuite()
     report.push_back ("=== Dusk Studio Engine Perf Benchmark ===");
     report.push_back ("Time: " + juce::Time::getCurrentTime().toString (true, true).toStdString());
     report.push_back ("Measures pure-engine callback wall time across configs.");
-    report.push_back ("All callbacks driven directly via audioDeviceIOCallbackWithContext;");
+    report.push_back ("All callbacks driven directly via audioDeviceIOCallback;");
     report.push_back ("no audio device, no PipeWire, no ALSA - engine DSP only.");
     report.push_back ("");
 
     const auto saved = saveState();
-    deviceManager.removeAudioCallback (&engine);
+    engine.detachAudioCallback();
 
     constexpr int warm = 32;
     constexpr int meas = 512;
@@ -1666,7 +1666,7 @@ std::string AudioPipelineSelfTest::runPerfSuite()
     restoreState (saved);
     // The perf sweep forces the engine serial; restore the configured pool.
     engine.applyDesiredWorkers();
-    deviceManager.addAudioCallback (&engine);
+    engine.reattachAudioCallback();
 
     report.push_back ("=== End of Engine Perf Benchmark ===");
     return dusk::text::joinIntoString (report, "\n");

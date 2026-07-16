@@ -10,7 +10,7 @@
 namespace duskstudio
 {
 // Headless self-test for the audio pipeline. The synthetic tests detach the
-// AudioEngine from deviceManager and call audioDeviceIOCallbackWithContext
+// AudioEngine from deviceManager and call audioDeviceIOCallback
 // directly with known input buffers, then measure the output. This catches
 // internal bugs (mute, fader, master DSP, channel routing) without requiring
 // audio hardware. The backend tests cycle through available device types and

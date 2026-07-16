@@ -143,6 +143,9 @@ public:
 
     void audioDeviceStopped() override { cb->audioDeviceStopped(); }
 
+    void audioDeviceError (const juce::String& message) override
+        { cb->audioDeviceError (message.toStdString()); }
+
 private:
     IODeviceCallback* cb;
     JuceDeviceAdapter adapter { nullptr };
