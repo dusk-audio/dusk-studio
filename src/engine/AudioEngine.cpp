@@ -466,8 +466,10 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
                 && d->getActiveOutputChannels().count() > 0;
         };
 
-        // The restored setup's output device name (empty if nothing was restored).
-        const std::string savedName = deviceManager.getSetup().outputDeviceName;
+        // The user's INTENDED output device (from the saved blob), not whatever
+        // initialise() landed on - so a saved device that failed to open is still
+        // named in the startup message even after a silent fallback.
+        const std::string savedName = deviceManager.outputDeviceNameFromState (savedDeviceState);
 
         if (! working())
         {

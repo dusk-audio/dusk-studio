@@ -259,6 +259,15 @@ std::string DeviceManager::getStateBlob() const
     return {};
 }
 
+std::string DeviceManager::outputDeviceNameFromState (const std::string& savedState) const
+{
+    if (savedState.empty()) return {};
+    if (auto xml = juce::parseXML (juce::String (savedState)))
+        return xml->getStringAttribute ("audioOutputDeviceName",
+                   xml->getStringAttribute ("audioInputDeviceName")).toStdString();
+    return {};
+}
+
 IODevice* DeviceManager::getCurrentDevice()
 {
     auto* d = impl->mgr.getCurrentAudioDevice();
