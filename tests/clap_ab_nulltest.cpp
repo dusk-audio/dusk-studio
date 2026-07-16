@@ -12,6 +12,7 @@
 #include "engine/clap/ClapInstance.h"
 #include "engine/hosting/InsertAdapter.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <string>
