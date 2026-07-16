@@ -18,6 +18,11 @@ namespace juce { class AudioDeviceManager; }
 // while the implementation currently delegates to a wrapped juce::AudioDeviceManager
 // and adapts JUCE's device/callback types behind it. A later phase swaps the
 // backing to the native PipeWire/ALSA types with this API unchanged.
+//
+// Message-thread only, same contract as juce::AudioDeviceManager: construct,
+// initialise, add/remove callbacks and query the device off the message thread.
+// The audio thread receives blocks through the registered IODeviceCallback, never
+// by calling into this class.
 namespace duskstudio::device
 {
 class IODeviceCallback;
@@ -41,6 +46,8 @@ public:
     // caller writes it to disk and hands it back to initialise()).
     std::string getStateBlob() const;
 
+    // A view of the live device, repointed on each call - use it, don't cache it
+    // (a later call reflects a different device through the same object).
     IODevice*     getCurrentDevice();
     IODeviceType* getCurrentDeviceType();
     void          setCurrentDeviceType (const std::string& typeName, bool treatAsChosen);

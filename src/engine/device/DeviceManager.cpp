@@ -306,10 +306,14 @@ std::string DeviceManager::setSetup (const DeviceSetup& d, bool treatAsChosen)
 
 void DeviceManager::addCallback (IODeviceCallback* callback)
 {
-    if (callback == nullptr || impl->bridges.count (callback) != 0) return;
-    auto bridge = std::make_unique<CallbackBridge> (callback);
-    impl->mgr.addAudioCallback (bridge.get());
-    impl->bridges.emplace (callback, std::move (bridge));
+    if (callback == nullptr) return;
+    // Claim the map slot before creating + registering the bridge, so a repeat
+    // call for the same callback can't register a second bridge that is then
+    // dropped (leaving mgr with a dangling pointer).
+    auto [it, inserted] = impl->bridges.emplace (callback, nullptr);
+    if (! inserted) return;
+    it->second = std::make_unique<CallbackBridge> (callback);
+    impl->mgr.addAudioCallback (it->second.get());
 }
 
 void DeviceManager::removeCallback (IODeviceCallback* callback)
