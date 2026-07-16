@@ -40,7 +40,7 @@ public:
                   const float* sidechainL = nullptr,
                   const float* sidechainR = nullptr,
                   const dusk::MidiBuffer* midiIn = nullptr,
-                  const juce::AudioPlayHead::PositionInfo* transport = nullptr) noexcept;
+                  const dusk::TransportPosition* transport = nullptr) noexcept;
 
     int inputChannels()     const noexcept { return inChans; }
     int outputChannels()    const noexcept { return outChans; }

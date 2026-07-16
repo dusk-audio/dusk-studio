@@ -5,6 +5,7 @@
 #include "engine/hosting/PortBuffers.h"
 #include "engine/hosting/PortLayout.h"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -127,7 +128,7 @@ public:
     void processBlock (const PortBuffers& io) noexcept override
     {
         if (! active || io.numFrames <= 0 || io.numFrames > maxFrames) return;
-        const int ch = juce::jmin (io.mainInChannels, io.mainOutChannels);
+        const int ch = std::min (io.mainInChannels, io.mainOutChannels);
         for (int c = 0; c < ch; ++c)
             for (int i = 0; i < io.numFrames; ++i)
                 io.mainOut[c][i] = io.mainIn[c][i] * 0.5f;

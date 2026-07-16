@@ -40,7 +40,7 @@ void InsertAdapter::process (INativeInstance& inst,
                              const float* sidechainL,
                              const float* sidechainR,
                              const dusk::MidiBuffer* midiIn,
-                             const juce::AudioPlayHead::PositionInfo* transport) noexcept
+                             const dusk::TransportPosition* transport) noexcept
 {
     if (! inst.isActive() || numFrames <= 0 || numFrames > maxFrames)
         return;   // dry passthrough - leave L/R untouched
@@ -60,7 +60,7 @@ void InsertAdapter::process (INativeInstance& inst,
         std::memcpy (inPtrs[0], L, n * sizeof (float));
         std::memcpy (inPtrs[1], R, n * sizeof (float));
         for (int c = 2; c < inChans; ++c)   // extra main-in channels (rare) get silence
-            juce::FloatVectorOperations::clear (inPtrs[(size_t) c], numFrames);
+            std::fill (inPtrs[(size_t) c], inPtrs[(size_t) c] + n, 0.0f);
     }
     // inChans == 0 -> instrument: no audio input to build.
 
@@ -68,23 +68,23 @@ void InsertAdapter::process (INativeInstance& inst,
     if (scChans >= 1)
     {
         if (sidechainL != nullptr) std::memcpy (scPtrs[0], sidechainL, n * sizeof (float));
-        else                       juce::FloatVectorOperations::clear (scPtrs[0], numFrames);
+        else                       std::fill (scPtrs[0], scPtrs[0] + n, 0.0f);
 
         if (scChans >= 2)
         {
             const float* r = sidechainR != nullptr ? sidechainR : sidechainL;   // mono source -> dup
             if (r != nullptr) std::memcpy (scPtrs[1], r, n * sizeof (float));
-            else              juce::FloatVectorOperations::clear (scPtrs[1], numFrames);
+            else              std::fill (scPtrs[1], scPtrs[1] + n, 0.0f);
 
             for (int c = 2; c < scChans; ++c)
-                juce::FloatVectorOperations::clear (scPtrs[(size_t) c], numFrames);
+                std::fill (scPtrs[(size_t) c], scPtrs[(size_t) c] + n, 0.0f);
         }
     }
 
     // Clear the output scratch so any main-out channel the plugin leaves
     // unwritten reads as silence, not last block's data.
     for (int c = 0; c < outChans; ++c)
-        juce::FloatVectorOperations::clear (outPtrs[(size_t) c], numFrames);
+        std::fill (outPtrs[(size_t) c], outPtrs[(size_t) c] + n, 0.0f);
 
     PortBuffers io;
     io.mainIn              = inChans  > 0 ? inPtrs.data() : nullptr;
