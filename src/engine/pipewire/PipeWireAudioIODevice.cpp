@@ -2,12 +2,17 @@
 
 #include <pipewire/pipewire.h>
 #include <pipewire/filter.h>
+#include <pipewire/link.h>
 #include <spa/node/io.h>
+#include <spa/utils/dict.h>
 
 #include <algorithm>
 #include <mutex>
 #include <cstdio>
 #include <cstring>
+#include <thread>
+#include <chrono>
+#include <ctime>
 
 namespace duskstudio
 {
@@ -50,6 +55,160 @@ pw_filter_events makeFilterEvents()
 }
 
 const pw_filter_events kFilterEvents = makeFilterEvents();
+
+// ----- graph port discovery (for manual linking) -----------------------------
+// A single node's audio port, collected from the registry so we can reference
+// its global id in a link. Direction is the graph's ("out" produces).
+struct GraphPort
+{
+    juce::uint32 nodeId = 0;
+    juce::uint32 portId = 0;
+    bool         isOutput = false;
+    juce::String name;      // "playback_1", "capture_2", device port names...
+    juce::String channel;   // audio.channel: "FL"/"FR"/"AUX0".., or empty
+};
+
+// A stable per-node channel ordering key. Prefer the semantic audio.channel
+// position (survives graph recreation, unlike registry ids); fall back to the
+// trailing index in our own DSP port names ("playback_3"), then the port id.
+// Only used to order ports WITHIN one node, so the key scales need not align
+// across the named/aux/fallback groups.
+int channelOrderKey (const GraphPort& p)
+{
+    if (p.channel.isNotEmpty())
+    {
+        if (p.channel.startsWith ("AUX"))
+            return 100 + p.channel.substring (3).getIntValue();
+        static const char* const canonical[] =
+            { "MONO", "FL", "FR", "FC", "LFE", "RL", "RR", "FLC", "FRC", "RC", "SL", "SR" };
+        for (int i = 0; i < (int) (sizeof (canonical) / sizeof (canonical[0])); ++i)
+            if (p.channel == canonical[i]) return i;
+    }
+    const auto digits = p.name.retainCharacters ("0123456789");
+    if (digits.isNotEmpty())
+        return digits.getIntValue();
+    return (int) p.portId;
+}
+
+struct GraphScan
+{
+    juce::Array<GraphPort> ports;
+    juce::StringArray      nodeNames;   // index-aligned with nodeIds
+    juce::Array<juce::uint32> nodeIds;
+    pw_main_loop* loop = nullptr;
+    int  syncSeq = 0;
+    bool haveSync = false;
+
+    juce::uint32 resolveNode (const juce::String& name) const
+    {
+        const int i = nodeNames.indexOf (name);
+        return i >= 0 ? nodeIds.getUnchecked (i) : (juce::uint32) SPA_ID_INVALID;
+    }
+};
+
+void onGraphGlobal (void* data, uint32_t id, uint32_t /*perm*/, const char* type,
+                     uint32_t /*version*/, const struct spa_dict* props)
+{
+    auto& s = *static_cast<GraphScan*> (data);
+    if (props == nullptr)
+        return;
+
+    if (std::strcmp (type, PW_TYPE_INTERFACE_Node) == 0)
+    {
+        if (const char* nm = spa_dict_lookup (props, PW_KEY_NODE_NAME))
+        {
+            s.nodeNames.add (juce::String::fromUTF8 (nm));
+            s.nodeIds.add (id);
+        }
+    }
+    else if (std::strcmp (type, PW_TYPE_INTERFACE_Port) == 0)
+    {
+        const char* nodeIdStr = spa_dict_lookup (props, PW_KEY_NODE_ID);
+        const char* dir       = spa_dict_lookup (props, PW_KEY_PORT_DIRECTION);
+        if (nodeIdStr == nullptr || dir == nullptr)
+            return;
+        const bool isOut = std::strcmp (dir, "out") == 0;
+        const bool isIn  = std::strcmp (dir, "in")  == 0;
+        if (! isOut && ! isIn)
+            return;
+        const char* ch = spa_dict_lookup (props, PW_KEY_AUDIO_CHANNEL);
+        const char* nm = spa_dict_lookup (props, PW_KEY_PORT_NAME);
+        const juce::String name = nm != nullptr ? juce::String::fromUTF8 (nm) : juce::String();
+        // Link only audio ports: device audio ports carry audio.channel; our own
+        // DSP ports don't but are named playback_/capture_. Everything else
+        // (MIDI / control / notify ports) must not be linked.
+        if (ch == nullptr && ! name.startsWith ("playback_") && ! name.startsWith ("capture_"))
+            return;
+        GraphPort p;
+        p.nodeId   = (juce::uint32) juce::String (nodeIdStr).getLargeIntValue();
+        p.portId   = id;
+        p.isOutput = isOut;
+        p.name     = name;
+        if (ch != nullptr)
+            p.channel = juce::String::fromUTF8 (ch);
+        s.ports.add (p);
+    }
+}
+
+void onGraphDone (void* data, uint32_t id, int seq)
+{
+    auto& s = *static_cast<GraphScan*> (data);
+    if (id == PW_ID_CORE && s.haveSync && seq == s.syncSeq)
+        pw_main_loop_quit (s.loop);
+}
+
+void onGraphError (void* data, uint32_t /*id*/, int /*seq*/, int /*res*/, const char* /*msg*/)
+{
+    // No matching done will arrive after a fatal core error; quit so discovery
+    // can't block the open() path forever.
+    auto& s = *static_cast<GraphScan*> (data);
+    if (s.loop != nullptr)
+        pw_main_loop_quit (s.loop);
+}
+
+void onGraphTimeout (void* data, uint64_t /*expirations*/)
+{
+    auto& s = *static_cast<GraphScan*> (data);
+    if (s.loop != nullptr)
+        pw_main_loop_quit (s.loop);
+}
+
+pw_registry_events makeGraphRegistryEvents()
+{
+    pw_registry_events e {};
+    e.version = PW_VERSION_REGISTRY_EVENTS;
+    e.global  = onGraphGlobal;
+    return e;
+}
+
+pw_core_events makeGraphCoreEvents()
+{
+    pw_core_events e {};
+    e.version = PW_VERSION_CORE_EVENTS;
+    e.done    = onGraphDone;
+    e.error   = onGraphError;
+    return e;
+}
+
+const pw_registry_events kGraphRegistryEvents = makeGraphRegistryEvents();
+const pw_core_events     kGraphCoreEvents     = makeGraphCoreEvents();
+
+// Registry ids of a node's ports in one direction, ordered by channelOrderKey
+// (semantic audio.channel, else port-name index) so link N maps our channel N
+// to the device's channel N regardless of registry id assignment.
+juce::Array<juce::uint32> orderedPortIds (const GraphScan& s, juce::uint32 nodeId, bool isOutput)
+{
+    juce::Array<GraphPort> matching;
+    for (const auto& p : s.ports)
+        if (p.nodeId == nodeId && p.isOutput == isOutput)
+            matching.add (p);
+    std::sort (matching.begin(), matching.end(),
+               [] (const GraphPort& a, const GraphPort& b)
+               { return channelOrderKey (a) < channelOrderKey (b); });
+    juce::Array<juce::uint32> ids;
+    for (const auto& p : matching) ids.add (p.portId);
+    return ids;
+}
 } // namespace
 
 // ----- pure helpers (shared with the self-test) ------------------------------
@@ -172,13 +331,27 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
     const auto latency = formatNodeLatency (quantum, rate);
 
     auto* props = pw_properties_new (
-        PW_KEY_MEDIA_TYPE,     "Audio",
-        PW_KEY_MEDIA_CATEGORY, category,
-        PW_KEY_MEDIA_ROLE,     "Production",
-        PW_KEY_APP_NAME,       "Dusk Studio",
-        PW_KEY_NODE_NAME,      "Dusk Studio",
-        PW_KEY_NODE_LATENCY,   latency.toRawUTF8(),
+        PW_KEY_MEDIA_TYPE,       "Audio",
+        PW_KEY_MEDIA_CATEGORY,   category,
+        PW_KEY_MEDIA_ROLE,       "Production",
+        PW_KEY_APP_NAME,         "Dusk Studio",
+        PW_KEY_NODE_NAME,        "Dusk Studio",
+        PW_KEY_NODE_LATENCY,     latency.toRawUTF8(),
+        // We link to the target ourselves (linkToHardware), so keep the session
+        // manager's auto-link policy out of it - autoconnect would also try to
+        // link the node to the DEFAULT device, routing audio to the wrong place.
+        PW_KEY_NODE_AUTOCONNECT, "false",
+        // A duplex filter is not a driver and, unlinked, is never scheduled -
+        // it sits at PAUSED and on_process never fires. want-driver asks the
+        // graph to group it with the hardware driver node so the cycle runs.
+        PW_KEY_NODE_WANT_DRIVER,  "true",
         nullptr);
+    // Drive the graph to the session's rate + block size (PipeWire otherwise
+    // runs at its own quantum/rate and resamples, so our callback would get a
+    // different block size than the engine prepared for). force-* holds them
+    // while our node is active - this is the DAW acting as the graph's clock.
+    pw_properties_setf (props, PW_KEY_NODE_FORCE_RATE,    "%d", rate);
+    pw_properties_setf (props, PW_KEY_NODE_FORCE_QUANTUM, "%d", quantum);
     // Node-level target links the primary direction to the chosen device. Ports
     // also carry a per-direction target below; recent WirePlumber honours the
     // port target, older policy the node target, so we set both.
@@ -252,6 +425,7 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
     // started, onProcess may read these on the very first cycle.
     lastXrunRecovering = false;
     xrunCount.store (0, std::memory_order_relaxed);
+    negotiatedQuantum.store (0, std::memory_order_relaxed);
 
     if (const int rc = pw_thread_loop_start (threadLoop); rc < 0)
     {
@@ -303,23 +477,188 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
         }
     }
 
+    // The session manager won't link a duplex filter, so link our ports to the
+    // chosen device ourselves. Once linked, the graph drives the node (STREAMING)
+    // and onProcess starts firing.
+    const int nLinks = linkToHardware();
+    if (nLinks <= 0)
+    {
+        lastError = "PipeWire: could not link all device ports";
+        close();
+        return lastError;
+    }
+
+    // Wait for the links to drive the node to STREAMING - that state IS the
+    // confirmation the links bound and the graph is running. If it never reaches
+    // STREAMING (no links bound, or the driver didn't start), the device would
+    // play silence with a frozen transport, so fail the open instead.
+    bool streaming = false;
+    {
+        pw_thread_loop_lock (threadLoop);
+        const char* se = nullptr;
+        pw_filter_state st = pw_filter_get_state (filter, &se);
+        for (int t = 0; st != PW_FILTER_STATE_STREAMING && st != PW_FILTER_STATE_ERROR && t < 10; ++t)
+        {
+            if (pw_thread_loop_timed_wait (threadLoop, 1) != 0)
+                break;
+            st = pw_filter_get_state (filter, &se);
+        }
+        streaming = (st == PW_FILTER_STATE_STREAMING);
+        pw_thread_loop_unlock (threadLoop);
+    }
+    if (! streaming)
+    {
+        lastError = "PipeWire node did not start streaming ("
+                    + juce::String (nLinks) + " link(s) created)";
+        close();
+        return lastError;
+    }
+
+    // Adopt the graph's real quantum: PipeWire runs the graph at its own block
+    // size (our request is only advisory), so the engine must prepare for what
+    // onProcess actually delivers - otherwise its oversized-block guard clears
+    // every block to silence. A quantum above maxQuantum is itself dropped by
+    // onProcess, so treat "no usable quantum" as a failed open rather than
+    // silently keeping the requested size.
+    for (int t = 0; t < 100 && negotiatedQuantum.load (std::memory_order_relaxed) == 0; ++t)
+        std::this_thread::sleep_for (std::chrono::milliseconds (2));
+    const int nq = negotiatedQuantum.load (std::memory_order_relaxed);
+    if (nq <= 0 || nq > maxQuantum)
+    {
+        lastError = "PipeWire delivered no usable quantum (" + juce::String (nq) + ")";
+        close();
+        return lastError;
+    }
+    currentBlockSize = nq;
+    if (wantOutput) outputLatency = nq;
+    if (wantInput)  inputLatency  = nq;
+
     isDeviceOpen.store (true, std::memory_order_release);
     lastError.clear();
 
     std::fprintf (stderr,
                   "[Dusk Studio/PipeWire] opened \"%s\" rate=%d quantum=%d out=%dch in=%dch "
-                  "target-out=\"%s\" target-in=\"%s\"\n",
-                  displayName.toRawUTF8(), rate, quantum,
-                  numOutputChannels, numInputChannels,
+                  "links=%d target-out=\"%s\" target-in=\"%s\"\n",
+                  displayName.toRawUTF8(), rate, currentBlockSize,
+                  numOutputChannels, numInputChannels, linkProxies.size(),
                   wantOutput ? outputId.toRawUTF8() : "-",
                   wantInput  ? inputId.toRawUTF8()  : "-");
 
     return {};
 }
 
+int PipeWireAudioIODevice::linkToHardware()
+{
+    // Filter accessors touch objects on the thread loop; briefly lock for them
+    // (but NOT across the registry roundtrip below, which would stall the RT
+    // thread for the whole sync).
+    pw_thread_loop_lock (threadLoop);
+    const juce::uint32 ourNode = pw_filter_get_node_id (filter);
+    pw_thread_loop_unlock (threadLoop);
+    if (ourNode == (juce::uint32) SPA_ID_INVALID)
+        return 0;
+
+    // Throwaway registry roundtrip to discover the global port ids of our node
+    // and the target device nodes. Object ids are graph-global, so ids found on
+    // this scratch connection are valid to reference from the filter's core.
+    GraphScan s;
+    s.loop = pw_main_loop_new (nullptr);
+    if (s.loop == nullptr) return 0;
+    auto* ctx = pw_context_new (pw_main_loop_get_loop (s.loop), nullptr, 0);
+    if (ctx == nullptr) { pw_main_loop_destroy (s.loop); return 0; }
+    auto* core = pw_context_connect (ctx, nullptr, 0);
+    if (core == nullptr) { pw_context_destroy (ctx); pw_main_loop_destroy (s.loop); return 0; }
+    auto* registry = pw_core_get_registry (core, PW_VERSION_REGISTRY, 0);
+    if (registry == nullptr)
+    {
+        pw_core_disconnect (core); pw_context_destroy (ctx); pw_main_loop_destroy (s.loop);
+        return 0;
+    }
+
+    spa_hook rHook {}, cHook {};
+    pw_registry_add_listener (registry, &rHook, &kGraphRegistryEvents, &s);
+    pw_core_add_listener (core, &cHook, &kGraphCoreEvents, &s);
+    s.syncSeq  = pw_core_sync (core, PW_ID_CORE, 0);
+    s.haveSync = true;
+
+    auto* pwLoop = pw_main_loop_get_loop (s.loop);
+    auto* timer  = pw_loop_add_timer (pwLoop, onGraphTimeout, &s);
+    struct timespec timeout {};
+    timeout.tv_sec = 2;
+    pw_loop_update_timer (pwLoop, timer, &timeout, nullptr, false);
+
+    pw_main_loop_run (s.loop);
+
+    pw_loop_destroy_source (pwLoop, timer);
+    spa_hook_remove (&rHook);
+    spa_hook_remove (&cHook);
+    pw_proxy_destroy ((pw_proxy*) registry);
+    pw_core_disconnect (core);
+    pw_context_destroy (ctx);
+    pw_main_loop_destroy (s.loop);
+    s.loop = nullptr;
+
+    const bool wantOut = numOutputChannels > 0 && outputId.isNotEmpty();
+    const bool wantIn  = numInputChannels  > 0 && inputId.isNotEmpty();
+    const juce::uint32 sinkNode   = wantOut ? s.resolveNode (outputId) : (juce::uint32) SPA_ID_INVALID;
+    const juce::uint32 sourceNode = wantIn  ? s.resolveNode (inputId)  : (juce::uint32) SPA_ID_INVALID;
+
+    const auto ourOut = orderedPortIds (s, ourNode, true);
+    const auto ourIn  = orderedPortIds (s, ourNode, false);
+    const auto sinkIn = sinkNode   != (juce::uint32) SPA_ID_INVALID ? orderedPortIds (s, sinkNode,   false)
+                                                                    : juce::Array<juce::uint32>();
+    const auto srcOut = sourceNode != (juce::uint32) SPA_ID_INVALID ? orderedPortIds (s, sourceNode, true)
+                                                                    : juce::Array<juce::uint32>();
+
+    const int wantLinks = std::min (ourOut.size(), sinkIn.size())
+                        + std::min (srcOut.size(), ourIn.size());
+
+    int made = 0;
+    pw_thread_loop_lock (threadLoop);
+    auto* filterCore = pw_filter_get_core (filter);
+    if (filterCore != nullptr)
+    {
+        auto makeLink = [&] (juce::uint32 outNode, juce::uint32 outPort,
+                             juce::uint32 inNode,  juce::uint32 inPort)
+        {
+            auto* lp = pw_properties_new (nullptr, nullptr);
+            pw_properties_setf (lp, PW_KEY_LINK_OUTPUT_NODE, "%u", outNode);
+            pw_properties_setf (lp, PW_KEY_LINK_OUTPUT_PORT, "%u", outPort);
+            pw_properties_setf (lp, PW_KEY_LINK_INPUT_NODE,  "%u", inNode);
+            pw_properties_setf (lp, PW_KEY_LINK_INPUT_PORT,  "%u", inPort);
+            auto* proxy = (pw_proxy*) pw_core_create_object (filterCore, "link-factory",
+                PW_TYPE_INTERFACE_Link, PW_VERSION_LINK, &lp->dict, 0);
+            pw_properties_free (lp);
+            if (proxy != nullptr) { linkProxies.add (proxy); ++made; }
+        };
+        for (int i = 0; i < std::min (ourOut.size(), sinkIn.size()); ++i)
+            makeLink (ourNode, ourOut.getUnchecked (i), sinkNode,   sinkIn.getUnchecked (i));
+        for (int j = 0; j < std::min (srcOut.size(), ourIn.size()); ++j)
+            makeLink (sourceNode, srcOut.getUnchecked (j), ourNode, ourIn.getUnchecked (j));
+    }
+    pw_thread_loop_unlock (threadLoop);
+
+    // A partial link set (a proxy failed, or no ports matched) would route only
+    // some channels; signal failure so open() rejects it rather than opening a
+    // half-wired device.
+    return (wantLinks > 0 && made == wantLinks) ? made : -1;
+}
+
 void PipeWireAudioIODevice::close()
 {
     stop();
+
+    // Destroy the links we created (on the filter's core) before stopping the
+    // loop - proxy destruction touches the loop, so it needs the lock and a
+    // running loop.
+    if (threadLoop != nullptr && threadLoopRunning && ! linkProxies.isEmpty())
+    {
+        pw_thread_loop_lock (threadLoop);
+        for (auto* p : linkProxies)
+            if (p != nullptr) pw_proxy_destroy ((pw_proxy*) p);
+        pw_thread_loop_unlock (threadLoop);
+    }
+    linkProxies.clearQuick();
 
     // pw_thread_loop_stop must be called WITHOUT the lock held; it joins the RT
     // thread, after which teardown races nothing. Only stop a loop we actually
@@ -382,6 +721,8 @@ void PipeWireAudioIODevice::onProcess (struct spa_io_position* position) noexcep
     const juce::uint32 n = position != nullptr ? (juce::uint32) position->clock.duration : 0;
     if (n == 0)
         return;
+
+    negotiatedQuantum.store ((int) n, std::memory_order_relaxed);
 
     // Count one xrun per recovery episode: increment on the rising edge of the
     // XRUN_RECOVER flag, not on every cycle it stays set (a recovery can span
@@ -455,6 +796,19 @@ juce::String PipeWireAudioIODevice::runSelfTest()
     // node.latency string formatting (quantum/rate).
     check (formatNodeLatency (512, 48000) == "512/48000", "PipeWire: node.latency format 512/48000");
     check (formatNodeLatency (64, 44100)  == "64/44100",  "PipeWire: node.latency format 64/44100");
+
+    // Channel ordering key that maps our ports to the device's ports for
+    // manual linking. Hardware ports order by audio.channel; our DSP ports by
+    // the trailing index in their name.
+    {
+        auto hw = [] (const char* ch) { GraphPort p; p.channel = ch; return channelOrderKey (p); };
+        check (hw ("FL") < hw ("FR"),     "PipeWire: channel order FL before FR");
+        check (hw ("AUX0") < hw ("AUX1"), "PipeWire: channel order AUX0 before AUX1");
+        check (hw ("AUX2") < hw ("AUX10"),"PipeWire: channel order AUX2 before AUX10");
+        auto ours = [] (const char* nm) { GraphPort p; p.name = nm; return channelOrderKey (p); };
+        check (ours ("playback_2") < ours ("playback_10"),
+               "PipeWire: our port order playback_2 before playback_10");
+    }
 
     return out.joinIntoString ("\n");
 }

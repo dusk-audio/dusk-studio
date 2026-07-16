@@ -119,6 +119,12 @@ private:
     juce::Array<void*> inPorts;
     juce::Array<void*> outPorts;
 
+    // Link proxies we create from our ports to the target device's ports. A
+    // duplex pw_filter is not auto-linked by the session manager (it keys off
+    // media.class, which a dual-direction node can't carry), so we link to the
+    // hardware ourselves - see linkToHardware(). Owned; destroyed in close().
+    juce::Array<void*> linkProxies;
+
     double openedSampleRate = 0.0;
     int    currentBlockSize = 0;
     int    maxQuantum       = 0;      // scratch ceiling; cycles above this are dropped
@@ -146,8 +152,18 @@ private:
     std::atomic<bool> isDeviceOpen { false };
     std::atomic<bool> isStarted    { false };
     std::atomic<int>  xrunCount    { 0 };
+    // The graph's real quantum, captured from the first process cycle. PipeWire
+    // runs the graph at its own block size (often not the value we requested),
+    // so open() adopts this as currentBlockSize before the engine prepares.
+    std::atomic<int>  negotiatedQuantum { 0 };
 
     juce::String lastError;
+
+    // After the filter connects, link our ports to the chosen sink/source ports
+    // (the session manager won't). Discovers the global port ids via a registry
+    // roundtrip and creates link objects on the filter's core. Returns the number
+    // of links created. Message-thread only.
+    int linkToHardware();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PipeWireAudioIODevice)
 };
