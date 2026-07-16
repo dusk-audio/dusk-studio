@@ -39,7 +39,7 @@ void InsertAdapter::process (INativeInstance& inst,
                              float* L, float* R, int numFrames,
                              const float* sidechainL,
                              const float* sidechainR,
-                             const juce::MidiBuffer* midiIn,
+                             const dusk::MidiBuffer* midiIn,
                              const juce::AudioPlayHead::PositionInfo* transport) noexcept
 {
     if (! inst.isActive() || numFrames <= 0 || numFrames > maxFrames)

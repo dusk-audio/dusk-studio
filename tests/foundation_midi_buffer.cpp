@@ -46,6 +46,14 @@ TEST_CASE ("dusk::MidiBuffer iterates like juce::MidiBuffer", "[foundation][midi
         REQUIRE (dm.getRawDataSize()  == jm.getRawDataSize());
         for (int b = 0; b < dm.getRawDataSize(); ++b)
             REQUIRE (dm.getRawData()[b] == jm.getRawData()[b]);
+
+        // The native plugin hosts iterate via meta.data / meta.numBytes (the
+        // juce::MidiMessageMetadata shape); these must match the message view.
+        REQUIRE ((*di).numBytes == dm.getRawDataSize());
+        REQUIRE ((*di).data     == dm.getRawData());
+        REQUIRE ((*di).data     != nullptr);
+        for (int b = 0; b < (*di).numBytes; ++b)
+            REQUIRE ((*di).data[b] == jm.getRawData()[b]);
         ++count;
     }
     REQUIRE (ji == j.end());

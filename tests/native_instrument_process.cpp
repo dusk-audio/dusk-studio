@@ -5,6 +5,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "support/DuskMidiTestBridge.h"
+
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
  #include "engine/clap/NativeClapSlot.h"
 #endif
@@ -48,9 +50,10 @@ float driveNote (Slot& slot, int blocks)
             for (const int k : keys)
                 for (const int ch : { 1, 10 })
                     midi.addEvent (juce::MidiMessage::noteOff (ch, k), 0);
+        const dusk::MidiBuffer dmidi = duskstudio::test::toDusk (midi);
         std::fill (L.begin(), L.end(), 0.0f);
         std::fill (R.begin(), R.end(), 0.0f);
-        slot.processStereo (L.data(), R.data(), L.data(), R.data(), kBlock, &midi);
+        slot.processStereo (L.data(), R.data(), L.data(), R.data(), kBlock, &dmidi);
         for (int i = 0; i < kBlock; ++i)
         {
             REQUIRE (std::isfinite (L[(size_t) i]));

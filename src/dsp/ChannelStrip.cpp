@@ -79,6 +79,9 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     // channel-voice messages per block; far above any sane density even
     // for instrument plugins generating dense controller streams.
     pluginMidiScratch.ensureSize (4096);
+    // Same headroom for the native-host bridge; reserveBytes caps it so the
+    // per-block juce->dusk refill drops any overflow instead of allocating.
+    nativeMidiScratch.reserveBytes (4096);
 
     // Plugin slot - prepared at the same SR/BS so the audio thread never
     // sees an unprepared instance. If the slot has no plugin loaded, this
@@ -1019,19 +1022,25 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             // tick the smoother to keep its state in sync in case the
             // track later flips to audio mode. A native host owns the slot
             // when loaded - same precedence as the effect-insert path.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3
+            // Bridge the block's MIDI into dusk once for whichever native host runs.
+            nativeMidiScratch.clear();
+            for (const auto meta : trackMidi)
+                nativeMidiScratch.addEvent (meta.data, meta.numBytes, meta.samplePosition);
+#endif
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
             if (nativeClapSlot.isLoaded())
-                nativeClapSlot.processStereo (L, R, L, R, numSamples, &trackMidi);
+                nativeClapSlot.processStereo (L, R, L, R, numSamples, &nativeMidiScratch);
             else
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
             if (nativeLv2Slot.isLoaded())
-                nativeLv2Slot.processStereo (L, R, L, R, numSamples, &trackMidi);
+                nativeLv2Slot.processStereo (L, R, L, R, numSamples, &nativeMidiScratch);
             else
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
             if (nativeVst3Slot.isLoaded())
-                nativeVst3Slot.processStereo (L, R, L, R, numSamples, &trackMidi);
+                nativeVst3Slot.processStereo (L, R, L, R, numSamples, &nativeMidiScratch);
             else
 #endif
             pluginSlot.processStereoBlock (L, R, numSamples, trackMidi);

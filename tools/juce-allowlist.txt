@@ -42,16 +42,12 @@ src/engine/alsa/AlsaAudioIODeviceType.cpp
 src/engine/alsa/AlsaAudioIODeviceType.h
 src/engine/alsa/AlsaPerformanceTest.cpp
 src/engine/alsa/AlsaPerformanceTest.h
-src/engine/clap/ClapInstance.cpp
-src/engine/clap/ClapInstance.h
 src/engine/hosting/InsertAdapter.cpp
 src/engine/hosting/InsertAdapter.h
-src/engine/hosting/NativeInsertSlot.h
 src/engine/hosting/NativePluginId.h
 src/engine/hosting/PortBuffers.h
 src/engine/ipc/IpcSelfTest.cpp
 src/engine/ipc/PluginHostMain.cpp
-src/engine/ipc/PluginIpc.h
 src/engine/ipc/PluginScanProtocol.h
 src/engine/ipc/RemotePluginConnection.cpp
 src/engine/ipc/RemotePluginConnection.h
