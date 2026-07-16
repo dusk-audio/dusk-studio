@@ -47,7 +47,7 @@ int runIpcSelfTest (const std::string& hostExecutablePath,
 
     int verifyFails = 0;
     constexpr long long kTimeoutNs = 100'000'000LL;  // 100 ms - generous
-    juce::MidiBuffer emptyMidi;
+    dusk::MidiBuffer emptyMidi;
 
     for (int it = 0; it < iterations; ++it)
     {
@@ -207,7 +207,7 @@ int runIpcHostTest (const std::string& hostExecutablePath,
 
     bool anyDifference = false;
     constexpr long long kTimeoutNs = 1'000'000'000LL;  // 1 s - plugins take time to warm up
-    juce::MidiBuffer emptyMidi;
+    dusk::MidiBuffer emptyMidi;
 
     for (int it = 0; it < iterations; ++it)
     {

@@ -50,7 +50,6 @@ src/engine/ipc/IpcSelfTest.cpp
 src/engine/ipc/PluginHostMain.cpp
 src/engine/ipc/PluginScanProtocol.h
 src/engine/ipc/RemotePluginConnection.cpp
-src/engine/ipc/RemotePluginConnection.h
 src/engine/midi/MidiDevices.cpp
 src/engine/midi/MidiDevices.h
 src/engine/multisample/AriaBank.cpp

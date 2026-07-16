@@ -320,6 +320,11 @@ private:
     std::atomic<bool> remoteIsInstrument { false };
     std::atomic<bool> remoteCrashed { false };
 
+    // The OOP round-trip serialises MIDI to raw bytes; processBlockSync takes
+    // a dusk::MidiBuffer. Bridged once per block from the caller's juce buffer
+    // (which the in-process JUCE path still needs). Pre-sized in prepareToPlay.
+    dusk::MidiBuffer oopMidiScratch;
+
     // Cached for getDescriptionXmlForSave (which can't
     // fillInPluginDescription on a remote instance).
     juce::String savedDescriptionXml;

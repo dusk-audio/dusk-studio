@@ -342,6 +342,10 @@ void PluginSlot::prepareToPlay (double sampleRate, int blockSize)
     // a stereo-only plugin is in the slot.
     stereoScratch.setSize (2, preparedBlockSize, false, false, true);
 
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
+    oopMidiScratch.reserveBytes (duskstudio::ipc::kMidiBytes);
+   #endif
+
     blocksSinceLoad     = 0;
     consecutiveOverruns = 0;
 
@@ -1256,9 +1260,12 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
             inPtrs[0] = nullptr;
         }
 
+        oopMidiScratch.clear();
+        for (const auto meta : midiMessages)
+            oopMidiScratch.addEvent (meta.data, meta.numBytes, meta.samplePosition);
         if (! r->processBlockSync (inPtrs, std::max (rNumIn, 0),
                                        std::max (rNumOut, 0),
-                                       numSamples, midiMessages,
+                                       numSamples, oopMidiScratch,
                                        kOopProcessTimeoutNs))
         {
             engageAutoBypass();
@@ -1436,9 +1443,12 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
             return;
         }
 
+        oopMidiScratch.clear();
+        for (const auto meta : midiMessages)
+            oopMidiScratch.addEvent (meta.data, meta.numBytes, meta.samplePosition);
         if (! r->processBlockSync (inPtrs, std::max (rNumIn, 0),
                                        std::max (rNumOut, 0),
-                                       numSamples, midiMessages,
+                                       numSamples, oopMidiScratch,
                                        kOopProcessTimeoutNs))
         {
             // Either the futex timed out or the connection was already

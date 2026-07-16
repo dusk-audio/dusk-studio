@@ -150,7 +150,7 @@ bool RemotePluginConnection::connect (const std::string& hostExecutablePath,
 
 bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
                                                  int numIn, int numOut, int numSamples,
-                                                 juce::MidiBuffer& midi,
+                                                 dusk::MidiBuffer& midi,
                                                  long long timeoutNs) noexcept
 {
     if (! shm.isMapped() || crashed.load (std::memory_order_acquire))
@@ -174,15 +174,16 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
         std::uint32_t written = 0;
         for (const auto meta : midi)
         {
-            const auto m = meta.getMessage();
-            const int len = m.getRawDataSize();
+            const int len = meta.numBytes;
             if (len <= 0) continue;
+            // The kMidiBytes bound (16 KB) caps len far below the uint16 wire
+            // limit, so the l16 cast below never truncates.
             if (written + 4 + 2 + (std::uint32_t) len > kMidiBytes) break;
             const int sample = meta.samplePosition;
             std::memcpy (out + written, &sample, 4);             written += 4;
             const std::uint16_t l16 = (std::uint16_t) len;
             std::memcpy (out + written, &l16, 2);                written += 2;
-            std::memcpy (out + written, m.getRawData(),
+            std::memcpy (out + written, meta.data,
                          (std::size_t) len);                      written += (std::uint32_t) len;
         }
         hdr->midiInBytes = written;
@@ -216,7 +217,7 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
             if (off + (std::uint32_t) eventLen > midiOutBytes)   break;
             std::memcpy (evBuf, base + off, (std::size_t) eventLen);
             off += (std::uint32_t) eventLen;
-            midi.addEvent (juce::MidiMessage (evBuf, eventLen), sample);
+            midi.addEvent (evBuf, eventLen, sample);
         }
     };
 
