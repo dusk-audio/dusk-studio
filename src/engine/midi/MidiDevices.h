@@ -120,9 +120,8 @@ public:
 
     // Message thread. Direct send with an ms-since-epoch base
     // (getMillisecondCounterHiRes = "ASAP", lower latency than buffering for the
-    // next block). juce-typed because McuController still builds juce buffers
-    // (events-tower coupling).
-    bool send (int index, const juce::MidiBuffer& events) noexcept;
+    // next block). Takes the dusk boundary buffer and bridges to juce internally.
+    bool send (int index, const dusk::MidiBuffer& events) noexcept;
 
     // Audio thread. sendBlockOfMessages is NOT audio-thread safe (it takes the
     // delivery thread's mutex and heap-allocates under it). The audio thread

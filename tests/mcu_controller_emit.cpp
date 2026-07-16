@@ -4,8 +4,6 @@
 #include "engine/McuProtocol.h"
 #include "session/Session.h"
 
-#include <juce_audio_basics/juce_audio_basics.h>
-
 using namespace duskstudio;
 
 namespace
@@ -14,7 +12,7 @@ namespace
 // pitch-bend channel). Returns the velocity / value byte (data2) or
 // -1 if not found. Avoids the test-asserting on event order across the
 // buffer.
-int findValueForNote (const juce::MidiBuffer& buf, int status, int data1)
+int findValueForNote (const dusk::MidiBuffer& buf, int status, int data1)
 {
     for (const auto meta : buf)
     {
@@ -29,7 +27,7 @@ int findValueForNote (const juce::MidiBuffer& buf, int status, int data1)
     return -1;
 }
 
-int findPitchBend14 (const juce::MidiBuffer& buf, int channel0Indexed)
+int findPitchBend14 (const dusk::MidiBuffer& buf, int channel0Indexed)
 {
     for (const auto meta : buf)
     {
@@ -42,6 +40,54 @@ int findPitchBend14 (const juce::MidiBuffer& buf, int channel0Indexed)
             return (raw[1] & 0x7F) | ((raw[2] & 0x7F) << 7);
     }
     return -1;
+}
+
+// CC (0xB0) value for a given controller number, or -1.
+int findControllerValue (const dusk::MidiBuffer& buf, int cc)
+{
+    for (const auto meta : buf)
+    {
+        const auto& m = meta.getMessage();
+        const auto* raw = m.getRawData();
+        const int sz = m.getRawDataSize();
+        if (raw == nullptr || sz < 3) continue;
+        if ((raw[0] & 0xF0) == 0xB0 && (raw[1] & 0x7F) == (cc & 0x7F))
+            return raw[2] & 0x7F;
+    }
+    return -1;
+}
+
+// Channel-pressure (0xD0) low-nibble (meter level) for the strip in the data
+// byte's high nibble, or -1 if no meter event for that strip.
+int findMeterLevel (const dusk::MidiBuffer& buf, int strip)
+{
+    for (const auto meta : buf)
+    {
+        const auto& m = meta.getMessage();
+        const auto* raw = m.getRawData();
+        const int sz = m.getRawDataSize();
+        if (raw == nullptr || sz < 2) continue;
+        if (raw[0] == mcu::meter::kStatus && (raw[1] >> 4) == strip)
+            return raw[1] & 0x0F;
+    }
+    return -1;
+}
+
+// True if a Mackie LCD sysex (F0 00 00 66 14 12 ...) addressed at `rowAddr`
+// is present.
+bool hasLcdSysex (const dusk::MidiBuffer& buf, int rowAddr)
+{
+    for (const auto meta : buf)
+    {
+        const auto& m = meta.getMessage();
+        const auto* raw = m.getRawData();
+        const int sz = m.getRawDataSize();
+        if (raw == nullptr || sz < (int) mcu::sysex::kPrefixLen + 3) continue;
+        if (raw[0] == 0xF0 && raw[mcu::sysex::kPrefixLen] == mcu::sysex::kCmdLcd
+            && raw[mcu::sysex::kPrefixLen + 1] == (rowAddr & 0x7F))
+            return true;
+    }
+    return false;
 }
 } // namespace
 
@@ -128,4 +174,30 @@ TEST_CASE ("McuController: bank flip relights the eight SELECT LEDs", "[mcu][con
     s.mcu.selectedChannel.store (10, std::memory_order_relaxed);
     auto buf2 = controller.buildBufferForTest();
     REQUIRE (findValueForNote (buf2, 0x90, mcu::btn::SelectBase + 2) == 0x7F);
+}
+
+// Exercises the remaining raw-byte builders on the dusk buffer: V-pot ring
+// CC (0xB0), meter channel-pressure (0xD0, 2-byte), and the LCD sysex framing.
+// Guards the nibble / status math the byte helpers now do by hand.
+TEST_CASE ("McuController: v-pot, meter and LCD sysex wire bytes", "[mcu][controller]")
+{
+    Session s;
+    McuController controller (s);
+
+    // Assign mode 0 (PAN) emits a V-pot ring CC per banked strip.
+    auto buf = controller.buildBufferForTest();
+
+    // V-pot ring for strip 0 = CC 0x30. Centre pan -> centre-dot bit set, so
+    // the value is non-zero; just require the CC exists.
+    REQUIRE (findControllerValue (buf, mcu::cc::VPotRingBase + 0) >= 0);
+    REQUIRE (findControllerValue (buf, mcu::cc::VPotRingBase + 7) >= 0);
+
+    // Meter channel-pressure for strip 3: default (silent) input -> level 0,
+    // data byte high nibble == strip.
+    REQUIRE (findMeterLevel (buf, 3) == 0);
+    REQUIRE (findMeterLevel (buf, 7) == 0);
+
+    // Both LCD rows framed as Mackie sysex.
+    REQUIRE (hasLcdSysex (buf, mcu::sysex::kLcdRow0Addr));
+    REQUIRE (hasLcdSysex (buf, mcu::sysex::kLcdRow1Addr));
 }

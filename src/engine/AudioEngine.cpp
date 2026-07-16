@@ -376,10 +376,10 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     // McuController definitions.
     mcuReceiver   = std::make_unique<McuReceiver>   (session);
     mcuController = std::make_unique<McuController> (session);
-    mcuController->setSink ([this] (const juce::MidiBuffer& buf)
+    mcuController->setSink ([this] (const dusk::MidiBuffer& buf)
     {
-        // Message thread (30 Hz MCU tick). The bank's juce send overload keeps
-        // McuController juce-typed (events-tower coupling).
+        // Message thread (30 Hz MCU tick). The bank bridges dusk -> juce for the
+        // direct send.
         const int outIdx = session.mcu.resolvedOutputIdx.load (std::memory_order_acquire);
         if (outIdx >= 0) midiOut.send (outIdx, buf);
     });

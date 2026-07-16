@@ -1,7 +1,7 @@
 #pragma once
 
-#include <juce_audio_basics/juce_audio_basics.h>
-#include <juce_events/juce_events.h>
+#include "../foundation/MessageThread.h"
+#include "../foundation/MidiBuffer.h"
 #include <array>
 #include <atomic>
 #include <functional>
@@ -22,7 +22,7 @@ class Session;
 //   Bank arrows    : 0x2E left / 0x2F right (lit when steppable)
 //   Assign modes   : 0x28..0x2D (exactly one lit)
 //   Selected ch    : 0x18 + (selected - bank*8) when inside visible bank
-class McuController : public juce::Timer
+class McuController : public dusk::Timer
 {
 public:
     static constexpr int kStripsPerBank = 8;
@@ -30,7 +30,7 @@ public:
 
     // Called on the message thread with the deltas to push. Empty
     // buffers are skipped before invocation.
-    using SinkFn = std::function<void (const juce::MidiBuffer&)>;
+    using SinkFn = std::function<void (const dusk::MidiBuffer&)>;
 
     explicit McuController (Session& sessionRef) noexcept;
     ~McuController() override;
@@ -61,12 +61,12 @@ public:
 
     // Test: build what the next tick would send without touching the
     // engine's output bank or updating lastSent caches.
-    juce::MidiBuffer buildBufferForTest();
+    dusk::MidiBuffer buildBufferForTest();
 
 private:
     void timerCallback() override;
 
-    juce::MidiBuffer buildEmitBuffer (bool forceAll);
+    dusk::MidiBuffer buildEmitBuffer (bool forceAll);
 
     Session&     session;
     SinkFn       sink;

@@ -313,6 +313,7 @@ endif()
 target_sources(DuskStudio PRIVATE
     src/Main.cpp
     src/DuskStudioApp.cpp
+    src/foundation/MessageThread.cpp
     # Native CLAP host is Linux-only (dlopen + poll + X11 editor) — added in the
     # UNIX-AND-NOT-APPLE block below, gated by DUSKSTUDIO_HAS_NATIVE_CLAP.
     src/engine/AudioEngine.cpp
