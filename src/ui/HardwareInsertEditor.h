@@ -1,10 +1,10 @@
 #pragma once
 
-#include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
 #include "DuskComboBox.h"
 #include "../session/Session.h"
+#include "../engine/device/DeviceManager.h"
 
 namespace duskstudio
 {
@@ -32,7 +32,7 @@ public:
     // format row - offered on mono tracks, where single-channel outboard
     // (a mono compressor, a guitar pedal) is the natural patch.
     HardwareInsertEditor (HardwareInsertParams& params,
-                          juce::AudioDeviceManager& deviceManager,
+                          device::DeviceManager& deviceManager,
                           std::function<void()> onDone,
                           bool embedded = false,
                           bool allowMono = false);
@@ -51,7 +51,7 @@ private:
     void timerCallback() override;
 
     HardwareInsertParams& params;
-    juce::AudioDeviceManager& deviceManager;
+    device::DeviceManager& deviceManager;
     std::function<void()> onDoneCallback;
     bool isEmbedded = false;
     bool monoAllowed = false;

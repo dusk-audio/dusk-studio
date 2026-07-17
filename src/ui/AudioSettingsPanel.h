@@ -22,7 +22,7 @@ class AudioSettingsPanel final : public juce::Component,
                                   public juce::ChangeListener
 {
 public:
-    AudioSettingsPanel (juce::AudioDeviceManager& dm,
+    AudioSettingsPanel (device::DeviceManager& dm,
                          AudioEngine& engine,
                          Session& session);
     ~AudioSettingsPanel() override;
@@ -31,11 +31,12 @@ public:
     void resized() override;
     // Engine broadcasts on MIDI-bank rebuild (hot-plug, manual rescan).
     // Refreshes the sync-source combo so new inputs appear without
-    // reopening.
+    // reopening. The device manager relays its own change (audio device
+    // switch / active-output change) through this same handler.
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
 
 private:
-    juce::AudioDeviceManager& deviceManager;
+    device::DeviceManager& deviceManager;
     AudioEngine& engine;
     Session& session;
     std::unique_ptr<DuskAudioDeviceSelector> selector;

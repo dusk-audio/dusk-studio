@@ -452,7 +452,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     // conflict - so it never falls through to the graph. Recover explicitly: the
     // native PipeWire backend (reaches the interface through the graph even while
     // the raw hw handle is held) -> the first ALSA device that opens -> give up
-    // and tell the user. This runs BEFORE addCallback / setChangeCallback: the audio
+    // and tell the user. This runs BEFORE addCallback / addChangeListener: the audio
     // thread isn't attached and no change handler is wired yet, so the
     // setup-switch broadcasts reach no one (no re-entrancy, no fallback loop).
     {
@@ -537,7 +537,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     // Detect hot-unplug (current device becomes null while we had one). Fires on
     // the message thread when the device manager's device list / current device
     // changes.
-    deviceManager.setChangeCallback ([this] { onDeviceManagerChanged(); });
+    deviceManager.addChangeListener (this, [this] { onDeviceManagerChanged(); });
 }
 
 void AudioEngine::refreshMidiInputs()
@@ -1087,7 +1087,7 @@ AudioEngine::~AudioEngine()
     diagTimer.stopTimer();
     if (transport.isRecording())
         recordManager.stopRecording (transport.getPlayhead());
-    deviceManager.setChangeCallback ({});
+    deviceManager.removeChangeListener (this);
     deviceManager.removeCallback (this);
     midiIn.detachCallback();
     deviceManager.closeDevice();

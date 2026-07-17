@@ -65,12 +65,21 @@ public:
     void removeCallback (IODeviceCallback* callback);
     void closeDevice();
 
-    // Hot-plug / device-change notification, fired on the message thread.
-    void setChangeCallback (std::function<void()> onChange);
+    // Hot-plug / device-change notification, fired on the message thread. Several
+    // independent subscribers observe device changes (the engine's fallback
+    // handler plus the settings UI), so listeners are keyed by an opaque owner
+    // pointer - each subscriber passes `this` and removes by the same identity.
+    void addChangeListener (void* owner, std::function<void()> onChange);
+    void removeChangeListener (void* owner);
+    // Force-fire every listener (the dusk replacement for a manual JUCE
+    // sendChangeMessage()) - used after a rescan where the backend's own diff
+    // check may swallow the notification.
+    void notifyChange();
 
-    // Escape hatch: the MIDI input layer still drives MIDI device enable/disable
-    // through the same juce::AudioDeviceManager. Removed once the native MIDI
-    // backend lands and juce_audio_devices unlinks.
+    // Escape hatch: the MIDI input layer alone still drives MIDI device
+    // enable/disable through the wrapped juce::AudioDeviceManager. This is now
+    // its only consumer (the audio-device UI drives the dusk API above). Removed
+    // once the native MIDI backend lands and juce_audio_devices unlinks.
     juce::AudioDeviceManager& juceManager();
 
 private:

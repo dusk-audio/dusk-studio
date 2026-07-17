@@ -10,7 +10,6 @@ src/dsp/MasteringChain.h
 src/engine/AudioEngine.cpp
 src/engine/AudioEngine.h
 src/engine/AudioPipelineSelfTest.cpp
-src/engine/AudioPipelineSelfTest.h
 src/engine/BounceEngine.cpp
 src/engine/BounceEngine.h
 src/engine/DpAligner.cpp

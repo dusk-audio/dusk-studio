@@ -167,7 +167,20 @@ struct DeviceManager::Impl : private juce::ChangeListener
         mgr.removeChangeListener (this);
     }
 
-    void changeListenerCallback (juce::ChangeBroadcaster*) override { if (onChange) onChange(); }
+    void changeListenerCallback (juce::ChangeBroadcaster*) override { fireListeners(); }
+
+    void fireListeners()
+    {
+        // Copy the callbacks before firing: a listener may add or remove
+        // subscribers (e.g. the settings UI relays out) and mutating the map
+        // mid-iteration would invalidate the loop.
+        std::vector<std::function<void()>> callbacks;
+        callbacks.reserve (listeners.size());
+        for (auto& entry : listeners)
+            callbacks.push_back (entry.second);
+        for (auto& cb : callbacks)
+            if (cb) cb();
+    }
 
     juce::AudioDeviceManager mgr;
     // Keyed by the juce type pointer (stable for the manager's lifetime), so an
@@ -176,7 +189,7 @@ struct DeviceManager::Impl : private juce::ChangeListener
     std::map<juce::AudioIODeviceType*, std::unique_ptr<JuceDeviceTypeAdapter>> typeAdapters;
     JuceDeviceAdapter currentDevice { nullptr };
     std::map<IODeviceCallback*, std::unique_ptr<CallbackBridge>> bridges;
-    std::function<void()> onChange;
+    std::map<void*, std::function<void()>> listeners;
     bool backendsRegistered = false;
 
     JuceDeviceTypeAdapter* adapterFor (juce::AudioIODeviceType* t)
@@ -338,7 +351,14 @@ void DeviceManager::removeCallback (IODeviceCallback* callback)
 
 void DeviceManager::closeDevice() { impl->mgr.closeAudioDevice(); }
 
-void DeviceManager::setChangeCallback (std::function<void()> onChange) { impl->onChange = std::move (onChange); }
+void DeviceManager::addChangeListener (void* owner, std::function<void()> onChange)
+{
+    if (owner != nullptr) impl->listeners[owner] = std::move (onChange);
+}
+
+void DeviceManager::removeChangeListener (void* owner) { impl->listeners.erase (owner); }
+
+void DeviceManager::notifyChange() { impl->fireListeners(); }
 
 juce::AudioDeviceManager& DeviceManager::juceManager() { return impl->mgr; }
 } // namespace duskstudio::device

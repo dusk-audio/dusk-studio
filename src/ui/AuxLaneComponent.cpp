@@ -480,9 +480,9 @@ void AuxLaneComponent::timerCallback()
     // Rebuild the output-pair menu when the device's ACTIVE output set changes
     // (e.g. the user enabled/swapped outputs in Audio settings - the physical
     // name count wouldn't move, only the active mask).
-    if (auto* dev = engine.getDeviceManager().getCurrentAudioDevice())
+    if (auto* dev = engine.getDeviceManager().getCurrentDevice())
         if (dev->getActiveOutputChannels() != lastOutputChannelMask
-            || dev->getOutputChannelNames().size() != lastOutputChannelCount)
+            || (int) dev->getOutputChannelNames().size() != lastOutputChannelCount)
             populateOutputPairCombo();
 }
 
@@ -491,8 +491,8 @@ void AuxLaneComponent::populateOutputPairCombo()
     outputPairCombo.clear (juce::dontSendNotification);
     outputPairCombo.addItem ("Master only", 1);
 
-    juce::BigInteger activeMask;
-    if (auto* device = engine.getDeviceManager().getCurrentAudioDevice())
+    device::ChannelSet activeMask;
+    if (auto* device = engine.getDeviceManager().getCurrentDevice())
     {
         // Only list pairs the engine can write to - both channels must be in the
         // device's active-output set. Offering inactive physical outputs would
@@ -500,7 +500,7 @@ void AuxLaneComponent::populateOutputPairCombo()
         // timer re-populates when the user toggles outputs in Audio settings
         // (getOutputChannelNames().size() wouldn't change there).
         const auto active = device->getActiveOutputChannels();
-        const int total = device->getOutputChannelNames().size();
+        const int total = (int) device->getOutputChannelNames().size();
         for (int i = 0; i + 1 < total; i += 2)
             if (active[i] && active[i + 1])
                 outputPairCombo.addItem ("Out " + juce::String (i + 1) + "-" + juce::String (i + 2),

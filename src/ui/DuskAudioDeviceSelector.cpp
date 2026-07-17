@@ -25,7 +25,7 @@ juce::String formatRate (double r)
 }
 } // namespace
 
-DuskAudioDeviceSelector::DuskAudioDeviceSelector (juce::AudioDeviceManager& dm)
+DuskAudioDeviceSelector::DuskAudioDeviceSelector (device::DeviceManager& dm)
     : deviceManager (dm)
 {
     auto styleRow = [this] (juce::Label& l, DuskComboBox& c)
@@ -43,16 +43,14 @@ DuskAudioDeviceSelector::DuskAudioDeviceSelector (juce::AudioDeviceManager& dm)
     typeCombo.onChange = [this]
     {
         if (updating) return;
-        if (auto* types = &deviceManager.getAvailableDeviceTypes())
+        const auto types = deviceManager.getAvailableDeviceTypes();
+        const int idx = typeCombo.getSelectedId() - 1;
+        if (idx >= 0 && idx < (int) types.size())
         {
-            const int idx = typeCombo.getSelectedId() - 1;
-            if (juce::isPositiveAndBelow (idx, types->size()))
-            {
-                deviceManager.setCurrentAudioDeviceType ((*types)[idx]->getTypeName(),
-                                                          /*treatAsChosen*/ true);
-                rebuildFromManager();
-                if (onDeviceChanged) onDeviceChanged();
-            }
+            deviceManager.setCurrentDeviceType (types[(size_t) idx]->getTypeName(),
+                                                /*treatAsChosen*/ true);
+            rebuildFromManager();
+            if (onDeviceChanged) onDeviceChanged();
         }
     };
     outputCombo.onChange = [this] { applySetupChange (/*deviceChanged*/ true); };
@@ -60,7 +58,8 @@ DuskAudioDeviceSelector::DuskAudioDeviceSelector (juce::AudioDeviceManager& dm)
     rateCombo  .onChange = [this] { applySetupChange (/*deviceChanged*/ false); };
     bufferCombo.onChange = [this] { applySetupChange (/*deviceChanged*/ false); };
 
-    deviceManager.addChangeListener (this);
+    // External change (hot-plug, another panel) - re-sync our combos.
+    deviceManager.addChangeListener (this, [this] { if (! updating) rebuildFromManager(); });
     rebuildFromManager();
 }
 
@@ -69,33 +68,26 @@ DuskAudioDeviceSelector::~DuskAudioDeviceSelector()
     deviceManager.removeChangeListener (this);
 }
 
-void DuskAudioDeviceSelector::changeListenerCallback (juce::ChangeBroadcaster*)
-{
-    // External change (hot-plug, another panel) - re-sync our combos.
-    if (! updating)
-        rebuildFromManager();
-}
-
 void DuskAudioDeviceSelector::rebuildFromManager()
 {
     const juce::ScopedValueSetter<bool> guard (updating, true);
 
-    const auto setup = deviceManager.getAudioDeviceSetup();
-    auto* currentType = deviceManager.getCurrentDeviceTypeObject();
-    auto* device = deviceManager.getCurrentAudioDevice();
+    const auto setup = deviceManager.getSetup();
+    auto* currentType = deviceManager.getCurrentDeviceType();
+    auto* device = deviceManager.getCurrentDevice();
 
     // Backend (device type).
     typeCombo.clear (juce::dontSendNotification);
-    auto& types = deviceManager.getAvailableDeviceTypes();
-    for (int i = 0; i < types.size(); ++i)
-        typeCombo.addItem (types[i]->getTypeName(), i + 1);
+    const auto types = deviceManager.getAvailableDeviceTypes();
+    for (int i = 0; i < (int) types.size(); ++i)
+        typeCombo.addItem (juce::String (types[(size_t) i]->getTypeName()), i + 1);
     if (currentType != nullptr)
-        for (int i = 0; i < types.size(); ++i)
-            if (types[i] == currentType)
+        for (int i = 0; i < (int) types.size(); ++i)
+            if (types[(size_t) i] == currentType)
                 typeCombo.setSelectedId (i + 1, juce::dontSendNotification);
 
     // Output + input device lists (current backend).
-    auto fillDevices = [&] (DuskComboBox& combo, bool isInput, const juce::String& chosen)
+    auto fillDevices = [&] (DuskComboBox& combo, bool isInput, const std::string& chosen)
     {
         combo.clear (juce::dontSendNotification);
         combo.addItem ("(None)", kNoneId);
@@ -103,10 +95,10 @@ void DuskAudioDeviceSelector::rebuildFromManager()
         if (currentType != nullptr)
         {
             const auto names = currentType->getDeviceNames (isInput);
-            for (int i = 0; i < names.size(); ++i)
+            for (int i = 0; i < (int) names.size(); ++i)
             {
-                combo.addItem (names[i], i + 2);
-                if (names[i] == chosen) sel = i + 2;
+                combo.addItem (juce::String (names[(size_t) i]), i + 2);
+                if (names[(size_t) i] == chosen) sel = i + 2;
             }
         }
         combo.setSelectedId (sel, juce::dontSendNotification);
@@ -146,12 +138,12 @@ void DuskAudioDeviceSelector::applySetupChange (bool deviceChanged)
 {
     if (updating) return;
 
-    auto setup = deviceManager.getAudioDeviceSetup();
+    auto setup = deviceManager.getSetup();
 
     const int outId = outputCombo.getSelectedId();
     const int inId  = inputCombo.getSelectedId();
-    setup.outputDeviceName = outId == kNoneId ? juce::String() : outputCombo.getText();
-    setup.inputDeviceName  = inId  == kNoneId ? juce::String() : inputCombo.getText();
+    setup.outputDeviceName = outId == kNoneId ? std::string() : outputCombo.getText().toStdString();
+    setup.inputDeviceName  = inId  == kNoneId ? std::string() : inputCombo.getText().toStdString();
 
     if (! deviceChanged)
     {
@@ -172,20 +164,20 @@ void DuskAudioDeviceSelector::applySetupChange (bool deviceChanged)
     // clamps the request to what the device actually exposes.
     setup.useDefaultOutputChannels = false;
     setup.outputChannels.clear();
-    if (setup.outputDeviceName.isNotEmpty())
+    if (! setup.outputDeviceName.empty())
         setup.outputChannels.setRange (0, kMaxDeviceOutputChannels, true);
 
     setup.useDefaultInputChannels = false;
     setup.inputChannels.clear();
-    if (setup.inputDeviceName.isNotEmpty())
+    if (! setup.inputDeviceName.empty())
         setup.inputChannels.setRange (0, kMaxDeviceInputChannels, true);
 
-    const auto error = deviceManager.setAudioDeviceSetup (setup, /*treatAsChosen*/ true);
+    const auto error = deviceManager.setSetup (setup, /*treatAsChosen*/ true);
 
-    if (error.isNotEmpty())
+    if (! error.empty())
     {
         if (auto* top = getTopLevelComponent())
-            showDuskAlert (*top, "Audio device error", error);
+            showDuskAlert (*top, "Audio device error", juce::String (error));
     }
     else if (onDeviceChanged)
     {
