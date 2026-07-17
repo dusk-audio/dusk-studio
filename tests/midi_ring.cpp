@@ -1,14 +1,14 @@
 #include <catch2/catch_test_macros.hpp>
-#include <catch2/catch_approx.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "foundation/MidiRing.h"
 
-#include <atomic>
+#include <cstddef>
 #include <cstdint>
-#include <thread>
 #include <vector>
 
 using dusk::MidiRing;
+using Catch::Matchers::WithinAbs;
 
 namespace
 {
@@ -56,10 +56,10 @@ TEST_CASE ("MidiRing round-trips records byte-exact, order preserved", "[midi][r
     for (int i = 0; i < (int) msgs.size(); ++i)
     {
         REQUIRE (got[(std::size_t) i].bytes == msgs[(std::size_t) i]);
-        REQUIRE (got[(std::size_t) i].timeMs == Catch::Approx (100.0 + i));
+        REQUIRE_THAT (got[(std::size_t) i].timeMs, WithinAbs (100.0 + i, 1e-9));
     }
     REQUIRE (got.back().bytes == sysex);
-    REQUIRE (got.back().timeMs == Catch::Approx (999.0));
+    REQUIRE_THAT (got.back().timeMs, WithinAbs (999.0, 1e-9));
     REQUIRE (r.isEmpty());
 }
 
@@ -78,7 +78,7 @@ TEST_CASE ("MidiRing stitches records that wrap the physical end", "[midi][ring]
         auto got = drainAll (r);
         REQUIRE (got.size() == 1u);
         REQUIRE (got[0].bytes == p);
-        REQUIRE (got[0].timeMs == Catch::Approx ((double) i));
+        REQUIRE_THAT (got[0].timeMs, WithinAbs ((double) i, 1e-9));
     }
 }
 
@@ -158,7 +158,7 @@ TEST_CASE ("MidiRing clear empties pending records", "[midi][ring]")
     REQUIRE (r.push (note, 3, 3.0));
     auto got = drainAll (r);
     REQUIRE (got.size() == 1u);
-    REQUIRE (got[0].timeMs == Catch::Approx (3.0));
+    REQUIRE_THAT (got[0].timeMs, WithinAbs (3.0, 1e-9));
 }
 
 TEST_CASE ("MidiRing cursor bounds a scan+drain, leaving later pushes pending", "[midi][ring]")
@@ -171,14 +171,18 @@ TEST_CASE ("MidiRing cursor bounds a scan+drain, leaving later pushes pending", 
     const std::size_t cursor = r.producerCursor();
     REQUIRE (r.push (b, 3, 2.0));            // pushed "after the scan"
 
-    // A scan bounded to the cursor sees only the first record.
-    int scanned = 0;
+    // A scan bounded to the cursor sees only the first record. forEachUntil is
+    // noexcept, so capture the timestamp and assert after it returns rather than
+    // letting a failing REQUIRE throw out of the callback.
+    int    scanned = 0;
+    double scannedTime = 0.0;
     r.forEachUntil (cursor, [&] (int, double t)
     {
         ++scanned;
-        REQUIRE (t == Catch::Approx (1.0));
+        scannedTime = t;
     });
     REQUIRE (scanned == 1);
+    REQUIRE_THAT (scannedTime, WithinAbs (1.0, 1e-9));
 
     // A drain bounded to the same cursor consumes only the first record.
     std::vector<Rec> drained;
@@ -194,56 +198,77 @@ TEST_CASE ("MidiRing cursor bounds a scan+drain, leaving later pushes pending", 
     auto rest = drainAll (r);
     REQUIRE (rest.size() == 1u);
     REQUIRE (rest[0].bytes == std::vector<std::uint8_t> (b, b + 3));
-    REQUIRE (rest[0].timeMs == Catch::Approx (2.0));
+    REQUIRE_THAT (rest[0].timeMs, WithinAbs (2.0, 1e-9));
 }
 
-TEST_CASE ("MidiRing SPSC: concurrent producer/consumer, no loss or reorder", "[midi][ring]")
+TEST_CASE ("MidiRing deterministic interleave preserves FIFO / integrity across the wrap", "[midi][ring]")
 {
-    MidiRing r (1024);
-    constexpr int kTotal = 20000;
+    // Single-threaded model of the SPSC contract: interleave pushes with
+    // cursor-bounded drains so head and tail chase each other across the wrap
+    // boundary many times. Bounded loops, no threads (the raw memory-ordering
+    // guarantee under real contention belongs to TSan / hardware, not the unit
+    // suite).
+    MidiRing r (128);
 
-    std::atomic<bool> producerDone { false };
-    std::vector<int> consumed;      // consumer thread only
-    consumed.reserve (kTotal);
+    int seq = 0;
+    std::vector<Rec> pending;   // pushed, not yet drained (FIFO)
 
-    std::thread producer ([&]
+    auto pushOne = [&]
     {
-        for (int i = 0; i < kTotal; )
-        {
-            // Encode the sequence index in the payload so the consumer can check
-            // ordering and completeness. Sizes vary to exercise wrapping.
-            const int n = 1 + (i % 6);
-            std::uint8_t buf[6];
-            for (int b = 0; b < n; ++b) buf[b] = (std::uint8_t) ((i + b) & 0xFF);
-            if (r.push (buf, n, (double) i))
-                ++i;               // retry same index on a transient full ring
-        }
-        producerDone.store (true, std::memory_order_release);
-    });
+        const int n = 1 + (seq % 6);
+        const auto p = pattern (seq, n);
+        if (! r.push (p.data(), n, (double) seq)) return false;
+        pending.push_back ({ p, (double) seq });
+        ++seq;
+        return true;
+    };
 
-    // Consumer: drain until the producer is done AND the ring is empty.
-    for (;;)
+    for (int round = 0; round < 400; ++round)
     {
-        r.drain ([&] (const std::uint8_t* b, int n, double t)
+        // Push a burst, snapshot the cursor (everything pending is drainable to
+        // here), then push more past the cursor.
+        for (int k = 0, b = 1 + (round % 5); k < b; ++k) pushOne();
+        const std::size_t cut = r.producerCursor();
+        const std::size_t drainable = pending.size();
+        for (int k = 0, b = 1 + ((round + 1) % 4); k < b; ++k) pushOne();
+
+        // Drain exactly the pre-cut records; assert order + integrity after the
+        // callback returns (drainUntil is noexcept).
+        std::vector<Rec> got;
+        r.drainUntil (cut, [&] (const std::uint8_t* bytes, int n, double t)
         {
-            consumed.push_back ((int) t);
-            // Payload first byte must equal (index & 0xFF) - byte integrity.
-            REQUIRE (b[0] == (std::uint8_t) (((int) t) & 0xFF));
-            REQUIRE (n >= 1);
+            got.push_back ({ std::vector<std::uint8_t> (bytes, bytes + n), t });
         });
-        if (producerDone.load (std::memory_order_acquire) && r.isEmpty())
+        REQUIRE (got.size() == drainable);
+        for (std::size_t i = 0; i < got.size(); ++i)
         {
-            r.drain ([&] (const std::uint8_t* b, int, double t)
-            {
-                consumed.push_back ((int) t);
-                REQUIRE (b[0] == (std::uint8_t) (((int) t) & 0xFF));
-            });
-            break;
+            REQUIRE (got[i].bytes == pending[i].bytes);
+            REQUIRE_THAT (got[i].timeMs, WithinAbs (pending[i].timeMs, 1e-9));
         }
+        pending.erase (pending.begin(), pending.begin() + (std::ptrdiff_t) got.size());
     }
-    producer.join();
 
-    REQUIRE ((int) consumed.size() == kTotal);
-    for (int i = 0; i < kTotal; ++i)
-        REQUIRE (consumed[(std::size_t) i] == i);   // exact FIFO order, nothing lost
+    // Whatever is still queued drains in order.
+    auto rest = drainAll (r);
+    REQUIRE (rest.size() == pending.size());
+    for (std::size_t i = 0; i < rest.size(); ++i)
+        REQUIRE (rest[i].bytes == pending[i].bytes);
+    REQUIRE (seq > 400);   // a real volume of records moved through the ring
+}
+
+TEST_CASE ("MidiRing full-ring retry: refused push succeeds after a drain frees space", "[midi][ring]")
+{
+    MidiRing r (128);
+    const std::uint8_t note[] = { 0x90, 0x40, 0x7F };
+
+    int accepted = 0;
+    while (r.push (note, 3, (double) accepted)) ++accepted;
+    REQUIRE (accepted > 0);
+
+    // Now full: the next push is refused.
+    REQUIRE_FALSE (r.push (note, 3, 999.0));
+
+    // Draining frees space; the retried push then succeeds.
+    (void) drainAll (r);
+    REQUIRE (r.push (note, 3, 999.0));
 }

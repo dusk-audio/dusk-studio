@@ -25,7 +25,7 @@ class IMidiInputBackend
 public:
     virtual ~IMidiInputBackend() = default;
 
-    virtual std::vector<BackendDeviceInfo> enumerate() = 0;
+    [[nodiscard]] virtual std::vector<BackendDeviceInfo> enumerate() = 0;
 
     // Fires on the backend's MIDI thread. deviceIdentifier matches enumerate();
     // timeMs is a hi-res ms timestamp in the same clock domain the seam's
@@ -35,7 +35,7 @@ public:
                                          double timeMs)>;
 
     virtual void setReceiver (Receiver r) = 0;          // set once, before start
-    virtual bool enable (const std::string& identifier) = 0;
+    [[nodiscard]] virtual bool enable (const std::string& identifier) = 0;
     virtual void disableAll() = 0;
     virtual void start() = 0;                            // attach fence
     // Detach fence: joins the dispatch side before returning, so no receiver
@@ -49,17 +49,17 @@ class IMidiOutputBackend
 public:
     virtual ~IMidiOutputBackend() = default;
 
-    virtual std::vector<BackendDeviceInfo> enumerate() = 0;
+    [[nodiscard]] virtual std::vector<BackendDeviceInfo> enumerate() = 0;
 
-    virtual bool open (const std::string& identifier) = 0;   // lazy, message thread
+    [[nodiscard]] virtual bool open (const std::string& identifier) = 0;   // lazy, message thread
     virtual void closeAll() = 0;
-    virtual bool isOpen (const std::string& identifier) const = 0;
+    [[nodiscard]] virtual bool isOpen (const std::string& identifier) const = 0;
 
     // Pump / message thread only; blocking is allowed. baseTimeMs + sampleRate
     // carry the sample-offset -> ms scheduling (mirrors JUCE's
     // sendBlockOfMessages semantics).
-    virtual bool send (const std::string& identifier,
-                       const dusk::MidiBuffer& events,
-                       double baseTimeMs, double sampleRate) = 0;
+    [[nodiscard]] virtual bool send (const std::string& identifier,
+                                     const dusk::MidiBuffer& events,
+                                     double baseTimeMs, double sampleRate) = 0;
 };
 } // namespace duskstudio::midi
