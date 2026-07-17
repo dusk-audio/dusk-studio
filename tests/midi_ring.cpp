@@ -161,6 +161,42 @@ TEST_CASE ("MidiRing clear empties pending records", "[midi][ring]")
     REQUIRE (got[0].timeMs == Catch::Approx (3.0));
 }
 
+TEST_CASE ("MidiRing cursor bounds a scan+drain, leaving later pushes pending", "[midi][ring]")
+{
+    MidiRing r (256);
+    const std::uint8_t a[] = { 0x90, 0x40, 0x7F };
+    const std::uint8_t b[] = { 0x80, 0x40, 0x00 };
+
+    REQUIRE (r.push (a, 3, 1.0));
+    const std::size_t cursor = r.producerCursor();
+    REQUIRE (r.push (b, 3, 2.0));            // pushed "after the scan"
+
+    // A scan bounded to the cursor sees only the first record.
+    int scanned = 0;
+    r.forEachUntil (cursor, [&] (int, double t)
+    {
+        ++scanned;
+        REQUIRE (t == Catch::Approx (1.0));
+    });
+    REQUIRE (scanned == 1);
+
+    // A drain bounded to the same cursor consumes only the first record.
+    std::vector<Rec> drained;
+    r.drainUntil (cursor, [&] (const std::uint8_t* p, int n, double t)
+    {
+        drained.push_back ({ std::vector<std::uint8_t> (p, p + n), t });
+    });
+    REQUIRE (drained.size() == 1u);
+    REQUIRE (drained[0].bytes == std::vector<std::uint8_t> (a, a + 3));
+
+    // The message pushed after the cursor survives for the next pass.
+    REQUIRE_FALSE (r.isEmpty());
+    auto rest = drainAll (r);
+    REQUIRE (rest.size() == 1u);
+    REQUIRE (rest[0].bytes == std::vector<std::uint8_t> (b, b + 3));
+    REQUIRE (rest[0].timeMs == Catch::Approx (2.0));
+}
+
 TEST_CASE ("MidiRing SPSC: concurrent producer/consumer, no loss or reorder", "[midi][ring]")
 {
     MidiRing r (1024);

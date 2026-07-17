@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <utility>
 #include <vector>
 
 // Single-producer / single-consumer lock-free ring of variable-length MIDI
@@ -63,6 +64,15 @@ public:
         return true;
     }
 
+    // Consumer thread. The producer's current publish position. Capture it once
+    // to bound a scan+drain pair (forEachUntil / drainUntil) to the same record
+    // set, so anything pushed after the cursor was taken stays pending for the
+    // next pass instead of being consumed with a stale-computed backlog.
+    std::size_t producerCursor() const noexcept
+    {
+        return head.load (std::memory_order_acquire);
+    }
+
     // Consumer thread. Invokes fn(const std::uint8_t* bytes, int n, double
     // timeMs) once per record in FIFO order, then frees the space. Wrapped
     // payloads are stitched into a reusable staging buffer so fn always sees a
@@ -70,10 +80,18 @@ public:
     template <class Fn>
     int drain (Fn&& fn) noexcept
     {
+        return drainUntil (producerCursor(), std::forward<Fn> (fn));
+    }
+
+    // Consumer thread. As drain(), but stops at `end` (a value from
+    // producerCursor()) rather than the live head, leaving records pushed after
+    // the cursor was captured pending.
+    template <class Fn>
+    int drainUntil (std::size_t end, Fn&& fn) noexcept
+    {
         std::size_t t = tail.load (std::memory_order_relaxed);
-        const std::size_t h = head.load (std::memory_order_acquire);
         int count = 0;
-        while (t != h)
+        while (t != end)
         {
             double timeMs;
             int    n;
@@ -97,10 +115,17 @@ public:
     template <class Fn>
     void forEach (Fn&& fn) const noexcept
     {
+        forEachUntil (producerCursor(), std::forward<Fn> (fn));
+    }
+
+    // Consumer thread. As forEach(), bounded at `end` (from producerCursor()) so
+    // a paired scan and drain cover the identical record set.
+    template <class Fn>
+    void forEachUntil (std::size_t end, Fn&& fn) const noexcept
+    {
         std::size_t t = tail.load (std::memory_order_relaxed);
-        const std::size_t h = head.load (std::memory_order_acquire);
         std::uint8_t hdr[kHeader];
-        while (t != h)
+        while (t != end)
         {
             readWrapped (t, hdr, kHeader);
             double timeMs;

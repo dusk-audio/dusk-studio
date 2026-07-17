@@ -65,18 +65,27 @@ public:
         lastCallbackTime = nowMs;   // advance the clock unconditionally, as JUCE does
 
         if (numSamples <= 0) { ring.clear(); return; }
-        if (ring.isEmpty()) return;
+
+        // Snapshot the producer position once so the scan and the drain cover the
+        // identical record set: a message pushed mid-block (after this cursor)
+        // stays pending for the next block rather than being drained here with a
+        // stale-computed backlog.
+        const std::size_t end = ring.producerCursor();
 
         // Pass 1: largest sample number, for the >1 s backlog trim. JUCE trims
         // incrementally at add-time; the equivalent single-shot floor is
         // (maxSampleNumber - sampleRate) when the newest event is over a second
         // past the last drain.
-        int maxS = std::numeric_limits<int>::min();
-        ring.forEach ([&] (int, double timeMs)
+        int  maxS = std::numeric_limits<int>::min();
+        bool any  = false;
+        ring.forEachUntil (end, [&] (int, double timeMs)
         {
             const int s = toSample (timeMs, prevLast);
             if (s > maxS) maxS = s;
+            any = true;
         });
+        if (! any) return;
+
         const int dropBelow = ((double) maxS > sampleRate)
                                 ? maxS - (int) sampleRate
                                 : std::numeric_limits<int>::min();
@@ -97,7 +106,7 @@ public:
             }
             const int scale   = (numSamples << 10) / numSourceSamples;
             const int floorS  = std::max (startSample, dropBelow);
-            ring.drain ([&] (const std::uint8_t* bytes, int n, double timeMs)
+            ring.drainUntil (end, [&] (const std::uint8_t* bytes, int n, double timeMs)
             {
                 const int s = toSample (timeMs, prevLast);
                 if (s < floorS) return;
@@ -109,7 +118,7 @@ public:
         {
             // Backlog shorter than the block: right-align towards the end.
             startSample = numSamples - numSourceSamples;
-            ring.drain ([&] (const std::uint8_t* bytes, int n, double timeMs)
+            ring.drainUntil (end, [&] (const std::uint8_t* bytes, int n, double timeMs)
             {
                 const int s = toSample (timeMs, prevLast);
                 if (s < dropBelow) return;
