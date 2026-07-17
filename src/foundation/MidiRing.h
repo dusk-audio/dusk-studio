@@ -90,6 +90,7 @@ public:
     int drainUntil (std::size_t end, Fn&& fn) noexcept
     {
         std::size_t t = tail.load (std::memory_order_relaxed);
+        if (end < t) return 0;   // stale cursor behind tail: the t != end walk would never terminate
         int count = 0;
         while (t != end)
         {
@@ -124,6 +125,7 @@ public:
     void forEachUntil (std::size_t end, Fn&& fn) const noexcept
     {
         std::size_t t = tail.load (std::memory_order_relaxed);
+        if (end < t) return;     // stale cursor behind tail: the t != end walk would never terminate
         std::uint8_t hdr[kHeader];
         while (t != end)
         {

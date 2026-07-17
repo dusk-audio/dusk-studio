@@ -201,6 +201,34 @@ TEST_CASE ("MidiRing cursor bounds a scan+drain, leaving later pushes pending", 
     REQUIRE_THAT (rest[0].timeMs, WithinAbs (2.0, 1e-9));
 }
 
+TEST_CASE ("MidiRing bounded methods no-op on a stale cursor behind tail", "[midi][ring]")
+{
+    MidiRing r (128);
+    const std::uint8_t note[] = { 0x90, 0x40, 0x7F };
+
+    REQUIRE (r.push (note, 3, 1.0));
+    const std::size_t stale = r.producerCursor();   // valid at capture time
+    REQUIRE (r.push (note, 3, 2.0));
+
+    (void) drainAll (r);                             // tail advances past `stale`
+    REQUIRE (r.isEmpty());
+
+    // `stale` now sits behind tail; both bounded walks must no-op, not spin on
+    // the t != end counter comparison.
+    int scanned = 0;
+    r.forEachUntil (stale, [&] (int, double) { ++scanned; });
+    REQUIRE (scanned == 0);
+
+    int drainedCount = 0;
+    const int n = r.drainUntil (stale, [&] (const std::uint8_t*, int, double) { ++drainedCount; });
+    REQUIRE (n == 0);
+    REQUIRE (drainedCount == 0);
+
+    // The ring is still usable afterwards.
+    REQUIRE (r.push (note, 3, 3.0));
+    REQUIRE (drainAll (r).size() == 1u);
+}
+
 TEST_CASE ("MidiRing deterministic interleave preserves FIFO / integrity across the wrap", "[midi][ring]")
 {
     // Single-threaded model of the SPSC contract: interleave pushes with
