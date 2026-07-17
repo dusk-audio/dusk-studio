@@ -16,17 +16,6 @@ using namespace duskstudio::midi;
 
 namespace
 {
-// The ALSA sequencer device is absent in most CI containers; probe it so the
-// whole suite SKIPs cleanly rather than failing there.
-bool seqAvailable()
-{
-    snd_seq_t* probe = nullptr;
-    if (snd_seq_open (&probe, "default", SND_SEQ_OPEN_DUPLEX, 0) < 0)
-        return false;
-    snd_seq_close (probe);
-    return true;
-}
-
 // First enumerated identifier whose display name contains portSubstr. Both
 // backends register under client "Dusk Studio"; the port names ("MIDI Out" /
 // "MIDI In") pick the loopback partner out.
@@ -62,12 +51,44 @@ struct Sink
                             [&] { return messages.size() >= want; });
     }
 };
+
+// A successful snd_seq_open is not enough: a constrained CI sequencer accepts
+// the handle yet cannot create or route ports, so the loopback would fail
+// rather than skip. Probe an actual send -> receive round-trip and only run the
+// assertions where it completes end to end.
+bool loopbackAvailable()
+{
+    snd_seq_t* probe = nullptr;
+    if (snd_seq_open (&probe, "default", SND_SEQ_OPEN_DUPLEX, 0) < 0)
+        return false;
+    snd_seq_close (probe);
+
+    Sink              sink;
+    AlsaSeqMidiInput  in;
+    AlsaSeqMidiOutput out;
+
+    const std::string src = findId (in.enumerate(),  "MIDI Out");
+    const std::string dst = findId (out.enumerate(), "MIDI In");
+    if (src.empty() || dst.empty())     return false;
+    if (! in.enable (src) || ! out.open (dst)) return false;
+
+    in.setReceiver ([&] (const std::string& id, const std::uint8_t* b, int n, double)
+                    { sink.onMidi (id, b, n); });
+    in.start();
+    dusk::MidiBuffer buf;
+    const std::uint8_t note[] { 0x90, 60, 100 };
+    buf.addEvent (note, 3, 0);
+    out.send (dst, buf, 0.0, 48000.0);
+    const bool ok = sink.waitFor (1);
+    in.stop();
+    return ok;
+}
 } // namespace
 
 TEST_CASE ("ALSA seq backend enumerates its loopback partner and stable ids", "[midi][alsa]")
 {
-    if (! seqAvailable())
-        SKIP ("ALSA sequencer (/dev/snd/seq) unavailable - headless CI");
+    if (! loopbackAvailable())
+        SKIP ("ALSA sequencer loopback unavailable - headless CI");
 
     AlsaSeqMidiInput  in;
     AlsaSeqMidiOutput out;
@@ -92,8 +113,8 @@ TEST_CASE ("ALSA seq backend enumerates its loopback partner and stable ids", "[
 
 TEST_CASE ("ALSA seq MIDI loopback round-trips bytes exactly", "[midi][alsa]")
 {
-    if (! seqAvailable())
-        SKIP ("ALSA sequencer (/dev/snd/seq) unavailable - headless CI");
+    if (! loopbackAvailable())
+        SKIP ("ALSA sequencer loopback unavailable - headless CI");
 
     Sink sink;
     AlsaSeqMidiInput  in;

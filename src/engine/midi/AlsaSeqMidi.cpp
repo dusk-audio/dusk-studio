@@ -41,9 +41,23 @@ double nowMs() noexcept
     return duration<double, std::milli> (steady_clock::now().time_since_epoch()).count();
 }
 
+// Escape '\' and ':' so the ':'-delimited identifier stays unambiguous even when
+// a client or port name itself contains a colon.
+std::string escapeComponent (const std::string& s)
+{
+    std::string o;
+    o.reserve (s.size());
+    for (char c : s)
+    {
+        if (c == '\\' || c == ':') o += '\\';
+        o += c;
+    }
+    return o;
+}
+
 std::string makeIdentifier (const std::string& clientName, const std::string& portName, int dup)
 {
-    std::string id = std::string (kIdPrefix) + clientName + ":" + portName;
+    std::string id = std::string (kIdPrefix) + escapeComponent (clientName) + ":" + escapeComponent (portName);
     if (dup > 0) id += ":" + std::to_string (dup);
     return id;
 }
@@ -76,7 +90,7 @@ std::vector<PortRef> queryPorts (snd_seq_t* seq, bool wantRead)
     snd_seq_client_info_alloca (&cinfo);
     snd_seq_port_info_alloca (&pinfo);
 
-    std::map<std::string, int> dupCounts;   // "client:port" -> next dup index
+    std::map<std::pair<std::string, std::string>, int> dupCounts;   // (client,port) -> next dup index
 
     snd_seq_client_info_set_client (cinfo, -1);
     while (snd_seq_query_next_client (seq, cinfo) >= 0)
@@ -94,8 +108,7 @@ std::vector<PortRef> queryPorts (snd_seq_t* seq, bool wantRead)
             if (caps & SND_SEQ_PORT_CAP_NO_EXPORT)        continue;
 
             const std::string portName = snd_seq_port_info_get_name (pinfo);
-            const std::string key = clientName + ":" + portName;
-            const int dup = dupCounts[key]++;
+            const int dup = dupCounts[{ clientName, portName }]++;
 
             out.push_back ({ client, snd_seq_port_info_get_port (pinfo),
                              clientName + ": " + portName,
@@ -137,11 +150,12 @@ struct AlsaSeqMidiInput::Impl
     std::atomic<bool> running { false };
     int               wakePipe[2] { -1, -1 };   // self-pipe to break poll() on stop
 
-    // Fully initialised = usable. A null coder (no decode) or a missing wake
-    // pipe (no clean stop) means the backend must not advertise or activate.
+    // Fully initialised = usable. A missing port, null coder (no decode), or
+    // missing wake pipe (no clean stop) means the backend must not advertise or
+    // activate.
     bool ready() const noexcept
     {
-        return seq != nullptr && coder != nullptr && wakePipe[0] >= 0 && wakePipe[1] >= 0;
+        return seq != nullptr && inPort >= 0 && coder != nullptr && wakePipe[0] >= 0 && wakePipe[1] >= 0;
     }
 
     Impl()
@@ -219,8 +233,11 @@ struct AlsaSeqMidiInput::Impl
         while (snd_seq_event_input (seq, &ev) >= 0 && ev != nullptr)
         {
             // Size the decode target to this event: a variable (sysex) event
-            // carries its length; anything else fits in a few bytes.
+            // carries its length; anything else fits in a few bytes. Bound the
+            // variable case by the reassembly cap so a bogus length can't drive a
+            // huge allocation - such an event is skipped, not buffered.
             const bool variable = (ev->flags & SND_SEQ_EVENT_LENGTH_MASK) == SND_SEQ_EVENT_LENGTH_VARIABLE;
+            if (variable && (std::size_t) ev->data.ext.len > kMaxSysexBytes) continue;
             const std::size_t need = variable ? (std::size_t) ev->data.ext.len : kShortEventBytes;
             if (decodeScratch.size() < need) decodeScratch.resize (need);
 
