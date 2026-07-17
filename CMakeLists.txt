@@ -526,6 +526,10 @@ if(UNIX AND NOT APPLE)
         src/engine/alsa/AlsaAudioIODevice.cpp
         src/engine/alsa/AlsaAudioIODeviceType.cpp
         src/engine/alsa/AlsaPerformanceTest.cpp
+        # Native ALSA-seq MIDI backend (snd_seq_*, same libasound as the audio
+        # backend). Compiled here so the app build proves it clean; the seam is
+        # not wired to it yet (M3).
+        src/engine/midi/AlsaSeqMidi.cpp
         src/ui/KeyboardStateLinux.cpp)
     target_link_libraries(DuskStudio PRIVATE asound X11 ${CMAKE_DL_LIBS})  # X11/dl: clap host + windowing
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_ALSA=1)

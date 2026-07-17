@@ -134,6 +134,16 @@ target_sources(dusk-studio-tests PRIVATE
     midi_collector.cpp
     lv2_state_paths.cpp)
 
+# Native ALSA-seq MIDI backend - Linux-only (snd_seq_* in the same libasound the
+# audio backend links). The loopback suite drives the real backend path in-
+# process and SKIPs itself when /dev/snd/seq is absent (headless CI).
+if(UNIX AND NOT APPLE)
+    target_sources(dusk-studio-tests PRIVATE
+        alsa_seq_midi.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/midi/AlsaSeqMidi.cpp)
+    target_link_libraries(dusk-studio-tests PRIVATE asound)
+endif()
+
 # Phase 1a de-JUCE: JUCE-free audio file I/O (libsndfile backend), test-only for
 # now. Optional — where libsndfile isn't installed (some CI platforms) the unit
 # and its tests are skipped rather than failing configure; it's Linux-first.

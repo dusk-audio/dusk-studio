@@ -1,0 +1,170 @@
+#include <catch2/catch_test_macros.hpp>
+
+#include "engine/midi/AlsaSeqMidi.h"
+#include "foundation/MidiBuffer.h"
+
+#include <alsa/asoundlib.h>
+
+#include <chrono>
+#include <condition_variable>
+#include <cstdint>
+#include <mutex>
+#include <string>
+#include <vector>
+
+using namespace duskstudio::midi;
+
+namespace
+{
+// The ALSA sequencer device is absent in most CI containers; probe it so the
+// whole suite SKIPs cleanly rather than failing there.
+bool seqAvailable()
+{
+    snd_seq_t* probe = nullptr;
+    if (snd_seq_open (&probe, "default", SND_SEQ_OPEN_DUPLEX, 0) < 0)
+        return false;
+    snd_seq_close (probe);
+    return true;
+}
+
+// First enumerated identifier whose display name contains portSubstr. Both
+// backends register under client "Dusk Studio"; the port names ("MIDI Out" /
+// "MIDI In") pick the loopback partner out.
+std::string findId (const std::vector<BackendDeviceInfo>& devs, const std::string& portSubstr)
+{
+    for (auto& d : devs)
+        if (d.name.find (portSubstr) != std::string::npos)
+            return d.identifier;
+    return {};
+}
+
+// Receiver-side collector: the poll thread pushes decoded messages; the test
+// waits on the condition variable instead of sleeping/polling.
+struct Sink
+{
+    std::mutex                            m;
+    std::condition_variable               cv;
+    std::vector<std::vector<std::uint8_t>> messages;
+    std::string                           lastId;
+
+    void onMidi (const std::string& id, const std::uint8_t* bytes, int n)
+    {
+        std::lock_guard<std::mutex> lk (m);
+        lastId = id;
+        messages.emplace_back (bytes, bytes + n);
+        cv.notify_all();
+    }
+
+    bool waitFor (std::size_t want, int ms = 2000)
+    {
+        std::unique_lock<std::mutex> lk (m);
+        return cv.wait_for (lk, std::chrono::milliseconds (ms),
+                            [&] { return messages.size() >= want; });
+    }
+};
+} // namespace
+
+TEST_CASE ("ALSA seq backend enumerates its loopback partner and stable ids", "[midi][alsa]")
+{
+    if (! seqAvailable())
+        SKIP ("ALSA sequencer (/dev/snd/seq) unavailable - headless CI");
+
+    AlsaSeqMidiInput  in;
+    AlsaSeqMidiOutput out;
+
+    // The output backend's port is a MIDI source to the input backend; the input
+    // backend's port is a destination to the output backend.
+    REQUIRE_FALSE (findId (in.enumerate(),  "MIDI Out").empty());
+    REQUIRE_FALSE (findId (out.enumerate(), "MIDI In").empty());
+
+    SECTION ("identifiers carry the scheme prefix and are stable across enumeration")
+    {
+        auto a = out.enumerate();
+        auto b = out.enumerate();
+        REQUIRE (a.size() == b.size());
+        for (std::size_t i = 0; i < a.size(); ++i)
+        {
+            REQUIRE (a[i].identifier == b[i].identifier);
+            REQUIRE (a[i].identifier.rfind ("alsa-seq:", 0) == 0);
+        }
+    }
+}
+
+TEST_CASE ("ALSA seq MIDI loopback round-trips bytes exactly", "[midi][alsa]")
+{
+    if (! seqAvailable())
+        SKIP ("ALSA sequencer (/dev/snd/seq) unavailable - headless CI");
+
+    Sink sink;
+    AlsaSeqMidiInput  in;
+    AlsaSeqMidiOutput out;
+    in.setReceiver ([&] (const std::string& id, const std::uint8_t* b, int n, double)
+                    { sink.onMidi (id, b, n); });
+
+    const std::string outAsSource = findId (in.enumerate(),  "MIDI Out");
+    const std::string inAsDest    = findId (out.enumerate(), "MIDI In");
+    REQUIRE_FALSE (outAsSource.empty());
+    REQUIRE_FALSE (inAsDest.empty());
+
+    REQUIRE (in.enable (outAsSource));   // in  <- out  (subscription)
+    REQUIRE (out.open (inAsDest));       // out ->  in  (subscription)
+    REQUIRE (out.isOpen (inAsDest));
+    in.start();
+
+    SECTION ("three-byte channel messages")
+    {
+        dusk::MidiBuffer buf;
+        const std::uint8_t noteOn[]  { 0x90, 60, 100 };
+        const std::uint8_t noteOff[] { 0x80, 60, 0 };
+        REQUIRE (buf.addEvent (noteOn,  3, 0));
+        REQUIRE (buf.addEvent (noteOff, 3, 0));
+        REQUIRE (out.send (inAsDest, buf, 0.0, 48000.0));
+
+        REQUIRE (sink.waitFor (2));
+        std::lock_guard<std::mutex> lk (sink.m);
+        REQUIRE (sink.messages.size() == 2);
+        REQUIRE (sink.messages[0] == std::vector<std::uint8_t> ({ 0x90, 60, 100 }));
+        REQUIRE (sink.messages[1] == std::vector<std::uint8_t> ({ 0x80, 60, 0 }));
+        REQUIRE (sink.lastId == outAsSource);   // demuxed back to the source id
+    }
+
+    SECTION ("running-status burst expands to full messages")
+    {
+        // One wire-format run of three note-ons sharing a status byte. The
+        // encoder must expand it to three events; the decoder must restore each
+        // status byte (no_status).
+        dusk::MidiBuffer buf;
+        const std::uint8_t burst[] { 0x90, 60, 100, 62, 101, 64, 102 };
+        REQUIRE (buf.addEvent (burst, (int) sizeof burst, 0));
+        REQUIRE (out.send (inAsDest, buf, 0.0, 48000.0));
+
+        REQUIRE (sink.waitFor (3));
+        std::lock_guard<std::mutex> lk (sink.m);
+        REQUIRE (sink.messages.size() == 3);
+        REQUIRE (sink.messages[0] == std::vector<std::uint8_t> ({ 0x90, 60, 100 }));
+        REQUIRE (sink.messages[1] == std::vector<std::uint8_t> ({ 0x90, 62, 101 }));
+        REQUIRE (sink.messages[2] == std::vector<std::uint8_t> ({ 0x90, 64, 102 }));
+    }
+
+    SECTION ("multi-byte sysex round-trips intact")
+    {
+        std::vector<std::uint8_t> sysex;
+        sysex.push_back (0xF0);
+        sysex.push_back (0x7D);              // non-commercial / test manufacturer id
+        for (int i = 0; i < 64; ++i)
+            sysex.push_back ((std::uint8_t) (i & 0x7f));
+        sysex.push_back (0xF7);
+
+        dusk::MidiBuffer buf;
+        REQUIRE (buf.addEvent (sysex.data(), (int) sysex.size(), 0));
+        REQUIRE (out.send (inAsDest, buf, 0.0, 48000.0));
+
+        REQUIRE (sink.waitFor (1));
+        std::lock_guard<std::mutex> lk (sink.m);
+        REQUIRE (sink.messages.size() == 1);
+        REQUIRE (sink.messages[0] == sysex);
+    }
+
+    in.stop();
+    out.closeAll();
+}
