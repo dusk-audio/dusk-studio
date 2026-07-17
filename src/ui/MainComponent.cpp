@@ -1923,11 +1923,11 @@ void MainComponent::openAudioSettings()
     // The Audio block hosts the DuskAudioDeviceSelector in a fixed slot
     // sized to its preferred height - see AudioSettingsPanel::resized.
     constexpr int kPanelW = 820;
-    // Content height with the bumped 360 px audio block + every
-    // section ends just past 1060 px - anything less clips the
-    // Advanced rows (ALSA periods / oversampling / self-test / rescan,
-    // plus the Multicore DSP row) off the bottom even with a scroll
-    // wrapper, because the viewport never sees the missing pixels.
+    // Content height that fits every section (the selector block sizes to its
+    // own preferred height) - anything less clips the Advanced rows (ALSA
+    // periods / oversampling / self-test / rescan, plus the Multicore DSP row)
+    // off the bottom even with a scroll wrapper, because the viewport never
+    // sees the missing pixels.
     constexpr int kPanelH = 1180;
     panel->setSize (kPanelW, kPanelH);
 

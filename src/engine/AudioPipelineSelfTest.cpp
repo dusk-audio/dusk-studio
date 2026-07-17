@@ -892,6 +892,18 @@ std::string AudioPipelineSelfTest::probeUMC1820AlsaFormat()
     std::string out;
     out += "--- UMC1820 ALSA Direct Open Probe ---\n";
 
+    // ALSA-specific by construction (forces the ALSA backend, probes a
+    // hardware-name it exposes). Skip entirely when ALSA isn't registered so
+    // the probe never switches the active backend to a type that doesn't exist.
+    bool alsaAvailable = false;
+    for (auto* t : deviceManager.getAvailableDeviceTypes())
+        if (t != nullptr && t->getTypeName() == "ALSA") { alsaAvailable = true; break; }
+    if (! alsaAvailable)
+    {
+        out += "  (ALSA backend not available - probe skipped)\n";
+        return out;
+    }
+
     auto* origTypeObj = deviceManager.getCurrentDeviceType();
     const std::string origType = origTypeObj != nullptr ? origTypeObj->getTypeName() : std::string();
     const auto origSetup = deviceManager.getSetup();

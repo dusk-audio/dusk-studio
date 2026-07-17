@@ -81,6 +81,12 @@ HardwareInsertEditor::HardwareInsertEditor (HardwareInsertParams& paramsRef,
     inChCombo .onChange = [this] { publishRoutingFromUi(); };
     populateDropdowns();
 
+    // Rebuild the channel lists when the audio device changes under an open
+    // editor (hot-swap, backend switch in Audio settings) so the dropdowns
+    // stop offering channels the new device doesn't have. populateDropdowns
+    // re-selects the stored routing, so a still-valid patch survives the swap.
+    deviceManager.addChangeListener (this, [this] { populateDropdowns(); });
+
     pingButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2a4a6a));
     pingButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
     pingButton.setTooltip ("Send a chirp out the SEND, capture the RETURN, "
@@ -181,7 +187,13 @@ HardwareInsertEditor::HardwareInsertEditor (HardwareInsertParams& paramsRef,
     params.enabled.store (true, std::memory_order_relaxed);
 }
 
-HardwareInsertEditor::~HardwareInsertEditor() { stopTimer(); }   // before derived members destruct
+HardwareInsertEditor::~HardwareInsertEditor()
+{
+    // Both before derived members destruct: the change callback touches the
+    // combos, so it must not fire once they are gone.
+    deviceManager.removeChangeListener (this);
+    stopTimer();
+}
 
 void HardwareInsertEditor::timerCallback()
 {

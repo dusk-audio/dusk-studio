@@ -77,7 +77,7 @@ public:
     void notifyChange();
 
     // Escape hatch: the MIDI input layer alone still drives MIDI device
-    // enable/disable through the wrapped juce::AudioDeviceManager. This is now
+    // enable/disable through the wrapped JUCE AudioDeviceManager. This is now
     // its only consumer (the audio-device UI drives the dusk API above). Removed
     // once the native MIDI backend lands and juce_audio_devices unlinks.
     juce::AudioDeviceManager& juceManager();
