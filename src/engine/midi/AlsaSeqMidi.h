@@ -15,7 +15,10 @@
 // ALSA client / port numbers are not stable across reboot or replug - the
 // string survives, the numbers do not. The seam owns index<->identifier; the
 // backend only ever speaks identifiers, and resolves one to a live address by
-// re-enumerating and matching the string.
+// re-enumerating and matching the string. Caveat: the :<dup> suffix on
+// identically named ports is an ordinal in the current enumeration order, not a
+// fixed key, so two same-named devices can trade identifiers across a replug or
+// reboot.
 //
 // Threading contract (matches the seam's detach/rebuild/attach fence, same as
 // the JUCE backing it replaces): enumerate / enable / disableAll / open /

@@ -137,7 +137,7 @@ target_sources(dusk-studio-tests PRIVATE
 # Native ALSA-seq MIDI backend - Linux-only (snd_seq_* in the same libasound the
 # audio backend links). The loopback suite drives the real backend path in-
 # process and SKIPs itself when /dev/snd/seq is absent (headless CI).
-if(UNIX AND NOT APPLE)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(dusk-studio-tests PRIVATE
         alsa_seq_midi.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/midi/AlsaSeqMidi.cpp)

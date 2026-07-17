@@ -8,7 +8,6 @@
 #include <poll.h>
 #include <unistd.h>
 
-#include <array>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -23,10 +22,15 @@ namespace duskstudio::midi
 {
 namespace
 {
-// Largest single sysex we encode/decode in one snd_seq event. Anything longer
-// arrives fragmented across events and is stitched back by the input side's
-// per-source reassembly below.
+// Working buffer for the snd_midi_event coders (one event's worth of raw bytes).
 constexpr std::size_t kCoderBufferBytes = 65536;
+// Upper bound on a sysex reassembled across multiple events; a longer one is
+// discarded rather than buffered without limit. Distinct from the per-event
+// decode target, which is sized to each event.
+constexpr std::size_t kMaxSysexBytes    = 1u << 20;
+// A non-sysex MIDI message decodes to at most three bytes; give the decode
+// scratch a little headroom for those before it has to grow.
+constexpr std::size_t kShortEventBytes  = 16;
 constexpr char        kIdPrefix[]       = "alsa-seq:";
 
 // Hi-res millisecond clock in the same domain the seam's MidiCollector drains
@@ -51,7 +55,7 @@ struct PortRef
     int         client = 0;
     int         port   = 0;
     std::string name;         // "client: port", for the picker UI
-    std::string identifier;   // stable across reboot/replug
+    std::string identifier;   // name-based (see AlsaSeqMidi.h); :dup ordinal is enumeration-order dependent
 };
 
 // Enumerate MIDI sources (wantRead) or destinations across every client except
@@ -120,12 +124,25 @@ struct AlsaSeqMidiInput::Impl
     // Live source address -> identifier, for demuxing incoming events. Built at
     // enable() (poll thread stopped); read only from the poll thread.
     std::map<std::uint32_t, std::string> sourceIds;
-    // Per-source sysex reassembly for messages ALSA delivers fragmented.
-    std::map<std::uint32_t, std::vector<std::uint8_t>> sysexAccum;
+
+    // Per-source sysex reassembly. `discarding` swallows the rest of an
+    // oversized or malformed sysex until its 0xF7, so its tail never leaks out
+    // as an ordinary message.
+    struct SysexReasm { std::vector<std::uint8_t> bytes; bool discarding = false; };
+    std::map<std::uint32_t, SysexReasm> sysex;
+
+    std::vector<std::uint8_t> decodeScratch;   // decode target, grown to each event's size
 
     std::thread       pollThread;
     std::atomic<bool> running { false };
     int               wakePipe[2] { -1, -1 };   // self-pipe to break poll() on stop
+
+    // Fully initialised = usable. A null coder (no decode) or a missing wake
+    // pipe (no clean stop) means the backend must not advertise or activate.
+    bool ready() const noexcept
+    {
+        return seq != nullptr && coder != nullptr && wakePipe[0] >= 0 && wakePipe[1] >= 0;
+    }
 
     Impl()
     {
@@ -168,33 +185,48 @@ struct AlsaSeqMidiInput::Impl
     {
         if (n == 1 && bytes[0] >= 0xF8) { deliver (client, port, bytes, 1); return; }
 
-        auto& acc = sysexAccum[addrKey (client, port)];
-        if (! acc.empty() || bytes[0] == 0xF0)
+        auto& sx = sysex[addrKey (client, port)];
+        const bool active = ! sx.bytes.empty() || sx.discarding;
+        if (! active && bytes[0] != 0xF0)
         {
-            acc.insert (acc.end(), bytes, bytes + n);
-            if (bytes[n - 1] == 0xF7)
-            {
-                deliver (client, port, acc.data(), (int) acc.size());
-                acc.clear();
-            }
-            else if (acc.size() > kCoderBufferBytes)   // runaway/malformed sysex: drop
-            {
-                acc.clear();
-            }
+            deliver (client, port, bytes, n);   // ordinary channel / system message
             return;
         }
-        deliver (client, port, bytes, n);
+
+        const bool terminated = bytes[n - 1] == 0xF7;
+        if (sx.discarding)                          // dropping an oversized sysex
+        {
+            if (terminated) sx.discarding = false;
+            return;
+        }
+        if (sx.bytes.size() + (std::size_t) n > kMaxSysexBytes)   // would overflow the cap
+        {
+            sx.bytes.clear();
+            sx.discarding = ! terminated;           // keep dropping until 0xF7 arrives
+            return;
+        }
+        sx.bytes.insert (sx.bytes.end(), bytes, bytes + n);
+        if (terminated)
+        {
+            deliver (client, port, sx.bytes.data(), (int) sx.bytes.size());
+            sx.bytes.clear();
+        }
     }
 
     void pumpEvents()
     {
-        std::array<std::uint8_t, kCoderBufferBytes> buf;
         snd_seq_event_t* ev = nullptr;
         while (snd_seq_event_input (seq, &ev) >= 0 && ev != nullptr)
         {
-            const long got = snd_midi_event_decode (coder, buf.data(), (long) buf.size(), ev);
+            // Size the decode target to this event: a variable (sysex) event
+            // carries its length; anything else fits in a few bytes.
+            const bool variable = (ev->flags & SND_SEQ_EVENT_LENGTH_MASK) == SND_SEQ_EVENT_LENGTH_VARIABLE;
+            const std::size_t need = variable ? (std::size_t) ev->data.ext.len : kShortEventBytes;
+            if (decodeScratch.size() < need) decodeScratch.resize (need);
+
+            const long got = snd_midi_event_decode (coder, decodeScratch.data(), (long) decodeScratch.size(), ev);
             if (got > 0)
-                handleDecoded (ev->source.client, ev->source.port, buf.data(), (int) got);
+                handleDecoded (ev->source.client, ev->source.port, decodeScratch.data(), (int) got);
             // no_status makes each decode self-contained: no cross-event running
             // status, so no reset between events is needed.
         }
@@ -244,6 +276,7 @@ AlsaSeqMidiInput::~AlsaSeqMidiInput() = default;
 std::vector<BackendDeviceInfo> AlsaSeqMidiInput::enumerate()
 {
     std::vector<BackendDeviceInfo> out;
+    if (! impl->ready()) return out;
     for (auto& p : queryPorts (impl->seq, /*wantRead*/ true))
         out.push_back ({ p.name, p.identifier });
     return out;
@@ -253,7 +286,7 @@ void AlsaSeqMidiInput::setReceiver (Receiver r) { impl->receiver = std::move (r)
 
 bool AlsaSeqMidiInput::enable (const std::string& identifier)
 {
-    if (impl->seq == nullptr) return false;
+    if (! impl->ready()) return false;
     for (auto& p : queryPorts (impl->seq, true))
     {
         if (p.identifier != identifier) continue;
@@ -272,7 +305,7 @@ void AlsaSeqMidiInput::disableAll()
             snd_seq_disconnect_from (impl->seq, impl->inPort,
                                      (int) (kv.first >> 16), (int) (kv.first & 0xffff));
     impl->sourceIds.clear();
-    impl->sysexAccum.clear();
+    impl->sysex.clear();
 }
 
 void AlsaSeqMidiInput::start() { impl->startThread(); }
@@ -287,6 +320,13 @@ struct AlsaSeqMidiOutput::Impl
     int               outPort = -1;
     snd_midi_event_t* coder   = nullptr;
     std::map<std::string, std::pair<int, int>> openDests;   // identifier -> (client,port)
+
+    // Fully initialised = usable. A null coder (no encode) or missing port means
+    // the backend cannot send, so it must not advertise or open devices.
+    bool ready() const noexcept
+    {
+        return seq != nullptr && coder != nullptr && outPort >= 0;
+    }
 
     Impl()
     {
@@ -321,6 +361,7 @@ AlsaSeqMidiOutput::~AlsaSeqMidiOutput() = default;
 std::vector<BackendDeviceInfo> AlsaSeqMidiOutput::enumerate()
 {
     std::vector<BackendDeviceInfo> out;
+    if (! impl->ready()) return out;
     for (auto& p : queryPorts (impl->seq, /*wantRead*/ false))
         out.push_back ({ p.name, p.identifier });
     return out;
@@ -328,7 +369,7 @@ std::vector<BackendDeviceInfo> AlsaSeqMidiOutput::enumerate()
 
 bool AlsaSeqMidiOutput::open (const std::string& identifier)
 {
-    if (impl->seq == nullptr) return false;
+    if (! impl->ready()) return false;
     if (impl->openDests.count (identifier)) return true;   // lazy open is idempotent
     for (auto& p : queryPorts (impl->seq, false))
     {

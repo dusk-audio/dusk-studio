@@ -77,16 +77,16 @@ TEST_CASE ("ALSA seq backend enumerates its loopback partner and stable ids", "[
     REQUIRE_FALSE (findId (in.enumerate(),  "MIDI Out").empty());
     REQUIRE_FALSE (findId (out.enumerate(), "MIDI In").empty());
 
-    SECTION ("identifiers carry the scheme prefix and are stable across enumeration")
+    SECTION ("the loopback endpoint keeps a stable, scheme-prefixed identifier")
     {
-        auto a = out.enumerate();
-        auto b = out.enumerate();
-        REQUIRE (a.size() == b.size());
-        for (std::size_t i = 0; i < a.size(); ++i)
-        {
-            REQUIRE (a[i].identifier == b[i].identifier);
-            REQUIRE (a[i].identifier.rfind ("alsa-seq:", 0) == 0);
-        }
+        // Compare this test's own "MIDI In" endpoint across two enumerations
+        // rather than the whole global list, which other MIDI clients on the
+        // machine can reorder or resize between calls.
+        const std::string a = findId (out.enumerate(), "MIDI In");
+        const std::string b = findId (out.enumerate(), "MIDI In");
+        REQUIRE_FALSE (a.empty());
+        REQUIRE (a == b);
+        REQUIRE (a.rfind ("alsa-seq:", 0) == 0);
     }
 }
 
