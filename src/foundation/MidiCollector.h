@@ -127,8 +127,6 @@ public:
         }
     }
 
-    double getSampleRate() const noexcept { return sampleRate; }
-
 private:
     // Event sample number relative to the last drain, matching JUCE's
     // (timeStamp - 0.001*lastCallbackTime)*sampleRate with timeStamp in seconds;

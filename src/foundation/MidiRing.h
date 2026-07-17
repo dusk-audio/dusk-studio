@@ -39,8 +39,6 @@ public:
         tail.store (0, std::memory_order_relaxed);
     }
 
-    std::size_t capacity() const noexcept { return cap; }
-
     // Producer thread. Copies one record in. Returns false and drops the whole
     // record when it does not fit (over the ring capacity, or the free space is
     // too small right now) - never a partial write, never a realloc.
