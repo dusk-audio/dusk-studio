@@ -171,15 +171,23 @@ struct DeviceManager::Impl : private juce::ChangeListener
 
     void fireListeners()
     {
-        // Copy the callbacks before firing: a listener may add or remove
-        // subscribers (e.g. the settings UI relays out) and mutating the map
-        // mid-iteration would invalidate the loop.
-        std::vector<std::function<void()>> callbacks;
-        callbacks.reserve (listeners.size());
+        // Snapshot the owner keys, not the closures: a listener may add or
+        // remove subscribers (e.g. the settings UI relays out). Firing a
+        // copied closure whose owner was already removed by an earlier
+        // callback would invoke a dead listener. So re-check each owner
+        // against the live map and pull its current callback before calling;
+        // copy that callback so an owner removing itself mid-call is safe.
+        std::vector<void*> owners;
+        owners.reserve (listeners.size());
         for (auto& entry : listeners)
-            callbacks.push_back (entry.second);
-        for (auto& cb : callbacks)
+            owners.push_back (entry.first);
+        for (auto* owner : owners)
+        {
+            auto it = listeners.find (owner);
+            if (it == listeners.end()) continue;
+            auto cb = it->second;
             if (cb) cb();
+        }
     }
 
     juce::AudioDeviceManager mgr;

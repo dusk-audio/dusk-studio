@@ -677,10 +677,7 @@ void AudioSettingsPanel::applyRescan()
     // We iterate every type rather than only the current one so that
     // switching backend (e.g. ALSA -> PipeWire) after a hot-plug still sees
     // the freshly-enumerated devices on the new backend.
-    const auto types = deviceManager.getAvailableDeviceTypes();
-    for (auto* type : types)
-        if (type != nullptr)
-            type->scanForDevices();
+    deviceManager.scanAllDeviceTypes();
 
     // The selector subscribes to the device manager's change notification. Most
     // backends' scanForDevices() will already fire it (routed through the
