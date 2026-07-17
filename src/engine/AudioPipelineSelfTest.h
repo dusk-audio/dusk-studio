@@ -1,10 +1,10 @@
 #pragma once
 
-#include <juce_audio_devices/juce_audio_devices.h>
 #include <array>
 #include <string>
 #include <vector>
 #include "AudioEngine.h"
+#include "device/DeviceManager.h"
 #include "../session/Session.h"
 
 namespace duskstudio
@@ -24,7 +24,7 @@ class AudioPipelineSelfTest
 {
 public:
     AudioPipelineSelfTest (AudioEngine& engine,
-                            juce::AudioDeviceManager& dm,
+                            device::DeviceManager& dm,
                             Session& session) noexcept;
 
     // Runs the full suite, returns a multi-line formatted report suitable for
@@ -133,7 +133,7 @@ private:
                                     int workerCount = -1);
 
     AudioEngine& engine;
-    juce::AudioDeviceManager& deviceManager;
+    device::DeviceManager& deviceManager;
     Session& session;
 };
 } // namespace duskstudio

@@ -84,9 +84,10 @@ public:
     // between captures.
     void setWorkerCountForTest (int n);
 
-    // Escape hatch: the selector UI + MIDI input layer still drive the wrapped
-    // juce::AudioDeviceManager directly (flipped to the dusk API in a later phase).
-    juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager.juceManager(); }
+    // The audio-device orchestrator. The settings UI + self-test drive it through
+    // the dusk API (IODevice / DeviceSetup / listener callbacks); no JUCE device
+    // type crosses this boundary.
+    device::DeviceManager& getDeviceManager() noexcept { return deviceManager; }
 
     // Detach / reattach the engine from the audio device. Offline render + self-
     // test detach, then drive audioDeviceIOCallback directly. Reattach re-prepares

@@ -6,6 +6,7 @@
 #include <memory>
 #include "../session/Session.h"
 #include "DuskComboBox.h"
+#include "../engine/device/ChannelSet.h"
 
 namespace duskstudio
 {
@@ -115,7 +116,7 @@ private:
     // rebuilds it when the device's active-output set changes. A bitmask (not
     // just a set-bit count) so swapping which pair is active - same count,
     // different channels - still triggers a repopulate.
-    juce::BigInteger lastOutputChannelMask;
+    device::ChannelSet lastOutputChannelMask;
     // Output channel count the combo was last built for. The mask alone can
     // match across two devices (both stereo -> bits 0,1) while the physical
     // output count - which drives how many pairs the menu lists - differs, so

@@ -1017,7 +1017,7 @@ struct DuskStudioApp::BounceTest : private juce::Timer
         // render never needs a device; the bounce re-attaches at the end, harmless
         // against a closed device.
         engine->detachAudioCallback();
-        engine->getDeviceManager().closeAudioDevice();
+        engine->getDeviceManager().closeDevice();
         engine->prepareForSelfTest (sr, bs);
 
         synthesiseContent();

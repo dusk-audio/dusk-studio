@@ -14,7 +14,7 @@ using outputpair::decodePairR;
 constexpr int kMonoChannelIdBase = 1000000;
 
 HardwareInsertEditor::HardwareInsertEditor (HardwareInsertParams& paramsRef,
-                                                juce::AudioDeviceManager& dm,
+                                                device::DeviceManager& dm,
                                                 std::function<void()> onDone,
                                                 bool embedded,
                                                 bool allowMono)
@@ -80,6 +80,12 @@ HardwareInsertEditor::HardwareInsertEditor (HardwareInsertParams& paramsRef,
     outChCombo.onChange = [this] { publishRoutingFromUi(); };
     inChCombo .onChange = [this] { publishRoutingFromUi(); };
     populateDropdowns();
+
+    // Rebuild the channel lists when the audio device changes under an open
+    // editor (hot-swap, backend switch in Audio settings) so the dropdowns
+    // stop offering channels the new device doesn't have. populateDropdowns
+    // re-selects the stored routing, so a still-valid patch survives the swap.
+    deviceManager.addChangeListener (this, [this] { populateDropdowns(); });
 
     pingButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2a4a6a));
     pingButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
@@ -181,7 +187,13 @@ HardwareInsertEditor::HardwareInsertEditor (HardwareInsertParams& paramsRef,
     params.enabled.store (true, std::memory_order_relaxed);
 }
 
-HardwareInsertEditor::~HardwareInsertEditor() { stopTimer(); }   // before derived members destruct
+HardwareInsertEditor::~HardwareInsertEditor()
+{
+    // Both before derived members destruct: the change callback touches the
+    // combos, so it must not fire once they are gone.
+    deviceManager.removeChangeListener (this);
+    stopTimer();
+}
 
 void HardwareInsertEditor::timerCallback()
 {
@@ -225,7 +237,7 @@ void HardwareInsertEditor::timerCallback()
             // size without doing arithmetic. When no audio device is
             // open / sample rate is unknown, fall back to "? ms" rather
             // than printing a misleading "0.00 ms".
-            auto* device = deviceManager.getCurrentAudioDevice();
+            auto* device = deviceManager.getCurrentDevice();
             const double sr = device != nullptr ? device->getCurrentSampleRate() : 0.0;
             const juce::String msPart = sr > 0.0
                 ? juce::String::formatted ("%.2f ms", (double) lag * 1000.0 / sr)
@@ -244,7 +256,7 @@ void HardwareInsertEditor::populateDropdowns()
     outChCombo.clear (juce::dontSendNotification);
     inChCombo .clear (juce::dontSendNotification);
 
-    auto* device = deviceManager.getCurrentAudioDevice();
+    auto* device = deviceManager.getCurrentDevice();
     if (device == nullptr)
     {
         outChCombo.addItem ("(no audio device)", 1);
@@ -259,24 +271,25 @@ void HardwareInsertEditor::populateDropdowns()
     const auto routing = currentRouting();
 
     const bool monoFormat = formatMonoButton.getToggleState();
-    auto addPairs = [] (juce::ComboBox& cb, const juce::StringArray& names)
+    auto addPairs = [] (juce::ComboBox& cb, const std::vector<std::string>& names)
     {
         // Pair adjacent channels - typical interface convention is
         // odd/even = L/R. Add a leading "(none)" entry so the user can
         // explicitly clear the routing.
         cb.addItem ("(none)", 1);
-        for (int i = 0; i + 1 < names.size(); i += 2)
+        for (int i = 0; i + 1 < (int) names.size(); i += 2)
         {
             const auto label = juce::String (i + 1) + "-" + juce::String (i + 2)
-                              + "  " + names[i] + " / " + names[i + 1];
+                              + "  " + juce::String (names[(size_t) i])
+                              + " / " + juce::String (names[(size_t) i + 1]);
             cb.addItem (label, encodePair (i, i + 1));
         }
     };
-    auto addSingles = [] (juce::ComboBox& cb, const juce::StringArray& names)
+    auto addSingles = [] (juce::ComboBox& cb, const std::vector<std::string>& names)
     {
         cb.addItem ("(none)", 1);
-        for (int i = 0; i < names.size(); ++i)
-            cb.addItem (juce::String (i + 1) + "  " + names[i],
+        for (int i = 0; i < (int) names.size(); ++i)
+            cb.addItem (juce::String (i + 1) + "  " + juce::String (names[(size_t) i]),
                         kMonoChannelIdBase + i);
     };
     if (monoFormat)

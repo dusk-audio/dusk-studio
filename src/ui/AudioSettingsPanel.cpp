@@ -13,7 +13,7 @@
 
 namespace duskstudio
 {
-AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
+AudioSettingsPanel::AudioSettingsPanel (device::DeviceManager& dm,
                                           AudioEngine& e, Session& s)
     : deviceManager (dm), engine (e), session (s)
 {
@@ -39,7 +39,7 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
     addAndMakeVisible (mainOutputCombo);
 
     // Refresh the main-output menu when the device's output count changes.
-    deviceManager.addChangeListener (this);
+    deviceManager.addChangeListener (this, [this] { changeListenerCallback (nullptr); });
 
 #if defined(__linux__)
     addAndMakeVisible (periodsLabel);
@@ -677,19 +677,14 @@ void AudioSettingsPanel::applyRescan()
     // We iterate every type rather than only the current one so that
     // switching backend (e.g. ALSA -> PipeWire) after a hot-plug still sees
     // the freshly-enumerated devices on the new backend.
-    const auto& types = deviceManager.getAvailableDeviceTypes();
-    for (auto* type : types)
-        if (type != nullptr)
-            type->scanForDevices();
+    deviceManager.scanAllDeviceTypes();
 
-    // The selector subscribes to AudioDeviceManager change broadcasts. Most
-    // backends' scanForDevices() will already fire callDeviceChangeListeners()
-    // (which routes through audioDeviceListChanged() -> sendChangeMessage()),
-    // but some only broadcast on a real diff. Force a refresh either way.
-    // Re-applying the same setup via setAudioDeviceSetup is a no-op when
-    // newSetup == currentSetup (JUCE early-returns without notifying), so
-    // poke the broadcaster directly.
-    deviceManager.sendChangeMessage();
+    // The selector subscribes to the device manager's change notification. Most
+    // backends' scanForDevices() will already fire it (routed through the
+    // wrapped manager's device-list-changed broadcast), but some only broadcast
+    // on a real diff. Force a refresh either way - re-applying the same setup is
+    // a no-op when nothing changed, so fire the listeners directly.
+    deviceManager.notifyChange();
 
     // Same rescan also re-enumerates MIDI inputs so freshly plugged-in
     // controllers appear in the per-strip MIDI dropdowns. The engine
@@ -711,8 +706,8 @@ void AudioSettingsPanel::applyPeriodsChange()
     // Re-open the device with the same setup so setParameters() runs and
     // picks up the new period count. Without this, the change only takes
     // effect on the next manual device switch.
-    auto setup = deviceManager.getAudioDeviceSetup();
-    deviceManager.setAudioDeviceSetup (setup, /*treatAsChosenDevice*/ true);
+    auto setup = deviceManager.getSetup();
+    deviceManager.setSetup (setup, /*treatAsChosen*/ true);
 }
 #endif
 
@@ -725,7 +720,7 @@ void AudioSettingsPanel::applyOversamplingChange()
 
     // Re-prepare engine DSP so the new factor takes effect. The factor is only
     // read in AudioEngine::prepareForSelfTest (driven by audioDeviceAboutToStart).
-    // setAudioDeviceSetup() with the SAME setup is a JUCE no-op, and a full
+    // setSetup() with the SAME setup is a no-op, and a full
     // device close/restart disturbs the window peer on Linux (mouse-offset
     // regression). Instead, detach + reattach the engine as the audio callback:
     // removeAudioCallback fires audioDeviceStopped, addAudioCallback fires
@@ -794,14 +789,14 @@ void AudioSettingsPanel::populateMainOutputCombo()
     mainOutputCombo.clear (juce::dontSendNotification);
     mainOutputCombo.addItem ("1-2 (default)", 1);
 
-    if (auto* device = deviceManager.getCurrentAudioDevice())
+    if (auto* device = deviceManager.getCurrentDevice())
     {
         // Only offer pairs the engine can actually write to: both channels of
         // the pair must be in the device's active-output set. Listing inactive
         // physical outputs lets the user route the master to a dead pair and
         // makes it appear to vanish.
         const auto active = device->getActiveOutputChannels();
-        const int count = device->getOutputChannelNames().size();
+        const int count = (int) device->getOutputChannelNames().size();
         // Skip the first pair - it's already the "1-2 (default)" item.
         for (int i = 2; i + 1 < count; i += 2)
             if (active[i] && active[i + 1])

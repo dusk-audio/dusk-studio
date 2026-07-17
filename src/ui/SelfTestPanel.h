@@ -1,7 +1,7 @@
 #pragma once
 
-#include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "../engine/device/DeviceManager.h"
 
 namespace duskstudio
 {
@@ -15,7 +15,7 @@ class SelfTestPanel final : public juce::Component
 {
 public:
     SelfTestPanel (AudioEngine& engine,
-                    juce::AudioDeviceManager& dm,
+                    device::DeviceManager& dm,
                     Session& session);
 
     // Wired by the host to tear down the EmbeddedModal hosting this panel.
@@ -27,7 +27,7 @@ public:
 
 private:
     AudioEngine& engine;
-    juce::AudioDeviceManager& deviceManager;
+    device::DeviceManager& deviceManager;
     Session& session;
 
     juce::TextEditor   logView;

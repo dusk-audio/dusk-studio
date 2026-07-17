@@ -31,7 +31,7 @@ std::string fmtPassFail (bool pass) { return pass ? "[PASS]" : "[FAIL]"; }
 } // namespace
 
 AudioPipelineSelfTest::AudioPipelineSelfTest (AudioEngine& e,
-                                              juce::AudioDeviceManager& dm,
+                                              device::DeviceManager& dm,
                                               Session& s) noexcept
     : engine (e), deviceManager (dm), session (s)
 {}
@@ -892,51 +892,64 @@ std::string AudioPipelineSelfTest::probeUMC1820AlsaFormat()
     std::string out;
     out += "--- UMC1820 ALSA Direct Open Probe ---\n";
 
-    const auto origType  = deviceManager.getCurrentAudioDeviceType();
-    const auto origSetup = deviceManager.getAudioDeviceSetup();
+    // ALSA-specific by construction (forces the ALSA backend, probes a
+    // hardware-name it exposes). Skip entirely when ALSA isn't registered so
+    // the probe never switches the active backend to a type that doesn't exist.
+    bool alsaAvailable = false;
+    for (auto* t : deviceManager.getAvailableDeviceTypes())
+        if (t != nullptr && t->getTypeName() == "ALSA") { alsaAvailable = true; break; }
+    if (! alsaAvailable)
+    {
+        out += "  (ALSA backend not available - probe skipped)\n";
+        return out;
+    }
 
-    deviceManager.setCurrentAudioDeviceType ("ALSA", true);
+    auto* origTypeObj = deviceManager.getCurrentDeviceType();
+    const std::string origType = origTypeObj != nullptr ? origTypeObj->getTypeName() : std::string();
+    const auto origSetup = deviceManager.getSetup();
+
+    deviceManager.setCurrentDeviceType ("ALSA", true);
 
     // JUCE-ALSA exposes UMC1820 outputs under several surround-mode names -
     // probe the most common one used in the dialog.
-    const juce::StringArray candidates {
+    const std::vector<std::string> candidates {
         "UMC1820, USB Audio; Front output / input",
         "UMC1820, USB Audio; 4.0 Surround output to Front and Rear speakers"
     };
 
     for (const auto& name : candidates)
     {
-        auto setup = deviceManager.getAudioDeviceSetup();
+        auto setup = deviceManager.getSetup();
         setup.outputDeviceName        = name;
         setup.useDefaultInputChannels = true;
         setup.useDefaultOutputChannels = true;
 
-        const auto err = deviceManager.setAudioDeviceSetup (setup, /*treatAsChosen*/ true);
-        if (err.isNotEmpty())
+        const auto err = deviceManager.setSetup (setup, /*treatAsChosen*/ true);
+        if (! err.empty())
         {
-            out += "  " + name.toStdString() + ": ERROR " + err.toStdString() + "\n";
+            out += "  " + name + ": ERROR " + err + "\n";
             continue;
         }
 
-        if (auto* dev = deviceManager.getCurrentAudioDevice())
+        if (auto* dev = deviceManager.getCurrentDevice())
         {
             out += dusk::text::format (
                 "  %s\n      OPENED rate=%.0f buf=%d in=%d out=%d "
                 "(see [Dusk Studio/JUCE-ALSA] line in stderr for format/access)\n",
-                name.toRawUTF8(),
+                name.c_str(),
                 dev->getCurrentSampleRate(),
                 dev->getCurrentBufferSizeSamples(),
-                dev->getActiveInputChannels().countNumberOfSetBits(),
-                dev->getActiveOutputChannels().countNumberOfSetBits());
+                dev->getActiveInputChannels().count(),
+                dev->getActiveOutputChannels().count());
         }
         else
         {
-            out += "  " + name.toStdString() + ": OPEN-FAILED (getCurrentAudioDevice() == nullptr)\n";
+            out += "  " + name + ": OPEN-FAILED (getCurrentDevice() == nullptr)\n";
         }
     }
 
-    deviceManager.setCurrentAudioDeviceType (origType, true);
-    deviceManager.setAudioDeviceSetup (origSetup, true);
+    deviceManager.setCurrentDeviceType (origType, true);
+    deviceManager.setSetup (origSetup, true);
     return out;
 }
 
@@ -946,10 +959,11 @@ std::string AudioPipelineSelfTest::testBackendsOpenCleanly()
     out += "--- Backend Open Tests ---\n";
 
     // Capture the user's current setup so we can restore.
-    const auto origType  = deviceManager.getCurrentAudioDeviceType();
-    const auto origSetup = deviceManager.getAudioDeviceSetup();
+    auto* origTypeObj = deviceManager.getCurrentDeviceType();
+    const std::string origType = origTypeObj != nullptr ? origTypeObj->getTypeName() : std::string();
+    const auto origSetup = deviceManager.getSetup();
 
-    auto& types = deviceManager.getAvailableDeviceTypes();
+    const auto types = deviceManager.getAvailableDeviceTypes();
     for (auto* type : types)
     {
         if (type == nullptr) continue;
@@ -959,32 +973,32 @@ std::string AudioPipelineSelfTest::testBackendsOpenCleanly()
         const auto inDevs  = type->getDeviceNames (true);
 
         out += dusk::text::format ("  Backend: %s | %d out devs, %d in devs\n",
-                                   type->getTypeName().toRawUTF8(),
-                                   outDevs.size(), inDevs.size());
-        for (const auto& d : outDevs) out += "      out: " + d.toStdString() + "\n";
-        for (const auto& d : inDevs)  out += "      in:  " + d.toStdString() + "\n";
+                                   type->getTypeName().c_str(),
+                                   (int) outDevs.size(), (int) inDevs.size());
+        for (const auto& d : outDevs) out += "      out: " + d + "\n";
+        for (const auto& d : inDevs)  out += "      in:  " + d + "\n";
 
         // Try opening the type's default device.
-        deviceManager.setCurrentAudioDeviceType (type->getTypeName(), /*treatAsChosenDevice*/ true);
-        if (auto* dev = deviceManager.getCurrentAudioDevice())
+        deviceManager.setCurrentDeviceType (type->getTypeName(), /*treatAsChosen*/ true);
+        if (auto* dev = deviceManager.getCurrentDevice())
         {
             out += dusk::text::format (
                 "      OPENED  rate=%.0f buf=%d in=%d out=%d\n",
                 dev->getCurrentSampleRate(),
                 dev->getCurrentBufferSizeSamples(),
-                dev->getActiveInputChannels().countNumberOfSetBits(),
-                dev->getActiveOutputChannels().countNumberOfSetBits());
+                dev->getActiveInputChannels().count(),
+                dev->getActiveOutputChannels().count());
         }
         else
         {
-            out += "      OPEN-FAILED (deviceManager.getCurrentAudioDevice() returned nullptr)\n";
+            out += "      OPEN-FAILED (deviceManager.getCurrentDevice() returned nullptr)\n";
         }
     }
 
     // Restore.
-    deviceManager.setCurrentAudioDeviceType (origType, /*treatAsChosenDevice*/ true);
-    deviceManager.setAudioDeviceSetup (origSetup, /*treatAsChosenDevice*/ true);
-    out += "  (restored original setup: " + origType.toStdString() + ")\n";
+    deviceManager.setCurrentDeviceType (origType, /*treatAsChosen*/ true);
+    deviceManager.setSetup (origSetup, /*treatAsChosen*/ true);
+    out += "  (restored original setup: " + origType + ")\n";
     return out;
 }
 
@@ -1342,12 +1356,14 @@ std::string AudioPipelineSelfTest::runAll()
     report.push_back ("=== Dusk Studio Audio Pipeline Self-Test ===");
     report.push_back ("Time: " + juce::Time::getCurrentTime().toString (true, true).toStdString());
     {
-        const auto& setup = deviceManager.getAudioDeviceSetup();
+        const auto setup = deviceManager.getSetup();
+        auto* typeObj = deviceManager.getCurrentDeviceType();
+        const std::string backend = typeObj != nullptr ? typeObj->getTypeName() : std::string();
         report.push_back (dusk::text::format (
             "Active backend: %s, %s out, %s in, %.0f Hz, %d-sample buffer",
-            deviceManager.getCurrentAudioDeviceType().toRawUTF8(),
-            setup.outputDeviceName.toRawUTF8(),
-            setup.inputDeviceName.toRawUTF8(),
+            backend.c_str(),
+            setup.outputDeviceName.c_str(),
+            setup.inputDeviceName.c_str(),
             setup.sampleRate,
             setup.bufferSize));
     }
@@ -1393,7 +1409,7 @@ std::string AudioPipelineSelfTest::runAll()
    #endif
 
     // Re-attach the engine BEFORE the backend cycle. Without an audio callback
-    // registered, every setCurrentAudioDeviceType / setAudioDeviceSetup below
+    // registered, every setCurrentDeviceType / setSetup below
     // opens the hardware PCM and the device thread streams whatever's in the
     // kernel/driver buffer (uninitialised memory, stale samples, PipeWire-graph
     // residue) - the "test button distortion" speakers hear on each transition.

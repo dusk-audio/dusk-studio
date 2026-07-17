@@ -6,7 +6,7 @@
 namespace duskstudio
 {
 SelfTestPanel::SelfTestPanel (AudioEngine& e,
-                                juce::AudioDeviceManager& dm,
+                                device::DeviceManager& dm,
                                 Session& s)
     : engine (e), deviceManager (dm), session (s)
 {

@@ -1920,14 +1920,14 @@ void MainComponent::openAudioSettings()
     // Tall enough that the new grouped layout (Audio + Control Surface +
     // MIDI Bindings + MIDI Sync + General + Advanced, each with a
     // section header + separator) fits without any group being clipped.
-    // The Audio block hosts JUCE's AudioDeviceSelectorComponent in a
-    // fixed 360 px slot - see AudioSettingsPanel::resized.
+    // The Audio block hosts the DuskAudioDeviceSelector in a fixed slot
+    // sized to its preferred height - see AudioSettingsPanel::resized.
     constexpr int kPanelW = 820;
-    // Content height with the bumped 360 px audio block + every
-    // section ends just past 1060 px - anything less clips the
-    // Advanced rows (ALSA periods / oversampling / self-test / rescan,
-    // plus the Multicore DSP row) off the bottom even with a scroll
-    // wrapper, because the viewport never sees the missing pixels.
+    // Content height that fits every section (the selector block sizes to its
+    // own preferred height) - anything less clips the Advanced rows (ALSA
+    // periods / oversampling / self-test / rescan, plus the Multicore DSP row)
+    // off the bottom even with a scroll wrapper, because the viewport never
+    // sees the missing pixels.
     constexpr int kPanelH = 1180;
     panel->setSize (kPanelW, kPanelH);
 
@@ -3077,11 +3077,11 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
         else if (deviceSr > 0.0
                  && std::abs (session.sessionSampleRate - deviceSr) > 0.5)
         {
-            auto setup = engine.getDeviceManager().getAudioDeviceSetup();
+            auto setup = engine.getDeviceManager().getSetup();
             setup.sampleRate = session.sessionSampleRate;
-            const auto err = engine.getDeviceManager().setAudioDeviceSetup (setup, true);
-            const double after = engine.getDeviceManager().getAudioDeviceSetup().sampleRate;
-            if (err.isNotEmpty() || std::abs (after - session.sessionSampleRate) > 0.5)
+            const auto err = engine.getDeviceManager().setSetup (setup, true);
+            const double after = engine.getDeviceManager().getSetup().sampleRate;
+            if (! err.empty() || std::abs (after - session.sessionSampleRate) > 0.5)
             {
                 warnedSampleRateMismatch = true;
                 const auto body =
@@ -3089,7 +3089,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
                     + juce::String ((int) session.sessionSampleRate) + " Hz, but the "
                     "audio device is running at " + juce::String ((int) after) + " Hz "
                     "and could not be switched"
-                    + (err.isNotEmpty() ? (":\n\n    " + err) : juce::String (".")) +
+                    + (! err.empty() ? juce::String (":\n\n    " + err) : juce::String (".")) +
                     "\n\nEvery recorded track will play at the wrong speed and pitch "
                     "until the device runs at the session's rate. Pick a device or "
                     "rate of " + juce::String ((int) session.sessionSampleRate)
