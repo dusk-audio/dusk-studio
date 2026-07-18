@@ -185,6 +185,7 @@ private:
         int              port       = -1;
         double           timeMs     = 0.0;
         double           sampleRate = 48000.0;
+        std::uint32_t    generation = 0;
         dusk::MidiBuffer events;
     };
     std::array<QueuedMidiOut, kQueueDepth> queue;
@@ -194,6 +195,13 @@ private:
     // each publishes with release and observes the other with acquire.
     std::atomic<std::uint32_t> writeCount { 0 };
     std::atomic<std::uint32_t> readCount  { 0 };
+
+    // Bumped by every close or re-enumeration. queueRt samples it before it
+    // tests the port, so a producer preempted between that test and its publish
+    // carries the OLD value and the pump discards its block. Resetting the
+    // cursors alone cannot cover that: the block is not committed yet when the
+    // discard runs, so it survives as if it had been queued afterwards.
+    std::atomic<std::uint32_t> queueGeneration { 0 };
 
     std::thread       pump;
     std::atomic<bool> pumpRunning { false };

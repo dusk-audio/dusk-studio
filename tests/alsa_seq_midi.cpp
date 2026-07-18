@@ -285,6 +285,28 @@ TEST_CASE ("MidiOutputBank RT queue delivers through the pump, bounded by its de
         REQUIRE (sink.messages[0][1] == 0x22);
     }
 
+    SECTION ("a re-enumeration discards what was queued against the old order")
+    {
+        bank.queueRt (dst, oneNote (0x33), 48000.0);
+        bank.rebuild();
+
+        // Indices are minted afresh, so the pre-rebuild block must not be sent
+        // even though the same physical port is still there and reopens.
+        const int again = indexOfName (bank.getDevices(), "Dusk Studio: MIDI In");
+        REQUIRE (again >= 0);
+        REQUIRE (bank.ensureOpen (again));
+        bank.startPump();
+        REQUIRE_FALSE (sink.waitFor (1, 250));
+
+        bank.queueRt (again, oneNote (0x44), 48000.0);
+        REQUIRE (sink.waitFor (1));
+        bank.stopPump();
+
+        std::lock_guard<std::mutex> lk (sink.m);
+        REQUIRE (sink.messages.size() == 1);
+        REQUIRE (sink.messages[0][1] == 0x44);
+    }
+
     in.stop();
 }
 
@@ -314,7 +336,10 @@ TEST_CASE ("ALSA seq identifier migration is safe while the poll thread runs",
                     { sink.onMidi (id, b, n); });
     in.start();
 
-    const std::string legacy = legacyAddressOf ("Dusk Studio", "MIDI In");
+    // The migration has to run on the INPUT backend: that is the one whose poll
+    // thread is reading the handle being queried. Migrating on the output side
+    // would query a handle nothing else touches and prove nothing.
+    const std::string legacy = legacyAddressOf ("Dusk Studio", "MIDI Out");
     REQUIRE_FALSE (legacy.empty());
 
     dusk::MidiBuffer note;
@@ -324,8 +349,10 @@ TEST_CASE ("ALSA seq identifier migration is safe while the poll thread runs",
     constexpr int kRounds = 64;
     for (int i = 0; i < kRounds; ++i)
     {
+        // The send keeps the poll thread busy on the same handle the migration
+        // walks.
         REQUIRE (out.send (inAsDest, note, 0.0, 48000.0));
-        REQUIRE (out.migrateIdentifier (legacy) == inAsDest);
+        REQUIRE (in.migrateIdentifier (legacy) == outAsSource);
     }
 
     REQUIRE (sink.waitFor (kRounds));

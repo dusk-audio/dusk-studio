@@ -190,7 +190,10 @@ void MidiOutputBank::rebuild()
 
     // Then drop queued-but-unsent blocks: their port indices were minted against
     // the OLD device order and could land on a different physical port after
-    // re-enumeration. The mutex excludes the pump's drain.
+    // re-enumeration. The mutex excludes the pump's drain. The generation bump
+    // covers the block a producer is midway through publishing, which the cursor
+    // reset cannot see.
+    queueGeneration.fetch_add (1, std::memory_order_release);
     readCount.store (writeCount.load (std::memory_order_acquire), std::memory_order_release);
 
     backend->closeAll();
@@ -260,6 +263,7 @@ void MidiOutputBank::closeAll()
     // a stale note-on landing after a deliberate close hangs a note on the
     // device. Re-checking the open flag at drain time would NOT catch this -
     // by then the port is open again.
+    queueGeneration.fetch_add (1, std::memory_order_release);
     readCount.store (writeCount.load (std::memory_order_acquire), std::memory_order_release);
 
     backend->closeAll();
@@ -282,6 +286,11 @@ bool MidiOutputBank::send (int index, const dusk::MidiBuffer& events) noexcept
 
 void MidiOutputBank::queueRt (int port, const dusk::MidiBuffer& events, double sampleRate) noexcept
 {
+    // Sampled before the port is tested, not after: a close landing between the
+    // two must leave this block carrying the pre-close generation so the pump
+    // rejects it.
+    const auto generation = queueGeneration.load (std::memory_order_acquire);
+
     // A port that is not open cannot be delivered to, so drop before spending a
     // slot and a copy on it: the pump would only discard the block once it saw
     // the same state under bankMutex.
@@ -310,6 +319,7 @@ void MidiOutputBank::queueRt (int port, const dusk::MidiBuffer& events, double s
     slot.port       = port;
     slot.timeMs     = backendClockMs();
     slot.sampleRate = sampleRate > 0.0 ? sampleRate : 48000.0;
+    slot.generation = generation;
     writeCount.store (w + 1, std::memory_order_release);
 }
 
@@ -323,10 +333,12 @@ void MidiOutputBank::drainQueue()
 
     auto r = readCount.load (std::memory_order_relaxed);
     const auto w = writeCount.load (std::memory_order_acquire);
+    const auto generation = queueGeneration.load (std::memory_order_acquire);
     while (r != w)
     {
         const auto& slot = queue[(size_t) (r % (std::uint32_t) kQueueDepth)];
-        if (slot.port >= 0 && slot.port < (int) devices.size())
+        if (slot.generation == generation
+              && slot.port >= 0 && slot.port < (int) devices.size())
             (void) backend->send (devices[(size_t) slot.port].identifier, slot.events,
                                   slot.timeMs, slot.sampleRate);
         ++r;
