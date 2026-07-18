@@ -30,6 +30,11 @@
   <content_rating type="oars-1.1"/>
   <releases>
     <!-- scripts/bump-version.sh prepends new <release> entries here. -->
+    <release version="0.12.5" date="2026-07-18">
+      <description>
+        <p>Fixes the Windows build of 0.12.4.</p>
+      </description>
+    </release>
     <release version="0.12.4" date="2026-07-18">
       <description>
         <p>Filterable program-grouped SoundFont preset browser.</p>

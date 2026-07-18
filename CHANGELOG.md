@@ -5,6 +5,17 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
+## [0.12.5] - 2026-07-18
+
+Beta patch: the Windows build of 0.12.4. Same feature set, now compiling on
+every platform.
+
+### Fixed
+
+- **Windows build.** 0.12.4 failed to compile on MSVC - a `juce::WeakReference`
+  built inside a lambda init-capture, which MSVC rejects and Clang accepts, so
+  macOS and Linux were unaffected. Constructed as a named local instead.
+
 ## [0.12.4] - 2026-07-18
 
 Beta patch on the 0.12 line: a filterable, program-grouped preset browser for
