@@ -397,4 +397,9 @@ endif()
 
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(Catch)
-catch_discover_tests(dusk-studio-tests)
+# --allow-running-no-tests: a Catch2 test that SKIP()s in isolation (each ctest
+# case runs the binary with an exact-name filter) otherwise exits 4, which ctest
+# scores as a failure. The flag makes an all-skipped run exit 0 while a real
+# failure still returns its assertion count. Environment-gated ALSA-seq loopback
+# tests skip on headless CI.
+catch_discover_tests(dusk-studio-tests EXTRA_ARGS --allow-running-no-tests)
