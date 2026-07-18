@@ -273,11 +273,16 @@ bool MidiOutputBank::send (int index, const dusk::MidiBuffer& events) noexcept
 
 void MidiOutputBank::queueRt (int port, const dusk::MidiBuffer& events, double sampleRate) noexcept
 {
+    // A port that is not open cannot be delivered to, so drop before spending a
+    // slot and a copy on it: the pump would only discard the block once it saw
+    // the same state under bankMutex.
+    if (! isOpen (port)) return;
+
     const auto w = writeCount.load (std::memory_order_relaxed);
-    if (w - readCount.load (std::memory_order_acquire) >= (std::uint32_t) kQueueSlots)
+    if (w - readCount.load (std::memory_order_acquire) >= (std::uint32_t) kQueueDepth)
         return;   // pump stalled - drop the block
 
-    auto& slot = queue[(size_t) (w % (std::uint32_t) kQueueSlots)];
+    auto& slot = queue[(size_t) (w % (std::uint32_t) kQueueDepth)];
     slot.events.clear();   // keeps the pre-sized capacity
 
     // A block past the pre-sized cap is dropped whole (same policy as
@@ -311,7 +316,7 @@ void MidiOutputBank::drainQueue()
     const auto w = writeCount.load (std::memory_order_acquire);
     while (r != w)
     {
-        const auto& slot = queue[(size_t) (r % (std::uint32_t) kQueueSlots)];
+        const auto& slot = queue[(size_t) (r % (std::uint32_t) kQueueDepth)];
         if (slot.port >= 0 && slot.port < (int) devices.size())
             (void) backend->send (devices[(size_t) slot.port].identifier, slot.events,
                                   slot.timeMs, slot.sampleRate);

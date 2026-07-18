@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "engine/midi/AlsaSeqMidi.h"
+#include "engine/midi/MidiDevices.h"
 #include "foundation/MidiBuffer.h"
 
 #include <alsa/asoundlib.h>
@@ -60,6 +61,14 @@ std::string legacyAddressOf (const std::string& clientName, const std::string& p
     }
     snd_seq_close (seq);
     return found;
+}
+
+int indexOfName (const std::vector<MidiDeviceInfo>& devs, const std::string& portSubstr)
+{
+    for (int i = 0; i < (int) devs.size(); ++i)
+        if (devs[(size_t) i].name.find (portSubstr) != std::string::npos)
+            return i;
+    return -1;
 }
 
 // Receiver-side collector: the poll thread pushes decoded messages; the test
@@ -175,6 +184,82 @@ TEST_CASE ("ALSA seq backend migrates a legacy address identifier", "[midi][alsa
 
     REQUIRE (in.migrateIdentifier (legacyAddressOf ("Dusk Studio", "MIDI Out"))
              == findId (in.enumerate(), "Dusk Studio: MIDI Out"));
+}
+
+TEST_CASE ("MidiOutputBank RT queue delivers through the pump, bounded by its depth",
+           "[midi][alsa]")
+{
+    if (! loopbackAvailable())
+        SKIP ("ALSA sequencer loopback unavailable - headless CI");
+
+    Sink sink;
+    AlsaSeqMidiInput in;
+    in.setReceiver ([&] (const std::string& id, const std::uint8_t* b, int n, double)
+                    { sink.onMidi (id, b, n); });
+
+    // Built after the input backend so its port is in the enumeration. The bank
+    // owns its own output backend, which the input sees as a source.
+    MidiOutputBank bank;
+    bank.rebuild();
+
+    const int dst = indexOfName (bank.getDevices(), "Dusk Studio: MIDI In");
+    REQUIRE (dst >= 0);
+
+    const std::string src = findId (in.enumerate(), "Dusk Studio: MIDI Out");
+    REQUIRE_FALSE (src.empty());
+    REQUIRE (in.enable (src));
+    in.start();
+
+    auto oneNote = [] (int note)
+    {
+        dusk::MidiBuffer b;
+        b.reserveBytes (64);
+        const std::uint8_t bytes[3] { 0x90, (std::uint8_t) (note & 0x7f), 100 };
+        b.addEvent (bytes, 3, 0);
+        return b;
+    };
+
+    // A closed port takes no slot: this must not consume queue depth, so all
+    // kQueueDepth of the notes below still commit.
+    REQUIRE_FALSE (bank.isOpen (dst));
+    for (int i = 0; i < MidiOutputBank::kQueueDepth; ++i)
+        bank.queueRt (dst, oneNote (0x7f), 48000.0);
+
+    REQUIRE (bank.ensureOpen (dst));
+    REQUIRE (bank.isOpen (dst));
+
+    // Past the slot cap: dropped whole rather than truncated, and likewise takes
+    // no slot.
+    dusk::MidiBuffer big;
+    big.reserveBytes (1 << 16);
+    const std::uint8_t filler[3] { 0x90, 0x7f, 100 };
+    for (int i = 0; i < 4096; ++i)
+        REQUIRE (big.addEvent (filler, 3, i));
+    bank.queueRt (dst, big, 48000.0);
+
+    // The pump is not running, so only kQueueDepth blocks can commit; the rest
+    // drop. Each carries its own note number, so the delivered set identifies
+    // exactly which ones survived.
+    constexpr int kPushed = MidiOutputBank::kQueueDepth * 3;
+    for (int i = 0; i < kPushed; ++i)
+        bank.queueRt (dst, oneNote (i), 48000.0);
+
+    bank.startPump();
+    REQUIRE (sink.waitFor ((std::size_t) MidiOutputBank::kQueueDepth));
+    // Nothing beyond the queue's depth is ever delivered - neither the dropped
+    // blocks nor the over-cap one.
+    REQUIRE_FALSE (sink.waitFor ((std::size_t) MidiOutputBank::kQueueDepth + 1, 250));
+
+    bank.stopPump();
+    in.stop();
+
+    std::lock_guard<std::mutex> lk (sink.m);
+    REQUIRE (sink.messages.size() == (std::size_t) MidiOutputBank::kQueueDepth);
+    for (int i = 0; i < (int) sink.messages.size(); ++i)
+    {
+        REQUIRE (sink.messages[(size_t) i].size() == 3);
+        REQUIRE (sink.messages[(size_t) i][1] == (std::uint8_t) i);   // FIFO order, first kQueueDepth pushed
+    }
 }
 
 TEST_CASE ("ALSA seq MIDI loopback round-trips bytes exactly", "[midi][alsa]")

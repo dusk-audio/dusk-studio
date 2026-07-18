@@ -122,13 +122,15 @@ public:
         for (const auto meta : events)
             scratch.addEvent (meta.data, meta.numBytes, meta.samplePosition);
 
-        // baseTimeMs comes from the seam's clock; sendBlockOfMessages schedules
-        // against JUCE's, a different epoch. The pump's ~1 ms cadence makes
-        // "now" the right base anyway - the same immediate-send policy the
-        // native backend uses.
-        (void) baseTimeMs;
+        // baseTimeMs is stamped in the seam's clock; sendBlockOfMessages
+        // schedules against JUCE's counter, which runs off a different epoch.
+        // Shift by the current offset between the two rather than substituting
+        // "now", so a block queued before the pump woke keeps the timing it was
+        // stamped with. Both clocks are monotonic, so the offset is read fresh
+        // per send rather than cached.
+        const double toJuceClock = juce::Time::getMillisecondCounterHiRes() - backendClockMs();
         it->second->sendBlockOfMessages (scratch,
-                                         juce::Time::getMillisecondCounterHiRes(),
+                                         baseTimeMs + toJuceClock,
                                          sampleRate > 0.0 ? sampleRate : 48000.0);
         return true;
     }

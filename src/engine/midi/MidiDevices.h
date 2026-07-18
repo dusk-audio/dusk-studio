@@ -139,12 +139,16 @@ public:
     // backends own one encoder and one connection per direction.
     bool send (int index, const dusk::MidiBuffer& events) noexcept;
 
+    // Blocks the audio thread can have in flight at once. A push past this is
+    // dropped, so it also bounds how much the pump can deliver per wake.
+    static constexpr int kQueueDepth = 64;
+
     // Audio thread. Backend sends are not audio-thread safe (they block on the
     // OS port), so the audio thread pushes whole per-port blocks into the
     // lock-free queue and the pump drains them. Slot buffers are pre-sized so
-    // the copy never allocates; a block past the slot cap OR a full queue drops
-    // the block (dropping clock bytes beats an xrun). sampleRate carries the
-    // sample-offset->ms math.
+    // the copy never allocates; a closed port, a block past the slot cap, or a
+    // full queue drops the block (dropping clock bytes beats an xrun).
+    // sampleRate carries the sample-offset->ms math.
     void queueRt (int port, const dusk::MidiBuffer& events, double sampleRate) noexcept;
 
     // Pump lifecycle (message thread).
@@ -175,7 +179,6 @@ private:
     // it only touches the queue's writer side.
     std::mutex bankMutex;
 
-    static constexpr int kQueueSlots = 64;
     static constexpr int kSlotBytes  = 4096;
     struct QueuedMidiOut
     {
@@ -184,10 +187,10 @@ private:
         double           sampleRate = 48000.0;
         dusk::MidiBuffer events;
     };
-    std::array<QueuedMidiOut, kQueueSlots> queue;
+    std::array<QueuedMidiOut, kQueueDepth> queue;
 
     // SPSC cursors over `queue`: monotonic counters, slot index = counter %
-    // kQueueSlots. The audio thread owns writeCount, the pump owns readCount;
+    // kQueueDepth. The audio thread owns writeCount, the pump owns readCount;
     // each publishes with release and observes the other with acquire.
     std::atomic<std::uint32_t> writeCount { 0 };
     std::atomic<std::uint32_t> readCount  { 0 };
