@@ -556,6 +556,7 @@ void DuskMultisampleProcessor::setStateInformation (const void* data, int size)
     // from the description (the common session-restore path). Loading a
     // soundfont is the single most expensive thing this plugin does (~1.5s of
     // sample decode); doing it twice per restored instance is pure waste.
+    bool fileLoadOk = true;
     if (path.isNotEmpty() && path != loadedFilePath)
     {
         const auto file = juce::File (path);
@@ -572,6 +573,7 @@ void DuskMultisampleProcessor::setStateInformation (const void* data, int size)
                               ? err
                               : ("File not found: " + path);
             DBG ("DuskMultisample setState: " << lastLoadError);
+            fileLoadOk = false;
         }
     }
 
@@ -588,10 +590,13 @@ void DuskMultisampleProcessor::setStateInformation (const void* data, int size)
 
     // Restore the SF2 preset selection (no-op for SFZ). Must run after
     // the file load above so the SF2 metadata + sfizz state exist.
+    // Skipped when that load failed: sf2Presets + loadedFilePath then still
+    // point at the previously loaded SF2, so restoring the saved index would
+    // switch the OLD file to a stale preset and clobber lastLoadError.
     // idx == 0 is deliberately skipped: loadSf2File already loaded
     // preset 0, so re-loading it would be redundant work. Only a
     // non-default saved preset needs an explicit switch.
-    if (state.hasProperty ("sf2Preset"))
+    if (fileLoadOk && state.hasProperty ("sf2Preset"))
     {
         const int idx = (int) state.getProperty ("sf2Preset");
         int presetCount;

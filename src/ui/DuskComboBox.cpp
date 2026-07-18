@@ -375,7 +375,7 @@ public:
         if (useGrid)
         {
             const auto cell = cellAt (p);
-            if (cell.first < 0) return;
+            if (! isSelectableCell (cell.first, cell.second)) return;
             if (cell.first != hoverCol || cell.second != hoverRow)
             {
                 // Not setGridHover: that scrolls the column fully into view,
@@ -389,7 +389,7 @@ public:
         }
         if (flat.scrollbarTrack().contains (p)) return;
         const int nh = flat.rowAtY (p);
-        if (nh >= 0 && nh != flat.hovered) { flat.hovered = nh; announceActive(); repaint(); }
+        if (flat.isSelectable (nh) && nh != flat.hovered) { flat.hovered = nh; announceActive(); repaint(); }
     }
 
     void mouseDown (const juce::MouseEvent& e) override
@@ -449,7 +449,7 @@ public:
         if (! flat.scrollbarTrack().contains (e.getPosition()))
         {
             const int nh = flat.rowAtY (e.getPosition());
-            if (nh >= 0 && nh != flat.hovered) { flat.hovered = nh; announceActive(); }
+            if (flat.isSelectable (nh) && nh != flat.hovered) { flat.hovered = nh; announceActive(); }
         }
         repaint();
     }
