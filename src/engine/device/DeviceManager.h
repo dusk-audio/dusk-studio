@@ -86,11 +86,13 @@ public:
     // check may swallow the notification.
     void notifyChange();
 
-    // Escape hatch: the MIDI input layer alone still drives MIDI device
-    // enable/disable through the wrapped JUCE AudioDeviceManager. This is now
-    // its only consumer (the audio-device UI drives the dusk API above). Removed
-    // once the native MIDI backend lands and juce_audio_devices unlinks.
+   #if ! defined(__linux__)
+    // Off Linux the MIDI seam falls back to JUCE's MIDI device API, whose input
+    // enable/callback lifecycle runs against this same manager. Linux drives the
+    // native ALSA-sequencer backend and compiles this hatch out; it disappears
+    // entirely when the wrapper does.
     juce::AudioDeviceManager& juceManager();
+   #endif
 
 private:
     struct Impl;

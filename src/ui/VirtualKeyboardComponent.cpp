@@ -220,15 +220,19 @@ void VirtualKeyboardComponent::timerCallback()
 
 void VirtualKeyboardComponent::sendNoteOn (int note, int vel, int chan)
 {
-    if (auto* col = engine.getVirtualKeyboardCollector())
-        col->addMessageToQueue (juce::MidiMessage::noteOn (chan, note, (std::uint8_t) vel));
+    const std::uint8_t bytes[3] { (std::uint8_t) (0x90 | ((chan - 1) & 0x0f)),
+                                  (std::uint8_t) (note & 0x7f),
+                                  (std::uint8_t) (vel & 0x7f) };
+    engine.postVirtualKeyboardMidi (bytes, 3);
     if (onNoteOn) onNoteOn (note, vel, chan);
 }
 
 void VirtualKeyboardComponent::sendNoteOff (int note, int chan)
 {
-    if (auto* col = engine.getVirtualKeyboardCollector())
-        col->addMessageToQueue (juce::MidiMessage::noteOff (chan, note));
+    const std::uint8_t bytes[3] { (std::uint8_t) (0x80 | ((chan - 1) & 0x0f)),
+                                  (std::uint8_t) (note & 0x7f),
+                                  0 };
+    engine.postVirtualKeyboardMidi (bytes, 3);
     if (onNoteOff) onNoteOff (note, chan);
 }
 

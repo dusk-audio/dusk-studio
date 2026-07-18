@@ -1,57 +1,62 @@
 #pragma once
 
-#include <juce_audio_devices/juce_audio_devices.h>
+#include "MidiBackend.h"
+#include "../../foundation/AutoResetEvent.h"
 #include "../../foundation/MidiBuffer.h"
+#include "../../foundation/MidiCollector.h"
 #include <array>
+#include <atomic>
+#include <cstdint>
 #include <memory>
 #include <mutex>
+#include <string>
+#include <thread>
+#include <unordered_map>
 #include <vector>
 
-// The single seam between Dusk Studio's engine and JUCE's MIDI device backend.
-// Its BOUNDARY type is dusk::MidiBuffer - the RT drain hands the audio thread
-// dusk events, and the RT out-queue takes them - so a future native ALSA-
-// sequencer backend can replace this file pair without touching the engine.
-// Internal storage stays juce-typed (collectors, outputs, the SPSC slots); only
-// the API is dusk. This is the only JUCE-device-touching code, hence the
-// deliberate juce-allowlist entry.
+// The single seam between Dusk Studio's engine and the platform MIDI backend.
+// Everything above it - the engine, the UI, the session - speaks dusk types;
+// below it an IMidiInputBackend / IMidiOutputBackend pair does the OS work
+// (native ALSA sequencer on Linux, a JUCE-backed fallback elsewhere). The seam
+// owns what the backends deliberately do not: the index<->identifier mapping the
+// session persists, the per-input retiming collectors, and the RT out-queue.
 namespace duskstudio::midi
 {
 struct MidiDeviceInfo
 {
-    juce::String name;
-    juce::String identifier;
+    std::string name;
+    std::string identifier;
 };
 
-// Owns the per-input MidiMessageCollector bank and is itself the juce callback
-// bound to every enabled input; routes by source identifier. The detach-rebuild-
-// reattach fence around a hot-plug is orchestrated by the engine (which also
-// detaches its own audio callback) - this class only exposes the pieces.
-class MidiInputClient final : public juce::MidiInputCallback
+// Owns the per-input collector bank and receives every enabled input's bytes on
+// the backend's MIDI thread, routing them by source identifier. The
+// detach-rebuild-reattach fence around a hot-plug is orchestrated by the engine
+// (which also detaches its own audio callback) - this class only exposes the
+// pieces.
+class MidiInputClient final
 {
 public:
     // Fixed identifier for the synthetic Virtual-Keyboard slot so saved sessions
     // resolve back to it across hot-plug (its index is otherwise re-derived).
     static constexpr const char* kVirtualKeyboardIdentifier = "Dusk Studio:virtual-keyboard";
 
-    // Message thread. Stash the device manager the enable/disable lifecycle and
-    // callback (un)registration run against. Call once before rebuild().
-    void setDeviceManager (juce::AudioDeviceManager& dm) noexcept { deviceManager = &dm; }
+    MidiInputClient();
+    ~MidiInputClient();
 
     // Message thread, input callback DETACHED. Enumerate the hardware inputs,
-    // enable each on the device manager, build a per-input MidiMessageCollector,
-    // then append the synthetic Virtual-Keyboard slot last (fixed identifier, no
-    // OS device). Mutating the bank with the callback active is UB - see the
-    // detach/attach fence.
+    // enable each on the backend, build a per-input collector, then append the
+    // synthetic Virtual-Keyboard slot last (fixed identifier, no OS device).
+    // Mutating the bank with the callback active is UB - see the detach/attach
+    // fence.
     void rebuild (double sampleRate);
 
-    // Detach half of the fence: unregister the input callback (JUCE's remove
-    // joins the MIDI dispatch side before returning) and disable every device so
-    // the OS handles are released before a rebuild.
+    // Detach half of the fence: stop the backend's dispatch (its stop() joins
+    // that side before returning) and release the OS handles before a rebuild.
     void detachCallback();
     void disableAllDevices();
 
-    // Reattach: empty identifier = every enabled input fans out to
-    // handleIncomingMidiMessage, routed there by source identifier.
+    // Reattach: start the backend's dispatch again. Every enabled input fans in
+    // to one receiver, routed to a collector by source identifier.
     void attachCallback();
 
     // Re-arm every collector to a new sample rate so the MIDI thread's ms
@@ -62,37 +67,44 @@ public:
     int getNumInputs() const noexcept { return (int) collectors.size(); }
 
     int getVirtualKeyboardIndex() const noexcept { return virtualKeyboardIndex; }
-    juce::MidiMessageCollector* getVirtualKeyboardCollector() noexcept;
 
-    // Audio thread. Pull this input's block out of its collector and copy the
-    // events into the dusk boundary buffer. RT-safe provided (a) `out` was
-    // reserveBytes()'d off the RT path by the caller and (b) the incoming burst
-    // fits the collector's pre-sized scratch - a rare overflow grows it, exactly
-    // as the pre-flip perInputMidi drain did. Call once per input index per
-    // block: the collector drain is destructive.
+    // Message thread. Saved-identifier -> current index, with the backend's
+    // migration fallback for identifiers minted by an earlier backend. -1 when
+    // the device is gone (or the identifier is empty).
+    int resolveIndex (const std::string& savedIdentifier);
+
+    // Message thread. Push a complete MIDI message into the synthetic
+    // Virtual-Keyboard slot, stamped with the same clock the backends use so it
+    // retimes like hardware input. No-op before the bank is built.
+    void postVirtualKeyboardMidi (const std::uint8_t* bytes, int numBytes) noexcept;
+
+    // Audio thread. Retime this input's pending events into the dusk boundary
+    // buffer. RT-safe: the collector's ring is pre-sized and never grows (an
+    // over-capacity burst drops whole records), and `out` was reserveBytes()'d
+    // off the RT path by the caller. Call once per input index per block - the
+    // drain is destructive.
     void drainBlock (int inputIndex, dusk::MidiBuffer& out, int numSamples) noexcept;
 
-    // juce::MidiInputCallback. Fires on JUCE's MIDI input thread (NOT the audio
-    // thread); routes by source identifier to the matching collector, which the
-    // audio thread later drains lock-free (JUCE contract).
-    void handleIncomingMidiMessage (juce::MidiInput* source,
-                                    const juce::MidiMessage& message) override;
-
 private:
-    juce::AudioDeviceManager* deviceManager = nullptr;
-    std::vector<MidiDeviceInfo> devices;
-    std::vector<std::unique_ptr<juce::MidiMessageCollector>> collectors;
-    int virtualKeyboardIndex = -1;
+    // Backend MIDI thread. Routes by source identifier to the matching
+    // collector, which the audio thread later drains lock-free.
+    void handleIncoming (const std::string& identifier,
+                         const std::uint8_t* bytes, int numBytes, double timeMs) noexcept;
 
-    // Single reused juce scratch the RT drain removes into before copying to the
-    // dusk boundary buffer. drainBlock runs sequentially per input on the audio
-    // thread, so one instance suffices.
-    juce::MidiBuffer drainScratch;
+    std::unique_ptr<IMidiInputBackend> backend;
+    std::vector<MidiDeviceInfo> devices;
+    std::vector<std::unique_ptr<dusk::MidiCollector>> collectors;
+
+    // Identifier -> collector index for the receiver's demux. Rebuilt only with
+    // the backend stopped, so the MIDI thread reads it without synchronisation.
+    std::unordered_map<std::string, int> indexByIdentifier;
+
+    int virtualKeyboardIndex = -1;
 };
 
 // Owns the output-port bank plus the whole RT out-queue apparatus: the SPSC
-// FIFO the audio thread pushes per-port blocks into and the 1 ms pump thread
-// that drains it into sendBlockOfMessages where blocking is harmless.
+// queue the audio thread pushes per-port blocks into and the 1 ms pump thread
+// that drains it into the backend, where blocking is harmless.
 class MidiOutputBank
 {
 public:
@@ -102,77 +114,79 @@ public:
     // Message thread, audio callback DETACHED. Discard queued blocks (their port
     // indices were minted against the old device order), close open outputs, and
     // re-enumerate. Does NOT eager-open: opening every port at startup blocks the
-    // message thread on each snd_seq_connect_to and spawns a thread per port,
-    // stalling MainWindow::setVisible for seconds on USB-MIDI systems. Open on
-    // demand via ensureOpen. Session sync/MCU eager-opens stay with the engine.
+    // message thread on each subscription, stalling MainWindow::setVisible for
+    // seconds on USB-MIDI systems. Open on demand via ensureOpen. Session
+    // sync/MCU eager-opens stay with the engine.
     void rebuild();
 
-    // Lazy open + start the port's background delivery thread so the pump's
-    // sendBlockOfMessages enqueues without blocking on the OS port. Message
-    // thread.
+    // Lazy open. Message thread.
     bool ensureOpen (int index);
 
     void closeAll();
 
     const std::vector<MidiDeviceInfo>& getDevices() const noexcept { return devices; }
-    int  getNumOutputs() const noexcept { return (int) outputs.size(); }
+    int  getNumOutputs() const noexcept { return (int) devices.size(); }
+
+    // As MidiInputClient::resolveIndex.
+    int resolveIndex (const std::string& savedIdentifier);
+
+    // Audio thread reads this to skip queueing at a closed port, so it is an
+    // atomic flag rather than a backend query (which walks a string-keyed map
+    // the message thread mutates).
     bool isOpen (int index) const noexcept;
 
-    // Message thread. Direct send with an ms-since-epoch base
-    // (getMillisecondCounterHiRes = "ASAP", lower latency than buffering for the
-    // next block). Takes the dusk boundary buffer and bridges to juce internally.
+    // Message thread. Direct send, serialised against the pump's drain - the
+    // backends own one encoder and one connection per direction.
     bool send (int index, const dusk::MidiBuffer& events) noexcept;
 
-    // Audio thread. sendBlockOfMessages is NOT audio-thread safe (it takes the
-    // delivery thread's mutex and heap-allocates under it). The audio thread
-    // instead pushes whole per-port blocks into the lock-free FIFO; the pump
-    // drains them. Slot buffers are pre-sized so the copy never allocates; a
-    // block past the slot cap OR a full queue drops the block (dropping clock
-    // bytes beats an xrun). timeMs/sampleRate carry the sample-offset->ms math.
+    // Audio thread. Backend sends are not audio-thread safe (they block on the
+    // OS port), so the audio thread pushes whole per-port blocks into the
+    // lock-free queue and the pump drains them. Slot buffers are pre-sized so
+    // the copy never allocates; a block past the slot cap OR a full queue drops
+    // the block (dropping clock bytes beats an xrun). sampleRate carries the
+    // sample-offset->ms math.
     void queueRt (int port, const dusk::MidiBuffer& events, double sampleRate) noexcept;
 
-    // Pump lifecycle (message thread). High priority so a loaded message thread
-    // can't starve clock / note delivery; still below the audio thread.
+    // Pump lifecycle (message thread).
     void startPump();
     void stopPump();
 
-    // Convert a dusk event buffer into a juce one. Factored out so the send +
-    // queue conversions are unit-testable without a real output device.
-    static void toJuceBuffer (const dusk::MidiBuffer& in, juce::MidiBuffer& out);
-
 private:
     void drainQueue();     // pump thread
-    bool sendJuce (int index, const juce::MidiBuffer& events, double sampleRate) noexcept;
-    static std::vector<MidiDeviceInfo> enumerate();
+    void pumpLoop();
 
+    std::unique_ptr<IMidiOutputBackend> backend;
     std::vector<MidiDeviceInfo> devices;
-    std::vector<std::unique_ptr<juce::MidiOutput>> outputs;
 
-    // Serialises the pump thread's port access against message-thread bank
-    // mutation (rebuild / ensureOpen). The audio thread never takes it - it only
-    // touches the FIFO writer side.
+    // Parallel to `devices`, allocated on rebuild. Heap array rather than a
+    // vector because std::atomic is neither movable nor copyable.
+    std::unique_ptr<std::atomic<bool>[]> openFlags;
+    std::size_t numOpenFlags = 0;
+
+    // Serialises the pump thread's backend access against message-thread bank
+    // mutation (rebuild / ensureOpen / send). The audio thread never takes it -
+    // it only touches the queue's writer side.
     std::mutex bankMutex;
 
     static constexpr int kQueueSlots = 64;
     static constexpr int kSlotBytes  = 4096;
-    // juce::MidiBuffer per-event overhead: int32 samplePosition + uint16 length.
-    static constexpr int kJuceEventHeaderBytes = 6;
     struct QueuedMidiOut
     {
-        int    port       = -1;
-        double timeMs     = 0.0;
-        double sampleRate = 48000.0;
-        juce::MidiBuffer events;
+        int              port       = -1;
+        double           timeMs     = 0.0;
+        double           sampleRate = 48000.0;
+        dusk::MidiBuffer events;
     };
-    juce::AbstractFifo fifo { kQueueSlots };
     std::array<QueuedMidiOut, kQueueSlots> queue;
 
-    struct Pump final : juce::Thread
-    {
-        explicit Pump (MidiOutputBank& b) : juce::Thread ("Dusk Studio MIDI out"), bank (b) {}
-        void run() override;
-        MidiOutputBank& bank;
-    };
-    Pump pump { *this };
+    // SPSC cursors over `queue`: monotonic counters, slot index = counter %
+    // kQueueSlots. The audio thread owns writeCount, the pump owns readCount;
+    // each publishes with release and observes the other with acquire.
+    std::atomic<std::uint32_t> writeCount { 0 };
+    std::atomic<std::uint32_t> readCount  { 0 };
+
+    std::thread       pump;
+    std::atomic<bool> pumpRunning { false };
+    dusk::AutoResetEvent pumpWake;
 };
 } // namespace duskstudio::midi

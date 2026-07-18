@@ -422,5 +422,7 @@ void DeviceManager::removeChangeListener (void* owner) { impl->listeners.erase (
 
 void DeviceManager::notifyChange() { impl->fireListeners(); }
 
+#if ! defined(__linux__)
 juce::AudioDeviceManager& DeviceManager::juceManager() { return impl->mgr; }
+#endif
 } // namespace duskstudio::device

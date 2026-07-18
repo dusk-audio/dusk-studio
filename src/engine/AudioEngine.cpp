@@ -9,6 +9,9 @@
 #include "../session/RegionEditActions.h"
 #include "DeviceFallbackMessage.h"
 #include "../foundation/MessageThread.h"
+#if ! defined(__linux__)
+ #include "midi/JuceMidiBackend.h"
+#endif
 #include <algorithm>
 #include <array>
 #include <cstdlib>
@@ -524,11 +527,16 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     }
    #endif
 
+   #if ! defined(__linux__)
+    // The JUCE MIDI fallback drives its input enable/callback lifecycle through
+    // the device manager. Linux runs the native ALSA-sequencer backend, which
+    // owns its own connections, and compiles this out entirely.
+    duskstudio::midi::setJuceMidiDeviceManager (deviceManager.juceManager());
+   #endif
+
     // Build both MIDI banks before ANY callback is registered - the audio
     // callback iterates perInputMidi, so it must not be attachable while
-    // rebuildMidiBanks sizes the vector. Empty deviceIdentifier = every
-    // enabled input fans out to midiIn, routed there by source identifier.
-    midiIn.setDeviceManager (deviceManager.juceManager());
+    // rebuildMidiBanks sizes the vector.
     rebuildMidiBanks();
     midiIn.attachCallback();
 
@@ -560,21 +568,13 @@ void AudioEngine::refreshMidiInputs()
     // devices. Re-resolve each track's saved identifier so a refresh
     // doesn't silently break existing routing. Tracks with no saved
     // identifier (very old sessions) keep their raw index, clamped.
-    auto resolveByIdentifier = [] (const std::vector<duskstudio::midi::MidiDeviceInfo>& devices,
-                                    const juce::String& wantedId)
-    {
-        for (int i = 0; i < (int) devices.size(); ++i)
-            if (devices[(size_t) i].identifier == wantedId)
-                return i;
-        return -1;
-    };
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto& track = session.track (t);
         if (track.midiInputIdentifier.isNotEmpty())
         {
             track.midiInputIndex.store (
-                resolveByIdentifier (midiIn.getDevices(), track.midiInputIdentifier),
+                midiIn.resolveIndex (track.midiInputIdentifier.toStdString()),
                 std::memory_order_relaxed);
         }
         else
@@ -586,7 +586,7 @@ void AudioEngine::refreshMidiInputs()
         if (track.midiOutputIdentifier.isNotEmpty())
         {
             track.midiOutputIndex.store (
-                resolveByIdentifier (midiOut.getDevices(), track.midiOutputIdentifier),
+                midiOut.resolveIndex (track.midiOutputIdentifier.toStdString()),
                 std::memory_order_relaxed);
         }
         else
@@ -908,27 +908,19 @@ void AudioEngine::reresolveTrackMidiFromSession()
     // no audio glitch. Cheap enough to run on every session load. (The full
     // refreshMidiInputs hot-plug path would detach/reattach the audio callback
     // and disable/re-enable every MIDI device - seconds of frozen UI on load.)
-    auto resolveByIdentifier = [] (const std::vector<duskstudio::midi::MidiDeviceInfo>& devices,
-                                    const juce::String& wantedId)
-    {
-        for (int i = 0; i < (int) devices.size(); ++i)
-            if (devices[(size_t) i].identifier == wantedId)
-                return i;
-        return -1;
-    };
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto& track = session.track (t);
         if (track.midiInputIdentifier.isNotEmpty())
             track.midiInputIndex.store (
-                resolveByIdentifier (midiIn.getDevices(), track.midiInputIdentifier),
+                midiIn.resolveIndex (track.midiInputIdentifier.toStdString()),
                 std::memory_order_relaxed);
         else if (track.midiInputIndex.load (std::memory_order_relaxed) >= (int) midiIn.getDevices().size())
             track.midiInputIndex.store (-1, std::memory_order_relaxed);
 
         if (track.midiOutputIdentifier.isNotEmpty())
             track.midiOutputIndex.store (
-                resolveByIdentifier (midiOut.getDevices(), track.midiOutputIdentifier),
+                midiOut.resolveIndex (track.midiOutputIdentifier.toStdString()),
                 std::memory_order_relaxed);
         else if (track.midiOutputIndex.load (std::memory_order_relaxed) >= (int) midiOut.getDevices().size())
             track.midiOutputIndex.store (-1, std::memory_order_relaxed);
@@ -939,17 +931,10 @@ void AudioEngine::reresolveTrackMidiFromSession()
     // so a session load must remap them to current bank indices too - else the
     // engine's sync + MCU consumers read stale indices until the user reopens
     // Audio Settings. release-ordered to match their setters in AudioSettingsPanel.
-    auto resolveSessionIdx = [&] (std::atomic<int>& idx,
-                                   const std::vector<duskstudio::midi::MidiDeviceInfo>& devices,
-                                   const juce::String& wantedId)
-    {
-        idx.store (wantedId.isNotEmpty() ? resolveByIdentifier (devices, wantedId) : -1,
-                   std::memory_order_release);
-    };
-    resolveSessionIdx (session.syncSourceInputIdx,    midiIn.getDevices(),  session.syncSourceInputIdentifier);
-    resolveSessionIdx (session.syncOutputIdx,         midiOut.getDevices(), session.syncOutputIdentifier);
-    resolveSessionIdx (session.mcu.resolvedInputIdx,  midiIn.getDevices(),  session.mcu.inputIdentifier);
-    resolveSessionIdx (session.mcu.resolvedOutputIdx, midiOut.getDevices(), session.mcu.outputIdentifier);
+    session.syncSourceInputIdx   .store (midiIn .resolveIndex (session.syncSourceInputIdentifier.toStdString()), std::memory_order_release);
+    session.syncOutputIdx        .store (midiOut.resolveIndex (session.syncOutputIdentifier     .toStdString()), std::memory_order_release);
+    session.mcu.resolvedInputIdx .store (midiIn .resolveIndex (session.mcu.inputIdentifier      .toStdString()), std::memory_order_release);
+    session.mcu.resolvedOutputIdx.store (midiOut.resolveIndex (session.mcu.outputIdentifier     .toStdString()), std::memory_order_release);
 
     // A session load may have replaced the tempo map - republish the audio
     // thread's snapshot so the MIDI scheduler + metronome see the loaded points.
@@ -979,18 +964,10 @@ void AudioEngine::rebuildMidiBanks()
     // hot-plug doesn't strand an index at a stale slot (STAYS in the engine -
     // the banks don't know session identifiers). Empty / no match = -1. release
     // pairs with the audio-thread acquires and the AudioSettingsPanel setters.
-    auto resolve = [] (const std::vector<duskstudio::midi::MidiDeviceInfo>& devices,
-                        const juce::String& wantedId)
-    {
-        if (wantedId.isEmpty()) return -1;
-        for (int i = 0; i < (int) devices.size(); ++i)
-            if (devices[(size_t) i].identifier == wantedId) return i;
-        return -1;
-    };
-    session.syncSourceInputIdx   .store (resolve (midiIn.getDevices(),  session.syncSourceInputIdentifier), std::memory_order_release);
-    session.mcu.resolvedInputIdx .store (resolve (midiIn.getDevices(),  session.mcu.inputIdentifier),       std::memory_order_release);
-    session.syncOutputIdx        .store (resolve (midiOut.getDevices(), session.syncOutputIdentifier),      std::memory_order_release);
-    session.mcu.resolvedOutputIdx.store (resolve (midiOut.getDevices(), session.mcu.outputIdentifier),      std::memory_order_release);
+    session.syncSourceInputIdx   .store (midiIn .resolveIndex (session.syncSourceInputIdentifier.toStdString()), std::memory_order_release);
+    session.mcu.resolvedInputIdx .store (midiIn .resolveIndex (session.mcu.inputIdentifier      .toStdString()), std::memory_order_release);
+    session.syncOutputIdx        .store (midiOut.resolveIndex (session.syncOutputIdentifier     .toStdString()), std::memory_order_release);
+    session.mcu.resolvedOutputIdx.store (midiOut.resolveIndex (session.mcu.outputIdentifier     .toStdString()), std::memory_order_release);
 
     // Eager-open the sync + MCU output ports so the first clock byte / MCU tick
     // doesn't wait on a synchronous ALSA snd_seq_connect. Per-track outputs open

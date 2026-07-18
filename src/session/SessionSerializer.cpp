@@ -1,6 +1,5 @@
 #include "SessionSerializer.h"
 #include "../foundation/Json.h"
-#include <juce_audio_devices/juce_audio_devices.h>
 #include <nlohmann/json.hpp>
 #include <cmath>
 #include <limits>
@@ -213,31 +212,6 @@ void fsyncFile (const juce::File& path)
    #else
     (void) path;
    #endif
-}
-
-// Resolve a MIDI device identifier (saved with a prior session) to its
-// current index in juce::MidiInput::getAvailableDevices(). Returns -1 if
-// the identifier doesn't match any currently-available device. The lookup
-// is O(N) in the device list but called at most once per track on load,
-// which is negligible compared to the JSON parse.
-int resolveMidiInputIndexByIdentifier (const juce::String& identifier)
-{
-    if (identifier.isEmpty()) return -1;
-    const auto devices = juce::MidiInput::getAvailableDevices();
-    for (int i = 0; i < devices.size(); ++i)
-        if (devices[i].identifier == identifier)
-            return i;
-    return -1;
-}
-
-int resolveMidiOutputIndexByIdentifier (const juce::String& identifier)
-{
-    if (identifier.isEmpty()) return -1;
-    const auto devices = juce::MidiOutput::getAvailableDevices();
-    for (int i = 0; i < devices.size(); ++i)
-        if (devices[i].identifier == identifier)
-            return i;
-    return -1;
 }
 
 juce::String colourToHex (juce::Colour c)
@@ -803,20 +777,17 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
     setBool  (t.printEffects,       "print_effects");
     setInt   (t.inputSource,        "input_source");
     setInt   (t.inputSourceR,       "input_source_r");
-    // MIDI input: prefer the stable identifier when present (resolved to
-    // the current device list's index). Fall back to the legacy raw int
-    // for sessions saved before identifiers existed, OR when the saved
-    // identifier doesn't match any currently-available device (USB MIDI
-    // gear unplugged, different machine, etc.) so the user can re-pick
-    // without the index pointing at a wrong device.
+    // MIDI input: the stable identifier is the source of truth when present;
+    // AudioEngine::reresolveTrackMidiFromSession maps it to a live bank index
+    // after the load (the MIDI device seam owns that mapping, and its bank
+    // order is the one the audio thread indexes). Until then the index stays
+    // unrouted rather than pointing at whatever now sits at the old slot. The
+    // legacy raw int is still honoured for sessions saved before identifiers
+    // existed.
     if (json::has (v, "midi_input_id"))
     {
         t.midiInputIdentifier = json::getString (v, "midi_input_id");
-        const int resolved = resolveMidiInputIndexByIdentifier (t.midiInputIdentifier);
-        if (resolved >= 0)
-            t.midiInputIndex.store (resolved, std::memory_order_relaxed);
-        else
-            t.midiInputIndex.store (-1, std::memory_order_relaxed);
+        t.midiInputIndex.store (-1, std::memory_order_relaxed);
     }
     else
     {
@@ -827,9 +798,7 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
     if (json::has (v, "midi_output_id"))
     {
         t.midiOutputIdentifier = json::getString (v, "midi_output_id");
-        const int resolved = resolveMidiOutputIndexByIdentifier (t.midiOutputIdentifier);
-        t.midiOutputIndex.store (resolved >= 0 ? resolved : -1,
-                                  std::memory_order_relaxed);
+        t.midiOutputIndex.store (-1, std::memory_order_relaxed);
     }
     else
     {

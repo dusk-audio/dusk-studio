@@ -838,8 +838,8 @@ void AudioSettingsPanel::populateSyncSourceCombo()
     int matchId = 1;
     for (int i = 0; i < (int) devices.size(); ++i)
     {
-        syncSourceCombo.addItem (devices[i].name, i + 2);
-        if (devices[i].identifier == session.syncSourceInputIdentifier)
+        syncSourceCombo.addItem (juce::String (devices[i].name), i + 2);
+        if (session.syncSourceInputIdentifier == juce::String (devices[i].identifier))
             matchId = i + 2;
     }
     syncSourceCombo.setSelectedId (matchId, juce::dontSendNotification);
@@ -857,7 +857,7 @@ void AudioSettingsPanel::applySyncSourceChange()
     const auto& devices = engine.getMidiInputDevices();
     const int idx = id - 2;
     if (idx < 0 || idx >= (int) devices.size()) return;
-    session.syncSourceInputIdentifier = devices[idx].identifier;
+    session.syncSourceInputIdentifier = juce::String (devices[idx].identifier);
     session.syncSourceInputIdx.store (idx, std::memory_order_release);
 }
 
@@ -871,8 +871,8 @@ void AudioSettingsPanel::populateSyncOutputCombo()
     int matchId = 1;
     for (int i = 0; i < (int) devices.size(); ++i)
     {
-        syncOutputCombo.addItem (devices[i].name, i + 2);
-        if (devices[i].identifier == session.syncOutputIdentifier)
+        syncOutputCombo.addItem (juce::String (devices[i].name), i + 2);
+        if (session.syncOutputIdentifier == juce::String (devices[i].identifier))
             matchId = i + 2;
     }
     syncOutputCombo.setSelectedId (matchId, juce::dontSendNotification);
@@ -890,7 +890,7 @@ void AudioSettingsPanel::applySyncOutputChange()
     const auto& devices = engine.getMidiOutputDevices();
     const int idx = id - 2;
     if (idx < 0 || idx >= (int) devices.size()) return;
-    session.syncOutputIdentifier = devices[idx].identifier;
+    session.syncOutputIdentifier = juce::String (devices[idx].identifier);
     session.syncOutputIdx.store (idx, std::memory_order_release);
     // Eagerly open the port so the first audio-thread emission doesn't
     // race with a synchronous ALSA snd_seq_connect.
@@ -905,8 +905,8 @@ void AudioSettingsPanel::populateMcuInputCombo()
     int matchId = 1;
     for (int i = 0; i < (int) devices.size(); ++i)
     {
-        mcuInputCombo.addItem (devices[i].name, i + 2);
-        if (devices[i].identifier == session.mcu.inputIdentifier)
+        mcuInputCombo.addItem (juce::String (devices[i].name), i + 2);
+        if (session.mcu.inputIdentifier == juce::String (devices[i].identifier))
             matchId = i + 2;
     }
     mcuInputCombo.setSelectedId (matchId, juce::dontSendNotification);
@@ -920,8 +920,8 @@ void AudioSettingsPanel::populateMcuOutputCombo()
     int matchId = 1;
     for (int i = 0; i < (int) devices.size(); ++i)
     {
-        mcuOutputCombo.addItem (devices[i].name, i + 2);
-        if (devices[i].identifier == session.mcu.outputIdentifier)
+        mcuOutputCombo.addItem (juce::String (devices[i].name), i + 2);
+        if (session.mcu.outputIdentifier == juce::String (devices[i].identifier))
             matchId = i + 2;
     }
     mcuOutputCombo.setSelectedId (matchId, juce::dontSendNotification);
@@ -939,7 +939,7 @@ void AudioSettingsPanel::applyMcuInputChange()
     const auto& devices = engine.getMidiInputDevices();
     const int idx = id - 2;
     if (idx < 0 || idx >= (int) devices.size()) return;
-    session.mcu.inputIdentifier = devices[idx].identifier;
+    session.mcu.inputIdentifier = juce::String (devices[idx].identifier);
     session.mcu.resolvedInputIdx.store (idx, std::memory_order_release);
 }
 
@@ -955,7 +955,7 @@ void AudioSettingsPanel::applyMcuOutputChange()
     const auto& devices = engine.getMidiOutputDevices();
     const int idx = id - 2;
     if (idx < 0 || idx >= (int) devices.size()) return;
-    session.mcu.outputIdentifier = devices[idx].identifier;
+    session.mcu.outputIdentifier = juce::String (devices[idx].identifier);
     session.mcu.resolvedOutputIdx.store (idx, std::memory_order_release);
     // Eagerly open so the first 30 Hz emit doesn't race with ALSA's
     // synchronous snd_seq_connect.
