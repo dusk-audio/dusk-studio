@@ -288,6 +288,51 @@ TEST_CASE ("MidiOutputBank RT queue delivers through the pump, bounded by its de
     in.stop();
 }
 
+TEST_CASE ("ALSA seq identifier migration is safe while the poll thread runs",
+           "[midi][alsa]")
+{
+    if (! loopbackAvailable())
+        SKIP ("ALSA sequencer loopback unavailable - headless CI");
+
+    // A session load resolves saved identifiers WITHOUT stopping MIDI input
+    // (AudioEngine::reresolveTrackMidiFromSession is deliberately detach-free),
+    // so migrateIdentifier queries the same sequencer handle the poll thread is
+    // reading. Drive both at once: the assertions below hold either way, but
+    // this is the shape a sanitiser build needs in order to see the conflict.
+    Sink sink;
+    AlsaSeqMidiInput  in;
+    AlsaSeqMidiOutput out;
+
+    const std::string outAsSource = findId (in.enumerate(),  "Dusk Studio: MIDI Out");
+    const std::string inAsDest    = findId (out.enumerate(), "Dusk Studio: MIDI In");
+    REQUIRE_FALSE (outAsSource.empty());
+    REQUIRE_FALSE (inAsDest.empty());
+    REQUIRE (in.enable (outAsSource));
+    REQUIRE (out.open (inAsDest));
+
+    in.setReceiver ([&] (const std::string& id, const std::uint8_t* b, int n, double)
+                    { sink.onMidi (id, b, n); });
+    in.start();
+
+    const std::string legacy = legacyAddressOf ("Dusk Studio", "MIDI In");
+    REQUIRE_FALSE (legacy.empty());
+
+    dusk::MidiBuffer note;
+    const std::uint8_t bytes[3] { 0x90, 60, 100 };
+    note.addEvent (bytes, 3, 0);
+
+    constexpr int kRounds = 64;
+    for (int i = 0; i < kRounds; ++i)
+    {
+        REQUIRE (out.send (inAsDest, note, 0.0, 48000.0));
+        REQUIRE (out.migrateIdentifier (legacy) == inAsDest);
+    }
+
+    REQUIRE (sink.waitFor (kRounds));
+    in.stop();
+    out.closeAll();
+}
+
 TEST_CASE ("ALSA seq MIDI loopback round-trips bytes exactly", "[midi][alsa]")
 {
     if (! loopbackAvailable())

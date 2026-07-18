@@ -535,8 +535,12 @@ if(UNIX AND NOT APPLE)
 endif()
 
 # No native MIDI backend off Linux: the seam falls back to JUCE's MIDI device
-# API, confined to this one TU. Gated on the same condition MidiDevices.cpp
-# selects the backend with (__linux__), so exactly one of the two is present.
+# API, confined to this one TU. This condition is the exact inverse of the
+# __linux__ branch MidiDevices.cpp picks its backend with, so the backend it
+# asks for is always compiled in. (The ALSA block above uses the wider
+# UNIX-AND-NOT-APPLE, so a non-Linux Unix would build AlsaSeqMidi.cpp too - as
+# its own non-Linux stub, unreferenced. Only Linux, macOS and Windows are
+# actually targeted.)
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(DuskStudio PRIVATE src/engine/midi/JuceMidiBackend.cpp)
 endif()

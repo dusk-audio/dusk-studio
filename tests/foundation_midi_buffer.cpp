@@ -73,6 +73,17 @@ TEST_CASE ("dusk::MidiBuffer clear keeps capacity and empties", "[foundation][mi
     int n = 0;
     for (auto it = d.begin(); it != d.end(); ++it) ++n;
     REQUIRE (n == 0);
+
+    // The reserved cap has to survive the clear, or the RT path would start
+    // reallocating on the audio thread after the first block. It is only
+    // observable through the drop it causes, and the fill is bounded so a lost
+    // cap fails here rather than growing until the runner is killed.
+    constexpr int kMoreThanFits = 256;
+    int accepted = 0;
+    while (accepted < kMoreThanFits && d.addEvent (&clk, 1, accepted)) ++accepted;
+    REQUIRE (accepted > 0);
+    REQUIRE (accepted < kMoreThanFits);
+    REQUIRE (! d.addEvent (&clk, 1, 0));
 }
 
 TEST_CASE ("dusk::MidiBuffer drops past its reserved cap instead of growing",
@@ -85,11 +96,14 @@ TEST_CASE ("dusk::MidiBuffer drops past its reserved cap instead of growing",
     d.reserveBytes (kCap);
 
     const std::uint8_t note[3] { 0x90, 60, 100 };
+    // 8-byte header + 3 payload bytes per event. Bounded well past that so a
+    // buffer that wrongly grows fails the count instead of running away.
+    constexpr int kPerEvent = 11;
+    constexpr int kMoreThanFits = (int) (kCap / kPerEvent) + 8;
     int accepted = 0;
-    while (d.addEvent (note, 3, accepted)) ++accepted;
+    while (accepted < kMoreThanFits && d.addEvent (note, 3, accepted)) ++accepted;
 
-    // 8-byte header + 3 payload bytes per event.
-    REQUIRE (accepted == (int) (kCap / 11));
+    REQUIRE (accepted == (int) (kCap / kPerEvent));
 
     // Rejection leaves the existing contents intact and is repeatable.
     int counted = 0;
