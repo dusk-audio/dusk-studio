@@ -243,9 +243,16 @@ struct AlsaSeqMidiInput::Impl
         snd_seq_event_t* ev = nullptr;
         while (snd_seq_event_input (seq, &ev) >= 0 && ev != nullptr)
         {
-            // Size the decode target to this event: a variable (sysex) event
-            // carries its length; anything else fits in a few bytes.
+            // Only SYSEX carries MIDI bytes in variable-length form; other
+            // variable events (BOUNCE, USR_VAR, ...) are not MIDI, so skip them
+            // before they are sized, decoded, or mistaken for a sysex fragment.
             const bool variable = (ev->flags & SND_SEQ_EVENT_LENGTH_MASK) == SND_SEQ_EVENT_LENGTH_VARIABLE;
+            if (variable && ev->type != SND_SEQ_EVENT_SYSEX)
+                continue;
+
+            // A sysex event carries its length; anything else fits in a few
+            // bytes. Bound the sysex case by the reassembly cap so a bogus length
+            // cannot drive a huge allocation.
             if (variable && (std::size_t) ev->data.ext.len > kMaxSysexBytes)
             {
                 // Over the cap: refuse to buffer it, but keep this source's

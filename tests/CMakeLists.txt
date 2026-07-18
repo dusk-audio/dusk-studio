@@ -397,9 +397,14 @@ endif()
 
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(Catch)
-# --allow-running-no-tests: a Catch2 test that SKIP()s in isolation (each ctest
-# case runs the binary with an exact-name filter) otherwise exits 4, which ctest
-# scores as a failure. The flag makes an all-skipped run exit 0 while a real
-# failure still returns its assertion count. Environment-gated ALSA-seq loopback
-# tests skip on headless CI.
-catch_discover_tests(dusk-studio-tests EXTRA_ARGS --allow-running-no-tests)
+# The environment-gated ALSA-seq loopback tests SKIP() on headless CI. Run in
+# isolation (catch_discover_tests filters each case by exact name) a skip-only
+# Catch2 run exits 4, which ctest scores as a failure. --allow-running-no-tests
+# (Catch2 >= 3.0.1; v3.5.4 is pinned above) makes an all-skipped run exit 0
+# while a real failure still returns its assertion count. Scope it to the [alsa]
+# tag so an unmatched/stale filter on any other test still fails.
+catch_discover_tests(dusk-studio-tests
+    TEST_SPEC "[alsa]"
+    EXTRA_ARGS --allow-running-no-tests)
+catch_discover_tests(dusk-studio-tests
+    TEST_SPEC "~[alsa]")
