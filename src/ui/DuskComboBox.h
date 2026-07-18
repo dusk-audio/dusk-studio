@@ -21,5 +21,16 @@ public:
     explicit DuskComboBox (const juce::String& componentName) : juce::ComboBox (componentName) {}
 
     void showPopup() override;
+
+    // Opt in to the grid browser: the menu's items are flowed into short,
+    // wide columns with a type-to-filter box on top, instead of one long
+    // scrolling list - a long preset list (hundreds of SoundFont programs)
+    // reads across instead of scrolling forever. Section headers / separators
+    // are dropped; items appear in their incoming order. Off by default so
+    // ordinary combos are unchanged.
+    void setGridBrowser (bool shouldBrowse) noexcept { gridBrowser = shouldBrowse; }
+
+private:
+    bool gridBrowser = false;
 };
 } // namespace duskstudio
