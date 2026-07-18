@@ -1,10 +1,11 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
-#include <algorithm>
+#include "DimOverlay.h"
 #include <functional>
 #include <memory>
-#include "DimOverlay.h"
+#include <vector>
+#include <algorithm>
 
 namespace duskstudio
 {
@@ -58,7 +59,8 @@ inline constexpr const char* kPluginEditorTag = "dusk_pluginEditor";
 // Paints its own opaque rounded backdrop behind the body so panels
 // without solid background don't bleed channel strips through.
 class EmbeddedModal final : private juce::KeyListener,
-                            private juce::ComponentListener
+                            private juce::ComponentListener,
+                            private juce::MouseListener
 {
 public:
     // Singleton focus-restore target. MainComponent registers itself here
@@ -72,6 +74,38 @@ public:
         return target;
     }
 
+    // App-wide monotonic modal-lifecycle token, bumped by every show() /
+    // showBorrowed() across ALL modal instances. Its sole job is to invalidate
+    // a stale deferred focus grab: close() snapshots the token and its async
+    // re-grab bails if a newer show() has bumped it since, so the grab can't
+    // yank focus off a modal that opened during the async window. WHICH
+    // component regains focus is decided by activeModalStack(), not this token
+    // (see close()).
+    static unsigned long long& modalGeneration()
+    {
+        static unsigned long long gen = 0;
+        return gen;
+    }
+
+    // App-wide stack of currently-open modals, in open order (back() = newest).
+    // Modals stack (a combo opens over an alert / plugin editor); close() pops
+    // itself and hands focus to the newest that remains, falling back to
+    // MainComponent only when the stack empties. Every teardown path
+    // (close / closeAndDeleteBodyNow / ~EmbeddedModal) removes its entry, so a
+    // pointer here is always a live, open modal.
+    static std::vector<EmbeddedModal*>& activeModalStack()
+    {
+        // Heap-allocated and deliberately never freed. The function-local-static
+        // shared modals (DuskAlerts / DuskComboBox / ...) run their destructor ->
+        // close() -> removeFromModalStack() during static teardown. A plain
+        // function-local static vector constructs on the first show() - AFTER
+        // those modals - so it would destruct BEFORE them and turn that teardown
+        // access into a use-after-free. Leaking it keeps the registry valid for
+        // every teardown path.
+        static auto* stack = new std::vector<EmbeddedModal*>();
+        return *stack;
+    }
+
     EmbeddedModal()  = default;
     ~EmbeddedModal() override { close(); }
 
@@ -81,39 +115,78 @@ public:
     //   need explicit button).
     // dismissOnEscape=false : Esc swallowed (focus-locked decision
     //   modals like save-before-quit).
+    // hidePluginEditors=false : keep tagged plugin editors visible. This is
+    //   intended for lightweight controls (such as combo popups) opened from
+    //   inside an editor; hiding the editor would also hide the control that
+    //   owns the popup and leave only its empty backdrop visible.
+    // useOverlay=false : don't place a full-parent JUCE component over the
+    //   host. Some embedded/native editor surfaces render black whenever any
+    //   sibling covers them, even when that sibling paints fully transparent.
+    //   Outside clicks are captured with a global mouse listener instead.
+    // forwardShortcuts=false : do NOT forward transport hotkeys (Space, R, L,
+    //   P, brackets) to MainComponent while this modal is up. Required for a
+    //   body that captures typing itself (e.g. the combo popup's type-to-filter);
+    //   otherwise a typed letter fires the app shortcut behind the modal.
+    // onDismissOutside : invoked instead of onDismiss on a click-outside
+    //   dismissal (falls back to onDismiss when empty). Lets a caller close
+    //   WITHOUT restoring focus so a control clicked outside keeps it (see
+    //   close(bool)); Esc keeps using onDismiss.
     // Defaults preserve "Esc + click-outside both dismiss".
     void show (juce::Component& parent,
                std::unique_ptr<juce::Component> body,
                std::function<void()> onDismiss = {},
                bool dismissOnClickOutside = true,
                bool dismissOnEscape = true,
-               float dimAlpha = 0.55f)   // processing editors pass kEditorDimAlpha
+               float dimAlpha = 0.55f,   // processing editors pass kEditorDimAlpha
+               bool hidePluginEditors = true,
+               bool useOverlay = true,
+               bool forwardShortcuts = true,
+               std::function<void()> onDismissOutside = {})
     {
         close();
+        ++modalGeneration();
         host = &parent;
         body_ = std::move (body);
-        dim_ = std::make_unique<DimOverlay> (dimAlpha);
-        dim_->setBounds (parent.getLocalBounds());
         userOnDismiss = std::move (onDismiss);
+        userOnDismissOutside = std::move (onDismissOutside);
         escapeDismisses = dismissOnEscape;
-        if (dismissOnClickOutside)
-            dim_->onClick = [this]
-            {
-                // Local copy BEFORE invoking - the user's callback may
-                // close() this modal, which resets userOnDismiss = {}
-                // and destroys the closure (with captures) mid-call.
-                // SIGABRT on Linux/XWayland without this.
-                if (auto cb = userOnDismiss) cb();
-                else                          close();
-            };
-        parent.addAndMakeVisible (dim_.get());
+        forwardShortcuts_ = forwardShortcuts;
+        if (useOverlay)
+        {
+            dim_ = std::make_unique<DimOverlay> (dimAlpha);
+            dim_->setBounds (parent.getLocalBounds());
+            if (dismissOnClickOutside)
+                dim_->onClick = [this]
+                {
+                    // An overlay-less popup (DuskComboBox) may be stacked above
+                    // this modal; its global listener dismisses it from the same
+                    // click. Only the topmost modal may act on a dim click, or
+                    // one click tears down both layers.
+                    if (activeModalStack().empty() || activeModalStack().back() != this)
+                        return;
+                    // Local copy BEFORE invoking - the user's callback may
+                    // close() this modal, which resets the dismiss callbacks
+                    // and destroys the closure (with captures) mid-call.
+                    // SIGABRT on Linux/XWayland without this. Prefer the
+                    // outside-click callback so a clicked control keeps focus.
+                    auto cb = userOnDismissOutside ? userOnDismissOutside : userOnDismiss;
+                    if (cb) cb();
+                    else    close();
+                };
+            parent.addAndMakeVisible (dim_.get());
+        }
+        else if (dismissOnClickOutside)
+        {
+            juce::Desktop::getInstance().addGlobalMouseListener (this);
+            listeningForOutsideClicks = true;
+        }
 
         const auto bounds = parent.getLocalBounds();
-        const int w = std::max (1, body_->getWidth());
-        const int h = std::max (1, body_->getHeight());
+        const int w = juce::jmax (1, body_->getWidth());
+        const int h = juce::jmax (1, body_->getHeight());
         const auto bodyBounds = bounds.withSizeKeepingCentre (
-            std::min (w, bounds.getWidth()  - 16),
-            std::min (h, bounds.getHeight() - 16));
+            juce::jmin (w, bounds.getWidth()  - 16),
+            juce::jmin (h, bounds.getHeight() - 16));
 
         // Slightly larger than body so rounded corners frame the panel.
         // Added BEFORE body so body paints on top.
@@ -126,14 +199,18 @@ public:
         // Force topmost - a stage swap that re-adds a fullscreen view
         // (AuxView, MasteringView) after the modal opens can demote it.
         // addAndMakeVisible alone is only topmost-at-add-time.
-        dim_     ->toFront (false);
+        if (dim_ != nullptr)
+            dim_->toFront (false);
         backdrop_->toFront (false);
         body_    ->toFront (true);
         body_->setWantsKeyboardFocus (true);
         body_->grabKeyboardFocus();
         body_->addKeyListener (this);
 
-        hidePluginEditorsUnder (parent);
+        if (hidePluginEditors)
+            hidePluginEditorsUnder (parent);
+
+        activeModalStack().push_back (this);
     }
 
     // Body NOT owned - caller keeps alive across show/close cycles.
@@ -146,8 +223,14 @@ public:
                        std::function<void()> onDismiss = {})
     {
         close();
+        ++modalGeneration();
         host = &parent;
         borrowedBody_ = &body;
+        // Borrowed modals are plugin editors: always forward transport shortcuts
+        // so the engineer can play / loop / audition while the editor is open.
+        // Reset explicitly - a prior show(..., forwardShortcuts=false) on this
+        // instance leaves it disabled (close() doesn't reset it).
+        forwardShortcuts_ = true;
         // showBorrowed is plugin-editors-only - use the lighter editor dim so
         // the strip meters behind stay readable while auditioning.
         dim_ = std::make_unique<DimOverlay> (kEditorDimAlpha);
@@ -155,18 +238,21 @@ public:
         userOnDismiss = std::move (onDismiss);
         dim_->onClick = [this]
         {
-            // See owning show()'s onClick - local copy survives close().
+            // See owning show()'s onClick - topmost-only guard + local copy
+            // survives close().
+            if (activeModalStack().empty() || activeModalStack().back() != this)
+                return;
             if (auto cb = userOnDismiss) cb();
             else                          close();
         };
         parent.addAndMakeVisible (dim_.get());
 
         const auto bounds = parent.getLocalBounds();
-        const int w = std::max (1, body.getWidth());
-        const int h = std::max (1, body.getHeight());
+        const int w = juce::jmax (1, body.getWidth());
+        const int h = juce::jmax (1, body.getHeight());
         const auto bodyBounds = bounds.withSizeKeepingCentre (
-            std::min (w, bounds.getWidth()  - 16),
-            std::min (h, bounds.getHeight() - 16));
+            juce::jmin (w, bounds.getWidth()  - 16),
+            juce::jmin (h, bounds.getHeight() - 16));
 
         backdrop_ = std::make_unique<Backdrop>();
         backdrop_->setBounds (bodyBounds.expanded (kBackdropMargin));
@@ -192,6 +278,8 @@ public:
         parent.addComponentListener (this);
 
         hidePluginEditorsUnder (parent);
+
+        activeModalStack().push_back (this);
     }
 
     // Idempotent. For owning show, destructs body; for showBorrowed,
@@ -203,6 +291,12 @@ public:
     // trusting close() won't double-fire. Audit every caller before
     // changing this contract.
     //
+    // restoreFocus=false : skip the immediate MainComponent focus grab. For a
+    // click-outside dismissal the clicked control has already taken focus;
+    // grabbing it back to MainComponent would steal it (see show()'s
+    // onDismissOutside). A deferred grab still fires if nothing took focus.
+    // Esc / pick / button closes keep the default.
+    //
     // Safe from inside a body's callback (button onClick): synchronous
     // path detaches body/backdrop/dim from parent so the modal
     // disappears immediately, then defers destruction to the next
@@ -210,9 +304,12 @@ public:
     // would run ~Button -> ~std::function while the button's onClick
     // lambda is still on the stack - observed to corrupt JUCE's
     // message-thread state and crash compositors on next X11 round.
-    void close()
+    void close (bool restoreFocus = true)
     {
         if (host == nullptr) return;
+
+        removeFromModalStack();
+        stopListeningForOutsideClicks();
 
         // Restore any plugin editors we hid in show() before tearing
         // down the modal body. Done first so their setVisible(true)
@@ -260,29 +357,51 @@ public:
             juce::MessageManager::callAsync (
                 [trash]() mutable { (void) trash; });
         }
-        // Restore keyboard focus. MainComponent registered itself with
-        // focusRestoreTarget() in its ctor; we grab focus on it both
-        // synchronously (so the very next key event already lands
-        // there) AND deferred (so any focus stolen by JUCE's own modal
-        // teardown / focus-traverser logic gets overridden once the
-        // trash lambdas have run and the modal's children are gone).
+        // Restore keyboard focus to whatever should own it now this modal is
+        // gone. With modals stacked (a combo opened over an alert / plugin
+        // editor), focus must return to the newest modal STILL open, not all
+        // the way back to MainComponent - the latter would yank focus off a
+        // modal the user can still see. Fall back to MainComponent (registered
+        // in its ctor via focusRestoreTarget()) only when the stack empties.
         //
-        // Without this, every popup pick leaves focus orphaned on the
-        // DocumentWindow itself - JUCE's default focus traverser does
-        // NOT reliably drill into the content component on this hybrid
-        // X11/Wayland setup, so spacebar / R silently die until the
-        // user clicks the canvas.
-        if (auto* mc = focusRestoreTarget().getComponent())
-            mc->grabKeyboardFocus();
-
-        auto safeTarget = focusRestoreTarget();
-        juce::MessageManager::callAsync ([safeTarget]() mutable
+        // Grab both synchronously (so the very next key event already lands
+        // there) AND deferred (JUCE's own modal-teardown / focus-traverser can
+        // steal focus once the trash lambdas run and this modal's children are
+        // gone; the default traverser does NOT reliably drill into the content
+        // component on this hybrid X11/Wayland setup, so spacebar / R silently
+        // die without the re-grab). The epoch snapshot invalidates the deferred
+        // grab if a show()/showBorrowed() during the async window opened a newer
+        // modal that now owns focus - don't steal it back.
         {
-            if (auto* c = safeTarget.getComponent())
-                c->grabKeyboardFocus();
-        });
+            juce::Component::SafePointer<juce::Component> target;
+            const auto& stack = activeModalStack();
+            if (! stack.empty())
+                target = stack.back()->getBody();
+            if (target == nullptr)
+                target = focusRestoreTarget();
+
+            if (restoreFocus)
+                if (auto* c = target.getComponent())
+                    c->grabKeyboardFocus();
+
+            // restoreFocus=false still needs the deferred pass: the dismissing
+            // click may have landed on a component that takes no keyboard focus
+            // (setMouseClickGrabsKeyboardFocus(false)), leaving focus orphaned
+            // once the body is destroyed. Grab only when nothing else took it.
+            const auto genAtClose = modalGeneration();
+            juce::MessageManager::callAsync ([target, genAtClose, restoreFocus]() mutable
+            {
+                if (genAtClose != modalGeneration()) return;
+                if (! restoreFocus
+                    && juce::Component::getCurrentlyFocusedComponent() != nullptr)
+                    return;   // the clicked control owns focus - keep it there
+                if (auto* c = target.getComponent())
+                    c->grabKeyboardFocus();
+            });
+        }
         host = nullptr;
         userOnDismiss = {};
+        userOnDismissOutside = {};
     }
 
     // Shutdown-only teardown. close() defers body destruction to the
@@ -295,6 +414,8 @@ public:
     // ~MainComponent / beginSafeShutdown.
     void closeAndDeleteBodyNow()
     {
+        removeFromModalStack();
+        stopListeningForOutsideClicks();
         restoreHiddenPluginEditors();
 
         if (host != nullptr)
@@ -317,6 +438,7 @@ public:
         borrowedBody_ = nullptr;
         host = nullptr;
         userOnDismiss = {};
+        userOnDismissOutside = {};
     }
 
     bool isOpen() const noexcept { return body_ != nullptr || borrowedBody_ != nullptr; }
@@ -350,8 +472,8 @@ public:
         if (body == nullptr || host == nullptr) return;
         const auto bounds = host->getLocalBounds();
         const auto bodyBounds = bounds.withSizeKeepingCentre (
-            std::min (std::max (1, body->getWidth()),  bounds.getWidth()  - 16),
-            std::min (std::max (1, body->getHeight()), bounds.getHeight() - 16));
+            juce::jmin (juce::jmax (1, body->getWidth()),  bounds.getWidth()  - 16),
+            juce::jmin (juce::jmax (1, body->getHeight()), bounds.getHeight() - 16));
         body->setTopLeftPosition (bodyBounds.getTopLeft());
         // Re-fit the backdrop to the body's REAL bounds (not the clamped
         // rect) - a body that outgrew its open-time size otherwise keeps
@@ -361,6 +483,44 @@ public:
     }
 
 private:
+    void removeFromModalStack()
+    {
+        auto& stack = activeModalStack();
+        stack.erase (std::remove (stack.begin(), stack.end(), this), stack.end());
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (! listeningForOutsideClicks) return;
+
+        // Only the topmost open modal may act on an outside click - with a
+        // modal stacked above this one, that layer owns the click, and
+        // dismissing from underneath would tear down both layers at once.
+        if (activeModalStack().empty() || activeModalStack().back() != this)
+            return;
+
+        // Test against the backdrop frame, not just the body - the visible
+        // popup includes the kBackdropMargin ring, and a click on it must not
+        // count as "outside".
+        juce::Component* hit = backdrop_ != nullptr ? backdrop_.get() : getBody();
+        if (hit != nullptr && hit->getScreenBounds().contains (e.getScreenPosition()))
+            return;
+
+        // Keep the callback alive across close(), which clears the dismiss
+        // callbacks. Prefer the outside-click callback so the clicked control
+        // keeps focus.
+        auto cb = userOnDismissOutside ? userOnDismissOutside : userOnDismiss;
+        if (cb) cb();
+        else    close();
+    }
+
+    void stopListeningForOutsideClicks()
+    {
+        if (! listeningForOutsideClicks) return;
+        juce::Desktop::getInstance().removeGlobalMouseListener (this);
+        listeningForOutsideClicks = false;
+    }
+
     bool keyPressed (const juce::KeyPress& k, juce::Component*) override
     {
         if (k == juce::KeyPress::escapeKey)
@@ -380,7 +540,7 @@ private:
         // handles its title-bar shortcuts. Edit/destructive keys are excluded
         // (see isModalForwardableShortcut). TextEditor children consume their
         // keys before this fires, so typing isn't affected.
-        if (isModalForwardableShortcut (k))
+        if (forwardShortcuts_ && isModalForwardableShortcut (k))
         {
             if (auto* mc = focusRestoreTarget().getComponent())
                 return mc->keyPressed (k);
@@ -433,7 +593,10 @@ private:
     std::unique_ptr<juce::Component> body_;
     juce::Component* borrowedBody_ = nullptr;
     std::function<void()> userOnDismiss;
+    std::function<void()> userOnDismissOutside;
     bool escapeDismisses = true;
+    bool forwardShortcuts_ = true;
+    bool listeningForOutsideClicks = false;
 
     // Components hidden by hidePluginEditorsUnder() in show(); restored
     // by restoreHiddenPluginEditors() in close(). Plugin editors (in

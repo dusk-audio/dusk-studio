@@ -4,7 +4,6 @@
 #include "../../engine/multisample/AriaBank.h"
 #include "../../engine/multisample/AriaGui.h"
 #include "../../engine/multisample/DuskMultisampleProcessor.h"
-#include <algorithm>
 
 namespace duskstudio
 {
@@ -95,10 +94,13 @@ DuskMultisampleEditor::DuskMultisampleEditor (DuskMultisampleProcessor& proc)
     sf2PresetLabel.setFont (juce::Font (juce::FontOptions (12.0f)));
     addChildComponent (sf2PresetLabel);
     sf2PresetSelector.setTooltip ("Switch between the SoundFont's presets.");
+    // Multi-bank SoundFonts (GS/XG) carry hundreds of presets; flow them into
+    // a filterable grid of columns instead of one long scrolling list.
+    sf2PresetSelector.setGridBrowser (true);
     sf2PresetSelector.onChange = [this]
     {
         const int idx = sf2PresetSelector.getSelectedId() - 1;   // IDs are 1-based
-        if (idx < 0 || idx >= processor.getSf2PresetNames().size()) return;
+        if (idx < 0 || idx >= (int) processor.getSf2Presets().size()) return;
         startAsyncLoad ({}, idx);
     };
     addChildComponent (sf2PresetSelector);
@@ -135,6 +137,18 @@ DuskMultisampleEditor::~DuskMultisampleEditor()
 
 void DuskMultisampleEditor::timerCallback()
 {
+    // A background load is in flight. startAsyncLoad already set the
+    // "(loading ...)" label and disabled the controls; bail before the
+    // refresh below so the timer can't overwrite that message, re-enable the
+    // controls mid-load, or rebuild the skin off a half-populated processor
+    // (getSf2Presets() hands back an empty vector until the load clears, so a
+    // rebuild here would hide the preset selector AND consume the path-change
+    // signal, leaving it hidden after the load lands). loadFileAsync clears
+    // pending before its onDone re-runs timerCallback, so the full refresh +
+    // skin rebuild fires then.
+    if (processor.isLoadPending())
+        return;
+
     const auto err  = processor.getLastLoadError();
     const auto path = processor.getLoadedFilePath();
     juce::String display;
@@ -240,14 +254,22 @@ void DuskMultisampleEditor::rebuildSkin()
     // SF2 program switcher: populate + show when the loaded SF2 has
     // more than one preset. (SF2 never has an ARIA skin, so it always
     // rides in the default layout.)
-    const auto& presets = processor.getSf2PresetNames();
+    const auto presets = processor.getSf2Presets();
     const bool showSf2Presets = showDefaults && presets.size() > 1;
     if (showSf2Presets)
     {
         sf2PresetSelector.clear (juce::dontSendNotification);
-        for (int i = 0; i < presets.size(); ++i)
-            sf2PresetSelector.addItem (presets[i], i + 1);   // IDs 1-based
-        sf2PresetSelector.setSelectedId (std::max (1, processor.getSf2PresetIndex() + 1),
+        for (const auto& preset : presets)
+        {
+            // Program-first display: "PPP [bank] Name" so an instrument's bank
+            // variants read as a group. Bank is the MIDI variant selector
+            // (128 = percussion kit, sorted to the end).
+            const auto number = juce::String (preset.program + 1).paddedLeft ('0', 3);
+            const auto name = preset.name.isNotEmpty() ? preset.name : juce::String ("(unnamed)");
+            sf2PresetSelector.addItem (number + " [" + juce::String (preset.bank) + "] " + name,
+                                        preset.sourceIndex + 1);
+        }
+        sf2PresetSelector.setSelectedId (juce::jmax (1, processor.getSf2PresetIndex() + 1),
                                           juce::dontSendNotification);
     }
     sf2PresetLabel   .setVisible (showSf2Presets);
@@ -267,7 +289,7 @@ void DuskMultisampleEditor::rebuildSkin()
         const auto natH = ariaSkin->nativeSize().getHeight();
         // Header (62) + optional program-switcher row (28) + skin + 12.
         const int progRow = showAriaPrograms ? 28 : 0;
-        setSize (std::max (natW + 24, 520), 62 + progRow + natH + 12);
+        setSize (juce::jmax (natW + 24, 520), 62 + progRow + natH + 12);
     }
     else
     {
@@ -339,13 +361,25 @@ void DuskMultisampleEditor::startAsyncLoad (const juce::File& file, int presetIn
     if (processor.isLoadPending()) return;
 
     setLoadControlsEnabled (false);
-    filePathLabel.setText ("(loading " + (presetIndex >= 0
-                               ? "preset " + juce::String (presetIndex + 1)
-                               : file.getFileName()) + " ...)",
+    auto loadingTarget = file.getFileName();
+    if (presetIndex >= 0)
+    {
+        loadingTarget = "preset " + juce::String (presetIndex + 1);
+        for (const auto& preset : processor.getSf2Presets())
+            if (preset.sourceIndex == presetIndex)
+            {
+                const auto name = preset.name.isNotEmpty() ? preset.name
+                                                           : juce::String ("(unnamed)");
+                loadingTarget = "program " + juce::String (preset.program + 1)
+                              + " - " + name;
+                break;
+            }
+    }
+    filePathLabel.setText ("(loading " + loadingTarget + " ...)",
                             juce::dontSendNotification);
 
     juce::Component::SafePointer<DuskMultisampleEditor> safe (this);
-    auto onDone = [safe] (bool ok, juce::String err)
+    auto onDone = [safe, presetIndex] (bool ok, juce::String err)
     {
         // The processor outlives a closed editor (worker joins in ITS
         // destructor) - only the UI refresh needs the guard.
@@ -353,7 +387,16 @@ void DuskMultisampleEditor::startAsyncLoad (const juce::File& file, int presetIn
         {
             self->setLoadControlsEnabled (true);
             if (! ok)
+            {
                 self->filePathLabel.setText ("(" + err + ")", juce::dontSendNotification);
+                // A failed preset switch leaves the selector on the choice that
+                // didn't load; snap it back to the preset still playing so the
+                // UI doesn't misreport the active program.
+                if (presetIndex >= 0)
+                    self->sf2PresetSelector.setSelectedId (
+                        juce::jmax (1, self->processor.getSf2PresetIndex() + 1),
+                        juce::dontSendNotification);
+            }
             else
                 self->timerCallback();
         }
@@ -402,7 +445,7 @@ void DuskMultisampleEditor::resized()
         {
             auto progRow = area.removeFromTop (24);
             ariaProgramLabel.setBounds (progRow.removeFromLeft (64));
-            ariaProgramSelector.setBounds (progRow.removeFromLeft (std::min (260, progRow.getWidth())));
+            ariaProgramSelector.setBounds (progRow.removeFromLeft (juce::jmin (260, progRow.getWidth())));
             area.removeFromTop (4);
         }
 

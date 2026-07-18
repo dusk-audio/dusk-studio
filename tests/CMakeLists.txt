@@ -84,6 +84,7 @@ add_executable(dusk-studio-tests
     aria_gui_parse.cpp
     sf2_reader_parse.cpp
     sf2_to_sfz_convert.cpp
+    sf2_preset_sort.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/multisample/DuskMultisampleProcessor.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/multisample/AriaBank.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/multisample/AriaGui.cpp

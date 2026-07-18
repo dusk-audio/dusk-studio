@@ -1486,7 +1486,9 @@ Drop a `.sfz` or `.sf2` file onto a MIDI track's insert slot to load it through 
 - **Master tune**: −100 to +100 cents.
 - **Polyphony cap**: 1 to 256 voices.
 
-The loaded file path is saved with the session.
+When a `.sf2` holds more than one preset (most GM/GS/XG SoundFonts do), a **preset picker** appears. Click it to open a filterable browser: start typing to filter presets by name or number, or read across the columns. Presets are grouped program-first — an instrument and its bank variations list together, drum kits last — each shown as `program [bank] name`.
+
+The loaded file path and the chosen preset are saved with the session.
 
 \newpage
 
