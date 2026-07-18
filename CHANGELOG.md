@@ -5,6 +5,19 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
+## [0.12.4] - 2026-07-18
+
+Beta patch on the 0.12 line: a filterable, program-grouped preset browser for
+multi-preset SoundFonts.
+
+### Changed
+
+- **SoundFont preset picker.** Loading a multi-preset `.sf2` (GM/GS/XG) now
+  opens a compact, filterable grid instead of one long scrolling dropdown.
+  Presets group program-first - an instrument and its bank variants list
+  together, drum kits last - each shown as `PPP [bank] Name`. Type to filter by
+  name or number; the popup stays short and reads across in columns.
+
 ## [0.12.3] - 2026-07-15
 
 Beta patch on the 0.12 line: monitored inputs now feed their aux sends during
