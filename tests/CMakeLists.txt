@@ -134,6 +134,16 @@ target_sources(dusk-studio-tests PRIVATE
     midi_collector.cpp
     lv2_state_paths.cpp)
 
+# Native ALSA-seq MIDI backend - Linux-only (snd_seq_* in the same libasound the
+# audio backend links). The loopback suite drives the real backend path in-
+# process and SKIPs itself when /dev/snd/seq is absent (headless CI).
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(dusk-studio-tests PRIVATE
+        alsa_seq_midi.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/midi/AlsaSeqMidi.cpp)
+    target_link_libraries(dusk-studio-tests PRIVATE asound)
+endif()
+
 # Phase 1a de-JUCE: JUCE-free audio file I/O (libsndfile backend), test-only for
 # now. Optional — where libsndfile isn't installed (some CI platforms) the unit
 # and its tests are skipped rather than failing configure; it's Linux-first.
@@ -387,4 +397,14 @@ endif()
 
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(Catch)
-catch_discover_tests(dusk-studio-tests)
+# The environment-gated ALSA-seq loopback tests SKIP() on headless CI. Run in
+# isolation (catch_discover_tests filters each case by exact name) a skip-only
+# Catch2 run exits 4, which ctest scores as a failure. --allow-running-no-tests
+# (Catch2 >= 3.0.1; v3.5.4 is pinned above) makes an all-skipped run exit 0
+# while a real failure still returns its assertion count. Scope it to the [alsa]
+# tag so an unmatched/stale filter on any other test still fails.
+catch_discover_tests(dusk-studio-tests
+    TEST_SPEC "[alsa]"
+    EXTRA_ARGS --allow-running-no-tests)
+catch_discover_tests(dusk-studio-tests
+    TEST_SPEC "~[alsa]")
