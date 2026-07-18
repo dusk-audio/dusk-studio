@@ -12,11 +12,12 @@ playback.
 
 ### Fixed
 
-- **Aux sends on a monitored input during playback.** With **IN** engaged an
-  audio track's live input reached the master dry but its aux sends went
-  silent the moment PLAY was pressed, returning only on Record - so a vocal
-  monitored with reverb lost the reverb while playing along, then got it back
-  on record. Live input now runs the full channel strip during playback, so
+- **Aux sends on a monitored input during playback.** With **IN** engaged,
+  pressing PLAY selected only the disk take for channel-strip processing, so
+  an audio track's live monitored input - and every aux send fed from it -
+  went silent, returning only on Record - so a vocal monitored with reverb
+  lost the reverb while playing along, then got it back on record. Live input
+  now runs the full channel strip during playback, so
   its sends (headphone reverb/delay while tracking) sound in every transport
   state. The audio twin of the 0.12.1 live-play-along fix.
 

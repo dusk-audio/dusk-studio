@@ -1258,9 +1258,35 @@ juce::String AudioPipelineSelfTest::testAudioPlayAlongSends()
     auto& ts0 = t0.strip;
     auto& aux0 = session.auxLane (0).params;
 
-    // Snapshot the atoms the outer runAll restore doesn't cover.
-    const float savedSend   = ts0.auxSendDb[0].load (std::memory_order_relaxed);
+    // Snapshot the atoms the outer runAll restore doesn't cover. Aux 0's return
+    // level / mute / automation mode all steer meterPostL, so normalise them to
+    // a known empty-lane-at-unity state for the probe and restore afterwards.
+    const float savedSend    = ts0.auxSendDb[0].load (std::memory_order_relaxed);
     const bool  savedAuxMute = aux0.mute.load (std::memory_order_relaxed);
+    const float savedAuxRet  = aux0.returnLevelDb.load (std::memory_order_relaxed);
+    const int   savedAuxMode = aux0.automationMode.load (std::memory_order_relaxed);
+    const int   savedTrkMode = t0.automationMode.load (std::memory_order_relaxed);
+
+    // The dry-pass assumption above only holds with aux 0's insert slots empty;
+    // a plugin / hardware insert left by the loaded session would reshape the
+    // send and mask a dropped monitor path. Snapshot each slot's mode, force it
+    // empty for the probe, restore afterward.
+    auto& auxStrip0 = engine.getAuxLaneStrip (0);
+    std::array<int, AuxLaneStrip::kMaxPlugins> savedInsertMode {};
+    for (int s = 0; s < AuxLaneStrip::kMaxPlugins; ++s)
+    {
+        savedInsertMode[(size_t) s] = auxStrip0.insertMode[(size_t) s].load (std::memory_order_acquire);
+        auxStrip0.insertMode[(size_t) s].store (AuxLaneStrip::kInsertEmpty, std::memory_order_release);
+    }
+
+    // Track 0's own channel-strip insert sits upstream of the aux send (it runs
+    // pre-EQ), so a plugin / hardware insert left by the loaded session would
+    // reshape the monitored signal before it reaches the send and mask a dropped
+    // path just as an aux insert would. prepareCleanState resets the strip's
+    // params but not its DSP insert slot - neutralise it here, restore after.
+    auto& chStrip0 = engine.getChannelStrip (0);
+    const int savedTrkInsertMode = chStrip0.insertMode.load (std::memory_order_acquire);
+    chStrip0.insertMode.store (ChannelStrip::kInsertEmpty, std::memory_order_release);
 
     // Track 0: mono, input-monitored, listening to input channel 0, sending to
     // aux lane 0 at unity. Other tracks muted so only track 0 can drive aux 0.
@@ -1268,14 +1294,27 @@ juce::String AudioPipelineSelfTest::testAudioPlayAlongSends()
     t0.inputSource.store  (0, std::memory_order_relaxed);
     t0.inputMonitor.store (true, std::memory_order_relaxed);
     t0.recordArmed.store  (false, std::memory_order_relaxed);
+    // Off so Read/Touch automation on the loaded session's track 0 can't
+    // override the manual fader / mute / send set below.
+    t0.automationMode.store ((int) AutomationMode::Off, std::memory_order_relaxed);
     ts0.mute.store        (false, std::memory_order_relaxed);
     ts0.faderDb.store     (0.0f, std::memory_order_relaxed);
     ts0.auxSendDb[0].store (0.0f, std::memory_order_relaxed);
-    aux0.mute.store       (false, std::memory_order_relaxed);
+    aux0.mute.store           (false, std::memory_order_relaxed);
+    aux0.returnLevelDb.store  (0.0f,  std::memory_order_relaxed);   // unity return
+    aux0.automationMode.store (0,     std::memory_order_relaxed);   // Off: honour the manual return/mute above
+    // Snapshot + neutralise each other track's automation mode. Read/Touch mute
+    // automation on the loaded session would otherwise un-mute the track at the
+    // current playhead during the Playing probe and let it drive aux 0, defeating
+    // the isolation. Restored below (SavedState doesn't round-trip automationMode).
+    std::array<int, Session::kNumTracks> savedOtherTrkMode {};
     for (int t = 1; t < Session::kNumTracks; ++t)
     {
-        session.track (t).inputMonitor.store (false, std::memory_order_relaxed);
-        session.track (t).strip.mute.store (true, std::memory_order_relaxed);
+        auto& tt = session.track (t);
+        savedOtherTrkMode[(size_t) t] = tt.automationMode.load (std::memory_order_relaxed);
+        tt.inputMonitor.store (false, std::memory_order_relaxed);
+        tt.strip.mute.store (true, std::memory_order_relaxed);
+        tt.automationMode.store ((int) AutomationMode::Off, std::memory_order_relaxed);
     }
     session.recomputeRtCounters();
 
@@ -1310,13 +1349,35 @@ juce::String AudioPipelineSelfTest::testAudioPlayAlongSends()
         return aux0.meterPostL.load (std::memory_order_relaxed);
     };
 
+    // Isolate the monitored-input send path: the meter must reflect the live
+    // overlay alone, never a disk take on track 0. Empty track 0's playback
+    // source and rebuild the readers via play()'s prep path so streams[0] is
+    // null (no disk audio) in both transport states - otherwise a stray disk
+    // region would prop the meter up and mask a dropped send while rolling.
+    auto savedRegions      = std::move (t0.regions);
+    t0.regions.clear();
+    const bool savedFrozen = t0.frozen.load (std::memory_order_acquire);
+    t0.frozen.store (false, std::memory_order_release);
+    engine.getPlaybackEngine().preparePlayback();
+
     const float stoppedDb = probe (Transport::State::Stopped);
     const float playingDb  = probe (Transport::State::Playing);
 
     // Restore.
     engine.getTransport().setState (Transport::State::Stopped);
+    engine.getPlaybackEngine().stopPlayback();   // tear down the probe's temp readers
+    t0.frozen.store (savedFrozen, std::memory_order_release);
+    t0.regions = std::move (savedRegions);
     ts0.auxSendDb[0].store (savedSend, std::memory_order_relaxed);
-    aux0.mute.store        (savedAuxMute, std::memory_order_relaxed);
+    aux0.mute.store           (savedAuxMute, std::memory_order_relaxed);
+    aux0.returnLevelDb.store  (savedAuxRet,  std::memory_order_relaxed);
+    aux0.automationMode.store (savedAuxMode, std::memory_order_relaxed);
+    t0.automationMode.store   (savedTrkMode, std::memory_order_relaxed);
+    for (int t = 1; t < Session::kNumTracks; ++t)
+        session.track (t).automationMode.store (savedOtherTrkMode[(size_t) t], std::memory_order_relaxed);
+    for (int s = 0; s < AuxLaneStrip::kMaxPlugins; ++s)
+        auxStrip0.insertMode[(size_t) s].store (savedInsertMode[(size_t) s], std::memory_order_release);
+    chStrip0.insertMode.store (savedTrkInsertMode, std::memory_order_release);
 
     constexpr float kFloorDb = -60.0f;
     const bool stoppedOK = stoppedDb > kFloorDb;
@@ -1388,17 +1449,24 @@ juce::String AudioPipelineSelfTest::runAll()
     // live input straight to the speakers while each device is open. So probe
     // with monitoring forced OFF on every track, then restore the user's real
     // session once the cycle (which opens real devices) is done.
+    std::array<int, Session::kNumTracks> savedTrkAutoMode {};
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
-        session.track (t).inputMonitor.store (false, std::memory_order_relaxed);
-        session.track (t).recordArmed.store  (false, std::memory_order_relaxed);
+        auto& tt = session.track (t);
+        savedTrkAutoMode[(size_t) t] = tt.automationMode.load (std::memory_order_relaxed);
+        tt.inputMonitor.store (false, std::memory_order_relaxed);
+        tt.recordArmed.store  (false, std::memory_order_relaxed);
         // Clearing monitor/arm stops LIVE input, but a self-generating plugin
         // (drone synth, noise box) on an unmuted track would still reach the
         // speakers while real devices are open. Hard-mute + clear solo for
         // unconditional silence (same enforcement prepareCleanState uses for the
         // synthetic tests). restoreState(savedSession) below reverts both.
-        session.track (t).strip.mute.store (true,  std::memory_order_relaxed);
-        session.track (t).strip.solo.store (false, std::memory_order_relaxed);
+        tt.strip.mute.store (true,  std::memory_order_relaxed);
+        tt.strip.solo.store (false, std::memory_order_relaxed);
+        // Off so Read/Touch mute automation can't override the forced mute at the
+        // current playhead. SavedState doesn't round-trip automationMode, so it's
+        // snapshotted here and restored after the cycle.
+        tt.automationMode.store ((int) AutomationMode::Off, std::memory_order_relaxed);
     }
     // Bus solos too: a soloed bus gates the master mix via the SIP solo logic,
     // so leave none set while probing.
@@ -1408,10 +1476,17 @@ juce::String AudioPipelineSelfTest::runAll()
     // on an unmuted aux lane sums into the master while real devices are open.
     // SavedState doesn't capture aux, so snapshot + restore the mute here.
     std::array<bool, Session::kNumAuxLanes> savedAuxMute {};
+    std::array<int,  Session::kNumAuxLanes> savedAuxAutoMode {};
     for (int a = 0; a < Session::kNumAuxLanes; ++a)
     {
-        savedAuxMute[(size_t) a] = session.auxLane (a).params.mute.load (std::memory_order_relaxed);
-        session.auxLane (a).params.mute.store (true, std::memory_order_relaxed);
+        auto& ap = session.auxLane (a).params;
+        savedAuxMute[(size_t) a]     = ap.mute.load (std::memory_order_relaxed);
+        savedAuxAutoMode[(size_t) a] = ap.automationMode.load (std::memory_order_relaxed);
+        ap.mute.store (true, std::memory_order_relaxed);
+        // Same reason as the per-track Off above: aux lanes carry a mute
+        // automation lane, and Read/Touch would drive liveMute back to the
+        // automated value at the playhead, undoing the forced mute.
+        ap.automationMode.store ((int) AutomationMode::Off, std::memory_order_relaxed);
     }
     session.recomputeRtCounters();
     // The synthetic tests force the engine serial (setWorkerCountForTest(0));
@@ -1426,7 +1501,13 @@ juce::String AudioPipelineSelfTest::runAll()
     // Probe done (devices opened/closed) - reinstate the user's real session.
     restoreState (savedSession);
     for (int a = 0; a < Session::kNumAuxLanes; ++a)
-        session.auxLane (a).params.mute.store (savedAuxMute[(size_t) a], std::memory_order_relaxed);
+    {
+        auto& ap = session.auxLane (a).params;
+        ap.mute.store (savedAuxMute[(size_t) a], std::memory_order_relaxed);
+        ap.automationMode.store (savedAuxAutoMode[(size_t) a], std::memory_order_relaxed);
+    }
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        session.track (t).automationMode.store (savedTrkAutoMode[(size_t) t], std::memory_order_relaxed);
 
     report.add ("");
     report.add ("=== End of Self-Test ===");
