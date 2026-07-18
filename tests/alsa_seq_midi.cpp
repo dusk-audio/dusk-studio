@@ -251,15 +251,41 @@ TEST_CASE ("MidiOutputBank RT queue delivers through the pump, bounded by its de
     REQUIRE_FALSE (sink.waitFor ((std::size_t) MidiOutputBank::kQueueDepth + 1, 250));
 
     bank.stopPump();
-    in.stop();
 
-    std::lock_guard<std::mutex> lk (sink.m);
-    REQUIRE (sink.messages.size() == (std::size_t) MidiOutputBank::kQueueDepth);
-    for (int i = 0; i < (int) sink.messages.size(); ++i)
     {
-        REQUIRE (sink.messages[(size_t) i].size() == 3);
-        REQUIRE (sink.messages[(size_t) i][1] == (std::uint8_t) i);   // FIFO order, first kQueueDepth pushed
+        std::lock_guard<std::mutex> lk (sink.m);
+        REQUIRE (sink.messages.size() == (std::size_t) MidiOutputBank::kQueueDepth);
+        for (int i = 0; i < (int) sink.messages.size(); ++i)
+        {
+            REQUIRE (sink.messages[(size_t) i].size() == 3);
+            REQUIRE (sink.messages[(size_t) i][1] == (std::uint8_t) i);   // FIFO order, first kQueueDepth pushed
+        }
+        sink.messages.clear();
     }
+
+    SECTION ("a close discards what was queued before it, even if the port reopens")
+    {
+        bank.queueRt (dst, oneNote (0x11), 48000.0);
+        bank.closeAll();
+        REQUIRE_FALSE (bank.isOpen (dst));
+
+        // Reopened before the pump ever ran: the block from before the close
+        // must be gone, not delivered late to the reopened port.
+        REQUIRE (bank.ensureOpen (dst));
+        bank.startPump();
+        REQUIRE_FALSE (sink.waitFor (1, 250));
+
+        // Delivery still works for anything queued after the reopen.
+        bank.queueRt (dst, oneNote (0x22), 48000.0);
+        REQUIRE (sink.waitFor (1));
+        bank.stopPump();
+
+        std::lock_guard<std::mutex> lk (sink.m);
+        REQUIRE (sink.messages.size() == 1);
+        REQUIRE (sink.messages[0][1] == 0x22);
+    }
+
+    in.stop();
 }
 
 TEST_CASE ("ALSA seq MIDI loopback round-trips bytes exactly", "[midi][alsa]")

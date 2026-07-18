@@ -183,15 +183,15 @@ void MidiOutputBank::rebuild()
     // bankMutex (the pump is sending through the backend).
     const std::lock_guard<std::mutex> lock (bankMutex);
 
-    // Discard queued-but-unsent blocks first: their port indices were minted
-    // against the OLD device order and could land on a different physical port
-    // after re-enumeration. The callback is detached, so nothing new is being
-    // written; the mutex excludes the pump's drain.
-    readCount.store (writeCount.load (std::memory_order_acquire), std::memory_order_release);
-
-    // Retract the open flags before the ports move: anything still reading them
-    // sees "closed" rather than a bound that no longer matches the bank.
+    // Retract the open flags before anything else: queueRt gates on them, so
+    // this is what stops new blocks arriving. Discarding first would leave a
+    // window for one to commit against the outgoing device order.
     numOpenFlags.store (0, std::memory_order_release);
+
+    // Then drop queued-but-unsent blocks: their port indices were minted against
+    // the OLD device order and could land on a different physical port after
+    // re-enumeration. The mutex excludes the pump's drain.
+    readCount.store (writeCount.load (std::memory_order_acquire), std::memory_order_release);
 
     backend->closeAll();
     devices.clear();
@@ -251,9 +251,18 @@ bool MidiOutputBank::ensureOpen (int index)
 void MidiOutputBank::closeAll()
 {
     const std::lock_guard<std::mutex> lock (bankMutex);
-    backend->closeAll();
+
     for (int i = 0; i < numOpenFlags.load (std::memory_order_acquire); ++i)
         openFlags[(size_t) i].store (false, std::memory_order_release);
+
+    // Blocks already queued predate the close, so they must not survive it: a
+    // port reopened before the pump next runs would otherwise receive them, and
+    // a stale note-on landing after a deliberate close hangs a note on the
+    // device. Re-checking the open flag at drain time would NOT catch this -
+    // by then the port is open again.
+    readCount.store (writeCount.load (std::memory_order_acquire), std::memory_order_release);
+
+    backend->closeAll();
 }
 
 bool MidiOutputBank::isOpen (int index) const noexcept
