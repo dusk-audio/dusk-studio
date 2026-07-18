@@ -45,8 +45,8 @@ src/engine/hosting/NativePluginId.h
 src/engine/ipc/IpcSelfTest.cpp
 src/engine/ipc/PluginHostMain.cpp
 src/engine/ipc/PluginScanProtocol.h
-src/engine/midi/MidiDevices.cpp
-src/engine/midi/MidiDevices.h
+src/engine/midi/JuceMidiBackend.cpp
+src/engine/midi/JuceMidiBackend.h
 src/engine/multisample/AriaBank.cpp
 src/engine/multisample/AriaBank.h
 src/engine/multisample/AriaGui.cpp
