@@ -20,8 +20,8 @@
 // fixed key, so two same-named devices can trade identifiers across a replug or
 // reboot.
 //
-// Threading contract (matches the seam's detach/rebuild/attach fence, same as
-// the JUCE backing it replaces): enumerate / enable / disableAll / open /
+// Threading contract (matches the seam's detach/rebuild/attach fence):
+// enumerate / enable / disableAll / open /
 // closeAll / send are called on the message or pump thread while the input
 // poll thread is stopped. start() launches the poll thread; stop() joins it, so
 // no Receiver callback is in flight once stop() returns.
@@ -35,6 +35,7 @@ public:
 
     std::vector<BackendDeviceInfo> enumerate() override;
     void setReceiver (Receiver r) override;
+    std::string migrateIdentifier (const std::string& legacy) override;
     bool enable (const std::string& identifier) override;
     void disableAll() override;
     void start() override;
@@ -52,6 +53,7 @@ public:
     ~AlsaSeqMidiOutput() override;
 
     std::vector<BackendDeviceInfo> enumerate() override;
+    std::string migrateIdentifier (const std::string& legacy) override;
     bool open (const std::string& identifier) override;
     void closeAll() override;
     bool isOpen (const std::string& identifier) const override;

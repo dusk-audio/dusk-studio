@@ -10,8 +10,8 @@
 
 #include <atomic>
 #include <cerrno>
-#include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <map>
 #include <string>
 #include <thread>
@@ -32,14 +32,6 @@ constexpr std::size_t kMaxSysexBytes    = 1u << 20;
 // scratch a little headroom for those before it has to grow.
 constexpr std::size_t kShortEventBytes  = 16;
 constexpr char        kIdPrefix[]       = "alsa-seq:";
-
-// Hi-res millisecond clock in the same domain the seam's MidiCollector drains
-// against (M3 passes the equivalent clock to removeNextBlock).
-double nowMs() noexcept
-{
-    using namespace std::chrono;
-    return duration<double, std::milli> (steady_clock::now().time_since_epoch()).count();
-}
 
 // Escape '\' and ':' so the ':'-delimited identifier stays unambiguous even when
 // a client or port name itself contains a colon.
@@ -122,6 +114,30 @@ std::uint32_t addrKey (int client, int port) noexcept
 {
     return ((std::uint32_t) client << 16) | (std::uint32_t) (port & 0xffff);
 }
+
+// JUCE's Linux MIDI identifiers are the raw sequencer address, "<client>-<port>".
+// Sessions saved before this backend existed hold those, so map one back to a
+// live port and hand out its name-based identifier instead. Only valid while the
+// numbers still point at the same hardware - the very instability that motivated
+// the name-based scheme - so a miss is normal and returns "".
+std::string migrateLegacyAddress (snd_seq_t* seq, bool wantRead, const std::string& legacy)
+{
+    const auto dash = legacy.find ('-');
+    if (dash == std::string::npos || dash == 0 || dash + 1 >= legacy.size()) return {};
+
+    const char* s = legacy.c_str();
+    char* endClient = nullptr;
+    char* endPort   = nullptr;
+    const long client = std::strtol (s, &endClient, 10);
+    if (endClient != s + dash) return {};
+    const long port = std::strtol (s + dash + 1, &endPort, 10);
+    if (endPort != s + legacy.size()) return {};
+
+    for (const auto& p : queryPorts (seq, wantRead))
+        if (p.client == client && p.port == port)
+            return p.identifier;
+    return {};
+}
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -190,7 +206,7 @@ struct AlsaSeqMidiInput::Impl
         if (! receiver || n <= 0) return;
         auto it = sourceIds.find (addrKey (client, port));
         if (it != sourceIds.end())
-            receiver (it->second, bytes, n, nowMs());
+            receiver (it->second, bytes, n, backendClockMs());
     }
 
     // Reassemble sysex spanning multiple events; pass everything else straight
@@ -326,6 +342,12 @@ std::vector<BackendDeviceInfo> AlsaSeqMidiInput::enumerate()
 
 void AlsaSeqMidiInput::setReceiver (Receiver r) { impl->receiver = std::move (r); }
 
+std::string AlsaSeqMidiInput::migrateIdentifier (const std::string& legacy)
+{
+    if (! impl->ready()) return {};
+    return migrateLegacyAddress (impl->seq, /*wantRead*/ true, legacy);
+}
+
 bool AlsaSeqMidiInput::enable (const std::string& identifier)
 {
     if (! impl->ready()) return false;
@@ -409,6 +431,12 @@ std::vector<BackendDeviceInfo> AlsaSeqMidiOutput::enumerate()
     return out;
 }
 
+std::string AlsaSeqMidiOutput::migrateIdentifier (const std::string& legacy)
+{
+    if (! impl->ready()) return {};
+    return migrateLegacyAddress (impl->seq, /*wantRead*/ false, legacy);
+}
+
 bool AlsaSeqMidiOutput::open (const std::string& identifier)
 {
     if (! impl->ready()) return false;
@@ -437,7 +465,7 @@ bool AlsaSeqMidiOutput::send (const std::string& identifier, const dusk::MidiBuf
     // The pump runs at ~1 ms cadence, so events fire immediately (output_direct)
     // rather than being scheduled per sample-offset within the block; the sub-ms
     // ordering within a block is preserved by send order. Per-offset queue
-    // scheduling, if it proves audible, lands with the M3 seam timing.
+    // scheduling stays unimplemented until it proves audible.
     (void) baseTimeMs;
     (void) sampleRate;
 
@@ -483,6 +511,7 @@ AlsaSeqMidiInput::AlsaSeqMidiInput()  = default;
 AlsaSeqMidiInput::~AlsaSeqMidiInput() = default;
 std::vector<BackendDeviceInfo> AlsaSeqMidiInput::enumerate() { return {}; }
 void AlsaSeqMidiInput::setReceiver (Receiver) {}
+std::string AlsaSeqMidiInput::migrateIdentifier (const std::string&) { return {}; }
 bool AlsaSeqMidiInput::enable (const std::string&) { return false; }
 void AlsaSeqMidiInput::disableAll() {}
 void AlsaSeqMidiInput::start() {}
@@ -491,6 +520,7 @@ void AlsaSeqMidiInput::stop()  {}
 AlsaSeqMidiOutput::AlsaSeqMidiOutput()  = default;
 AlsaSeqMidiOutput::~AlsaSeqMidiOutput() = default;
 std::vector<BackendDeviceInfo> AlsaSeqMidiOutput::enumerate() { return {}; }
+std::string AlsaSeqMidiOutput::migrateIdentifier (const std::string&) { return {}; }
 bool AlsaSeqMidiOutput::open (const std::string&) { return false; }
 void AlsaSeqMidiOutput::closeAll() {}
 bool AlsaSeqMidiOutput::isOpen (const std::string&) const { return false; }

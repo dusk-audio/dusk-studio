@@ -2,6 +2,7 @@
 
 #include "../../foundation/MidiBuffer.h"
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -20,6 +21,16 @@ struct BackendDeviceInfo
     std::string identifier;
 };
 
+// The one clock the MIDI path is timed against: backends stamp incoming events
+// with it, and the seam drains its collectors against it. Both sides MUST read
+// the same source - a backend stamping a different epoch than the drain
+// compares to would retime every event by the offset between them.
+inline double backendClockMs() noexcept
+{
+    using namespace std::chrono;
+    return duration<double, std::milli> (steady_clock::now().time_since_epoch()).count();
+}
+
 class IMidiInputBackend
 {
 public:
@@ -35,6 +46,13 @@ public:
                                          double timeMs)>;
 
     virtual void setReceiver (Receiver r) = 0;          // set once, before start
+
+    // Best-effort remap of an identifier minted by a PREVIOUS backend, so a
+    // session saved before the backend changed keeps its routing. Returns the
+    // current identifier for that device, or "" when it cannot be mapped.
+    // Message thread.
+    [[nodiscard]] virtual std::string migrateIdentifier (const std::string& legacy) = 0;
+
     [[nodiscard]] virtual bool enable (const std::string& identifier) = 0;
     virtual void disableAll() = 0;
     virtual void start() = 0;                            // attach fence
@@ -50,6 +68,9 @@ public:
     virtual ~IMidiOutputBackend() = default;
 
     [[nodiscard]] virtual std::vector<BackendDeviceInfo> enumerate() = 0;
+
+    // As IMidiInputBackend::migrateIdentifier, for output ports.
+    [[nodiscard]] virtual std::string migrateIdentifier (const std::string& legacy) = 0;
 
     [[nodiscard]] virtual bool open (const std::string& identifier) = 0;   // lazy, message thread
     virtual void closeAll() = 0;
