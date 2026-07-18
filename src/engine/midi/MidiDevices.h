@@ -158,10 +158,17 @@ private:
     std::unique_ptr<IMidiOutputBackend> backend;
     std::vector<MidiDeviceInfo> devices;
 
-    // Parallel to `devices`, allocated on rebuild. Heap array rather than a
-    // vector because std::atomic is neither movable nor copyable.
-    std::unique_ptr<std::atomic<bool>[]> openFlags;
-    std::size_t numOpenFlags = 0;
+    // Ports the audio thread may see beyond this are not addressable; no
+    // sequencer exposes anywhere near it.
+    static constexpr int kMaxPorts = 256;
+
+    // Parallel to `devices`, but fixed storage with a published count: the audio
+    // thread reads these in isOpen while the message thread re-enumerates, so
+    // neither the array nor its bound may be swapped under it. rebuild()
+    // publishes 0 before it touches anything and the new count after, so a
+    // racing reader sees "closed", never a stale bound.
+    std::array<std::atomic<bool>, kMaxPorts> openFlags {};
+    std::atomic<int> numOpenFlags { 0 };
 
     // Serialises the pump thread's backend access against message-thread bank
     // mutation (rebuild / ensureOpen / send). The audio thread never takes it -

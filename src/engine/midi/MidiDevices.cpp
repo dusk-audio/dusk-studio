@@ -18,6 +18,9 @@ namespace
 // thread has genuinely stopped draining.
 constexpr std::size_t kInputRingBytes = 16384;
 
+// Stand-in rate for a collector built before the audio device reports one.
+constexpr double kFallbackSampleRate = 48000.0;
+
 int indexOfIdentifier (const std::vector<MidiDeviceInfo>& devices, const std::string& identifier)
 {
     for (int i = 0; i < (int) devices.size(); ++i)
@@ -72,11 +75,18 @@ void MidiInputClient::rebuild (double sampleRate)
     devices.reserve (avail.size() + 1);
     collectors.reserve (avail.size() + 1);
 
+    // A collector must never be left unseeded: its retime is relative to
+    // lastCallbackTime, so a drain against an unset one would measure the whole
+    // steady-clock epoch and overflow the sample number. The engine rebuilds
+    // with sampleRate 0 before a device is open (and after one stops), so fall
+    // back to a placeholder rate here; audioDeviceAboutToStart resets to the
+    // real one before the first drain.
     const double now = backendClockMs();
+    const double rate = sampleRate > 0.0 ? sampleRate : kFallbackSampleRate;
     for (const auto& d : avail)
     {
         auto col = std::make_unique<dusk::MidiCollector> (kInputRingBytes);
-        if (sampleRate > 0.0) col->reset (sampleRate, now);
+        col->reset (rate, now);
 
         // Failure usually = OS denied access (another app exclusively owns the
         // port). Keep the slot: it stays addressable, it just never fires.
@@ -97,7 +107,7 @@ void MidiInputClient::rebuild (double sampleRate)
     devices.push_back ({ "Virtual Keyboard (Dusk Studio)", kVirtualKeyboardIdentifier });
     {
         auto vkb = std::make_unique<dusk::MidiCollector> (kInputRingBytes);
-        if (sampleRate > 0.0) vkb->reset (sampleRate, now);
+        vkb->reset (rate, now);
         collectors.push_back (std::move (vkb));
     }
     virtualKeyboardIndex = (int) collectors.size() - 1;
@@ -109,9 +119,10 @@ void MidiInputClient::attachCallback()  { backend->start(); }
 
 void MidiInputClient::resetCollectors (double sampleRate)
 {
-    const double now = backendClockMs();
+    const double now  = backendClockMs();
+    const double rate = sampleRate > 0.0 ? sampleRate : kFallbackSampleRate;
     for (auto& c : collectors)
-        if (c != nullptr) c->reset (sampleRate, now);
+        if (c != nullptr) c->reset (rate, now);
 }
 
 int MidiInputClient::resolveIndex (const std::string& savedIdentifier)
@@ -178,15 +189,27 @@ void MidiOutputBank::rebuild()
     // written; the mutex excludes the pump's drain.
     readCount.store (writeCount.load (std::memory_order_acquire), std::memory_order_release);
 
+    // Retract the open flags before the ports move: anything still reading them
+    // sees "closed" rather than a bound that no longer matches the bank.
+    numOpenFlags.store (0, std::memory_order_release);
+
     backend->closeAll();
     devices.clear();
     for (const auto& d : backend->enumerate())
+    {
+        if ((int) devices.size() >= kMaxPorts)
+        {
+            std::fprintf (stderr,
+                          "[Dusk Studio/MidiDevices] WARNING: more than %d MIDI outputs; "
+                          "the rest are not addressable.\n", kMaxPorts);
+            break;
+        }
         devices.push_back ({ d.name, d.identifier });
+    }
 
-    openFlags = std::make_unique<std::atomic<bool>[]> (devices.size());
-    numOpenFlags = devices.size();
-    for (std::size_t i = 0; i < numOpenFlags; ++i)
-        openFlags[i].store (false, std::memory_order_relaxed);
+    for (int i = 0; i < (int) devices.size(); ++i)
+        openFlags[(size_t) i].store (false, std::memory_order_relaxed);
+    numOpenFlags.store ((int) devices.size(), std::memory_order_release);
 }
 
 int MidiOutputBank::resolveIndex (const std::string& savedIdentifier)
@@ -229,13 +252,13 @@ void MidiOutputBank::closeAll()
 {
     const std::lock_guard<std::mutex> lock (bankMutex);
     backend->closeAll();
-    for (std::size_t i = 0; i < numOpenFlags; ++i)
-        openFlags[i].store (false, std::memory_order_release);
+    for (int i = 0; i < numOpenFlags.load (std::memory_order_acquire); ++i)
+        openFlags[(size_t) i].store (false, std::memory_order_release);
 }
 
 bool MidiOutputBank::isOpen (int index) const noexcept
 {
-    return index >= 0 && (std::size_t) index < numOpenFlags
+    return index >= 0 && index < numOpenFlags.load (std::memory_order_acquire)
              && openFlags[(size_t) index].load (std::memory_order_acquire);
 }
 

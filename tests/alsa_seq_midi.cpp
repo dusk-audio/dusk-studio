@@ -28,6 +28,40 @@ std::string findId (const std::vector<BackendDeviceInfo>& devs, const std::strin
     return {};
 }
 
+// Raw "<client>-<port>" sequencer address of the named port, which is exactly
+// the identifier format JUCE minted on Linux and therefore what pre-existing
+// sessions carry.
+std::string legacyAddressOf (const std::string& clientName, const std::string& portName)
+{
+    snd_seq_t* seq = nullptr;
+    if (snd_seq_open (&seq, "default", SND_SEQ_OPEN_INPUT, 0) < 0)
+        return {};
+
+    std::string found;
+    snd_seq_client_info_t* cinfo;
+    snd_seq_port_info_t*   pinfo;
+    snd_seq_client_info_alloca (&cinfo);
+    snd_seq_port_info_alloca (&pinfo);
+
+    snd_seq_client_info_set_client (cinfo, -1);
+    while (found.empty() && snd_seq_query_next_client (seq, cinfo) >= 0)
+    {
+        const int client = snd_seq_client_info_get_client (cinfo);
+        if (clientName != snd_seq_client_info_get_name (cinfo)) continue;
+
+        snd_seq_port_info_set_client (pinfo, client);
+        snd_seq_port_info_set_port (pinfo, -1);
+        while (snd_seq_query_next_port (seq, pinfo) >= 0)
+        {
+            if (portName != snd_seq_port_info_get_name (pinfo)) continue;
+            found = std::to_string (client) + "-" + std::to_string (snd_seq_port_info_get_port (pinfo));
+            break;
+        }
+    }
+    snd_seq_close (seq);
+    return found;
+}
+
 // Receiver-side collector: the poll thread pushes decoded messages; the test
 // waits on the condition variable instead of sleeping/polling.
 struct Sink
@@ -110,6 +144,37 @@ TEST_CASE ("ALSA seq backend enumerates its loopback partner and stable ids", "[
         REQUIRE (a == b);
         REQUIRE (a.rfind ("alsa-seq:", 0) == 0);
     }
+}
+
+TEST_CASE ("ALSA seq backend migrates a legacy address identifier", "[midi][alsa]")
+{
+    if (! loopbackAvailable())
+        SKIP ("ALSA sequencer loopback unavailable - headless CI");
+
+    AlsaSeqMidiInput  in;
+    AlsaSeqMidiOutput out;
+
+    const std::string current = findId (out.enumerate(), "Dusk Studio: MIDI In");
+    const std::string legacy  = legacyAddressOf ("Dusk Studio", "MIDI In");
+    REQUIRE_FALSE (current.empty());
+    REQUIRE_FALSE (legacy.empty());
+
+    // A session saved under the old scheme resolves back to the same port.
+    REQUIRE (out.migrateIdentifier (legacy) == current);
+
+    // Addresses that no longer point anywhere, and anything not in the legacy
+    // shape at all, report a miss rather than guessing.
+    REQUIRE (out.migrateIdentifier ("9999-0").empty());
+    REQUIRE (out.migrateIdentifier ("").empty());
+    REQUIRE (out.migrateIdentifier ("-").empty());
+    REQUIRE (out.migrateIdentifier ("12").empty());
+    REQUIRE (out.migrateIdentifier ("12-").empty());
+    REQUIRE (out.migrateIdentifier ("x-0").empty());
+    REQUIRE (out.migrateIdentifier ("12-0junk").empty());
+    REQUIRE (out.migrateIdentifier (current).empty());   // already migrated
+
+    REQUIRE (in.migrateIdentifier (legacyAddressOf ("Dusk Studio", "MIDI Out"))
+             == findId (in.enumerate(), "Dusk Studio: MIDI Out"));
 }
 
 TEST_CASE ("ALSA seq MIDI loopback round-trips bytes exactly", "[midi][alsa]")

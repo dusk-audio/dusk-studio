@@ -74,3 +74,36 @@ TEST_CASE ("dusk::MidiBuffer clear keeps capacity and empties", "[foundation][mi
     for (auto it = d.begin(); it != d.end(); ++it) ++n;
     REQUIRE (n == 0);
 }
+
+TEST_CASE ("dusk::MidiBuffer drops past its reserved cap instead of growing",
+           "[foundation][midi]")
+{
+    // The RT out-queue relies on this: a reserved buffer must refuse an event
+    // that would exceed the cap rather than reallocate on the audio thread.
+    constexpr std::size_t kCap = 64;
+    dusk::MidiBuffer d;
+    d.reserveBytes (kCap);
+
+    const std::uint8_t note[3] { 0x90, 60, 100 };
+    int accepted = 0;
+    while (d.addEvent (note, 3, accepted)) ++accepted;
+
+    // 8-byte header + 3 payload bytes per event.
+    REQUIRE (accepted == (int) (kCap / 11));
+
+    // Rejection leaves the existing contents intact and is repeatable.
+    int counted = 0;
+    for (const auto meta : d)
+    {
+        REQUIRE (meta.numBytes == 3);
+        REQUIRE (meta.samplePosition == counted);
+        ++counted;
+    }
+    REQUIRE (counted == accepted);
+    REQUIRE (! d.addEvent (note, 3, 0));
+
+    // Unreserved buffers keep growing freely (message-thread use).
+    dusk::MidiBuffer unbounded;
+    for (int i = 0; i < 1000; ++i)
+        REQUIRE (unbounded.addEvent (note, 3, i));
+}

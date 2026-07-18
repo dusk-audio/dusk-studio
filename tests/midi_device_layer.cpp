@@ -114,15 +114,17 @@ TEST_CASE ("Seam resolves saved identifiers back to bank indices", "[midi][devic
     REQUIRE (! bank.isOpen (bank.getNumOutputs()));
 }
 
-TEST_CASE ("MidiOutputBank queueRt drops a block past the slot cap", "[midi][devices]")
+TEST_CASE ("MidiOutputBank queueRt survives over-cap and over-depth blocks",
+           "[midi][devices]")
 {
     MidiOutputBank bank;
     bank.rebuild();
 
-    // No device needed: queueRt only fills a slot, and the pump (not started
-    // here) is what would consume it. A block far past the 4 kB slot cap must be
-    // dropped whole rather than reallocated on the audio thread, and the queue
-    // must stay usable afterwards.
+    // The drop policies themselves are asserted where they are observable (the
+    // MidiBuffer cap test in foundation_midi_buffer). What this pins down is
+    // that queueRt honours them without wedging or overrunning the fixed queue:
+    // no device is open and the pump is not started, so every push must be
+    // absorbed and discarded.
     dusk::MidiBuffer big;
     big.reserveBytes (1 << 16);
     const std::uint8_t note[3] { 0x90, 64, 100 };

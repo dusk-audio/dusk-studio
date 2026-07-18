@@ -376,8 +376,8 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     mcuController = std::make_unique<McuController> (session);
     mcuController->setSink ([this] (const dusk::MidiBuffer& buf)
     {
-        // Message thread (30 Hz MCU tick). The bank bridges dusk -> juce for the
-        // direct send.
+        // Message thread (30 Hz MCU tick); the bank's direct send blocks here,
+        // not on the audio thread.
         const int outIdx = session.mcu.resolvedOutputIdx.load (std::memory_order_acquire);
         if (outIdx >= 0) midiOut.send (outIdx, buf);
     });

@@ -220,7 +220,9 @@ void VirtualKeyboardComponent::timerCallback()
 
 void VirtualKeyboardComponent::sendNoteOn (int note, int vel, int chan)
 {
-    const std::uint8_t bytes[3] { (std::uint8_t) (0x90 | ((chan - 1) & 0x0f)),
+    // Clamp rather than mask the channel: masking would wrap an out-of-range
+    // one onto a different channel instead of the nearest valid one.
+    const std::uint8_t bytes[3] { (std::uint8_t) (0x90 | (std::clamp (chan, 1, 16) - 1)),
                                   (std::uint8_t) (note & 0x7f),
                                   (std::uint8_t) (vel & 0x7f) };
     engine.postVirtualKeyboardMidi (bytes, 3);
@@ -229,7 +231,7 @@ void VirtualKeyboardComponent::sendNoteOn (int note, int vel, int chan)
 
 void VirtualKeyboardComponent::sendNoteOff (int note, int chan)
 {
-    const std::uint8_t bytes[3] { (std::uint8_t) (0x80 | ((chan - 1) & 0x0f)),
+    const std::uint8_t bytes[3] { (std::uint8_t) (0x80 | (std::clamp (chan, 1, 16) - 1)),
                                   (std::uint8_t) (note & 0x7f),
                                   0 };
     engine.postVirtualKeyboardMidi (bytes, 3);
