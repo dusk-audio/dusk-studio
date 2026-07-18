@@ -246,8 +246,8 @@ void DuskMultisampleProcessor::loadFileAsync (
         const bool ok = file.getFileExtension().toLowerCase() == ".sf2"
                             ? loadSf2File (file, err)
                             : loadSfzFile (file, err);
-        juce::MessageManager::callAsync (
-            [weak = juce::WeakReference<DuskMultisampleProcessor> (this), onDone, ok, err]
+        juce::WeakReference<DuskMultisampleProcessor> weak (this);
+        juce::MessageManager::callAsync ([weak, onDone, ok, err]
         {
             // Skip entirely if the processor was destroyed after posting this:
             // removeAllJobs joins the pool job, not this queued callback.
@@ -274,8 +274,8 @@ void DuskMultisampleProcessor::loadSf2PresetAsync (
     {
         juce::String err;
         const bool ok = loadSf2Preset (presetIndex, err);
-        juce::MessageManager::callAsync (
-            [weak = juce::WeakReference<DuskMultisampleProcessor> (this), onDone, ok, err]
+        juce::WeakReference<DuskMultisampleProcessor> weak (this);
+        juce::MessageManager::callAsync ([weak, onDone, ok, err]
         {
             auto* self = weak.get();
             if (self == nullptr) return;
