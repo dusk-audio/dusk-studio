@@ -1,7 +1,9 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+
 #include <memory>
+#include <vector>
 
 namespace duskstudio
 {
@@ -54,17 +56,35 @@ public:
 
     // Load an .sf2 (SoundFont 2) file. Converts the first preset to SFZ
     // + extracted WAVs (Sf2Reader + Sf2ToSfz) and plays it through the
-    // vendored sfizz engine - no fluidsynth dependency. Caches the
-    // preset name list for the editor's program switcher.
+    // vendored sfizz engine - no fluidsynth dependency. Caches preset
+    // display metadata for the editor's program switcher.
     bool loadSf2File (const juce::File& sf2, juce::String& errorMessage);
 
     // Switch the loaded SF2 to another preset (re-converts + reloads).
     // No-op error when the current file isn't an SF2.
     bool loadSf2Preset (int presetIndex, juce::String& errorMessage);
 
-    // Preset names of the loaded SF2 (empty for SFZ / no file). The
-    // editor populates its program dropdown from this.
-    const juce::StringArray& getSf2PresetNames() const noexcept { return sf2PresetNames; }
+    struct Sf2PresetInfo
+    {
+        juce::String name;
+        int sourceIndex { 0 };
+        int bank        { 0 };
+        int program     { 0 };
+    };
+
+    // Sorted for display by bank/program. sourceIndex remains the preset's
+    // original PHDR position, which is the stable ID used for loading and
+    // session persistence. Hands back a snapshot, not a reference: a background
+    // load clears + rebuilds sf2Presets on the loader thread, so a caller
+    // holding a reference could see it realloc mid-iteration. Empty while a load
+    // is pending (matches getNumRegions / getControlCcLabels /
+    // getControlImagePath).
+    std::vector<Sf2PresetInfo> getSf2Presets() const
+    {
+        if (isLoadPending()) return {};
+        const juce::ScopedLock sl (sf2PresetsLock);
+        return sf2Presets;
+    }
     int getSf2PresetIndex() const noexcept { return sf2PresetIndex; }
 
     // True if a soundfont has been loaded. Used by editor UI to show
@@ -160,9 +180,12 @@ private:
     juce::String lastLoadError;      // most recent setState / load failure
     Overrides overrides;
 
-    // SF2 program switcher state: cached preset names + the active one.
-    juce::StringArray sf2PresetNames;
-    int               sf2PresetIndex { 0 };
+    // SF2 program switcher state: display metadata + active source index.
+    // sf2PresetsLock guards every replacement of the vector against the
+    // snapshot getSf2Presets() copies out on the message thread.
+    std::vector<Sf2PresetInfo> sf2Presets;
+    juce::CriticalSection      sf2PresetsLock;
+    int                        sf2PresetIndex { 0 };
 
     // CC control plumbing. ccCache holds the last value the UI set per
     // CC (-1 = unset) for read-back + state save. ccFifo carries
@@ -198,5 +221,12 @@ private:
     // invert that order either.
     std::atomic<bool> loadPending { false };
     juce::ThreadPool  loadPool { 1 };
+
+    // A background load's completion is posted via MessageManager::callAsync,
+    // which outlives the pool job the destructor joins. The queued callback
+    // guards on this token so it no-ops if the processor was destroyed before
+    // it ran (destruction + the callback are both message-thread, so the weak
+    // ref's clear/get never race).
+    JUCE_DECLARE_WEAK_REFERENCEABLE (DuskMultisampleProcessor)
 };
 } // namespace duskstudio
