@@ -227,17 +227,35 @@ struct AlsaSeqMidiInput::Impl
         }
     }
 
+    // Abandon an oversized variable event we refuse to buffer: drop whatever was
+    // accumulating for this source and, unless this fragment already ended the
+    // sysex, keep discarding until its 0xF7 so a later fragment is not stitched
+    // onto the hole.
+    void beginDiscard (int client, int port, bool terminated)
+    {
+        auto& sx = sysex[addrKey (client, port)];
+        sx.bytes.clear();
+        sx.discarding = ! terminated;
+    }
+
     void pumpEvents()
     {
         snd_seq_event_t* ev = nullptr;
         while (snd_seq_event_input (seq, &ev) >= 0 && ev != nullptr)
         {
             // Size the decode target to this event: a variable (sysex) event
-            // carries its length; anything else fits in a few bytes. Bound the
-            // variable case by the reassembly cap so a bogus length can't drive a
-            // huge allocation - such an event is skipped, not buffered.
+            // carries its length; anything else fits in a few bytes.
             const bool variable = (ev->flags & SND_SEQ_EVENT_LENGTH_MASK) == SND_SEQ_EVENT_LENGTH_VARIABLE;
-            if (variable && (std::size_t) ev->data.ext.len > kMaxSysexBytes) continue;
+            if (variable && (std::size_t) ev->data.ext.len > kMaxSysexBytes)
+            {
+                // Over the cap: refuse to buffer it, but keep this source's
+                // reassembly coherent - drop any partial sysex and discard the
+                // rest until 0xF7, unless this fragment already carries it.
+                const auto* ext = (const std::uint8_t*) ev->data.ext.ptr;
+                const bool terminated = ext != nullptr && ext[ev->data.ext.len - 1] == 0xF7;
+                beginDiscard (ev->source.client, ev->source.port, terminated);
+                continue;
+            }
             const std::size_t need = variable ? (std::size_t) ev->data.ext.len : kShortEventBytes;
             if (decodeScratch.size() < need) decodeScratch.resize (need);
 

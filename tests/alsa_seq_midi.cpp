@@ -17,8 +17,9 @@ using namespace duskstudio::midi;
 namespace
 {
 // First enumerated identifier whose display name contains portSubstr. Both
-// backends register under client "Dusk Studio"; the port names ("MIDI Out" /
-// "MIDI In") pick the loopback partner out.
+// backends register under client "Dusk Studio", so the tests match the full
+// "Dusk Studio: MIDI ..." display name to avoid selecting some other vendor's
+// MIDI port.
 std::string findId (const std::vector<BackendDeviceInfo>& devs, const std::string& portSubstr)
 {
     for (auto& d : devs)
@@ -67,8 +68,8 @@ bool loopbackAvailable()
     AlsaSeqMidiInput  in;
     AlsaSeqMidiOutput out;
 
-    const std::string src = findId (in.enumerate(),  "MIDI Out");
-    const std::string dst = findId (out.enumerate(), "MIDI In");
+    const std::string src = findId (in.enumerate(),  "Dusk Studio: MIDI Out");
+    const std::string dst = findId (out.enumerate(), "Dusk Studio: MIDI In");
     if (src.empty() || dst.empty())     return false;
     if (! in.enable (src) || ! out.open (dst)) return false;
 
@@ -95,16 +96,16 @@ TEST_CASE ("ALSA seq backend enumerates its loopback partner and stable ids", "[
 
     // The output backend's port is a MIDI source to the input backend; the input
     // backend's port is a destination to the output backend.
-    REQUIRE_FALSE (findId (in.enumerate(),  "MIDI Out").empty());
-    REQUIRE_FALSE (findId (out.enumerate(), "MIDI In").empty());
+    REQUIRE_FALSE (findId (in.enumerate(),  "Dusk Studio: MIDI Out").empty());
+    REQUIRE_FALSE (findId (out.enumerate(), "Dusk Studio: MIDI In").empty());
 
     SECTION ("the loopback endpoint keeps a stable, scheme-prefixed identifier")
     {
-        // Compare this test's own "MIDI In" endpoint across two enumerations
+        // Compare this test's own "Dusk Studio: MIDI In" endpoint across two enumerations
         // rather than the whole global list, which other MIDI clients on the
         // machine can reorder or resize between calls.
-        const std::string a = findId (out.enumerate(), "MIDI In");
-        const std::string b = findId (out.enumerate(), "MIDI In");
+        const std::string a = findId (out.enumerate(), "Dusk Studio: MIDI In");
+        const std::string b = findId (out.enumerate(), "Dusk Studio: MIDI In");
         REQUIRE_FALSE (a.empty());
         REQUIRE (a == b);
         REQUIRE (a.rfind ("alsa-seq:", 0) == 0);
@@ -122,8 +123,8 @@ TEST_CASE ("ALSA seq MIDI loopback round-trips bytes exactly", "[midi][alsa]")
     in.setReceiver ([&] (const std::string& id, const std::uint8_t* b, int n, double)
                     { sink.onMidi (id, b, n); });
 
-    const std::string outAsSource = findId (in.enumerate(),  "MIDI Out");
-    const std::string inAsDest    = findId (out.enumerate(), "MIDI In");
+    const std::string outAsSource = findId (in.enumerate(),  "Dusk Studio: MIDI Out");
+    const std::string inAsDest    = findId (out.enumerate(), "Dusk Studio: MIDI In");
     REQUIRE_FALSE (outAsSource.empty());
     REQUIRE_FALSE (inAsDest.empty());
 
