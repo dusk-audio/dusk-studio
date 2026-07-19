@@ -113,6 +113,11 @@ void MidiInputClient::rebuild (double sampleRate)
     virtualKeyboardIndex = (int) collectors.size() - 1;
 }
 
+void MidiInputClient::setDeviceChangeHandler (std::function<void()> h)
+{
+    backend->setDeviceChangeHandler (std::move (h));
+}
+
 void MidiInputClient::detachCallback()  { backend->stop(); }
 void MidiInputClient::disableAllDevices() { backend->disableAll(); }
 void MidiInputClient::attachCallback()  { backend->start(); }

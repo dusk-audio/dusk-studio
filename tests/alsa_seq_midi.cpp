@@ -96,6 +96,62 @@ struct Sink
     }
 };
 
+// A MIDI client that comes and goes on demand - what a hot-plug looks like to
+// the sequencer. Creating it raises CLIENT_START + PORT_START on the announce
+// port; closing it raises PORT_EXIT + CLIENT_EXIT.
+struct ProbeClient
+{
+    static constexpr const char* kClientName = "Dusk Hotplug Probe";
+    static constexpr const char* kPortName   = "Probe Out";
+    static constexpr const char* kDisplayName = "Dusk Hotplug Probe: Probe Out";
+
+    snd_seq_t* seq = nullptr;
+
+    bool appear()
+    {
+        if (snd_seq_open (&seq, "default", SND_SEQ_OPEN_DUPLEX, 0) < 0) { seq = nullptr; return false; }
+        snd_seq_set_client_name (seq, kClientName);
+        return snd_seq_create_simple_port (seq, kPortName,
+                   SND_SEQ_PORT_CAP_READ | SND_SEQ_PORT_CAP_SUBS_READ,
+                   SND_SEQ_PORT_TYPE_MIDI_GENERIC) >= 0;
+    }
+
+    void vanish()
+    {
+        if (seq != nullptr) snd_seq_close (seq);
+        seq = nullptr;
+    }
+
+    ~ProbeClient() { vanish(); }
+};
+
+// Device-change reports, counted off the poll thread.
+struct ChangeCounter
+{
+    std::mutex              m;
+    std::condition_variable cv;
+    int                     count = 0;
+
+    void bump()
+    {
+        std::lock_guard<std::mutex> lk (m);
+        ++count;
+        cv.notify_all();
+    }
+
+    int total()
+    {
+        std::lock_guard<std::mutex> lk (m);
+        return count;
+    }
+
+    bool waitFor (int want, int ms = 2000)
+    {
+        std::unique_lock<std::mutex> lk (m);
+        return cv.wait_for (lk, std::chrono::milliseconds (ms), [&] { return count >= want; });
+    }
+};
+
 // A successful snd_seq_open is not enough: a constrained CI sequencer accepts
 // the handle yet cannot create or route ports, so the loopback would fail
 // rather than skip. Probe an actual send -> receive round-trip and only run the
@@ -437,4 +493,67 @@ TEST_CASE ("ALSA seq MIDI loopback round-trips bytes exactly", "[midi][alsa]")
 
     in.stop();
     out.closeAll();
+}
+
+TEST_CASE ("ALSA seq backend reports a port appearing and disappearing", "[midi][alsa]")
+{
+    if (! loopbackAvailable())
+        SKIP ("ALSA sequencer loopback unavailable - headless CI");
+
+    ChangeCounter changes;
+    AlsaSeqMidiInput in;
+    in.setDeviceChangeHandler ([&] { changes.bump(); });
+    in.start();
+
+    ProbeClient probe;
+    REQUIRE (probe.appear());
+    REQUIRE (changes.waitFor (1));
+
+    // The report is only worth anything if re-enumerating on the back of it
+    // actually finds the new port - that is all the engine does when it fires.
+    REQUIRE_FALSE (findId (in.enumerate(), ProbeClient::kDisplayName).empty());
+
+    const int afterAppear = changes.total();
+    probe.vanish();
+    REQUIRE (changes.waitFor (afterAppear + 1));
+    REQUIRE (findId (in.enumerate(), ProbeClient::kDisplayName).empty());
+
+    in.stop();
+}
+
+TEST_CASE ("ALSA seq backend does not report its own subscriptions as a change",
+           "[midi][alsa]")
+{
+    if (! loopbackAvailable())
+        SKIP ("ALSA sequencer loopback unavailable - headless CI");
+
+    // enable() subscribes, and the sequencer announces every subscription. Were
+    // those counted, each refresh would announce the next one and the engine
+    // would rebuild for ever.
+    //
+    // The output backend is constructed FIRST so its port already exists when
+    // the input subscribes to the announce port - otherwise its arrival is
+    // itself a genuine port-set change, queued and delivered mid-test.
+    AlsaSeqMidiOutput out;
+    AlsaSeqMidiInput  in;
+
+    const std::string src = findId (in.enumerate(), "Dusk Studio: MIDI Out");
+    REQUIRE_FALSE (src.empty());
+
+    ChangeCounter changes;
+    in.setDeviceChangeHandler ([&] { changes.bump(); });
+    in.start();
+
+    for (int i = 0; i < 8; ++i)
+    {
+        REQUIRE (in.enable (src));
+        in.disableAll();
+    }
+
+    // Nothing came or went, so nothing may be reported. A failure here means
+    // either subscribe traffic is being counted or some other MIDI client on the
+    // machine appeared during the window.
+    REQUIRE_FALSE (changes.waitFor (1, 250));
+
+    in.stop();
 }

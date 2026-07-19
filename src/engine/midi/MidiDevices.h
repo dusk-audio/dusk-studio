@@ -7,6 +7,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -49,6 +50,12 @@ public:
     // Mutating the bank with the callback active is UB - see the detach/attach
     // fence.
     void rebuild (double sampleRate);
+
+    // Message thread, before the first attachCallback. Forwarded to the backend,
+    // whose MIDI thread fires it when the OS port set moves. Bursty and raised
+    // off the message thread, so the consumer owns the thread hop and the
+    // coalescing; backends without an OS notification never fire it.
+    void setDeviceChangeHandler (std::function<void()> h);
 
     // Detach half of the fence: stop the backend's dispatch (its stop() joins
     // that side before returning) and release the OS handles before a rebuild.

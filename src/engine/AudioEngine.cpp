@@ -534,6 +534,18 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     duskstudio::midi::setJuceMidiDeviceManager (deviceManager.juceManager());
    #endif
 
+    // Hot-plug. Set before the backend starts: the handler runs on its MIDI
+    // thread, so it only hops to the message thread and lets that side decide
+    // when a rebuild is safe.
+    midiIn.setDeviceChangeHandler ([this, alive = midiHotplugAlive]
+    {
+        dusk::callAsync ([this, alive]
+        {
+            if (alive->load (std::memory_order_acquire))
+                noteMidiDeviceChange();
+        });
+    });
+
     // Build both MIDI banks before ANY callback is registered - the audio
     // callback iterates perInputMidi, so it must not be attachable while
     // rebuildMidiBanks sizes the vector.
@@ -546,6 +558,30 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     // the message thread when the device manager's device list / current device
     // changes.
     deviceManager.addChangeListener (this, [this] { onDeviceManagerChanged(); });
+}
+
+// Long enough to swallow one device's announce burst, short enough that a
+// controller shows up while the user is still reaching for the mouse. It is
+// also the re-check period while a take holds the refresh off.
+static constexpr int kMidiHotplugDelayMs = 400;
+
+void AudioEngine::noteMidiDeviceChange()
+{
+    // A single plug raises a client arrival plus one port arrival per port, and
+    // a hub raises several devices' worth. The armed timer IS the pending flag,
+    // so re-arming while it runs is what collapses the burst into one rebuild.
+    if (! midiHotplugTimer.isTimerRunning())
+        midiHotplugTimer.startTimer (kMidiHotplugDelayMs);
+}
+
+void AudioEngine::serviceMidiHotplug()
+{
+    // Held, not dropped: refreshMidiInputs detaches the audio callback, so a
+    // hub blip mid-take waits here and applies the moment the take ends.
+    if (! transport.isStopped()) return;
+
+    midiHotplugTimer.stopTimer();
+    refreshMidiInputs();
 }
 
 void AudioEngine::refreshMidiInputs()
@@ -1061,6 +1097,11 @@ void AudioEngine::setStage (Stage s) noexcept
 
 AudioEngine::~AudioEngine()
 {
+    // Before anything else: a hop posted by the poll thread can already be
+    // sitting in the message queue, and joining that thread below will not
+    // remove it. Clearing the flag makes it land on a no-op.
+    midiHotplugAlive->store (false, std::memory_order_release);
+    midiHotplugTimer.stopTimer();
     diagTimer.stopTimer();
     if (transport.isRecording())
         recordManager.stopRecording (transport.getPlayhead());
