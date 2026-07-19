@@ -161,11 +161,11 @@ public:
         return midiOut.getDevices();
     }
 
-    // Synthetic "Virtual Keyboard (Dusk Studio)" collector appended to the
-    // input bank. nullptr until the input bank has been built.
-    juce::MidiMessageCollector* getVirtualKeyboardCollector() noexcept
+    // Feed the synthetic "Virtual Keyboard (Dusk Studio)" input slot with a
+    // complete MIDI message. No-op until the input bank has been built.
+    void postVirtualKeyboardMidi (const std::uint8_t* bytes, int numBytes) noexcept
     {
-        return midiIn.getVirtualKeyboardCollector();
+        midiIn.postVirtualKeyboardMidi (bytes, numBytes);
     }
 
     // Index of the virtual keyboard inside the input bank, or -1 if the bank
@@ -722,9 +722,9 @@ private:
     void processStripLane (int lane) noexcept;            // one worker lane
     void reduceLaneAccum (int numSamples) noexcept;       // sum lanes -> mix
 
-    // The single JUCE-device seam. midiIn owns the per-input collector bank and
-    // is itself the input callback; midiOut owns the output-port bank + RT
-    // out-queue + pump thread. The audio thread only calls midiIn.drainBlock /
+    // The MIDI device seam. midiIn owns the per-input collector bank and
+    // receives the backend's input callback; midiOut owns the output-port bank +
+    // RT out-queue + pump thread. The audio thread only calls midiIn.drainBlock /
     // midiOut.queueRt (both take dusk::MidiBuffer). The detach-rebuild-reattach
     // fence around a hot-plug is orchestrated by rebuildMidiBanks below.
     duskstudio::midi::MidiInputClient  midiIn;

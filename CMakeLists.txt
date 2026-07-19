@@ -527,12 +527,22 @@ if(UNIX AND NOT APPLE)
         src/engine/alsa/AlsaAudioIODeviceType.cpp
         src/engine/alsa/AlsaPerformanceTest.cpp
         # Native ALSA-seq MIDI backend (snd_seq_*, same libasound as the audio
-        # backend). Compiled here so the app build proves it clean; the seam is
-        # not wired to it yet (M3).
+        # backend) - what the MIDI device seam runs on here.
         src/engine/midi/AlsaSeqMidi.cpp
         src/ui/KeyboardStateLinux.cpp)
     target_link_libraries(DuskStudio PRIVATE asound X11 ${CMAKE_DL_LIBS})  # X11/dl: clap host + windowing
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_ALSA=1)
+endif()
+
+# No native MIDI backend off Linux: the seam falls back to JUCE's MIDI device
+# API, confined to this one TU. This condition is the exact inverse of the
+# __linux__ branch MidiDevices.cpp picks its backend with, so the backend it
+# asks for is always compiled in. (The ALSA block above uses the wider
+# UNIX-AND-NOT-APPLE, so a non-Linux Unix would build AlsaSeqMidi.cpp too - as
+# its own non-Linux stub, unreferenced. Only Linux, macOS and Windows are
+# actually targeted.)
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(DuskStudio PRIVATE src/engine/midi/JuceMidiBackend.cpp)
 endif()
 
 # Dusk Studio-owned native PipeWire backend - a juce::AudioIODevice +

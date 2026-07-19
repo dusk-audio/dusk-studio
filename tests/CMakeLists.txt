@@ -143,6 +143,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         alsa_seq_midi.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/midi/AlsaSeqMidi.cpp)
     target_link_libraries(dusk-studio-tests PRIVATE asound)
+else()
+    # The seam picks its backend on __linux__, so off Linux the JUCE fallback is
+    # what MidiDevices.cpp links against. It is the only remaining user of the
+    # JUCE MIDI device API in the test binary, so the module is linked here
+    # rather than for every platform.
+    target_sources(dusk-studio-tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/engine/midi/JuceMidiBackend.cpp)
+    target_link_libraries(dusk-studio-tests PRIVATE juce::juce_audio_devices)
 endif()
 
 # Phase 1a de-JUCE: JUCE-free audio file I/O (libsndfile backend), test-only for
@@ -237,12 +245,6 @@ target_link_libraries(dusk-studio-tests PRIVATE
     Catch2::Catch2WithMain
     ${CMAKE_DL_LIBS}   # dl: ClapBundle dlopen
     juce::juce_audio_basics
-    # juce_audio_devices required by SessionSerializer.cpp for
-    # juce::MidiInput::getAvailableDevices() — resolves Track::
-    # midiInputIdentifier back to an index on session load. Removing
-    # this triggers an ld undefined-reference on the MidiInput /
-    # MidiOutput statics.
-    juce::juce_audio_devices
     juce::juce_audio_formats
     # juce_audio_processors brings in juce::AudioPluginInstance for
     # multisample tests (DuskMultisampleProcessor subclasses it).

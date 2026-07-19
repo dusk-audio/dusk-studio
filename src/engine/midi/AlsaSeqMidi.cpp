@@ -10,9 +10,10 @@
 
 #include <atomic>
 #include <cerrno>
-#include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <map>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <utility>
@@ -32,14 +33,6 @@ constexpr std::size_t kMaxSysexBytes    = 1u << 20;
 // scratch a little headroom for those before it has to grow.
 constexpr std::size_t kShortEventBytes  = 16;
 constexpr char        kIdPrefix[]       = "alsa-seq:";
-
-// Hi-res millisecond clock in the same domain the seam's MidiCollector drains
-// against (M3 passes the equivalent clock to removeNextBlock).
-double nowMs() noexcept
-{
-    using namespace std::chrono;
-    return duration<double, std::milli> (steady_clock::now().time_since_epoch()).count();
-}
 
 // Escape '\' and ':' so the ':'-delimited identifier stays unambiguous even when
 // a client or port name itself contains a colon.
@@ -122,6 +115,30 @@ std::uint32_t addrKey (int client, int port) noexcept
 {
     return ((std::uint32_t) client << 16) | (std::uint32_t) (port & 0xffff);
 }
+
+// JUCE's Linux MIDI identifiers are the raw sequencer address, "<client>-<port>".
+// Sessions saved before this backend existed hold those, so map one back to a
+// live port and hand out its name-based identifier instead. Only valid while the
+// numbers still point at the same hardware - the very instability that motivated
+// the name-based scheme - so a miss is normal and returns "".
+std::string migrateLegacyAddress (snd_seq_t* seq, bool wantRead, const std::string& legacy)
+{
+    const auto dash = legacy.find ('-');
+    if (dash == std::string::npos || dash == 0 || dash + 1 >= legacy.size()) return {};
+
+    const char* s = legacy.c_str();
+    char* endClient = nullptr;
+    char* endPort   = nullptr;
+    const long client = std::strtol (s, &endClient, 10);
+    if (endClient != s + dash) return {};
+    const long port = std::strtol (s + dash + 1, &endPort, 10);
+    if (endPort != s + legacy.size()) return {};
+
+    for (const auto& p : queryPorts (seq, wantRead))
+        if (p.client == client && p.port == port)
+            return p.identifier;
+    return {};
+}
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -133,6 +150,14 @@ struct AlsaSeqMidiInput::Impl
     int               inPort = -1;
     snd_midi_event_t* coder  = nullptr;
     Receiver          receiver;
+
+    // libasound does not support concurrent use of one snd_seq_t. The poll
+    // thread reads events off `seq` while the message thread can be querying it
+    // (migrateIdentifier runs during a session load, which deliberately does NOT
+    // stop the poll thread). Every use of the handle takes this - except poll()
+    // itself, which must stay outside or the message thread would block until
+    // MIDI happens to arrive.
+    std::mutex seqMutex;
 
     // Live source address -> identifier, for demuxing incoming events. Built at
     // enable() (poll thread stopped); read only from the poll thread.
@@ -190,7 +215,7 @@ struct AlsaSeqMidiInput::Impl
         if (! receiver || n <= 0) return;
         auto it = sourceIds.find (addrKey (client, port));
         if (it != sourceIds.end())
-            receiver (it->second, bytes, n, nowMs());
+            receiver (it->second, bytes, n, backendClockMs());
     }
 
     // Reassemble sysex spanning multiple events; pass everything else straight
@@ -240,6 +265,7 @@ struct AlsaSeqMidiInput::Impl
 
     void pumpEvents()
     {
+        const std::lock_guard<std::mutex> lock (seqMutex);
         snd_seq_event_t* ev = nullptr;
         while (snd_seq_event_input (seq, &ev) >= 0 && ev != nullptr)
         {
@@ -276,11 +302,24 @@ struct AlsaSeqMidiInput::Impl
 
     void run()
     {
-        const int nfds = snd_seq_poll_descriptors_count (seq, POLLIN);
+        int nfds = 0;
+        {
+            const std::lock_guard<std::mutex> lock (seqMutex);
+            nfds = snd_seq_poll_descriptors_count (seq, POLLIN);
+        }
+        // A negative count is an alsa error code, and it must not reach the
+        // sizing below: cast to size_t it either wraps to a huge allocation or
+        // to zero, and the wake-pipe slot is then written out of bounds. Nothing
+        // is pollable in that case, so the thread has no work to do.
+        if (nfds <= 0) return;
+
         std::vector<pollfd> pfds ((std::size_t) nfds + 1);
         while (running.load (std::memory_order_acquire))
         {
-            snd_seq_poll_descriptors (seq, pfds.data(), (unsigned) nfds, POLLIN);
+            {
+                const std::lock_guard<std::mutex> lock (seqMutex);
+                snd_seq_poll_descriptors (seq, pfds.data(), (unsigned) nfds, POLLIN);
+            }
             pfds[(std::size_t) nfds] = { wakePipe[0], POLLIN, 0 };
             const int r = poll (pfds.data(), (nfds_t) (nfds + 1), -1);
             if (r < 0) { if (errno == EINTR) continue; break; }
@@ -319,6 +358,7 @@ std::vector<BackendDeviceInfo> AlsaSeqMidiInput::enumerate()
 {
     std::vector<BackendDeviceInfo> out;
     if (! impl->ready()) return out;
+    const std::lock_guard<std::mutex> lock (impl->seqMutex);
     for (auto& p : queryPorts (impl->seq, /*wantRead*/ true))
         out.push_back ({ p.name, p.identifier });
     return out;
@@ -326,9 +366,17 @@ std::vector<BackendDeviceInfo> AlsaSeqMidiInput::enumerate()
 
 void AlsaSeqMidiInput::setReceiver (Receiver r) { impl->receiver = std::move (r); }
 
+std::string AlsaSeqMidiInput::migrateIdentifier (const std::string& legacy)
+{
+    if (! impl->ready()) return {};
+    const std::lock_guard<std::mutex> lock (impl->seqMutex);
+    return migrateLegacyAddress (impl->seq, /*wantRead*/ true, legacy);
+}
+
 bool AlsaSeqMidiInput::enable (const std::string& identifier)
 {
     if (! impl->ready()) return false;
+    const std::lock_guard<std::mutex> lock (impl->seqMutex);
     for (auto& p : queryPorts (impl->seq, true))
     {
         if (p.identifier != identifier) continue;
@@ -342,6 +390,7 @@ bool AlsaSeqMidiInput::enable (const std::string& identifier)
 
 void AlsaSeqMidiInput::disableAll()
 {
+    const std::lock_guard<std::mutex> lock (impl->seqMutex);
     if (impl->seq != nullptr)
         for (auto& kv : impl->sourceIds)
             snd_seq_disconnect_from (impl->seq, impl->inPort,
@@ -362,6 +411,12 @@ struct AlsaSeqMidiOutput::Impl
     int               outPort = -1;
     snd_midi_event_t* coder   = nullptr;
     std::map<std::string, std::pair<int, int>> openDests;   // identifier -> (client,port)
+
+    // As on the input side: the pump thread sends through `seq` while the
+    // message thread can be opening or querying it. Taken by the public entry
+    // points only - Impl::closeAll is also reached from the destructor, which
+    // must not re-enter it.
+    std::mutex seqMutex;
 
     // Fully initialised = usable. A null coder (no encode) or missing port means
     // the backend cannot send, so it must not advertise or open devices.
@@ -404,14 +459,23 @@ std::vector<BackendDeviceInfo> AlsaSeqMidiOutput::enumerate()
 {
     std::vector<BackendDeviceInfo> out;
     if (! impl->ready()) return out;
+    const std::lock_guard<std::mutex> lock (impl->seqMutex);
     for (auto& p : queryPorts (impl->seq, /*wantRead*/ false))
         out.push_back ({ p.name, p.identifier });
     return out;
 }
 
+std::string AlsaSeqMidiOutput::migrateIdentifier (const std::string& legacy)
+{
+    if (! impl->ready()) return {};
+    const std::lock_guard<std::mutex> lock (impl->seqMutex);
+    return migrateLegacyAddress (impl->seq, /*wantRead*/ false, legacy);
+}
+
 bool AlsaSeqMidiOutput::open (const std::string& identifier)
 {
     if (! impl->ready()) return false;
+    const std::lock_guard<std::mutex> lock (impl->seqMutex);
     if (impl->openDests.count (identifier)) return true;   // lazy open is idempotent
     for (auto& p : queryPorts (impl->seq, false))
     {
@@ -424,10 +488,15 @@ bool AlsaSeqMidiOutput::open (const std::string& identifier)
     return false;
 }
 
-void AlsaSeqMidiOutput::closeAll() { impl->closeAll(); }
+void AlsaSeqMidiOutput::closeAll()
+{
+    const std::lock_guard<std::mutex> lock (impl->seqMutex);
+    impl->closeAll();
+}
 
 bool AlsaSeqMidiOutput::isOpen (const std::string& identifier) const
 {
+    const std::lock_guard<std::mutex> lock (impl->seqMutex);
     return impl->openDests.count (identifier) > 0;
 }
 
@@ -437,10 +506,11 @@ bool AlsaSeqMidiOutput::send (const std::string& identifier, const dusk::MidiBuf
     // The pump runs at ~1 ms cadence, so events fire immediately (output_direct)
     // rather than being scheduled per sample-offset within the block; the sub-ms
     // ordering within a block is preserved by send order. Per-offset queue
-    // scheduling, if it proves audible, lands with the M3 seam timing.
+    // scheduling stays unimplemented until it proves audible.
     (void) baseTimeMs;
     (void) sampleRate;
 
+    const std::lock_guard<std::mutex> lock (impl->seqMutex);
     if (impl->seq == nullptr || impl->coder == nullptr) return false;
     auto it = impl->openDests.find (identifier);
     if (it == impl->openDests.end()) return false;
@@ -483,6 +553,7 @@ AlsaSeqMidiInput::AlsaSeqMidiInput()  = default;
 AlsaSeqMidiInput::~AlsaSeqMidiInput() = default;
 std::vector<BackendDeviceInfo> AlsaSeqMidiInput::enumerate() { return {}; }
 void AlsaSeqMidiInput::setReceiver (Receiver) {}
+std::string AlsaSeqMidiInput::migrateIdentifier (const std::string&) { return {}; }
 bool AlsaSeqMidiInput::enable (const std::string&) { return false; }
 void AlsaSeqMidiInput::disableAll() {}
 void AlsaSeqMidiInput::start() {}
@@ -491,6 +562,7 @@ void AlsaSeqMidiInput::stop()  {}
 AlsaSeqMidiOutput::AlsaSeqMidiOutput()  = default;
 AlsaSeqMidiOutput::~AlsaSeqMidiOutput() = default;
 std::vector<BackendDeviceInfo> AlsaSeqMidiOutput::enumerate() { return {}; }
+std::string AlsaSeqMidiOutput::migrateIdentifier (const std::string&) { return {}; }
 bool AlsaSeqMidiOutput::open (const std::string&) { return false; }
 void AlsaSeqMidiOutput::closeAll() {}
 bool AlsaSeqMidiOutput::isOpen (const std::string&) const { return false; }

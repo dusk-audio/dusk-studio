@@ -1098,7 +1098,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         {
             const auto& inputs = engine.getMidiInputDevices();
             track.midiInputIdentifier = (idx < (int) inputs.size())
-                                          ? inputs[idx].identifier
+                                          ? juce::String (inputs[idx].identifier)
                                           : juce::String();
         }
         else
@@ -1141,7 +1141,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         {
             const auto& outs = engine.getMidiOutputDevices();
             track.midiOutputIdentifier = (idx < (int) outs.size())
-                                           ? outs[idx].identifier
+                                           ? juce::String (outs[idx].identifier)
                                            : juce::String();
             // Eagerly open the port so the first audio-thread emission
             // doesn't race a synchronous ALSA snd_seq_connect.
@@ -1467,7 +1467,7 @@ void ChannelStripComponent::rebuildMidiInputDropdown()
     midiInputSelector.addItem ("None", 1);
     const auto& inputs = engine.getMidiInputDevices();
     for (int i = 0; i < (int) inputs.size(); ++i)
-        midiInputSelector.addItem (inputs[i].name, 2 + i);
+        midiInputSelector.addItem (juce::String (inputs[i].name), 2 + i);
 
     // Prefer identifier-based selection when we have one - it survives
     // device-list reordering. Fall back to the raw index for older
@@ -1477,7 +1477,7 @@ void ChannelStripComponent::rebuildMidiInputDropdown()
     {
         for (int i = 0; i < (int) inputs.size(); ++i)
         {
-            if (inputs[i].identifier == track.midiInputIdentifier)
+            if (track.midiInputIdentifier == juce::String (inputs[i].identifier))
             {
                 idx = i; break;
             }
@@ -1501,14 +1501,14 @@ void ChannelStripComponent::rebuildMidiOutputDropdown()
     midiOutputSelector.addItem ("None", 1);
     const auto& outs = engine.getMidiOutputDevices();
     for (int i = 0; i < (int) outs.size(); ++i)
-        midiOutputSelector.addItem (outs[i].name, 2 + i);
+        midiOutputSelector.addItem (juce::String (outs[i].name), 2 + i);
 
     int idx = -1;
     if (track.midiOutputIdentifier.isNotEmpty())
     {
         for (int i = 0; i < (int) outs.size(); ++i)
         {
-            if (outs[i].identifier == track.midiOutputIdentifier)
+            if (track.midiOutputIdentifier == juce::String (outs[i].identifier))
             {
                 idx = i; break;
             }
