@@ -776,7 +776,11 @@ private:
 
     // Outlives the engine so a hop still queued when it dies is a no-op instead
     // of a use-after-free: the poll thread posts those, and joining it in the
-    // destructor cannot un-queue what it already posted.
+    // destructor cannot un-queue what it already posted. The timer above needs
+    // no such guard even though it also holds the engine by reference - it
+    // never crosses a thread. Its dispatch re-reads the live timer list, which
+    // stopTimer removes it from, and both the tick and ~AudioEngine run on the
+    // message thread, so a callback cannot be in flight while the engine dies.
     std::shared_ptr<std::atomic<bool>> midiHotplugAlive
         { std::make_shared<std::atomic<bool>> (true) };
 
