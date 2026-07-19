@@ -116,6 +116,25 @@ std::uint32_t addrKey (int client, int port) noexcept
     return ((std::uint32_t) client << 16) | (std::uint32_t) (port & 0xffff);
 }
 
+// System-announce types that mean the set of ports moved and an enumeration is
+// stale. PORT_SUBSCRIBED / PORT_UNSUBSCRIBED are deliberately NOT here: our own
+// connect_from raises them, so counting them would make every refresh announce
+// the next one and the engine would rebuild forever.
+bool isPortSetChange (int type) noexcept
+{
+    switch (type)
+    {
+        case SND_SEQ_EVENT_CLIENT_START:
+        case SND_SEQ_EVENT_CLIENT_EXIT:
+        case SND_SEQ_EVENT_PORT_START:
+        case SND_SEQ_EVENT_PORT_EXIT:
+        case SND_SEQ_EVENT_PORT_CHANGE:
+            return true;
+        default:
+            return false;
+    }
+}
+
 // JUCE's Linux MIDI identifiers are the raw sequencer address, "<client>-<port>".
 // Sessions saved before this backend existed hold those, so map one back to a
 // live port and hand out its name-based identifier instead. Only valid while the
@@ -150,6 +169,10 @@ struct AlsaSeqMidiInput::Impl
     int               inPort = -1;
     snd_midi_event_t* coder  = nullptr;
     Receiver          receiver;
+
+    // Fired on the poll thread, outside seqMutex, when the announce port
+    // reported a moved port set.
+    DeviceChangeHandler onDeviceChange;
 
     // libasound does not support concurrent use of one snd_seq_t. The poll
     // thread reads events off `seq` while the message thread can be querying it
@@ -190,6 +213,12 @@ struct AlsaSeqMidiInput::Impl
         inPort = snd_seq_create_simple_port (seq, "MIDI In",
                      SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE,
                      SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_APPLICATION);
+        // Hot-plug feed. Subscribing the input port to the System Announce port
+        // routes client/port arrivals and departures into the same poll loop the
+        // MIDI traffic uses. It is not in sourceIds (queryPorts skips client 0),
+        // so disableAll never tears it down and it survives every refresh.
+        if (inPort >= 0)
+            snd_seq_connect_from (seq, inPort, SND_SEQ_CLIENT_SYSTEM, SND_SEQ_PORT_SYSTEM_ANNOUNCE);
         snd_seq_nonblock (seq, 1);   // poll() drives wakeups; event_input returns EAGAIN when empty
         if (snd_midi_event_new (kCoderBufferBytes, &coder) == 0)
             snd_midi_event_no_status (coder, 1);   // emit a status byte on every decoded message
@@ -263,12 +292,25 @@ struct AlsaSeqMidiInput::Impl
         sx.discarding = ! terminated;
     }
 
-    void pumpEvents()
+    // Returns true when this batch carried an announce meaning the port set
+    // moved. The caller fires the handler once the batch is drained and the
+    // sequencer lock is released - it is consumer code, and holding seqMutex
+    // across it would block enumerate() on the message thread.
+    bool pumpEvents()
     {
+        bool portSetChanged = false;
         const std::lock_guard<std::mutex> lock (seqMutex);
         snd_seq_event_t* ev = nullptr;
         while (snd_seq_event_input (seq, &ev) >= 0 && ev != nullptr)
         {
+            // Announce traffic carries no MIDI, so it is taken before the decode
+            // path rather than being sized and decoded as if it did.
+            if (ev->source.client == SND_SEQ_CLIENT_SYSTEM)
+            {
+                portSetChanged = portSetChanged || isPortSetChange (ev->type);
+                continue;
+            }
+
             // Only SYSEX carries MIDI bytes in variable-length form; other
             // variable events (BOUNCE, USR_VAR, ...) are not MIDI, so skip them
             // before they are sized, decoded, or mistaken for a sysex fragment.
@@ -298,6 +340,7 @@ struct AlsaSeqMidiInput::Impl
             // no_status makes each decode self-contained: no cross-event running
             // status, so no reset between events is needed.
         }
+        return portSetChanged;
     }
 
     void run()
@@ -324,7 +367,8 @@ struct AlsaSeqMidiInput::Impl
             const int r = poll (pfds.data(), (nfds_t) (nfds + 1), -1);
             if (r < 0) { if (errno == EINTR) continue; break; }
             if (pfds[(std::size_t) nfds].revents & POLLIN) break;   // stop() woke us
-            pumpEvents();
+            if (pumpEvents() && onDeviceChange)
+                onDeviceChange();
         }
     }
 
@@ -365,6 +409,11 @@ std::vector<BackendDeviceInfo> AlsaSeqMidiInput::enumerate()
 }
 
 void AlsaSeqMidiInput::setReceiver (Receiver r) { impl->receiver = std::move (r); }
+
+void AlsaSeqMidiInput::setDeviceChangeHandler (DeviceChangeHandler h)
+{
+    impl->onDeviceChange = std::move (h);
+}
 
 std::string AlsaSeqMidiInput::migrateIdentifier (const std::string& legacy)
 {
@@ -553,6 +602,7 @@ AlsaSeqMidiInput::AlsaSeqMidiInput()  = default;
 AlsaSeqMidiInput::~AlsaSeqMidiInput() = default;
 std::vector<BackendDeviceInfo> AlsaSeqMidiInput::enumerate() { return {}; }
 void AlsaSeqMidiInput::setReceiver (Receiver) {}
+void AlsaSeqMidiInput::setDeviceChangeHandler (DeviceChangeHandler) {}
 std::string AlsaSeqMidiInput::migrateIdentifier (const std::string&) { return {}; }
 bool AlsaSeqMidiInput::enable (const std::string&) { return false; }
 void AlsaSeqMidiInput::disableAll() {}

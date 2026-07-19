@@ -20,6 +20,11 @@
 // fixed key, so two same-named devices can trade identifiers across a replug or
 // reboot.
 //
+// Hot-plug: the input's port also subscribes to the sequencer's System Announce
+// port, so the poll thread that already waits on this handle sees clients and
+// ports come and go and reports them through the device-change handler. No
+// extra thread, no polling.
+//
 // Threading contract (matches the seam's detach/rebuild/attach fence):
 // enumerate / enable / disableAll / open /
 // closeAll / send are called on the message or pump thread while the input
@@ -35,6 +40,7 @@ public:
 
     std::vector<BackendDeviceInfo> enumerate() override;
     void setReceiver (Receiver r) override;
+    void setDeviceChangeHandler (DeviceChangeHandler h) override;
     std::string migrateIdentifier (const std::string& legacy) override;
     bool enable (const std::string& identifier) override;
     void disableAll() override;

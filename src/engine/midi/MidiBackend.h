@@ -47,6 +47,16 @@ public:
 
     virtual void setReceiver (Receiver r) = 0;          // set once, before start
 
+    // Fires on the backend's MIDI thread when the OS reports that the set of
+    // MIDI ports moved. A bare signal, not a diff: the only useful response is
+    // a full re-enumeration. One plug raises several, so the consumer coalesces.
+    // The handler must not re-enter the backend - the rebuild that follows a
+    // change calls stop(), which joins the thread the handler runs on.
+    // Default no-op: only the ALSA sequencer has an announce port, so the JUCE
+    // fallback leaves mac/win on the manual rescan path.
+    using DeviceChangeHandler = std::function<void()>;
+    virtual void setDeviceChangeHandler (DeviceChangeHandler) {}   // set once, before start
+
     // Best-effort remap of an identifier minted by a PREVIOUS backend, so a
     // session saved before the backend changed keeps its routing. Returns the
     // current identifier for that device, or "" when it cannot be mapped.
