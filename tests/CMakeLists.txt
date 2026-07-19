@@ -145,9 +145,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(dusk-studio-tests PRIVATE asound)
 else()
     # The seam picks its backend on __linux__, so off Linux the JUCE fallback is
-    # what MidiDevices.cpp links against.
+    # what MidiDevices.cpp links against. It is the only remaining user of the
+    # JUCE MIDI device API in the test binary, so the module is linked here
+    # rather than for every platform.
     target_sources(dusk-studio-tests PRIVATE
         ${CMAKE_SOURCE_DIR}/src/engine/midi/JuceMidiBackend.cpp)
+    target_link_libraries(dusk-studio-tests PRIVATE juce::juce_audio_devices)
 endif()
 
 # Phase 1a de-JUCE: JUCE-free audio file I/O (libsndfile backend), test-only for

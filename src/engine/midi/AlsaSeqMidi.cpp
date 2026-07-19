@@ -307,6 +307,12 @@ struct AlsaSeqMidiInput::Impl
             const std::lock_guard<std::mutex> lock (seqMutex);
             nfds = snd_seq_poll_descriptors_count (seq, POLLIN);
         }
+        // A negative count is an alsa error code, and it must not reach the
+        // sizing below: cast to size_t it either wraps to a huge allocation or
+        // to zero, and the wake-pipe slot is then written out of bounds. Nothing
+        // is pollable in that case, so the thread has no work to do.
+        if (nfds <= 0) return;
+
         std::vector<pollfd> pfds ((std::size_t) nfds + 1);
         while (running.load (std::memory_order_acquire))
         {
