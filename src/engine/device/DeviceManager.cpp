@@ -10,6 +10,7 @@
  #include "../alsa/AlsaAudioIODeviceType.h"
 #endif
 
+#include <atomic>
 #include <map>
 
 namespace duskstudio::device
@@ -124,7 +125,8 @@ private:
 class CallbackBridge final : public juce::AudioIODeviceCallback
 {
 public:
-    explicit CallbackBridge (IODeviceCallback* c) noexcept : cb (c) {}
+    CallbackBridge (IODeviceCallback* c, std::atomic<bool>& pendingFlag) noexcept
+        : cb (c), deviceChangePending (&pendingFlag) {}
 
     void audioDeviceIOCallbackWithContext (const float* const* in, int numIn,
                                            float* const* out, int numOut, int numSamples,
@@ -137,6 +139,11 @@ public:
 
     void audioDeviceAboutToStart (juce::AudioIODevice* device) override
     {
+        // Synchronous counterpart to the change-listener clear: a device that
+        // starts and is pulled again before the (async) change broadcast lands
+        // would otherwise leave the flag set with no live device to clear it.
+        deviceChangePending->store (false, std::memory_order_release);
+
         adapter.repoint (device);
         cb->audioDeviceAboutToStart (&adapter);
     }
@@ -147,8 +154,9 @@ public:
         { cb->audioDeviceError (message.toStdString()); }
 
 private:
-    IODeviceCallback* cb;
-    JuceDeviceAdapter adapter { nullptr };
+    IODeviceCallback*  cb;
+    std::atomic<bool>* deviceChangePending;
+    JuceDeviceAdapter  adapter { nullptr };
 };
 } // namespace
 
@@ -167,7 +175,16 @@ struct DeviceManager::Impl : private juce::ChangeListener
         mgr.removeChangeListener (this);
     }
 
-    void changeListenerCallback (juce::ChangeBroadcaster*) override { fireListeners(); }
+    void changeListenerCallback (juce::ChangeBroadcaster*) override
+    {
+        // A live device means whatever deliberate change closed the previous one
+        // has landed. Cleared here rather than from the device-started callback
+        // so it does not depend on anyone having registered one.
+        if (mgr.getCurrentAudioDevice() != nullptr)
+            deviceChangePending.store (false, std::memory_order_release);
+
+        fireListeners();
+    }
 
     void fireListeners()
     {
@@ -191,6 +208,10 @@ struct DeviceManager::Impl : private juce::ChangeListener
     }
 
     juce::AudioDeviceManager mgr;
+
+    // Set by a deliberate device-type / setup change, cleared once a device
+    // starts. See DeviceManager::isDeviceChangePending.
+    std::atomic<bool> deviceChangePending { false };
     // Keyed by the juce type pointer (stable for the manager's lifetime), so an
     // adapter is created once and never moved or destroyed while handed out - a
     // returned IODeviceType* stays valid across later calls.
@@ -305,7 +326,27 @@ IODeviceType* DeviceManager::getCurrentDeviceType()
 
 void DeviceManager::setCurrentDeviceType (const std::string& typeName, bool treatAsChosen)
 {
-    impl->mgr.setCurrentAudioDeviceType (juce::String (typeName), treatAsChosen);
+    // Only arm for a request that will actually move: the manager ignores an
+    // unknown type name or one that is already current, closing nothing and
+    // broadcasting nothing. Arming for those would strand the flag set while a
+    // device is still live, and swallow the next genuine disconnection.
+    const juce::String wanted (typeName);
+    bool willChange = wanted != impl->mgr.getCurrentAudioDeviceType();
+    if (willChange)
+    {
+        willChange = false;
+        for (auto* t : impl->mgr.getAvailableDeviceTypes())
+            if (t != nullptr && t->getTypeName() == wanted) { willChange = true; break; }
+    }
+    if (willChange)
+        impl->deviceChangePending.store (true, std::memory_order_release);
+
+    impl->mgr.setCurrentAudioDeviceType (wanted, treatAsChosen);
+}
+
+bool DeviceManager::isDeviceChangePending() const noexcept
+{
+    return impl->deviceChangePending.load (std::memory_order_acquire);
 }
 
 DeviceSetup DeviceManager::getSetup() const
@@ -334,6 +375,12 @@ std::string DeviceManager::setSetup (const DeviceSetup& d, bool treatAsChosen)
     s.outputChannels = toBig (d.outputChannels);
     s.useDefaultInputChannels  = d.useDefaultInputChannels;
     s.useDefaultOutputChannels = d.useDefaultOutputChannels;
+
+    // Same reasoning as setCurrentDeviceType: an unchanged setup against a live
+    // device is a no-op the manager returns from without broadcasting.
+    if (s != impl->mgr.getAudioDeviceSetup() || impl->mgr.getCurrentAudioDevice() == nullptr)
+        impl->deviceChangePending.store (true, std::memory_order_release);
+
     return impl->mgr.setAudioDeviceSetup (s, treatAsChosen).toStdString();
 }
 
@@ -345,7 +392,7 @@ void DeviceManager::addCallback (IODeviceCallback* callback)
     // dropped (leaving mgr with a dangling pointer).
     auto [it, inserted] = impl->bridges.emplace (callback, nullptr);
     if (! inserted) return;
-    it->second = std::make_unique<CallbackBridge> (callback);
+    it->second = std::make_unique<CallbackBridge> (callback, impl->deviceChangePending);
     impl->mgr.addAudioCallback (it->second.get());
 }
 
@@ -357,7 +404,14 @@ void DeviceManager::removeCallback (IODeviceCallback* callback)
     impl->bridges.erase (it);
 }
 
-void DeviceManager::closeDevice() { impl->mgr.closeAudioDevice(); }
+void DeviceManager::closeDevice()
+{
+    // An explicit close is never a disconnection, whoever asked for it. Nothing
+    // to arm when there is no device to close.
+    if (impl->mgr.getCurrentAudioDevice() != nullptr)
+        impl->deviceChangePending.store (true, std::memory_order_release);
+    impl->mgr.closeAudioDevice();
+}
 
 void DeviceManager::addChangeListener (void* owner, std::function<void()> onChange)
 {

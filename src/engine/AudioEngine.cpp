@@ -2390,15 +2390,22 @@ void AudioEngine::onDeviceManagerChanged()
     if (! hadLiveDevice_.load (std::memory_order_acquire)) return;
     if (deviceManager.getCurrentDevice() != nullptr) return;
 
-    // Defer one tick so a settings-driven device swap can complete
-    // before we decide it's a hot-unplug. The audioDeviceAboutToStart
-    // for the new device will republish hadLiveDevice_ = true and
-    // the deferred check below sees getCurrentDevice() != null,
-    // bailing without spurious alert.
-    dusk::callAsync ([this]
+    // Two things distinguish a real loss from a device change the user asked
+    // for. The defer below covers a swap: audioDeviceAboutToStart republishes
+    // hadLiveDevice_ and the deferred check sees a non-null device, so it bails.
+    // That is not enough for a BACKEND switch, which selects nothing until the
+    // user picks from the new backend's list - no replacement ever arrives, so
+    // consult the manager's pending-change state as well. Sampled here rather
+    // than inside the lambda: what matters is whether THIS notification came
+    // from a deliberate change, not whether one happens to be running a tick
+    // later.
+    const bool fromDeliberateChange = deviceManager.isDeviceChangePending();
+
+    dusk::callAsync ([this, fromDeliberateChange]
     {
         if (deviceManager.getCurrentDevice() != nullptr) return;
         if (! hadLiveDevice_.load (std::memory_order_acquire)) return;
+        if (fromDeliberateChange) return;
 
         // Confirmed loss. Clear the flag so a subsequent change
         // broadcast for the same loss doesn't re-fire.

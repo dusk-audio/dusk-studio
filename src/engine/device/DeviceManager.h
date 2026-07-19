@@ -61,6 +61,16 @@ public:
     // Apply a setup. Returns an empty string on success, else an error message.
     std::string setSetup (const DeviceSetup& setup, bool treatAsChosen);
 
+    // True between a deliberate device change - a type switch, a setup change,
+    // or an explicit closeDevice - and the next device coming up. All of those
+    // close the current device, so a null device during that window is expected
+    // rather than a disconnection, and switching backend leaves it null
+    // indefinitely, until the user picks an interface from the new backend's
+    // list. Whoever watches for hot-unplug must consult this before deciding a
+    // null device means the hardware went away. Self clearing: dropped as soon
+    // as a device starts, or as soon as a change broadcast reports a live one.
+    bool isDeviceChangePending() const noexcept;
+
     void addCallback (IODeviceCallback* callback);
     void removeCallback (IODeviceCallback* callback);
     void closeDevice();
