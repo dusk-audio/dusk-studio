@@ -73,9 +73,11 @@ AudioSettingsPanel::AudioSettingsPanel (device::DeviceManager& dm,
     addAndMakeVisible (selfTestButton);
 
     rescanButton.onClick = [this] { applyRescan(); };
-    rescanButton.setTooltip ("Re-enumerate audio backends and devices. "
-                              "Use after plugging in or removing a USB / "
-                              "Thunderbolt audio interface.");
+    rescanButton.setTooltip ("Re-enumerate audio backends, devices and MIDI "
+                              "ports. Use after plugging in or removing a USB / "
+                              "Thunderbolt audio interface. On Linux, MIDI "
+                              "controllers are picked up on their own once the "
+                              "transport is stopped.");
     addAndMakeVisible (rescanButton);
 
     // Effect oversampling - global. ComboBox IDs are the literal factor (1,

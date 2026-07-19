@@ -428,7 +428,7 @@ Open **Settings → Audio…** to choose your audio device. The panel is divided
 - **Periods (Linux/ALSA only)**: how many buffers the ALSA driver keeps in flight. Two is the lowest-latency safe value; three or more is more robust on a busy machine.
 - **Active output channels**: the master mix uses outputs 1-2. If your interface has more outputs, tick the extra pairs here to open them — each pair then becomes selectable as an aux lane's **Output** (a headphone / cue feed). Off by default; the master stays stereo until you enable more.
 - **Main output**: which physical pair the master mix goes to. **1-2 (default)** in most rigs; move it to another pair (e.g. when you want outputs 1-2 free for a control-room or cue feed). Only pairs the device currently has open are listed. If an aux lane is routed to the same pair as the master, the two sum on that pair.
-- **Rescan devices**: re-enumerates every backend, useful if you plugged in a USB interface after launch.
+- **Rescan devices**: re-enumerates every backend and every MIDI port, useful if you plugged in a USB interface after launch. MIDI controllers on Linux do not need it — see [MIDI hot-plug](#midi-hot-plug).
 
 ### Control surface
 
@@ -966,6 +966,14 @@ For an audio track, the **Input** dropdown lists every input channel on your aud
 For a stereo track, you select two inputs (left and right) independently.
 
 For a MIDI track, you select a MIDI input port and a channel filter. The activity LED next to the input blinks each time a MIDI message arrives, so you can confirm your controller is talking to the right track.
+
+### MIDI hot-plug
+
+On Linux, plugging in a MIDI controller while Dusk Studio is running is enough — the new port appears in the input dropdowns by itself, and tracks whose saved port just came back re-attach to it.
+
+The one rule: the port list is only rebuilt while the transport is **stopped**. Plug something in mid-take and nothing happens until you hit stop, at which point it appears. That is deliberate. Rebuilding the port list briefly interrupts audio, so a controller waking up — or a USB hub blinking — can never put a hole in a take you are recording.
+
+On macOS and Windows, use **Rescan devices** in Audio Settings after plugging a controller in.
 
 ## Arming a track
 
