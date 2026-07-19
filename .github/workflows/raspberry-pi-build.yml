@@ -8,9 +8,9 @@ name: Raspberry Pi build (arm64)
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'release/**']
   pull_request:
-    branches: [main]
+    branches: [main, 'release/**']
   workflow_dispatch:
 
 jobs:
