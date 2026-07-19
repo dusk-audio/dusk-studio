@@ -1,6 +1,7 @@
 #include "JuceMidiBackend.h"
 
 #include <map>
+#include <mutex>
 #include <utility>
 #include <vector>
 
@@ -95,6 +96,7 @@ public:
 
     bool open (const std::string& identifier) override
     {
+        const std::lock_guard<std::mutex> lock (m);
         if (outputs.count (identifier)) return true;   // lazy open is idempotent
         auto out = juce::MidiOutput::openDevice (juce::String (identifier));
         if (out == nullptr) return false;
@@ -105,16 +107,25 @@ public:
         return true;
     }
 
-    void closeAll() override { outputs.clear(); }
+    void closeAll() override
+    {
+        const std::lock_guard<std::mutex> lock (m);
+        outputs.clear();
+    }
 
     bool isOpen (const std::string& identifier) const override
     {
+        const std::lock_guard<std::mutex> lock (m);
         return outputs.count (identifier) > 0;
     }
 
     bool send (const std::string& identifier, const dusk::MidiBuffer& events,
                double baseTimeMs, double sampleRate) override
     {
+        // Held across the send, not just the lookup: releasing early would let a
+        // concurrent closeAll destroy the output this iterator points at.
+        const std::lock_guard<std::mutex> lock (m);
+
         const auto it = outputs.find (identifier);
         if (it == outputs.end() || it->second == nullptr) return false;
 
@@ -136,8 +147,13 @@ public:
     }
 
 private:
+    // The seam serialises every call into this backend under its own mutex, but
+    // that is the caller's discipline, not a property of this class. Guarding
+    // here keeps it safe for any caller, on the platforms where this fallback is
+    // the MIDI path and the ALSA backend's equivalent guard does not apply.
+    mutable std::mutex m;
     std::map<std::string, std::unique_ptr<juce::MidiOutput>> outputs;
-    juce::MidiBuffer scratch;   // pump thread only
+    juce::MidiBuffer scratch;   // guarded by m
 };
 } // namespace
 
