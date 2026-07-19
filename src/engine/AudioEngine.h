@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <memory>
 #include <mutex>
 #include <vector>
 #include "../dsp/AuxLaneStrip.h"
@@ -14,6 +15,7 @@
 #include "../dsp/MasteringChain.h"
 #include "../dsp/Metronome.h"
 #include "../dsp/PitchDetector.h"
+#include "../foundation/MessageThread.h"
 #include "MidiSyncReceiver.h"
 #include "MidiTimeCodeReceiver.h"
 #include "MidiClockEmitter.h"
@@ -755,6 +757,28 @@ private:
     // new input. Without this, held notes from the previous device
     // keep ringing (Note Off never arrives on the now-unrouted source).
     std::array<int, Session::kNumTracks> lastMidiInputIndex {};
+
+    // MIDI hot-plug. The backend's MIDI thread reports that the OS port set
+    // moved; noteMidiDeviceChange arms a single delayed pass so one plug (a
+    // client arrival plus a port arrival per port) costs one rebuild, and
+    // serviceMidiHotplug holds that pass until the transport is stopped -
+    // refreshMidiInputs detaches the audio callback, so applying it mid-take
+    // would drop audio. Message thread; only the ALSA backend raises it.
+    void noteMidiDeviceChange();
+    void serviceMidiHotplug();
+    struct MidiHotplugTimer : dusk::Timer
+    {
+        explicit MidiHotplugTimer (AudioEngine& o) : owner (o) {}
+        void timerCallback() override { owner.serviceMidiHotplug(); }
+        AudioEngine& owner;
+    };
+    MidiHotplugTimer midiHotplugTimer { *this };
+
+    // Outlives the engine so a hop still queued when it dies is a no-op instead
+    // of a use-after-free: the poll thread posts those, and joining it in the
+    // destructor cannot un-queue what it already posted.
+    std::shared_ptr<std::atomic<bool>> midiHotplugAlive
+        { std::make_shared<std::atomic<bool>> (true) };
 
     // Rebuild both device banks (message thread, input+audio callbacks
     // DETACHED by the caller). Enumerates hardware, sizes perInputMidi,
