@@ -1,14 +1,47 @@
 # Dusk Studio — instructions for Claude
 
-Dusk Studio is a portastudio-style DAW for Linux, JUCE 8 / C++17. The authoritative spec is [DuskStudio.md](DuskStudio.md). Read it before changing anything non-trivial.
+Dusk Studio is a portastudio-style DAW for Linux, C++17. It is being actively de-JUCE'd (see **De-JUCE — no new JUCE** below; read it before writing any new code). The authoritative spec is [DuskStudio.md](DuskStudio.md). Read it before changing anything non-trivial.
 
 ## Architecture cheat-sheet
 
-- **Audio backend**: PipeWire (primary) via JUCE's JACK backend; ALSA fallback.
+- **Audio backend**: native `dusk` PipeWire backend ([src/engine/pipewire/](src/engine/pipewire/)), primary; native ALSA fallback. (The old JUCE-JACK shim is deleted — don't reintroduce a JUCE audio-device path.)
 - **DSP**: extracted from the user's existing Dusk Audio plugins at `/home/marc/projects/plugins/`. Shared headers live (or will live) at `plugins/plugins/shared/dsp-cores/` so both Dusk Studio and the Dusk plugins are single-source-of-truth consumers. Resolved via `-DDUSK_PLUGINS_PATH=/path/to/plugins` or sibling `../plugins` (mirror of the JUCE pattern). Header-only cores: edit a file in the plugins repo, next Dusk Studio build picks it up — no copy step, no submodule bump.
 - **JUCE**: 8.x, resolved via `-DJUCE_PATH` or sibling `../JUCE` (same scheme as the Dusk plugins repo).
 - **Native plugin hosts** (Linux): CLAP (`src/engine/clap/`), LV2 (`src/engine/lv2/`, lilv/suil via pkg-config), VST3 (`src/engine/vst3/`, Steinberg SDK hosting subset via the `external/vst3sdk` submodule — Dusk-owned mirror `dusk-audio/vst3sdk`, tag `dusk-vst3sdk-v1`, GPL-3.0 arm). All implement `src/engine/hosting/INativeInstance`; compile gates `DUSKSTUDIO_HAS_NATIVE_{CLAP,LV2,VST3}` with `#else` stubs so other platforms build. GPL invariant: never bundle any third-party plugin in a distribution (see LICENSES.txt).
 - **Topology**: 24 channel strips (HPF → 4-band EQ → FET/Opto comp → sends → pan → bus assign → fader → mute/solo) → 4 aux buses (EQ + comp + fader) → master (Pultec EQ + bus comp + tape sat + fader). Three banks of 8 select which 8 strips the control surface drives at a time; the full 24 are visible on screen.
+
+## De-JUCE — no new JUCE (READ FIRST)
+
+Dusk Studio is being re-platformed to remove **all** JUCE by 1.0, incrementally, tower by tower (campaign map + tower order in [docs/dejuce-campaign.md](docs/dejuce-campaign.md); live state in the [de-JUCE roadmap memory](../../.claude/projects/-home-marc-projects-DuskStudio/memory/project_dejuce_roadmap.md)). Much of the code documented below still uses `juce::` — that is the *migration surface*, not a pattern to copy. **New code must not add JUCE.** Reach for the JUCE-free seam first; fall back to `juce::` only inside a file that is already coupled and has no seam yet.
+
+**The gate.** [tools/juce-gate.sh](tools/juce-gate.sh) (CI, via `linux-build.yml`) is a ratchet over `src/`: a *clean* file that gains `juce::`/`<juce_` and isn't on `tools/juce-allowlist.txt` **fails the build**, and allowlisted files may only leave the list, never rejoin. Two things the gate can't catch — you must:
+- **Don't pile more `juce::` into an already-allowlisted file.** The gate is silent there (the file is already coupled), yet most feature work lands in coupled files (AudioEngine, Session, `src/ui/*`) — exactly where new JUCE sneaks in. Use the seam anyway.
+- **Never write the literal `juce::` token in a comment** — the gate greps text, so `// mirrors juce::Foo` trips it. Write "JUCE's Foo" by name instead.
+- The gate scans `src/` only. `tests/` may reference JUCE (the A/B-vs-JUCE parity tests need it); `tools/` and `packaging/` should not gain it.
+
+**Prefer the `src/foundation/` (and sibling) seams for new code:**
+
+| Instead of | Use | Header |
+|---|---|---|
+| `juce::String`, text ops | `dusk::text` | [Text.h](src/foundation/Text.h) |
+| `juce::File`, paths | `dusk::fs` | [Fs.h](src/foundation/Fs.h) |
+| `juce::var` / JSON | `dusk::json` (nlohmann) | [Json.h](src/foundation/Json.h) |
+| `juce::jmax/jmin/jlimit` | `std::max`/`std::min`/`std::clamp` | — |
+| `juce::SmoothedValue` | `dusk::audio::SmoothedValue` | [SmoothedValue.h](src/foundation/SmoothedValue.h) |
+| `juce::Decibels` | `dusk::audio` decibel helpers | [Decibels.h](src/foundation/Decibels.h) |
+| `juce::ScopedNoDenormals` | `dusk::audio::ScopedNoDenormals` | [ScopedNoDenormals.h](src/foundation/ScopedNoDenormals.h) |
+| `juce::dsp::Oversampling` | `dusk::audio::StereoOversampler` | [StereoOversampler.h](src/foundation/StereoOversampler.h) |
+| `juce::dsp::DelayLine` | `dusk::audio::IntDelayLine` | [IntDelayLine.h](src/foundation/IntDelayLine.h) |
+| `juce::dsp::IIR::Filter` | `duskaudio::Biquad` (donor DuskFilters) | donor `shared-dpf/dsp/DuskFilters.hpp` |
+| `juce::MidiBuffer` / `MidiMessage` | `dusk::MidiBuffer` | [MidiBuffer.h](src/foundation/MidiBuffer.h) |
+| `juce::MidiInput` / `MidiOutput` / `MidiMessageCollector` | `duskstudio::midi` seam + native backend | [src/engine/midi/](src/engine/midi/) (`JuceMidiBackend.cpp` is the mac/win fallback and the ONLY place these are still allowed) |
+| `juce::Timer`, `MessageManager::callAsync` | `dusk::Timer`, `dusk::callAsync` | [MessageThread.h](src/foundation/MessageThread.h) |
+| `juce::WaitableEvent` | `dusk::AutoResetEvent` | [AutoResetEvent.h](src/foundation/AutoResetEvent.h) |
+| `juce::AudioPlayHead::PositionInfo` | `dusk::TransportPosition` | [TransportPosition.h](src/foundation/TransportPosition.h) |
+| `juce::AudioFormatReader/Writer` | libsndfile wrappers | [src/engine/audiofile/](src/engine/audiofile/) |
+| `juce::AudioIODevice(Type)`, `AudioDeviceManager`, `BigInteger` masks | `dusk::audio` device interfaces | [src/engine/device/](src/engine/device/) (seam; native backend in progress) |
+
+**No seam yet (still JUCE — don't spread it to clean files):** the GUI tower (`juce::Component/Graphics/Colour/Font/Slider/Label/Button` — a bespoke Wayland toolkit is the finale), plugin-hosting `juce::AudioProcessor`/`AudioPluginInstance`, donor `juce::AudioProcessorValueTreeState` (being ported JUCE→DPF in the plugins repo), and `juce::AbstractFifo`. Editing these inside their already-coupled files is fine; do not pull them into a currently-clean file. For new UI use `DuskComboBox` / `duskstudio::showContextMenu`, never raw `juce::ComboBox` / `PopupMenu::showMenuAsync` / `juce::FileChooser`.
 
 ## Build
 
@@ -41,7 +74,9 @@ Phases 1a → 5 follow [DuskStudio.md](DuskStudio.md). Don't skip ahead. As of w
 
 ## Audio thread rules (MANDATORY)
 
-The audio thread (`AudioEngine::audioDeviceIOCallbackWithContext` and any `process*` it calls) is **real-time**. Violating these rules causes glitches, clicks, dropouts, or crashes:
+The audio thread (`AudioEngine::audioDeviceIOCallback` and any `process*` it calls) is **real-time**. Violating these rules causes glitches, clicks, dropouts, or crashes:
+
+> **De-JUCE:** the `juce::` names in this section describe *current* code. For new code use the seams from the De-JUCE section above — `dusk::audio::ScopedNoDenormals`, `dusk::text` (not `juce::String`), `dusk::Timer`. `juce::AbstractFifo` has no seam yet; keep it only where already used.
 
 - **NEVER allocate memory** — no `new`, `make_unique`, `push_back`, `resize`, `std::string`, or `juce::String`. Pre-size all buffers in `prepare`/`audioDeviceAboutToStart`.
 - **NEVER lock a mutex** — cross-thread state is `std::atomic<T>` or `juce::AbstractFifo`. For rare swap-load patterns (see PluginSlot), use a lock-free atomic instance pointer; the audio thread reads via `acquire`, the message thread mutates via `release` and only releases the old object after the swap completes.
@@ -58,6 +93,8 @@ The audio thread (`AudioEngine::audioDeviceIOCallbackWithContext` and any `proce
 
 Dusk Studio's DSP classes (`ChannelStrip`, `AuxBusStrip`, `MasterBus`, `MasteringChain`, `PluginSlot`) follow a consistent shape:
 
+> **De-JUCE:** new DSP uses `dusk::audio::SmoothedValue`, `dusk::audio::StereoOversampler` / `IntDelayLine`, and `duskaudio::Biquad` — not `juce::SmoothedValue` / `juce::dsp::*`. Prefer raw `float*`/`float**` buffers over `juce::AudioBuffer` at new boundaries.
+
 - **`prepare(sampleRate, blockSize, ...)`** — cache `sampleRate`, `.prepare(spec)` every `juce::dsp::*` member, `.reset(sampleRate, rampSeconds)` every `SmoothedValue`, size every per-block scratch buffer. Called from `AudioEngine::prepareForSelfTest` (and indirectly from `audioDeviceAboutToStart`). May be called multiple times — must be idempotent.
 - **`bind(params)`** — stash a reference to the matching `ChannelStripParams` / `AuxBusParams` / `MasterBusParams` so the audio thread can read live values via the cached atom addresses. Called once at `AudioEngine` construction.
 - **`processInPlace(L, R, numSamples)`** or **`processAndAccumulate(...)`** — the audio-thread entry point. Updates smoother targets at the top, runs DSP, updates `mutable` meter atomics at the bottom.
@@ -68,6 +105,8 @@ Dusk Studio's DSP classes (`ChannelStrip`, `AuxBusStrip`, `MasterBus`, `Masterin
 ## Parameter conventions
 
 Dusk Studio has two parameter sources, both following the same "cache-the-atomic-pointer-once, read-lock-free-on-the-audio-thread" rule:
+
+> **De-JUCE:** source 1 (session `std::atomic<T>`) is already JUCE-free — new audio params go there. Source 2's APVTS is donor DSP being ported JUCE→DPF; don't add a *new* APVTS-backed processor.
 
 1. **Session-level atomics** — `ChannelStripParams::faderDb`, `AuxBusParams::eqLfGainDb`, etc. are plain `std::atomic<T>` members of structs in [src/session/Session.h](src/session/Session.h). The UI mutates via `.store(v, std::memory_order_relaxed)` on `onValueChange`; the audio thread reads via `.load(std::memory_order_relaxed)`. New audio params go here.
 2. **APVTS atoms in vendored DSP** — `UniversalCompressor`, `BritishEQProcessor`, `TubeEQProcessor` etc. expose their parameters via `juce::AudioProcessorValueTreeState::getRawParameterValue("name")`. Cache the returned pointer ONCE in a `bindCompParams()`-style function called from `prepare`. The audio thread writes via `storeAtom(p, v)` at the top of each block (lock-free, notification-free path) and the donor's `processBlock` reads it.
@@ -85,6 +124,8 @@ For plugin instances, audio file readers, or any heavy resource — never block 
 - **Autosave / session save** — message thread only. Atomic temp-file + rename in `SessionSerializer::save` so a crash mid-save never produces a half-written `session.json`.
 
 ## Common DSP patterns
+
+> **De-JUCE:** filters → `duskaudio::Biquad`; oversampling → `dusk::audio::StereoOversampler`; smoothing → `dusk::audio::SmoothedValue`; metering timer → `dusk::Timer`. `juce::FloatVectorOperations` has no seam yet — plain loops or `std::` for new SIMD-friendly work.
 
 - **Oversampling** — All oversampling (donor plugins and otherwise) is controlled globally by the **Effect Oversampling** dropdown in the Audio Device settings panel. Individual DSP units must NOT enable internal oversampling on their own; the engine drives the chosen factor through to every processor that supports it. Don't call `setInternalOversamplingEnabled` (or equivalent) at the DSP-class level — wire new processors to read the engine-wide setting instead. **One deliberate exception**: the mastering [BrickwallLimiter](src/dsp/BrickwallLimiter.h) owns a fixed 4× oversampler. True-peak limiting is impossible without it, and the limiter is the terminal output stage (no donor saturation downstream to double-oversample), so it stays independent of the global setting.
 - **Filters** — `juce::dsp::IIR::Filter` and `BritishEQProcessor` (vendored). Always `.prepare(spec)` in `prepare`. **No EQ cramping ever** — IIR filters near Nyquist need oversampling; pre-warping alone is insufficient. The vendored EQs handle this.
