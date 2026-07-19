@@ -1,7 +1,11 @@
 # De-JUCE campaign — map and working agreement
 
-Read this first in any session doing de-JUCE work. It is the campaign-level map:
-where we are, what remains, how a tower session runs, and when to escalate.
+Read this first among the de-JUCE docs in any session doing de-JUCE work. It is
+the campaign-level map: where we are, what remains, how a tower session runs,
+and when to escalate. It does not replace the product spec — anything that
+changes behaviour rather than re-platforming it still goes through
+[DuskStudio.md](../DuskStudio.md) (read the relevant part; it is ~30k tokens, so
+chunk it).
 The per-tower executable spec for the current tower is a sibling doc (see
 "Remaining towers" below). Live session-to-session state (current branch, phase
 status, gate count) lives in the memory ledger

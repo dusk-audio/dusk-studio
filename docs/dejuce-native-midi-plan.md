@@ -83,9 +83,15 @@ message-thread `midiOut.send` (:379); pump lifecycle (:407, :1096);
 
 **OUT OF SCOPE — do not pull in:** construction of `juce::MidiMessage` for
 playback/sync/test content (AudioEngine.cpp ~:4016–:4206, DuskStudioApp.cpp
-:422+, AudioPipelineSelfTest.cpp:1227, VirtualKeyboardComponent's message
-*building*). That is MIDI content, not device I/O — it dies with the
-events/GUI towers. Only the VKB *injection route* changes here.
+:422+, AudioPipelineSelfTest.cpp:1227). That is MIDI content, not device I/O —
+it dies with the events/GUI towers.
+
+The virtual keyboard is the one exception, and M3 step 5 is authoritative on it:
+its note-on/off *byte assembly* did change, because the injection route it fed
+(`getVirtualKeyboardCollector`) was one of the two leaks being closed. Building
+three bytes locally is trivial, so the component now posts raw bytes and no
+longer constructs a `juce::MidiMessage` for note on/off. Its other JUCE use
+(note-name display) is untouched.
 
 **Template precedent:** the device tower's seam split —
 `src/engine/device/DeviceManager.cpp` keeps Juce*Adapter classes in one
@@ -133,8 +139,23 @@ Retiming collector on top of `MidiRing`, replacing
 `juce::MidiMessageCollector`. Producer: backend MIDI thread. Consumer: audio
 thread, once per block.
 
+**Ownership contract (inherited from `MidiRing`, which is SPSC):** exactly ONE
+producer thread per collector, and one consumer. The seam satisfies this by
+construction — a hardware input is fed only by the backend's dispatch thread,
+and the synthetic VKB slot only by the message thread; no collector is ever fed
+by both. A backend that dispatches concurrently for one device must serialise
+before the collector or hand each source its own.
+
+**Normative shape: the producer stamps a raw `timeMs` and nothing else; ALL
+retiming happens consumer-side in `removeNextBlock`, against consumer-owned
+`lastCallbackTime` / `sampleRate`.** The JUCE algorithm below is transcribed as
+the *semantics to preserve*, not the structure to copy — its producer-side
+`sampleNumber` formula is explicitly NON-normative here, because JUCE computes
+it under a mutex the SPSC ring exists to avoid. Read the "Adaptation for dusk"
+bullet with it.
+
 **JUCE's algorithm (read from JUCE source 2026-07-17,
-`juce_MidiMessageCollector.cpp`) — replicate the semantics:**
+`juce_MidiMessageCollector.cpp`) — semantics to replicate:**
 
 - State: `sampleRate`, `lastCallbackTime` (ms, hi-res clock), pending event
   list with per-event sample numbers.
@@ -248,14 +269,28 @@ present-or-stub pattern if the audio-ALSA gate doesn't fit cleanly).
   stamp `timeMs` from the same hi-res clock domain the collector drains
   against, invoke the Receiver. Output: `snd_midi_event_encode` +
   `snd_seq_event_output_direct` (blocking OK — called from the seam's pump).
-- Sysex: `snd_midi_event_t` handles running status/sysex chunking — reset the
-  coder appropriately between events (`snd_midi_event_reset_decode/encode`);
-  test multi-chunk sysex explicitly.
+- Sysex: `snd_midi_event_t` handles running status / sysex chunking. The two
+  directions do NOT share reset timing, so treat them separately:
+  - Encode (output): each `dusk::MidiBuffer` entry is one complete message, so
+    `snd_midi_event_reset_encode` runs once per entry to stop running status
+    leaking between independent messages. It must NOT run inside an entry — a
+    sysex is a single entry and its encode loop runs to completion untouched.
+  - Decode (input): the coder is put in `no_status` mode, which makes every
+    decode self-contained, so no per-event reset is needed at all. Multi-event
+    sysex reassembly is done above the coder, per source.
+  Test multi-chunk sysex explicitly.
 - **Identifier scheme (the subtle correctness risk):** ALSA client *numbers*
   are not stable across reboot/replug. Identifier must be name-based, e.g.
   `"alsa-seq:<client name>:<port name>[:<dup-index>]"` (dup-index for
   same-named ports, ordinal within enumeration). Requirements:
-  - Stable across reboot/replug for the same hardware.
+  - Stable across reboot/replug for the same hardware, with one known
+    limitation: the `:<dup>` suffix is an ordinal within the *current*
+    enumeration, not a persistent key, so two identically named ports can trade
+    identifiers across a replug or reboot and a saved routing then silently
+    resolves to the wrong one of the pair. ALSA exposes no stable per-port
+    identity to key on instead. Open follow-on, not solved by this tower: treat
+    an ambiguous name match as unresolved and make the user re-pick, rather than
+    guessing. Exact-identifier matching is unaffected.
   - Saved-session compat: Session stores string ids
     (Session.h:778–791 track midiInput/OutputIdentifier, :1388–93 MCU) and
     resolves via `resolveByIdentifier` string match (AudioEngine.cpp:563).
@@ -271,8 +306,15 @@ present-or-stub pattern if the audio-ALSA gate doesn't fit cleanly).
   through the real backend path (enum → open → send → receive → decode).
   Cover: 3-byte channel messages, running-status bursts, multi-chunk sysex,
   enumeration finds the loopback port, identifier round-trip stability.
-  Guard the suite to skip cleanly when `/dev/snd/seq` is absent (CI
-  containers) — probe `snd_seq_open` and `SKIP()` on failure, never fail.
+  Guard the suite to skip cleanly on a constrained sequencer (CI containers).
+  `snd_seq_open` succeeding is NOT a sufficient probe — a container can hand
+  back a handle and still refuse to create or route ports, which fails the suite
+  instead of skipping it. Probe an actual send -> receive round-trip and
+  `SKIP()` when it does not complete. Skipping also needs ctest told about it:
+  `catch_discover_tests` runs each case under an exact-name filter, so a
+  skip-only run exits 4 and scores as failed. Split the discovery into a scoped
+  `catch_discover_tests(<t> TEST_SPEC "[alsa]" EXTRA_ARGS
+  --allow-running-no-tests)` plus a second call taking `~[alsa]`.
 
 **M2 done-when:** backend + tests green locally (loopback suite passes on a
 real machine, skips gracefully headless-CI), gate unchanged (new files clean
