@@ -1,6 +1,5 @@
 #pragma once
 
-#include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include "../session/Session.h"
 #include "../foundation/Text.h"
