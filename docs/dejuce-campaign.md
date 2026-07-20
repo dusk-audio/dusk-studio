@@ -27,6 +27,25 @@ and every call site is flipped. `juce_core` unlinks last. The
 `tools/juce-gate.sh` ratchet (allowlist currently 194 files) is the
 file-level backstop, not the goal.
 
+Metric caveat: JUCE module declarations pull dependencies transitively —
+e.g. `juce_audio_utils` depends on `juce_audio_devices`, so removing the
+direct `juce_audio_devices` link still leaves the module compiling until
+`juce_audio_utils` itself unlinks. "Unlinked" for a tower means the direct
+link line is gone AND zero `src/` translation units include the module's
+headers on the platform in question; the object code leaves the binary when
+the last transitive dependent goes.
+
+Platform scope: a module is **globally unlinked** — and only then does the
+north-star count above drop — once its direct CMake link is removed on
+**every** shipping platform (Linux, macOS, Windows). A tower that removes a
+link on one platform while the others keep the JUCE path scores a
+**platform-scoped** unlink (e.g. "Linux-unlinked"): report that progress
+explicitly, but the count stays put until macOS and Windows follow.
+Phase-3-audio is exactly this shape — `juce_audio_devices` goes
+Linux-unlinked while mac/win keep the JUCE device path, so the count of 12
+does not move; it drops to 11 only when the mac/win path is also
+reimplemented.
+
 ## Done (condensed — full history in memory `project_dejuce_history.md`)
 
 - **Phase 0**: CI juce-token ratchet gate + allowlist + Catch2 A/B harness.
@@ -70,14 +89,20 @@ file-level backstop, not the goal.
 
 ## Remaining towers, in order
 
-1. **Device Phase-3-audio** — NEXT — native PipeWire/ALSA implement the dusk
-   `IODevice`/`IODeviceType` interfaces directly; drop the Juce*Adapter /
-   CallbackBridge scaffolding inside `DeviceManager.cpp`; unlink
-   `juce_audio_devices` (the MIDI half is done, so this tower is what finally drops the module). RT-critical: the native
-   backend takes over callback dispatch and removes the JUCE audio safety
-   net/A-B reference. **Blocked on Marc's owed hardware bench** (PipeWire
-   streaming, 2b failure paths: hot-unplug mid-play, xrun recovery, SR/buffer
-   swap). Escalate the kickoff plan to Fable (see policy below).
+1. **Device Phase-3-audio** — ACTIVE — native PipeWire/ALSA implement the
+   dusk `IODevice`/`IODeviceType` interfaces directly; drop the Juce*Adapter /
+   CallbackBridge scaffolding inside `DeviceManager.cpp`; remove the direct
+   `juce_audio_devices` link on Linux (mac/win keep the JUCE path; see the
+   metric caveat above). RT-critical: the native backend takes over callback
+   dispatch and removes the JUCE audio safety net/A-B reference. Executable
+   spec: [dejuce-device-phase3-audio-plan.md](dejuce-device-phase3-audio-plan.md)
+   (P0–P5, two PRs, Opus prompts included). Unblocked 2026-07-20: code
+   proceeds now. Marc's hardware bench gates each PR's merge against the
+   bench debts named in *that* PR — PR-A (P0–P2): device-busy-at-boot
+   fallback + legacy-blob migration; PR-B (P3–P5): PipeWire/ALSA streaming +
+   the device-failure paths (hot-unplug, xrun, SR/buffer swap). The debts are
+   split across the two PRs (plan §"Owed to Marc's bench"); there is no single
+   whole-tower "gates merge" pass.
 2. **String-floor remnants** — juce::String in Session/SessionSerializer core
    (blocked by UI writes into Session.h members), ALSA backend (juce virtual
    signatures die with tower 2), hosting surfaces (PluginManager/PluginSlot),
