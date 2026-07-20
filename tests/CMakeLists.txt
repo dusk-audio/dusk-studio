@@ -44,6 +44,8 @@ add_executable(dusk-studio-tests
     session_track_shrink.cpp
     device_fallback_message.cpp
     device_interfaces.cpp
+    device_state_blob.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/device/DeviceStateBlob.cpp
     update_checker_version.cpp
     session_schema_migration.cpp
     dsp_components_test.cpp

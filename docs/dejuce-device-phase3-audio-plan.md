@@ -1,7 +1,10 @@
 # De-JUCE tower spec — Device Phase-3-audio
 
-**STATUS: P0 DONE (commit a7a06a2) on branch `dejuce/device-phase3-audio-a`.
-Next phase: P1 (DeviceStateBlob unit + A/B tests) on the same branch.**
+**STATUS: P1 DONE (HEAD of branch `dejuce/device-phase3-audio-a`).
+DeviceStateBlob unit + full JSON round-trip / legacy-XML A/B matrix landed
+(8 cases, 427/427 ctest). Next phase: P2 (native DeviceManager on Linux) on the
+same branch. Resume: "P2 on dejuce/device-phase3-audio-a - native DeviceManager
+per spec §D1/§D2/§D4/§P2".**
 Update this line each session (phase done, branch, resume phrase).
 
 Read order for an executing session: `docs/dejuce-campaign.md` → this file →
