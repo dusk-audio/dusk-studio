@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <set>
 #include <string>
@@ -229,19 +230,35 @@ struct Harness
 };
 
 #if ! defined (__APPLE__)
-struct LoopStopper final : dusk::Timer
+// Pump the JUCE message loop until `ready()` holds or `timeoutMs` elapses, then
+// exit. A repeating timer polls the condition from inside a single dispatch loop
+// (JUCE_MODAL_LOOPS_PERMITTED is off, so runDispatchLoopUntil is unavailable and
+// stopDispatchLoop latches the quit flag - the loop must be entered and quit
+// exactly once). A met condition returns promptly; a miss still stops at the
+// timeout, so a failing test terminates deterministically instead of hanging.
+struct PumpUntil final : dusk::Timer
 {
+    std::function<bool()> ready;
+    int elapsedMs = 0, timeoutMs = 0, tickMs = 0;
     void timerCallback() override
     {
-        stopTimer();
-        juce::MessageManager::getInstance()->stopDispatchLoop();
+        elapsedMs += tickMs;
+        if (ready() || elapsedMs >= timeoutMs)
+        {
+            stopTimer();
+            juce::MessageManager::getInstance()->stopDispatchLoop();
+        }
     }
 };
 
-void pumpFor (int ms)
+void pumpUntil (std::function<bool()> ready, int timeoutMs = 1000)
 {
-    LoopStopper stopper;
-    stopper.startTimer (ms);
+    if (ready()) return;
+    PumpUntil p;
+    p.ready     = std::move (ready);
+    p.timeoutMs = timeoutMs;
+    p.tickMs    = 5;
+    p.startTimer (p.tickMs);
     juce::MessageManager::getInstance()->runDispatchLoop();
 }
 #endif
@@ -419,10 +436,16 @@ TEST_CASE ("DeviceManager setCurrentDeviceType: arm rules and pending clears", "
         REQUIRE (dm.isDeviceChangePending());
 
         // The async broadcast fires with a null device, so it must NOT clear the
-        // pending flag (a backend switch selects nothing until the user picks).
+        // pending flag (a backend switch selects nothing until the user picks). A
+        // listener observes the broadcast actually landing, so the assertion runs
+        // against a fired broadcast rather than an elapsed timer.
 #if ! defined (__APPLE__)
-        pumpFor (30);
+        int broadcasts = 0;
+        dm.addChangeListener (&broadcasts, [&broadcasts] { ++broadcasts; });
+        pumpUntil ([&] { return broadcasts >= 1; });
+        REQUIRE (broadcasts == 1);
         REQUIRE (dm.isDeviceChangePending());
+        dm.removeChangeListener (&broadcasts);
 #endif
 
         // The user picks a device on the new type: aboutToStart clears pending
@@ -524,33 +547,42 @@ TEST_CASE ("DeviceManager listeners: owner removed mid-fire is skipped", "[audio
     DeviceManager dm;
     dm.setDeviceTypesForTest (h.build());
 
-    int aCalls = 0, bCalls = 0, cCalls = 0;
-    int ownerB = 0;   // identity key for listener B
+    // fireListeners walks the listener map in ascending pointer order
+    // (std::map<void*, ...>), which is independent of registration order. Sort
+    // three distinct owner keys the same way and assign roles by fire position,
+    // so the test holds however the stack lays the locals out.
+    int k0 = 0, k1 = 0, k2 = 0;
+    std::vector<void*> keys { &k0, &k1, &k2 };
+    std::sort (keys.begin(), keys.end(), std::less<void*>{});
+    void* firstOwner  = keys[0];   // fires first  - removes the second before its turn
+    void* secondOwner = keys[1];   // fires second - must be skipped
+    void* thirdOwner  = keys[2];   // fires last   - removes itself mid-call
 
-    // A removes B before B's turn; B must not be called. C (self-removing) is
-    // safe because fireListeners copies the callback before invoking.
-    dm.addChangeListener (&aCalls, [&]
+    int firstCalls = 0, secondCalls = 0, thirdCalls = 0;
+
+    dm.addChangeListener (firstOwner, [&]
     {
-        ++aCalls;
-        dm.removeChangeListener (&ownerB);
+        ++firstCalls;
+        dm.removeChangeListener (secondOwner);
     });
-    dm.addChangeListener (&ownerB, [&] { ++bCalls; });
-    dm.addChangeListener (&cCalls, [&]
+    dm.addChangeListener (secondOwner, [&] { ++secondCalls; });
+    dm.addChangeListener (thirdOwner, [&]
     {
-        ++cCalls;
-        dm.removeChangeListener (&cCalls);   // remove self mid-call
+        ++thirdCalls;
+        dm.removeChangeListener (thirdOwner);   // remove self mid-call; safe because
+                                                // fireListeners copies the callback
     });
 
     dm.notifyChange();   // synchronous fan-out
-    REQUIRE (aCalls == 1);
-    REQUIRE (bCalls == 0);   // removed by A before its turn
-    REQUIRE (cCalls == 1);
+    REQUIRE (firstCalls == 1);
+    REQUIRE (secondCalls == 0);   // removed before its turn by the earlier-firing listener
+    REQUIRE (thirdCalls == 1);
 
     dm.notifyChange();
-    REQUIRE (aCalls == 2);
-    REQUIRE (cCalls == 1);   // self-removed last round, not called again
+    REQUIRE (firstCalls == 2);
+    REQUIRE (thirdCalls == 1);   // self-removed last round, not called again
 
-    dm.removeChangeListener (&aCalls);
+    dm.removeChangeListener (firstOwner);
 }
 
 #if ! defined (__APPLE__)
@@ -577,7 +609,7 @@ TEST_CASE ("DeviceManager broadcast: async and coalesced on the message thread",
 
     REQUIRE (fired == 0);   // async: deferred, nothing runs inline
 
-    pumpFor (30);
+    pumpUntil ([&] { return fired >= 1; });
     REQUIRE (fired == 1);   // coalesced: three requests, one fire
 
     dm.removeChangeListener (&fired);

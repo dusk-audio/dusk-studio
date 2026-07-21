@@ -3,6 +3,7 @@
 #include "IODeviceCallback.h"
 
 #include "../../foundation/MessageThread.h"
+#include "../../foundation/ScopedNoDenormals.h"
 
 // The juce-typed backends the native manager drives during this phase: PipeWire
 // and ALSA are still JUCE AudioIODeviceType subclasses, wrapped here in OWNING
@@ -86,6 +87,9 @@ public:
                                 float* const* out, int numOut, int numSamples,
                                 const CallbackContext& ctx) override
     {
+        const dusk::audio::ScopedNoDenormals noDenormals;
+        if (numSamples == 0) return;
+
         std::lock_guard<std::mutex> lock (callbackListLock);
 
         if (callbacks.empty())
