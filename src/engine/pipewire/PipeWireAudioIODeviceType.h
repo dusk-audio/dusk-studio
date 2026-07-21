@@ -35,7 +35,7 @@ public:
     void               scanForDevices() override;
     std::vector<std::string> getDeviceNames (bool wantInputNames) const override;
     int                getDefaultDeviceIndex (bool forInput) const override;
-    int                getIndexOfDevice (device::IODevice* device, bool asInput) const override;
+    int                getIndexOfDevice (device::IODevice* dev, bool asInput) const override;
     std::unique_ptr<device::IODevice> createDevice (const std::string& outputDeviceName,
                                                     const std::string& inputDeviceName) override;
 

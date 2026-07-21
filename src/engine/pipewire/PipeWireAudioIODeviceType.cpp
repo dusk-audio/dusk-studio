@@ -34,10 +34,9 @@ int indexOfString (const std::vector<std::string>& v, const std::string& s)
     return -1;
 }
 
-// Replicates JUCE's StringArray::appendNumbersToDuplicates(false, true):
-// exact (case-sensitive) duplicate device labels get " (1)", " (2)", ...
-// suffixes, the first instance numbered too, so the dropdown never shows two
-// identical names.
+// Disambiguate duplicate device labels: exact (case-sensitive) duplicates get
+// " (1)", " (2)", ... suffixes, the first instance numbered too, so the dropdown
+// never shows two identical names.
 void appendNumbersToDuplicates (std::vector<std::string>& names)
 {
     auto findFrom = [&names] (const std::string& target, int startIndex) -> int
@@ -303,10 +302,10 @@ int PipeWireAudioIODeviceType::getDefaultDeviceIndex (bool forInput) const
     return names.empty() ? -1 : 0;
 }
 
-int PipeWireAudioIODeviceType::getIndexOfDevice (device::IODevice* device, bool asInput) const
+int PipeWireAudioIODeviceType::getIndexOfDevice (device::IODevice* dev, bool asInput) const
 {
     assert (hasScanned);
-    if (auto* pw = dynamic_cast<PipeWireAudioIODevice*> (device))
+    if (auto* pw = dynamic_cast<PipeWireAudioIODevice*> (dev))
         return indexOfString (asInput ? inputIds : outputIds, asInput ? pw->inputId : pw->outputId);
     return -1;
 }
