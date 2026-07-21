@@ -330,7 +330,8 @@ target_sources(DuskStudio PRIVATE
     src/engine/McuReceiver.cpp
     src/engine/McuController.cpp
     src/engine/MidiTimeCodeEmitter.cpp
-    src/engine/device/DeviceManager.cpp
+    # DeviceManager: native orchestrator on Linux (DeviceManager.cpp), JUCE-wrapped
+    # fallback off Linux (DeviceManagerJuce.cpp). Gated below the target_sources().
     src/engine/midi/MidiDevices.cpp
     src/engine/PlaybackEngine.cpp
     src/engine/PluginManager.cpp
@@ -401,6 +402,19 @@ target_sources(DuskStudio PRIVATE
     src/ui/TransportBar.cpp
     src/ui/VirtualKeyboardComponent.cpp
     src/ui/WindowState.cpp)
+
+# DeviceManager backing: Linux uses the native orchestrator (owns the device
+# types, drives open/start/stop/close and the callback fan-out itself); macOS /
+# Windows keep the JUCE-wrapped implementation. Same public dusk API either way.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # The native manager reads/writes the state blob directly (dusk JSON + legacy
+    # XML migration); off Linux the JUCE-wrapped manager keeps its own XML path.
+    target_sources(DuskStudio PRIVATE
+        src/engine/device/DeviceManager.cpp
+        src/engine/device/DeviceStateBlob.cpp)
+else()
+    target_sources(DuskStudio PRIVATE src/engine/device/DeviceManagerJuce.cpp)
+endif()
 
 # Cross-platform window-management primitives. One implementation per
 # platform; callsites #include only PlatformWindowing.h and stay

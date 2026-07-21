@@ -14,10 +14,13 @@ namespace juce { class AudioDeviceManager; }
 // The engine's audio-device orchestrator, mirroring the slice of JUCE's
 // AudioDeviceManager the app drives: register backends, restore/persist the
 // chosen setup, open a device, and fan the RT callback out to the engine. This
-// is the seam - the public API is pure dusk (IODevice / DeviceSetup / ChannelSet),
-// while the implementation currently delegates to a wrapped juce::AudioDeviceManager
-// and adapts JUCE's device/callback types behind it. A later phase swaps the
-// backing to the native PipeWire/ALSA types with this API unchanged.
+// is the seam - the public API is pure dusk (IODevice / DeviceSetup / ChannelSet).
+// On Linux (DeviceManager.cpp) it is a native orchestrator: it owns the
+// IODeviceType list, drives IODevice open/start/stop/close itself, and fans the
+// callback out directly, with the PipeWire/ALSA backends still juce-typed behind
+// temporary owning adapters (P3/P4 re-base them onto the dusk interfaces). Off
+// Linux (DeviceManagerJuce.cpp) it delegates to a wrapped juce::AudioDeviceManager,
+// adapting JUCE's device/callback types behind this same API.
 //
 // Message-thread only, same contract as juce::AudioDeviceManager: construct,
 // initialise, add/remove callbacks and query the device off the message thread.
@@ -93,6 +96,13 @@ public:
     // entirely when the wrapper does.
     juce::AudioDeviceManager& juceManager();
    #endif
+
+    // Test seam (native Linux orchestrator): install a caller-supplied backend
+    // set in place of the platform PipeWire/ALSA registration, so the mock suite
+    // can drive open/start/stop/close ordering and fan-out with no real device.
+    // Call before initialise(). Off Linux it is an unused no-op (the wrapper owns
+    // its own juce backends and the native mock suite is Linux-only).
+    void setDeviceTypesForTest (std::vector<std::unique_ptr<IODeviceType>> types);
 
 private:
     struct Impl;
