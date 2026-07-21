@@ -33,13 +33,6 @@ src/engine/PluginSlot.cpp
 src/engine/PluginSlot.h
 src/engine/RecordManager.cpp
 src/engine/RecordManager.h
-src/engine/alsa/AlsaAudioIODevice.cpp
-src/engine/alsa/AlsaAudioIODevice.h
-src/engine/alsa/AlsaAudioIODeviceType.cpp
-src/engine/alsa/AlsaAudioIODeviceType.h
-src/engine/alsa/AlsaPerformanceTest.cpp
-src/engine/alsa/AlsaPerformanceTest.h
-src/engine/device/DeviceManager.cpp
 src/engine/device/DeviceManager.h
 src/engine/device/DeviceManagerJuce.cpp
 src/engine/hosting/NativePluginId.h

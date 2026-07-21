@@ -4,13 +4,14 @@
  #error "AlsaPerformanceTest.h is ALSA/Linux-only"
 #endif
 
-#include <juce_core/juce_core.h>
+#include <string>
+#include <vector>
 
 namespace duskstudio
 {
 // Performance + stability test harness for the Dusk Studio-owned ALSA backend.
 // Tier 1: drives an AlsaAudioIODevice directly with a measuring callback,
-// no JUCE AudioDeviceManager involvement, no audible content, no special
+// no DeviceManager involvement, no audible content, no special
 // hardware setup beyond a real ALSA hw: device.
 //
 // Reports per-buffer-size:
@@ -28,9 +29,9 @@ class AlsaPerformanceTest
 public:
     struct Result
     {
-        juce::String testName;
-        juce::String configuration;     // "buf=512 rate=48000"
-        bool         passed = false;
+        std::string testName;
+        std::string configuration;      // "buf=512 rate=48000"
+        bool        passed = false;
 
         int    xruns           = 0;
         double budgetMs        = 0.0;   // (period * 1000.0) / sampleRate
@@ -48,21 +49,21 @@ public:
         int          activeOutChannels   = 0;
         int          activeInChannels    = 0;
 
-        juce::String verdict;           // "SAFE" / "MARGINAL" / "UNSAFE" / "FAIL"
-        juce::String details;
+        std::string verdict;            // "SAFE" / "MARGINAL" / "UNSAFE" / "FAIL"
+        std::string details;
     };
 
     struct Options
     {
-        juce::String              deviceId        = "hw:0,0";
+        std::string               deviceId        = "hw:0,0";
         unsigned int              sampleRate      = 48000;
         int                       durationMs      = 5000;     // per buffer-size step
         int                       fakeDspLoadUs   = 0;        // synthetic CPU work in callback
         int                       openCloseCycles = 50;
         int                       startStopCycles = 20;
         bool                      runLoopback     = false;    // require user-supplied loopback path
-        juce::Array<int>          bufferSizes;                // empty -> use default ladder
-        juce::Array<unsigned int> sampleRates;                // empty -> just opts.sampleRate
+        std::vector<int>          bufferSizes;                // empty -> use default ladder
+        std::vector<unsigned int> sampleRates;                // empty -> just opts.sampleRate
     };
 
     // Loopback round-trip measurement. Only meaningful when there is a
@@ -72,21 +73,21 @@ public:
     // stays false.
     struct LoopbackResult
     {
-        bool         signalDetected = false;
-        int          latencySamples = -1;
-        double       latencyMs      = -1.0;   // -1 == not measured (matches latencySamples sentinel)
-        int          burstStartSample = -1;
-        int          firstSignalSample = -1;
-        juce::String details;
+        bool        signalDetected = false;
+        int         latencySamples = -1;
+        double      latencyMs      = -1.0;   // -1 == not measured (matches latencySamples sentinel)
+        int         burstStartSample = -1;
+        int         firstSignalSample = -1;
+        std::string details;
     };
 
     // Run the full Tier 1 suite (buffer sweep + open/close + start/stop)
     // and return a markdown-style report. If opts.runLoopback is true,
     // also runs the loopback probe and includes results.
-    static juce::String runAll (const Options& opts);
+    static std::string runAll (const Options& opts);
 
     // Individual entry points - useful for targeted reruns.
-    static juce::Array<Result> runBufferSweep    (const Options& opts);
+    static std::vector<Result> runBufferSweep    (const Options& opts);
     static Result              runOpenCloseStress (const Options& opts);
     static Result              runStartStopRace   (const Options& opts);
     static LoopbackResult      runLoopbackProbe   (const Options& opts);

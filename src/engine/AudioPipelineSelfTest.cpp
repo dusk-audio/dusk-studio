@@ -978,8 +978,21 @@ std::string AudioPipelineSelfTest::testBackendsOpenCleanly()
         for (const auto& d : outDevs) out += "      out: " + d + "\n";
         for (const auto& d : inDevs)  out += "      in:  " + d + "\n";
 
-        // Try opening the type's default device.
+        // Try opening the type's default device. A backend switch selects
+        // nothing on its own (pick-backend -> pick-device contract), so name
+        // the type's default device explicitly.
         deviceManager.setCurrentDeviceType (type->getTypeName(), /*treatAsChosen*/ true);
+        {
+            device::DeviceSetup pick;
+            const int outIdx = type->getDefaultDeviceIndex (false);
+            const int inIdx  = type->getDefaultDeviceIndex (true);
+            if (outIdx >= 0 && outIdx < (int) outDevs.size()) pick.outputDeviceName = outDevs[(size_t) outIdx];
+            if (inIdx  >= 0 && inIdx  < (int) inDevs.size())  pick.inputDeviceName  = inDevs[(size_t) inIdx];
+            pick.useDefaultInputChannels  = true;
+            pick.useDefaultOutputChannels = true;
+            if (const auto err = deviceManager.setSetup (pick, /*treatAsChosen*/ true); ! err.empty())
+                out += "      setSetup: " + err + "\n";
+        }
         if (auto* dev = deviceManager.getCurrentDevice())
         {
             out += dusk::text::format (
@@ -997,8 +1010,10 @@ std::string AudioPipelineSelfTest::testBackendsOpenCleanly()
 
     // Restore.
     deviceManager.setCurrentDeviceType (origType, /*treatAsChosen*/ true);
-    deviceManager.setSetup (origSetup, /*treatAsChosen*/ true);
-    out += "  (restored original setup: " + origType + ")\n";
+    if (const auto err = deviceManager.setSetup (origSetup, /*treatAsChosen*/ true); ! err.empty())
+        out += "  (restore FAILED: " + err + ")\n";
+    else
+        out += "  (restored original setup: " + origType + ")\n";
     return out;
 }
 
@@ -1394,9 +1409,8 @@ std::string AudioPipelineSelfTest::runAll()
     // Pure-logic self-test for the Dusk Studio-owned ALSA backend. Covers the
     // converter math, channel-mask routing, hw:CARD,DEV parsing, and the
     // periods-knob clamping. Real-device opens of the backend are
-    // exercised by the backend cycle below alongside the JUCE-stock
-    // ALSA / JACK paths.
-    report.push_back (AlsaAudioIODevice::runSelfTest().toStdString());
+    // exercised by the backend cycle below.
+    report.push_back (AlsaAudioIODevice::runSelfTest());
     report.push_back ("");
    #endif
 

@@ -1,5 +1,6 @@
 #include "AlsaAudioIODevice.h"
 #include "../RtPriority.h"
+#include "../../foundation/Text.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -59,7 +60,8 @@ const AlsaFormat* selectFormat (snd_pcm_t* handle, snd_pcm_hw_params_t* hwParams
 // (max_int_value) factor to map float [-1, 1] onto the full int range.
 //
 // Inactive channels are written as zero into the interleaved frame; the
-// caller arranges the active-channel-index mapping.
+// caller arranges the active-channel-index mapping. `src`/`dest` are planar
+// per-channel pointer arrays, numActive entries, each numFrames long.
 
 constexpr float kInt16Scale = 32767.0f;
 constexpr float kInt24Scale = 8388607.0f;
@@ -70,7 +72,7 @@ inline float clampUnit (float v) noexcept
     return v > 1.0f ? 1.0f : (v < -1.0f ? -1.0f : v);
 }
 
-void writeInterleavedS32 (const juce::AudioBuffer<float>& src, void* dest,
+void writeInterleavedS32 (const float* const* src, void* dest,
                            int numFrames, int numDeviceChannels,
                            const int* activeIdx, int numActive)
 {
@@ -78,14 +80,14 @@ void writeInterleavedS32 (const juce::AudioBuffer<float>& src, void* dest,
     std::memset (out, 0, sizeof (int32_t) * (size_t) (numFrames * numDeviceChannels));
     for (int a = 0; a < numActive; ++a)
     {
-        const auto* srcCh = src.getReadPointer (a);
+        const auto* srcCh = src[a];
         const int   col   = activeIdx[a];
         for (int f = 0; f < numFrames; ++f)
             out[f * numDeviceChannels + col] = (int32_t) std::lrint (clampUnit (srcCh[f]) * kInt32Scale);
     }
 }
 
-void writeInterleavedS16 (const juce::AudioBuffer<float>& src, void* dest,
+void writeInterleavedS16 (const float* const* src, void* dest,
                            int numFrames, int numDeviceChannels,
                            const int* activeIdx, int numActive)
 {
@@ -93,14 +95,14 @@ void writeInterleavedS16 (const juce::AudioBuffer<float>& src, void* dest,
     std::memset (out, 0, sizeof (int16_t) * (size_t) (numFrames * numDeviceChannels));
     for (int a = 0; a < numActive; ++a)
     {
-        const auto* srcCh = src.getReadPointer (a);
+        const auto* srcCh = src[a];
         const int   col   = activeIdx[a];
         for (int f = 0; f < numFrames; ++f)
             out[f * numDeviceChannels + col] = (int16_t) std::lrint (clampUnit (srcCh[f]) * kInt16Scale);
     }
 }
 
-void writeInterleavedS24in32 (const juce::AudioBuffer<float>& src, void* dest,
+void writeInterleavedS24in32 (const float* const* src, void* dest,
                                int numFrames, int numDeviceChannels,
                                const int* activeIdx, int numActive)
 {
@@ -110,7 +112,7 @@ void writeInterleavedS24in32 (const juce::AudioBuffer<float>& src, void* dest,
     std::memset (out, 0, sizeof (int32_t) * (size_t) (numFrames * numDeviceChannels));
     for (int a = 0; a < numActive; ++a)
     {
-        const auto* srcCh = src.getReadPointer (a);
+        const auto* srcCh = src[a];
         const int   col   = activeIdx[a];
         for (int f = 0; f < numFrames; ++f)
         {
@@ -122,7 +124,7 @@ void writeInterleavedS24in32 (const juce::AudioBuffer<float>& src, void* dest,
     }
 }
 
-void writeInterleavedS24Packed (const juce::AudioBuffer<float>& src, void* dest,
+void writeInterleavedS24Packed (const float* const* src, void* dest,
                                   int numFrames, int numDeviceChannels,
                                   const int* activeIdx, int numActive)
 {
@@ -130,7 +132,7 @@ void writeInterleavedS24Packed (const juce::AudioBuffer<float>& src, void* dest,
     std::memset (out, 0, (size_t) (3 * numFrames * numDeviceChannels));
     for (int a = 0; a < numActive; ++a)
     {
-        const auto* srcCh = src.getReadPointer (a);
+        const auto* srcCh = src[a];
         const int   col   = activeIdx[a];
         for (int f = 0; f < numFrames; ++f)
         {
@@ -143,7 +145,7 @@ void writeInterleavedS24Packed (const juce::AudioBuffer<float>& src, void* dest,
     }
 }
 
-void writeInterleavedFloat (const juce::AudioBuffer<float>& src, void* dest,
+void writeInterleavedFloat (const float* const* src, void* dest,
                               int numFrames, int numDeviceChannels,
                               const int* activeIdx, int numActive)
 {
@@ -151,7 +153,7 @@ void writeInterleavedFloat (const juce::AudioBuffer<float>& src, void* dest,
     std::memset (out, 0, sizeof (float) * (size_t) (numFrames * numDeviceChannels));
     for (int a = 0; a < numActive; ++a)
     {
-        const auto* srcCh = src.getReadPointer (a);
+        const auto* srcCh = src[a];
         const int   col   = activeIdx[a];
         for (int f = 0; f < numFrames; ++f)
             out[f * numDeviceChannels + col] = srcCh[f];
@@ -162,7 +164,7 @@ void writeInterleavedFloat (const juce::AudioBuffer<float>& src, void* dest,
 // Only the active subset of device channels is materialised into floats; the
 // rest of the device's interleaved data is ignored.
 
-void readInterleavedS32 (const void* src, juce::AudioBuffer<float>& dest,
+void readInterleavedS32 (const void* src, float* const* dest,
                           int numFrames, int numDeviceChannels,
                           const int* activeIdx, int numActive)
 {
@@ -170,14 +172,14 @@ void readInterleavedS32 (const void* src, juce::AudioBuffer<float>& dest,
     constexpr float invScale = 1.0f / kInt32Scale;
     for (int a = 0; a < numActive; ++a)
     {
-        auto*     destCh = dest.getWritePointer (a);
+        auto*     destCh = dest[a];
         const int col    = activeIdx[a];
         for (int f = 0; f < numFrames; ++f)
             destCh[f] = (float) in[f * numDeviceChannels + col] * invScale;
     }
 }
 
-void readInterleavedS16 (const void* src, juce::AudioBuffer<float>& dest,
+void readInterleavedS16 (const void* src, float* const* dest,
                           int numFrames, int numDeviceChannels,
                           const int* activeIdx, int numActive)
 {
@@ -185,14 +187,14 @@ void readInterleavedS16 (const void* src, juce::AudioBuffer<float>& dest,
     constexpr float invScale = 1.0f / kInt16Scale;
     for (int a = 0; a < numActive; ++a)
     {
-        auto*     destCh = dest.getWritePointer (a);
+        auto*     destCh = dest[a];
         const int col    = activeIdx[a];
         for (int f = 0; f < numFrames; ++f)
             destCh[f] = (float) in[f * numDeviceChannels + col] * invScale;
     }
 }
 
-void readInterleavedS24in32 (const void* src, juce::AudioBuffer<float>& dest,
+void readInterleavedS24in32 (const void* src, float* const* dest,
                               int numFrames, int numDeviceChannels,
                               const int* activeIdx, int numActive)
 {
@@ -200,7 +202,7 @@ void readInterleavedS24in32 (const void* src, juce::AudioBuffer<float>& dest,
     constexpr float invScale = 1.0f / kInt24Scale;
     for (int a = 0; a < numActive; ++a)
     {
-        auto*     destCh = dest.getWritePointer (a);
+        auto*     destCh = dest[a];
         const int col    = activeIdx[a];
         for (int f = 0; f < numFrames; ++f)
         {
@@ -211,7 +213,7 @@ void readInterleavedS24in32 (const void* src, juce::AudioBuffer<float>& dest,
     }
 }
 
-void readInterleavedS24Packed (const void* src, juce::AudioBuffer<float>& dest,
+void readInterleavedS24Packed (const void* src, float* const* dest,
                                  int numFrames, int numDeviceChannels,
                                  const int* activeIdx, int numActive)
 {
@@ -219,7 +221,7 @@ void readInterleavedS24Packed (const void* src, juce::AudioBuffer<float>& dest,
     constexpr float invScale = 1.0f / kInt24Scale;
     for (int a = 0; a < numActive; ++a)
     {
-        auto*     destCh = dest.getWritePointer (a);
+        auto*     destCh = dest[a];
         const int col    = activeIdx[a];
         for (int f = 0; f < numFrames; ++f)
         {
@@ -234,14 +236,14 @@ void readInterleavedS24Packed (const void* src, juce::AudioBuffer<float>& dest,
     }
 }
 
-void readInterleavedFloat (const void* src, juce::AudioBuffer<float>& dest,
+void readInterleavedFloat (const void* src, float* const* dest,
                              int numFrames, int numDeviceChannels,
                              const int* activeIdx, int numActive)
 {
     const auto* in = static_cast<const float*> (src);
     for (int a = 0; a < numActive; ++a)
     {
-        auto*     destCh = dest.getWritePointer (a);
+        auto*     destCh = dest[a];
         const int col    = activeIdx[a];
         for (int f = 0; f < numFrames; ++f)
             destCh[f] = in[f * numDeviceChannels + col];
@@ -265,7 +267,7 @@ std::atomic<int> gRequestedPeriods { 3 };
 // ----- Sample rate / buffer size candidates ----------------------------------
 //
 // The device's actual support is checked by ALSA at open(); these are just
-// the values we surface to JUCE's UI. Standard pro-audio rates and sizes.
+// the values we surface to the settings UI. Standard pro-audio rates and sizes.
 const double kCandidateRates[] = {
     44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0
 };
@@ -277,10 +279,18 @@ const int kCandidateBufferSizes[] = {
 // -> "UMC1820"; "hw:PCH,1" -> "PCH"; anything that doesn't start with "hw:"
 // -> empty. Used by open() to gate snd_pcm_link to same-card pairs (so
 // cross-card duplex doesn't silently drift), and exercised by runSelfTest().
-juce::String cardOfHwId (const juce::String& id)
+std::string cardOfHwId (const std::string& id)
 {
-    return id.fromFirstOccurrenceOf ("hw:", false, false)
-             .upToFirstOccurrenceOf (",", false, false);
+    return dusk::text::upToFirstOccurrenceOf (
+               dusk::text::fromFirstOccurrenceOf (id, "hw:", false), ",", false);
+}
+
+// Process-lifetime holder for abandoned devices (see destroyOrPark). Leaked on
+// purpose: the detached I/O threads referencing these objects may never exit.
+std::vector<AlsaAudioIODevice*>& abandonedHolder()
+{
+    static std::vector<AlsaAudioIODevice*> holder;
+    return holder;
 }
 } // namespace
 
@@ -293,13 +303,22 @@ int AlsaAudioIODevice::getRequestedPeriods() noexcept
     return gRequestedPeriods.load (std::memory_order_relaxed);
 }
 
+void AlsaAudioIODevice::destroyOrPark (std::unique_ptr<AlsaAudioIODevice> dev)
+{
+    if (dev != nullptr && dev->ioThreadWasAbandoned())
+        abandonedHolder().push_back (dev.release());
+}
+
+int AlsaAudioIODevice::abandonedCount() noexcept
+{
+    return (int) abandonedHolder().size();
+}
+
 // ============================================================================
-AlsaAudioIODevice::AlsaAudioIODevice (const juce::String& name,
-                                        const juce::String& inId,
-                                        const juce::String& outId)
-    : juce::AudioIODevice (name, "ALSA"),
-      juce::Thread ("Dusk Studio-ALSA-IO"),
-      inputId (inId),
+AlsaAudioIODevice::AlsaAudioIODevice (const std::string& name,
+                                        const std::string& inId,
+                                        const std::string& outId)
+    : inputId (inId),
       outputId (outId),
       displayName (name)
 {
@@ -308,6 +327,13 @@ AlsaAudioIODevice::AlsaAudioIODevice (const juce::String& name,
 AlsaAudioIODevice::~AlsaAudioIODevice()
 {
     close();
+    // Owners must route an abandoned device through destroyOrPark; reaching
+    // this destructor with the detached thread live is a use-after-free in
+    // waiting. Nothing can be done about it here - flag it loudly.
+    if (threadAbandoned.load (std::memory_order_acquire))
+        std::fprintf (stderr,
+                      "[Dusk Studio/ALSA] ERROR: destroying \"%s\" while its abandoned "
+                      "I/O thread is still live\n", displayName.c_str());
 }
 
 // ----- Capability queries ----------------------------------------------------
@@ -316,17 +342,17 @@ void AlsaAudioIODevice::probeIfNeeded()
     if (hasProbed)
         return;
 
-    auto probe = [] (const juce::String& id, bool isCapture,
+    auto probe = [] (const std::string& id, bool isCapture,
                       unsigned int& maxChans,
-                      juce::Array<double>& rates,
-                      juce::Array<int>& bufSizes)
+                      std::vector<double>& rates,
+                      std::vector<int>& bufSizes)
     {
-        if (id.isEmpty())
+        if (id.empty())
             return;
 
         snd_pcm_t* handle = nullptr;
         if (snd_pcm_open (&handle,
-                           id.toRawUTF8(),
+                           id.c_str(),
                            isCapture ? SND_PCM_STREAM_CAPTURE
                                      : SND_PCM_STREAM_PLAYBACK,
                            SND_PCM_NONBLOCK) < 0)
@@ -342,14 +368,16 @@ void AlsaAudioIODevice::probeIfNeeded()
             maxChans = std::max (maxChans, maxCh);
 
             for (double r : kCandidateRates)
-                if (snd_pcm_hw_params_test_rate (handle, hw, (unsigned int) r, 0) == 0)
-                    rates.addIfNotAlreadyThere (r);
+                if (snd_pcm_hw_params_test_rate (handle, hw, (unsigned int) r, 0) == 0
+                    && std::find (rates.begin(), rates.end(), r) == rates.end())
+                    rates.push_back (r);
 
             for (int b : kCandidateBufferSizes)
             {
                 snd_pcm_uframes_t f = (snd_pcm_uframes_t) b;
-                if (snd_pcm_hw_params_test_period_size (handle, hw, f, 0) == 0)
-                    bufSizes.addIfNotAlreadyThere (b);
+                if (snd_pcm_hw_params_test_period_size (handle, hw, f, 0) == 0
+                    && std::find (bufSizes.begin(), bufSizes.end(), b) == bufSizes.end())
+                    bufSizes.push_back (b);
             }
         }
 
@@ -359,10 +387,10 @@ void AlsaAudioIODevice::probeIfNeeded()
     probe (outputId, false, deviceMaxOutChannels, supportedSampleRates, supportedBufferSizes);
     probe (inputId,  true,  deviceMaxInChannels,  supportedSampleRates, supportedBufferSizes);
 
-    if (supportedSampleRates.isEmpty())
-        for (double r : kCandidateRates) supportedSampleRates.add (r);
-    if (supportedBufferSizes.isEmpty())
-        for (int b : kCandidateBufferSizes) supportedBufferSizes.add (b);
+    if (supportedSampleRates.empty())
+        for (double r : kCandidateRates) supportedSampleRates.push_back (r);
+    if (supportedBufferSizes.empty())
+        for (int b : kCandidateBufferSizes) supportedBufferSizes.push_back (b);
 
     std::sort (supportedSampleRates.begin(), supportedSampleRates.end());
     std::sort (supportedBufferSizes.begin(), supportedBufferSizes.end());
@@ -370,31 +398,31 @@ void AlsaAudioIODevice::probeIfNeeded()
     hasProbed = true;
 }
 
-juce::StringArray AlsaAudioIODevice::getOutputChannelNames()
+std::vector<std::string> AlsaAudioIODevice::getOutputChannelNames()
 {
     probeIfNeeded();
-    juce::StringArray names;
+    std::vector<std::string> names;
     for (unsigned int i = 0; i < deviceMaxOutChannels; ++i)
-        names.add ("channel " + juce::String ((int) i + 1));
+        names.push_back ("channel " + std::to_string ((int) i + 1));
     return names;
 }
 
-juce::StringArray AlsaAudioIODevice::getInputChannelNames()
+std::vector<std::string> AlsaAudioIODevice::getInputChannelNames()
 {
     probeIfNeeded();
-    juce::StringArray names;
+    std::vector<std::string> names;
     for (unsigned int i = 0; i < deviceMaxInChannels; ++i)
-        names.add ("channel " + juce::String ((int) i + 1));
+        names.push_back ("channel " + std::to_string ((int) i + 1));
     return names;
 }
 
-juce::Array<double> AlsaAudioIODevice::getAvailableSampleRates()
+std::vector<double> AlsaAudioIODevice::getAvailableSampleRates()
 {
     probeIfNeeded();
     return supportedSampleRates;
 }
 
-juce::Array<int> AlsaAudioIODevice::getAvailableBufferSizes()
+std::vector<int> AlsaAudioIODevice::getAvailableBufferSizes()
 {
     probeIfNeeded();
     return supportedBufferSizes;
@@ -407,11 +435,11 @@ int AlsaAudioIODevice::getDefaultBufferSize()
 }
 
 // ----- Open / close ----------------------------------------------------------
-bool AlsaAudioIODevice::openOneHandle (const juce::String& id, bool isCapture, snd_pcm_t*& handle)
+bool AlsaAudioIODevice::openOneHandle (const std::string& id, bool isCapture, snd_pcm_t*& handle)
 {
     handle = nullptr;
     const int err = snd_pcm_open (&handle,
-                                    id.toRawUTF8(),
+                                    id.c_str(),
                                     isCapture ? SND_PCM_STREAM_CAPTURE
                                               : SND_PCM_STREAM_PLAYBACK,
                                     SND_PCM_NONBLOCK);
@@ -425,14 +453,14 @@ bool AlsaAudioIODevice::openOneHandle (const juce::String& id, bool isCapture, s
         // suspects.
         if (err == -EBUSY)
         {
-            lastError = juce::String ("Device \"") + id + "\" is in use by another "
+            lastError = "Device \"" + id + "\" is in use by another "
                        "application (PipeWire, JACK, browser audio, or another DAW). "
                        "Stop the other app or run `pactl suspend-sink <sink-name> 1` "
                        "to release the kernel handle, then try again.";
         }
         else
         {
-            lastError = juce::String ("snd_pcm_open(") + id + ", "
+            lastError = "snd_pcm_open(" + id + ", "
                       + (isCapture ? "capture" : "playback") + "): "
                       + snd_strerror (err);
         }
@@ -476,7 +504,7 @@ bool AlsaAudioIODevice::configurePcm (snd_pcm_t* handle, bool isCapture,
 
     if (snd_pcm_hw_params_set_rate_near (handle, hw, &sampleRate, nullptr) < 0)
     {
-        lastError = "device rejected sample rate " + juce::String ((int) sampleRate);
+        lastError = "device rejected sample rate " + std::to_string ((int) sampleRate);
         return false;
     }
 
@@ -487,7 +515,7 @@ bool AlsaAudioIODevice::configurePcm (snd_pcm_t* handle, bool isCapture,
         numChannels = std::clamp (numChannels, minCh, maxCh);
         if (snd_pcm_hw_params_set_channels (handle, hw, numChannels) < 0)
         {
-            lastError = "device rejected channel count " + juce::String ((int) numChannels);
+            lastError = "device rejected channel count " + std::to_string ((int) numChannels);
             return false;
         }
     }
@@ -531,10 +559,18 @@ bool AlsaAudioIODevice::configurePcm (snd_pcm_t* handle, bool isCapture,
     return true;
 }
 
-juce::String AlsaAudioIODevice::open (const juce::BigInteger& inputChannels,
-                                        const juce::BigInteger& outputChannels,
-                                        double sampleRate, int bufferSizeSamples)
+std::string AlsaAudioIODevice::open (const device::ChannelSet& inputChannels,
+                                       const device::ChannelSet& outputChannels,
+                                       double sampleRate, int bufferSizeSamples)
 {
+    if (threadAbandoned.load (std::memory_order_acquire))
+    {
+        // The detached thread still owns the handles and scratch; re-opening
+        // would reallocate under it. The owner replaces the device instead.
+        lastError = "device unusable: its I/O thread was abandoned after a wedged stop";
+        return lastError;
+    }
+
     if (isDeviceOpen.load (std::memory_order_acquire))
         close();
 
@@ -543,8 +579,8 @@ juce::String AlsaAudioIODevice::open (const juce::BigInteger& inputChannels,
     currentInputChannels  = inputChannels;
     currentOutputChannels = outputChannels;
 
-    const bool wantOutput = outputChannels.getHighestBit() >= 0 && outputId.isNotEmpty();
-    const bool wantInput  = inputChannels.getHighestBit()  >= 0 && inputId.isNotEmpty();
+    const bool wantOutput = outputChannels.highestSetBit() >= 0 && ! outputId.empty();
+    const bool wantInput  = inputChannels.highestSetBit()  >= 0 && ! inputId.empty();
 
     if (! wantOutput && ! wantInput)
     {
@@ -597,8 +633,8 @@ juce::String AlsaAudioIODevice::open (const juce::BigInteger& inputChannels,
         bytesPerInSample = inBytes;
         if (inRate != rate)
         {
-            lastError = "capture rate " + juce::String ((int) inRate)
-                       + " != playback rate " + juce::String ((int) rate);
+            lastError = "capture rate " + std::to_string ((int) inRate)
+                       + " != playback rate " + std::to_string ((int) rate);
             close();
             return lastError;
         }
@@ -630,8 +666,8 @@ juce::String AlsaAudioIODevice::open (const juce::BigInteger& inputChannels,
                           "different cards (\"%s\" vs \"%s\"); not linking. The two "
                           "clocks will drift over a long session. For tracking + "
                           "monitoring use the same interface for in and out.\n",
-                          inputId.toRawUTF8(), outputId.toRawUTF8(),
-                          inCard.toRawUTF8(), outCard.toRawUTF8());
+                          inputId.c_str(), outputId.c_str(),
+                          inCard.c_str(), outCard.c_str());
         }
     }
 
@@ -643,8 +679,8 @@ juce::String AlsaAudioIODevice::open (const juce::BigInteger& inputChannels,
 
     // Active-channel index tables. Callback channel `a` corresponds to device
     // channel `activeXXXDeviceChannelIndex[a]`. Mask is the user's UI ticks.
-    activeOutDeviceChannelIndex.clearQuick();
-    activeInDeviceChannelIndex.clearQuick();
+    activeOutDeviceChannelIndex.clear();
+    activeInDeviceChannelIndex.clear();
     // Clamp to the channel count the device actually opened. outNumChannels /
     // inNumChannels can be smaller than the requested mask - a 12-output
     // interface asked to open 32 negotiates down to 12. Without this clamp a
@@ -652,19 +688,19 @@ juce::String AlsaAudioIODevice::open (const juce::BigInteger& inputChannels,
     // addresses the interleaved buffer (sized to the opened count) out of
     // bounds: out[frame * numDeviceChannels + col] with col past the last real
     // channel. That heap overflow is what crashes with "free(): invalid pointer".
-    juce::BigInteger clampedOutMask, clampedInMask;
+    device::ChannelSet clampedOutMask, clampedInMask;
     if (wantOutput)
         for (int i = 0; i < (int) outNumChannels; ++i)
             if (outputChannels[i])
             {
-                activeOutDeviceChannelIndex.add (i);
+                activeOutDeviceChannelIndex.push_back (i);
                 clampedOutMask.setBit (i);
             }
     if (wantInput)
         for (int i = 0; i < (int) inNumChannels; ++i)
             if (inputChannels[i])
             {
-                activeInDeviceChannelIndex.add (i);
+                activeInDeviceChannelIndex.push_back (i);
                 clampedInMask.setBit (i);
             }
     // A stale/invalid mask can select only channels the device doesn't have,
@@ -673,10 +709,10 @@ juce::String AlsaAudioIODevice::open (const juce::BigInteger& inputChannels,
     // channel(s) (a default stereo pair) so we always have at least one.
     if (wantOutput && clampedOutMask.isZero() && (int) outNumChannels > 0)
         for (int i = 0; i < std::min (2, (int) outNumChannels); ++i)
-        { activeOutDeviceChannelIndex.add (i); clampedOutMask.setBit (i); }
+        { activeOutDeviceChannelIndex.push_back (i); clampedOutMask.setBit (i); }
     if (wantInput && clampedInMask.isZero() && (int) inNumChannels > 0)
         for (int i = 0; i < std::min (2, (int) inNumChannels); ++i)
-        { activeInDeviceChannelIndex.add (i); clampedInMask.setBit (i); }
+        { activeInDeviceChannelIndex.push_back (i); clampedInMask.setBit (i); }
 
     // Publish the actually-active masks. The requested mask can be wider than the
     // device opened (32 asked, 12 real); without this, getActiveOutput/Input-
@@ -687,23 +723,29 @@ juce::String AlsaAudioIODevice::open (const juce::BigInteger& inputChannels,
 
     // Pre-size scratch. Allocations on the audio thread are forbidden; the
     // sizing here is the size the I/O loop relies on.
-    const int activeOut = activeOutDeviceChannelIndex.size();
-    const int activeIn  = activeInDeviceChannelIndex.size();
+    const int activeOut = (int) activeOutDeviceChannelIndex.size();
+    const int activeIn  = (int) activeInDeviceChannelIndex.size();
 
-    callbackOutFloats.setSize (std::max (1, activeOut), periodSize, false, true, false);
-    callbackInFloats .setSize (std::max (1, activeIn),  periodSize, false, true, false);
-    callbackOutPointers.resize (activeOut);
-    callbackInPointers .resize (activeIn);
-    for (int i = 0; i < activeOut; ++i) callbackOutPointers.set (i, callbackOutFloats.getWritePointer (i));
-    for (int i = 0; i < activeIn;  ++i) callbackInPointers .set (i, callbackInFloats .getReadPointer  (i));
+    callbackOutStore.assign ((size_t) std::max (1, activeOut) * (size_t) periodSize, 0.0f);
+    callbackInStore .assign ((size_t) std::max (1, activeIn)  * (size_t) periodSize, 0.0f);
+    callbackOutPointers.resize ((size_t) activeOut);
+    callbackInWritePointers.resize ((size_t) activeIn);
+    callbackInPointers.resize ((size_t) activeIn);
+    for (int i = 0; i < activeOut; ++i)
+        callbackOutPointers[(size_t) i] = callbackOutStore.data() + (size_t) i * (size_t) periodSize;
+    for (int i = 0; i < activeIn; ++i)
+    {
+        callbackInWritePointers[(size_t) i] = callbackInStore.data() + (size_t) i * (size_t) periodSize;
+        callbackInPointers[(size_t) i]      = callbackInWritePointers[(size_t) i];
+    }
 
     if (wantOutput)
     {
-        interleavedOutBytes.allocate ((size_t) (bytesPerOutSample * (int) outNumChannels * periodSize), true);
-        silencePrefill.allocate ((size_t) (bytesPerOutSample * (int) outNumChannels * periodSize * periodsCount), true);
+        interleavedOutBytes.assign ((size_t) (bytesPerOutSample * (int) outNumChannels * periodSize), 0);
+        silencePrefill.assign ((size_t) (bytesPerOutSample * (int) outNumChannels * periodSize * periodsCount), 0);
     }
     if (wantInput)
-        interleavedInBytes .allocate ((size_t) (bytesPerInSample  * (int) inNumChannels  * periodSize), true);
+        interleavedInBytes.assign ((size_t) (bytesPerInSample * (int) inNumChannels * periodSize), 0);
 
     if (outHandle != nullptr) snd_pcm_prepare (outHandle);
     if (inHandle  != nullptr) snd_pcm_prepare (inHandle);
@@ -714,7 +756,7 @@ juce::String AlsaAudioIODevice::open (const juce::BigInteger& inputChannels,
     std::fprintf (stderr,
                   "[Dusk Studio/ALSA] opened \"%s\" rate=%u period=%d periods=%d bits=%d %s "
                   "out=%uch in=%uch (active out=%d in=%d)\n",
-                  displayName.toRawUTF8(),
+                  displayName.c_str(),
                   (unsigned) rate, (int) period, (int) periods, openedBitDepth,
                   openedIsFloat ? "float" : "int",
                   outNumChannels, inNumChannels, activeOut, activeIn);
@@ -726,31 +768,39 @@ void AlsaAudioIODevice::close()
 {
     stop();
 
+    if (threadAbandoned.load (std::memory_order_acquire))
+    {
+        // The detached thread still reads the handles and scratch; release
+        // nothing. The device is dead to callers from here (destroyOrPark
+        // leaks the whole object).
+        isDeviceOpen.store (false, std::memory_order_release);
+        return;
+    }
+
     if (outHandle != nullptr) { snd_pcm_close (outHandle); outHandle = nullptr; }
     if (inHandle  != nullptr) { snd_pcm_close (inHandle);  inHandle  = nullptr; }
 
-    interleavedOutBytes.free();
-    interleavedInBytes .free();
-    silencePrefill     .free();
-    callbackOutFloats.setSize (1, 1);
-    callbackInFloats .setSize (1, 1);
+    interleavedOutBytes = {};
+    interleavedInBytes  = {};
+    silencePrefill      = {};
+    callbackOutStore    = {};
+    callbackInStore     = {};
 
     isDeviceOpen.store (false, std::memory_order_release);
 }
 
 // ----- Start / stop ----------------------------------------------------------
-void AlsaAudioIODevice::start (juce::AudioIODeviceCallback* newCallback)
+void AlsaAudioIODevice::start (device::IODeviceCallback* newCallback)
 {
     if (! isDeviceOpen.load (std::memory_order_acquire) || newCallback == nullptr)
         return;
     if (isStarted.load (std::memory_order_acquire))
         return;
 
-    if (newCallback != nullptr)
-        newCallback->audioDeviceAboutToStart (this);
+    newCallback->audioDeviceAboutToStart (this);
 
     {
-        const juce::ScopedLock sl (callbackLock);
+        std::lock_guard<std::mutex> sl (callbackLock);
         callback = newCallback;
     }
 
@@ -778,9 +828,9 @@ void AlsaAudioIODevice::start (juce::AudioIODeviceCallback* newCallback)
     {
         const int frameBytes = bytesPerOutSample * (int) outNumChannels;
         const auto preFillFrames = (size_t) (periodSize * periodsCount);
-        juce::HeapBlock<char> silence (preFillFrames * (size_t) frameBytes, true);
+        std::vector<char> silence (preFillFrames * (size_t) frameBytes, 0);
 
-        snd_pcm_sframes_t wrote = snd_pcm_writei (outHandle, silence.getData(),
+        snd_pcm_sframes_t wrote = snd_pcm_writei (outHandle, silence.data(),
                                                     (snd_pcm_uframes_t) preFillFrames);
         if (wrote < 0)
         {
@@ -791,7 +841,7 @@ void AlsaAudioIODevice::start (juce::AudioIODeviceCallback* newCallback)
             // recoverFromXrun's rearmStream would prefill+start a second time.
             xrunCount.fetch_add (1, std::memory_order_relaxed);
             snd_pcm_recover (outHandle, (int) wrote, /*silent*/ 1);
-            const auto retry = snd_pcm_writei (outHandle, silence.getData(),
+            const auto retry = snd_pcm_writei (outHandle, silence.data(),
                                                  (snd_pcm_uframes_t) preFillFrames);
             if (retry < 0)
                 std::fprintf (stderr, "[Dusk Studio/ALSA] WARNING: pre-fill retry failed: %s\n",
@@ -809,50 +859,10 @@ void AlsaAudioIODevice::start (juce::AudioIODeviceCallback* newCallback)
         snd_pcm_start (startHandle);
     }
 
-    // Run the I/O thread at real-time priority. The rlimit->priority mapping is
-    // shared with the DSP worker pool (see RtPriority.h - the pool MUST run at
-    // the same SCHED_RR level as this thread or the per-block join can starve a
-    // worker sharing this core). jucePriority < 0 means the rlimit admits no
-    // JUCE-reachable realtime level; don't bother asking. 0 IS a valid level
-    // (lowest SCHED_RR), so request RT for it too.
-    const auto rtInfo = duskstudio::rt::queryRealtimePriority();
-    const int  juceRtPrio = rtInfo.jucePriority;
-
-    const bool gotRT = juceRtPrio >= 0
-        && startRealtimeThread (juce::Thread::RealtimeOptions{}.withPriority (juceRtPrio));
-    if (! gotRT)
-        startThread (juce::Thread::Priority::high);
-
-    // Resolve and log the actual kernel sched_priority post-attach so
-    // regressions in JUCE's priority mapping are visible without
-    // re-reading source. juce::Thread::getThreadId() returns the
-    // pthread_t cast through a void*; cast it back here.
-    int kernelPrio = -1;
-    juce::String policyStr = "unknown";
-    if (gotRT)
-    {
-        const auto nativeHandle = (pthread_t) (uintptr_t) getThreadId();
-        if (nativeHandle != 0)
-        {
-            int policy = 0;
-            sched_param sp {};
-            if (pthread_getschedparam (nativeHandle, &policy, &sp) == 0)
-            {
-                kernelPrio = sp.sched_priority;
-                policyStr = (policy == SCHED_RR)    ? "SCHED_RR"
-                          : (policy == SCHED_FIFO)  ? "SCHED_FIFO"
-                          : (policy == SCHED_OTHER) ? "SCHED_OTHER"
-                          :                           "SCHED_?";
-            }
-        }
-    }
-    const juce::String rtLimitStr =
-        (! rtInfo.haveRtLimit)   ? juce::String ("unknown")
-        : (rtInfo.rtLimit < 0)   ? juce::String ("infinity")
-        :                          juce::String ((std::int64_t) rtInfo.rtLimit);
-    std::fprintf (stderr, "[Dusk Studio/ALSA] thread started: %s (juce-prio=%d, kernel-prio=%d, RLIMIT_RTPRIO=%s)\n",
-                  gotRT ? policyStr.toRawUTF8() : "Priority::high",
-                  juceRtPrio, kernelPrio, rtLimitStr.toRawUTF8());
+    // The I/O thread self-promotes to SCHED_RR as its first act (see
+    // ioThreadRun); on kernel refusal it runs as a plain SCHED_OTHER thread.
+    ioShouldExit.store (false, std::memory_order_release);
+    ioThread = std::thread ([this] { ioThreadRun(); });
 
     isStarted.store (true, std::memory_order_release);
 }
@@ -863,21 +873,65 @@ void AlsaAudioIODevice::stop()
         return;
 
     isStarted.store (false, std::memory_order_release);
-    signalThreadShouldExit();
-    stopThread (2000);
+    ioShouldExit.store (true, std::memory_order_release);
 
-    juce::AudioIODeviceCallback* cb = nullptr;
+    if (ioThread.joinable())
     {
-        const juce::ScopedLock sl (callbackLock);
-        std::swap (cb, callback);
+        // The thread signals ioExited as its last statement; every blocking
+        // call in the loop is bounded <= 1 s, so a healthy worst-case exit
+        // lands well inside the window.
+        if (ioExited.wait (2000))
+        {
+            ioThread.join();
+        }
+        else
+        {
+            // No kill escape hatch with std::thread, and the wedged thread
+            // still dereferences this whole object (PCM handles, mutex,
+            // scratch, the flags). Detach it and mark the device abandoned:
+            // close() stops releasing resources and destroyOrPark leaks the
+            // object instead of destroying it, so the owner always outlives
+            // the thread.
+            std::fprintf (stderr,
+                          "[Dusk Studio/ALSA] ERROR: I/O thread did not exit within 2000 ms; "
+                          "detaching it and abandoning \"%s\" (device leaked, not destroyed - "
+                          "the thread still references it)\n",
+                          displayName.c_str());
+            ioThread.detach();
+            threadAbandoned.store (true, std::memory_order_release);
+        }
     }
-    if (cb != nullptr)
-        cb->audioDeviceStopped();
 
-    if (outHandle != nullptr) snd_pcm_drop (outHandle);
-    if (inHandle  != nullptr) snd_pcm_drop (inHandle);
-    if (outHandle != nullptr) snd_pcm_prepare (outHandle);
-    if (inHandle  != nullptr) snd_pcm_prepare (inHandle);
+    if (! threadAbandoned.load (std::memory_order_acquire))
+    {
+        device::IODeviceCallback* cb = nullptr;
+        {
+            std::lock_guard<std::mutex> sl (callbackLock);
+            std::swap (cb, callback);
+        }
+        if (cb != nullptr)
+            cb->audioDeviceStopped();
+
+        if (outHandle != nullptr) snd_pcm_drop (outHandle);
+        if (inHandle  != nullptr) snd_pcm_drop (inHandle);
+        if (outHandle != nullptr) snd_pcm_prepare (outHandle);
+        if (inHandle  != nullptr) snd_pcm_prepare (inHandle);
+    }
+    else
+    {
+        // The live thread may be wedged inside a client callback holding
+        // callbackLock, so a blocking lock here could deadlock stop(). Detach
+        // the callback only if the lock is free, and leave the PCM handles
+        // alone - the thread is still using them.
+        device::IODeviceCallback* cb = nullptr;
+        {
+            std::unique_lock<std::mutex> sl (callbackLock, std::try_to_lock);
+            if (sl.owns_lock())
+                std::swap (cb, callback);
+        }
+        if (cb != nullptr)
+            cb->audioDeviceStopped();
+    }
 }
 
 // ----- Recovery --------------------------------------------------------------
@@ -912,11 +966,11 @@ void AlsaAudioIODevice::rearmStream() noexcept
     if (inHandle != nullptr)
         snd_pcm_prepare (inHandle);
 
-    if (silencePrefill != nullptr && periodsCount > 0 && periodSize > 0)
+    if (! silencePrefill.empty() && periodsCount > 0 && periodSize > 0)
     {
         const auto   frames     = (snd_pcm_uframes_t) (periodSize * periodsCount);
         const size_t frameBytes = (size_t) bytesPerOutSample * (size_t) outNumChannels;
-        const auto*  src        = silencePrefill.getData();
+        const auto*  src        = silencePrefill.data();
         // NONBLOCK PCM: writei can return a short count, or -EPIPE if the ring
         // underran during re-arm. Loop until the full prefill lands (recovering
         // on error) so we never snd_pcm_start an underfilled ring -> instant
@@ -950,12 +1004,12 @@ void AlsaAudioIODevice::rearmStream() noexcept
 }
 
 // ----- Interleave / deinterleave dispatch ------------------------------------
-void AlsaAudioIODevice::interleavePlaybackBlock (const juce::AudioBuffer<float>& src,
+void AlsaAudioIODevice::interleavePlaybackBlock (const float* const* src,
                                                    void* dest, int numFrames) const
 {
     const int n      = (int) outNumChannels;
-    const int active = activeOutDeviceChannelIndex.size();
-    const int* idx   = activeOutDeviceChannelIndex.getRawDataPointer();
+    const int active = (int) activeOutDeviceChannelIndex.size();
+    const int* idx   = activeOutDeviceChannelIndex.data();
 
     if (openedIsFloat)
         writeInterleavedFloat (src, dest, numFrames, n, idx, active);
@@ -970,11 +1024,11 @@ void AlsaAudioIODevice::interleavePlaybackBlock (const juce::AudioBuffer<float>&
 }
 
 void AlsaAudioIODevice::deinterleaveCaptureBlock (const void* src,
-                                                    juce::AudioBuffer<float>& dest, int numFrames) const
+                                                    float* const* dest, int numFrames) const
 {
     const int n      = (int) inNumChannels;
-    const int active = activeInDeviceChannelIndex.size();
-    const int* idx   = activeInDeviceChannelIndex.getRawDataPointer();
+    const int active = (int) activeInDeviceChannelIndex.size();
+    const int* idx   = activeInDeviceChannelIndex.data();
 
     if (openedIsFloat)
         readInterleavedFloat (src, dest, numFrames, n, idx, active);
@@ -989,18 +1043,53 @@ void AlsaAudioIODevice::deinterleaveCaptureBlock (const void* src,
 }
 
 // ----- I/O thread ------------------------------------------------------------
-void AlsaAudioIODevice::run()
+void AlsaAudioIODevice::ioThreadRun()
 {
+    // Self-promote to SCHED_RR before the first block. The rlimit->priority
+    // mapping is shared with the DSP worker pool (see RtPriority.h - the pool
+    // MUST run at the same SCHED_RR level as this thread or the per-block join
+    // can starve a worker sharing this core). jucePriority < 0 means the rlimit
+    // admits no realtime level; don't bother asking. 0 IS a valid level (lowest
+    // SCHED_RR), so request RT for it too. On kernel refusal this stays a plain
+    // SCHED_OTHER thread.
+    const auto rtInfo = rt::queryRealtimePriority();
+    if (rtInfo.jucePriority >= 0)
+        rt::applyRealtimeSchedRR (rtInfo.jucePriority);
+
+    // Resolve and log the actual kernel sched_priority post-promotion so
+    // regressions in the priority mapping are visible without re-reading
+    // source.
+    {
+        int policy = 0;
+        sched_param sp {};
+        int kernelPrio = -1;
+        const char* policyStr = "unknown";
+        if (pthread_getschedparam (pthread_self(), &policy, &sp) == 0)
+        {
+            kernelPrio = sp.sched_priority;
+            policyStr = (policy == SCHED_RR)    ? "SCHED_RR"
+                      : (policy == SCHED_FIFO)  ? "SCHED_FIFO"
+                      : (policy == SCHED_OTHER) ? "SCHED_OTHER"
+                      :                           "SCHED_?";
+        }
+        const std::string rtLimitStr =
+            (! rtInfo.haveRtLimit)   ? std::string ("unknown")
+            : (rtInfo.rtLimit < 0)   ? std::string ("infinity")
+            :                          std::to_string (rtInfo.rtLimit);
+        std::fprintf (stderr, "[Dusk Studio/ALSA] thread started: %s (rt-prio=%d, kernel-prio=%d, RLIMIT_RTPRIO=%s)\n",
+                      policyStr, rtInfo.jucePriority, kernelPrio, rtLimitStr.c_str());
+    }
+
     // Fatal-recovery indicator. When snd_pcm_recover refuses to bring
     // the handle back (typically -ENODEV on USB / Bluetooth hot-unplug)
     // we capture the snd_strerror text and surface it to the
-    // AudioIODeviceCallback after the loop exits. Without this the
+    // IODeviceCallback after the loop exits. Without this the
     // audio thread dies silently and AudioEngine's transport keeps
     // "rolling" against a missing device - recordings continue against
     // a stalled writer until the user notices.
     int          fatalErr = 0;
     const char*  fatalCtx = nullptr;
-    while (! threadShouldExit())
+    while (! ioShouldExit.load (std::memory_order_acquire))
     {
         // Capture path: read one period (blocking with a long timeout). If
         // there's no input device, the playback path drives the loop on its
@@ -1018,7 +1107,7 @@ void AlsaAudioIODevice::run()
                 }
                 continue;
             }
-            if (threadShouldExit()) break;
+            if (ioShouldExit.load (std::memory_order_acquire)) break;
 
             // Loop on partial reads. snd_pcm_readi can short-return after
             // recovery or during state transitions - retry on the residual
@@ -1026,11 +1115,11 @@ void AlsaAudioIODevice::run()
             // distinct from xrun: it just means "wait briefly and try
             // again", not a stream error.
             int       framesRemaining = periodSize;
-            char*     cursor          = (char*) interleavedInBytes.getData();
+            char*     cursor          = interleavedInBytes.data();
             const int frameBytes      = bytesPerInSample * (int) inNumChannels;
             bool      readFatal       = false;
 
-            while (framesRemaining > 0 && ! threadShouldExit())
+            while (framesRemaining > 0 && ! ioShouldExit.load (std::memory_order_acquire))
             {
                 snd_pcm_sframes_t got = snd_pcm_readi (inHandle, cursor,
                                                          (snd_pcm_uframes_t) framesRemaining);
@@ -1061,21 +1150,21 @@ void AlsaAudioIODevice::run()
             }
             if (readFatal) break;
 
-            deinterleaveCaptureBlock (interleavedInBytes.getData(),
-                                        callbackInFloats, periodSize);
+            deinterleaveCaptureBlock (interleavedInBytes.data(),
+                                        callbackInWritePointers.data(), periodSize);
         }
 
-        callbackOutFloats.clear();
+        std::fill (callbackOutStore.begin(), callbackOutStore.end(), 0.0f);
 
         {
-            const juce::ScopedLock sl (callbackLock);
+            std::lock_guard<std::mutex> sl (callbackLock);
             if (callback != nullptr)
             {
-                callback->audioDeviceIOCallbackWithContext (
-                    callbackInPointers.getRawDataPointer(),
-                    callbackInPointers.size(),
-                    callbackOutPointers.getRawDataPointer(),
-                    callbackOutPointers.size(),
+                callback->audioDeviceIOCallback (
+                    callbackInPointers.data(),
+                    (int) callbackInPointers.size(),
+                    callbackOutPointers.data(),
+                    (int) callbackOutPointers.size(),
                     periodSize,
                     {});
             }
@@ -1100,17 +1189,17 @@ void AlsaAudioIODevice::run()
                     }
                     continue;
                 }
-                if (threadShouldExit()) break;
+                if (ioShouldExit.load (std::memory_order_acquire)) break;
             }
 
-            interleavePlaybackBlock (callbackOutFloats,
-                                       interleavedOutBytes.getData(), periodSize);
+            interleavePlaybackBlock (callbackOutPointers.data(),
+                                       interleavedOutBytes.data(), periodSize);
 
             int    framesRemaining = periodSize;
-            char*  cursor          = (char*) interleavedOutBytes.getData();
+            char*  cursor          = interleavedOutBytes.data();
             const int frameBytes   = bytesPerOutSample * (int) outNumChannels;
 
-            while (framesRemaining > 0 && ! threadShouldExit())
+            while (framesRemaining > 0 && ! ioShouldExit.load (std::memory_order_acquire))
             {
                 snd_pcm_sframes_t wrote = snd_pcm_writei (outHandle, cursor,
                                                             (snd_pcm_uframes_t) framesRemaining);
@@ -1141,23 +1230,31 @@ void AlsaAudioIODevice::run()
     }
 loopExit: ;
 
-    // Surface the device loss to AudioDeviceManager so it can switch
-    // to a fallback device (or post audioDeviceError to the UI). Without
-    // this, JUCE's AudioDeviceManager has no signal that the audio
-    // thread died - Dusk Studio's transport keeps "running" with no callbacks
-    // firing and a recording-in-progress accumulates against a stalled
-    // writer.
+    // Surface the device loss to the DeviceManager's fan-out so the engine can
+    // switch to a fallback device (or post the error to the UI). Without
+    // this the audio thread dies silently - Dusk Studio's transport keeps
+    // "running" with no callbacks firing and a recording-in-progress
+    // accumulates against a stalled writer.
     if (fatalErr != 0)
     {
-        const auto msg = juce::String ("ALSA device error in ")
-                       + juce::String (fatalCtx != nullptr ? fatalCtx : "I/O loop")
-                       + ": " + juce::String (snd_strerror (fatalErr));
-        std::fprintf (stderr, "[Dusk Studio/ALSA] fatal: %s\n", msg.toRawUTF8());
+        const auto msg = std::string ("ALSA device error in ")
+                       + (fatalCtx != nullptr ? fatalCtx : "I/O loop")
+                       + ": " + snd_strerror (fatalErr);
+        std::fprintf (stderr, "[Dusk Studio/ALSA] fatal: %s\n", msg.c_str());
 
-        const juce::ScopedLock sl (callbackLock);
+        std::lock_guard<std::mutex> sl (callbackLock);
         if (callback != nullptr)
             callback->audioDeviceError (msg);
     }
+
+    ioExited.signal();
+}
+
+void AlsaAudioIODevice::startThreadForTest (std::function<void (std::atomic<bool>&, dusk::AutoResetEvent&)> body)
+{
+    ioShouldExit.store (false, std::memory_order_release);
+    ioThread = std::thread ([this, body = std::move (body)] { body (ioShouldExit, ioExited); });
+    isStarted.store (true, std::memory_order_release);
 }
 
 // ============================================================================
@@ -1177,15 +1274,15 @@ loopExit: ;
 //
 // Real-device opens (snd_pcm_open + start + writei + readi against actual
 // hardware) are exercised by AudioPipelineSelfTest's existing backend cycle.
-juce::String AlsaAudioIODevice::runSelfTest()
+std::string AlsaAudioIODevice::runSelfTest()
 {
-    juce::StringArray report;
+    std::vector<std::string> report;
     int passed = 0, failed = 0;
 
-    auto record = [&] (const juce::String& name, bool pass, const juce::String& detail = {})
+    auto record = [&] (const std::string& name, bool pass, const std::string& detail = {})
     {
-        report.add (juce::String ("  [") + (pass ? "PASS" : "FAIL") + "] " + name
-                     + (detail.isNotEmpty() ? "  " + detail : juce::String()));
+        report.push_back (std::string ("  [") + (pass ? "PASS" : "FAIL") + "] " + name
+                          + (! detail.empty() ? "  " + detail : std::string()));
         (pass ? passed : failed)++;
     };
 
@@ -1193,12 +1290,13 @@ juce::String AlsaAudioIODevice::runSelfTest()
     {
         constexpr int kFrames = 64;
         constexpr int kDevCh  = 1;
+        constexpr float kPi   = 3.14159265358979323846f;
         const int activeIdx[] = { 0 };
 
-        juce::AudioBuffer<float> src (1, kFrames);
+        std::vector<float> src ((size_t) kFrames);
         for (int i = 0; i < kFrames; ++i)
-            src.setSample (0, i, 0.5f * std::sin (2.0f * juce::MathConstants<float>::pi
-                                                     * 1000.0f * (float) i / 48000.0f));
+            src[(size_t) i] = 0.5f * std::sin (2.0f * kPi * 1000.0f * (float) i / 48000.0f);
+        const float* srcChans[] = { src.data() };
 
         // Precision floors: lossy formats have a max-error budget at twice
         // the LSB of the format's quantization step, since round-trip
@@ -1210,8 +1308,8 @@ juce::String AlsaAudioIODevice::runSelfTest()
             int  bitDepth;
             bool isFloat;
             float epsilon;
-            void (*write) (const juce::AudioBuffer<float>&, void*, int, int, const int*, int);
-            void (*read)  (const void*, juce::AudioBuffer<float>&, int, int, const int*, int);
+            void (*write) (const float* const*, void*, int, int, const int*, int);
+            void (*read)  (const void*, float* const*, int, int, const int*, int);
         };
         const Case cases[] = {
             { "FLOAT_LE", 4, 32, true,  0.0f,                         writeInterleavedFloat,    readInterleavedFloat    },
@@ -1223,20 +1321,20 @@ juce::String AlsaAudioIODevice::runSelfTest()
 
         for (const auto& c : cases)
         {
-            juce::HeapBlock<char> scratch ((size_t) (c.bytesPerSample * kDevCh * kFrames), true);
-            juce::AudioBuffer<float> dest (1, kFrames);
-            dest.clear();
+            std::vector<char> scratch ((size_t) (c.bytesPerSample * kDevCh * kFrames), 0);
+            std::vector<float> dest ((size_t) kFrames, 0.0f);
+            float* destChans[] = { dest.data() };
 
-            c.write (src, scratch.getData(), kFrames, kDevCh, activeIdx, 1);
-            c.read  (scratch.getData(), dest, kFrames, kDevCh, activeIdx, 1);
+            c.write (srcChans, scratch.data(), kFrames, kDevCh, activeIdx, 1);
+            c.read  (scratch.data(), destChans, kFrames, kDevCh, activeIdx, 1);
 
             float maxErr = 0.0f;
             for (int i = 0; i < kFrames; ++i)
-                maxErr = std::max (maxErr, std::abs (src.getSample (0, i) - dest.getSample (0, i)));
+                maxErr = std::max (maxErr, std::abs (src[(size_t) i] - dest[(size_t) i]));
 
-            record (juce::String ("Format round-trip ") + c.name,
+            record (std::string ("Format round-trip ") + c.name,
                      maxErr <= c.epsilon,
-                     juce::String::formatted ("max err %.2e (eps %.2e)", maxErr, c.epsilon));
+                     dusk::text::format ("max err %.2e (eps %.2e)", maxErr, c.epsilon));
         }
     }
 
@@ -1247,17 +1345,18 @@ juce::String AlsaAudioIODevice::runSelfTest()
         const int activeIdx[] = { 0, 2 };
         constexpr int kActive = 2;
 
-        juce::AudioBuffer<float> src (kActive, kFrames);
+        std::vector<float> src ((size_t) (kActive * kFrames));
+        const float* srcChans[] = { src.data(), src.data() + kFrames };
         for (int f = 0; f < kFrames; ++f)
         {
-            src.setSample (0, f,  0.5f);   // active 0 -> device slot 0
-            src.setSample (1, f, -0.25f);  // active 1 -> device slot 2
+            src[(size_t) f]           =  0.5f;   // active 0 -> device slot 0
+            src[(size_t) (kFrames + f)] = -0.25f;  // active 1 -> device slot 2
         }
 
-        juce::HeapBlock<char> scratch ((size_t) (sizeof (int32_t) * kDevCh * kFrames), true);
-        writeInterleavedS32 (src, scratch.getData(), kFrames, kDevCh, activeIdx, kActive);
+        std::vector<char> scratch (sizeof (int32_t) * (size_t) (kDevCh * kFrames), 0);
+        writeInterleavedS32 (srcChans, scratch.data(), kFrames, kDevCh, activeIdx, kActive);
 
-        const auto* raw = reinterpret_cast<const int32_t*> (scratch.getData());
+        const auto* raw = reinterpret_cast<const int32_t*> (scratch.data());
         bool slot0HasData = false, slot2HasData = false;
         bool slot1Zero = true,    slot3Zero = true;
         for (int f = 0; f < kFrames; ++f)
@@ -1270,30 +1369,29 @@ juce::String AlsaAudioIODevice::runSelfTest()
 
         record ("Channel routing - active slots populated",
                  slot0HasData && slot2HasData,
-                 juce::String::formatted ("slot0=%s slot2=%s",
-                                            slot0HasData ? "data" : "ZERO",
-                                            slot2HasData ? "data" : "ZERO"));
+                 dusk::text::format ("slot0=%s slot2=%s",
+                                     slot0HasData ? "data" : "ZERO",
+                                     slot2HasData ? "data" : "ZERO"));
         record ("Channel routing - inactive slots zeroed",
                  slot1Zero && slot3Zero,
-                 juce::String::formatted ("slot1=%s slot3=%s",
-                                            slot1Zero ? "zero" : "NONZERO",
-                                            slot3Zero ? "zero" : "NONZERO"));
+                 dusk::text::format ("slot1=%s slot3=%s",
+                                     slot1Zero ? "zero" : "NONZERO",
+                                     slot3Zero ? "zero" : "NONZERO"));
 
         // Round-trip back through deinterleave verifies the active-index
         // map is symmetric (write puts active a -> slot activeIdx[a],
         // read pulls slot activeIdx[a] -> active a).
-        juce::AudioBuffer<float> dest (kActive, kFrames);
-        dest.clear();
-        readInterleavedS32 (scratch.getData(), dest, kFrames, kDevCh, activeIdx, kActive);
+        std::vector<float> dest ((size_t) (kActive * kFrames), 0.0f);
+        float* destChans[] = { dest.data(), dest.data() + kFrames };
+        readInterleavedS32 (scratch.data(), destChans, kFrames, kDevCh, activeIdx, kActive);
 
         float maxErr = 0.0f;
-        for (int a = 0; a < kActive; ++a)
-            for (int f = 0; f < kFrames; ++f)
-                maxErr = std::max (maxErr, std::abs (src.getSample (a, f) - dest.getSample (a, f)));
+        for (int i = 0; i < kActive * kFrames; ++i)
+            maxErr = std::max (maxErr, std::abs (src[(size_t) i] - dest[(size_t) i]));
 
         record ("Channel routing - round-trip preserves active channels",
                  maxErr <= 2.0f / kInt32Scale,
-                 juce::String::formatted ("max err %.2e", maxErr));
+                 dusk::text::format ("max err %.2e", maxErr));
     }
 
     // ----- 3. cardOfHwId parsing -------------------------------------------
@@ -1308,15 +1406,15 @@ juce::String AlsaAudioIODevice::runSelfTest()
             { "",                     ""        },
         };
         bool allOk = true;
-        juce::String detail;
+        std::string detail;
         for (const auto& c : cases)
         {
-            const juce::String got = cardOfHwId (c.in);
-            const bool ok = got == juce::String (c.expected);
+            const std::string got = cardOfHwId (c.in);
+            const bool ok = got == c.expected;
             if (! ok)
             {
                 allOk = false;
-                detail += juce::String ("'") + c.in + "' -> '" + got + "' (want '"
+                detail += std::string ("'") + c.in + "' -> '" + got + "' (want '"
                         + c.expected + "'); ";
             }
         }
@@ -1348,25 +1446,19 @@ juce::String AlsaAudioIODevice::runSelfTest()
         setRequestedPeriods (8);    const int p8   = getRequestedPeriods();
         setRequestedPeriods (2);    const int p2   = getRequestedPeriods();
 
-        record ("Periods clamping - low (1)",     p1   == 2,
-                 juce::String::formatted ("got %d", p1));
-        record ("Periods clamping - lower (0)",   p0   == 2,
-                 juce::String::formatted ("got %d", p0));
-        record ("Periods clamping - negative",    pNeg == 2,
-                 juce::String::formatted ("got %d", pNeg));
-        record ("Periods clamping - high (99)",   p99  == 16,
-                 juce::String::formatted ("got %d", p99));
-        record ("Periods clamping - in-range (8)",p8   == 8,
-                 juce::String::formatted ("got %d", p8));
-        record ("Periods clamping - in-range (2)",p2   == 2,
-                 juce::String::formatted ("got %d", p2));
+        record ("Periods clamping - low (1)",     p1   == 2, dusk::text::format ("got %d", p1));
+        record ("Periods clamping - lower (0)",   p0   == 2, dusk::text::format ("got %d", p0));
+        record ("Periods clamping - negative",    pNeg == 2, dusk::text::format ("got %d", pNeg));
+        record ("Periods clamping - high (99)",   p99  == 16, dusk::text::format ("got %d", p99));
+        record ("Periods clamping - in-range (8)",p8   == 8, dusk::text::format ("got %d", p8));
+        record ("Periods clamping - in-range (2)",p2   == 2, dusk::text::format ("got %d", p2));
     }
 
-    juce::StringArray header;
-    header.add ("--- ALSA Backend Self-Test (no hardware) ---");
-    header.add (juce::String::formatted ("  Total: %d passed, %d failed", passed, failed));
-    header.add ("");
-    return header.joinIntoString ("\n") + "\n" + report.joinIntoString ("\n");
+    std::vector<std::string> header;
+    header.push_back ("--- ALSA Backend Self-Test (no hardware) ---");
+    header.push_back (dusk::text::format ("  Total: %d passed, %d failed", passed, failed));
+    header.push_back ("");
+    return dusk::text::joinIntoString (header, "\n") + "\n" + dusk::text::joinIntoString (report, "\n");
 }
 
 } // namespace duskstudio

@@ -149,7 +149,11 @@ target_sources(dusk-studio-tests PRIVATE
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(dusk-studio-tests PRIVATE
         alsa_seq_midi.cpp
-        ${CMAKE_SOURCE_DIR}/src/engine/midi/AlsaSeqMidi.cpp)
+        ${CMAKE_SOURCE_DIR}/src/engine/midi/AlsaSeqMidi.cpp
+        # ALSA audio backend: the wedged-I/O-thread abandon/park path needs no
+        # hardware (test-injected thread body, PCMs never opened).
+        alsa_thread_teardown.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/alsa/AlsaAudioIODevice.cpp)
     target_link_libraries(dusk-studio-tests PRIVATE asound)
 else()
     # The seam picks its backend on __linux__, so off Linux the JUCE fallback is

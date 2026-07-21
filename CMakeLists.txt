@@ -524,7 +524,7 @@ if(WIN32)
     endif()
 endif()
 
-# Dusk Studio-owned ALSA backend - a juce::AudioIODevice + AudioIODeviceType pair
+# Dusk Studio-owned ALSA backend - a dusk device::IODevice + IODeviceType pair
 # written from scratch using Ardour's libs/backends/alsa/ as a reference for
 # patterns (xrun recovery, sw_params choices, format priority, channel-mask
 # handling) but with no copied code. Replaces JUCE's stock ALSA backend,
@@ -533,8 +533,8 @@ endif()
 #
 # Linux-only: the implementation depends on <alsa/asoundlib.h>. macOS and
 # Windows builds skip it and fall back to the audio backends JUCE provides
-# (CoreAudio / WASAPI). The AudioEngine constructor's registration is
-# similarly guarded by #if defined(__linux__).
+# (CoreAudio / WASAPI). Registration in DeviceManager is similarly guarded
+# by DUSKSTUDIO_HAS_ALSA.
 if(UNIX AND NOT APPLE)
     target_sources(DuskStudio PRIVATE
         src/engine/alsa/AlsaAudioIODevice.cpp

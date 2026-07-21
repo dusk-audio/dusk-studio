@@ -26,8 +26,8 @@
  #include "engine/ipc/IpcSelfTest.h"
 #endif
 #if defined(__linux__)
- #include "engine/alsa/AlsaAudioIODeviceType.h"
  #include "engine/alsa/AlsaPerformanceTest.h"
+ #include "foundation/Text.h"
 #endif
 #include "session/Session.h"
 
@@ -302,16 +302,9 @@ static void runHeadlessToneTest()
                   backendName.toRawUTF8(), deviceName.toRawUTF8(),
                   targetRate, targetBuf, durationMs);
 
-    // Linux: pre-register Dusk Studio's own native ALSA backend before init so
-    // JUCE's createDeviceTypesIfNeeded doesn't auto-register its stock ALSA path.
-    // The native PipeWire backend implements the dusk device interfaces, not
-    // JUCE's, so it does not fit a JUCE AudioDeviceManager; P5 moves the whole
-    // tone test onto the dusk DeviceManager and registers PipeWire there.
-    // Pre-scanning lets init's pickCurrentDeviceTypeWithDevices read device
-    // counts without tripping hasScanned assertions.
-   #if defined(__linux__)
-    dm.addAudioDeviceType (std::make_unique<duskstudio::AlsaAudioIODeviceType>());
-   #endif
+    // Both native backends implement the dusk device interfaces now, so neither
+    // fits a JUCE AudioDeviceManager; this probe runs against JUCE's stock
+    // backends until P5 moves the whole tone test onto the dusk DeviceManager.
    #if defined(__linux__)
     for (auto* type : dm.getAvailableDeviceTypes())
         if (type != nullptr) type->scanForDevices();
@@ -1912,25 +1905,24 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         // none set.
         duskstudio::AlsaPerformanceTest::Options opts;
         if (const auto* v = std::getenv ("DUSKSTUDIO_ALSA_PERF_DEVICE"))      opts.deviceId      = v;
-        if (const auto* v = std::getenv ("DUSKSTUDIO_ALSA_PERF_RATE"))        opts.sampleRate    = (unsigned int) juce::String (v).getIntValue();
-        if (const auto* v = std::getenv ("DUSKSTUDIO_ALSA_PERF_DURATION_MS")) opts.durationMs    = juce::String (v).getIntValue();
-        if (const auto* v = std::getenv ("DUSKSTUDIO_ALSA_PERF_LOAD_US"))     opts.fakeDspLoadUs = juce::String (v).getIntValue();
-        if (const auto* v = std::getenv ("DUSKSTUDIO_ALSA_PERF_LOOPBACK"))    opts.runLoopback   = juce::String (v).getIntValue() != 0;
+        if (const auto* v = std::getenv ("DUSKSTUDIO_ALSA_PERF_RATE"))        opts.sampleRate    = (unsigned int) dusk::text::getIntValue (v);
+        if (const auto* v = std::getenv ("DUSKSTUDIO_ALSA_PERF_DURATION_MS")) opts.durationMs    = dusk::text::getIntValue (v);
+        if (const auto* v = std::getenv ("DUSKSTUDIO_ALSA_PERF_LOAD_US"))     opts.fakeDspLoadUs = dusk::text::getIntValue (v);
+        if (const auto* v = std::getenv ("DUSKSTUDIO_ALSA_PERF_LOOPBACK"))    opts.runLoopback   = dusk::text::getIntValue (v) != 0;
 
         // Tier 2: comma-separated list, e.g. "44100,48000,96000". Empty
         // (or unset) keeps the single-rate Tier 1 behaviour.
         if (const auto* v = std::getenv ("DUSKSTUDIO_ALSA_PERF_RATES"))
         {
-            const auto tokens = juce::StringArray::fromTokens (juce::String (v), ",", "");
-            for (const auto& t : tokens)
+            for (const auto& t : dusk::text::split (v, ','))
             {
-                const int rate = t.trim().getIntValue();
-                if (rate > 0) opts.sampleRates.add ((unsigned int) rate);
+                const int rate = dusk::text::getIntValue (dusk::text::trim (t));
+                if (rate > 0) opts.sampleRates.push_back ((unsigned int) rate);
             }
         }
 
         const auto report = duskstudio::AlsaPerformanceTest::runAll (opts);
-        std::fprintf (stdout, "%s\n", report.toRawUTF8());
+        std::fprintf (stdout, "%s\n", report.c_str());
         std::fflush (stdout);
 
         quit();

@@ -1,16 +1,26 @@
 #pragma once
 
-#include <juce_audio_devices/juce_audio_devices.h>
-#include <juce_core/juce_core.h>
+#include "../device/ChannelSet.h"
+#include "../device/IODevice.h"
+#include "../device/IODeviceCallback.h"
+#include "../../foundation/AutoResetEvent.h"
+
 #include <alsa/asoundlib.h>
+
 #include <atomic>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <vector>
 
 namespace duskstudio
 {
 // Dusk Studio-owned ALSA audio I/O. One instance per open device pair (a playback
-// PCM, a capture PCM, or both linked together). Implements juce::AudioIODevice
-// so the rest of Dusk Studio (AudioDeviceManager, AudioDeviceSelectorComponent,
-// AudioEngine's callback) can use it interchangeably with the JACK backend.
+// PCM, a capture PCM, or both linked together). Implements device::IODevice
+// so the rest of Dusk Studio (DeviceManager, the selector UI, AudioEngine's
+// callback) can use it interchangeably with the PipeWire backend.
 //
 // Design choices, for new readers:
 //   - Raw `hw:CARD,DEV` PCMs only. No `plug:`/`default:`/`front:` aliases -
@@ -27,56 +37,58 @@ namespace duskstudio
 //     = buffer_size, no silence-fill override. Underrun stops the device,
 //     recovery restarts it cleanly. The xrun counter is surfaced to the UI
 //     so the user knows.
-//   - Open at the device's reported max channel count; map JUCE's active-
+//   - Open at the device's reported max channel count; map the active-
 //     channel mask to per-channel float buffers; zero inactive slots in the
 //     interleaved frame.
-//   - SCHED_RR I/O thread, priority sized below RLIMIT_RTPRIO so
-//     pthread_create won't EPERM. mlockall() is done once at app start.
+//   - SCHED_RR I/O thread (std::thread, self-promoted via rt::applyRealtimeSchedRR),
+//     priority sized below RLIMIT_RTPRIO so the kernel won't EPERM. mlockall()
+//     is done once at app start.
 //
 // Patterns referenced from Ardour's libs/backends/alsa/zita-alsa-pcmi.cc
 // (study only, no copied code).
-class AlsaAudioIODevice final : public juce::AudioIODevice,
-                                  private juce::Thread
+class AlsaAudioIODevice final : public device::IODevice
 {
 public:
-    AlsaAudioIODevice (const juce::String& deviceName,
-                       const juce::String& inputId,
-                       const juce::String& outputId);
+    AlsaAudioIODevice (const std::string& deviceName,
+                       const std::string& inputId,
+                       const std::string& outputId);
     ~AlsaAudioIODevice() override;
 
-    // Identifiers used by the AudioIODeviceType to look up this instance.
-    const juce::String inputId, outputId;
+    // Identifiers used by the IODeviceType to look up this instance.
+    const std::string inputId, outputId;
 
-    // juce::AudioIODevice ------------------------------------------------------
-    juce::StringArray  getOutputChannelNames() override;
-    juce::StringArray  getInputChannelNames()  override;
-    juce::Array<double> getAvailableSampleRates() override;
-    juce::Array<int>    getAvailableBufferSizes() override;
+    // device::IODevice ---------------------------------------------------------
+    std::string getName() const override                      { return displayName; }
+
+    std::vector<std::string> getOutputChannelNames() override;
+    std::vector<std::string> getInputChannelNames()  override;
+    std::vector<double> getAvailableSampleRates() override;
+    std::vector<int>    getAvailableBufferSizes() override;
     int                 getDefaultBufferSize()    override;
 
-    juce::String open (const juce::BigInteger& inputChannels,
-                        const juce::BigInteger& outputChannels,
-                        double sampleRate, int bufferSizeSamples) override;
+    std::string open (const device::ChannelSet& inputChannels,
+                      const device::ChannelSet& outputChannels,
+                      double sampleRate, int bufferSizeSamples) override;
     void  close()  override;
     bool  isOpen() override                                   { return isDeviceOpen.load (std::memory_order_acquire); }
 
-    void  start (juce::AudioIODeviceCallback* newCallback) override;
+    void  start (device::IODeviceCallback* newCallback) override;
     void  stop() override;
     bool  isPlaying() override                                { return isStarted.load (std::memory_order_acquire); }
 
-    juce::String getLastError() override                       { return lastError; }
+    std::string getLastError() override                       { return lastError; }
 
-    int    getCurrentBufferSizeSamples() override              { return periodSize; }
-    double getCurrentSampleRate()        override              { return openedSampleRate; }
-    int    getCurrentBitDepth()          override              { return openedBitDepth; }
+    int    getCurrentBufferSizeSamples() override             { return periodSize; }
+    double getCurrentSampleRate()        override             { return openedSampleRate; }
+    int    getCurrentBitDepth()          override             { return openedBitDepth; }
 
-    juce::BigInteger getActiveOutputChannels() const override  { return currentOutputChannels; }
-    juce::BigInteger getActiveInputChannels()  const override  { return currentInputChannels; }
+    device::ChannelSet getActiveOutputChannels() const override { return currentOutputChannels; }
+    device::ChannelSet getActiveInputChannels()  const override { return currentInputChannels; }
 
-    int getOutputLatencyInSamples() override                   { return outputLatency; }
-    int getInputLatencyInSamples()  override                   { return inputLatency; }
+    int getOutputLatencyInSamples() override                  { return outputLatency; }
+    int getInputLatencyInSamples()  override                  { return inputLatency; }
 
-    int getXRunCount() const noexcept override                 { return xrunCount.load (std::memory_order_relaxed); }
+    int getXRunCount() const noexcept override                { return xrunCount.load (std::memory_order_relaxed); }
 
     // Periods-per-buffer override. Reads as the value that will be used on
     // the NEXT open(). Default 2 (Ardour-style; the lowest value that gives
@@ -94,10 +106,29 @@ public:
     // alongside the engine pipeline tests, so DUSKSTUDIO_RUN_SELFTEST=1 picks
     // it up. Real-device opens are covered by the existing backend cycle
     // section of AudioPipelineSelfTest, not here.
-    static juce::String runSelfTest();
+    static std::string runSelfTest();
+
+    // Wedged-thread abandonment. stop() gives the I/O thread 2000 ms to exit;
+    // on timeout it detaches the thread and marks this device abandoned. The
+    // detached thread still dereferences all of this object (PCM handles,
+    // mutex, scratch, the exit flag and event), so an abandoned device must be
+    // leaked, never destroyed - owners route destruction through destroyOrPark,
+    // which parks an abandoned device in a process-lifetime holder instead of
+    // running its destructor. A destructor that runs while the thread is live
+    // is a use-after-free.
+    bool ioThreadWasAbandoned() const noexcept                { return threadAbandoned.load (std::memory_order_acquire); }
+    static void destroyOrPark (std::unique_ptr<AlsaAudioIODevice> dev);
+    static int  abandonedCount() noexcept;
+
+    // Test-only: launch the I/O thread with `body` in place of the real loop
+    // and arm the stop() join machinery, so the timed-join/abandon path is
+    // testable without hardware. The body must signal the event as its last
+    // statement (the real thread's contract).
+    void startThreadForTest (std::function<void (std::atomic<bool>& shouldExit,
+                                                 dusk::AutoResetEvent& exited)> body);
 
 private:
-    void run() override;  // SCHED_RR I/O thread
+    void ioThreadRun();  // SCHED_RR I/O thread body
 
     // hw_params + sw_params negotiation. Caller passes the requested values;
     // these may be modified by the kernel's "near" snapping. Returns true
@@ -109,7 +140,7 @@ private:
                         unsigned int& periods,
                         int& bytesPerSample, bool& sampleIsFloat);
 
-    bool openOneHandle (const juce::String& id, bool isCapture, snd_pcm_t*& handle);
+    bool openOneHandle (const std::string& id, bool isCapture, snd_pcm_t*& handle);
 
     // Recover from an EPIPE / ESTRPIPE / EBADFD; bumps xrunCount. Returns
     // 0 on successful recovery, the original errno on failure. On success it
@@ -125,27 +156,27 @@ private:
     // Convert one period's worth of float samples to the negotiated sample
     // type, interleaved across all device channels. Inactive channels are
     // zero-filled. The reverse for capture.
-    void interleavePlaybackBlock (const juce::AudioBuffer<float>& src,
+    void interleavePlaybackBlock (const float* const* src,
                                    void* destInterleaved, int numFrames) const;
     void deinterleaveCaptureBlock (const void* srcInterleaved,
-                                    juce::AudioBuffer<float>& dest, int numFrames) const;
+                                    float* const* dest, int numFrames) const;
 
     // Capability cache populated lazily on first sample-rate / buffer-size
     // query (or open()). Avoids re-probing the device for every UI redraw.
-    // Message-thread only: callers are JUCE's channel-name / rate / buffer
-    // queries and open(), all driven from AudioDeviceManager. The cached
-    // members below are not synchronised; do not call from the I/O thread.
+    // Message-thread only: callers are the manager's channel-name / rate /
+    // buffer queries and open(). The cached members below are not
+    // synchronised; do not call from the I/O thread.
     void probeIfNeeded();
 
     // State ---------------------------------------------------------------
-    const juce::String displayName;
+    const std::string displayName;
 
     // Capability cache (probed once, cleared on close).
     bool                hasProbed         = false;
     unsigned int        deviceMaxOutChannels = 0;
     unsigned int        deviceMaxInChannels  = 0;
-    juce::Array<double> supportedSampleRates;
-    juce::Array<int>    supportedBufferSizes;
+    std::vector<double> supportedSampleRates;
+    std::vector<int>    supportedBufferSizes;
 
     // Negotiated values from the most recent successful open().
     snd_pcm_t* outHandle = nullptr;
@@ -162,32 +193,41 @@ private:
     int        outputLatency     = 0;
     int        inputLatency      = 0;
 
-    juce::BigInteger currentOutputChannels, currentInputChannels;
-    juce::Array<int> activeOutDeviceChannelIndex; // active-callback-i -> device-ch-j
-    juce::Array<int> activeInDeviceChannelIndex;
+    device::ChannelSet currentOutputChannels, currentInputChannels;
+    std::vector<int> activeOutDeviceChannelIndex; // active-callback-i -> device-ch-j
+    std::vector<int> activeInDeviceChannelIndex;
 
     // Per-period scratch (allocated on open, never reallocated on the audio
     // thread).
-    juce::HeapBlock<char>     interleavedOutBytes;
-    juce::HeapBlock<char>     interleavedInBytes;
+    std::vector<char> interleavedOutBytes;
+    std::vector<char> interleavedInBytes;
     // periodSize * periodsCount frames of zeroed output bytes, pre-allocated at
     // open so rearmStream can refill the playback ring without allocating on
     // the audio thread.
-    juce::HeapBlock<char>     silencePrefill;
-    juce::AudioBuffer<float>  callbackOutFloats;  // sized [numChannelsActive, periodSize]
-    juce::AudioBuffer<float>  callbackInFloats;
-    juce::Array<float*>       callbackOutPointers;
-    juce::Array<const float*> callbackInPointers;
+    std::vector<char> silencePrefill;
+    // Planar float scratch the callback reads/writes, one periodSize run per
+    // active channel; the pointer arrays index into these stores.
+    std::vector<float>        callbackOutStore;
+    std::vector<float>        callbackInStore;
+    std::vector<float*>       callbackOutPointers;
+    std::vector<float*>       callbackInWritePointers;  // deinterleave target
+    std::vector<const float*> callbackInPointers;       // callback view of the same store
 
-    juce::CriticalSection callbackLock;
-    juce::AudioIODeviceCallback* callback = nullptr;
+    std::mutex callbackLock;
+    device::IODeviceCallback* callback = nullptr;
+
+    std::thread          ioThread;
+    std::atomic<bool>    ioShouldExit { false };
+    dusk::AutoResetEvent ioExited;
+    std::atomic<bool>    threadAbandoned { false };
 
     std::atomic<bool> isDeviceOpen { false };
     std::atomic<bool> isStarted    { false };
     std::atomic<int>  xrunCount    { 0 };
 
-    juce::String lastError;
+    std::string lastError;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AlsaAudioIODevice)
+    AlsaAudioIODevice (const AlsaAudioIODevice&) = delete;
+    AlsaAudioIODevice& operator= (const AlsaAudioIODevice&) = delete;
 };
 } // namespace duskstudio

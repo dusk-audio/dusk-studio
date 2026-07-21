@@ -1,6 +1,10 @@
 #pragma once
 
-#include <juce_audio_devices/juce_audio_devices.h>
+#include "../device/IODeviceType.h"
+
+#include <memory>
+#include <string>
+#include <vector>
 
 namespace duskstudio
 {
@@ -10,33 +14,25 @@ namespace duskstudio
 // the result that "raw hardware" is anything but. The hw: PCMs talk directly
 // to the kernel ALSA driver, the same path Ardour uses.
 //
-// The actual I/O loop lives in AlsaAudioIODevice (Phase 2), wrapping
-// zita-alsa-pcmi (vendored from Ardour). This type is just the factory and
-// enumeration glue.
-class AlsaAudioIODeviceType final : public juce::AudioIODeviceType
+// The actual I/O loop lives in AlsaAudioIODevice. This type is just the factory
+// and enumeration glue; createDevice wraps each device in a small owning handle
+// whose destructor routes through AlsaAudioIODevice::destroyOrPark, so a device
+// whose I/O thread wedged is leaked instead of destroyed under a live thread.
+class AlsaAudioIODeviceType final : public device::IODeviceType
 {
 public:
-    AlsaAudioIODeviceType();
+    std::string getTypeName() const override { return "ALSA"; }
 
-    void               scanForDevices() override;
-    juce::StringArray  getDeviceNames (bool wantInputNames) const override;
-    int                getDefaultDeviceIndex (bool forInput) const override;
-    int                getIndexOfDevice (juce::AudioIODevice* device, bool asInput) const override;
-    bool               hasSeparateInputsAndOutputs() const override { return true; }
-    juce::AudioIODevice* createDevice (const juce::String& outputDeviceName,
-                                        const juce::String& inputDeviceName) override;
-
-    // Re-run device enumeration and notify any registered listeners (which
-    // includes JUCE's AudioDeviceSelectorComponent, so the dropdown
-    // repopulates). The UI's Rescan button calls this after a USB
-    // plug/unplug.
-    void rescan();
+    void scanForDevices() override;
+    std::vector<std::string> getDeviceNames (bool wantInputNames) const override;
+    int  getDefaultDeviceIndex (bool forInput) const override;
+    int  getIndexOfDevice (device::IODevice* dev, bool asInput) const override;
+    std::unique_ptr<device::IODevice> createDevice (const std::string& outputDeviceName,
+                                                    const std::string& inputDeviceName) override;
 
 private:
-    juce::StringArray inputNames, outputNames;
-    juce::StringArray inputIds, outputIds;
+    std::vector<std::string> inputNames, outputNames;
+    std::vector<std::string> inputIds, outputIds;
     bool hasScanned = false;
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AlsaAudioIODeviceType)
 };
 } // namespace duskstudio
