@@ -1,10 +1,22 @@
 # De-JUCE tower spec — Device Phase-3-audio
 
-**STATUS: P1 DONE (HEAD of branch `dejuce/device-phase3-audio-a`).
-DeviceStateBlob unit + full JSON round-trip / legacy-XML A/B matrix landed
-(8 cases, 427/427 ctest). Next phase: P2 (native DeviceManager on Linux) on the
-same branch. Resume: "P2 on dejuce/device-phase3-audio-a - native DeviceManager
-per spec §D1/§D2/§D4/§P2".**
+**STATUS: P2 DONE (HEAD of branch `dejuce/device-phase3-audio-a`, commit acdef95).
+Native DeviceManager orchestrator on Linux: owns the IODeviceType list, drives
+IODevice open/start/stop/close and the CallbackFanout itself; PipeWire/ALSA stay
+juce-typed behind owning adapters. DeviceStateBlob wired (seed + busy fallback,
+saved intent preserved). Wrapped impl moved verbatim to DeviceManagerJuce.cpp
+(gated NOT-Linux; allowlist 194->195). New device_manager_native.cpp mock suite
+(9 cases). 436/436 ctest, app build 0 warnings, Xvfb selftest clean; real
+PipeWire (legacy XML) + ALSA (new JSON) open/play verified on the dev box. P2
+CLOSES PR-A (P0-P2) - PR-A description drafted, awaiting Marc review before push.
+Known transitional diagnostic drift: AudioPipelineSelfTest's testBackendsOpenCleanly
++ UMC1820 probe rely on JUCE's auto-open-on-type-switch, which the native manager
+drops per §D2 (no-auto-open); those helpers get reworked in P3/P4 (they are in
+those file lists). Next: after PR-A merges, P3 PipeWire re-type per §D6/§P3 on a
+NEW branch dejuce/device-phase3-audio-b.
+Resume: "PR-A (device P0-P2) awaiting Marc review on dejuce/device-phase3-audio-a;
+after merge, start P3 (PipeWire re-type, §D6/§P3) on new branch
+dejuce/device-phase3-audio-b".**
 Update this line each session (phase done, branch, resume phrase).
 
 Read order for an executing session: `docs/dejuce-campaign.md` → this file →
