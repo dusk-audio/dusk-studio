@@ -1,5 +1,7 @@
 #include "PipeWireAudioIODevice.h"
 
+#include "../../foundation/Text.h"
+
 #include <pipewire/pipewire.h>
 #include <pipewire/filter.h>
 #include <pipewire/link.h>
@@ -8,9 +10,13 @@
 
 #include <algorithm>
 #include <mutex>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <string>
 #include <thread>
+#include <vector>
 #include <chrono>
 #include <ctime>
 
@@ -61,11 +67,11 @@ const pw_filter_events kFilterEvents = makeFilterEvents();
 // its global id in a link. Direction is the graph's ("out" produces).
 struct GraphPort
 {
-    juce::uint32 nodeId = 0;
-    juce::uint32 portId = 0;
-    bool         isOutput = false;
-    juce::String name;      // "playback_1", "capture_2", device port names...
-    juce::String channel;   // audio.channel: "FL"/"FR"/"AUX0".., or empty
+    std::uint32_t nodeId = 0;
+    std::uint32_t portId = 0;
+    bool          isOutput = false;
+    std::string   name;      // "playback_1", "capture_2", device port names...
+    std::string   channel;   // audio.channel: "FL"/"FR"/"AUX0".., or empty
 };
 
 // A stable per-node channel ordering key. Prefer the semantic audio.channel
@@ -75,34 +81,35 @@ struct GraphPort
 // across the named/aux/fallback groups.
 int channelOrderKey (const GraphPort& p)
 {
-    if (p.channel.isNotEmpty())
+    if (! p.channel.empty())
     {
-        if (p.channel.startsWith ("AUX"))
-            return 100 + p.channel.substring (3).getIntValue();
+        if (dusk::text::startsWith (p.channel, "AUX"))
+            return 100 + dusk::text::getIntValue (dusk::text::substring (p.channel, 3));
         static const char* const canonical[] =
             { "MONO", "FL", "FR", "FC", "LFE", "RL", "RR", "FLC", "FRC", "RC", "SL", "SR" };
         for (int i = 0; i < (int) (sizeof (canonical) / sizeof (canonical[0])); ++i)
             if (p.channel == canonical[i]) return i;
     }
-    const auto digits = p.name.retainCharacters ("0123456789");
-    if (digits.isNotEmpty())
-        return digits.getIntValue();
+    const auto digits = dusk::text::retainCharacters (p.name, "0123456789");
+    if (! digits.empty())
+        return dusk::text::getIntValue (digits);
     return (int) p.portId;
 }
 
 struct GraphScan
 {
-    juce::Array<GraphPort> ports;
-    juce::StringArray      nodeNames;   // index-aligned with nodeIds
-    juce::Array<juce::uint32> nodeIds;
+    std::vector<GraphPort>     ports;
+    std::vector<std::string>   nodeNames;   // index-aligned with nodeIds
+    std::vector<std::uint32_t> nodeIds;
     pw_main_loop* loop = nullptr;
     int  syncSeq = 0;
     bool haveSync = false;
 
-    juce::uint32 resolveNode (const juce::String& name) const
+    std::uint32_t resolveNode (const std::string& name) const
     {
-        const int i = nodeNames.indexOf (name);
-        return i >= 0 ? nodeIds.getUnchecked (i) : (juce::uint32) SPA_ID_INVALID;
+        for (int i = 0; i < (int) nodeNames.size(); ++i)
+            if (nodeNames[(size_t) i] == name) return nodeIds[(size_t) i];
+        return (std::uint32_t) SPA_ID_INVALID;
     }
 };
 
@@ -117,8 +124,8 @@ void onGraphGlobal (void* data, uint32_t id, uint32_t /*perm*/, const char* type
     {
         if (const char* nm = spa_dict_lookup (props, PW_KEY_NODE_NAME))
         {
-            s.nodeNames.add (juce::String::fromUTF8 (nm));
-            s.nodeIds.add (id);
+            s.nodeNames.push_back (std::string (nm));
+            s.nodeIds.push_back (id);
         }
     }
     else if (std::strcmp (type, PW_TYPE_INTERFACE_Port) == 0)
@@ -133,20 +140,20 @@ void onGraphGlobal (void* data, uint32_t id, uint32_t /*perm*/, const char* type
             return;
         const char* ch = spa_dict_lookup (props, PW_KEY_AUDIO_CHANNEL);
         const char* nm = spa_dict_lookup (props, PW_KEY_PORT_NAME);
-        const juce::String name = nm != nullptr ? juce::String::fromUTF8 (nm) : juce::String();
+        const std::string name = nm != nullptr ? std::string (nm) : std::string();
         // Link only audio ports: device audio ports carry audio.channel; our own
         // DSP ports don't but are named playback_/capture_. Everything else
         // (MIDI / control / notify ports) must not be linked.
-        if (ch == nullptr && ! name.startsWith ("playback_") && ! name.startsWith ("capture_"))
+        if (ch == nullptr && ! dusk::text::startsWith (name, "playback_") && ! dusk::text::startsWith (name, "capture_"))
             return;
         GraphPort p;
-        p.nodeId   = (juce::uint32) juce::String (nodeIdStr).getLargeIntValue();
+        p.nodeId   = (std::uint32_t) std::strtoul (nodeIdStr, nullptr, 10);
         p.portId   = id;
         p.isOutput = isOut;
         p.name     = name;
         if (ch != nullptr)
-            p.channel = juce::String::fromUTF8 (ch);
-        s.ports.add (p);
+            p.channel = std::string (ch);
+        s.ports.push_back (p);
     }
 }
 
@@ -196,43 +203,42 @@ const pw_core_events     kGraphCoreEvents     = makeGraphCoreEvents();
 // Registry ids of a node's ports in one direction, ordered by channelOrderKey
 // (semantic audio.channel, else port-name index) so link N maps our channel N
 // to the device's channel N regardless of registry id assignment.
-juce::Array<juce::uint32> orderedPortIds (const GraphScan& s, juce::uint32 nodeId, bool isOutput)
+std::vector<std::uint32_t> orderedPortIds (const GraphScan& s, std::uint32_t nodeId, bool isOutput)
 {
-    juce::Array<GraphPort> matching;
+    std::vector<GraphPort> matching;
     for (const auto& p : s.ports)
         if (p.nodeId == nodeId && p.isOutput == isOutput)
-            matching.add (p);
+            matching.push_back (p);
     std::sort (matching.begin(), matching.end(),
                [] (const GraphPort& a, const GraphPort& b)
                { return channelOrderKey (a) < channelOrderKey (b); });
-    juce::Array<juce::uint32> ids;
-    for (const auto& p : matching) ids.add (p.portId);
+    std::vector<std::uint32_t> ids;
+    for (const auto& p : matching) ids.push_back (p.portId);
     return ids;
 }
 } // namespace
 
 // ----- pure helpers (shared with the self-test) ------------------------------
-int PipeWireAudioIODevice::countActiveChannels (const juce::BigInteger& mask)
+int PipeWireAudioIODevice::countActiveChannels (const device::ChannelSet& mask)
 {
     int n = 0;
-    for (int i = 0; i <= mask.getHighestBit(); ++i)
+    for (int i = 0; i <= mask.highestSetBit(); ++i)
         if (mask[i]) ++n;
     return n;
 }
 
-juce::String PipeWireAudioIODevice::formatNodeLatency (int quantum, int sampleRate)
+std::string PipeWireAudioIODevice::formatNodeLatency (int quantum, int sampleRate)
 {
-    return juce::String (quantum) + "/" + juce::String (sampleRate);
+    return std::to_string (quantum) + "/" + std::to_string (sampleRate);
 }
 
 // ----- construction ----------------------------------------------------------
-PipeWireAudioIODevice::PipeWireAudioIODevice (const juce::String& deviceName,
-                                              const juce::String& inId,
-                                              const juce::String& outId,
+PipeWireAudioIODevice::PipeWireAudioIODevice (const std::string& deviceName,
+                                              const std::string& inId,
+                                              const std::string& outId,
                                               int numInChannels,
                                               int numOutChannels)
-    : juce::AudioIODevice (deviceName, "PipeWire"),
-      inputId (inId), outputId (outId), displayName (deviceName),
+    : inputId (inId), outputId (outId), displayName (deviceName),
       deviceInChannels (std::max (0, numInChannels)),
       deviceOutChannels (std::max (0, numOutChannels))
 {
@@ -244,33 +250,33 @@ PipeWireAudioIODevice::~PipeWireAudioIODevice()
 }
 
 // ----- capability queries ----------------------------------------------------
-juce::StringArray PipeWireAudioIODevice::getOutputChannelNames()
+std::vector<std::string> PipeWireAudioIODevice::getOutputChannelNames()
 {
     // Report the node's real channel count (from enumeration's audio.channels)
     // so a multichannel interface isn't capped at stereo. Fall back to a stereo
     // pair when the node didn't advertise a count.
-    juce::StringArray names;
+    std::vector<std::string> names;
     const int n = deviceOutChannels > 0 ? deviceOutChannels : 2;
-    for (int i = 1; i <= n; ++i) names.add ("Out " + juce::String (i));
+    for (int i = 1; i <= n; ++i) names.push_back ("Out " + std::to_string (i));
     return names;
 }
 
-juce::StringArray PipeWireAudioIODevice::getInputChannelNames()
+std::vector<std::string> PipeWireAudioIODevice::getInputChannelNames()
 {
-    juce::StringArray names;
+    std::vector<std::string> names;
     const int n = deviceInChannels > 0 ? deviceInChannels : 2;
-    for (int i = 1; i <= n; ++i) names.add ("In " + juce::String (i));
+    for (int i = 1; i <= n; ++i) names.push_back ("In " + std::to_string (i));
     return names;
 }
 
-juce::Array<double> PipeWireAudioIODevice::getAvailableSampleRates()
+std::vector<double> PipeWireAudioIODevice::getAvailableSampleRates()
 {
     // PipeWire resamples transparently around the graph rate, so any common rate
     // is usable regardless of the underlying device.
     return { 44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0 };
 }
 
-juce::Array<int> PipeWireAudioIODevice::getAvailableBufferSizes()
+std::vector<int> PipeWireAudioIODevice::getAvailableBufferSizes()
 {
     return { 32, 64, 128, 256, 512, 1024, 2048 };
 }
@@ -278,9 +284,9 @@ juce::Array<int> PipeWireAudioIODevice::getAvailableBufferSizes()
 int PipeWireAudioIODevice::getDefaultBufferSize() { return 512; }
 
 // ----- open / close ----------------------------------------------------------
-juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
-                                          const juce::BigInteger& outputChannels,
-                                          double sampleRate, int bufferSizeSamples)
+std::string PipeWireAudioIODevice::open (const device::ChannelSet& inputChannels,
+                                         const device::ChannelSet& outputChannels,
+                                         double sampleRate, int bufferSizeSamples)
 {
     if (isDeviceOpen.load (std::memory_order_acquire))
         close();
@@ -291,8 +297,8 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
     numOutputChannels = countActiveChannels (outputChannels);
     numInputChannels  = countActiveChannels (inputChannels);
 
-    const bool wantOutput = numOutputChannels > 0 && outputId.isNotEmpty();
-    const bool wantInput  = numInputChannels  > 0 && inputId.isNotEmpty();
+    const bool wantOutput = numOutputChannels > 0 && ! outputId.empty();
+    const bool wantInput  = numInputChannels  > 0 && ! inputId.empty();
     if (! wantOutput && ! wantInput)
     {
         lastError = "no input or output channels selected";
@@ -309,11 +315,11 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
 
     // Unlinked-port scratch. silenceIn stays zeroed (read by the callback for a
     // port the graph hasn't linked); dumpOut absorbs writes to an unlinked output.
-    silenceIn.allocate ((size_t) maxQuantum, true);
-    dumpOut  .allocate ((size_t) maxQuantum, true);
+    silenceIn.assign ((size_t) maxQuantum, 0.0f);
+    dumpOut  .assign ((size_t) maxQuantum, 0.0f);
 
-    callbackInPointers.resize (numInputChannels);
-    callbackOutPointers.resize (numOutputChannels);
+    callbackInPointers.resize ((size_t) numInputChannels);
+    callbackOutPointers.resize ((size_t) numOutputChannels);
 
     ensurePipeWireInit();
 
@@ -336,7 +342,7 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
         PW_KEY_MEDIA_ROLE,       "Production",
         PW_KEY_APP_NAME,         "Dusk Studio",
         PW_KEY_NODE_NAME,        "Dusk Studio",
-        PW_KEY_NODE_LATENCY,     latency.toRawUTF8(),
+        PW_KEY_NODE_LATENCY,     latency.c_str(),
         // We link to the target ourselves (linkToHardware), so keep the session
         // manager's auto-link policy out of it - autoconnect would also try to
         // link the node to the DEFAULT device, routing audio to the wrong place.
@@ -355,8 +361,8 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
     // Node-level target links the primary direction to the chosen device. Ports
     // also carry a per-direction target below; recent WirePlumber honours the
     // port target, older policy the node target, so we set both.
-    if (wantOutput)      pw_properties_set (props, PW_KEY_TARGET_OBJECT, outputId.toRawUTF8());
-    else if (wantInput)  pw_properties_set (props, PW_KEY_TARGET_OBJECT, inputId.toRawUTF8());
+    if (wantOutput)      pw_properties_set (props, PW_KEY_TARGET_OBJECT, outputId.c_str());
+    else if (wantInput)  pw_properties_set (props, PW_KEY_TARGET_OBJECT, inputId.c_str());
     // Strict target: don't let the session manager fall back to a different node
     // when the requested one is unavailable. The connect then fails to reach
     // PAUSED (see open()'s wait below) instead of silently linking elsewhere.
@@ -372,16 +378,16 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
         return lastError;
     }
 
-    inPorts.clearQuick();
-    outPorts.clearQuick();
+    inPorts.clear();
+    outPorts.clear();
 
     for (int i = 0; i < numOutputChannels; ++i)
     {
-        const auto portName = "playback_" + juce::String (i + 1);
+        const auto portName = "playback_" + std::to_string (i + 1);
         auto* pp = pw_properties_new (PW_KEY_FORMAT_DSP, "32 bit float mono audio",
-                                       PW_KEY_PORT_NAME,  portName.toRawUTF8(),
+                                       PW_KEY_PORT_NAME,  portName.c_str(),
                                        nullptr);
-        pw_properties_set (pp, PW_KEY_TARGET_OBJECT, outputId.toRawUTF8());
+        pw_properties_set (pp, PW_KEY_TARGET_OBJECT, outputId.c_str());
         void* port = pw_filter_add_port (filter, PW_DIRECTION_OUTPUT,
                                           PW_FILTER_PORT_FLAG_MAP_BUFFERS,
                                           0, pp, nullptr, 0);
@@ -392,16 +398,16 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
             close();
             return lastError;
         }
-        outPorts.add (port);
+        outPorts.push_back (port);
     }
 
     for (int i = 0; i < numInputChannels; ++i)
     {
-        const auto portName = "capture_" + juce::String (i + 1);
+        const auto portName = "capture_" + std::to_string (i + 1);
         auto* pp = pw_properties_new (PW_KEY_FORMAT_DSP, "32 bit float mono audio",
-                                       PW_KEY_PORT_NAME,  portName.toRawUTF8(),
+                                       PW_KEY_PORT_NAME,  portName.c_str(),
                                        nullptr);
-        pw_properties_set (pp, PW_KEY_TARGET_OBJECT, inputId.toRawUTF8());
+        pw_properties_set (pp, PW_KEY_TARGET_OBJECT, inputId.c_str());
         void* port = pw_filter_add_port (filter, PW_DIRECTION_INPUT,
                                           PW_FILTER_PORT_FLAG_MAP_BUFFERS,
                                           0, pp, nullptr, 0);
@@ -412,7 +418,7 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
             close();
             return lastError;
         }
-        inPorts.add (port);
+        inPorts.push_back (port);
     }
 
     // The graph's real port latency isn't known until links are made; report one
@@ -429,7 +435,7 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
 
     if (const int rc = pw_thread_loop_start (threadLoop); rc < 0)
     {
-        lastError = "pw_thread_loop_start failed (" + juce::String (rc) + ")";
+        lastError = "pw_thread_loop_start failed (" + std::to_string (rc) + ")";
         close();
         return lastError;
     }
@@ -470,7 +476,7 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
 
         if (state != PW_FILTER_STATE_PAUSED && state != PW_FILTER_STATE_STREAMING)
         {
-            lastError = juce::String ("PipeWire filter did not connect: ")
+            lastError = std::string ("PipeWire filter did not connect: ")
                         + (stateError != nullptr ? stateError : "timeout");
             close();
             return lastError;
@@ -509,7 +515,7 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
     if (! streaming)
     {
         lastError = "PipeWire node did not start streaming ("
-                    + juce::String (nLinks) + " link(s) created)";
+                    + std::to_string (nLinks) + " link(s) created)";
         close();
         return lastError;
     }
@@ -525,7 +531,7 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
     const int nq = negotiatedQuantum.load (std::memory_order_relaxed);
     if (nq <= 0 || nq > maxQuantum)
     {
-        lastError = "PipeWire delivered no usable quantum (" + juce::String (nq) + ")";
+        lastError = "PipeWire delivered no usable quantum (" + std::to_string (nq) + ")";
         close();
         return lastError;
     }
@@ -539,10 +545,10 @@ juce::String PipeWireAudioIODevice::open (const juce::BigInteger& inputChannels,
     std::fprintf (stderr,
                   "[Dusk Studio/PipeWire] opened \"%s\" rate=%d quantum=%d out=%dch in=%dch "
                   "links=%d target-out=\"%s\" target-in=\"%s\"\n",
-                  displayName.toRawUTF8(), rate, currentBlockSize,
-                  numOutputChannels, numInputChannels, linkProxies.size(),
-                  wantOutput ? outputId.toRawUTF8() : "-",
-                  wantInput  ? inputId.toRawUTF8()  : "-");
+                  displayName.c_str(), rate, currentBlockSize,
+                  numOutputChannels, numInputChannels, (int) linkProxies.size(),
+                  wantOutput ? outputId.c_str() : "-",
+                  wantInput  ? inputId.c_str()  : "-");
 
     return {};
 }
@@ -553,9 +559,9 @@ int PipeWireAudioIODevice::linkToHardware()
     // (but NOT across the registry roundtrip below, which would stall the RT
     // thread for the whole sync).
     pw_thread_loop_lock (threadLoop);
-    const juce::uint32 ourNode = pw_filter_get_node_id (filter);
+    const std::uint32_t ourNode = pw_filter_get_node_id (filter);
     pw_thread_loop_unlock (threadLoop);
-    if (ourNode == (juce::uint32) SPA_ID_INVALID)
+    if (ourNode == (std::uint32_t) SPA_ID_INVALID)
         return 0;
 
     // Throwaway registry roundtrip to discover the global port ids of our node
@@ -598,28 +604,28 @@ int PipeWireAudioIODevice::linkToHardware()
     pw_main_loop_destroy (s.loop);
     s.loop = nullptr;
 
-    const bool wantOut = numOutputChannels > 0 && outputId.isNotEmpty();
-    const bool wantIn  = numInputChannels  > 0 && inputId.isNotEmpty();
-    const juce::uint32 sinkNode   = wantOut ? s.resolveNode (outputId) : (juce::uint32) SPA_ID_INVALID;
-    const juce::uint32 sourceNode = wantIn  ? s.resolveNode (inputId)  : (juce::uint32) SPA_ID_INVALID;
+    const bool wantOut = numOutputChannels > 0 && ! outputId.empty();
+    const bool wantIn  = numInputChannels  > 0 && ! inputId.empty();
+    const std::uint32_t sinkNode   = wantOut ? s.resolveNode (outputId) : (std::uint32_t) SPA_ID_INVALID;
+    const std::uint32_t sourceNode = wantIn  ? s.resolveNode (inputId)  : (std::uint32_t) SPA_ID_INVALID;
 
     const auto ourOut = orderedPortIds (s, ourNode, true);
     const auto ourIn  = orderedPortIds (s, ourNode, false);
-    const auto sinkIn = sinkNode   != (juce::uint32) SPA_ID_INVALID ? orderedPortIds (s, sinkNode,   false)
-                                                                    : juce::Array<juce::uint32>();
-    const auto srcOut = sourceNode != (juce::uint32) SPA_ID_INVALID ? orderedPortIds (s, sourceNode, true)
-                                                                    : juce::Array<juce::uint32>();
+    const auto sinkIn = sinkNode   != (std::uint32_t) SPA_ID_INVALID ? orderedPortIds (s, sinkNode,   false)
+                                                                     : std::vector<std::uint32_t>();
+    const auto srcOut = sourceNode != (std::uint32_t) SPA_ID_INVALID ? orderedPortIds (s, sourceNode, true)
+                                                                     : std::vector<std::uint32_t>();
 
-    const int wantLinks = std::min (ourOut.size(), sinkIn.size())
-                        + std::min (srcOut.size(), ourIn.size());
+    const int wantLinks = (int) std::min (ourOut.size(), sinkIn.size())
+                        + (int) std::min (srcOut.size(), ourIn.size());
 
     int made = 0;
     pw_thread_loop_lock (threadLoop);
     auto* filterCore = pw_filter_get_core (filter);
     if (filterCore != nullptr)
     {
-        auto makeLink = [&] (juce::uint32 outNode, juce::uint32 outPort,
-                             juce::uint32 inNode,  juce::uint32 inPort)
+        auto makeLink = [&] (std::uint32_t outNode, std::uint32_t outPort,
+                             std::uint32_t inNode,  std::uint32_t inPort)
         {
             auto* lp = pw_properties_new (nullptr, nullptr);
             pw_properties_setf (lp, PW_KEY_LINK_OUTPUT_NODE, "%u", outNode);
@@ -629,12 +635,12 @@ int PipeWireAudioIODevice::linkToHardware()
             auto* proxy = (pw_proxy*) pw_core_create_object (filterCore, "link-factory",
                 PW_TYPE_INTERFACE_Link, PW_VERSION_LINK, &lp->dict, 0);
             pw_properties_free (lp);
-            if (proxy != nullptr) { linkProxies.add (proxy); ++made; }
+            if (proxy != nullptr) { linkProxies.push_back (proxy); ++made; }
         };
-        for (int i = 0; i < std::min (ourOut.size(), sinkIn.size()); ++i)
-            makeLink (ourNode, ourOut.getUnchecked (i), sinkNode,   sinkIn.getUnchecked (i));
-        for (int j = 0; j < std::min (srcOut.size(), ourIn.size()); ++j)
-            makeLink (sourceNode, srcOut.getUnchecked (j), ourNode, ourIn.getUnchecked (j));
+        for (int i = 0; i < (int) std::min (ourOut.size(), sinkIn.size()); ++i)
+            makeLink (ourNode, ourOut[(size_t) i], sinkNode,   sinkIn[(size_t) i]);
+        for (int j = 0; j < (int) std::min (srcOut.size(), ourIn.size()); ++j)
+            makeLink (sourceNode, srcOut[(size_t) j], ourNode, ourIn[(size_t) j]);
     }
     pw_thread_loop_unlock (threadLoop);
 
@@ -651,14 +657,14 @@ void PipeWireAudioIODevice::close()
     // Destroy the links we created (on the filter's core) before stopping the
     // loop - proxy destruction touches the loop, so it needs the lock and a
     // running loop.
-    if (threadLoop != nullptr && threadLoopRunning && ! linkProxies.isEmpty())
+    if (threadLoop != nullptr && threadLoopRunning && ! linkProxies.empty())
     {
         pw_thread_loop_lock (threadLoop);
         for (auto* p : linkProxies)
             if (p != nullptr) pw_proxy_destroy ((pw_proxy*) p);
         pw_thread_loop_unlock (threadLoop);
     }
-    linkProxies.clearQuick();
+    linkProxies.clear();
 
     // pw_thread_loop_stop must be called WITHOUT the lock held; it joins the RT
     // thread, after which teardown races nothing. Only stop a loop we actually
@@ -673,16 +679,16 @@ void PipeWireAudioIODevice::close()
     if (filter != nullptr)     { pw_filter_destroy (filter);      filter = nullptr; }
     if (threadLoop != nullptr) { pw_thread_loop_destroy (threadLoop); threadLoop = nullptr; }
 
-    inPorts.clearQuick();
-    outPorts.clearQuick();
-    silenceIn.free();
-    dumpOut.free();
+    inPorts.clear();
+    outPorts.clear();
+    silenceIn.clear();
+    dumpOut.clear();
 
     isDeviceOpen.store (false, std::memory_order_release);
 }
 
 // ----- start / stop ----------------------------------------------------------
-void PipeWireAudioIODevice::start (juce::AudioIODeviceCallback* newCallback)
+void PipeWireAudioIODevice::start (device::IODeviceCallback* newCallback)
 {
     if (! isDeviceOpen.load (std::memory_order_acquire) || newCallback == nullptr)
         return;
@@ -692,7 +698,7 @@ void PipeWireAudioIODevice::start (juce::AudioIODeviceCallback* newCallback)
     newCallback->audioDeviceAboutToStart (this);
 
     {
-        const juce::ScopedLock sl (callbackLock);
+        const std::lock_guard<std::mutex> sl (callbackLock);
         callback = newCallback;
     }
 
@@ -706,9 +712,9 @@ void PipeWireAudioIODevice::stop()
 
     isStarted.store (false, std::memory_order_release);
 
-    juce::AudioIODeviceCallback* cb = nullptr;
+    device::IODeviceCallback* cb = nullptr;
     {
-        const juce::ScopedLock sl (callbackLock);
+        const std::lock_guard<std::mutex> sl (callbackLock);
         std::swap (cb, callback);
     }
     if (cb != nullptr)
@@ -718,7 +724,7 @@ void PipeWireAudioIODevice::stop()
 // ----- RT process ------------------------------------------------------------
 void PipeWireAudioIODevice::onProcess (struct spa_io_position* position) noexcept
 {
-    const juce::uint32 n = position != nullptr ? (juce::uint32) position->clock.duration : 0;
+    const std::uint32_t n = position != nullptr ? (std::uint32_t) position->clock.duration : 0;
     if (n == 0)
         return;
 
@@ -738,35 +744,35 @@ void PipeWireAudioIODevice::onProcess (struct spa_io_position* position) noexcep
 
     // A cycle larger than our scratch ceiling can't be serviced safely without
     // allocating; clear any real output buffers and skip the callback.
-    if (n > (juce::uint32) maxQuantum)
+    if (n > (std::uint32_t) maxQuantum)
     {
         for (int i = 0; i < numOutputChannels; ++i)
-            if (auto* b = (float*) pw_filter_get_dsp_buffer (outPorts.getUnchecked (i), n))
+            if (auto* b = (float*) pw_filter_get_dsp_buffer (outPorts[(size_t) i], n))
                 std::memset (b, 0, (size_t) n * sizeof (float));
         return;
     }
 
     for (int i = 0; i < numOutputChannels; ++i)
     {
-        auto* b = (float*) pw_filter_get_dsp_buffer (outPorts.getUnchecked (i), n);
-        callbackOutPointers.setUnchecked (i, b != nullptr ? b : dumpOut.getData());
+        auto* b = (float*) pw_filter_get_dsp_buffer (outPorts[(size_t) i], n);
+        callbackOutPointers[(size_t) i] = (b != nullptr ? b : dumpOut.data());
     }
     for (int i = 0; i < numInputChannels; ++i)
     {
-        auto* b = (const float*) pw_filter_get_dsp_buffer (inPorts.getUnchecked (i), n);
-        callbackInPointers.setUnchecked (i, b != nullptr ? b : silenceIn.getData());
+        auto* b = (const float*) pw_filter_get_dsp_buffer (inPorts[(size_t) i], n);
+        callbackInPointers[(size_t) i] = (b != nullptr ? b : silenceIn.data());
     }
 
     // Clear the output buffers up front so channels the callback leaves untouched
     // (or every channel when stopped) are silence, not stale graph memory.
     for (int i = 0; i < numOutputChannels; ++i)
-        std::memset (callbackOutPointers.getUnchecked (i), 0, (size_t) n * sizeof (float));
+        std::memset (callbackOutPointers[(size_t) i], 0, (size_t) n * sizeof (float));
 
-    const juce::ScopedLock sl (callbackLock);
+    const std::lock_guard<std::mutex> sl (callbackLock);
     if (callback != nullptr)
-        callback->audioDeviceIOCallbackWithContext (
-            callbackInPointers.getRawDataPointer(),  numInputChannels,
-            callbackOutPointers.getRawDataPointer(), numOutputChannels,
+        callback->audioDeviceIOCallback (
+            callbackInPointers.data(),  numInputChannels,
+            callbackOutPointers.data(), numOutputChannels,
             (int) n, {});
 }
 
@@ -778,18 +784,18 @@ void PipeWireAudioIODevice::onFilterStateChanged() noexcept
 }
 
 // ----- self-test -------------------------------------------------------------
-juce::String PipeWireAudioIODevice::runSelfTest()
+std::string PipeWireAudioIODevice::runSelfTest()
 {
-    juce::StringArray out;
-    auto check = [&out] (bool ok, const juce::String& what)
-    { out.add ((ok ? "[PASS] " : "[FAIL] ") + what); };
+    std::vector<std::string> out;
+    auto check = [&out] (bool ok, const std::string& what)
+    { out.push_back ((ok ? "[PASS] " : "[FAIL] ") + what); };
 
     // Active-channel counting from a mask (drives port creation).
     {
-        juce::BigInteger m;
+        device::ChannelSet m;
         m.setBit (0); m.setBit (1); m.setBit (5);
         check (countActiveChannels (m) == 3, "PipeWire: countActiveChannels stereo+1 = 3");
-        juce::BigInteger empty;
+        device::ChannelSet empty;
         check (countActiveChannels (empty) == 0, "PipeWire: countActiveChannels empty = 0");
     }
 
@@ -810,6 +816,6 @@ juce::String PipeWireAudioIODevice::runSelfTest()
                "PipeWire: our port order playback_2 before playback_10");
     }
 
-    return out.joinIntoString ("\n");
+    return dusk::text::joinIntoString (out, "\n");
 }
 } // namespace duskstudio

@@ -5,19 +5,17 @@
 #include "../../foundation/MessageThread.h"
 #include "../../foundation/ScopedNoDenormals.h"
 
-// The juce-typed backends the native manager drives during this phase: PipeWire
-// and ALSA are still JUCE AudioIODeviceType subclasses, wrapped here in OWNING
-// adapters (P3/P4 re-base them onto the dusk interfaces and delete the adapters).
-// Gated so a build without either backend (the narrow-link test target) compiles
-// this TU with no JUCE at all - only the owning-adapter machinery needs it.
-#if defined(DUSKSTUDIO_HAS_PIPEWIRE) || defined(DUSKSTUDIO_HAS_ALSA)
+// The native PipeWire backend implements the dusk device interfaces directly, so
+// it registers without an adapter. ALSA is still a JUCE AudioIODeviceType,
+// wrapped here in an OWNING adapter (P4 re-bases it and deletes the adapter). The
+// adapter machinery and its JUCE include are gated on ALSA alone, so a build
+// without it (the narrow-link test target) compiles this TU with no JUCE at all.
+#if defined(DUSKSTUDIO_HAS_PIPEWIRE)
+ #include "../pipewire/PipeWireAudioIODeviceType.h"
+#endif
+#if defined(DUSKSTUDIO_HAS_ALSA)
  #include <juce_audio_devices/juce_audio_devices.h>
- #if defined(DUSKSTUDIO_HAS_PIPEWIRE)
-  #include "../pipewire/PipeWireAudioIODeviceType.h"
- #endif
- #if defined(DUSKSTUDIO_HAS_ALSA)
-  #include "../alsa/AlsaAudioIODeviceType.h"
- #endif
+ #include "../alsa/AlsaAudioIODeviceType.h"
  #define DUSKSTUDIO_DEVICE_HAS_JUCE_BACKENDS 1
 #endif
 
@@ -335,18 +333,16 @@ struct DeviceManager::Impl
     {
         if (backendsRegistered) return;
         backendsRegistered = true;
-       #if defined(DUSKSTUDIO_DEVICE_HAS_JUCE_BACKENDS)
         // Preference order preserved from the wrapped manager: PipeWire first,
         // ALSA second (the default pick lands on the first type that enumerates
         // devices).
-        #if defined(DUSKSTUDIO_HAS_PIPEWIRE)
-         types.push_back (std::make_unique<JuceDeviceTypeAdapter> (std::make_unique<PipeWireAudioIODeviceType>()));
-        #endif
-        #if defined(DUSKSTUDIO_HAS_ALSA)
-         types.push_back (std::make_unique<JuceDeviceTypeAdapter> (std::make_unique<AlsaAudioIODeviceType>()));
-        #endif
-        for (auto& t : types) t->scanForDevices();
+       #if defined(DUSKSTUDIO_HAS_PIPEWIRE)
+        types.push_back (std::make_unique<PipeWireAudioIODeviceType>());
        #endif
+       #if defined(DUSKSTUDIO_HAS_ALSA)
+        types.push_back (std::make_unique<JuceDeviceTypeAdapter> (std::make_unique<AlsaAudioIODeviceType>()));
+       #endif
+        for (auto& t : types) t->scanForDevices();
     }
 
     IODeviceType* findType (const std::string& name)

@@ -1404,7 +1404,7 @@ std::string AudioPipelineSelfTest::runAll()
     // Pure-logic self-test for the native PipeWire backend: active-channel
     // counting (drives port creation) and node.latency string formatting. No
     // live graph needed; a real-device open is exercised by the backend cycle.
-    report.push_back (PipeWireAudioIODevice::runSelfTest().toStdString());
+    report.push_back (PipeWireAudioIODevice::runSelfTest());
     report.push_back ("");
    #endif
 

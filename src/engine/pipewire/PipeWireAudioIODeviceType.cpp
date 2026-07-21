@@ -1,12 +1,19 @@
 #include "PipeWireAudioIODeviceType.h"
 #include "PipeWireAudioIODevice.h"
 
+#include "../../foundation/Text.h"
+
 #include <pipewire/pipewire.h>
 #include <spa/utils/dict.h>
 
-#include <mutex>
+#include <cassert>
+#include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <mutex>
+#include <string>
+#include <vector>
 
 namespace duskstudio
 {
@@ -20,6 +27,40 @@ void ensurePipeWireInit()
     std::call_once (once, [] { pw_init (nullptr, nullptr); });
 }
 
+int indexOfString (const std::vector<std::string>& v, const std::string& s)
+{
+    for (int i = 0; i < (int) v.size(); ++i)
+        if (v[(size_t) i] == s) return i;
+    return -1;
+}
+
+// Replicates JUCE's StringArray::appendNumbersToDuplicates(false, true):
+// exact (case-sensitive) duplicate device labels get " (1)", " (2)", ...
+// suffixes, the first instance numbered too, so the dropdown never shows two
+// identical names.
+void appendNumbersToDuplicates (std::vector<std::string>& names)
+{
+    auto findFrom = [&names] (const std::string& target, int startIndex) -> int
+    {
+        for (int j = startIndex; j < (int) names.size(); ++j)
+            if (names[(size_t) j] == target) return j;
+        return -1;
+    };
+    for (int i = 0; i + 1 < (int) names.size(); ++i)
+    {
+        int nextIndex = findFrom (names[(size_t) i], i + 1);
+        if (nextIndex < 0) continue;
+        const std::string original = names[(size_t) i];
+        int number = 0;
+        names[(size_t) i] = original + " (" + std::to_string (++number) + ")";
+        while (nextIndex >= 0)
+        {
+            names[(size_t) nextIndex] = names[(size_t) nextIndex] + " (" + std::to_string (++number) + ")";
+            nextIndex = findFrom (original, nextIndex + 1);
+        }
+    }
+}
+
 // Collected during a single synchronous registry roundtrip. Nodes and their
 // audio ports arrive as separate globals; channel counts come from counting the
 // ports (audio.channels is not in the node's registry props - it lives in the
@@ -27,19 +68,19 @@ void ensurePipeWireInit()
 // index-aligned *Names / *Ids / *Chans arrays by finalizeScan().
 struct NodeRec
 {
-    juce::uint32 gid = 0;
-    juce::String name, label;
+    std::uint32_t gid = 0;
+    std::string name, label;
     bool isSink = false, isSource = false;
 };
 
 struct ScanResult
 {
-    juce::Array<NodeRec>      nodes;
-    juce::Array<juce::uint32> portNodeId;   // parallel with portIsOutput
-    juce::Array<bool>         portIsOutput;
+    std::vector<NodeRec>      nodes;
+    std::vector<std::uint32_t> portNodeId;   // parallel with portIsOutput
+    std::vector<bool>         portIsOutput;
 
-    juce::StringArray inNames, outNames, inIds, outIds;
-    juce::Array<int>  inChans, outChans;
+    std::vector<std::string> inNames, outNames, inIds, outIds;
+    std::vector<int>  inChans, outChans;
 
     pw_main_loop* loop = nullptr;
     int  syncSeq = 0;
@@ -69,11 +110,11 @@ void onRegistryGlobal (void* data, uint32_t id, uint32_t /*permissions*/,
         const char* desc = spa_dict_lookup (props, PW_KEY_NODE_DESCRIPTION);
         NodeRec n;
         n.gid      = id;
-        n.name     = juce::String::fromUTF8 (nodeName);
-        n.label    = desc != nullptr ? juce::String::fromUTF8 (desc) : n.name;
+        n.name     = std::string (nodeName);
+        n.label    = desc != nullptr ? std::string (desc) : n.name;
         n.isSink   = isSink   || isDuplex;
         n.isSource = isSource || isDuplex;
-        r.nodes.add (n);
+        r.nodes.push_back (n);
     }
     else if (std::strcmp (type, PW_TYPE_INTERFACE_Port) == 0)
     {
@@ -84,8 +125,8 @@ void onRegistryGlobal (void* data, uint32_t id, uint32_t /*permissions*/,
         if (nodeIdStr == nullptr || dir == nullptr
             || spa_dict_lookup (props, PW_KEY_AUDIO_CHANNEL) == nullptr)
             return;
-        r.portNodeId.add ((juce::uint32) juce::String (nodeIdStr).getLargeIntValue());
-        r.portIsOutput.add (std::strcmp (dir, "out") == 0);
+        r.portNodeId.push_back ((std::uint32_t) std::strtoul (nodeIdStr, nullptr, 10));
+        r.portIsOutput.push_back (std::strcmp (dir, "out") == 0);
     }
 }
 
@@ -96,12 +137,12 @@ void finalizeScan (ScanResult& r)
     for (const auto& n : r.nodes)
     {
         int inPorts = 0, outPorts = 0;
-        for (int k = 0; k < r.portNodeId.size(); ++k)
-            if (r.portNodeId.getUnchecked (k) == n.gid)
-                (r.portIsOutput.getUnchecked (k) ? outPorts : inPorts) += 1;
+        for (int k = 0; k < (int) r.portNodeId.size(); ++k)
+            if (r.portNodeId[(size_t) k] == n.gid)
+                (r.portIsOutput[(size_t) k] ? outPorts : inPorts) += 1;
 
-        if (n.isSink)   { r.outNames.add (n.label); r.outIds.add (n.name); r.outChans.add (inPorts); }
-        if (n.isSource) { r.inNames.add  (n.label); r.inIds.add  (n.name); r.inChans.add  (outPorts); }
+        if (n.isSink)   { r.outNames.push_back (n.label); r.outIds.push_back (n.name); r.outChans.push_back (inPorts); }
+        if (n.isSource) { r.inNames.push_back  (n.label); r.inIds.push_back  (n.name); r.inChans.push_back  (outPorts); }
     }
 }
 
@@ -217,7 +258,6 @@ void enumerateNodes (ScanResult& result)
 } // namespace
 
 PipeWireAudioIODeviceType::PipeWireAudioIODeviceType()
-    : juce::AudioIODeviceType ("PipeWire")
 {
     ensurePipeWireInit();
 }
@@ -234,65 +274,59 @@ void PipeWireAudioIODeviceType::scanForDevices()
     inputChans  = r.inChans;
     outputChans = r.outChans;
 
-    inputNames.appendNumbersToDuplicates  (false, true);
-    outputNames.appendNumbersToDuplicates (false, true);
+    appendNumbersToDuplicates (inputNames);
+    appendNumbersToDuplicates (outputNames);
 
     hasScanned = true;
 }
 
-juce::StringArray PipeWireAudioIODeviceType::getDeviceNames (bool wantInputNames) const
+std::vector<std::string> PipeWireAudioIODeviceType::getDeviceNames (bool wantInputNames) const
 {
-    jassert (hasScanned);
+    assert (hasScanned);
     return wantInputNames ? inputNames : outputNames;
 }
 
 int PipeWireAudioIODeviceType::getDefaultDeviceIndex (bool forInput) const
 {
-    jassert (hasScanned);
+    assert (hasScanned);
     // Skip monitor sources and HDMI sinks - the same "don't default to the
     // thing the user didn't mean" heuristic the ALSA backend uses. A saved
     // selection, once resolved, always takes precedence over this.
     const auto& names = forInput ? inputNames : outputNames;
-    for (int i = 0; i < names.size(); ++i)
+    for (int i = 0; i < (int) names.size(); ++i)
     {
-        const auto& n = names[i];
-        if (n.containsIgnoreCase ("Monitor")) continue;
-        if (n.containsIgnoreCase ("HDMI"))    continue;
+        const auto& n = names[(size_t) i];
+        if (dusk::text::containsIgnoreCase (n, "Monitor")) continue;
+        if (dusk::text::containsIgnoreCase (n, "HDMI"))    continue;
         return i;
     }
-    return names.isEmpty() ? -1 : 0;
+    return names.empty() ? -1 : 0;
 }
 
-int PipeWireAudioIODeviceType::getIndexOfDevice (juce::AudioIODevice* device, bool asInput) const
+int PipeWireAudioIODeviceType::getIndexOfDevice (device::IODevice* device, bool asInput) const
 {
-    jassert (hasScanned);
+    assert (hasScanned);
     if (auto* pw = dynamic_cast<PipeWireAudioIODevice*> (device))
-        return (asInput ? inputIds : outputIds).indexOf (asInput ? pw->inputId : pw->outputId);
+        return indexOfString (asInput ? inputIds : outputIds, asInput ? pw->inputId : pw->outputId);
     return -1;
 }
 
-juce::AudioIODevice* PipeWireAudioIODeviceType::createDevice (const juce::String& outputDeviceName,
-                                                               const juce::String& inputDeviceName)
+std::unique_ptr<device::IODevice> PipeWireAudioIODeviceType::createDevice (const std::string& outputDeviceName,
+                                                                           const std::string& inputDeviceName)
 {
-    jassert (hasScanned);
-    const int outIdx = outputNames.indexOf (outputDeviceName);
-    const int inIdx  = inputNames .indexOf (inputDeviceName);
+    assert (hasScanned);
+    const int outIdx = indexOfString (outputNames, outputDeviceName);
+    const int inIdx  = indexOfString (inputNames, inputDeviceName);
 
     if (outIdx < 0 && inIdx < 0)
         return nullptr;
 
-    const juce::String outId = outIdx >= 0 ? outputIds[outIdx] : juce::String();
-    const juce::String inId  = inIdx  >= 0 ? inputIds [inIdx]  : juce::String();
-    const juce::String name  = outIdx >= 0 ? outputDeviceName : inputDeviceName;
-    const int outChans = outIdx >= 0 ? outputChans[outIdx] : 0;
-    const int inChans  = inIdx  >= 0 ? inputChans [inIdx]  : 0;
+    const std::string outId = outIdx >= 0 ? outputIds[(size_t) outIdx] : std::string();
+    const std::string inId  = inIdx  >= 0 ? inputIds [(size_t) inIdx]  : std::string();
+    const std::string name  = outIdx >= 0 ? outputDeviceName : inputDeviceName;
+    const int outChans = outIdx >= 0 ? outputChans[(size_t) outIdx] : 0;
+    const int inChans  = inIdx  >= 0 ? inputChans [(size_t) inIdx]  : 0;
 
-    return new PipeWireAudioIODevice (name, inId, outId, inChans, outChans);
-}
-
-void PipeWireAudioIODeviceType::rescan()
-{
-    scanForDevices();
-    callDeviceChangeListeners();
+    return std::make_unique<PipeWireAudioIODevice> (name, inId, outId, inChans, outChans);
 }
 } // namespace duskstudio

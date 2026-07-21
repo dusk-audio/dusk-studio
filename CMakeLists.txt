@@ -559,8 +559,8 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(DuskStudio PRIVATE src/engine/midi/JuceMidiBackend.cpp)
 endif()
 
-# Dusk Studio-owned native PipeWire backend - a juce::AudioIODevice +
-# AudioIODeviceType pair speaking libpipewire directly (single pw_filter node),
+# Dusk Studio-owned native PipeWire backend - a dusk device::IODevice +
+# IODeviceType pair speaking libpipewire directly (single pw_filter node),
 # replacing JUCE's JACK-over-pipewire-jack path. Correct graph latency, native
 # node naming, one fewer shim on the Linux #1 audio path. Linux-only, and only
 # when the dev libs are present (as with the LV2 host); registration in
