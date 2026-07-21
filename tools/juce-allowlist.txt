@@ -58,10 +58,6 @@ src/engine/multisample/DuskMultisampleProcessor.cpp
 src/engine/multisample/DuskMultisampleProcessor.h
 src/engine/multisample/Sf2ToSfz.cpp
 src/engine/multisample/Sf2ToSfz.h
-src/engine/pipewire/PipeWireAudioIODevice.cpp
-src/engine/pipewire/PipeWireAudioIODevice.h
-src/engine/pipewire/PipeWireAudioIODeviceType.cpp
-src/engine/pipewire/PipeWireAudioIODeviceType.h
 src/foundation/MessageThread.cpp
 src/session/MarkerEditActions.h
 src/session/MidiBindings.cpp

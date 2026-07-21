@@ -29,9 +29,6 @@
  #include "engine/alsa/AlsaAudioIODeviceType.h"
  #include "engine/alsa/AlsaPerformanceTest.h"
 #endif
-#if defined(DUSKSTUDIO_HAS_PIPEWIRE)
- #include "engine/pipewire/PipeWireAudioIODeviceType.h"
-#endif
 #include "session/Session.h"
 
 #include <algorithm>
@@ -305,15 +302,13 @@ static void runHeadlessToneTest()
                   backendName.toRawUTF8(), deviceName.toRawUTF8(),
                   targetRate, targetBuf, durationMs);
 
-    // Linux: pre-register Dusk Studio's own backends before init, same pattern
-    // (and preference order) AudioEngine uses - native PipeWire first, native
-    // ALSA fallback, no JUCE JACK. Stops JUCE's createDeviceTypesIfNeeded from
-    // auto-registering its stock ALSA path. Pre-scanning lets init's
-    // pickCurrentDeviceTypeWithDevices read device counts without tripping
-    // hasScanned assertions.
-   #if defined(DUSKSTUDIO_HAS_PIPEWIRE)
-    dm.addAudioDeviceType (std::make_unique<duskstudio::PipeWireAudioIODeviceType>());
-   #endif
+    // Linux: pre-register Dusk Studio's own native ALSA backend before init so
+    // JUCE's createDeviceTypesIfNeeded doesn't auto-register its stock ALSA path.
+    // The native PipeWire backend implements the dusk device interfaces, not
+    // JUCE's, so it does not fit a JUCE AudioDeviceManager; P5 moves the whole
+    // tone test onto the dusk DeviceManager and registers PipeWire there.
+    // Pre-scanning lets init's pickCurrentDeviceTypeWithDevices read device
+    // counts without tripping hasScanned assertions.
    #if defined(__linux__)
     dm.addAudioDeviceType (std::make_unique<duskstudio::AlsaAudioIODeviceType>());
    #endif

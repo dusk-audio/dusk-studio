@@ -1,6 +1,10 @@
 #pragma once
 
-#include <juce_audio_devices/juce_audio_devices.h>
+#include "../device/IODeviceType.h"
+
+#include <memory>
+#include <string>
+#include <vector>
 
 namespace duskstudio
 {
@@ -8,7 +12,7 @@ namespace duskstudio
 // Sink / Source nodes as individual devices (device-per-node, mirroring the
 // ALSA backend's model so the existing AudioDeviceSelector UI works unchanged)
 // and hands each one to a PipeWireAudioIODevice that speaks libpipewire
-// directly via a single pw_filter node.
+// directly via a single pw_filter node. Implements the dusk device::IODeviceType.
 //
 // Why native, not JUCE-JACK-over-pipewire-jack: the pipewire-jack shim adds a
 // translation layer, mis-reports latency, and names our client generically.
@@ -22,29 +26,26 @@ namespace duskstudio
 // The node's PW_KEY_NODE_NAME is the stable identifier (used as the
 // PW_KEY_TARGET_OBJECT link target at connect time); PW_KEY_NODE_DESCRIPTION
 // (falling back to the name) is the human-readable dropdown label.
-class PipeWireAudioIODeviceType final : public juce::AudioIODeviceType
+class PipeWireAudioIODeviceType final : public device::IODeviceType
 {
 public:
     PipeWireAudioIODeviceType();
 
+    std::string        getTypeName() const override { return "PipeWire"; }
     void               scanForDevices() override;
-    juce::StringArray  getDeviceNames (bool wantInputNames) const override;
+    std::vector<std::string> getDeviceNames (bool wantInputNames) const override;
     int                getDefaultDeviceIndex (bool forInput) const override;
-    int                getIndexOfDevice (juce::AudioIODevice* device, bool asInput) const override;
-    bool               hasSeparateInputsAndOutputs() const override { return true; }
-    juce::AudioIODevice* createDevice (const juce::String& outputDeviceName,
-                                        const juce::String& inputDeviceName) override;
-
-    // Re-run enumeration and notify listeners (repopulates the dropdown after a
-    // node appears / disappears). Mirrors AlsaAudioIODeviceType::rescan().
-    void rescan();
+    int                getIndexOfDevice (device::IODevice* dev, bool asInput) const override;
+    std::unique_ptr<device::IODevice> createDevice (const std::string& outputDeviceName,
+                                                    const std::string& inputDeviceName) override;
 
 private:
-    juce::StringArray inputNames, outputNames;
-    juce::StringArray inputIds, outputIds;      // PW_KEY_NODE_NAME, index-aligned with the *Names arrays
-    juce::Array<int>  inputChans, outputChans;  // audio.channels, index-aligned with the *Names arrays
+    std::vector<std::string> inputNames, outputNames;
+    std::vector<std::string> inputIds, outputIds;   // PW_KEY_NODE_NAME, index-aligned with the *Names arrays
+    std::vector<int>         inputChans, outputChans; // audio.channels, index-aligned with the *Names arrays
     bool hasScanned = false;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PipeWireAudioIODeviceType)
+    PipeWireAudioIODeviceType (const PipeWireAudioIODeviceType&) = delete;
+    PipeWireAudioIODeviceType& operator= (const PipeWireAudioIODeviceType&) = delete;
 };
 } // namespace duskstudio
