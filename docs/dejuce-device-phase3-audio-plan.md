@@ -1,22 +1,30 @@
 # De-JUCE tower spec — Device Phase-3-audio
 
-**STATUS: P2 DONE (HEAD of branch `dejuce/device-phase3-audio-a`, commit acdef95).
-Native DeviceManager orchestrator on Linux: owns the IODeviceType list, drives
-IODevice open/start/stop/close and the CallbackFanout itself; PipeWire/ALSA stay
-juce-typed behind owning adapters. DeviceStateBlob wired (seed + busy fallback,
-saved intent preserved). Wrapped impl moved verbatim to DeviceManagerJuce.cpp
-(gated NOT-Linux; allowlist 194->195). New device_manager_native.cpp mock suite
-(9 cases). 436/436 ctest, app build 0 warnings, Xvfb selftest clean; real
-PipeWire (legacy XML) + ALSA (new JSON) open/play verified on the dev box. P2
-CLOSES PR-A (P0-P2) - PR-A description drafted, awaiting Marc review before push.
-Known transitional diagnostic drift: AudioPipelineSelfTest's testBackendsOpenCleanly
-+ UMC1820 probe rely on JUCE's auto-open-on-type-switch, which the native manager
-drops per §D2 (no-auto-open); those helpers get reworked in P3/P4 (they are in
-those file lists). Next: after PR-A merges, P3 PipeWire re-type per §D6/§P3 on a
-NEW branch dejuce/device-phase3-audio-b.
-Resume: "PR-A (device P0-P2) awaiting Marc review on dejuce/device-phase3-audio-a;
-after merge, start P3 (PipeWire re-type, §D6/§P3) on new branch
-dejuce/device-phase3-audio-b".**
+**STATUS: P3 DONE (branch `dejuce/device-phase3-audio-b`, commit 9cabe13).
+PR-A (P0-P2) MERGED to main as #103 (squash 091fcb5); the `-a` branch is retired.
+P2 was acdef95 (native DeviceManager orchestrator + owning adapters + DeviceStateBlob
++ device_manager_native mock suite). P3: PipeWireAudioIODevice/Type re-based onto
+device::IODevice/IODeviceType (BigInteger->ChannelSet, String/Array->std::string/
+std::vector, HeapBlock->std::vector, CriticalSection->std::mutex, runSelfTest()->
+std::string; dead rescan() deleted). RT path frozen, type names only (onProcess /
+xrun rising-edge / over-quantum guard / pre-zeroed outputs / lock-then-dispatch
+byte-identical; pw_thread_loop model unchanged; CallbackContext {}). DeviceManager
+registers the native PipeWire type directly, drops its owning adapter; ALSA keeps
+its adapter until P4 (adapter machinery + JUCE include now gated on ALSA alone, so
+the narrow-link test TU stays JUCE-free). DuskStudioApp tone-test PipeWire
+registration dropped (can't join a juce::AudioDeviceManager once dusk-typed) -
+restored in P5. Allowlist 195->191 (4 pipewire entries out). Build 0 new warnings,
+436/436 ctest, gate 191, Xvfb selftest: native PipeWire opened+streamed (UMC1820
+48000/512/32out/16in, 22 links) + PipeWire pure-logic 8/8 + ALSA 15/15. Optional
+tests/pipewire_helpers.cpp SKIPPED (compiling the .cpp into a test drags in
+libpipewire; the helpers are already covered by the selftest's 8 PASS lines).
+Known drift carried from P2 (harmless): backend-cycle ALSA switch shows
+OPEN-FAILED because setCurrentDeviceType no longer auto-opens per §D2 - diagnostic
+text, not a 15/15 gate; reworked in P4. NOT pushed.
+Next: P4 (ALSA re-type + JUCE-Thread->std::thread swap per §D5/§P4) on the SAME
+branch dejuce/device-phase3-audio-b.
+Resume: "P3 (PipeWire re-type) committed on dejuce/device-phase3-audio-b (9cabe13),
+not pushed; start P4 (ALSA re-type + thread swap, §D5/§P4) on the same branch".**
 Update this line each session (phase done, branch, resume phrase).
 
 Read order for an executing session: `docs/dejuce-campaign.md` → this file →
