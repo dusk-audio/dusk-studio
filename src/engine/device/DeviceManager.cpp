@@ -504,7 +504,10 @@ struct DeviceManager::Impl
     void removeCallback (IODeviceCallback* cb)
     {
         if (cb == nullptr) return;
-        bool needsStop = currentDevice != nullptr;
+        // Symmetric with addCallback's prime gate: only a callback that saw
+        // aboutToStart (device live AND playing) gets a matching stopped, so a
+        // self-stopped device is never stopped a second time on removal.
+        bool needsStop = currentDevice != nullptr && currentDevice->isPlaying();
         {
             std::lock_guard<std::mutex> lock (fanout.callbackListLock);
             auto it = std::find (fanout.callbacks.begin(), fanout.callbacks.end(), cb);
