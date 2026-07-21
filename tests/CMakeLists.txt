@@ -46,6 +46,12 @@ add_executable(dusk-studio-tests
     device_interfaces.cpp
     device_state_blob.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/device/DeviceStateBlob.cpp
+    # Native DeviceManager orchestrator (mock-backend suite). Compiled with
+    # neither DUSKSTUDIO_HAS_PIPEWIRE nor DUSKSTUDIO_HAS_ALSA, so the owning
+    # juce adapters compile out and the TU links JUCE-free; the mock suite
+    # injects its own device types via setDeviceTypesForTest.
+    device_manager_native.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/device/DeviceManager.cpp
     update_checker_version.cpp
     session_schema_migration.cpp
     dsp_components_test.cpp
