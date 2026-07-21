@@ -1,30 +1,50 @@
 # De-JUCE tower spec — Device Phase-3-audio
 
-**STATUS: P3 DONE (branch `dejuce/device-phase3-audio-b`, commit 9cabe13).
-PR-A (P0-P2) MERGED to main as #103 (squash 091fcb5); the `-a` branch is retired.
-P2 was acdef95 (native DeviceManager orchestrator + owning adapters + DeviceStateBlob
-+ device_manager_native mock suite). P3: PipeWireAudioIODevice/Type re-based onto
-device::IODevice/IODeviceType (BigInteger->ChannelSet, String/Array->std::string/
-std::vector, HeapBlock->std::vector, CriticalSection->std::mutex, runSelfTest()->
-std::string; dead rescan() deleted). RT path frozen, type names only (onProcess /
-xrun rising-edge / over-quantum guard / pre-zeroed outputs / lock-then-dispatch
-byte-identical; pw_thread_loop model unchanged; CallbackContext {}). DeviceManager
-registers the native PipeWire type directly, drops its owning adapter; ALSA keeps
-its adapter until P4 (adapter machinery + JUCE include now gated on ALSA alone, so
-the narrow-link test TU stays JUCE-free). DuskStudioApp tone-test PipeWire
-registration dropped (can't join a juce::AudioDeviceManager once dusk-typed) -
-restored in P5. Allowlist 195->191 (4 pipewire entries out). Build 0 new warnings,
-436/436 ctest, gate 191, Xvfb selftest: native PipeWire opened+streamed (UMC1820
-48000/512/32out/16in, 22 links) + PipeWire pure-logic 8/8 + ALSA 15/15. Optional
-tests/pipewire_helpers.cpp SKIPPED (compiling the .cpp into a test drags in
-libpipewire; the helpers are already covered by the selftest's 8 PASS lines).
-Known drift carried from P2 (harmless): backend-cycle ALSA switch shows
-OPEN-FAILED because setCurrentDeviceType no longer auto-opens per §D2 - diagnostic
-text, not a 15/15 gate; reworked in P4. NOT pushed.
-Next: P4 (ALSA re-type + JUCE-Thread->std::thread swap per §D5/§P4) on the SAME
-branch dejuce/device-phase3-audio-b.
-Resume: "P3 (PipeWire re-type) committed on dejuce/device-phase3-audio-b (9cabe13),
-not pushed; start P4 (ALSA re-type + thread swap, §D5/§P4) on the same branch".**
+**STATUS: P4 DONE (branch `dejuce/device-phase4-alsa` off main 6c7d569, commit
+5365cec, NOT pushed). P0-P2 merged as #103 (091fcb5); P3 merged as its OWN PR
+#104 (6c7d569) - Marc split the planned batched PR-B, so the `-a`/`-b` branches
+are both retired and PR-B is now P4-P5 on the new branch. P4: AlsaAudioIODevice/
+Type + AlsaPerformanceTest re-based onto device::IODevice/IODeviceType/
+IODeviceCallback (String/Array->std::string/std::vector, BigInteger->ChannelSet,
+HeapBlock/AudioBuffer scratch->std::vector + planar pointer arrays,
+CriticalSection->std::mutex, high-res ticks->std::chrono, runSelfTest()->
+std::string; dead rescan() deleted). Thread swap per §D5: std::thread, ioShouldExit
+acquire-polled at the same five exit sites, ioExited (dusk::AutoResetEvent)
+signalled as the thread's last statement; stop() = 2000 ms timed wait then join,
+on timeout detach + abandon; the WHOLE device is leaked via
+AlsaAudioIODevice::destroyOrPark (createDevice wraps devices in AlsaDeviceHandle
+whose dtor routes there; an abandoned device refuses open/start, close releases
+nothing). Thread body self-promotes via rt::applyRealtimeSchedRR - verified live
+SCHED_RR rt-prio=9 -> kernel 89 under RLIMIT 95; "thread started" stderr line
+kept (juce-prio label renamed rt-prio; nothing greps it). RT hunks proven
+type-rename-only by normalized diff: recoverFromXrun + format table
+byte-identical; rearm/configurePcm/converters/loop/prefill differ only in the
+sanctioned type swaps; ioExited.signal() is the sole addition. DeviceManager.cpp
+registers ALSA natively; JuceDeviceAdapter/JuceDeviceTypeAdapter/shim +
+toBig/fromBig/toStrings/toVector + the JUCE include DELETED - the TU is JUCE-free
+and the gate ratchet forced it OFF the allowlist NOW (the spec's "stays until P5"
+was unsatisfiable: the gate fails clean-but-listed files; P5's allowlist step is
+banked early). DeviceManagerJuce.cpp dropped its unreachable HAS_PIPEWIRE/
+HAS_ALSA registration blocks. Tone test falls back to JUCE stock ALSA until P5.
+Selftest backend cycle picks each type's default device explicitly (P2
+no-auto-open drift reworked) and the restore reports its error. Allowlist
+191->184 (6 alsa + DeviceManager.cpp). Build 0 NEW warnings (the
+readInterleavedS24Packed sign-conversion warning is the pre-existing line,
+verbatim from main). ctest 438/438 incl. NEW tests/alsa_thread_teardown.cpp
+(wedged injected thread: stop() holds the 2000 ms window then detaches+abandons,
+destroyOrPark leaks-not-frees, state valid through the thread's late touch;
+clean thread: joins, freed normally). Xvfb selftest: ALSA pure-logic 15/15 +
+PipeWire 8/8; backend-cycle open attempts fail on this box's environment
+(built-in PipeWire sink delivers quantum 0; UMC kernel device held by WirePlumber
+during the ALSA probe) - diagnostic text only, the restore reopens the UMC.
+DUSKSTUDIO_RUN_ALSA_PERF matrix on real hw:UMC1820,0 (WirePlumber suspended):
+44.1k+48k x 32..2048 duplex, all cells SAFE (one xrun at 44.1k/32), open/close
+50 cycles SAFE, start/stop race 20 cycles SAFE, 34 SCHED_RR thread starts.
+Next: P5 (consumer sweep + Linux CMake unlink + docs, §P5) on the SAME branch
+dejuce/device-phase4-alsa; PR-B (P4-P5) prepared at P5 - Marc may merge P4 alone,
+his call.
+Resume: "P4 (ALSA re-type + thread swap) committed on dejuce/device-phase4-alsa
+(5365cec), not pushed; start P5 (§P5) on the same branch".**
 Update this line each session (phase done, branch, resume phrase).
 
 Read order for an executing session: `docs/dejuce-campaign.md` → this file →
