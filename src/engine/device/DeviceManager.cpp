@@ -5,18 +5,14 @@
 #include "../../foundation/MessageThread.h"
 #include "../../foundation/ScopedNoDenormals.h"
 
-// The native PipeWire backend implements the dusk device interfaces directly, so
-// it registers without an adapter. ALSA is still a JUCE AudioIODeviceType,
-// wrapped here in an OWNING adapter (P4 re-bases it and deletes the adapter). The
-// adapter machinery and its JUCE include are gated on ALSA alone, so a build
-// without it (the narrow-link test target) compiles this TU with no JUCE at all.
+// Both native backends implement the dusk device interfaces directly and
+// register without adapters. Gated so a build with neither backend (the
+// narrow-link test target) compiles this TU standalone.
 #if defined(DUSKSTUDIO_HAS_PIPEWIRE)
  #include "../pipewire/PipeWireAudioIODeviceType.h"
 #endif
 #if defined(DUSKSTUDIO_HAS_ALSA)
- #include <juce_audio_devices/juce_audio_devices.h>
  #include "../alsa/AlsaAudioIODeviceType.h"
- #define DUSKSTUDIO_DEVICE_HAS_JUCE_BACKENDS 1
 #endif
 
 #include <algorithm>
@@ -160,130 +156,6 @@ private:
     std::vector<float*> scratchPtrs; // one entry per output channel
 };
 
-#if defined(DUSKSTUDIO_DEVICE_HAS_JUCE_BACKENDS)
-juce::BigInteger toBig (const ChannelSet& cs)
-{
-    juce::BigInteger b;
-    for (int i = 0; i < ChannelSet::kMaxChannels; ++i)
-        if (cs[i]) b.setBit (i);
-    return b;
-}
-
-ChannelSet fromBig (const juce::BigInteger& b)
-{
-    ChannelSet cs;
-    for (int i = 0; i < ChannelSet::kMaxChannels; ++i)
-        if (b[i]) cs.setBit (i);
-    return cs;
-}
-
-std::vector<std::string> toStrings (const juce::StringArray& a)
-{
-    std::vector<std::string> v;
-    v.reserve ((std::size_t) a.size());
-    for (const auto& s : a) v.push_back (s.toStdString());
-    return v;
-}
-
-template <typename T>
-std::vector<T> toVector (const juce::Array<T>& a)
-{
-    std::vector<T> v;
-    v.reserve ((std::size_t) a.size());
-    for (const auto& x : a) v.push_back (x);
-    return v;
-}
-
-// Owning dusk IODevice over a JUCE AudioIODevice. start() installs a small
-// juce-callback shim forwarding the device's RT blocks to the dusk callback (the
-// manager's CallbackFanout), presenting this adapter as the dusk device.
-class JuceDeviceAdapter final : public IODevice
-{
-public:
-    explicit JuceDeviceAdapter (std::unique_ptr<juce::AudioIODevice> d) noexcept : dev (std::move (d)) {}
-
-    std::string getName() const override { return dev ? dev->getName().toStdString() : std::string(); }
-
-    std::vector<std::string> getOutputChannelNames() override
-        { return dev ? toStrings (dev->getOutputChannelNames()) : std::vector<std::string>{}; }
-    std::vector<std::string> getInputChannelNames() override
-        { return dev ? toStrings (dev->getInputChannelNames()) : std::vector<std::string>{}; }
-    std::vector<double> getAvailableSampleRates() override
-        { return dev ? toVector (dev->getAvailableSampleRates()) : std::vector<double>{}; }
-    std::vector<int> getAvailableBufferSizes() override
-        { return dev ? toVector (dev->getAvailableBufferSizes()) : std::vector<int>{}; }
-    int getDefaultBufferSize() override { return dev ? dev->getDefaultBufferSize() : 0; }
-
-    std::string open (const ChannelSet& in, const ChannelSet& out, double sr, int bs) override
-        { return dev ? dev->open (toBig (in), toBig (out), sr, bs).toStdString() : std::string ("no device"); }
-    void close() override { if (dev) dev->close(); }
-    bool isOpen() override { return dev && dev->isOpen(); }
-
-    void start (IODeviceCallback* cb) override { shim.bind (cb, this); if (dev) dev->start (&shim); }
-    void stop() override { if (dev) dev->stop(); }
-    bool isPlaying() override { return dev && dev->isPlaying(); }
-
-    std::string getLastError() override { return dev ? dev->getLastError().toStdString() : std::string(); }
-    int    getCurrentBufferSizeSamples() override { return dev ? dev->getCurrentBufferSizeSamples() : 0; }
-    double getCurrentSampleRate()        override { return dev ? dev->getCurrentSampleRate() : 0.0; }
-    int    getCurrentBitDepth()          override { return dev ? dev->getCurrentBitDepth() : 0; }
-    ChannelSet getActiveOutputChannels() const override { return dev ? fromBig (dev->getActiveOutputChannels()) : ChannelSet{}; }
-    ChannelSet getActiveInputChannels()  const override { return dev ? fromBig (dev->getActiveInputChannels()) : ChannelSet{}; }
-    int getOutputLatencyInSamples() override { return dev ? dev->getOutputLatencyInSamples() : 0; }
-    int getInputLatencyInSamples()  override { return dev ? dev->getInputLatencyInSamples() : 0; }
-    int getXRunCount() const noexcept override { return dev ? dev->getXRunCount() : 0; }
-
-private:
-    struct Shim final : juce::AudioIODeviceCallback
-    {
-        void bind (IODeviceCallback* c, IODevice* ownerDev) noexcept { cb = c; owner = ownerDev; }
-
-        void audioDeviceIOCallbackWithContext (const float* const* in, int numIn,
-                                               float* const* out, int numOut, int numSamples,
-                                               const juce::AudioIODeviceCallbackContext& ctx) override
-        {
-            CallbackContext dctx;
-            dctx.hostTimeNs = ctx.hostTimeNs;
-            cb->audioDeviceIOCallback (in, numIn, out, numOut, numSamples, dctx);
-        }
-        void audioDeviceAboutToStart (juce::AudioIODevice*) override { cb->audioDeviceAboutToStart (owner); }
-        void audioDeviceStopped() override { cb->audioDeviceStopped(); }
-        void audioDeviceError (const juce::String& m) override { cb->audioDeviceError (m.toStdString()); }
-
-        IODeviceCallback* cb = nullptr;
-        IODevice* owner = nullptr;
-    };
-
-    std::unique_ptr<juce::AudioIODevice> dev;
-    Shim shim;
-};
-
-// Owning dusk IODeviceType over a JUCE AudioIODeviceType. createDevice now has a
-// real implementation (the native manager drives device construction directly),
-// returning an owning JuceDeviceAdapter.
-class JuceDeviceTypeAdapter final : public IODeviceType
-{
-public:
-    explicit JuceDeviceTypeAdapter (std::unique_ptr<juce::AudioIODeviceType> t) noexcept : type (std::move (t)) {}
-
-    std::string getTypeName() const override { return type->getTypeName().toStdString(); }
-    void scanForDevices() override { type->scanForDevices(); }
-    std::vector<std::string> getDeviceNames (bool wantInputNames) const override
-        { return toStrings (type->getDeviceNames (wantInputNames)); }
-    int getDefaultDeviceIndex (bool forInput) const override { return type->getDefaultDeviceIndex (forInput); }
-    int getIndexOfDevice (IODevice*, bool) const override { return -1; }
-
-    std::unique_ptr<IODevice> createDevice (const std::string& outputName, const std::string& inputName) override
-    {
-        auto* raw = type->createDevice (juce::String (outputName), juce::String (inputName));
-        if (raw == nullptr) return nullptr;
-        return std::make_unique<JuceDeviceAdapter> (std::unique_ptr<juce::AudioIODevice> (raw));
-    }
-
-private:
-    std::unique_ptr<juce::AudioIODeviceType> type;
-};
-#endif // DUSKSTUDIO_DEVICE_HAS_JUCE_BACKENDS
 } // namespace
 
 struct DeviceManager::Impl
@@ -340,7 +212,7 @@ struct DeviceManager::Impl
         types.push_back (std::make_unique<PipeWireAudioIODeviceType>());
        #endif
        #if defined(DUSKSTUDIO_HAS_ALSA)
-        types.push_back (std::make_unique<JuceDeviceTypeAdapter> (std::make_unique<AlsaAudioIODeviceType>()));
+        types.push_back (std::make_unique<AlsaAudioIODeviceType>());
        #endif
         for (auto& t : types) t->scanForDevices();
     }

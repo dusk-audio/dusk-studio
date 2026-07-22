@@ -17,9 +17,8 @@ namespace juce { class AudioDeviceManager; }
 // is the seam - the public API is pure dusk (IODevice / DeviceSetup / ChannelSet).
 // On Linux (DeviceManager.cpp) it is a native orchestrator: it owns the
 // IODeviceType list, drives IODevice open/start/stop/close itself, and fans the
-// callback out directly, with the PipeWire/ALSA backends still juce-typed behind
-// temporary owning adapters (P3/P4 re-base them onto the dusk interfaces). Off
-// Linux (DeviceManagerJuce.cpp) it delegates to a wrapped juce::AudioDeviceManager,
+// callback out directly to the native PipeWire/ALSA backends. Off Linux
+// (DeviceManagerJuce.cpp) it delegates to a wrapped juce::AudioDeviceManager,
 // adapting JUCE's device/callback types behind this same API.
 //
 // Message-thread only, same contract as juce::AudioDeviceManager: construct,

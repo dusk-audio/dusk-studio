@@ -884,11 +884,10 @@ std::string AudioPipelineSelfTest::testCompPerTrack()
 
 std::string AudioPipelineSelfTest::probeUMC1820AlsaFormat()
 {
-    // Explicitly open the UMC1820 front: device on the ALSA backend so the
-    // device-open stderr line shows what format/access mode plug negotiated
-    // for THAT specific PCM. Verifies the format-pin patch (S24_3LE first
-    // for non-hw: devices) is taking effect on the actual hardware the user
-    // selects in the dialog.
+    // Explicitly open the UMC1820 on the native ALSA backend (raw hw: PCM) so
+    // the device-open stderr line shows the negotiated format/bit depth for
+    // the exact hardware the user selects in the dialog. Fails honestly with
+    // the backend's EBUSY guidance when another audio server holds the device.
     std::string out;
     out += "--- UMC1820 ALSA Direct Open Probe ---\n";
 
@@ -910,11 +909,10 @@ std::string AudioPipelineSelfTest::probeUMC1820AlsaFormat()
 
     deviceManager.setCurrentDeviceType ("ALSA", true);
 
-    // JUCE-ALSA exposes UMC1820 outputs under several surround-mode names -
-    // probe the most common one used in the dialog.
+    // The native backend enumerates one entry per hw:CARD,DEV PCM, named
+    // "<card>, <pcm>" - no surround-mode aliases.
     const std::vector<std::string> candidates {
-        "UMC1820, USB Audio; Front output / input",
-        "UMC1820, USB Audio; 4.0 Surround output to Front and Rear speakers"
+        "UMC1820, USB Audio"
     };
 
     for (const auto& name : candidates)
@@ -928,6 +926,11 @@ std::string AudioPipelineSelfTest::probeUMC1820AlsaFormat()
         if (! err.empty())
         {
             out += "  " + name + ": ERROR " + err + "\n";
+            // A busy hw: device (held by PipeWire/JACK) fails the channel
+            // probe, which surfaces as zero selectable channels rather than
+            // EBUSY - annotate so it doesn't read as a mask bug.
+            if (dusk::text::contains (err, "no input or output channels"))
+                out += "      (device likely held by another audio server - the channel probe saw 0 channels)\n";
             continue;
         }
 
@@ -935,7 +938,7 @@ std::string AudioPipelineSelfTest::probeUMC1820AlsaFormat()
         {
             out += dusk::text::format (
                 "  %s\n      OPENED rate=%.0f buf=%d in=%d out=%d "
-                "(see [Dusk Studio/JUCE-ALSA] line in stderr for format/access)\n",
+                "(see [Dusk Studio/ALSA] opened line in stderr for format/bits)\n",
                 name.c_str(),
                 dev->getCurrentSampleRate(),
                 dev->getCurrentBufferSizeSamples(),
@@ -949,7 +952,8 @@ std::string AudioPipelineSelfTest::probeUMC1820AlsaFormat()
     }
 
     deviceManager.setCurrentDeviceType (origType, true);
-    deviceManager.setSetup (origSetup, true);
+    if (const auto err = deviceManager.setSetup (origSetup, true); ! err.empty())
+        out += "  (restore FAILED: " + err + ")\n";
     return out;
 }
 
@@ -978,8 +982,21 @@ std::string AudioPipelineSelfTest::testBackendsOpenCleanly()
         for (const auto& d : outDevs) out += "      out: " + d + "\n";
         for (const auto& d : inDevs)  out += "      in:  " + d + "\n";
 
-        // Try opening the type's default device.
+        // Try opening the type's default device. A backend switch selects
+        // nothing on its own (pick-backend -> pick-device contract), so name
+        // the type's default device explicitly.
         deviceManager.setCurrentDeviceType (type->getTypeName(), /*treatAsChosen*/ true);
+        {
+            device::DeviceSetup pick;
+            const int outIdx = type->getDefaultDeviceIndex (false);
+            const int inIdx  = type->getDefaultDeviceIndex (true);
+            if (outIdx >= 0 && outIdx < (int) outDevs.size()) pick.outputDeviceName = outDevs[(size_t) outIdx];
+            if (inIdx  >= 0 && inIdx  < (int) inDevs.size())  pick.inputDeviceName  = inDevs[(size_t) inIdx];
+            pick.useDefaultInputChannels  = true;
+            pick.useDefaultOutputChannels = true;
+            if (const auto err = deviceManager.setSetup (pick, /*treatAsChosen*/ true); ! err.empty())
+                out += "      setSetup: " + err + "\n";
+        }
         if (auto* dev = deviceManager.getCurrentDevice())
         {
             out += dusk::text::format (
@@ -997,8 +1014,10 @@ std::string AudioPipelineSelfTest::testBackendsOpenCleanly()
 
     // Restore.
     deviceManager.setCurrentDeviceType (origType, /*treatAsChosen*/ true);
-    deviceManager.setSetup (origSetup, /*treatAsChosen*/ true);
-    out += "  (restored original setup: " + origType + ")\n";
+    if (const auto err = deviceManager.setSetup (origSetup, /*treatAsChosen*/ true); ! err.empty())
+        out += "  (restore FAILED: " + err + ")\n";
+    else
+        out += "  (restored original setup: " + origType + ")\n";
     return out;
 }
 
@@ -1394,9 +1413,8 @@ std::string AudioPipelineSelfTest::runAll()
     // Pure-logic self-test for the Dusk Studio-owned ALSA backend. Covers the
     // converter math, channel-mask routing, hw:CARD,DEV parsing, and the
     // periods-knob clamping. Real-device opens of the backend are
-    // exercised by the backend cycle below alongside the JUCE-stock
-    // ALSA / JACK paths.
-    report.push_back (AlsaAudioIODevice::runSelfTest().toStdString());
+    // exercised by the backend cycle below.
+    report.push_back (AlsaAudioIODevice::runSelfTest());
     report.push_back ("");
    #endif
 

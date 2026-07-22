@@ -1,30 +1,29 @@
 # De-JUCE tower spec — Device Phase-3-audio
 
-**STATUS: P3 DONE (branch `dejuce/device-phase3-audio-b`, commit 9cabe13).
-PR-A (P0-P2) MERGED to main as #103 (squash 091fcb5); the `-a` branch is retired.
-P2 was acdef95 (native DeviceManager orchestrator + owning adapters + DeviceStateBlob
-+ device_manager_native mock suite). P3: PipeWireAudioIODevice/Type re-based onto
-device::IODevice/IODeviceType (BigInteger->ChannelSet, String/Array->std::string/
-std::vector, HeapBlock->std::vector, CriticalSection->std::mutex, runSelfTest()->
-std::string; dead rescan() deleted). RT path frozen, type names only (onProcess /
-xrun rising-edge / over-quantum guard / pre-zeroed outputs / lock-then-dispatch
-byte-identical; pw_thread_loop model unchanged; CallbackContext {}). DeviceManager
-registers the native PipeWire type directly, drops its owning adapter; ALSA keeps
-its adapter until P4 (adapter machinery + JUCE include now gated on ALSA alone, so
-the narrow-link test TU stays JUCE-free). DuskStudioApp tone-test PipeWire
-registration dropped (can't join a juce::AudioDeviceManager once dusk-typed) -
-restored in P5. Allowlist 195->191 (4 pipewire entries out). Build 0 new warnings,
-436/436 ctest, gate 191, Xvfb selftest: native PipeWire opened+streamed (UMC1820
-48000/512/32out/16in, 22 links) + PipeWire pure-logic 8/8 + ALSA 15/15. Optional
-tests/pipewire_helpers.cpp SKIPPED (compiling the .cpp into a test drags in
-libpipewire; the helpers are already covered by the selftest's 8 PASS lines).
-Known drift carried from P2 (harmless): backend-cycle ALSA switch shows
-OPEN-FAILED because setCurrentDeviceType no longer auto-opens per §D2 - diagnostic
-text, not a 15/15 gate; reworked in P4. NOT pushed.
-Next: P4 (ALSA re-type + JUCE-Thread->std::thread swap per §D5/§P4) on the SAME
-branch dejuce/device-phase3-audio-b.
-Resume: "P3 (PipeWire re-type) committed on dejuce/device-phase3-audio-b (9cabe13),
-not pushed; start P4 (ALSA re-type + thread swap, §D5/§P4) on the same branch".**
+**STATUS: P5 DONE — TOWER CODE-COMPLETE / LINUX-UNLINKED on branch
+`dejuce/device-phase4-alsa` off main 6c7d569, NOT pushed. P0-P2 merged as #103;
+P3 merged separately as #104; P4 is 5365cec plus review fixes 672020a. P4
+re-based ALSA onto the dusk device interfaces, replaced its I/O Thread with the
+§D5 std::thread lifecycle (including whole-device park-on-timeout), removed the
+last Linux adapters/shim, and took the allowlist 191->184. P5 rewrote the Linux
+headless tone harness over device::DeviceManager with a fixed 440 Hz/-6 dB
+IODeviceCallback; the non-Linux harness retains the wrapped implementation. The
+direct juce_audio_devices link is now NOT-Linux only. juce_audio_utils still
+pulls that module transitively on Linux, so object code remains until the GUI/
+hosting towers unlink it; regenerated compile_commands.json resolves zero Linux
+src/ translation units with direct juce_audio_devices header includes. This is
+a platform-scoped unlink: macOS/Windows retain the wrapped path and the
+north-star count stays 12. MANUAL.md audit: no change needed. Gate stays 184;
+build has zero new warnings; ctest 438/438; private-Xvfb selftest matches P4
+(synthetic green, ALSA 15/15, PipeWire helpers 8/8, known device-open diagnostics
+only). The private-Xvfb native tone probe reports a clean no-device error in this
+sandbox. Pre-paid bench debt: real hw:UMC1820,0 ALSA perf matrix 44.1k/48k x
+32..2048 all SAFE, open/close 50 and start/stop 20 SAFE. Outstanding merge gates:
+ALSA hot-unplug mid-play with the new thread teardown, xrun recovery under load,
+buffer/SR swap, periods knob; PipeWire streaming plus SR/quantum renegotiation
+on hardware (built-in sink quantum-0 could not exercise it). PR-B is P4+P5 and
+may still be split after P4 at Marc's discretion.
+Resume: "PR-B ready for Marc's review; bench debts gate merge".**
 Update this line each session (phase done, branch, resume phrase).
 
 Read order for an executing session: `docs/dejuce-campaign.md` → this file →

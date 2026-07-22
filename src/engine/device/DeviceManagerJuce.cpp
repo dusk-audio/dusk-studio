@@ -9,13 +9,6 @@
 
 #include <juce_audio_devices/juce_audio_devices.h>
 
-#if defined(DUSKSTUDIO_HAS_PIPEWIRE)
- #include "../pipewire/PipeWireAudioIODeviceType.h"
-#endif
-#if defined(DUSKSTUDIO_HAS_ALSA)
- #include "../alsa/AlsaAudioIODeviceType.h"
-#endif
-
 #include <atomic>
 #include <map>
 
@@ -238,13 +231,6 @@ struct DeviceManager::Impl : private juce::ChangeListener
     {
         if (backendsRegistered) return;
         backendsRegistered = true;
-
-       #if defined(DUSKSTUDIO_HAS_PIPEWIRE)
-        mgr.addAudioDeviceType (std::make_unique<PipeWireAudioIODeviceType>());
-       #endif
-       #if defined(DUSKSTUDIO_HAS_ALSA)
-        mgr.addAudioDeviceType (std::make_unique<AlsaAudioIODeviceType>());
-       #endif
 
        #if JUCE_WINDOWS
         // Preference order: ASIO (only present when the SDK was built in) ->
