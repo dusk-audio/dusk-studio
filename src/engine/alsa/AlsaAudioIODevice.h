@@ -91,9 +91,9 @@ public:
     int getXRunCount() const noexcept override                { return xrunCount.load (std::memory_order_relaxed); }
 
     // Periods-per-buffer override. Reads as the value that will be used on
-    // the NEXT open(). Default 2 (Ardour-style; the lowest value that gives
-    // the kernel any slack and is the lowest-latency setting that's stable
-    // on most modern interfaces). Range clamped to [2, 16].
+    // the NEXT open(). Default 3 (matches PipeWire/JACK's internal headroom so
+    // the out-of-box ALSA experience doesn't xrun; 2 is the lowest-latency
+    // stable setting for users who opt down). Range clamped to [2, 16].
     static void setRequestedPeriods (int p) noexcept;
     static int  getRequestedPeriods() noexcept;
 
