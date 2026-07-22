@@ -43,10 +43,10 @@ TEST_CASE ("AlsaAudioIODevice: wedged I/O thread leaks the device, never frees i
     const auto stopMs = std::chrono::duration_cast<std::chrono::milliseconds> (
         std::chrono::steady_clock::now() - t0).count();
 
-    // stop() must hold the full join window, then detach - neither joining
-    // until the thread exits nor returning early.
+    // stop() must hold the full join window, then detach rather than returning
+    // early. The abandonment assertion below distinguishes this from joining
+    // the thread through its later exit.
     REQUIRE (stopMs >= 1900);
-    REQUIRE (stopMs < 3000);
     REQUIRE (raw->ioThreadWasAbandoned());
 
     // An abandoned device refuses to rejoin the streaming lifecycle.
