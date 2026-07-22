@@ -1,29 +1,15 @@
 # De-JUCE tower spec — Device Phase-3-audio
 
-**STATUS: P5 DONE — TOWER CODE-COMPLETE / LINUX-UNLINKED on branch
-`dejuce/device-phase4-alsa` off main 6c7d569, NOT pushed. P0-P2 merged as #103;
-P3 merged separately as #104; P4 is 5365cec plus review fixes 672020a. P4
-re-based ALSA onto the dusk device interfaces, replaced its I/O Thread with the
-§D5 std::thread lifecycle (including whole-device park-on-timeout), removed the
-last Linux adapters/shim, and took the allowlist 191->184. P5 rewrote the Linux
-headless tone harness over device::DeviceManager with a fixed 440 Hz/-6 dB
-IODeviceCallback; the non-Linux harness retains the wrapped implementation. The
-direct juce_audio_devices link is now NOT-Linux only. juce_audio_utils still
-pulls that module transitively on Linux, so object code remains until the GUI/
-hosting towers unlink it; regenerated compile_commands.json resolves zero Linux
-src/ translation units with direct juce_audio_devices header includes. This is
-a platform-scoped unlink: macOS/Windows retain the wrapped path and the
-north-star count stays 12. MANUAL.md audit: no change needed. Gate stays 184;
-build has zero new warnings; ctest 438/438; private-Xvfb selftest matches P4
-(synthetic green, ALSA 15/15, PipeWire helpers 8/8, known device-open diagnostics
-only). The private-Xvfb native tone probe reports a clean no-device error in this
-sandbox. Pre-paid bench debt: real hw:UMC1820,0 ALSA perf matrix 44.1k/48k x
-32..2048 all SAFE, open/close 50 and start/stop 20 SAFE. Outstanding merge gates:
-ALSA hot-unplug mid-play with the new thread teardown, xrun recovery under load,
-buffer/SR swap, periods knob; PipeWire streaming plus SR/quantum renegotiation
-on hardware (built-in sink quantum-0 could not exercise it). PR-B is P4+P5 and
-may still be split after P4 at Marc's discretion.
-Resume: "PR-B ready for Marc's review; bench debts gate merge".**
+**STATUS: TOWER COMPLETE — all phases merged to main. P0-P2 = #103, P3 = #104,
+P4-P5 = #105 (squash 8d075f0, incl. CodeRabbit test fix 1f78df1). Linux is
+unlinked from juce_audio_devices (direct link + all Linux src includes gone);
+mac/win keep the wrapped path, north-star count stays 12 (platform-scoped
+unlink). Gate/allowlist on main: 184. Tower branches retired. Bench debts
+outstanding post-merge (standing sign-off, see campaign Done entry): ALSA
+hot-unplug mid-play with the new thread teardown, xrun recovery under load,
+buffer/SR swap, periods knob; PipeWire streaming + SR/quantum renegotiation
+(validated pre-merge: UMC1820 ALSA perf matrix all SAFE). This spec is
+archival; no further phases.**
 Update this line each session (phase done, branch, resume phrase).
 
 Read order for an executing session: `docs/dejuce-campaign.md` → this file →

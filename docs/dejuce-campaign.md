@@ -24,8 +24,8 @@ juce_dsp, juce_events, juce_graphics, juce_gui_basics, juce_gui_extra`
 
 A module leaves the link line only when its whole subsystem is reimplemented
 and every call site is flipped. `juce_core` unlinks last. The
-`tools/juce-gate.sh` ratchet (allowlist 184 files on the completed device
-tower branch, 191 on main until merge) is the file-level backstop, not the goal.
+`tools/juce-gate.sh` ratchet (allowlist 184 files) is the file-level
+backstop, not the goal.
 
 Metric caveat: JUCE module declarations pull dependencies transitively —
 e.g. `juce_audio_utils` depends on `juce_audio_devices`, so removing the
@@ -86,42 +86,53 @@ reimplemented.
   `juceManager()` escape hatch survives with exactly one MIDI consumer.
 - **Misc clean-ups**: SF2 reader, scanners, RecentSessions/AppConfig, String
   leaf batches, ChordAnalyzer, hosting-transport cluster.
+- **Device Phase-3-audio (P0–P5, PRs #103/#104/#105, merged 2026-07-22)**:
+  native PipeWire/ALSA backends implement `IODevice`/`IODeviceType` directly;
+  `DeviceManager` is a native orchestrator on Linux (CallbackFanout,
+  DeviceStateBlob JSON state with one-way legacy-XML migration); ALSA I/O on
+  `std::thread` + SCHED_RR with timed-join/detach-and-park teardown;
+  `juce_audio_devices` is Linux-unlinked (direct link + all Linux src
+  includes gone; mac/win keep the wrapped path in `DeviceManagerJuce.cpp`, so
+  the global count stays 12 per the platform-scope rule). Deliberate
+  behaviour change: no auto-open on backend switch. Allowlist 194 → 184.
+  Bench debts outstanding at merge: ALSA hot-unplug mid-play, xrun recovery
+  under load, buffer/SR swap, periods knob, PipeWire streaming + SR/quantum
+  renegotiation (UMC1820 perf matrix green pre-merge). Spec:
+  [dejuce-device-phase3-audio-plan.md](dejuce-device-phase3-audio-plan.md).
 
 ## Remaining towers, in order
 
-1. **Device Phase-3-audio** — **CODE-COMPLETE / LINUX-UNLINKED** — native
-   PipeWire/ALSA implement the dusk `IODevice`/`IODeviceType` interfaces and
-   Linux has no direct `juce_audio_devices` link or direct source-TU header
-   includes.
-   macOS/Windows retain the wrapped device path, so this is a platform-scoped
-   unlink and the north-star count stays at 12. PR-A (P0–P2) merged as #103;
-   P3 merged separately as #104; P4–P5 are ready for review on
-   `dejuce/device-phase4-alsa`. Merge remains gated by Marc's bench: PipeWire
-   streaming plus SR/quantum renegotiation; ALSA hot-unplug with the new thread
-   teardown; xrun recovery under load; buffer/SR swaps; and the periods knob.
-   The real UMC1820 performance matrix is already green. Executable spec:
-   [dejuce-device-phase3-audio-plan.md](dejuce-device-phase3-audio-plan.md).
-2. **String-floor remnants** — juce::String in Session/SessionSerializer core
-   (blocked by UI writes into Session.h members), ALSA backend (juce virtual
-   signatures die with tower 2), hosting surfaces (PluginManager/PluginSlot),
-   MidiBindings. Mostly falls out of towers 2 and 5; sweep what goes fully
-   clean, don't churn coupled files.
-3. **Plugin-hosting JUCE fallback drop** — native CLAP/LV2/VST3 become the
+1. **Audio-file call-site sweep** — NEXT — flip all juce_audio_formats
+   consumers (record/playback/bounce/importers/mastering/mp3) onto the dusk
+   libsndfile seam (`src/engine/audiofile/`, already JUCE-free and A/B-proven
+   but test-only today). Honest yield: zero allowlist movement and no unlink
+   yet — the deliverable is zero production call sites, so the module drops
+   the moment `juce_audio_utils` goes with the GUI tower. Executable spec:
+   [dejuce-audiofile-plan.md](dejuce-audiofile-plan.md) (A0–A4, two PRs).
+2. **Plugin-hosting JUCE fallback drop** — native CLAP/LV2/VST3 become the
    only hosts; delete `juce::AudioPluginInstance`/`AudioProcessor` hosting
    path (PluginSlot/PluginManager/PluginHostMain). Depends on donor DPF ports
    finishing (APVTS gone) and Marc's call on dropping JUCE-plugin-format
    support. Unlinks `juce_audio_processors`/`juce_audio_utils`/
    `juce_audio_formats` territory.
-4. **FFT** — DpAligner + MasteringEqEditor onto pffft/kissfft (lib decision
+3. **FFT** — DpAligner + MasteringEqEditor onto pffft/kissfft (lib decision
    open). No ratchet movement, low priority; batch with whichever tower
    touches those files.
-5. **Events remainder + GUI tower (finale)** — ~40 UI juce::Timer subclasses,
+4. **Events remainder + GUI tower (finale)** — ~40 UI juce::Timer subclasses,
    ~79 callAsync sites, then the bespoke Wayland toolkit (xdg-shell +
    XWayland/XEmbed for plugin UIs, 2D renderer TBD Blend2D/Skia,
    HarfBuzz/FreeType, own widget layer; swap behind the existing
    DuskComboBox/DuskContextMenu/LookAndFeel/EmbeddedModal seams). ~120 files,
    50%+ of total effort, multi-release. Unlinks everything else, `juce_core`
    last.
+
+Dissolved tower — **String-floor remnants** (2026-07-22 scout): zero files in
+session/engine scope can go fully clean on a String/File flip; every
+candidate is anchored by a heavier type (Session model by juce Colour,
+importers/playback by AudioFormat, hosting surfaces by PluginDescription,
+edit actions by UndoableAction, MidiBindings by gui_basics menus,
+CrashHandler by Logger/SystemStats). The string work rides along inside
+whichever tower removes each file's anchor; no standalone sweep.
 
 ## Standing workflow ritual (every tower session)
 
