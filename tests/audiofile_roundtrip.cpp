@@ -5,6 +5,8 @@
 #include "engine/audiofile/FileWriter.h"
 #include "engine/audiofile/ThreadedFileWriter.h"
 
+#include <sndfile.h>
+
 #include <cmath>
 #include <filesystem>
 #include <memory>
@@ -49,13 +51,13 @@ std::vector<const float*> ptrs (const std::vector<std::vector<float>>& ch)
 
 TEST_CASE ("FileWriter/FileReader round-trip preserves samples", "[audiofile]")
 {
-    struct Case { const char* file; WriteSpec::Format fmt; int bits; float tol; };
+    struct Case { const char* file; WriteSpec::Format fmt; int bits; bool isFloat; float tol; };
     const Case cases[] = {
-        { "dusk_af_wav16.wav",  WriteSpec::Format::Wav,  16, 2.0e-4f },
-        { "dusk_af_wav24.wav",  WriteSpec::Format::Wav,  24, 1.0e-5f },
-        { "dusk_af_wav32.wav",  WriteSpec::Format::Wav,  32, 1.0e-6f },
-        { "dusk_af_flac24.flac", WriteSpec::Format::Flac, 24, 1.0e-5f },
-        { "dusk_af_aiff24.aiff", WriteSpec::Format::Aiff, 24, 1.0e-5f },
+        { "dusk_af_wav16.wav",   WriteSpec::Format::Wav,  16, false, 2.0e-4f },
+        { "dusk_af_wav24.wav",   WriteSpec::Format::Wav,  24, false, 1.0e-5f },
+        { "dusk_af_wav32.wav",   WriteSpec::Format::Wav,  32, true,  1.0e-6f },
+        { "dusk_af_flac24.flac", WriteSpec::Format::Flac, 24, false, 1.0e-5f },
+        { "dusk_af_aiff24.aiff", WriteSpec::Format::Aiff, 24, false, 1.0e-5f },
     };
 
     const auto ramp = makeRamp();
@@ -84,6 +86,7 @@ TEST_CASE ("FileWriter/FileReader round-trip preserves samples", "[audiofile]")
             REQUIRE (r->info().numChannels == kChannels);
             REQUIRE (r->info().numFrames   == kFrames);
             REQUIRE (r->info().sampleRate  == 48000.0);
+            REQUIRE (r->info().isFloat     == tc.isFloat);
 
             std::vector<std::vector<float>> out ((size_t) kChannels, std::vector<float> ((size_t) kFrames, 0.0f));
             std::vector<float*> outP;
@@ -124,6 +127,30 @@ TEST_CASE ("FileReader seek matches a full-buffer slice", "[audiofile]")
     for (int c = 0; c < kChannels; ++c)
         for (int64_t f = 0; f < len; ++f)
             REQUIRE_THAT (out[(size_t) c][(size_t) f], WithinAbs (sample (c, start + f), 1.0e-6f));
+
+    std::filesystem::remove (path);
+}
+
+TEST_CASE ("FileReader distinguishes 32-bit PCM from floating point", "[audiofile]")
+{
+    const auto path = tmp ("dusk_af_pcm32.wav");
+    SF_INFO info {};
+    info.samplerate = 48000;
+    info.channels = 1;
+    info.format = SF_FORMAT_WAV | SF_FORMAT_PCM_32;
+
+    std::unique_ptr<SNDFILE, decltype (&sf_close)> file (
+        sf_open (path.string().c_str(), SFM_WRITE, &info), &sf_close);
+    REQUIRE (file != nullptr);
+
+    std::vector<float> samples ((size_t) kFrames, 0.25f);
+    REQUIRE (sf_writef_float (file.get(), samples.data(), kFrames) == kFrames);
+    file.reset();
+
+    auto reader = FileReader::open (path);
+    REQUIRE (reader != nullptr);
+    REQUIRE (reader->info().bitsPerSample == 32);
+    REQUIRE_FALSE (reader->info().isFloat);
 
     std::filesystem::remove (path);
 }

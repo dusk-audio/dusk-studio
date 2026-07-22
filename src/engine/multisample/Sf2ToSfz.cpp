@@ -1,5 +1,8 @@
 #include "Sf2ToSfz.h"
 
+#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
+#include "../audiofile/FileWriter.h"
+#endif
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include <algorithm>
@@ -102,6 +105,17 @@ bool writeSampleWav(juce::FileInputStream& in,
     }
 
     outWav.deleteFile();
+#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate    = (double) (s.sampleRate > 0 ? s.sampleRate : 44100);
+    spec.numChannels   = 1;
+    spec.bitsPerSample = 16;
+    spec.format        = dusk::audio::WriteSpec::Format::Wav;
+    auto writer = dusk::audio::FileWriter::create (
+        std::filesystem::u8path (outWav.getFullPathName().toStdString()), spec);
+    if (writer == nullptr) { outWav.deleteFile(); return false; }
+    const bool ok = writer->write (buf.getArrayOfReadPointers(), 1, numFrames);
+#else
     std::unique_ptr<juce::FileOutputStream> os (outWav.createOutputStream());
     if (os == nullptr) return false;
 
@@ -113,6 +127,7 @@ bool writeSampleWav(juce::FileInputStream& in,
     if (writer == nullptr) { os.reset(); outWav.deleteFile(); return false; }
     os.release();
     const bool ok = writer->writeFromAudioSampleBuffer(buf, 0, numFrames);
+#endif
     writer.reset();
     return ok;
 }

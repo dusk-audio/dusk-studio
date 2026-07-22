@@ -26,6 +26,9 @@
 #include "PluginPickerPanel.h"
 #include "BounceDialog.h"
 #include "../engine/BounceEngine.h"
+#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
+ #include "../engine/audiofile/FileWriter.h"
+#endif
 
 #include "../session/Session.h"
 #include "../engine/AudioEngine.h"
@@ -106,8 +109,18 @@ juce::File writeDemoWav (const juce::File& dir, double sampleRate)
         buf.setSample (1, n, r);
     }
 
-    juce::WavAudioFormat wav;
     file.deleteFile();
+   #if defined(DUSKSTUDIO_HAS_AUDIOFILE)
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate = sampleRate;
+    spec.numChannels = numCh;
+    spec.bitsPerSample = 24;
+    spec.format = dusk::audio::WriteSpec::Format::Wav;
+    if (auto writer = dusk::audio::FileWriter::create (
+            std::filesystem::u8path (file.getFullPathName().toStdString()), spec))
+        writer->write (buf.getArrayOfReadPointers(), numCh, numFrames);
+   #else
+    juce::WavAudioFormat wav;
     if (auto os = std::unique_ptr<juce::FileOutputStream> (file.createOutputStream()))
     {
         if (auto* writer = wav.createWriterFor (os.get(), sampleRate, (unsigned int) numCh,
@@ -118,6 +131,7 @@ juce::File writeDemoWav (const juce::File& dir, double sampleRate)
             delete writer;
         }
     }
+   #endif
     return file;
 }
 } // namespace

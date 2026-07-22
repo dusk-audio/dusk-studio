@@ -2,6 +2,10 @@
 #include "../engine/AudioEngine.h"
 #include "../engine/PlaybackEngine.h"
 #include "../engine/Transport.h"
+#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
+#include "../engine/audiofile/FileReader.h"
+#include "../engine/audiofile/FileWriter.h"
+#endif
 
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <algorithm>
@@ -10,6 +14,14 @@ namespace duskstudio
 {
 namespace
 {
+#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
+template <typename FileType>
+std::filesystem::path audioPath (const FileType& file)
+{
+    return std::filesystem::u8path (file.getFullPathName().toStdString());
+}
+#endif
+
 void rebuildPlaybackIfStopped (AudioEngine& engine)
 {
     if (engine.getTransport().getState() == Transport::State::Stopped)
@@ -687,13 +699,23 @@ bool JoinRegionsAction::perform()
     // selected region into one buffer at its proper timeline offset
     // (gaps become silence; overlaps sum). Uses the source files'
     // sample rate / channel count from the leading region.
+#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
+    auto firstReader = dusk::audio::FileReader::open (
+        audioPath (beforeRegions.front().file));
+#else
     juce::AudioFormatManager fm;
     fm.registerBasicFormats();
     auto firstReader = std::unique_ptr<juce::AudioFormatReader> (
         fm.createReaderFor (beforeRegions.front().file));
+#endif
     if (firstReader == nullptr) return false;
+#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
+    const double sr   = firstReader->info().sampleRate;
+    const int    bits = std::max (16, firstReader->info().bitsPerSample);
+#else
     const double sr   = firstReader->sampleRate;
     const int    bits = std::max (16, (int) firstReader->bitsPerSample);
+#endif
     const int    chs  = std::clamp ((int) beforeRegions.front().numChannels, 1, 2);
 
     const auto totalSamples = (int) std::clamp<std::int64_t> (
@@ -703,14 +725,23 @@ bool JoinRegionsAction::perform()
 
     for (const auto& reg : beforeRegions)
     {
+#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
+        auto rdr = dusk::audio::FileReader::open (audioPath (reg.file));
+#else
         std::unique_ptr<juce::AudioFormatReader> rdr (fm.createReaderFor (reg.file));
+#endif
         if (rdr == nullptr) continue;
         const int regSamples = (int) std::clamp<std::int64_t> (
             reg.lengthInSamples, 0, std::numeric_limits<int>::max());
         if (regSamples == 0) continue;
         juce::AudioBuffer<float> tmp (chs, regSamples);
         tmp.clear();
+#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
+        if (rdr->read (tmp.getArrayOfWritePointers(), chs, reg.sourceOffset,
+                       regSamples) != regSamples)
+#else
         if (! rdr->read (&tmp, 0, regSamples, reg.sourceOffset, true, chs > 1))
+#endif
             return false;   // unreadable region body - abort the join, leave regions unchanged
                             // (no output file created yet, nothing to clean up)
         const int destOffset = (int) (reg.timelineStart - firstStart);
@@ -727,6 +758,15 @@ bool JoinRegionsAction::perform()
     auto outFile = takesDir.getNonexistentChildFile (
         beforeRegions.front().file.getFileNameWithoutExtension() + "-joined",
         ".wav", false);
+#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
+    dusk::audio::WriteSpec writeSpec;
+    writeSpec.sampleRate    = sr;
+    writeSpec.numChannels   = chs;
+    writeSpec.bitsPerSample = bits;
+    writeSpec.format        = dusk::audio::WriteSpec::Format::Wav;
+    auto writer = dusk::audio::FileWriter::create (audioPath (outFile), writeSpec);
+    if (writer == nullptr) { outFile.deleteFile(); return false; }
+#else
     juce::WavAudioFormat wav;
     std::unique_ptr<juce::FileOutputStream> out (outFile.createOutputStream());
     if (out == nullptr) return false;
@@ -734,7 +774,12 @@ bool JoinRegionsAction::perform()
         wav.createWriterFor (out.get(), sr, (std::uint32_t) chs, bits, {}, 0));
     if (writer == nullptr) { out.reset(); outFile.deleteFile(); return false; }
     out.release();   // ownership transferred to writer
+#endif
+#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
+    if (! writer->write (mixBuf.getArrayOfReadPointers(), chs, totalSamples))
+#else
     if (! writer->writeFromAudioSampleBuffer (mixBuf, 0, totalSamples))
+#endif
     {
         writer.reset();
         outFile.deleteFile();
@@ -858,25 +903,48 @@ bool ReverseRegionAction::perform()
     {
         beforeState = session.track (trackIdx).regions[(size_t) regionIdx];
 
+#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
+        auto rdr = dusk::audio::FileReader::open (audioPath (beforeState.file));
+#else
         juce::AudioFormatManager fm;
         fm.registerBasicFormats();
         std::unique_ptr<juce::AudioFormatReader> rdr (fm.createReaderFor (beforeState.file));
+#endif
         if (rdr == nullptr) return false;
 
         // Bound the channel count: corrupt session data could carry a wild
         // numChannels and blow up the buffer allocation. Cap to 1-2 (the app is
         // stereo-max) and to what the reader actually has.
+#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
+        const int readerChannels = rdr->info().numChannels;
+#else
+        const int readerChannels = (int) rdr->numChannels;
+#endif
         const int chs = std::clamp ((int) beforeState.numChannels,
-                                     1, std::max (1, std::min (2, (int) rdr->numChannels)));
+                                     1, std::max (1, std::min (2, readerChannels)));
         const std::int64_t len = std::clamp<std::int64_t> (
             beforeState.lengthInSamples, 1, std::numeric_limits<int>::max());
+#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
+        const double sr   = rdr->info().sampleRate;
+        const int    bits = std::max (16, rdr->info().bitsPerSample);
+#else
         const double sr   = rdr->sampleRate;
         const int    bits = std::max (16, (int) rdr->bitsPerSample);
+#endif
 
         auto takesDir = session.getSessionDirectory().getChildFile ("takes");
         if (! takesDir.exists() && takesDir.createDirectory().failed()) return false;
         auto outFile = takesDir.getNonexistentChildFile (
             beforeState.file.getFileNameWithoutExtension() + "-reversed", ".wav", false);
+#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
+        dusk::audio::WriteSpec writeSpec;
+        writeSpec.sampleRate    = sr;
+        writeSpec.numChannels   = chs;
+        writeSpec.bitsPerSample = bits;
+        writeSpec.format        = dusk::audio::WriteSpec::Format::Wav;
+        auto writer = dusk::audio::FileWriter::create (audioPath (outFile), writeSpec);
+        if (writer == nullptr) { outFile.deleteFile(); return false; }
+#else
         juce::WavAudioFormat wav;
         std::unique_ptr<juce::FileOutputStream> out (outFile.createOutputStream());
         if (out == nullptr) return false;
@@ -884,6 +952,7 @@ bool ReverseRegionAction::perform()
             wav.createWriterFor (out.get(), sr, (std::uint32_t) chs, bits, {}, 0));
         if (writer == nullptr) { out.reset(); outFile.deleteFile(); return false; }
         out.release();   // ownership -> writer
+#endif
 
         // Stream the source tail-first in bounded chunks: read the chunk ending
         // at `remaining`, reverse each channel, append it. This reverses the
@@ -897,12 +966,21 @@ bool ReverseRegionAction::perform()
         {
             const int n = (int) std::min ((std::int64_t) kChunk, remaining);
             chunk.clear();
+#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
+            if (rdr->read (chunk.getArrayOfWritePointers(), chs,
+                           beforeState.sourceOffset + (remaining - n), n) != n)
+#else
             if (! rdr->read (&chunk, 0, n,
                              beforeState.sourceOffset + (remaining - n), true, chs > 1))
+#endif
             { ioOk = false; break; }
             for (int c = 0; c < chs; ++c)
                 std::reverse (chunk.getWritePointer (c), chunk.getWritePointer (c) + n);
+#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
+            if (! writer->write (chunk.getArrayOfReadPointers(), chs, n))
+#else
             if (! writer->writeFromAudioSampleBuffer (chunk, 0, n))
+#endif
             { ioOk = false; break; }
             remaining -= n;
         }

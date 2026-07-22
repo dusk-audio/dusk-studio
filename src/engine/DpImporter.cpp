@@ -1,6 +1,9 @@
 #include "DpImporter.h"
 
 #include "../foundation/Text.h"
+#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
+#include "audiofile/FileReader.h"
+#endif
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -43,15 +46,31 @@ struct HeaderInfo
     int         numChannels = 0;
 };
 
-HeaderInfo readWavHeader (juce::AudioFormatManager& fm, const juce::File& f)
+HeaderInfo readWavHeader (
+#if !defined(DUSKSTUDIO_HAS_AUDIOFILE)
+                          juce::AudioFormatManager& fm,
+#endif
+                          const juce::File& f)
 {
     HeaderInfo h;
+#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
+    auto reader = dusk::audio::FileReader::open (
+        std::filesystem::u8path (f.getFullPathName().toStdString()));
+#else
     std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (f));
+#endif
     if (reader == nullptr) return h;
+#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
+    h.sampleRate    = reader->info().sampleRate;
+    h.lengthSamples = reader->info().numFrames;
+    h.bitDepth      = reader->info().bitsPerSample;
+    h.numChannels   = reader->info().numChannels;
+#else
     h.sampleRate    = reader->sampleRate;
     h.lengthSamples = (std::int64_t) reader->lengthInSamples;
     h.bitDepth      = (int) reader->bitsPerSample;
     h.numChannels   = (int) reader->numChannels;
+#endif
     h.ok = (h.sampleRate > 0.0 && h.lengthSamples > 0 && h.numChannels > 0);
     return h;
 }
@@ -414,8 +433,10 @@ SongScan scanSongFolder (const juce::File& folder)
         return scan;
     }
 
+#if !defined(DUSKSTUDIO_HAS_AUDIOFILE)
     juce::AudioFormatManager fm;
     fm.registerBasicFormats();
+#endif
 
     // Group fragment files by ZZ index.
     struct Pair { juce::File f1, f2; };
@@ -472,8 +493,13 @@ SongScan scanSongFolder (const juce::File& folder)
 
         if (have1 && have2)
         {
+#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
+            const auto h1 = readWavHeader (pair.f1);
+            const auto h2 = readWavHeader (pair.f2);
+#else
             const auto h1 = readWavHeader (fm, pair.f1);
             const auto h2 = readWavHeader (fm, pair.f2);
+#endif
             if (! h1.ok || ! h2.ok)
             {
                 warn.add (juce::String::formatted ("ZZ%04d: unreadable WAV header; skipped.", idx));
@@ -503,7 +529,11 @@ SongScan scanSongFolder (const juce::File& folder)
             const auto src = have1 ? pair.f1 : pair.f2;
             if (have2 && ! have1)
                 warn.add (juce::String::formatted ("ZZ%04d: right channel without left; imported as mono.", idx));
+#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
+            const auto h = readWavHeader (src);
+#else
             const auto h = readWavHeader (fm, src);
+#endif
             if (! h.ok)
             {
                 warn.add (juce::String::formatted ("ZZ%04d: unreadable WAV header; skipped.", idx));
