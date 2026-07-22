@@ -40,11 +40,8 @@
 #include "DpImportDialog.h"
 #include "../engine/DpImporter.h"
 #include "../engine/DpAligner.h"
-#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
- #include "../engine/audiofile/FileReader.h"
- #include "../engine/audiofile/FileWriter.h"
-#endif
-#include <juce_audio_formats/juce_audio_formats.h>
+#include "../engine/audiofile/FileReader.h"
+#include "../engine/audiofile/FileWriter.h"
 #include <algorithm>
 
 namespace duskstudio
@@ -75,22 +72,6 @@ juce::Array<juce::File> toFileArray (const std::vector<std::filesystem::path>& p
 // Shared helpers for the file-import flow (both menu-driven and
 // drag-and-drop). Lives at file scope so the TapeStrip drop callback
 // wired up in the MainComponent ctor can reference them.
-#if !defined(DUSKSTUDIO_HAS_AUDIOFILE)
-juce::AudioFormatManager& importAudioFormatManager()
-{
-    // AudioFormatManager is non-copyable; constexpr-init isn't an option.
-    // Cheap to construct + register; share a static instance and lazily
-    // register on first use via the flag below.
-    static juce::AudioFormatManager fm;
-    static bool registered = false;
-    if (! registered)
-    {
-        fm.registerBasicFormats();
-        registered = true;
-    }
-    return fm;
-}
-#endif
 
 // Background worker for the DP-song bulk import: mixdown alignment plus every
 // fragment decode/convert runs here so a large song doesn't wedge the message
@@ -3517,7 +3498,6 @@ void MainComponent::runAudioImportFlow (const juce::File& source,
                                             std::int64_t timelineStart,
                                             int trackHint)
 {
-   #if defined(DUSKSTUDIO_HAS_AUDIOFILE)
     auto reader = dusk::audio::FileReader::open (toPath (source));
     if (reader == nullptr)
     {
@@ -3533,24 +3513,6 @@ void MainComponent::runAudioImportFlow (const juce::File& source,
     summary.lengthSamples = reader->info().numFrames;
     summary.isMidi        = false;
     reader.reset();   // close before the picker calls FileImporter
-   #else
-    std::unique_ptr<juce::AudioFormatReader> reader (
-        importAudioFormatManager().createReaderFor (source));
-    if (reader == nullptr)
-    {
-        showImportError ("Import audio",
-                          "Unsupported or unreadable audio file: " + source.getFileName());
-        return;
-    }
-
-    ImportTargetPicker::FileSummary summary;
-    summary.file          = source;
-    summary.sampleRate    = reader->sampleRate;
-    summary.numChannels   = std::min (2, (int) reader->numChannels);
-    summary.lengthSamples = (std::int64_t) reader->lengthInSamples;
-    summary.isMidi        = false;
-    reader.reset();   // close before the picker calls FileImporter
-   #endif
 
     auto picker = std::make_unique<ImportTargetPicker> (
         session,
@@ -3783,26 +3745,15 @@ namespace
 // source. Returns an empty File on failure; caller deletes the temp afterwards.
 juce::File makeStereoTempWav (const juce::File& left, const juce::File& right)
 {
-   #if defined(DUSKSTUDIO_HAS_AUDIOFILE)
     auto rl = dusk::audio::FileReader::open (toPath (left));
     auto rr = dusk::audio::FileReader::open (toPath (right));
     if (rl == nullptr || rr == nullptr) return {};
 
     const std::int64_t len = std::min (rl->info().numFrames, rr->info().numFrames);
     const double sampleRate = rl->info().sampleRate;
-   #else
-    auto& fm = importAudioFormatManager();
-    std::unique_ptr<juce::AudioFormatReader> rl (fm.createReaderFor (left));
-    std::unique_ptr<juce::AudioFormatReader> rr (fm.createReaderFor (right));
-    if (rl == nullptr || rr == nullptr) return {};
-
-    const std::int64_t len = std::min (rl->lengthInSamples, rr->lengthInSamples);
-    const double sampleRate = rl->sampleRate;
-   #endif
     if (len <= 0 || sampleRate <= 0.0) return {};
 
     const auto tmp = juce::File::createTempFile (".wav");
-   #if defined(DUSKSTUDIO_HAS_AUDIOFILE)
     dusk::audio::WriteSpec spec;
     spec.sampleRate = sampleRate;
     spec.numChannels = 2;
@@ -3810,15 +3761,6 @@ juce::File makeStereoTempWav (const juce::File& left, const juce::File& right)
     spec.format = dusk::audio::WriteSpec::Format::Wav;
     auto writer = dusk::audio::FileWriter::create (toPath (tmp), spec);
     if (writer == nullptr) { tmp.deleteFile(); return {}; }
-   #else
-    std::unique_ptr<juce::FileOutputStream> stream (tmp.createOutputStream());
-    if (stream == nullptr || ! stream->openedOk()) { tmp.deleteFile(); return {}; }
-    juce::WavAudioFormat wav;
-    std::unique_ptr<juce::AudioFormatWriter> writer (
-        wav.createWriterFor (stream.get(), sampleRate, 2, 24, {}, 0));
-    if (writer == nullptr) { tmp.deleteFile(); return {}; }
-    stream.release();   // writer owns it now
-   #endif
 
     // Each fragment is a mono reader (channel 0). Interleave the two halves into
     // a 2-ch stream in fixed-size chunks so a long take doesn't allocate the
@@ -3828,23 +3770,14 @@ juce::File makeStereoTempWav (const juce::File& left, const juce::File& right)
     for (std::int64_t pos = 0; pos < len; pos += kChunk)
     {
         const int n = (int) std::min ((std::int64_t) kChunk, len - pos);
-       #if defined(DUSKSTUDIO_HAS_AUDIOFILE)
         if (rl->read (lbuf.getArrayOfWritePointers(), 1, pos, n) != n
             || rr->read (rbuf.getArrayOfWritePointers(), 1, pos, n) != n)
-       #else
-        if (! rl->read (&lbuf, 0, n, pos, true, false)
-            || ! rr->read (&rbuf, 0, n, pos, true, false))
-       #endif
         {
             writer.reset(); tmp.deleteFile(); return {};
         }
         out.copyFrom (0, 0, lbuf, 0, 0, n);
         out.copyFrom (1, 0, rbuf, 0, 0, n);
-       #if defined(DUSKSTUDIO_HAS_AUDIOFILE)
         if (! writer->write (out.getArrayOfReadPointers(), 2, n))
-       #else
-        if (! writer->writeFromAudioSampleBuffer (out, 0, n))
-       #endif
         {
             writer.reset(); tmp.deleteFile(); return {};
         }
@@ -4275,22 +4208,12 @@ void MainComponent::openMultiImportPicker (juce::Array<juce::File> files,
         }
         else
         {
-           #if defined(DUSKSTUDIO_HAS_AUDIOFILE)
             auto reader = dusk::audio::FileReader::open (toPath (f));
             if (reader == nullptr)
                 continue;
             s.sampleRate    = reader->info().sampleRate;
             s.numChannels   = std::min (2, reader->info().numChannels);
             s.lengthSamples = reader->info().numFrames;
-           #else
-            std::unique_ptr<juce::AudioFormatReader> reader (
-                importAudioFormatManager().createReaderFor (f));
-            if (reader == nullptr)
-                continue;
-            s.sampleRate    = reader->sampleRate;
-            s.numChannels   = std::min (2, (int) reader->numChannels);
-            s.lengthSamples = (std::int64_t) reader->lengthInSamples;
-           #endif
         }
         summaries.push_back (std::move (s));
     }

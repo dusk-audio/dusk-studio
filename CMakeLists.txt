@@ -405,20 +405,18 @@ target_sources(DuskStudio PRIVATE
 
 find_library(SNDFILE_LIBRARY NAMES sndfile)
 find_path(SNDFILE_INCLUDE_DIR sndfile.h)
-if(SNDFILE_LIBRARY AND SNDFILE_INCLUDE_DIR)
-    target_sources(DuskStudio PRIVATE
-        src/engine/audiofile/FileReader.cpp
-        src/engine/audiofile/FileWriter.cpp
-        src/engine/audiofile/ThreadedFileWriter.cpp)
-    target_include_directories(DuskStudio SYSTEM PRIVATE "${SNDFILE_INCLUDE_DIR}")
-    target_link_libraries(DuskStudio PRIVATE "${SNDFILE_LIBRARY}")
-    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_AUDIOFILE=1)
-    message(STATUS "libsndfile found — Dusk Studio audiofile seam enabled")
-elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    message(FATAL_ERROR "libsndfile development files are required on Linux")
-else()
-    message(STATUS "libsndfile not found — Dusk Studio audiofile seam disabled")
+if(NOT (SNDFILE_LIBRARY AND SNDFILE_INCLUDE_DIR))
+    message(FATAL_ERROR
+        "libsndfile development files are required (all audio file I/O goes "
+        "through it). Linux: libsndfile1-dev. macOS: brew install libsndfile. "
+        "Windows: vcpkg install libsndfile:x64-windows-static.")
 endif()
+target_sources(DuskStudio PRIVATE
+    src/engine/audiofile/FileReader.cpp
+    src/engine/audiofile/FileWriter.cpp
+    src/engine/audiofile/ThreadedFileWriter.cpp)
+target_include_directories(DuskStudio SYSTEM PRIVATE "${SNDFILE_INCLUDE_DIR}")
+target_link_libraries(DuskStudio PRIVATE "${SNDFILE_LIBRARY}")
 
 # DeviceManager backing: Linux uses the native orchestrator (owns the device
 # types, drives open/start/stop/close and the callback fan-out itself); macOS /

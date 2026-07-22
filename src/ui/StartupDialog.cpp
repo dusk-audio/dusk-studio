@@ -1,10 +1,6 @@
 #include "StartupDialog.h"
 
-#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
- #include "../engine/audiofile/FileReader.h"
-#endif
-
-#include <juce_audio_formats/juce_audio_formats.h>
+#include "../engine/audiofile/FileReader.h"
 
 #if __has_include("BinaryData.h")
  #include "BinaryData.h"
@@ -85,7 +81,6 @@ void inferAudioFormat (const juce::File& sessionDir,
         audioDir.findChildFiles (files, juce::File::findFiles, false, "*.flac;*.aiff;*.aif");
     if (files.isEmpty()) return;
 
-   #if defined(DUSKSTUDIO_HAS_AUDIOFILE)
     auto reader = dusk::audio::FileReader::open (
         std::filesystem::u8path (files.getReference (0).getFullPathName().toStdString()));
     if (reader == nullptr) return;
@@ -93,21 +88,6 @@ void inferAudioFormat (const juce::File& sessionDir,
     const auto& info = reader->info();
     sampleRateOut = formatSampleRate (info.sampleRate);
     bitDepthOut   = formatBitDepth (info.bitsPerSample, info.isFloat);
-   #else
-    juce::AudioFormatManager fm;
-    fm.registerBasicFormats();
-    // registerBasicFormats covers WAV + AIFF only; the file glob above also
-    // matches .flac, so register it explicitly or the SR / bit-depth columns
-    // stay blank for FLAC-only sessions.
-    fm.registerFormat (new juce::FlacAudioFormat(), false);
-    std::unique_ptr<juce::AudioFormatReader> reader
-        (fm.createReaderFor (files.getReference (0)));
-    if (reader == nullptr) return;
-
-    sampleRateOut = formatSampleRate (reader->sampleRate);
-    bitDepthOut   = formatBitDepth ((int) reader->bitsPerSample,
-                                   reader->usesFloatingPointData);
-   #endif
 }
 } // namespace
 

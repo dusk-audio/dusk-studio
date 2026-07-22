@@ -1,8 +1,6 @@
 #include "DpAligner.h"
 
-#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
 #include "audiofile/FileReader.h"
-#endif
 #include <juce_dsp/juce_dsp.h>
 #include <algorithm>
 #include <cmath>
@@ -17,29 +15,15 @@ constexpr int kDomExcludeFrames = 400;  // ~2 s at hop 240 / 48 kHz: dominance e
 
 // Decode an audio file to a mono float vector (channel-averaged). Returns
 // empty on failure. Message-thread only.
-std::vector<float> decodeMono (
-#if !defined(DUSKSTUDIO_HAS_AUDIOFILE)
-                               juce::AudioFormatManager& fm,
-#endif
-                               const juce::File& f, double& sampleRateOut)
+std::vector<float> decodeMono (const juce::File& f, double& sampleRateOut)
 {
     std::vector<float> out;
-#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
     auto reader = dusk::audio::FileReader::open (
         std::filesystem::u8path (f.getFullPathName().toStdString()));
-#else
-    std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (f));
-#endif
     if (reader == nullptr) return out;
-#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
     const auto len = reader->info().numFrames;
     const int  ch  = reader->info().numChannels;
     const auto sr  = reader->info().sampleRate;
-#else
-    const auto len = (std::int64_t) reader->lengthInSamples;
-    const int  ch  = (int) reader->numChannels;
-    const auto sr  = reader->sampleRate;
-#endif
     if (len <= 0 || ch <= 0 || sr <= 0.0) return out;
     // Guard against absurd files eating all RAM. A stereo decode allocates
     // ~12 bytes/sample (the 2-ch buffer + the mono out), so this caps the
@@ -54,11 +38,7 @@ std::vector<float> decodeMono (
     const int usedCh = std::min (ch, 2);
     juce::AudioBuffer<float> buf (usedCh, (int) len);
     buf.clear();
-#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
     if (reader->read (buf.getArrayOfWritePointers(), usedCh, 0, len) != len) return out;
-#else
-    if (! reader->read (&buf, 0, (int) len, 0, true, usedCh > 1)) return out;
-#endif
 
     out.resize ((size_t) len);
     if (usedCh == 1)
@@ -209,17 +189,8 @@ std::vector<Alignment> alignToMixdown (const juce::File& mixdown,
 {
     std::vector<Alignment> result ((size_t) sources.size());
 
-#if !defined(DUSKSTUDIO_HAS_AUDIOFILE)
-    juce::AudioFormatManager fm;
-    fm.registerBasicFormats();
-#endif
-
     double mixSr = 0.0;
-#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
     const auto mix = decodeMono (mixdown, mixSr);
-#else
-    const auto mix = decodeMono (fm, mixdown, mixSr);
-#endif
     if (mix.empty() || mixSr <= 0.0) return result;   // all unplaced
     const auto mixEnv = onsetEnvelope (mix.data(), (int) mix.size(), kHop, kFftOrder);
     if (mixEnv.size() < 2) return result;
@@ -228,11 +199,7 @@ std::vector<Alignment> alignToMixdown (const juce::File& mixdown,
     {
         Alignment a;
         double fragSr = 0.0;
-#if defined(DUSKSTUDIO_HAS_AUDIOFILE)
         const auto frag = decodeMono (sources[i], fragSr);
-#else
-        const auto frag = decodeMono (fm, sources[i], fragSr);
-#endif
         if (frag.empty()) { result[i] = a; continue; }
 
         // Full-length take (spans the whole song) -> sits at song start.

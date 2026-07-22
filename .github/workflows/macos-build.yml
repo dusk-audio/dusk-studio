@@ -44,7 +44,7 @@ jobs:
         # survives across runs via the actions/cache step below, so an
         # unchanged TU isn't recompiled on the next push.
         # lame: libmp3lame for MP3 bounce/export (CMake auto-detects it).
-        run: brew install ninja ccache lame
+        run: brew install ninja ccache lame libsndfile
 
       - name: Cache ccache objects
         uses: actions/cache@v6
