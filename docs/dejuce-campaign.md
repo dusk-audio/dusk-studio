@@ -102,11 +102,13 @@ reimplemented.
 
 ## Remaining towers, in order
 
-1. **String-floor remnants** — NEXT — juce::String in Session/SessionSerializer
-   core (blocked by UI writes into Session.h members), hosting surfaces
-   (PluginManager/PluginSlot), MidiBindings. Mostly falls out of the hosting
-   and GUI towers; sweep what goes fully clean, don't churn coupled files.
-   Needs a Fable kickoff to scope which files actually go clean.
+1. **Audio-file call-site sweep** — NEXT — flip all juce_audio_formats
+   consumers (record/playback/bounce/importers/mastering/mp3) onto the dusk
+   libsndfile seam (`src/engine/audiofile/`, already JUCE-free and A/B-proven
+   but test-only today). Honest yield: zero allowlist movement and no unlink
+   yet — the deliverable is zero production call sites, so the module drops
+   the moment `juce_audio_utils` goes with the GUI tower. Executable spec:
+   [dejuce-audiofile-plan.md](dejuce-audiofile-plan.md) (A0–A4, two PRs).
 2. **Plugin-hosting JUCE fallback drop** — native CLAP/LV2/VST3 become the
    only hosts; delete `juce::AudioPluginInstance`/`AudioProcessor` hosting
    path (PluginSlot/PluginManager/PluginHostMain). Depends on donor DPF ports
@@ -123,6 +125,14 @@ reimplemented.
    DuskComboBox/DuskContextMenu/LookAndFeel/EmbeddedModal seams). ~120 files,
    50%+ of total effort, multi-release. Unlinks everything else, `juce_core`
    last.
+
+Dissolved tower — **String-floor remnants** (2026-07-22 scout): zero files in
+session/engine scope can go fully clean on a String/File flip; every
+candidate is anchored by a heavier type (Session model by juce Colour,
+importers/playback by AudioFormat, hosting surfaces by PluginDescription,
+edit actions by UndoableAction, MidiBindings by gui_basics menus,
+CrashHandler by Logger/SystemStats). The string work rides along inside
+whichever tower removes each file's anchor; no standalone sweep.
 
 ## Standing workflow ritual (every tower session)
 
