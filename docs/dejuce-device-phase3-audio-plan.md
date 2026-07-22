@@ -1,50 +1,29 @@
 # De-JUCE tower spec — Device Phase-3-audio
 
-**STATUS: P4 DONE (branch `dejuce/device-phase4-alsa` off main 6c7d569, commit
-5365cec, NOT pushed). P0-P2 merged as #103 (091fcb5); P3 merged as its OWN PR
-#104 (6c7d569) - Marc split the planned batched PR-B, so the `-a`/`-b` branches
-are both retired and PR-B is now P4-P5 on the new branch. P4: AlsaAudioIODevice/
-Type + AlsaPerformanceTest re-based onto device::IODevice/IODeviceType/
-IODeviceCallback (String/Array->std::string/std::vector, BigInteger->ChannelSet,
-HeapBlock/AudioBuffer scratch->std::vector + planar pointer arrays,
-CriticalSection->std::mutex, high-res ticks->std::chrono, runSelfTest()->
-std::string; dead rescan() deleted). Thread swap per §D5: std::thread, ioShouldExit
-acquire-polled at the same five exit sites, ioExited (dusk::AutoResetEvent)
-signalled as the thread's last statement; stop() = 2000 ms timed wait then join,
-on timeout detach + abandon; the WHOLE device is leaked via
-AlsaAudioIODevice::destroyOrPark (createDevice wraps devices in AlsaDeviceHandle
-whose dtor routes there; an abandoned device refuses open/start, close releases
-nothing). Thread body self-promotes via rt::applyRealtimeSchedRR - verified live
-SCHED_RR rt-prio=9 -> kernel 89 under RLIMIT 95; "thread started" stderr line
-kept (juce-prio label renamed rt-prio; nothing greps it). RT hunks proven
-type-rename-only by normalized diff: recoverFromXrun + format table
-byte-identical; rearm/configurePcm/converters/loop/prefill differ only in the
-sanctioned type swaps; ioExited.signal() is the sole addition. DeviceManager.cpp
-registers ALSA natively; JuceDeviceAdapter/JuceDeviceTypeAdapter/shim +
-toBig/fromBig/toStrings/toVector + the JUCE include DELETED - the TU is JUCE-free
-and the gate ratchet forced it OFF the allowlist NOW (the spec's "stays until P5"
-was unsatisfiable: the gate fails clean-but-listed files; P5's allowlist step is
-banked early). DeviceManagerJuce.cpp dropped its unreachable HAS_PIPEWIRE/
-HAS_ALSA registration blocks. Tone test falls back to JUCE stock ALSA until P5.
-Selftest backend cycle picks each type's default device explicitly (P2
-no-auto-open drift reworked) and the restore reports its error. Allowlist
-191->184 (6 alsa + DeviceManager.cpp). Build 0 NEW warnings (the
-readInterleavedS24Packed sign-conversion warning is the pre-existing line,
-verbatim from main). ctest 438/438 incl. NEW tests/alsa_thread_teardown.cpp
-(wedged injected thread: stop() holds the 2000 ms window then detaches+abandons,
-destroyOrPark leaks-not-frees, state valid through the thread's late touch;
-clean thread: joins, freed normally). Xvfb selftest: ALSA pure-logic 15/15 +
-PipeWire 8/8; backend-cycle open attempts fail on this box's environment
-(built-in PipeWire sink delivers quantum 0; UMC kernel device held by WirePlumber
-during the ALSA probe) - diagnostic text only, the restore reopens the UMC.
-DUSKSTUDIO_RUN_ALSA_PERF matrix on real hw:UMC1820,0 (WirePlumber suspended):
-44.1k+48k x 32..2048 duplex, all cells SAFE (one xrun at 44.1k/32), open/close
-50 cycles SAFE, start/stop race 20 cycles SAFE, 34 SCHED_RR thread starts.
-Next: P5 (consumer sweep + Linux CMake unlink + docs, §P5) on the SAME branch
-dejuce/device-phase4-alsa; PR-B (P4-P5) prepared at P5 - Marc may merge P4 alone,
-his call.
-Resume: "P4 (ALSA re-type + thread swap) committed on dejuce/device-phase4-alsa
-(5365cec), not pushed; start P5 (§P5) on the same branch".**
+**STATUS: P5 DONE — TOWER CODE-COMPLETE / LINUX-UNLINKED on branch
+`dejuce/device-phase4-alsa` off main 6c7d569, NOT pushed. P0-P2 merged as #103;
+P3 merged separately as #104; P4 is 5365cec plus review fixes 672020a. P4
+re-based ALSA onto the dusk device interfaces, replaced its I/O Thread with the
+§D5 std::thread lifecycle (including whole-device park-on-timeout), removed the
+last Linux adapters/shim, and took the allowlist 191->184. P5 rewrote the Linux
+headless tone harness over device::DeviceManager with a fixed 440 Hz/-6 dB
+IODeviceCallback; the non-Linux harness retains the wrapped implementation. The
+direct juce_audio_devices link is now NOT-Linux only. juce_audio_utils still
+pulls that module transitively on Linux, so object code remains until the GUI/
+hosting towers unlink it; regenerated compile_commands.json resolves zero Linux
+src/ translation units with direct juce_audio_devices header includes. This is
+a platform-scoped unlink: macOS/Windows retain the wrapped path and the
+north-star count stays 12. MANUAL.md audit: no change needed. Gate stays 184;
+build has zero new warnings; ctest 438/438; private-Xvfb selftest matches P4
+(synthetic green, ALSA 15/15, PipeWire helpers 8/8, known device-open diagnostics
+only). The private-Xvfb native tone probe reports a clean no-device error in this
+sandbox. Pre-paid bench debt: real hw:UMC1820,0 ALSA perf matrix 44.1k/48k x
+32..2048 all SAFE, open/close 50 and start/stop 20 SAFE. Outstanding merge gates:
+ALSA hot-unplug mid-play with the new thread teardown, xrun recovery under load,
+buffer/SR swap, periods knob; PipeWire streaming plus SR/quantum renegotiation
+on hardware (built-in sink quantum-0 could not exercise it). PR-B is P4+P5 and
+may still be split after P4 at Marc's discretion.
+Resume: "PR-B ready for Marc's review; bench debts gate merge".**
 Update this line each session (phase done, branch, resume phrase).
 
 Read order for an executing session: `docs/dejuce-campaign.md` → this file →

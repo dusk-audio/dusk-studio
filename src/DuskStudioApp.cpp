@@ -27,13 +27,19 @@
 #endif
 #if defined(__linux__)
  #include "engine/alsa/AlsaPerformanceTest.h"
+ #include "engine/device/DeviceManager.h"
+ #include "engine/device/IODeviceCallback.h"
  #include "foundation/Text.h"
 #endif
 #include "session/Session.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <thread>
 
 #if JUCE_LINUX
  #include <sys/mman.h>
@@ -266,12 +272,9 @@ static bool envFlagSet (const char* name)
         || s.equalsIgnoreCase ("yes");
 }
 
-// Headless tone-test probe: opens a chosen device at a chosen rate/buffer
-// and runs the same juce::AudioDeviceManager::playTestSound() that the GUI
-// "Test" button in AudioDeviceSelectorComponent calls. No AudioEngine is
-// attached - this isolates the JUCE backend + driver path from any engine
-// DSP. Useful for diagnosing distortion that appears when pressing the
-// Test button at low buffer sizes on ALSA + USB interfaces.
+// Headless tone-test probe: opens a chosen device at a chosen rate/buffer and
+// renders a 440 Hz sine without attaching an AudioEngine. Useful for isolating
+// the backend + driver path from engine DSP when diagnosing low-buffer noise.
 //
 // Env vars (all optional, sensible defaults):
 //   DUSKSTUDIO_TONE_BACKEND     "ALSA" | "PipeWire"       (default "ALSA")
@@ -279,6 +282,128 @@ static bool envFlagSet (const char* name)
 //   DUSKSTUDIO_TONE_RATE        sample rate in Hz         (default 48000)
 //   DUSKSTUDIO_TONE_BUFFER      buffer size in samples    (default 128)
 //   DUSKSTUDIO_TONE_DURATION_MS playback duration (ms)    (default 2000)
+#if defined(__linux__)
+class HeadlessSineCallback final : public device::IODeviceCallback
+{
+public:
+    void audioDeviceIOCallback (const float* const*, int,
+                                float* const* outputChannelData, int numOutputChannels,
+                                int numSamples, const device::CallbackContext&) override
+    {
+        for (int sample = 0; sample < numSamples; ++sample)
+        {
+            const float value = 0.5f * (float) std::sin (phase);
+            phase += phaseStep;
+            if (phase >= twoPi) phase -= twoPi;
+
+            for (int channel = 0; channel < numOutputChannels; ++channel)
+                if (outputChannelData[channel] != nullptr)
+                    outputChannelData[channel][sample] = value;
+        }
+        renderedFrames.fetch_add ((std::uint64_t) numSamples, std::memory_order_relaxed);
+    }
+
+    void audioDeviceAboutToStart (device::IODevice* dev) override
+    {
+        phase = 0.0;
+        phaseStep = dev->getCurrentSampleRate() > 0.0
+                  ? twoPi * 440.0 / dev->getCurrentSampleRate() : 0.0;
+        renderedFrames.store (0, std::memory_order_relaxed);
+    }
+
+    void audioDeviceStopped() override {}
+
+    std::uint64_t framesRendered() const noexcept
+    {
+        return renderedFrames.load (std::memory_order_relaxed);
+    }
+
+private:
+    static constexpr double twoPi = 6.28318530717958647692;
+    double phase = 0.0;
+    double phaseStep = 0.0;
+    std::atomic<std::uint64_t> renderedFrames { 0 };
+};
+
+static void runHeadlessToneTest()
+{
+    auto env = [] (const char* name) -> std::string {
+        if (const char* v = std::getenv (name)) return v;
+        return {};
+    };
+    const std::string backendEnv = env ("DUSKSTUDIO_TONE_BACKEND");
+    const std::string rateEnv    = env ("DUSKSTUDIO_TONE_RATE");
+    const std::string bufferEnv  = env ("DUSKSTUDIO_TONE_BUFFER");
+    const std::string durationEnv = env ("DUSKSTUDIO_TONE_DURATION_MS");
+    const std::string backendName = backendEnv.empty() ? "ALSA" : backendEnv;
+    const std::string deviceName  = env ("DUSKSTUDIO_TONE_DEVICE");
+    const double targetRate = rateEnv.empty() ? 48000.0 : dusk::text::getDoubleValue (rateEnv);
+    const int targetBuf = bufferEnv.empty() ? 128 : dusk::text::getIntValue (bufferEnv);
+    const int durationMs = durationEnv.empty() ? 2000 : dusk::text::getIntValue (durationEnv);
+
+    device::DeviceManager dm;
+
+    std::fprintf (stdout, "=== Dusk Studio Headless Tone Test ===\n");
+    std::fprintf (stdout, "Requested: backend=%s device=\"%s\" rate=%.0f buf=%d duration=%dms\n",
+                  backendName.c_str(), deviceName.c_str(), targetRate, targetBuf, durationMs);
+
+    if (const auto err = dm.initialise (0, 2, {}, false); ! err.empty())
+        std::fprintf (stdout, "init: %s\n", err.c_str());
+
+    dm.setCurrentDeviceType (backendName, /*treatAsChosen*/ true);
+    auto* type = dm.getCurrentDeviceType();
+    if (type == nullptr || type->getTypeName() != backendName)
+    {
+        std::fprintf (stdout, "Open failed: backend \"%s\" is unavailable\n", backendName.c_str());
+        std::fprintf (stdout, "=== End of Tone Test ===\n");
+        std::fflush (stdout);
+        return;
+    }
+
+    type->scanForDevices();
+    const auto outputNames = type->getDeviceNames (false);
+    device::DeviceSetup setup;
+    setup.outputDeviceName = deviceName;
+    if (setup.outputDeviceName.empty())
+    {
+        int defaultIndex = type->getDefaultDeviceIndex (false);
+        if (defaultIndex < 0 && ! outputNames.empty()) defaultIndex = 0;
+        if (defaultIndex >= 0 && defaultIndex < (int) outputNames.size())
+            setup.outputDeviceName = outputNames[(std::size_t) defaultIndex];
+    }
+    setup.sampleRate = targetRate;
+    setup.bufferSize = targetBuf;
+
+    if (const auto err = dm.setSetup (setup, /*treatAsChosen*/ true); ! err.empty())
+        std::fprintf (stdout, "setSetup: %s\n", err.c_str());
+
+    if (auto* dev = dm.getCurrentDevice())
+    {
+        std::fprintf (stdout,
+                      "Opened: \"%s\" type=%s rate=%.0f buf=%d activeOut=%d activeIn=%d bitDepth=%d\n",
+                      dev->getName().c_str(), type->getTypeName().c_str(),
+                      dev->getCurrentSampleRate(), dev->getCurrentBufferSizeSamples(),
+                      dev->getActiveOutputChannels().count(), dev->getActiveInputChannels().count(),
+                      dev->getCurrentBitDepth());
+        const int xrunBefore = dev->getXRunCount();
+        HeadlessSineCallback tone;
+        dm.addCallback (&tone);
+        std::this_thread::sleep_for (std::chrono::milliseconds (durationMs));
+        dm.removeCallback (&tone);
+        const int xrunAfter = dev->getXRunCount();
+
+        std::fprintf (stdout, "Sine render: %llu frames\n",
+                      (unsigned long long) tone.framesRendered());
+        std::fprintf (stdout, "Backend xrun count: before=%d after=%d delta=%d\n",
+                      xrunBefore, xrunAfter, xrunAfter - xrunBefore);
+    }
+    else
+        std::fprintf (stdout, "Open failed: getCurrentDevice() returned nullptr\n");
+
+    std::fprintf (stdout, "=== End of Tone Test ===\n");
+    std::fflush (stdout);
+}
+#else
 static void runHeadlessToneTest()
 {
     auto env = [] (const char* name) -> juce::String {
@@ -302,14 +427,6 @@ static void runHeadlessToneTest()
                   backendName.toRawUTF8(), deviceName.toRawUTF8(),
                   targetRate, targetBuf, durationMs);
 
-    // Both native backends implement the dusk device interfaces now, so neither
-    // fits a JUCE AudioDeviceManager; this probe runs against JUCE's stock
-    // backends until P5 moves the whole tone test onto the dusk DeviceManager.
-   #if defined(__linux__)
-    for (auto* type : dm.getAvailableDeviceTypes())
-        if (type != nullptr) type->scanForDevices();
-   #endif
-
     if (const auto err = dm.initialiseWithDefaultDevices (0, 2); err.isNotEmpty())
         std::fprintf (stdout, "init: %s\n", err.toRawUTF8());
 
@@ -330,17 +447,13 @@ static void runHeadlessToneTest()
     {
         std::fprintf (stdout,
                       "Opened: \"%s\" type=%s rate=%.0f buf=%d activeOut=%d activeIn=%d bitDepth=%d\n",
-                      dev->getName().toRawUTF8(),
-                      dm.getCurrentAudioDeviceType().toRawUTF8(),
-                      dev->getCurrentSampleRate(),
-                      dev->getCurrentBufferSizeSamples(),
+                      dev->getName().toRawUTF8(), dm.getCurrentAudioDeviceType().toRawUTF8(),
+                      dev->getCurrentSampleRate(), dev->getCurrentBufferSizeSamples(),
                       dev->getActiveOutputChannels().countNumberOfSetBits(),
                       dev->getActiveInputChannels().countNumberOfSetBits(),
                       dev->getCurrentBitDepth());
         const int xrunBefore = dev->getXRunCount();
 
-        // Same call the GUI Test button makes. Plays a 440 Hz sine at -6 dB
-        // through the open device for ~1 s.
         dm.playTestSound();
         juce::Thread::sleep (durationMs);
 
@@ -349,13 +462,12 @@ static void runHeadlessToneTest()
                       xrunBefore, xrunAfter, xrunAfter - xrunBefore);
     }
     else
-    {
         std::fprintf (stdout, "Open failed: getCurrentAudioDevice() returned nullptr\n");
-    }
 
     std::fprintf (stdout, "=== End of Tone Test ===\n");
     std::fflush (stdout);
 }
+#endif
 
 // Headless instrument-plugin test: load a single VST3 / LV2 / AU
 // instrument, send a synthetic MIDI chord, and report whether the

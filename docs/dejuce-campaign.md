@@ -24,8 +24,8 @@ juce_dsp, juce_events, juce_graphics, juce_gui_basics, juce_gui_extra`
 
 A module leaves the link line only when its whole subsystem is reimplemented
 and every call site is flipped. `juce_core` unlinks last. The
-`tools/juce-gate.sh` ratchet (allowlist currently 194 files) is the
-file-level backstop, not the goal.
+`tools/juce-gate.sh` ratchet (allowlist 184 files on the completed device
+tower branch, 191 on main until merge) is the file-level backstop, not the goal.
 
 Metric caveat: JUCE module declarations pull dependencies transitively —
 e.g. `juce_audio_utils` depends on `juce_audio_devices`, so removing the
@@ -89,20 +89,18 @@ reimplemented.
 
 ## Remaining towers, in order
 
-1. **Device Phase-3-audio** — ACTIVE — native PipeWire/ALSA implement the
-   dusk `IODevice`/`IODeviceType` interfaces directly; drop the Juce*Adapter /
-   CallbackBridge scaffolding inside `DeviceManager.cpp`; remove the direct
-   `juce_audio_devices` link on Linux (mac/win keep the JUCE path; see the
-   metric caveat above). RT-critical: the native backend takes over callback
-   dispatch and removes the JUCE audio safety net/A-B reference. Executable
-   spec: [dejuce-device-phase3-audio-plan.md](dejuce-device-phase3-audio-plan.md)
-   (P0–P5, two PRs, Opus prompts included). Unblocked 2026-07-20: code
-   proceeds now. Marc's hardware bench gates each PR's merge against the
-   bench debts named in *that* PR — PR-A (P0–P2): device-busy-at-boot
-   fallback + legacy-blob migration; PR-B (P3–P5): PipeWire/ALSA streaming +
-   the device-failure paths (hot-unplug, xrun, SR/buffer swap). The debts are
-   split across the two PRs (plan §"Owed to Marc's bench"); there is no single
-   whole-tower "gates merge" pass.
+1. **Device Phase-3-audio** — **CODE-COMPLETE / LINUX-UNLINKED** — native
+   PipeWire/ALSA implement the dusk `IODevice`/`IODeviceType` interfaces and
+   Linux has no direct `juce_audio_devices` link or direct source-TU header
+   includes.
+   macOS/Windows retain the wrapped device path, so this is a platform-scoped
+   unlink and the north-star count stays at 12. PR-A (P0–P2) merged as #103;
+   P3 merged separately as #104; P4–P5 are ready for review on
+   `dejuce/device-phase4-alsa`. Merge remains gated by Marc's bench: PipeWire
+   streaming plus SR/quantum renegotiation; ALSA hot-unplug with the new thread
+   teardown; xrun recovery under load; buffer/SR swaps; and the periods knob.
+   The real UMC1820 performance matrix is already green. Executable spec:
+   [dejuce-device-phase3-audio-plan.md](dejuce-device-phase3-audio-plan.md).
 2. **String-floor remnants** — juce::String in Session/SessionSerializer core
    (blocked by UI writes into Session.h members), ALSA backend (juce virtual
    signatures die with tower 2), hosting surfaces (PluginManager/PluginSlot),

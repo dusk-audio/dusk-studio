@@ -1047,9 +1047,14 @@ if((CMAKE_SYSTEM_NAME STREQUAL "Linux") AND TARGET juce::pkgconfig_JUCE_WAYLAND_
     target_link_libraries(DuskStudio PRIVATE juce::pkgconfig_JUCE_WAYLAND_LINUX_DEPS)
 endif()
 
+# Linux uses the native device layer. juce_audio_utils still pulls the JUCE
+# device module transitively until that higher-level module unlinks.
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_libraries(DuskStudio PRIVATE juce::juce_audio_devices)
+endif()
+
 target_link_libraries(DuskStudio PRIVATE
     juce::juce_audio_basics
-    juce::juce_audio_devices
     juce::juce_audio_formats
     juce::juce_audio_processors
     juce::juce_audio_utils
