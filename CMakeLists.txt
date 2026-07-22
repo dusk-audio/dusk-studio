@@ -403,6 +403,22 @@ target_sources(DuskStudio PRIVATE
     src/ui/VirtualKeyboardComponent.cpp
     src/ui/WindowState.cpp)
 
+find_library(SNDFILE_LIBRARY NAMES sndfile)
+find_path(SNDFILE_INCLUDE_DIR sndfile.h)
+if(SNDFILE_LIBRARY AND SNDFILE_INCLUDE_DIR)
+    target_sources(DuskStudio PRIVATE
+        src/engine/audiofile/FileReader.cpp
+        src/engine/audiofile/FileWriter.cpp
+        src/engine/audiofile/ThreadedFileWriter.cpp)
+    target_include_directories(DuskStudio SYSTEM PRIVATE "${SNDFILE_INCLUDE_DIR}")
+    target_link_libraries(DuskStudio PRIVATE "${SNDFILE_LIBRARY}")
+    message(STATUS "libsndfile found — Dusk Studio audiofile seam enabled")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "libsndfile development files are required on Linux")
+else()
+    message(STATUS "libsndfile not found — Dusk Studio audiofile seam disabled")
+endif()
+
 # DeviceManager backing: Linux uses the native orchestrator (owns the device
 # types, drives open/start/stop/close and the callback fan-out itself); macOS /
 # Windows keep the JUCE-wrapped implementation. Same public dusk API either way.

@@ -1,6 +1,6 @@
 # De-JUCE tower spec — Audio-file call-site sweep (juce_audio_formats consumers → dusk libsndfile seam)
 
-**STATUS: READY — not started. Next phase: A0 (PR-1 branch `dejuce/audiofile-sweep-1`).**
+**STATUS: A0 DONE — branch `dejuce/audiofile-sweep-1`. Resume: "A1 one-shot flips on dejuce/audiofile-sweep-1".**
 Update this line each session (phase done, branch, resume phrase).
 
 Read order for an executing session: `docs/dejuce-campaign.md` → this file →

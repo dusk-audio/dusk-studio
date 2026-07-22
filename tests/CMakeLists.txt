@@ -165,9 +165,8 @@ else()
     target_link_libraries(dusk-studio-tests PRIVATE juce::juce_audio_devices)
 endif()
 
-# Phase 1a de-JUCE: JUCE-free audio file I/O (libsndfile backend), test-only for
-# now. Optional — where libsndfile isn't installed (some CI platforms) the unit
-# and its tests are skipped rather than failing configure; it's Linux-first.
+# JUCE-free audio file I/O tests. Where libsndfile is optional and unavailable,
+# the unit and its tests are skipped rather than failing configure.
 find_library(SNDFILE_LIBRARY NAMES sndfile)
 find_path(SNDFILE_INCLUDE_DIR sndfile.h)
 if(SNDFILE_LIBRARY AND SNDFILE_INCLUDE_DIR)
@@ -181,7 +180,7 @@ if(SNDFILE_LIBRARY AND SNDFILE_INCLUDE_DIR)
     target_link_libraries(dusk-studio-tests PRIVATE "${SNDFILE_LIBRARY}")
     message(STATUS "libsndfile found — audiofile tests enabled")
 else()
-    message(STATUS "libsndfile not found — audiofile tests skipped (Linux-first, test-only unit)")
+    message(STATUS "libsndfile not found — audiofile tests skipped")
 endif()
 
 # Console-saturation calibration test + the donor DSP headers it needs
