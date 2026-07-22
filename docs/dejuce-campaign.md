@@ -95,9 +95,9 @@ reimplemented.
   includes gone; mac/win keep the wrapped path in `DeviceManagerJuce.cpp`, so
   the global count stays 12 per the platform-scope rule). Deliberate
   behaviour change: no auto-open on backend switch. Allowlist 194 → 184.
-  Bench debts outstanding at merge: ALSA hot-unplug mid-play, PipeWire
-  streaming + SR/quantum renegotiation, buffer/SR swap, periods knob (UMC1820
-  perf matrix green pre-merge). Spec:
+  Bench debts outstanding at merge: ALSA hot-unplug mid-play, xrun recovery
+  under load, buffer/SR swap, periods knob, PipeWire streaming + SR/quantum
+  renegotiation (UMC1820 perf matrix green pre-merge). Spec:
   [dejuce-device-phase3-audio-plan.md](dejuce-device-phase3-audio-plan.md).
 
 ## Remaining towers, in order

@@ -8,8 +8,8 @@ unlink). Gate/allowlist on main: 184. Tower branches retired. Bench debts
 outstanding post-merge (standing sign-off, see campaign Done entry): ALSA
 hot-unplug mid-play with the new thread teardown, xrun recovery under load,
 buffer/SR swap, periods knob; PipeWire streaming + SR/quantum renegotiation
-(pre-paid: UMC1820 ALSA perf matrix all SAFE). This spec is archival; no
-further phases.**
+(validated pre-merge: UMC1820 ALSA perf matrix all SAFE). This spec is
+archival; no further phases.**
 Update this line each session (phase done, branch, resume phrase).
 
 Read order for an executing session: `docs/dejuce-campaign.md` → this file →
