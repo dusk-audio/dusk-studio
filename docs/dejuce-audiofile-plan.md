@@ -1,6 +1,12 @@
 # De-JUCE tower spec — Audio-file call-site sweep (juce_audio_formats consumers → dusk libsndfile seam)
 
-**STATUS: PR-1 READY — A0+A1 DONE on branch `dejuce/audiofile-sweep-1`. Resume after merge: "A2 BufferedFileReader on dejuce/audiofile-sweep-2 after PR-1 merges".**
+**STATUS: PR-1 READY — A0+A1 DONE on branch `dejuce/audiofile-sweep-1`, plus
+libsndfile made a hard requirement on every platform (CI installs it in all
+workflows) and every `DUSKSTUDIO_HAS_AUDIOFILE` guard + JUCE fallback branch
+deleted: consumers call the seam unconditionally, so the flips are NOT
+Linux-scoped. Resume after merge: "A2 BufferedFileReader on
+dejuce/audiofile-sweep-2 after PR-1 merges" — write A2/A3 code WITHOUT any
+platform gate.**
 Update this line each session (phase done, branch, resume phrase).
 
 Read order for an executing session: `docs/dejuce-campaign.md` → this file →
@@ -21,8 +27,10 @@ File/String, TimeSliceThread, dsp, GUI), and `juce_audio_utils`
 (AudioThumbnail) transitively keeps `juce_audio_formats` compiling until the
 GUI tower. The deliverable is: zero production call sites on the JUCE
 audio-format APIs, so `juce_audio_formats` becomes unlinkable the moment
-`juce_audio_utils` goes (GUI tower), with no residual work. The gate ratchet
-does not move; do not chase it.
+`juce_audio_utils` goes (GUI tower), with no residual work. That unlink will
+be global rather than platform-scoped: libsndfile is required on every
+platform, so no JUCE fallback path survives anywhere. The gate ratchet does
+not move; do not chase it.
 
 **Out of scope (do not pull in):** `juce::MidiFile` (FileImporter,
 MainComponent — juce_audio_basics MIDI content, dies with the events tower);
@@ -150,13 +158,14 @@ then RT write path.
 ### A0 — seam into the app build (mechanical, small)
 
 - CMakeLists.txt: compile `src/engine/audiofile/*.cpp` into DuskStudio, find
-  + link sndfile for the app (mirror the tests' find_library pattern;
-  hard-require on Linux, and gate the mac/win app link the same way the
-  tests do — the seam is portable libsndfile, but if sndfile is not
-  available in the mac/win CI toolchain, gate consumers' flips
-  Linux-conditional and park a ledger note; DO NOT break mac/win CI).
-  Also the `dusk-studio-plugin-host` child target if/when its formats use
-  goes — it doesn't consume the seam yet; leave it.
+  + link sndfile for the app and the tests. **libsndfile is a hard
+  requirement on every platform** (configure fails without it) — CI installs
+  it via `libsndfile1-dev` (Linux, incl. the Raspberry Pi job), `brew install
+  libsndfile` (macOS), `vcpkg install libsndfile:x64-windows-static`
+  (Windows, same /MT triplet as mp3lame). There is therefore **no
+  `DUSKSTUDIO_HAS_AUDIOFILE` gate and no JUCE fallback branch**: consumers
+  call the seam unconditionally on all platforms. The
+  `dusk-studio-plugin-host` child target doesn't consume the seam; leave it.
 - No call sites change. Verify: full build all platforms via CI, ctest, gate
   unchanged.
 
@@ -239,7 +248,7 @@ Thread::sleep) untouched.
 | 2 | Record drop behaviour delta under disk pressure | A3 | Same fifo depth, same drop-and-count contract, pool cadence = today's 2 ms; recording_byte_accuracy; bench debt named |
 | 3 | Thread-count explosion (writer per thread) | A3 | WriterDrainPool (B3) — one thread per subsystem, as today |
 | 4 | MP3 path breaks when LameMp3Writer leaves juce base | A3 | IFileWriteSink minimal; lame_mp3_writer test; bounce mp3 smoke |
-| 5 | mac/win sndfile availability | A0 | Gate app link like the tests do; if absent on mac/win CI, flips go Linux-gated + ledger note; never break CI |
+| 5 | mac/win sndfile availability | A0 | Resolved: sndfile installed in every CI workflow and required at configure time on all platforms, so the flips are unconditional (no dual paths) |
 | 6 | Silent decode-capability change | A1 | Ground truth 4: JUCE surface was WAV/AIFF(+FLAC); libsndfile ⊇ that; importer tests pin behaviour |
 | 7 | Scope creep into resamplers/MidiFile/thumbnails | all | Out-of-scope list up top; reviewers reject on sight |
 
