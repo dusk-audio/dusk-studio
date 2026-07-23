@@ -13,6 +13,7 @@ struct FileInfo
     int     numChannels   = 0;
     int64_t numFrames     = 0;
     int     bitsPerSample = 0;
+    bool    isFloat       = false;
 };
 
 // Random-access sound-file reader backed by libsndfile. Format is sniffed on

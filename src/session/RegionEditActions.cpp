@@ -2,14 +2,21 @@
 #include "../engine/AudioEngine.h"
 #include "../engine/PlaybackEngine.h"
 #include "../engine/Transport.h"
+#include "../engine/audiofile/FileReader.h"
+#include "../engine/audiofile/FileWriter.h"
 
-#include <juce_audio_formats/juce_audio_formats.h>
 #include <algorithm>
 
 namespace duskstudio
 {
 namespace
 {
+template <typename FileType>
+std::filesystem::path audioPath (const FileType& file)
+{
+    return std::filesystem::u8path (file.getFullPathName().toStdString());
+}
+
 void rebuildPlaybackIfStopped (AudioEngine& engine)
 {
     if (engine.getTransport().getState() == Transport::State::Stopped)
@@ -687,13 +694,11 @@ bool JoinRegionsAction::perform()
     // selected region into one buffer at its proper timeline offset
     // (gaps become silence; overlaps sum). Uses the source files'
     // sample rate / channel count from the leading region.
-    juce::AudioFormatManager fm;
-    fm.registerBasicFormats();
-    auto firstReader = std::unique_ptr<juce::AudioFormatReader> (
-        fm.createReaderFor (beforeRegions.front().file));
+    auto firstReader = dusk::audio::FileReader::open (
+        audioPath (beforeRegions.front().file));
     if (firstReader == nullptr) return false;
-    const double sr   = firstReader->sampleRate;
-    const int    bits = std::max (16, (int) firstReader->bitsPerSample);
+    const double sr   = firstReader->info().sampleRate;
+    const int    bits = std::max (16, firstReader->info().bitsPerSample);
     const int    chs  = std::clamp ((int) beforeRegions.front().numChannels, 1, 2);
 
     const auto totalSamples = (int) std::clamp<std::int64_t> (
@@ -703,14 +708,15 @@ bool JoinRegionsAction::perform()
 
     for (const auto& reg : beforeRegions)
     {
-        std::unique_ptr<juce::AudioFormatReader> rdr (fm.createReaderFor (reg.file));
+        auto rdr = dusk::audio::FileReader::open (audioPath (reg.file));
         if (rdr == nullptr) continue;
         const int regSamples = (int) std::clamp<std::int64_t> (
             reg.lengthInSamples, 0, std::numeric_limits<int>::max());
         if (regSamples == 0) continue;
         juce::AudioBuffer<float> tmp (chs, regSamples);
         tmp.clear();
-        if (! rdr->read (&tmp, 0, regSamples, reg.sourceOffset, true, chs > 1))
+        if (rdr->read (tmp.getArrayOfWritePointers(), chs, reg.sourceOffset,
+                       regSamples) != regSamples)
             return false;   // unreadable region body - abort the join, leave regions unchanged
                             // (no output file created yet, nothing to clean up)
         const int destOffset = (int) (reg.timelineStart - firstStart);
@@ -727,14 +733,14 @@ bool JoinRegionsAction::perform()
     auto outFile = takesDir.getNonexistentChildFile (
         beforeRegions.front().file.getFileNameWithoutExtension() + "-joined",
         ".wav", false);
-    juce::WavAudioFormat wav;
-    std::unique_ptr<juce::FileOutputStream> out (outFile.createOutputStream());
-    if (out == nullptr) return false;
-    std::unique_ptr<juce::AudioFormatWriter> writer (
-        wav.createWriterFor (out.get(), sr, (std::uint32_t) chs, bits, {}, 0));
-    if (writer == nullptr) { out.reset(); outFile.deleteFile(); return false; }
-    out.release();   // ownership transferred to writer
-    if (! writer->writeFromAudioSampleBuffer (mixBuf, 0, totalSamples))
+    dusk::audio::WriteSpec writeSpec;
+    writeSpec.sampleRate    = sr;
+    writeSpec.numChannels   = chs;
+    writeSpec.bitsPerSample = bits;
+    writeSpec.format        = dusk::audio::WriteSpec::Format::Wav;
+    auto writer = dusk::audio::FileWriter::create (audioPath (outFile), writeSpec);
+    if (writer == nullptr) { outFile.deleteFile(); return false; }
+    if (! writer->write (mixBuf.getArrayOfReadPointers(), chs, totalSamples))
     {
         writer.reset();
         outFile.deleteFile();
@@ -858,32 +864,31 @@ bool ReverseRegionAction::perform()
     {
         beforeState = session.track (trackIdx).regions[(size_t) regionIdx];
 
-        juce::AudioFormatManager fm;
-        fm.registerBasicFormats();
-        std::unique_ptr<juce::AudioFormatReader> rdr (fm.createReaderFor (beforeState.file));
+        auto rdr = dusk::audio::FileReader::open (audioPath (beforeState.file));
         if (rdr == nullptr) return false;
 
         // Bound the channel count: corrupt session data could carry a wild
         // numChannels and blow up the buffer allocation. Cap to 1-2 (the app is
         // stereo-max) and to what the reader actually has.
+        const int readerChannels = rdr->info().numChannels;
         const int chs = std::clamp ((int) beforeState.numChannels,
-                                     1, std::max (1, std::min (2, (int) rdr->numChannels)));
+                                     1, std::max (1, std::min (2, readerChannels)));
         const std::int64_t len = std::clamp<std::int64_t> (
             beforeState.lengthInSamples, 1, std::numeric_limits<int>::max());
-        const double sr   = rdr->sampleRate;
-        const int    bits = std::max (16, (int) rdr->bitsPerSample);
+        const double sr   = rdr->info().sampleRate;
+        const int    bits = std::max (16, rdr->info().bitsPerSample);
 
         auto takesDir = session.getSessionDirectory().getChildFile ("takes");
         if (! takesDir.exists() && takesDir.createDirectory().failed()) return false;
         auto outFile = takesDir.getNonexistentChildFile (
             beforeState.file.getFileNameWithoutExtension() + "-reversed", ".wav", false);
-        juce::WavAudioFormat wav;
-        std::unique_ptr<juce::FileOutputStream> out (outFile.createOutputStream());
-        if (out == nullptr) return false;
-        std::unique_ptr<juce::AudioFormatWriter> writer (
-            wav.createWriterFor (out.get(), sr, (std::uint32_t) chs, bits, {}, 0));
-        if (writer == nullptr) { out.reset(); outFile.deleteFile(); return false; }
-        out.release();   // ownership -> writer
+        dusk::audio::WriteSpec writeSpec;
+        writeSpec.sampleRate    = sr;
+        writeSpec.numChannels   = chs;
+        writeSpec.bitsPerSample = bits;
+        writeSpec.format        = dusk::audio::WriteSpec::Format::Wav;
+        auto writer = dusk::audio::FileWriter::create (audioPath (outFile), writeSpec);
+        if (writer == nullptr) { outFile.deleteFile(); return false; }
 
         // Stream the source tail-first in bounded chunks: read the chunk ending
         // at `remaining`, reverse each channel, append it. This reverses the
@@ -897,12 +902,12 @@ bool ReverseRegionAction::perform()
         {
             const int n = (int) std::min ((std::int64_t) kChunk, remaining);
             chunk.clear();
-            if (! rdr->read (&chunk, 0, n,
-                             beforeState.sourceOffset + (remaining - n), true, chs > 1))
+            if (rdr->read (chunk.getArrayOfWritePointers(), chs,
+                           beforeState.sourceOffset + (remaining - n), n) != n)
             { ioOk = false; break; }
             for (int c = 0; c < chs; ++c)
                 std::reverse (chunk.getWritePointer (c), chunk.getWritePointer (c) + n);
-            if (! writer->writeFromAudioSampleBuffer (chunk, 0, n))
+            if (! writer->write (chunk.getArrayOfReadPointers(), chs, n))
             { ioOk = false; break; }
             remaining -= n;
         }

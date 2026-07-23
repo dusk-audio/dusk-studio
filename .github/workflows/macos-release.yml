@@ -59,7 +59,7 @@ jobs:
 
       - name: Install ninja + ccache + lame
         # lame: libmp3lame for MP3 bounce/export (CMake auto-detects it).
-        run: brew install ninja ccache lame
+        run: brew install ninja ccache lame libsndfile
 
       - name: Cache ccache objects
         uses: actions/cache@v6

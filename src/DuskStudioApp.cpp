@@ -20,6 +20,8 @@
 #include "engine/BounceEngine.h"
 #include "engine/PluginManager.h"
 #include "engine/PluginSlot.h"
+#include "engine/audiofile/FileReader.h"
+#include "engine/audiofile/FileWriter.h"
 #include "session/SessionSerializer.h"
 #include "util/CrashHandler.h"
 #if JUCE_LINUX
@@ -1120,7 +1122,11 @@ struct DuskStudioApp::BounceTest : private juce::Timer
         engine->getDeviceManager().closeDevice();
         engine->prepareForSelfTest (sr, bs);
 
-        synthesiseContent();
+        if (! synthesiseContent())
+        {
+            exitCode = 1;
+            return false;
+        }
 
         if (! loadPluginByExtension())
         {
@@ -1173,22 +1179,21 @@ private:
             buf.setSample (0, n, (float) (env * 0.6 * std::sin (2.0 * juce::MathConstants<double>::pi * fL * t)));
             buf.setSample (1, n, (float) (env * 0.6 * std::sin (2.0 * juce::MathConstants<double>::pi * fR * t)));
         }
-        juce::WavAudioFormat wav;
         file.deleteFile();
-        if (auto os = std::unique_ptr<juce::FileOutputStream> (file.createOutputStream()))
-        {
-            // createWriterFor takes ownership of the stream only on success.
-            if (auto* writer = wav.createWriterFor (os.get(), sr, (unsigned) numCh, 24, {}, 0))
-            {
-                os.release();
-                std::unique_ptr<juce::AudioFormatWriter> w (writer);
-                w->writeFromAudioSampleBuffer (buf, 0, numFrames);
-            }
-        }
+        dusk::audio::WriteSpec spec;
+        spec.sampleRate = sr;
+        spec.numChannels = numCh;
+        spec.bitsPerSample = 24;
+        spec.format = dusk::audio::WriteSpec::Format::Wav;
+        auto writer = dusk::audio::FileWriter::create (
+            std::filesystem::u8path (file.getFullPathName().toStdString()), spec);
+        if (writer == nullptr
+            || ! writer->write (buf.getArrayOfReadPointers(), numCh, numFrames))
+            return {};
         return file;
     }
 
-    void synthesiseContent()
+    bool synthesiseContent()
     {
         const std::int64_t lenSamples = (std::int64_t) (sr * kContentSeconds);
         auto makeRegion = [&] (const juce::File& f)
@@ -1204,6 +1209,12 @@ private:
         };
         const auto wav0 = writeDemoWav (tmpDir.getChildFile ("take0.wav"), 196.0, 198.0);
         const auto wav1 = writeDemoWav (tmpDir.getChildFile ("take1.wav"), 261.0, 264.0);
+        if (wav0 == juce::File() || wav1 == juce::File())
+        {
+            std::fprintf (stdout, "[FAIL] could not write the demo takes into %s\n",
+                          tmpDir.getFullPathName().toRawUTF8());
+            return false;
+        }
 
         session->track (0).name = "Plugin Trk";
         session->track (0).mode.store ((int) Track::Mode::Stereo, std::memory_order_relaxed);
@@ -1212,6 +1223,7 @@ private:
         session->track (1).name = "Dry Trk";
         session->track (1).mode.store ((int) Track::Mode::Stereo, std::memory_order_relaxed);
         session->track (1).regions = { makeRegion (wav1) };
+        return true;
     }
 
     // Dispatch to the native host slot by file extension - exactly the ChannelStrip
@@ -1287,24 +1299,28 @@ private:
                           label, file.getFullPathName().toRawUTF8());
             return false;
         }
-        auto stream = file.createInputStream();
-        juce::WavAudioFormat wav;
-        std::unique_ptr<juce::AudioFormatReader> reader (
-            stream != nullptr ? wav.createReaderFor (stream.release(), true) : nullptr);
+        auto reader = dusk::audio::FileReader::open (
+            std::filesystem::u8path (file.getFullPathName().toStdString()));
+        const auto readerLength = reader != nullptr ? reader->info().numFrames : 0;
+        const auto readerChannels = reader != nullptr ? reader->info().numChannels : 0;
         if (reader == nullptr)
         {
             std::fprintf (stdout, "[FAIL] %s: could not open output WAV for readback\n", label);
             return false;
         }
-        if (lengthOut != nullptr) *lengthOut = reader->lengthInSamples;
-        const int n = (int) reader->lengthInSamples;
+        if (lengthOut != nullptr) *lengthOut = readerLength;
+        const int n = (int) readerLength;
         if (n <= 0)
         {
             std::fprintf (stdout, "[FAIL] %s: output WAV has zero samples\n", label);
             return false;
         }
-        juce::AudioBuffer<float> buf ((int) std::max (1u, reader->numChannels), n);
-        reader->read (&buf, 0, n, 0, true, true);
+        juce::AudioBuffer<float> buf (std::max (1, readerChannels), n);
+        if (reader->read (buf.getArrayOfWritePointers(), buf.getNumChannels(), 0, n) != n)
+        {
+            std::fprintf (stdout, "[FAIL] %s: short read from output WAV\n", label);
+            return false;
+        }
         bool allFinite = true;
         float peak = 0.0f;
         for (int c = 0; c < buf.getNumChannels(); ++c)

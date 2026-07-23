@@ -21,6 +21,12 @@ int bitsFromSubtype (int format) noexcept
         default:               return 0;
     }
 }
+
+bool isFloatingPointSubtype (int format) noexcept
+{
+    const int subtype = format & SF_FORMAT_SUBMASK;
+    return subtype == SF_FORMAT_FLOAT || subtype == SF_FORMAT_DOUBLE;
+}
 } // namespace
 
 std::unique_ptr<FileReader> FileReader::open (const std::filesystem::path& path)
@@ -35,6 +41,7 @@ std::unique_ptr<FileReader> FileReader::open (const std::filesystem::path& path)
     info.numChannels   = si.channels;
     info.numFrames     = (int64_t) si.frames;
     info.bitsPerSample = bitsFromSubtype (si.format);
+    info.isFloat       = isFloatingPointSubtype (si.format);
 
     return std::unique_ptr<FileReader> (new FileReader (h, info));
 }

@@ -150,17 +150,18 @@ jobs:
           fi
           echo "ASIOSDK_PATH=${RUNNER_TEMP}/asiosdk-extract" >> "$GITHUB_ENV"
 
-      - name: Install libmp3lame (vcpkg)
+      - name: Install libmp3lame + libsndfile (vcpkg)
         shell: bash
-        # MP3 bounce/export. x64-windows-static = static mp3lame + /MT static
-        # CRT, matching the whole tree's CMAKE_MSVC_RUNTIME_LIBRARY (sfizz forces
-        # /MT). The -md triplet (/MD) would LNK2038 against the /MT objects. It
-        # links into the binary, so no mp3lame.dll ships in the MSI. CMake's
-        # find_library/find_path pick it up via CMAKE_PREFIX_PATH (forward-
-        # slashed so cmake parses the path cleanly).
+        # mp3lame: MP3 bounce/export. libsndfile: the audio file I/O layer,
+        # required on every platform. x64-windows-static = static libs + /MT
+        # static CRT, matching the whole tree's CMAKE_MSVC_RUNTIME_LIBRARY
+        # (sfizz forces /MT). The -md triplet (/MD) would LNK2038 against the
+        # /MT objects. They link into the binary, so no DLLs ship in the MSI.
+        # CMake's find_library/find_path pick them up via CMAKE_PREFIX_PATH
+        # (forward-slashed so cmake parses the path cleanly).
         run: |
-          vcpkg install mp3lame:x64-windows-static
-          echo "LAME_PREFIX=${VCPKG_INSTALLATION_ROOT//\\//}/installed/x64-windows-static" >> "$GITHUB_ENV"
+          vcpkg install mp3lame:x64-windows-static libsndfile:x64-windows-static
+          echo "VCPKG_PREFIX=${VCPKG_INSTALLATION_ROOT//\\//}/installed/x64-windows-static" >> "$GITHUB_ENV"
 
       - name: Configure (CMake / Visual Studio 17 2022 / x64)
         shell: bash
@@ -170,7 +171,7 @@ jobs:
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
-            -DCMAKE_PREFIX_PATH="${LAME_PREFIX}" \
+            -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}" \
             -DDUSKSTUDIO_ENABLE_LTO=ON
 
       - name: Build (Release)
@@ -192,7 +193,7 @@ jobs:
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
-            -DCMAKE_PREFIX_PATH="${LAME_PREFIX}"
+            -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}"
           cmake --build build-tests --config Release --target dusk-studio-tests -j
           ctest --test-dir build-tests --output-on-failure -C Release -E "FileImporter"
 

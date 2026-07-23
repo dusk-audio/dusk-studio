@@ -1,6 +1,8 @@
 #include "FileImporter.h"
 
 #include "../foundation/Text.h"
+#include "audiofile/FileReader.h"
+#include "audiofile/FileWriter.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <algorithm>
 #include <array>
@@ -14,6 +16,12 @@ namespace duskstudio::fileimport
 {
 namespace
 {
+template <typename FileType>
+std::filesystem::path audioPath (const FileType& file)
+{
+    return std::filesystem::u8path (file.getFullPathName().toStdString());
+}
+
 // Generated filename pattern - mirrors RecordManager::createFilename's
 // "track{NN}_{timestamp}.wav" so imports sit next to recordings in the
 // session's audio directory and aren't visually distinct in the file
@@ -96,16 +104,14 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         }
     }
 
-    juce::AudioFormatManager fm;
-    fm.registerBasicFormats();
     // Bounded retry: on Windows a file that was just written/downloaded can be
     // transiently locked by the indexer or AV real-time scan, so the first open
     // returns null even though the file is valid. Retry briefly before treating
     // it as unreadable; genuine unsupported files just exhaust the attempts.
-    std::unique_ptr<juce::AudioFormatReader> reader;
+    std::unique_ptr<dusk::audio::FileReader> reader;
     for (int attempt = 0; attempt < 5 && reader == nullptr; ++attempt)
     {
-        reader.reset (fm.createReaderFor (req.source));
+        reader = dusk::audio::FileReader::open (audioPath (req.source));
         if (reader == nullptr && attempt < 4)
             juce::Thread::sleep (20);
     }
@@ -116,9 +122,9 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         return result;
     }
 
-    const auto srcSampleRate = reader->sampleRate;
-    const auto srcLength     = (std::int64_t) reader->lengthInSamples;
-    const auto srcChannels   = (int) reader->numChannels;
+    const auto srcSampleRate = reader->info().sampleRate;
+    const auto srcLength     = reader->info().numFrames;
+    const auto srcChannels   = reader->info().numChannels;
 
     if (srcSampleRate <= 0.0 || srcLength <= 0 || srcChannels <= 0)
     {
@@ -204,39 +210,40 @@ AudioImportResult importAudio (const AudioImportRequest& req)
     if (outFile.exists())
         outFile = req.audioDir.getNonexistentChildFile (
             outFile.getFileNameWithoutExtension(), ".wav");
-    std::unique_ptr<juce::FileOutputStream> stream;
+    dusk::audio::WriteSpec writeSpec;
+    writeSpec.sampleRate    = sessionSr;
+    writeSpec.numChannels   = req.targetChannels;
+    writeSpec.bitsPerSample = 24;
+    writeSpec.format        = dusk::audio::WriteSpec::Format::Wav;
+    std::unique_ptr<dusk::audio::FileWriter> writer;
     for (int attempt = 0; attempt < 5; ++attempt)
     {
-        stream = outFile.createOutputStream();
-        if (stream != nullptr && stream->openedOk())
+        writer = dusk::audio::FileWriter::create (audioPath (outFile), writeSpec);
+        if (writer != nullptr)
             break;
-        stream.reset();
         if (attempt < 4)
             juce::Thread::sleep (20);
     }
-    if (stream == nullptr || ! stream->openedOk())
+    if (writer == nullptr)
     {
         result.errorMessage = ("Could not open output file for writing: "
                             + outFile.getFullPathName()).toStdString();
         return result;
     }
 
-    juce::WavAudioFormat wav;
-    constexpr int kBitsPerSample = 24;
-    std::unique_ptr<juce::AudioFormatWriter> writer (
-        wav.createWriterFor (stream.get(),
-                              sessionSr,
-                              (unsigned int) req.targetChannels,
-                              kBitsPerSample,
-                              {},
-                              0));
-    if (writer == nullptr)
+    auto readChunk = [&reader, srcChannels] (auto& buffer, std::int64_t start,
+                                              int frames)
     {
-        result.errorMessage = "WAV writer construction failed (unsupported configuration)";
-        return result;
-    }
-    // createWriterFor takes ownership of the stream on success.
-    stream.release();
+        return reader->read (buffer.getArrayOfWritePointers(), srcChannels,
+                             start, frames) == frames;
+    };
+    auto writeChunk = [&writer] (const auto& buffer, int start, int frames)
+    {
+        std::array<const float*, 2> channels {};
+        for (int c = 0; c < buffer.getNumChannels(); ++c)
+            channels[(size_t) c] = buffer.getReadPointer (c, start);
+        return writer->write (channels.data(), buffer.getNumChannels(), frames);
+    };
 
     // Stream decode -> conform -> (sinc-)resample -> write in bounded chunks.
     // The old whole-file path allocated three full-length buffers (a 30-min
@@ -256,13 +263,13 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         {
             const int n = (int) std::min ((std::int64_t) kGrain, srcLength - pos);
             srcChunk.clear();
-            if (! reader->read (&srcChunk, 0, n, pos, true, srcChannels > 1))
+            if (! readChunk (srcChunk, pos, n))
             {
                 wrote = false;
                 break;
             }
             conformChunk (srcChunk, confChunk, req.targetChannels, n);
-            wrote = writer->writeFromAudioSampleBuffer (confChunk, 0, n);
+            wrote = writeChunk (confChunk, 0, n);
             pos += n;
         }
     }
@@ -299,7 +306,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
             {
                 const int n = (int) std::min ((std::int64_t) kGrain, srcLength - srcPos);
                 srcChunk.clear();
-                if (! reader->read (&srcChunk, 0, n, srcPos, true, srcChannels > 1))
+                if (! readChunk (srcChunk, srcPos, n))
                 {
                     wrote = false;
                     break;
@@ -331,7 +338,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
             const int skip       = (int) std::min ((std::int64_t) nOut, discard);
             const int writeCount = nOut - skip;
             if (writeCount > 0)
-                wrote = writer->writeFromAudioSampleBuffer (outChunk, skip, writeCount);
+                wrote = writeChunk (outChunk, skip, writeCount);
             discard  -= skip;
             produced += writeCount;
 

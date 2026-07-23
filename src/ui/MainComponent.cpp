@@ -40,7 +40,8 @@
 #include "DpImportDialog.h"
 #include "../engine/DpImporter.h"
 #include "../engine/DpAligner.h"
-#include <juce_audio_formats/juce_audio_formats.h>
+#include "../engine/audiofile/FileReader.h"
+#include "../engine/audiofile/FileWriter.h"
 #include <algorithm>
 
 namespace duskstudio
@@ -71,20 +72,6 @@ juce::Array<juce::File> toFileArray (const std::vector<std::filesystem::path>& p
 // Shared helpers for the file-import flow (both menu-driven and
 // drag-and-drop). Lives at file scope so the TapeStrip drop callback
 // wired up in the MainComponent ctor can reference them.
-juce::AudioFormatManager& importAudioFormatManager()
-{
-    // AudioFormatManager is non-copyable; constexpr-init isn't an option.
-    // Cheap to construct + register; share a static instance and lazily
-    // register on first use via the flag below.
-    static juce::AudioFormatManager fm;
-    static bool registered = false;
-    if (! registered)
-    {
-        fm.registerBasicFormats();
-        registered = true;
-    }
-    return fm;
-}
 
 // Background worker for the DP-song bulk import: mixdown alignment plus every
 // fragment decode/convert runs here so a large song doesn't wedge the message
@@ -3511,8 +3498,7 @@ void MainComponent::runAudioImportFlow (const juce::File& source,
                                             std::int64_t timelineStart,
                                             int trackHint)
 {
-    std::unique_ptr<juce::AudioFormatReader> reader (
-        importAudioFormatManager().createReaderFor (source));
+    auto reader = dusk::audio::FileReader::open (toPath (source));
     if (reader == nullptr)
     {
         showImportError ("Import audio",
@@ -3522,9 +3508,9 @@ void MainComponent::runAudioImportFlow (const juce::File& source,
 
     ImportTargetPicker::FileSummary summary;
     summary.file          = source;
-    summary.sampleRate    = reader->sampleRate;
-    summary.numChannels   = std::min (2, (int) reader->numChannels);
-    summary.lengthSamples = (std::int64_t) reader->lengthInSamples;
+    summary.sampleRate    = reader->info().sampleRate;
+    summary.numChannels   = std::min (2, reader->info().numChannels);
+    summary.lengthSamples = reader->info().numFrames;
     summary.isMidi        = false;
     reader.reset();   // close before the picker calls FileImporter
 
@@ -3759,22 +3745,22 @@ namespace
 // source. Returns an empty File on failure; caller deletes the temp afterwards.
 juce::File makeStereoTempWav (const juce::File& left, const juce::File& right)
 {
-    auto& fm = importAudioFormatManager();
-    std::unique_ptr<juce::AudioFormatReader> rl (fm.createReaderFor (left));
-    std::unique_ptr<juce::AudioFormatReader> rr (fm.createReaderFor (right));
+    auto rl = dusk::audio::FileReader::open (toPath (left));
+    auto rr = dusk::audio::FileReader::open (toPath (right));
     if (rl == nullptr || rr == nullptr) return {};
 
-    const std::int64_t len = std::min (rl->lengthInSamples, rr->lengthInSamples);
-    if (len <= 0 || rl->sampleRate <= 0.0) return {};
+    const std::int64_t len = std::min (rl->info().numFrames, rr->info().numFrames);
+    const double sampleRate = rl->info().sampleRate;
+    if (len <= 0 || sampleRate <= 0.0) return {};
 
     const auto tmp = juce::File::createTempFile (".wav");
-    std::unique_ptr<juce::FileOutputStream> stream (tmp.createOutputStream());
-    if (stream == nullptr || ! stream->openedOk()) { tmp.deleteFile(); return {}; }
-    juce::WavAudioFormat wav;
-    std::unique_ptr<juce::AudioFormatWriter> writer (
-        wav.createWriterFor (stream.get(), rl->sampleRate, 2, 24, {}, 0));
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate = sampleRate;
+    spec.numChannels = 2;
+    spec.bitsPerSample = 24;
+    spec.format = dusk::audio::WriteSpec::Format::Wav;
+    auto writer = dusk::audio::FileWriter::create (toPath (tmp), spec);
     if (writer == nullptr) { tmp.deleteFile(); return {}; }
-    stream.release();   // writer owns it now
 
     // Each fragment is a mono reader (channel 0). Interleave the two halves into
     // a 2-ch stream in fixed-size chunks so a long take doesn't allocate the
@@ -3784,14 +3770,14 @@ juce::File makeStereoTempWav (const juce::File& left, const juce::File& right)
     for (std::int64_t pos = 0; pos < len; pos += kChunk)
     {
         const int n = (int) std::min ((std::int64_t) kChunk, len - pos);
-        if (! rl->read (&lbuf, 0, n, pos, true, false)
-            || ! rr->read (&rbuf, 0, n, pos, true, false))
+        if (rl->read (lbuf.getArrayOfWritePointers(), 1, pos, n) != n
+            || rr->read (rbuf.getArrayOfWritePointers(), 1, pos, n) != n)
         {
             writer.reset(); tmp.deleteFile(); return {};
         }
         out.copyFrom (0, 0, lbuf, 0, 0, n);
         out.copyFrom (1, 0, rbuf, 0, 0, n);
-        if (! writer->writeFromAudioSampleBuffer (out, 0, n))
+        if (! writer->write (out.getArrayOfReadPointers(), 2, n))
         {
             writer.reset(); tmp.deleteFile(); return {};
         }
@@ -4182,7 +4168,7 @@ void MainComponent::openMultiImportPicker (juce::Array<juce::File> files,
                                               std::int64_t timelineStart)
 {
     // Peek each file to build a FileSummary the picker can render. Audio
-    // peek opens an AudioFormatReader; MIDI peek runs MidiFile::readFrom +
+    // peek opens an audio reader; MIDI peek runs MidiFile::readFrom +
     // counts notes. Both happen synchronously on the message thread - the
     // user clicked Import and is waiting for the modal to appear.
     std::vector<ImportTargetPicker::FileSummary> summaries;
@@ -4222,13 +4208,12 @@ void MainComponent::openMultiImportPicker (juce::Array<juce::File> files,
         }
         else
         {
-            std::unique_ptr<juce::AudioFormatReader> reader (
-                importAudioFormatManager().createReaderFor (f));
+            auto reader = dusk::audio::FileReader::open (toPath (f));
             if (reader == nullptr)
                 continue;
-            s.sampleRate    = reader->sampleRate;
-            s.numChannels   = std::min (2, (int) reader->numChannels);
-            s.lengthSamples = (std::int64_t) reader->lengthInSamples;
+            s.sampleRate    = reader->info().sampleRate;
+            s.numChannels   = std::min (2, reader->info().numChannels);
+            s.lengthSamples = reader->info().numFrames;
         }
         summaries.push_back (std::move (s));
     }

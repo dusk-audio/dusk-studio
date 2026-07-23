@@ -26,11 +26,10 @@
 #include "PluginPickerPanel.h"
 #include "BounceDialog.h"
 #include "../engine/BounceEngine.h"
+#include "../engine/audiofile/FileWriter.h"
 
 #include "../session/Session.h"
 #include "../engine/AudioEngine.h"
-
-#include <juce_audio_formats/juce_audio_formats.h>
 
 #include <algorithm>
 
@@ -106,18 +105,17 @@ juce::File writeDemoWav (const juce::File& dir, double sampleRate)
         buf.setSample (1, n, r);
     }
 
-    juce::WavAudioFormat wav;
     file.deleteFile();
-    if (auto os = std::unique_ptr<juce::FileOutputStream> (file.createOutputStream()))
-    {
-        if (auto* writer = wav.createWriterFor (os.get(), sampleRate, (unsigned int) numCh,
-                                                24, {}, 0))
-        {
-            os.release();   // writer owns the stream now
-            writer->writeFromAudioSampleBuffer (buf, 0, numFrames);
-            delete writer;
-        }
-    }
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate = sampleRate;
+    spec.numChannels = numCh;
+    spec.bitsPerSample = 24;
+    spec.format = dusk::audio::WriteSpec::Format::Wav;
+    auto writer = dusk::audio::FileWriter::create (
+        std::filesystem::u8path (file.getFullPathName().toStdString()), spec);
+    if (writer == nullptr
+        || ! writer->write (buf.getArrayOfReadPointers(), numCh, numFrames))
+        return {};
     return file;
 }
 } // namespace
@@ -144,6 +142,12 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
 
     // Audio regions on tracks 0 and 1 (bank 0, visible on the tape strip).
     const auto wav = writeDemoWav (outDir.getChildFile ("_demo"), sr);
+    if (wav == juce::File())
+    {
+        std::fprintf (stderr, "[Dusk Studio/capture] demo WAV write failed - aborting capture\n");
+        juce::JUCEApplication::getInstance()->quit();
+        return;
+    }
     const std::int64_t lenSamples = (std::int64_t) (sr * 1.8);
     auto makeRegion = [&] (std::int64_t start) {
         AudioRegion r;

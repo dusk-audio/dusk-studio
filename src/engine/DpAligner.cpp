@@ -1,5 +1,6 @@
 #include "DpAligner.h"
 
+#include "audiofile/FileReader.h"
 #include <juce_dsp/juce_dsp.h>
 #include <algorithm>
 #include <cmath>
@@ -14,30 +15,30 @@ constexpr int kDomExcludeFrames = 400;  // ~2 s at hop 240 / 48 kHz: dominance e
 
 // Decode an audio file to a mono float vector (channel-averaged). Returns
 // empty on failure. Message-thread only.
-std::vector<float> decodeMono (juce::AudioFormatManager& fm, const juce::File& f,
-                               double& sampleRateOut)
+std::vector<float> decodeMono (const juce::File& f, double& sampleRateOut)
 {
     std::vector<float> out;
-    std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (f));
+    auto reader = dusk::audio::FileReader::open (
+        std::filesystem::u8path (f.getFullPathName().toStdString()));
     if (reader == nullptr) return out;
-    const auto len = (std::int64_t) reader->lengthInSamples;
-    const int  ch  = (int) reader->numChannels;
-    if (len <= 0 || ch <= 0 || reader->sampleRate <= 0.0) return out;
+    const auto len = reader->info().numFrames;
+    const int  ch  = reader->info().numChannels;
+    const auto sr  = reader->info().sampleRate;
+    if (len <= 0 || ch <= 0 || sr <= 0.0) return out;
     // Guard against absurd files eating all RAM. A stereo decode allocates
     // ~12 bytes/sample (the 2-ch buffer + the mono out), so this caps the
     // worst case near ~1 GB - generous for any real DP song (15 min @ 96 k /
     // 30 min @ 48 k) while refusing a pathological multi-hour file.
     if (len > 96000ll * 60ll * 15ll) return out;
 
-    sampleRateOut = reader->sampleRate;
-    // The AudioBuffer read overload only fills up to 2 channels (left/right
-    // flags), so mix from at most the first two. DP fragments are mono and
-    // mixdowns are stereo, so this covers every real input; for a >2-channel
-    // file we mix L+R and ignore the rest rather than averaging in zeros.
+    sampleRateOut = sr;
+    // DP fragments are mono and mixdowns are stereo, so mix from at most the
+    // first two channels. This also preserves the legacy behaviour for an
+    // unexpected file with more than two channels.
     const int usedCh = std::min (ch, 2);
     juce::AudioBuffer<float> buf (usedCh, (int) len);
     buf.clear();
-    if (! reader->read (&buf, 0, (int) len, 0, true, usedCh > 1)) return out;
+    if (reader->read (buf.getArrayOfWritePointers(), usedCh, 0, len) != len) return out;
 
     out.resize ((size_t) len);
     if (usedCh == 1)
@@ -188,11 +189,8 @@ std::vector<Alignment> alignToMixdown (const juce::File& mixdown,
 {
     std::vector<Alignment> result ((size_t) sources.size());
 
-    juce::AudioFormatManager fm;
-    fm.registerBasicFormats();
-
     double mixSr = 0.0;
-    const auto mix = decodeMono (fm, mixdown, mixSr);
+    const auto mix = decodeMono (mixdown, mixSr);
     if (mix.empty() || mixSr <= 0.0) return result;   // all unplaced
     const auto mixEnv = onsetEnvelope (mix.data(), (int) mix.size(), kHop, kFftOrder);
     if (mixEnv.size() < 2) return result;
@@ -201,7 +199,7 @@ std::vector<Alignment> alignToMixdown (const juce::File& mixdown,
     {
         Alignment a;
         double fragSr = 0.0;
-        const auto frag = decodeMono (fm, sources[i], fragSr);
+        const auto frag = decodeMono (sources[i], fragSr);
         if (frag.empty()) { result[i] = a; continue; }
 
         // Full-length take (spans the whole song) -> sits at song start.
