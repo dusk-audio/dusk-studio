@@ -403,20 +403,37 @@ target_sources(DuskStudio PRIVATE
     src/ui/VirtualKeyboardComponent.cpp
     src/ui/WindowState.cpp)
 
-find_library(SNDFILE_LIBRARY NAMES sndfile)
-find_path(SNDFILE_INCLUDE_DIR sndfile.h)
-if(NOT (SNDFILE_LIBRARY AND SNDFILE_INCLUDE_DIR))
-    message(FATAL_ERROR
-        "libsndfile development files are required (all audio file I/O goes "
-        "through it). Linux: libsndfile1-dev. macOS: brew install libsndfile. "
-        "Windows: vcpkg install libsndfile:x64-windows-static.")
+# libsndfile backs all audio file I/O and is required on every platform. The
+# exported config package is preferred because a static libsndfile (the vcpkg
+# x64-windows-static build) only links once its codec dependencies - FLAC, Ogg,
+# Opus, mpg123 - are on the link line, and just the config target carries them.
+# Installs that ship no config (autotools-era distro packages) fall back to a
+# plain library search, where the shared object resolves its own dependencies.
+# Both app and test targets link the resulting dusk_sndfile interface.
+add_library(dusk_sndfile INTERFACE)
+find_package(SndFile CONFIG QUIET)
+if(SndFile_FOUND)
+    target_link_libraries(dusk_sndfile INTERFACE SndFile::sndfile)
+    message(STATUS "libsndfile: config package (${SndFile_DIR})")
+else()
+    find_library(SNDFILE_LIBRARY NAMES sndfile)
+    find_path(SNDFILE_INCLUDE_DIR sndfile.h)
+    if(NOT (SNDFILE_LIBRARY AND SNDFILE_INCLUDE_DIR))
+        message(FATAL_ERROR
+            "libsndfile development files are required (all audio file I/O goes "
+            "through it). Linux: libsndfile1-dev. macOS: brew install libsndfile. "
+            "Windows: vcpkg install libsndfile:x64-windows-static.")
+    endif()
+    target_include_directories(dusk_sndfile SYSTEM INTERFACE "${SNDFILE_INCLUDE_DIR}")
+    target_link_libraries(dusk_sndfile INTERFACE "${SNDFILE_LIBRARY}")
+    message(STATUS "libsndfile: ${SNDFILE_LIBRARY}")
 endif()
+
 target_sources(DuskStudio PRIVATE
     src/engine/audiofile/FileReader.cpp
     src/engine/audiofile/FileWriter.cpp
     src/engine/audiofile/ThreadedFileWriter.cpp)
-target_include_directories(DuskStudio SYSTEM PRIVATE "${SNDFILE_INCLUDE_DIR}")
-target_link_libraries(DuskStudio PRIVATE "${SNDFILE_LIBRARY}")
+target_link_libraries(DuskStudio PRIVATE dusk_sndfile)
 
 # DeviceManager backing: Linux uses the native orchestrator (owns the device
 # types, drives open/start/stop/close and the callback fan-out itself); macOS /

@@ -166,20 +166,15 @@ else()
 endif()
 
 # JUCE-free audio file I/O. Required: the src/ units under test read and write
-# through this seam unconditionally.
-find_library(SNDFILE_LIBRARY NAMES sndfile)
-find_path(SNDFILE_INCLUDE_DIR sndfile.h)
-if(NOT (SNDFILE_LIBRARY AND SNDFILE_INCLUDE_DIR))
-    message(FATAL_ERROR "libsndfile development files are required to build the tests")
-endif()
+# through this seam unconditionally. dusk_sndfile is resolved in the top-level
+# CMakeLists (config package where available, plain library search otherwise).
 target_sources(dusk-studio-tests PRIVATE
     audiofile_roundtrip.cpp
     audiofile_ab_null.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/FileReader.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/FileWriter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/ThreadedFileWriter.cpp)
-target_include_directories(dusk-studio-tests SYSTEM PRIVATE "${SNDFILE_INCLUDE_DIR}")
-target_link_libraries(dusk-studio-tests PRIVATE "${SNDFILE_LIBRARY}")
+target_link_libraries(dusk-studio-tests PRIVATE dusk_sndfile)
 
 # Console-saturation calibration test + the donor DSP headers it needs
 # (BritishEQProcessor.h + its header-only ConsoleSaturation/ADAA/SafeFloat deps).
