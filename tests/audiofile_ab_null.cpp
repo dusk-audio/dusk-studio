@@ -85,6 +85,8 @@ TEST_CASE ("FileReader matches juce::AudioFormatReader", "[audiofile][abnull]")
                     REQUIRE_THAT (j, WithinAbs (sample (c, f), tc.tol));                     // juce reads our output
                 }
 
+            jr.reset();
+            dr.reset();
             std::filesystem::remove (path);
         }
     }

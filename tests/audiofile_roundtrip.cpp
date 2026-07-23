@@ -98,6 +98,7 @@ TEST_CASE ("FileWriter/FileReader round-trip preserves samples", "[audiofile]")
                 for (int64_t f = 0; f < kFrames; ++f)
                     REQUIRE_THAT (out[(size_t) c][(size_t) f], WithinAbs (sample (c, f), tc.tol));
 
+            r.reset();
             std::filesystem::remove (path);
         }
     }
@@ -128,6 +129,7 @@ TEST_CASE ("FileReader seek matches a full-buffer slice", "[audiofile]")
         for (int64_t f = 0; f < len; ++f)
             REQUIRE_THAT (out[(size_t) c][(size_t) f], WithinAbs (sample (c, start + f), 1.0e-6f));
 
+    r.reset();
     std::filesystem::remove (path);
 }
 
@@ -152,6 +154,7 @@ TEST_CASE ("FileReader distinguishes 32-bit PCM from floating point", "[audiofil
     REQUIRE (reader->info().bitsPerSample == 32);
     REQUIRE_FALSE (reader->info().isFloat);
 
+    reader.reset();
     std::filesystem::remove (path);
 }
 
@@ -179,6 +182,7 @@ TEST_CASE ("FileReader zero-fills channels beyond the file", "[audiofile]")
     for (int64_t f = 0; f < kFrames; ++f)
         REQUIRE (out[1][(size_t) f] == 0.0f);
 
+    r.reset();
     std::filesystem::remove (path);
 }
 
@@ -215,6 +219,7 @@ TEST_CASE ("ThreadedFileWriter drains all pushed frames to disk", "[audiofile]")
         for (int64_t f = 0; f < kFrames; ++f)
             REQUIRE_THAT (out[(size_t) c][(size_t) f], WithinAbs (sample (c, f), 1.0e-6f));
 
+    r.reset();
     std::filesystem::remove (path);
 }
 
@@ -227,10 +232,12 @@ TEST_CASE ("ThreadedFileWriter drops a block when the ring is full", "[audiofile
 
     // Tiny ring, no consumer progress guaranteed: at least one oversized push
     // must be refused rather than corrupting the buffer.
-    ThreadedFileWriter tw (std::move (fw), 64);
-    std::vector<float> a (256, 0.5f), b (256, -0.5f);
-    const float* p[kChannels] = { a.data(), b.data() };
-    REQUIRE_FALSE (tw.push (p, kChannels, 256));
+    {
+        ThreadedFileWriter tw (std::move (fw), 64);
+        std::vector<float> a (256, 0.5f), b (256, -0.5f);
+        const float* p[kChannels] = { a.data(), b.data() };
+        REQUIRE_FALSE (tw.push (p, kChannels, 256));
+    }
 
     std::filesystem::remove (path);
 }
