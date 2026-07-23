@@ -171,6 +171,8 @@ endif()
 target_sources(dusk-studio-tests PRIVATE
     audiofile_roundtrip.cpp
     audiofile_ab_null.cpp
+    audiofile_buffered_reader.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/audiofile/BufferedFileReader.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/FileReader.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/FileWriter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/ThreadedFileWriter.cpp)

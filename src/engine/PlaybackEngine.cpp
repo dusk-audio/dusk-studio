@@ -5,12 +5,18 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <thread>
 
 namespace duskstudio
 {
 namespace
 {
+std::filesystem::path audioPath (const juce::File& file)
+{
+    return std::filesystem::u8path (file.getFullPathName().toStdString());
+}
+
 // Samples pre-cached at the loop start per region (~0.68 s at 48 kHz) -
 // comfortably longer than the prefetch thread needs to re-warm a reader
 // after the backward seek at a loop wrap.
@@ -24,24 +30,11 @@ constexpr int kLoopSeamFade = 64;
 // would degenerate into per-sample spans.
 constexpr std::int64_t kMinLoopLenForSplit = 2 * (std::int64_t) kLoopSeamFade;
 } // namespace
-PlaybackEngine::PlaybackEngine (Session& s) : session (s)
-{
-    formatManager.registerBasicFormats();
-
-    // Start the prefetch thread once at construction. BufferingAudioReader
-    // instances created later in preparePlayback() attach themselves via
-    // addTimeSliceClient (handled by the BufferingAudioReader ctor) and
-    // detach on destruction in stopPlayback().
-    bufferingThread.startThread();
-}
+PlaybackEngine::PlaybackEngine (Session& s) : session (s) {}
 
 PlaybackEngine::~PlaybackEngine()
 {
-    // Tear down readers (which detach from bufferingThread) before letting
-    // the thread member go out of scope. stopPlayback handles the readers;
-    // ~TimeSliceThread joins.
     stopPlayback();
-    bufferingThread.stopThread (2000);
 }
 
 void PlaybackEngine::prepare (int maxBlockSize)
@@ -115,20 +108,27 @@ void PlaybackEngine::preparePlayback()
         {
             if (! region.file.existsAsFile()) continue;
 
-            std::unique_ptr<juce::AudioFormatReader> rawReader (
-                formatManager.createReaderFor (region.file));
+            auto rawReader = dusk::audio::FileReader::open (audioPath (region.file));
             if (rawReader == nullptr) continue;
 
-            // Wrap in a BufferingAudioReader. Sample rate of the source isn't
-            // known at this scope without inspecting `rawReader`, so size by
-            // a fixed sample count: 96000 samples is ~1 s at 96 kHz / ~2 s at
-            // 44.1 kHz - generous given block sizes are 256-2048. Read
-            // timeout 0 keeps the audio thread non-blocking; missed reads
-            // return silence until prefetch catches up.
-            constexpr int kSamplesToBuffer = 96000;
-            auto buffered = std::make_unique<juce::BufferingAudioReader> (
-                rawReader.release(), bufferingThread, kSamplesToBuffer);
-            buffered->setReadTimeout (0);
+            // 96000 frames is ~1 s at 96 kHz / ~2 s at 44.1 kHz - generous
+            // given block sizes are 256-2048 - but a region shorter than that
+            // never reads past its own end, and a take-heavy session opens one
+            // reader per region, so cap the window at the region length.
+            const std::int64_t windowFrames =
+                std::clamp (region.lengthInSamples, (std::int64_t) 8192,
+                             dusk::audio::BufferedFileReader::kDefaultWindowFrames);
+            auto buffered = std::make_unique<dusk::audio::BufferedFileReader> (
+                std::move (rawReader), windowFrames);
+            // Warm where playback will begin, not at the region head - every
+            // caller sets the playhead before rebuilding, so Play from mid-song
+            // starts warm instead of dropping blocks while the window re-seeks.
+            const std::int64_t startInRegion =
+                transport != nullptr
+                    ? std::clamp (transport->getPlayhead() - region.timelineStart,
+                                   (std::int64_t) 0, std::max ((std::int64_t) 0, region.lengthInSamples))
+                    : 0;
+            buffered->prefetch (region.sourceOffset + startInRegion);
 
             RegionStream rs;
             rs.reader          = std::move (buffered);
@@ -228,21 +228,23 @@ void PlaybackEngine::primeLoopCaches (std::int64_t loopStart, std::int64_t loopE
                                                         regionEnd);
             if (cacheEnd <= cacheStart) continue;
 
-            // A fresh plain reader for the fill: the region's own
-            // BufferingAudioReader would return silence on a cold window
-            // (timeout 0), and bumping its window here would fight the
-            // audio thread's forward prefetch.
-            std::unique_ptr<juce::AudioFormatReader> fillReader (
-                formatManager.createReaderFor (rs.sourceFile));
+            // A fresh plain reader for the fill: the region's own buffered
+            // reader would return silence on a cold window, and bumping its
+            // window here would fight the audio thread's forward prefetch.
+            auto fillReader = dusk::audio::FileReader::open (audioPath (rs.sourceFile));
             if (fillReader == nullptr) continue;
 
             const int len = (int) (cacheEnd - cacheStart);
-            const bool stereo = (rs.numChannels == 2);
+            // A region can claim two channels over a mono file (hand-edited
+            // session, file replaced on disk). Reading one channel and letting
+            // the audio path duplicate it keeps that case center-panned instead
+            // of silencing the right side.
+            const bool stereo = (rs.numChannels == 2) && fillReader->info().numChannels >= 2;
             juce::AudioBuffer<float> tmp (2, len);
             tmp.clear();
-            fillReader->read (&tmp, 0, len,
-                               rs.sourceOffset + (cacheStart - rs.timelineStart),
-                               true, stereo);
+            float* fillDest[2] = { tmp.getWritePointer (0), tmp.getWritePointer (1) };
+            fillReader->read (fillDest, stereo ? 2 : 1,
+                               rs.sourceOffset + (cacheStart - rs.timelineStart), len);
 
             rs.loopCacheL.assign (tmp.getReadPointer (0), tmp.getReadPointer (0) + len);
             if (stereo)
@@ -404,14 +406,13 @@ void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
         if (withinSamples > readScratch.getNumSamples()) continue;
 
         const std::int64_t readStart = r.sourceOffset + (firstWithin - r.timelineStart);
-        // For mono regions, read L only. For stereo, read both. The
-        // BufferingAudioReader's read(useLeft, useRight) flags do the
-        // right thing on either side; we always have a 2-channel
-        // readScratch so the call is safe regardless.
-        const bool readStereo = (r.numChannels == 2);
-        r.reader->read (&readScratch, 0, withinSamples, readStart,
-                         /*useLeftChan*/ true,
-                         /*useRightChan*/ readStereo);
+        // For mono regions, read L only. For stereo, read both. readScratch is
+        // always 2-channel, so the call is safe either way. A stereo region
+        // over a mono file reads one channel and duplicates below, rather than
+        // taking the reader's zero-filled second channel as silence.
+        const bool readStereo = (r.numChannels == 2) && r.reader->info().numChannels >= 2;
+        float* dest[2] = { readScratch.getWritePointer (0), readScratch.getWritePointer (1) };
+        r.reader->readRt (dest, readStereo ? 2 : 1, readStart, withinSamples);
 
         // Serve the loop-start window from the pre-cache: the forward-only
         // reader misses (returns silence) right after a wrap's backward

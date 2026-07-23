@@ -1,21 +1,21 @@
 #pragma once
 
 #include <juce_audio_basics/juce_audio_basics.h>
-#include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_core/juce_core.h>
 #include <array>
 #include <atomic>
 #include <memory>
+#include "audiofile/BufferedFileReader.h"
 #include "../session/Session.h"
 
 namespace duskstudio
 {
 class Transport;
 
-// Multi-region playback. One BufferingAudioReader per region, all sharing
-// a TimeSliceThread for prefetch. Audio thread reads from pre-filled
-// buffers; on prefetch miss (right after Play or seek) readers return
-// silence rather than block.
+// Multi-region playback. One buffered reader per region, each keeping a
+// prefetch window resident. Audio thread reads from those windows; on a
+// prefetch miss (right after Play or seek) a reader returns silence rather
+// than block.
 class PlaybackEngine
 {
 public:
@@ -59,15 +59,10 @@ public:
 private:
     Session& session;
     const Transport* transport = nullptr;
-    juce::AudioFormatManager formatManager;
-
-    // Declared before streams so it outlives the readers attached to
-    // it (destruction is reverse declaration order).
-    juce::TimeSliceThread bufferingThread { "Dusk Studio playback prefetch" };
 
     struct RegionStream
     {
-        std::unique_ptr<juce::BufferingAudioReader> reader;
+        std::unique_ptr<dusk::audio::BufferedFileReader> reader;
         juce::File  sourceFile;
         std::int64_t timelineStart   = 0;
         std::int64_t lengthInSamples = 0;
@@ -92,10 +87,10 @@ private:
         float       gainLinear      = 1.0f;
         bool        muted           = false;
 
-        // Loop-start pre-cache. BufferingAudioReader prefetches forward
-        // only, so the backward seek at every loop wrap misses and (with
-        // timeout 0) returns silence until the prefetch thread catches
-        // up - an audible dropout at the top of every cycle. These hold
+        // Loop-start pre-cache. The reader's window follows playback
+        // forward, so the backward seek at every loop wrap misses and
+        // returns silence until the prefetch thread catches up - an
+        // audible dropout at the top of every cycle. These hold
         // the region's raw source samples for the timeline window
         // [loopCacheTimelineStart, +loopCacheLen), filled on the message
         // thread in preparePlayback while the audio thread is guaranteed
