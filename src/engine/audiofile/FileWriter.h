@@ -5,6 +5,8 @@
 #include <memory>
 #include <vector>
 
+#include "IFileWriteSink.h"
+
 namespace dusk::audio
 {
 struct WriteSpec
@@ -20,25 +22,25 @@ struct WriteSpec
 // Sound-file writer backed by libsndfile. Container + sample format come from
 // WriteSpec. MP3 is deliberately absent: libsndfile MP3 support is build
 // dependent, so MP3 stays on the dedicated libmp3lame path.
-class FileWriter
+class FileWriter final : public IFileWriteSink
 {
 public:
     static std::unique_ptr<FileWriter> create (const std::filesystem::path& path, const WriteSpec& spec);
-    ~FileWriter();
+    ~FileWriter() override;
 
     FileWriter (const FileWriter&)            = delete;
     FileWriter& operator= (const FileWriter&) = delete;
 
-    int numChannels() const noexcept { return channels; }
+    int numChannels() const noexcept override { return channels; }
 
     // Deinterleaved. src carries numCh channel pointers of >= numFrames.
     bool write (const float* const* src, int numCh, int64_t numFrames);
 
     // Interleaved, allocation-free: the real-time drain path uses this so the
     // disk thread never touches the heap mid-record.
-    bool writeInterleaved (const float* interleaved, int64_t numFrames) noexcept;
+    bool writeInterleaved (const float* interleaved, int64_t numFrames) noexcept override;
 
-    bool flush();
+    bool flush() override;
 
 private:
     FileWriter (void* handle, int channels);

@@ -433,7 +433,8 @@ target_sources(DuskStudio PRIVATE
     src/engine/audiofile/BufferedFileReader.cpp
     src/engine/audiofile/FileReader.cpp
     src/engine/audiofile/FileWriter.cpp
-    src/engine/audiofile/ThreadedFileWriter.cpp)
+    src/engine/audiofile/ThreadedFileWriter.cpp
+    src/engine/audiofile/WriterDrainPool.cpp)
 target_link_libraries(DuskStudio PRIVATE dusk_sndfile)
 
 # DeviceManager backing: Linux uses the native orchestrator (owns the device
