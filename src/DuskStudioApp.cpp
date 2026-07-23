@@ -1122,7 +1122,11 @@ struct DuskStudioApp::BounceTest : private juce::Timer
         engine->getDeviceManager().closeDevice();
         engine->prepareForSelfTest (sr, bs);
 
-        synthesiseContent();
+        if (! synthesiseContent())
+        {
+            exitCode = 1;
+            return false;
+        }
 
         if (! loadPluginByExtension())
         {
@@ -1181,13 +1185,15 @@ private:
         spec.numChannels = numCh;
         spec.bitsPerSample = 24;
         spec.format = dusk::audio::WriteSpec::Format::Wav;
-        if (auto writer = dusk::audio::FileWriter::create (
-                std::filesystem::u8path (file.getFullPathName().toStdString()), spec))
-            writer->write (buf.getArrayOfReadPointers(), numCh, numFrames);
+        auto writer = dusk::audio::FileWriter::create (
+            std::filesystem::u8path (file.getFullPathName().toStdString()), spec);
+        if (writer == nullptr
+            || ! writer->write (buf.getArrayOfReadPointers(), numCh, numFrames))
+            return {};
         return file;
     }
 
-    void synthesiseContent()
+    bool synthesiseContent()
     {
         const std::int64_t lenSamples = (std::int64_t) (sr * kContentSeconds);
         auto makeRegion = [&] (const juce::File& f)
@@ -1203,6 +1209,12 @@ private:
         };
         const auto wav0 = writeDemoWav (tmpDir.getChildFile ("take0.wav"), 196.0, 198.0);
         const auto wav1 = writeDemoWav (tmpDir.getChildFile ("take1.wav"), 261.0, 264.0);
+        if (wav0 == juce::File() || wav1 == juce::File())
+        {
+            std::fprintf (stdout, "[FAIL] could not write the demo takes into %s\n",
+                          tmpDir.getFullPathName().toRawUTF8());
+            return false;
+        }
 
         session->track (0).name = "Plugin Trk";
         session->track (0).mode.store ((int) Track::Mode::Stereo, std::memory_order_relaxed);
@@ -1211,6 +1223,7 @@ private:
         session->track (1).name = "Dry Trk";
         session->track (1).mode.store ((int) Track::Mode::Stereo, std::memory_order_relaxed);
         session->track (1).regions = { makeRegion (wav1) };
+        return true;
     }
 
     // Dispatch to the native host slot by file extension - exactly the ChannelStrip
