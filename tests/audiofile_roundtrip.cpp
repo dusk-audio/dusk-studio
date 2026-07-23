@@ -10,6 +10,7 @@
 #include <cmath>
 #include <filesystem>
 #include <memory>
+#include <system_error>
 #include <vector>
 
 using namespace dusk::audio;
@@ -30,6 +31,15 @@ float sample (int ch, int64_t f)
 std::filesystem::path tmp (const char* name)
 {
     return std::filesystem::temp_directory_path() / name;
+}
+
+// Non-throwing: the Windows CI runner's virus scanner intermittently holds a
+// just-closed temp file, and a cleanup hiccup must not fail a run whose
+// assertions all passed.
+void discard (const std::filesystem::path& p)
+{
+    std::error_code ec;
+    std::filesystem::remove (p, ec);
 }
 
 std::vector<std::vector<float>> makeRamp()
@@ -99,7 +109,7 @@ TEST_CASE ("FileWriter/FileReader round-trip preserves samples", "[audiofile]")
                     REQUIRE_THAT (out[(size_t) c][(size_t) f], WithinAbs (sample (c, f), tc.tol));
 
             r.reset();
-            std::filesystem::remove (path);
+            discard (path);
         }
     }
 }
@@ -130,7 +140,7 @@ TEST_CASE ("FileReader seek matches a full-buffer slice", "[audiofile]")
             REQUIRE_THAT (out[(size_t) c][(size_t) f], WithinAbs (sample (c, start + f), 1.0e-6f));
 
     r.reset();
-    std::filesystem::remove (path);
+    discard (path);
 }
 
 TEST_CASE ("FileReader distinguishes 32-bit PCM from floating point", "[audiofile]")
@@ -155,7 +165,7 @@ TEST_CASE ("FileReader distinguishes 32-bit PCM from floating point", "[audiofil
     REQUIRE_FALSE (reader->info().isFloat);
 
     reader.reset();
-    std::filesystem::remove (path);
+    discard (path);
 }
 
 TEST_CASE ("FileReader zero-fills channels beyond the file", "[audiofile]")
@@ -183,7 +193,7 @@ TEST_CASE ("FileReader zero-fills channels beyond the file", "[audiofile]")
         REQUIRE (out[1][(size_t) f] == 0.0f);
 
     r.reset();
-    std::filesystem::remove (path);
+    discard (path);
 }
 
 TEST_CASE ("ThreadedFileWriter drains all pushed frames to disk", "[audiofile]")
@@ -220,7 +230,7 @@ TEST_CASE ("ThreadedFileWriter drains all pushed frames to disk", "[audiofile]")
             REQUIRE_THAT (out[(size_t) c][(size_t) f], WithinAbs (sample (c, f), 1.0e-6f));
 
     r.reset();
-    std::filesystem::remove (path);
+    discard (path);
 }
 
 TEST_CASE ("ThreadedFileWriter drops a block when the ring is full", "[audiofile]")
@@ -239,5 +249,5 @@ TEST_CASE ("ThreadedFileWriter drops a block when the ring is full", "[audiofile
         REQUIRE_FALSE (tw.push (p, kChannels, 256));
     }
 
-    std::filesystem::remove (path);
+    discard (path);
 }

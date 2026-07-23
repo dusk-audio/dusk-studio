@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <system_error>
 #include <vector>
 
 using namespace dusk::audio;
@@ -87,7 +88,11 @@ TEST_CASE ("FileReader matches juce::AudioFormatReader", "[audiofile][abnull]")
 
             jr.reset();
             dr.reset();
-            std::filesystem::remove (path);
+
+            // Non-throwing: a virus-scanner lock on the Windows CI runner must
+            // not fail a run whose assertions all passed.
+            std::error_code ec;
+            std::filesystem::remove (path, ec);
         }
     }
 }
