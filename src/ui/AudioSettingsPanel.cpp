@@ -568,6 +568,7 @@ void AudioSettingsPanel::resized()
         auto row = takeStdRow();
         mainOutputLabel.setBounds (row.removeFromLeft (kLabelW).reduced (4, 2));
         mainOutputCombo.setBounds (row.removeFromLeft (kComboW).reduced (4, 2));
+        rescanButton   .setBounds (row.removeFromRight (140).reduced (4, 2));
     }
     endSection();
 
@@ -670,7 +671,6 @@ void AudioSettingsPanel::resized()
         periodsCombo.setBounds (row.removeFromLeft (100).reduced (4, 4));
 #endif
         selfTestButton.setBounds (row.removeFromRight (160).reduced (4, 4));
-        rescanButton  .setBounds (row.removeFromRight (140).reduced (4, 4));
     }
     {
         auto row = takeRow (32);
