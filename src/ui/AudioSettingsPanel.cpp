@@ -616,6 +616,7 @@ void AudioSettingsPanel::resized()
         auto row = takeStdRow();
         mtcEmitFrameRateLabel.setBounds (row.removeFromLeft (kLabelW).reduced (4, 2));
         mtcEmitFrameRateCombo.setBounds (row.removeFromLeft (140).reduced (4, 2));
+        row.removeFromLeft (kComboW - 140);
         mtcEmitToggle.setBounds (row.reduced (8, 2));
     }
     endSection();
@@ -639,18 +640,18 @@ void AudioSettingsPanel::resized()
     }
     {
         auto row = takeStdRow();
+        row.removeFromLeft (kLabelW);
+        scanOnStartupToggle.setBounds (row.reduced (4, 2));
+    }
+    {
+        auto row = takeStdRow();
         stopBehaviorLabel.setBounds (row.removeFromLeft (kLabelW).reduced (4, 2));
-        stopBehaviorCombo.setBounds (row.reduced (4, 2));
+        stopBehaviorCombo.setBounds (row.removeFromLeft (kComboW).reduced (4, 2));
     }
     {
         auto row = takeStdRow();
         autosaveLabel.setBounds (row.removeFromLeft (kLabelW).reduced (4, 2));
         autosaveCombo.setBounds (row.removeFromLeft (200).reduced (4, 2));
-    }
-    {
-        auto row = takeStdRow();
-        row.removeFromLeft (kLabelW);
-        scanOnStartupToggle.setBounds (row.reduced (4, 2));
     }
     {
         auto row = takeStdRow();
