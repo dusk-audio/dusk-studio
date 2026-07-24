@@ -154,8 +154,10 @@ private:
     std::int64_t recordStartSample = 0;
     double      recordSampleRate  = 0.0;
 
-    // Subtracted from committed audio region starts (clamped >= 0). Applied
-    // at commit only - count-in and the write gate use recordStartSample.
+    // Subtracted from committed audio region starts; may be negative. The
+    // derived region.timelineStart (not the offset) is clamped >= 0 in
+    // stopRecording, head-trimming the take. Applied at commit only -
+    // count-in and the write gate use recordStartSample.
     int recordLatencyOffsetSamples = 0;
 
     std::vector<TrackCommitDiff> lastCommitDiff;
