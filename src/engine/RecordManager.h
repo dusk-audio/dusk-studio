@@ -1,19 +1,20 @@
 #pragma once
 
 #include <juce_audio_basics/juce_audio_basics.h>
-#include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_core/juce_core.h>
 #include <array>
 #include <atomic>
 #include <memory>
 #include "../session/Session.h"
+#include "audiofile/ThreadedFileWriter.h"
+#include "audiofile/WriterDrainPool.h"
 
 namespace duskstudio
 {
 // Per-track threaded WAV writer. Created on the message thread at
-// startRecording, written from the audio thread (lock-free queue),
-// drained by a TimeSliceThread, finalized on the message thread at
-// stopRecording.
+// startRecording, written from the audio thread (lock-free ring),
+// drained by a shared WriterDrainPool disk thread, finalized on the
+// message thread at stopRecording.
 class RecordManager
 {
 public:
@@ -84,17 +85,19 @@ private:
 
     struct PerTrackWriter
     {
-        std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> writer;
+        std::unique_ptr<dusk::audio::ThreadedFileWriter> writer;
         juce::File file;
         std::int64_t framesWritten = 0;
         int numChannels = 1;
         std::atomic<std::uint64_t> writeFailures { 0 };
     };
 
-    juce::TimeSliceThread diskThread { "Dusk Studio recorder" };
-    juce::WavAudioFormat wav;
-
     std::array<std::unique_ptr<PerTrackWriter>, Session::kNumTracks> writers;
+
+    // Declared after the writers so it destructs FIRST: the pool's disk thread
+    // joins before any ThreadedFileWriter is torn down, so nothing races the
+    // per-writer drainOnce() the pool would otherwise be running.
+    dusk::audio::WriterDrainPool drainPool { Session::kNumTracks };
 
     // ~30 min of busy controller stream (16 events/s × 1800 s = 28k).
     // RawEvent is POD so the FIFO pre-sizes without audio-thread heap.

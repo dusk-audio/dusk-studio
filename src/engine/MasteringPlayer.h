@@ -1,10 +1,10 @@
 #pragma once
 
 #include <juce_audio_basics/juce_audio_basics.h>
-#include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_core/juce_core.h>
 #include <atomic>
 #include <memory>
+#include "audiofile/BufferedFileReader.h"
 
 namespace duskstudio
 {
@@ -21,7 +21,6 @@ namespace duskstudio
 class MasteringPlayer
 {
 public:
-    MasteringPlayer();
     ~MasteringPlayer();
 
     // Message thread. deviceSampleRate drives the resampler: a source whose
@@ -51,26 +50,18 @@ public:
     void process (float* L, float* R, int numSamples) noexcept;
 
 private:
-    juce::AudioFormatManager formatManager;
-
-    // Declared before the readers so it outlives them (destruction is
-    // reverse declaration order). Prefetches for the BufferingAudioReader
-    // wrapper so process() never does synchronous disk I/O - a cold file
-    // or a seek after setPlayhead would otherwise stall the callback.
-    juce::TimeSliceThread bufferingThread { "Dusk Studio mastering prefetch" };
-
     // Owning pointer - mutated only on the message thread (loadFile /
     // unloadFile). The audio thread reads via the `currentReader` atomic
     // below (PluginSlot pattern). `previousReader` keeps the prior owned
     // reader alive across one publish so the audio thread can safely finish
     // its current block with the old pointer; the next publish drops it.
-    std::unique_ptr<juce::AudioFormatReader> ownedReader;
-    std::unique_ptr<juce::AudioFormatReader> previousReader;
+    std::unique_ptr<dusk::audio::BufferedFileReader> ownedReader;
+    std::unique_ptr<dusk::audio::BufferedFileReader> previousReader;
 
     // Audio-thread-safe view of `ownedReader.get()`. The audio thread
     // acquire-loads this once per block and uses the resulting pointer for
     // the rest of the block. Message-thread writes are release-stores.
-    std::atomic<juce::AudioFormatReader*> currentReader { nullptr };
+    std::atomic<dusk::audio::BufferedFileReader*> currentReader { nullptr };
 
     juce::File loadedFile;
 

@@ -1,13 +1,18 @@
 # De-JUCE tower spec — Audio-file call-site sweep (juce_audio_formats consumers → dusk libsndfile seam)
 
-**STATUS: PR-1 READY — A0+A1 DONE on branch `dejuce/audiofile-sweep-1`, plus
-libsndfile made a hard requirement on every platform (CI installs it in all
-workflows) and every `DUSKSTUDIO_HAS_AUDIOFILE` guard + JUCE fallback branch
-deleted: consumers call the seam unconditionally, so the flips are NOT
-Linux-scoped. Resume after merge: "A2 BufferedFileReader on
-dejuce/audiofile-sweep-2 after PR-1 merges" — write A2/A3 code WITHOUT any
-platform gate.**
-Update this line each session (phase done, branch, resume phrase).
+**STATUS: TOWER COMPLETE. PR-1 MERGED (#107, main @ 8c7859e); PR-2 =
+A2+A3+A4 on `dejuce/audiofile-sweep-2`. A2 built
+`dusk::audio::BufferedFileReader` (§B1) and flipped PlaybackEngine +
+MasteringPlayer; A3 wired the write path — LameMp3Writer re-based onto
+IFileWriteSink (now JUCE-free, plain FILE*), RecordManager + BounceEngine +
+RtBounceSink drain through WriterDrainPools, no platform gate anywhere; A4
+swept the residue (orphaned umbrella includes in FileImporter/DpImporter/
+DpAligner headers) and closed the docs. Net allowlist −2
+(LameMp3Writer.{h,cpp} cleaned → gate 182) — the honest-yield "zero
+movement" prediction missed this. Zero production call sites remain on the
+JUCE audio-format APIs; the module unlink waits on juce_audio_utils (GUI
+tower). Bench debts at §Owed.**
+This spec is archival once PR-2 merges.
 
 Read order for an executing session: `docs/dejuce-campaign.md` → this file →
 memory ledger `project_dejuce_roadmap.md` → the files of the ONE phase you are
@@ -107,11 +112,15 @@ thread:
   (timeout-0 parity — never blocks, never does I/O). Return value reports
   full/partial residency so callers can count misses if they care (JUCE's
   API returned bool; keep bool = fully-resident).
-- Prefetch thread follows the highest `startFrame` seen (forward-only, JUCE
-  parity); an explicit `prefetch(startFrame)` hint lets `preparePlayback`
-  and loop-wrap logic pre-warm — PlaybackEngine's manual loopCacheL/R stays
-  as-is (do NOT fold it into the reader; it exists precisely because
-  forward-only prefetch can't cover loop wraps, and it works).
+- Prefetch thread follows the LAST `startFrame` seen, not the highest: it
+  buffers forward from that position only (JUCE parity, and why the loop
+  pre-cache is needed), but a position outside the window restarts the window
+  there rather than being ignored. Tracking the maximum instead would leave a
+  loop longer than the pre-cache silent for the rest of its cycle, forever.
+  An explicit `prefetch(startFrame)` hint lets `preparePlayback` and
+  loop-wrap logic pre-warm — PlaybackEngine's manual loopCacheL/R stays as-is
+  (do NOT fold it into the reader; it exists precisely because forward
+  prefetch can't cover loop wraps, and it works).
 - One background std::thread per BufferedFileReader, normal priority,
   condition-variable wakeup on hint/position change, joined in dtor.
   AutoResetEvent reuse fine. No allocation after construction (window sized

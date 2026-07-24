@@ -1,5 +1,7 @@
 #include "RecordManager.h"
+#include "audiofile/FileWriter.h"
 #include <algorithm>
+#include <new>
 #include <thread>
 #include <unordered_map>
 
@@ -23,16 +25,12 @@ void trimTakeHistory (Region& region) noexcept
 }
 } // namespace
 
-RecordManager::RecordManager (Session& s) : session (s)
-{
-    diskThread.startThread();
-}
+RecordManager::RecordManager (Session& s) : session (s) {}
 
 RecordManager::~RecordManager()
 {
     if (active.load (std::memory_order_relaxed))
         stopRecording (0);
-    diskThread.stopThread (2000);
 }
 
 bool RecordManager::startRecording (double sampleRate, std::int64_t startSample)
@@ -131,18 +129,6 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample)
             outFile = audioDir.getNonexistentChildFile (
                 trackName.upToLastOccurrenceOf (".wav", false, true), ".wav");
 
-        auto* fileStream = outFile.createOutputStream().release();
-        if (fileStream == nullptr)
-        {
-            std::fprintf (stderr,
-                          "[Dusk Studio/RecordManager] startRecording: track %d "
-                          "createOutputStream failed for \"%s\" - take will be silently "
-                          "dropped without this surface.\n",
-                          t + 1, outFile.getFullPathName().toRawUTF8());
-            lastSetupFailures.push_back (t);
-            continue;
-        }
-
         // 24-bit WAV per the spec. Channel count follows the track's mode:
         // 1 for Mono / Midi (MIDI tracks don't audio-record yet), 2 for
         // Stereo. The writer's channel count is captured here so writeInput-
@@ -151,19 +137,21 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample)
             session.track (t).mode.load (std::memory_order_relaxed)
                 == (int) Track::Mode::Stereo ? 2 : 1;
 
-        std::unique_ptr<juce::AudioFormatWriter> writer (
-            wav.createWriterFor (fileStream, sampleRate, (unsigned int) trackChannels,
-                                  24, {}, 0));
-        if (writer == nullptr)
+        dusk::audio::WriteSpec spec;
+        spec.sampleRate    = sampleRate;
+        spec.numChannels   = trackChannels;
+        spec.bitsPerSample = 24;
+        spec.format        = dusk::audio::WriteSpec::Format::Wav;
+        auto fileWriter = dusk::audio::FileWriter::create (
+            outFile.getFullPathName().toStdString(), spec);
+        if (fileWriter == nullptr)
         {
             std::fprintf (stderr,
                           "[Dusk Studio/RecordManager] startRecording: track %d "
-                          "createWriterFor failed (format-level error).\n",
-                          t + 1);
+                          "FileWriter::create failed for \"%s\" - take will be silently "
+                          "dropped without this surface.\n",
+                          t + 1, outFile.getFullPathName().toRawUTF8());
             lastSetupFailures.push_back (t);
-            // juce::AudioFormat::createWriterFor contract: takes ownership
-            // of the stream on success AND deletes it on failure, so we must
-            // not delete it ourselves here.
             continue;
         }
 
@@ -174,41 +162,48 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample)
         // case constant: ≈ 1.5 MB / track @ 48k stereo vs ≈ 3 MB @ 96k.
         // Floor at 65536 samples to guarantee a safety margin even on
         // exotic low-rate setups.
-        const int kThreadedWriterSamples = std::max (65536, (int) (sampleRate * 4.0));
+        const int kRingFrames = std::max (65536, (int) (sampleRate * 4.0));
 
-        // ThreadedWriter ctor allocates its FIFO + worker queue and can
-        // throw std::bad_alloc on a memory-starved system. We do NOT catch
-        // here: ownership of the raw AudioFormatWriter passes into JUCE
-        // mid-ctor and the exact transfer point is implementation-detail,
-        // so a catch-and-cleanup is ambiguous (potential double-free if
-        // JUCE already destroyed the writer in unwind). On bad_alloc the
-        // exception propagates out of startRecording cleanly:
-        //   - any per-track writers we already built unwind via the array's
-        //     unique_ptr dtors (each drains its FIFO + closes its WAV);
-        //   - active was never set to true, so the audio thread sees
-        //     active=false and is a no-op;
-        //   - caller (AudioEngine::record) sees a false return and surfaces
-        //     "recording cannot start" to the user.
-        // bad_alloc here means the system is in genuine memory exhaustion;
-        // failing the record arm is the correct response.
-        auto perTrack = std::make_unique<PerTrackWriter>();
-        perTrack->file = outFile;
-        perTrack->numChannels = trackChannels;
-        perTrack->writer = std::make_unique<juce::AudioFormatWriter::ThreadedWriter> (
-            writer.release(), diskThread, kThreadedWriterSamples);
-        if (perTrack->writer == nullptr)
+        // The ThreadedFileWriter ctor allocates a multi-MB ring per track, the
+        // realistic bad_alloc site in this loop on a memory-starved system.
+        // Unwind the whole take and return false so record() surfaces the
+        // failure; active is still false, so nothing here is visible to the
+        // audio thread and the writers built so far can be unregistered and
+        // destroyed safely.
+        std::unique_ptr<PerTrackWriter> perTrack;
+        try
         {
-            // Defensive: make_unique returning null is not standard-conformant
-            // (it throws on failure, never returns null), but a future custom
-            // allocator or instrumented build could. We can't reclaim the raw
-            // AudioFormatWriter since its ownership state is undefined here;
-            // treat the slot as "armed but inactive" and continue. The
-            // existing slot->writer null-check on the audio thread
-            // (writeInputBlock) makes the missing entry safe.
+            perTrack = std::make_unique<PerTrackWriter>();
+            perTrack->file = outFile;
+            perTrack->numChannels = trackChannels;
+            perTrack->writer = std::make_unique<dusk::audio::ThreadedFileWriter> (
+                std::move (fileWriter), kRingFrames,
+                dusk::audio::ThreadedFileWriter::Drain::External);
+        }
+        catch (const std::bad_alloc&)
+        {
             std::fprintf (stderr,
                           "[Dusk Studio/RecordManager] startRecording: track %d "
-                          "ThreadedWriter is null after construction; take dropped.\n",
-                          t + 1);
+                          "writer ring allocation failed; aborting the take.\n", t + 1);
+            lastSetupFailures.push_back (t);
+            for (auto& w : writers)
+                if (w != nullptr)
+                {
+                    drainPool.remove (w->writer.get());
+                    w.reset();
+                }
+            for (auto& cap : midiCaptures)
+                cap.reset();
+            return false;
+        }
+
+        // Registry sized to kNumTracks (never full here); a false return would
+        // leave a writer whose ring nothing drains, so drop the take instead.
+        if (! drainPool.add (perTrack->writer.get()))
+        {
+            std::fprintf (stderr,
+                          "[Dusk Studio/RecordManager] startRecording: track %d "
+                          "drain pool full; take dropped.\n", t + 1);
             lastSetupFailures.push_back (t);
             continue;
         }
@@ -489,7 +484,11 @@ void RecordManager::stopRecording (std::int64_t endSample)
         if (slot == nullptr) continue;
 
         const auto frames = slot->framesWritten;
-        slot->writer.reset();  // closes the file
+        // Producer stopped (active false + audioInFlight drained above): the
+        // pool drains this writer's ring to empty and flushes it on this thread,
+        // then unregisters it, so the file is complete before reset() closes it.
+        drainPool.remove (slot->writer.get());
+        slot->writer.reset();  // flush + close
 
         if (frames > 0)
         {
@@ -786,8 +785,8 @@ void RecordManager::writeInputBlock (int trackIndex,
     if (slot == nullptr || slot->writer == nullptr || L == nullptr) return;
 
     // Build the channel-pointer array to match the writer's channel count.
-    // ThreadedWriter::write reads exactly numChannels pointers from the
-    // array, so each slot it touches must be non-null.
+    // push() reads numChannels pointers from the array, so each slot it
+    // touches must be non-null.
     //   - Mono writer (numChannels == 1): only L is read; R is ignored even
     //     if the caller supplied it (mono-armed track + stereo input is a
     //     caller bug, asserted below).
@@ -797,7 +796,7 @@ void RecordManager::writeInputBlock (int trackIndex,
     const float* channels[2] = { L, (R != nullptr) ? R : L };
     jassert (channels[0] != nullptr
              && (slot->numChannels < 2 || channels[1] != nullptr));
-    if (slot->writer->write (channels, numSamples))
+    if (slot->writer->push (channels, slot->numChannels, numSamples))
         slot->framesWritten += numSamples;
     else
         slot->writeFailures.fetch_add (1, std::memory_order_relaxed);

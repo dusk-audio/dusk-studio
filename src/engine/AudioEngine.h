@@ -32,6 +32,8 @@
 #include "Transport.h"
 #include "DuskStudioPlayHead.h"
 
+namespace dusk::audio { class ThreadedFileWriter; }
+
 namespace duskstudio
 {
 // input -> channel strip (live or playback source) -> aux/master.
@@ -313,7 +315,7 @@ public:
     }
 
     // Realtime bounce: the live callback pushes each armed sink's source
-    // block into its ThreadedWriter after the mix is complete (post-master,
+    // block into its ThreadedFileWriter after the mix is complete (post-master,
     // pre-metronome, so the monitoring click never prints). srcL == nullptr
     // means "the master mix bus". leadRemaining samples are dropped from the
     // head on the audio thread (per-kind PDC trim); writing stops at cap so
@@ -322,7 +324,7 @@ public:
     // the transport has stopped (the callback may be mid-block at disarm).
     struct RtBounceSink
     {
-        juce::AudioFormatWriter::ThreadedWriter* writer = nullptr;
+        dusk::audio::ThreadedFileWriter* writer = nullptr;
         const float* srcL = nullptr;
         const float* srcR = nullptr;
         // Stem taps ACCUMULATE into their scratch, so after consuming a block

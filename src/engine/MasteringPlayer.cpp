@@ -4,24 +4,18 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <thread>
 
 namespace duskstudio
 {
-MasteringPlayer::MasteringPlayer()
-{
-    formatManager.registerBasicFormats();
-    bufferingThread.startThread();
-}
-
 MasteringPlayer::~MasteringPlayer()
 {
-    // Readers detach from bufferingThread on destruction; drop them
-    // before joining the thread.
-    currentReader.store (nullptr, std::memory_order_release);
+    // Parks currentReader on null and drains any in-flight process() so the
+    // readers can't be destroyed under a callback that latched the pointer.
+    parkAndWaitForAudio();
     previousReader.reset();
     ownedReader.reset();
-    bufferingThread.stopThread (2000);
 }
 
 bool MasteringPlayer::parkAndWaitForAudio()
@@ -68,7 +62,7 @@ void MasteringPlayer::prepare (int maxBlockSize, double deviceSampleRate)
 
 void MasteringPlayer::updateResampleState()
 {
-    const double srcRate = ownedReader != nullptr ? ownedReader->sampleRate : 0.0;
+    const double srcRate = ownedReader != nullptr ? ownedReader->info().sampleRate : 0.0;
     const double ratio   = (srcRate > 0.0 && preparedDeviceRate > 0.0)
                                ? srcRate / preparedDeviceRate : 1.0;
     // Worst-case source samples one output block can consume, plus the
@@ -86,18 +80,14 @@ bool MasteringPlayer::loadFile (const juce::File& file)
     unloadFile();
     if (! file.existsAsFile()) return false;
 
-    std::unique_ptr<juce::AudioFormatReader> raw (formatManager.createReaderFor (file));
+    auto raw = dusk::audio::FileReader::open (
+        std::filesystem::u8path (file.getFullPathName().toStdString()));
     if (raw == nullptr) return false;
 
-    // Wrap in a BufferingAudioReader so process() reads from prefetched
-    // memory. 96000 samples ≈ 1-2 s of lead; timeout 0 keeps the audio
-    // thread non-blocking - a prefetch miss (right after a seek) returns
-    // silence until the prefetch catches up. Same pattern as
-    // PlaybackEngine.
-    constexpr int kSamplesToBuffer = 96000;
-    auto r = std::make_unique<juce::BufferingAudioReader> (
-        raw.release(), bufferingThread, kSamplesToBuffer);
-    r->setReadTimeout (0);
+    // Buffered so process() reads from prefetched memory: the default window
+    // is 1-2 s of lead, and a miss (right after a seek) returns silence until
+    // the prefetch catches up. Same pattern as PlaybackEngine.
+    auto r = std::make_unique<dusk::audio::BufferedFileReader> (std::move (raw));
 
     // Stop playback before swapping the reader. The audio thread reads
     // `playing` first and bails before touching the reader pointer; this
@@ -140,12 +130,12 @@ void MasteringPlayer::unloadFile()
 
 std::int64_t MasteringPlayer::getLengthSamples() const noexcept
 {
-    return ownedReader ? ownedReader->lengthInSamples : 0;
+    return ownedReader ? ownedReader->info().numFrames : 0;
 }
 
 double MasteringPlayer::getSourceSampleRate() const noexcept
 {
-    return ownedReader ? ownedReader->sampleRate : 0.0;
+    return ownedReader ? ownedReader->info().sampleRate : 0.0;
 }
 
 void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
@@ -166,9 +156,11 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
     auto* r = currentReader.load (std::memory_order_acquire);
     if (r == nullptr) return;
 
-    const std::int64_t start = playhead.load (std::memory_order_relaxed);
+    const std::int64_t start  = playhead.load (std::memory_order_relaxed);
+    const std::int64_t length = r->info().numFrames;
+    const bool         mono   = r->info().numChannels < 2;
     if (start < 0) return;
-    if (start >= r->lengthInSamples)
+    if (start >= length)
     {
         // Past EOF - auto-stop so the UI can flip the Play button back.
         playing.store (false, std::memory_order_relaxed);
@@ -179,15 +171,15 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
     if (std::abs (ratio - 1.0) < 1.0e-9)
     {
         const int  available = (int) std::min ((std::int64_t) numSamples,
-                                                  (std::int64_t) (r->lengthInSamples - start));
+                                                  (std::int64_t) (length - start));
         if (available > readScratch.getNumSamples()) return;  // shouldn't happen
 
-        // Read into our 2-ch scratch. AudioFormatReader::read with two non-null
-        // destination pointers fills both; for mono sources it duplicates the
-        // single channel into both, which is exactly what we want.
-        r->read (&readScratch, 0, available, start,
-                  /*useLeftChan*/  true,
-                  /*useRightChan*/ true);
+        // The reader zero-fills destination channels the file doesn't have, so
+        // a mono source is duplicated here to keep the stage stereo.
+        float* dest[2] = { readScratch.getWritePointer (0), readScratch.getWritePointer (1) };
+        r->readRt (dest, 2, start, available);
+        if (mono)
+            std::memcpy (dest[1], dest[0], sizeof (float) * (size_t) available);
 
         std::memcpy (L, readScratch.getReadPointer (0), sizeof (float) * (size_t) available);
         std::memcpy (R, readScratch.getReadPointer (1), sizeof (float) * (size_t) available);
@@ -195,7 +187,7 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
         playhead.fetch_add (available, std::memory_order_relaxed);
 
         // If we just hit EOF mid-block, auto-stop.
-        if (start + available >= r->lengthInSamples)
+        if (start + available >= length)
             playing.store (false, std::memory_order_relaxed);
         return;
     }
@@ -216,21 +208,26 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
 
     // Read past-EOF input as silence so the interpolator can flush the tail.
     const int inAvailable = (int) std::min ((std::int64_t) inNeeded,
-                                               (std::int64_t) (r->lengthInSamples - start));
+                                               (std::int64_t) (length - start));
     inScratch.clear();
     if (inAvailable > 0)
-        r->read (&inScratch, 0, inAvailable, start, true, true);
+    {
+        float* dest[2] = { inScratch.getWritePointer (0), inScratch.getWritePointer (1) };
+        r->readRt (dest, 2, start, inAvailable);
+        if (mono)
+            std::memcpy (dest[1], dest[0], sizeof (float) * (size_t) inAvailable);
+    }
 
     const int usedL = interpL.process (ratio, inScratch.getReadPointer (0), L, numSamples);
     const int usedR = interpR.process (ratio, inScratch.getReadPointer (1), R, numSamples);
     juce::ignoreUnused (usedR);   // both consume identically for equal ratios
 
     const std::int64_t consumed = std::min ((std::int64_t) usedL,
-                                              (std::int64_t) (r->lengthInSamples - start));
+                                              (std::int64_t) (length - start));
     playhead.fetch_add (consumed, std::memory_order_relaxed);
     resampleReadPos = start + consumed;
 
-    if (start + consumed >= r->lengthInSamples)
+    if (start + consumed >= length)
         playing.store (false, std::memory_order_relaxed);
 }
 } // namespace duskstudio
