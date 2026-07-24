@@ -22,6 +22,7 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
     // fixed, but rates/buffers may have changed).
     selector->onDeviceChanged = [this]
     {
+        engine.clearDeviceFallbackHold();
         populateMainOutputCombo();
         resized();
     };
@@ -777,17 +778,11 @@ void AudioSettingsPanel::applyOversamplingChange()
 
     session.oversamplingFactor.store (factor, std::memory_order_relaxed);
 
-    // Re-prepare engine DSP so the new factor takes effect. The factor is only
-    // read in AudioEngine::prepareForSelfTest (driven by audioDeviceAboutToStart).
-    // setAudioDeviceSetup() with the SAME setup is a JUCE no-op, and a full
-    // device close/restart disturbs the window peer on Linux (mouse-offset
-    // regression). Instead, detach + reattach the engine as the audio callback:
-    // removeAudioCallback fires audioDeviceStopped, addAudioCallback fires
-    // audioDeviceAboutToStart -> prepareForSelfTest, rebuilding every
-    // strip/bus/master oversampler at the new factor - all WITHOUT touching the
-    // device or the window. Brief silence gap only.
-    deviceManager.removeAudioCallback (&engine);
-    deviceManager.addAudioCallback (&engine);
+    // The factor is only read in AudioEngine::prepareForSelfTest (driven by
+    // audioDeviceAboutToStart), so the engine must restart its DSP to apply
+    // it. Deferred to the next stop while the transport rolls so a live take
+    // or playback isn't cut by the restart's silence gap.
+    engine.restartDspWhenIdle();
 }
 
 void AudioSettingsPanel::applyMulticoreChange()
@@ -807,15 +802,11 @@ void AudioSettingsPanel::applyMulticoreChange()
 
     engine.setDesiredWorkers (appconfig::resolveWorkerCount());
 
-    // Detach first so no audio thread is inside the worker pool's runBlock, then
-    // reconfigure the pool, then reattach. removeAudioCallback quiesces the
-    // callback (and waits out any in-flight block); applyDesiredWorkers does the
-    // stop+start safely; addAudioCallback re-prepares DSP and resumes. The pool
-    // is changed ONLY here - prepare no longer touches it - so a routine
-    // buffer-size change can never race the pool. Brief silence gap only.
-    deviceManager.removeAudioCallback (&engine);
-    engine.applyDesiredWorkers();
-    deviceManager.addAudioCallback (&engine);
+    // The pool is reconfigured only inside the engine's DSP restart (callback
+    // detached, no audio thread in runBlock) - prepare never touches it, so a
+    // routine buffer-size change can't race the pool. Deferred to the next
+    // stop while the transport rolls.
+    engine.restartDspWhenIdle();
 }
 
 AudioSettingsPanel::~AudioSettingsPanel()

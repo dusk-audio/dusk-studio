@@ -72,12 +72,12 @@ juce::AudioFormatManager& importAudioFormatManager()
 {
     // Magic-static so registration is race-free: import jobs run on a
     // background thread and can hit this concurrently with the UI.
-    static const struct Holder
+    static struct Holder
     {
         juce::AudioFormatManager fm;
         Holder() { fm.registerBasicFormats(); }
     } holder;
-    return const_cast<juce::AudioFormatManager&> (holder.fm);
+    return holder.fm;
 }
 
 // Background worker for the DP-song bulk import: mixdown alignment plus every

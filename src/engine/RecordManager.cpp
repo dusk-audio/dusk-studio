@@ -184,15 +184,16 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
         // mid-ctor and the exact transfer point is implementation-detail,
         // so a catch-and-cleanup is ambiguous (potential double-free if
         // JUCE already destroyed the writer in unwind). On bad_alloc the
-        // exception propagates out of startRecording cleanly:
-        //   - any per-track writers we already built unwind via the array's
-        //     unique_ptr dtors (each drains its FIFO + closes its WAV);
+        // exception escapes startRecording - there is no false return, so
+        // AudioEngine::record's blocked-surface never fires - and continues
+        // up to the message loop. That is still safe:
         //   - active was never set to true, so the audio thread sees
         //     active=false and is a no-op;
-        //   - caller (AudioEngine::record) sees a false return and surfaces
-        //     "recording cannot start" to the user.
+        //   - writers[] slots already built this pass stay populated (the
+        //     member array doesn't unwind) and are reclaimed by the next
+        //     startRecording.
         // bad_alloc here means the system is in genuine memory exhaustion;
-        // failing the record arm is the correct response.
+        // aborting the record arm is the correct response.
         auto perTrack = std::make_unique<PerTrackWriter>();
         perTrack->file = outFile;
         perTrack->numChannels = trackChannels;

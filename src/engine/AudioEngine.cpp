@@ -521,6 +521,12 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
 
         if (! working())
         {
+            // The fallback devices below are opened with treatAsChosen (needed
+            // so setAudioDeviceSetup actually starts them), which would let the
+            // next change broadcast persist the fallback over the user's saved
+            // (merely busy) device. Hold persistence until an explicit pick.
+            deviceFallbackHold_ = true;
+
             // Clear the pinned (busy) device name + use default channels, else
             // setAudioDeviceSetup can short-circuit to a non-started, sr-0 setup.
             auto openDefaultOnType = [this] (const char* typeName, const juce::String& devName)
@@ -1235,6 +1241,45 @@ void AudioEngine::stop()
         if (last >= 0)
             transport.setPlayhead (last);
     }
+
+    if (dspRestartPending_)
+    {
+        dspRestartPending_ = false;
+        performDspRestart();
+    }
+}
+
+void AudioEngine::restartDspWhenIdle()
+{
+    if (! transport.isStopped())
+    {
+        dspRestartPending_ = true;
+        return;
+    }
+    performDspRestart();
+}
+
+// Detach + reattach rather than close the device: removeAudioCallback fires
+// audioDeviceStopped, addAudioCallback fires audioDeviceAboutToStart ->
+// prepareForSelfTest, rebuilding every strip/bus/master oversampler at the
+// current factor without touching the device or the window peer (a full
+// close/restart disturbs it on Linux - mouse-offset regression). The worker
+// pool is reconfigured in the same detached window so the audio thread can
+// never race it. Brief silence gap only.
+void AudioEngine::performDspRestart()
+{
+    deviceManager.removeAudioCallback (this);
+    applyDesiredWorkers();
+    deviceManager.addAudioCallback (this);
+}
+
+void AudioEngine::clearDeviceFallbackHold()
+{
+    if (! deviceFallbackHold_) return;
+    deviceFallbackHold_ = false;
+    if (deviceManager.getCurrentAudioDevice() != nullptr)
+        if (const auto xml = deviceManager.createStateXml())
+            audioDeviceStateFile().replaceWithText (xml->toString());
 }
 
 void AudioEngine::record()
@@ -2401,8 +2446,10 @@ void AudioEngine::changeListenerCallback (juce::ChangeBroadcaster* source)
     // Persist the chosen setup. createStateXml returns null until the
     // user has explicitly picked something (treatAsChosenDevice), so the
     // first-launch default pick is never frozen into the file - only
-    // deliberate choices survive a restart.
-    if (deviceManager.getCurrentAudioDevice() != nullptr)
+    // deliberate choices survive a restart. deviceFallbackHold_ keeps a
+    // startup fallback (saved device busy) from being frozen in the same
+    // way; clearDeviceFallbackHold persists once the user picks.
+    if (deviceManager.getCurrentAudioDevice() != nullptr && ! deviceFallbackHold_)
         if (const auto xml = deviceManager.createStateXml())
             audioDeviceStateFile().replaceWithText (xml->toString());
 
