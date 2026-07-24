@@ -665,17 +665,20 @@ void AudioSettingsPanel::resized()
     {
         auto row = takeRow (32);
 #if defined(__linux__)
-        periodsLabel     .setBounds (row.removeFromLeft (kLabelW).reduced (4, 4));
-        periodsCombo     .setBounds (row.removeFromLeft (100).reduced (4, 4));
+        periodsLabel.setBounds (row.removeFromLeft (kLabelW).reduced (4, 4));
+        periodsCombo.setBounds (row.removeFromLeft (100).reduced (4, 4));
 #endif
-        oversamplingLabel.setBounds (row.removeFromLeft (160).reduced (4, 4));
-        oversamplingCombo.setBounds (row.removeFromLeft (120).reduced (4, 4));
-        selfTestButton   .setBounds (row.removeFromRight (160).reduced (4, 4));
-        rescanButton     .setBounds (row.removeFromRight (140).reduced (4, 4));
+        selfTestButton.setBounds (row.removeFromRight (160).reduced (4, 4));
+        rescanButton  .setBounds (row.removeFromRight (140).reduced (4, 4));
     }
     {
         auto row = takeRow (32);
-        multicoreLabel.setBounds (row.removeFromLeft (160).reduced (4, 4));
+        oversamplingLabel.setBounds (row.removeFromLeft (kLabelW).reduced (4, 4));
+        oversamplingCombo.setBounds (row.removeFromLeft (140).reduced (4, 4));
+    }
+    {
+        auto row = takeRow (32);
+        multicoreLabel.setBounds (row.removeFromLeft (kLabelW).reduced (4, 4));
         multicoreCombo.setBounds (row.removeFromLeft (220).reduced (4, 4));
     }
     {
