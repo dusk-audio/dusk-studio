@@ -111,6 +111,14 @@ private:
     juce::Label  uiScaleHint;
     bool         uiScaleDragging = false;
 
+    // Manual recording latency offset (samples), per-machine (AppConfig).
+    // Subtracted from committed audio takes so a round-trip-delayed input
+    // lands in time. Persisted + pushed to the engine on change.
+    juce::Label  recordOffsetLabel { {}, "Recording offset" };
+    juce::Slider recordOffsetSlider;
+    juce::Label  recordOffsetHint;
+    bool         recordOffsetDragging = false;
+
     // Per-machine (AppConfig), independent of session. Stderr log shows
     // added / total counts after MainComponent wires the engine.
     juce::ToggleButton scanOnStartupToggle { "Scan plugins on startup" };
@@ -139,6 +147,7 @@ private:
     void applyOversamplingChange();
     void applyMulticoreChange();
     void applyUiScaleChange();
+    void applyRecordOffsetChange();
     void applyRescan();
     void openSelfTest();
     void populateSyncSourceCombo();

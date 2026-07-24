@@ -1,4 +1,5 @@
 #include "RecordManager.h"
+#include <algorithm>
 #include <thread>
 #include <unordered_map>
 
@@ -34,7 +35,8 @@ RecordManager::~RecordManager()
     diskThread.stopThread (2000);
 }
 
-bool RecordManager::startRecording (double sampleRate, std::int64_t startSample)
+bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
+                                    int latencyOffsetSamples)
 {
     if (active.load (std::memory_order_relaxed))
         return true;
@@ -66,6 +68,7 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample)
 
     recordStartSample = startSample;
     recordSampleRate  = sampleRate;
+    recordLatencyOffsetSamples = latencyOffsetSamples;
 
     lastSetupFailures.clear();
     lastRecordErrors.clear();
@@ -490,13 +493,19 @@ void RecordManager::stopRecording (std::int64_t endSample)
         const auto frames = slot->framesWritten;
         slot->writer.reset();  // closes the file
 
-        if (frames > 0)
+        // When the latency shift pulls the start before 0 we can't move the
+        // take earlier than the timeline origin, so trim that much off the
+        // head instead - otherwise the take plays late by the clamped amount.
+        const std::int64_t shifted = recordStartSample - recordLatencyOffsetSamples;
+        const std::int64_t trim    = shifted < 0 ? -shifted : 0;
+
+        if (frames > 0 && trim < frames)
         {
             AudioRegion region;
             region.file = slot->file;
-            region.timelineStart = recordStartSample;
-            region.lengthInSamples = frames;
-            region.sourceOffset = 0;
+            region.timelineStart = std::max<std::int64_t> (0, shifted);
+            region.lengthInSamples = frames - trim;
+            region.sourceOffset = trim;
             region.numChannels = slot->numChannels;
 
             // Take-history capture: any existing region whose timeline range

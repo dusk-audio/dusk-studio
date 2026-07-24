@@ -189,6 +189,19 @@ public:
         return midiSoftTakeover.load (std::memory_order_relaxed);
     }
 
+    // Manual recording latency offset (samples), subtracted from a take's
+    // committed audio region start. Pushed from the UI at startup and on
+    // change. Message-thread only - read in record(), never on the audio
+    // thread - so a plain int is sufficient.
+    void setRecordingLatencyOffsetSamples (int samples) noexcept
+    {
+        recordingLatencyOffsetSamples_ = samples;
+    }
+    int getRecordingLatencyOffsetSamples() const noexcept
+    {
+        return recordingLatencyOffsetSamples_;
+    }
+
     struct RegionClipboard
     {
         bool        hasContent = false;
@@ -774,6 +787,9 @@ private:
     // rolled back before this; writes are skipped until it catches up.
     // INT64_MIN = no record active.
     std::atomic<std::int64_t> activeRecordStart { std::numeric_limits<std::int64_t>::min() };
+
+    // Manual recording latency offset in samples (message-thread only).
+    int recordingLatencyOffsetSamples_ = 0;
 
     // Audio-thread-only. Together these let us detect two events that
     // require a per-block "All Notes Off" flush:

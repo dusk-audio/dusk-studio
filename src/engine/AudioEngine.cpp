@@ -1282,7 +1282,7 @@ void AudioEngine::record()
         startSample = transport.getPunchIn();
     }
 
-    if (! recordManager.startRecording (sr, startSample))
+    if (! recordManager.startRecording (sr, startSample, recordingLatencyOffsetSamples_))
     {
         std::fprintf (stderr, "[Dusk Studio/AudioEngine] record(): startRecording failed; "
                               "no armed track could be set up (e.g. all frozen, or the take "

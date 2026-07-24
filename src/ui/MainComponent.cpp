@@ -533,6 +533,7 @@ MainComponent::MainComponent()
     session.stopBehavior.store ((int) appconfig::getStopBehavior(),
                                   std::memory_order_relaxed);
     engine.setMidiSoftTakeover (appconfig::getMidiSoftTakeover());
+    engine.setRecordingLatencyOffsetSamples (appconfig::getRecordingLatencyOffsetSamples());
 
     // Plugin scan-on-startup is deferred (see resized() ->
     // maybeStartStartupPluginScan): it runs on a background thread behind a

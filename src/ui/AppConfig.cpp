@@ -27,6 +27,7 @@ constexpr const char* kKeyMulticoreMode      = "multicore_dsp_mode";
 constexpr const char* kKeyMulticoreManual    = "multicore_dsp_workers";
 constexpr const char* kKeyMidiSoftTakeover   = "midi_soft_takeover";
 constexpr const char* kKeyAutosaveInterval   = "autosave_interval_sec";
+constexpr const char* kKeyRecordLatencyOffset = "recording_latency_offset_samples";
 
 int numCpus()
 {
@@ -60,6 +61,15 @@ bool isTruthy (const std::string& s)
 bool looksNumeric (const std::string& s)
 {
     return ! s.empty() && s.find_first_not_of ("0123456789") == std::string::npos;
+}
+
+// As looksNumeric, but tolerates a single leading sign so negative values
+// (e.g. the recording latency offset) survive the round-trip.
+bool looksSignedNumeric (const std::string& s)
+{
+    if (s.empty()) return false;
+    const auto digits = (s[0] == '-' || s[0] == '+') ? s.substr (1) : s;
+    return looksNumeric (digits);
 }
 
 stdfs::path getStorePath()
@@ -199,6 +209,21 @@ int getAutosaveIntervalSeconds()
 void setAutosaveIntervalSeconds (int seconds)
 {
     writeKey (kKeyAutosaveInterval, std::to_string (std::clamp (seconds, 10, 600)));
+}
+
+int getRecordingLatencyOffsetSamples()
+{
+    const auto raw = readKey (kKeyRecordLatencyOffset);
+    if (! looksSignedNumeric (raw)) return kRecordingLatencyOffsetDefault;
+    return std::clamp (dusk::text::getIntValue (raw),
+                       kRecordingLatencyOffsetMin, kRecordingLatencyOffsetMax);
+}
+
+void setRecordingLatencyOffsetSamples (int samples)
+{
+    writeKey (kKeyRecordLatencyOffset,
+              std::to_string (std::clamp (samples, kRecordingLatencyOffsetMin,
+                                          kRecordingLatencyOffsetMax)));
 }
 
 bool getMidiSoftTakeover()

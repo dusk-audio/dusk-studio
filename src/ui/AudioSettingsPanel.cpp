@@ -335,6 +335,46 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
                           juce::dontSendNotification);
     addAndMakeVisible (uiScaleHint);
 
+    // Recording latency offset - subtracted from committed audio takes to
+    // pull a round-trip-delayed input back in time. Per-machine app config.
+    // The slider's typed range is a practical +/-0.4 s at 48 kHz; the config
+    // clamp is wider for hand-editing extreme values.
+    recordOffsetLabel.setJustificationType (juce::Justification::centredRight);
+    addAndMakeVisible (recordOffsetLabel);
+
+    recordOffsetSlider.setSliderStyle (juce::Slider::LinearHorizontal);
+    recordOffsetSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 70, 20);
+    recordOffsetSlider.setRange (-19200.0, 19200.0, 1.0);
+    recordOffsetSlider.setValue ((double) appconfig::getRecordingLatencyOffsetSamples(),
+                                  juce::dontSendNotification);
+    recordOffsetSlider.setNumDecimalPlacesToDisplay (0);
+    recordOffsetSlider.setTextValueSuffix (" smp");
+    recordOffsetSlider.setTooltip (
+        "Samples subtracted from each recorded audio take's timeline start, "
+        "to compensate for input round-trip latency (converters, external "
+        "gear, unreported plugin delay). Calibrate by recording a loopback "
+        "of the metronome click, measuring the error in samples with the "
+        "editor's sample readout, and entering that value. Saved per-machine; "
+        "applies to the next take.");
+    recordOffsetSlider.onDragStart = [this] { recordOffsetDragging = true; };
+    recordOffsetSlider.onDragEnd   = [this]
+    {
+        recordOffsetDragging = false;
+        applyRecordOffsetChange();
+    };
+    recordOffsetSlider.onValueChange = [this]
+    {
+        if (! recordOffsetDragging) applyRecordOffsetChange();
+    };
+    addAndMakeVisible (recordOffsetSlider);
+
+    recordOffsetHint.setJustificationType (juce::Justification::centredLeft);
+    recordOffsetHint.setColour (juce::Label::textColourId, juce::Colour (0xff909094));
+    recordOffsetHint.setFont (juce::Font (juce::FontOptions (10.0f)));
+    recordOffsetHint.setText ("Saved per-machine; applies to the next take.",
+                              juce::dontSendNotification);
+    addAndMakeVisible (recordOffsetHint);
+
     scanOnStartupToggle.setToggleState (appconfig::getScanPluginsOnStartup(),
                                           juce::dontSendNotification);
     scanOnStartupToggle.setTooltip (
@@ -635,6 +675,12 @@ void AudioSettingsPanel::resized()
         multicoreLabel.setBounds (row.removeFromLeft (160).reduced (4, 4));
         multicoreCombo.setBounds (row.removeFromLeft (220).reduced (4, 4));
     }
+    {
+        auto row = takeStdRow();
+        recordOffsetLabel .setBounds (row.removeFromLeft (kLabelW).reduced (4, 2));
+        recordOffsetSlider.setBounds (row.removeFromLeft (260).reduced (4, 2));
+        recordOffsetHint  .setBounds (row.reduced (4, 2));
+    }
 }
 
 void AudioSettingsPanel::openSelfTest()
@@ -663,6 +709,13 @@ void AudioSettingsPanel::applyUiScaleChange()
     const float scale = (float) uiScaleSlider.getValue();
     appconfig::setUiScaleOverride (scale);
     juce::Desktop::getInstance().setGlobalScaleFactor (scale);
+}
+
+void AudioSettingsPanel::applyRecordOffsetChange()
+{
+    const int samples = (int) recordOffsetSlider.getValue();
+    appconfig::setRecordingLatencyOffsetSamples (samples);
+    engine.setRecordingLatencyOffsetSamples (samples);
 }
 
 void AudioSettingsPanel::applyRescan()
