@@ -337,14 +337,16 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
 
     // Recording latency offset - subtracted from committed audio takes to
     // pull a round-trip-delayed input back in time. Per-machine app config.
-    // The slider's typed range is a practical +/-0.4 s at 48 kHz; the config
-    // clamp is wider for hand-editing extreme values.
+    // Range matches the config clamp exactly so a stored value never gets
+    // silently re-clamped on load; precise values are typed into the textbox,
+    // the drag is only a coarse gesture.
     recordOffsetLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (recordOffsetLabel);
 
     recordOffsetSlider.setSliderStyle (juce::Slider::LinearHorizontal);
-    recordOffsetSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 70, 20);
-    recordOffsetSlider.setRange (-19200.0, 19200.0, 1.0);
+    recordOffsetSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 80, 20);
+    recordOffsetSlider.setRange ((double) appconfig::kRecordingLatencyOffsetMin,
+                                 (double) appconfig::kRecordingLatencyOffsetMax, 1.0);
     recordOffsetSlider.setValue ((double) appconfig::getRecordingLatencyOffsetSamples(),
                                   juce::dontSendNotification);
     recordOffsetSlider.setNumDecimalPlacesToDisplay (0);

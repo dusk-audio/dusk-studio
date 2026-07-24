@@ -124,6 +124,12 @@ TEST_CASE ("Latency offset exceeding take length commits no region",
     rm.stopRecording (kTotal);
 
     REQUIRE (session.track (0).regions.empty());
+
+    const auto& errs = rm.getLastRecordErrors();
+    REQUIRE (errs.size() == 1);
+    REQUIRE (errs[0].trackIndex == 0);
+    REQUIRE (errs[0].kind == RecordManager::RecordErrorKind::OffsetConsumedTake);
+    REQUIRE (errs[0].count == (std::uint64_t) (kNumBlocks * kBlockSize));
 }
 
 TEST_CASE ("Latency offset does not move MIDI region placement",

@@ -70,17 +70,14 @@ juce::Array<juce::File> toFileArray (const std::vector<std::filesystem::path>& p
 // wired up in the MainComponent ctor can reference them.
 juce::AudioFormatManager& importAudioFormatManager()
 {
-    // AudioFormatManager is non-copyable; constexpr-init isn't an option.
-    // Cheap to construct + register; share a static instance and lazily
-    // register on first use via the flag below.
-    static juce::AudioFormatManager fm;
-    static bool registered = false;
-    if (! registered)
+    // Magic-static so registration is race-free: import jobs run on a
+    // background thread and can hit this concurrently with the UI.
+    static const struct Holder
     {
-        fm.registerBasicFormats();
-        registered = true;
-    }
-    return fm;
+        juce::AudioFormatManager fm;
+        Holder() { fm.registerBasicFormats(); }
+    } holder;
+    return const_cast<juce::AudioFormatManager&> (holder.fm);
 }
 
 // Background worker for the DP-song bulk import: mixdown alignment plus every
@@ -3710,7 +3707,7 @@ juce::File makeStereoTempWav (const juce::File& left, const juce::File& right)
     if (rl == nullptr || rr == nullptr) return {};
 
     const std::int64_t len = juce::jmin (rl->lengthInSamples, rr->lengthInSamples);
-    if (len <= 0 || rl->sampleRate <= 0.0) return {};
+    if (len <= 0 || rl->sampleRate <= 0.0 || rl->sampleRate != rr->sampleRate) return {};
 
     const auto tmp = juce::File::createTempFile (".wav");
     std::unique_ptr<juce::FileOutputStream> stream (tmp.createOutputStream());

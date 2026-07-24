@@ -655,6 +655,16 @@ void RecordManager::stopRecording (std::int64_t endSample)
         }
         else
         {
+            if (frames > 0)
+            {
+                std::fprintf (stderr,
+                              "[Dusk Studio/RecordManager] stopRecording: track %d take "
+                              "discarded - latency offset head-trim (%lld) consumed all "
+                              "%lld recorded frames.\n",
+                              t + 1, (long long) trim, (long long) frames);
+                lastRecordErrors.push_back (
+                    { t, RecordErrorKind::OffsetConsumedTake, (std::uint64_t) frames });
+            }
             slot->file.deleteFile();
         }
         slot.reset();

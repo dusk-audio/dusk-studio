@@ -55,7 +55,7 @@ public:
     }
 
     // Mid-take errors latched at stopRecording.
-    enum class RecordErrorKind { WavWrite, MidiOverflow };
+    enum class RecordErrorKind { WavWrite, MidiOverflow, OffsetConsumedTake };
     struct RecordError
     {
         int trackIndex;

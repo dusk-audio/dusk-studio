@@ -73,7 +73,8 @@ Open **Settings → Audio…**. Choose your interface, sample rate, and block si
 
 ![Audio device panel with a real interface selected.](docs/images/qg-02-audio-settings.png)
 
-On Linux, PipeWire and JACK both appear as "JACK"; pick whichever owns your interface. On macOS, both Core Audio devices and any AVB / aggregate devices show up. On Windows, ASIO drivers appear ahead of WASAPI.
+On Linux, PipeWire is accessed through the "JACK" backend; select the
+listed JACK device or ports for your interface.
 
 If your interface has more than two inputs, the channel pickers on each track's input block will populate automatically; no extra routing dialog is needed.
 
