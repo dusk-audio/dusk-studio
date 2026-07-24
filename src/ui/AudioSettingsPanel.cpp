@@ -345,7 +345,7 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
     addAndMakeVisible (recordOffsetLabel);
 
     recordOffsetSlider.setSliderStyle (juce::Slider::LinearHorizontal);
-    recordOffsetSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 80, 20);
+    recordOffsetSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 96, 20);
     recordOffsetSlider.setRange ((double) appconfig::kRecordingLatencyOffsetMin,
                                  (double) appconfig::kRecordingLatencyOffsetMax, 1.0);
     recordOffsetSlider.setValue ((double) appconfig::getRecordingLatencyOffsetSamples(),
