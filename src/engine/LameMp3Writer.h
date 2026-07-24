@@ -27,6 +27,10 @@ public:
 
     bool isOk() const noexcept { return encoder != nullptr && file != nullptr; }
 
+    // Splits the isOk()==false causes: false means the output file could not be
+    // opened; true means the file opened but the encoder is unavailable.
+    bool fileOpened() const noexcept { return file != nullptr; }
+
     int numChannels() const noexcept override { return channels; }
 
     // Interleaved float, matching the drain ring's storage. Deinterleaves in
@@ -35,9 +39,10 @@ public:
     bool writeInterleaved (const float* interleaved, std::int64_t numFrames) noexcept override;
 
     // Flush the encoder's buffered frames and rewrite the Info (Xing) frame with
-    // the real frame/byte counts so players report duration + seek. Idempotent.
-    // The destructor also flushes, but it can't report a failure - call this
-    // first when a truncated-file (disk full at flush) distinction matters.
+    // the real frame/byte counts so players report duration + seek. Idempotent;
+    // repeat calls report the first attempt's result, so a failed flush stays a
+    // failure. The destructor also flushes, but it can't report a failure - call
+    // this first when a truncated-file (disk full at flush) distinction matters.
     bool flush() override;
 
 private:
@@ -50,5 +55,6 @@ private:
     std::vector<unsigned char> mp3buf;
     std::vector<float>         scratchL, scratchR;
     bool  flushed = false;
+    bool  flushOk = false;
 };
 } // namespace duskstudio

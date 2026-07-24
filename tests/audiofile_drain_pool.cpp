@@ -118,14 +118,10 @@ TEST_CASE ("WriterDrainPool drains several writers to disk bit-exactly",
         tws.push_back (std::move (tw));
     }
 
-    // Producers run concurrently; the pool's single thread keeps every ring
-    // from overflowing.
-    std::vector<std::thread> producers;
-    std::atomic<int> ok { 0 };
+    // The pool's single thread drains concurrently, so pushRamp's ring-space
+    // waits resolve without producer threads.
     for (auto& tw : tws)
-        producers.emplace_back ([&] { if (pushRamp (*tw, kFrames, 512)) ok.fetch_add (1); });
-    for (auto& t : producers) t.join();
-    REQUIRE (ok.load() == kWriters);
+        REQUIRE (pushRamp (*tw, kFrames, 512));
 
     for (auto& tw : tws) pool.remove (tw.get());   // drains to empty + flushes
     tws.clear();
@@ -201,18 +197,15 @@ TEST_CASE ("WriterDrainPool isolates a failed writer from a healthy one",
     REQUIRE (pool.add (good.get()));
     REQUIRE (pool.add (bad.get()));
 
-    std::thread pg ([&] { pushRamp (*good, kFrames, 512); });
+    REQUIRE (pushRamp (*good, kFrames, 512));
     // The bad writer stops accepting pushes once the drain latches failure;
     // push what fits and move on rather than waiting on a writer that will
     // never free space.
-    std::thread pb ([&]
     {
         std::vector<float> l (512, 0.25f), r (512, -0.25f);
         const float* p[kChannels] = { l.data(), r.data() };
         for (std::int64_t off = 0; off < kFrames && bad->push (p, kChannels, 512); off += 512) {}
-    });
-    pg.join();
-    pb.join();
+    }
 
     pool.remove (good.get());
     pool.remove (bad.get());

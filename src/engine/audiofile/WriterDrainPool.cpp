@@ -27,6 +27,10 @@ bool WriterDrainPool::add (ThreadedFileWriter* w)
         return false;
 
     std::lock_guard<std::mutex> lk (m);
+    // A duplicate would survive remove() as a stale entry and dangle once the
+    // caller destroys the writer.
+    if (std::find (writers.begin(), writers.end(), w) != writers.end())
+        return false;
     if (writers.size() >= maxWriters)
         return false;
     writers.push_back (w);

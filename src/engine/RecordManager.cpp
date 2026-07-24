@@ -1,6 +1,7 @@
 #include "RecordManager.h"
 #include "audiofile/FileWriter.h"
 #include <algorithm>
+#include <new>
 #include <thread>
 #include <unordered_map>
 
@@ -163,18 +164,38 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample)
         // exotic low-rate setups.
         const int kRingFrames = std::max (65536, (int) (sampleRate * 4.0));
 
-        // The ThreadedFileWriter ctor allocates its interleaved ring and can
-        // throw std::bad_alloc on a memory-starved system; we let it propagate
-        // out of startRecording cleanly. Any per-track writers already built
-        // unwind via the array's unique_ptr dtors (each drains + closes its
-        // WAV), active was never set true so the audio thread stays a no-op,
-        // and the caller surfaces "recording cannot start" to the user.
-        auto perTrack = std::make_unique<PerTrackWriter>();
-        perTrack->file = outFile;
-        perTrack->numChannels = trackChannels;
-        perTrack->writer = std::make_unique<dusk::audio::ThreadedFileWriter> (
-            std::move (fileWriter), kRingFrames,
-            dusk::audio::ThreadedFileWriter::Drain::External);
+        // The ThreadedFileWriter ctor allocates a multi-MB ring per track, the
+        // realistic bad_alloc site in this loop on a memory-starved system.
+        // Unwind the whole take and return false so record() surfaces the
+        // failure; active is still false, so nothing here is visible to the
+        // audio thread and the writers built so far can be unregistered and
+        // destroyed safely.
+        std::unique_ptr<PerTrackWriter> perTrack;
+        try
+        {
+            perTrack = std::make_unique<PerTrackWriter>();
+            perTrack->file = outFile;
+            perTrack->numChannels = trackChannels;
+            perTrack->writer = std::make_unique<dusk::audio::ThreadedFileWriter> (
+                std::move (fileWriter), kRingFrames,
+                dusk::audio::ThreadedFileWriter::Drain::External);
+        }
+        catch (const std::bad_alloc&)
+        {
+            std::fprintf (stderr,
+                          "[Dusk Studio/RecordManager] startRecording: track %d "
+                          "writer ring allocation failed; aborting the take.\n", t + 1);
+            lastSetupFailures.push_back (t);
+            for (auto& w : writers)
+                if (w != nullptr)
+                {
+                    drainPool.remove (w->writer.get());
+                    w.reset();
+                }
+            for (auto& cap : midiCaptures)
+                cap.reset();
+            return false;
+        }
 
         // Registry sized to kNumTracks (never full here); a false return would
         // leave a writer whose ring nothing drains, so drop the take instead.

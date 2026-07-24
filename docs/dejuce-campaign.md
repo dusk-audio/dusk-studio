@@ -101,9 +101,10 @@ reimplemented.
   [dejuce-device-phase3-audio-plan.md](dejuce-device-phase3-audio-plan.md).
 - **Audio-file call-site sweep (A0–A4, PR #107 + the sweep-2 PR)**: every
   production consumer of the JUCE audio-format APIs
-  (record/playback/bounce/importers/mastering/mp3) runs on the dusk
-  libsndfile seam, unconditionally on all platforms (libsndfile is a hard
-  configure requirement; no fallback branch). New RT primitives:
+  (record/playback/bounce/importers/mastering) runs on the dusk audio-file
+  seams, unconditionally on all platforms: libsndfile-backed PCM I/O
+  (WAV/FLAC/AIFF; hard configure requirement, no fallback branch) plus the
+  JUCE-free LAME sink for MP3. New RT primitives:
   `BufferedFileReader` (last-position prefetch window, timeout-0 parity),
   `IFileWriteSink` + externally-drained `ThreadedFileWriter` +
   `WriterDrainPool` (one disk thread per subsystem, as before). LameMp3Writer
@@ -119,8 +120,9 @@ reimplemented.
    only hosts; delete `juce::AudioPluginInstance`/`AudioProcessor` hosting
    path (PluginSlot/PluginManager/PluginHostMain). Depends on donor DPF ports
    finishing (APVTS gone) and Marc's call on dropping JUCE-plugin-format
-   support. Unlinks `juce_audio_processors`/`juce_audio_utils`/
-   `juce_audio_formats` territory.
+   support. Unlinks `juce_audio_processors`; `juce_audio_utils` and
+   `juce_audio_formats` stay for AudioThumbnail regardless — the GUI tower
+   replacing the thumbnail views is the sole unlink criterion for those two.
 2. **FFT** — DpAligner + MasteringEqEditor onto pffft/kissfft (lib decision
    open). No ratchet movement, low priority; batch with whichever tower
    touches those files.

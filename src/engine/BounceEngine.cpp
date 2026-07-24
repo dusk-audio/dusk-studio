@@ -96,7 +96,9 @@ BounceEngine::makeWriter (const juce::File& outFile, std::string& errOut) const
                                                         kNumChannels, renderBitrateKbps);
         if (! writer->isOk())
         {
-            errOut = "MP3 export is not available - this build has no libmp3lame.";
+            errOut = writer->fileOpened()
+                         ? "MP3 export is not available - this build has no libmp3lame."
+                         : "Could not create the MP3 output file.";
             return nullptr;
         }
         return writer;

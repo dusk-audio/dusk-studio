@@ -1,12 +1,12 @@
 #pragma once
 
+#include "../../foundation/AutoResetEvent.h"
+
 #include <atomic>
 #include <cstddef>
 #include <mutex>
 #include <thread>
 #include <vector>
-
-#include "../../foundation/AutoResetEvent.h"
 
 namespace dusk::audio
 {
@@ -27,8 +27,8 @@ public:
     WriterDrainPool& operator= (const WriterDrainPool&) = delete;
 
     // Message thread. Registers a writer built in ThreadedFileWriter::Drain::
-    // External mode. False if the fixed registry is full. The pool does not own
-    // the writer.
+    // External mode. False if the fixed registry is full or the writer is
+    // already registered. The pool does not own the writer.
     bool add (ThreadedFileWriter* w);
 
     // Message thread. Drains the writer to empty, flushes it, then drops it from

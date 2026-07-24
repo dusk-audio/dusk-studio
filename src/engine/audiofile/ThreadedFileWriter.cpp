@@ -85,8 +85,10 @@ int64_t ThreadedFileWriter::drainOnce() noexcept
 
 void ThreadedFileWriter::finalizeExternal()
 {
-    if (writer != nullptr && ! writeFailed.load (std::memory_order_acquire))
-        writer->flush();
+    if (writer == nullptr || writeFailed.load (std::memory_order_acquire))
+        return;
+    if (! writer->flush())
+        writeFailed.store (true, std::memory_order_release);
 }
 
 void ThreadedFileWriter::run()

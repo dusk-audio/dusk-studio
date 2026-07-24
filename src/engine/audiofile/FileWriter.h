@@ -1,11 +1,11 @@
 #pragma once
 
+#include "IFileWriteSink.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <vector>
-
-#include "IFileWriteSink.h"
 
 namespace dusk::audio
 {

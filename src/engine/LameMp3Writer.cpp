@@ -70,7 +70,7 @@ bool LameMp3Writer::flush()
 {
 #if DUSKSTUDIO_HAS_LAME
     if (encoder == nullptr || file == nullptr) return false;
-    if (flushed) return true;
+    if (flushed) return flushOk;
     flushed = true;
     auto* g = static_cast<lame_global_flags*> (encoder);
     if (mp3buf.size() < 7200) mp3buf.resize (7200);
@@ -94,6 +94,7 @@ bool LameMp3Writer::flush()
         }
     }
     std::fflush (file);
+    flushOk = true;
     return true;
 #else
     return false;

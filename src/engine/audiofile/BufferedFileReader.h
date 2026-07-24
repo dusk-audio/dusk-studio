@@ -1,13 +1,13 @@
 #pragma once
 
+#include "FileReader.h"
+#include "../../foundation/AutoResetEvent.h"
+
 #include <atomic>
 #include <cstdint>
 #include <memory>
 #include <thread>
 #include <vector>
-
-#include "FileReader.h"
-#include "../../foundation/AutoResetEvent.h"
 
 namespace dusk::audio
 {
