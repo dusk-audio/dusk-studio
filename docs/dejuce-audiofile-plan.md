@@ -1,14 +1,18 @@
 # De-JUCE tower spec — Audio-file call-site sweep (juce_audio_formats consumers → dusk libsndfile seam)
 
-**STATUS: PR-1 MERGED (#107, main @ 8c7859e). A2 + A3 DONE on branch
-`dejuce/audiofile-sweep-2`: A2 built `dusk::audio::BufferedFileReader` (§B1) and
-flipped PlaybackEngine + MasteringPlayer; A3 wired the write path — LameMp3Writer
-re-based onto IFileWriteSink (now JUCE-free, plain FILE*), RecordManager +
-BounceEngine + RtBounceSink drain through WriterDrainPools, no platform gate
-anywhere. Net allowlist −2 (LameMp3Writer.{h,cpp} cleaned → gate 182). Resume:
-"A4 residue sweep + docs on dejuce/audiofile-sweep-2". PR-2 = A2+A3+A4 on that
-one branch — do not open it before A4.**
-Update this line each session (phase done, branch, resume phrase).
+**STATUS: TOWER COMPLETE. PR-1 MERGED (#107, main @ 8c7859e); PR-2 =
+A2+A3+A4 on `dejuce/audiofile-sweep-2`. A2 built
+`dusk::audio::BufferedFileReader` (§B1) and flipped PlaybackEngine +
+MasteringPlayer; A3 wired the write path — LameMp3Writer re-based onto
+IFileWriteSink (now JUCE-free, plain FILE*), RecordManager + BounceEngine +
+RtBounceSink drain through WriterDrainPools, no platform gate anywhere; A4
+swept the residue (orphaned umbrella includes in FileImporter/DpImporter/
+DpAligner headers) and closed the docs. Net allowlist −2
+(LameMp3Writer.{h,cpp} cleaned → gate 182) — the honest-yield "zero
+movement" prediction missed this. Zero production call sites remain on the
+JUCE audio-format APIs; the module unlink waits on juce_audio_utils (GUI
+tower). Bench debts at §Owed.**
+This spec is archival once PR-2 merges.
 
 Read order for an executing session: `docs/dejuce-campaign.md` → this file →
 memory ledger `project_dejuce_roadmap.md` → the files of the ONE phase you are

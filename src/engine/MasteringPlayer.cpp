@@ -11,7 +11,9 @@ namespace duskstudio
 {
 MasteringPlayer::~MasteringPlayer()
 {
-    currentReader.store (nullptr, std::memory_order_release);
+    // Parks currentReader on null and drains any in-flight process() so the
+    // readers can't be destroyed under a callback that latched the pointer.
+    parkAndWaitForAudio();
     previousReader.reset();
     ownedReader.reset();
 }

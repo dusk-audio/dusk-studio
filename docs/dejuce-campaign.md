@@ -53,7 +53,7 @@ reimplemented.
   `dusk::json`; integer-typedef sweep; jmax/jmin/jlimit fully gone from src/
   (math sweep, ~1080 sites).
 - **Audio file I/O**: libsndfile FileReader/Writer/ThreadedFileWriter
-  (`src/engine/audiofile/`); reader call-site swaps parked (coupled files).
+  (`src/engine/audiofile/`), A/B bit-exact vs JUCE's WavAudioFormat.
 - **Audio math**: `dusk::audio` Decibels / SmoothedValue / ScopedNoDenormals,
   A/B bit-exact vs JUCE.
 - **DSP tower**: `duskaudio::Biquad` + donor halfband FIR oversampler adopted
@@ -99,26 +99,32 @@ reimplemented.
   under load, buffer/SR swap, periods knob, PipeWire streaming + SR/quantum
   renegotiation (UMC1820 perf matrix green pre-merge). Spec:
   [dejuce-device-phase3-audio-plan.md](dejuce-device-phase3-audio-plan.md).
+- **Audio-file call-site sweep (A0–A4, PR #107 + the sweep-2 PR)**: every
+  production consumer of the JUCE audio-format APIs
+  (record/playback/bounce/importers/mastering/mp3) runs on the dusk
+  libsndfile seam, unconditionally on all platforms (libsndfile is a hard
+  configure requirement; no fallback branch). New RT primitives:
+  `BufferedFileReader` (last-position prefetch window, timeout-0 parity),
+  `IFileWriteSink` + externally-drained `ThreadedFileWriter` +
+  `WriterDrainPool` (one disk thread per subsystem, as before). LameMp3Writer
+  is JUCE-free (allowlist −2, gate 182 — the "zero movement" honest-yield
+  prediction missed this). `juce_audio_formats` stays linked only for
+  `juce_audio_utils`/AudioThumbnail; it unlinks globally with the GUI tower.
+  Bench debts at spec §Owed. Spec:
+  [dejuce-audiofile-plan.md](dejuce-audiofile-plan.md).
 
 ## Remaining towers, in order
 
-1. **Audio-file call-site sweep** — NEXT — flip all juce_audio_formats
-   consumers (record/playback/bounce/importers/mastering/mp3) onto the dusk
-   libsndfile seam (`src/engine/audiofile/`, already JUCE-free and A/B-proven
-   but test-only today). Honest yield: zero allowlist movement and no unlink
-   yet — the deliverable is zero production call sites, so the module drops
-   the moment `juce_audio_utils` goes with the GUI tower. Executable spec:
-   [dejuce-audiofile-plan.md](dejuce-audiofile-plan.md) (A0–A4, two PRs).
-2. **Plugin-hosting JUCE fallback drop** — native CLAP/LV2/VST3 become the
+1. **Plugin-hosting JUCE fallback drop** — native CLAP/LV2/VST3 become the
    only hosts; delete `juce::AudioPluginInstance`/`AudioProcessor` hosting
    path (PluginSlot/PluginManager/PluginHostMain). Depends on donor DPF ports
    finishing (APVTS gone) and Marc's call on dropping JUCE-plugin-format
    support. Unlinks `juce_audio_processors`/`juce_audio_utils`/
    `juce_audio_formats` territory.
-3. **FFT** — DpAligner + MasteringEqEditor onto pffft/kissfft (lib decision
+2. **FFT** — DpAligner + MasteringEqEditor onto pffft/kissfft (lib decision
    open). No ratchet movement, low priority; batch with whichever tower
    touches those files.
-4. **Events remainder + GUI tower (finale)** — ~40 UI juce::Timer subclasses,
+3. **Events remainder + GUI tower (finale)** — ~40 UI juce::Timer subclasses,
    ~79 callAsync sites, then the bespoke Wayland toolkit (xdg-shell +
    XWayland/XEmbed for plugin UIs, 2D renderer TBD Blend2D/Skia,
    HarfBuzz/FreeType, own widget layer; swap behind the existing

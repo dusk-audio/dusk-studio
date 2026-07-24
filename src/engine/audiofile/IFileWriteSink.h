@@ -20,6 +20,9 @@ public:
     // allocate.
     virtual bool writeInterleaved (const float* interleaved, std::int64_t numFrames) noexcept = 0;
 
+    // May be called more than once: WriterDrainPool::remove() flushes and the
+    // externally-drained ThreadedFileWriter destructor flushes again, so
+    // implementations must make repeat calls no-ops.
     virtual bool flush() = 0;
 };
 } // namespace dusk::audio
