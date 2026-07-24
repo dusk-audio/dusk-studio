@@ -133,7 +133,7 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
             outFile = audioDir.getNonexistentChildFile (
                 trackName.upToLastOccurrenceOf (".wav", false, true), ".wav");
 
-        auto* fileStream = outFile.createOutputStream().release();
+        auto fileStream = outFile.createOutputStream();
         if (fileStream == nullptr)
         {
             std::fprintf (stderr,
@@ -154,7 +154,7 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
                 == (int) Track::Mode::Stereo ? 2 : 1;
 
         std::unique_ptr<juce::AudioFormatWriter> writer (
-            wav.createWriterFor (fileStream, sampleRate, (unsigned int) trackChannels,
+            wav.createWriterFor (fileStream.get(), sampleRate, (unsigned int) trackChannels,
                                   24, {}, 0));
         if (writer == nullptr)
         {
@@ -163,11 +163,11 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
                           "createWriterFor failed (format-level error).\n",
                           t + 1);
             lastSetupFailures.push_back (t);
-            // juce::AudioFormat::createWriterFor contract: takes ownership
-            // of the stream on success AND deletes it on failure, so we must
-            // not delete it ourselves here.
+            // createWriterFor takes ownership of the stream only on success;
+            // on failure it stays caller-owned, so fileStream deletes it here.
             continue;
         }
+        fileStream.release();
 
         // Ring sized to hold ~4 s at the active sample rate so a brief
         // disk stall (NFS hiccup, drive spindown) doesn't push the
