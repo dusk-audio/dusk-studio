@@ -4839,8 +4839,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     // file with silence. The scratch WIPES are not gated: the taps
     // accumulate during stopped callbacks too (input monitoring runs the
     // strips), and an unwiped pre-roll prints as a summed burst at sample 0.
-    // ThreadedWriter::write is a lock-free FIFO push (its TimeSliceThread
-    // drains to disk), so this stays RT-safe.
+    // ThreadedFileWriter::push is a lock-free SPSC ring push (a shared drain
+    // pool writes it to disk), so this stays RT-safe.
     if (const int nSinks = rtBounceSinkCount.load (std::memory_order_acquire);
         nSinks > 0)
     {
@@ -4865,7 +4865,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 if (n > 0)
                 {
                     const float* chans[2] = { srcL + offset, srcR + offset };
-                    if (sink.writer->write (chans, n))
+                    if (sink.writer->push (chans, 2, n))
                         sink.written.store (already + n, std::memory_order_release);
                     else
                         sink.writeFailed.store (true, std::memory_order_release);

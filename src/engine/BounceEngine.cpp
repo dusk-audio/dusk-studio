@@ -1,10 +1,15 @@
 #include "BounceEngine.h"
+#include <juce_audio_basics/juce_audio_basics.h>
 #include <algorithm>
 #include <cmath>
+#include <vector>
 #include "AudioEngine.h"
 #include "LameMp3Writer.h"
 #include "MasteringPlayer.h"
 #include "../session/Session.h"
+#include "audiofile/FileWriter.h"
+#include "audiofile/ThreadedFileWriter.h"
+#include "audiofile/WriterDrainPool.h"
 
 namespace duskstudio
 {
@@ -79,20 +84,16 @@ bool BounceEngine::runOnMessageThread (std::function<void()> fn)
     return true;
 }
 
-std::unique_ptr<juce::AudioFormatWriter>
-BounceEngine::makeWriter (std::unique_ptr<juce::FileOutputStream> outStream,
-                            std::string& errOut) const
+std::unique_ptr<dusk::audio::IFileWriteSink>
+BounceEngine::makeWriter (const juce::File& outFile, std::string& errOut) const
 {
-    constexpr unsigned kNumChannels = 2;   // bounce is always stereo
+    constexpr int kNumChannels = 2;   // bounce is always stereo
+    const auto path = outFile.getFullPathName().toStdString();
 
     if (renderFormat == Format::Mp3)
     {
-        // LameMp3Writer's base ctor takes ownership of the stream immediately,
-        // so hand it the raw pointer up front; on failure the writer's destructor
-        // frees it (no double-free with the unique_ptr).
-        auto writer = std::make_unique<LameMp3Writer> (outStream.release(),
-                                                        renderSampleRate, kNumChannels,
-                                                        renderBitrateKbps);
+        auto writer = std::make_unique<LameMp3Writer> (path, renderSampleRate,
+                                                        kNumChannels, renderBitrateKbps);
         if (! writer->isOk())
         {
             errOut = "MP3 export is not available - this build has no libmp3lame.";
@@ -101,18 +102,17 @@ BounceEngine::makeWriter (std::unique_ptr<juce::FileOutputStream> outStream,
         return writer;
     }
 
-    // WAV: createWriterFor takes ownership of the stream only on success.
-    juce::WavAudioFormat wavFormat;
-    juce::StringPairArray metadata;
-    std::unique_ptr<juce::AudioFormatWriter> writer (
-        wavFormat.createWriterFor (outStream.get(), renderSampleRate,
-                                     kNumChannels, renderWavBitDepth, metadata, 0));
+    dusk::audio::WriteSpec spec;
+    spec.sampleRate    = renderSampleRate;
+    spec.numChannels   = kNumChannels;
+    spec.bitsPerSample = renderWavBitDepth;
+    spec.format        = dusk::audio::WriteSpec::Format::Wav;
+    auto writer = dusk::audio::FileWriter::create (path, spec);
     if (writer == nullptr)
     {
         errOut = "Could not create WAV writer";
-        return nullptr;   // outStream still owns + frees the stream
+        return nullptr;
     }
-    outStream.release();
     return writer;
 }
 
@@ -180,14 +180,14 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
     renderMode      = mode;
     // Stems must stay WAV: MP3 encoder delay + frame padding shift each stem by
     // a different amount and change its length, breaking the sample-accurate
-    // alignment stems need for re-import. Realtime is WAV too: the disk path
-    // is ThreadedWriter, which owns its writer outright, so the MP3 encoder's
-    // explicit finalize flush has no place to run. Force WAV at the engine
-    // boundary regardless of what the caller requested.
+    // alignment stems need for re-import. Realtime is WAV too: its disk path
+    // streams through the drain pool, whose sinks flush on drain-to-empty, so
+    // the MP3 encoder's explicit finalize flush has no place to run. Force WAV
+    // at the engine boundary regardless of what the caller requested.
     renderFormat    = (mode == Mode::Stems || renderRealtime) ? Format::Wav : format;
     renderBitrateKbps = mp3BitrateKbps;
     // Stems keep 24-bit regardless: they exist for re-import, not delivery.
-    // Realtime does too: its disk path streams through ThreadedWriter with no
+    // Realtime does too: its disk path streams straight to the sink with no
     // dither stage, so a 16-bit realtime file would truncate undithered (the
     // offline loop is where the TPDF dither lives).
     renderWavBitDepth = (mode != Mode::Stems && ! renderRealtime && wavBitDepth == 16)
@@ -288,28 +288,13 @@ void BounceEngine::run()
 
     // Open the writer first - failure here means we don't bother touching the
     // engine state.
-    std::unique_ptr<juce::FileOutputStream> outStream (outputFile.createOutputStream());
-    if (outStream == nullptr)
-    {
-        const std::string err = ("Could not open output file " + outputFile.getFullPathName()).toStdString();
-        {
-            const juce::ScopedLock lock (lastErrorLock);
-            lastError = err;
-        }
-        rendering.store (false, std::memory_order_relaxed);
-        if (onFinished) onFinished (false, err);
-        return;
-    }
-    outStream->setPosition (0);
-    outStream->truncate();
-
     constexpr int kNumChannels = 2;   // bounce is always stereo
     std::string writerErr;
-    std::unique_ptr<juce::AudioFormatWriter> writer = makeWriter (std::move (outStream), writerErr);
+    auto writer = makeWriter (outputFile, writerErr);
     if (writer == nullptr)
     {
-        // Writer failed AFTER we truncated the file above - drop the now-zeroed
-        // file so we don't leave a 0-byte output behind (mirrors renderOneStem).
+        // makeWriter may have created + truncated the file before failing - drop
+        // it so we don't leave a 0-byte output behind (mirrors renderOneStem).
         outputFile.deleteFile();
         {
             const juce::ScopedLock lock (lastErrorLock);
@@ -410,6 +395,7 @@ void BounceEngine::run()
     bool succeeded = true;
     const bool dither16 = renderFormat == Format::Wav && renderWavBitDepth == 16;
     juce::Random ditherRng;
+    std::vector<float> interleaved ((size_t) renderBlockSize * kNumChannels, 0.0f);
     while (done < toRender && ! cancelRequested.load (std::memory_order_relaxed))
     {
         const int remaining = (int) std::min ((std::int64_t) renderBlockSize,
@@ -448,7 +434,10 @@ void BounceEngine::run()
                         p[i] += (ditherRng.nextFloat() - ditherRng.nextFloat()) * lsb;
                 }
             }
-            if (! writer->writeFromFloatArrays (offPtrs.data(), kNumChannels, writeCount))
+            for (int i = 0; i < writeCount; ++i)
+                for (int c = 0; c < kNumChannels; ++c)
+                    interleaved[(size_t) i * kNumChannels + (size_t) c] = offPtrs[(size_t) c][i];
+            if (! writer->writeInterleaved (interleaved.data(), writeCount))
             {
                 const juce::ScopedLock lock (lastErrorLock);
                 lastError = "Writer failed mid-render at " + std::to_string (written) + " samples";
@@ -472,17 +461,16 @@ void BounceEngine::run()
         lastError = kCancelledError;
     }
 
-    // MP3: the final frames only hit the stream at flush. Flush explicitly so
-    // a disk-full there fails the bounce instead of reporting success.
-    if (auto* mp3 = dynamic_cast<LameMp3Writer*> (writer.get());
-        mp3 != nullptr && ! mp3->finalize() && succeeded)
+    // Flush before close so a disk-full at flush (notably the MP3 encoder's
+    // final frames + Xing rewrite) fails the bounce instead of reporting success.
+    if (! writer->flush() && succeeded)
     {
         succeeded = false;
         const juce::ScopedLock lock (lastErrorLock);
-        lastError = "MP3 encoder flush failed (disk full?)";
+        lastError = "Writer flush failed (disk full?)";
     }
 
-    writer.reset();  // flush + close
+    writer.reset();  // close (flush already done above)
     // A cancelled or failed render must not leave a truncated file where the
     // user's previous good bounce was - stems and freeze already do this.
     if (! succeeded)
@@ -520,18 +508,10 @@ void BounceEngine::run()
     if (onFinished) onFinished (succeeded, errSnapshot);
 }
 
-std::unique_ptr<juce::AudioFormatWriter>
+std::unique_ptr<dusk::audio::IFileWriteSink>
 BounceEngine::openWriterFor (const juce::File& outFile, std::string& errOut) const
 {
-    std::unique_ptr<juce::FileOutputStream> outStream (outFile.createOutputStream());
-    if (outStream == nullptr)
-    {
-        errOut = ("Could not open output file " + outFile.getFullPathName()).toStdString();
-        return nullptr;
-    }
-    outStream->setPosition (0);
-    outStream->truncate();
-    auto writer = makeWriter (std::move (outStream), errOut);
+    auto writer = makeWriter (outFile, errOut);
     if (writer == nullptr)
         errOut += (" (" + outFile.getFileName() + ")").toStdString();
     return writer;
@@ -613,7 +593,7 @@ bool BounceEngine::runStemsMode()
     // Open every writer up front so a full disk / bad path fails before any
     // rendering.
     bool succeeded = true;
-    std::vector<std::unique_ptr<juce::AudioFormatWriter>> writers;
+    std::vector<std::unique_ptr<dusk::audio::IFileWriteSink>> writers;
     writers.reserve ((size_t) numStems);
     for (const auto& tgt : targets)
     {
@@ -648,6 +628,8 @@ bool BounceEngine::runStemsMode()
                                                    std::vector<float> ((size_t) renderBlockSize, 0.0f));
         std::vector<float*> outputPtrs (kNumChannels);
         for (int c = 0; c < kNumChannels; ++c) outputPtrs[(size_t) c] = outputs[(size_t) c].data();
+
+        std::vector<float> interleaved ((size_t) renderBlockSize * kNumChannels, 0.0f);
 
         duskstudio::device::CallbackContext ctx {};
 
@@ -702,9 +684,14 @@ bool BounceEngine::runStemsMode()
                                                            totalSamples - writtenFor[(size_t) i]);
                 if (writeCount > 0)
                 {
-                    const float* ptrs[kNumChannels] = { capL[(size_t) i].data() + writeStart,
-                                                        capR[(size_t) i].data() + writeStart };
-                    if (! writers[(size_t) i]->writeFromFloatArrays (ptrs, kNumChannels, writeCount))
+                    const float* srcL = capL[(size_t) i].data() + writeStart;
+                    const float* srcR = capR[(size_t) i].data() + writeStart;
+                    for (int f = 0; f < writeCount; ++f)
+                    {
+                        interleaved[(size_t) f * 2]       = srcL[f];
+                        interleaved[(size_t) f * 2 + 1]   = srcR[f];
+                    }
+                    if (! writers[(size_t) i]->writeInterleaved (interleaved.data(), writeCount))
                     {
                         const juce::ScopedLock lock (lastErrorLock);
                         lastError = "Writer failed mid-stem at "
@@ -772,7 +759,7 @@ bool BounceEngine::runRealtimeMode()
 {
     // Realtime capture: the engine stays attached and the session PLAYS.
     // The audio callback pushes the capture taps (or the master mix) into
-    // ThreadedWriters (see AudioEngine::RtBounceSink); this worker only
+    // ThreadedFileWriters (see AudioEngine::RtBounceSink); this worker only
     // orchestrates transport state and polls progress. Hardware inserts run
     // their external loop for real - the whole point of this mode.
     std::vector<StemTarget> files;
@@ -793,9 +780,6 @@ bool BounceEngine::runRealtimeMode()
     }
     const int numFiles = (int) files.size();
 
-    juce::TimeSliceThread diskThread ("Dusk Studio bounce disk");
-    diskThread.startThread();
-
     // Capture scratches sized to the live block; the callback never hands the
     // strips more than the prepared block size (oversized host blocks are
     // guarded upstream).
@@ -808,8 +792,14 @@ bool BounceEngine::runRealtimeMode()
     }
 
     bool succeeded = true;
-    std::vector<std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter>> writers;
+    std::vector<std::unique_ptr<dusk::audio::ThreadedFileWriter>> writers;
     writers.reserve ((size_t) numFiles);
+
+    // One disk thread drains every writer's ring round-robin. Declared after the
+    // writers so it destructs first: its thread joins before any ThreadedFileWriter
+    // is torn down (the teardown also unregisters + drains each writer explicitly).
+    dusk::audio::WriterDrainPool drainPool (numFiles);
+
     for (const auto& f : files)
     {
         std::string writerErr;
@@ -823,8 +813,10 @@ bool BounceEngine::runRealtimeMode()
             succeeded = false;
             break;
         }
-        writers.push_back (std::make_unique<juce::AudioFormatWriter::ThreadedWriter> (
-            writer.release(), diskThread, 1 << 17));
+        auto threaded = std::make_unique<dusk::audio::ThreadedFileWriter> (
+            std::move (writer), 1 << 17, dusk::audio::ThreadedFileWriter::Drain::External);
+        drainPool.add (threaded.get());
+        writers.push_back (std::move (threaded));
     }
 
     auto& transport = engine.getTransport();
@@ -961,10 +953,13 @@ bool BounceEngine::runRealtimeMode()
         });
     }
 
-    // ThreadedWriter destructors flush their queues to disk.
+    // Producers are stopped (engine.stop + the process fence above): drain each
+    // writer's ring to disk and unregister it before the pool thread goes away,
+    // then destroy the writers. drainPool joins its disk thread at scope exit.
     const size_t writersOpened = writers.size();
+    for (auto& w : writers)
+        drainPool.remove (w.get());
     writers.clear();
-    diskThread.stopThread (2000);
 
     runOnMessageThread ([&transport, savedPlayhead, savedLoop]
     {
@@ -1046,22 +1041,12 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
     renderFormat     = Format::Wav;   // freeze is always WAV (sample-accurate re-import)
 
     // Open the writer first - a failure here means we never touch engine state.
-    std::unique_ptr<juce::FileOutputStream> outStream (outFile.createOutputStream());
-    if (outStream == nullptr)
-    {
-        const juce::ScopedLock lock (lastErrorLock);
-        lastError = ("Could not open freeze file " + outFile.getFullPathName()).toStdString();
-        return false;
-    }
-    outStream->setPosition (0);
-    outStream->truncate();
-
     constexpr int kNumChannels = 2;
     std::string writerErr;
-    std::unique_ptr<juce::AudioFormatWriter> writer = makeWriter (std::move (outStream), writerErr);
+    auto writer = makeWriter (outFile, writerErr);
     if (writer == nullptr)
     {
-        outFile.deleteFile();   // drop the 0-byte file we just truncated
+        outFile.deleteFile();   // drop any partial file makeWriter truncated
         const juce::ScopedLock lock (lastErrorLock);
         lastError = writerErr;
         return false;
@@ -1099,6 +1084,7 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
     // per-block so a strip early-return writes silence, never a stale block.
     std::vector<float> capL ((size_t) renderBlockSize, 0.0f);
     std::vector<float> capR ((size_t) renderBlockSize, 0.0f);
+    std::vector<float> interleaved ((size_t) renderBlockSize * kNumChannels, 0.0f);
 
     duskstudio::device::CallbackContext ctx {};
 
@@ -1161,8 +1147,14 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
         const int writeCount = remaining - writeStart;
         if (writeCount > 0)
         {
-            float* capPtrs[kNumChannels] = { capL.data() + writeStart, capR.data() + writeStart };
-            if (! writer->writeFromFloatArrays (capPtrs, kNumChannels, writeCount))
+            const float* srcL = capL.data() + writeStart;
+            const float* srcR = capR.data() + writeStart;
+            for (int i = 0; i < writeCount; ++i)
+            {
+                interleaved[(size_t) i * 2]     = srcL[i];
+                interleaved[(size_t) i * 2 + 1] = srcR[i];
+            }
+            if (! writer->writeInterleaved (interleaved.data(), writeCount))
             {
                 const juce::ScopedLock lock (lastErrorLock);
                 lastError = "Writer failed mid-freeze at " + std::to_string (written) + " samples";

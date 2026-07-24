@@ -1,11 +1,13 @@
 # De-JUCE tower spec — Audio-file call-site sweep (juce_audio_formats consumers → dusk libsndfile seam)
 
-**STATUS: PR-1 MERGED (#107, main @ 8c7859e). A2 DONE on branch
-`dejuce/audiofile-sweep-2`: `dusk::audio::BufferedFileReader` built per §B1 and
-PlaybackEngine + MasteringPlayer flipped off the JUCE buffering reader, no
-platform gate anywhere. Resume: "A3 write path (IFileWriteSink +
-WriterDrainPool) on dejuce/audiofile-sweep-2". PR-2 = A2+A3+A4 on that one
-branch — do not open it before A4.**
+**STATUS: PR-1 MERGED (#107, main @ 8c7859e). A2 + A3 DONE on branch
+`dejuce/audiofile-sweep-2`: A2 built `dusk::audio::BufferedFileReader` (§B1) and
+flipped PlaybackEngine + MasteringPlayer; A3 wired the write path — LameMp3Writer
+re-based onto IFileWriteSink (now JUCE-free, plain FILE*), RecordManager +
+BounceEngine + RtBounceSink drain through WriterDrainPools, no platform gate
+anywhere. Net allowlist −2 (LameMp3Writer.{h,cpp} cleaned → gate 182). Resume:
+"A4 residue sweep + docs on dejuce/audiofile-sweep-2". PR-2 = A2+A3+A4 on that
+one branch — do not open it before A4.**
 Update this line each session (phase done, branch, resume phrase).
 
 Read order for an executing session: `docs/dejuce-campaign.md` → this file →

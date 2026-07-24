@@ -20,8 +20,6 @@ src/engine/DuskStudioPlayHead.h
 src/engine/FileImporter.cpp
 src/engine/FileImporter.h
 src/engine/JuceCompat.h
-src/engine/LameMp3Writer.cpp
-src/engine/LameMp3Writer.h
 src/engine/MasteringPlayer.cpp
 src/engine/MasteringPlayer.h
 src/engine/NativeScanRows.h

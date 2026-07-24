@@ -1,8 +1,9 @@
 #pragma once
 
-#include <juce_audio_formats/juce_audio_formats.h>
+#include <juce_core/juce_core.h>
 #include "../session/Session.h"
 #include "../foundation/Text.h"
+#include "audiofile/IFileWriteSink.h"
 #include <array>
 #include <atomic>
 #include <functional>
@@ -293,16 +294,16 @@ private:
 
     std::int64_t computeBounceLength (double sampleRate, double tail) const;
 
-    // Create the WAV or MP3 writer for the chosen format over an already-opened
-    // (truncated) output stream. Returns null + sets errOut on failure. Takes
-    // ownership of outStream on success; on failure outStream is freed.
-    std::unique_ptr<juce::AudioFormatWriter>
-        makeWriter (std::unique_ptr<juce::FileOutputStream> outStream, std::string& errOut) const;
+    // Create the WAV (libsndfile) or MP3 (libmp3lame) write sink for the chosen
+    // format, opening + truncating outFile itself. Null + errOut on failure; the
+    // file may already be truncated by then, so failure paths that must preserve
+    // prior content delete it.
+    std::unique_ptr<dusk::audio::IFileWriteSink>
+        makeWriter (const juce::File& outFile, std::string& errOut) const;
 
-    // Open + truncate outFile, then wrap it in the configured format writer.
-    // Null + errOut on failure - the file may already be truncated by then,
-    // so failure paths that must preserve prior content delete it.
-    std::unique_ptr<juce::AudioFormatWriter>
+    // makeWriter with the file name appended to the error, for the stem / realtime
+    // paths that render many files at once.
+    std::unique_ptr<dusk::audio::IFileWriteSink>
         openWriterFor (const juce::File& outFile, std::string& errOut) const;
 
     // Stem-tap registry plumbing shared by the offline and realtime stem

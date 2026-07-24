@@ -4,6 +4,7 @@
 
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <cmath>
+#include <vector>
 
 using namespace duskstudio;
 
@@ -13,10 +14,16 @@ namespace
 juce::File encodeToMp3 (const juce::AudioBuffer<float>& src, double sr, int bitrate)
 {
     const auto mp3 = juce::File::createTempFile (".mp3");
-    auto* stream = mp3.createOutputStream().release();
-    LameMp3Writer writer (stream, sr, 2, bitrate);
+    LameMp3Writer writer (mp3.getFullPathName().toStdString(), sr, 2, bitrate);
     REQUIRE (writer.isOk());
-    REQUIRE (writer.writeFromAudioSampleBuffer (src, 0, src.getNumSamples()));
+    const int n = src.getNumSamples();
+    std::vector<float> interleaved ((size_t) n * 2, 0.0f);
+    for (int i = 0; i < n; ++i)
+    {
+        interleaved[(size_t) i * 2]     = src.getSample (0, i);
+        interleaved[(size_t) i * 2 + 1] = src.getSample (1, i);
+    }
+    REQUIRE (writer.writeInterleaved (interleaved.data(), n));
     return mp3;   // writer destructor (end of scope) flushes + closes
 }
 }
