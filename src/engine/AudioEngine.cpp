@@ -1244,8 +1244,8 @@ void AudioEngine::performPendingDspRestartIfIdle()
     performDspRestart();
 }
 
-// Detach + reattach rather than close the device: removeAudioCallback fires
-// audioDeviceStopped, addAudioCallback fires audioDeviceAboutToStart ->
+// Detach + reattach rather than close the device: removeCallback fires
+// audioDeviceStopped, addCallback fires audioDeviceAboutToStart ->
 // prepareForSelfTest, rebuilding every strip/bus/master oversampler at the
 // current factor without touching the device or the window peer (a full
 // close/restart disturbs it on Linux - mouse-offset regression). The worker
@@ -1253,9 +1253,9 @@ void AudioEngine::performPendingDspRestartIfIdle()
 // never race it. Brief silence gap only.
 void AudioEngine::performDspRestart()
 {
-    deviceManager.removeAudioCallback (this);
+    deviceManager.removeCallback (this);
     applyDesiredWorkers();
-    deviceManager.addAudioCallback (this);
+    deviceManager.addCallback (this);
 }
 
 void AudioEngine::clearDeviceFallbackHold()
