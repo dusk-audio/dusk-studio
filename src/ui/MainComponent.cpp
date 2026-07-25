@@ -226,7 +226,7 @@ public:
 // Progress body for the DP-import modal: bar + cancel, 20 Hz poll of the
 // job's atomics. Fires onFinished exactly once on the message thread when
 // the worker flips `done`.
-class DpImportProgressPanel final : public juce::Component, private juce::Timer
+class DpImportProgressPanel final : public juce::Component, private dusk::Timer
 {
 public:
     explicit DpImportProgressPanel (DpImportJob& j) : job (j), bar (value)
@@ -844,7 +844,7 @@ MainComponent::MainComponent()
     if (auto deviceMsg = engine.consumeStartupDeviceMessage(); deviceMsg.isNotEmpty())
     {
         juce::Component::SafePointer<MainComponent> safeThis (this);
-        juce::MessageManager::callAsync ([safeThis, deviceMsg]
+        dusk::callAsync ([safeThis, deviceMsg]
         {
             if (auto* self = safeThis.getComponent())
                 showDuskConfirm (*self, "Audio device unavailable", deviceMsg,
@@ -869,7 +869,7 @@ MainComponent::MainComponent()
     {
         juce::Component::SafePointer<MainComponent> safeThis (this);
         juce::String pathStr (loadPath);
-        juce::MessageManager::callAsync ([safeThis, pathStr]
+        dusk::callAsync ([safeThis, pathStr]
         {
             if (safeThis != nullptr)
                 safeThis->loadSessionFromJson (juce::File (pathStr));
@@ -883,7 +883,7 @@ MainComponent::MainComponent()
         // Capture mode suppresses the picker too - its modal would overlay
         // the snapshots (mirrors the CAPTURE_DIR guard in the scan path).
         juce::Component::SafePointer<MainComponent> safeThis (this);
-        juce::MessageManager::callAsync ([safeThis]
+        dusk::callAsync ([safeThis]
         {
             if (safeThis != nullptr) safeThis->launchStartupDialog();
         });
@@ -902,7 +902,7 @@ MainComponent::MainComponent()
         // here would be too late).
         juce::String dirStr (capDir);
         juce::Component::SafePointer<MainComponent> safeThis (this);
-        juce::Timer::callAfterDelay (1500, [safeThis, dirStr]
+        dusk::Timer::callAfterDelay (1500, [safeThis, dirStr]
         {
             if (safeThis != nullptr)
                 safeThis->captureScreenshots (juce::File (dirStr));
@@ -1556,7 +1556,7 @@ void MainComponent::maybeStartStartupPluginScan()
     // re-enter layout). By the next message-loop tick the window is shown and
     // sized, so the EmbeddedModal centres over real bounds.
     juce::Component::SafePointer<MainComponent> safe (this);
-    juce::MessageManager::callAsync ([safe]
+    dusk::callAsync ([safe]
     {
         auto* self = safe.getComponent();
         if (self == nullptr) return;
@@ -2093,7 +2093,7 @@ void MainComponent::doMixdown()
         panel->onRequestClose = [safeThis] { if (safeThis != nullptr) safeThis->mixdownModal.close(); };
         panel->onSuccessfulFinish = [safeThis] (juce::File rendered)
         {
-            juce::MessageManager::callAsync ([safeThis, rendered]
+            dusk::callAsync ([safeThis, rendered]
             {
                 if (safeThis == nullptr) return;
                 safeThis->switchToStage (AudioEngine::Stage::Mastering);
@@ -2176,7 +2176,7 @@ void MainComponent::dismissStartupDialog (std::function<void()> onDone)
     // chain is fragile. callAsync runs on the message thread after the
     // click handler returns, when nothing's still on the dialog's stack.
     juce::Component::SafePointer<MainComponent> safeThis (this);
-    juce::MessageManager::callAsync ([safeThis, onDone = std::move (onDone)]
+    dusk::callAsync ([safeThis, onDone = std::move (onDone)]
     {
         if (safeThis == nullptr) return;
         safeThis->startupDialog.reset();
@@ -2223,12 +2223,12 @@ void MainComponent::guardUnsavedThen (const juce::String& title,
     auto go = std::make_shared<std::function<void()>> (std::move (proceed));
     dialog->onCancel = [safe]
     {
-        juce::MessageManager::callAsync ([safe]
+        dusk::callAsync ([safe]
             { if (auto* s = safe.getComponent()) s->quitModal.close(); });
     };
     dialog->onDontSave = [safe, go]
     {
-        juce::MessageManager::callAsync ([safe, go]
+        dusk::callAsync ([safe, go]
         {
             if (auto* s = safe.getComponent())
             {
@@ -2243,7 +2243,7 @@ void MainComponent::guardUnsavedThen (const juce::String& title,
     };
     dialog->onSave = [safe, go]
     {
-        juce::MessageManager::callAsync ([safe, go]
+        dusk::callAsync ([safe, go]
         {
             auto* s = safe.getComponent();
             if (s == nullptr) return;
@@ -2680,7 +2680,7 @@ void MainComponent::requestQuit()
 
     dialog->onCancel = [safeThis]
     {
-        juce::MessageManager::callAsync ([safeThis]
+        dusk::callAsync ([safeThis]
         {
             if (auto* self = safeThis.getComponent())
                 self->quitModal.close();
@@ -2692,7 +2692,7 @@ void MainComponent::requestQuit()
         // launch doesn't offer to recover the work the user just discarded.
         // Recovery is then reserved for an actual crash (unclean exit, where
         // this clean-shutdown path never runs and the autosave survives).
-        juce::MessageManager::callAsync ([safeThis]
+        dusk::callAsync ([safeThis]
         {
             if (auto* self = safeThis.getComponent())
             {
@@ -2709,7 +2709,7 @@ void MainComponent::requestQuit()
         // the chooser, if it opens, isn't fighting our overlay for
         // input. On save success, quit; on failure (chooser cancel,
         // disk error) the user is left in the app and can retry.
-        juce::MessageManager::callAsync ([safeThis]
+        dusk::callAsync ([safeThis]
         {
             auto* self = safeThis.getComponent();
             if (self == nullptr) return;
@@ -2823,7 +2823,7 @@ void MainComponent::beginSafeShutdown()
     // the unmap before processing the EWMH activate above and trips
     // meta_window_unmanage.
     juce::Component::SafePointer<MainComponent> safeThis (this);
-    juce::MessageManager::callAsync ([safeThis]
+    dusk::callAsync ([safeThis]
     {
         auto* self = safeThis.getComponent();
         if (self == nullptr) return;
@@ -2842,7 +2842,7 @@ void MainComponent::beginSafeShutdown()
         duskstudio::platform::clearXInputFocus();
 
         mark ("phase 7: defer systemRequestedQuit to next message-loop tick");
-        juce::MessageManager::callAsync ([]
+        dusk::callAsync ([]
         {
             std::fprintf (stderr,
                           "[Dusk Studio/shutdown] phase 7b: posting systemRequestedQuit\n");
@@ -3082,7 +3082,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
                     "rate of " + juce::String ((int) session.sessionSampleRate)
                     + " Hz in Settings, or expect to re-record.";
                 juce::Component::SafePointer<MainComponent> safeThis (this);
-                juce::MessageManager::callAsync ([body, safeThis]
+                dusk::callAsync ([body, safeThis]
                 {
                     if (auto* self = safeThis.getComponent())
                         showDuskAlert (*self, "Sample-rate mismatch", body);
@@ -3142,7 +3142,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
                     "right format (VST3 / LV2 / AU / CLAP) and that this binary "
                     "can find them, then reload the session.";
             juce::Component::SafePointer<MainComponent> safeThis (this);
-            juce::MessageManager::callAsync (
+            dusk::callAsync (
                 [body = std::move (body), safeThis]
                 {
                     if (auto* self = safeThis.getComponent())
@@ -3164,7 +3164,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
                 "moved, copy the files back into its audio/ subfolder and "
                 "reload the session.";
         juce::Component::SafePointer<MainComponent> safeThis (this);
-        juce::MessageManager::callAsync (
+        dusk::callAsync (
             [body = std::move (body), safeThis]
             {
                 if (auto* self = safeThis.getComponent())
@@ -3268,7 +3268,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // renders in its inactive/dimmed state and the first click only re-focuses.
     // Reassert front + keyboard focus once the rebuild settles.
     juce::Component::SafePointer<MainComponent> safeThis (this);
-    juce::MessageManager::callAsync ([safeThis]
+    dusk::callAsync ([safeThis]
     {
         auto* self = safeThis.getComponent();
         if (self == nullptr) return;
@@ -4687,7 +4687,7 @@ bool editorStartRectUsable (juce::Rectangle<int> r) noexcept
 
 // One-shot timer that fires `fn` once after `ms` then idles. Owned by
 // MainComponent so it outlives the ComponentAnimator's collapse run.
-class OneShotTimer final : public juce::Timer
+class OneShotTimer final : public dusk::Timer
 {
 public:
     OneShotTimer (int ms, std::function<void()> f) : fn (std::move (f)) { startTimer (ms); }
@@ -4806,7 +4806,7 @@ void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
         // frame - closing in place would destroy the component (and the
         // invoked std::function) while both are still on the stack.
         juce::Component::SafePointer<MainComponent> safe (this);
-        juce::MessageManager::callAsync ([safe, t, newIdx]
+        dusk::callAsync ([safe, t, newIdx]
         {
             if (auto* self = safe.getComponent())
             {
@@ -4942,7 +4942,7 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
     {
         // Deferred - see the piano-roll navigate handler.
         juce::Component::SafePointer<MainComponent> safe (this);
-        juce::MessageManager::callAsync ([safe, t, newIdx]
+        dusk::callAsync ([safe, t, newIdx]
         {
             if (auto* self = safe.getComponent())
             {
@@ -5000,7 +5000,7 @@ void MainComponent::scheduleEditModeRestore()
     // stack, so by the time this fires a modal is open again and the restore
     // is correctly skipped. A genuine close leaves both editors null.
     juce::Component::SafePointer<MainComponent> safe (this);
-    juce::MessageManager::callAsync ([safe]
+    dusk::callAsync ([safe]
     {
         if (auto* s = safe.getComponent()) s->restoreEditModeIfModalClosed();
     });
@@ -5042,8 +5042,8 @@ namespace
 {
 // Tiny Timer subclass used by the tuner overlay to poll the engine's
 // pitch atoms at 30 Hz on the message thread. Public-internal because
-// the unique_ptr in MainComponent.h holds it as juce::Timer*.
-class TunerPoller final : public juce::Timer
+// the unique_ptr in MainComponent.h holds it as dusk::Timer*.
+class TunerPoller final : public dusk::Timer
 {
 public:
     TunerPoller (Session& s, TunerOverlay& o) : session (s), overlay (o)
@@ -5106,7 +5106,7 @@ void MainComponent::closeTuner()
     {
         std::shared_ptr<juce::Component> trashTuner (tuner.release());
         std::shared_ptr<juce::Component> trashDim   (tunerDim.release());
-        juce::MessageManager::callAsync ([trashTuner, trashDim]() mutable {});
+        dusk::callAsync ([trashTuner, trashDim]() mutable {});
     }
     session.tuneTrackIndex.store (-1, std::memory_order_relaxed);
 }

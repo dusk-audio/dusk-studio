@@ -117,7 +117,7 @@ public:
         // showing, and a synchronous grab silently fails - the user then
         // has to click into the field before typing.
         juce::Component::SafePointer<TextInputPanel> safe (this);
-        juce::MessageManager::callAsync ([safe]
+        dusk::callAsync ([safe]
         {
             // Modal may be dismissed between scheduling and now; skip the grab
             // if the panel is no longer on screen.

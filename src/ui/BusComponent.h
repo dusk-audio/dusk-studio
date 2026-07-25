@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "../foundation/MessageThread.h"
 #include <memory>
 #include "../session/Session.h"
 #include "AnalogVuMeter.h"
@@ -13,7 +14,7 @@ namespace duskstudio
 {
 class AudioEngine;
 
-class BusComponent final : public juce::Component, private juce::Timer
+class BusComponent final : public juce::Component, private dusk::Timer
 {
 public:
     BusComponent (Bus& busRef, class Session& sessionRef,

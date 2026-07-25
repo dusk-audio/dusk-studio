@@ -1,5 +1,6 @@
 #include "DuskComboBox.h"
 #include "EmbeddedModal.h"
+#include "../foundation/MessageThread.h"
 
 #include <cmath>
 
@@ -273,7 +274,7 @@ struct ListView
 // The list is presented in its incoming order (the SF2 editor sorts it
 // program-first so an instrument's bank variants group together).
 class DuskComboPanel final : public juce::Component,
-                             private juce::Timer
+                             private dusk::Timer
 {
 public:
     using Row = duskstudio::Row;
@@ -313,6 +314,8 @@ public:
 
         if (useGrid) startTimer (kCaretBlinkMs);   // blinking caret in the filter box
     }
+
+    ~DuskComboPanel() override { stopTimer(); }
 
     void timerCallback() override
     {

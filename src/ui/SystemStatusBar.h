@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <memory>
 #include "../engine/AudioEngine.h"
+#include "../foundation/MessageThread.h"
 
 class ChordAnalyzer;
 
@@ -11,7 +12,7 @@ namespace duskstudio
 // Compact monospace readout that lives in the upper-right of the window:
 //   Audio: 48 kHz 5.3 ms   DSP: 12% (3)
 // Updated 4 Hz. CPU comes from AudioDeviceManager; xrun count from AudioEngine.
-class SystemStatusBar final : public juce::Component, private juce::Timer
+class SystemStatusBar final : public juce::Component, private dusk::Timer
 {
 public:
     explicit SystemStatusBar (AudioEngine& engineRef);

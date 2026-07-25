@@ -4,6 +4,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "../DuskComboBox.h"
+#include "../../foundation/MessageThread.h"
 
 #include <memory>
 
@@ -20,7 +21,7 @@ class DuskMultisampleProcessor;
 // plugin picker. ADSR / filter / LFO controls + zone mapping
 // editor land in Phase 2 / Phase 3 per the plan.
 class DuskMultisampleEditor final : public juce::AudioProcessorEditor,
-                                     private juce::Timer
+                                     private dusk::Timer
 {
 public:
     explicit DuskMultisampleEditor (DuskMultisampleProcessor& proc);

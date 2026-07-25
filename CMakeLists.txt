@@ -781,6 +781,7 @@ if(_duskstudio_oop_enabled)
         BUNDLE_ID    "audio.dusk.studio.pluginhost")
     target_sources(dusk-studio-plugin-host PRIVATE
         src/engine/ipc/PluginHostMain.cpp
+        src/foundation/MessageThread.cpp
         ${_duskstudio_ipc_child_platform_sources})
     target_compile_features (dusk-studio-plugin-host PRIVATE cxx_std_17)
     target_compile_definitions (dusk-studio-plugin-host PRIVATE

@@ -198,7 +198,7 @@ private:
 //   - RIGHT: 2×2 knob grid (RAT / MAK top, ATK / REL bottom)
 // No mode picker (bus comp is a fixed SSL-style glue topology). No
 // standalone THR knob - threshold is set via the triangle handle.
-class BusCompEditorPanel final : public juce::Component, private juce::Timer
+class BusCompEditorPanel final : public juce::Component, private dusk::Timer
 {
 public:
     BusCompEditorPanel (Bus& busRef) : bus (busRef)
@@ -855,7 +855,7 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
 BusComponent::~BusComponent()
 {
     // stopTimer() must run before any member destructor so the timer
-    // thread can't fire timerCallback on freed atomics. juce::Timer's
+    // thread can't fire timerCallback on freed atomics. dusk::Timer's
     // own destructor calls stopTimer too but that's the BASE-class
     // destructor - it runs AFTER derived-class members destruct.
     stopTimer();

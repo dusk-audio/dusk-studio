@@ -5,6 +5,7 @@
 #include "../engine/clap/ClapBundle.h"
 #include "../engine/clap/ClapInstance.h"
 #include "../engine/clap/ClapEditor.h"
+#include "../foundation/MessageThread.h"
 
 namespace duskstudio
 {
@@ -17,7 +18,7 @@ namespace duskstudio
 // The reusable editor piece for aux-lane hosting; also driven by the
 // DUSKSTUDIO_CLAP_EDITOR_TEST launch path for live verification.
 class ClapPluginEditorComponent final : public juce::Component,
-                                         private juce::Timer
+                                         private dusk::Timer
 {
 public:
     ClapPluginEditorComponent();

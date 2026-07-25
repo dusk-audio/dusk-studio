@@ -1,11 +1,12 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "../foundation/MessageThread.h"
 #include "../session/Session.h"
 
 namespace duskstudio
 {
-class ChannelCompEditor final : public juce::Component, private juce::Timer
+class ChannelCompEditor final : public juce::Component, private dusk::Timer
 {
 public:
     explicit ChannelCompEditor (Track& trackRef);

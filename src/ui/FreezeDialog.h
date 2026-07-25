@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <memory>
 #include "../engine/BounceEngine.h"
+#include "../foundation/MessageThread.h"
 
 namespace duskstudio
 {
@@ -16,7 +17,7 @@ class Session;
 // success it commits the freeze on the message thread (AudioEngine::commitFreeze)
 // before the user dismisses it; Cancel aborts the render and writes nothing.
 class FreezeDialog final : public juce::Component,
-                            private juce::Timer
+                            private dusk::Timer
 {
 public:
     FreezeDialog (AudioEngine& engine, Session& session, int trackIndex);

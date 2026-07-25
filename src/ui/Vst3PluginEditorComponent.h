@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "../engine/vst3/Vst3Editor.h"
+#include "../foundation/MessageThread.h"
 
 namespace duskstudio
 {
@@ -14,7 +15,7 @@ namespace vst3 { class Vst3Instance; }
 // like the LV2 UI, the view attaches (and first exists on screen) when this
 // component is actually showing.
 class Vst3PluginEditorComponent final : public juce::Component,
-                                         private juce::Timer
+                                         private dusk::Timer
 {
 public:
     Vst3PluginEditorComponent();

@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "DimOverlay.h"
+#include "../foundation/MessageThread.h"
 #include <functional>
 #include <memory>
 #include <vector>
@@ -336,7 +337,7 @@ public:
             // capture is copyable - std::function needs copyable
             // callables on libc++ (macOS).
             std::shared_ptr<juce::Component> trash (body_.release());
-            juce::MessageManager::callAsync (
+            dusk::callAsync (
                 [trash]() mutable { (void) trash; });
         }
         borrowedBody_ = nullptr;
@@ -348,13 +349,13 @@ public:
         if (backdrop_ != nullptr)
         {
             std::shared_ptr<juce::Component> trash (backdrop_.release());
-            juce::MessageManager::callAsync (
+            dusk::callAsync (
                 [trash]() mutable { (void) trash; });
         }
         if (dim_ != nullptr)
         {
             std::shared_ptr<juce::Component> trash (dim_.release());
-            juce::MessageManager::callAsync (
+            dusk::callAsync (
                 [trash]() mutable { (void) trash; });
         }
         // Restore keyboard focus to whatever should own it now this modal is
@@ -389,7 +390,7 @@ public:
             // (setMouseClickGrabsKeyboardFocus(false)), leaving focus orphaned
             // once the body is destroyed. Grab only when nothing else took it.
             const auto genAtClose = modalGeneration();
-            juce::MessageManager::callAsync ([target, genAtClose, restoreFocus]() mutable
+            dusk::callAsync ([target, genAtClose, restoreFocus]() mutable
             {
                 if (genAtClose != modalGeneration()) return;
                 if (! restoreFocus

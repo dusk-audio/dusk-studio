@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "../foundation/MessageThread.h"
 #include <atomic>
 
 namespace duskstudio
@@ -18,7 +19,7 @@ namespace duskstudio
 // meter would slam its endstop. Two atoms = stereo (two needles overlaid on
 // one face); one atom = single-channel (e.g. master bus summed RMS, or a
 // caller that already collapses L/R upstream).
-class AnalogVuMeter final : public juce::Component, private juce::Timer
+class AnalogVuMeter final : public juce::Component, private dusk::Timer
 {
 public:
     // leftRmsAtom must be non-null; rightRmsAtom may be null for mono. Atoms

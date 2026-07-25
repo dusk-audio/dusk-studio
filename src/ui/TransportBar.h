@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../engine/AudioEngine.h"
+#include "../foundation/MessageThread.h"
 #include <array>
 
 namespace duskstudio
@@ -35,7 +36,7 @@ private:
     bool heldDown = false;
 };
 
-class TransportBar final : public juce::Component, private juce::Timer
+class TransportBar final : public juce::Component, private dusk::Timer
 {
 public:
     explicit TransportBar (AudioEngine& engineRef);

@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <array>
 #include "../engine/AudioEngine.h"
+#include "../foundation/MessageThread.h"
 
 namespace duskstudio
 {
@@ -38,7 +39,7 @@ namespace duskstudio
 // auto-repeat keyPressed resets it as a "still-held" heartbeat for the
 // fallback path.
 class VirtualKeyboardComponent final : public juce::Component,
-                                          private juce::Timer
+                                          private dusk::Timer
 {
 public:
     explicit VirtualKeyboardComponent (AudioEngine& engine);

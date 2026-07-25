@@ -1,8 +1,8 @@
 #pragma once
 
 #include <juce_core/juce_core.h>
-#include <juce_events/juce_events.h>
 #include <nlohmann/json.hpp>
+#include "../foundation/MessageThread.h"
 #include <functional>
 #include <algorithm>
 
@@ -161,7 +161,7 @@ inline void checkForNewerTagAsync (juce::String currentVersion,
         if (! parseVersion (tag, latest) || ! isNewer (latest, current))
             return;
 
-        juce::MessageManager::callAsync ([tag, onNewer] { if (onNewer) onNewer (tag); });
+        dusk::callAsync ([tag, onNewer] { if (onNewer) onNewer (tag); });
     });
 }
 } // namespace updatecheck

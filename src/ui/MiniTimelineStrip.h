@@ -2,6 +2,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "../foundation/MessageThread.h"
+
 #include <functional>
 #include <utility>
 #include <vector>
@@ -18,7 +20,7 @@ class AudioEngine;
 // now, not in the transport bar); other names appear as hover tooltips.
 class MiniTimelineStrip final : public juce::Component,
                                 public juce::SettableTooltipClient,
-                                private juce::Timer,
+                                private dusk::Timer,
                                 private juce::ChangeListener
 {
 public:

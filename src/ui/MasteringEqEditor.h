@@ -6,6 +6,7 @@
 #include <memory>
 #include "../session/Session.h"
 #include "../dsp/MasteringChain.h"
+#include "../foundation/MessageThread.h"
 
 namespace duskstudio
 {
@@ -24,7 +25,7 @@ namespace duskstudio
 // Shelf bands hide their Q knob (the response-curve evaluator still uses
 // Q internally, but the user-facing control isn't useful for shelves at
 // the resolution mastering needs).
-class MasteringEqEditor final : public juce::Component, private juce::Timer
+class MasteringEqEditor final : public juce::Component, private dusk::Timer
 {
 public:
     MasteringEqEditor (MasteringParams& params, MasteringChain* chain);

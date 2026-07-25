@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "../foundation/MessageThread.h"
 #include <array>
 #include <memory>
 #include "../session/Session.h"
@@ -22,7 +23,7 @@ class ClapPluginEditorComponent;
 // the right. The plugin editor embeds inline in the center area below
 // the slot header (DuskStudioApp forces the main window peer to X11 on
 // Linux so OOP plugin X11 sub-windows can reparent into the lane).
-class AuxLaneComponent final : public juce::Component, private juce::Timer
+class AuxLaneComponent final : public juce::Component, private dusk::Timer
 {
 public:
     AuxLaneComponent (AuxLane& laneRef, AuxLaneStrip& strip, int laneIndex,
