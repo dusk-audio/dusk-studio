@@ -1125,6 +1125,8 @@ void AudioEngine::setStage (Stage s) noexcept
     // Gates two different signal flows on the audio thread - release/acquire
     // so the stop sequencing above is visible before the path switches.
     stage.store (s, std::memory_order_release);
+    if (crossesMastering)
+        performPendingDspRestartIfIdle();
 }
 
 AudioEngine::~AudioEngine()
@@ -1168,6 +1170,7 @@ void AudioEngine::drainCallbackDiagnostics()
 void AudioEngine::play()
 {
     if (transport.isPlaying() || transport.isRecording()) return;
+    performPendingDspRestartIfIdle();
 
     // The audio callback already wraps playhead >= loopEnd back, but
     // has no symmetric guard for before-loop - linear playback would
@@ -1191,7 +1194,11 @@ void AudioEngine::play()
 
 void AudioEngine::stop()
 {
-    if (transport.isStopped()) return;
+    if (transport.isStopped())
+    {
+        performPendingDspRestartIfIdle();
+        return;
+    }
 
     const bool wasRecording = transport.isRecording();
     transport.setState (Transport::State::Stopped);
@@ -1242,20 +1249,19 @@ void AudioEngine::stop()
             transport.setPlayhead (last);
     }
 
-    if (dspRestartPending_)
-    {
-        dspRestartPending_ = false;
-        performDspRestart();
-    }
+    performPendingDspRestartIfIdle();
 }
 
 void AudioEngine::restartDspWhenIdle()
 {
-    if (! transport.isStopped())
-    {
-        dspRestartPending_ = true;
-        return;
-    }
+    dspRestartPending_ = true;
+    performPendingDspRestartIfIdle();
+}
+
+void AudioEngine::performPendingDspRestartIfIdle()
+{
+    if (! dspRestartPending_ || ! transport.isStopped()) return;
+    dspRestartPending_ = false;
     performDspRestart();
 }
 
@@ -1289,6 +1295,8 @@ void AudioEngine::record()
         std::fprintf (stderr, "[Dusk Studio/AudioEngine] record(): already recording, ignored.\n");
         return;
     }
+
+    performPendingDspRestartIfIdle();
 
     // Defensive resync - some paths (RegionEditActions clone/restore)
     // write recordArmed directly and leave the counter stale, making
@@ -2421,6 +2429,15 @@ void AudioEngine::audioDeviceStopped()
     if (transport.isPlaying() || transport.isRecording())
         transport.setState (Transport::State::Stopped);
 
+    // The callback is already stopped here, so don't detach/reattach it
+    // recursively. Apply the non-prepare worker change now; the next
+    // audioDeviceAboutToStart rebuilds the remaining DSP at current settings.
+    if (dspRestartPending_)
+    {
+        dspRestartPending_ = false;
+        applyDesiredWorkers();
+    }
+
     currentSampleRate.store (0.0, std::memory_order_relaxed);
     currentBlockSize.store  (0,   std::memory_order_relaxed);
 
@@ -2493,6 +2510,7 @@ void AudioEngine::changeListenerCallback (juce::ChangeBroadcaster* source)
                 recordManager.stopRecording (transport.getPlayhead());
             transport.setState (Transport::State::Stopped);
         }
+        performPendingDspRestartIfIdle();
 
         if (onDeviceLostAlert_)
         {

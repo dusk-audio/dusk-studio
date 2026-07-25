@@ -2939,7 +2939,9 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
     {
         auto* r = region();
         if (r == nullptr) return true;
-        const double sr = juce::jmax (1.0, engine.getCurrentSampleRate());
+        const double sr = juce::jmax (1.0,
+            loadedFileSampleRate > 0.0 ? loadedFileSampleRate
+                                        : engine.getCurrentSampleRate());
         const double bpm = juce::jmax (1.0, (double) session.tempoBpm.load (std::memory_order_relaxed));
         const int    bpb = juce::jmax (1, session.beatsPerBar.load (std::memory_order_relaxed));
         const auto samplesPerBeat = (std::int64_t) std::round (sr * 60.0 / bpm);

@@ -250,9 +250,9 @@ public:
     void record();
 
     // Message thread. Detach + reattach the audio callback so DSP re-prepares
-    // (oversampling factor, worker-pool size). Deferred to the next stop()
-    // while the transport is rolling so a live take or playback isn't
-    // interrupted by the silence gap.
+    // (oversampling factor, worker-pool size). Deferred until the transport is
+    // next observed stopped while it is rolling so a live take or playback
+    // isn't interrupted by the silence gap.
     void restartDspWhenIdle();
 
     // Message thread. Re-enables device-state persistence after the ALSA
@@ -802,8 +802,10 @@ private:
     int recordingLatencyOffsetSamples_ = 0;
 
     // Message-thread only. Set when a settings change needs a DSP restart
-    // but the transport was rolling; consumed at the end of stop().
+    // but the transport was rolling; consumed as soon as the transport is
+    // observed stopped.
     bool dspRestartPending_ = false;
+    void performPendingDspRestartIfIdle();
     void performDspRestart();
 
     // Message-thread only. While set, changeListenerCallback skips
