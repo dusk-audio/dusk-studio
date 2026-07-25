@@ -2,9 +2,9 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../foundation/MessageThread.h"
+#include "../session/Session.h"
 #include <functional>
 #include <utility>
-#include "../session/Session.h"
 
 namespace duskstudio
 {

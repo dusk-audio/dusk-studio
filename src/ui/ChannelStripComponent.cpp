@@ -3243,6 +3243,8 @@ public:
         setSize (260, 130);
     }
 
+    ~AuxSendsCompactPanel() override { stopTimer(); }
+
     void resized() override
     {
         auto area = getLocalBounds().reduced (10);
