@@ -5,6 +5,36 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
+## [0.12.6] - 2026-07-25
+
+Beta patch on the 0.12 line: manual recording latency compensation for
+interfaces that misreport their round-trip latency.
+
+### Added
+
+- **Manual recording latency offset.** Audio Settings > Advanced gains an
+  offset (in samples) applied to every recorded take at placement, for
+  interfaces whose reported latency leaves overdubs drifting. Count-in, the
+  write gate, and MIDI placement are unaffected; a shift that would cross
+  timeline zero trims the take's head instead of playing it late, and a take
+  fully consumed by the offset is surfaced rather than silently discarded.
+- **Sample readout in the region editor.** The status bar shows the cursor
+  position - or range start and length - in raw samples, so a loopback
+  calibration recording can be measured directly.
+
+### Fixed
+
+- **Stream leak** when WAV writer creation failed at record start.
+- **Import races** in the region editor.
+- **Device restarts.** A pending DSP restart now defers to transport stop and
+  is consumed at every stop, and teardown around the restart is thread-safe.
+  The fallback device choice persists across restarts.
+
+### Changed
+
+- **Audio settings layout.** Advanced rows aligned, effect oversampling on its
+  own row, Rescan devices moved into the Audio section.
+
 ## [0.12.5] - 2026-07-18
 
 Beta patch: the Windows build of 0.12.4. Same feature set, now compiling on
