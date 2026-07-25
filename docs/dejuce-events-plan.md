@@ -147,9 +147,10 @@ files, AI-slop sweep of the whole diff.
 
 ## Owed to Marc's bench
 
-- Live-Wayland launch sanity (dev verification is Xvfb-only).
+- Live-Wayland launch sanity — PAID 2026-07-25: session load, CLAP editor
+  embed, timer-driven UI, full shutdown chain all clean on live Wayland.
 - OOP plugin host smoke (PluginHostMain callAsync flip) with a real
-  out-of-process plugin.
+  out-of-process plugin — still open.
 
 ## Resume phrase
 
