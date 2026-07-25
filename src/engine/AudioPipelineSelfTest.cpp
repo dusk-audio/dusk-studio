@@ -262,22 +262,24 @@ juce::String AudioPipelineSelfTest::testPassThroughUnity()
                       && std::abs (m.rmsR  - expRms)  < kRmsTol;
     const bool stereoOK = std::abs (m.peakL - m.peakR) < 0.01f;
 
-    return juce::String::formatted (
-        "%s Pass-Through Unity (track 0 IN, fader 0 dB, pan center, master 0 dB)\n"
-        "      Input -6 dBFS sine @1 kHz, %.0f Hz / %d samples, 16in/2out\n"
-        "      Expected peak=%.4f (%+.2f dBFS), RMS=%.4f (%+.2f dBFS)\n"
-        "      Measured L peak=%.4f (%+.2f dBFS), RMS=%.4f (%+.2f dBFS) %s\n"
-        "      Measured R peak=%.4f (%+.2f dBFS), RMS=%.4f (%+.2f dBFS) %s\n"
-        "      L vs R peak delta: %.4f %s",
-        fmtPassFail (peakOK && rmsOK && stereoOK).toRawUTF8(),
-        sr, bs,
-        expPeak, ampToDb (expPeak), expRms, ampToDb (expRms),
-        m.peakL, ampToDb (m.peakL), m.rmsL, ampToDb (m.rmsL),
-        peakOK && rmsOK ? "" : "<-- mismatch",
-        m.peakR, ampToDb (m.peakR), m.rmsR, ampToDb (m.rmsR),
-        peakOK && rmsOK ? "" : "<-- mismatch",
-        std::abs (m.peakL - m.peakR),
-        stereoOK ? "" : "<-- L/R imbalance!");
+    return fmtPassFail (peakOK && rmsOK && stereoOK)
+        + juce::String::formatted (
+            " Pass-Through Unity (track 0 IN, fader 0 dB, pan center, master 0 dB)\n"
+            "      Input -6 dBFS sine @1 kHz, %.0f Hz / %d samples, 16in/2out\n"
+            "      Expected peak=%.4f (%+.2f dBFS), RMS=%.4f (%+.2f dBFS)\n"
+            "      Measured L peak=%.4f (%+.2f dBFS), RMS=%.4f (%+.2f dBFS) ",
+            sr, bs,
+            expPeak, ampToDb (expPeak), expRms, ampToDb (expRms),
+            m.peakL, ampToDb (m.peakL), m.rmsL, ampToDb (m.rmsL))
+        + (peakOK && rmsOK ? "" : "<-- mismatch")
+        + juce::String::formatted (
+            "\n      Measured R peak=%.4f (%+.2f dBFS), RMS=%.4f (%+.2f dBFS) ",
+            m.peakR, ampToDb (m.peakR), m.rmsR, ampToDb (m.rmsR))
+        + (peakOK && rmsOK ? "" : "<-- mismatch")
+        + juce::String::formatted (
+            "\n      L vs R peak delta: %.4f ",
+            std::abs (m.peakL - m.peakR))
+        + (stereoOK ? "" : "<-- L/R imbalance!");
 }
 
 juce::String AudioPipelineSelfTest::testMuteSilences()
@@ -290,13 +292,13 @@ juce::String AudioPipelineSelfTest::testMuteSilences()
     const bool silentL = m.peakL < 1.0e-4f;
     const bool silentR = m.peakR < 1.0e-4f;
 
-    return juce::String::formatted (
-        "%s Mute Silences (track 0 IN + mute on)\n"
+    return fmtPassFail (silentL && silentR)
+        + juce::String::formatted (
+        " Mute Silences (track 0 IN + mute on)\n"
         "      Expected peak=0.0 on both channels\n"
-        "      Measured L peak=%.6f, R peak=%.6f %s",
-        fmtPassFail (silentL && silentR).toRawUTF8(),
-        m.peakL, m.peakR,
-        silentL && silentR ? "" : "<-- audio leaking past mute!");
+        "      Measured L peak=%.6f, R peak=%.6f ",
+        m.peakL, m.peakR)
+        + (silentL && silentR ? "" : "<-- audio leaking past mute!");
 }
 
 juce::String AudioPipelineSelfTest::testMasterFaderMinusSix()
@@ -311,14 +313,14 @@ juce::String AudioPipelineSelfTest::testMasterFaderMinusSix()
     const float expPeak = kInputAmpMinusSixDb * 0.7071f * 0.5012f;
     const bool peakOK = std::abs (m.peakL - expPeak) < kPeakTol;
 
-    return juce::String::formatted (
-        "%s Master Fader -6 dB (track 0 unity + pan center, master -6 dB)\n"
+    return fmtPassFail (peakOK)
+        + juce::String::formatted (
+        " Master Fader -6 dB (track 0 unity + pan center, master -6 dB)\n"
         "      Expected peak=%.4f (%+.2f dBFS)\n"
-        "      Measured L peak=%.4f (%+.2f dBFS) %s",
-        fmtPassFail (peakOK).toRawUTF8(),
+        "      Measured L peak=%.4f (%+.2f dBFS) ",
         expPeak, ampToDb (expPeak),
-        m.peakL, ampToDb (m.peakL),
-        peakOK ? "" : "<-- master fader not applying expected gain!");
+        m.peakL, ampToDb (m.peakL))
+        + (peakOK ? "" : "<-- master fader not applying expected gain!");
 }
 
 juce::String AudioPipelineSelfTest::testMasterCompNoNoiseFloor()
@@ -337,13 +339,13 @@ juce::String AudioPipelineSelfTest::testMasterCompNoNoiseFloor()
     const bool silentL = m.peakL < 1.0e-4f;   // -80 dBFS
     const bool silentR = m.peakR < 1.0e-4f;
 
-    return juce::String::formatted (
-        "%s Master Comp No Noise Floor (comp ON, silent input)\n"
+    return fmtPassFail (silentL && silentR)
+        + juce::String::formatted (
+        " Master Comp No Noise Floor (comp ON, silent input)\n"
         "      Expected peak=0.0 on both channels (donor analog-noise disabled)\n"
-        "      Measured L peak=%.6f (%+.2f dBFS), R peak=%.6f %s",
-        fmtPassFail (silentL && silentR).toRawUTF8(),
-        m.peakL, ampToDb (m.peakL), m.peakR,
-        silentL && silentR ? "" : "<-- comp injecting noise into silence!");
+        "      Measured L peak=%.6f (%+.2f dBFS), R peak=%.6f ",
+        m.peakL, ampToDb (m.peakL), m.peakR)
+        + (silentL && silentR ? "" : "<-- comp injecting noise into silence!");
 }
 
 juce::String AudioPipelineSelfTest::testBusSoloMutesDirect()
@@ -364,13 +366,13 @@ juce::String AudioPipelineSelfTest::testBusSoloMutesDirect()
     // clear it here to avoid bleeding into the next test.
     session.setBusSoloed (0, false);
 
-    return juce::String::formatted (
-        "%s Bus Solo Mutes Direct (bus 0 soloed + empty, track 0 unassigned)\n"
+    return fmtPassFail (silentL && silentR)
+        + juce::String::formatted (
+        " Bus Solo Mutes Direct (bus 0 soloed + empty, track 0 unassigned)\n"
         "      Expected silence: a direct-to-master track must not bypass bus solo\n"
-        "      Measured L peak=%.6f, R peak=%.6f %s",
-        fmtPassFail (silentL && silentR).toRawUTF8(),
-        m.peakL, m.peakR,
-        silentL && silentR ? "" : "<-- unassigned track leaking past bus solo!");
+        "      Measured L peak=%.6f, R peak=%.6f ",
+        m.peakL, m.peakR)
+        + (silentL && silentR ? "" : "<-- unassigned track leaking past bus solo!");
 }
 
 juce::String AudioPipelineSelfTest::testChannelRoutingTwoOut()
@@ -380,12 +382,12 @@ juce::String AudioPipelineSelfTest::testChannelRoutingTwoOut()
 
     // With 2 output channels, both should have signal (pan center).
     const bool bothPresent = m.peakL > 0.05f && m.peakR > 0.05f;
-    return juce::String::formatted (
-        "%s Channel Routing 2-out (16in/2out, pan center)\n"
-        "      L=%.4f R=%.4f %s",
-        fmtPassFail (bothPresent).toRawUTF8(),
-        m.peakL, m.peakR,
-        bothPresent ? "" : "<-- one or both output channels missing signal");
+    return fmtPassFail (bothPresent)
+        + juce::String::formatted (
+        " Channel Routing 2-out (16in/2out, pan center)\n"
+        "      L=%.4f R=%.4f ",
+        m.peakL, m.peakR)
+        + (bothPresent ? "" : "<-- one or both output channels missing signal");
 }
 
 juce::String AudioPipelineSelfTest::testChannelRoutingFourOut()
@@ -440,12 +442,12 @@ juce::String AudioPipelineSelfTest::testChannelRoutingFourOut()
     const bool ch01HaveSignal = peaks[0] > 0.05f && peaks[1] > 0.05f;
     const bool ch23AreSilent  = peaks[2] < 1.0e-4f && peaks[3] < 1.0e-4f;
 
-    return juce::String::formatted (
-        "%s Channel Routing 4-out (16in/4out, only ch 0+1 should have audio)\n"
-        "      ch0=%.4f ch1=%.4f ch2=%.6f ch3=%.6f %s",
-        fmtPassFail (ch01HaveSignal && ch23AreSilent).toRawUTF8(),
-        peaks[0], peaks[1], peaks[2], peaks[3],
-        (! ch01HaveSignal) ? "<-- L/R missing"
+    return fmtPassFail (ch01HaveSignal && ch23AreSilent)
+        + juce::String::formatted (
+        " Channel Routing 4-out (16in/4out, only ch 0+1 should have audio)\n"
+        "      ch0=%.4f ch1=%.4f ch2=%.6f ch3=%.6f ",
+        peaks[0], peaks[1], peaks[2], peaks[3])
+        + ((! ch01HaveSignal) ? "<-- L/R missing"
             : (! ch23AreSilent) ? "<-- ch2/3 should be silent (engine bleeding into extra channels?)"
             : "");
 }
@@ -499,7 +501,7 @@ juce::String AudioPipelineSelfTest::testMasterTapeAddsGain()
         setNorm (pAuto, ac ? 1.0f : 0.0f);   // Choice "Off"/"On" -> 0 / 1
         setNorm (pOut,  normFromGainDb (0.0f));
 
-        table << juce::String::formatted ("      autoComp=%s\n", ac ? "ON " : "OFF");
+        table << "      autoComp=" << (ac ? "ON " : "OFF") << "\n";
         for (float drDb : drives)
         {
             setNorm (pIn, normFromGainDb (drDb));
@@ -527,13 +529,13 @@ juce::String AudioPipelineSelfTest::testMasterTapeAddsGain()
 
     const bool pass = autoCompOnWithinHalfDb;
 
-    return juce::String::formatted (
-        "%s Master Tape gain audit (sweep)\n%s"
+    return fmtPassFail (pass)
+        + " Master Tape gain audit (sweep)\n"
+        + table
+        + juce::String::formatted (
         "      Default (autoComp ON, drive 0 dB): %+.2f dB vs unity\n"
         "      autoComp ON worst |delta| over -12..+12 dB: %.2f dB "
         "(pass if < 0.5 dB at every drive point)",
-        fmtPassFail (pass).toRawUTF8(),
-        table.toRawUTF8(),
         deltaAtDefault,
         worstAutoOnDelta);
 }
@@ -685,24 +687,23 @@ juce::String AudioPipelineSelfTest::testCompEachMode()
         const bool pass    = fundOk && aliasOk;
         if (! pass) allPass = false;
 
-        table << juce::String::formatted (
-            "      %s  fund=%+6.2f dBFS  H2=%+6.2f  H3=%+6.2f  H4=%+6.2f  "
-            "H5=%+6.2f  THD=%5.2f%%  alias17k=%+7.2f dBFS  %s\n",
-            m.label,
+        table << "      " << m.label
+              << juce::String::formatted (
+            "  fund=%+6.2f dBFS  H2=%+6.2f  H3=%+6.2f  H4=%+6.2f  "
+            "H5=%+6.2f  THD=%5.2f%%  alias17k=%+7.2f dBFS  ",
             ampToDb (fund),
             ampToDb (h2),
             ampToDb (h3),
             ampToDb (h4),
             ampToDb (h5),
             thd * 100.0f,
-            ampToDb (alias),
-            pass ? "OK" : "FAIL");
+            ampToDb (alias))
+              << (pass ? "OK" : "FAIL") << "\n";
     }
 
-    return juce::String::formatted (
-        "%s Channel comp (Opto / FET / VCA) on -18 dBFS @ 1 kHz\n%s",
-        fmtPassFail (allPass).toRawUTF8(),
-        table.toRawUTF8());
+    return fmtPassFail (allPass)
+        + " Channel comp (Opto / FET / VCA) on -18 dBFS @ 1 kHz\n"
+        + table;
 }
 
 juce::String AudioPipelineSelfTest::testCompHeavyGR()
@@ -782,10 +783,10 @@ juce::String AudioPipelineSelfTest::testCompHeavyGR()
         float peak = 0.0f;
         for (float v : buf) if (std::abs (v) > peak) peak = std::abs (v);
 
-        table << juce::String::formatted (
-            "      %s  peak=%+6.2f  fund=%+6.2f  H2=%+6.2f  H3=%+6.2f  "
+        table << "      " << s.label
+              << juce::String::formatted (
+            "  peak=%+6.2f  fund=%+6.2f  H2=%+6.2f  H3=%+6.2f  "
             "H4=%+6.2f  H5=%+6.2f  THD=%6.2f%%  alias17k=%+7.2f\n",
-            s.label,
             ampToDb (peak),
             ampToDb (fund),
             ampToDb (h2),
@@ -796,12 +797,12 @@ juce::String AudioPipelineSelfTest::testCompHeavyGR()
             ampToDb (alias));
     }
 
-    return juce::String::formatted (
-        "[INFO] Channel comp heavy-GR characterization (-6 dBFS in, extreme settings)\n%s"
-        "      Heavy-GR distortion is partly intrinsic (envelope chatter,\n"
+    return juce::String (
+        "[INFO] Channel comp heavy-GR characterization (-6 dBFS in, extreme settings)\n")
+        + table
+        + "      Heavy-GR distortion is partly intrinsic (envelope chatter,\n"
         "      asymmetric saturation) and partly side-effect (donor clip if\n"
-        "      makeup pushes hot). 17 kHz floor < -50 dBFS = OS doing its job.",
-        table.toRawUTF8());
+        "      makeup pushes hot). 17 kHz floor < -50 dBFS = OS doing its job.";
 }
 
 juce::String AudioPipelineSelfTest::testCompPerTrack()
@@ -867,11 +868,11 @@ juce::String AudioPipelineSelfTest::testCompPerTrack()
                               : 999.0f;
     const bool pass = spreadDb < 0.5f && minP > 0.01f;
 
-    return juce::String::formatted (
-        "%s Comp wiring uniformity across 16 tracks (Opto)\n"
+    return fmtPassFail (pass)
+        + juce::String::formatted (
+        " Comp wiring uniformity across 16 tracks (Opto)\n"
         "      peak min=%+6.2f dBFS  max=%+6.2f dBFS  spread=%.3f dB "
         "(pass if spread < 0.5 dB AND min > -40 dBFS)",
-        fmtPassFail (pass).toRawUTF8(),
         ampToDb (minP),
         ampToDb (maxP),
         spreadDb);
@@ -915,10 +916,10 @@ juce::String AudioPipelineSelfTest::probeUMC1820AlsaFormat()
 
         if (auto* dev = deviceManager.getCurrentAudioDevice())
         {
-            out << juce::String::formatted (
-                "  %s\n      OPENED rate=%.0f buf=%d in=%d out=%d "
+            out << "  " << name
+                << juce::String::formatted (
+                "\n      OPENED rate=%.0f buf=%d in=%d out=%d "
                 "(see [Dusk Studio/JUCE-ALSA] line in stderr for format/access)\n",
-                name.toRawUTF8(),
                 dev->getCurrentSampleRate(),
                 dev->getCurrentBufferSizeSamples(),
                 dev->getActiveInputChannels().countNumberOfSetBits(),
@@ -1108,13 +1109,13 @@ juce::String AudioPipelineSelfTest::testParallelMatchesSerial()
     const bool matchOK   = testWorkers == 0 || parallelDiff <= serialDiff + kReassocTol;
     const bool pass      = sizeOK && signalOK && matchOK;
 
-    return juce::String::formatted (
-        "%s Parallel Matches Serial (%d active tracks, %d workers vs serial)\n"
-        "      serial-vs-serial = %.3e   serial-vs-parallel = %.3e   (reassoc tol %.1e, peak %.4f)%s",
-        fmtPassFail (pass).toRawUTF8(),
+    return fmtPassFail (pass)
+        + juce::String::formatted (
+        " Parallel Matches Serial (%d active tracks, %d workers vs serial)\n"
+        "      serial-vs-serial = %.3e   serial-vs-parallel = %.3e   (reassoc tol %.1e, peak %.4f)",
         activeTracks, testWorkers,
-        (double) serialDiff, (double) parallelDiff, (double) kReassocTol, (double) peak,
-        testWorkers == 0 ? "  [host < 3 cores: parallel == serial by construction]"
+        (double) serialDiff, (double) parallelDiff, (double) kReassocTol, (double) peak)
+        + (testWorkers == 0 ? "  [host < 3 cores: parallel == serial by construction]"
         : ! signalOK      ? "  <-- no signal reached the mix"
         : ! matchOK       ? "  <-- parallel diverged from serial beyond the serial baseline"
                           : "");
@@ -1223,15 +1224,13 @@ juce::String AudioPipelineSelfTest::testMidiPlayAlongMonitor()
     t0.midiActivity.store   (savedActivity, std::memory_order_relaxed);
 
     const bool pass = stoppedBefore && playing && stoppedAfter && flushInert;
-    return juce::String::formatted (
-        "%s MIDI play-along monitor (armed + IN MIDI track, live note each state)\n"
-        "      stopped=%s  playing=%s  stopped-again=%s  flush-inert=%s %s",
-        fmtPassFail (pass).toRawUTF8(),
-        stoppedBefore ? "sound" : "SILENT",
-        playing       ? "sound" : "SILENT",
-        stoppedAfter  ? "sound" : "SILENT",
-        flushInert    ? "yes"   : "NO",
-        pass ? "" : "<-- live MIDI dropped (play-along must sound while rolling)");
+    return fmtPassFail (pass)
+        + " MIDI play-along monitor (armed + IN MIDI track, live note each state)\n"
+          "      stopped="   + (stoppedBefore ? "sound" : "SILENT")
+        + "  playing="       + (playing       ? "sound" : "SILENT")
+        + "  stopped-again=" + (stoppedAfter  ? "sound" : "SILENT")
+        + "  flush-inert="   + (flushInert    ? "yes"   : "NO")
+        + " "                + (pass ? "" : "<-- live MIDI dropped (play-along must sound while rolling)");
 }
 
 juce::String AudioPipelineSelfTest::testAudioPlayAlongSends()
@@ -1383,12 +1382,12 @@ juce::String AudioPipelineSelfTest::testAudioPlayAlongSends()
     const bool stoppedOK = stoppedDb > kFloorDb;
     const bool playingOK = playingDb  > kFloorDb;
     const bool pass = stoppedOK && playingOK;
-    return juce::String::formatted (
-        "%s Audio play-along sends (IN audio track feeds aux 0 each state)\n"
-        "      stopped=%.1f dB  playing=%.1f dB  (floor %.0f dB) %s",
-        fmtPassFail (pass).toRawUTF8(),
-        (double) stoppedDb, (double) playingDb, (double) kFloorDb,
-        pass ? "" : "<-- monitored send dropped (must feed aux while rolling)");
+    return fmtPassFail (pass)
+        + juce::String::formatted (
+        " Audio play-along sends (IN audio track feeds aux 0 each state)\n"
+        "      stopped=%.1f dB  playing=%.1f dB  (floor %.0f dB) ",
+        (double) stoppedDb, (double) playingDb, (double) kFloorDb)
+        + (pass ? "" : "<-- monitored send dropped (must feed aux while rolling)");
 }
 
 juce::String AudioPipelineSelfTest::runAll()
@@ -1398,13 +1397,14 @@ juce::String AudioPipelineSelfTest::runAll()
     report.add ("Time: " + juce::Time::getCurrentTime().toString (true, true));
     {
         const auto& setup = deviceManager.getAudioDeviceSetup();
-        report.add (juce::String::formatted (
-            "Active backend: %s, %s out, %s in, %.0f Hz, %d-sample buffer",
-            deviceManager.getCurrentAudioDeviceType().toRawUTF8(),
-            setup.outputDeviceName.toRawUTF8(),
-            setup.inputDeviceName.toRawUTF8(),
-            setup.sampleRate,
-            setup.bufferSize));
+        report.add (juce::String ("Active backend: ")
+            + deviceManager.getCurrentAudioDeviceType()
+            + ", " + setup.outputDeviceName
+            + " out, " + setup.inputDeviceName
+            + juce::String::formatted (
+                " in, %.0f Hz, %d-sample buffer",
+                setup.sampleRate,
+                setup.bufferSize));
     }
     report.add ("");
 
@@ -1631,11 +1631,11 @@ juce::String AudioPipelineSelfTest::runPerfBenchmark (const juce::String& label,
     for (auto v : times) if (v > budgetUs) ++overruns;
     const double headroomPctMedian = 100.0 * (1.0 - median / budgetUs);
 
-    return juce::String::formatted (
-        "%s %s  median=%.1f us  p95=%.1f us  p99=%.1f us  max=%.1f us  min=%.1f us  "
+    return juce::String (overruns > 0 ? "[OVER]" : "[OK]")
+        + " " + label
+        + juce::String::formatted (
+        "  median=%.1f us  p95=%.1f us  p99=%.1f us  max=%.1f us  min=%.1f us  "
         "(budget=%.1f us, headroom@median=%.1f%%, overruns=%d/%d)",
-        overruns > 0 ? "[OVER]" : "[OK]",
-        label.toRawUTF8(),
         median, p95, p99, maxV, minV,
         budgetUs, headroomPctMedian,
         overruns, (int) times.size());

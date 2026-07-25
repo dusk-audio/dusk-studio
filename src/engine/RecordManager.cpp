@@ -1,4 +1,5 @@
 #include "RecordManager.h"
+#include <algorithm>
 #include <thread>
 #include <unordered_map>
 
@@ -29,12 +30,30 @@ RecordManager::RecordManager (Session& s) : session (s)
 
 RecordManager::~RecordManager()
 {
-    if (active.load (std::memory_order_relaxed))
-        stopRecording (0);
+    // Destruction is an abnormal take end: prevent new writes, wait for any
+    // audio-thread caller that already entered, then discard the uncommitted
+    // capture. The normal stopRecording path mutates the session by creating
+    // regions, which must only happen through an explicit engine stop.
+    active.store (false, std::memory_order_release);
+    while (audioInFlight.load (std::memory_order_acquire) > 0)
+        std::this_thread::yield();
+
+    for (auto& cap : midiCaptures)
+        cap.reset();
+
+    for (auto& slot : writers)
+    {
+        if (slot == nullptr) continue;
+        const auto file = slot->file;
+        slot.reset();
+        file.deleteFile();
+    }
+
     diskThread.stopThread (2000);
 }
 
-bool RecordManager::startRecording (double sampleRate, std::int64_t startSample)
+bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
+                                    int latencyOffsetSamples)
 {
     if (active.load (std::memory_order_relaxed))
         return true;
@@ -66,6 +85,7 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample)
 
     recordStartSample = startSample;
     recordSampleRate  = sampleRate;
+    recordLatencyOffsetSamples = latencyOffsetSamples;
 
     lastSetupFailures.clear();
     lastRecordErrors.clear();
@@ -130,7 +150,7 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample)
             outFile = audioDir.getNonexistentChildFile (
                 trackName.upToLastOccurrenceOf (".wav", false, true), ".wav");
 
-        auto* fileStream = outFile.createOutputStream().release();
+        auto fileStream = outFile.createOutputStream();
         if (fileStream == nullptr)
         {
             std::fprintf (stderr,
@@ -151,7 +171,7 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample)
                 == (int) Track::Mode::Stereo ? 2 : 1;
 
         std::unique_ptr<juce::AudioFormatWriter> writer (
-            wav.createWriterFor (fileStream, sampleRate, (unsigned int) trackChannels,
+            wav.createWriterFor (fileStream.get(), sampleRate, (unsigned int) trackChannels,
                                   24, {}, 0));
         if (writer == nullptr)
         {
@@ -160,11 +180,11 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample)
                           "createWriterFor failed (format-level error).\n",
                           t + 1);
             lastSetupFailures.push_back (t);
-            // juce::AudioFormat::createWriterFor contract: takes ownership
-            // of the stream on success AND deletes it on failure, so we must
-            // not delete it ourselves here.
+            // createWriterFor takes ownership of the stream only on success;
+            // on failure it stays caller-owned, so fileStream deletes it here.
             continue;
         }
+        fileStream.release();
 
         // Ring sized to hold ~4 s at the active sample rate so a brief
         // disk stall (NFS hiccup, drive spindown) doesn't push the
@@ -181,15 +201,16 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample)
         // mid-ctor and the exact transfer point is implementation-detail,
         // so a catch-and-cleanup is ambiguous (potential double-free if
         // JUCE already destroyed the writer in unwind). On bad_alloc the
-        // exception propagates out of startRecording cleanly:
-        //   - any per-track writers we already built unwind via the array's
-        //     unique_ptr dtors (each drains its FIFO + closes its WAV);
+        // exception escapes startRecording - there is no false return, so
+        // AudioEngine::record's blocked-surface never fires - and continues
+        // up to the message loop. That is still safe:
         //   - active was never set to true, so the audio thread sees
         //     active=false and is a no-op;
-        //   - caller (AudioEngine::record) sees a false return and surfaces
-        //     "recording cannot start" to the user.
+        //   - writers[] slots already built this pass stay populated (the
+        //     member array doesn't unwind) and are reclaimed by the next
+        //     startRecording.
         // bad_alloc here means the system is in genuine memory exhaustion;
-        // failing the record arm is the correct response.
+        // aborting the record arm is the correct response.
         auto perTrack = std::make_unique<PerTrackWriter>();
         perTrack->file = outFile;
         perTrack->numChannels = trackChannels;
@@ -490,13 +511,19 @@ void RecordManager::stopRecording (std::int64_t endSample)
         const auto frames = slot->framesWritten;
         slot->writer.reset();  // closes the file
 
-        if (frames > 0)
+        // When the latency shift pulls the start before 0 we can't move the
+        // take earlier than the timeline origin, so trim that much off the
+        // head instead - otherwise the take plays late by the clamped amount.
+        const std::int64_t shifted = recordStartSample - recordLatencyOffsetSamples;
+        const std::int64_t trim    = shifted < 0 ? -shifted : 0;
+
+        if (frames > 0 && trim < frames)
         {
             AudioRegion region;
             region.file = slot->file;
-            region.timelineStart = recordStartSample;
-            region.lengthInSamples = frames;
-            region.sourceOffset = 0;
+            region.timelineStart = std::max<std::int64_t> (0, shifted);
+            region.lengthInSamples = frames - trim;
+            region.sourceOffset = trim;
             region.numChannels = slot->numChannels;
 
             // Take-history capture: any existing region whose timeline range
@@ -646,6 +673,16 @@ void RecordManager::stopRecording (std::int64_t endSample)
         }
         else
         {
+            if (frames > 0)
+            {
+                std::fprintf (stderr,
+                              "[Dusk Studio/RecordManager] stopRecording: track %d take "
+                              "discarded - latency offset head-trim (%lld) consumed all "
+                              "%lld recorded frames.\n",
+                              t + 1, (long long) trim, (long long) frames);
+                lastRecordErrors.push_back (
+                    { t, RecordErrorKind::OffsetConsumedTake, (std::uint64_t) frames });
+            }
             slot->file.deleteFile();
         }
         slot.reset();

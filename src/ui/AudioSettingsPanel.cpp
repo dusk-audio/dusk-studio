@@ -22,6 +22,7 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
     // fixed, but rates/buffers may have changed).
     selector->onDeviceChanged = [this]
     {
+        engine.clearDeviceFallbackHold();
         populateMainOutputCombo();
         resized();
     };
@@ -335,6 +336,48 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
                           juce::dontSendNotification);
     addAndMakeVisible (uiScaleHint);
 
+    // Recording latency offset - subtracted from committed audio takes to
+    // pull a round-trip-delayed input back in time. Per-machine app config.
+    // Range matches the config clamp exactly so a stored value never gets
+    // silently re-clamped on load; precise values are typed into the textbox,
+    // the drag is only a coarse gesture.
+    recordOffsetLabel.setJustificationType (juce::Justification::centredRight);
+    addAndMakeVisible (recordOffsetLabel);
+
+    recordOffsetSlider.setSliderStyle (juce::Slider::LinearHorizontal);
+    recordOffsetSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 96, 20);
+    recordOffsetSlider.setRange ((double) appconfig::kRecordingLatencyOffsetMin,
+                                 (double) appconfig::kRecordingLatencyOffsetMax, 1.0);
+    recordOffsetSlider.setValue ((double) appconfig::getRecordingLatencyOffsetSamples(),
+                                  juce::dontSendNotification);
+    recordOffsetSlider.setNumDecimalPlacesToDisplay (0);
+    recordOffsetSlider.setTextValueSuffix (" smp");
+    recordOffsetSlider.setTooltip (
+        "Samples subtracted from each recorded audio take's timeline start, "
+        "to compensate for input round-trip latency (converters, external "
+        "gear, unreported plugin delay). Calibrate by recording a loopback "
+        "of the metronome click, measuring the error in samples with the "
+        "editor's sample readout, and entering that value. Saved per-machine; "
+        "applies to the next take.");
+    recordOffsetSlider.onDragStart = [this] { recordOffsetDragging = true; };
+    recordOffsetSlider.onDragEnd   = [this]
+    {
+        recordOffsetDragging = false;
+        applyRecordOffsetChange();
+    };
+    recordOffsetSlider.onValueChange = [this]
+    {
+        if (! recordOffsetDragging) applyRecordOffsetChange();
+    };
+    addAndMakeVisible (recordOffsetSlider);
+
+    recordOffsetHint.setJustificationType (juce::Justification::centredLeft);
+    recordOffsetHint.setColour (juce::Label::textColourId, juce::Colour (0xff909094));
+    recordOffsetHint.setFont (juce::Font (juce::FontOptions (10.0f)));
+    recordOffsetHint.setText ("Saved per-machine; applies to the next take.",
+                              juce::dontSendNotification);
+    addAndMakeVisible (recordOffsetHint);
+
     scanOnStartupToggle.setToggleState (appconfig::getScanPluginsOnStartup(),
                                           juce::dontSendNotification);
     scanOnStartupToggle.setTooltip (
@@ -525,6 +568,7 @@ void AudioSettingsPanel::resized()
         auto row = takeStdRow();
         mainOutputLabel.setBounds (row.removeFromLeft (kLabelW).reduced (4, 2));
         mainOutputCombo.setBounds (row.removeFromLeft (kComboW).reduced (4, 2));
+        rescanButton   .setBounds (row.removeFromRight (140).reduced (4, 2));
     }
     endSection();
 
@@ -573,6 +617,7 @@ void AudioSettingsPanel::resized()
         auto row = takeStdRow();
         mtcEmitFrameRateLabel.setBounds (row.removeFromLeft (kLabelW).reduced (4, 2));
         mtcEmitFrameRateCombo.setBounds (row.removeFromLeft (140).reduced (4, 2));
+        row.removeFromLeft (kComboW - 140);
         mtcEmitToggle.setBounds (row.reduced (8, 2));
     }
     endSection();
@@ -596,18 +641,18 @@ void AudioSettingsPanel::resized()
     }
     {
         auto row = takeStdRow();
+        row.removeFromLeft (kLabelW);
+        scanOnStartupToggle.setBounds (row.reduced (4, 2));
+    }
+    {
+        auto row = takeStdRow();
         stopBehaviorLabel.setBounds (row.removeFromLeft (kLabelW).reduced (4, 2));
-        stopBehaviorCombo.setBounds (row.reduced (4, 2));
+        stopBehaviorCombo.setBounds (row.removeFromLeft (kComboW).reduced (4, 2));
     }
     {
         auto row = takeStdRow();
         autosaveLabel.setBounds (row.removeFromLeft (kLabelW).reduced (4, 2));
         autosaveCombo.setBounds (row.removeFromLeft (200).reduced (4, 2));
-    }
-    {
-        auto row = takeStdRow();
-        row.removeFromLeft (kLabelW);
-        scanOnStartupToggle.setBounds (row.reduced (4, 2));
     }
     {
         auto row = takeStdRow();
@@ -622,18 +667,26 @@ void AudioSettingsPanel::resized()
     {
         auto row = takeRow (32);
 #if defined(__linux__)
-        periodsLabel     .setBounds (row.removeFromLeft (kLabelW).reduced (4, 4));
-        periodsCombo     .setBounds (row.removeFromLeft (100).reduced (4, 4));
+        periodsLabel.setBounds (row.removeFromLeft (kLabelW).reduced (4, 4));
+        periodsCombo.setBounds (row.removeFromLeft (100).reduced (4, 4));
 #endif
-        oversamplingLabel.setBounds (row.removeFromLeft (160).reduced (4, 4));
-        oversamplingCombo.setBounds (row.removeFromLeft (120).reduced (4, 4));
-        selfTestButton   .setBounds (row.removeFromRight (160).reduced (4, 4));
-        rescanButton     .setBounds (row.removeFromRight (140).reduced (4, 4));
+        selfTestButton.setBounds (row.removeFromRight (160).reduced (4, 4));
     }
     {
         auto row = takeRow (32);
-        multicoreLabel.setBounds (row.removeFromLeft (160).reduced (4, 4));
+        oversamplingLabel.setBounds (row.removeFromLeft (kLabelW).reduced (4, 4));
+        oversamplingCombo.setBounds (row.removeFromLeft (140).reduced (4, 4));
+    }
+    {
+        auto row = takeRow (32);
+        multicoreLabel.setBounds (row.removeFromLeft (kLabelW).reduced (4, 4));
         multicoreCombo.setBounds (row.removeFromLeft (220).reduced (4, 4));
+    }
+    {
+        auto row = takeStdRow();
+        recordOffsetLabel .setBounds (row.removeFromLeft (kLabelW).reduced (4, 2));
+        recordOffsetSlider.setBounds (row.removeFromLeft (260).reduced (4, 2));
+        recordOffsetHint  .setBounds (row.reduced (4, 2));
     }
 }
 
@@ -663,6 +716,13 @@ void AudioSettingsPanel::applyUiScaleChange()
     const float scale = (float) uiScaleSlider.getValue();
     appconfig::setUiScaleOverride (scale);
     juce::Desktop::getInstance().setGlobalScaleFactor (scale);
+}
+
+void AudioSettingsPanel::applyRecordOffsetChange()
+{
+    const int samples = (int) recordOffsetSlider.getValue();
+    appconfig::setRecordingLatencyOffsetSamples (samples);
+    engine.setRecordingLatencyOffsetSamples (samples);
 }
 
 void AudioSettingsPanel::applyRescan()
@@ -722,17 +782,11 @@ void AudioSettingsPanel::applyOversamplingChange()
 
     session.oversamplingFactor.store (factor, std::memory_order_relaxed);
 
-    // Re-prepare engine DSP so the new factor takes effect. The factor is only
-    // read in AudioEngine::prepareForSelfTest (driven by audioDeviceAboutToStart).
-    // setAudioDeviceSetup() with the SAME setup is a JUCE no-op, and a full
-    // device close/restart disturbs the window peer on Linux (mouse-offset
-    // regression). Instead, detach + reattach the engine as the audio callback:
-    // removeAudioCallback fires audioDeviceStopped, addAudioCallback fires
-    // audioDeviceAboutToStart -> prepareForSelfTest, rebuilding every
-    // strip/bus/master oversampler at the new factor - all WITHOUT touching the
-    // device or the window. Brief silence gap only.
-    deviceManager.removeAudioCallback (&engine);
-    deviceManager.addAudioCallback (&engine);
+    // The factor is only read in AudioEngine::prepareForSelfTest (driven by
+    // audioDeviceAboutToStart), so the engine must restart its DSP to apply
+    // it. Deferred to the next stop while the transport rolls so a live take
+    // or playback isn't cut by the restart's silence gap.
+    engine.restartDspWhenIdle();
 }
 
 void AudioSettingsPanel::applyMulticoreChange()
@@ -752,15 +806,11 @@ void AudioSettingsPanel::applyMulticoreChange()
 
     engine.setDesiredWorkers (appconfig::resolveWorkerCount());
 
-    // Detach first so no audio thread is inside the worker pool's runBlock, then
-    // reconfigure the pool, then reattach. removeAudioCallback quiesces the
-    // callback (and waits out any in-flight block); applyDesiredWorkers does the
-    // stop+start safely; addAudioCallback re-prepares DSP and resumes. The pool
-    // is changed ONLY here - prepare no longer touches it - so a routine
-    // buffer-size change can never race the pool. Brief silence gap only.
-    deviceManager.removeAudioCallback (&engine);
-    engine.applyDesiredWorkers();
-    deviceManager.addAudioCallback (&engine);
+    // The pool is reconfigured only inside the engine's DSP restart (callback
+    // detached, no audio thread in runBlock) - prepare never touches it, so a
+    // routine buffer-size change can't race the pool. Deferred to the next
+    // stop while the transport rolls.
+    engine.restartDspWhenIdle();
 }
 
 AudioSettingsPanel::~AudioSettingsPanel()

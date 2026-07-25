@@ -111,7 +111,12 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
     styleReadout (positionLabel, juce::Justification::centredLeft);
     styleReadout (gainLabel,     juce::Justification::centredLeft);
     styleReadout (fadeLabel,     juce::Justification::centredLeft);
+    styleReadout (samplesLabel,  juce::Justification::centredLeft);
     styleReadout (infoLabel,     juce::Justification::centredRight);
+    // Monospaced so the digit count changing (or a live range drag) doesn't
+    // jitter the surrounding layout - calibration users read this closely.
+    samplesLabel.setFont (juce::Font (juce::FontOptions (
+        juce::Font::getDefaultMonospacedFontName(), 12.0f, juce::Font::bold)));
 
     // Make gain + fade click-to-edit. Double-click enters edit mode;
     // Enter commits, Esc reverts. Parse is liberal: strips trailing
@@ -223,6 +228,7 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
     addAndMakeVisible (positionLabel);
     addAndMakeVisible (gainLabel);
     addAndMakeVisible (fadeLabel);
+    addAndMakeVisible (samplesLabel);
     addAndMakeVisible (infoLabel);
 
     muteToggle.setButtonText ("Mute");
@@ -2933,7 +2939,9 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
     {
         auto* r = region();
         if (r == nullptr) return true;
-        const double sr = juce::jmax (1.0, engine.getCurrentSampleRate());
+        const double sr = juce::jmax (1.0,
+            loadedFileSampleRate > 0.0 ? loadedFileSampleRate
+                                        : engine.getCurrentSampleRate());
         const double bpm = juce::jmax (1.0, (double) session.tempoBpm.load (std::memory_order_relaxed));
         const int    bpb = juce::jmax (1, session.beatsPerBar.load (std::memory_order_relaxed));
         const auto samplesPerBeat = (std::int64_t) std::round (sr * 60.0 / bpm);
@@ -3339,6 +3347,8 @@ void AudioRegionEditor::layoutStatusBar (juce::Rectangle<int> area)
     gainLabel    .setBounds (inner.removeFromLeft (84));
     inner.removeFromLeft (4);
     fadeLabel    .setBounds (inner.removeFromLeft (162));
+    inner.removeFromLeft (4);
+    samplesLabel .setBounds (inner.removeFromLeft (166));
     inner.removeFromLeft (10);
 
     // Right-aligned cluster: lock, mute, info readout.
@@ -3417,6 +3427,24 @@ void AudioRegionEditor::refreshStatusBarReadouts()
         fadeLabel.setText ("fade " + juce::String (fadeInMs, 0)
                               + " / " + juce::String (fadeOutMs, 0) + " ms",
                               juce::dontSendNotification);
+        // Raw sample counts for manual latency-calibration math.
+        const auto toTimeline = [r] (std::int64_t fileSample)
+        {
+            return r->timelineStart + (fileSample - r->sourceOffset);
+        };
+        if (rangeActive)
+        {
+            const auto lo = juce::jmin (rangeStartSample, rangeEndSample);
+            const auto len = std::abs (rangeEndSample - rangeStartSample);
+            samplesLabel.setText ("smp " + juce::String (toTimeline (lo))
+                                     + " +" + juce::String (len),
+                                     juce::dontSendNotification);
+        }
+        else
+        {
+            samplesLabel.setText ("smp " + juce::String (timelineSample),
+                                     juce::dontSendNotification);
+        }
         const int channels = juce::jmax (1, r->numChannels);
         const double durSec = (double) r->lengthInSamples / sr;
         const int mins = (int) (durSec / 60.0);
