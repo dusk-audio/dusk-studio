@@ -523,6 +523,7 @@ MainComponent::MainComponent()
     session.stopBehavior.store ((int) appconfig::getStopBehavior(),
                                   std::memory_order_relaxed);
     engine.setMidiSoftTakeover (appconfig::getMidiSoftTakeover());
+    engine.setRecordingLatencyOffsetSamples (appconfig::getRecordingLatencyOffsetSamples());
 
     // Plugin scan-on-startup is deferred (see resized() ->
     // maybeStartStartupPluginScan): it runs on a background thread behind a
@@ -3751,7 +3752,7 @@ juce::File makeStereoTempWav (const juce::File& left, const juce::File& right)
 
     const std::int64_t len = std::min (rl->info().numFrames, rr->info().numFrames);
     const double sampleRate = rl->info().sampleRate;
-    if (len <= 0 || sampleRate <= 0.0) return {};
+    if (len <= 0 || sampleRate <= 0.0 || sampleRate != rr->info().sampleRate) return {};
 
     const auto tmp = juce::File::createTempFile (".wav");
     dusk::audio::WriteSpec spec;

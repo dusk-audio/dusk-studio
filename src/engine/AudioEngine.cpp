@@ -476,6 +476,12 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
 
         if (! working())
         {
+            // The fallback devices below are opened with treatAsChosen (needed
+            // so setAudioDeviceSetup actually starts them), which would let the
+            // next change broadcast persist the fallback over the user's saved
+            // (merely busy) device. Hold persistence until an explicit pick.
+            deviceFallbackHold_ = true;
+
             // Clear the pinned (busy) device name + use default channels, else
             // setSetup can short-circuit to a non-started, sr-0 setup.
             auto openDefaultOnType = [this] (const char* typeName, const std::string& devName)
@@ -1093,6 +1099,8 @@ void AudioEngine::setStage (Stage s) noexcept
     // Gates two different signal flows on the audio thread - release/acquire
     // so the stop sequencing above is visible before the path switches.
     stage.store (s, std::memory_order_release);
+    if (crossesMastering)
+        performPendingDspRestartIfIdle();
 }
 
 AudioEngine::~AudioEngine()
@@ -1141,6 +1149,7 @@ void AudioEngine::drainCallbackDiagnostics()
 void AudioEngine::play()
 {
     if (transport.isPlaying() || transport.isRecording()) return;
+    performPendingDspRestartIfIdle();
 
     // The audio callback already wraps playhead >= loopEnd back, but
     // has no symmetric guard for before-loop - linear playback would
@@ -1164,7 +1173,11 @@ void AudioEngine::play()
 
 void AudioEngine::stop()
 {
-    if (transport.isStopped()) return;
+    if (transport.isStopped())
+    {
+        performPendingDspRestartIfIdle();
+        return;
+    }
 
     const bool wasRecording = transport.isRecording();
     transport.setState (Transport::State::Stopped);
@@ -1214,6 +1227,44 @@ void AudioEngine::stop()
         if (last >= 0)
             transport.setPlayhead (last);
     }
+
+    performPendingDspRestartIfIdle();
+}
+
+void AudioEngine::restartDspWhenIdle()
+{
+    dspRestartPending_ = true;
+    performPendingDspRestartIfIdle();
+}
+
+void AudioEngine::performPendingDspRestartIfIdle()
+{
+    if (! dspRestartPending_ || ! transport.isStopped()) return;
+    dspRestartPending_ = false;
+    performDspRestart();
+}
+
+// Detach + reattach rather than close the device: removeAudioCallback fires
+// audioDeviceStopped, addAudioCallback fires audioDeviceAboutToStart ->
+// prepareForSelfTest, rebuilding every strip/bus/master oversampler at the
+// current factor without touching the device or the window peer (a full
+// close/restart disturbs it on Linux - mouse-offset regression). The worker
+// pool is reconfigured in the same detached window so the audio thread can
+// never race it. Brief silence gap only.
+void AudioEngine::performDspRestart()
+{
+    deviceManager.removeAudioCallback (this);
+    applyDesiredWorkers();
+    deviceManager.addAudioCallback (this);
+}
+
+void AudioEngine::clearDeviceFallbackHold()
+{
+    if (! deviceFallbackHold_) return;
+    deviceFallbackHold_ = false;
+    if (deviceManager.getCurrentDevice() != nullptr)
+        if (const auto blob = deviceManager.getStateBlob(); ! blob.empty())
+            audioDeviceStateFile().replaceWithText (juce::String (blob));
 }
 
 void AudioEngine::record()
@@ -1223,6 +1274,8 @@ void AudioEngine::record()
         std::fprintf (stderr, "[Dusk Studio/AudioEngine] record(): already recording, ignored.\n");
         return;
     }
+
+    performPendingDspRestartIfIdle();
 
     // Defensive resync - some paths (RegionEditActions clone/restore)
     // write recordArmed directly and leave the counter stale, making
@@ -1261,7 +1314,7 @@ void AudioEngine::record()
         startSample = transport.getPunchIn();
     }
 
-    if (! recordManager.startRecording (sr, startSample))
+    if (! recordManager.startRecording (sr, startSample, recordingLatencyOffsetSamples_))
     {
         std::fprintf (stderr, "[Dusk Studio/AudioEngine] record(): startRecording failed; "
                               "no armed track could be set up (e.g. all frozen, or the take "
@@ -2370,6 +2423,10 @@ void AudioEngine::audioDeviceStopped()
     if (transport.isPlaying() || transport.isRecording())
         transport.setState (Transport::State::Stopped);
 
+    // dspRestartPending_ is message-thread-owned. Leave it set here for
+    // performPendingDspRestartIfIdle() to consume from the next message-thread
+    // stopped-state path; this callback may run on a backend/device thread.
+
     currentSampleRate.store (0.0, std::memory_order_relaxed);
     currentBlockSize.store  (0,   std::memory_order_relaxed);
 
@@ -2391,8 +2448,10 @@ void AudioEngine::onDeviceManagerChanged()
     // Persist the chosen setup. getStateBlob returns empty until the user has
     // explicitly picked something (treatAsChosen), so the first-launch default
     // pick is never frozen into the file - only deliberate choices survive a
-    // restart.
-    if (deviceManager.getCurrentDevice() != nullptr)
+    // restart. deviceFallbackHold_ keeps a startup fallback (saved device
+    // busy) from being frozen the same way; clearDeviceFallbackHold persists
+    // once the user picks.
+    if (deviceManager.getCurrentDevice() != nullptr && ! deviceFallbackHold_)
         if (const auto blob = deviceManager.getStateBlob(); ! blob.empty())
             audioDeviceStateFile().replaceWithText (juce::String (blob));
 
@@ -2443,6 +2502,7 @@ void AudioEngine::onDeviceManagerChanged()
                 recordManager.stopRecording (transport.getPlayhead());
             transport.setState (Transport::State::Stopped);
         }
+        performPendingDspRestartIfIdle();
 
         if (onDeviceLostAlert_)
         {

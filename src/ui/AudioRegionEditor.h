@@ -245,6 +245,7 @@ private:
     juce::Label        positionLabel;
     juce::Label        gainLabel;
     juce::Label        fadeLabel;
+    juce::Label        samplesLabel;
     juce::Label        infoLabel;
     // "What am I editing?" without forcing the user to close to check.
     // trackNameLabel = which TRACK (non-editable, tinted with the track

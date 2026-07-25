@@ -21,8 +21,12 @@ public:
     explicit RecordManager (Session& s);
     ~RecordManager();
 
-    // Message thread. False if no tracks armed.
-    bool startRecording (double sampleRate, std::int64_t startSample);
+    // Message thread. False if no tracks armed. latencyOffsetSamples is
+    // subtracted from committed AUDIO region starts (see stopRecording) to
+    // compensate for input round-trip delay; the write gate and MIDI
+    // placement are unaffected.
+    bool startRecording (double sampleRate, std::int64_t startSample,
+                          int latencyOffsetSamples = 0);
 
     // Message thread. Closes writers, finalizes WAV, appends regions.
     void stopRecording (std::int64_t endSample);
@@ -52,7 +56,7 @@ public:
     }
 
     // Mid-take errors latched at stopRecording.
-    enum class RecordErrorKind { WavWrite, MidiOverflow };
+    enum class RecordErrorKind { WavWrite, MidiOverflow, OffsetConsumedTake };
     struct RecordError
     {
         int trackIndex;
@@ -152,6 +156,12 @@ private:
 
     std::int64_t recordStartSample = 0;
     double      recordSampleRate  = 0.0;
+
+    // Subtracted from committed audio region starts; may be negative. The
+    // derived region.timelineStart (not the offset) is clamped >= 0 in
+    // stopRecording, head-trimming the take. Applied at commit only -
+    // count-in and the write gate use recordStartSample.
+    int recordLatencyOffsetSamples = 0;
 
     std::vector<TrackCommitDiff> lastCommitDiff;
 };

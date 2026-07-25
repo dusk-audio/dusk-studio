@@ -245,6 +245,15 @@ public:
             if (layout.sliderBounds.getHeight() > pad * 2)
                 layout.sliderBounds.reduce (0, pad);
         }
+        // Same clip for horizontal thumbs: the round cap is drawn centred
+        // on sliderPos, so without this inset it loses half its width at
+        // the track ends and rides into an adjacent right/left textbox.
+        else if (style == juce::Slider::LinearHorizontal)
+        {
+            const int pad = getSliderThumbRadius (slider);
+            if (layout.sliderBounds.getWidth() > pad * 2)
+                layout.sliderBounds.reduce (pad, 0);
+        }
         return layout;
     }
 

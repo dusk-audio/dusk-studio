@@ -942,6 +942,8 @@ void TransportBar::notifyRecordStopped()
         const juce::String kind =
             e.kind == RecordManager::RecordErrorKind::WavWrite
                 ? "WAV write failed (disk full / I/O error)"
+            : e.kind == RecordManager::RecordErrorKind::OffsetConsumedTake
+                ? "take discarded (recording offset exceeds its length)"
                 : "MIDI events dropped (capture buffer full)";
         body += "    Track " + juce::String (e.trackIndex + 1)
               + " - " + kind + " ("
