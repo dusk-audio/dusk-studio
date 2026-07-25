@@ -28,6 +28,11 @@ void Timer::startTimerHz (int hz)         noexcept { impl->startHz (hz); }
 void Timer::stopTimer()                   noexcept { impl->stop(); }
 bool Timer::isTimerRunning() const        noexcept { return impl->running(); }
 
+void Timer::callAfterDelay (int milliseconds, std::function<void()> fn)
+{
+    juce::Timer::callAfterDelay (milliseconds, std::move (fn));
+}
+
 bool callAsync (std::function<void()> fn)
 {
     return juce::MessageManager::callAsync (std::move (fn));
