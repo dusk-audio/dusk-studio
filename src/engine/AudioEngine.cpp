@@ -2429,14 +2429,9 @@ void AudioEngine::audioDeviceStopped()
     if (transport.isPlaying() || transport.isRecording())
         transport.setState (Transport::State::Stopped);
 
-    // The callback is already stopped here, so don't detach/reattach it
-    // recursively. Apply the non-prepare worker change now; the next
-    // audioDeviceAboutToStart rebuilds the remaining DSP at current settings.
-    if (dspRestartPending_)
-    {
-        dspRestartPending_ = false;
-        applyDesiredWorkers();
-    }
+    // dspRestartPending_ is message-thread-owned. Leave it set here for
+    // performPendingDspRestartIfIdle() to consume from the next message-thread
+    // stopped-state path; this callback may run on a backend/device thread.
 
     currentSampleRate.store (0.0, std::memory_order_relaxed);
     currentBlockSize.store  (0,   std::memory_order_relaxed);
