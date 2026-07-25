@@ -39,7 +39,7 @@ AudioSettingsPanel::AudioSettingsPanel (device::DeviceManager& dm,
     addAndMakeVisible (mainOutputCombo);
 
     // Refresh the main-output menu when the device's output count changes.
-    deviceManager.addChangeListener (this, [this] { changeListenerCallback (nullptr); });
+    deviceManager.addChangeListener (this, [this] { handleDeviceListChange(); });
 
 #if defined(__linux__)
     addAndMakeVisible (periodsLabel);
@@ -140,7 +140,7 @@ AudioSettingsPanel::AudioSettingsPanel (device::DeviceManager& dm,
     addAndMakeVisible (multicoreCombo);
 
     // MIDI sync source. Populated on construction + re-populated on
-    // every engine MIDI-bank rebuild via the engine's ChangeBroadcaster
+    // every engine MIDI-bank rebuild via the engine's change fanout
     // (hot-plug, refreshMidiInputs). Selection writes session's saved
     // identifier; the engine's rebuild path resolves it back to an
     // index. Tooltip explains the v1 "tempo only" semantics.
@@ -292,11 +292,11 @@ AudioSettingsPanel::AudioSettingsPanel (device::DeviceManager& dm,
     };
     addAndMakeVisible (midiBindingsButton);
 
-    // Subscribe to the engine's ChangeBroadcaster so a hot-plug MIDI
+    // Subscribe to the engine's change fanout so a hot-plug MIDI
     // device rebuild repopulates the sync-source combo. Without this,
     // a user who plugs in a new MIDI device after opening the panel
     // would have to close + reopen to see it.
-    engine.addChangeListener (this);
+    engine.addChangeCallback (this, [this] { handleDeviceListChange(); });
 
     // UI scale - user override on top of JUCE's per-display DPI. Lives
     // in app config (per-machine), separate from session state.
@@ -763,11 +763,11 @@ void AudioSettingsPanel::applyMulticoreChange()
 
 AudioSettingsPanel::~AudioSettingsPanel()
 {
-    engine.removeChangeListener (this);
+    engine.removeChangeCallback (this);
     deviceManager.removeChangeListener (this);
 }
 
-void AudioSettingsPanel::changeListenerCallback (juce::ChangeBroadcaster*)
+void AudioSettingsPanel::handleDeviceListChange()
 {
     // Engine broadcasts after refreshMidiInputs / hot-plug. Repopulate
     // so a newly-arrived device appears in the picker (and conversely,

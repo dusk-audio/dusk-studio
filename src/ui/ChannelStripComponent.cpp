@@ -152,7 +152,11 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
 
     // Listen for engine-side MIDI device-list rebuilds (USB hot-plug
     // refresh) so the dropdown stays in sync with the live device list.
-    engine.addChangeListener (this);
+    engine.addChangeCallback (this, [this]
+    {
+        rebuildMidiInputDropdown();
+        rebuildMidiOutputDropdown();
+    });
 
     nameLabel.setText (track.name, juce::dontSendNotification);
     nameLabel.setJustificationType (juce::Justification::centred);
@@ -1079,8 +1083,8 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
 
     // MIDI input selector - populated from the engine's current MIDI
     // input bank. Re-populated whenever AudioEngine signals a refresh
-    // (USB hot-plug etc.) via the ChangeListener wiring in the dtor /
-    // changeListenerCallback below. Item ID 1 = "None" (maps to
+    // (USB hot-plug etc.) via the engine change-callback wiring in the
+    // constructor / dtor. Item ID 1 = "None" (maps to
     // track.midiInputIndex = -1). Subsequent IDs are 2 + deviceIndex.
     rebuildMidiInputDropdown();
     midiInputSelector.onChange = [this]
@@ -1432,7 +1436,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
 ChannelStripComponent::~ChannelStripComponent()
 {
     stopTimer();   // before derived members destruct (base Timer::~Timer is too late)
-    engine.removeChangeListener (this);
+    engine.removeChangeCallback (this);
 
     // If a popup editor is still open when the strip dies, destroy its body
     // NOW (synchronously) rather than via close()'s deferred callAsync: on the
@@ -1450,15 +1454,6 @@ ChannelStripComponent::~ChannelStripComponent()
     // since the editor's destructor calls editorBeingDeleted on its
     // owning AudioProcessor. dropPluginEditor() also closes the modal.
     dropPluginEditor();
-}
-
-void ChannelStripComponent::changeListenerCallback (juce::ChangeBroadcaster*)
-{
-    // Engine signalled a MIDI device-list refresh (post-rebuild). The
-    // device order may have changed; re-resolve our track's index from
-    // its saved identifier and rebuild both dropdowns (input + output).
-    rebuildMidiInputDropdown();
-    rebuildMidiOutputDropdown();
 }
 
 void ChannelStripComponent::rebuildMidiInputDropdown()
@@ -1765,13 +1760,13 @@ void ChannelStripComponent::openPluginPicker()
                                         // collapse into a single frame.
                                         self->closePluginEditor();
                                         juce::Component::SafePointer<ChannelStripComponent> deferred (self);
-                                        juce::MessageManager::callAsync ([deferred]
+                                        dusk::callAsync ([deferred]
                                         {
                                             auto* s = deferred.getComponent();
                                             if (s == nullptr) return;
                                             s->refreshPluginSlotButton();
                                             juce::Component::SafePointer<ChannelStripComponent> openLater (s);
-                                            juce::MessageManager::callAsync ([openLater]
+                                            dusk::callAsync ([openLater]
                                             {
                                                 auto* ss = openLater.getComponent();
                                                 if (ss == nullptr) return;
@@ -3134,7 +3129,7 @@ namespace
 // behaviour: same param atoms (track.strip.auxSendDb), same colour grammar,
 // same off-sentinel mapping. Sized so the 4 knobs sit at a comfortable
 // editing diameter - bigger than the inline strip's 24 px rotaries.
-class AuxSendsCompactPanel : public juce::Component, private juce::Timer
+class AuxSendsCompactPanel : public juce::Component, private dusk::Timer
 {
 public:
     AuxSendsCompactPanel (Track& t, Session& s) : track (t), sessionRef (s)

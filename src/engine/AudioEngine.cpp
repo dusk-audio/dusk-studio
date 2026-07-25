@@ -219,7 +219,7 @@ static std::vector<uint8_t> decodeBase64Blob (const juce::String& s)
 }
 #endif
 
-class AudioEngine::PerfReporter final : public juce::Timer
+class AudioEngine::PerfReporter final : public dusk::Timer
 {
 public:
     explicit PerfReporter (AudioEngine& e) : engine (e) { startTimer (2000); }
@@ -277,7 +277,7 @@ void AudioEngine::printPerfTable()
 // thread's binding apply can't touch the instances' single-producer param
 // rings directly). 30 Hz matches PluginSlot's own drain cadence; a tick over
 // empty rings is one atomic load per slot.
-class AudioEngine::NativeParamDrain final : public juce::Timer
+class AudioEngine::NativeParamDrain final : public dusk::Timer
 {
 public:
     explicit NativeParamDrain (AudioEngine& e) : engine (e) { startTimerHz (30); }
@@ -640,7 +640,47 @@ void AudioEngine::refreshMidiInputs()
     midiIn.attachCallback();
     deviceManager.addCallback (this);
 
-    sendChangeMessage();
+    broadcastChange();
+}
+
+void AudioEngine::addChangeCallback (void* token, std::function<void()> fn)
+{
+    if (token != nullptr) changeListeners[token] = std::move (fn);
+}
+
+void AudioEngine::removeChangeCallback (void* token) { changeListeners.erase (token); }
+
+void AudioEngine::broadcastChange()
+{
+    jassert (juce::MessageManager::existsAndIsCurrentThread());
+
+    if (changeBroadcastPending.exchange (true, std::memory_order_acq_rel)) return;
+    auto keepAlive = changeListenersAlive;
+    const bool queued = dusk::callAsync ([this, keepAlive]
+    {
+        if (! keepAlive->load (std::memory_order_acquire)) return;
+        changeBroadcastPending.store (false, std::memory_order_release);
+        fireChangeListeners();
+    });
+    if (! queued) changeBroadcastPending.store (false, std::memory_order_release);
+}
+
+void AudioEngine::fireChangeListeners()
+{
+    // Snapshot the owner keys, not the closures: a callback may add or remove
+    // subscribers. Re-check each owner against the live map and copy its
+    // callback before calling, so an owner removing itself mid-call is safe.
+    std::vector<void*> owners;
+    owners.reserve (changeListeners.size());
+    for (auto& entry : changeListeners)
+        owners.push_back (entry.first);
+    for (auto* owner : owners)
+    {
+        auto it = changeListeners.find (owner);
+        if (it == changeListeners.end()) continue;
+        auto cb = it->second;
+        if (cb) cb();
+    }
 }
 
 void AudioEngine::publishTempoMap()
@@ -1101,6 +1141,8 @@ AudioEngine::~AudioEngine()
     // sitting in the message queue, and joining that thread below will not
     // remove it. Clearing the flag makes it land on a no-op.
     midiHotplugAlive->store (false, std::memory_order_release);
+    changeListenersAlive->store (false, std::memory_order_release);
+    changeListeners.clear();
     midiHotplugTimer.stopTimer();
     diagTimer.stopTimer();
     if (transport.isRecording())
