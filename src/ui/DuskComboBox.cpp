@@ -315,6 +315,8 @@ public:
         if (useGrid) startTimer (kCaretBlinkMs);   // blinking caret in the filter box
     }
 
+    ~DuskComboPanel() override { stopTimer(); }
+
     void timerCallback() override
     {
         caretOn = ! caretOn;
