@@ -1,6 +1,10 @@
 # De-JUCE — FFT tower (executable spec)
 
-Status: **F0–F2 pending.** Branch `dejuce/fft`. One PR. Read
+Status: **F0–F2 DONE 2026-07-25, committed on `dejuce/fft`, awaiting Marc's
+review + push.** Verified: build zero new warnings, ctest 457/457 (+7 parity
+cases), gate 182, selftest + screenshot harness green under Xvfb, mastering
+view renders identically. Owed: bench ear-check on a real DP import.
+Branch `dejuce/fft`. One PR. Read
 `docs/dejuce-campaign.md` + the memory ledger first, per ritual.
 
 ## Goal
