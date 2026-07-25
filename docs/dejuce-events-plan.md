@@ -1,6 +1,10 @@
 # De-JUCE — events-remainder tower (executable spec)
 
-Status: **E0–E3 pending.** Branch `dejuce/events-remainder`. One PR for the
+Status: **E0–E3 DONE 2026-07-25, committed on `dejuce/events-remainder`,
+awaiting Marc's review + push.** Verified: app build zero new warnings, gate
+182 (no rise), ctest 450/450 (one later rerun hit the documented
+alsa_seq_midi PipeWire env flake; binary functionally unchanged from the
+green run), selftest + screenshot harness green under Xvfb. One PR for the
 tower. Read `docs/dejuce-campaign.md` and the memory ledger first, per ritual.
 
 ## Goal, honestly stated
