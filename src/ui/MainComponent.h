@@ -10,6 +10,7 @@
 #include "MultiImportTargetPicker.h"
 #include "AppConfig.h"
 #include "../engine/AudioEngine.h"
+#include "../foundation/MessageThread.h"
 #include "../session/Session.h"
 
 namespace duskstudio
@@ -18,7 +19,7 @@ namespace dp { struct SongScan; }
 
 class MainComponent final : public juce::Component,
                              public juce::MenuBarModel,
-                             private juce::Timer
+                             private dusk::Timer
 {
 public:
     MainComponent();
@@ -364,14 +365,14 @@ private:
     // alive while the ComponentAnimator runs, then fires the immediate
     // close. Only one region editor is open at a time, so a single slot
     // suffices.
-    std::unique_ptr<juce::Timer> editorTeardownTimer;
+    std::unique_ptr<dusk::Timer> editorTeardownTimer;
 
     // 30 Hz timer polls Session::tuneLatestHz / Level into the overlay.
     // onDismiss closes the modal AND clears tuneTrackIndex so the
     // audio thread stops running the detector.
     std::unique_ptr<class DimOverlay>    tunerDim;
     std::unique_ptr<class TunerOverlay>  tuner;
-    std::unique_ptr<class juce::Timer>   tunerPoller;
+    std::unique_ptr<dusk::Timer>         tunerPoller;
     void toggleTuner();
     void closeTuner();
 

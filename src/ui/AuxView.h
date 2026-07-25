@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "../foundation/MessageThread.h"
 #include <array>
 #include <memory>
 #include "../session/Session.h"
@@ -22,7 +23,7 @@ class AuxLaneComponent;
 // construction, retained across hide/show cycles when the user toggles
 // between stages).
 class AuxView final : public juce::Component,
-                       private juce::Timer
+                       private dusk::Timer
 {
 public:
     AuxView (Session& session, AudioEngine& engine);

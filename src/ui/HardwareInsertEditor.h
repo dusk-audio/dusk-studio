@@ -5,6 +5,7 @@
 #include "DuskComboBox.h"
 #include "../session/Session.h"
 #include "../engine/device/DeviceManager.h"
+#include "../foundation/MessageThread.h"
 
 namespace duskstudio
 {
@@ -25,7 +26,7 @@ namespace duskstudio
 // implemented. The manual Ping button drives
 // the existing handshake today.
 class HardwareInsertEditor final : public juce::Component,
-                                       private juce::Timer
+                                       private dusk::Timer
 {
 public:
     // allowMono adds a Mono format (single-channel send + return) to the

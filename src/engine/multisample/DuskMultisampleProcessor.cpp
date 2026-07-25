@@ -1,6 +1,7 @@
 #include "DuskMultisampleProcessor.h"
 #include "Sf2ToSfz.h"
 #include "Sf2PresetSort.h"
+#include "../../foundation/MessageThread.h"
 #include "../../ui/multisample/DuskMultisampleEditor.h"
 
 #include <sfizz.h>
@@ -249,7 +250,7 @@ void DuskMultisampleProcessor::loadFileAsync (
                             ? loadSf2File (file, err)
                             : loadSfzFile (file, err);
         juce::WeakReference<DuskMultisampleProcessor> weak (this);
-        juce::MessageManager::callAsync ([weak, onDone, ok, err]
+        dusk::callAsync ([weak, onDone, ok, err]
         {
             // Skip entirely if the processor was destroyed after posting this:
             // removeAllJobs joins the pool job, not this queued callback.
@@ -277,7 +278,7 @@ void DuskMultisampleProcessor::loadSf2PresetAsync (
         juce::String err;
         const bool ok = loadSf2Preset (presetIndex, err);
         juce::WeakReference<DuskMultisampleProcessor> weak (this);
-        juce::MessageManager::callAsync ([weak, onDone, ok, err]
+        dusk::callAsync ([weak, onDone, ok, err]
         {
             auto* self = weak.get();
             if (self == nullptr) return;

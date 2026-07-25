@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "../foundation/MessageThread.h"
 #include <array>
 #include <functional>
 #include <memory>
@@ -13,7 +14,7 @@
 namespace duskstudio
 {
 class ConsoleView final : public juce::Component,
-                          private juce::Timer
+                          private dusk::Timer
 {
 public:
     // Engine ref so each ChannelStripComponent gets a PluginSlot

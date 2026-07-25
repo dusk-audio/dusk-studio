@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "../foundation/MessageThread.h"
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -21,7 +22,7 @@ class PluginManager;
 // abort mid-file (via the atomic the scanner polls between child-process reads)
 // and joins it, so quitting the app mid-scan doesn't hang on a slow plugin.
 class PluginScanModal final : public juce::Component,
-                              private juce::Timer
+                              private dusk::Timer
 {
 public:
     PluginScanModal (PluginManager& manager,

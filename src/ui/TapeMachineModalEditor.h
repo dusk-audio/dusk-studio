@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "../foundation/MessageThread.h"
 #include <functional>
 #include <memory>
 
@@ -21,7 +22,7 @@ namespace duskstudio
 // by combo items / button text / label text. Overrides applied after
 // donor's resized() runs.
 class TapeMachineModalEditor final : public juce::Component,
-                                     private juce::Timer
+                                     private dusk::Timer
 {
 public:
     // getEnabled / setEnabled bridge the tape's bypass to MasterBusParams::
@@ -84,7 +85,7 @@ public:
         // the cluster to the right edge after our sync override runs.
         // Re-run on next tick so we win the final position.
         juce::Component::SafePointer<TapeMachineModalEditor> safe (this);
-        juce::MessageManager::callAsync ([safe]
+        dusk::callAsync ([safe]
         {
             if (auto* s = safe.getComponent())
                 s->recenterPresetCluster();

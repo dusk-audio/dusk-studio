@@ -1,8 +1,8 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
-#include <juce_events/juce_events.h>
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "../foundation/MessageThread.h"
 #include <array>
 #include <atomic>
 #include <functional>
@@ -24,11 +24,11 @@ class PluginManager;
 // thread after swap because the destructor isn't RT-safe. Audio thread
 // sees either nullptr (bypass) or a fully-prepared instance.
 //
-// PluginSlot inherits juce::Timer so the audio-thread param-write path
+// PluginSlot inherits dusk::Timer so the audio-thread param-write path
 // (setParamNormalised -> SPSC FIFO push) can be drained on the message
 // thread without ever blocking, allocating, or invoking JUCE parameter
 // setters from the render context. See timerCallback() + paramFifo.
-class PluginSlot : private juce::Timer
+class PluginSlot : private dusk::Timer
 {
 public:
     PluginSlot();
@@ -330,7 +330,7 @@ private:
     juce::String savedDescriptionXml;
 
     static constexpr int kReaperPeriodMs = 1000;
-    class ReaperTimer final : public juce::Timer
+    class ReaperTimer final : public dusk::Timer
     {
     public:
         explicit ReaperTimer (PluginSlot& s) : slot (s) {}
@@ -415,7 +415,7 @@ private:
     // performed by the message-thread mutators.
     std::atomic<std::uint32_t> currentLoadEpoch { 0 };
 
-    // Drains paramFifo on the message thread. Called by juce::Timer at
+    // Drains paramFifo on the message thread. Called by dusk::Timer at
     // 30 Hz; cheap when empty (one atomic load + branch).
     void timerCallback() override;
 

@@ -901,7 +901,7 @@ void AuxLaneComponent::unloadSlot (int slotIdx)
     // Letting the click handler unwind first puts the teardown on a
     // clean stack.
     juce::Component::SafePointer<AuxLaneComponent> safe (this);
-    juce::MessageManager::callAsync ([safe, slotIdx]
+    dusk::callAsync ([safe, slotIdx]
     {
         auto* self = safe.getComponent();
         if (self == nullptr) return;
@@ -1302,7 +1302,7 @@ void AuxLaneComponent::scheduleEditorRefits (int slotIdx)
     for (int delayMs : { 100, 350, 800 })
     {
         juce::Component::SafePointer<AuxLaneComponent> safe (this);
-        juce::Timer::callAfterDelay (delayMs, [safe, slotIdx]
+        dusk::Timer::callAfterDelay (delayMs, [safe, slotIdx]
         {
             if (auto* self = safe.getComponent())
                 self->layoutEditorForSlot (slotIdx);

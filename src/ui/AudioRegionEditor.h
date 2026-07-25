@@ -7,6 +7,7 @@
 // juce_audio_utils) instantiates SIMDRegister<int64>.
 #include <juce_dsp/juce_dsp.h>
 #include <juce_audio_utils/juce_audio_utils.h>
+#include "../foundation/MessageThread.h"
 #include <functional>
 #include "../session/Session.h"
 
@@ -24,7 +25,7 @@ class EditModeToolbar;
 // view paints nothing rather than crashing.
 class AudioRegionEditor final : public juce::Component,
                                   private juce::ChangeListener,
-                                  private juce::Timer,
+                                  private dusk::Timer,
                                   private juce::ScrollBar::Listener
 {
 public:

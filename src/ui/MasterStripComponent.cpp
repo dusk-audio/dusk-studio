@@ -365,7 +365,7 @@ private:
 // BusCompEditorPanel: ON top-right, LEFT meter strip (triangle threshold
 // drag + IN + GR bars), RIGHT 2×2 knob grid (RAT/MAK over ATK/REL). No
 // THR knob - threshold via the triangle on the IN bar.
-class MasterCompEditorPanel final : public juce::Component, private juce::Timer
+class MasterCompEditorPanel final : public juce::Component, private dusk::Timer
 {
 public:
     MasterCompEditorPanel (MasterBusParams& p) : params (p)
@@ -1137,7 +1137,7 @@ void MasterStripComponent::audioProcessorParameterChanged (juce::AudioProcessor*
     // thread before touching atoms / UI. The store itself is atomic
     // but we also call setToggleState which is message-thread-only.
     juce::Component::SafePointer<MasterStripComponent> safe (this);
-    juce::MessageManager::callAsync ([safe]()
+    dusk::callAsync ([safe]()
     {
         if (auto* self = safe.getComponent())
         {
@@ -2016,7 +2016,7 @@ void MasterStripComponent::openTapeMachineModal()
     tapeMachineDim->onClick = [this]
     {
         juce::Component::SafePointer<MasterStripComponent> safe (this);
-        juce::MessageManager::callAsync ([safe]
+        dusk::callAsync ([safe]
         {
             if (auto* s = safe.getComponent()) s->openTapeMachineModal();
         });

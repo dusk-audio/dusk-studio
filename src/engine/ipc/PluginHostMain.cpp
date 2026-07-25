@@ -36,6 +36,7 @@
 #if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
  #include "../NativeScanRows.h"
 #endif
+#include "../../foundation/MessageThread.h"
 #include "../JuceCompat.h"
 #include "platform/IpcChannel.h"
 #include "platform/IpcShm.h"
@@ -644,7 +645,7 @@ void handleSetParamAsync (HostState& host,
     SetParamPayload p {};
     std::memcpy (&p, payload.data(), sizeof (p));
 
-    juce::MessageManager::callAsync ([&host, p]
+    dusk::callAsync ([&host, p]
     {
         auto* instance = host.currentInstance.load (std::memory_order_acquire);
         if (instance == nullptr) return;

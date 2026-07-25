@@ -222,7 +222,7 @@ private:
     std::atomic<bool> loadPending { false };
     juce::ThreadPool  loadPool { 1 };
 
-    // A background load's completion is posted via MessageManager::callAsync,
+    // A background load's completion is posted via dusk::callAsync,
     // which outlives the pool job the destructor joins. The queued callback
     // guards on this token so it no-ops if the processor was destroyed before
     // it ran (destruction + the callback are both message-thread, so the weak

@@ -121,7 +121,7 @@ PluginSlot::PluginSlot()
 
 PluginSlot::~PluginSlot()
 {
-    // Stop our own timer FIRST. juce::Timer's dtor also stopTimer's, but
+    // Stop our own timer FIRST. dusk::Timer's dtor also stopTimer's, but
     // doing it explicitly here closes the window where a tick could fire
     // mid-destruction and observe a half-torn currentInstance / ownedRemote.
     stopTimer();
@@ -1649,7 +1649,7 @@ void PluginSlot::setParamNormalised (int paramIndex, float value01) noexcept
 void PluginSlot::timerCallback()
 {
     // Message thread. Drain every pending ParamWrite into the live
-    // plugin instance. Bounded loop - caller (juce::Timer) marshals us
+    // plugin instance. Bounded loop - caller (dusk::Timer) marshals us
     // here so JUCE_ASSERT_MESSAGE_THREAD in applyParamWriteOnMessageThread
     // is satisfied by construction.
     const int avail = paramFifo.getNumReady();
@@ -1814,7 +1814,7 @@ bool PluginSlot::ensureShellInstanceForEditor (juce::String& err)
             [this] (int paramIndex, float value01, std::uint32_t /*seq*/)
             {
                 // Already on the message thread - RemotePluginConnection's
-                // reader marshalled here via juce::MessageManager::callAsync.
+                // reader marshalled here via dusk::callAsync.
                 applyShellParamFromChild (paramIndex, value01);
             });
     }
