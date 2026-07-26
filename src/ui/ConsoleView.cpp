@@ -32,8 +32,7 @@ ConsoleView::ConsoleView (Session& session, AudioEngine& engine) : sessionRef (s
     masterStrip = std::make_unique<MasterStripComponent> (
         session.master(),
         session,
-        engine,
-        nullptr);
+        engine);
     addAndMakeVisible (masterStrip.get());
 
     // ConsoleView owns only the bank-state model + visibility. The BANK A/B

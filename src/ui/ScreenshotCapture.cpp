@@ -19,6 +19,7 @@
 #include "PianoRollComponent.h"
 #include "ChannelEqEditor.h"
 #include "ChannelCompEditor.h"
+#include "TapePanel.h"
 #include "AudioSettingsPanel.h"
 #include "MidiBindingsPanel.h"
 #include "HardwareInsertEditor.h"
@@ -384,6 +385,16 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         const int w = cp.getWidth()  > 0 ? cp.getWidth()  : 380;
         const int h = cp.getHeight() > 0 ? cp.getHeight() : 360;
         modalShot (cp, w, h, "fx-02-comp.png", 300);
+    }
+    {
+        auto& m = session.master();
+        const bool wasTapeEnabled = m.tapeEnabled.load (std::memory_order_relaxed);
+        m.tapeEnabled.store (true, std::memory_order_relaxed);
+        TapePanel tp (m, engine);
+        const int w = tp.getWidth()  > 0 ? tp.getWidth()  : 720;
+        const int h = tp.getHeight() > 0 ? tp.getHeight() : 420;
+        modalShot (tp, w, h, "fx-03-tape.png", 300);
+        m.tapeEnabled.store (wasTapeEnabled, std::memory_order_relaxed);
     }
     {
         // Startup dialog - full-bleed, so size it to the window.

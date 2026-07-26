@@ -1,7 +1,6 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
-#include <juce_audio_processors/juce_audio_processors.h>
 #include <memory>
 #include "../session/Session.h"
 #include "AnalogVuMeter.h"
@@ -12,37 +11,21 @@
 #include "SectionPillButton.h"
 #include "../foundation/MessageThread.h"
 
-// Forward decl unconditional; the definition is only #included from the
-// .cpp when DUSKSTUDIO_HAS_DUSK_DSP is set. Pointer parameter stays
-// valid either way (nullptr without donor).
-class TapeMachineAudioProcessor;
-
 namespace duskstudio
 {
 class AudioEngine;
 class MasterStripComponent final : public juce::Component,
-                                     private dusk::Timer,
-                                     public juce::AudioProcessorListener
+                                     private dusk::Timer
 {
 public:
-    // tapeProcessor is borrowed from AudioEngine; gear button spawns
-    // its editor. Nullable when DUSKSTUDIO_HAS_DUSK_DSP=0.
     explicit MasterStripComponent (MasterBusParams& paramsRef,
                                    class Session& sessionRef,
-                                   AudioEngine& engineRef,
-                                   ::TapeMachineAudioProcessor* tapeProcessor = nullptr);
+                                   AudioEngine& engineRef);
     ~MasterStripComponent() override;
 
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent& e) override;
-
-    // Registered on the donor TapeMachine so any editor change auto-arms
-    // tapeEnabled (matches EQ / COMP arm-on-touch). Fires from any
-    // thread; defers to message before touching UI.
-    void audioProcessorParameterChanged (juce::AudioProcessor*, int, float) override;
-    void audioProcessorChanged          (juce::AudioProcessor*,
-                                           const juce::AudioProcessorListener::ChangeDetails&) override;
 
     void setCompactVu (bool compact);
     void setCompactMode (bool compact);
@@ -99,15 +82,14 @@ private:
 
     // Compact-mode pill labelled "TAPE". Unified section grammar (identical
     // to the expanded tapeHeaderBtn): left-click toggles tapeEnabled, right-
-    // click opens the TAPE section menu, double-click opens the TapeMachine
-    // editor. The lit state is driven by the tapeEnabled atom (synced from
-    // the 30 Hz timer) so the editor's auto-arm is still reflected here.
+    // click opens the TAPE section menu, double-click opens the tape panel.
+    // The lit state is driven by the tapeEnabled atom (synced from the 30 Hz
+    // timer) so the panel's arm-on-touch is still reflected here.
     SectionPillButton tapeButton { "TAPE" };
     // Expanded-mode header: shared CompHeaderButton (matches EQ/COMP
     // grammar). Left toggles, right opens the section menu, double-click
-    // opens the TapeMachine editor.
+    // opens the tape panel.
     std::unique_ptr<CompHeaderButton> tapeHeaderBtn;
-    ::TapeMachineAudioProcessor* tapeProcessorPtr = nullptr;
     void openTapeMachineModal();
     std::unique_ptr<class DimOverlay> tapeMachineDim;
     juce::Component::SafePointer<juce::Component> tapeMachineModal;

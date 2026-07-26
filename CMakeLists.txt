@@ -397,6 +397,7 @@ target_sources(DuskStudio PRIVATE
     src/ui/PluginScanModal.cpp
     src/ui/SystemStatusBar.cpp
     src/ui/EditModeToolbar.cpp
+    src/ui/TapePanel.cpp
     src/ui/TapeStrip.cpp
     src/ui/MiniTimelineStrip.cpp
     src/ui/TransportBar.cpp
@@ -854,8 +855,10 @@ if(DEFINED DUSK_PLUGINS_PATH)
     #   - tape-echo    (TapeEchoDSP::TapeSaturation — legacy master bus tape sat,
     #                   being replaced by TapeMachine; still vendored while the
     #                   migration completes)
-    #   - TapeMachine  (full-featured tape emulation hosted on the master bus;
-    #                   editor opened via the gear button next to TAPE)
+    #   - TapeMachine  (full-featured tape emulation hosted on the master bus
+    #                   via the framework-free core; the native tape panel is
+    #                   Dusk Studio's own, and only the donor's reel component
+    #                   is reused from its GUI)
     # SYSTEM include — vendored DSP headers carry benign warnings
     # (shadows, sign conversions) we don't own. Marking them SYSTEM
     # tells GCC/Clang to suppress those warnings on inclusion, which
@@ -873,8 +876,7 @@ if(DEFINED DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/HardwareEmulation"
         "${DUSK_PLUGINS_PATH}/plugins/tape-echo/Source/DSP"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI")
+        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source")
 
     # Compile multi-comp's processor + editor + shared LEDMeter so
     # UniversalCompressor links cleanly. Editor sources are linked but not
@@ -895,32 +897,7 @@ if(DEFINED DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/shared/LEDMeter.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/core/TapeMachineDSP.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/PluginProcessor.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/PluginEditor.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/ImprovedTapeEmulation.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI/AnalogVUMeter.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI/TapeReelComponent.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI/TapeMachineLookAndFeel.cpp")
-
-    # Both multi-comp's editor and TapeMachine's editor declare a class named
-    # AnalogVUMeter in the global namespace, which collides at link time.
-    # Rename the multi-comp one in-translation-unit so the donors stay
-    # unmodified. Applied to every multi-comp .cpp that pulls in
-    # AnalogLookAndFeel.h (directly or via EnhancedCompressorEditor.h).
-    set_source_files_properties(
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
-        PROPERTIES
-        COMPILE_DEFINITIONS "AnalogVUMeter=MultiCompAnalogVUMeter")
-
-    # Both donors define createPluginFilter() as their JUCE plugin entry
-    # point. Dusk Studio instantiates them directly so neither is called, but the
-    # global symbol still collides at link. Rename the TapeMachine one.
-    set_source_files_properties(
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/PluginProcessor.cpp"
-        PROPERTIES
-        COMPILE_DEFINITIONS "createPluginFilter=createTapeMachinePluginFilter")
+        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI/TapeReelComponent.cpp")
 
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_DUSK_DSP=1)
 endif()
@@ -1068,18 +1045,11 @@ target_compile_definitions(DuskStudio PRIVATE
     # AU is the dominant native plugin format on macOS; without this
     # define the format is silently absent from addDefaultFormats().
     JUCE_PLUGINHOST_AU=$<IF:$<PLATFORM_ID:Darwin>,1,0>
-    # Projucer-style macros that vendored plugin sources expect. multi-comp
-    # uses VersionString / Name / Manufacturer; TapeMachine additionally
-    # references the IsMidiEffect / IsSynth / WantsMidiInput / ProducesMidiOutput
-    # toggles from inside #if blocks, so we provide defaults (all 0) globally
-    # rather than per-source.
+    # Projucer-style macros that vendored plugin sources expect: multi-comp
+    # uses VersionString / Name / Manufacturer.
     JucePlugin_VersionString="${PROJECT_VERSION}"
     JucePlugin_Name="DuskStudio_Comp"
-    JucePlugin_Manufacturer="Marc Korte"
-    JucePlugin_IsMidiEffect=0
-    JucePlugin_IsSynth=0
-    JucePlugin_WantsMidiInput=0
-    JucePlugin_ProducesMidiOutput=0)
+    JucePlugin_Manufacturer="Marc Korte")
 
 if((CMAKE_SYSTEM_NAME STREQUAL "Linux") AND TARGET juce::pkgconfig_JUCE_WAYLAND_LINUX_DEPS)
     # Pulls in wayland-client / xkbcommon / libdecor-0 include paths.

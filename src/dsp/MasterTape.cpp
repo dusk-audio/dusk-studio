@@ -50,11 +50,6 @@ void MasterTape::pushParameters (const TapeParams& p) noexcept
     c.setAutoComp     (p.autoComp.load     (std::memory_order_relaxed));
 }
 
-void MasterTape::setBypass (bool shouldBypass) noexcept
-{
-    impl->core.setBypass (shouldBypass);
-}
-
 void MasterTape::processInPlace (float* L, float* R, int numSamples) noexcept
 {
     // The core reads inputs[ch][n] before writing outputs[ch][n] at the same
@@ -67,6 +62,6 @@ void MasterTape::processInPlace (float* L, float* R, int numSamples) noexcept
 MasterTape::Vu MasterTape::getVu() const noexcept
 {
     const auto& c = impl->core;
-    return { c.getVuL(), c.getVuR(), c.getInVuL(), c.getInVuR() };
+    return { c.getVuL(), c.getVuR() };
 }
 } // namespace duskstudio

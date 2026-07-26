@@ -793,8 +793,11 @@ master input → program EQ → master bus compressor → tape saturation → ma
 Models a small reel-to-reel tape machine.
 
 - **Bypass / engage**: left-click the **TAPE** header to toggle the tape stage in or out of the signal path.
-- **Open the editor**: double-click the **TAPE** header, or right-click it and choose **Open editor…**, to open the full tape-machine modal editor, where drive, saturation, and tape-character controls live.
+- **Open the editor**: double-click the **TAPE** header, or right-click it and choose **Open editor…**, to open the tape-machine modal editor: machine, tape speed and formulation, signal path, EQ standard and calibration, plus input drive, bias, high/low-pass filters, wow, flutter, noise, and output level. Touching any control engages the tape stage.
+
 - **Oversampling**: tape oversampling follows the engine-wide **Effect Oversampling** setting in the Audio Device panel — it is not a per-stage toggle.
+
+![The tape-machine editor.](docs/images/fx-03-tape.png)
 
 Tape saturation is the right tool to glue a mix together. A light application thickens the low-mids, rounds the transients, and adds a touch of harmonic colour.
 

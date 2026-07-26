@@ -6,12 +6,8 @@
 #include "DimOverlay.h"
 #include "DuskStudioLookAndFeel.h"
 #include "SteppedKnob.h"
-#include "TapeMachineModalEditor.h"
+#include "TapePanel.h"
 #include <algorithm>
-
-#if DUSKSTUDIO_HAS_DUSK_DSP
-  #include "PluginProcessor.h"   // TapeMachineAudioProcessor + createEditor
-#endif
 
 namespace duskstudio
 {
@@ -645,9 +641,8 @@ private:
 
 MasterStripComponent::MasterStripComponent (MasterBusParams& p,
                                               Session& s,
-                                              AudioEngine& e,
-                                              ::TapeMachineAudioProcessor* tapeProc)
-    : params (p), session (s), engine (e), tapeProcessorPtr (tapeProc)
+                                              AudioEngine& e)
+    : params (p), session (s), engine (e)
 {
     nameLabel.setText ("MASTER", juce::dontSendNotification);
     nameLabel.setJustificationType (juce::Justification::centred);
@@ -1017,14 +1012,6 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     // strip toggles.
     tapeButton.setVisible (false);
 
-    // Listen for parameter changes on the donor TapeMachine processor
-    // so any edit in the popup auto-arms tapeEnabled (matches the EQ
-    // / COMP arm-on-touch behaviour).
-   #if DUSKSTUDIO_HAS_DUSK_DSP
-    if (tapeProcessorPtr != nullptr)
-        tapeProcessorPtr->addListener (this);
-   #endif
-
     faderSlider.setRange (ChannelStripParams::kFaderMinDb, ChannelStripParams::kFaderMaxDb, 0.1);
     faderSlider.setSkewFactorFromMidPoint (-12.0);
     faderSlider.setValue (params.faderDb.load (std::memory_order_relaxed), juce::dontSendNotification);
@@ -1130,41 +1117,12 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     startTimerHz (30);
 }
 
-void MasterStripComponent::audioProcessorParameterChanged (juce::AudioProcessor*,
-                                                             int, float)
-{
-    // Fires from any thread (incl. audio). Defer to the message
-    // thread before touching atoms / UI. The store itself is atomic
-    // but we also call setToggleState which is message-thread-only.
-    juce::Component::SafePointer<MasterStripComponent> safe (this);
-    dusk::callAsync ([safe]()
-    {
-        if (auto* self = safe.getComponent())
-        {
-            self->params.tapeEnabled.store (true, std::memory_order_relaxed);
-            self->tapeButton.setToggleState (true, juce::dontSendNotification);
-            self->tapeButton.repaint();
-            if (self->tapeHeaderBtn != nullptr) self->tapeHeaderBtn->repaint();
-        }
-    });
-}
-
-void MasterStripComponent::audioProcessorChanged (juce::AudioProcessor*,
-                                                    const juce::AudioProcessorListener::ChangeDetails&)
-{
-    // Layout / preset changes - no-op for the tape arm-on-touch UX.
-}
-
 MasterStripComponent::~MasterStripComponent()
 {
     // See BusComponent::~BusComponent - explicit stopTimer() runs
     // before any modal / member teardown so the timer thread can't
     // fire on objects we're about to clean up.
     stopTimer();
-   #if DUSKSTUDIO_HAS_DUSK_DSP
-    if (tapeProcessorPtr != nullptr)
-        tapeProcessorPtr->removeListener (this);
-   #endif
     if (tapeMachineDim != nullptr)
         tapeMachineDim->onClick = nullptr;
     if (auto* m = tapeMachineModal.getComponent())
@@ -1960,7 +1918,7 @@ void MasterStripComponent::openTapeMachineModal()
             delete m;
         }
         tapeMachineDim.reset();
-        // The editor held keyboard focus; this modal isn't an EmbeddedModal so
+        // The panel held keyboard focus; this modal isn't an EmbeddedModal so
         // there's no automatic hand-back. Restore focus to the main canvas (the
         // EmbeddedModal focus-restore target) so transport / edit shortcuts work
         // without a stray click.
@@ -1972,41 +1930,7 @@ void MasterStripComponent::openTapeMachineModal()
     auto* topLevel = getTopLevelComponent();
     if (topLevel == nullptr) return;
 
-    juce::Component* body = nullptr;
-
-#if DUSKSTUDIO_HAS_DUSK_DSP
-    // Spawn the TapeMachine plugin's native editor and wrap it so the
-    // donor's plugin-style header (painted "TapeMachine" + "Vintage Tape
-    // Emulation") is masked and the HQ oversampling combo (now driven
-    // globally from Audio Settings) is hidden. The wrapper takes
-    // ownership of the editor; deleting the wrapper deletes the editor,
-    // which calls editorBeingDeleted on the processor.
-    if (tapeProcessorPtr != nullptr)
-        if (auto* editor = tapeProcessorPtr->createEditor())
-        {
-            juce::Component::SafePointer<MasterStripComponent> safeThis (this);
-            body = new TapeMachineModalEditor (editor,
-                [safeThis]
-                {
-                    auto* s = safeThis.getComponent();
-                    return s != nullptr
-                        && s->params.tapeEnabled.load (std::memory_order_relaxed);
-                },
-                [safeThis] (bool on)
-                {
-                    if (auto* s = safeThis.getComponent())
-                        s->params.tapeEnabled.store (on, std::memory_order_relaxed);
-                });
-        }
-#endif
-
-    if (body == nullptr)
-    {
-        // Defensive fallback if the donor DSP is disabled or the editor
-        // failed to construct.
-        body = new juce::Component();
-        body->setSize (520, 320);
-    }
+    auto* body = new TapePanel (params, engine);
 
     tapeMachineDim = std::make_unique<DimOverlay>();
     tapeMachineDim->setBounds (topLevel->getLocalBounds());
@@ -2029,7 +1953,7 @@ void MasterStripComponent::openTapeMachineModal()
     // This modal uses a raw DimOverlay rather than EmbeddedModal, so it doesn't
     // get EmbeddedModal's key forwarding for free - attach the forwarder so
     // Space / R / Home / loop+punch shortcuts still reach MainComponent while
-    // the tape editor holds focus.
+    // the tape panel holds focus.
     attachTransportKeyForwarder (*body);
     tapeMachineModal = body;
 }

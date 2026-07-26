@@ -46,7 +46,7 @@ private:
     MasterTape                  tape;
     // Max samples per tape.processInPlace call - the core's scratch is sized to
     // the prepared block, so the process loop chunks anything larger.
-    int                         tapeMaxBlock = 0;
+    int                         tapeMaxBlock = 1;
 
     // TAPE on/off crossfade. The core hard-bypasses (early-returns, no ramp),
     // so toggling it would pop. We blend the pre-tape (dry) signal against the

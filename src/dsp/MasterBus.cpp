@@ -191,7 +191,7 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
     updateCompParameters();
 
     // The master tube EQ and bus comp are the only saturating stages inside
-    // this wrap (TapeMachine handles its own OS below). When BOTH are bypassed
+    // this wrap (the tape core oversamples internally, below). When BOTH are bypassed
     // the up/downsample round-trip is pure waste - both donors would just pass
     // the signal through dry - so we skip the oversampler entirely.
     const bool eqOn   = paramsRef != nullptr
@@ -268,7 +268,7 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
             osSkipDelayR.pushSample (R[i]);  R[i] = osSkipDelayR.popSample();
         }
     }
-    // else (factor == 1, both off): signal passes through. TapeMachine still
+    // else (factor == 1, both off): signal passes through. The tape core still
     // runs below.
 
     if (paramsRef != nullptr)
@@ -302,8 +302,6 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
     // and the whole stage is free.
     if (runTape || alignDry)
     {
-        tape.setBypass (! runTape);
-
         for (int offset = 0; offset < numSamples; offset += tapeMaxBlock)
         {
             const int n = std::min (tapeMaxBlock, numSamples - offset);

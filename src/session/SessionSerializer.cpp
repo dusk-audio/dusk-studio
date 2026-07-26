@@ -102,9 +102,11 @@ inline void migrateTapeStateBlob (const std::string& base64, TapeParams& t)
     const auto xml = parseProcessorStateBlob (base64);
     if (xml == nullptr) return;
 
+    // Clamp before rounding: a hand-edited blob can carry a value far outside
+    // int range, where std::lround is undefined.
     const auto storeInt = [] (std::atomic<int>& dst, float v, int hi)
     {
-        dst.store (std::clamp ((int) std::lround (v), 0, hi));
+        dst.store ((int) std::lround (jlimit (0.0f, (float) hi, v)));
     };
     const auto storeFloat = [] (std::atomic<float>& dst, float v, float lo, float hi)
     {
