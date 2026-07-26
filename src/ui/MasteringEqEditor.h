@@ -1,9 +1,9 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
-#include <juce_dsp/juce_dsp.h>
 #include <array>
 #include <memory>
+#include "../foundation/Fft.h"
 #include "../session/Session.h"
 #include "../dsp/MasteringChain.h"
 #include "../foundation/MessageThread.h"
@@ -76,9 +76,8 @@ private:
     bool showSpectrum = true;
     juce::TextButton specToggle { "FFT" };
 
-    juce::dsp::FFT fft { kFftOrder };
-    juce::dsp::WindowingFunction<float> fftWindow
-        { (size_t) kFftSize, juce::dsp::WindowingFunction<float>::hann, false };
+    dusk::audio::Fft fft { kFftOrder };
+    std::array<float, kFftSize>     fftWindow {};    // Hann, filled once in the ctor
     std::array<float, kFftSize>     fftScratch {};   // [time | imag]; FFT wants 2×size
     std::array<float, kFftSize * 2> fftWork {};
     std::array<float, kNumBins>     specDb;          // smoothed magnitudes, dBFS

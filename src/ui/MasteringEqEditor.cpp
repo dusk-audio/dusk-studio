@@ -77,6 +77,7 @@ MasteringEqEditor::MasteringEqEditor (MasteringParams& p, MasteringChain* c)
     setOpaque (true);
 
     specDb.fill (kSpecFloorDb);
+    dusk::audio::Fft::fillHannWindow (fftWindow.data(), kFftSize);
 
     // Spectrum on/off - a small unobtrusive pill in the curve's top-right.
     specToggle.setMouseClickGrabsKeyboardFocus (false);
@@ -242,7 +243,11 @@ bool MasteringEqEditor::updateSpectrum()
     // performFrequencyOnlyForwardTransform wants a 2×size scratch; the
     // windowed time data goes in the low half, magnitudes come back in it.
     std::copy (fftScratch.begin(), fftScratch.end(), fftWork.begin());
-    fftWindow.multiplyWithWindowingTable (fftWork.data(), (size_t) kFftSize);
+    for (int i = 0; i < kFftSize; ++i)
+        fftWork[(size_t) i] *= fftWindow[(size_t) i];
+
+    // Only bins 0..kFftSize/2 survive the transform - everything above is zeroed.
+    static_assert (kNumBins <= kFftSize / 2 + 1, "spectrum reads past the magnitude bins");
     fft.performFrequencyOnlyForwardTransform (fftWork.data());
 
     // ×4/N: single-sided scaling (2/N) times the 2× that compensates the Hann

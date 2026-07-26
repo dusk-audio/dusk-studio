@@ -58,6 +58,15 @@ nlohmann/json (JSON parser — session + preset serialisation)
   Path     : external/json/nlohmann/json.hpp (vendored single header)
   Upstream : https://github.com/nlohmann/json
 
+pffft (FFT backend behind dusk::audio::Fft — spectrum analyser, DP alignment)
+  Version  : 2013 single-file release (Julien Pommier)
+  License  : FFTPACK license (BSD-3-Clause style, GPL-compatible)
+  Path     : external/pffft/pffft.{c,h} (vendored verbatim)
+  Upstream : https://bitbucket.org/jpommier/pffft
+  Notes    : Derived from FFTPACKv4 (Dr Paul Swarztrauber, NCAR, 1985); the
+             FFTPACKv5 license text applies and is reproduced in full at the
+             top of external/pffft/pffft.h.
+
 Steinberg VST3 SDK (native VST3 host — Linux builds only)
   Version  : 3.8.0 (upstream tag v3.8.0_build_66)
   License  : Dual-licensed — GPL-3.0 (used here) OR Steinberg VST3 proprietary

@@ -1,9 +1,12 @@
 #include "DpAligner.h"
 
 #include "audiofile/FileReader.h"
-#include <juce_dsp/juce_dsp.h>
+#include "../foundation/Fft.h"
+#include <juce_audio_basics/juce_audio_basics.h>
+
 #include <algorithm>
 #include <cmath>
+#include <complex>
 
 namespace duskstudio::dp
 {
@@ -67,11 +70,9 @@ std::vector<float> onsetEnvelope (const float* x, int n, int hop, int fftOrder)
     const int nfr = (n - fftSize + hop) / hop;
     if (nfr < 2) return {};
 
-    juce::dsp::FFT fft (fftOrder);
+    dusk::audio::Fft fft (fftOrder);
     std::vector<float> window ((size_t) fftSize);
-    for (int i = 0; i < fftSize; ++i)
-        window[(size_t) i] = 0.5f * (1.0f - std::cos (2.0f * juce::MathConstants<float>::pi
-                                                       * (float) i / (float) (fftSize - 1)));
+    dusk::audio::Fft::fillHannWindow (window.data(), fftSize);
 
     std::vector<float> fftbuf ((size_t) (2 * fftSize));
     std::vector<float> prevMag ((size_t) (fftSize / 2 + 1), 0.0f);
@@ -124,22 +125,20 @@ CorrResult crossCorrelate (const std::vector<float>& longEnv,
     const int Lb = (int) shortEnv.size();
     if (La <= Lb || Lb < 2) return r;
 
-    int order = 0;
-    while ((1 << order) < La + Lb) ++order;
+    // Bounded by Fft's supported order range; the extra zero padding at the
+    // low end is harmless, and decodeMono's length cap keeps the top unreachable.
+    int order = dusk::audio::Fft::kMinOrder;
+    while (order < dusk::audio::Fft::kMaxOrder && (1 << order) < La + Lb) ++order;
     const int N = 1 << order;
 
-    std::vector<juce::dsp::Complex<float>> A ((size_t) N), B ((size_t) N), C ((size_t) N),
-                                           Af ((size_t) N), Bf ((size_t) N), Cf ((size_t) N);
+    std::vector<std::complex<float>> A ((size_t) N), B ((size_t) N), C ((size_t) N),
+                                     Af ((size_t) N), Bf ((size_t) N), Cf ((size_t) N);
     for (int i = 0; i < N; ++i)
     {
         A[(size_t) i] = { i < La ? longEnv[(size_t) i]  : 0.0f, 0.0f };
         B[(size_t) i] = { i < Lb ? shortEnv[(size_t) i] : 0.0f, 0.0f };
     }
-    juce::dsp::FFT fft (order);
-    // perform() must NOT alias input and output. macOS vDSP tolerates in-place,
-    // but the FFTFallback engine (Linux / any non-vDSP build) writes garbage
-    // when input == output - which silently zeroed the whole correlation and
-    // left every fragment unplaced. Keep the in/out buffers distinct.
+    dusk::audio::Fft fft (order);
     fft.perform (A.data(), Af.data(), false);
     fft.perform (B.data(), Bf.data(), false);
     for (int i = 0; i < N; ++i)
