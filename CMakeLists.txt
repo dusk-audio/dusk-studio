@@ -313,6 +313,7 @@ endif()
 target_sources(DuskStudio PRIVATE
     src/Main.cpp
     src/DuskStudioApp.cpp
+    src/foundation/Fft.cpp
     src/foundation/MessageThread.cpp
     # Native CLAP host is Linux-only (dlopen + poll + X11 editor) — added in the
     # UNIX-AND-NOT-APPLE block below, gated by DUSKSTUDIO_HAS_NATIVE_CLAP.
@@ -842,6 +843,14 @@ target_include_directories(DuskStudio PRIVATE
 
 # nlohmann/json single header (MIT) — de-JUCE JSON replacement for juce::var.
 target_include_directories(DuskStudio SYSTEM PRIVATE external/json)
+
+# pffft (FFTPACK license) — de-JUCE FFT backend behind dusk::audio::Fft.
+# Shared by the app and the test target.
+add_library(dusk-pffft OBJECT external/pffft/pffft.c)
+target_include_directories(dusk-pffft SYSTEM PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/external/pffft")
+target_compile_options(dusk-pffft PRIVATE "$<IF:$<C_COMPILER_ID:MSVC>,/w,-w>")
+target_link_libraries(DuskStudio PRIVATE dusk-pffft)
 
 if(DEFINED DUSK_PLUGINS_PATH)
     # Per-plugin DSP headers from the Dusk plugins repo's main branch. Each

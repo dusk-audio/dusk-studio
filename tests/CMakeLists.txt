@@ -130,6 +130,14 @@ target_include_directories(dusk-studio-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/external/clap/include)
 target_include_directories(dusk-studio-tests SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/external/json)
 
+# pffft backend for dusk::audio::Fft, plus its A/B parity suite. The pffft
+# object library (include dir + warning silencing) is defined in the root
+# CMakeLists and shared with the app target.
+target_sources(dusk-studio-tests PRIVATE
+    fft_pffft_parity.cpp
+    ${CMAKE_SOURCE_DIR}/src/foundation/Fft.cpp)
+target_link_libraries(dusk-studio-tests PRIVATE dusk-pffft)
+
 # JUCE-free foundation helpers (dusk::text / dusk::fs / dusk::json) — no external deps.
 target_sources(dusk-studio-tests PRIVATE
     foundation_text.cpp
