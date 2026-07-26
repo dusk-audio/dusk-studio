@@ -7,10 +7,11 @@
 namespace duskstudio
 {
 // Classic analog VU meter - cream face, swept needle, red overload zone past
-// 0 VU. Reads one or two std::atomic<float> linear-RMS sources (audio-thread
-// integrated at 300 ms tau, matching IEC 60268-17 and the TapeMachine
-// plugin's internal VU integrator). The UI thread converts to VU dB
-// (20·log10(rms) - referenceDbFs) and runs the mechanical ballistics
+// 0 VU. Reads one or two std::atomic<float> linear-level sources written by
+// the audio thread; each caller picks the detector it feeds in (the console
+// meters push 300 ms IEC 60268-17 RMS, the tape panel pushes the tape core's
+// 300 ms-release peak follower). The UI thread converts to VU dB
+// (20·log10(level) - referenceDbFs) and runs the mechanical ballistics
 // (spring + RC) on the needle position.
 //
 // Reference level (dBFS that maps to 0 VU) is configurable; default -18 dBFS
@@ -23,8 +24,9 @@ class AnalogVuMeter final : public juce::Component, private dusk::Timer
 {
 public:
     // leftRmsAtom must be non-null; rightRmsAtom may be null for mono. Atoms
-    // hold linear RMS amplitude (not dB) so the UI does one log10 + position
-    // map per refresh tick rather than per sample. Both pointed-to atoms
+    // hold a linear level (not dB), detector chosen by the caller, so the UI
+    // does one log10 + position map per refresh tick rather than per sample
+    // and never assumes which follower fed it. Both pointed-to atoms
     // must outlive this component; in Dusk Studio these live on Session params
     // (BusParams / MasterBusParams), constructed before any UI and destructed
     // after, so the lifetime contract holds implicitly.

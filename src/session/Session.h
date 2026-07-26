@@ -990,6 +990,31 @@ struct AuxLane
     std::array<HardwareInsertParams, AuxLaneParams::kMaxLanePlugins> hardwareInserts;
 };
 
+// Master tape emulation controls. Defaults mirror the tape core's own
+// defaults so a session that predates the "tape" JSON object loads with the
+// same character it had when the settings lived in the plugin state blob.
+struct TapeParams
+{
+    std::atomic<int>   machine     { 0 };      // 0 Swiss 800, 1 Classic 102
+    std::atomic<int>   speed       { 1 };      // 0 7.5, 1 15, 2 30 IPS
+    std::atomic<int>   type        { 0 };      // 0 456, 1 GP9, 2 911, 3 250
+    std::atomic<int>   signalPath  { 0 };      // 0 Repro, 1 Sync, 2 Input, 3 Thru
+    std::atomic<int>   eqStandard  { 0 };      // 0 NAB, 1 CCIR, 2 AES
+    std::atomic<int>   calibration { 0 };      // 0..3 -> +0/+3/+6/+9 dB
+
+    std::atomic<float> inputGainDb  { 0.0f };      // -12..+12; also sets tape drive
+    std::atomic<float> bias         { 50.0f };     // 0..100 %, ignored while autoCal
+    std::atomic<float> highpassHz   { 20.0f };     // 20..500
+    std::atomic<float> lowpassHz    { 20000.0f };  // 3000..20000
+    std::atomic<float> noiseAmount  { 0.0f };      // 0..100 %
+    std::atomic<float> wow          { 7.0f };      // 0..100 %
+    std::atomic<float> flutter      { 3.0f };      // 0..100 %
+    std::atomic<float> outputGainDb { 0.0f };      // -12..+12, ignored while autoComp
+
+    std::atomic<bool>  autoCal  { true };
+    std::atomic<bool>  autoComp { true };
+};
+
 struct MasterBusParams
 {
     std::atomic<float> faderDb     { 0.0f };
@@ -1017,13 +1042,12 @@ struct MasterBusParams
     std::atomic<int> automationMode { 0 };
     std::array<AutomationLane, kNumAutomationParams> automationLanes {};
 
-    // Internal drive / bias / formulation fixed; user toggles only
-    // engagement + HQ (4x ox).
+    // tapeHQ is dead legacy - oversampling is engine-wide now. Kept so old
+    // sessions round-trip the field instead of losing it on save.
     std::atomic<bool>  tapeEnabled { false };
     std::atomic<bool>  tapeHQ      { false };
 
-    // APVTS XML (base64). Empty = donor defaults.
-    juce::String tapeStateBase64;
+    TapeParams tape;
 
     // Pultec-style Tube EQ. Minimal control surface: LF boost, HF
     // boost, drive, output gain. Frequencies + bandwidth are musical

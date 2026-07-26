@@ -2,7 +2,9 @@
 # De-JUCE ratchet. Fails if any src/ file gains a JUCE dependency unless it is
 # already on tools/juce-allowlist.txt, and fails if a listed file has since
 # been cleaned (so the list can only shrink). Migration PRs delete allowlist
-# lines; nothing adds them.
+# lines. One sanctioned exception adds them: a genuinely new UI source file,
+# which has no JUCE-free option until the GUI tower lands its toolkit - each
+# such addition must be called out in its PR body.
 #
 #   tools/juce-gate.sh            check (CI + pre-push)
 #   tools/juce-gate.sh --update   rewrite the allowlist to match reality,

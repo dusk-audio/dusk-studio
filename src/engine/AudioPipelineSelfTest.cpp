@@ -69,6 +69,9 @@ AudioPipelineSelfTest::SavedState AudioPipelineSelfTest::saveState() const
     s.masterTapeEnabled = session.master().tapeEnabled.load (std::memory_order_relaxed);
     s.masterTapeHQ      = session.master().tapeHQ.load (std::memory_order_relaxed);
     s.masterCompEnabled = session.master().compEnabled.load (std::memory_order_relaxed);
+    s.masterTapeInputGainDb  = session.master().tape.inputGainDb.load (std::memory_order_relaxed);
+    s.masterTapeOutputGainDb = session.master().tape.outputGainDb.load (std::memory_order_relaxed);
+    s.masterTapeAutoComp     = session.master().tape.autoComp.load (std::memory_order_relaxed);
     s.oversamplingFactor = session.oversamplingFactor.load (std::memory_order_relaxed);
     return s;
 }
@@ -105,6 +108,9 @@ void AudioPipelineSelfTest::restoreState (const SavedState& s)
     session.master().tapeEnabled.store (s.masterTapeEnabled, std::memory_order_relaxed);
     session.master().tapeHQ.store      (s.masterTapeHQ,      std::memory_order_relaxed);
     session.master().compEnabled.store (s.masterCompEnabled, std::memory_order_relaxed);
+    session.master().tape.inputGainDb.store  (s.masterTapeInputGainDb,  std::memory_order_relaxed);
+    session.master().tape.outputGainDb.store (s.masterTapeOutputGainDb, std::memory_order_relaxed);
+    session.master().tape.autoComp.store     (s.masterTapeAutoComp,     std::memory_order_relaxed);
     session.oversamplingFactor.store (s.oversamplingFactor, std::memory_order_relaxed);
     // Bulk-write path bypassed the counter-aware setters; resync the RT
     // counters so anyTrackSoloed/Armed reads are correct in the test pass.
@@ -457,34 +463,20 @@ std::string AudioPipelineSelfTest::testChannelRoutingFourOut()
 
 std::string AudioPipelineSelfTest::testMasterTapeAddsGain()
 {
-    // Audit: characterize the master tape donor's transfer function across
+    // Audit: characterize the master tape core's transfer function across
     // its input-gain (drive) parameter, with auto-compensation both ON and
     // OFF. Pre-tape peak after pan-center is 0.3544 (-9.01 dBFS) given a
-    // -6 dBFS sine on the input. With autoComp ON the TapeMachine donor is
+    // -6 dBFS sine on the input. With autoComp ON the tape core is
     // expected to hold close-to-unity output across the full drive range
     // (-12..+12 dB). Pass = autoComp ON delivers |delta| < 0.5 dB at every
-    // drive point. The donor's compressionCompensation curve was re-derived
+    // drive point. The compressionCompensation curve was re-derived
     // from the measured raw transfer (plugins GH #92), so the old 2-4 dB
     // high-drive undercompensation no longer applies.
+   #if DUSKSTUDIO_HAS_DUSK_DSP
     prepareCleanState();
     session.master().tapeEnabled.store (true,  std::memory_order_relaxed);
-    session.master().tapeHQ.store      (false, std::memory_order_relaxed);
 
-   #if DUSKSTUDIO_HAS_DUSK_DSP
-    auto& tapeProc = engine.getMasterBus().getTapeProcessor();
-    auto& apvts    = tapeProc.getAPVTS();
-    auto* pIn      = apvts.getParameter ("inputGain");
-    auto* pOut     = apvts.getParameter ("outputGain");
-    auto* pAuto    = apvts.getParameter ("autoComp");
-   #else
-    return std::string ("[SKIP] Master Tape gain audit - DUSKSTUDIO_HAS_DUSK_DSP not defined");
-   #endif
-
-    auto setNorm = [] (juce::AudioProcessorParameter* p, float n)
-    {
-        if (p != nullptr) p->setValueNotifyingHost (std::clamp (n, 0.0f, 1.0f));
-    };
-    auto normFromGainDb = [] (float db) { return (db + 12.0f) / 24.0f; };
+    auto& tape = session.master().tape;
 
     constexpr float postStripPeak = 0.5012f * 0.7071f;  // 0.3544 = -9.01 dBFS
 
@@ -501,13 +493,13 @@ std::string AudioPipelineSelfTest::testMasterTapeAddsGain()
     bool  autoCompOnWithinHalfDb = true;
     for (bool ac : autoCompModes)
     {
-        setNorm (pAuto, ac ? 1.0f : 0.0f);   // Choice "Off"/"On" -> 0 / 1
-        setNorm (pOut,  normFromGainDb (0.0f));
+        tape.autoComp.store     (ac,   std::memory_order_relaxed);
+        tape.outputGainDb.store (0.0f, std::memory_order_relaxed);
 
         table += dusk::text::format ("      autoComp=%s\n", ac ? "ON " : "OFF");
         for (float drDb : drives)
         {
-            setNorm (pIn, normFromGainDb (drDb));
+            tape.inputGainDb.store (drDb, std::memory_order_relaxed);
             auto m = runSynthetic (48000.0, 512, 16, 2,
                                     kInputAmpMinusSixDb, kToneHz, 24, 8);
             const float deltaDb = ampToDb (m.peakL / postStripPeak);
@@ -526,10 +518,6 @@ std::string AudioPipelineSelfTest::testMasterTapeAddsGain()
         }
     }
 
-    setNorm (pIn,   normFromGainDb (0.0f));
-    setNorm (pOut,  normFromGainDb (0.0f));
-    setNorm (pAuto, 1.0f);
-
     const bool pass = autoCompOnWithinHalfDb;
 
     return dusk::text::format (
@@ -541,6 +529,9 @@ std::string AudioPipelineSelfTest::testMasterTapeAddsGain()
         table.c_str(),
         deltaAtDefault,
         worstAutoOnDelta);
+   #else
+    return std::string ("[SKIP] Master Tape gain audit - DUSKSTUDIO_HAS_DUSK_DSP not defined");
+   #endif
 }
 
 namespace

@@ -161,7 +161,8 @@ src/ui/SteppedKnob.h
 src/ui/SupportersPanel.h
 src/ui/SystemStatusBar.cpp
 src/ui/SystemStatusBar.h
-src/ui/TapeMachineModalEditor.h
+src/ui/TapePanel.cpp
+src/ui/TapePanel.h
 src/ui/TapeStrip.cpp
 src/ui/TapeStrip.h
 src/ui/TransportBar.cpp
