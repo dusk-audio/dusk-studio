@@ -145,10 +145,17 @@ the new surface. The interim JUCE TapePanel (H1b) stays until the embed
 lands, then is deleted (fx-03 figure recaptured; preset bar returns via
 TM2's own preset system - the "presets dropped" note reverses).
 
-Feasibility spike questions (answer before committing to the phase):
-DPF UIExporter with a parent window handle inside a non-DPF host; GL
-context on Xvfb (software GL for CI/screenshots); event routing
-(keyboard/mouse to ImGui vs JUCE focus); lifetime across device restarts.
+Feasibility spike (2026-07-26): GO — prototype embedded the real TM2 UI in
+a foreign X11 parent under Xvfb; recipe + param-delta table in the ledger.
+
+Wayland end-state constraint (Marc, 2026-07-26): on a Wayland-only session,
+nothing Dusk-owned may touch XWayland once JUCE is gone. The X11 embed
+below is INTERIM (the whole app is X11-on-Wayland pre-GUI-tower). At the
+GUI tower, the same TapeMachineUI.cpp ImGui content re-hosts onto a
+Dusk-toolkit Wayland/EGL surface (ImGui is windowing-agnostic; DGL/pugl is
+X11-only and gets replaced). The param/meter/lifecycle bridges built here
+must therefore stay windowing-independent — no Xlib types outside the one
+window-shim TU. XWayland remains only for third-party plugin editors.
 
 ## Owed to Marc's bench
 

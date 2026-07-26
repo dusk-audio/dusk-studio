@@ -126,8 +126,11 @@ reimplemented.
    `juce_audio_formats` stay for AudioThumbnail — GUI tower unlinks those.
    Multi-PR tower, phases H1-H6 in
    [dejuce-hosting-plan.md](dejuce-hosting-plan.md).
-2. **GUI tower (finale)** — bespoke Wayland toolkit (xdg-shell +
-   XWayland/XEmbed for plugin UIs, 2D renderer TBD Blend2D/Skia,
+2. **GUI tower (finale)** — bespoke Wayland toolkit (xdg-shell; XWayland/
+   XEmbed for THIRD-PARTY plugin UIs only — hard constraint from Marc
+   2026-07-26: zero XWayland for anything Dusk-owned on a Wayland-only
+   session, so first-party DPF plugin UIs re-host their Dear-ImGui content
+   onto Dusk-toolkit EGL surfaces; 2D renderer TBD Blend2D/Skia,
    HarfBuzz/FreeType, own widget layer; swap behind the existing
    DuskComboBox/DuskContextMenu/LookAndFeel/EmbeddedModal seams; event loop =
    rewrite of MessageThread.cpp, call sites already converged by the
