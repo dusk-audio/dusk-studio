@@ -116,23 +116,27 @@ reimplemented.
 
 ## Remaining towers, in order
 
-1. **Plugin-hosting JUCE fallback drop** — native CLAP/LV2/VST3 become the
-   only hosts; delete `juce::AudioPluginInstance`/`AudioProcessor` hosting
-   path (PluginSlot/PluginManager/PluginHostMain). Depends on donor DPF ports
-   finishing (APVTS gone) and Marc's call on dropping JUCE-plugin-format
-   support. Unlinks `juce_audio_processors`; `juce_audio_utils` and
-   `juce_audio_formats` stay for AudioThumbnail regardless — the GUI tower
-   replacing the thumbnail views is the sole unlink criterion for those two.
-2. **FFT** — DpAligner + MasteringEqEditor onto pffft/kissfft (lib decision
-   open). No ratchet movement, low priority; batch with whichever tower
-   touches those files.
-3. **Events remainder + GUI tower (finale)** — ~40 UI juce::Timer subclasses,
-   ~79 callAsync sites, then the bespoke Wayland toolkit (xdg-shell +
+1. **Plugin-hosting drop** — GREEN-LIT by Marc 2026-07-26 (reverses the
+   2026-07-01 keep-fallback decision). Native hosting becomes the only path:
+   VST3/LV2/CLAP on all three platforms + AU on macOS; the whole JUCE
+   hosting path (PluginSlot/PluginManager JUCE half/PluginHostMain loop) and
+   both remaining in-app JUCE donor processors (TapeMachine -> TapeMachineDSP,
+   Multiband UniversalCompressor -> donor DPF port) are deleted. Unlinks
+   `juce_audio_processors` globally; `juce_audio_utils` and
+   `juce_audio_formats` stay for AudioThumbnail — GUI tower unlinks those.
+   Multi-PR tower, phases H1-H6 in
+   [dejuce-hosting-plan.md](dejuce-hosting-plan.md).
+2. **GUI tower (finale)** — bespoke Wayland toolkit (xdg-shell +
    XWayland/XEmbed for plugin UIs, 2D renderer TBD Blend2D/Skia,
    HarfBuzz/FreeType, own widget layer; swap behind the existing
-   DuskComboBox/DuskContextMenu/LookAndFeel/EmbeddedModal seams). ~120 files,
-   50%+ of total effort, multi-release. Unlinks everything else, `juce_core`
-   last.
+   DuskComboBox/DuskContextMenu/LookAndFeel/EmbeddedModal seams; event loop =
+   rewrite of MessageThread.cpp, call sites already converged by the
+   events-remainder tower, PR #112). ~120 files, 50%+ of total effort,
+   multi-release. Unlinks everything else, `juce_core` last.
+
+Done since the last queue edit: events remainder (PR #112, zero gate
+movement by design), FFT (branch dejuce/fft — DpAligner + MasteringEqEditor
+on vendored pffft behind dusk::audio::Fft).
 
 Dissolved tower — **String-floor remnants** (2026-07-22 scout): zero files in
 session/engine scope can go fully clean on a String/File flip; every
