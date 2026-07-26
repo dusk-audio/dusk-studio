@@ -104,6 +104,18 @@ void setAutosaveIntervalSeconds (int seconds);
 bool getMidiSoftTakeover();
 void setMidiSoftTakeover (bool on);
 
+// Manual recording latency offset in samples. The engine subtracts this
+// from a take's committed timeline start so a round-trip-delayed input
+// (converter latency, external gear, unreported plugin latency) lands
+// back in time with what the user played. Default 0; clamped to
+// [-192000, 192000] on write (~4 s either way at 48 kHz). Per-machine -
+// it describes this desk's I/O latency, not the session.
+constexpr int kRecordingLatencyOffsetMin     = -192000;
+constexpr int kRecordingLatencyOffsetMax     = 192000;
+constexpr int kRecordingLatencyOffsetDefault = 0;
+int  getRecordingLatencyOffsetSamples();
+void setRecordingLatencyOffsetSamples (int samples);
+
 // Virtual-keyboard centre note (MIDI 0..120). Default 36 (C2) - sits
 // near the lower half of the bass register so the visible 2-octave
 // window (centre-12..centre+12) covers C1..C3 by default, matching

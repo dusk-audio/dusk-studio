@@ -212,6 +212,19 @@ public:
         return midiSoftTakeover.load (std::memory_order_relaxed);
     }
 
+    // Manual recording latency offset (samples), subtracted from a take's
+    // committed audio region start. Pushed from the UI at startup and on
+    // change. Message-thread only - read in record(), never on the audio
+    // thread - so a plain int is sufficient.
+    void setRecordingLatencyOffsetSamples (int samples) noexcept
+    {
+        recordingLatencyOffsetSamples_ = samples;
+    }
+    int getRecordingLatencyOffsetSamples() const noexcept
+    {
+        return recordingLatencyOffsetSamples_;
+    }
+
     struct RegionClipboard
     {
         bool        hasContent = false;
@@ -258,6 +271,16 @@ public:
     void play();
     void stop();
     void record();
+
+    // Message thread. Detach + reattach the audio callback so DSP re-prepares
+    // (oversampling factor, worker-pool size). Deferred until the transport is
+    // next observed stopped while it is rolling so a live take or playback
+    // isn't interrupted by the silence gap.
+    void restartDspWhenIdle();
+
+    // Message thread. Re-enables device-state persistence after the ALSA
+    // startup fallback and immediately persists the user's explicit choice.
+    void clearDeviceFallbackHold();
 
     // Marker jumps clamp to known points - no overshoot past zero or
     // past the last marker. Message-thread only.
@@ -913,6 +936,22 @@ private:
     // rolled back before this; writes are skipped until it catches up.
     // INT64_MIN = no record active.
     std::atomic<std::int64_t> activeRecordStart { std::numeric_limits<std::int64_t>::min() };
+
+    // Manual recording latency offset in samples (message-thread only).
+    int recordingLatencyOffsetSamples_ = 0;
+
+    // Message-thread only. Set when a settings change needs a DSP restart
+    // but the transport was rolling; consumed as soon as the transport is
+    // observed stopped.
+    bool dspRestartPending_ = false;
+    void performPendingDspRestartIfIdle();
+    void performDspRestart();
+
+    // Message-thread only. While set, changeListenerCallback skips
+    // persisting device state: the current device is a startup fallback
+    // (saved device busy), not a user choice. Cleared by an explicit
+    // selection in the device selector.
+    bool deviceFallbackHold_ = false;
 
     // Audio-thread-only. Together these let us detect two events that
     // require a per-block "All Notes Off" flush:

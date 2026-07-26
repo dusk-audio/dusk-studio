@@ -5,6 +5,76 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
+## [0.12.6] - 2026-07-25
+
+Beta patch on the 0.12 line: manual recording latency compensation for
+interfaces that misreport their round-trip latency.
+
+### Added
+
+- **Manual recording latency offset.** Audio Settings > Advanced gains an
+  offset (in samples) applied to every recorded take at placement, for
+  interfaces whose reported latency leaves overdubs drifting. Count-in, the
+  write gate, and MIDI placement are unaffected; a shift that would cross
+  timeline zero trims the take's head instead of playing it late, and a take
+  fully consumed by the offset is surfaced rather than silently discarded.
+- **Sample readout in the region editor.** The status bar shows the cursor
+  position - or range start and length - in raw samples, so a loopback
+  calibration recording can be measured directly.
+
+### Fixed
+
+- **Stream leak** when WAV writer creation failed at record start.
+- **Import races** in the region editor.
+- **Device restarts.** A pending DSP restart now defers to transport stop and
+  is consumed at every stop, and teardown around the restart is thread-safe.
+  The fallback device choice persists across restarts.
+
+### Changed
+
+- **Audio settings layout.** Advanced rows aligned, effect oversampling on its
+  own row, Rescan devices moved into the Audio section.
+
+## [0.12.5] - 2026-07-18
+
+Beta patch: the Windows build of 0.12.4. Same feature set, now compiling on
+every platform.
+
+### Fixed
+
+- **Windows build.** 0.12.4 failed to compile on MSVC - a `juce::WeakReference`
+  built inside a lambda init-capture, which MSVC rejects and Clang accepts, so
+  macOS and Linux were unaffected. Constructed as a named local instead.
+
+## [0.12.4] - 2026-07-18
+
+Beta patch on the 0.12 line: a filterable, program-grouped preset browser for
+multi-preset SoundFonts.
+
+### Changed
+
+- **SoundFont preset picker.** Loading a multi-preset `.sf2` (GM/GS/XG) now
+  opens a compact, filterable grid instead of one long scrolling dropdown.
+  Presets group program-first - an instrument and its bank variants list
+  together, drum kits last - each shown as `PPP [bank] Name`. Type to filter by
+  name or number; the popup stays short and reads across in columns.
+
+## [0.12.3] - 2026-07-15
+
+Beta patch on the 0.12 line: monitored inputs now feed their aux sends during
+playback.
+
+### Fixed
+
+- **Aux sends on a monitored input during playback.** With **IN** engaged,
+  pressing PLAY selected only the disk take for channel-strip processing, so
+  an audio track's live monitored input - and every aux send fed from it -
+  went silent, returning only on Record - so a vocal monitored with reverb
+  lost the reverb while playing along, then got it back on record. Live input
+  now runs the full channel strip during playback, so
+  its sends (headphone reverb/delay while tracking) sound in every transport
+  state. The audio twin of the 0.12.1 live-play-along fix.
+
 ## [0.12.2] - 2026-07-12
 
 Beta patch on the 0.12 line: fixes a crash when bouncing, rendering stems,

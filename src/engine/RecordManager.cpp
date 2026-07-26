@@ -29,11 +29,29 @@ RecordManager::RecordManager (Session& s) : session (s) {}
 
 RecordManager::~RecordManager()
 {
-    if (active.load (std::memory_order_relaxed))
-        stopRecording (0);
+    // Destruction is an abnormal take end: prevent new writes, wait for any
+    // audio-thread caller that already entered, then discard the uncommitted
+    // capture. The normal stopRecording path mutates the session by creating
+    // regions, which must only happen through an explicit engine stop.
+    active.store (false, std::memory_order_release);
+    while (audioInFlight.load (std::memory_order_acquire) > 0)
+        std::this_thread::yield();
+
+    for (auto& cap : midiCaptures)
+        cap.reset();
+
+    for (auto& slot : writers)
+    {
+        if (slot == nullptr) continue;
+        drainPool.remove (slot->writer.get());
+        const auto file = slot->file;
+        slot.reset();
+        file.deleteFile();
+    }
 }
 
-bool RecordManager::startRecording (double sampleRate, std::int64_t startSample)
+bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
+                                    int latencyOffsetSamples)
 {
     if (active.load (std::memory_order_relaxed))
         return true;
@@ -65,6 +83,7 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample)
 
     recordStartSample = startSample;
     recordSampleRate  = sampleRate;
+    recordLatencyOffsetSamples = latencyOffsetSamples;
 
     lastSetupFailures.clear();
     lastRecordErrors.clear();
@@ -490,13 +509,19 @@ void RecordManager::stopRecording (std::int64_t endSample)
         drainPool.remove (slot->writer.get());
         slot->writer.reset();  // flush + close
 
-        if (frames > 0)
+        // When the latency shift pulls the start before 0 we can't move the
+        // take earlier than the timeline origin, so trim that much off the
+        // head instead - otherwise the take plays late by the clamped amount.
+        const std::int64_t shifted = recordStartSample - recordLatencyOffsetSamples;
+        const std::int64_t trim    = shifted < 0 ? -shifted : 0;
+
+        if (frames > 0 && trim < frames)
         {
             AudioRegion region;
             region.file = slot->file;
-            region.timelineStart = recordStartSample;
-            region.lengthInSamples = frames;
-            region.sourceOffset = 0;
+            region.timelineStart = std::max<std::int64_t> (0, shifted);
+            region.lengthInSamples = frames - trim;
+            region.sourceOffset = trim;
             region.numChannels = slot->numChannels;
 
             // Take-history capture: any existing region whose timeline range
@@ -646,6 +671,16 @@ void RecordManager::stopRecording (std::int64_t endSample)
         }
         else
         {
+            if (frames > 0)
+            {
+                std::fprintf (stderr,
+                              "[Dusk Studio/RecordManager] stopRecording: track %d take "
+                              "discarded - latency offset head-trim (%lld) consumed all "
+                              "%lld recorded frames.\n",
+                              t + 1, (long long) trim, (long long) frames);
+                lastRecordErrors.push_back (
+                    { t, RecordErrorKind::OffsetConsumedTake, (std::uint64_t) frames });
+            }
             slot->file.deleteFile();
         }
         slot.reset();

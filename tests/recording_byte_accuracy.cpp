@@ -158,3 +158,34 @@ TEST_CASE ("RecordManager writes stereo L+R interleaving in order",
 
     dir.deleteRecursively();
 }
+
+TEST_CASE ("RecordManager destruction discards an active take",
+           "[recording][recordmanager][teardown]")
+{
+    using duskstudio::RecordManager;
+    using duskstudio::Session;
+    using duskstudio::Track;
+
+    constexpr double kSampleRate = 48000.0;
+    constexpr int    kBlockSize  = 256;
+
+    const auto dir = makeTempSessionDir();
+    Session session;
+    session.setSessionDirectory (dir);
+    session.track (0).mode.store ((int) Track::Mode::Mono, std::memory_order_relaxed);
+    session.setTrackArmed (0, true);
+
+    {
+        RecordManager rm (session);
+        REQUIRE (rm.startRecording (kSampleRate, 0));
+
+        std::vector<float> block ((size_t) kBlockSize, 0.25f);
+        rm.writeInputBlock (0, block.data(), nullptr, kBlockSize);
+    }
+
+    REQUIRE (session.track (0).regions.empty());
+    REQUIRE (session.getAudioDirectory().findChildFiles (
+                 juce::File::findFiles, false, "*.wav").isEmpty());
+
+    dir.deleteRecursively();
+}
