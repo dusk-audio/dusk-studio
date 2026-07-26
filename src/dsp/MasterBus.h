@@ -10,7 +10,7 @@
 #include "../session/Session.h"
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
-  #include "PluginProcessor.h"    // TapeMachine/Source - master tape emulation (full plugin processor + editor)
+  #include "MasterTape.h"                    // TapeMachine - master tape emulation (framework-free donor core)
   #include <core/MultiQTube.hpp>             // multi-q - Pultec-style Tube EQ (framework-free donor core)
   #include <core/UniversalCompressorDSP.hpp> // multi-comp - Bus mode master comp (framework-free donor core)
 #endif
@@ -34,9 +34,8 @@ public:
     void processInPlace (float* L, float* R, int numSamples) noexcept;
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
-    // Live access to the hosted TapeMachine processor. Used by the master
-    // strip's gear button to spawn its editor on demand.
-    TapeMachineAudioProcessor& getTapeProcessor() noexcept { return tape; }
+    // Tape meters for the tape panel; see MasterTape::getVu.
+    MasterTape::Vu getTapeVu() const noexcept { return tape.getVu(); }
 #endif
 
 private:
@@ -44,12 +43,12 @@ private:
     dusk::audio::SmoothedValue<float> faderGain { 1.0f };
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
-    TapeMachineAudioProcessor   tape;
-    juce::AudioBuffer<float>    tapeStereoBuffer;    // pre-allocated; tape processBlock target
-    juce::MidiBuffer            tapeMidi;            // unused but required by processBlock
-    std::atomic<float>*         tapeBypassAtom = nullptr;
+    MasterTape                  tape;
+    // Max samples per tape.processInPlace call - the core's scratch is sized to
+    // the prepared block, so the process loop chunks anything larger.
+    int                         tapeMaxBlock = 0;
 
-    // TAPE on/off crossfade. The donor hard-bypasses (early-returns, no ramp),
+    // TAPE on/off crossfade. The core hard-bypasses (early-returns, no ramp),
     // so toggling it would pop. We blend the pre-tape (dry) signal against the
     // processed (wet) output over 20 ms here instead. Tape is skipped entirely
     // once fully faded out, so a disengaged tape still costs ~nothing.
@@ -65,24 +64,19 @@ private:
 
     void updateEqParameters() noexcept;
     void updateCompParameters() noexcept;
-    // Lock-free atomic store, used for the tape stage's bypass APVTS atom.
-    static inline void storeAtom (std::atomic<float>* a, float v) noexcept
-    {
-        if (a != nullptr) a->store (v, std::memory_order_relaxed);
-    }
 #endif
 
     int currentOxFactor      = 1;     // 1, 2 or 4 - set in prepare(); drives the
                                        // Dusk Studio-side oversampler around (TubeEQ
-                                       // + comp) and the TapeMachine "oversampling"
-                                       // APVTS choice atom. The comp core's internal
+                                       // + comp) and the tape core's own oversampling
+                                       // factor. The comp core's internal
                                        // oversampling path is never engaged because
                                        // the Dusk Studio-side wrap handles it.
 
     // Master oversampler around (TubeEQ + bus comp). Both stages saturate (tube
     // + comp) and alias at native rate; running them at oversampled rate inside
-    // this wrap suppresses it. TapeMachine has its own internal oversampling
-    // (driven via APVTS) so it's processed at native rate AFTER this wrap.
+    // this wrap suppresses it. The tape core has its own internal oversampling
+    // so it's processed at native rate AFTER this wrap.
     dusk::audio::StereoOversampler oversampler;
 
     // When EQ + comp are both bypassed the oversampler is skipped. Its FIR round
@@ -102,22 +96,21 @@ private:
     bool prevWrapActive { false };
 
     // juce::dsp integer delay line, retained for the tape crossfade dry-path PDC
-    // below (the tape stage keeps its JUCE API).
+    // below.
     using OsDelayLine = juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None>;
 
     // Dry-path PDC for the tape crossfade. Tape adds its own oversampler
     // latency when engaged (0 at 1×); delaying the dry by the same amount keeps
     // the on/off blend phase-coherent (no comb mid-fade) and seamless (no
-    // timing jump at the fade ends). Resolved in prepare from the donor's
+    // timing jump at the fade ends). Resolved in prepare from the core's
     // reported latency; max sized to it. Fed every block at >0 latency so the
     // ring stays warm for the next toggle - a constant, sub-ms master latency.
     OsDelayLine tapeDryDelayL { 1 };
     OsDelayLine tapeDryDelayR { 1 };
     int tapeLatencySamples = 0;
 
-    // VU-RMS smoother state - 300 ms tau on the audio thread so the
-    // analog VU on the master strip reads the same level TapeMachine's
-    // own VU shows on identical signals.
+    // VU-RMS smoother state - 300 ms tau on the audio thread, the VU standard
+    // integration time the analog meter on the master strip is calibrated to.
     double sampleRateForMeter = 44100.0;
     float  vuRmsLinL = 0.0f;
     float  vuRmsLinR = 0.0f;

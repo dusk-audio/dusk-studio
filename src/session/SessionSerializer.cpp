@@ -16,7 +16,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <map>
+#include <memory>
 #include <set>
 
 namespace duskstudio
@@ -56,6 +58,83 @@ inline void storeFiniteFloat (std::atomic<float>& dst, const nlohmann::json& src
     const double d = src.get<double>();
     if (std::isfinite (d) && std::abs (d) <= (double) std::numeric_limits<float>::max())
         dst.store ((float) d);
+}
+
+// Tape settings used to live in the master's plugin-state blob: base64 of
+// JUCE's AudioProcessor::copyXmlToBinary container wrapped around the APVTS
+// "Parameters" tree. The container is a uint32 LE magic, a uint32 LE text
+// length, then the uncompressed single-line XML - parsed inline here so the
+// session layer doesn't take a dependency on the plugin-hosting module just
+// to read a format we only ever migrate away from.
+inline std::unique_ptr<juce::XmlElement> parseProcessorStateBlob (const std::string& base64)
+{
+    juce::MemoryBlock mb;
+    if (base64.empty() || ! mb.fromBase64Encoding (juce::String (base64)))
+        return {};
+
+    const auto size = mb.getSize();
+    if (size <= 8) return {};
+
+    const auto* bytes = static_cast<const std::uint8_t*> (mb.getData());
+    const auto readLe32 = [bytes] (size_t at)
+    {
+        return (std::uint32_t) bytes[at]
+             | ((std::uint32_t) bytes[at + 1] << 8)
+             | ((std::uint32_t) bytes[at + 2] << 16)
+             | ((std::uint32_t) bytes[at + 3] << 24);
+    };
+    if (readLe32 (0) != 0x21324356u) return {};
+
+    const auto textLen = (size_t) readLe32 (4);
+    if (textLen == 0) return {};
+
+    return juce::parseXML (juce::String::fromUTF8 (
+        reinterpret_cast<const char*> (bytes + 8),
+        (int) std::min (textLen, size - 8)));
+}
+
+// One-way migration of that blob into TapeParams. Choice parameters store
+// their index in the same "value" attribute floats use. The donor's dead
+// "saturation" / "noiseEnabled" params and the engine-owned "oversampling" /
+// "bypass" are deliberately not modelled and fall through.
+inline void migrateTapeStateBlob (const std::string& base64, TapeParams& t)
+{
+    const auto xml = parseProcessorStateBlob (base64);
+    if (xml == nullptr) return;
+
+    const auto storeInt = [] (std::atomic<int>& dst, float v, int hi)
+    {
+        dst.store (std::clamp ((int) std::lround (v), 0, hi));
+    };
+    const auto storeFloat = [] (std::atomic<float>& dst, float v, float lo, float hi)
+    {
+        dst.store (jlimit (lo, hi, v));
+    };
+
+    for (auto* p : xml->getChildWithTagNameIterator ("PARAM"))
+    {
+        if (! p->hasAttribute ("value")) continue;
+        const auto  id = p->getStringAttribute ("id");
+        const float v  = (float) p->getDoubleAttribute ("value");
+        if (! std::isfinite (v)) continue;
+
+        if      (id == "tapeMachine")   storeInt   (t.machine,     v, 1);
+        else if (id == "tapeSpeed")     storeInt   (t.speed,       v, 2);
+        else if (id == "tapeType")      storeInt   (t.type,        v, 3);
+        else if (id == "signalPath")    storeInt   (t.signalPath,  v, 3);
+        else if (id == "eqStandard")    storeInt   (t.eqStandard,  v, 2);
+        else if (id == "calibration")   storeInt   (t.calibration, v, 3);
+        else if (id == "inputGain")     storeFloat (t.inputGainDb,  v, -12.0f, 12.0f);
+        else if (id == "bias")          storeFloat (t.bias,         v, 0.0f, 100.0f);
+        else if (id == "highpassFreq")  storeFloat (t.highpassHz,   v, 20.0f, 500.0f);
+        else if (id == "lowpassFreq")   storeFloat (t.lowpassHz,    v, 3000.0f, 20000.0f);
+        else if (id == "noiseAmount")   storeFloat (t.noiseAmount,  v, 0.0f, 100.0f);
+        else if (id == "wowAmount")     storeFloat (t.wow,          v, 0.0f, 100.0f);
+        else if (id == "flutterAmount") storeFloat (t.flutter,      v, 0.0f, 100.0f);
+        else if (id == "outputGain")    storeFloat (t.outputGainDb, v, -12.0f, 12.0f);
+        else if (id == "autoCal")       t.autoCal.store  (v >= 0.5f);
+        else if (id == "autoComp")      t.autoComp.store (v >= 0.5f);
+    }
 }
 
 // Scalar sibling for plain-float fields (region gain, etc.) that aren't atomics.
@@ -1334,6 +1413,27 @@ juce::String SessionSerializer::serialize (const Session& s)
         master["mono_sum"] = true;
     master["tape_enabled"] = s.master().tapeEnabled.load();
     master["tape_hq"]      = s.master().tapeHQ.load();
+    {
+        const auto& t = s.master().tape;
+        JObj tape;
+        tape["machine"]       = t.machine.load();
+        tape["speed"]         = t.speed.load();
+        tape["type"]          = t.type.load();
+        tape["signal_path"]   = t.signalPath.load();
+        tape["eq_standard"]   = t.eqStandard.load();
+        tape["calibration"]   = t.calibration.load();
+        tape["input_gain_db"] = t.inputGainDb.load();
+        tape["bias"]          = t.bias.load();
+        tape["highpass_hz"]   = t.highpassHz.load();
+        tape["lowpass_hz"]    = t.lowpassHz.load();
+        tape["noise_amount"]  = t.noiseAmount.load();
+        tape["wow"]           = t.wow.load();
+        tape["flutter"]       = t.flutter.load();
+        tape["output_gain_db"] = t.outputGainDb.load();
+        tape["auto_cal"]      = t.autoCal.load();
+        tape["auto_comp"]     = t.autoComp.load();
+        master["tape"] = std::move (tape);
+    }
 
     // Pultec EQ (all atoms - every knob the user can move).
     master["eq_enabled"]            = s.master().eqEnabled.load();
@@ -1355,10 +1455,6 @@ juce::String SessionSerializer::serialize (const Session& s)
     master["comp_release_ms"]   = s.master().compReleaseMs.load();
     master["comp_release_auto"] = s.master().compReleaseAuto.load();
     master["comp_makeup_db"]    = s.master().compMakeupDb.load();
-    // TapeMachine APVTS state (base64). Skipped when empty so existing
-    // sessions don't gain a noisy field they don't need.
-    if (s.master().tapeStateBase64.isNotEmpty())
-        master["tape_state"] = toStd (s.master().tapeStateBase64);
 
     // Master automation: only FaderDb is automatable per spec. Reuses
     // the same shape as track / aux serialization for symmetry.
@@ -1770,7 +1866,37 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         s.master().monoSum.store     (json::getBool (master, "mono_sum", false));
         s.master().tapeEnabled.store (json::getBool (master, "tape_enabled", false));
         s.master().tapeHQ.store      (json::getBool (master, "tape_hq", false));
-        s.master().tapeStateBase64 = json::getString (master, "tape_state");
+        {
+            auto&       t    = s.master().tape;
+            const auto& tape = json::child (master, "tape");
+            const auto tapeFloat = [&tape] (const char* key, float def, float lo, float hi)
+            {
+                const float v = json::getFloat (tape, key, def);
+                return std::isfinite (v) ? jlimit (lo, hi, v) : def;
+            };
+            t.machine.store      (std::clamp (json::getInt (tape, "machine",     0), 0, 1));
+            t.speed.store        (std::clamp (json::getInt (tape, "speed",       1), 0, 2));
+            t.type.store         (std::clamp (json::getInt (tape, "type",        0), 0, 3));
+            t.signalPath.store   (std::clamp (json::getInt (tape, "signal_path", 0), 0, 3));
+            t.eqStandard.store   (std::clamp (json::getInt (tape, "eq_standard", 0), 0, 2));
+            t.calibration.store  (std::clamp (json::getInt (tape, "calibration", 0), 0, 3));
+            t.inputGainDb.store  (tapeFloat ("input_gain_db",      0.0f, -12.0f, 12.0f));
+            t.bias.store         (tapeFloat ("bias",              50.0f,   0.0f, 100.0f));
+            t.highpassHz.store   (tapeFloat ("highpass_hz",       20.0f,  20.0f, 500.0f));
+            t.lowpassHz.store    (tapeFloat ("lowpass_hz",     20000.0f, 3000.0f, 20000.0f));
+            t.noiseAmount.store  (tapeFloat ("noise_amount",       0.0f,   0.0f, 100.0f));
+            t.wow.store          (tapeFloat ("wow",                7.0f,   0.0f, 100.0f));
+            t.flutter.store      (tapeFloat ("flutter",            3.0f,   0.0f, 100.0f));
+            t.outputGainDb.store (tapeFloat ("output_gain_db",     0.0f, -12.0f, 12.0f));
+            t.autoCal.store      (json::getBool (tape, "auto_cal",  true));
+            t.autoComp.store     (json::getBool (tape, "auto_comp", true));
+
+            // Sessions written before the "tape" object carry the settings in
+            // the legacy plugin-state blob. Migrate once; the next save drops
+            // "tape_state" and the plain values own it from then on.
+            if (! json::has (master, "tape"))
+                migrateTapeStateBlob (json::getString (master, "tape_state"), t);
+        }
 
         // Pultec EQ. Missing keys keep the in-memory default (matches
         // the per-track / per-bus pattern).

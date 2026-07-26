@@ -872,6 +872,7 @@ if(DEFINED DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/HardwareEmulation"
         "${DUSK_PLUGINS_PATH}/plugins/tape-echo/Source/DSP"
+        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI")
 
@@ -881,13 +882,19 @@ if(DEFINED DUSK_PLUGINS_PATH)
     # createEditor() references them. The framework-free cores
     # (UniversalCompressorDSP / FourKEQDSP) are the de-JUCE'd donors BusStrip
     # uses directly.
+    #
+    # MasterTape.cpp lives here rather than in the main source list: it is the
+    # only translation unit that includes the TapeMachine core, which exists
+    # only under DUSK_PLUGINS_PATH.
     target_sources(DuskStudio PRIVATE
+        src/dsp/MasterTape.cpp
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core/UniversalCompressorDSP.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/shared-dpf/dsp/FourKEQDSP.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/shared/LEDMeter.cpp"
+        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/core/TapeMachineDSP.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/PluginProcessor.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/PluginEditor.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/ImprovedTapeEmulation.cpp"

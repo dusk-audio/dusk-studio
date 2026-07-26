@@ -30,34 +30,11 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
                        ? oversamplingFactor : 1;
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
-    // TapeMachine is a full juce::AudioProcessor instance. Configure its bus
-    // layout, prepare it for the working SR/block size, and pre-size the
-    // scratch buffer used to feed processBlock each callback. The bypass
-    // APVTS atom is cached here so the audio thread can flip it lock-free.
-    tape.setPlayConfigDetails (2, 2, sampleRate, std::max (1, blockSize));
-
-    // Drive TapeMachine's internal oversampling from the global Audio Settings
-    // factor (Session::oversamplingFactor). The donor's "oversampling" param
-    // is a 3-choice (1x / 2x / 4x); map Dusk Studio's 1/2/4 factor to indices 0/1/2.
-    // Set this BEFORE prepareToPlay: the donor reads the param there to size its
-    // oversampler and report its latency, so setting it first means
-    // getLatencySamples() below is correct without waiting for a processBlock to
-    // re-sync. operator= so JUCE's listeners fire and any open editor's combo
-    // updates (raw-atom write would skip the notification and leave it stale).
-    if (auto* osParam = dynamic_cast<juce::AudioParameterChoice*> (
-            tape.getAPVTS().getParameter ("oversampling")))
-    {
-        const int idx = (currentOxFactor == 4) ? 2
-                     : (currentOxFactor == 2) ? 1
-                                              : 0;
-        *osParam = idx;
-    }
-
-    tape.prepareToPlay (sampleRate, std::max (1, blockSize));
-    tapeStereoBuffer.setSize (2, std::max (1, blockSize), false, false, true);
-    tapeDryBuffer.setSize (2, std::max (1, blockSize), false, false, true);
-    tapeMidi.clear();
-    tapeBypassAtom = tape.getAPVTS().getRawParameterValue ("bypass");
+    // The tape core's own oversampling follows the global Audio Settings factor
+    // (Session::oversamplingFactor).
+    tapeMaxBlock = std::max (1, blockSize);
+    tape.prepare (sampleRate, tapeMaxBlock, currentOxFactor);
+    tapeDryBuffer.setSize (2, tapeMaxBlock, false, false, true);
 
     // 20 ms toggle crossfade. Primed to the live tape state on the first block
     // (prepare can't see paramsRef reliably) so loading a session with tape ON
@@ -65,10 +42,10 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
     tapeMix.reset (sampleRate, 0.020);
     tapeMixPrimed = false;
 
-    // Resolve the tape's engaged latency (0 at 1×) now that prepareToPlay has
+    // Resolve the tape's engaged latency (0 at 1×) now that prepare() has
     // set it from the factor above, and size the dry delay to match so the
     // crossfade is phase-coherent and bit-perfect.
-    tapeLatencySamples = std::max (0, tape.getLatencySamples());
+    tapeLatencySamples = std::max (0, tape.latencySamples());
     {
         const int maxDelay = std::max (1, tapeLatencySamples);
         const juce::dsp::ProcessSpec drySpec {
@@ -87,8 +64,8 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
     // saturation that aliases at native rate; the wrap moves them to
     // oversampled rate. The comp core's internal oversampling path is never
     // engaged because Dusk Studio does the up/downsample around the chain.
-    // TapeMachine has its own internal oversampling (driven via APVTS above) so
-    // it processes at native rate AFTER this wrap.
+    // The tape core has its own internal oversampling (set above) so it
+    // processes at native rate AFTER this wrap.
     const int bsClamped = std::max (1, blockSize);
     oversampler.setFactor (currentOxFactor);
     oversampler.prepare (bsClamped);
@@ -300,13 +277,15 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
 #endif
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
-    // TapeMachine handles its own internal oversampling (driven from the
-    // global factor via its `oversampling` APVTS param, written in prepare()).
-    // The donor hard-bypasses (early-returns, no ramp), so we own the on/off
-    // crossfade here: blend the dry (pre-tape) signal against the wet output
-    // over 20 ms. Tape is run only while audible - fully on, or still fading -
-    // so a disengaged tape costs ~nothing. Chunked to the tape scratch size
-    // because the donor's internal scratch is sized to the prepared block.
+    if (paramsRef != nullptr)
+        tape.pushParameters (paramsRef->tape);
+
+    // The tape core handles its own internal oversampling (factor set in
+    // prepare()). It hard-bypasses (early-returns, no ramp), so we own the
+    // on/off crossfade here: blend the dry (pre-tape) signal against the wet
+    // output over 20 ms. Tape is run only while audible - fully on, or still
+    // fading - so a disengaged tape costs ~nothing. Chunked to tapeMaxBlock
+    // because the core's internal scratch is sized to the prepared block.
     const float tapeTarget = tapeOn ? 1.0f : 0.0f;
     if (! tapeMixPrimed)
     {
@@ -319,20 +298,15 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
     const bool runTape  = tapeOn || blending;            // wet needed this block
     const bool alignDry = tapeLatencySamples > 0;        // tape adds latency (2×/4×)
 
-    if (! runTape && ! alignDry)
+    // At 1x (no latency), fully faded out -> the dry passes through untouched
+    // and the whole stage is free.
+    if (runTape || alignDry)
     {
-        // 1× (no latency) and fully faded out -> dry passes through untouched
-        // (free). Keep the donor's bypass atom set so any open editor agrees.
-        storeAtom (tapeBypassAtom, 1.0f);
-    }
-    else
-    {
-        storeAtom (tapeBypassAtom, runTape ? 0.0f : 1.0f);
+        tape.setBypass (! runTape);
 
-        const int bufSize = tapeStereoBuffer.getNumSamples();
-        for (int offset = 0; offset < numSamples; offset += bufSize)
+        for (int offset = 0; offset < numSamples; offset += tapeMaxBlock)
         {
-            const int n = std::min (bufSize, numSamples - offset);
+            const int n = std::min (tapeMaxBlock, numSamples - offset);
             float* Lc = L + offset;
             float* Rc = R + offset;
 
@@ -357,12 +331,7 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
             }
 
             if (runTape)
-            {
-                float* lrView[2] = { Lc, Rc };
-                juce::AudioBuffer<float> tapeBuf (lrView, 2, n);
-                tapeMidi.clear();
-                tape.processBlock (tapeBuf, tapeMidi);
-            }
+                tape.processInPlace (Lc, Rc, n);
 
             const float* dryL = tapeDryBuffer.getReadPointer (0);
             const float* dryR = tapeDryBuffer.getReadPointer (1);

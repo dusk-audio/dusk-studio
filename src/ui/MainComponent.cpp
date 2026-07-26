@@ -2451,30 +2451,25 @@ juce::File MainComponent::getAutosaveFileFor (const juce::File& sessionDir) cons
     return sessionDir.getChildFile ("session.json.autosave");
 }
 
-// Hosted plugins (per-channel inserts, aux-lane slots, master tape) re-
-// emit slightly different APVTS state on each getStateInformation call -
-// internal counters / smoother phases that aren't user-meaningful. The
-// autosave dirty-check must ignore that drift, otherwise it fires every
-// 30 s on a freshly-saved session and resurfaces the recovery dialog on
-// the next launch. Strip the two base64 state values to "" before any
-// content compare.
+// Hosted plugins (per-channel inserts, aux-lane slots) re-emit slightly
+// different APVTS state on each getStateInformation call - internal counters /
+// smoother phases that aren't user-meaningful. The autosave dirty-check must
+// ignore that drift, otherwise it fires every 30 s on a freshly-saved session
+// and resurfaces the recovery dialog on the next launch. Strip the base64
+// state values to "" before any content compare.
 static juce::String stripVolatileStateForDirtyCompare (juce::String s)
 {
-    static const char* const markers[] = { "\"plugin_state\":", "\"tape_state\":" };
-    for (const char* marker : markers)
+    const juce::String m ("\"plugin_state\":");
+    int pos = 0;
+    while ((pos = s.indexOf (pos, m)) != -1)
     {
-        const juce::String m (marker);
-        int pos = 0;
-        while ((pos = s.indexOf (pos, m)) != -1)
-        {
-            const int afterColon = pos + m.length();
-            const int q1 = s.indexOfChar (afterColon, '"');
-            if (q1 < 0) break;
-            const int q2 = s.indexOfChar (q1 + 1, '"');
-            if (q2 < 0) break;
-            s = s.replaceSection (q1, q2 - q1 + 1, "\"\"");
-            pos = q1 + 2;
-        }
+        const int afterColon = pos + m.length();
+        const int q1 = s.indexOfChar (afterColon, '"');
+        if (q1 < 0) break;
+        const int q2 = s.indexOfChar (q1 + 1, '"');
+        if (q2 < 0) break;
+        s = s.replaceSection (q1, q2 - q1 + 1, "\"\"");
+        pos = q1 + 2;
     }
     return s;
 }

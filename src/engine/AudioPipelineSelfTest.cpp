@@ -457,34 +457,23 @@ std::string AudioPipelineSelfTest::testChannelRoutingFourOut()
 
 std::string AudioPipelineSelfTest::testMasterTapeAddsGain()
 {
-    // Audit: characterize the master tape donor's transfer function across
+    // Audit: characterize the master tape core's transfer function across
     // its input-gain (drive) parameter, with auto-compensation both ON and
     // OFF. Pre-tape peak after pan-center is 0.3544 (-9.01 dBFS) given a
-    // -6 dBFS sine on the input. With autoComp ON the TapeMachine donor is
+    // -6 dBFS sine on the input. With autoComp ON the tape core is
     // expected to hold close-to-unity output across the full drive range
     // (-12..+12 dB). Pass = autoComp ON delivers |delta| < 0.5 dB at every
-    // drive point. The donor's compressionCompensation curve was re-derived
+    // drive point. The compressionCompensation curve was re-derived
     // from the measured raw transfer (plugins GH #92), so the old 2-4 dB
     // high-drive undercompensation no longer applies.
     prepareCleanState();
     session.master().tapeEnabled.store (true,  std::memory_order_relaxed);
-    session.master().tapeHQ.store      (false, std::memory_order_relaxed);
 
    #if DUSKSTUDIO_HAS_DUSK_DSP
-    auto& tapeProc = engine.getMasterBus().getTapeProcessor();
-    auto& apvts    = tapeProc.getAPVTS();
-    auto* pIn      = apvts.getParameter ("inputGain");
-    auto* pOut     = apvts.getParameter ("outputGain");
-    auto* pAuto    = apvts.getParameter ("autoComp");
+    auto& tape = session.master().tape;
    #else
     return std::string ("[SKIP] Master Tape gain audit - DUSKSTUDIO_HAS_DUSK_DSP not defined");
    #endif
-
-    auto setNorm = [] (juce::AudioProcessorParameter* p, float n)
-    {
-        if (p != nullptr) p->setValueNotifyingHost (std::clamp (n, 0.0f, 1.0f));
-    };
-    auto normFromGainDb = [] (float db) { return (db + 12.0f) / 24.0f; };
 
     constexpr float postStripPeak = 0.5012f * 0.7071f;  // 0.3544 = -9.01 dBFS
 
@@ -501,13 +490,13 @@ std::string AudioPipelineSelfTest::testMasterTapeAddsGain()
     bool  autoCompOnWithinHalfDb = true;
     for (bool ac : autoCompModes)
     {
-        setNorm (pAuto, ac ? 1.0f : 0.0f);   // Choice "Off"/"On" -> 0 / 1
-        setNorm (pOut,  normFromGainDb (0.0f));
+        tape.autoComp.store     (ac,   std::memory_order_relaxed);
+        tape.outputGainDb.store (0.0f, std::memory_order_relaxed);
 
         table += dusk::text::format ("      autoComp=%s\n", ac ? "ON " : "OFF");
         for (float drDb : drives)
         {
-            setNorm (pIn, normFromGainDb (drDb));
+            tape.inputGainDb.store (drDb, std::memory_order_relaxed);
             auto m = runSynthetic (48000.0, 512, 16, 2,
                                     kInputAmpMinusSixDb, kToneHz, 24, 8);
             const float deltaDb = ampToDb (m.peakL / postStripPeak);
@@ -526,9 +515,9 @@ std::string AudioPipelineSelfTest::testMasterTapeAddsGain()
         }
     }
 
-    setNorm (pIn,   normFromGainDb (0.0f));
-    setNorm (pOut,  normFromGainDb (0.0f));
-    setNorm (pAuto, 1.0f);
+    tape.inputGainDb.store  (0.0f, std::memory_order_relaxed);
+    tape.outputGainDb.store (0.0f, std::memory_order_relaxed);
+    tape.autoComp.store     (true, std::memory_order_relaxed);
 
     const bool pass = autoCompOnWithinHalfDb;
 

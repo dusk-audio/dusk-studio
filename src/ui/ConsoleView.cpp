@@ -33,11 +33,7 @@ ConsoleView::ConsoleView (Session& session, AudioEngine& engine) : sessionRef (s
         session.master(),
         session,
         engine,
-#if DUSKSTUDIO_HAS_DUSK_DSP
-        &engine.getMasterBus().getTapeProcessor());
-#else
         nullptr);
-#endif
     addAndMakeVisible (masterStrip.get());
 
     // ConsoleView owns only the bank-state model + visibility. The BANK A/B

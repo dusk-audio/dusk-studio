@@ -1623,17 +1623,6 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
 #endif
         }
     }
-
-#if DUSKSTUDIO_HAS_DUSK_DSP
-    // Master tape (TapeMachine) state. Mirrors the per-slot pattern: serialise
-    // getStateInformation() into a base64 string on the session model so the
-    // serializer (which only sees Session) can persist it.
-    {
-        juce::MemoryBlock mb;
-        master.getTapeProcessor().getStateInformation (mb);
-        session.master().tapeStateBase64 = mb.toBase64Encoding();
-    }
-#endif
 }
 
 void AudioEngine::releaseAllPluginResources()
@@ -2070,23 +2059,6 @@ void AudioEngine::consumePluginStateAfterLoad()
             }
         }
     }
-
-#if DUSKSTUDIO_HAS_DUSK_DSP
-    // Master tape state: push the deserialised base64 blob back into the
-    // hosted TapeMachineAudioProcessor. fromBase64Encoding fails-soft (no
-    // exception); empty / malformed data leaves the processor at its
-    // donor defaults rather than blowing up the load.
-    {
-        const auto& s64 = session.master().tapeStateBase64;
-        if (s64.isNotEmpty())
-        {
-            juce::MemoryBlock mb;
-            if (mb.fromBase64Encoding (s64) && mb.getSize() > 0)
-                master.getTapeProcessor().setStateInformation (mb.getData(),
-                                                                  (int) mb.getSize());
-        }
-    }
-#endif
 }
 
 void AudioEngine::audioDeviceAboutToStart (device::IODevice* device)
@@ -2258,12 +2230,6 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     midiTimeCodeReceiver.prepare (sr);
     midiClockEmitter.prepare (sr);
     midiTimeCodeEmitter.prepare (sr);
-#if DUSKSTUDIO_HAS_DUSK_DSP
-    // TapeMachine animates its reels + level-integration timing from
-    // getPlayHead()->getPosition(). Without a playhead the donor reads
-    // null and the reels stay still even while audio passes through.
-    master.getTapeProcessor().setPlayHead (playHead.get());
-#endif
 
     // Push the playhead onto every per-channel plugin slot so hosted
     // synths/effects see the session's BPM, transport state, and sample
