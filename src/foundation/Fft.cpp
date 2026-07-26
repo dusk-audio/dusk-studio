@@ -10,8 +10,6 @@ namespace dusk::audio
 {
 namespace
 {
-constexpr int kMinOrder = 5;    // pffft needs at least 32 real / 16 complex points
-constexpr int kMaxOrder = 24;
 constexpr float kPi = 3.14159265358979323846f;
 
 float* allocFloats (int n) noexcept
@@ -51,7 +49,7 @@ PFFFT_Setup* Fft::getSetup (bool complexTransform) const noexcept
 void Fft::performRealOnlyForwardTransform (float* buf, bool onlyNonNegative) const noexcept
 {
     auto* setup = getSetup (false);
-    if (setup == nullptr || buf == nullptr) return;
+    if (setup == nullptr || buf == nullptr || ! stagingReady()) return;
 
     std::memcpy (stagingIn, buf, sizeof (float) * (size_t) size);
     pffft_transform_ordered (setup, stagingIn, stagingOut, work, PFFFT_FORWARD);
@@ -78,7 +76,7 @@ void Fft::performRealOnlyForwardTransform (float* buf, bool onlyNonNegative) con
 
 void Fft::performFrequencyOnlyForwardTransform (float* buf) const noexcept
 {
-    if (getSetup (false) == nullptr || buf == nullptr) return;
+    if (getSetup (false) == nullptr || buf == nullptr || ! stagingReady()) return;
 
     performRealOnlyForwardTransform (buf, true);
 
@@ -96,7 +94,7 @@ void Fft::performFrequencyOnlyForwardTransform (float* buf) const noexcept
 void Fft::perform (const std::complex<float>* in, std::complex<float>* out, bool inverse) const noexcept
 {
     auto* setup = getSetup (true);
-    if (setup == nullptr || in == nullptr || out == nullptr) return;
+    if (setup == nullptr || in == nullptr || out == nullptr || ! stagingReady()) return;
 
     // in and out may alias: the input is fully copied into staging before any
     // output is written, and pffft reads only from staging.

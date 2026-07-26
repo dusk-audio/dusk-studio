@@ -16,9 +16,12 @@ namespace dusk::audio
 class Fft
 {
 public:
-    // order is clamped to [5, 24] - pffft's minimum is 32 points real /
-    // 16 complex, and the ceiling keeps a mistaken order from asking for a
-    // gigabyte of twiddle table.
+    // pffft's minimum is 32 points real / 16 complex; the ceiling keeps a
+    // mistaken order from asking for a gigabyte of twiddle table.
+    static constexpr int kMinOrder = 5;
+    static constexpr int kMaxOrder = 24;
+
+    // order is clamped to [kMinOrder, kMaxOrder].
     explicit Fft (int order);
     ~Fft();
 
@@ -46,6 +49,11 @@ public:
 
 private:
     PFFFT_Setup* getSetup (bool complexTransform) const noexcept;
+
+    bool stagingReady() const noexcept
+    {
+        return stagingIn != nullptr && stagingOut != nullptr && work != nullptr;
+    }
 
     int size = 0;
     mutable PFFFT_Setup* realSetup = nullptr;

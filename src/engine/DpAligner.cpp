@@ -127,8 +127,8 @@ CorrResult crossCorrelate (const std::vector<float>& longEnv,
 
     // Bounded by Fft's supported order range; the extra zero padding at the
     // low end is harmless, and decodeMono's length cap keeps the top unreachable.
-    int order = 5;
-    while (order < 24 && (1 << order) < La + Lb) ++order;
+    int order = dusk::audio::Fft::kMinOrder;
+    while (order < dusk::audio::Fft::kMaxOrder && (1 << order) < La + Lb) ++order;
     const int N = 1 << order;
 
     std::vector<std::complex<float>> A ((size_t) N), B ((size_t) N), C ((size_t) N),
