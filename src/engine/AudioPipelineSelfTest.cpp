@@ -69,6 +69,9 @@ AudioPipelineSelfTest::SavedState AudioPipelineSelfTest::saveState() const
     s.masterTapeEnabled = session.master().tapeEnabled.load (std::memory_order_relaxed);
     s.masterTapeHQ      = session.master().tapeHQ.load (std::memory_order_relaxed);
     s.masterCompEnabled = session.master().compEnabled.load (std::memory_order_relaxed);
+    s.masterTapeInputGainDb  = session.master().tape.inputGainDb.load (std::memory_order_relaxed);
+    s.masterTapeOutputGainDb = session.master().tape.outputGainDb.load (std::memory_order_relaxed);
+    s.masterTapeAutoComp     = session.master().tape.autoComp.load (std::memory_order_relaxed);
     s.oversamplingFactor = session.oversamplingFactor.load (std::memory_order_relaxed);
     return s;
 }
@@ -105,6 +108,9 @@ void AudioPipelineSelfTest::restoreState (const SavedState& s)
     session.master().tapeEnabled.store (s.masterTapeEnabled, std::memory_order_relaxed);
     session.master().tapeHQ.store      (s.masterTapeHQ,      std::memory_order_relaxed);
     session.master().compEnabled.store (s.masterCompEnabled, std::memory_order_relaxed);
+    session.master().tape.inputGainDb.store  (s.masterTapeInputGainDb,  std::memory_order_relaxed);
+    session.master().tape.outputGainDb.store (s.masterTapeOutputGainDb, std::memory_order_relaxed);
+    session.master().tape.autoComp.store     (s.masterTapeAutoComp,     std::memory_order_relaxed);
     session.oversamplingFactor.store (s.oversamplingFactor, std::memory_order_relaxed);
     // Bulk-write path bypassed the counter-aware setters; resync the RT
     // counters so anyTrackSoloed/Armed reads are correct in the test pass.
@@ -514,10 +520,6 @@ std::string AudioPipelineSelfTest::testMasterTapeAddsGain()
             }
         }
     }
-
-    tape.inputGainDb.store  (0.0f, std::memory_order_relaxed);
-    tape.outputGainDb.store (0.0f, std::memory_order_relaxed);
-    tape.autoComp.store     (true, std::memory_order_relaxed);
 
     const bool pass = autoCompOnWithinHalfDb;
 

@@ -6,6 +6,10 @@
 
 #include <juce_core/juce_core.h>
 
+#include <cstdint>
+#include <cstring>
+#include <vector>
+
 using Catch::Matchers::WithinAbs;
 
 namespace
@@ -118,6 +122,29 @@ TEST_CASE ("SessionSerializer migrates the legacy tape_state blob", "[session][s
         REQUIRE_THAT (b.master().tape.inputGainDb.load(), WithinAbs (5.5f, 1.0e-5f));
         REQUIRE_THAT (b.master().tape.lowpassHz.load(),   WithinAbs (11000.0f, 1.0e-3f));
         REQUIRE_FALSE (b.master().tape.autoComp.load());
+    }
+
+    SECTION ("a partial tape object resets the absent fields and ignores a stale blob")
+    {
+        const juce::String partial =
+            "{\"version\":3,\"master\":{\"tape\":{\"machine\":1},\"tape_state\":\""
+            + makeLegacyTapeStateBlob (xml) + "\"}}";
+        REQUIRE (target.replaceWithText (partial));
+
+        Session d;
+        d.master().tape.wow.store (99.0f);
+        d.master().tape.signalPath.store (3);
+        REQUIRE (SessionSerializer::load (d, target));
+
+        REQUIRE (d.master().tape.machine.load() == 1);
+        // Present "tape" object wins outright - the legacy blob must not be
+        // replayed on top of it, and absent keys fall back to the defaults
+        // rather than keeping whatever the reused Session held.
+        REQUIRE (d.master().tape.signalPath.load() == 0);
+        REQUIRE (d.master().tape.speed.load() == 1);
+        REQUIRE_THAT (d.master().tape.wow.load(), WithinAbs (7.0f, 1.0e-5f));
+        REQUIRE_THAT (d.master().tape.inputGainDb.load(), WithinAbs (0.0f, 1.0e-5f));
+        REQUIRE (d.master().tape.autoCal.load());
     }
 
     SECTION ("a corrupt blob leaves the defaults intact")

@@ -208,6 +208,10 @@ TapePanel::TapePanel (MasterBusParams& p, AudioEngine& e)
 
     vuMeter = std::make_unique<AnalogVuMeter> (&vuLeft, &vuRight);
     vuMeter->setRichStyle (true);
+    // The core hands us a peak follower, not the RMS the VU scale is drawn for.
+    // Shift 0 VU up by the sine crest factor so the printed scale still reads
+    // true and the needle agrees with the console meters on the same level.
+    vuMeter->setReferenceLevelDb (-18.0f + 3.01f);
     addAndMakeVisible (*vuMeter);
 
 #if DUSKSTUDIO_HAS_DUSK_DSP

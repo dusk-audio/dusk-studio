@@ -793,7 +793,7 @@ master input → program EQ → master bus compressor → tape saturation → ma
 Models a small reel-to-reel tape machine.
 
 - **Bypass / engage**: left-click the **TAPE** header to toggle the tape stage in or out of the signal path.
-- **Open the editor**: double-click the **TAPE** header, or right-click it and choose **Open editor…**, to open the tape-machine modal editor: machine, tape speed and formulation, signal path, EQ standard and calibration, plus input drive, bias, high/low-pass filters, wow, flutter, noise, and output level. Touching any control engages the tape stage.
+- **Open the editor**: double-click the **TAPE** header, or right-click it and choose **Open editor…**, to open the tape-machine modal editor: machine, tape speed and formulation, signal path, EQ standard and calibration, plus input drive, bias, high/low-pass filters, wow, flutter, noise, and output level, plus **Auto cal** (calibrates bias for the selected tape type and speed — disables the Bias knob) and **Auto comp** (matches output level to input so drive changes don't change loudness — overrides Output). Touching any control engages the tape stage.
 
 - **Oversampling**: tape oversampling follows the engine-wide **Effect Oversampling** setting in the Audio Device panel — it is not a per-stage toggle.
 

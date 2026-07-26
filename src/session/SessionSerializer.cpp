@@ -1871,10 +1871,15 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         {
             auto&       t    = s.master().tape;
             const auto& tape = json::child (master, "tape");
+            // Range-check the double before narrowing: casting an out-of-float-range
+            // double to float is UB, so a hand-edited 1e300 has to be rejected here
+            // rather than by an isfinite on the already-narrowed value.
             const auto tapeFloat = [&tape] (const char* key, float def, float lo, float hi)
             {
-                const float v = json::getFloat (tape, key, def);
-                return std::isfinite (v) ? jlimit (lo, hi, v) : def;
+                const double d = json::getDouble (tape, key, (double) def);
+                if (! std::isfinite (d) || std::abs (d) > (double) std::numeric_limits<float>::max())
+                    return def;
+                return jlimit (lo, hi, (float) d);
             };
             t.machine.store      (std::clamp (json::getInt (tape, "machine",     0), 0, 1));
             t.speed.store        (std::clamp (json::getInt (tape, "speed",       1), 0, 2));

@@ -367,9 +367,10 @@ if(DUSK_PLUGINS_PATH)
         PROPERTIES
         COMPILE_DEFINITIONS "createPluginFilter=createTapeMachinePluginFilter")
 
-    # Same AnalogVUMeter rename the main app applies — keeps the donor
-    # untouched while preventing a global-namespace collision when other
-    # donors with the same class name get linked in.
+    # Required only here: the tests compile TapeMachine's GUI/AnalogVUMeter.cpp
+    # alongside multi-comp's, and both declare a global AnalogVUMeter. Renaming
+    # the multi-comp one in-translation-unit keeps the donor untouched. The app
+    # no longer links TapeMachine's editor, so it does not need this.
     set_source_files_properties(
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"

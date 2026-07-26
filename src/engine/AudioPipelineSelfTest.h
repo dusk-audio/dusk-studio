@@ -79,6 +79,11 @@ private:
         bool  masterTapeEnabled = false;
         bool  masterTapeHQ      = false;
         bool  masterCompEnabled = false;
+        // testMasterTapeAddsGain sweeps the tape's drive and auto-comp; capture
+        // them so the run doesn't leave the session on the sweep's end state.
+        float masterTapeInputGainDb  = 0.0f;
+        float masterTapeOutputGainDb = 0.0f;
+        bool  masterTapeAutoComp     = true;
         // runPerfBenchmark overwrites the global oversampling factor; capture
         // it so a perf run doesn't leak its last (4x) setting into the session.
         int   oversamplingFactor = 1;
