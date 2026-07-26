@@ -33,20 +33,38 @@ RecordManager::~RecordManager()
     // audio-thread caller that already entered, then discard the uncommitted
     // capture. The normal stopRecording path mutates the session by creating
     // regions, which must only happen through an explicit engine stop.
+    //
+    // The wait is bounded like stopRecording's: a stuck audio thread must
+    // not hang teardown forever. On timeout, skip the explicit discard -
+    // the audio thread may still hold cached pointers into writers[] /
+    // midiCaptures[], so the slots are left for the member destructors.
     active.store (false, std::memory_order_release);
+    constexpr int kMaxSpinIterations = 1000;
+    int spinIters = 0;
+    bool drained = true;
     while (audioInFlight.load (std::memory_order_acquire) > 0)
-        std::this_thread::yield();
-
-    for (auto& cap : midiCaptures)
-        cap.reset();
-
-    for (auto& slot : writers)
     {
-        if (slot == nullptr) continue;
-        drainPool.remove (slot->writer.get());
-        const auto file = slot->file;
-        slot.reset();
-        file.deleteFile();
+        if (++spinIters > kMaxSpinIterations)
+        {
+            drained = false;
+            break;
+        }
+        std::this_thread::yield();
+    }
+
+    if (drained)
+    {
+        for (auto& cap : midiCaptures)
+            cap.reset();
+
+        for (auto& slot : writers)
+        {
+            if (slot == nullptr) continue;
+            drainPool.remove (slot->writer.get());
+            const auto file = slot->file;
+            slot.reset();
+            file.deleteFile();
+        }
     }
 }
 

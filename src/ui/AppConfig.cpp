@@ -5,6 +5,7 @@
 #include "../foundation/Text.h"
 
 #include <algorithm>
+#include <charconv>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -61,15 +62,6 @@ bool isTruthy (const std::string& s)
 bool looksNumeric (const std::string& s)
 {
     return ! s.empty() && s.find_first_not_of ("0123456789") == std::string::npos;
-}
-
-// As looksNumeric, but tolerates a single leading sign so negative values
-// (e.g. the recording latency offset) survive the round-trip.
-bool looksSignedNumeric (const std::string& s)
-{
-    if (s.empty()) return false;
-    const auto digits = (s[0] == '-' || s[0] == '+') ? s.substr (1) : s;
-    return looksNumeric (digits);
 }
 
 stdfs::path getStorePath()
@@ -214,9 +206,14 @@ void setAutosaveIntervalSeconds (int seconds)
 int getRecordingLatencyOffsetSamples()
 {
     const auto raw = readKey (kKeyRecordLatencyOffset);
-    if (! looksSignedNumeric (raw)) return kRecordingLatencyOffsetDefault;
-    return std::clamp (dusk::text::getIntValue (raw),
-                       kRecordingLatencyOffsetMin, kRecordingLatencyOffsetMax);
+    const char* first = raw.data();
+    const char* last  = raw.data() + raw.size();
+    if (first != last && *first == '+') ++first;   // from_chars rejects '+'
+    int value = 0;
+    const auto [ptr, ec] = std::from_chars (first, last, value);
+    if (ec != std::errc() || ptr != last || first == last)
+        return kRecordingLatencyOffsetDefault;
+    return std::clamp (value, kRecordingLatencyOffsetMin, kRecordingLatencyOffsetMax);
 }
 
 void setRecordingLatencyOffsetSamples (int samples)
