@@ -119,10 +119,41 @@ selftest under Xvfb (tape sweep now exercises the core); screenshot harness
 every affected variant per standing rule); AI-slop sweep; MANUAL.md audit
 (tape editor screenshots/wording likely reference donor UI — update).
 
+## H1d — TM2 DPF UI embed (Marc's call 2026-07-26, supersedes the JUCE panel)
+
+The tape editor must be TapeMachine2's own DPF/ImGui UI, not a JUCE
+recreation. Direction chosen over hosting the .clap: keep the in-process
+TapeMachineDSP + session TapeParams from H1a; compile the TM2 DPF UI stack
+(TapeMachineUI.cpp + DuskImGuiWidgets + DGL-OpenGL) into Dusk Studio and
+embed its DGL window as an X11 child (same reparent/embed pattern as
+ClapPluginEditorComponent), bridging:
+
+- UI -> engine: DPF setParameterValue(index) mapped through
+  TapeMachineParams.hpp enum onto session TapeParams atoms (arm-on-touch
+  preserved).
+- engine -> UI: parameterChanged pushed from a 30 Hz atom-diff sync.
+- Meters: DuskAccessBridge weak symbols (tapeMachineGetVuL/R, InVuL/R)
+  resolved by strong definitions in Dusk Studio returning the in-process
+  core's followers; getPluginInstancePointer supplies the core.
+
+Version prerequisite: the pinned donor rev (69f0431) predates TM2's current
+param surface (head width, gain link, wow/flutter enable, advanced page,
+preset bar). UI and core MUST come from one donor rev. Requires donor
+consolidation first: merge the multicomp-core branch into donor main, bump
+DONOR_REV in all 8 workflows, extend session TapeParams + core setters to
+the new surface. The interim JUCE TapePanel (H1b) stays until the embed
+lands, then is deleted (fx-03 figure recaptured; preset bar returns via
+TM2's own preset system - the "presets dropped" note reverses).
+
+Feasibility spike questions (answer before committing to the phase):
+DPF UIExporter with a parent window handle inside a non-DPF host; GL
+context on Xvfb (software GL for CI/screenshots); event routing
+(keyboard/mouse to ImGui vs JUCE focus); lifetime across device restarts.
+
 ## Owed to Marc's bench
 
 - Tape null-listen old vs new at 1x/2x/4x on real program material.
-- Panel usability pass (knob ranges, layout) — native panel is a redesign.
+- TM2-embed usability pass once H1d lands.
 
 ## Resume phrase
 
