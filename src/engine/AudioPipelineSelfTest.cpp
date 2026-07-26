@@ -472,14 +472,11 @@ std::string AudioPipelineSelfTest::testMasterTapeAddsGain()
     // drive point. The compressionCompensation curve was re-derived
     // from the measured raw transfer (plugins GH #92), so the old 2-4 dB
     // high-drive undercompensation no longer applies.
+   #if DUSKSTUDIO_HAS_DUSK_DSP
     prepareCleanState();
     session.master().tapeEnabled.store (true,  std::memory_order_relaxed);
 
-   #if DUSKSTUDIO_HAS_DUSK_DSP
     auto& tape = session.master().tape;
-   #else
-    return std::string ("[SKIP] Master Tape gain audit - DUSKSTUDIO_HAS_DUSK_DSP not defined");
-   #endif
 
     constexpr float postStripPeak = 0.5012f * 0.7071f;  // 0.3544 = -9.01 dBFS
 
@@ -532,6 +529,9 @@ std::string AudioPipelineSelfTest::testMasterTapeAddsGain()
         table.c_str(),
         deltaAtDefault,
         worstAutoOnDelta);
+   #else
+    return std::string ("[SKIP] Master Tape gain audit - DUSKSTUDIO_HAS_DUSK_DSP not defined");
+   #endif
 }
 
 namespace

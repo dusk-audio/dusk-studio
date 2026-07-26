@@ -2487,7 +2487,7 @@ bool MainComponent::autosaveIsNewerThan (const juce::File& sessionJson) const
     // save deletes the autosave (see saveSession), so the autosave
     // file existing AND its content differing from session.json is
     // the authoritative signal that a recovery point is available.
-    // Volatile plugin/tape APVTS drift is stripped so an idle session
+    // Volatile hosted-plugin state drift is stripped so an idle session
     // doesn't see spurious diffs.
     const auto autosaveStripped    = stripVolatileStateForDirtyCompare (autosave.loadFileAsString());
     const auto sessionJsonStripped = stripVolatileStateForDirtyCompare (sessionJson.loadFileAsString());

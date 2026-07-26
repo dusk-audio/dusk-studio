@@ -24,8 +24,9 @@ class AnalogVuMeter final : public juce::Component, private dusk::Timer
 {
 public:
     // leftRmsAtom must be non-null; rightRmsAtom may be null for mono. Atoms
-    // hold linear RMS amplitude (not dB) so the UI does one log10 + position
-    // map per refresh tick rather than per sample. Both pointed-to atoms
+    // hold a linear level (not dB), detector chosen by the caller, so the UI
+    // does one log10 + position map per refresh tick rather than per sample
+    // and never assumes which follower fed it. Both pointed-to atoms
     // must outlive this component; in Dusk Studio these live on Session params
     // (BusParams / MasterBusParams), constructed before any UI and destructed
     // after, so the lifetime contract holds implicitly.

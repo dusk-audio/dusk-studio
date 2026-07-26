@@ -1,12 +1,14 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
-#include <atomic>
-#include <memory>
+
 #include "AnalogVuMeter.h"
 #include "DuskComboBox.h"
 #include "../session/Session.h"
 #include "../foundation/MessageThread.h"
+
+#include <atomic>
+#include <memory>
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
 class TapeReelComponent;

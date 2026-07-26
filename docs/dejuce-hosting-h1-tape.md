@@ -1,6 +1,7 @@
 # Hosting tower H1 — TapeMachine2 swap (executable spec)
 
-Status: **H1a–H1c pending.** Branch `dejuce/hosting`. One PR for H1.
+Status: **H1a–H1c implemented; H1d pending donor consolidation.** Branch
+`dejuce/hosting`. One PR for H1.
 Parent plan: [dejuce-hosting-plan.md](dejuce-hosting-plan.md). Donor core:
 `plugins/TapeMachine/core/TapeMachineDSP.{hpp,cpp}` at the build's
 DUSK_PLUGINS_PATH (worktree @ 69f0431; PORT_NOTES.md in that dir is
@@ -18,7 +19,7 @@ masked donor editor.
 
 - Param storage follows house convention #1: new `TapeParams` atomics on the
   session master params; UI writes atoms, MasterBus pushes to core setters
-  per block (setters are lock-free atomic stores; push all 18 live params
+  per block (setters are lock-free atomic stores; push all 16 live params
   unconditionally each block).
 - Dead donor params `saturation` and `noiseEnabled` (PORT_NOTES 3.6/3.7) are
   NOT modeled; migration ignores them. `tapeHQ` stays dead-legacy.
@@ -57,18 +58,22 @@ masked donor editor.
    fields (values are plain units; choice indices arrive as float). Stop
    writing `"tape_state"`. Drop `Session.h` tapeStateBase64 member and the
    AudioEngine publish/consume sites (AudioEngine.cpp ~1631, ~2079).
-3. `src/dsp/MasterBus.{h,cpp}`: member becomes `duskaudio::TapeMachineDSP`;
-   include flips to `<core/TapeMachineDSP.hpp>`; delete `getTapeProcessor()`
-   (fix ConsoleView/MasterStrip call sites in H1b), `tapeStereoBuffer`
-   (already unwritten), `tapeMidi`, `tapeBypassAtom`, the
+3. `src/dsp/MasterBus.{h,cpp}`: member becomes the `MasterTape` wrapper
+   (`src/dsp/MasterTape.{h,cpp}`) - the tape core and the multi-comp core
+   define the same `duskaudio::` math helpers, so the two headers cannot
+   share a translation unit and the tape core stays behind that pimpl.
+   Delete `getTapeProcessor()` (fix ConsoleView/MasterStrip call sites in
+   H1b), `tapeStereoBuffer` (already unwritten), `tapeMidi`,
+   `tapeBypassAtom`, the
    setPlayConfigDetails/dynamic_cast-oversampling/getRawParameterValue
-   plumbing. prepare: `tape.setOversampling(idx)` BEFORE `tape.prepare(sr,
-   blockSize)`; `tapeLatencySamples = tape.latencySamples()`; PDC delay
-   sizing unchanged. process: per block push all TapeParams atoms + bypass
-   (`setBypass(! runTape)` replacing the atom stores at :326/:330), then
-   `tape.processBlock(lrView, lrView, n, 2)` (in-place contract: verify
-   core supports in==out from PORT_NOTES/source; if not, use the dry
-   scratch as out and swap). Chunk bound stays (prepared blockSize).
+   plumbing. prepare: `tape.prepare(sr, blockSize, osFactor)` - the factor
+   reaches the core before its own prepare, so `tapeLatencySamples =
+   tape.latencySamples()` is valid straight after; PDC delay sizing
+   unchanged. process: per block `tape.pushParameters(paramsRef->tape)`,
+   then run the tape only while it is audible (on, or still fading) and
+   blend the wet against the latency-aligned dry path with the 20 ms enable
+   crossfade. No bypass setter: the core hard-bypasses with an early return
+   and no ramp, which would pop. Chunk bound stays (prepared blockSize).
 4. `AudioEngine.cpp:2265` setPlayHead site: delete (playhead was
    reel-animation-only). `prepareForSelfTest` keeps preparing MasterBus.
 5. `AudioPipelineSelfTest.cpp` tape sweep: drive via session TapeParams

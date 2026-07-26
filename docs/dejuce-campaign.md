@@ -118,7 +118,9 @@ reimplemented.
 
 1. **Plugin-hosting drop** — GREEN-LIT by Marc 2026-07-26 (reverses the
    2026-07-01 keep-fallback decision). Native hosting becomes the only path:
-   VST3/LV2/CLAP on all three platforms + AU on macOS; the whole JUCE
+   VST3/CLAP on all three platforms, AU on macOS, LV2 on Linux and macOS
+   (Windows LV2 pending the H5 suil decision recorded in
+   [dejuce-hosting-plan.md](dejuce-hosting-plan.md)); the whole JUCE
    hosting path (PluginSlot/PluginManager JUCE half/PluginHostMain loop) and
    both remaining in-app JUCE donor processors (TapeMachine -> TapeMachineDSP,
    Multiband UniversalCompressor -> donor DPF port) are deleted. Unlinks

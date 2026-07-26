@@ -1,6 +1,6 @@
 # De-JUCE — plugin-hosting tower (campaign plan)
 
-Status: **PLANNED 2026-07-26, execution not started.** Marc's call on
+Status: **H1 executed on branch `dejuce/hosting`; H2-H6 planned.** Marc's call on
 2026-07-26 reversed the 2026-07-01 keep-JUCE-fallback decision: the JUCE
 plugin-hosting path gets deleted entirely; native hosting must cover
 VST3 + LV2 + CLAP on Linux, macOS, and Windows, plus AU on macOS.
@@ -31,10 +31,9 @@ merges. Read `docs/dejuce-campaign.md` + the memory ledger first.
   MultiQTube. Build points at the `plugins-multicomp-core` worktree
   (DUSK_PLUGINS_PATH in both build caches) — its core scope is LOCKED and
   excludes Multiband.
-- Remaining JUCE donors in-app: TapeMachine (MasterBus + tape modal editor +
-  AudioEngine state/playhead sites + AudioPipelineSelfTest APVTS reads) and
-  UniversalCompressor mode 7 Multiband (MasteringChain bindCompParams +
-  MasteringView's embedded donor MultibandCompressorPanel writing mb_*).
+- Remaining JUCE donor in-app: UniversalCompressor mode 7 Multiband
+  (MasteringChain bindCompParams + MasteringView's embedded donor
+  MultibandCompressorPanel writing mb_*).
 - TapeMachine2 = TapeMachine/dpf-plugin + TapeMachine/core TapeMachineDSP:
   verbatim port of the same algorithm Dusk Studio hosts today (null-test
   expected), 20 atomic setters + VU getters + latencySamples. Two donor
@@ -60,14 +59,17 @@ merges. Read `docs/dejuce-campaign.md` + the memory ledger first.
 
 ## Phases
 
-- **H1 — TapeMachine2 swap (Dusk Studio).** MasterBus hosts TapeMachineDSP
-  directly (prepare/processBlock/latencySamples; bypass + oversampling via
-  setters; playhead/state sites in AudioEngine re-shaped to a param
-  snapshot in session JSON with one-way migration from the old
-  getStateInformation blob). Native tape UI: rebuild TapeMachineModalEditor
-  + MasterStrip tape pill on Dusk controls (embedded modal, DuskComboBox,
-  no juce::AudioProcessorEditor). A/B null test old-vs-new tape path.
-  Donor-side prep: none (core exists on donor main).
+- **H1 — TapeMachine2 swap (Dusk Studio). DONE on `dejuce/hosting`.**
+  MasterBus hosts TapeMachineDSP through the `MasterTape` wrapper
+  (prepare/processInPlace/latencySamples, oversampling set in prepare, the
+  on/off crossfade owned by MasterBus); tape settings live in session JSON
+  as plain values with one-way migration from the old getStateInformation
+  blob, and the AudioEngine state/playhead sites are gone. Native
+  `src/ui/TapePanel.{h,cpp}` replaces TapeMachineModalEditor; the donor
+  TapeMachine sources left the app build. A/B null test in
+  `tests/tape_core_ab.cpp`. Remaining: H1d (TM2 DPF UI embed) once the donor
+  is consolidated - see
+  [dejuce-hosting-h1-tape.md](dejuce-hosting-h1-tape.md).
 - **H2 — Mastering multiband (donor first, then Dusk Studio).** Donor:
   port Multiband mode into a JUCE-free core (extend
   multi-comp/core scope or sibling MultibandCompressorDSP; Marc's

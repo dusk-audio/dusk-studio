@@ -109,6 +109,7 @@ TEST_CASE ("SessionSerializer migrates the legacy tape_state blob", "[session][s
     REQUIRE_THAT (t.outputGainDb.load(), WithinAbs (-2.5f, 1.0e-5f));
     REQUIRE_FALSE (t.autoCal.load());
     REQUIRE_FALSE (t.autoComp.load());
+    REQUIRE (s.master().tapeEnabled.load());
 
     SECTION ("saving drops the blob and the values survive a plain round-trip")
     {
@@ -122,6 +123,7 @@ TEST_CASE ("SessionSerializer migrates the legacy tape_state blob", "[session][s
         REQUIRE_THAT (b.master().tape.inputGainDb.load(), WithinAbs (5.5f, 1.0e-5f));
         REQUIRE_THAT (b.master().tape.lowpassHz.load(),   WithinAbs (11000.0f, 1.0e-3f));
         REQUIRE_FALSE (b.master().tape.autoComp.load());
+        REQUIRE (b.master().tapeEnabled.load());
     }
 
     SECTION ("a partial tape object resets the absent fields and ignores a stale blob")
