@@ -11,14 +11,14 @@
 #include "DuskComboBox.h"
 #include "SectionPillButton.h"
 #include "../session/Session.h"
+#include "../foundation/MessageThread.h"
 
 namespace duskstudio
 {
 class AudioEngine;
 
 class ChannelStripComponent final : public juce::Component,
-                                       private juce::Timer,
-                                       private juce::ChangeListener
+                                       private dusk::Timer
 {
 public:
     ChannelStripComponent (int trackIndex, Track& trackRef, Session& sessionRef,
@@ -65,10 +65,6 @@ public:
 
 private:
     void timerCallback() override;
-    // AudioEngine fires after refreshMidiInputs rebuilds the device
-    // bank. Repopulate dropdowns + re-resolve via saved identifier so
-    // a still-present device stays selected even if its index changed.
-    void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void rebuildMidiInputDropdown();
     void rebuildMidiOutputDropdown();
 

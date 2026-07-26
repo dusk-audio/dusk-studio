@@ -2,6 +2,7 @@
 
 #include <juce_core/juce_core.h>
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "../foundation/MessageThread.h"
 #include <functional>
 #include <vector>
 
@@ -16,7 +17,7 @@ namespace duskstudio
 // session-management helpers.
 class StartupDialog final : public juce::Component,
                               private juce::TableListBoxModel,
-                              private juce::Timer
+                              private dusk::Timer
 {
 public:
     explicit StartupDialog (juce::Array<juce::File> recentSessions);

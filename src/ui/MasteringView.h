@@ -7,6 +7,7 @@
 #include "DuskComboBox.h"
 #include "../engine/AudioEngine.h"
 #include "../session/Session.h"
+#include "../foundation/MessageThread.h"
 
 namespace duskstudio
 {
@@ -14,7 +15,7 @@ class MasteringPlayer;
 
 // Inline AudioThumbnail above the mastering controls + playhead line
 // that follows MasteringPlayer. Click anywhere to seek.
-class WaveformDisplay final : public juce::Component, private juce::Timer
+class WaveformDisplay final : public juce::Component, private dusk::Timer
 {
 public:
     explicit WaveformDisplay (MasteringPlayer& player);
@@ -38,7 +39,7 @@ private:
 // mixdown), plays through MasteringChain (Tube EQ -> bus comp ->
 // brickwall limiter), shows post-limiter peak meters + comp/limiter GR.
 // Export = engine's BounceEngine in Mastering mode.
-class MasteringView final : public juce::Component, private juce::Timer
+class MasteringView final : public juce::Component, private dusk::Timer
 {
 public:
     MasteringView (Session& session, AudioEngine& engine);

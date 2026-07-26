@@ -18,8 +18,7 @@ class Session;
 // materially affects USB audio on Linux - fractional periods cause
 // jitter; certain kernel+device combos distort at specific counts).
 // Also hosts a "Run Self-Test" button (SelfTestPanel).
-class AudioSettingsPanel final : public juce::Component,
-                                  public juce::ChangeListener
+class AudioSettingsPanel final : public juce::Component
 {
 public:
     AudioSettingsPanel (device::DeviceManager& dm,
@@ -29,13 +28,14 @@ public:
 
     void paint   (juce::Graphics&) override;
     void resized() override;
+
+private:
     // Engine broadcasts on MIDI-bank rebuild (hot-plug, manual rescan).
     // Refreshes the sync-source combo so new inputs appear without
     // reopening. The device manager relays its own change (audio device
     // switch / active-output change) through this same handler.
-    void changeListenerCallback (juce::ChangeBroadcaster*) override;
+    void handleDeviceListChange();
 
-private:
     device::DeviceManager& deviceManager;
     AudioEngine& engine;
     Session& session;

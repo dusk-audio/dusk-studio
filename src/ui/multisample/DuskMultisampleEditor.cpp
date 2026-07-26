@@ -130,7 +130,7 @@ DuskMultisampleEditor::~DuskMultisampleEditor()
 {
     // Explicit stopTimer before any member destructs so the 4 Hz
     // poller can't fire one final tick against half-torn-down state.
-    // juce::Timer's dtor stops too, but that runs AFTER the derived
+    // dusk::Timer's dtor stops too, but that runs AFTER the derived
     // class's members destruct - too late if a tick is mid-flight.
     stopTimer();
 }

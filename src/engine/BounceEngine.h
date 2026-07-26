@@ -243,7 +243,7 @@ public:
     }
     std::int64_t  getRenderedSamples() const noexcept { return renderedSamples.load (std::memory_order_relaxed); }
 
-    // Called on the worker thread. Use MessageManager::callAsync for UI.
+    // Called on the worker thread. Use dusk::callAsync for UI.
     std::function<void()>                  onStarted;
     std::function<void(float)>             onProgressUpdated;
     std::function<void(bool, std::string)> onFinished;

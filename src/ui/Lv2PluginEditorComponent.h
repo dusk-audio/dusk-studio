@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "../engine/lv2/Lv2Editor.h"
+#include "../foundation/MessageThread.h"
 
 namespace duskstudio
 {
@@ -15,7 +16,7 @@ namespace lv2 { class Lv2Instance; }
 // time, so the embed happens (and the UI first exists) when this component is
 // actually on-screen.
 class Lv2PluginEditorComponent final : public juce::Component,
-                                        private juce::Timer
+                                        private dusk::Timer
 {
 public:
     Lv2PluginEditorComponent();

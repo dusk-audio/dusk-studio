@@ -1,6 +1,7 @@
 #include "SelfTestPanel.h"
 #include "../engine/AudioEngine.h"
 #include "../engine/AudioPipelineSelfTest.h"
+#include "../foundation/MessageThread.h"
 #include "../session/Session.h"
 
 namespace duskstudio
@@ -64,7 +65,7 @@ void SelfTestPanel::runTest()
     logView.repaint();
 
     // The test does some heavy I/O (device opens) on the message thread.
-    // We yield via MessageManager::callAsync so the "Running..." text paints
+    // We yield via dusk::callAsync so the "Running..." text paints
     // before we block on the synchronous test run.
     //
     // SafePointer guards the small race between callAsync scheduling the
@@ -75,7 +76,7 @@ void SelfTestPanel::runTest()
     // for the duration of the test, so the panel can't be destroyed
     // mid-execution; only the queued-but-not-started case is dangerous.
     juce::Component::SafePointer<SelfTestPanel> safeThis (this);
-    juce::MessageManager::callAsync ([safeThis]
+    dusk::callAsync ([safeThis]
     {
         if (safeThis == nullptr) return;
         auto& self = *safeThis;

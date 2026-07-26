@@ -4,6 +4,7 @@
 #include <memory>
 #include "DuskComboBox.h"
 #include "../session/Session.h"
+#include "../foundation/MessageThread.h"
 
 namespace duskstudio
 {
@@ -18,7 +19,7 @@ class BrickwallLimiter;
 //   - Atten meter: live gain reduction (1..30 dB).
 //   - LUFS readout box (Long-term integrated I-LUFS via params).
 //   - Right column: Mode dropdown + Release / Stereo-link toggles.
-class MasteringLimiterEditor final : public juce::Component, private juce::Timer
+class MasteringLimiterEditor final : public juce::Component, private dusk::Timer
 {
 public:
     MasteringLimiterEditor (MasteringParams& params,

@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
 #include "DuskComboBox.h"
+#include "../foundation/MessageThread.h"
 #include "../session/Session.h"
 
 namespace duskstudio
@@ -26,7 +27,7 @@ class EditModeToolbar;
 // visible" rule - modal overlay on top of TapeStrip, Esc / click-out
 // to dismiss.
 class PianoRollComponent final : public juce::Component,
-                                    private juce::Timer,
+                                    private dusk::Timer,
                                     private juce::ScrollBar::Listener
 {
 public:

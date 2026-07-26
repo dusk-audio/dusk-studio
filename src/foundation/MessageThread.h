@@ -27,6 +27,8 @@ public:
     void stopTimer() noexcept;
     bool isTimerRunning() const noexcept;
 
+    static void callAfterDelay (int milliseconds, std::function<void()> fn);
+
 protected:
     virtual void timerCallback() = 0;
 

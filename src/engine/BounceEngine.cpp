@@ -6,6 +6,7 @@
 #include "AudioEngine.h"
 #include "LameMp3Writer.h"
 #include "MasteringPlayer.h"
+#include "../foundation/MessageThread.h"
 #include "../session/Session.h"
 #include "audiofile/FileWriter.h"
 #include "audiofile/ThreadedFileWriter.h"
@@ -59,7 +60,7 @@ bool BounceEngine::runOnMessageThread (std::function<void()> fn)
     // stopThread join.
     struct Sync { juce::WaitableEvent done; std::atomic<bool> abandoned { false }; };
     auto sync = std::make_shared<Sync>();
-    const bool posted = juce::MessageManager::callAsync ([sync, fn = std::move (fn)]
+    const bool posted = dusk::callAsync ([sync, fn = std::move (fn)]
     {
         if (! sync->abandoned.load (std::memory_order_acquire))
             fn();

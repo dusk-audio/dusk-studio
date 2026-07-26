@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../engine/AudioEngine.h"
 #include "../session/Session.h"
+#include "../foundation/MessageThread.h"
 
 #include <algorithm>
 
@@ -12,7 +13,7 @@ namespace duskstudio
 // rounded blocks, playhead vertical line, time ruler at top.
 class TapeStrip final : public juce::Component,
                          public juce::FileDragAndDropTarget,
-                         private juce::Timer,
+                         private dusk::Timer,
                          private juce::ChangeListener
 {
 public:

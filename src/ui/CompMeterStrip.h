@@ -1,9 +1,10 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "../foundation/MessageThread.h"
+#include "../session/Session.h"
 #include <functional>
 #include <utility>
-#include "../session/Session.h"
 
 namespace duskstudio
 {
@@ -12,7 +13,7 @@ namespace duskstudio
 // threshold marker on the input meter. Replaces the THR knob - drag the
 // triangle handle up/down on the input meter to set the threshold relative
 // to the live input signal.
-class CompMeterStrip final : public juce::Component, private juce::Timer
+class CompMeterStrip final : public juce::Component, private dusk::Timer
 {
 public:
     // Generic data-source hook set. Bus + master strips wire this directly

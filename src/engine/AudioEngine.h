@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -38,8 +40,7 @@ namespace duskstudio
 {
 // input -> channel strip (live or playback source) -> aux/master.
 // Owns Transport, recording, playback, plugin host.
-class AudioEngine final : public device::IODeviceCallback,
-                            public juce::ChangeBroadcaster
+class AudioEngine final : public device::IODeviceCallback
 {
 public:
     // Recording / Mixing / Aux share the live track-to-master path; only
@@ -146,6 +147,13 @@ public:
     // Re-enumerate MIDI inputs after hot-plug. Detach + rebuild + reattach
     // so audio thread doesn't race the mutation. Message-thread only.
     void refreshMidiInputs();
+
+    // Engine-changed fanout (MIDI device banks rebuilt). Subscribers are keyed
+    // by an opaque owner token so a component can register without the engine
+    // knowing its type; re-registering the same token replaces its callback.
+    // Message thread only, both sides.
+    void addChangeCallback (void* token, std::function<void()> fn);
+    void removeChangeCallback (void* token);
 
     // Lightweight: re-map the loaded session's saved per-track MIDI in/out
     // IDENTIFIERS to runtime INDICES against the EXISTING device banks. No
@@ -808,6 +816,16 @@ private:
     std::shared_ptr<std::atomic<bool>> midiHotplugAlive
         { std::make_shared<std::atomic<bool>> (true) };
 
+    // Change fanout. The broadcast is coalesced and posted to the message
+    // thread, so a burst of rebuilds costs one pass; the alive latch makes a
+    // post still queued when the engine dies land on a no-op.
+    std::map<void*, std::function<void()>> changeListeners;
+    std::atomic<bool> changeBroadcastPending { false };
+    std::shared_ptr<std::atomic<bool>> changeListenersAlive
+        { std::make_shared<std::atomic<bool>> (true) };
+    void broadcastChange();
+    void fireChangeListeners();
+
     // Rebuild both device banks (message thread, input+audio callbacks
     // DETACHED by the caller). Enumerates hardware, sizes perInputMidi,
     // re-resolves the session sync/MCU identifiers to indices, eager-opens the
@@ -869,7 +887,7 @@ private:
     // member keeps AudioEngine's (final) base list unchanged; it ticks at 1 Hz
     // and prints only when a counter has advanced since the last report.
     void drainCallbackDiagnostics();
-    struct CallbackDiagnosticTimer : juce::Timer
+    struct CallbackDiagnosticTimer : dusk::Timer
     {
         explicit CallbackDiagnosticTimer (AudioEngine& o) : owner (o) {}
         void timerCallback() override { owner.drainCallbackDiagnostics(); }
@@ -901,9 +919,9 @@ private:
     std::atomic<bool>   usableOutputs     { true };
 
     // H5 hot-unplug detector: set in audioDeviceAboutToStart, cleared
-    // when changeListenerCallback observes a now-null current device.
+    // when the device-change callback observes a now-null current device.
     // Atomic so audioDeviceAboutToStart (audio device thread) and
-    // changeListenerCallback (message thread) don't race on the flag
+    // the device-change callback (message thread) don't race on the flag
     // itself. Acquire / release across the threads.
     std::atomic<bool>   hadLiveDevice_    { false };
 

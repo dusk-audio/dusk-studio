@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "../foundation/MessageThread.h"
 #include <memory>
 #include "../engine/BounceEngine.h"
 
@@ -11,7 +12,7 @@ class Session;
 
 // Modal panel that runs a master-mix bounce to a user-chosen WAV file.
 // Owns its own BounceEngine; the engine's worker-thread callbacks are
-// marshalled to the message thread via SafePointer + MessageManager::callAsync
+// marshalled to the message thread via SafePointer + dusk::callAsync
 // so the panel can update its progress bar / status label safely.
 //
 // Lifetime: launched from MainComponent's "Bounce..." button. Closing the
@@ -21,7 +22,7 @@ class Session;
 // teardown re-attaches the audio device and needs the loop to keep turning).
 // The host wires onRequestClose to dismiss the embedded modal.
 class BounceDialog final : public juce::Component,
-                            private juce::Timer
+                            private dusk::Timer
 {
 public:
     // renderSampleRate 0 = the engine's current rate; wavBitDepth 16 dithers

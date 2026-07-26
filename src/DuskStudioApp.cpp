@@ -22,6 +22,7 @@
 #include "engine/PluginSlot.h"
 #include "engine/audiofile/FileReader.h"
 #include "engine/audiofile/FileWriter.h"
+#include "foundation/MessageThread.h"
 #include "session/SessionSerializer.h"
 #include "util/CrashHandler.h"
 #if JUCE_LINUX
@@ -165,7 +166,7 @@ public:
         // focus once the peer exists. bringWindowToFront is a no-op on
         // non-Linux builds.
         juce::Component::SafePointer<MainWindow> safeThis (this);
-        juce::MessageManager::callAsync ([safeThis]
+        dusk::callAsync ([safeThis]
         {
             auto* self = safeThis.getComponent();
             if (self == nullptr) return;
@@ -1070,7 +1071,7 @@ static void runHeadlessSelfTest()
 // start() spins the worker thread and the worker marshals its engine re-prepare
 // back to the message thread via BounceEngine::runOnMessageThread. This harness
 // must therefore keep the message loop pumping while it waits, which it does by
-// polling from a juce::Timer (fired by the app dispatch loop) rather than
+// polling from a dusk::Timer (fired by the app dispatch loop) rather than
 // blocking - a blocking wait would deadlock the worker's callAsync marshalling.
 //
 // The u-he-Satin-native-CLAP crash lived precisely in that worker/message-thread
@@ -1087,7 +1088,7 @@ static void runHeadlessSelfTest()
 //
 // Usage:
 //   DUSKSTUDIO_BOUNCE_TEST=/home/marc/.clap/u-he/Satin.64.clap ./DuskStudio
-struct DuskStudioApp::BounceTest : private juce::Timer
+struct DuskStudioApp::BounceTest : private dusk::Timer
 {
     BounceTest (DuskStudioApp& a, juce::String p)
         : app (a), pluginPath (std::move (p)) {}
@@ -2123,7 +2124,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         sessionPath != juce::File())
     {
         juce::Component::SafePointer<MainWindow> safeWin (mainWindow.get());
-        juce::MessageManager::callAsync ([safeWin, sessionPath]
+        dusk::callAsync ([safeWin, sessionPath]
         {
             if (safeWin == nullptr) return;
             if (auto* main = dynamic_cast<MainComponent*> (safeWin->getContentComponent()))

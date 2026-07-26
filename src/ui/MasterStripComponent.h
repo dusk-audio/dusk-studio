@@ -10,6 +10,7 @@
 #include "DuskComboBox.h"
 #include "EmbeddedModal.h"
 #include "SectionPillButton.h"
+#include "../foundation/MessageThread.h"
 
 // Forward decl unconditional; the definition is only #included from the
 // .cpp when DUSKSTUDIO_HAS_DUSK_DSP is set. Pointer parameter stays
@@ -20,7 +21,7 @@ namespace duskstudio
 {
 class AudioEngine;
 class MasterStripComponent final : public juce::Component,
-                                     private juce::Timer,
+                                     private dusk::Timer,
                                      public juce::AudioProcessorListener
 {
 public:
