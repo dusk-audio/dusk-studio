@@ -143,6 +143,14 @@ public:
     const NativeMultisampleSlot& getNativeMultisampleSlot() const noexcept { return nativeMultisampleSlot; }
     void setPendingNativeMultisample (const juce::File& soundfont,
                                        std::vector<uint8_t> state) noexcept;
+    // Two-phase load for a running engine - see NativeMultisampleSlot::prime.
+    // primeNativeMultisample runs with NO gate held (it is the expensive half);
+    // commitNativeMultisample must run with the audio thread fenced and evicts
+    // the other hosts, exactly like loadNativeMultisample does.
+    NativeMultisampleSlot::PrimedLoad primeNativeMultisample (
+        const juce::File& soundfont, std::string& errorOut,
+        const std::vector<uint8_t>* state = nullptr) const;
+    bool commitNativeMultisample (NativeMultisampleSlot::PrimedLoad primed);
     bool nativeMultisampleReloadFailed() const noexcept { return multisampleReloadFailed.load (std::memory_order_relaxed); }
     void markNativeMultisampleRestoreFailed() noexcept { multisampleReloadFailed.store (true, std::memory_order_relaxed); }
 #else

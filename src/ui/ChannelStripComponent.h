@@ -363,6 +363,11 @@ private:
     // Multisample instrument editor - in-process Dusk UI over the strip's
     // NativeMultisampleSlot instance, same kept-alive/showBorrowed lifecycle.
     std::unique_ptr<class DuskMultisampleEditor> multisampleEditor;
+    // The instance multisampleEditor was built against. Clone / undo can destroy
+    // or replace it from outside the UI, so the editor is dropped whenever the
+    // slot's live instance stops matching (see syncMultisampleEditorOwner).
+    class DuskMultisampleProcessor* multisampleEditorOwner = nullptr;
+    void syncMultisampleEditorOwner();
     void loadNativeMultisampleForChannel (const juce::File& soundfont);
     // Join an in-flight soundfont load. Call BEFORE suspendProcessing on any
     // path that tears the slot down - the teardown joins the loader pool, and

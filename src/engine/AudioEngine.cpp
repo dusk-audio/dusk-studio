@@ -1901,12 +1901,20 @@ void AudioEngine::consumePluginStateAfterLoad()
             const juce::File soundfont (track.nativeMultisamplePath);
             if (strip.isPrepared())
             {
-                suspendProcessing();
+                // Two-phase: the soundfont parse + state restore run with the
+                // audio thread untouched; only the swap is gated.
                 std::string err;
-                const bool ok = strip.loadNativeMultisample (soundfont, err);
-                if (ok && ! blob.empty())
-                    strip.getNativeMultisampleSlot().loadState (blob);
-                resumeProcessing();
+                auto primed = strip.primeNativeMultisample (soundfont, err, &blob);
+                // The swap destroys the outgoing instance - join its loader here,
+                // not with the audio thread parked (mirrors the teardown below).
+                strip.getNativeMultisampleSlot().drainPendingLoads();
+                bool ok = false;
+                if (primed)
+                {
+                    suspendProcessing();
+                    ok = strip.commitNativeMultisample (std::move (primed));
+                    resumeProcessing();
+                }
                 if (! ok)
                 {
                     strip.markNativeMultisampleRestoreFailed();   // keep refs - see the CLAP twin

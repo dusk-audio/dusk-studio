@@ -610,6 +610,31 @@ void ChannelStrip::unloadNativeMultisample() noexcept
     pendingMultisampleState.clear();
 }
 
+NativeMultisampleSlot::PrimedLoad ChannelStrip::primeNativeMultisample (
+    const juce::File& soundfont, std::string& errorOut,
+    const std::vector<uint8_t>* state) const
+{
+    if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
+    { errorOut = "channel strip not prepared"; return {}; }
+    return NativeMultisampleSlot::prime (
+        std::filesystem::u8path (soundfont.getFullPathName().toStdString()),
+        preparedSampleRate, preparedBlockSize, errorOut, state);
+}
+
+bool ChannelStrip::commitNativeMultisample (NativeMultisampleSlot::PrimedLoad primed)
+{
+    if (! primed) return false;
+    // One host per insert - see loadNativeClap.
+    unloadNativeClap();
+    unloadNativeLv2();
+    unloadNativeVst3();
+    pluginSlot.unload();
+    const bool ok = nativeMultisampleSlot.commit (std::move (primed), preparedBlockSize);
+    // A user-initiated load always ends any "failed restore" state (see loadNativeClap).
+    multisampleReloadFailed.store (false, std::memory_order_relaxed);
+    return ok;
+}
+
 void ChannelStrip::setPendingNativeMultisample (const juce::File& soundfont,
                                                  std::vector<uint8_t> state) noexcept
 {

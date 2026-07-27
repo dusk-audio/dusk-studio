@@ -735,6 +735,8 @@ void openInsertChooser (PluginSlot& slot,
         if (safeTarget.getComponent() == nullptr) return;
        #if DUSKSTUDIO_HAS_MULTISAMPLE
         openSoundfontFileChooser (std::move (onPickSoundfont), safeTarget);
+       #else
+        juce::ignoreUnused (onPickSoundfont);
        #endif
     };
 

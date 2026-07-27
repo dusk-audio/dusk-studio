@@ -1492,7 +1492,7 @@ When you load a session:
 
 ## Multi-sample instruments
 
-Drop a `.sfz` or `.sf2` file onto a MIDI track's insert slot to load it through the **sfizz** engine. Most SoundFont and SFZ instrument libraries work directly. The processor exposes three runtime overrides:
+Click a MIDI track's **Insert** slot and choose **Soundfont** to pick a `.sfz` or `.sf2` file and load it through the **sfizz** engine. Most SoundFont and SFZ instrument libraries work directly. The processor exposes three runtime overrides:
 
 - **Master volume**: −60 to +12 dB.
 - **Master tune**: −100 to +100 cents.

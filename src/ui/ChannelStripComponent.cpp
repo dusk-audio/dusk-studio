@@ -1716,6 +1716,7 @@ void ChannelStripComponent::openPluginPicker()
    #if DUSKSTUDIO_HAS_MULTISAMPLE
                                             self->drainMultisampleLoads();
                                             self->multisampleEditor.reset();
+                                            self->multisampleEditorOwner = nullptr;
    #endif
                                             self->engine.suspendProcessing();
                                             chStrip.unloadNativeClap();
@@ -1949,6 +1950,7 @@ void ChannelStripComponent::unloadPluginSlot()
         {
             drainMultisampleLoads();     // join the loader before parking audio
             multisampleEditor.reset();   // references the dying instance
+            multisampleEditorOwner = nullptr;
             engine.suspendProcessing();
             msStrip.unloadNativeMultisample();
             msStrip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
@@ -2068,6 +2070,12 @@ bool ChannelStripComponent::insertSlotOccupied() const
 
 void ChannelStripComponent::refreshPluginSlotButton()
 {
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    // Before any of the per-rung early-returns below: a clone / undo replay can
+    // destroy or replace the multisample instance without going through the UI,
+    // and the editor holds a reference to it on a live timer.
+    syncMultisampleEditorOwner();
+#endif
     // Native CLAP insert - name from the loaded .clap bundle. The JUCE pluginSlot is
     // empty for a native insert, so this must precede the slot-based bookkeeping below
     // (which would otherwise mislabel "Insert" and drop the live clap editor). Linux-only.
@@ -2118,11 +2126,16 @@ void ChannelStripComponent::refreshPluginSlotButton()
                             engine.getChannelStrip (trackIndex)
                                   .getNativeMultisampleSlot().getLoadedSoundfontPath().c_str()))
                           .getFileNameWithoutExtension();
-        const auto label = juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xbe ")) + nm;
-        if (label == lastSlotName) return;
-        lastSlotName = label;
-        pluginSlotButton.setButtonText (label);
-        return;
+        // Clearing the soundfont in the editor leaves the rung loaded but empty -
+        // fall through to the generic label rather than showing a bare arrow.
+        if (nm.isNotEmpty())
+        {
+            const auto label = juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xbe ")) + nm;
+            if (label == lastSlotName) return;
+            lastSlotName = label;
+            pluginSlotButton.setButtonText (label);
+            return;
+        }
     }
 #endif
 
@@ -2293,7 +2306,10 @@ void ChannelStripComponent::openPluginEditor()
         auto* inst = engine.getChannelStrip (trackIndex).getNativeMultisampleSlot().getInstance();
         if (inst == nullptr) return;
         if (multisampleEditor == nullptr)
+        {
             multisampleEditor = std::make_unique<DuskMultisampleEditor> (*inst);
+            multisampleEditorOwner = inst;
+        }
         pluginEditorModal.showBorrowed (*parent, *multisampleEditor, onClose);
         return;
     }
@@ -2539,6 +2555,7 @@ void ChannelStripComponent::dropPluginEditor()
 #endif
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     multisampleEditor.reset();   // pure Dusk UI - plain teardown
+    multisampleEditorOwner = nullptr;
 #endif
     // ~AudioProcessorEditor tears down the plugin's internal X11
     // children synchronously (colour pickers, preset browsers,
@@ -2612,6 +2629,7 @@ void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile
 #endif
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     multisampleEditor.reset();
+    multisampleEditorOwner = nullptr;
 #endif
     pluginEditor.reset();
     pluginEditorOwner = nullptr;
@@ -2690,6 +2708,7 @@ void ChannelStripComponent::loadNativeLv2ForChannel (const juce::File& bundleDir
 #endif
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     multisampleEditor.reset();
+    multisampleEditorOwner = nullptr;
 #endif
     lv2Editor.reset();
     pluginEditor.reset();
@@ -2760,6 +2779,7 @@ void ChannelStripComponent::loadNativeVst3ForChannel (const juce::File& vst3File
 #endif
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     multisampleEditor.reset();
+    multisampleEditorOwner = nullptr;
 #endif
     vst3Editor.reset();
     pluginEditor.reset();
@@ -2813,6 +2833,22 @@ void ChannelStripComponent::loadNativeVst3ForChannel (const juce::File& vst3File
 #endif // DUSKSTUDIO_HAS_NATIVE_VST3
 
 #if DUSKSTUDIO_HAS_MULTISAMPLE
+void ChannelStripComponent::syncMultisampleEditorOwner()
+{
+    if (multisampleEditor == nullptr) { multisampleEditorOwner = nullptr; return; }
+
+    auto* live = engine.getChannelStrip (trackIndex).getNativeMultisampleSlot().getInstance();
+    if (live != nullptr && live == multisampleEditorOwner) return;
+
+    // The instance the editor references is gone or was swapped. Dismiss the
+    // modal FIRST - it borrows the body by raw pointer, so leaving it showing
+    // (or re-showable) past the reset is a second use-after-free.
+    if (pluginEditorModal.getBody() == multisampleEditor.get())
+        pluginEditorModal.close();
+    multisampleEditor.reset();
+    multisampleEditorOwner = nullptr;
+}
+
 void ChannelStripComponent::drainMultisampleLoads()
 {
     engine.getChannelStrip (trackIndex).getNativeMultisampleSlot().drainPendingLoads();
@@ -2835,6 +2871,7 @@ void ChannelStripComponent::loadNativeMultisampleForChannel (const juce::File& s
     vst3Editor.reset();
 #endif
     multisampleEditor.reset();
+    multisampleEditorOwner = nullptr;
     pluginEditor.reset();
     pluginEditorOwner = nullptr;
    #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
@@ -2844,15 +2881,21 @@ void ChannelStripComponent::loadNativeMultisampleForChannel (const juce::File& s
     remoteForeignEmbed.reset();
    #endif
 
-    // Parsing a soundfont is not RT-safe; fence the audio thread around the swap.
-    // loadNativeMultisample itself evicts the CLAP + LV2 + VST3 + JUCE occupants.
+    // Two-phase: parse the soundfont (seconds on a GM bank) with the audio thread
+    // still running the current occupant, then fence only the swap.
+    // commitNativeMultisample evicts the CLAP + LV2 + VST3 + JUCE occupants.
     std::string err;
-    drainMultisampleLoads();   // the reload below joins it anyway; do it unparked
-    engine.suspendProcessing();
-    const bool ok = strip.loadNativeMultisample (soundfont, err);
-    if (ok)
-        strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
-    engine.resumeProcessing();
+    auto primed = strip.primeNativeMultisample (soundfont, err);
+    drainMultisampleLoads();   // outgoing instance's loader, before it is destroyed
+    bool ok = false;
+    if (primed)
+    {
+        engine.suspendProcessing();
+        ok = strip.commitNativeMultisample (std::move (primed));
+        if (ok)
+            strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
+        engine.resumeProcessing();
+    }
 
     if (! ok)
     {

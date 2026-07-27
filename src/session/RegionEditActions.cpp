@@ -559,17 +559,21 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
         auto& strip = engine.getStrip (idx);
         if (s.multisamplePath.isNotEmpty() || strip.isNativeMultisampleLoaded())
         {
-            engine.suspendProcessing();
-            bool msLoaded = false;
+            // Two-phase: parse the soundfont off the engine gate, fence the swap
+            // only (see NativeMultisampleSlot::prime).
+            NativeMultisampleSlot::PrimedLoad primed;
             if (s.multisamplePath.isNotEmpty())
             {
                 std::string msErr;
-                msLoaded = strip.loadNativeMultisample (juce::File (s.multisamplePath), msErr);
-                if (msLoaded && ! s.multisampleState.empty())
-                    strip.getNativeMultisampleSlot().loadState (s.multisampleState);
+                primed = strip.primeNativeMultisample (juce::File (s.multisamplePath),
+                                                        msErr, &s.multisampleState);
             }
-            else
-                strip.unloadNativeMultisample();
+            strip.getNativeMultisampleSlot().drainPendingLoads();
+
+            engine.suspendProcessing();
+            bool msLoaded = false;
+            if (primed) msLoaded = strip.commitNativeMultisample (std::move (primed));
+            else        strip.unloadNativeMultisample();
             engine.resumeProcessing();
 
             t.nativeMultisamplePath = msLoaded ? s.multisamplePath : juce::String();

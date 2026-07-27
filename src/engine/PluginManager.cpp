@@ -706,8 +706,7 @@ void PluginManager::createPluginInstanceAsync (
     const juce::PluginDescription& desc, double sampleRate, int blockSize,
     std::function<void (std::unique_ptr<juce::AudioPluginInstance>, juce::String)> callback)
 {
-    // Off-thread creation for slow-to-instantiate formats (notably the native
-    // multisample / soundfont player, which decodes samples). JUCE runs the
+    // Off-thread creation for slow-to-instantiate formats. JUCE runs the
     // format's createInstance on a background thread when the format reports
     // requiresUnblockedMessageThreadDuringCreation() == false, then fires this
     // callback ON THE MESSAGE THREAD with the fully-built instance - so the
