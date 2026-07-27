@@ -21,6 +21,9 @@
 #if DUSKSTUDIO_HAS_NATIVE_VST3
   #include "../engine/vst3/NativeVst3Slot.h"   // Linux-only native VST3 host
 #endif
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+  #include "../engine/multisample/NativeMultisampleSlot.h"
+#endif
 #include "HardwareInsertSlot.h"
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
@@ -129,6 +132,25 @@ public:
     bool nativeVst3ReloadFailed() const noexcept { return false; }
 #endif
 
+    // Native multisample instrument (.sfz / .sf2 through sfizz) - same contract as
+    // the CLAP block above, one rung below VST3. Instrument-only: it runs on the
+    // MIDI-track instrument path, never the effect insert.
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    bool loadNativeMultisample   (const juce::File& soundfont, std::string& errorOut);
+    void unloadNativeMultisample() noexcept;
+    bool isNativeMultisampleLoaded() const noexcept { return nativeMultisampleSlot.isLoaded(); }
+    NativeMultisampleSlot&       getNativeMultisampleSlot()       noexcept { return nativeMultisampleSlot; }
+    const NativeMultisampleSlot& getNativeMultisampleSlot() const noexcept { return nativeMultisampleSlot; }
+    void setPendingNativeMultisample (const juce::File& soundfont,
+                                       std::vector<uint8_t> state) noexcept;
+    bool nativeMultisampleReloadFailed() const noexcept { return multisampleReloadFailed.load (std::memory_order_relaxed); }
+    void markNativeMultisampleRestoreFailed() noexcept { multisampleReloadFailed.store (true, std::memory_order_relaxed); }
+#else
+    bool isNativeMultisampleLoaded() const noexcept { return false; }
+    void unloadNativeMultisample() noexcept {}
+    bool nativeMultisampleReloadFailed() const noexcept { return false; }
+#endif
+
     // Whether a native host owns the insert with an instrument loaded (no main
     // audio input - MIDI drives it). Gates the track-mode/unload interplay.
     bool insertIsNativeInstrument() const noexcept
@@ -141,6 +163,9 @@ public:
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
         if (isNativeVst3Loaded()) return nativeVst3Slot.isLoadedInstrument();
+#endif
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+        if (isNativeMultisampleLoaded()) return nativeMultisampleSlot.isLoadedInstrument();
 #endif
         return false;
     }
@@ -291,6 +316,10 @@ private:
     vst3::NativeVst3Slot nativeVst3Slot;   // native VST3 alternative to pluginSlot
     std::atomic<bool>    vst3ReloadFailed { false };
 #endif
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    NativeMultisampleSlot nativeMultisampleSlot;
+    std::atomic<bool>     multisampleReloadFailed { false };
+#endif
     HardwareInsertSlot hardwareSlot;
 
     // Stashed in prepare() so loadNativeClap / pending-restore can (re)activate at spec.
@@ -311,6 +340,10 @@ private:
     juce::String         pendingVst3Path;
     juce::String         pendingVst3PluginId;
     std::vector<uint8_t> pendingVst3State;
+#endif
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    juce::String         pendingMultisamplePath;
+    std::vector<uint8_t> pendingMultisampleState;
 #endif
 
     // activeInsertMode = what we're currently running; insertMode = what

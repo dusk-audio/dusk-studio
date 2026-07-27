@@ -43,8 +43,6 @@ src/engine/multisample/AriaBank.cpp
 src/engine/multisample/AriaBank.h
 src/engine/multisample/AriaGui.cpp
 src/engine/multisample/AriaGui.h
-src/engine/multisample/DuskMultisamplePluginFormat.cpp
-src/engine/multisample/DuskMultisamplePluginFormat.h
 src/engine/multisample/DuskMultisampleProcessor.cpp
 src/engine/multisample/DuskMultisampleProcessor.h
 src/engine/multisample/Sf2ToSfz.cpp

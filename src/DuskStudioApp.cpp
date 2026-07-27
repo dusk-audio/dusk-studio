@@ -20,6 +20,9 @@
 #include "engine/BounceEngine.h"
 #include "engine/PluginManager.h"
 #include "engine/PluginSlot.h"
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+  #include "engine/multisample/NativeMultisampleSlot.h"
+#endif
 #include "engine/audiofile/FileReader.h"
 #include "engine/audiofile/FileWriter.h"
 #include "foundation/MessageThread.h"
@@ -498,8 +501,28 @@ static void runHeadlessInstrumentTest (const juce::String& pluginPath)
     slot.setManager (manager);
     slot.prepareToPlay (sampleRate, blockSize);
 
+    // A .sfz / .sf2 argument drives the native multisample rung, not the JUCE
+    // slot - soundfonts are not a hosted plugin format.
+    bool isSoundfont = false;
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    NativeMultisampleSlot msSlot;
+    dusk::MidiBuffer duskMidi;
+    isSoundfont = MultisampleBundle::isSoundfontExtension (
+        std::filesystem::u8path (pluginPath.toStdString()));
+    if (isSoundfont)
+    {
+        std::string msErr;
+        if (! msSlot.load (std::filesystem::u8path (pluginPath.toStdString()),
+                            sampleRate, blockSize, msErr))
+        {
+            std::fprintf (stderr, "FAIL: soundfont load: %s\n", msErr.c_str());
+            return;
+        }
+    }
+#endif
+
     juce::String err;
-    if (! slot.loadFromFile (juce::File (pluginPath), err))
+    if (! isSoundfont && ! slot.loadFromFile (juce::File (pluginPath), err))
     {
         std::fprintf (stderr, "FAIL: loadFromFile: %s\n", err.toRawUTF8());
         return;
@@ -527,6 +550,16 @@ static void runHeadlessInstrumentTest (const juce::String& pluginPath)
             for (int n : kChordNotes)
                 midi.addEvent (juce::MidiMessage::noteOff (1, n), 0);
 
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+        if (isSoundfont)
+        {
+            duskMidi.clear();
+            for (const auto meta : midi)
+                duskMidi.addEvent (meta.data, meta.numBytes, meta.samplePosition);
+            msSlot.processStereo (L.data(), R.data(), L.data(), R.data(), blockSize, &duskMidi);
+        }
+        else
+#endif
         slot.processStereoBlock (L.data(), R.data(), blockSize, midi);
 
         for (int s = 0; s < blockSize; ++s)
@@ -647,11 +680,26 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
     {
         // Default-state path: track 0 in MIDI mode + load the plugin.
         session->track (0).mode.store ((int) Track::Mode::Midi, std::memory_order_relaxed);
-        juce::String err;
-        if (! engine->getStrip (0).getPluginSlot().loadFromFile (juce::File (pluginPath), err))
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+        if (MultisampleBundle::isSoundfontExtension (
+                std::filesystem::u8path (pluginPath.toStdString())))
         {
-            std::fprintf (stderr, "FAIL: loadFromFile: %s\n", err.toRawUTF8());
-            return;
+            std::string msErr;
+            if (! engine->getStrip (0).loadNativeMultisample (juce::File (pluginPath), msErr))
+            {
+                std::fprintf (stderr, "FAIL: soundfont load: %s\n", msErr.c_str());
+                return;
+            }
+        }
+        else
+#endif
+        {
+            juce::String err;
+            if (! engine->getStrip (0).getPluginSlot().loadFromFile (juce::File (pluginPath), err))
+            {
+                std::fprintf (stderr, "FAIL: loadFromFile: %s\n", err.toRawUTF8());
+                return;
+            }
         }
     }
 

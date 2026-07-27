@@ -116,10 +116,8 @@ TEST_CASE ("scan sandbox policy: third-party formats are sandboxed, in-house is 
     CHECK (formatRequiresSandbox ("LV2"));
     CHECK (formatRequiresSandbox ("AudioUnit"));
 
-    // In-house / trusted formats scan in-process. DuskMultisample is our own
-    // soundfont player; an unknown name defaults to in-process (never sandboxed
-    // by accident — but also never a third-party crash vector).
-    CHECK_FALSE (formatRequiresSandbox ("DuskMultisample"));
+    // Everything else scans in-process: an unknown name defaults to in-process
+    // (never sandboxed by accident — but also never a third-party crash vector).
     CHECK_FALSE (formatRequiresSandbox (""));
     CHECK_FALSE (formatRequiresSandbox ("CLAP"));   // native CLAP has its own sandbox path
 }

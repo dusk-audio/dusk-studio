@@ -264,13 +264,12 @@ target_link_libraries(dusk-studio-tests PRIVATE
     ${CMAKE_DL_LIBS}   # dl: ClapBundle dlopen
     juce::juce_audio_basics
     juce::juce_audio_formats
-    # juce_audio_processors brings in juce::AudioPluginInstance for
-    # multisample tests (DuskMultisampleProcessor subclasses it).
-    juce::juce_audio_processors
-    # juce_gui_basics required by DuskMultisampleEditor (compiled into
-    # the test binary via the multisample tests). The tests don't
-    # construct the editor; we just link the symbol it references
-    # through createEditor().
+    # juce_data_structures brings in juce::ValueTree, which carries the
+    # multisample state blob.
+    juce::juce_data_structures
+    # juce_gui_basics required by DuskMultisampleEditor + DuskFileBrowser,
+    # both compiled into the test binary via the multisample tests. The
+    # tests don't construct them; the symbols just have to resolve.
     juce::juce_gui_basics
     juce::juce_core
     juce::juce_dsp

@@ -1,6 +1,12 @@
 # Hosting tower H3 — DuskMultisample re-home (executable spec)
 
-Status: **PENDING.** Branch `dejuce/hosting-h3`. One PR.
+Status: **IMPLEMENTED 2026-07-27, committed on `dejuce/hosting-h3`,
+awaiting review + push.** Verified: build zero new warnings, ctest 470/470,
+gate 183 -> 181 (the two deleted format-wrapper files), instrument harness
+AUDIO PRESENT through the native rung with a synthetic full-range .sfz,
+selftest 36 PASS under Xvfb. Behavior fix shipped: pitch-wheel was passed
+uncentred (0..16383) to sfizz in the JUCE-hosted build too - bends now work.
+Branch `dejuce/hosting-h3`. One PR.
 Parent plan: [dejuce-hosting-plan.md](dejuce-hosting-plan.md). Prior scout
 2026-07-27 mapped the full coupling (session notes); re-verify line numbers
 before editing.

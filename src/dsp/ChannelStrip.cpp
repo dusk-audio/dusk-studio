@@ -176,6 +176,30 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         pendingVst3State.clear();
     }
 #endif
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    if (nativeMultisampleSlot.isLoaded())
+    {
+        std::string err;
+        const bool ok = nativeMultisampleSlot.reactivate (preparedSampleRate, preparedBlockSize, err);
+        multisampleReloadFailed.store (! ok, std::memory_order_relaxed);
+    }
+    else if (pendingMultisamplePath.isNotEmpty())
+    {
+        if (! isNativeClapLoaded() && ! isNativeLv2Loaded() && ! isNativeVst3Loaded())
+        {
+            const juce::File p (pendingMultisamplePath);
+            std::string err;
+            const bool ok = nativeMultisampleSlot.load (
+                std::filesystem::u8path (p.getFullPathName().toStdString()),
+                preparedSampleRate, preparedBlockSize, err);
+            if (ok && ! pendingMultisampleState.empty())
+                nativeMultisampleSlot.loadState (pendingMultisampleState);
+            multisampleReloadFailed.store (! ok, std::memory_order_relaxed);
+        }
+        pendingMultisamplePath.clear();
+        pendingMultisampleState.clear();
+    }
+#endif
 
     // Oversampling: wrap (EQ + Comp) in a Dusk Studio-side oversampler when the
     // user picks 2× / 4× in Audio Settings. The EQ's always-on console
@@ -457,6 +481,7 @@ bool ChannelStrip::loadNativeClap (const juce::File& path, std::string& errorOut
     // at once. Callers fence the audio thread around this call.
     unloadNativeLv2();
     unloadNativeVst3();
+    unloadNativeMultisample();
     pluginSlot.unload();
     const bool ok = nativeClapSlot.load (std::filesystem::u8path (path.getFullPathName().toStdString()),
                                          preparedSampleRate, preparedBlockSize, errorOut, pluginId.toStdString());
@@ -494,6 +519,7 @@ bool ChannelStrip::loadNativeLv2 (const juce::File& path, std::string& errorOut,
     // One host per insert - see loadNativeClap.
     unloadNativeClap();
     unloadNativeVst3();
+    unloadNativeMultisample();
     pluginSlot.unload();
     const bool ok = nativeLv2Slot.load (std::filesystem::u8path (path.getFullPathName().toStdString()),
                                         preparedSampleRate, preparedBlockSize, errorOut, pluginId.toStdString());
@@ -531,6 +557,7 @@ bool ChannelStrip::loadNativeVst3 (const juce::File& path, std::string& errorOut
     // One host per insert - see loadNativeClap.
     unloadNativeClap();
     unloadNativeLv2();
+    unloadNativeMultisample();
     pluginSlot.unload();
     const bool ok = nativeVst3Slot.load (std::filesystem::u8path (path.getFullPathName().toStdString()),
                                          preparedSampleRate, preparedBlockSize, errorOut, pluginId.toStdString());
@@ -554,6 +581,40 @@ void ChannelStrip::setPendingNativeVst3 (const juce::File& path, std::vector<uin
     pendingVst3Path     = path.getFullPathName();
     pendingVst3PluginId = pluginId;
     pendingVst3State    = std::move (state);
+}
+#endif
+
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+bool ChannelStrip::loadNativeMultisample (const juce::File& soundfont, std::string& errorOut)
+{
+    if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
+    { errorOut = "channel strip not prepared"; return false; }
+    // One host per insert - see loadNativeClap.
+    unloadNativeClap();
+    unloadNativeLv2();
+    unloadNativeVst3();
+    pluginSlot.unload();
+    const bool ok = nativeMultisampleSlot.load (
+        std::filesystem::u8path (soundfont.getFullPathName().toStdString()),
+        preparedSampleRate, preparedBlockSize, errorOut);
+    // A user-initiated load always ends any "failed restore" state (see loadNativeClap).
+    multisampleReloadFailed.store (false, std::memory_order_relaxed);
+    return ok;
+}
+
+void ChannelStrip::unloadNativeMultisample() noexcept
+{
+    nativeMultisampleSlot.unload();
+    multisampleReloadFailed.store (false, std::memory_order_relaxed);
+    pendingMultisamplePath.clear();
+    pendingMultisampleState.clear();
+}
+
+void ChannelStrip::setPendingNativeMultisample (const juce::File& soundfont,
+                                                 std::vector<uint8_t> state) noexcept
+{
+    pendingMultisamplePath  = soundfont.getFullPathName();
+    pendingMultisampleState = std::move (state);
 }
 #endif
 
@@ -1022,7 +1083,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             // tick the smoother to keep its state in sync in case the
             // track later flips to audio mode. A native host owns the slot
             // when loaded - same precedence as the effect-insert path.
-#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3 \
+    || DUSKSTUDIO_HAS_MULTISAMPLE
             // Bridge the block's MIDI into dusk once for whichever native host runs.
             nativeMidiScratch.clear();
             for (const auto meta : trackMidi)
@@ -1041,6 +1103,11 @@ void ChannelStrip::processAndAccumulate (const float* inL,
 #if DUSKSTUDIO_HAS_NATIVE_VST3
             if (nativeVst3Slot.isLoaded())
                 nativeVst3Slot.processStereo (L, R, L, R, numSamples, &nativeMidiScratch);
+            else
+#endif
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+            if (nativeMultisampleSlot.isLoaded())
+                nativeMultisampleSlot.processStereo (L, R, L, R, numSamples, &nativeMidiScratch);
             else
 #endif
             pluginSlot.processStereoBlock (L, R, numSamples, trackMidi);

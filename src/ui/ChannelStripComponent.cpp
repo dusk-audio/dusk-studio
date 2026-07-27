@@ -18,6 +18,9 @@
 #if DUSKSTUDIO_HAS_NATIVE_VST3
   #include "Vst3PluginEditorComponent.h"   // Linux-only native VST3 editor (IPlugView)
 #endif
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+  #include "multisample/DuskMultisampleEditor.h"
+#endif
 #include "DuskAlerts.h"
 #include "FreezeDialog.h"
 #include "../engine/AudioEngine.h"
@@ -1340,7 +1343,8 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         if (pluginSlot.isLoaded()
             || engine.getChannelStrip (trackIndex).isNativeClapLoaded()
             || engine.getChannelStrip (trackIndex).isNativeLv2Loaded()
-            || engine.getChannelStrip (trackIndex).isNativeVst3Loaded())
+            || engine.getChannelStrip (trackIndex).isNativeVst3Loaded()
+            || engine.getChannelStrip (trackIndex).isNativeMultisampleLoaded())
         {
             togglePluginEditor();
             return;
@@ -1697,7 +1701,8 @@ void ChannelStripComponent::openPluginPicker()
                                         // lingering native would silently shadow the picked plugin.
                                         if (self->pluginSlot.isLoaded()
                                             && (chStrip.isNativeClapLoaded() || chStrip.isNativeLv2Loaded()
-                                                || chStrip.isNativeVst3Loaded()))
+                                                || chStrip.isNativeVst3Loaded()
+                                                || chStrip.isNativeMultisampleLoaded()))
                                         {
    #if DUSKSTUDIO_HAS_NATIVE_CLAP
                                             self->clapEditor.reset();   // references the dying instance
@@ -1708,10 +1713,15 @@ void ChannelStripComponent::openPluginPicker()
    #if DUSKSTUDIO_HAS_NATIVE_VST3
                                             self->vst3Editor.reset();
    #endif
+   #if DUSKSTUDIO_HAS_MULTISAMPLE
+                                            self->drainMultisampleLoads();
+                                            self->multisampleEditor.reset();
+   #endif
                                             self->engine.suspendProcessing();
                                             chStrip.unloadNativeClap();
                                             chStrip.unloadNativeLv2();
                                             chStrip.unloadNativeVst3();
+                                            chStrip.unloadNativeMultisample();
                                             self->engine.resumeProcessing();
                                             self->track.nativeClapPath = {};
                                             self->track.nativeClapPluginId = {};
@@ -1722,6 +1732,8 @@ void ChannelStripComponent::openPluginPicker()
                                             self->track.nativeVst3Path = {};
                                             self->track.nativeVst3PluginId = {};
                                             self->track.nativeVst3StateBase64 = {};
+                                            self->track.nativeMultisamplePath = {};
+                                            self->track.nativeMultisampleStateBase64 = {};
                                         }
 
                                         // Loading an instrument (soundfont or VST/LV2 synth) on a
@@ -1806,6 +1818,16 @@ void ChannelStripComponent::openPluginPicker()
     };
 #endif
 
+    // Soundfont route - the native multisample rung; instruments only.
+    std::function<void (const juce::File&)> onSoundfont;
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    onSoundfont = [safe] (const juce::File& f)
+    {
+        if (auto* self = safe.getComponent())
+            self->loadNativeMultisampleForChannel (f);
+    };
+#endif
+
     pluginpicker::openInsertChooser (pluginSlot,
                                       pluginSlotButton,
                                       std::move (onChange),
@@ -1813,7 +1835,8 @@ void ChannelStripComponent::openPluginPicker()
                                       std::move (openHwEditor),
                                       std::move (onClap),
                                       std::move (onLv2),
-                                      std::move (onVst3));
+                                      std::move (onVst3),
+                                      std::move (onSoundfont));
 }
 
 void ChannelStripComponent::openHardwareInsertEditor()
@@ -1919,6 +1942,24 @@ void ChannelStripComponent::unloadPluginSlot()
         }
     }
 #endif
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    {
+        auto& msStrip = engine.getChannelStrip (trackIndex);
+        if (msStrip.isNativeMultisampleLoaded())
+        {
+            drainMultisampleLoads();     // join the loader before parking audio
+            multisampleEditor.reset();   // references the dying instance
+            engine.suspendProcessing();
+            msStrip.unloadNativeMultisample();
+            msStrip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
+            engine.resumeProcessing();
+            track.nativeMultisamplePath = {};
+            track.nativeMultisampleStateBase64 = {};
+            refreshPluginSlotButton();
+            return;
+        }
+    }
+#endif
 
     pluginSlot.unload();
     refreshPluginSlotButton();
@@ -1929,7 +1970,8 @@ void ChannelStripComponent::showPluginSlotMenu()
     juce::PopupMenu menu;
     const bool nativeLoaded = engine.getChannelStrip (trackIndex).isNativeClapLoaded()
                            || engine.getChannelStrip (trackIndex).isNativeLv2Loaded()
-                           || engine.getChannelStrip (trackIndex).isNativeVst3Loaded();
+                           || engine.getChannelStrip (trackIndex).isNativeVst3Loaded()
+                           || engine.getChannelStrip (trackIndex).isNativeMultisampleLoaded();
     if (pluginSlot.isLoaded() || nativeLoaded)
     {
         // Editor toggle headline so right-click ALSO becomes a way to open
@@ -2016,7 +2058,8 @@ void ChannelStripComponent::refreshInsertButtonForCapture()
 bool ChannelStripComponent::insertSlotOccupied() const
 {
     auto& st = engine.getChannelStrip (trackIndex);
-    if (st.isNativeClapLoaded() || st.isNativeLv2Loaded() || st.isNativeVst3Loaded())
+    if (st.isNativeClapLoaded() || st.isNativeLv2Loaded() || st.isNativeVst3Loaded()
+        || st.isNativeMultisampleLoaded())
         return true;
     if (pluginSlot.isLoaded())
         return true;
@@ -2060,6 +2103,20 @@ void ChannelStripComponent::refreshPluginSlotButton()
     {
         const auto nm = juce::File (engine.getChannelStrip (trackIndex)
                                       .getNativeVst3Slot().getPath())
+                          .getFileNameWithoutExtension();
+        const auto label = juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xbe ")) + nm;
+        if (label == lastSlotName) return;
+        lastSlotName = label;
+        pluginSlotButton.setButtonText (label);
+        return;
+    }
+#endif
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    if (engine.getChannelStrip (trackIndex).isNativeMultisampleLoaded())
+    {
+        const auto nm = juce::File (juce::String::fromUTF8 (
+                            engine.getChannelStrip (trackIndex)
+                                  .getNativeMultisampleSlot().getLoadedSoundfontPath().c_str()))
                           .getFileNameWithoutExtension();
         const auto label = juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xbe ")) + nm;
         if (label == lastSlotName) return;
@@ -2227,6 +2284,17 @@ void ChannelStripComponent::openPluginEditor()
             }
         }
         pluginEditorModal.showBorrowed (*parent, *vst3Editor, onClose);
+        return;
+    }
+#endif
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    if (engine.getChannelStrip (trackIndex).isNativeMultisampleLoaded())
+    {
+        auto* inst = engine.getChannelStrip (trackIndex).getNativeMultisampleSlot().getInstance();
+        if (inst == nullptr) return;
+        if (multisampleEditor == nullptr)
+            multisampleEditor = std::make_unique<DuskMultisampleEditor> (*inst);
+        pluginEditorModal.showBorrowed (*parent, *multisampleEditor, onClose);
         return;
     }
 #endif
@@ -2469,6 +2537,9 @@ void ChannelStripComponent::dropPluginEditor()
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     vst3Editor.reset();   // in-process C++ teardown - no leak path needed
 #endif
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    multisampleEditor.reset();   // pure Dusk UI - plain teardown
+#endif
     // ~AudioProcessorEditor tears down the plugin's internal X11
     // children synchronously (colour pickers, preset browsers,
     // transient popups). On a Wayland session, any of those could
@@ -2539,6 +2610,9 @@ void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     vst3Editor.reset();
 #endif
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    multisampleEditor.reset();
+#endif
     pluginEditor.reset();
     pluginEditorOwner = nullptr;
     // Release any OOP-side embed too - replacing a remote (OOP) plugin with a native
@@ -2554,6 +2628,9 @@ void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile
     // NativeClapSlot::load is NOT RT-safe (tears down + rebuilds the instance), so
     // fence the audio thread with the engine process gate around the swap.
     std::string err;
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    drainMultisampleLoads();   // the load below evicts it; join outside the gate
+#endif
     engine.suspendProcessing();
     pluginSlot.unload();                       // ensure no JUCE plugin lingers
     const bool ok = strip.loadNativeClap (clapFile, err, pluginId);
@@ -2588,6 +2665,8 @@ void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile
     track.nativeVst3Path = {};
     track.nativeVst3PluginId = {};
     track.nativeVst3StateBase64 = {};
+    track.nativeMultisamplePath = {};
+    track.nativeMultisampleStateBase64 = {};
     refreshPluginSlotButton();
     openPluginEditor();
 }
@@ -2609,6 +2688,9 @@ void ChannelStripComponent::loadNativeLv2ForChannel (const juce::File& bundleDir
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     vst3Editor.reset();
 #endif
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    multisampleEditor.reset();
+#endif
     lv2Editor.reset();
     pluginEditor.reset();
     pluginEditorOwner = nullptr;
@@ -2619,6 +2701,9 @@ void ChannelStripComponent::loadNativeLv2ForChannel (const juce::File& bundleDir
     remoteForeignEmbed.reset();
    #endif
 
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    drainMultisampleLoads();   // the load below evicts it; join outside the gate
+#endif
     // NativeLv2Slot::load is NOT RT-safe; fence the audio thread around the swap.
     // loadNativeLv2 itself evicts the CLAP + JUCE occupants.
     std::string err;
@@ -2650,6 +2735,8 @@ void ChannelStripComponent::loadNativeLv2ForChannel (const juce::File& bundleDir
     track.nativeVst3Path = {};
     track.nativeVst3PluginId = {};
     track.nativeVst3StateBase64 = {};
+    track.nativeMultisamplePath = {};
+    track.nativeMultisampleStateBase64 = {};
     refreshPluginSlotButton();
     openPluginEditor();
 }
@@ -2671,6 +2758,9 @@ void ChannelStripComponent::loadNativeVst3ForChannel (const juce::File& vst3File
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     lv2Editor.reset();
 #endif
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    multisampleEditor.reset();
+#endif
     vst3Editor.reset();
     pluginEditor.reset();
     pluginEditorOwner = nullptr;
@@ -2681,6 +2771,9 @@ void ChannelStripComponent::loadNativeVst3ForChannel (const juce::File& vst3File
     remoteForeignEmbed.reset();
    #endif
 
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    drainMultisampleLoads();   // the load below evicts it; join outside the gate
+#endif
     // NativeVst3Slot::load is NOT RT-safe; fence the audio thread around the swap.
     // loadNativeVst3 itself evicts the CLAP + LV2 + JUCE occupants.
     std::string err;
@@ -2712,10 +2805,80 @@ void ChannelStripComponent::loadNativeVst3ForChannel (const juce::File& vst3File
     track.nativeLv2Path = {};
     track.nativeLv2PluginId = {};
     track.nativeLv2StateBase64 = {};
+    track.nativeMultisamplePath = {};
+    track.nativeMultisampleStateBase64 = {};
     refreshPluginSlotButton();
     openPluginEditor();
 }
 #endif // DUSKSTUDIO_HAS_NATIVE_VST3
+
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+void ChannelStripComponent::drainMultisampleLoads()
+{
+    engine.getChannelStrip (trackIndex).getNativeMultisampleSlot().drainPendingLoads();
+}
+
+void ChannelStripComponent::loadNativeMultisampleForChannel (const juce::File& soundfont)
+{
+    auto& strip = engine.getChannelStrip (trackIndex);
+
+    // One insert per strip - tear down whatever editor is open first. Mirrors
+    // loadNativeClapForChannel.
+    closePluginEditor();
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    clapEditor.reset();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    lv2Editor.reset();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    vst3Editor.reset();
+#endif
+    multisampleEditor.reset();
+    pluginEditor.reset();
+    pluginEditorOwner = nullptr;
+   #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
+    remoteEditorEmbed.reset();
+   #endif
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
+    remoteForeignEmbed.reset();
+   #endif
+
+    // Parsing a soundfont is not RT-safe; fence the audio thread around the swap.
+    // loadNativeMultisample itself evicts the CLAP + LV2 + VST3 + JUCE occupants.
+    std::string err;
+    drainMultisampleLoads();   // the reload below joins it anyway; do it unparked
+    engine.suspendProcessing();
+    const bool ok = strip.loadNativeMultisample (soundfont, err);
+    if (ok)
+        strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
+    engine.resumeProcessing();
+
+    if (! ok)
+    {
+        showDuskAlert (*this, "Couldn't load soundfont",
+                       soundfont.getFileNameWithoutExtension() + ":\n" + juce::String (err));
+        track.nativeMultisamplePath = {};
+        track.nativeMultisampleStateBase64 = {};
+        return;
+    }
+
+    adoptInstrumentTrackDefaults();
+    track.nativeMultisamplePath = soundfont.getFullPathName();
+    track.nativeMultisampleStateBase64 = {};
+    track.nativeClapPath = {};
+    track.nativeClapPluginId = {};
+    track.nativeClapStateBase64 = {};
+    track.nativeLv2Path = {};
+    track.nativeLv2PluginId = {};
+    track.nativeLv2StateBase64 = {};
+    track.nativeVst3Path = {};
+    track.nativeVst3PluginId = {};
+    track.nativeVst3StateBase64 = {};
+    refreshPluginSlotButton();
+    openPluginEditor();
+}
+#endif // DUSKSTUDIO_HAS_MULTISAMPLE
 
 namespace
 {
@@ -4347,7 +4510,8 @@ void ChannelStripComponent::onTrackModeChanged()
     }
     else if (engine.getChannelStrip (trackIndex).isNativeClapLoaded()
               || engine.getChannelStrip (trackIndex).isNativeLv2Loaded()
-              || engine.getChannelStrip (trackIndex).isNativeVst3Loaded())
+              || engine.getChannelStrip (trackIndex).isNativeVst3Loaded()
+              || engine.getChannelStrip (trackIndex).isNativeMultisampleLoaded())
     {
         // Same mode/kind matching as the JUCE slot above: a native EFFECT can't
         // ride a MIDI strip, a native INSTRUMENT can't ride an audio strip.

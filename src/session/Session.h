@@ -807,10 +807,10 @@ struct Track
     juce::String pluginStateBase64;
 
     // Native insert alternatives to the JUCE plugin above. An insert hosts at
-    // most ONE of {JUCE plugin, native CLAP, native LV2, native VST3}: the
-    // non-empty native*Path names the host (precedence CLAP > LV2 > VST3 if
-    // several are somehow set). Always present so non-Linux builds round-trip
-    // the fields untouched.
+    // most ONE of {JUCE plugin, native CLAP, native LV2, native VST3, native
+    // multisample}: the non-empty native*Path names the host (precedence
+    // CLAP > LV2 > VST3 > multisample if several are somehow set). Always
+    // present so non-Linux builds round-trip the fields untouched.
     juce::String nativeClapPath;
     juce::String nativeClapPluginId;   // which plugin inside the bundle; empty = first effect
     juce::String nativeClapStateBase64;
@@ -820,6 +820,9 @@ struct Track
     juce::String nativeVst3Path;
     juce::String nativeVst3PluginId;
     juce::String nativeVst3StateBase64;
+    // Soundfont path (.sfz / .sf2) - the multisample rung has no plugin id.
+    juce::String nativeMultisamplePath;
+    juce::String nativeMultisampleStateBase64;
 
     // Track freeze (MIDI tracks): the instrument + pre-fader strip is rendered
     // to a WAV, the plugin is bypassed to free CPU, and playback reads the WAV

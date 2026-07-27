@@ -369,6 +369,13 @@ struct CloneTrackAction::Impl
     juce::String pluginDescXml;
     juce::String pluginStateB64;
 
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    // Native multisample instrument - not a JUCE-hosted plugin, so it needs
+    // its own pair alongside the description above.
+    juce::String         multisamplePath;
+    std::vector<uint8_t> multisampleState;
+#endif
+
     // Region / MIDI region content.
     std::vector<AudioRegion> regions;
     std::vector<MidiRegion>  midiRegions;
@@ -442,6 +449,15 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
     auto& slot = engine.getStrip (idx).getPluginSlot();
     s.pluginDescXml  = slot.getDescriptionXmlForSave();
     s.pluginStateB64 = slot.getStateBase64ForSave();
+
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    auto& msSlot = engine.getStrip (idx).getNativeMultisampleSlot();
+    if (msSlot.isLoaded())
+    {
+        s.multisamplePath = juce::String::fromUTF8 (msSlot.getLoadedSoundfontPath().c_str());
+        msSlot.saveState (s.multisampleState);
+    }
+#endif
 
     s.regions     = t.regions;
     s.midiRegions = t.midiRegions.current();   // snapshot of the live vector
@@ -535,6 +551,34 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
     // a single track we mirror by hand.
     t.pluginDescriptionXml = s.pluginDescXml;
     t.pluginStateBase64    = s.pluginStateB64;
+
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    // After the JUCE replay: a multisample load evicts the JUCE slot, so doing
+    // it second keeps "one host per insert" whichever way the clone goes.
+    {
+        auto& strip = engine.getStrip (idx);
+        if (s.multisamplePath.isNotEmpty() || strip.isNativeMultisampleLoaded())
+        {
+            engine.suspendProcessing();
+            bool msLoaded = false;
+            if (s.multisamplePath.isNotEmpty())
+            {
+                std::string msErr;
+                msLoaded = strip.loadNativeMultisample (juce::File (s.multisamplePath), msErr);
+                if (msLoaded && ! s.multisampleState.empty())
+                    strip.getNativeMultisampleSlot().loadState (s.multisampleState);
+            }
+            else
+                strip.unloadNativeMultisample();
+            engine.resumeProcessing();
+
+            t.nativeMultisamplePath = msLoaded ? s.multisamplePath : juce::String();
+            t.nativeMultisampleStateBase64 = (msLoaded && ! s.multisampleState.empty())
+                ? juce::Base64::toBase64 (s.multisampleState.data(), s.multisampleState.size())
+                : juce::String();
+        }
+    }
+#endif
 }
 } // namespace
 

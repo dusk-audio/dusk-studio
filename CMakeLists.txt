@@ -916,7 +916,7 @@ endif()
 # don't ship a separate .so/.dylib + dlopen at startup. Library-only
 # build: no JACK CLI, no MIDI-file renderer, no benchmarks/tests/demos.
 # DuskMultisampleProcessor (src/engine/multisample/) wraps it as a
-# juce::AudioPluginInstance.
+# native instrument rung (hosting::INativeInstance).
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     set(SFIZZ_JACK      OFF CACHE BOOL "" FORCE)
     set(SFIZZ_RENDER    OFF CACHE BOOL "" FORCE)
@@ -1017,7 +1017,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_MULTISAMPLE=1)
     target_sources(DuskStudio PRIVATE
         src/engine/multisample/DuskMultisampleProcessor.cpp
-        src/engine/multisample/DuskMultisamplePluginFormat.cpp
         src/engine/multisample/AriaBank.cpp
         src/engine/multisample/AriaGui.cpp
         src/engine/multisample/Sf2Reader.cpp
