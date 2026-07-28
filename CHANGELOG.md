@@ -5,6 +5,20 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
+## [0.12.7] - Unreleased
+
+Beta patch on the 0.12 line: restores plug-in scanning in the Windows
+installer.
+
+### Fixed
+
+- **Windows plug-in scanning.** The MSI now includes
+  `dusk-studio-plugin-host.exe` beside the main application. The helper was
+  built but omitted from CMake's install set, so every third-party plug-in was
+  deliberately left unscanned and the scan completed immediately with a
+  sandbox-host-unavailable warning. The Windows packaging script now validates
+  the staged install contains both executables before creating the MSI.
+
 ## [0.12.6] - 2026-07-25
 
 Beta patch on the 0.12 line: manual recording latency compensation for
