@@ -1105,6 +1105,16 @@ endif()
 install(TARGETS DuskStudio
         RUNTIME DESTINATION bin
         BUNDLE  DESTINATION .)
+# On Linux/Windows the plugin host is a separate executable that the main app
+# resolves beside itself.  Building it as a dependency is not enough: CPack
+# only packages targets with install rules, so omitting this target left the
+# Windows MSI without the sandbox scanner (issue #116).  The macOS helper is
+# already inside DuskStudio.app/Contents/MacOS because its runtime output is
+# directed beside the app executable, and installing the bundle carries it.
+if(TARGET dusk-studio-plugin-host AND NOT APPLE)
+    install(TARGETS dusk-studio-plugin-host
+            RUNTIME DESTINATION bin)
+endif()
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/audio.dusk.studio.desktop"
         DESTINATION share/applications)
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/DuskStudio.appdata.xml"
