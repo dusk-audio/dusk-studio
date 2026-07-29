@@ -839,7 +839,8 @@ JObj busToObject (const Bus& a)
     return obj;
 }
 
-void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
+void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
+                   double defaultRecordBpm,
                    const juce::File& sessionDir,
                    std::vector<juce::String>& missingFiles)
 {
@@ -850,7 +851,15 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
     t.pluginDescriptor.reset();
     if (const auto it = v.find ("plugin_descriptor");
         it != v.end() && it->is_object())
+    {
         t.pluginDescriptor = descriptorFromObject (*it);
+        if (! t.pluginDescriptor.has_value())
+            std::fprintf (
+                stderr,
+                "[Dusk Studio/session] rejected plugin_descriptor for track %d; "
+                "using plugin_desc_xml fallback when present\n",
+                trackIndex + 1);
+    }
     t.pluginLegacyDescriptionXml = t.pluginDescriptor.has_value()
         ? juce::String() : json::getString (v, "plugin_desc_xml");
     t.pluginStateBase64    = json::getString (v, "plugin_state");
@@ -1765,7 +1774,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         // automation mode, plugin state).
         const nlohmann::json emptyTrack = nlohmann::json::object();
         for (int i = 0; i < Session::kNumTracks; ++i)
-            restoreTrack (s.track (i),
+            restoreTrack (s.track (i), i,
                           i < (int) tracks.size() ? tracks[(size_t) i] : emptyTrack,
                           sessionLoadBpm, s.getSessionDirectory(),
                           s.missingAudioFilesAfterLoad);
@@ -1808,7 +1817,16 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     lane.pluginDescriptor[(size_t) p].reset();
                     if (const auto it = sv.find ("plugin_descriptor");
                         it != sv.end() && it->is_object())
+                    {
                         lane.pluginDescriptor[(size_t) p] = descriptorFromObject (*it);
+                        if (! lane.pluginDescriptor[(size_t) p].has_value())
+                            std::fprintf (
+                                stderr,
+                                "[Dusk Studio/session] rejected plugin_descriptor "
+                                "for aux %d slot %d; using plugin_desc_xml fallback "
+                                "when present\n",
+                                i + 1, p + 1);
+                    }
                     lane.pluginLegacyDescriptionXml[(size_t) p]
                         = lane.pluginDescriptor[(size_t) p].has_value()
                             ? juce::String() : json::getString (sv, "plugin_desc_xml");

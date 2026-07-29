@@ -5,6 +5,8 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <atomic>
 #include <functional>
+#include <optional>
+#include <string>
 #include <vector>
 
 namespace duskstudio
@@ -69,6 +71,11 @@ public:
     static std::vector<PluginDescriptor> importLegacyNativeCacheForTest (
         const juce::String& xml,
         const std::function<bool (const juce::File&)>& locationExists);
+    static bool loadNativeCacheSourcesForTest (
+        const std::optional<std::string>& jsonSource,
+        const std::optional<juce::String>& legacyXmlSource,
+        const std::function<bool (const juce::File&)>& locationExists,
+        std::vector<PluginDescriptor>& into);
    #endif
 
     juce::File getCacheFile() const;

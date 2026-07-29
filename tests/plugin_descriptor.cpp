@@ -68,6 +68,20 @@ TEST_CASE ("plugin descriptor preserves every field and unknown format names")
     CHECK (restored == descriptor);
 }
 
+TEST_CASE ("plugin descriptor replaces invalid UTF-8 while serializing")
+{
+    PluginDescriptor descriptor;
+    descriptor.name = "Invalid ";
+    descriptor.name.push_back (static_cast<char> (0xff));
+
+    std::string serialized;
+    REQUIRE_NOTHROW (serialized = descriptor.toJson());
+
+    PluginDescriptor restored;
+    REQUIRE (PluginDescriptor::fromJson (serialized, restored));
+    CHECK (restored.name == std::string ("Invalid \xef\xbf\xbd"));
+}
+
 TEST_CASE ("loaded descriptor trusts instantiated classification but preserves reload identity")
 {
     PluginDescriptor scanned;

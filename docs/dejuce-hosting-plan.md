@@ -94,7 +94,7 @@ merges. Read `docs/dejuce-campaign.md` + the memory ledger first.
   The private JUCE host boundary converts only where H6 still needs it.
   Session schema v4 preserves structured descriptors and migrates legacy XML;
   native sidecar caches are versioned JSON with one-way XML import. Gate
-  181 -> 179; full CTest 488/488 plus private-Xvfb self-test, synthetic SFZ
+  181 -> 179; full CTest 493/493 plus private-Xvfb self-test, synthetic SFZ
   sound verdict, and picker screenshot review passed. Spec:
   [dejuce-hosting-h4-descriptors.md](dejuce-hosting-h4-descriptors.md).
 - **H5 — platform ports (mac, win).** Flip CMake gates per-OS; loader

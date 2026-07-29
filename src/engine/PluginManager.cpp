@@ -33,8 +33,19 @@ PluginDescriptor fromJuceDescription (const juce::PluginDescription& source)
     descriptor.category = source.category.toStdString();
     descriptor.version = source.version.toStdString();
     descriptor.formatName = source.pluginFormatName.toStdString();
-    descriptor.backend = PluginBackend::JuceLegacy;
-    descriptor.location = source.fileOrIdentifier.toStdString();
+    const auto nativeIdentifier = hosting::splitNativeIdentifier (
+        source.fileOrIdentifier);
+    if (nativeIdentifier.pluginId.isNotEmpty())
+    {
+        descriptor.backend = PluginBackend::Native;
+        descriptor.location = nativeIdentifier.bundlePath.toStdString();
+        descriptor.pluginId = nativeIdentifier.pluginId.toStdString();
+    }
+    else
+    {
+        descriptor.backend = PluginBackend::JuceLegacy;
+        descriptor.location = source.fileOrIdentifier.toStdString();
+    }
     descriptor.uniqueId = source.uniqueId;
     descriptor.deprecatedUid = source.deprecatedUid;
     descriptor.numInputChannels = source.numInputChannels;
@@ -56,7 +67,9 @@ juce::PluginDescription toJuceDescription (const PluginDescriptor& source)
     descriptor.category = source.category;
     descriptor.version = source.version;
     descriptor.pluginFormatName = source.formatName;
-    descriptor.fileOrIdentifier = source.location;
+    descriptor.fileOrIdentifier = source.backend == PluginBackend::Native
+        ? hosting::joinNativeIdentifier (source.location, source.pluginId)
+        : juce::String (source.location);
     descriptor.uniqueId = source.uniqueId;
     descriptor.deprecatedUid = source.deprecatedUid;
     descriptor.numInputChannels = source.numInputChannels;
@@ -69,14 +82,14 @@ juce::PluginDescription toJuceDescription (const PluginDescriptor& source)
     return descriptor;
 }
 
-std::vector<PluginDescriptor> importLegacyNativeCache (
+std::optional<std::vector<PluginDescriptor>> importLegacyNativeCache (
     const juce::String& xmlSource,
     const std::function<bool (const juce::File&)>& locationExists)
 {
     std::vector<PluginDescriptor> imported;
     const auto xml = juce::parseXML (xmlSource);
-    if (xml == nullptr)
-        return imported;
+    if (xml == nullptr || ! xml->hasTagName ("KNOWNPLUGINS"))
+        return std::nullopt;
 
     for (auto* child : xml->getChildIterator())
     {
@@ -94,6 +107,40 @@ std::vector<PluginDescriptor> importLegacyNativeCache (
             imported.push_back (std::move (descriptor));
     }
     return imported;
+}
+
+bool loadNativeCacheSources (
+    const std::optional<std::string>& jsonSource,
+    const std::optional<juce::String>& legacyXmlSource,
+    const std::function<bool (const juce::File&)>& locationExists,
+    std::vector<PluginDescriptor>& into)
+{
+    std::vector<PluginDescriptor> fresh;
+    if (jsonSource.has_value()
+        && nativecache::parse (*jsonSource,
+            [&locationExists] (std::string_view location)
+            {
+                const juce::File bundle (juce::String::fromUTF8 (
+                    location.data(), static_cast<int> (location.size())));
+                return ! locationExists || locationExists (bundle);
+            },
+            fresh))
+    {
+        into = std::move (fresh);
+        return true;
+    }
+
+    if (legacyXmlSource.has_value())
+    {
+        auto imported = importLegacyNativeCache (*legacyXmlSource, locationExists);
+        if (imported.has_value())
+        {
+            into = std::move (*imported);
+            return true;
+        }
+    }
+
+    return false;
 }
 } // namespace
 
@@ -217,10 +264,20 @@ public:
             return false;
         }
 
-        // A clean payload means the child completed the scan without crashing,
-        // so this is a successful scan even when the file legitimately yields
-        // zero descriptions. Only the crash (empty payload) / timeout cases fail.
-        for (const auto& descriptor : scanproto::parsePayload (payload))
+        const auto parsed = scanproto::parsePayload (payload);
+        if (! parsed.has_value())
+        {
+            knownList.addToBlacklist (fileOrIdentifier);
+            std::fprintf (stderr,
+                          "[Dusk Studio/scan] quarantined \"%s\": malformed scan payload\n",
+                          fileOrIdentifier.toRawUTF8());
+            std::fflush (stderr);
+            return false;
+        }
+
+        // A valid payload means the child completed the scan without crashing,
+        // so this is successful even when the file yields zero descriptions.
+        for (const auto& descriptor : *parsed)
             result.add (new juce::PluginDescription (toJuceDescription (descriptor)));
         return true;
     }
@@ -525,8 +582,15 @@ bool PluginManager::scanNativeBundleSandboxed (const char* format, const juce::F
         return true;
     }
     auto found = scanproto::parsePayload (payload);
-    into.insert (into.end(), std::make_move_iterator (found.begin()),
-                 std::make_move_iterator (found.end()));
+    if (! found.has_value())
+    {
+        std::fprintf (stderr,
+                      "[Dusk Studio/scan] native %s bundle skipped (malformed child payload): %s\n",
+                      format, bundle.getFullPathName().toRawUTF8());
+        return true;
+    }
+    into.insert (into.end(), std::make_move_iterator (found->begin()),
+                 std::make_move_iterator (found->end()));
     return true;
 }
 #endif
@@ -563,28 +627,30 @@ void PluginManager::loadNativeCache (std::vector<PluginDescriptor>& into,
                                      bool bundleIsDirectory)
 {
     std::vector<PluginDescriptor> fresh;
+    const auto locationExists = [bundleIsDirectory] (const juce::File& bundle)
+    {
+        return bundleIsDirectory ? bundle.isDirectory() : bundle.exists();
+    };
+    bool loaded = false;
     const auto jsonFile = nativeCacheFile (jsonFileName);
     if (jsonFile != juce::File() && jsonFile.existsAsFile())
     {
-        nativecache::parse (jsonFile.loadFileAsString().toStdString(),
-            [bundleIsDirectory] (std::string_view location)
-            {
-                const juce::File bundle (juce::String::fromUTF8 (
-                    location.data(), static_cast<int> (location.size())));
-                return bundleIsDirectory ? bundle.isDirectory() : bundle.exists();
-            },
-            fresh);
+        loaded = loadNativeCacheSources (
+            jsonFile.loadFileAsString().toStdString(), std::nullopt,
+            locationExists, fresh);
     }
-    else
+
+    if (! loaded)
     {
         const auto legacyFile = nativeCacheFile (legacyXmlFileName);
         if (legacyFile != juce::File() && legacyFile.existsAsFile())
-            fresh = importLegacyNativeCache (legacyFile.loadFileAsString(),
-                [bundleIsDirectory] (const juce::File& bundle)
-                {
-                    return bundleIsDirectory ? bundle.isDirectory() : bundle.exists();
-                });
+            loaded = loadNativeCacheSources (
+                std::nullopt, legacyFile.loadFileAsString(),
+                locationExists, fresh);
     }
+
+    if (! loaded)
+        return;
 
     const juce::ScopedLock sl (nativeDescriptionsLock);
     into.swap (fresh);
@@ -845,7 +911,18 @@ std::vector<PluginDescriptor> PluginManager::importLegacyNativeCacheForTest (
     const juce::String& xml,
     const std::function<bool (const juce::File&)>& locationExists)
 {
-    return importLegacyNativeCache (xml, locationExists);
+    return importLegacyNativeCache (xml, locationExists).value_or (
+        std::vector<PluginDescriptor> {});
+}
+
+bool PluginManager::loadNativeCacheSourcesForTest (
+    const std::optional<std::string>& jsonSource,
+    const std::optional<juce::String>& legacyXmlSource,
+    const std::function<bool (const juce::File&)>& locationExists,
+    std::vector<PluginDescriptor>& into)
+{
+    return loadNativeCacheSources (
+        jsonSource, legacyXmlSource, locationExists, into);
 }
 #endif
 } // namespace duskstudio

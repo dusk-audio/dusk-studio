@@ -3,6 +3,7 @@
 #include "../PluginDescriptor.h"
 
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -54,22 +55,22 @@ inline std::string extractPayload (std::string_view childStdout)
     return std::string (payload);
 }
 
-inline std::vector<PluginDescriptor> parsePayload (std::string_view payload)
+inline std::optional<std::vector<PluginDescriptor>> parsePayload (std::string_view payload)
 {
     const auto root = nlohmann::json::parse (payload, nullptr, false);
     if (! root.is_object())
-        return {};
+        return std::nullopt;
     const auto version = root.find ("version");
     const auto descriptors = root.find ("descriptors");
     if (version == root.end()
         || descriptors == root.end() || ! descriptors->is_array())
-        return {};
+        return std::nullopt;
     const bool versionMatches = version->is_number_unsigned()
         ? version->get<std::uint64_t>() == 1u
         : version->is_number_integer()
             && version->get<std::int64_t>() == 1;
     if (! versionMatches)
-        return {};
+        return std::nullopt;
 
     std::vector<PluginDescriptor> parsed;
     parsed.reserve (descriptors->size());
@@ -77,7 +78,7 @@ inline std::vector<PluginDescriptor> parsePayload (std::string_view payload)
     {
         PluginDescriptor descriptor;
         if (! PluginDescriptor::fromJson (value.dump(), descriptor))
-            return {};
+            return std::nullopt;
         parsed.push_back (std::move (descriptor));
     }
     return parsed;

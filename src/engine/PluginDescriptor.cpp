@@ -86,7 +86,8 @@ std::string PluginDescriptor::toJson() const
         { "has_shared_container", hasSharedContainer },
         { "has_ara_extension", hasAraExtension }
     };
-    return value.dump();
+    return value.dump (-1, ' ', false,
+                       nlohmann::ordered_json::error_handler_t::replace);
 }
 
 bool PluginDescriptor::fromJson (const std::string& source, PluginDescriptor& out)

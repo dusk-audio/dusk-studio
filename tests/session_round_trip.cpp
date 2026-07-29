@@ -5,6 +5,7 @@
 #include "session/SessionSerializer.h"
 
 #include <juce_core/juce_core.h>
+#include <nlohmann/json.hpp>
 
 using Catch::Matchers::WithinAbs;
 
@@ -332,6 +333,43 @@ TEST_CASE ("SessionSerializer round-trips structured plugin descriptors and lega
     CHECK (restored->track (1).pluginLegacyDescriptionXml
            == "<BROKEN legacy=\"keep me\"");
     CHECK (restored->track (1).pluginStateBase64 == "bGVnYWN5");
+
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("SessionSerializer preserves XML fallback for rejected structured descriptors",
+           "[session][serializer][plugin-descriptor]")
+{
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
+
+    const auto dir = makeTempSessionDir();
+    const auto target = dir.getChildFile ("session.json");
+    const juce::String trackFallback ("<PLUGIN name=\"track fallback\"/>");
+    const juce::String auxFallback ("<PLUGIN name=\"aux fallback\"/>");
+
+    auto source = std::make_unique<Session>();
+    source->track (0).pluginLegacyDescriptionXml = trackFallback;
+    source->auxLane (0).pluginLegacyDescriptionXml[0] = auxFallback;
+    REQUIRE (SessionSerializer::save (*source, target));
+
+    auto document = nlohmann::json::parse (
+        target.loadFileAsString().toStdString());
+    const auto rejected = nlohmann::json {
+        { "version", 1 },
+        { "backend", "native" },
+        { "unique_id", "not an integer" }
+    };
+    document["tracks"][0]["plugin_descriptor"] = rejected;
+    document["aux_lanes"][0]["plugin_slots"][0]["plugin_descriptor"] = rejected;
+    REQUIRE (target.replaceWithText (document.dump()));
+
+    auto restored = std::make_unique<Session>();
+    REQUIRE (SessionSerializer::load (*restored, target));
+    CHECK_FALSE (restored->track (0).pluginDescriptor.has_value());
+    CHECK (restored->track (0).pluginLegacyDescriptionXml == trackFallback);
+    CHECK_FALSE (restored->auxLane (0).pluginDescriptor[0].has_value());
+    CHECK (restored->auxLane (0).pluginLegacyDescriptionXml[0] == auxFallback);
 
     dir.deleteRecursively();
 }

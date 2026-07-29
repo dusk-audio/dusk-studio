@@ -9,9 +9,10 @@ re-scout was repeated on `698fd71`; the old 36-file table is obsolete.
 
 Validation: Release app and plugin-host builds completed without new warnings;
 the focused descriptor/session/slot/scan suite passed 478 assertions in 60
-cases; full CTest passed 488/488; private-Xvfb self-test passed; the synthetic
-full-range SFZ harness printed `VERDICT: AUDIO PRESENT`; and the plugin-picker
-screenshot passed visual review. Temporary validation assets were removed.
+cases; full CTest passed 493/493 after the review-fix pass; private-Xvfb
+self-test passed; the synthetic full-range SFZ harness printed
+`VERDICT: AUDIO PRESENT`; and the plugin-picker screenshot passed visual
+review. Temporary validation assets were removed.
 
 ## Goal
 
@@ -157,9 +158,9 @@ H4 does not change which host processes audio or which native rung wins.
   malformed-legacy preservation, failed/offline reference preservation,
   unsupported-platform native-key preservation, and clone action
   perform/undo/redo.
-- App build completes with zero new warnings. Fresh configure/build commands
-  include
-  `-DDUSK_PLUGINS_PATH=/home/marc/projects/plugins-multicomp-core`.
+- App build completes with zero new warnings. Set `DUSK_PLUGINS_PATH` to the
+  donor checkout, then include
+  `-DDUSK_PLUGINS_PATH="${DUSK_PLUGINS_PATH}"` in fresh configure commands.
 - Full `ctest --output-on-failure` is green except the independently
   reproducible `ALSA seq backend does not report` environment flake. Do not
   waive any new failure.

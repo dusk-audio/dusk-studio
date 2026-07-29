@@ -30,7 +30,9 @@ TEST_CASE ("plugin scan protocol round-trips multiple descriptors")
     const auto framed = scanproto::makePayload (input);
     const auto payload = scanproto::extractPayload (framed);
     REQUIRE_FALSE (payload.empty());
-    REQUIRE (scanproto::parsePayload (payload) == input);
+    const auto parsed = scanproto::parsePayload (payload);
+    REQUIRE (parsed.has_value());
+    REQUIRE (*parsed == input);
 }
 
 TEST_CASE ("plugin scan protocol distinguishes empty success from missing framing")
@@ -38,10 +40,12 @@ TEST_CASE ("plugin scan protocol distinguishes empty success from missing framin
     const auto framed = scanproto::makePayload ({});
     const auto payload = scanproto::extractPayload (framed);
     REQUIRE_FALSE (payload.empty());
-    REQUIRE (scanproto::parsePayload (payload).empty());
+    const auto parsed = scanproto::parsePayload (payload);
+    REQUIRE (parsed.has_value());
+    REQUIRE (parsed->empty());
     REQUIRE (scanproto::extractPayload ("plugin output only").empty());
     REQUIRE (scanproto::extractPayload (
-        R"({"version":1,"descriptors":[]})==DUSK_SCAN_END==").empty());
+        R"scan({"version":1,"descriptors":[]}==DUSK_SCAN_END==)scan").empty());
     REQUIRE (scanproto::extractPayload (
         std::string (scanproto::kPayloadBegin) + "\n{}").empty());
     REQUIRE (scanproto::extractPayload (
@@ -56,9 +60,10 @@ TEST_CASE ("plugin scan protocol ignores output before its begin sentinel")
     const auto payload = scanproto::extractPayload (
         std::string ("plugin wrote this first\n") + scanproto::makePayload ({ row }));
     const auto parsed = scanproto::parsePayload (payload);
-    REQUIRE (parsed.size() == 1);
-    CHECK (parsed.front().location == "/plugins/delay.vst3");
-    CHECK (parsed.front().pluginId == "delay.inner");
+    REQUIRE (parsed.has_value());
+    REQUIRE (parsed->size() == 1);
+    CHECK (parsed->front().location == "/plugins/delay.vst3");
+    CHECK (parsed->front().pluginId == "delay.inner");
 }
 
 TEST_CASE ("plugin scan protocol rejects malformed JSON without partial rows")
@@ -67,14 +72,14 @@ TEST_CASE ("plugin scan protocol rejects malformed JSON without partial rows")
     auto root = nlohmann::json::parse (scanproto::extractPayload (
         scanproto::makePayload ({ valid })));
     root["descriptors"].push_back ("not an object");
-    REQUIRE (scanproto::parsePayload (root.dump()).empty());
-    REQUIRE (scanproto::parsePayload ("{not json").empty());
+    REQUIRE_FALSE (scanproto::parsePayload (root.dump()).has_value());
+    REQUIRE_FALSE (scanproto::parsePayload ("{not json").has_value());
 }
 
 TEST_CASE ("plugin scan protocol rejects an out-of-range schema version")
 {
-    REQUIRE (scanproto::parsePayload (
-        R"({"version":18446744073709551615,"descriptors":[]})").empty());
+    REQUIRE_FALSE (scanproto::parsePayload (
+        R"({"version":18446744073709551615,"descriptors":[]})").has_value());
 }
 
 TEST_CASE ("plugin scan sandbox policy")
