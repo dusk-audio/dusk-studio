@@ -21,8 +21,8 @@ inline constexpr const char* kPayloadEnd   = "==DUSK_SCAN_END==";
 
 // Scan-sandbox policy: which formats load third-party binary code and therefore
 // MUST be probed out-of-process - an unauthorized or crashy plugin scanned
-// in-process takes down the whole app. Our own in-house formats (e.g.
-// DuskMultisample) are trusted and scan in-process. Centralised here so the
+// in-process takes down the whole app. Anything else (our own in-house code,
+// unknown names) is trusted and scans in-process. Centralised here so the
 // scanner's routing and its unit test read from one list.
 inline bool formatRequiresSandbox (const juce::String& formatName)
 {

@@ -3,6 +3,8 @@
 
 #include "engine/multisample/DuskMultisampleProcessor.h"
 
+#include <juce_data_structures/juce_data_structures.h>
+
 #include <cstdint>
 #include <cstring>
 #include <vector>
@@ -77,9 +79,9 @@ std::vector<std::uint8_t> twoPresetSf2()
 } // namespace
 
 // DuskMultisampleProcessor persists its file path + override params
-// (master volume / tune / polyphony) via getStateInformation +
-// setStateInformation. A session save / load that loses any of
-// these would silently reset the user's mix on reopen.
+// (master volume / tune / polyphony) via saveState + loadState. A session
+// save / load that loses any of these would silently reset the user's mix
+// on reopen.
 TEST_CASE ("DuskMultisampleProcessor round-trips overrides through state", "[multisample]")
 {
     duskstudio::DuskMultisampleProcessor a;
@@ -88,12 +90,12 @@ TEST_CASE ("DuskMultisampleProcessor round-trips overrides through state", "[mul
     aov.masterTuneCents.store ( 25.0f, std::memory_order_relaxed);
     a.setPolyphony (32);   // message-thread-only setter
 
-    juce::MemoryBlock block;
-    a.getStateInformation (block);
-    REQUIRE (block.getSize() > 0);
+    std::vector<std::uint8_t> blob;
+    REQUIRE (a.saveState (blob));
+    REQUIRE (! blob.empty());
 
     duskstudio::DuskMultisampleProcessor b;
-    b.setStateInformation (block.getData(), (int) block.getSize());
+    REQUIRE (b.loadState (blob));
     const auto& bov = b.getOverrides();
 
     REQUIRE_THAT (bov.masterVolDb    .load (std::memory_order_relaxed),
@@ -114,11 +116,11 @@ TEST_CASE ("DuskMultisampleProcessor clamps out-of-range state", "[multisample]"
     aov.masterTuneCents.store (-9999.0f, std::memory_order_relaxed);  // ditto
     a.setPolyphony (0);   // clamps inside setPolyphony
 
-    juce::MemoryBlock block;
-    a.getStateInformation (block);
+    std::vector<std::uint8_t> blob;
+    REQUIRE (a.saveState (blob));
 
     duskstudio::DuskMultisampleProcessor b;
-    b.setStateInformation (block.getData(), (int) block.getSize());
+    REQUIRE (b.loadState (blob));
     const auto& bov = b.getOverrides();
 
     REQUIRE (bov.masterVolDb    .load() >= -60.0f);
@@ -129,19 +131,101 @@ TEST_CASE ("DuskMultisampleProcessor clamps out-of-range state", "[multisample]"
     REQUIRE (bov.polyphony      .load() <=  256);
 }
 
-// Empty state (fresh processor with no save data) must not crash.
+// Empty / junk state (fresh processor with no save data) must not crash.
 TEST_CASE ("DuskMultisampleProcessor accepts empty state", "[multisample]")
 {
     duskstudio::DuskMultisampleProcessor p;
-    p.setStateInformation (nullptr, 0);
-    p.setStateInformation ("", 0);
+    REQUIRE_FALSE (p.loadState ({}));
+    REQUIRE_FALSE (p.loadState ({ 0x00, 0x01, 0x02 }));
     REQUIRE_FALSE (p.hasLoadedFile());
+}
+
+// The blob is a plain ValueTree binary, which is what sessions on disk carry.
+// A blob built by hand (i.e. written by an older build) must still restore.
+TEST_CASE ("DuskMultisampleProcessor loads a legacy state blob", "[multisample]")
+{
+    juce::ValueTree state ("DuskMultisample");
+    state.setProperty ("masterVolDb",     -3.5f, nullptr);
+    state.setProperty ("masterTuneCents", -12.0f, nullptr);
+    state.setProperty ("polyphony",       48,    nullptr);
+    juce::ValueTree ccTree ("cc");
+    juce::ValueTree e ("c");
+    e.setProperty ("n", 7,     nullptr);
+    e.setProperty ("v", 0.25f, nullptr);
+    ccTree.appendChild (e, nullptr);
+    state.appendChild (ccTree, nullptr);
+
+    juce::MemoryOutputStream os;
+    state.writeToStream (os);
+    const auto* bytes = static_cast<const std::uint8_t*> (os.getData());
+    const std::vector<std::uint8_t> blob (bytes, bytes + os.getDataSize());
+
+    duskstudio::DuskMultisampleProcessor p;
+    REQUIRE (p.loadState (blob));
+    const auto& ov = p.getOverrides();
+    REQUIRE_THAT (ov.masterVolDb    .load (std::memory_order_relaxed), WithinAbs (-3.5f,  1e-4f));
+    REQUIRE_THAT (ov.masterTuneCents.load (std::memory_order_relaxed), WithinAbs (-12.0f, 1e-4f));
+    REQUIRE (ov.polyphony.load (std::memory_order_relaxed) == 48);
+    REQUIRE_THAT (p.getHDCC (7), WithinAbs (0.25f, 1e-4f));
+
+    // And a fresh save of that state reproduces the same reader-visible values.
+    std::vector<std::uint8_t> resaved;
+    REQUIRE (p.saveState (resaved));
+    duskstudio::DuskMultisampleProcessor q;
+    REQUIRE (q.loadState (resaved));
+    REQUIRE (q.getOverrides().polyphony.load (std::memory_order_relaxed) == 48);
+}
+
+// A legacy blob's "file" property names the soundfont to restore. A real path
+// loads it; the state's overrides land on top.
+TEST_CASE ("DuskMultisampleProcessor legacy blob restores its file", "[multisample]")
+{
+    const auto sfz = juce::File::createTempFile (".sfz");
+    sfz.replaceWithText ("<region> sample=*sine");
+
+    juce::ValueTree state ("DuskMultisample");
+    state.setProperty ("file", sfz.getFullPathName(), nullptr);
+    state.setProperty ("polyphony", 24, nullptr);
+    juce::MemoryOutputStream os;
+    state.writeToStream (os);
+    const auto* b = static_cast<const std::uint8_t*> (os.getData());
+
+    duskstudio::DuskMultisampleProcessor p;
+    REQUIRE (p.loadState (std::vector<std::uint8_t> (b, b + os.getDataSize())));
+    REQUIRE (p.hasLoadedFile());
+    REQUIRE (p.getLoadedFilePath() == sfz.getFullPathName());
+    REQUIRE (p.getLoadedPathSnapshot() == sfz.getFullPathName().toStdString());
+    REQUIRE (p.getLastLoadError().isEmpty());
+    REQUIRE (p.getOverrides().polyphony.load (std::memory_order_relaxed) == 24);
+
+    sfz.deleteFile();
+}
+
+// A legacy blob naming a soundfont that is gone must fail SOFT: the error is
+// surfaced for the editor, nothing is loaded, and the overrides still apply so
+// the user can point the slot at a replacement without losing their settings.
+TEST_CASE ("DuskMultisampleProcessor legacy blob with a missing file fails soft", "[multisample]")
+{
+    juce::ValueTree state ("DuskMultisample");
+    state.setProperty ("file", juce::String ("/no/such/missing.sfz"), nullptr);
+    state.setProperty ("masterVolDb", -9.0f, nullptr);
+    juce::MemoryOutputStream os;
+    state.writeToStream (os);
+    const auto* b = static_cast<const std::uint8_t*> (os.getData());
+
+    duskstudio::DuskMultisampleProcessor p;
+    REQUIRE (p.loadState (std::vector<std::uint8_t> (b, b + os.getDataSize())));
+    REQUIRE_FALSE (p.hasLoadedFile());
+    REQUIRE (p.getLoadedPathSnapshot().empty());
+    REQUIRE_FALSE (p.getLastLoadError().isEmpty());
+    REQUIRE_THAT (p.getOverrides().masterVolDb.load (std::memory_order_relaxed),
+                  WithinAbs (-9.0f, 1e-4f));
 }
 
 // Regression: an SF2 is already loaded, then a session restore references a
 // DIFFERENT, missing SF2. The failed load must NOT let the saved preset index
 // switch the still-loaded old file or clear the surfaced load error.
-TEST_CASE ("DuskMultisampleProcessor: failed setState load leaves the old SF2's preset untouched", "[multisample]")
+TEST_CASE ("DuskMultisampleProcessor: failed loadState leaves the old SF2's preset untouched", "[multisample]")
 {
     duskstudio::DuskMultisampleProcessor proc;
 
@@ -166,13 +250,16 @@ TEST_CASE ("DuskMultisampleProcessor: failed setState load leaves the old SF2's 
     state.setProperty ("sf2Preset", 1, nullptr);
     juce::MemoryOutputStream os;
     state.writeToStream (os);
-    proc.setStateInformation (os.getData(), (int) os.getDataSize());
+    const auto* stateBytes = static_cast<const std::uint8_t*> (os.getData());
+    REQUIRE (proc.loadState (std::vector<std::uint8_t> (stateBytes,
+                                                        stateBytes + os.getDataSize())));
 
     // The missing-B load failed: its error survives, and A keeps preset 0 -
     // the saved index must not have switched the still-loaded A to preset 1.
     REQUIRE_FALSE (proc.getLastLoadError().isEmpty());
     REQUIRE (proc.getSf2PresetIndex() == 0);
     REQUIRE (proc.getLoadedFilePath() == aPath);
+    REQUIRE (proc.getLoadedPathSnapshot() == aPath.toStdString());
 
     aFile.deleteFile();
 }

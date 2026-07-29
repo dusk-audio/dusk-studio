@@ -1,6 +1,5 @@
 #pragma once
 
-#include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "../DuskComboBox.h"
@@ -20,7 +19,7 @@ class DuskMultisampleProcessor;
 // the user swap the loaded soundfont without going back to the
 // plugin picker. ADSR / filter / LFO controls + zone mapping
 // editor land in Phase 2 / Phase 3 per the plan.
-class DuskMultisampleEditor final : public juce::AudioProcessorEditor,
+class DuskMultisampleEditor final : public juce::Component,
                                      private dusk::Timer
 {
 public:

@@ -2,8 +2,9 @@
 #include "Sf2ToSfz.h"
 #include "Sf2PresetSort.h"
 #include "../../foundation/MessageThread.h"
-#include "../../ui/multisample/DuskMultisampleEditor.h"
+#include "../../foundation/ScopedNoDenormals.h"
 
+#include <juce_data_structures/juce_data_structures.h>
 #include <sfizz.h>
 
 #include <algorithm>
@@ -22,19 +23,22 @@ struct DuskMultisampleProcessor::Impl
 };
 
 DuskMultisampleProcessor::DuskMultisampleProcessor()
-    : juce::AudioPluginInstance (BusesProperties()
-        // Instrument bus layout: no audio input, stereo output.
-        // PluginSlot's instrument-vs-effect routing reads
-        // getTotalNumInputChannels() == 0 to pick the instrument
-        // path (MIDI -> stereo audio); matches VST3 instrument
-        // bus conventions.
-        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
-      impl (std::make_unique<Impl>())
+    : impl (std::make_unique<Impl>())
 {
+    using hosting::BusInfo;
+    // Instrument port shape: no audio input, stereo output, one MIDI-in event
+    // bus. isInstrument is what routes the strip's MIDI here instead of audio.
+    layout.outputs.push_back ({ BusInfo::Kind::Audio, BusInfo::Direction::Output,
+                                BusInfo::Role::Main, 2, true, false, "Output" });
+    layout.inputs.push_back ({ BusInfo::Kind::Event, BusInfo::Direction::Input,
+                               BusInfo::Role::Main, 0, true, true, "MIDI In" });
+    layout.mainOutIndex = 0;
+    layout.eventInIndex = 0;
+    layout.isInstrument = true;
+
     impl->synth = sfizz_create_synth();
-    // sfizz allocates per-voice state lazily on prepareToPlay, so the
-    // ctor is cheap. Polyphony default (128 voices on v1.2) is fine
-    // until step 5's editor exposes a slider override.
+    // sfizz allocates per-voice state lazily on activate(), so the ctor is
+    // cheap.
 
     // -1 = "CC never set by the UI" so widgets fall back to their own
     // default instead of snapping to 0.
@@ -119,22 +123,79 @@ DuskMultisampleProcessor::~DuskMultisampleProcessor()
         impl->sf2TempDir.deleteRecursively();
 }
 
-void DuskMultisampleProcessor::prepareToPlay (double sampleRate, int blockSize)
+void DuskMultisampleProcessor::publishLoadedPath (const juce::String& path)
 {
-    currentSampleRate = sampleRate;
-    currentBlockSize  = blockSize;
-    if (impl == nullptr) return;
-    if (impl->synth != nullptr)
-    {
-        sfizz_set_sample_rate (impl->synth, (float) sampleRate);
-        sfizz_set_samples_per_block (impl->synth, blockSize);
-    }
+    const std::lock_guard<std::mutex> lock (loadedPathLock);
+    loadedPathShared = path.toStdString();
 }
 
-void DuskMultisampleProcessor::releaseResources()
+std::string DuskMultisampleProcessor::getLoadedPathSnapshot() const
 {
-    // sfizz keeps its voice state allocated across releaseResources -
-    // a subsequent prepareToPlay reuses the buffers. No-op here.
+    const std::lock_guard<std::mutex> lock (loadedPathLock);
+    return loadedPathShared;
+}
+
+void DuskMultisampleProcessor::cancelPendingLoads()
+{
+    loadPool.removeAllJobs (true, -1);
+    // A job discarded before it ran never posts its completion callback, so the
+    // flag would stay set and every later load would bail as already-in-progress.
+    // The bump disowns the completion already posted by a job that WAS running.
+    loadGeneration.fetch_add (1, std::memory_order_acq_rel);
+    loadPending.store (false, std::memory_order_release);
+}
+
+bool DuskMultisampleProcessor::create (const MultisampleBundle& bundle,
+                                        const std::string&,
+                                        std::string& errorOut)
+{
+    const juce::File file (juce::String::fromUTF8 (bundle.getFile().u8string().c_str()));
+    juce::String err;
+    const bool ok = file.getFileExtension().toLowerCase() == ".sf2"
+                        ? loadSf2File (file, err)
+                        : loadSfzFile (file, err);
+    if (! ok) errorOut = err.toStdString();
+    return ok;
+}
+
+bool DuskMultisampleProcessor::activate (double sampleRate, int maxBlockFrames,
+                                          std::string& errorOut)
+{
+    if (impl == nullptr || impl->synth == nullptr)
+    {
+        errorOut = "sfizz synth not initialised";
+        return false;
+    }
+    if (sampleRate <= 0.0 || maxBlockFrames <= 0)
+    {
+        errorOut = "invalid activation spec";
+        return false;
+    }
+    {
+        // Both setters reallocate sfizz's voice buffers - hold the render lock
+        // so processBlock dry-passes instead of racing them. The block-size
+        // publish lives in here too: the audio thread reads it under the same
+        // lock, so it can never see a size sfizz has not been resized to yet.
+        const juce::SpinLock::ScopedLockType lock (sfizzLock);
+        sfizz_set_sample_rate (impl->synth, (float) sampleRate);
+        sfizz_set_samples_per_block (impl->synth, maxBlockFrames);
+        currentBlockSize.store (maxBlockFrames, std::memory_order_release);
+    }
+    active.store (true, std::memory_order_release);
+    return true;
+}
+
+void DuskMultisampleProcessor::deactivate()
+{
+    // sfizz keeps its voice state allocated across a deactivate - a subsequent
+    // activate reuses the buffers, so only the gate flips.
+    active.store (false, std::memory_order_release);
+}
+
+bool DuskMultisampleProcessor::reactivate (double sampleRate, int maxBlockFrames,
+                                            std::string& errorOut)
+{
+    return activate (sampleRate, maxBlockFrames, errorOut);
 }
 
 int DuskMultisampleProcessor::getNumRegions() const noexcept
@@ -179,6 +240,7 @@ void DuskMultisampleProcessor::clearLoadedFile()
     }
     sf2PresetIndex = -1;
     loadedFilePath.clear();
+    publishLoadedPath ({});
     lastLoadError.clear();
 }
 
@@ -243,19 +305,23 @@ void DuskMultisampleProcessor::loadFileAsync (
         if (onDone) onDone (false, "A load is already in progress");
         return;
     }
-    loadPool.addJob ([this, file, onDone = std::move (onDone)]
+    const std::uint64_t gen = loadGeneration.load (std::memory_order_acquire);
+    loadPool.addJob ([this, file, gen, onDone = std::move (onDone)]
     {
         juce::String err;
         const bool ok = file.getFileExtension().toLowerCase() == ".sf2"
                             ? loadSf2File (file, err)
                             : loadSfzFile (file, err);
         juce::WeakReference<DuskMultisampleProcessor> weak (this);
-        dusk::callAsync ([weak, onDone, ok, err]
+        dusk::callAsync ([weak, onDone, ok, err, gen]
         {
             // Skip entirely if the processor was destroyed after posting this:
             // removeAllJobs joins the pool job, not this queued callback.
             auto* self = weak.get();
             if (self == nullptr) return;
+            // Same for a cancel: this load was disowned, and the pending flag
+            // it would clear now belongs to whatever load came after it.
+            if (self->loadGeneration.load (std::memory_order_acquire) != gen) return;
             // Clear pending FIRST so the UI refresh in onDone observes the
             // finished load: getSf2Presets / getNumRegions / control-image
             // queries all return empty while a load is pending.
@@ -273,15 +339,17 @@ void DuskMultisampleProcessor::loadSf2PresetAsync (
         if (onDone) onDone (false, "A load is already in progress");
         return;
     }
-    loadPool.addJob ([this, presetIndex, onDone = std::move (onDone)]
+    const std::uint64_t gen = loadGeneration.load (std::memory_order_acquire);
+    loadPool.addJob ([this, presetIndex, gen, onDone = std::move (onDone)]
     {
         juce::String err;
         const bool ok = loadSf2Preset (presetIndex, err);
         juce::WeakReference<DuskMultisampleProcessor> weak (this);
-        dusk::callAsync ([weak, onDone, ok, err]
+        dusk::callAsync ([weak, onDone, ok, err, gen]
         {
             auto* self = weak.get();
             if (self == nullptr) return;
+            if (self->loadGeneration.load (std::memory_order_acquire) != gen) return;
             // Clear pending FIRST, mirroring loadFileAsync - onDone re-runs the
             // editor's timerCallback, whose pending-guarded getters would
             // otherwise observe an empty snapshot.
@@ -340,6 +408,7 @@ bool DuskMultisampleProcessor::applySf2Preset (const juce::File& sf2,
     }
     sf2PresetIndex = juce::jlimit (0, juce::jmax (0, presetCount - 1), presetIndex);
     loadedFilePath = sf2.getFullPathName();
+    publishLoadedPath (loadedFilePath);
     lastLoadError.clear();
     return true;
 }
@@ -400,38 +469,32 @@ bool DuskMultisampleProcessor::loadSfzFile (const juce::File& sfz,
     }
     sf2PresetIndex = -1;
     loadedFilePath = sfz.getFullPathName();
+    publishLoadedPath (loadedFilePath);
     lastLoadError.clear();
     return true;
 }
 
-void DuskMultisampleProcessor::processBlock (juce::AudioBuffer<float>& buf,
-                                              juce::MidiBuffer& midi)
+void DuskMultisampleProcessor::processBlock (const hosting::PortBuffers& io) noexcept
 {
-    juce::ScopedNoDenormals noDenormals;
-    const int numSamples = buf.getNumSamples();
-    if (numSamples == 0) return;
-
-    if (impl == nullptr)
-    {
-        buf.clear();
-        return;
-    }
-
-    if (impl->synth == nullptr)
-    {
-        buf.clear();
-        return;
-    }
+    dusk::audio::ScopedNoDenormals noDenormals;
+    const int numSamples = io.numFrames;
+    // The adapter pre-clears the output scratch, so every bail here is silence.
+    if (numSamples <= 0) return;
+    if (io.mainOut == nullptr || io.mainOutChannels < 2) return;
+    // Acquire-load the gate FIRST: it is what publishes everything activate()
+    // wrote, currentBlockSize included.
+    if (! active.load (std::memory_order_acquire)) return;
+    if (impl == nullptr || impl->synth == nullptr) return;
 
     // Loads mutate the sfizz synth from the loader thread; TRY-lock and pass
     // one silent block instead of racing them (PluginSlot's prepare<->process
     // pattern). The message-thread mutators take this lock blocking.
     const juce::SpinLock::ScopedTryLockType renderLock (sfizzLock);
-    if (! renderLock.isLocked())
-    {
-        buf.clear();
-        return;
-    }
+    if (! renderLock.isLocked()) return;
+
+    // Under the render lock: sfizz is sized for the activate() block size and a
+    // longer block would run past its scratch.
+    if (numSamples > currentBlockSize.load (std::memory_order_acquire)) return;
 
     // Apply RT-safe override drift before MIDI dispatch. Each
     // setter is a no-op when the cached "last applied" equals the
@@ -478,40 +541,60 @@ void DuskMultisampleProcessor::processBlock (juce::AudioBuffer<float>& buf,
         }
     }
 
-    // Dispatch incoming MIDI events to sfizz. sfizz batches them
-    // against the current block; delays are sample offsets within
-    // the block.
-    for (const auto meta : midi)
+    // Dispatch incoming MIDI events to sfizz. sfizz batches them against the
+    // current block; delays are sample offsets within the block. dusk::MidiBuffer
+    // is a byte-level container, so the status nibble is decoded inline - no
+    // message objects, no scratch buffer, no allocation.
+    if (io.midiIn != nullptr)
     {
-        const auto m = meta.getMessage();
-        const int delay = std::clamp (meta.samplePosition, 0, numSamples - 1);
-        if (m.isNoteOn())
-            sfizz_send_note_on (impl->synth, delay,
-                                 m.getNoteNumber(), m.getVelocity());
-        else if (m.isNoteOff())
-            sfizz_send_note_off (impl->synth, delay,
-                                  m.getNoteNumber(), m.getVelocity());
-        else if (m.isController())
-            sfizz_send_cc (impl->synth, delay,
-                            m.getControllerNumber(), m.getControllerValue());
-        else if (m.isPitchWheel())
-            sfizz_send_pitch_wheel (impl->synth, delay, m.getPitchWheelValue());
-        else if (m.isChannelPressure())
-            sfizz_send_channel_aftertouch (impl->synth, delay,
-                                            m.getChannelPressureValue());
+        for (const auto meta : *io.midiIn)
+        {
+            const auto* d = meta.data;
+            if (d == nullptr || meta.numBytes < 2) continue;
+            const int delay = std::clamp (meta.samplePosition, 0, numSamples - 1);
+            const int d1 = d[1] & 0x7F;
+            const int d2 = meta.numBytes > 2 ? (d[2] & 0x7F) : 0;
+            switch (d[0] & 0xF0)
+            {
+                case 0x90:
+                    if (d2 > 0)
+                    {
+                        sfizz_send_note_on (impl->synth, delay, d1, d2);
+                        break;
+                    }
+                    // Note-on at velocity 0 is a note-off.
+                    [[fallthrough]];
+                case 0x80:
+                    sfizz_send_note_off (impl->synth, delay, d1, d2);
+                    break;
+                case 0xB0:
+                    sfizz_send_cc (impl->synth, delay, d1, d2);
+                    break;
+                case 0xE0:
+                    // sfizz normalises against +/-8191, so the wheel must arrive
+                    // 0-centred - a raw 0..16383 value pins it full sharp.
+                    sfizz_send_pitch_wheel (impl->synth, delay, ((d2 << 7) | d1) - 8192);
+                    break;
+                case 0xD0:
+                    sfizz_send_channel_aftertouch (impl->synth, delay, d1);
+                    break;
+                default:
+                    break;
+            }
+        }
     }
 
-    // Render. sfizz wants float** with 2 channels for the default
-    // stereo output layout. JUCE's AudioBuffer already gives us
-    // contiguous per-channel pointers.
-    float* chans[2] = { buf.getWritePointer (0), buf.getWritePointer (1) };
+    // Render. sfizz wants float** with 2 channels for the default stereo
+    // output layout; the adapter hands us exactly that.
+    float* chans[2] = { io.mainOut[0], io.mainOut[1] };
     sfizz_render_block (impl->synth, chans, 2, numSamples);
 }
 
-void DuskMultisampleProcessor::getStateInformation (juce::MemoryBlock& block)
+bool DuskMultisampleProcessor::saveState (std::vector<uint8_t>& out) const
 {
     juce::ValueTree state ("DuskMultisample");
-    state.setProperty ("file", loadedFilePath, nullptr);
+    state.setProperty ("file", juce::String::fromUTF8 (getLoadedPathSnapshot().c_str()),
+                        nullptr);
     state.setProperty ("masterVolDb",
                         overrides.masterVolDb.load (std::memory_order_relaxed),
                         nullptr);
@@ -541,20 +624,23 @@ void DuskMultisampleProcessor::getStateInformation (juce::MemoryBlock& block)
     if (ccTree.getNumChildren() > 0)
         state.appendChild (ccTree, nullptr);
 
-    juce::MemoryOutputStream stream (block, false);
+    juce::MemoryOutputStream stream;
     state.writeToStream (stream);
+    const auto* bytes = static_cast<const uint8_t*> (stream.getData());
+    out.assign (bytes, bytes + stream.getDataSize());
+    return true;
 }
 
-void DuskMultisampleProcessor::setStateInformation (const void* data, int size)
+bool DuskMultisampleProcessor::loadState (const std::vector<uint8_t>& in)
 {
-    if (data == nullptr || size <= 0) return;
-    juce::MemoryInputStream stream (data, (size_t) size, false);
+    if (in.empty()) return false;
+    juce::MemoryInputStream stream (in.data(), in.size(), false);
     const auto state = juce::ValueTree::readFromStream (stream);
-    if (! state.isValid()) return;
+    if (! state.isValid()) return false;
 
     const auto path = state.getProperty ("file").toString();
-    // Skip the re-load when createPluginInstance already loaded this exact file
-    // from the description (the common session-restore path). Loading a
+    // Skip the re-load when create() already loaded this exact file from the
+    // slot's bundle path (the common session-restore path). Loading a
     // soundfont is the single most expensive thing this plugin does (~1.5s of
     // sample decode); doing it twice per restored instance is pure waste.
     bool fileLoadOk = true;
@@ -573,7 +659,6 @@ void DuskMultisampleProcessor::setStateInformation (const void* data, int size)
             lastLoadError = err.isNotEmpty()
                               ? err
                               : ("File not found: " + path);
-            DBG ("DuskMultisample setState: " << lastLoadError);
             fileLoadOk = false;
         }
     }
@@ -623,28 +708,6 @@ void DuskMultisampleProcessor::setStateInformation (const void* data, int size)
             setHDCC ((int) e.getProperty ("n"), (float) e.getProperty ("v"));
         }
     }
-}
-
-juce::AudioProcessorEditor* DuskMultisampleProcessor::createEditor()
-{
-    return new DuskMultisampleEditor (*this);
-}
-
-void DuskMultisampleProcessor::fillInPluginDescription (juce::PluginDescription& desc) const
-{
-    // Identifies this processor to the picker + session save. Format
-    // matches the AudioPluginFormat we'll register in step 3
-    // (DuskMultisamplePluginFormat::getName).
-    desc.name                = "Dusk Multisample";
-    desc.descriptiveName     = "Dusk Studio native multisample instrument (.sfz / .sf2)";
-    desc.pluginFormatName    = "DuskMultisample";
-    desc.category            = "Instrument";
-    desc.manufacturerName    = "Dusk Audio";
-    desc.version             = "0.9.0";
-    desc.fileOrIdentifier    = loadedFilePath;   // empty until a file is loaded
-    desc.isInstrument        = true;
-    desc.numInputChannels    = 0;
-    desc.numOutputChannels   = 2;
-    desc.hasSharedContainer  = false;
+    return true;
 }
 } // namespace duskstudio

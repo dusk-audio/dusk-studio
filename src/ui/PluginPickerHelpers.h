@@ -57,6 +57,8 @@ enum class PluginKind { Effects, Instruments };
 // stay as the fallback host.
 // `onPickNativeVst3` is the VST3 twin: merges "VST3-Native" rows (.vst3 bundle
 // paths), hides the JUCE-format "VST3" effect rows, and routes selection here.
+// `onPickSoundfont`, when set, adds the "Soundfont" button to an instrument
+// picker and hands the chosen .sfz / .sf2 to the caller's multisample rung.
 void openPickerMenu (PluginSlot& slot,
                       juce::Component& target,
                       std::function<void()> onChange,
@@ -66,19 +68,20 @@ void openPickerMenu (PluginSlot& slot,
                       bool suppressSecondaryButtons = false,
                       std::function<void (const juce::File&, const juce::String&)> onPickNativeClap = {},
                       std::function<void (const juce::File&, const juce::String&)> onPickNativeLv2 = {},
-                      std::function<void (const juce::File&, const juce::String&)> onPickNativeVst3 = {});
+                      std::function<void (const juce::File&, const juce::String&)> onPickNativeVst3 = {},
+                      std::function<void (const juce::File&)> onPickSoundfont = {});
 
 // Two-step insert flow. Step 1 shows a small modal with three big
 // buttons - Hardware Insert / Soundfont / Plugin - letting the user
 // pick WHAT kind of insert they want before the (potentially long)
 // plugin list appears. Step 2 routes to the existing helper:
 //   - Hardware Insert -> onPickHardwareInsert() (no-op if unset)
-//   - Soundfont       -> openSoundfontFileChooser
+//   - Soundfont       -> onPickSoundfont with the chosen .sfz / .sf2
 //   - Plugin          -> openPickerMenu (existing plugin list flow)
 // Same lifetime / callback contract as openPickerMenu - onChange runs
-// on every successful slot change. Buttons that don't make sense for
-// the active slot (HW insert on a MIDI/instrument slot, Soundfont on
-// an audio/effect slot) are hidden.
+// on every successful slot change. Buttons whose callback is unset are
+// hidden (HW insert on a MIDI/instrument slot, Soundfont on a surface
+// with no multisample rung).
 void openInsertChooser (PluginSlot& slot,
                          juce::Component& target,
                          std::function<void()> onChange,
@@ -86,7 +89,8 @@ void openInsertChooser (PluginSlot& slot,
                          std::function<void()> onPickHardwareInsert = {},
                          std::function<void (const juce::File&, const juce::String&)> onPickNativeClap = {},
                          std::function<void (const juce::File&, const juce::String&)> onPickNativeLv2 = {},
-                         std::function<void (const juce::File&, const juce::String&)> onPickNativeVst3 = {});
+                         std::function<void (const juce::File&, const juce::String&)> onPickNativeVst3 = {},
+                         std::function<void (const juce::File&)> onPickSoundfont = {});
 
 // Synchronous scan. Blocks the message thread during scanInstalledPlugins().
 // Shows a Dusk in-window completion alert in `parent` (top-level Component)

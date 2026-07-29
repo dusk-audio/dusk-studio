@@ -204,7 +204,8 @@ static std::filesystem::path lv2StateDirFor (Session& session, const juce::Strin
 }
 #endif
 
-#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3 \
+    || DUSKSTUDIO_HAS_MULTISAMPLE
 // Session-carried native plugin state blob (base64) -> bytes. Empty on any
 // decode failure - callers treat "no state" and "bad state" the same.
 static std::vector<uint8_t> decodeBase64Blob (const juce::String& s)
@@ -216,6 +217,30 @@ static std::vector<uint8_t> decodeBase64Blob (const juce::String& s)
         blob.assign (static_cast<const uint8_t*> (mb.getData()),
                      static_cast<const uint8_t*> (mb.getData()) + mb.getSize());
     return blob;
+}
+#endif
+
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+// Sessions written while the multisample instrument was hosted as a JUCE plugin
+// carry it as a "DuskMultisample" PluginDescription whose fileOrIdentifier is the
+// soundfont path, plus the same ValueTree state blob the native rung reads. Move
+// those onto the native keys once; the next save writes only the native form.
+static void migrateLegacyMultisampleTrack (Track& track)
+{
+    if (track.nativeMultisamplePath.isNotEmpty() || track.pluginDescriptionXml.isEmpty())
+        return;
+    auto xml = juce::XmlDocument::parse (track.pluginDescriptionXml);
+    if (xml == nullptr) return;
+    juce::PluginDescription desc;
+    if (! desc.loadFromXml (*xml) || desc.pluginFormatName != "DuskMultisample") return;
+    // No soundfont named: leave the legacy pair alone rather than clearing it -
+    // wiping it here would destroy the blob on the next save and restore nothing.
+    if (desc.fileOrIdentifier.isEmpty()) return;
+
+    track.nativeMultisamplePath        = desc.fileOrIdentifier;
+    track.nativeMultisampleStateBase64 = track.pluginStateBase64;
+    track.pluginDescriptionXml.clear();
+    track.pluginStateBase64.clear();
 }
 #endif
 
@@ -1550,6 +1575,29 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
             track.nativeVst3StateBase64.clear();
         }
 #endif
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+        // The editor can swap or CLEAR the soundfont in place, so the live path
+        // off the instance - not the slot's original bundle path - decides
+        // whether this strip still hosts a multisample at all.
+        const auto liveSoundfont = strip.isNativeMultisampleLoaded()
+            ? juce::String::fromUTF8 (
+                  strip.getNativeMultisampleSlot().getLoadedSoundfontPath().c_str())
+            : juce::String();
+        if (liveSoundfont.isNotEmpty())
+        {
+            track.nativeMultisamplePath = liveSoundfont;
+            std::vector<uint8_t> blob;
+            if (strip.getNativeMultisampleSlot().saveState (blob) && ! blob.empty())
+                track.nativeMultisampleStateBase64 = juce::Base64::toBase64 (blob.data(), blob.size());
+            else
+                track.nativeMultisampleStateBase64.clear();
+        }
+        else if (! strip.nativeMultisampleReloadFailed())
+        {
+            track.nativeMultisamplePath.clear();
+            track.nativeMultisampleStateBase64.clear();
+        }
+#endif
     }
     for (int a = 0; a < Session::kNumAuxLanes; ++a)
     {
@@ -1651,6 +1699,11 @@ void AudioEngine::leakAllPluginInstancesForShutdown()
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
         strip.getNativeVst3Slot().leakForShutdown();
+#endif
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+        // Same deliberate exit-time leak: destroying the instance joins its
+        // loader pool, so quitting mid-GM-bank-load would block on the decode.
+        strip.getNativeMultisampleSlot().leakForShutdown();
 #endif
     }
     for (auto& laneStrip : auxLaneStrips)
@@ -1754,6 +1807,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 // hosts unfenced (the prepared path's loadNativeClap evicts them).
                 strip.unloadNativeLv2();
                 strip.unloadNativeVst3();
+                strip.unloadNativeMultisample();
                 strip.setPendingNativeClap (clapFile, std::move (blob), track.nativeClapPluginId);
             }
             continue;
@@ -1792,6 +1846,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             {
                 strip.unloadNativeClap();   // see the CLAP pending branch above
                 strip.unloadNativeVst3();
+                strip.unloadNativeMultisample();
                 strip.setPendingNativeLv2 (lv2File, std::move (blob), track.nativeLv2PluginId,
                                            lv2StateDirFor (session,
                                                "track" + juce::String (t + 1).paddedLeft ('0', 2)));
@@ -1828,7 +1883,57 @@ void AudioEngine::consumePluginStateAfterLoad()
             {
                 strip.unloadNativeClap();   // see the CLAP pending branch above
                 strip.unloadNativeLv2();
+                strip.unloadNativeMultisample();
                 strip.setPendingNativeVst3 (vst3File, std::move (blob), track.nativeVst3PluginId);
+            }
+            continue;
+        }
+#endif
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+        migrateLegacyMultisampleTrack (track);
+        if (track.nativeMultisamplePath.isNotEmpty())
+        {
+            slot.unload();
+            strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
+
+            auto blob = decodeBase64Blob (track.nativeMultisampleStateBase64);
+
+            const juce::File soundfont (track.nativeMultisamplePath);
+            if (strip.isPrepared())
+            {
+                // Two-phase: the soundfont parse + state restore run with the
+                // audio thread untouched; only the swap is gated.
+                std::string err;
+                auto primed = strip.primeNativeMultisample (soundfont, err, &blob);
+                // The swap destroys the outgoing instance - join its loader here,
+                // not with the audio thread parked (mirrors the teardown below).
+                strip.getNativeMultisampleSlot().drainPendingLoads();
+                suspendProcessing();
+                // Evict every other host and the outgoing soundfont whether or not
+                // the prime succeeded, so a failed restore can't leave the previous
+                // session's instrument playing (loadNativeClap does this inline).
+                strip.unloadNativeClap();
+                strip.unloadNativeLv2();
+                strip.unloadNativeVst3();
+                strip.unloadNativeMultisample();
+                bool ok = false;
+                if (primed) ok = strip.commitNativeMultisample (std::move (primed));
+                resumeProcessing();
+                if (! ok)
+                {
+                    // Must follow the unload above, which clears the flag.
+                    strip.markNativeMultisampleRestoreFailed();   // keep refs - see the CLAP twin
+                    lastPluginLoadFailures.push_back ({
+                        "Track " + juce::String (t + 1),
+                        soundfont.getFileNameWithoutExtension() });
+                }
+            }
+            else
+            {
+                strip.unloadNativeClap();   // see the CLAP pending branch above
+                strip.unloadNativeLv2();
+                strip.unloadNativeVst3();
+                strip.setPendingNativeMultisample (soundfont, std::move (blob));
             }
             continue;
         }
@@ -1837,12 +1942,19 @@ void AudioEngine::consumePluginStateAfterLoad()
         // No native host in this session for this strip - tear down any native
         // instance carried over from the previously-loaded session before the JUCE
         // restore below (unload destroys the instance, so fence it when live).
-        if (strip.isNativeClapLoaded() || strip.isNativeLv2Loaded() || strip.isNativeVst3Loaded())
+        if (strip.isNativeClapLoaded() || strip.isNativeLv2Loaded() || strip.isNativeVst3Loaded()
+            || strip.isNativeMultisampleLoaded())
         {
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+            // Join the soundfont loader BEFORE the gate parks the audio thread -
+            // the slot teardown below joins it anyway, and a GM bank takes seconds.
+            strip.getNativeMultisampleSlot().drainPendingLoads();
+#endif
             suspendProcessing();
             strip.unloadNativeClap();
             strip.unloadNativeLv2();
             strip.unloadNativeVst3();
+            strip.unloadNativeMultisample();
             resumeProcessing();
         }
         else
@@ -1850,6 +1962,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             strip.unloadNativeClap();   // no live instance: just clears any stale pending
             strip.unloadNativeLv2();
             strip.unloadNativeVst3();
+            strip.unloadNativeMultisample();
         }
 
         if (track.pluginDescriptionXml.isEmpty())

@@ -20,6 +20,9 @@
 #include "engine/BounceEngine.h"
 #include "engine/PluginManager.h"
 #include "engine/PluginSlot.h"
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+  #include "engine/multisample/NativeMultisampleSlot.h"
+#endif
 #include "engine/audiofile/FileReader.h"
 #include "engine/audiofile/FileWriter.h"
 #include "foundation/MessageThread.h"
@@ -498,8 +501,28 @@ static void runHeadlessInstrumentTest (const juce::String& pluginPath)
     slot.setManager (manager);
     slot.prepareToPlay (sampleRate, blockSize);
 
+    // A .sfz / .sf2 argument drives the native multisample rung, not the JUCE
+    // slot - soundfonts are not a hosted plugin format.
+    bool isSoundfont = false;
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    NativeMultisampleSlot msSlot;
+    dusk::MidiBuffer duskMidi;
+    isSoundfont = MultisampleBundle::isSoundfontExtension (
+        std::filesystem::u8path (pluginPath.toStdString()));
+    if (isSoundfont)
+    {
+        std::string msErr;
+        if (! msSlot.load (std::filesystem::u8path (pluginPath.toStdString()),
+                            sampleRate, blockSize, msErr))
+        {
+            std::fprintf (stderr, "FAIL: soundfont load: %s\n", msErr.c_str());
+            return;
+        }
+    }
+#endif
+
     juce::String err;
-    if (! slot.loadFromFile (juce::File (pluginPath), err))
+    if (! isSoundfont && ! slot.loadFromFile (juce::File (pluginPath), err))
     {
         std::fprintf (stderr, "FAIL: loadFromFile: %s\n", err.toRawUTF8());
         return;
@@ -527,6 +550,16 @@ static void runHeadlessInstrumentTest (const juce::String& pluginPath)
             for (int n : kChordNotes)
                 midi.addEvent (juce::MidiMessage::noteOff (1, n), 0);
 
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+        if (isSoundfont)
+        {
+            duskMidi.clear();
+            for (const auto meta : midi)
+                duskMidi.addEvent (meta.data, meta.numBytes, meta.samplePosition);
+            msSlot.processStereo (L.data(), R.data(), L.data(), R.data(), blockSize, &duskMidi);
+        }
+        else
+#endif
         slot.processStereoBlock (L.data(), R.data(), blockSize, midi);
 
         for (int s = 0; s < blockSize; ++s)
@@ -604,42 +637,94 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
             std::fprintf (stderr, "FAIL: SessionSerializer::load returned false\n");
             return;
         }
-        // Verify the description was deserialised before we ask the
-        // engine to consume it. Empty here = the JSON didn't contain
-        // plugin_desc_xml, which is a session-file regression.
-        const auto& descXml = session->track (0).pluginDescriptionXml;
-        const auto& stateB64 = session->track (0).pluginStateBase64;
-        std::fprintf (stdout,
-                      "After SessionSerializer::load: track[0] descXml.len=%d  state.len=%d  "
-                      "descXml head=\"%.60s\"\n",
-                      descXml.length(), stateB64.length(),
-                      descXml.toRawUTF8());
-
-        // Call restoreFromSavedState DIRECTLY here (instead of going via
-        // engine->consumePluginStateAfterLoad) so we can see the error.
-        // The engine wraps the same call but routes failures into DBG,
-        // which is a no-op in release builds.
-        juce::String restoreErr;
-        const bool restored = engine->getStrip (0).getPluginSlot()
-            .restoreFromSavedState (descXml, stateB64, restoreErr);
-        if (! restored)
+        // A soundfont track leaves the JUCE slot empty by design, so its
+        // restore has to be reported off the native slot instead.
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+        const juce::String soundfontPath = session->track (0).nativeMultisamplePath;
+        // Sessions saved before the native re-home carry the soundfont as a
+        // DuskMultisample plugin description; consumePluginStateAfterLoad
+        // migrates them onto nativeMultisamplePath. Probing the JUCE slot
+        // with that descriptor would report a false restore failure.
+        const bool legacyMultisample =
+            soundfontPath.isEmpty()
+            && session->track (0).pluginDescriptionXml.contains ("DuskMultisample");
+#else
+        const juce::String soundfontPath;
+        const bool legacyMultisample = false;
+#endif
+        if (soundfontPath.isNotEmpty())
         {
-            std::fprintf (stderr, "FAIL: restoreFromSavedState: %s\n",
-                          restoreErr.toRawUTF8());
+            std::fprintf (stdout,
+                          "After SessionSerializer::load: track[0] soundfont=\"%s\"  "
+                          "state.len=%d\n",
+                          soundfontPath.toRawUTF8(),
+                          session->track (0).nativeMultisampleStateBase64.length());
         }
         else
         {
+            // Verify the description was deserialised before we ask the
+            // engine to consume it. Empty here = the JSON didn't contain
+            // plugin_desc_xml, which is a session-file regression.
+            const auto& descXml = session->track (0).pluginDescriptionXml;
+            const auto& stateB64 = session->track (0).pluginStateBase64;
             std::fprintf (stdout,
-                          "restoreFromSavedState: ok (loaded=%d)\n",
-                          (int) engine->getStrip (0).getPluginSlot().isLoaded());
+                          "After SessionSerializer::load: track[0] descXml.len=%d  state.len=%d  "
+                          "descXml head=\"%.60s\"\n",
+                          descXml.length(), stateB64.length(),
+                          descXml.toRawUTF8());
+
+            if (legacyMultisample)
+            {
+                std::fprintf (stdout,
+                              "track[0] carries a legacy DuskMultisample descriptor; "
+                              "restored via migration in consumePluginStateAfterLoad\n");
+            }
+            else
+            {
+                // Call restoreFromSavedState DIRECTLY here (instead of going via
+                // engine->consumePluginStateAfterLoad) so we can see the error.
+                // The engine wraps the same call but routes failures into DBG,
+                // which is a no-op in release builds.
+                juce::String restoreErr;
+                const bool restored = engine->getStrip (0).getPluginSlot()
+                    .restoreFromSavedState (descXml, stateB64, restoreErr);
+                if (! restored)
+                {
+                    std::fprintf (stderr, "FAIL: restoreFromSavedState: %s\n",
+                                  restoreErr.toRawUTF8());
+                }
+                else
+                {
+                    std::fprintf (stdout,
+                                  "restoreFromSavedState: ok (loaded=%d)\n",
+                                  (int) engine->getStrip (0).getPluginSlot().isLoaded());
+                }
+            }
         }
 
         // Run the rest of the engine's after-load housekeeping (other
         // tracks, aux-lane plugins, master tape state) - just call the
         // public consume method; track 0 will be re-restored as a no-op
-        // since restoreFromSavedState is idempotent.
+        // since restoreFromSavedState is idempotent. The soundfont rung is
+        // restored here and nowhere else.
         engine->consumePluginStateAfterLoad();
         engine->consumeTransportStateAfterLoad();
+
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+        // Re-read after consumption: a legacy descriptor only lands on
+        // nativeMultisamplePath once the migration inside consume has run.
+        if (session->track (0).nativeMultisamplePath.isNotEmpty())
+        {
+            auto& msStrip = engine->getStrip (0);
+            if (msStrip.isNativeMultisampleLoaded())
+                std::fprintf (stdout, "multisample restore: ok (soundfont=\"%s\")\n",
+                              msStrip.getNativeMultisampleSlot()
+                                     .getLoadedSoundfontPath().c_str());
+            else
+                std::fprintf (stderr, "FAIL: multisample restore (restoreFailed=%d)\n",
+                              (int) msStrip.nativeMultisampleReloadFailed());
+        }
+#endif
         // Re-prepare so the just-loaded plugin sees the right SR/BS.
         engine->prepareForSelfTest (sampleRate, blockSize);
     }
@@ -647,13 +732,38 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
     {
         // Default-state path: track 0 in MIDI mode + load the plugin.
         session->track (0).mode.store ((int) Track::Mode::Midi, std::memory_order_relaxed);
-        juce::String err;
-        if (! engine->getStrip (0).getPluginSlot().loadFromFile (juce::File (pluginPath), err))
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+        if (MultisampleBundle::isSoundfontExtension (
+                std::filesystem::u8path (pluginPath.toStdString())))
         {
-            std::fprintf (stderr, "FAIL: loadFromFile: %s\n", err.toRawUTF8());
-            return;
+            std::string msErr;
+            if (! engine->getStrip (0).loadNativeMultisample (juce::File (pluginPath), msErr))
+            {
+                std::fprintf (stderr, "FAIL: soundfont load: %s\n", msErr.c_str());
+                return;
+            }
+        }
+        else
+#endif
+        {
+            juce::String err;
+            if (! engine->getStrip (0).getPluginSlot().loadFromFile (juce::File (pluginPath), err))
+            {
+                std::fprintf (stderr, "FAIL: loadFromFile: %s\n", err.toRawUTF8());
+                return;
+            }
         }
     }
+
+    // A soundfont hosts on the strip's native insert and leaves the JUCE slot
+    // empty by design, so "is anything loaded" has to ask both.
+    const auto insertLoaded = [&engine]
+    {
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+        if (engine->getStrip (0).isNativeMultisampleLoaded()) return true;
+#endif
+        return engine->getStrip (0).getPluginSlot().isLoaded();
+    };
 
     // Snapshot the relevant Track[0] + Master state so the user can see
     // exactly what we're testing against. This is what would be silencing
@@ -682,7 +792,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
                       t0.midiInputIdentifier.toRawUTF8(),
                       t0.midiChannel.load());
         std::fprintf (stdout, "  pluginLoaded=%d  pluginAutoBypassed=%d\n",
-                      (int) engine->getStrip (0).getPluginSlot().isLoaded(),
+                      (int) insertLoaded(),
                       (int) engine->getStrip (0).getPluginSlot().wasAutoBypassed());
 
         std::fprintf (stdout, "--- Master state ---\n");
@@ -697,7 +807,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
         std::fprintf (stdout, "\n");
     }
 
-    if (! engine->getStrip (0).getPluginSlot().isLoaded())
+    if (! insertLoaded())
     {
         std::fprintf (stderr, "FAIL: track 0 has no plugin loaded after setup; aborting.\n");
         return;

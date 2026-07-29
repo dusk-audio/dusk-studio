@@ -1,10 +1,6 @@
 #include "PluginManager.h"
 #include "JuceCompat.h"
 
-#if DUSKSTUDIO_HAS_MULTISAMPLE
-  #include "multisample/DuskMultisamplePluginFormat.h"
-#endif
-
 #include "ipc/PluginScanProtocol.h"
 #include "PluginBackingCheck.h"
 #include "hosting/NativePluginId.h"
@@ -179,14 +175,6 @@ PluginManager::PluginManager()
     // juce_audio_processors which we already link. The compat shim covers
     // the upstream-vs-wayland-fork API split.
     juce_compat::addDefaultFormats (formatManager);
-
-   #if DUSKSTUDIO_HAS_MULTISAMPLE
-    // Native multisample format: makes .sfz / .sf2 files first-class
-    // citizens alongside VST3 / LV2 / AU. The format claims those
-    // extensions in fileMightContainThisPluginType so PluginSlot's
-    // loadFromFile path lands here first for soundfont files.
-    formatManager.addFormat (new DuskMultisamplePluginFormat());
-   #endif
 
     loadCache();
     // Restore native-format descriptions so the picker has them at launch.
@@ -718,8 +706,7 @@ void PluginManager::createPluginInstanceAsync (
     const juce::PluginDescription& desc, double sampleRate, int blockSize,
     std::function<void (std::unique_ptr<juce::AudioPluginInstance>, juce::String)> callback)
 {
-    // Off-thread creation for slow-to-instantiate formats (notably the native
-    // multisample / soundfont player, which decodes samples). JUCE runs the
+    // Off-thread creation for slow-to-instantiate formats. JUCE runs the
     // format's createInstance on a background thread when the format reports
     // requiresUnblockedMessageThreadDuringCreation() == false, then fires this
     // callback ON THE MESSAGE THREAD with the fully-built instance - so the

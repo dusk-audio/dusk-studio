@@ -359,6 +359,21 @@ private:
     std::unique_ptr<class Vst3PluginEditorComponent> vst3Editor;
     void loadNativeVst3ForChannel (const juce::File& vst3File, const juce::String& pluginId = {});
 #endif
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    // Multisample instrument editor - in-process Dusk UI over the strip's
+    // NativeMultisampleSlot instance, same kept-alive/showBorrowed lifecycle.
+    std::unique_ptr<class DuskMultisampleEditor> multisampleEditor;
+    // The instance multisampleEditor was built against. Clone / undo can destroy
+    // or replace it from outside the UI, so the editor is dropped whenever the
+    // slot's live instance stops matching (see syncMultisampleEditorOwner).
+    class DuskMultisampleProcessor* multisampleEditorOwner = nullptr;
+    void syncMultisampleEditorOwner();
+    void loadNativeMultisampleForChannel (const juce::File& soundfont);
+    // Join an in-flight soundfont load. Call BEFORE suspendProcessing on any
+    // path that tears the slot down - the teardown joins the loader pool, and
+    // a GM-bank decode takes seconds the audio thread must not be parked for.
+    void drainMultisampleLoads();
+#endif
 
     // A freshly loaded instrument flips the track to MIDI and routes the Virtual
     // Keyboard when no MIDI input is bound (shared by the JUCE and native loads).

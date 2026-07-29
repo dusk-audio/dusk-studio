@@ -1,0 +1,90 @@
+# Hosting tower H3 — DuskMultisample re-home (executable spec)
+
+Status: **IMPLEMENTED 2026-07-27, committed on `dejuce/hosting-h3`,
+awaiting review + push.** Verified: build zero new warnings, ctest 470/470,
+gate 183 -> 181 (the two deleted format-wrapper files), instrument harness
+AUDIO PRESENT through the native rung with a synthetic full-range .sfz,
+selftest 36 PASS under Xvfb. Behavior fix shipped: pitch-wheel was passed
+uncentred (0..16383) to sfizz in the JUCE-hosted build too - bends now work.
+Branch `dejuce/hosting-h3`. One PR.
+Parent plan: [dejuce-hosting-plan.md](dejuce-hosting-plan.md). Prior scout
+2026-07-27 mapped the full coupling (session notes); re-verify line numbers
+before editing.
+
+## Goal
+
+DuskMultisampleProcessor stops being a juce::AudioPluginInstance hosted
+through the generic JUCE PluginSlot and becomes the fourth native rung:
+an `hosting::INativeInstance` in a `NativeInsertSlot`-based slot on
+ChannelStrip, loaded by file like today, state-compatible with existing
+sessions. DuskMultisamplePluginFormat is deleted. The multisample test unit
+drops its juce_audio_processors link.
+
+## Locked decisions
+
+- Processor implements `hosting::INativeInstance` directly: portLayout
+  0-in/2-out + midiIn; activate/deactivate wrap the current
+  prepareToPlay/releaseResources; `processBlock (const PortBuffers&)` wraps
+  the existing body (sfizz try-lock, override drift, CC drain,
+  sfizz_render_block) with `PortBuffers::midiIn` (dusk::MidiBuffer)
+  replacing the juce::MidiBuffer argument — convert events at the seam,
+  keep the internal logic untouched; saveState/loadState carry the SAME
+  ValueTree-binary blob bytes as today's get/setStateInformation (old
+  sessions must restore byte-identically); latency 0.
+- New `NativeMultisampleSlot` via `NativeInsertSlot<Traits>` (mirror
+  NativeClapSlot's 27-line traits shape). Instrument-only: it joins the
+  MIDI-track instrument ladder in ChannelStrip::processAndAccumulate at
+  precedence CLAP > LV2 > VST3 > multisample > (JUCE pluginSlot fallthrough
+  until H5); load/unload/pending-restore/isNativeInstrument/latency wired
+  exactly like the other three rungs. Aux lanes: NOT wired (instruments do
+  not load on aux; verify nothing routes soundfonts there today).
+- Discovery stays file-chooser-driven (canScanForPlugins was already
+  false). PluginPickerHelpers' soundfont chooser + .bank.xml flow load into
+  the new slot. No KnownPluginList rows; getInstrumentDescriptions loses
+  its multisample entries (they only appeared post-load — verify no UI
+  depends on them).
+- Session compatibility: keep Track::pluginDescriptionXml /
+  pluginStateBase64 keys for the OTHER plugins, but multisample save/restore
+  moves to the native pending-restore scheme the other rungs use. Old
+  sessions with a DuskMultisample description XML must still restore: the
+  restore path detects pluginFormatName == "DuskMultisample" and routes
+  file + state blob into the new slot (one-way migration, mirror how native
+  CLAP restore-by-identifier works). New saves write the native identifier
+  form.
+- Editor: DuskMultisampleEditor drops the juce::AudioProcessorEditor base
+  (plain juce::Component + dusk::Timer), constructed directly by
+  ChannelStripComponent's editor-open path when the multisample rung is
+  loaded (in-process, no embedding, same EmbeddedModal borrowed-body flow).
+  AriaGuiComponent unchanged (already plain refs).
+- DuskMultisamplePluginFormat.{h,cpp} deleted; PluginManager registration
+  and the DUSKSTUDIO_HAS_MULTISAMPLE format include go; the define keeps
+  gating the sources. PluginBackingCheck .sf2 rule stays.
+- Selftest / hot-swap harness paths in DuskStudioApp that loadFromFile a
+  soundfont must route to the new rung.
+- MidiBindings: multisample exposes no params today (refreshParameterList
+  empty) — nothing to wire; confirm no binding path assumes the slot.
+
+## Verify
+
+As built: app build zero new warnings; gate 183 -> 181 (the two deleted
+format-wrapper files leave src/ entirely); full ctest green —
+multisample_state_roundtrip runs against the INativeInstance surface with the
+blob-compat cases preserved (an old-format blob still loads), other
+multisample tests untouched; tests/CMakeLists: the multisample unit dropped
+BOTH juce_audio_processors AND juce_gui_basics — the final round pulled the
+editor / file-browser / combo-box sources out of the unit (nothing in the
+tests reaches them), so it links only audio_basics / audio_formats /
+data_structures / core / dsp / graphics; selftest 36 PASS under Xvfb with a
+.sfz incl. the restore-by-description path; screenshot harness unaffected (no
+multisample figure). AI-slop sweep done. MANUAL.md WAS edited: the soundfont
+route now names the picker's actual "Load Soundfont" button.
+
+## Owed to Marc's bench
+
+- Real SF2/SFZ session: load, play, save, reload, editor open, bounce with
+  the instrument on a MIDI track.
+
+## Resume phrase
+
+"Hosting H3, branch dejuce/hosting-h3, spec docs/dejuce-hosting-h3-multisample.md
+— continue at first unchecked item."

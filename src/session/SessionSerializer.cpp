@@ -436,6 +436,11 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
         obj["native_vst3_plugin"] = toStd (t.nativeVst3PluginId);
         obj["native_vst3_state"]  = toStd (t.nativeVst3StateBase64);
     }
+    if (t.nativeMultisamplePath.isNotEmpty())
+    {
+        obj["native_multisample_path"]  = toStd (t.nativeMultisamplePath);
+        obj["native_multisample_state"] = toStd (t.nativeMultisampleStateBase64);
+    }
 
     obj["fader_db"]     = t.strip.faderDb.load();
     obj["pan"]          = t.strip.pan.load();
@@ -833,6 +838,8 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
     t.nativeVst3Path        = json::getString (v, "native_vst3_path");
     t.nativeVst3PluginId    = json::getString (v, "native_vst3_plugin");
     t.nativeVst3StateBase64 = json::getString (v, "native_vst3_state");
+    t.nativeMultisamplePath        = json::getString (v, "native_multisample_path");
+    t.nativeMultisampleStateBase64 = json::getString (v, "native_multisample_state");
 
     auto setFloat = [&v] (std::atomic<float>& a, const char* key)
     {

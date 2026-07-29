@@ -1,57 +1,52 @@
 #pragma once
 
-#include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_core/juce_core.h>
 
+#include "MultisampleBundle.h"
+#include "../hosting/INativeInstance.h"
+
+#include <array>
+#include <atomic>
+#include <cstdint>
+#include <functional>
 #include <memory>
+#include <mutex>
+#include <string>
 #include <vector>
 
 namespace duskstudio
 {
-// Native Multisample instrument: a juce::AudioPluginInstance that
-// loads .sfz (and, in 1.0, .sf2) files and renders them through the
-// vendored sfizz engine. Lives in src/engine/multisample/ alongside
-// the SFZ/SF2 -> sfizz adapters.
+// Native Multisample instrument: a hosting::INativeInstance that loads
+// .sfz / .sf2 files and renders them through the vendored sfizz engine.
+// Lives in src/engine/multisample/ alongside the SFZ/SF2 -> sfizz adapters.
 //
-// Lifetime: created on the message thread by PluginManager via
-// DuskMultisamplePluginFormat::createPluginInstance.
-// Owned by PluginSlot via std::unique_ptr<juce::AudioPluginInstance>.
-// Atomic-swap of the slot's currentInstance pointer follows the same
-// rules every other hosted plugin uses (see PluginSlot.h:34).
-class DuskMultisampleProcessor : public juce::AudioPluginInstance
+// Lifetime: created on the message thread by NativeMultisampleSlot, which
+// fences load / unload with the engine process gate exactly like the CLAP,
+// LV2 and VST3 rungs.
+class DuskMultisampleProcessor final : public hosting::INativeInstance
 {
 public:
     DuskMultisampleProcessor();
     ~DuskMultisampleProcessor() override;
 
-    // juce::AudioProcessor surface.
-    const juce::String getName() const override                { return "Dusk Multisample"; }
-    void prepareToPlay (double sampleRate, int blockSize) override;
-    void releaseResources() override;
-    void processBlock (juce::AudioBuffer<float>& buf,
-                       juce::MidiBuffer& midi) override;
-    bool acceptsMidi() const override                          { return true; }
-    bool producesMidi() const override                         { return false; }
-    bool isMidiEffect() const override                         { return false; }
-    double getTailLengthSeconds() const override               { return 0.0; }
-    bool hasEditor() const override                            { return true; }
-    juce::AudioProcessorEditor* createEditor() override;
-    int getNumPrograms() override                              { return 1; }
-    int getCurrentProgram() override                           { return 0; }
-    void setCurrentProgram (int) override                      {}
-    const juce::String getProgramName (int) override           { return {}; }
-    void changeProgramName (int, const juce::String&) override {}
-    void getStateInformation (juce::MemoryBlock&) override;
-    void setStateInformation (const void*, int) override;
+    // NativeInsertSlot construction hook: load the bundle's soundfont. The
+    // multisample rung has exactly one plugin per bundle, so pluginId is unused.
+    bool create (const MultisampleBundle& bundle, const std::string& pluginId,
+                 std::string& errorOut);
 
-    // juce::AudioPluginInstance surface. JUCE relies on these for
-    // plugin-host bookkeeping; the picker reads getPluginDescription
-    // to populate the menu entry.
-    void fillInPluginDescription (juce::PluginDescription& desc) const override;
-    void refreshParameterList() override {}
+    // hosting::INativeInstance.
+    const hosting::PortLayout& portLayout() const noexcept override { return layout; }
+    bool activate (double sampleRate, int maxBlockFrames, std::string& errorOut) override;
+    void deactivate() override;
+    bool reactivate (double sampleRate, int maxBlockFrames, std::string& errorOut) override;
+    bool isActive() const noexcept override { return active.load (std::memory_order_acquire); }
+    void processBlock (const hosting::PortBuffers& io) noexcept override;
+    bool saveState (std::vector<uint8_t>& out) const override;
+    bool loadState (const std::vector<uint8_t>& in) override;
+    int  getLatencySamples() const noexcept override { return 0; }
 
     // Load an .sfz file synchronously on the message thread. Returns
-    // true + clears errorMessage on success. PluginSlot's atomic-swap
-    // pattern moves the loaded processor into place once this returns.
+    // true + clears errorMessage on success.
     bool loadSfzFile (const juce::File& sfz, juce::String& errorMessage);
 
     // Load an .sf2 (SoundFont 2) file. Converts the first preset to SFZ
@@ -115,23 +110,35 @@ public:
         return loadPending.load (std::memory_order_relaxed);
     }
 
+    // Message thread. Join any in-flight background load. Call this BEFORE the
+    // engine's process gate parks the audio thread on an unload: the slot's
+    // teardown joins loadPool in the destructor, and a GM-bank load takes
+    // seconds - parking the audio thread across it is an audible stall.
+    void cancelPendingLoads();
+
+    // Thread-safe copy of the loaded soundfont path, empty when none is loaded.
+    // loadedFilePath itself is written by the loader thread, so JUCE's String
+    // refcount must not be shared across the hand-off; this hands back an
+    // independent std::string taken under a lock. Never reflects an in-flight
+    // load - the shared value only advances once a load has succeeded.
+    std::string getLoadedPathSnapshot() const;
+
     // Drop the loaded soundfont. After this call the processor
-    // renders silence; subsequent loadSfzFile / setStateInformation
-    // can replace it.
+    // renders silence; subsequent loadSfzFile / loadState can replace it.
     void clearLoadedFile();
 
     // Polyphony change. Per sfizz.h, sfizz_set_num_voices is marked
     // OFF - "cannot be invoked while a thread is calling RT
     // functions". setPolyphony() runs on the message thread (editor
     // / state-load callers), pauses sfizz briefly, applies, then
-    // resumes. The Overrides atom is updated so getStateInformation
+    // resumes. The Overrides atom is updated so saveState
     // sees the latest value.
     void setPolyphony (int newPolyphony);
 
-    // Surfaces the most-recent error from setStateInformation /
-    // loadSfzFile when called from the deserialiser. Editor polls it
-    // so a missing-file restore shows "(file not found)" instead of
-    // silent emptiness. Cleared when a load succeeds.
+    // Surfaces the most-recent error from loadState / loadSfzFile when
+    // called from the deserialiser. Editor polls it so a missing-file
+    // restore shows "(file not found)" instead of silent emptiness.
+    // Cleared when a load succeeds.
     juce::String getLastLoadError() const noexcept { return lastLoadError; }
 
     // Override parameters. Phase 1 v1: master volume, master tune,
@@ -174,10 +181,23 @@ private:
     bool applySf2Preset (const juce::File& sf2, int presetIndex,
                           juce::String& errorMessage);
 
-    double currentSampleRate { 48000.0 };
-    int    currentBlockSize  { 512 };
+    hosting::PortLayout layout;
+    std::atomic<bool>   active { false };
+
+    // The activate() block size, so processBlock can reject a block sfizz was
+    // never sized for. Published INSIDE the sfizz render lock alongside
+    // sfizz_set_samples_per_block and read by the audio thread under the same
+    // lock, so the guard can never see a size sfizz has not applied yet.
+    std::atomic<int> currentBlockSize { 512 };
     juce::String loadedFilePath;     // empty when no file loaded
-    juce::String lastLoadError;      // most recent setState / load failure
+
+    // Cross-thread copy of loadedFilePath (see getLoadedPathSnapshot). Written
+    // wherever loadedFilePath is, read by the message thread. Never the audio
+    // thread, so a plain mutex is fine.
+    mutable std::mutex loadedPathLock;
+    std::string        loadedPathShared;
+    void publishLoadedPath (const juce::String& path);
+    juce::String lastLoadError;      // most recent loadState / load failure
     Overrides overrides;
 
     // SF2 program switcher state: display metadata + active source index.
@@ -220,6 +240,11 @@ private:
     // still dereferences it). Declared after impl so member teardown can't
     // invert that order either.
     std::atomic<bool> loadPending { false };
+    // Bumped by cancelPendingLoads. A job that was already running when
+    // removeAllJobs returned still posts its completion; the captured
+    // generation lets that completion recognise it has been disowned instead
+    // of clearing a LATER load's pending flag and firing a stale onDone.
+    std::atomic<std::uint64_t> loadGeneration { 0 };
     juce::ThreadPool  loadPool { 1 };
 
     // A background load's completion is posted via dusk::callAsync,

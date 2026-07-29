@@ -8,7 +8,7 @@
 namespace duskstudio
 {
 DuskMultisampleEditor::DuskMultisampleEditor (DuskMultisampleProcessor& proc)
-    : juce::AudioProcessorEditor (proc), processor (proc)
+    : processor (proc)
 {
     setSize (520, 260);
 

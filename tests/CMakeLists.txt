@@ -99,14 +99,6 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/multisample/AriaGui.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/multisample/Sf2Reader.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/multisample/Sf2ToSfz.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/multisample/DuskMultisampleEditor.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/multisample/AriaGuiComponent.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/DuskFileBrowser.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/DimOverlay.cpp
-    # DuskComboBox.cpp carries the vtable for duskstudio::DuskComboBox, which the
-    # multisample editor now uses (its showPopup override) — link it so the
-    # editor TU resolves.
-    ${CMAKE_SOURCE_DIR}/src/ui/DuskComboBox.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/HardwareInsertSlot.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/FileImporter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/DpImporter.cpp
@@ -264,14 +256,9 @@ target_link_libraries(dusk-studio-tests PRIVATE
     ${CMAKE_DL_LIBS}   # dl: ClapBundle dlopen
     juce::juce_audio_basics
     juce::juce_audio_formats
-    # juce_audio_processors brings in juce::AudioPluginInstance for
-    # multisample tests (DuskMultisampleProcessor subclasses it).
-    juce::juce_audio_processors
-    # juce_gui_basics required by DuskMultisampleEditor (compiled into
-    # the test binary via the multisample tests). The tests don't
-    # construct the editor; we just link the symbol it references
-    # through createEditor().
-    juce::juce_gui_basics
+    # juce_data_structures brings in juce::ValueTree, which carries the
+    # multisample state blob.
+    juce::juce_data_structures
     juce::juce_core
     juce::juce_dsp
     juce::juce_graphics

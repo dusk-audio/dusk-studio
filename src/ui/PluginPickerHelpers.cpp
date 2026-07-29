@@ -322,11 +322,10 @@ void openFileChooser (PluginSlot& slot,
 // EmbeddedModal panel) so it shares the same chrome as the plugin
 // browse / session save / bounce dialogs. No standalone window, no
 // XWayland / Mutter positioning workarounds.
-static void openSoundfontFileChooser (PluginSlot& slot,
-                                                        std::function<void()> onChange,
+static void openSoundfontFileChooser (std::function<void (const juce::File&)> onPick,
                                        juce::Component::SafePointer<juce::Component> parentForLifetime)
 {
-        auto* host = parentForLifetime.getComponent();
+    auto* host = parentForLifetime.getComponent();
     if (host == nullptr) return;
     const auto defaultDir = juce::File::getSpecialLocation (juce::File::userHomeDirectory);
     filebrowser::open (*host, {
@@ -337,16 +336,14 @@ static void openSoundfontFileChooser (PluginSlot& slot,
         /*warnAboutOverwriting*/   false,
         /*selectDirectories*/      false,
     },
-    [&slot, onChange = std::move (onChange),
-     parentForLifetime] (juce::File file)
+    [onPick = std::move (onPick), parentForLifetime] (juce::File file)
     {
         if (parentForLifetime.getComponent() == nullptr) return;
         if (file == juce::File()) return;
 
-        // ARIA bank manifest - resolve to the first program's .sfz so
-        // PluginSlot::loadFromFile (which routes through
-        // DuskMultisamplePluginFormat and only accepts .sfz / .sf2) has
-        // something it can consume. Program switcher comes later.
+        // ARIA bank manifest - resolve to the first program's .sfz so the
+        // multisample slot (which only accepts .sfz / .sf2) has something it
+        // can consume. Program switcher comes later.
         juce::File fileToLoad = file;
         if (file.getFileName().toLowerCase().endsWith (".bank.xml"))
         {
@@ -366,19 +363,7 @@ static void openSoundfontFileChooser (PluginSlot& slot,
             fileToLoad = bankOpt->programs.front().sfzFile;
         }
 
-        juce::String error;
-        const bool ok = slot.loadFromFile (fileToLoad, error);
-        if (! ok)
-        {
-            if (auto* tl = parentForLifetime.getComponent() != nullptr
-                              ? parentForLifetime.getComponent()->getTopLevelComponent()
-                              : nullptr)
-                showDuskAlert (*tl, "Plugin load failed", error);
-            else
-                showLoadFailureAlertFallback (error);
-            return;
-        }
-        if (onChange) onChange();
+        if (onPick) onPick (fileToLoad);
     });
 }
 #endif
@@ -392,7 +377,8 @@ void openPickerMenu (PluginSlot& slot,
                       bool suppressSecondaryButtons,
                       std::function<void (const juce::File&, const juce::String&)> onPickNativeClap,
                       std::function<void (const juce::File&, const juce::String&)> onPickNativeLv2,
-                      std::function<void (const juce::File&, const juce::String&)> onPickNativeVst3)
+                      std::function<void (const juce::File&, const juce::String&)> onPickNativeVst3,
+                      std::function<void (const juce::File&)> onPickSoundfont)
 {
     auto& manager = slot.getManagerForUi();
 
@@ -446,8 +432,9 @@ void openPickerMenu (PluginSlot& slot,
 
     cb.onCancel = closeModal;
 
-    cb.onScan = [closeModal, slotPtr, safeTarget, safeParent,                   onChange, kind, onPickHardwareInsert, onPickNativeClap, onPickNativeLv2,
-                  onPickNativeVst3]() mutable
+    cb.onScan = [closeModal, slotPtr, safeTarget, safeParent, onChange, kind,
+                  onPickHardwareInsert, onPickNativeClap, onPickNativeLv2,
+                  onPickNativeVst3, onPickSoundfont]() mutable
     {
         closeModal();
 
@@ -456,15 +443,17 @@ void openPickerMenu (PluginSlot& slot,
         // alert - otherwise the picker stacks back over the alert (alert
         // was added before the picker, so JUCE z-order puts the picker
         // on top), making the result message invisible.
-        auto reopenPicker = [slotPtr, safeTarget,                               onChange, kind, onPickHardwareInsert, onPickNativeClap,
-                              onPickNativeLv2, onPickNativeVst3]() mutable
+        auto reopenPicker = [slotPtr, safeTarget, onChange, kind, onPickHardwareInsert,
+                              onPickNativeClap, onPickNativeLv2, onPickNativeVst3,
+                              onPickSoundfont]() mutable
         {
             if (auto* t = safeTarget.getComponent())
                 openPickerMenu (*slotPtr, *t, std::move (onChange), kind, { -1, -1 },
                                   std::move (onPickHardwareInsert), false,
                                   std::move (onPickNativeClap),
                                   std::move (onPickNativeLv2),
-                                  std::move (onPickNativeVst3));
+                                  std::move (onPickNativeVst3),
+                                  std::move (onPickSoundfont));
         };
         runScanModal (slotPtr->getManagerForUi(), safeParent.getComponent(),
                        std::move (reopenPicker));
@@ -492,15 +481,17 @@ void openPickerMenu (PluginSlot& slot,
     }
 
    #if DUSKSTUDIO_HAS_MULTISAMPLE
-    if (kind == PluginKind::Instruments && ! suppressSecondaryButtons)
+    if (onPickSoundfont && kind == PluginKind::Instruments && ! suppressSecondaryButtons)
     {
-        cb.onLoadSoundfont = [closeModal, slotPtr, safeTarget,                                 onChange]() mutable
+        cb.onLoadSoundfont = [closeModal, safeTarget, onPickSoundfont]() mutable
         {
             closeModal();
             if (safeTarget.getComponent() == nullptr) return;
-            openSoundfontFileChooser (*slotPtr, std::move (onChange), safeTarget);
+            openSoundfontFileChooser (std::move (onPickSoundfont), safeTarget);
         };
     }
+   #else
+    juce::ignoreUnused (onPickSoundfont);
    #endif
 
     cb.onPickPlugin = [closeModal, slotPtr, safeTarget, safeParent, onChange, kind,
@@ -714,7 +705,8 @@ void openInsertChooser (PluginSlot& slot,
                          std::function<void()> onPickHardwareInsert,
                          std::function<void (const juce::File&, const juce::String&)> onPickNativeClap,
                          std::function<void (const juce::File&, const juce::String&)> onPickNativeLv2,
-                         std::function<void (const juce::File&, const juce::String&)> onPickNativeVst3)
+                         std::function<void (const juce::File&, const juce::String&)> onPickNativeVst3,
+                         std::function<void (const juce::File&)> onPickSoundfont)
 {
     auto* parent = target.getTopLevelComponent();
     if (parent == nullptr) parent = &target;
@@ -726,18 +718,13 @@ void openInsertChooser (PluginSlot& slot,
 
     // HW insert only makes sense on audio (effects) slots - a MIDI
     // instrument slot can't route audio out to a physical pair.
-    // Soundfont is shown ALWAYS when the multisample backend is built
-    // in: it loads via the same path as an instrument plugin, and the
-    // engine routes MIDI-driven content even on an audio track (the
-    // user picks the SFZ for a reason - flagging it as "wrong slot"
-    // here hides a valid choice).
+    // Soundfont is shown whenever the caller hosts the multisample rung,
+    // regardless of slot kind: it loads via the same path as an instrument
+    // plugin and flips the track to MIDI, so flagging it as "wrong slot"
+    // on an audio strip would hide a valid choice.
     const bool showHw = (kind == PluginKind::Effects)
                         && static_cast<bool> (onPickHardwareInsert);
-   #if DUSKSTUDIO_HAS_MULTISAMPLE
-    const bool showSf = true;
-   #else
-    const bool showSf = false;
-   #endif
+    const bool showSf = static_cast<bool> (onPickSoundfont);
 
     auto onHw = [closeChooser, hw = onPickHardwareInsert]() mutable
     {
@@ -745,14 +732,14 @@ void openInsertChooser (PluginSlot& slot,
         if (hw) hw();
     };
 
-    auto onSf = [closeChooser, slotPtr, safeTarget,                   onChange]() mutable
+    auto onSf = [closeChooser, safeTarget, onPickSoundfont]() mutable
     {
         closeChooser();
         if (safeTarget.getComponent() == nullptr) return;
        #if DUSKSTUDIO_HAS_MULTISAMPLE
-        openSoundfontFileChooser (*slotPtr, std::move (onChange), safeTarget);
+        openSoundfontFileChooser (std::move (onPickSoundfont), safeTarget);
        #else
-        juce::ignoreUnused (slotPtr, onChange);
+        juce::ignoreUnused (onPickSoundfont);
        #endif
     };
 

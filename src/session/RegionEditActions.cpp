@@ -369,6 +369,13 @@ struct CloneTrackAction::Impl
     juce::String pluginDescXml;
     juce::String pluginStateB64;
 
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    // Native multisample instrument - not a JUCE-hosted plugin, so it needs
+    // its own pair alongside the description above.
+    juce::String         multisamplePath;
+    std::vector<uint8_t> multisampleState;
+#endif
+
     // Region / MIDI region content.
     std::vector<AudioRegion> regions;
     std::vector<MidiRegion>  midiRegions;
@@ -442,6 +449,21 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
     auto& slot = engine.getStrip (idx).getPluginSlot();
     s.pluginDescXml  = slot.getDescriptionXmlForSave();
     s.pluginStateB64 = slot.getStateBase64ForSave();
+
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    auto& msSlot = engine.getStrip (idx).getNativeMultisampleSlot();
+    // The editor can clear the soundfont in place, leaving a loaded slot with no
+    // file - the live path decides, as in publishPluginStateForSave. applyTrack
+    // reads an empty path as "no multisample", so a blob captured beside one
+    // would be stranded.
+    const auto liveSoundfont = juce::String::fromUTF8 (
+        msSlot.isLoaded() ? msSlot.getLoadedSoundfontPath().c_str() : "");
+    if (liveSoundfont.isNotEmpty())
+    {
+        s.multisamplePath = liveSoundfont;
+        msSlot.saveState (s.multisampleState);
+    }
+#endif
 
     s.regions     = t.regions;
     s.midiRegions = t.midiRegions.current();   // snapshot of the live vector
@@ -535,6 +557,48 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
     // a single track we mirror by hand.
     t.pluginDescriptionXml = s.pluginDescXml;
     t.pluginStateBase64    = s.pluginStateB64;
+
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    // After the JUCE replay: a multisample load evicts the JUCE slot, so doing
+    // it second keeps "one host per insert" whichever way the clone goes.
+    {
+        auto& strip = engine.getStrip (idx);
+        if (s.multisamplePath.isNotEmpty() || strip.isNativeMultisampleLoaded())
+        {
+            // Two-phase: parse the soundfont off the engine gate, fence the swap
+            // only (see NativeMultisampleSlot::prime).
+            NativeMultisampleSlot::PrimedLoad primed;
+            std::string msErr;
+            if (s.multisamplePath.isNotEmpty())
+                primed = strip.primeNativeMultisample (juce::File (s.multisamplePath),
+                                                        msErr, &s.multisampleState);
+            strip.getNativeMultisampleSlot().drainPendingLoads();
+
+            engine.suspendProcessing();
+            bool msLoaded = false;
+            if (primed) msLoaded = strip.commitNativeMultisample (std::move (primed));
+            else        strip.unloadNativeMultisample();
+            engine.resumeProcessing();
+
+            if (! msLoaded && s.multisamplePath.isNotEmpty())
+            {
+                // Keep the reference so a save right after the clone still
+                // round-trips it and the load can be retried, exactly like a
+                // failed restore in consumePluginStateAfterLoad.
+                strip.markNativeMultisampleRestoreFailed();
+                DBG ("CloneTrackAction: multisample restore failed on strip " << idx
+                      << " (" << s.multisamplePath << "): " << msErr.c_str());
+            }
+        }
+
+        // Unconditional, like the plugin writes above: a clone from a source
+        // with no multisample has to clear whatever the destination held.
+        t.nativeMultisamplePath = s.multisamplePath;
+        t.nativeMultisampleStateBase64 = s.multisampleState.empty()
+            ? juce::String()
+            : juce::Base64::toBase64 (s.multisampleState.data(), s.multisampleState.size());
+    }
+#endif
 }
 } // namespace
 
