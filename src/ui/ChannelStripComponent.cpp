@@ -2127,15 +2127,16 @@ void ChannelStripComponent::refreshPluginSlotButton()
                                   .getNativeMultisampleSlot().getLoadedSoundfontPath().c_str()))
                           .getFileNameWithoutExtension();
         // Clearing the soundfont in the editor leaves the rung loaded but empty -
-        // fall through to the generic label rather than showing a bare arrow.
-        if (nm.isNotEmpty())
-        {
-            const auto label = juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xbe ")) + nm;
-            if (label == lastSlotName) return;
-            lastSlotName = label;
-            pluginSlotButton.setButtonText (label);
-            return;
-        }
+        // show the generic label rather than a bare arrow. Handled in-branch so a
+        // loaded multisample never reaches the JUCE-slot bookkeeping below, which
+        // describes an insert this strip isn't running.
+        const auto label = nm.isNotEmpty()
+            ? juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xbe ")) + nm
+            : juce::String ("Insert");
+        if (label == lastSlotName) return;
+        lastSlotName = label;
+        pluginSlotButton.setButtonText (label);
+        return;
     }
 #endif
 
@@ -2899,10 +2900,10 @@ void ChannelStripComponent::loadNativeMultisampleForChannel (const juce::File& s
 
     if (! ok)
     {
+        // Nothing was committed, so whatever ran before still runs - the
+        // persisted references have to keep describing it.
         showDuskAlert (*this, "Couldn't load soundfont",
                        soundfont.getFileNameWithoutExtension() + ":\n" + juce::String (err));
-        track.nativeMultisamplePath = {};
-        track.nativeMultisampleStateBase64 = {};
         return;
     }
 

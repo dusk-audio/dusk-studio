@@ -589,14 +589,14 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
                 DBG ("CloneTrackAction: multisample restore failed on strip " << idx
                       << " (" << s.multisamplePath << "): " << msErr.c_str());
             }
-
-            // Path empty means the source had no multisample, so the state blob
-            // is empty too - the references clear on their own.
-            t.nativeMultisamplePath = s.multisamplePath;
-            t.nativeMultisampleStateBase64 = s.multisampleState.empty()
-                ? juce::String()
-                : juce::Base64::toBase64 (s.multisampleState.data(), s.multisampleState.size());
         }
+
+        // Unconditional, like the plugin writes above: a clone from a source
+        // with no multisample has to clear whatever the destination held.
+        t.nativeMultisamplePath = s.multisamplePath;
+        t.nativeMultisampleStateBase64 = s.multisampleState.empty()
+            ? juce::String()
+            : juce::Base64::toBase64 (s.multisampleState.data(), s.multisampleState.size());
     }
 #endif
 }

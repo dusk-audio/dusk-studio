@@ -117,7 +117,7 @@ public:
     void cancelPendingLoads();
 
     // Thread-safe copy of the loaded soundfont path, empty when none is loaded.
-    // loadedFilePath itself is written by the loader thread, so its juce::String
+    // loadedFilePath itself is written by the loader thread, so JUCE's String
     // refcount must not be shared across the hand-off; this hands back an
     // independent std::string taken under a lock. Never reflects an in-flight
     // load - the shared value only advances once a load has succeeded.

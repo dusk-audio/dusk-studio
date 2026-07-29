@@ -610,8 +610,11 @@ if(UNIX AND NOT APPLE AND PIPEWIRE_FOUND)
 endif()
 
 # Shared native-host layer (format-agnostic) — compiled whenever any native host
-# is on, so it isn't double-added by the per-format blocks below.
-if(DUSKSTUDIO_NATIVE_CLAP OR DUSKSTUDIO_NATIVE_LV2)
+# or the multisample instrument rung is on, so it isn't double-added by the
+# per-format blocks below. The sfizz test mirrors the multisample gate further
+# down: that rung is platform-independent, so mac/win link it too.
+if(DUSKSTUDIO_NATIVE_CLAP OR DUSKSTUDIO_NATIVE_LV2 OR DUSKSTUDIO_NATIVE_VST3
+   OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     target_sources(DuskStudio PRIVATE src/engine/hosting/InsertAdapter.cpp)
 endif()
 

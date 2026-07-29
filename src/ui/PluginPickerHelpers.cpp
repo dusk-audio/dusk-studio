@@ -432,8 +432,9 @@ void openPickerMenu (PluginSlot& slot,
 
     cb.onCancel = closeModal;
 
-    cb.onScan = [closeModal, slotPtr, safeTarget, safeParent,                   onChange, kind, onPickHardwareInsert, onPickNativeClap, onPickNativeLv2,
-                  onPickNativeVst3]() mutable
+    cb.onScan = [closeModal, slotPtr, safeTarget, safeParent, onChange, kind,
+                  onPickHardwareInsert, onPickNativeClap, onPickNativeLv2,
+                  onPickNativeVst3, onPickSoundfont]() mutable
     {
         closeModal();
 
@@ -442,15 +443,17 @@ void openPickerMenu (PluginSlot& slot,
         // alert - otherwise the picker stacks back over the alert (alert
         // was added before the picker, so JUCE z-order puts the picker
         // on top), making the result message invisible.
-        auto reopenPicker = [slotPtr, safeTarget,                               onChange, kind, onPickHardwareInsert, onPickNativeClap,
-                              onPickNativeLv2, onPickNativeVst3]() mutable
+        auto reopenPicker = [slotPtr, safeTarget, onChange, kind, onPickHardwareInsert,
+                              onPickNativeClap, onPickNativeLv2, onPickNativeVst3,
+                              onPickSoundfont]() mutable
         {
             if (auto* t = safeTarget.getComponent())
                 openPickerMenu (*slotPtr, *t, std::move (onChange), kind, { -1, -1 },
                                   std::move (onPickHardwareInsert), false,
                                   std::move (onPickNativeClap),
                                   std::move (onPickNativeLv2),
-                                  std::move (onPickNativeVst3));
+                                  std::move (onPickNativeVst3),
+                                  std::move (onPickSoundfont));
         };
         runScanModal (slotPtr->getManagerForUi(), safeParent.getComponent(),
                        std::move (reopenPicker));
