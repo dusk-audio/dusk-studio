@@ -5,20 +5,6 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [0.12.7] - Unreleased
-
-Beta patch on the 0.12 line: restores plug-in scanning in the Windows
-installer.
-
-### Fixed
-
-- **Windows plug-in scanning.** The MSI now includes
-  `dusk-studio-plugin-host.exe` beside the main application. The helper was
-  built but omitted from CMake's install set, so every third-party plug-in was
-  deliberately left unscanned and the scan completed immediately with a
-  sandbox-host-unavailable warning. The Windows packaging script now validates
-  the staged install contains both executables before creating the MSI.
-
 ## [0.12.6] - 2026-07-25
 
 Beta patch on the 0.12 line: manual recording latency compensation for
@@ -38,6 +24,12 @@ interfaces that misreport their round-trip latency.
 
 ### Fixed
 
+- **Windows plug-in scanning.** The MSI omitted
+  `dusk-studio-plugin-host.exe` from CMake's install set, so every third-party
+  plug-in went unscanned and the scan finished immediately with a
+  sandbox-host-unavailable warning. The helper now ships beside the main
+  application, and the packaging script fails the build if either executable
+  is missing from the staged install.
 - **Stream leak** when WAV writer creation failed at record start.
 - **Import races** in the region editor.
 - **Device restarts.** A pending DSP restart now defers to transport stop and
