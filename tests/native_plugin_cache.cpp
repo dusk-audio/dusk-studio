@@ -35,18 +35,29 @@ TEST_CASE ("native plugin cache round-trips descriptors and prunes stale locatio
 
 TEST_CASE ("native plugin cache malformed schema never throws or mutates output")
 {
-    std::vector<PluginDescriptor> parsed { descriptorAt ("/keep.clap") };
-    CHECK_FALSE (nativecache::parse (R"({"version":"1"})", {}, parsed));
-    REQUIRE (parsed.size() == 1);
-    CHECK (parsed.front().location == "/keep.clap");
-
-    CHECK_FALSE (nativecache::parse (R"({"version":1,"descriptors":{}})", {}, parsed));
-    REQUIRE (parsed.size() == 1);
-    CHECK (parsed.front().location == "/keep.clap");
-
-    CHECK_FALSE (nativecache::parse (R"({"version":-1,"descriptors":[]})", {}, parsed));
-    REQUIRE (parsed.size() == 1);
-    CHECK (parsed.front().location == "/keep.clap");
+    SECTION ("version has the wrong type")
+    {
+        std::vector<PluginDescriptor> parsed { descriptorAt ("/keep.clap") };
+        CHECK_FALSE (nativecache::parse (R"({"version":"1"})", {}, parsed));
+        REQUIRE (parsed.size() == 1);
+        CHECK (parsed.front().location == "/keep.clap");
+    }
+    SECTION ("descriptors has the wrong shape")
+    {
+        std::vector<PluginDescriptor> parsed { descriptorAt ("/keep.clap") };
+        CHECK_FALSE (nativecache::parse (
+            R"({"version":1,"descriptors":{}})", {}, parsed));
+        REQUIRE (parsed.size() == 1);
+        CHECK (parsed.front().location == "/keep.clap");
+    }
+    SECTION ("version is unsupported")
+    {
+        std::vector<PluginDescriptor> parsed { descriptorAt ("/keep.clap") };
+        CHECK_FALSE (nativecache::parse (
+            R"({"version":-1,"descriptors":[]})", {}, parsed));
+        REQUIRE (parsed.size() == 1);
+        CHECK (parsed.front().location == "/keep.clap");
+    }
 }
 
 TEST_CASE ("native plugin cache skips malformed descriptor rows best-effort")

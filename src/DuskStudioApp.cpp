@@ -2079,13 +2079,20 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
                 juce::String scanErr;
                 auto probe = mgr.createPluginInstance (juce::File (pathA),
                                                           sampleRate, blockSize, scanErr);
-                if (probe != nullptr)
+                if (probe == nullptr)
+                {
+                    err = scanErr;
+                    std::fprintf (stderr, "FAIL: swap B->A re-resolve: %s\n",
+                                  err.toRawUTF8());
+                }
+                else
                 {
                     descA = mgr.descriptorForInstance (*probe);
                     probe.reset();
+                    if (! slot.loadFromDescriptor (descA, err))
+                        std::fprintf (stderr, "FAIL: swap B->A: %s\n",
+                                      err.toRawUTF8());
                 }
-                if (! slot.loadFromDescriptor (descA, err))
-                    std::fprintf (stderr, "FAIL: swap B->A: %s\n", err.toRawUTF8());
             }
         }
         std::fprintf (stdout, "[Replace] survived 200 blocks across two swaps.\n");

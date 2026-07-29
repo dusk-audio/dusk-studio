@@ -257,9 +257,9 @@ void PluginSlot::clearAutoBypass() noexcept
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     // Clearing crashed state too: if the user explicitly asks to
     // re-enable a crashed slot, drop the dead connection so the next
-    // load (or processBlock attempt) doesn't see a stale carcass. The
-    // Same deferred-destruction shape as the
-    // swap paths: hand off into previousRemote so any audio block
+    // load (or processBlock attempt) doesn't see a stale carcass. Use the
+    // same deferred-destruction shape as the swap paths: hand off
+    // into previousRemote so any audio block
     // that's still holding a freshly-null'd currentRemote pointer
     // can complete safely.
     if (remoteCrashed.load (std::memory_order_relaxed))
@@ -476,14 +476,15 @@ void PluginSlot::setOfflineForCapture (const juce::String& displayName)
         offlineDescriptor.reset();
         offlineLegacyDescriptionXml.clear();
         offlineStateBase64.clear();
+        offlineCapturePlaceholder = false;
         return;
     }
     PluginDescriptor descriptor;
     descriptor.name = displayName.toStdString();
-    descriptor.formatName = "VST3";
     offlineDescriptor = std::move (descriptor);
     offlineLegacyDescriptionXml.clear();
     offlineStateBase64.clear();
+    offlineCapturePlaceholder = true;
 }
 
 #if defined(DUSKSTUDIO_TESTS)
@@ -602,6 +603,7 @@ bool PluginSlot::loadFromFile (const juce::File& pluginFile, juce::String& error
     offlineDescriptor.reset();
     offlineLegacyDescriptionXml.clear();
     offlineStateBase64.clear();
+    offlineCapturePlaceholder = false;
     lastKnownStateBase64.clear();
     return true;
 }
@@ -739,6 +741,7 @@ bool PluginSlot::loadFromDescriptor (const PluginDescriptor& descriptor,
                     offlineDescriptor.reset();
                     offlineLegacyDescriptionXml.clear();
                     offlineStateBase64.clear();
+                    offlineCapturePlaceholder = false;
                     lastKnownStateBase64.clear();
                     return true;
                 }
@@ -805,6 +808,7 @@ bool PluginSlot::installInProcessInstance (std::unique_ptr<juce::AudioPluginInst
     offlineDescriptor.reset();
     offlineLegacyDescriptionXml.clear();
     offlineStateBase64.clear();
+    offlineCapturePlaceholder = false;
     lastKnownStateBase64.clear();
     return true;
 }
@@ -958,6 +962,7 @@ void PluginSlot::unload()
     offlineDescriptor.reset();
     offlineLegacyDescriptionXml.clear();
     offlineStateBase64.clear();
+    offlineCapturePlaceholder = false;
     lastKnownStateBase64.clear();
 }
 
@@ -966,12 +971,15 @@ std::optional<PluginDescriptor> PluginSlot::getDescriptorForSave (int parkSleepM
     juce::ignoreUnused (parkSleepMs);
     if (loadedDescriptor.has_value())
         return loadedDescriptor;
+    if (offlineCapturePlaceholder)
+        return std::nullopt;
     return offlineDescriptor;
 }
 
 juce::String PluginSlot::getLegacyDescriptionXmlForSave() const
 {
-    if (loadedDescriptor.has_value() || offlineDescriptor.has_value())
+    if (loadedDescriptor.has_value()
+        || (offlineDescriptor.has_value() && ! offlineCapturePlaceholder))
         return {};
     return offlineLegacyDescriptionXml;
 }
@@ -1104,6 +1112,7 @@ bool PluginSlot::restoreFromSavedState (
         offlineDescriptor.reset();
         offlineLegacyDescriptionXml = legacyDescriptionXml;
         offlineStateBase64 = stateBase64;
+        offlineCapturePlaceholder = false;
         errorMessage = "Saved plugin description is not valid legacy XML";
         return false;
     }
@@ -1113,6 +1122,7 @@ bool PluginSlot::restoreFromSavedState (
     offlineDescriptor = persistedDescriptor;
     offlineLegacyDescriptionXml.clear();
     offlineStateBase64 = stateBase64;
+    offlineCapturePlaceholder = false;
     lastKnownStateBase64 = stateBase64;
 
     // Try the OOP path first if enabled. On any failure we fall through
@@ -1145,6 +1155,7 @@ bool PluginSlot::restoreFromSavedState (
             offlineDescriptor.reset();
             offlineLegacyDescriptionXml.clear();
             offlineStateBase64.clear();
+            offlineCapturePlaceholder = false;
             lastKnownStateBase64 = stateBase64;
             return true;
         }
@@ -1209,6 +1220,7 @@ bool PluginSlot::restoreFromSavedState (
     offlineDescriptor.reset();
     offlineLegacyDescriptionXml.clear();
     offlineStateBase64.clear();
+    offlineCapturePlaceholder = false;
     lastKnownStateBase64 = stateBase64;
     return true;
 }

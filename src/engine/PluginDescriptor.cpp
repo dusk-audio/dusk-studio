@@ -62,10 +62,10 @@ bool readOptionalInteger (const nlohmann::json& object, const char* key, T& valu
 }
 } // namespace
 
-std::string PluginDescriptor::toJson() const
+nlohmann::ordered_json PluginDescriptor::toJsonObject() const
 {
     const auto backendName = backend == PluginBackend::Native ? "native" : "juce_legacy";
-    const nlohmann::ordered_json value {
+    return {
         { "version", kDescriptorVersion },
         { "name", name },
         { "descriptive_name", descriptiveName },
@@ -86,58 +86,90 @@ std::string PluginDescriptor::toJson() const
         { "has_shared_container", hasSharedContainer },
         { "has_ara_extension", hasAraExtension }
     };
-    return value.dump (-1, ' ', false,
-                       nlohmann::ordered_json::error_handler_t::replace);
 }
 
-bool PluginDescriptor::fromJson (const std::string& source, PluginDescriptor& out)
+std::string PluginDescriptor::toJson() const
 {
-    const auto value = nlohmann::json::parse (source, nullptr, false);
-    if (! value.is_object())
-        return false;
+    return toJsonObject().dump (
+        -1, ' ', false, nlohmann::ordered_json::error_handler_t::replace);
+}
 
-    const auto versionIt = value.find ("version");
-    const auto backendIt = value.find ("backend");
-    if (versionIt == value.end()
-        || (! versionIt->is_number_integer() && ! versionIt->is_number_unsigned())
-        || backendIt == value.end() || ! backendIt->is_string())
-        return false;
+bool PluginDescriptor::fromJsonObject (
+    const nlohmann::json& object, PluginDescriptor& out) noexcept
+{
+    try
+    {
+        if (! object.is_object())
+            return false;
 
-    PluginDescriptor parsed;
-    int descriptorVersion = 0;
-    if (! readOptionalInteger (value, "version", descriptorVersion)
-        || descriptorVersion != kDescriptorVersion)
-        return false;
+        const auto versionIt = object.find ("version");
+        const auto backendIt = object.find ("backend");
+        if (versionIt == object.end()
+            || (! versionIt->is_number_integer()
+                && ! versionIt->is_number_unsigned())
+            || backendIt == object.end() || ! backendIt->is_string())
+            return false;
 
-    const auto backendName = backendIt->get<std::string>();
-    if (backendName == "native")
-        parsed.backend = PluginBackend::Native;
-    else if (backendName == "juce_legacy")
-        parsed.backend = PluginBackend::JuceLegacy;
-    else
-        return false;
+        PluginDescriptor parsed;
+        int descriptorVersion = 0;
+        if (! readOptionalInteger (object, "version", descriptorVersion)
+            || descriptorVersion != kDescriptorVersion)
+            return false;
 
-    if (! readOptionalString (value, "name", parsed.name)
-        || ! readOptionalString (value, "descriptive_name", parsed.descriptiveName)
-        || ! readOptionalString (value, "manufacturer", parsed.manufacturer)
-        || ! readOptionalString (value, "category", parsed.category)
-        || ! readOptionalString (value, "plugin_version", parsed.version)
-        || ! readOptionalString (value, "format_name", parsed.formatName)
-        || ! readOptionalString (value, "location", parsed.location)
-        || ! readOptionalString (value, "plugin_id", parsed.pluginId)
-        || ! readOptionalInteger (value, "unique_id", parsed.uniqueId)
-        || ! readOptionalInteger (value, "deprecated_uid", parsed.deprecatedUid)
-        || ! readOptionalInteger (value, "num_input_channels", parsed.numInputChannels)
-        || ! readOptionalInteger (value, "num_output_channels", parsed.numOutputChannels)
-        || ! readOptionalInteger (value, "last_file_modification_ms", parsed.lastFileModificationMs)
-        || ! readOptionalInteger (value, "last_info_update_ms", parsed.lastInfoUpdateMs)
-        || ! readOptionalBool (value, "is_instrument", parsed.isInstrument)
-        || ! readOptionalBool (value, "has_shared_container", parsed.hasSharedContainer)
-        || ! readOptionalBool (value, "has_ara_extension", parsed.hasAraExtension))
-        return false;
+        const auto backendName = backendIt->get<std::string>();
+        if (backendName == "native")
+            parsed.backend = PluginBackend::Native;
+        else if (backendName == "juce_legacy")
+            parsed.backend = PluginBackend::JuceLegacy;
+        else
+            return false;
 
-    out = std::move (parsed);
-    return true;
+        if (! readOptionalString (object, "name", parsed.name)
+            || ! readOptionalString (
+                object, "descriptive_name", parsed.descriptiveName)
+            || ! readOptionalString (
+                object, "manufacturer", parsed.manufacturer)
+            || ! readOptionalString (object, "category", parsed.category)
+            || ! readOptionalString (
+                object, "plugin_version", parsed.version)
+            || ! readOptionalString (
+                object, "format_name", parsed.formatName)
+            || ! readOptionalString (object, "location", parsed.location)
+            || ! readOptionalString (object, "plugin_id", parsed.pluginId)
+            || ! readOptionalInteger (object, "unique_id", parsed.uniqueId)
+            || ! readOptionalInteger (
+                object, "deprecated_uid", parsed.deprecatedUid)
+            || ! readOptionalInteger (
+                object, "num_input_channels", parsed.numInputChannels)
+            || ! readOptionalInteger (
+                object, "num_output_channels", parsed.numOutputChannels)
+            || ! readOptionalInteger (
+                object, "last_file_modification_ms",
+                parsed.lastFileModificationMs)
+            || ! readOptionalInteger (
+                object, "last_info_update_ms", parsed.lastInfoUpdateMs)
+            || ! readOptionalBool (
+                object, "is_instrument", parsed.isInstrument)
+            || ! readOptionalBool (
+                object, "has_shared_container", parsed.hasSharedContainer)
+            || ! readOptionalBool (
+                object, "has_ara_extension", parsed.hasAraExtension))
+            return false;
+
+        out = std::move (parsed);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+bool PluginDescriptor::fromJson (
+    const std::string& source, PluginDescriptor& out)
+{
+    const auto object = nlohmann::json::parse (source, nullptr, false);
+    return fromJsonObject (object, out);
 }
 
 PluginDescriptor mergeLoadedPluginDescriptor (

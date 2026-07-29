@@ -91,7 +91,7 @@ TEST_CASE ("PluginManager imports a legacy native XML cache once and prunes stal
         root.toString (juce::XmlElement::TextFormat().singleLine()),
         [] (const juce::File& location)
         {
-            return location.getFullPathName() == "/plugins/present.lv2";
+            return location.getFileName() == "present.lv2";
         });
 
     REQUIRE (imported.size() == 1);
@@ -115,23 +115,32 @@ TEST_CASE ("PluginManager falls back from malformed native JSON without erasing 
         juce::XmlElement::TextFormat().singleLine());
     const auto locationExists = [] (const juce::File&) { return true; };
 
-    std::vector<PluginDescriptor> loaded { completeDescriptor() };
-    REQUIRE (PluginManager::loadNativeCacheSourcesForTest (
-        std::string ("{not json"), legacyXml, locationExists, loaded));
-    REQUIRE (loaded.size() == 1);
-    CHECK (loaded.front().name == "Legacy fallback");
-    CHECK (loaded.front().pluginId == "https://dusk.audio/fallback");
+    SECTION ("malformed JSON falls back to legacy XML")
+    {
+        std::vector<PluginDescriptor> loaded { completeDescriptor() };
+        REQUIRE (PluginManager::loadNativeCacheSourcesForTest (
+            std::string ("{not json"), legacyXml, locationExists, loaded));
+        REQUIRE (loaded.size() == 1);
+        CHECK (loaded.front().name == "Legacy fallback");
+        CHECK (loaded.front().pluginId == "https://dusk.audio/fallback");
+    }
 
-    loaded = { completeDescriptor() };
-    CHECK_FALSE (PluginManager::loadNativeCacheSourcesForTest (
-        std::string ("{not json"), juce::String ("<broken"),
-        locationExists, loaded));
-    REQUIRE (loaded.size() == 1);
-    CHECK (loaded.front() == completeDescriptor());
+    SECTION ("failed JSON and XML preserve the existing cache")
+    {
+        std::vector<PluginDescriptor> loaded { completeDescriptor() };
+        CHECK_FALSE (PluginManager::loadNativeCacheSourcesForTest (
+            std::string ("{not json"), juce::String ("<broken"),
+            locationExists, loaded));
+        REQUIRE (loaded.size() == 1);
+        CHECK (loaded.front() == completeDescriptor());
+    }
 
-    loaded = { completeDescriptor() };
-    REQUIRE (PluginManager::loadNativeCacheSourcesForTest (
-        std::string (R"({"version":1,"descriptors":[]})"),
-        legacyXml, locationExists, loaded));
-    CHECK (loaded.empty());
+    SECTION ("valid empty JSON overrides legacy XML")
+    {
+        std::vector<PluginDescriptor> loaded { completeDescriptor() };
+        REQUIRE (PluginManager::loadNativeCacheSourcesForTest (
+            std::string (R"({"version":1,"descriptors":[]})"),
+            legacyXml, locationExists, loaded));
+        CHECK (loaded.empty());
+    }
 }

@@ -39,15 +39,16 @@ inline std::string toStd (const juce::String& s) { return s.toStdString(); }
 
 inline JObj descriptorToObject (const PluginDescriptor& descriptor)
 {
-    return JObj::parse (descriptor.toJson());
+    return descriptor.toJsonObject();
 }
 
-inline std::optional<PluginDescriptor> descriptorFromObject (const nlohmann::json& value)
+inline std::optional<PluginDescriptor> descriptorFromObject (
+    const nlohmann::json& value) noexcept
 {
     PluginDescriptor descriptor;
-    if (! PluginDescriptor::fromJson (value.dump(), descriptor))
-        return std::nullopt;
-    return descriptor;
+    if (PluginDescriptor::fromJsonObject (value, descriptor))
+        return descriptor;
+    return std::nullopt;
 }
 
 // Bump whenever the JSON shape gains a NEW required field or changes
@@ -1647,7 +1648,8 @@ juce::String SessionSerializer::serialize (const Session& s)
     tport["oversampling_factor"] = s.oversamplingFactor.load();
     root["transport"] = std::move (tport);
 
-    return juce::String (root.dump (2));
+    return juce::String (root.dump (
+        2, ' ', false, JObj::error_handler_t::replace));
 }
 
 bool SessionSerializer::writeAtomic (const juce::File& target, const juce::String& json)

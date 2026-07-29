@@ -1,19 +1,20 @@
 #pragma once
 
-#include "PluginDescriptor.h"
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
+
+#include "PluginDescriptor.h"
 #include "../foundation/MessageThread.h"
+
+#if DUSKSTUDIO_HAS_OOP_PLUGINS
+ #include "ipc/RemotePluginConnection.h"
+#endif
+
 #include <array>
 #include <atomic>
 #include <functional>
 #include <memory>
 #include <optional>
-
-#if DUSKSTUDIO_HAS_OOP_PLUGINS
- #include "ipc/RemotePluginConnection.h"
- #include <memory>
-#endif
 
 namespace duskstudio
 {
@@ -357,6 +358,7 @@ private:
     std::optional<PluginDescriptor> offlineDescriptor;
     juce::String offlineLegacyDescriptionXml;
     juce::String offlineStateBase64;
+    bool offlineCapturePlaceholder { false };
     juce::String lastKnownStateBase64;
 
    #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS

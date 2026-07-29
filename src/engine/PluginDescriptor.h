@@ -1,5 +1,7 @@
 #pragma once
 
+#include <nlohmann/json.hpp>
+
 #include <cstdint>
 #include <string>
 
@@ -32,6 +34,9 @@ struct PluginDescriptor
     bool hasSharedContainer { false };
     bool hasAraExtension { false };
 
+    nlohmann::ordered_json toJsonObject() const;
+    static bool fromJsonObject (const nlohmann::json& object,
+                                PluginDescriptor& out) noexcept;
     std::string toJson() const;
     static bool fromJson (const std::string& source, PluginDescriptor& out);
 

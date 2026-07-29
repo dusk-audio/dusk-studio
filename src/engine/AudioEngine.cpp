@@ -230,24 +230,20 @@ static void migrateLegacyMultisampleTrack (Track& track, PluginManager& manager)
     if (track.nativeMultisamplePath.isNotEmpty())
         return;
 
-    if (! track.pluginDescriptor.has_value()
-        && track.pluginLegacyDescriptionXml.isNotEmpty())
+    auto descriptor = track.pluginDescriptor;
+    if (! descriptor.has_value() && track.pluginLegacyDescriptionXml.isNotEmpty())
     {
         PluginDescriptor converted;
         if (manager.descriptorFromLegacyXml (track.pluginLegacyDescriptionXml, converted))
-        {
-            track.pluginDescriptor = std::move (converted);
-            track.pluginLegacyDescriptionXml.clear();
-        }
+            descriptor = std::move (converted);
     }
-    if (! track.pluginDescriptor.has_value()
-        || track.pluginDescriptor->formatName != "DuskMultisample")
+    if (! descriptor.has_value() || descriptor->formatName != "DuskMultisample")
         return;
     // No soundfont named: leave the legacy pair alone rather than clearing it -
     // wiping it here would destroy the blob on the next save and restore nothing.
-    if (track.pluginDescriptor->location.empty()) return;
+    if (descriptor->location.empty()) return;
 
-    track.nativeMultisamplePath        = track.pluginDescriptor->location;
+    track.nativeMultisamplePath        = descriptor->location;
     track.nativeMultisampleStateBase64 = track.pluginStateBase64;
     track.pluginDescriptor.reset();
     track.pluginLegacyDescriptionXml.clear();

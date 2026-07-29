@@ -1,7 +1,9 @@
 #pragma once
 
-#include "../engine/PluginDescriptor.h"
 #include <juce_gui_basics/juce_gui_basics.h>
+
+#include "../engine/PluginDescriptor.h"
+
 #include <functional>
 #include <vector>
 

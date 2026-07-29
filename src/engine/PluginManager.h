@@ -1,8 +1,9 @@
 #pragma once
 
+#include <juce_audio_processors/juce_audio_processors.h>
+
 #include "PluginDescriptor.h"
 
-#include <juce_audio_processors/juce_audio_processors.h>
 #include <atomic>
 #include <functional>
 #include <optional>

@@ -55,10 +55,11 @@ merges. Read `docs/dejuce-campaign.md` + the memory ledger first.
 - OOP host: JUCE audio path only + native scan sandbox (clap/vst3). After
   the drop it keeps only scanning; its juce_events dispatch loop goes with
   the JUCE path (also closes the events-tower out-of-scope items).
-- Deletion surface: was 36 files typed against AudioProcessor /
-  AudioPluginInstance / PluginDescription / KnownPluginList outside the
-  native dirs; H1 and H3 removed several (tape donor, multisample format
-  wrapper) — the table is stale, RE-SCOUT at H4 kickoff.
+- Deletion surface: the completed post-H3 H4 re-scout covered the picker and
+  helpers, native scan rows and caches, session references, scan wire format,
+  screenshot fixtures, restore paths, and MIDI bindings. H4 moved descriptor
+  plumbing to the Dusk type; the remaining processor/editor ownership stays
+  explicitly deferred to H6.
 
 ## Phases
 

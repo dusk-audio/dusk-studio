@@ -2,6 +2,8 @@
 
 #include "engine/PluginDescriptor.h"
 
+#include <nlohmann/json.hpp>
+
 using namespace duskstudio;
 
 TEST_CASE ("plugin descriptor supplies defaults for missing optional fields")
@@ -20,25 +22,62 @@ TEST_CASE ("plugin descriptor rejects malformed input without mutation")
 {
     PluginDescriptor descriptor;
     descriptor.name = "keep";
-    CHECK_FALSE (PluginDescriptor::fromJson ("[]", descriptor));
-    CHECK_FALSE (PluginDescriptor::fromJson (
-        R"({"version":1,"backend":"alien"})", descriptor));
-    CHECK_FALSE (PluginDescriptor::fromJson (
-        R"({"version":1,"backend":"native","unique_id":"bad"})", descriptor));
-    CHECK_FALSE (PluginDescriptor::fromJson (
-        R"({"version":1,"backend":"native","unique_id":1.5})", descriptor));
-    CHECK_FALSE (PluginDescriptor::fromJson (
-        R"({"version":1,"backend":"native","unique_id":2147483648})", descriptor));
-    CHECK_FALSE (PluginDescriptor::fromJson (
-        R"({"version":1,"backend":"native","deprecated_uid":-2147483649})", descriptor));
-    CHECK_FALSE (PluginDescriptor::fromJson (
-        R"({"version":1,"backend":"native","last_info_update_ms":9223372036854775808})",
-        descriptor));
-    CHECK_FALSE (PluginDescriptor::fromJson (
-        R"({"version":1,"backend":"native","num_input_channels":true})", descriptor));
-    CHECK_FALSE (PluginDescriptor::fromJson (
-        R"({"version":1,"backend":"native","is_instrument":1})", descriptor));
-    CHECK (descriptor.name == "keep");
+    SECTION ("top-level array")
+    {
+        CHECK_FALSE (PluginDescriptor::fromJson ("[]", descriptor));
+        CHECK (descriptor.name == "keep");
+    }
+    SECTION ("unknown backend")
+    {
+        CHECK_FALSE (PluginDescriptor::fromJson (
+            R"({"version":1,"backend":"alien"})", descriptor));
+        CHECK (descriptor.name == "keep");
+    }
+    SECTION ("string integer field")
+    {
+        CHECK_FALSE (PluginDescriptor::fromJson (
+            R"({"version":1,"backend":"native","unique_id":"bad"})", descriptor));
+        CHECK (descriptor.name == "keep");
+    }
+    SECTION ("fractional integer field")
+    {
+        CHECK_FALSE (PluginDescriptor::fromJson (
+            R"({"version":1,"backend":"native","unique_id":1.5})", descriptor));
+        CHECK (descriptor.name == "keep");
+    }
+    SECTION ("positive 32-bit overflow")
+    {
+        CHECK_FALSE (PluginDescriptor::fromJson (
+            R"({"version":1,"backend":"native","unique_id":2147483648})", descriptor));
+        CHECK (descriptor.name == "keep");
+    }
+    SECTION ("negative 32-bit overflow")
+    {
+        CHECK_FALSE (PluginDescriptor::fromJson (
+            R"({"version":1,"backend":"native","deprecated_uid":-2147483649})",
+            descriptor));
+        CHECK (descriptor.name == "keep");
+    }
+    SECTION ("64-bit overflow")
+    {
+        CHECK_FALSE (PluginDescriptor::fromJson (
+            R"({"version":1,"backend":"native","last_info_update_ms":9223372036854775808})",
+            descriptor));
+        CHECK (descriptor.name == "keep");
+    }
+    SECTION ("boolean integer field")
+    {
+        CHECK_FALSE (PluginDescriptor::fromJson (
+            R"({"version":1,"backend":"native","num_input_channels":true})",
+            descriptor));
+        CHECK (descriptor.name == "keep");
+    }
+    SECTION ("integer boolean field")
+    {
+        CHECK_FALSE (PluginDescriptor::fromJson (
+            R"({"version":1,"backend":"native","is_instrument":1})", descriptor));
+        CHECK (descriptor.name == "keep");
+    }
 }
 
 TEST_CASE ("plugin descriptor preserves every field and unknown format names")
@@ -63,9 +102,40 @@ TEST_CASE ("plugin descriptor preserves every field and unknown format names")
     descriptor.hasSharedContainer = true;
     descriptor.hasAraExtension = true;
 
-    PluginDescriptor restored;
-    REQUIRE (PluginDescriptor::fromJson (descriptor.toJson(), restored));
-    CHECK (restored == descriptor);
+    SECTION ("object API")
+    {
+        const auto object = descriptor.toJsonObject();
+        REQUIRE (object.is_object());
+        REQUIRE_FALSE (object.empty());
+        CHECK (object.begin().key() == "version");
+        CHECK (object.rbegin().key() == "has_ara_extension");
+
+        PluginDescriptor restored;
+        const nlohmann::json objectForRead = object;
+        REQUIRE (PluginDescriptor::fromJsonObject (objectForRead, restored));
+        CHECK (restored == descriptor);
+    }
+
+    SECTION ("string compatibility API")
+    {
+        PluginDescriptor restored;
+        REQUIRE (PluginDescriptor::fromJson (descriptor.toJson(), restored));
+        CHECK (restored == descriptor);
+    }
+}
+
+TEST_CASE ("plugin descriptor object API rejects malformed data without mutation")
+{
+    PluginDescriptor descriptor;
+    descriptor.name = "keep";
+    const nlohmann::json malformed {
+        { "version", 1 },
+        { "backend", "native" },
+        { "is_instrument", 1 }
+    };
+
+    CHECK_FALSE (PluginDescriptor::fromJsonObject (malformed, descriptor));
+    CHECK (descriptor.name == "keep");
 }
 
 TEST_CASE ("plugin descriptor replaces invalid UTF-8 while serializing")

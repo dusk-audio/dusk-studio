@@ -15,10 +15,7 @@ inline constexpr std::string_view kPayloadEnd   = "==DUSK_SCAN_END==";
 
 inline bool formatRequiresSandbox (std::string_view formatName)
 {
-    return formatName == "VST3"
-        || formatName == "LV2"
-        || formatName == "AudioUnit"
-        || formatName == "VST";
+    return formatName != "DuskMultisample";
 }
 
 inline std::string makePayload (const std::vector<PluginDescriptor>& found)

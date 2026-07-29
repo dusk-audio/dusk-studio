@@ -18,9 +18,10 @@ namespace duskstudio::nativescan
 inline void appendClapRows (const std::filesystem::path& bundle,
                             std::vector<PluginDescriptor>& into)
 {
+    const auto bundlePath = bundle.u8string();
     clap::ClapBundle loaded;
     std::string error;
-    if (! loaded.load (bundle.string(), error))
+    if (! loaded.load (bundlePath, error))
         return;
     for (const auto& plugin : loaded.plugins())
     {
@@ -30,7 +31,7 @@ inline void appendClapRows (const std::filesystem::path& bundle,
         descriptor.version = plugin.version;
         descriptor.formatName = "CLAP";
         descriptor.backend = PluginBackend::Native;
-        descriptor.location = bundle.string();
+        descriptor.location = bundlePath;
         descriptor.pluginId = plugin.id;
         descriptor.isInstrument = plugin.isInstrument();
         into.push_back (std::move (descriptor));
@@ -42,9 +43,10 @@ inline void appendClapRows (const std::filesystem::path& bundle,
 inline void appendVst3Rows (const std::filesystem::path& bundle,
                             std::vector<PluginDescriptor>& into)
 {
+    const auto bundlePath = bundle.u8string();
     vst3::Vst3Bundle loaded;
     std::string error;
-    if (! loaded.load (bundle.string(), error))
+    if (! loaded.load (bundlePath, error))
         return;
     for (const auto& plugin : loaded.plugins())
     {
@@ -54,7 +56,7 @@ inline void appendVst3Rows (const std::filesystem::path& bundle,
         descriptor.version = plugin.version;
         descriptor.formatName = "VST3";
         descriptor.backend = PluginBackend::Native;
-        descriptor.location = bundle.string();
+        descriptor.location = bundlePath;
         descriptor.pluginId = plugin.id;
         descriptor.isInstrument = plugin.isInstrument;
         into.push_back (std::move (descriptor));

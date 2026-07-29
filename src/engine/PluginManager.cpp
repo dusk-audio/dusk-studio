@@ -169,10 +169,10 @@ public:
                              juce::OwnedArray<juce::PluginDescription>& result,
                              const juce::String& fileOrIdentifier) override
     {
-        // In-house formats are our own code and can't crash the host, so scan
-        // them in-process. Third-party binary formats are sandboxed - and for
-        // those we NEVER fall back to in-process: an unauthorized or crashy
-        // plugin scanned in-process takes down the whole app (issue #45).
+        // DuskMultisample is trusted in-house code and scans in-process. Every
+        // other format, including an unrecognized future format, is sandboxed.
+        // We NEVER fall back to in-process: an unauthorized or crashy plugin
+        // scanned in-process takes down the whole app (issue #45).
         if (! scanproto::formatRequiresSandbox (format.getName().toStdString()))
         {
             format.findAllTypesForFile (result, fileOrIdentifier);

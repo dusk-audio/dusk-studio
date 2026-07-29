@@ -181,9 +181,10 @@ H4 does not change which host processes audio or which native rung wins.
 - AI-slop sweep the complete diff: remove change-narration comments,
   duplicated conversion helpers, dead compatibility branches, and
   speculative abstractions. `git diff --check` must be clean.
-- Audit `MANUAL.md`. H4 is internal plumbing and should need no manual prose
-  change; if picker behavior or visible labels moved, stop and document the
-  user-visible change plus updated screenshot instead of assuming it away.
+- Audit `MANUAL.md`. Cache-format and path migration documentation is expected,
+  including JSON sidecar filenames and the legacy-XML import/fallback behavior.
+  If picker behavior or visible labels moved, stop and document the user-visible
+  change plus updated screenshot instead of assuming it away.
 - Commit only after the reviewer and fresh-eyes rounds are clear. Zero
   attribution trailers. Stop before push.
 

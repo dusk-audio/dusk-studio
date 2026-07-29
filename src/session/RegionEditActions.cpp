@@ -539,9 +539,9 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
 
     // Plugin: replay through the live slot.
     juce::String err;
-    engine.getStrip (idx).getPluginSlot().restoreFromSavedState (
-        s.plugin.descriptor, s.plugin.legacyDescriptionXml, s.plugin.stateBase64, err);
-    if (err.isNotEmpty())
+    if (! engine.getStrip (idx).getPluginSlot().restoreFromSavedState (
+            s.plugin.descriptor, s.plugin.legacyDescriptionXml,
+            s.plugin.stateBase64, err))
     {
         DBG ("CloneTrackAction: plugin restore failed on strip " << idx
               << ": " << err);

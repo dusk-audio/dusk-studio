@@ -192,8 +192,9 @@ int runIpcHostTest (const std::string& hostExecutablePath,
         std::fprintf (stderr, "FAIL: loadPlugin: %s\n", err.c_str());
         return 13;
     }
-    std::fprintf (stdout, "loaded: numIn=%d numOut=%d latency=%d\n",
-                  numIn, numOut, latency);
+    std::fprintf (stdout,
+                  "loaded: numIn=%d numOut=%d latency=%d isInstrument=%s\n",
+                  numIn, numOut, latency, isInstrument ? "true" : "false");
 
     // Some plugins are output-only (instruments, numIn=0). For those we
     // can still run processBlock - the child fills the input buffer

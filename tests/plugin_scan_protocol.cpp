@@ -37,21 +37,35 @@ TEST_CASE ("plugin scan protocol round-trips multiple descriptors")
 
 TEST_CASE ("plugin scan protocol distinguishes empty success from missing framing")
 {
-    const auto framed = scanproto::makePayload ({});
-    const auto payload = scanproto::extractPayload (framed);
-    REQUIRE_FALSE (payload.empty());
-    const auto parsed = scanproto::parsePayload (payload);
-    REQUIRE (parsed.has_value());
-    REQUIRE (parsed->empty());
-    REQUIRE (scanproto::extractPayload ("plugin output only").empty());
-    REQUIRE (scanproto::extractPayload (
-        R"scan({"version":1,"descriptors":[]}==DUSK_SCAN_END==)scan").empty());
-    REQUIRE (scanproto::extractPayload (
-        std::string (scanproto::kPayloadBegin) + "\n{}").empty());
-    REQUIRE (scanproto::extractPayload (
-        std::string (scanproto::kPayloadBegin) + "\n"
-        R"({"version":1,"descriptors":[]})"
-        "\n==DUSK_SCAN_EN").empty());
+    SECTION ("valid empty scan")
+    {
+        const auto payload = scanproto::extractPayload (scanproto::makePayload ({}));
+        REQUIRE_FALSE (payload.empty());
+        const auto parsed = scanproto::parsePayload (payload);
+        REQUIRE (parsed.has_value());
+        REQUIRE (parsed->empty());
+    }
+    SECTION ("no framing")
+    {
+        REQUIRE (scanproto::extractPayload ("plugin output only").empty());
+    }
+    SECTION ("end sentinel only")
+    {
+        REQUIRE (scanproto::extractPayload (
+            R"scan({"version":1,"descriptors":[]}==DUSK_SCAN_END==)scan").empty());
+    }
+    SECTION ("begin sentinel only")
+    {
+        REQUIRE (scanproto::extractPayload (
+            std::string (scanproto::kPayloadBegin) + "\n{}").empty());
+    }
+    SECTION ("truncated end sentinel")
+    {
+        REQUIRE (scanproto::extractPayload (
+            std::string (scanproto::kPayloadBegin) + "\n"
+            R"({"version":1,"descriptors":[]})"
+            "\n==DUSK_SCAN_EN").empty());
+    }
 }
 
 TEST_CASE ("plugin scan protocol ignores output before its begin sentinel")
@@ -68,12 +82,18 @@ TEST_CASE ("plugin scan protocol ignores output before its begin sentinel")
 
 TEST_CASE ("plugin scan protocol rejects malformed JSON without partial rows")
 {
-    const auto valid = makeDescriptor ("Valid", "/valid.vst3", "valid");
-    auto root = nlohmann::json::parse (scanproto::extractPayload (
-        scanproto::makePayload ({ valid })));
-    root["descriptors"].push_back ("not an object");
-    REQUIRE_FALSE (scanproto::parsePayload (root.dump()).has_value());
-    REQUIRE_FALSE (scanproto::parsePayload ("{not json").has_value());
+    SECTION ("malformed descriptor row")
+    {
+        const auto valid = makeDescriptor ("Valid", "/valid.vst3", "valid");
+        auto root = nlohmann::json::parse (scanproto::extractPayload (
+            scanproto::makePayload ({ valid })));
+        root["descriptors"].push_back ("not an object");
+        REQUIRE_FALSE (scanproto::parsePayload (root.dump()).has_value());
+    }
+    SECTION ("invalid raw JSON")
+    {
+        REQUIRE_FALSE (scanproto::parsePayload ("{not json").has_value());
+    }
 }
 
 TEST_CASE ("plugin scan protocol rejects an out-of-range schema version")
@@ -89,5 +109,5 @@ TEST_CASE ("plugin scan sandbox policy")
     CHECK (scanproto::formatRequiresSandbox ("AudioUnit"));
     CHECK (scanproto::formatRequiresSandbox ("VST"));
     CHECK_FALSE (scanproto::formatRequiresSandbox ("DuskMultisample"));
-    CHECK_FALSE (scanproto::formatRequiresSandbox ("UnknownFutureFormat"));
+    CHECK (scanproto::formatRequiresSandbox ("UnknownFutureFormat"));
 }

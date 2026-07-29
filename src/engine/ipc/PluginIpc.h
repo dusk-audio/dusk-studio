@@ -23,9 +23,9 @@ namespace duskstudio::ipc
 {
 
 constexpr std::uint32_t kMagic     = 0x46434C30;  // 'FCL0'
-constexpr std::uint32_t kVersion   = 1;
+constexpr std::uint32_t kVersion   = 2;
 constexpr int           kMaxBlock  = 1024;        // upper bound on numSamples per block
-constexpr int           kMaxChans  = 2;           // stereo plenty for v1
+constexpr int           kMaxChans  = 2;           // stereo plenty for this host
 constexpr std::size_t   kMidiBytes = 16 * 1024;   // serialised MIDI-block byte cap
 constexpr std::size_t   kStateBytes = 4 * 1024 * 1024; // up to 4 MB plugin state blob
 // Hard cap on a single control-socket payload. Legit payloads are small

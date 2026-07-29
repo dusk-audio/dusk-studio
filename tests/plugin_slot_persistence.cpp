@@ -5,6 +5,18 @@
 
 using namespace duskstudio;
 
+TEST_CASE ("PluginSlot capture placeholder is visible but never persisted")
+{
+    PluginSlot slot;
+    slot.setOfflineForCapture ("Screenshot Only");
+
+    CHECK (slot.isOffline());
+    CHECK (slot.getOfflineName() == "Screenshot Only");
+    CHECK_FALSE (slot.getDescriptorForSave (0).has_value());
+    CHECK (slot.getLegacyDescriptionXmlForSave().isEmpty());
+    CHECK (slot.getStateBase64ForSave (0).isEmpty());
+}
+
 TEST_CASE ("PluginSlot preserves identity and last-known state while temporarily inactive")
 {
     PluginDescriptor descriptor;
