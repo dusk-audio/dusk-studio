@@ -1908,15 +1908,20 @@ void AudioEngine::consumePluginStateAfterLoad()
                 // The swap destroys the outgoing instance - join its loader here,
                 // not with the audio thread parked (mirrors the teardown below).
                 strip.getNativeMultisampleSlot().drainPendingLoads();
+                suspendProcessing();
+                // Evict every other host and the outgoing soundfont whether or not
+                // the prime succeeded, so a failed restore can't leave the previous
+                // session's instrument playing (loadNativeClap does this inline).
+                strip.unloadNativeClap();
+                strip.unloadNativeLv2();
+                strip.unloadNativeVst3();
+                strip.unloadNativeMultisample();
                 bool ok = false;
-                if (primed)
-                {
-                    suspendProcessing();
-                    ok = strip.commitNativeMultisample (std::move (primed));
-                    resumeProcessing();
-                }
+                if (primed) ok = strip.commitNativeMultisample (std::move (primed));
+                resumeProcessing();
                 if (! ok)
                 {
+                    // Must follow the unload above, which clears the flag.
                     strip.markNativeMultisampleRestoreFailed();   // keep refs - see the CLAP twin
                     lastPluginLoadFailures.push_back ({
                         "Track " + juce::String (t + 1),

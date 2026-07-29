@@ -66,16 +66,18 @@ drops its juce_audio_processors link.
 
 ## Verify
 
-App build zero new warnings; gate must not rise (target: DROP — the format
-wrapper files leave src/ entirely; count the allowlist delta honestly);
-full ctest: multisample_state_roundtrip adapted to the INativeInstance
-surface (blob compat cases preserved — an old-format blob must load), other
-multisample tests untouched; tests/CMakeLists: multisample unit loses
-juce_audio_processors (and juce_gui_basics only if the editor TU allows —
-editor stays a juce Component, so gui_basics likely stays; be honest);
-selftest with a .sfz under Xvfb incl. restore-by-description path;
-screenshot harness unaffected (no multisample figure). AI-slop sweep.
-MANUAL.md: behavior identical — confirm, no edit expected.
+As built: app build zero new warnings; gate 183 -> 181 (the two deleted
+format-wrapper files leave src/ entirely); full ctest green —
+multisample_state_roundtrip runs against the INativeInstance surface with the
+blob-compat cases preserved (an old-format blob still loads), other
+multisample tests untouched; tests/CMakeLists: the multisample unit dropped
+BOTH juce_audio_processors AND juce_gui_basics — the final round pulled the
+editor / file-browser / combo-box sources out of the unit (nothing in the
+tests reaches them), so it links only audio_basics / audio_formats /
+data_structures / core / dsp / graphics; selftest 36 PASS under Xvfb with a
+.sfz incl. the restore-by-description path; screenshot harness unaffected (no
+multisample figure). AI-slop sweep done. MANUAL.md WAS edited: the soundfont
+route now names the picker's actual "Load Soundfont" button.
 
 ## Owed to Marc's bench
 

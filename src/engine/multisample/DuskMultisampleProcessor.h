@@ -7,6 +7,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -239,6 +240,11 @@ private:
     // still dereferences it). Declared after impl so member teardown can't
     // invert that order either.
     std::atomic<bool> loadPending { false };
+    // Bumped by cancelPendingLoads. A job that was already running when
+    // removeAllJobs returned still posts its completion; the captured
+    // generation lets that completion recognise it has been disowned instead
+    // of clearing a LATER load's pending flag and firing a stale onDone.
+    std::atomic<std::uint64_t> loadGeneration { 0 };
     juce::ThreadPool  loadPool { 1 };
 
     // A background load's completion is posted via dusk::callAsync,

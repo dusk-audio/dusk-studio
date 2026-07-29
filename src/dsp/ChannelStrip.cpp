@@ -589,6 +589,9 @@ bool ChannelStrip::loadNativeMultisample (const juce::File& soundfont, std::stri
 {
     if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
     { errorOut = "channel strip not prepared"; return false; }
+    // Join the outgoing instance's loader before anything destroys it - the
+    // two-phase callers do the same before their commit.
+    nativeMultisampleSlot.drainPendingLoads();
     // One host per insert - see loadNativeClap.
     unloadNativeClap();
     unloadNativeLv2();

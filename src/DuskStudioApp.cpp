@@ -637,42 +637,75 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
             std::fprintf (stderr, "FAIL: SessionSerializer::load returned false\n");
             return;
         }
-        // Verify the description was deserialised before we ask the
-        // engine to consume it. Empty here = the JSON didn't contain
-        // plugin_desc_xml, which is a session-file regression.
-        const auto& descXml = session->track (0).pluginDescriptionXml;
-        const auto& stateB64 = session->track (0).pluginStateBase64;
-        std::fprintf (stdout,
-                      "After SessionSerializer::load: track[0] descXml.len=%d  state.len=%d  "
-                      "descXml head=\"%.60s\"\n",
-                      descXml.length(), stateB64.length(),
-                      descXml.toRawUTF8());
-
-        // Call restoreFromSavedState DIRECTLY here (instead of going via
-        // engine->consumePluginStateAfterLoad) so we can see the error.
-        // The engine wraps the same call but routes failures into DBG,
-        // which is a no-op in release builds.
-        juce::String restoreErr;
-        const bool restored = engine->getStrip (0).getPluginSlot()
-            .restoreFromSavedState (descXml, stateB64, restoreErr);
-        if (! restored)
+        // A soundfont track leaves the JUCE slot empty by design, so its
+        // restore has to be reported off the native slot instead.
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+        const juce::String soundfontPath = session->track (0).nativeMultisamplePath;
+#else
+        const juce::String soundfontPath;
+#endif
+        if (soundfontPath.isNotEmpty())
         {
-            std::fprintf (stderr, "FAIL: restoreFromSavedState: %s\n",
-                          restoreErr.toRawUTF8());
+            std::fprintf (stdout,
+                          "After SessionSerializer::load: track[0] soundfont=\"%s\"  "
+                          "state.len=%d\n",
+                          soundfontPath.toRawUTF8(),
+                          session->track (0).nativeMultisampleStateBase64.length());
         }
         else
         {
+            // Verify the description was deserialised before we ask the
+            // engine to consume it. Empty here = the JSON didn't contain
+            // plugin_desc_xml, which is a session-file regression.
+            const auto& descXml = session->track (0).pluginDescriptionXml;
+            const auto& stateB64 = session->track (0).pluginStateBase64;
             std::fprintf (stdout,
-                          "restoreFromSavedState: ok (loaded=%d)\n",
-                          (int) engine->getStrip (0).getPluginSlot().isLoaded());
+                          "After SessionSerializer::load: track[0] descXml.len=%d  state.len=%d  "
+                          "descXml head=\"%.60s\"\n",
+                          descXml.length(), stateB64.length(),
+                          descXml.toRawUTF8());
+
+            // Call restoreFromSavedState DIRECTLY here (instead of going via
+            // engine->consumePluginStateAfterLoad) so we can see the error.
+            // The engine wraps the same call but routes failures into DBG,
+            // which is a no-op in release builds.
+            juce::String restoreErr;
+            const bool restored = engine->getStrip (0).getPluginSlot()
+                .restoreFromSavedState (descXml, stateB64, restoreErr);
+            if (! restored)
+            {
+                std::fprintf (stderr, "FAIL: restoreFromSavedState: %s\n",
+                              restoreErr.toRawUTF8());
+            }
+            else
+            {
+                std::fprintf (stdout,
+                              "restoreFromSavedState: ok (loaded=%d)\n",
+                              (int) engine->getStrip (0).getPluginSlot().isLoaded());
+            }
         }
 
         // Run the rest of the engine's after-load housekeeping (other
         // tracks, aux-lane plugins, master tape state) - just call the
         // public consume method; track 0 will be re-restored as a no-op
-        // since restoreFromSavedState is idempotent.
+        // since restoreFromSavedState is idempotent. The soundfont rung is
+        // restored here and nowhere else.
         engine->consumePluginStateAfterLoad();
         engine->consumeTransportStateAfterLoad();
+
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+        if (soundfontPath.isNotEmpty())
+        {
+            auto& msStrip = engine->getStrip (0);
+            if (msStrip.isNativeMultisampleLoaded())
+                std::fprintf (stdout, "multisample restore: ok (soundfont=\"%s\")\n",
+                              msStrip.getNativeMultisampleSlot()
+                                     .getLoadedSoundfontPath().c_str());
+            else
+                std::fprintf (stderr, "FAIL: multisample restore (restoreFailed=%d)\n",
+                              (int) msStrip.nativeMultisampleReloadFailed());
+        }
+#endif
         // Re-prepare so the just-loaded plugin sees the right SR/BS.
         engine->prepareForSelfTest (sampleRate, blockSize);
     }
@@ -703,6 +736,16 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
         }
     }
 
+    // A soundfont hosts on the strip's native insert and leaves the JUCE slot
+    // empty by design, so "is anything loaded" has to ask both.
+    const auto insertLoaded = [&engine]
+    {
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+        if (engine->getStrip (0).isNativeMultisampleLoaded()) return true;
+#endif
+        return engine->getStrip (0).getPluginSlot().isLoaded();
+    };
+
     // Snapshot the relevant Track[0] + Master state so the user can see
     // exactly what we're testing against. This is what would be silencing
     // the strip if anything is misconfigured in the loaded session.
@@ -730,7 +773,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
                       t0.midiInputIdentifier.toRawUTF8(),
                       t0.midiChannel.load());
         std::fprintf (stdout, "  pluginLoaded=%d  pluginAutoBypassed=%d\n",
-                      (int) engine->getStrip (0).getPluginSlot().isLoaded(),
+                      (int) insertLoaded(),
                       (int) engine->getStrip (0).getPluginSlot().wasAutoBypassed());
 
         std::fprintf (stdout, "--- Master state ---\n");
@@ -745,7 +788,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
         std::fprintf (stdout, "\n");
     }
 
-    if (! engine->getStrip (0).getPluginSlot().isLoaded())
+    if (! insertLoaded())
     {
         std::fprintf (stderr, "FAIL: track 0 has no plugin loaded after setup; aborting.\n");
         return;

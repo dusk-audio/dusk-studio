@@ -452,9 +452,15 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
 
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     auto& msSlot = engine.getStrip (idx).getNativeMultisampleSlot();
-    if (msSlot.isLoaded())
+    // The editor can clear the soundfont in place, leaving a loaded slot with no
+    // file - the live path decides, as in publishPluginStateForSave. applyTrack
+    // reads an empty path as "no multisample", so a blob captured beside one
+    // would be stranded.
+    const auto liveSoundfont = juce::String::fromUTF8 (
+        msSlot.isLoaded() ? msSlot.getLoadedSoundfontPath().c_str() : "");
+    if (liveSoundfont.isNotEmpty())
     {
-        s.multisamplePath = juce::String::fromUTF8 (msSlot.getLoadedSoundfontPath().c_str());
+        s.multisamplePath = liveSoundfont;
         msSlot.saveState (s.multisampleState);
     }
 #endif
@@ -562,12 +568,10 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
             // Two-phase: parse the soundfont off the engine gate, fence the swap
             // only (see NativeMultisampleSlot::prime).
             NativeMultisampleSlot::PrimedLoad primed;
+            std::string msErr;
             if (s.multisamplePath.isNotEmpty())
-            {
-                std::string msErr;
                 primed = strip.primeNativeMultisample (juce::File (s.multisamplePath),
                                                         msErr, &s.multisampleState);
-            }
             strip.getNativeMultisampleSlot().drainPendingLoads();
 
             engine.suspendProcessing();
@@ -576,10 +580,22 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
             else        strip.unloadNativeMultisample();
             engine.resumeProcessing();
 
-            t.nativeMultisamplePath = msLoaded ? s.multisamplePath : juce::String();
-            t.nativeMultisampleStateBase64 = (msLoaded && ! s.multisampleState.empty())
-                ? juce::Base64::toBase64 (s.multisampleState.data(), s.multisampleState.size())
-                : juce::String();
+            if (! msLoaded && s.multisamplePath.isNotEmpty())
+            {
+                // Keep the reference so a save right after the clone still
+                // round-trips it and the load can be retried, exactly like a
+                // failed restore in consumePluginStateAfterLoad.
+                strip.markNativeMultisampleRestoreFailed();
+                DBG ("CloneTrackAction: multisample restore failed on strip " << idx
+                      << " (" << s.multisamplePath << "): " << msErr.c_str());
+            }
+
+            // Path empty means the source had no multisample, so the state blob
+            // is empty too - the references clear on their own.
+            t.nativeMultisamplePath = s.multisamplePath;
+            t.nativeMultisampleStateBase64 = s.multisampleState.empty()
+                ? juce::String()
+                : juce::Base64::toBase64 (s.multisampleState.data(), s.multisampleState.size());
         }
     }
 #endif

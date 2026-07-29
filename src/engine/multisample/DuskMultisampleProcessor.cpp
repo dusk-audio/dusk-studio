@@ -138,6 +138,11 @@ std::string DuskMultisampleProcessor::getLoadedPathSnapshot() const
 void DuskMultisampleProcessor::cancelPendingLoads()
 {
     loadPool.removeAllJobs (true, -1);
+    // A job discarded before it ran never posts its completion callback, so the
+    // flag would stay set and every later load would bail as already-in-progress.
+    // The bump disowns the completion already posted by a job that WAS running.
+    loadGeneration.fetch_add (1, std::memory_order_acq_rel);
+    loadPending.store (false, std::memory_order_release);
 }
 
 bool DuskMultisampleProcessor::create (const MultisampleBundle& bundle,
@@ -300,19 +305,23 @@ void DuskMultisampleProcessor::loadFileAsync (
         if (onDone) onDone (false, "A load is already in progress");
         return;
     }
-    loadPool.addJob ([this, file, onDone = std::move (onDone)]
+    const std::uint64_t gen = loadGeneration.load (std::memory_order_acquire);
+    loadPool.addJob ([this, file, gen, onDone = std::move (onDone)]
     {
         juce::String err;
         const bool ok = file.getFileExtension().toLowerCase() == ".sf2"
                             ? loadSf2File (file, err)
                             : loadSfzFile (file, err);
         juce::WeakReference<DuskMultisampleProcessor> weak (this);
-        dusk::callAsync ([weak, onDone, ok, err]
+        dusk::callAsync ([weak, onDone, ok, err, gen]
         {
             // Skip entirely if the processor was destroyed after posting this:
             // removeAllJobs joins the pool job, not this queued callback.
             auto* self = weak.get();
             if (self == nullptr) return;
+            // Same for a cancel: this load was disowned, and the pending flag
+            // it would clear now belongs to whatever load came after it.
+            if (self->loadGeneration.load (std::memory_order_acquire) != gen) return;
             // Clear pending FIRST so the UI refresh in onDone observes the
             // finished load: getSf2Presets / getNumRegions / control-image
             // queries all return empty while a load is pending.
@@ -330,15 +339,17 @@ void DuskMultisampleProcessor::loadSf2PresetAsync (
         if (onDone) onDone (false, "A load is already in progress");
         return;
     }
-    loadPool.addJob ([this, presetIndex, onDone = std::move (onDone)]
+    const std::uint64_t gen = loadGeneration.load (std::memory_order_acquire);
+    loadPool.addJob ([this, presetIndex, gen, onDone = std::move (onDone)]
     {
         juce::String err;
         const bool ok = loadSf2Preset (presetIndex, err);
         juce::WeakReference<DuskMultisampleProcessor> weak (this);
-        dusk::callAsync ([weak, onDone, ok, err]
+        dusk::callAsync ([weak, onDone, ok, err, gen]
         {
             auto* self = weak.get();
             if (self == nullptr) return;
+            if (self->loadGeneration.load (std::memory_order_acquire) != gen) return;
             // Clear pending FIRST, mirroring loadFileAsync - onDone re-runs the
             // editor's timerCallback, whose pending-guarded getters would
             // otherwise observe an empty snapshot.
