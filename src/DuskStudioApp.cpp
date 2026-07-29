@@ -641,8 +641,16 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
         // restore has to be reported off the native slot instead.
 #if DUSKSTUDIO_HAS_MULTISAMPLE
         const juce::String soundfontPath = session->track (0).nativeMultisamplePath;
+        // Sessions saved before the native re-home carry the soundfont as a
+        // DuskMultisample plugin description; consumePluginStateAfterLoad
+        // migrates them onto nativeMultisamplePath. Probing the JUCE slot
+        // with that descriptor would report a false restore failure.
+        const bool legacyMultisample =
+            soundfontPath.isEmpty()
+            && session->track (0).pluginDescriptionXml.contains ("DuskMultisample");
 #else
         const juce::String soundfontPath;
+        const bool legacyMultisample = false;
 #endif
         if (soundfontPath.isNotEmpty())
         {
@@ -665,23 +673,32 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
                           descXml.length(), stateB64.length(),
                           descXml.toRawUTF8());
 
-            // Call restoreFromSavedState DIRECTLY here (instead of going via
-            // engine->consumePluginStateAfterLoad) so we can see the error.
-            // The engine wraps the same call but routes failures into DBG,
-            // which is a no-op in release builds.
-            juce::String restoreErr;
-            const bool restored = engine->getStrip (0).getPluginSlot()
-                .restoreFromSavedState (descXml, stateB64, restoreErr);
-            if (! restored)
+            if (legacyMultisample)
             {
-                std::fprintf (stderr, "FAIL: restoreFromSavedState: %s\n",
-                              restoreErr.toRawUTF8());
+                std::fprintf (stdout,
+                              "track[0] carries a legacy DuskMultisample descriptor; "
+                              "restored via migration in consumePluginStateAfterLoad\n");
             }
             else
             {
-                std::fprintf (stdout,
-                              "restoreFromSavedState: ok (loaded=%d)\n",
-                              (int) engine->getStrip (0).getPluginSlot().isLoaded());
+                // Call restoreFromSavedState DIRECTLY here (instead of going via
+                // engine->consumePluginStateAfterLoad) so we can see the error.
+                // The engine wraps the same call but routes failures into DBG,
+                // which is a no-op in release builds.
+                juce::String restoreErr;
+                const bool restored = engine->getStrip (0).getPluginSlot()
+                    .restoreFromSavedState (descXml, stateB64, restoreErr);
+                if (! restored)
+                {
+                    std::fprintf (stderr, "FAIL: restoreFromSavedState: %s\n",
+                                  restoreErr.toRawUTF8());
+                }
+                else
+                {
+                    std::fprintf (stdout,
+                                  "restoreFromSavedState: ok (loaded=%d)\n",
+                                  (int) engine->getStrip (0).getPluginSlot().isLoaded());
+                }
             }
         }
 
@@ -694,7 +711,9 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
         engine->consumeTransportStateAfterLoad();
 
 #if DUSKSTUDIO_HAS_MULTISAMPLE
-        if (soundfontPath.isNotEmpty())
+        // Re-read after consumption: a legacy descriptor only lands on
+        // nativeMultisamplePath once the migration inside consume has run.
+        if (session->track (0).nativeMultisamplePath.isNotEmpty())
         {
             auto& msStrip = engine->getStrip (0);
             if (msStrip.isNativeMultisampleLoaded())
