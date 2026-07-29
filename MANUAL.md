@@ -1411,7 +1411,7 @@ Plugin scan results are cached in:
 - macOS: `~/Library/Application Support/Dusk Studio/plugin-cache.xml`
 - Windows: `%APPDATA%\Dusk Studio\plugin-cache.xml`
 
-On Linux the native hosts keep their own sidecar caches next to it (`clap-cache.xml`, `lv2-native-cache.xml`, `vst3-native-cache.xml`), rebuilt by the same **Scan plugins** button. The native LV2 scan reads only the bundles' manifests — it never loads the plugin binary, so a broken bundle cannot crash the scan; it is simply skipped (or reported when you try to load it).
+On Linux the native hosts keep their own sidecar caches next to it (`clap-cache.json`, `lv2-native-cache.json`, `vst3-native-cache.json`), rebuilt by the same **Scan plugins** button. Existing XML sidecars are imported once only when the matching JSON cache is absent; subsequent scans write JSON. The native LV2 scan reads only the bundles' manifests — it never loads the plugin binary, so a broken bundle cannot crash the scan; it is simply skipped (or reported when you try to load it).
 
 To re-scan on every launch, enable **Settings → General → Scan plugins on startup**. The startup scan runs in the background behind a progress window (it shows the plugin currently being scanned and a progress bar), so the app stays responsive instead of appearing to hang while a large collection is scanned.
 

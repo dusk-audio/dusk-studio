@@ -1,8 +1,9 @@
 #pragma once
 
+#include "../engine/PluginDescriptor.h"
 #include <juce_gui_basics/juce_gui_basics.h>
-#include <juce_audio_processors/juce_audio_processors.h>
 #include <functional>
+#include <vector>
 
 namespace duskstudio
 {
@@ -28,7 +29,7 @@ public:
     {
         // Fired on row click. Description is owned by the panel; copy if
         // you need it past the callback's stack frame.
-        std::function<void (const juce::PluginDescription&)> onPickPlugin;
+        std::function<void (const PluginDescriptor&)> onPickPlugin;
         std::function<void()> onScan;
         std::function<void()> onBrowseFile;
         std::function<void()> onHardwareInsert;   // null -> omit button
@@ -36,7 +37,7 @@ public:
         std::function<void()> onCancel;
     };
 
-    PluginPickerPanel (juce::Array<juce::PluginDescription> descriptions,
+    PluginPickerPanel (std::vector<PluginDescriptor> descriptions,
                        Kind kind,
                        Callbacks cb);
     ~PluginPickerPanel() override;

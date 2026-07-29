@@ -222,6 +222,30 @@ TEST_CASE ("SessionSerializer round-trips native-VST3 slots", "[session][seriali
     dir.deleteRecursively();
 }
 
+TEST_CASE ("SessionSerializer round-trips native multisample references",
+           "[session][serializer][multisample]")
+{
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
+
+    const auto dir = makeTempSessionDir();
+    const auto target = dir.getChildFile ("session.json");
+
+    Session source;
+    source.track (3).nativeMultisamplePath = "/banks/portable/full-range.sfz";
+    source.track (3).nativeMultisampleStateBase64 = "bXVsdGlzYW1wbGU=";
+    REQUIRE (SessionSerializer::save (source, target));
+
+    Session restored;
+    REQUIRE (SessionSerializer::load (restored, target));
+    CHECK (restored.track (3).nativeMultisamplePath
+           == "/banks/portable/full-range.sfz");
+    CHECK (restored.track (3).nativeMultisampleStateBase64
+           == "bXVsdGlzYW1wbGU=");
+
+    dir.deleteRecursively();
+}
+
 // The canonical session sample rate must survive save/load, reset to 0 when
 // absent (legacy file), and reject garbage — the load UI keys the device-
 // switch / mismatch warning off it.
@@ -251,6 +275,63 @@ TEST_CASE ("SessionSerializer round-trips the session sample rate", "[session][s
     target.replaceWithText (R"({"version":3,"session_sample_rate":1e40,"tracks":[],"buses":[],"aux_lanes":[]})");
     REQUIRE (SessionSerializer::load (b, target));
     REQUIRE (b.sessionSampleRate == 0.0);
+
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("SessionSerializer round-trips structured plugin descriptors and legacy fallback",
+           "[session][serializer][plugin-descriptor]")
+{
+    using duskstudio::PluginBackend;
+    using duskstudio::PluginDescriptor;
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
+
+    const auto dir = makeTempSessionDir();
+    const auto target = dir.getChildFile ("session.json");
+
+    PluginDescriptor descriptor;
+    descriptor.name = "Offline Synth";
+    descriptor.manufacturer = "Dusk";
+    descriptor.formatName = "FutureFormat";
+    descriptor.backend = PluginBackend::JuceLegacy;
+    descriptor.location = "/missing/Offline.future";
+    descriptor.pluginId = "inner.plugin";
+    descriptor.uniqueId = 1234;
+    descriptor.deprecatedUid = 4321;
+    descriptor.numInputChannels = 0;
+    descriptor.numOutputChannels = 2;
+    descriptor.lastFileModificationMs = 987654321;
+    descriptor.lastInfoUpdateMs = 123456789;
+    descriptor.isInstrument = true;
+    descriptor.hasSharedContainer = true;
+    descriptor.hasAraExtension = true;
+
+    auto source = std::make_unique<Session>();
+    source->track (0).pluginDescriptor = descriptor;
+    source->track (0).pluginStateBase64 = "c3RhdGU=";
+    source->auxLane (0).pluginDescriptor[0] = descriptor;
+    source->auxLane (0).pluginStateBase64[0] = "YXV4";
+    source->track (1).pluginLegacyDescriptionXml = "<BROKEN legacy=\"keep me\"";
+    source->track (1).pluginStateBase64 = "bGVnYWN5";
+
+    REQUIRE (SessionSerializer::save (*source, target));
+    const auto saved = target.loadFileAsString();
+    CHECK (saved.contains ("\"plugin_descriptor\""));
+    CHECK_FALSE (saved.contains ("Offline.future\\ninner.plugin"));
+
+    auto restored = std::make_unique<Session>();
+    REQUIRE (SessionSerializer::load (*restored, target));
+    REQUIRE (restored->track (0).pluginDescriptor.has_value());
+    CHECK (*restored->track (0).pluginDescriptor == descriptor);
+    CHECK (restored->track (0).pluginStateBase64 == "c3RhdGU=");
+    REQUIRE (restored->auxLane (0).pluginDescriptor[0].has_value());
+    CHECK (*restored->auxLane (0).pluginDescriptor[0] == descriptor);
+    CHECK (restored->auxLane (0).pluginStateBase64[0] == "YXV4");
+    CHECK_FALSE (restored->track (1).pluginDescriptor.has_value());
+    CHECK (restored->track (1).pluginLegacyDescriptionXml
+           == "<BROKEN legacy=\"keep me\"");
+    CHECK (restored->track (1).pluginStateBase64 == "bGVnYWN5");
 
     dir.deleteRecursively();
 }

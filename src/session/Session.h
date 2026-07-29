@@ -11,6 +11,7 @@
 #include <vector>
 #include "AtomicSnapshot.h"
 #include "MidiBindings.h"
+#include "../engine/PluginDescriptor.h"
 
 namespace duskstudio
 {
@@ -801,9 +802,10 @@ struct Track
     std::vector<AudioRegion>                regions;
     AtomicSnapshot<std::vector<MidiRegion>> midiRegions;
 
-    // Populated by AudioEngine::publishPluginStateForSave before save;
-    // consumed by consumePluginStateAfterLoad. Empty = no plugin.
-    juce::String pluginDescriptionXml;
+    // Populated by AudioEngine::publishPluginStateForSave before save and
+    // consumed by consumePluginStateAfterLoad.
+    std::optional<PluginDescriptor> pluginDescriptor;
+    juce::String pluginLegacyDescriptionXml;
     juce::String pluginStateBase64;
 
     // Native insert alternatives to the JUCE plugin above. An insert hosts at
@@ -972,7 +974,8 @@ struct AuxLane
 
     // Per-slot plugin state. Slot's audio mode (Plugin vs Hardware)
     // lives on the strip; Session just persists param values.
-    std::array<juce::String, AuxLaneParams::kMaxLanePlugins> pluginDescriptionXml;
+    std::array<std::optional<PluginDescriptor>, AuxLaneParams::kMaxLanePlugins> pluginDescriptor;
+    std::array<juce::String, AuxLaneParams::kMaxLanePlugins> pluginLegacyDescriptionXml;
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> pluginStateBase64;
 
     // Native host alternatives to the JUCE plugin above. A slot is JUCE /

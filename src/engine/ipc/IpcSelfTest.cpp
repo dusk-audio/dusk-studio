@@ -184,9 +184,10 @@ int runIpcHostTest (const std::string& hostExecutablePath,
     // 3) Load the plugin in the child.
     constexpr double kSampleRate = 48000.0;
     int numIn = 0, numOut = 0, latency = 0;
+    bool isInstrument = false;
     if (! conn.loadPlugin (descXmlStr.toStdString(),
                             kSampleRate, numSamples,
-                            numIn, numOut, latency, err))
+                            numIn, numOut, latency, isInstrument, err))
     {
         std::fprintf (stderr, "FAIL: loadPlugin: %s\n", err.c_str());
         return 13;
@@ -199,8 +200,6 @@ int runIpcHostTest (const std::string& hostExecutablePath,
     // with our data which the plugin ignores - but the "output != input"
     // assertion is meaningless. Skip the change-detection check for
     // instrument plugins.
-    const bool isInstrument = (numIn == 0);
-
     // 4) Run process-block round-trips. Generate deterministic non-zero
     // input so an effect plugin must alter it (an EQ at non-flat settings
     // / a comp / a reverb all will).

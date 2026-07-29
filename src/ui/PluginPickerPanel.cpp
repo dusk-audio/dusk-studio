@@ -14,8 +14,8 @@ class PluginPickerPanel::ListBody final : public juce::Component
 public:
     enum class Group { Manufacturer, Type };
 
-    ListBody (juce::Array<juce::PluginDescription> descs,
-              std::function<void (const juce::PluginDescription&)> picker)
+    ListBody (std::vector<PluginDescriptor> descs,
+              std::function<void (const PluginDescriptor&)> picker)
         : rawDescs (std::move (descs)), onPick (std::move (picker))
     {
         rebuild();
@@ -29,16 +29,16 @@ public:
     }
 
     // Header key a description sorts/groups under, per current group mode.
-    static juce::String groupKeyFor (const juce::PluginDescription& d, Group g)
+    static juce::String groupKeyFor (const PluginDescriptor& d, Group g)
     {
         if (g == Group::Manufacturer)
-            return d.manufacturerName.isEmpty() ? juce::String ("(unknown)")
-                                                : d.manufacturerName;
+            return d.manufacturer.empty() ? juce::String ("(unknown)")
+                                          : juce::String (d.manufacturer);
 
         // Type: the plugin category, reduced to its most specific token
         // ("Fx|EQ" -> "EQ"). Falls back to instrument/effect when the
         // scanned description carries no category (e.g. native CLAP).
-        auto cat = d.category.trim();
+        auto cat = juce::String (d.category).trim();
         if (cat.containsChar ('|'))
             cat = cat.fromLastOccurrenceOf ("|", false, false).trim();
         if (cat.isNotEmpty())
@@ -51,20 +51,20 @@ public:
         auto descs = rawDescs;
         const auto g = group;
         std::sort (descs.begin(), descs.end(),
-            [g] (const juce::PluginDescription& a, const juce::PluginDescription& b)
+            [g] (const PluginDescriptor& a, const PluginDescriptor& b)
             {
                 const auto ka = groupKeyFor (a, g);
                 const auto kb = groupKeyFor (b, g);
                 if (ka != kb) return ka.compareIgnoreCase (kb) < 0;
-                return a.name.compareIgnoreCase (b.name) < 0;
+                return juce::String (a.name).compareIgnoreCase (juce::String (b.name)) < 0;
             });
 
         allEntries.clear();
         juce::String currentKey;
         bool first = true;
-        for (int i = 0; i < descs.size(); ++i)
+        for (size_t i = 0; i < descs.size(); ++i)
         {
-            const auto& d = descs.getReference (i);
+            const auto& d = descs[i];
             const auto key = groupKeyFor (d, g);
             if (first || key != currentKey)
             {
@@ -72,9 +72,16 @@ public:
                 currentKey = key;
                 first = false;
             }
-            juce::String label = d.name;
-            if (d.pluginFormatName.isNotEmpty())
-                label += "  (" + d.pluginFormatName + ")";
+            juce::String label (d.name);
+            if (! d.formatName.empty())
+            {
+                auto visibleFormat = juce::String (d.formatName);
+                if (d.backend == PluginBackend::Native && d.formatName == "LV2")
+                    visibleFormat = "LV2-Native";
+                else if (d.backend == PluginBackend::Native && d.formatName == "VST3")
+                    visibleFormat = "VST3-Native";
+                label += "  (" + visibleFormat + ")";
+            }
             allEntries.push_back ({ false, label, d });
         }
         applyFilter (currentFilter);
@@ -211,7 +218,7 @@ private:
     {
         bool isHeader;
         juce::String text;
-        juce::PluginDescription desc;
+        PluginDescriptor desc;
     };
 
     static constexpr int kRowH       = 22;
@@ -256,16 +263,16 @@ private:
         g.fillRect (x + 1, thumbY, kScrollbarW - 2, thumbH);
     }
 
-    juce::Array<juce::PluginDescription> rawDescs;
+    std::vector<PluginDescriptor> rawDescs;
     Group group = Group::Manufacturer;
     juce::String currentFilter;
     std::vector<Entry> allEntries;
     std::vector<Entry> visibleEntries;
-    std::function<void (const juce::PluginDescription&)> onPick;
+    std::function<void (const PluginDescriptor&)> onPick;
     int scrollOffset = 0;
 };
 
-PluginPickerPanel::PluginPickerPanel (juce::Array<juce::PluginDescription> descriptions,
+PluginPickerPanel::PluginPickerPanel (std::vector<PluginDescriptor> descriptions,
                                         Kind kind, Callbacks cb)
     : kind_ (kind), callbacks_ (std::move (cb))
 {
@@ -327,7 +334,7 @@ PluginPickerPanel::PluginPickerPanel (juce::Array<juce::PluginDescription> descr
     if (callbacks_.onHardwareInsert) addAndMakeVisible (hwInsertBtn);
     if (callbacks_.onLoadSoundfont)  addAndMakeVisible (soundfontBtn);
 
-    auto pickFn = [this] (const juce::PluginDescription& desc)
+    auto pickFn = [this] (const PluginDescriptor& desc)
     {
         if (callbacks_.onPickPlugin) callbacks_.onPickPlugin (desc);
     };

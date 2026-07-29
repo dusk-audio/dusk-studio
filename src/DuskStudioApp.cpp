@@ -647,7 +647,9 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
         // with that descriptor would report a false restore failure.
         const bool legacyMultisample =
             soundfontPath.isEmpty()
-            && session->track (0).pluginDescriptionXml.contains ("DuskMultisample");
+            && ((session->track (0).pluginDescriptor.has_value()
+                 && session->track (0).pluginDescriptor->formatName == "DuskMultisample")
+                || session->track (0).pluginLegacyDescriptionXml.contains ("DuskMultisample"));
 #else
         const juce::String soundfontPath;
         const bool legacyMultisample = false;
@@ -662,16 +664,14 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
         }
         else
         {
-            // Verify the description was deserialised before we ask the
-            // engine to consume it. Empty here = the JSON didn't contain
-            // plugin_desc_xml, which is a session-file regression.
-            const auto& descXml = session->track (0).pluginDescriptionXml;
+            const auto& descriptor = session->track (0).pluginDescriptor;
+            const auto& legacyXml = session->track (0).pluginLegacyDescriptionXml;
             const auto& stateB64 = session->track (0).pluginStateBase64;
             std::fprintf (stdout,
-                          "After SessionSerializer::load: track[0] descXml.len=%d  state.len=%d  "
-                          "descXml head=\"%.60s\"\n",
-                          descXml.length(), stateB64.length(),
-                          descXml.toRawUTF8());
+                          "After SessionSerializer::load: track[0] descriptor=\"%s\"  "
+                          "legacyXml.len=%d  state.len=%d\n",
+                          descriptor.has_value() ? descriptor->name.c_str() : "",
+                          legacyXml.length(), stateB64.length());
 
             if (legacyMultisample)
             {
@@ -687,7 +687,8 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
                 // which is a no-op in release builds.
                 juce::String restoreErr;
                 const bool restored = engine->getStrip (0).getPluginSlot()
-                    .restoreFromSavedState (descXml, stateB64, restoreErr);
+                    .restoreFromSavedState (descriptor, legacyXml,
+                                            stateB64, restoreErr);
                 if (! restored)
                 {
                     std::fprintf (stderr, "FAIL: restoreFromSavedState: %s\n",
@@ -1995,7 +1996,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
 
     // DUSKSTUDIO_REPLACE_TEST=A.vst3:B.vst3 - exercises the Replace plugin...
     // swap pattern under live processing. Loads A, runs audio, swaps to
-    // B mid-stream via loadFromDescription, runs more audio. Mirrors the
+    // B mid-stream via loadFromDescriptor, runs more audio. Mirrors the
     // user's GUI flow: right-click slot button -> Replace plugin -> pick
     // a different plugin. The colon-separated form lets us test ACROSS
     // distinct plugins, which is the actual crashing case (a single
@@ -2027,14 +2028,14 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
 
         // Build a description for plugin B by scanning its file via the
         // PluginManager so it's resolved through the same path the GUI
-        // picker uses (cached KnownPluginList descriptions).
-        juce::PluginDescription descB;
+        // picker uses (cached descriptors).
+        PluginDescriptor descB;
         {
             auto& mgr = engine->getPluginManager();
             juce::String scanErr;
             auto probe = mgr.createPluginInstance (juce::File (pathB), sampleRate,
                                                      blockSize, scanErr);
-            if (probe != nullptr) probe->fillInPluginDescription (descB);
+            if (probe != nullptr) descB = mgr.descriptorForInstance (*probe);
             else
             {
                 std::fprintf (stderr, "FAIL: scan B: %s\n", scanErr.toRawUTF8());
@@ -2043,7 +2044,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
             }
             // probe goes out of scope - releases its instance immediately.
         }
-        std::fprintf (stdout, "[Replace] B = \"%s\"\n", descB.name.toRawUTF8());
+        std::fprintf (stdout, "[Replace] B = \"%s\"\n", descB.name.c_str());
 
         // I/O buffers
         std::vector<std::vector<float>> inputs (2, std::vector<float> (blockSize, 0.0f));
@@ -2052,7 +2053,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         std::vector<float*> outputPtrs { outputs[0].data(), outputs[1].data() };
         duskstudio::device::CallbackContext ctx {};
 
-        // Drive audio callbacks, then loadFromDescription with plugin B
+        // Drive audio callbacks, then loadFromDescriptor with plugin B
         // mid-stream to swap. The previousInstance keep-alive in
         // PluginSlot defers A's destructor until the NEXT swap; an
         // immediate Diva->MininnDrum->ThirdPlugin sequence would
@@ -2066,15 +2067,13 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
             if (b == 50)
             {
                 std::fprintf (stdout, "[Replace] swap A -> B...\n");
-                if (! slot.loadFromDescription (descB, err))
+                if (! slot.loadFromDescriptor (descB, err))
                     std::fprintf (stderr, "FAIL: swap A->B: %s\n", err.toRawUTF8());
             }
             if (b == 120)
             {
                 std::fprintf (stdout, "[Replace] swap B -> A (forces A's prev destructor in PluginSlot)...\n");
-                juce::PluginDescription descA;
-                if (auto* p = slot.getInstance())
-                    p->fillInPluginDescription (descA);
+                PluginDescriptor descA;
                 // Re-resolve A via the manager so we have a clean desc.
                 auto& mgr = engine->getPluginManager();
                 juce::String scanErr;
@@ -2082,10 +2081,10 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
                                                           sampleRate, blockSize, scanErr);
                 if (probe != nullptr)
                 {
-                    probe->fillInPluginDescription (descA);
+                    descA = mgr.descriptorForInstance (*probe);
                     probe.reset();
                 }
-                if (! slot.loadFromDescription (descA, err))
+                if (! slot.loadFromDescriptor (descA, err))
                     std::fprintf (stderr, "FAIL: swap B->A: %s\n", err.toRawUTF8());
             }
         }

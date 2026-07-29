@@ -14,6 +14,14 @@ add_executable(dusk-studio-tests
     hosting_insert_adapter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/hosting/InsertAdapter.cpp
     # Native CLAP tests + sources are Linux-only (dlopen/poll) — added conditionally below.
+    plugin_descriptor.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/PluginDescriptor.cpp
+    plugin_manager_descriptor.cpp
+    plugin_slot_persistence.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/PluginManager.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/PluginSlot.cpp
+    native_plugin_cache.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/NativePluginCache.cpp
     plugin_scan_protocol.cpp
     plugin_backing_check.cpp
     session_tick_conversion.cpp
@@ -29,6 +37,7 @@ add_executable(dusk-studio-tests
     snap_helpers.cpp
     fade_shapes.cpp
     crossfade.cpp
+    clone_plugin_snapshot.cpp
     fade_curve_path.cpp
     file_importer_audio.cpp
     hardware_insert.cpp
@@ -225,7 +234,8 @@ if(DUSKSTUDIO_NATIVE_LV2)
         lv2_instance_process.cpp
         lv2_native_slot.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Bundle.cpp
-        ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Instance.cpp)
+        ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Instance.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Scanner.cpp)
     target_link_libraries(dusk-studio-tests PRIVATE PkgConfig::LILV PkgConfig::SUIL PkgConfig::LV2)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_LV2=1)
 endif()
@@ -256,6 +266,7 @@ target_link_libraries(dusk-studio-tests PRIVATE
     ${CMAKE_DL_LIBS}   # dl: ClapBundle dlopen
     juce::juce_audio_basics
     juce::juce_audio_formats
+    juce::juce_audio_processors
     # juce_data_structures brings in juce::ValueTree, which carries the
     # multisample state blob.
     juce::juce_data_structures
@@ -307,12 +318,15 @@ if (_duskstudio_ipc_test_enabled)
         ${CMAKE_SOURCE_DIR}/src/engine/ipc/RemotePluginConnection.cpp
         ${_duskstudio_ipc_test_sources})
     target_compile_definitions(dusk-studio-tests PRIVATE
+        DUSKSTUDIO_HAS_OOP_PLUGINS=1
         DUSKSTUDIO_PLUGIN_HOST_PATH="$<TARGET_FILE:dusk-studio-plugin-host>")
     if (WIN32)
         target_link_libraries(dusk-studio-tests PRIVATE synchronization)
     endif()
     add_dependencies(dusk-studio-tests dusk-studio-plugin-host)
 endif()
+
+target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_TESTS=1)
 
 # UniversalCompressor (multi-comp donor) tests — gated on the donor being
 # available. Mirrors the main app's DUSK_PLUGINS_PATH wiring exactly so the

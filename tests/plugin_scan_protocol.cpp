@@ -2,122 +2,87 @@
 
 #include "engine/ipc/PluginScanProtocol.h"
 
-using namespace duskstudio::scanproto;
+using namespace duskstudio;
 
 namespace
 {
-juce::PluginDescription makeDesc (const juce::String& name,
-                                  const juce::String& format,
-                                  juce::uint32 uid,
-                                  bool isInstrument)
+PluginDescriptor makeDescriptor (std::string name, std::string location,
+                                 std::string pluginId)
 {
-    juce::PluginDescription d;
-    d.name             = name;
-    d.descriptiveName  = name;
-    d.pluginFormatName = format;
-    d.manufacturerName = "Acme";
-    d.fileOrIdentifier = "/some/path/" + name + ".vst3";
-    d.uniqueId         = (int) uid;
-    d.isInstrument     = isInstrument;
-    d.numInputChannels  = isInstrument ? 0 : 2;
-    d.numOutputChannels = 2;
-    return d;
+    PluginDescriptor descriptor;
+    descriptor.name = std::move (name);
+    descriptor.formatName = "VST3";
+    descriptor.backend = PluginBackend::Native;
+    descriptor.location = std::move (location);
+    descriptor.pluginId = std::move (pluginId);
+    descriptor.uniqueId = 0x123456;
+    descriptor.isInstrument = true;
+    return descriptor;
 }
 } // namespace
 
-TEST_CASE ("scan protocol round-trips plugin descriptions", "[scanproto]")
+TEST_CASE ("plugin scan protocol round-trips multiple descriptors")
 {
-    juce::OwnedArray<juce::PluginDescription> in;
-    in.add (new juce::PluginDescription (makeDesc ("Reverb",  "VST3", 0xabc123, false)));
-    in.add (new juce::PluginDescription (makeDesc ("Synth X", "VST3", 0x00ff01, true)));
-
-    const juce::String stdoutBytes = makePayload (in);
-
-    const juce::String payload = extractPayload (stdoutBytes);
-    REQUIRE (payload.isNotEmpty());
-
-    juce::OwnedArray<juce::PluginDescription> out;
-    parsePayload (payload, out);
-
-    REQUIRE (out.size() == 2);
-    CHECK (out[0]->name             == "Reverb");
-    CHECK (out[0]->pluginFormatName == "VST3");
-    CHECK (out[0]->uniqueId         == (int) 0xabc123);
-    CHECK (out[0]->isInstrument     == false);
-    CHECK (out[1]->name             == "Synth X");   // name with a space survives
-    CHECK (out[1]->isInstrument     == true);
-    CHECK (out[1]->uniqueId         == (int) 0x00ff01);
+    const std::vector<PluginDescriptor> input {
+        makeDescriptor ("Reverb", "/plugins/Reverb.vst3", "com.dusk.reverb"),
+        makeDescriptor ("Synth X", "/plugins/Synth X.vst3", "com.dusk.synth")
+    };
+    const auto framed = scanproto::makePayload (input);
+    const auto payload = scanproto::extractPayload (framed);
+    REQUIRE_FALSE (payload.empty());
+    REQUIRE (scanproto::parsePayload (payload) == input);
 }
 
-TEST_CASE ("scan protocol: clean empty result is not a crash", "[scanproto]")
+TEST_CASE ("plugin scan protocol distinguishes empty success from missing framing")
 {
-    // A search-path file that is not actually a plugin: the child finds zero
-    // descriptions but exits cleanly. The payload must still be extractable
-    // (so the parent does NOT blacklist it) and parse to zero descriptions.
-    juce::OwnedArray<juce::PluginDescription> none;
-    const juce::String payload = extractPayload (makePayload (none));
-    REQUIRE (payload.isNotEmpty());
-
-    juce::OwnedArray<juce::PluginDescription> out;
-    parsePayload (payload, out);
-    CHECK (out.isEmpty());
+    const auto framed = scanproto::makePayload ({});
+    const auto payload = scanproto::extractPayload (framed);
+    REQUIRE_FALSE (payload.empty());
+    REQUIRE (scanproto::parsePayload (payload).empty());
+    REQUIRE (scanproto::extractPayload ("plugin output only").empty());
+    REQUIRE (scanproto::extractPayload (
+        R"({"version":1,"descriptors":[]})==DUSK_SCAN_END==").empty());
+    REQUIRE (scanproto::extractPayload (
+        std::string (scanproto::kPayloadBegin) + "\n{}").empty());
+    REQUIRE (scanproto::extractPayload (
+        std::string (scanproto::kPayloadBegin) + "\n"
+        R"({"version":1,"descriptors":[]})"
+        "\n==DUSK_SCAN_EN").empty());
 }
 
-TEST_CASE ("scan protocol: missing/truncated payload reads as failure", "[scanproto]")
+TEST_CASE ("plugin scan protocol ignores output before its begin sentinel")
 {
-    SECTION ("no sentinels at all (child crashed before printing)")
-    {
-        CHECK (extractPayload ("").isEmpty());
-        CHECK (extractPayload ("Segmentation fault\n").isEmpty());
-    }
-    SECTION ("begin sentinel but no end (crashed mid-print)")
-    {
-        const juce::String truncated =
-            juce::String (kPayloadBegin) + "\n<PLUGINS><PLUGIN name=\"x\"";
-        CHECK (extractPayload (truncated).isEmpty());
-    }
-    SECTION ("end sentinel but no begin")
-    {
-        CHECK (extractPayload (juce::String ("noise ") + kPayloadEnd).isEmpty());
-    }
+    const auto row = makeDescriptor ("Delay", "/plugins/delay.vst3", "delay.inner");
+    const auto payload = scanproto::extractPayload (
+        std::string ("plugin wrote this first\n") + scanproto::makePayload ({ row }));
+    const auto parsed = scanproto::parsePayload (payload);
+    REQUIRE (parsed.size() == 1);
+    CHECK (parsed.front().location == "/plugins/delay.vst3");
+    CHECK (parsed.front().pluginId == "delay.inner");
 }
 
-TEST_CASE ("scan protocol: plugin stdout chatter before the payload is skipped", "[scanproto]")
+TEST_CASE ("plugin scan protocol rejects malformed JSON without partial rows")
 {
-    juce::OwnedArray<juce::PluginDescription> in;
-    in.add (new juce::PluginDescription (makeDesc ("Delay", "VST3", 0x42, false)));
-
-    // Plugins commonly spew banner / licence lines to stdout during init,
-    // which run before the payload is printed. extractPayload must skip them.
-    const juce::String noisy = "lib v1.2 loaded\n[plugin] hello world\n"
-                             + makePayload (in);
-
-    juce::OwnedArray<juce::PluginDescription> out;
-    parsePayload (extractPayload (noisy), out);
-    REQUIRE (out.size() == 1);
-    CHECK (out[0]->name == "Delay");
+    const auto valid = makeDescriptor ("Valid", "/valid.vst3", "valid");
+    auto root = nlohmann::json::parse (scanproto::extractPayload (
+        scanproto::makePayload ({ valid })));
+    root["descriptors"].push_back ("not an object");
+    REQUIRE (scanproto::parsePayload (root.dump()).empty());
+    REQUIRE (scanproto::parsePayload ("{not json").empty());
 }
 
-TEST_CASE ("scan protocol: malformed payload XML parses to nothing", "[scanproto]")
+TEST_CASE ("plugin scan protocol rejects an out-of-range schema version")
 {
-    juce::OwnedArray<juce::PluginDescription> out;
-    parsePayload ("<PLUGINS><PLUGIN garbled", out);   // not well-formed
-    CHECK (out.isEmpty());
+    REQUIRE (scanproto::parsePayload (
+        R"({"version":18446744073709551615,"descriptors":[]})").empty());
 }
 
-TEST_CASE ("scan sandbox policy: third-party formats are sandboxed, in-house is not",
-           "[scanproto]")
+TEST_CASE ("plugin scan sandbox policy")
 {
-    // Third-party binary formats load foreign code and MUST be scanned
-    // out-of-process — this is the decision that keeps an unauthorized / crashy
-    // plugin from taking down the app (issue #45).
-    CHECK (formatRequiresSandbox ("VST3"));
-    CHECK (formatRequiresSandbox ("VST"));
-    CHECK (formatRequiresSandbox ("LV2"));
-    CHECK (formatRequiresSandbox ("AudioUnit"));
-
-    // Everything else scans in-process: an unknown name defaults to in-process
-    // (never sandboxed by accident — but also never a third-party crash vector).
-    CHECK_FALSE (formatRequiresSandbox (""));
-    CHECK_FALSE (formatRequiresSandbox ("CLAP"));   // native CLAP has its own sandbox path
+    CHECK (scanproto::formatRequiresSandbox ("VST3"));
+    CHECK (scanproto::formatRequiresSandbox ("LV2"));
+    CHECK (scanproto::formatRequiresSandbox ("AudioUnit"));
+    CHECK (scanproto::formatRequiresSandbox ("VST"));
+    CHECK_FALSE (scanproto::formatRequiresSandbox ("DuskMultisample"));
+    CHECK_FALSE (scanproto::formatRequiresSandbox ("UnknownFutureFormat"));
 }

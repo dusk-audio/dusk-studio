@@ -410,12 +410,12 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         // Plugin picker with a synthetic effect list (no real scan in capture mode).
         auto mk = [] (const char* n, const char* mfr, const char* cat)
         {
-            juce::PluginDescription d;
-            d.name = n; d.manufacturerName = mfr; d.category = cat;
-            d.pluginFormatName = "VST3"; d.version = "1.0";
+            PluginDescriptor d;
+            d.name = n; d.manufacturer = mfr; d.category = cat;
+            d.formatName = "VST3"; d.version = "1.0";
             return d;
         };
-        juce::Array<juce::PluginDescription> descs {
+        std::vector<PluginDescriptor> descs {
             mk ("Ambience",        "Smartelectronix", "Reverb"),
             mk ("TAL-Chorus-LX",   "TAL",             "Modulation"),
             mk ("Dragonfly Hall",  "Michael Willis",  "Reverb"),

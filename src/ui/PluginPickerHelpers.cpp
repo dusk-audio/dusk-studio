@@ -5,7 +5,6 @@
 #include "PluginPickerPanel.h"
 #include "../engine/PluginManager.h"
 #include "../engine/PluginSlot.h"
-#include "../engine/hosting/NativePluginId.h"
 #include <algorithm>
 #if DUSKSTUDIO_HAS_MULTISAMPLE
  #include "../engine/multisample/AriaBank.h"
@@ -202,7 +201,7 @@ void runScanModal (PluginManager& manager, juce::Component* parent,
             auto message = juce::String::formatted (
                 "Added %d plugin%s to the picker. (Total known: %d)",
                 added, added == 1 ? "" : "s",
-                manager.getKnownPluginList().getNumTypes());
+                manager.getPluginCount());
 
             if (const int skipped = manager.getLastScanSandboxSkips(); skipped > 0)
                 message << juce::String::formatted (
@@ -227,7 +226,7 @@ namespace
 // Returns true when the plugin currently loaded into `slot` matches the
 // expected kind. Empty slot returns false (caller decides whether to
 // treat that as success or failure). Message-thread only - calls into
-// the plugin via fillInPluginDescription.
+// the plugin through its cached descriptor.
 bool loadedKindMatches (PluginSlot& slot, PluginKind kind)
 {
     if (! slot.isLoaded()) return false;
@@ -388,30 +387,53 @@ void openPickerMenu (PluginSlot& slot,
 
     // Merge native-CLAP plugins into the unified list when the caller can host them.
     if (onPickNativeClap)
-        descriptions.addArray (kind == PluginKind::Effects
-                                 ? manager.getClapEffectDescriptions()
-                                 : manager.getClapInstrumentDescriptions());
+    {
+        auto native = kind == PluginKind::Effects
+                        ? manager.getClapEffectDescriptions()
+                        : manager.getClapInstrumentDescriptions();
+        descriptions.insert (descriptions.end(),
+                             std::make_move_iterator (native.begin()),
+                             std::make_move_iterator (native.end()));
+    }
 
     // Native-LV2 rows replace the JUCE-hosted LV2 rows for both kinds (same
     // plugins, better host) so each plugin appears once. JUCE LV2 stays the
     // fallback when unset.
     if (onPickNativeLv2)
     {
-        descriptions.removeIf ([] (const juce::PluginDescription& d)
-                               { return d.pluginFormatName == "LV2"; });
-        descriptions.addArray (kind == PluginKind::Effects
-                                 ? manager.getLv2EffectDescriptions()
-                                 : manager.getLv2InstrumentDescriptions());
+        descriptions.erase (
+            std::remove_if (descriptions.begin(), descriptions.end(),
+                [] (const PluginDescriptor& descriptor)
+                {
+                    return descriptor.backend == PluginBackend::JuceLegacy
+                        && descriptor.formatName == "LV2";
+                }),
+            descriptions.end());
+        auto native = kind == PluginKind::Effects
+                        ? manager.getLv2EffectDescriptions()
+                        : manager.getLv2InstrumentDescriptions();
+        descriptions.insert (descriptions.end(),
+                             std::make_move_iterator (native.begin()),
+                             std::make_move_iterator (native.end()));
     }
 
     // Native-VST3 rows replace the JUCE-hosted VST3 rows for both kinds.
     if (onPickNativeVst3)
     {
-        descriptions.removeIf ([] (const juce::PluginDescription& d)
-                               { return d.pluginFormatName == "VST3"; });
-        descriptions.addArray (kind == PluginKind::Effects
-                                 ? manager.getVst3NativeEffectDescriptions()
-                                 : manager.getVst3NativeInstrumentDescriptions());
+        descriptions.erase (
+            std::remove_if (descriptions.begin(), descriptions.end(),
+                [] (const PluginDescriptor& descriptor)
+                {
+                    return descriptor.backend == PluginBackend::JuceLegacy
+                        && descriptor.formatName == "VST3";
+                }),
+            descriptions.end());
+        auto native = kind == PluginKind::Effects
+                        ? manager.getVst3NativeEffectDescriptions()
+                        : manager.getVst3NativeInstrumentDescriptions();
+        descriptions.insert (descriptions.end(),
+                             std::make_move_iterator (native.begin()),
+                             std::make_move_iterator (native.end()));
     }
 
     auto* parent = target.getTopLevelComponent();
@@ -496,7 +518,7 @@ void openPickerMenu (PluginSlot& slot,
 
     cb.onPickPlugin = [closeModal, slotPtr, safeTarget, safeParent, onChange, kind,
                        onPickNativeClap, onPickNativeLv2, onPickNativeVst3]
-                        (const juce::PluginDescription& desc) mutable
+                        (const PluginDescriptor& desc) mutable
     {
         closeModal();
         if (safeTarget.getComponent() == nullptr) return;
@@ -506,24 +528,21 @@ void openPickerMenu (PluginSlot& slot,
         // so DON'T also fire the generic onChange here - on a failed load it would
         // refresh state as if the slot loaded (the JUCE path only refreshes on a
         // successful async load).
-        if (desc.pluginFormatName == "CLAP"
-            || desc.pluginFormatName == "LV2-Native"
-            || desc.pluginFormatName == "VST3-Native")
+        if (desc.backend == PluginBackend::Native)
         {
-            // fileOrIdentifier carries "bundle\npluginId" so a row picks ITS
-            // plugin out of a multi-plugin bundle, not the bundle's first.
-            const auto ident = hosting::splitNativeIdentifier (desc.fileOrIdentifier);
-            if (desc.pluginFormatName == "CLAP")
-            { if (onPickNativeClap) onPickNativeClap (juce::File (ident.bundlePath), ident.pluginId); }
-            else if (desc.pluginFormatName == "LV2-Native")
-            { if (onPickNativeLv2)  onPickNativeLv2  (juce::File (ident.bundlePath), ident.pluginId); }
-            else
-            { if (onPickNativeVst3) onPickNativeVst3 (juce::File (ident.bundlePath), ident.pluginId); }
+            const juce::File bundle (desc.location);
+            const juce::String pluginId (desc.pluginId);
+            if (desc.formatName == "CLAP")
+            { if (onPickNativeClap) onPickNativeClap (bundle, pluginId); }
+            else if (desc.formatName == "LV2")
+            { if (onPickNativeLv2)  onPickNativeLv2  (bundle, pluginId); }
+            else if (desc.formatName == "VST3")
+            { if (onPickNativeVst3) onPickNativeVst3 (bundle, pluginId); }
             return;
         }
 
         // Defence-in-depth: getInstrument/EffectDescriptions already
-        // filtered by kind, but a stale KnownPluginList entry could slip
+        // filtered by kind, but a stale cache entry could slip
         // through (plugin reclassified by vendor since last scan).
         const bool descMatches = (kind == PluginKind::Instruments)
                                    ? desc.isInstrument
@@ -539,7 +558,7 @@ void openPickerMenu (PluginSlot& slot,
         // the UI. The completion runs on the message thread, and only if the
         // slot is still alive (PluginSlot's internal guard), so slotPtr is safe
         // to deref here.
-        slotPtr->loadFromDescriptionAsync (desc,
+        slotPtr->loadFromDescriptorAsync (desc,
             [slotPtr, safeParent, onChange, kind] (bool ok, juce::String error) mutable
         {
             if (! ok)

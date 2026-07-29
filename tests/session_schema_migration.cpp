@@ -5,7 +5,7 @@
 // session JSON. Confirms:
 //   1. migrateSession returns false + does not advance when asked to
 //      migrate from an unknown lower version (safety branch).
-//   2. migrateSession advances v1 → kFormatVersion (currently v2) on a
+//   2. migrateSession advances v1 → the current kFormatVersion on a
 //      well-formed root object, and the "version" property on `root` is
 //      bumped to match.
 //   3. End-to-end: a v1-tagged session.json on disk loads cleanly,
@@ -23,6 +23,7 @@
 
 #include <juce_core/juce_core.h>
 #include <nlohmann/json.hpp>
+#include <memory>
 
 namespace duskstudio
 {
@@ -79,10 +80,10 @@ TEST_CASE ("migrateSession advances a mock v1 root to the current schema",
     // version field must now match the current build's kFormatVersion.
     // We don't reach kFormatVersion symbolically from the test (it's
     // in an anonymous namespace inside the .cpp), so we check the
-    // post-migrate value is at least 2 + the original payload survived.
+    // H4 owns version 4; the original payload must survive every step.
     REQUIRE (root.is_object());
     REQUIRE (root.contains ("version"));
-    REQUIRE (root["version"].get<int>() >= 2);
+    REQUIRE (root["version"].get<int>() == 4);
     REQUIRE (root.contains ("tempo"));
     REQUIRE (root["tempo"].get<double>() == 98.5);
 }
@@ -105,14 +106,50 @@ TEST_CASE ("SessionSerializer loads a v1-tagged session file end-to-end",
     REQUIRE (SessionSerializer::load (s, target));
 
     // Save back + verify the file is now tagged with the current
-    // kFormatVersion. Without re-reading SessionSerializer's
-    // kFormatVersion constant directly, we settle for ">= 2" (the
-    // version this migrator case targets).
+    // kFormatVersion.
     REQUIRE (SessionSerializer::save (s, target));
     auto root = nlohmann::json::parse (target.loadFileAsString().toStdString(), nullptr, false);
     REQUIRE (root.is_object());
     REQUIRE (root.contains ("version"));
-    REQUIRE (root["version"].get<int>() >= 2);
+    REQUIRE (root["version"].get<int>() == 4);
+
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("SessionSerializer migrates a v3 legacy plugin reference to a v4 save",
+           "[session][serializer][migration][plugin-descriptor]")
+{
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
+
+    const auto dir = makeTempMigrationDir();
+    const auto target = dir.getChildFile ("session.json");
+    const std::string legacyXml =
+        R"(<PLUGIN name="Legacy Synth" descriptiveName="Legacy Synth" format="VST3" file="/plugins/Legacy.vst3" uid="1234" manufacturer="Dusk" version="1.0" isInstrument="1"/>)";
+    nlohmann::json root {
+        { "version", 3 },
+        { "tracks", nlohmann::json::array ({
+            { { "name", "Legacy" },
+              { "plugin_desc_xml", legacyXml },
+              { "plugin_state", "bGVnYWN5LXN0YXRl" } }
+        }) }
+    };
+    writeRaw (target, root.dump());
+
+    auto session = std::make_unique<Session>();
+    REQUIRE (SessionSerializer::load (*session, target));
+    CHECK_FALSE (session->track (0).pluginDescriptor.has_value());
+    CHECK (session->track (0).pluginLegacyDescriptionXml.toStdString() == legacyXml);
+    CHECK (session->track (0).pluginStateBase64 == "bGVnYWN5LXN0YXRl");
+
+    REQUIRE (SessionSerializer::save (*session, target));
+    const auto saved = nlohmann::json::parse (
+        target.loadFileAsString().toStdString(), nullptr, false);
+    REQUIRE (saved.is_object());
+    CHECK (saved["version"].get<int>() == 4);
+    CHECK (saved["tracks"][0]["plugin_desc_xml"].get<std::string>() == legacyXml);
+    CHECK (saved["tracks"][0]["plugin_state"].get<std::string>()
+           == "bGVnYWN5LXN0YXRl");
 
     dir.deleteRecursively();
 }

@@ -1,6 +1,9 @@
 #pragma once
 
-#include <juce_audio_processors/juce_audio_processors.h>
+#include "PluginDescriptor.h"
+
+#include <filesystem>
+#include <vector>
 
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
  #include "clap/ClapBundle.h"
@@ -8,58 +11,53 @@
 #if DUSKSTUDIO_HAS_NATIVE_VST3
  #include "vst3/Vst3Bundle.h"
 #endif
-#include "hosting/NativePluginId.h"
 
 namespace duskstudio::nativescan
 {
-// One bundle -> picker rows, shared verbatim by the sandboxed scan child
-// (dusk-studio-plugin-host --scan-native) and the parent's in-process fallback,
-// so both sides emit identical descriptions. Loading a bundle executes its code
-// (dlopen + factory read) - that is exactly what the sandbox exists for; call
-// these in-process only as the fallback when the child can't spawn.
-
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-inline void appendClapRows (const juce::File& bundle,
-                            juce::Array<juce::PluginDescription>& into)
+inline void appendClapRows (const std::filesystem::path& bundle,
+                            std::vector<PluginDescriptor>& into)
 {
-    clap::ClapBundle b;
-    std::string err;
-    if (! b.load (bundle.getFullPathName().toStdString(), err))
+    clap::ClapBundle loaded;
+    std::string error;
+    if (! loaded.load (bundle.string(), error))
         return;
-    for (const auto& d : b.plugins())
+    for (const auto& plugin : loaded.plugins())
     {
-        juce::PluginDescription desc;
-        desc.name             = juce::String (juce::CharPointer_UTF8 (d.name.c_str()));
-        desc.manufacturerName = juce::String (juce::CharPointer_UTF8 (d.vendor.c_str()));
-        desc.version          = juce::String (juce::CharPointer_UTF8 (d.version.c_str()));
-        desc.pluginFormatName = "CLAP";
-        desc.fileOrIdentifier = hosting::joinNativeIdentifier (
-            bundle.getFullPathName(), juce::String (juce::CharPointer_UTF8 (d.id.c_str())));
-        desc.isInstrument     = d.isInstrument();
-        into.add (desc);
+        PluginDescriptor descriptor;
+        descriptor.name = plugin.name;
+        descriptor.manufacturer = plugin.vendor;
+        descriptor.version = plugin.version;
+        descriptor.formatName = "CLAP";
+        descriptor.backend = PluginBackend::Native;
+        descriptor.location = bundle.string();
+        descriptor.pluginId = plugin.id;
+        descriptor.isInstrument = plugin.isInstrument();
+        into.push_back (std::move (descriptor));
     }
 }
 #endif
 
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-inline void appendVst3Rows (const juce::File& bundle,
-                            juce::Array<juce::PluginDescription>& into)
+inline void appendVst3Rows (const std::filesystem::path& bundle,
+                            std::vector<PluginDescriptor>& into)
 {
-    vst3::Vst3Bundle b;
-    std::string err;
-    if (! b.load (bundle.getFullPathName().toStdString(), err))
+    vst3::Vst3Bundle loaded;
+    std::string error;
+    if (! loaded.load (bundle.string(), error))
         return;
-    for (const auto& d : b.plugins())
+    for (const auto& plugin : loaded.plugins())
     {
-        juce::PluginDescription desc;
-        desc.name             = juce::String (juce::CharPointer_UTF8 (d.name.c_str()));
-        desc.manufacturerName = juce::String (juce::CharPointer_UTF8 (d.vendor.c_str()));
-        desc.version          = juce::String (juce::CharPointer_UTF8 (d.version.c_str()));
-        desc.pluginFormatName = "VST3-Native";
-        desc.fileOrIdentifier = hosting::joinNativeIdentifier (
-            bundle.getFullPathName(), juce::String (juce::CharPointer_UTF8 (d.id.c_str())));
-        desc.isInstrument     = d.isInstrument;
-        into.add (desc);
+        PluginDescriptor descriptor;
+        descriptor.name = plugin.name;
+        descriptor.manufacturer = plugin.vendor;
+        descriptor.version = plugin.version;
+        descriptor.formatName = "VST3";
+        descriptor.backend = PluginBackend::Native;
+        descriptor.location = bundle.string();
+        descriptor.pluginId = plugin.id;
+        descriptor.isInstrument = plugin.isInstrument;
+        into.push_back (std::move (descriptor));
     }
 }
 #endif

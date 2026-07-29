@@ -9,8 +9,8 @@
 //                 thread, services control RPCs on a separate socket-
 //                 reader thread, runs the JUCE message loop on main.
 //   --scan      : one-shot crash-isolated plugin discovery. Scans a single
-//                 file/identifier for one format, prints its
-//                 PluginDescription(s) as XML to stdout, exits. A plugin
+//                 file/identifier for one format, prints versioned Dusk
+//                 descriptors as JSON between sentinels, exits. A plugin
 //                 that crashes the scan takes down only this process; the
 //                 parent blacklists the file and carries on. See runScan.
 //
@@ -46,6 +46,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <signal.h>
 
 #include <algorithm>
@@ -420,7 +421,9 @@ std::uint32_t handleLoadPlugin (HostState& host,
     reply.numInChans     = fresh->getTotalNumInputChannels();
     reply.numOutChans    = fresh->getTotalNumOutputChannels();
     reply.latencySamples = fresh->getLatencySamples();
-    reply.reserved       = 0;
+    juce::PluginDescription loadedDescription;
+    fresh->fillInPluginDescription (loadedDescription);
+    reply.isInstrument = loadedDescription.isInstrument ? 1u : 0u;
     replyOut.resize (sizeof (reply));
     std::memcpy (replyOut.data(), &reply, sizeof (reply));
 
@@ -896,13 +899,44 @@ int runIpcHost (int argc, const char* const* argv) noexcept
 //   dusk-studio-plugin-host --scan <formatName> <fileOrIdentifier>
 //
 // We instantiate the plugin just far enough to read its PluginDescription(s)
-// and print them as XML between sentinel markers on stdout. If the plugin
+// and print Dusk descriptors between sentinel markers on stdout. If the plugin
 // segfaults or hangs in findAllTypesForFile, only THIS process dies - the
 // parent times it out / sees the crash, blacklists the file, and keeps
 // running. The plugin's own stdout chatter (if any) is emitted by its init
 // code, which runs BEFORE we print kScanPayloadBegin, so the parent's
 // extract-between-sentinels parse skips it.
 //
+std::vector<duskstudio::PluginDescriptor> descriptorsFromJuce (
+    const juce::OwnedArray<juce::PluginDescription>& found)
+{
+    std::vector<duskstudio::PluginDescriptor> rows;
+    rows.reserve ((size_t) found.size());
+    for (const auto* source : found)
+    {
+        if (source == nullptr) continue;
+        duskstudio::PluginDescriptor descriptor;
+        descriptor.name = source->name.toStdString();
+        descriptor.descriptiveName = source->descriptiveName.toStdString();
+        descriptor.manufacturer = source->manufacturerName.toStdString();
+        descriptor.category = source->category.toStdString();
+        descriptor.version = source->version.toStdString();
+        descriptor.formatName = source->pluginFormatName.toStdString();
+        descriptor.backend = duskstudio::PluginBackend::JuceLegacy;
+        descriptor.location = source->fileOrIdentifier.toStdString();
+        descriptor.uniqueId = source->uniqueId;
+        descriptor.deprecatedUid = source->deprecatedUid;
+        descriptor.numInputChannels = source->numInputChannels;
+        descriptor.numOutputChannels = source->numOutputChannels;
+        descriptor.lastFileModificationMs = source->lastFileModTime.toMilliseconds();
+        descriptor.lastInfoUpdateMs = source->lastInfoUpdateTime.toMilliseconds();
+        descriptor.isInstrument = source->isInstrument;
+        descriptor.hasSharedContainer = source->hasSharedContainer;
+        descriptor.hasAraExtension = source->hasARAExtension;
+        rows.push_back (std::move (descriptor));
+    }
+    return rows;
+}
+
 #if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
 // Sandboxed native-format discovery: load ONE bundle through the native host's
 // own loader and print the resulting picker rows between the scan sentinels.
@@ -923,18 +957,18 @@ int runScanNative (int argc, const char* const* argv) noexcept
 
     juce::ScopedJuceInitialiser_GUI juceInit;
 
-    juce::Array<juce::PluginDescription> rows;
+    std::vector<duskstudio::PluginDescriptor> rows;
+    const auto bundlePath = std::filesystem::u8path (
+        bundle.getFullPathName().toStdString());
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-    if (format == "clap") duskstudio::nativescan::appendClapRows (bundle, rows);
+    if (format == "clap") duskstudio::nativescan::appendClapRows (bundlePath, rows);
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-    if (format == "vst3") duskstudio::nativescan::appendVst3Rows (bundle, rows);
+    if (format == "vst3") duskstudio::nativescan::appendVst3Rows (bundlePath, rows);
 #endif
 
-    juce::OwnedArray<juce::PluginDescription> found;
-    for (const auto& r : rows)
-        found.add (new juce::PluginDescription (r));
-    std::fputs (duskstudio::scanproto::makePayload (found).toRawUTF8(), stdout);
+    const auto payload = duskstudio::scanproto::makePayload (rows);
+    std::fwrite (payload.data(), 1, payload.size(), stdout);
     std::fflush (stdout);
     return 0;
 }
@@ -983,7 +1017,9 @@ int runScan (int argc, const char* const* argv) noexcept
     juce::OwnedArray<juce::PluginDescription> found;
     chosen->findAllTypesForFile (found, fileOrId);   // may crash/hang - that is the point
 
-    std::fputs (duskstudio::scanproto::makePayload (found).toRawUTF8(), stdout);
+    const auto payload = duskstudio::scanproto::makePayload (
+        descriptorsFromJuce (found));
+    std::fwrite (payload.data(), 1, payload.size(), stdout);
     std::fflush (stdout);
     return 0;
 }

@@ -118,7 +118,7 @@ struct LoadPluginReply
     std::int32_t  numInChans;
     std::int32_t  numOutChans;
     std::int32_t  latencySamples;
-    std::uint32_t reserved;
+    std::uint32_t isInstrument;
 };
 
 struct PrepareToPlayPayload

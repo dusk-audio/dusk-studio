@@ -5,7 +5,7 @@
 #include <atomic>
 
 // withParkedAtomicPointer is the bracketing primitive that guards
-// PluginSlot::getStateBase64ForSave / getDescriptionXmlForSave from
+// PluginSlot::getStateBase64ForSave from
 // racing the audio thread inside the plugin. Phase A of the Mutter-
 // safety work moved it here so it's testable without needing a real
 // plugin instance.

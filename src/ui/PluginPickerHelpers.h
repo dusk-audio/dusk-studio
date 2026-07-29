@@ -1,6 +1,5 @@
 #pragma once
 
-#include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
 #include <memory>
@@ -14,7 +13,7 @@ class PluginSlot;
 // slots. The picker, scan, and file-chooser flows are identical between the
 // two surfaces; the only differences are which PluginSlot they target and
 // what to refresh on success. Keeping the implementation here avoids two
-// slowly-diverging copies of the same menu-building / load-from-description
+// slowly-diverging copies of the same menu-building / descriptor-load
 // code.
 namespace pluginpicker
 {
@@ -27,7 +26,7 @@ namespace pluginpicker
 enum class PluginKind { Effects, Instruments };
 
 // Open a popup menu of installed plugins anchored on `target`. On selection:
-//   - 1..N -> resolves to KnownPluginList types and loadFromDescription.
+//   - 1..N -> resolves to cached descriptors and loads the selected plugin.
 //   - "Scan plugins" -> runs the synchronous scan + reopens the picker.
 //   - "Browse for file..." -> opens the in-window DuskFileBrowser.
 // `onChange` runs on every successful change to the slot.
@@ -51,11 +50,11 @@ enum class PluginKind { Effects, Instruments };
 // bundle path) instead of the JUCE loader. Used by every surface with a native CLAP
 // host - aux lanes AND channel-strip effect slots - which expose CLAP rows alongside
 // their JUCE-hosted VST3/LV2/AU. Unset -> no CLAP rows (surfaces without a native host).
-// `onPickNativeLv2` is the LV2 twin: merges "LV2-Native" rows (bundle-directory
+// `onPickNativeLv2` is the LV2 twin: merges native LV2 rows (bundle-directory
 // paths) and routes their selection here. When set, JUCE-format "LV2" effect rows
 // are hidden so each plugin appears once, hosted natively; unset -> JUCE LV2 rows
 // stay as the fallback host.
-// `onPickNativeVst3` is the VST3 twin: merges "VST3-Native" rows (.vst3 bundle
+// `onPickNativeVst3` is the VST3 twin: merges native VST3 rows (.vst3 bundle
 // paths), hides the JUCE-format "VST3" effect rows, and routes selection here.
 // `onPickSoundfont`, when set, adds the "Soundfont" button to an instrument
 // picker and hands the chosen .sfz / .sf2 to the caller's multisample rung.

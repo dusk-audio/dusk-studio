@@ -23,7 +23,7 @@ namespace duskstudio
 //      resumes normal use on its next callback.
 //
 // Used by PluginSlot to bracket getStateInformation /
-// fillInPluginDescription so the audio thread isn't inside processBlock
+// metadata/state reads so the audio thread isn't inside processBlock
 // on the same plugin while we're reading its state. JUCE's contract is
 // that processBlock and getStateInformation MUST NOT overlap; a number
 // of widely-used plugins crash hard when the host violates it. On
