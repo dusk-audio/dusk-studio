@@ -21,7 +21,7 @@ float getUiScaleOverride();
 void  setUiScaleOverride (float scale);
 
 // Scan installed plugin formats on every app launch (synchronous). When
-// false (default) the cached KnownPluginList is used as-is and the user
+// false (default) the cached plugin descriptor list is used as-is and the user
 // runs scans manually from the plugin picker's "Scan plugins" button.
 // Persisted per-machine so the choice survives session changes.
 bool getScanPluginsOnStartup();

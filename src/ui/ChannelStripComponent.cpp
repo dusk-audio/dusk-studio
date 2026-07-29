@@ -1800,7 +1800,7 @@ void ChannelStripComponent::openPluginPicker()
             self->loadNativeClapForChannel (f, id);
     };
 #endif
-    // Native LV2 route - same shape; LV2-Native rows replace the JUCE LV2 rows.
+    // Native LV2 route - same shape; native rows replace the JUCE LV2 rows.
     std::function<void (const juce::File&, const juce::String&)> onLv2;
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     onLv2 = [safe] (const juce::File& f, const juce::String& id)
@@ -1809,7 +1809,7 @@ void ChannelStripComponent::openPluginPicker()
             self->loadNativeLv2ForChannel (f, id);
     };
 #endif
-    // Native VST3 route - same shape; VST3-Native rows replace the JUCE VST3 rows.
+    // Native VST3 route - same shape; native rows replace the JUCE VST3 rows.
     std::function<void (const juce::File&, const juce::String&)> onVst3;
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     onVst3 = [safe] (const juce::File& f, const juce::String& id)

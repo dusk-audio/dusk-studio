@@ -386,7 +386,7 @@ AudioSettingsPanel::AudioSettingsPanel (device::DeviceManager& dm,
     scanOnStartupToggle.setTooltip (
         "When on, every app launch synchronously scans every "
         "installed plugin format and refreshes the cached "
-        "KnownPluginList. Saved per-machine; takes effect on next "
+        "plugin cache. Saved per-machine; takes effect on next "
         "launch. Stderr logs an [Dusk Studio] Scan-on-startup line "
         "with the added / total counts.");
     scanOnStartupToggle.onClick = [this]

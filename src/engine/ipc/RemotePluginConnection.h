@@ -64,11 +64,13 @@ public:
 
     // Load a plugin from its PluginDescription XML string at the given
     // sample rate / block size. Fills `numInOut`
-    // with the plugin's reported channel layout and `latencyOut` with
-    // its reported latency in samples.
+    // with the plugin's reported channel layout, `latencyOut` with its
+    // reported latency, and `isInstrumentOut` with the instantiated
+    // plugin description's classification.
     bool loadPlugin (const std::string& pluginDescriptionXml,
                       double sampleRate, int blockSize,
                       int& numInOut, int& numOutOut, int& latencyOut,
+                      bool& isInstrumentOut,
                       std::string& errorOut);
 
     // Re-prepare the loaded plugin (sample-rate or block-size change).

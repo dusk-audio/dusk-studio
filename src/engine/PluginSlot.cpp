@@ -60,7 +60,7 @@ void disableAuxiliaryBuses (juce::AudioPluginInstance& instance)
 // AudioPluginFormatManager's findFormatForDescription gates on
 // `format->fileMightContainThisPluginType`, which for VST3 demands the
 // path end in `.vst3`. So a session that round-trips Diva's description
-// through getDescriptionXmlForSave -> JSON -> loadFromXml fails to load
+// through session persistence fails to load
 // with "No compatible plug-in format exists for this plug-in", AND a
 // freshly-picked-from-cache description has the same problem because the
 // scanned descriptions in KnownPluginList carry the same inner-.so path.
@@ -68,37 +68,44 @@ void disableAuxiliaryBuses (juce::AudioPluginInstance& instance)
 // Walk parents until we find a `.vst3` ancestor and rewrite the path.
 // No-op when the path is already a `.vst3` (macOS / non-Linux / future
 // JUCE that fixes this).
-void normalizeVst3FileOrIdentifier (juce::PluginDescription& desc)
+void normalizeVst3Location (PluginDescriptor& descriptor)
 {
-    if (desc.pluginFormatName != "VST3") return;
-    if (juce::File (desc.fileOrIdentifier).hasFileExtension (".vst3")) return;
+    if (descriptor.formatName != "VST3") return;
+    if (juce::File (descriptor.location).hasFileExtension (".vst3")) return;
 
-    for (auto walk = juce::File (desc.fileOrIdentifier).getParentDirectory();
+    for (auto walk = juce::File (descriptor.location).getParentDirectory();
          walk.exists() && walk.getFullPathName().isNotEmpty();
          walk = walk.getParentDirectory())
     {
         if (walk.hasFileExtension (".vst3"))
         {
-            desc.fileOrIdentifier = walk.getFullPathName();
+            descriptor.location = walk.getFullPathName().toStdString();
             return;
         }
         if (walk.getParentDirectory() == walk) break;  // hit fs root
     }
 }
 
+PluginDescriptor refreshFromInstance (PluginManager& manager,
+                                      juce::AudioPluginInstance& instance,
+                                      const PluginDescriptor& reloadDescriptor)
+{
+    return mergeLoadedPluginDescriptor (
+        reloadDescriptor, manager.descriptorForInstance (instance));
+}
+
 // One-shot diagnostic so the user (and we) can see exactly what JUCE is
 // reporting after load + bus-layout pass. Helps debug "plugin loaded but
 // silent" cases like an instrument that ends up looking like an effect
 // because of an auto-enabled sidechain bus.
-void logLoadedPlugin (const juce::AudioPluginInstance& instance)
+void logLoadedPlugin (const juce::AudioPluginInstance& instance,
+                      const PluginDescriptor& descriptor)
 {
-    juce::PluginDescription desc;
-    instance.fillInPluginDescription (desc);
     std::fprintf (stderr,
                   "[Dusk Studio/PluginSlot] Loaded \"%s\" (instrument=%d) - "
                   "totalIn=%d totalOut=%d busesIn=%d busesOut=%d latency=%d\n",
-                  desc.name.toRawUTF8(),
-                  (int) desc.isInstrument,
+                  descriptor.name.c_str(),
+                  (int) descriptor.isInstrument,
                   instance.getTotalNumInputChannels(),
                   instance.getTotalNumOutputChannels(),
                   instance.getBusCount (true),
@@ -250,10 +257,9 @@ void PluginSlot::clearAutoBypass() noexcept
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     // Clearing crashed state too: if the user explicitly asks to
     // re-enable a crashed slot, drop the dead connection so the next
-    // load (or processBlock attempt) doesn't see a stale carcass. The
-    // saved description XML stays so a subsequent restoreFromSavedState
-    // can re-spawn cleanly. Same deferred-destruction shape as the
-    // swap paths: hand off into previousRemote so any audio block
+    // load (or processBlock attempt) doesn't see a stale carcass. Use the
+    // same deferred-destruction shape as the swap paths: hand off
+    // into previousRemote so any audio block
     // that's still holding a freshly-null'd currentRemote pointer
     // can complete safely.
     if (remoteCrashed.load (std::memory_order_relaxed))
@@ -416,7 +422,12 @@ void PluginSlot::releaseResources()
 
     currentInstance.store (nullptr, std::memory_order_release);
     if (ownedInstance != nullptr)
+    {
         ownedInstance->releaseResources();
+        juce::MemoryBlock state;
+        ownedInstance->getStateInformation (state);
+        lastKnownStateBase64 = state.toBase64Encoding();
+    }
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     reaperTimer.stopTimer();
@@ -424,6 +435,11 @@ void PluginSlot::releaseResources()
     if (ownedRemote != nullptr)
     {
         std::string err;
+        std::vector<std::uint8_t> state;
+        if (ownedRemote->getState (state, err))
+            lastKnownStateBase64 = state.empty()
+                ? juce::String()
+                : juce::MemoryBlock (state.data(), state.size()).toBase64Encoding();
         // release() asks the child to drop its plugin instance but keeps
         // the SHM + child process alive, so a subsequent load doesn't
         // pay the fork+exec cost again.
@@ -443,57 +459,48 @@ bool PluginSlot::isLoaded() const noexcept
 
 juce::String PluginSlot::getLoadedName() const
 {
-    if (auto* p = currentInstance.load (std::memory_order_acquire))
-        return p->getName();
-   #if DUSKSTUDIO_HAS_OOP_PLUGINS
-    if (currentRemote.load (std::memory_order_acquire) != nullptr)
-    {
-        // Parse the cached description XML for the plugin's display
-        // name. Cheap (a few hundred bytes of XML) and avoids an IPC
-        // round-trip just for a label.
-        if (savedDescriptionXml.isNotEmpty())
-            if (auto xml = juce::XmlDocument::parse (savedDescriptionXml))
-            {
-                juce::PluginDescription desc;
-                if (desc.loadFromXml (*xml))
-                    return desc.name;
-            }
-    }
-   #endif
+    if (loadedDescriptor.has_value())
+        return loadedDescriptor->name;
     return {};
 }
 
 bool PluginSlot::isOffline() const noexcept
 {
-    if (isLoaded()) return false;
-    return offlineDescriptionXml.isNotEmpty();
+    return offlineDescriptor.has_value() || offlineLegacyDescriptionXml.isNotEmpty();
 }
 
 void PluginSlot::setOfflineForCapture (const juce::String& displayName)
 {
     if (displayName.isEmpty())
     {
-        offlineDescriptionXml.clear();
+        offlineDescriptor.reset();
+        offlineLegacyDescriptionXml.clear();
         offlineStateBase64.clear();
+        offlineCapturePlaceholder = false;
         return;
     }
-    juce::PluginDescription desc;
-    desc.name             = displayName;
-    desc.pluginFormatName = "VST3";
-    if (auto xml = desc.createXml())
-        offlineDescriptionXml = xml->toString();
+    PluginDescriptor descriptor;
+    descriptor.name = displayName.toStdString();
+    offlineDescriptor = std::move (descriptor);
+    offlineLegacyDescriptionXml.clear();
     offlineStateBase64.clear();
+    offlineCapturePlaceholder = true;
 }
+
+#if defined(DUSKSTUDIO_TESTS)
+void PluginSlot::setTemporarilyInactivePersistenceForTest (
+    PluginDescriptor descriptor, const juce::String& stateBase64)
+{
+    unload();
+    loadedDescriptor = std::move (descriptor);
+    lastKnownStateBase64 = stateBase64;
+}
+#endif
 
 juce::String PluginSlot::getOfflineName() const
 {
-    if (offlineDescriptionXml.isEmpty()) return {};
-    if (auto xml = juce::XmlDocument::parse (offlineDescriptionXml))
-    {
-        juce::PluginDescription desc;
-        if (desc.loadFromXml (*xml))
-            return desc.name;
-    }
+    if (offlineDescriptor.has_value())
+        return offlineDescriptor->name;
     return {};
 }
 
@@ -548,6 +555,8 @@ bool PluginSlot::loadFromFile (const juce::File& pluginFile, juce::String& error
     previousInstances[1] = std::move (previousInstances[0]);
     previousInstances[0] = std::move (ownedInstance);
     ownedInstance.reset();
+    loadedDescriptor.reset();
+    lastKnownStateBase64.clear();
 
     auto fresh = manager->createPluginInstance (pluginFile,
                                                   preparedSampleRate,
@@ -569,7 +578,9 @@ bool PluginSlot::loadFromFile (const juce::File& pluginFile, juce::String& error
                                   preparedBlockSize);
     if (preparedSampleRate > 0.0)
         fresh->prepareToPlay (preparedSampleRate, preparedBlockSize);
-    logLoadedPlugin (*fresh);
+    auto descriptor = manager->descriptorForInstance (*fresh);
+    normalizeVst3Location (descriptor);
+    logLoadedPlugin (*fresh, descriptor);
 
     ownedInstance = std::move (fresh);
     blocksSinceLoad     = 0;
@@ -588,13 +599,17 @@ bool PluginSlot::loadFromFile (const juce::File& pluginFile, juce::String& error
     for (auto* p : ownedInstance->getParameters())
         if (p != nullptr) p->addListener (lastTouchedListener.get());
     currentInstance.store (ownedInstance.get(), std::memory_order_release);
-    offlineDescriptionXml.clear();
+    loadedDescriptor = std::move (descriptor);
+    offlineDescriptor.reset();
+    offlineLegacyDescriptionXml.clear();
     offlineStateBase64.clear();
+    offlineCapturePlaceholder = false;
+    lastKnownStateBase64.clear();
     return true;
 }
 
-bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
-                                        juce::String& errorMessage)
+bool PluginSlot::loadFromDescriptor (const PluginDescriptor& descriptor,
+                                     juce::String& errorMessage)
 {
     if (manager == nullptr)
     {
@@ -619,8 +634,8 @@ bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
 
     // Normalize the path - cached KnownPluginList descriptions on Linux
     // carry the inner-.so path which findFormatForDescription rejects.
-    juce::PluginDescription fixedDesc = desc;
-    normalizeVst3FileOrIdentifier (fixedDesc);
+    PluginDescriptor fixedDescriptor = descriptor;
+    normalizeVst3Location (fixedDescriptor);
 
     // Same swap-load shape as loadFromFile; rotates through the
     // two-deep keep-alive ring so the deposed instance survives TWO
@@ -644,6 +659,8 @@ bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
     previousInstances[1] = std::move (previousInstances[0]);
     previousInstances[0] = std::move (ownedInstance);
     ownedInstance.reset();
+    loadedDescriptor.reset();
+    lastKnownStateBase64.clear();
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     // Tear down any prior OOP slot before deciding which path the new
@@ -661,7 +678,6 @@ bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
     previousRemotes[1] = std::move (previousRemotes[0]);
     previousRemotes[0] = std::move (ownedRemote);
     remoteCrashed.store (false, std::memory_order_relaxed);
-    savedDescriptionXml.clear();
 
     const bool tryOop = manager->isOopEnabled()
                          && preparedBlockSize > 0
@@ -690,14 +706,13 @@ bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
             }
             else
             {
-                auto descXml = fixedDesc.createXml();
-                const auto descXmlStr = descXml != nullptr
-                    ? descXml->toString (juce::XmlElement::TextFormat().singleLine())
-                    : juce::String();
+                const auto descXmlStr = manager->descriptorToLegacyXml (fixedDescriptor);
                 int  numIn = 0, numOut = 0, latency = 0;
+                bool isInstrument = false;
                 if (! remote->loadPlugin (descXmlStr.toStdString(),
                                             preparedSampleRate, preparedBlockSize,
-                                            numIn, numOut, latency, err))
+                                            numIn, numOut, latency,
+                                            isInstrument, err))
                 {
                     std::fprintf (stderr,
                                   "[Dusk Studio/PluginSlot] OOP loadPlugin failed (%s); "
@@ -708,20 +723,26 @@ bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
                 {
                     remoteNumIn .store (numIn,  std::memory_order_relaxed);
                     remoteNumOut.store (numOut, std::memory_order_relaxed);
-                    remoteIsInstrument.store (numIn == 0,
+                    remoteIsInstrument.store (isInstrument,
                                                 std::memory_order_relaxed);
                     cachedLatencySamples.store (latency, std::memory_order_relaxed);
                     blocksSinceLoad     = 0;
                     consecutiveOverruns = 0;
                     autoBypassed .store (false, std::memory_order_relaxed);
                     remoteCrashed.store (false, std::memory_order_relaxed);
-                    savedDescriptionXml = descXmlStr;
                     ownedRemote = std::move (remote);
                     currentRemote.store (ownedRemote.get(),
                                             std::memory_order_release);
                     reaperTimer.startTimer (kReaperPeriodMs);
-                    offlineDescriptionXml.clear();
+                    fixedDescriptor.isInstrument = isInstrument;
+                    fixedDescriptor.numInputChannels = numIn;
+                    fixedDescriptor.numOutputChannels = numOut;
+                    loadedDescriptor = fixedDescriptor;
+                    offlineDescriptor.reset();
+                    offlineLegacyDescriptionXml.clear();
                     offlineStateBase64.clear();
+                    offlineCapturePlaceholder = false;
+                    lastKnownStateBase64.clear();
                     return true;
                 }
             }
@@ -731,7 +752,7 @@ bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
     }
    #endif
 
-    auto fresh = manager->createPluginInstance (fixedDesc, preparedSampleRate,
+    auto fresh = manager->createPluginInstance (fixedDescriptor, preparedSampleRate,
                                                   preparedBlockSize, errorMessage);
     if (fresh == nullptr)
     {
@@ -741,15 +762,16 @@ bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
         return false;
     }
 
-    return installInProcessInstance (std::move (fresh));
+    return installInProcessInstance (std::move (fresh), std::move (fixedDescriptor));
 }
 
-// Message-thread install tail shared by the synchronous loadFromDescription and
-// the off-thread loadFromDescriptionAsync completion. Primes the freshly-built
+// Message-thread install tail shared by synchronous and off-thread descriptor
+// loads. Primes the freshly-built
 // instance, then atomically swaps it into currentInstance - the audio thread
 // reads via acquire. Caller has already rotated the keep-alive ring + nulled
 // currentInstance, so this only installs the new owner.
-bool PluginSlot::installInProcessInstance (std::unique_ptr<juce::AudioPluginInstance> fresh)
+bool PluginSlot::installInProcessInstance (std::unique_ptr<juce::AudioPluginInstance> fresh,
+                                           PluginDescriptor descriptor)
 {
     if (fresh == nullptr) return false;
 
@@ -766,7 +788,8 @@ bool PluginSlot::installInProcessInstance (std::unique_ptr<juce::AudioPluginInst
                                   preparedBlockSize);
     if (preparedSampleRate > 0.0)
         fresh->prepareToPlay (preparedSampleRate, preparedBlockSize);
-    logLoadedPlugin (*fresh);
+    descriptor = refreshFromInstance (*manager, *fresh, descriptor);
+    logLoadedPlugin (*fresh, descriptor);
 
     ownedInstance = std::move (fresh);
     blocksSinceLoad     = 0;
@@ -781,13 +804,17 @@ bool PluginSlot::installInProcessInstance (std::unique_ptr<juce::AudioPluginInst
     for (auto* p : ownedInstance->getParameters())
         if (p != nullptr) p->addListener (lastTouchedListener.get());
     currentInstance.store (ownedInstance.get(), std::memory_order_release);
-    offlineDescriptionXml.clear();
+    loadedDescriptor = std::move (descriptor);
+    offlineDescriptor.reset();
+    offlineLegacyDescriptionXml.clear();
     offlineStateBase64.clear();
+    offlineCapturePlaceholder = false;
+    lastKnownStateBase64.clear();
     return true;
 }
 
-void PluginSlot::loadFromDescriptionAsync (const juce::PluginDescription& desc,
-                                           std::function<void (bool, juce::String)> onDone)
+void PluginSlot::loadFromDescriptorAsync (const PluginDescriptor& descriptor,
+                                          std::function<void (bool, juce::String)> onDone)
 {
     if (manager == nullptr)
     {
@@ -802,7 +829,7 @@ void PluginSlot::loadFromDescriptionAsync (const juce::PluginDescription& desc,
     if (manager->isOopEnabled())
     {
         juce::String err;
-        const bool ok = loadFromDescription (desc, err);
+        const bool ok = loadFromDescriptor (descriptor, err);
         if (onDone) onDone (ok, err);
         return;
     }
@@ -817,12 +844,12 @@ void PluginSlot::loadFromDescriptionAsync (const juce::PluginDescription& desc,
     releaseShellInstance();
    #endif
 
-    juce::PluginDescription fixedDesc = desc;
-    normalizeVst3FileOrIdentifier (fixedDesc);
+    PluginDescriptor fixedDescriptor = descriptor;
+    normalizeVst3Location (fixedDescriptor);
 
     // Rotate the keep-alive ring + null currentInstance now - the slot goes
     // silent for the duration of the off-thread load. Same shape as the
-    // synchronous path's pre-swap rotation (loadFromDescription).
+    // synchronous path's pre-swap rotation.
     if (ownedInstance != nullptr && lastTouchedListener != nullptr)
         for (auto* p : ownedInstance->getParameters())
             if (p != nullptr) p->removeListener (lastTouchedListener.get());
@@ -838,13 +865,15 @@ void PluginSlot::loadFromDescriptionAsync (const juce::PluginDescription& desc,
     previousInstances[1] = std::move (previousInstances[0]);
     previousInstances[0] = std::move (ownedInstance);
     ownedInstance.reset();
+    loadedDescriptor.reset();
+    lastKnownStateBase64.clear();
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     // A prior load may have been OOP (mode is per-load). Mirror the sync path's
     // remote teardown so processBlock stops routing to the remote before the
     // in-process instance becomes the active processor - without this the slot
     // keeps playing the OOP plugin after currentInstance is nulled. Two-deep
-    // deferred-destruction ring, same as loadFromDescription / unload.
+    // deferred-destruction ring, same as descriptor load / unload.
     reaperTimer.stopTimer();
     currentRemote.store (nullptr, std::memory_order_release);
     previousRemotes[1].reset();
@@ -857,9 +886,9 @@ void PluginSlot::loadFromDescriptionAsync (const juce::PluginDescription& desc,
     // to lifeToken guards against the slot being destroyed mid-load (token dies
     // with the slot -> weak_ptr expires -> bail before touching `this`).
     std::weak_ptr<char> life = lifeToken;
-    manager->createPluginInstanceAsync (fixedDesc, preparedSampleRate, preparedBlockSize,
-        [this, life, epoch, onDone] (std::unique_ptr<juce::AudioPluginInstance> inst,
-                                      juce::String err)
+    manager->createPluginInstanceAsync (fixedDescriptor, preparedSampleRate, preparedBlockSize,
+        [this, life, epoch, onDone, fixedDescriptor]
+        (std::unique_ptr<juce::AudioPluginInstance> inst, juce::String err)
     {
         if (! life.lock()) return;                      // slot destroyed mid-load
         if (currentLoadEpoch.load (std::memory_order_relaxed) != epoch)
@@ -873,7 +902,7 @@ void PluginSlot::loadFromDescriptionAsync (const juce::PluginDescription& desc,
                                                         : juce::String ("plugin creation failed"));
             return;
         }
-        const bool ok = installInProcessInstance (std::move (inst));
+        const bool ok = installInProcessInstance (std::move (inst), fixedDescriptor);
         if (onDone) onDone (ok, ok ? juce::String() : juce::String ("install failed"));
     });
 }
@@ -918,7 +947,7 @@ void PluginSlot::unload()
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     // Two-deep deferred-destruction via previousRemotes ring; see
-    // loadFromDescription for the rationale.
+    // descriptor load for the rationale.
     reaperTimer.stopTimer();
     currentRemote.store (nullptr, std::memory_order_release);
     previousRemotes[1].reset();
@@ -928,50 +957,31 @@ void PluginSlot::unload()
     remoteNumOut.store (0, std::memory_order_relaxed);
     remoteIsInstrument.store (false, std::memory_order_relaxed);
     remoteCrashed.store (false, std::memory_order_relaxed);
-    savedDescriptionXml.clear();
    #endif
-    offlineDescriptionXml.clear();
+    loadedDescriptor.reset();
+    offlineDescriptor.reset();
+    offlineLegacyDescriptionXml.clear();
     offlineStateBase64.clear();
+    offlineCapturePlaceholder = false;
+    lastKnownStateBase64.clear();
 }
 
-juce::String PluginSlot::getDescriptionXmlForSave (int parkSleepMs)
+std::optional<PluginDescriptor> PluginSlot::getDescriptorForSave (int parkSleepMs)
 {
-   #if DUSKSTUDIO_HAS_OOP_PLUGINS
-    if (currentRemote.load (std::memory_order_acquire) != nullptr
-        && savedDescriptionXml.isNotEmpty())
-    {
-        // Saved at load time. The XML is already path-normalized
-        // (PluginManager's caller passed a normalized desc, or
-        // loadFromDescription's normalization ran).
-        return savedDescriptionXml;
-    }
-   #endif
+    juce::ignoreUnused (parkSleepMs);
+    if (loadedDescriptor.has_value())
+        return loadedDescriptor;
+    if (offlineCapturePlaceholder)
+        return std::nullopt;
+    return offlineDescriptor;
+}
 
-    // Slot is empty in-process but holds an offline placeholder from a
-    // failed restoreFromSavedState. Return the stashed XML so the next
-    // save round-trips the user's data instead of wiping it.
-    if (currentInstance.load (std::memory_order_acquire) == nullptr
-        && offlineDescriptionXml.isNotEmpty())
-        return offlineDescriptionXml;
-
-    juce::PluginDescription desc;
-    bool ok = false;
-    // fillInPluginDescription is metadata-only (uid + format + path + name)
-    // and does NOT race the renderer. No releaseResources/prepareToPlay
-    // needed - atomic-park alone is sufficient.
-    withParkedAtomicPointer (currentInstance, [&] (juce::AudioPluginInstance& p)
-    {
-        p.fillInPluginDescription (desc);
-        ok = true;
-    }, parkSleepMs);
-    if (! ok) return {};
-    // JUCE's Linux VST3 wrapper fills the description with the inner-.so
-    // path. Normalize back to the bundle path so the saved session loads
-    // cleanly without relying on restoreFromSavedState's recovery walk.
-    normalizeVst3FileOrIdentifier (desc);
-    if (auto xml = desc.createXml())
-        return xml->toString (juce::XmlElement::TextFormat().singleLine());
-    return {};
+juce::String PluginSlot::getLegacyDescriptionXmlForSave() const
+{
+    if (loadedDescriptor.has_value()
+        || (offlineDescriptor.has_value() && ! offlineCapturePlaceholder))
+        return {};
+    return offlineLegacyDescriptionXml;
 }
 
 bool PluginSlot::isLoadedPluginInstrument() const
@@ -981,11 +991,7 @@ bool PluginSlot::isLoadedPluginInstrument() const
         return remoteIsInstrument.load (std::memory_order_relaxed);
    #endif
 
-    auto* p = currentInstance.load (std::memory_order_acquire);
-    if (p == nullptr) return false;
-    juce::PluginDescription desc;
-    p->fillInPluginDescription (desc);
-    return desc.isInstrument;
+    return loadedDescriptor.has_value() && loadedDescriptor->isInstrument;
 }
 
 juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs)
@@ -1005,12 +1011,17 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs)
             std::fprintf (stderr,
                           "[Dusk Studio/PluginSlot] OOP getState failed: %s\n",
                           err.c_str());
-            return {};
+            return lastKnownStateBase64;
         }
-        if (blob.empty()) return {};
-        return juce::MemoryBlock (blob.data(), blob.size()).toBase64Encoding();
+        lastKnownStateBase64 = blob.empty()
+            ? juce::String()
+            : juce::MemoryBlock (blob.data(), blob.size()).toBase64Encoding();
+        return lastKnownStateBase64;
     }
     juce::ignoreUnused (parkSleepMs);
+
+    if (ownedRemote != nullptr && loadedDescriptor.has_value())
+        return lastKnownStateBase64;
    #endif
 
     // Slot is empty but holds an offline placeholder. Round-trip the
@@ -1019,6 +1030,15 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs)
     if (currentInstance.load (std::memory_order_acquire) == nullptr
         && offlineStateBase64.isNotEmpty())
         return offlineStateBase64;
+
+    if (currentInstance.load (std::memory_order_acquire) == nullptr
+        && ownedInstance != nullptr && loadedDescriptor.has_value())
+    {
+        juce::MemoryBlock inactiveState;
+        ownedInstance->getStateInformation (inactiveState);
+        lastKnownStateBase64 = inactiveState.toBase64Encoding();
+        return lastKnownStateBase64;
+    }
 
     juce::MemoryBlock mb;
     // Atomic-park alone is NOT sufficient for state capture: it tells the
@@ -1051,40 +1071,28 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs)
             }
         },
         parkSleepMs);
-    if (p == nullptr) return {};
-    return mb.toBase64Encoding();
+    if (p == nullptr) return lastKnownStateBase64;
+    lastKnownStateBase64 = mb.toBase64Encoding();
+    return lastKnownStateBase64;
 }
 
-bool PluginSlot::restoreFromSavedState (const juce::String& descriptionXml,
-                                          const juce::String& stateBase64,
-                                          juce::String& errorMessage)
+bool PluginSlot::restoreFromSavedState (
+    const std::optional<PluginDescriptor>& descriptor,
+    const juce::String& legacyDescriptionXml,
+    const juce::String& stateBase64,
+    juce::String& errorMessage)
 {
-    if (descriptionXml.isEmpty())
+    if (! descriptor.has_value() && legacyDescriptionXml.isEmpty())
     {
-        // Saved session had no plugin on this slot - make sure the slot is
-        // empty. Returning success because "no plugin to restore" is the
-        // valid steady state, not an error.
         unload();
         return true;
     }
 
-    // Session-load is a plugin swap from the user's point of view -
-    // bump the epoch + invalidate Mac shell the same way as
-    // loadFromDescription.
     currentLoadEpoch.fetch_add (1, std::memory_order_release);
 
    #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
     releaseShellInstance();
    #endif
-
-    // Stash the inputs up front. On any failure path below the slot
-    // ends up empty, but these copies survive so getDescriptionXmlForSave
-    // / getStateBase64ForSave still return the user's saved data - a
-    // subsequent autosave or manual save then round-trips it instead of
-    // wiping it because the plugin happened to be unavailable. Cleared
-    // by every success path and by unload().
-    offlineDescriptionXml = descriptionXml;
-    offlineStateBase64    = stateBase64;
 
     if (manager == nullptr)
     {
@@ -1092,21 +1100,30 @@ bool PluginSlot::restoreFromSavedState (const juce::String& descriptionXml,
         return false;
     }
 
-    // Parse the description.
-    auto xml = juce::XmlDocument::parse (descriptionXml);
-    if (xml == nullptr)
+    PluginDescriptor persistedDescriptor;
+    if (descriptor.has_value())
     {
-        errorMessage = "Saved plugin description is not valid XML";
-        return false;
+        persistedDescriptor = *descriptor;
     }
-    juce::PluginDescription desc;
-    if (! desc.loadFromXml (*xml))
+    else if (! manager->descriptorFromLegacyXml (legacyDescriptionXml,
+                                                  persistedDescriptor))
     {
-        errorMessage = "Saved plugin description failed to deserialise";
+        unload();
+        offlineDescriptor.reset();
+        offlineLegacyDescriptionXml = legacyDescriptionXml;
+        offlineStateBase64 = stateBase64;
+        offlineCapturePlaceholder = false;
+        errorMessage = "Saved plugin description is not valid legacy XML";
         return false;
     }
 
-    normalizeVst3FileOrIdentifier (desc);
+    PluginDescriptor descriptorToLoad = persistedDescriptor;
+    normalizeVst3Location (descriptorToLoad);
+    offlineDescriptor = persistedDescriptor;
+    offlineLegacyDescriptionXml.clear();
+    offlineStateBase64 = stateBase64;
+    offlineCapturePlaceholder = false;
+    lastKnownStateBase64 = stateBase64;
 
     // Try the OOP path first if enabled. On any failure we fall through
     // to the in-process load below - the user's session restore should
@@ -1117,10 +1134,7 @@ bool PluginSlot::restoreFromSavedState (const juce::String& descriptionXml,
         && preparedBlockSize > 0
         && preparedBlockSize <= duskstudio::ipc::kMaxBlock)
     {
-        // Use the standard load path, then setState. loadFromDescription
-        // handles parking, swap, and OOP/in-process choice; on success,
-        // currentRemote is non-null when the OOP path took.
-        if (loadFromDescription (desc, errorMessage))
+        if (loadFromDescriptor (descriptorToLoad, errorMessage))
         {
             if (auto* r = currentRemote.load (std::memory_order_acquire);
                 r != nullptr && stateBase64.isNotEmpty())
@@ -1138,16 +1152,17 @@ bool PluginSlot::restoreFromSavedState (const juce::String& descriptionXml,
                     }
                 }
             }
-            offlineDescriptionXml.clear();
+            offlineDescriptor.reset();
+            offlineLegacyDescriptionXml.clear();
             offlineStateBase64.clear();
+            offlineCapturePlaceholder = false;
+            lastKnownStateBase64 = stateBase64;
             return true;
         }
-        // loadFromDescription set errorMessage; fall through to retry
-        // in-process so the user's session still loads.
     }
    #endif
 
-    // Same swap-load shape as loadFromFile/loadFromDescription, with the
+    // Same swap-load shape as loadFromFile/loadFromDescriptor, with the
     // same two-deep deferred-destruction-via-previousInstances ring and
     // the same detach-listener-before-rotate discipline (see
     // loadFromFile for the rationale).
@@ -1164,7 +1179,7 @@ bool PluginSlot::restoreFromSavedState (const juce::String& descriptionXml,
     previousInstances[0] = std::move (ownedInstance);
     ownedInstance.reset();
 
-    auto fresh = manager->createPluginInstance (desc, preparedSampleRate,
+    auto fresh = manager->createPluginInstance (descriptorToLoad, preparedSampleRate,
                                                   preparedBlockSize, errorMessage);
     if (fresh == nullptr)
         return false;
@@ -1175,7 +1190,8 @@ bool PluginSlot::restoreFromSavedState (const juce::String& descriptionXml,
                                   preparedSampleRate, preparedBlockSize);
     if (preparedSampleRate > 0.0)
         fresh->prepareToPlay (preparedSampleRate, preparedBlockSize);
-    logLoadedPlugin (*fresh);
+    auto loaded = refreshFromInstance (*manager, *fresh, descriptorToLoad);
+    logLoadedPlugin (*fresh, loaded);
 
     // Apply the saved state blob (if any).
     if (stateBase64.isNotEmpty())
@@ -1200,8 +1216,12 @@ bool PluginSlot::restoreFromSavedState (const juce::String& descriptionXml,
     for (auto* p : ownedInstance->getParameters())
         if (p != nullptr) p->addListener (lastTouchedListener.get());
     currentInstance.store (ownedInstance.get(), std::memory_order_release);
-    offlineDescriptionXml.clear();
+    loadedDescriptor = std::move (loaded);
+    offlineDescriptor.reset();
+    offlineLegacyDescriptionXml.clear();
     offlineStateBase64.clear();
+    offlineCapturePlaceholder = false;
+    lastKnownStateBase64 = stateBase64;
     return true;
 }
 
@@ -1733,7 +1753,7 @@ void PluginSlot::applyParamWriteOnMessageThread (const ParamWrite& pw) noexcept
     // applies it on its DSP-side instance via the existing
     // SetParam -> callAsync -> setValueNotifyingHost path. Acquire
     // load pairs with the message-thread release stores in
-    // loadFromDescription / unload that swap currentRemote.
+    // descriptor load / unload that swap currentRemote.
     if (auto* r = currentRemote.load (std::memory_order_acquire))
         (void) r->setRemoteParam (pw.paramIndex, pw.value);
    #endif
@@ -1755,32 +1775,18 @@ bool PluginSlot::ensureShellInstanceForEditor (juce::String& err)
         err = "PluginSlot has no PluginManager bound";
         return false;
     }
-    if (savedDescriptionXml.isEmpty())
+    if (! loadedDescriptor.has_value())
     {
         err = "No plugin loaded - nothing to host in the shell";
         return false;
     }
 
-    // Parse the saved description (populated by loadFromDescription's
-    // OOP path) and load a fresh in-process instance against the same
+    // Load a fresh in-process instance against the same
     // file. The instance is editor-only: prepareToPlay is called so
     // the editor's bounds + initial parameter snapshot match the
     // engine's current SR/BS, but processBlock is NEVER invoked on
     // this instance - DSP runs in the OOP child.
-    auto xml = juce::XmlDocument::parse (savedDescriptionXml);
-    if (xml == nullptr)
-    {
-        err = "Saved plugin description is not valid XML";
-        return false;
-    }
-    juce::PluginDescription desc;
-    if (! desc.loadFromXml (*xml))
-    {
-        err = "Saved plugin description failed to deserialise";
-        return false;
-    }
-
-    auto fresh = manager->createPluginInstance (desc,
+    auto fresh = manager->createPluginInstance (*loadedDescriptor,
                                                   preparedSampleRate > 0.0
                                                        ? preparedSampleRate : 48000.0,
                                                   preparedBlockSize  > 0

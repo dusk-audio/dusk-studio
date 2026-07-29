@@ -128,16 +128,27 @@ reimplemented.
    `juce_audio_formats` stay for AudioThumbnail — GUI tower unlinks those.
    Multi-PR tower, phases H1-H6 in
    [dejuce-hosting-plan.md](dejuce-hosting-plan.md).
-2. **GUI tower (finale)** — bespoke Wayland toolkit (xdg-shell; XWayland/
-   XEmbed for THIRD-PARTY plugin UIs only — hard constraint from Marc
-   2026-07-26: zero XWayland for anything Dusk-owned on a Wayland-only
-   session, so first-party DPF plugin UIs re-host their Dear-ImGui content
-   onto Dusk-toolkit EGL surfaces; 2D renderer TBD Blend2D/Skia,
-   HarfBuzz/FreeType, own widget layer; swap behind the existing
-   DuskComboBox/DuskContextMenu/LookAndFeel/EmbeddedModal seams; event loop =
-   rewrite of MessageThread.cpp, call sites already converged by the
-   events-remainder tower, PR #112). ~120 files, 50%+ of total effort,
-   multi-release. Unlinks everything else, `juce_core` last.
+2. **GUI tower (finale)** — framework decision (Marc, 2026-07-27): build on
+   the hard-forked DPF stack, not a bespoke retained toolkit. App UI =
+   Dear ImGui + DuskImGuiWidgets on EGL, over a Dusk-written **Wayland
+   backend for pugl** in the fork (xdg-shell surfaces, EGL contexts, input,
+   clipboard, cursors — pugl ships mac/win/X11 only today). The earlier
+   bespoke plan (2D renderer TBD Blend2D/Skia, HarfBuzz/FreeType, own
+   widget layer) is DROPPED. One UI stack across app and first-party
+   plugin UIs — the H1d embed becomes a plain in-process surface at end
+   state; zero XWayland for anything Dusk-owned on a Wayland-only session
+   (Marc, 2026-07-26); XWayland/XEmbed stays for THIRD-PARTY plugin
+   editors only. Consequences owned in the tower spec: per-view
+   immediate-mode rewrite (not a Component port), ImGui theme must
+   replicate the current LookAndFeel, accessibility needs a deliberate
+   bridge (current JUCE a11y handlers must not silently regress),
+   IME/DnD/multi-window land in the Wayland backend. Gate before lock-in:
+   a spike — app shell as a native Wayland window rendering one channel
+   strip in ImGui at 60 Hz with input. Swap still happens behind the
+   existing DuskComboBox/DuskContextMenu/LookAndFeel/EmbeddedModal seams;
+   event loop = rewrite of MessageThread.cpp, call sites already converged
+   by the events-remainder tower, PR #112. ~120 files, 50%+ of total
+   effort, multi-release. Unlinks everything else, `juce_core` last.
 
 Done since the last queue edit: events remainder (PR #112, zero gate
 movement by design), FFT (branch dejuce/fft — DpAligner + MasteringEqEditor

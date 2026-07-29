@@ -22,7 +22,6 @@ src/engine/FileImporter.h
 src/engine/JuceCompat.h
 src/engine/MasteringPlayer.cpp
 src/engine/MasteringPlayer.h
-src/engine/NativeScanRows.h
 src/engine/PlaybackEngine.cpp
 src/engine/PlaybackEngine.h
 src/engine/PluginManager.cpp
@@ -36,7 +35,6 @@ src/engine/device/DeviceManagerJuce.cpp
 src/engine/hosting/NativePluginId.h
 src/engine/ipc/IpcSelfTest.cpp
 src/engine/ipc/PluginHostMain.cpp
-src/engine/ipc/PluginScanProtocol.h
 src/engine/midi/JuceMidiBackend.cpp
 src/engine/midi/JuceMidiBackend.h
 src/engine/multisample/AriaBank.cpp

@@ -1,9 +1,11 @@
 # De-JUCE — plugin-hosting tower (campaign plan)
 
-Status: **H1 executed on branch `dejuce/hosting`; H2-H6 planned.** Marc's call on
+Status: **H1a-c merged (PR #114); H3 merged (PR #118); H4 complete locally
+on `dejuce/hosting-h4` and awaiting Marc's push word; H1d blocked on donor
+consolidation; H2 blocked on the donor multiband port.** Marc's call on
 2026-07-26 reversed the 2026-07-01 keep-JUCE-fallback decision: the JUCE
-plugin-hosting path gets deleted entirely; native hosting must cover
-VST3 + LV2 + CLAP on Linux, macOS, and Windows, plus AU on macOS.
+plugin-hosting path gets deleted entirely; native hosting must cover VST3 +
+LV2 + CLAP on Linux, macOS, and Windows, plus AU on macOS.
 Multi-PR tower (>15 files per phase, RT-risky and mechanical work mixed) —
 one PR per phase, sequenced below. Do not start phase N+1's PR before N
 merges. Read `docs/dejuce-campaign.md` + the memory ledger first.
@@ -53,9 +55,11 @@ merges. Read `docs/dejuce-campaign.md` + the memory ledger first.
 - OOP host: JUCE audio path only + native scan sandbox (clap/vst3). After
   the drop it keeps only scanning; its juce_events dispatch loop goes with
   the JUCE path (also closes the events-tower out-of-scope items).
-- Deletion surface: 36 files typed against AudioProcessor /
-  AudioPluginInstance / PluginDescription / KnownPluginList outside the
-  native dirs (scout table in session notes; re-scout at H4 kickoff).
+- Deletion surface: the completed post-H3 H4 re-scout covered the picker and
+  helpers, native scan rows and caches, session references, scan wire format,
+  screenshot fixtures, restore paths, and MIDI bindings. H4 moved descriptor
+  plumbing to the Dusk type; the remaining processor/editor ownership stays
+  explicitly deferred to H6.
 
 ## Phases
 
@@ -78,15 +82,22 @@ merges. Read `docs/dejuce-campaign.md` + the memory ledger first.
   UniversalCompressor/APVTS onto the new core; MasteringView native
   multiband panel replacing the embedded donor panel. A/B vs JUCE
   multiband.
-- **H3 — DuskMultisample re-home.** Off juce::AudioPluginInstance /
-  AudioProcessorEditor / AudioPluginFormat onto an internal-instrument seam
-  (its params are already plain atomics; sfizz does the DSP — coupling is
-  shim-shaped). Editor becomes a plain Component.
-- **H4 — descriptor/plumbing de-JUCE.** Replace PluginDescription /
-  KnownPluginList surfaces with a dusk descriptor type: picker +
-  PluginPickerHelpers, NativeScanRows, scan caches, session references,
-  PluginScanProtocol wire format, ScreenshotCapture fake rows,
-  DuskStudioApp session-restore path. Mechanical but wide; re-scout first.
+- **H3 — DuskMultisample re-home. DONE (PR #118).**
+  DuskMultisampleProcessor implements hosting::INativeInstance; fourth
+  native rung (NativeMultisampleSlot, ladder CLAP > LV2 > VST3 > MS > JUCE);
+  session keys native_multisample_path/state with one-way legacy desc-XML
+  migration; format wrapper deleted (gate 183 -> 181); two-phase
+  prime/commit keeps sfizz parses outside the engine gate; spec:
+  [dejuce-hosting-h3-multisample.md](dejuce-hosting-h3-multisample.md).
+- **H4 — descriptor/plumbing de-JUCE. DONE locally; not pushed.** Dusk
+  `PluginDescriptor` now owns picker, native scan/cache, scan-protocol,
+  session-reference, offline/clone, screenshot-fixture, and restore plumbing.
+  The private JUCE host boundary converts only where H6 still needs it.
+  Session schema v4 preserves structured descriptors and migrates legacy XML;
+  native sidecar caches are versioned JSON with one-way XML import. Gate
+  181 -> 179; full CTest 493/493 plus private-Xvfb self-test, synthetic SFZ
+  sound verdict, and picker screenshot review passed. Spec:
+  [dejuce-hosting-h4-descriptors.md](dejuce-hosting-h4-descriptors.md).
 - **H5 — platform ports (mac, win).** Flip CMake gates per-OS; loader
   shims (dlopen/LoadLibrary, mac bundle resolution); per-OS scan paths;
   editor embed variants (COCOA/HWND CLAP targets, kPlatformTypeNSView/HWND,

@@ -334,7 +334,9 @@ target_sources(DuskStudio PRIVATE
     # DeviceManager: native orchestrator on Linux (DeviceManager.cpp), JUCE-wrapped
     # fallback off Linux (DeviceManagerJuce.cpp). Gated below the target_sources().
     src/engine/midi/MidiDevices.cpp
+    src/engine/NativePluginCache.cpp
     src/engine/PlaybackEngine.cpp
+    src/engine/PluginDescriptor.cpp
     src/engine/PluginManager.cpp
     src/engine/PluginSlot.cpp
     src/engine/RecordManager.cpp
@@ -786,6 +788,7 @@ if(_duskstudio_oop_enabled)
         BUNDLE_ID    "audio.dusk.studio.pluginhost")
     target_sources(dusk-studio-plugin-host PRIVATE
         src/engine/ipc/PluginHostMain.cpp
+        src/engine/PluginDescriptor.cpp
         src/foundation/MessageThread.cpp
         ${_duskstudio_ipc_child_platform_sources})
     target_compile_features (dusk-studio-plugin-host PRIVATE cxx_std_17)
@@ -813,6 +816,7 @@ if(_duskstudio_oop_enabled)
         target_link_libraries(dusk-studio-plugin-host PRIVATE synchronization)
     endif()
     target_include_directories(dusk-studio-plugin-host PRIVATE src)
+    target_include_directories(dusk-studio-plugin-host SYSTEM PRIVATE external/json)
     # Native-format discovery runs sandboxed through this child (--scan-native):
     # it needs each format's bundle loader, nothing else from the native hosts.
     if(DUSKSTUDIO_NATIVE_CLAP)

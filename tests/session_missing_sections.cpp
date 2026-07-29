@@ -32,13 +32,13 @@ TEST_CASE ("loading a session without section keys resets those sections",
         r.file            = s.getAudioDirectory().getChildFile ("ghost.wav");
         r.lengthInSamples = 1000;
         s.track (3).regions.push_back (r);
-        s.track (3).pluginDescriptionXml = "<PLUGIN/>";
+        s.track (3).pluginLegacyDescriptionXml = "<PLUGIN/>";
         s.track (3).pluginStateBase64    = "ABCD";
 
         s.bus (1).strip.faderDb.store (-12.0f);
         s.bus (1).strip.compEnabled.store (true);
 
-        s.auxLane (0).pluginDescriptionXml[0] = "<PLUGIN/>";
+        s.auxLane (0).pluginLegacyDescriptionXml[0] = "<PLUGIN/>";
         s.auxLane (0).pluginStateBase64[0]    = "ABCD";
         s.auxLane (0).nativeClapPath[0]       = "/tmp/ghost.clap";
         s.auxLane (0).params.returnLevelDb.store (-6.0f);
@@ -62,13 +62,15 @@ TEST_CASE ("loading a session without section keys resets those sections",
     REQUIRE (SessionSerializer::load (s, target));
 
     REQUIRE (s.track (3).regions.empty());
-    REQUIRE (s.track (3).pluginDescriptionXml.isEmpty());
+    REQUIRE_FALSE (s.track (3).pluginDescriptor.has_value());
+    REQUIRE (s.track (3).pluginLegacyDescriptionXml.isEmpty());
     REQUIRE (s.track (3).pluginStateBase64.isEmpty());
 
     REQUIRE_THAT (s.bus (1).strip.faderDb.load(), WithinAbs (0.0f, 1e-6f));
     REQUIRE_FALSE (s.bus (1).strip.compEnabled.load());
 
-    REQUIRE (s.auxLane (0).pluginDescriptionXml[0].isEmpty());
+    REQUIRE_FALSE (s.auxLane (0).pluginDescriptor[0].has_value());
+    REQUIRE (s.auxLane (0).pluginLegacyDescriptionXml[0].isEmpty());
     REQUIRE (s.auxLane (0).pluginStateBase64[0].isEmpty());
     REQUIRE (s.auxLane (0).nativeClapPath[0].isEmpty());
     REQUIRE_THAT (s.auxLane (0).params.returnLevelDb.load(), WithinAbs (0.0f, 1e-6f));

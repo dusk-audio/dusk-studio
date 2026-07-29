@@ -343,7 +343,8 @@ bool RemotePluginConnection::ping (int timeoutMs, std::string& errorOut)
 bool RemotePluginConnection::loadPlugin (const std::string& pluginDescriptionXml,
                                           double sampleRate, int blockSize,
                                           int& numInOut, int& numOutOut,
-                                          int& latencyOut, std::string& errorOut)
+                                          int& latencyOut, bool& isInstrumentOut,
+                                          std::string& errorOut)
 {
     PrepareToPlayPayload header {};
     header.sampleRate = sampleRate;
@@ -381,6 +382,7 @@ bool RemotePluginConnection::loadPlugin (const std::string& pluginDescriptionXml
     numInOut    = r.numInChans;
     numOutOut   = r.numOutChans;
     latencyOut  = r.latencySamples;
+    isInstrumentOut = r.isInstrument != 0;
     return true;
 }
 

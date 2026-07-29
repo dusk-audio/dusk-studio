@@ -325,8 +325,7 @@ bool DeleteMidiRegionAction::undo()
 
 // POD snapshot of every per-track field the clone should duplicate.
 // Atomics are loaded into plain values; vectors are copied by value.
-// Plugin state is captured as the (descriptionXml, stateBase64) pair the
-// session-restore path already understands.
+// Plugin state is captured as one descriptor/legacy-fallback/state unit.
 struct CloneTrackAction::Impl
 {
     juce::String name;
@@ -365,9 +364,8 @@ struct CloneTrackAction::Impl
     int   inputSource = -2, inputSourceR = -2;
     int   midiInputIndex = -1, midiChannel = 0;
 
-    // Plugin slot - description + state captured live from the engine.
-    juce::String pluginDescXml;
-    juce::String pluginStateB64;
+    // Plugin slot - descriptor, raw legacy fallback, and state captured live.
+    ClonePluginSnapshot plugin;
 
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     // Native multisample instrument - not a JUCE-hosted plugin, so it needs
@@ -447,8 +445,9 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
     // Plugin: pull from the live slot, not the (potentially stale)
     // session.json fields. Those are only kept fresh during save.
     auto& slot = engine.getStrip (idx).getPluginSlot();
-    s.pluginDescXml  = slot.getDescriptionXmlForSave();
-    s.pluginStateB64 = slot.getStateBase64ForSave();
+    s.plugin.descriptor = slot.getDescriptorForSave();
+    s.plugin.legacyDescriptionXml = slot.getLegacyDescriptionXmlForSave();
+    s.plugin.stateBase64 = slot.getStateBase64ForSave();
 
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     auto& msSlot = engine.getStrip (idx).getNativeMultisampleSlot();
@@ -538,15 +537,15 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
     // and silently bail.
     engine.getSession().recomputeRtCounters();
 
-    // Plugin: replay through the live slot. Empty descriptionXml
-    // legitimately means "no plugin" - restoreFromSavedState handles
-    // that as the unloaded steady state.
+    // Plugin: replay through the live slot.
     juce::String err;
-    engine.getStrip (idx).getPluginSlot().restoreFromSavedState (
-        s.pluginDescXml, s.pluginStateB64, err);
-    if (err.isNotEmpty())
+    if (! engine.getStrip (idx).getPluginSlot().restoreFromSavedState (
+            s.plugin.descriptor, s.plugin.legacyDescriptionXml,
+            s.plugin.stateBase64, err))
+    {
         DBG ("CloneTrackAction: plugin restore failed on strip " << idx
-              << " (" << s.pluginDescXml << "): " << err);
+              << ": " << err);
+    }
 
     t.regions = s.regions;
     t.midiRegions.publish (std::make_unique<std::vector<MidiRegion>> (s.midiRegions));
@@ -555,8 +554,7 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
     // after a clone (with no manual edits in between) round-trips
     // correctly. publishPluginStateForSave does this for ALL slots; for
     // a single track we mirror by hand.
-    t.pluginDescriptionXml = s.pluginDescXml;
-    t.pluginStateBase64    = s.pluginStateB64;
+    s.plugin.publishTo (t);
 
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     // After the JUCE replay: a multisample load evicts the JUCE slot, so doing

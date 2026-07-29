@@ -2,16 +2,19 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
+
+#include "PluginDescriptor.h"
 #include "../foundation/MessageThread.h"
+
+#if DUSKSTUDIO_HAS_OOP_PLUGINS
+ #include "ipc/RemotePluginConnection.h"
+#endif
+
 #include <array>
 #include <atomic>
 #include <functional>
 #include <memory>
-
-#if DUSKSTUDIO_HAS_OOP_PLUGINS
- #include "ipc/RemotePluginConnection.h"
- #include <memory>
-#endif
+#include <optional>
 
 namespace duskstudio
 {
@@ -64,16 +67,16 @@ public:
     void leakInstanceForShutdown();
 
     bool loadFromFile (const juce::File& pluginFile, juce::String& errorMessage);
-    bool loadFromDescription (const juce::PluginDescription& desc,
-                                juce::String& errorMessage);
+    bool loadFromDescriptor (const PluginDescriptor& descriptor,
+                             juce::String& errorMessage);
 
     // Off-thread load (in-process only - OOP falls back to the sync path).
     // Creates the instance on a background thread so a slow sample decode never
     // freezes the UI, then swaps it in + fires onDone(success, error) ON THE
     // MESSAGE THREAD. Safe against the slot being destroyed or a newer
     // load/unload arriving mid-load (weak-token + load-epoch guards).
-    void loadFromDescriptionAsync (
-        const juce::PluginDescription& desc,
+    void loadFromDescriptorAsync (
+        const PluginDescriptor& descriptor,
         std::function<void (bool success, juce::String error)> onDone);
 
     void unload();
@@ -176,12 +179,14 @@ public:
     // so the audio thread observes the parked pointer. Default 25 ms
     // covers a 1024-sample block at 44.1 kHz. Pass 0 only when the
     // audio callback is already detached (shutdown).
-    juce::String getDescriptionXmlForSave (int parkSleepMs = 25);
+    std::optional<PluginDescriptor> getDescriptorForSave (int parkSleepMs = 25);
+    juce::String getLegacyDescriptionXmlForSave() const;
     juce::String getStateBase64ForSave   (int parkSleepMs = 25);
 
-    bool restoreFromSavedState (const juce::String& descriptionXml,
-                                  const juce::String& stateBase64,
-                                  juce::String& errorMessage);
+    bool restoreFromSavedState (const std::optional<PluginDescriptor>& descriptor,
+                                const juce::String& legacyDescriptionXml,
+                                const juce::String& stateBase64,
+                                juce::String& errorMessage);
 
     // True when restore couldn't re-instantiate (plugin missing /
     // moved / unsupported). Saved description + state are preserved so
@@ -195,6 +200,13 @@ public:
     // figure can be captured without a real missing-plugin session). Pass an
     // empty string to clear it again. Never called in normal operation.
     void setOfflineForCapture (const juce::String& displayName);
+
+   #if defined(DUSKSTUDIO_TESTS)
+    // Persistence-only seam: models an instantiated slot whose audio pointer is
+    // temporarily unpublished (device inactive or OOP child already gone).
+    void setTemporarilyInactivePersistenceForTest (
+        PluginDescriptor descriptor, const juce::String& stateBase64);
+   #endif
 
    #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
     // Mac dual-load shell-instance API. Loads a parent-process copy of
@@ -233,10 +245,11 @@ public:
    #endif
 
 private:
-    // Message-thread install tail shared by loadFromDescription (sync) and
-    // loadFromDescriptionAsync's completion. Primes + atomically swaps in the
+    // Message-thread install tail shared by descriptor-based sync and async
+    // loads. Primes + atomically swaps in the
     // already-built instance; caller has already rotated the keep-alive ring.
-    bool installInProcessInstance (std::unique_ptr<juce::AudioPluginInstance> fresh);
+    bool installInProcessInstance (std::unique_ptr<juce::AudioPluginInstance> fresh,
+                                   PluginDescriptor descriptor);
 
     // Liveness token for async-load completions: a completion captures a
     // weak_ptr to this and bails if it has expired (slot destroyed mid-load).
@@ -325,10 +338,6 @@ private:
     // (which the in-process JUCE path still needs). Pre-sized in prepareToPlay.
     dusk::MidiBuffer oopMidiScratch;
 
-    // Cached for getDescriptionXmlForSave (which can't
-    // fillInPluginDescription on a remote instance).
-    juce::String savedDescriptionXml;
-
     static constexpr int kReaperPeriodMs = 1000;
     class ReaperTimer final : public dusk::Timer
     {
@@ -345,8 +354,12 @@ private:
     // Stashed when restoreFromSavedState fails so a subsequent save
     // round-trips the original blob. Outside the OOP gate because
     // macOS has no OOP impl yet but offline restore is cross-platform.
-    juce::String offlineDescriptionXml;
+    std::optional<PluginDescriptor> loadedDescriptor;
+    std::optional<PluginDescriptor> offlineDescriptor;
+    juce::String offlineLegacyDescriptionXml;
     juce::String offlineStateBase64;
+    bool offlineCapturePlaceholder { false };
+    juce::String lastKnownStateBase64;
 
    #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
     // Mac dual-load shell-instance state. Loaded lazily on first editor

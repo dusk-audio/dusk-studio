@@ -8,6 +8,37 @@ namespace duskstudio
 {
 class AudioEngine;
 
+// The plugin portion of a clone snapshot is one indivisible replay unit.
+// Keeping the structured descriptor, malformed legacy fallback, and state
+// together prevents perform/undo/redo from dropping one representation.
+struct ClonePluginSnapshot
+{
+    std::optional<PluginDescriptor> descriptor;
+    juce::String legacyDescriptionXml;
+    juce::String stateBase64;
+
+    static ClonePluginSnapshot fromTrack (const Track& track)
+    {
+        return { track.pluginDescriptor,
+                 track.pluginLegacyDescriptionXml,
+                 track.pluginStateBase64 };
+    }
+
+    void publishTo (Track& track) const
+    {
+        track.pluginDescriptor = descriptor;
+        track.pluginLegacyDescriptionXml = legacyDescriptionXml;
+        track.pluginStateBase64 = stateBase64;
+    }
+
+    bool operator== (const ClonePluginSnapshot& other) const
+    {
+        return descriptor == other.descriptor
+            && legacyDescriptionXml == other.legacyDescriptionXml
+            && stateBase64 == other.stateBase64;
+    }
+};
+
 // Replaces a single AudioRegion's fields with new values. Used for the move
 // and trim drags, all of which collapse to "region X is now Y". perform()
 // applies the new state; undo() restores the original.
@@ -244,10 +275,10 @@ private:
 // (description + state). Undo restores the destination's previous state
 // captured at first perform().
 //
-// Plugin replay: copying pluginDescriptionXml / pluginStateBase64 onto
+// Plugin replay: copying the descriptor / legacy fallback / state onto
 // the destination Track isn't enough on its own - the live PluginSlot
 // owned by AudioEngine has to re-instantiate. perform() reads source's
-// live slot via getDescriptionXmlForSave / getStateBase64ForSave and
+// live slot via getDescriptorForSave / getStateBase64ForSave and
 // asks the destination slot to restoreFromSavedState. Undo replays the
 // captured before-state through the same path so the dest slot returns
 // to whatever plugin (if any) was loaded before.

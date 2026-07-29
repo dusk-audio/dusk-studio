@@ -34,7 +34,7 @@ TEST_CASE ("loading a session with fewer tracks blanks the surplus slots",
         r.lengthInSamples = 1000;
         s.track (5).regions.push_back (r);
 
-        s.track (5).pluginDescriptionXml = "<PLUGIN/>";
+        s.track (5).pluginLegacyDescriptionXml = "<PLUGIN/>";
         s.track (5).pluginStateBase64    = "ABCD";
 
         s.track (5).midiRegions.publish (
@@ -53,7 +53,8 @@ TEST_CASE ("loading a session with fewer tracks blanks the surplus slots",
     // Slot 5 is not in the JSON, so it must come back blank — no ghosts.
     REQUIRE (s.track (5).regions.empty());
     REQUIRE (s.track (5).midiRegions.current().empty());
-    REQUIRE (s.track (5).pluginDescriptionXml.isEmpty());
+    REQUIRE_FALSE (s.track (5).pluginDescriptor.has_value());
+    REQUIRE (s.track (5).pluginLegacyDescriptionXml.isEmpty());
     REQUIRE (s.track (5).pluginStateBase64.isEmpty());
     REQUIRE (s.track (5).automationLanes[0].pointsConst().empty());
 }

@@ -1,80 +1,83 @@
 #pragma once
 
-#include <juce_audio_processors/juce_audio_processors.h>
-#include <memory>
+#include "../PluginDescriptor.h"
 
-// Wire protocol for out-of-process plugin scanning. The parent
-// (PluginManager's OutOfProcessPluginScanner) spawns dusk-studio-plugin-host
-// with `--scan <format> <file>`; the child instantiates the plugin just far
-// enough to read its PluginDescription(s) and prints them between sentinel
-// markers on stdout. A plugin that crashes / hangs during the scan dies in
-// the child, leaving no payload - the parent treats that as a failed scan and
-// blacklists the file.
-//
-// Both sides go through this one header so the sentinels + serialisation can
-// never drift out of sync, and so the parse path is unit-testable without
-// spawning a subprocess.
+#include <nlohmann/json.hpp>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
 namespace duskstudio::scanproto
 {
-inline constexpr const char* kPayloadBegin = "==DUSK_SCAN_BEGIN==";
-inline constexpr const char* kPayloadEnd   = "==DUSK_SCAN_END==";
+inline constexpr std::string_view kPayloadBegin = "==DUSK_SCAN_BEGIN==";
+inline constexpr std::string_view kPayloadEnd   = "==DUSK_SCAN_END==";
 
-// Scan-sandbox policy: which formats load third-party binary code and therefore
-// MUST be probed out-of-process - an unauthorized or crashy plugin scanned
-// in-process takes down the whole app. Anything else (our own in-house code,
-// unknown names) is trusted and scans in-process. Centralised here so the
-// scanner's routing and its unit test read from one list.
-inline bool formatRequiresSandbox (const juce::String& formatName)
+inline bool formatRequiresSandbox (std::string_view formatName)
 {
-    return formatName == "VST3"
-        || formatName == "LV2"
-        || formatName == "AudioUnit"
-        || formatName == "VST";
+    return formatName != "DuskMultisample";
 }
 
-// Child side: serialise the discovered descriptions into the stdout payload.
-// The plugin's own stdout chatter (if any) is emitted by its init code, which
-// runs BEFORE this is printed, so it lands ahead of kPayloadBegin and the
-// parent's extract step skips it.
-inline juce::String makePayload (const juce::OwnedArray<juce::PluginDescription>& found)
+inline std::string makePayload (const std::vector<PluginDescriptor>& found)
 {
-    juce::XmlElement root ("PLUGINS");
-    for (auto* d : found)
-        if (d != nullptr)
-            root.addChildElement (d->createXml().release());
+    nlohmann::ordered_json root {
+        { "version", 1 },
+        { "descriptors", nlohmann::ordered_json::array() }
+    };
+    for (const auto& descriptor : found)
+        root["descriptors"].push_back (
+            nlohmann::ordered_json::parse (descriptor.toJson()));
 
-    juce::String s;
-    s << kPayloadBegin << "\n"
-      << root.toString (juce::XmlElement::TextFormat().singleLine()) << "\n"
-      << kPayloadEnd << "\n";
-    return s;
+    return std::string (kPayloadBegin) + "\n" + root.dump() + "\n"
+        + std::string (kPayloadEnd) + "\n";
 }
 
-// Parent side: pull the XML bytes between the sentinels out of the child's
-// captured stdout. Returns empty when either sentinel is missing (child
-// crashed / hung before completing the print) - the caller treats empty as a
-// failed scan.
-inline juce::String extractPayload (const juce::String& childStdout)
+inline std::string extractPayload (std::string_view childStdout)
 {
-    const int b = childStdout.indexOf (kPayloadBegin);
-    if (b < 0) return {};
-    const int from = b + juce::String (kPayloadBegin).length();
-    const int e = childStdout.indexOf (from, kPayloadEnd);
-    if (e < 0) return {};
-    return childStdout.substring (from, e).trim();
+    const auto begin = childStdout.find (kPayloadBegin);
+    if (begin == std::string_view::npos)
+        return {};
+    const auto from = begin + kPayloadBegin.size();
+    const auto end = childStdout.find (kPayloadEnd, from);
+    if (end == std::string_view::npos)
+        return {};
+
+    auto payload = childStdout.substr (from, end - from);
+    while (! payload.empty() && (payload.front() == '\n' || payload.front() == '\r'
+                                  || payload.front() == ' ' || payload.front() == '\t'))
+        payload.remove_prefix (1);
+    while (! payload.empty() && (payload.back() == '\n' || payload.back() == '\r'
+                                  || payload.back() == ' ' || payload.back() == '\t'))
+        payload.remove_suffix (1);
+    return std::string (payload);
 }
 
-// Parent side: parse an extracted payload into descriptions. No-op (leaves
-// `out` untouched) on malformed XML.
-inline void parsePayload (const juce::String& payload,
-                          juce::OwnedArray<juce::PluginDescription>& out)
+inline std::optional<std::vector<PluginDescriptor>> parsePayload (std::string_view payload)
 {
-    if (auto xml = juce::parseXML (payload))
-        for (auto* e : xml->getChildIterator())
-        {
-            auto desc = std::make_unique<juce::PluginDescription>();
-            if (desc->loadFromXml (*e))
-                out.add (desc.release());
-        }
+    const auto root = nlohmann::json::parse (payload, nullptr, false);
+    if (! root.is_object())
+        return std::nullopt;
+    const auto version = root.find ("version");
+    const auto descriptors = root.find ("descriptors");
+    if (version == root.end()
+        || descriptors == root.end() || ! descriptors->is_array())
+        return std::nullopt;
+    const bool versionMatches = version->is_number_unsigned()
+        ? version->get<std::uint64_t>() == 1u
+        : version->is_number_integer()
+            && version->get<std::int64_t>() == 1;
+    if (! versionMatches)
+        return std::nullopt;
+
+    std::vector<PluginDescriptor> parsed;
+    parsed.reserve (descriptors->size());
+    for (const auto& value : *descriptors)
+    {
+        PluginDescriptor descriptor;
+        if (! PluginDescriptor::fromJson (value.dump(), descriptor))
+            return std::nullopt;
+        parsed.push_back (std::move (descriptor));
+    }
+    return parsed;
 }
 } // namespace duskstudio::scanproto

@@ -222,24 +222,31 @@ static std::vector<uint8_t> decodeBase64Blob (const juce::String& s)
 
 #if DUSKSTUDIO_HAS_MULTISAMPLE
 // Sessions written while the multisample instrument was hosted as a JUCE plugin
-// carry it as a "DuskMultisample" PluginDescription whose fileOrIdentifier is the
+// carry a "DuskMultisample" descriptor whose location is the
 // soundfont path, plus the same ValueTree state blob the native rung reads. Move
 // those onto the native keys once; the next save writes only the native form.
-static void migrateLegacyMultisampleTrack (Track& track)
+static void migrateLegacyMultisampleTrack (Track& track, PluginManager& manager)
 {
-    if (track.nativeMultisamplePath.isNotEmpty() || track.pluginDescriptionXml.isEmpty())
+    if (track.nativeMultisamplePath.isNotEmpty())
         return;
-    auto xml = juce::XmlDocument::parse (track.pluginDescriptionXml);
-    if (xml == nullptr) return;
-    juce::PluginDescription desc;
-    if (! desc.loadFromXml (*xml) || desc.pluginFormatName != "DuskMultisample") return;
+
+    auto descriptor = track.pluginDescriptor;
+    if (! descriptor.has_value() && track.pluginLegacyDescriptionXml.isNotEmpty())
+    {
+        PluginDescriptor converted;
+        if (manager.descriptorFromLegacyXml (track.pluginLegacyDescriptionXml, converted))
+            descriptor = std::move (converted);
+    }
+    if (! descriptor.has_value() || descriptor->formatName != "DuskMultisample")
+        return;
     // No soundfont named: leave the legacy pair alone rather than clearing it -
     // wiping it here would destroy the blob on the next save and restore nothing.
-    if (desc.fileOrIdentifier.isEmpty()) return;
+    if (descriptor->location.empty()) return;
 
-    track.nativeMultisamplePath        = desc.fileOrIdentifier;
+    track.nativeMultisamplePath        = descriptor->location;
     track.nativeMultisampleStateBase64 = track.pluginStateBase64;
-    track.pluginDescriptionXml.clear();
+    track.pluginDescriptor.reset();
+    track.pluginLegacyDescriptionXml.clear();
     track.pluginStateBase64.clear();
 }
 #endif
@@ -1508,7 +1515,8 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
         auto& track = session.track (t);
         auto& strip = strips[(size_t) t];
         auto& slot  = strip.getPluginSlot();
-        track.pluginDescriptionXml = slot.getDescriptionXmlForSave (parkSleepMs);
+        track.pluginDescriptor = slot.getDescriptorForSave (parkSleepMs);
+        track.pluginLegacyDescriptionXml = slot.getLegacyDescriptionXmlForSave();
         track.pluginStateBase64    = slot.getStateBase64ForSave   (parkSleepMs);
 
         // Native CLAP insert (parallel to the JUCE plugin; at most one is loaded).
@@ -1606,7 +1614,9 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
         {
             auto& strip = auxLaneStrips[(size_t) a];
             auto& slot  = strip.getPluginSlot (s);
-            lane.pluginDescriptionXml[(size_t) s] = slot.getDescriptionXmlForSave (parkSleepMs);
+            lane.pluginDescriptor[(size_t) s] = slot.getDescriptorForSave (parkSleepMs);
+            lane.pluginLegacyDescriptionXml[(size_t) s]
+                = slot.getLegacyDescriptionXmlForSave();
             lane.pluginStateBase64[(size_t) s]    = slot.getStateBase64ForSave   (parkSleepMs);
 
             // Native CLAP slot (parallel to the JUCE plugin; at most one is loaded).
@@ -1752,14 +1762,14 @@ void AudioEngine::consumePluginStateAfterLoad()
     // mix is intact but the plugin chain it depended on is gone).
     lastPluginLoadFailures.clear();
 
-    auto parsePluginName = [] (const juce::String& descXml) -> juce::String
+    auto pluginName = [this] (const std::optional<PluginDescriptor>& descriptor,
+                              const juce::String& legacyXml) -> juce::String
     {
-        if (descXml.isEmpty()) return {};
-        if (auto xml = juce::XmlDocument::parse (descXml))
-        {
-            juce::PluginDescription desc;
-            if (desc.loadFromXml (*xml)) return desc.name;
-        }
+        if (descriptor.has_value())
+            return descriptor->name;
+        PluginDescriptor converted;
+        if (pluginManager.descriptorFromLegacyXml (legacyXml, converted))
+            return converted.name;
         return juce::String ("(unknown)");
     };
 
@@ -1890,7 +1900,7 @@ void AudioEngine::consumePluginStateAfterLoad()
         }
 #endif
 #if DUSKSTUDIO_HAS_MULTISAMPLE
-        migrateLegacyMultisampleTrack (track);
+        migrateLegacyMultisampleTrack (track, pluginManager);
         if (track.nativeMultisamplePath.isNotEmpty())
         {
             slot.unload();
@@ -1965,7 +1975,8 @@ void AudioEngine::consumePluginStateAfterLoad()
             strip.unloadNativeMultisample();
         }
 
-        if (track.pluginDescriptionXml.isEmpty())
+        if (! track.pluginDescriptor.has_value()
+            && track.pluginLegacyDescriptionXml.isEmpty())
         {
             slot.unload();   // session has no plugin here - clear any carried over from the prior one
             // Reconstruct the insert mode from session state so a strip that ran
@@ -1981,15 +1992,19 @@ void AudioEngine::consumePluginStateAfterLoad()
         // restore below fails) so a prior session's kInsertHardware can't linger.
         strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
         juce::String error;
-        if (! slot.restoreFromSavedState (track.pluginDescriptionXml,
-                                            track.pluginStateBase64, error))
+        if (! slot.restoreFromSavedState (track.pluginDescriptor,
+                                          track.pluginLegacyDescriptionXml,
+                                          track.pluginStateBase64, error))
         {
             DBG ("AudioEngine: failed to restore plugin on track " << (t + 1)
                   << ": " << error);
             lastPluginLoadFailures.push_back ({
                 "Track " + juce::String (t + 1),
-                parsePluginName (track.pluginDescriptionXml) });
+                pluginName (track.pluginDescriptor,
+                            track.pluginLegacyDescriptionXml) });
         }
+        track.pluginDescriptor = slot.getDescriptorForSave (0);
+        track.pluginLegacyDescriptionXml = slot.getLegacyDescriptionXmlForSave();
     }
     for (int a = 0; a < Session::kNumAuxLanes; ++a)
     {
@@ -2139,8 +2154,9 @@ void AudioEngine::consumePluginStateAfterLoad()
                 strip.unloadNativeVst3 (s);
             }
 
-            const auto& descXml = lane.pluginDescriptionXml[(size_t) s];
-            if (descXml.isEmpty())
+            auto& descriptor = lane.pluginDescriptor[(size_t) s];
+            auto& legacyXml = lane.pluginLegacyDescriptionXml[(size_t) s];
+            if (! descriptor.has_value() && legacyXml.isEmpty())
             {
                 // No plugin in this slot - unload any instance left from the
                 // prior session and route around it (or through the hardware
@@ -2161,15 +2177,17 @@ void AudioEngine::consumePluginStateAfterLoad()
             auxLaneStrips[(size_t) a].insertMode[(size_t) s].store (
                 AuxLaneStrip::kInsertPlugin, std::memory_order_release);
             juce::String error;
-            if (! slot.restoreFromSavedState (descXml,
-                                                lane.pluginStateBase64[(size_t) s], error))
+            if (! slot.restoreFromSavedState (descriptor, legacyXml,
+                                              lane.pluginStateBase64[(size_t) s], error))
             {
                 DBG ("AudioEngine: failed to restore plugin on aux lane " << (a + 1)
                       << " slot " << (s + 1) << ": " << error);
                 lastPluginLoadFailures.push_back ({
                     "Aux " + juce::String (a + 1) + " / slot " + juce::String (s + 1),
-                    parsePluginName (descXml) });
+                    pluginName (descriptor, legacyXml) });
             }
+            descriptor = slot.getDescriptorForSave (0);
+            legacyXml = slot.getLegacyDescriptionXmlForSave();
         }
     }
 }

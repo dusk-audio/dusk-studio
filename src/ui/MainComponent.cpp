@@ -3098,8 +3098,8 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // Seeding it here would miss those fields and the first autosave tick
     // would still fire (snapshot mismatch). The seed lives at the tail.
 
-    // After deserialisation, the Track::pluginDescriptionXml /
-    // pluginStateBase64 fields are populated; ask the engine to
+    // After deserialisation, the track descriptor/state fields are populated;
+    // ask the engine to
     // re-instantiate each track's plugin from those.
     // Drop the prior session's undo stack BEFORE consuming plugin
     // state. Without this, hitting Cmd+Z right after a session load
@@ -3287,7 +3287,8 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
             const auto& lane = self->session.auxLane (a);
             for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
                 if (lane.nativeClapPath[(size_t) s].isNotEmpty()
-                    || lane.pluginDescriptionXml[(size_t) s].isNotEmpty())
+                    || lane.pluginDescriptor[(size_t) s].has_value()
+                    || lane.pluginLegacyDescriptionXml[(size_t) s].isNotEmpty())
                 { anyAuxInsert = true; break; }
         }
         if (anyAuxInsert)

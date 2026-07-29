@@ -2,6 +2,7 @@
 #include "JuceCompat.h"
 
 #include "ipc/PluginScanProtocol.h"
+#include "NativePluginCache.h"
 #include "PluginBackingCheck.h"
 #include "hosting/NativePluginId.h"
 #if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
@@ -21,6 +22,128 @@
 
 namespace duskstudio
 {
+namespace
+{
+PluginDescriptor fromJuceDescription (const juce::PluginDescription& source)
+{
+    PluginDescriptor descriptor;
+    descriptor.name = source.name.toStdString();
+    descriptor.descriptiveName = source.descriptiveName.toStdString();
+    descriptor.manufacturer = source.manufacturerName.toStdString();
+    descriptor.category = source.category.toStdString();
+    descriptor.version = source.version.toStdString();
+    descriptor.formatName = source.pluginFormatName.toStdString();
+    const auto nativeIdentifier = hosting::splitNativeIdentifier (
+        source.fileOrIdentifier);
+    if (nativeIdentifier.pluginId.isNotEmpty())
+    {
+        descriptor.backend = PluginBackend::Native;
+        descriptor.location = nativeIdentifier.bundlePath.toStdString();
+        descriptor.pluginId = nativeIdentifier.pluginId.toStdString();
+    }
+    else
+    {
+        descriptor.backend = PluginBackend::JuceLegacy;
+        descriptor.location = source.fileOrIdentifier.toStdString();
+    }
+    descriptor.uniqueId = source.uniqueId;
+    descriptor.deprecatedUid = source.deprecatedUid;
+    descriptor.numInputChannels = source.numInputChannels;
+    descriptor.numOutputChannels = source.numOutputChannels;
+    descriptor.lastFileModificationMs = source.lastFileModTime.toMilliseconds();
+    descriptor.lastInfoUpdateMs = source.lastInfoUpdateTime.toMilliseconds();
+    descriptor.isInstrument = source.isInstrument;
+    descriptor.hasSharedContainer = source.hasSharedContainer;
+    descriptor.hasAraExtension = source.hasARAExtension;
+    return descriptor;
+}
+
+juce::PluginDescription toJuceDescription (const PluginDescriptor& source)
+{
+    juce::PluginDescription descriptor;
+    descriptor.name = source.name;
+    descriptor.descriptiveName = source.descriptiveName;
+    descriptor.manufacturerName = source.manufacturer;
+    descriptor.category = source.category;
+    descriptor.version = source.version;
+    descriptor.pluginFormatName = source.formatName;
+    descriptor.fileOrIdentifier = source.backend == PluginBackend::Native
+        ? hosting::joinNativeIdentifier (source.location, source.pluginId)
+        : juce::String (source.location);
+    descriptor.uniqueId = source.uniqueId;
+    descriptor.deprecatedUid = source.deprecatedUid;
+    descriptor.numInputChannels = source.numInputChannels;
+    descriptor.numOutputChannels = source.numOutputChannels;
+    descriptor.lastFileModTime = juce::Time (source.lastFileModificationMs);
+    descriptor.lastInfoUpdateTime = juce::Time (source.lastInfoUpdateMs);
+    descriptor.isInstrument = source.isInstrument;
+    descriptor.hasSharedContainer = source.hasSharedContainer;
+    descriptor.hasARAExtension = source.hasAraExtension;
+    return descriptor;
+}
+
+std::optional<std::vector<PluginDescriptor>> importLegacyNativeCache (
+    const juce::String& xmlSource,
+    const std::function<bool (const juce::File&)>& locationExists)
+{
+    std::vector<PluginDescriptor> imported;
+    const auto xml = juce::parseXML (xmlSource);
+    if (xml == nullptr || ! xml->hasTagName ("KNOWNPLUGINS"))
+        return std::nullopt;
+
+    for (auto* child : xml->getChildIterator())
+    {
+        juce::PluginDescription legacy;
+        if (! legacy.loadFromXml (*child))
+            continue;
+        auto descriptor = fromJuceDescription (legacy);
+        descriptor.backend = PluginBackend::Native;
+        if (descriptor.formatName == "LV2-Native") descriptor.formatName = "LV2";
+        if (descriptor.formatName == "VST3-Native") descriptor.formatName = "VST3";
+        const auto split = hosting::splitNativeIdentifier (legacy.fileOrIdentifier);
+        descriptor.location = split.bundlePath.toStdString();
+        descriptor.pluginId = split.pluginId.toStdString();
+        if (! locationExists || locationExists (juce::File (descriptor.location)))
+            imported.push_back (std::move (descriptor));
+    }
+    return imported;
+}
+
+bool loadNativeCacheSources (
+    const std::optional<std::string>& jsonSource,
+    const std::optional<juce::String>& legacyXmlSource,
+    const std::function<bool (const juce::File&)>& locationExists,
+    std::vector<PluginDescriptor>& into)
+{
+    std::vector<PluginDescriptor> fresh;
+    if (jsonSource.has_value()
+        && nativecache::parse (*jsonSource,
+            [&locationExists] (std::string_view location)
+            {
+                const juce::File bundle (juce::String::fromUTF8 (
+                    location.data(), static_cast<int> (location.size())));
+                return ! locationExists || locationExists (bundle);
+            },
+            fresh))
+    {
+        into = std::move (fresh);
+        return true;
+    }
+
+    if (legacyXmlSource.has_value())
+    {
+        auto imported = importLegacyNativeCache (*legacyXmlSource, locationExists);
+        if (imported.has_value())
+        {
+            into = std::move (*imported);
+            return true;
+        }
+    }
+
+    return false;
+}
+} // namespace
+
 #if DUSKSTUDIO_HAS_OOP_PLUGINS
 namespace
 {
@@ -46,11 +169,11 @@ public:
                              juce::OwnedArray<juce::PluginDescription>& result,
                              const juce::String& fileOrIdentifier) override
     {
-        // In-house formats are our own code and can't crash the host, so scan
-        // them in-process. Third-party binary formats are sandboxed - and for
-        // those we NEVER fall back to in-process: an unauthorized or crashy
-        // plugin scanned in-process takes down the whole app (issue #45).
-        if (! scanproto::formatRequiresSandbox (format.getName()))
+        // DuskMultisample is trusted in-house code and scans in-process. Every
+        // other format, including an unrecognized future format, is sandboxed.
+        // We NEVER fall back to in-process: an unauthorized or crashy plugin
+        // scanned in-process takes down the whole app (issue #45).
+        if (! scanproto::formatRequiresSandbox (format.getName().toStdString()))
         {
             format.findAllTypesForFile (result, fileOrIdentifier);
             return true;
@@ -124,9 +247,9 @@ public:
         // (return true) rather than blacklisting a plugin the user cancelled on.
         if (aborted) return true;
 
-        const juce::String payload = scanproto::extractPayload (captured.toString());
+        const auto payload = scanproto::extractPayload (captured.toString().toStdString());
 
-        if (timedOut || payload.isEmpty())
+        if (timedOut || payload.empty())
         {
             // A hang (timed out) or a crash (child died with no clean payload):
             // quarantine so the next scan skips it instead of re-hanging /
@@ -141,10 +264,21 @@ public:
             return false;
         }
 
-        // A clean payload means the child completed the scan without crashing,
-        // so this is a successful scan even when the file legitimately yields
-        // zero descriptions. Only the crash (empty payload) / timeout cases fail.
-        scanproto::parsePayload (payload, result);
+        const auto parsed = scanproto::parsePayload (payload);
+        if (! parsed.has_value())
+        {
+            knownList.addToBlacklist (fileOrIdentifier);
+            std::fprintf (stderr,
+                          "[Dusk Studio/scan] quarantined \"%s\": malformed scan payload\n",
+                          fileOrIdentifier.toRawUTF8());
+            std::fflush (stderr);
+            return false;
+        }
+
+        // A valid payload means the child completed the scan without crashing,
+        // so this is successful even when the file yields zero descriptions.
+        for (const auto& descriptor : *parsed)
+            result.add (new juce::PluginDescription (toJuceDescription (descriptor)));
         return true;
     }
 
@@ -179,13 +313,14 @@ PluginManager::PluginManager()
     loadCache();
     // Restore native-format descriptions so the picker has them at launch.
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-    loadNativeCache (clapDescriptions, "clap-cache.xml", false);
+    loadNativeCache (clapDescriptions, "clap-cache.json", "clap-cache.xml", false);
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-    loadNativeCache (lv2Descriptions, "lv2-native-cache.xml", true);
+    loadNativeCache (lv2Descriptions, "lv2-native-cache.json", "lv2-native-cache.xml", true);
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-    loadNativeCache (vst3NativeDescriptions, "vst3-native-cache.xml", false);
+    loadNativeCache (vst3NativeDescriptions, "vst3-native-cache.json",
+                     "vst3-native-cache.xml", false);
 #endif
 }
 
@@ -402,7 +537,7 @@ int PluginManager::scanInstalledPlugins (
 // or times out yields no payload and the bundle is skipped - re-probed next
 // scan, but never fatal.
 bool PluginManager::scanNativeBundleSandboxed (const char* format, const juce::File& bundle,
-                                               juce::Array<juce::PluginDescription>& into) const
+                                               std::vector<PluginDescriptor>& into) const
 {
     const juce::File hostExe (getHostExecutablePath());
     if (hostExe == juce::File() || ! hostExe.existsAsFile())
@@ -437,8 +572,8 @@ bool PluginManager::scanNativeBundleSandboxed (const char* format, const juce::F
         juce::Thread::sleep (5);
     }
 
-    const juce::String payload = scanproto::extractPayload (captured.toString());
-    if (payload.isEmpty())
+    const auto payload = scanproto::extractPayload (captured.toString().toStdString());
+    if (payload.empty())
     {
         // Crash / hang / no sentinels - treat as handled (skip the bundle) so the
         // caller doesn't re-execute the crashing code in-process.
@@ -446,10 +581,16 @@ bool PluginManager::scanNativeBundleSandboxed (const char* format, const juce::F
                       format, bundle.getFullPathName().toRawUTF8());
         return true;
     }
-    juce::OwnedArray<juce::PluginDescription> found;
-    scanproto::parsePayload (payload, found);
-    for (const auto* d : found)
-        into.add (*d);
+    auto found = scanproto::parsePayload (payload);
+    if (! found.has_value())
+    {
+        std::fprintf (stderr,
+                      "[Dusk Studio/scan] native %s bundle skipped (malformed child payload): %s\n",
+                      format, bundle.getFullPathName().toRawUTF8());
+        return true;
+    }
+    into.insert (into.end(), std::make_move_iterator (found->begin()),
+                 std::make_move_iterator (found->end()));
     return true;
 }
 #endif
@@ -460,18 +601,18 @@ void PluginManager::scanClapPlugins()
     // Discover OUTSIDE the lock (executes every bundle's factory - slow), swap
     // in under it. The cache write also stays outside so a picker open on the
     // message thread can't stall behind this thread's file I/O.
-    juce::Array<juce::PluginDescription> fresh;
+    std::vector<PluginDescriptor> fresh;
     for (const auto& path : clap::ClapScanner::findClapFiles (clap::ClapScanner::defaultSearchPaths()))
     {
         const juce::File file (juce::String::fromUTF8 (path.u8string().c_str()));
         if (! scanNativeBundleSandboxed ("clap", file, fresh))
-            nativescan::appendClapRows (file, fresh);   // no sandbox available - in-process
+            nativescan::appendClapRows (path, fresh);   // no sandbox available - in-process
     }
     {
         const juce::ScopedLock sl (nativeDescriptionsLock);
-        clapDescriptions.swapWith (fresh);
+        clapDescriptions.swap (fresh);
     }
-    saveNativeCache (clapDescriptions, "clap-cache.xml", "CLAP_PLUGINS");
+    saveNativeCache (clapDescriptions, "clap-cache.json");
 #endif
 }
 
@@ -481,73 +622,74 @@ juce::File PluginManager::nativeCacheFile (const char* fileName) const
     return base == juce::File() ? juce::File() : base.getSiblingFile (fileName);
 }
 
-void PluginManager::loadNativeCache (juce::Array<juce::PluginDescription>& into,
-                                     const char* fileName, bool bundleIsDirectory)
+void PluginManager::loadNativeCache (std::vector<PluginDescriptor>& into,
+                                     const char* jsonFileName, const char* legacyXmlFileName,
+                                     bool bundleIsDirectory)
 {
-    const auto file = nativeCacheFile (fileName);
-    if (file == juce::File() || ! file.existsAsFile())
+    std::vector<PluginDescriptor> fresh;
+    const auto locationExists = [bundleIsDirectory] (const juce::File& bundle)
+    {
+        return bundleIsDirectory ? bundle.isDirectory() : bundle.exists();
+    };
+    bool loaded = false;
+    const auto jsonFile = nativeCacheFile (jsonFileName);
+    if (jsonFile != juce::File() && jsonFile.existsAsFile())
+    {
+        loaded = loadNativeCacheSources (
+            jsonFile.loadFileAsString().toStdString(), std::nullopt,
+            locationExists, fresh);
+    }
+
+    if (! loaded)
+    {
+        const auto legacyFile = nativeCacheFile (legacyXmlFileName);
+        if (legacyFile != juce::File() && legacyFile.existsAsFile())
+            loaded = loadNativeCacheSources (
+                std::nullopt, legacyFile.loadFileAsString(),
+                locationExists, fresh);
+    }
+
+    if (! loaded)
         return;
 
-    if (auto xml = juce::parseXML (file))
-    {
-        // Parse into a local first; only the swap-in holds nativeDescriptionsLock
-        // (the contract every access to the description arrays follows).
-        juce::Array<juce::PluginDescription> fresh;
-        for (auto* child : xml->getChildIterator())
-        {
-            juce::PluginDescription d;
-            if (! d.loadFromXml (*child))
-                continue;
-            // Drop entries whose bundle is gone since the cache was written, so
-            // the picker never offers a removed plugin until a rescan rebuilds it.
-            // fileOrIdentifier carries "bundle\npluginId" - check the bundle half.
-            const juce::File bundle (
-                hosting::splitNativeIdentifier (d.fileOrIdentifier).bundlePath);
-            if (bundleIsDirectory ? bundle.isDirectory() : bundle.exists())
-                fresh.add (d);
-        }
-        const juce::ScopedLock sl (nativeDescriptionsLock);
-        into.swapWith (fresh);
-    }
+    const juce::ScopedLock sl (nativeDescriptionsLock);
+    into.swap (fresh);
 }
 
-void PluginManager::saveNativeCache (const juce::Array<juce::PluginDescription>& from,
-                                     const char* fileName, const char* rootTag) const
+void PluginManager::saveNativeCache (const std::vector<PluginDescriptor>& from,
+                                     const char* jsonFileName) const
 {
-    const auto file = nativeCacheFile (fileName);
+    const auto file = nativeCacheFile (jsonFileName);
     if (file == juce::File())
         return;
 
     // Snapshot under the lock; serialize + write with it released so the picker
     // can't stall behind the file I/O.
-    juce::Array<juce::PluginDescription> snapshot;
+    std::vector<PluginDescriptor> snapshot;
     {
         const juce::ScopedLock sl (nativeDescriptionsLock);
         snapshot = from;
     }
-    juce::XmlElement root (rootTag);
-    for (const auto& d : snapshot)
-        root.addChildElement (d.createXml().release());
-    root.writeTo (file);
+    file.replaceWithText (nativecache::serialize (snapshot));
 }
 
-juce::Array<juce::PluginDescription> PluginManager::filterByInstrumentFlag (
-    const juce::Array<juce::PluginDescription>& source, bool wantInstrument) const
+std::vector<PluginDescriptor> PluginManager::filterByInstrumentFlag (
+    const std::vector<PluginDescriptor>& source, bool wantInstrument) const
 {
     const juce::ScopedLock sl (nativeDescriptionsLock);
-    juce::Array<juce::PluginDescription> out;
+    std::vector<PluginDescriptor> out;
     for (const auto& d : source)
         if (d.isInstrument == wantInstrument)
-            out.add (d);
+            out.push_back (d);
     return out;
 }
 
-juce::Array<juce::PluginDescription> PluginManager::getClapEffectDescriptions() const
+std::vector<PluginDescriptor> PluginManager::getClapEffectDescriptions() const
 {
     return filterByInstrumentFlag (clapDescriptions, false);
 }
 
-juce::Array<juce::PluginDescription> PluginManager::getClapInstrumentDescriptions() const
+std::vector<PluginDescriptor> PluginManager::getClapInstrumentDescriptions() const
 {
     return filterByInstrumentFlag (clapDescriptions, true);
 }
@@ -558,7 +700,7 @@ void PluginManager::scanLv2Plugins()
     const auto scanned = lv2::Lv2Scanner::scan();   // manifest parse outside the lock
     {
         const juce::ScopedLock sl (nativeDescriptionsLock);
-        lv2Descriptions.clearQuick();
+        lv2Descriptions.clear();
         for (const auto& s : scanned)
         {
             // Audio effects (audio in + out) and instruments (atom/MIDI in,
@@ -567,25 +709,26 @@ void PluginManager::scanLv2Plugins()
             const bool effect = s.desc.audioInputs > 0 && s.desc.audioOutputs > 0;
             if (! effect && ! s.desc.isInstrument)
                 continue;
-            juce::PluginDescription d;
-            d.name             = juce::String (juce::CharPointer_UTF8 (s.desc.name.c_str()));
-            d.pluginFormatName = "LV2-Native";
-            d.fileOrIdentifier = hosting::joinNativeIdentifier (
-                s.bundlePath, juce::String (juce::CharPointer_UTF8 (s.desc.uri.c_str())));
-            d.isInstrument     = s.desc.isInstrument;
-            lv2Descriptions.add (d);
+            PluginDescriptor descriptor;
+            descriptor.name = s.desc.name;
+            descriptor.formatName = "LV2";
+            descriptor.backend = PluginBackend::Native;
+            descriptor.location = s.bundlePath;
+            descriptor.pluginId = s.desc.uri;
+            descriptor.isInstrument = s.desc.isInstrument;
+            lv2Descriptions.push_back (std::move (descriptor));
         }
     }
-    saveNativeCache (lv2Descriptions, "lv2-native-cache.xml", "LV2_NATIVE_PLUGINS");
+    saveNativeCache (lv2Descriptions, "lv2-native-cache.json");
 #endif
 }
 
-juce::Array<juce::PluginDescription> PluginManager::getLv2EffectDescriptions() const
+std::vector<PluginDescriptor> PluginManager::getLv2EffectDescriptions() const
 {
     return filterByInstrumentFlag (lv2Descriptions, false);
 }
 
-juce::Array<juce::PluginDescription> PluginManager::getLv2InstrumentDescriptions() const
+std::vector<PluginDescriptor> PluginManager::getLv2InstrumentDescriptions() const
 {
     return filterByInstrumentFlag (lv2Descriptions, true);
 }
@@ -593,46 +736,46 @@ juce::Array<juce::PluginDescription> PluginManager::getLv2InstrumentDescriptions
 void PluginManager::scanVst3NativePlugins()
 {
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-    juce::Array<juce::PluginDescription> fresh;
+    std::vector<PluginDescriptor> fresh;
     for (const auto& path : vst3::Vst3Scanner::findVst3Bundles (vst3::Vst3Scanner::defaultSearchPaths()))
     {
         const juce::File file (juce::String::fromUTF8 (path.u8string().c_str()));
         if (! scanNativeBundleSandboxed ("vst3", file, fresh))
-            nativescan::appendVst3Rows (file, fresh);   // no sandbox available - in-process
+            nativescan::appendVst3Rows (path, fresh);   // no sandbox available - in-process
     }
     {
         const juce::ScopedLock sl (nativeDescriptionsLock);
-        vst3NativeDescriptions.swapWith (fresh);
+        vst3NativeDescriptions.swap (fresh);
     }
-    saveNativeCache (vst3NativeDescriptions, "vst3-native-cache.xml", "VST3_NATIVE_PLUGINS");
+    saveNativeCache (vst3NativeDescriptions, "vst3-native-cache.json");
 #endif
 }
 
-juce::Array<juce::PluginDescription> PluginManager::getVst3NativeEffectDescriptions() const
+std::vector<PluginDescriptor> PluginManager::getVst3NativeEffectDescriptions() const
 {
     return filterByInstrumentFlag (vst3NativeDescriptions, false);
 }
 
-juce::Array<juce::PluginDescription> PluginManager::getVst3NativeInstrumentDescriptions() const
+std::vector<PluginDescriptor> PluginManager::getVst3NativeInstrumentDescriptions() const
 {
     return filterByInstrumentFlag (vst3NativeDescriptions, true);
 }
 
-juce::Array<juce::PluginDescription> PluginManager::getInstrumentDescriptions() const
+std::vector<PluginDescriptor> PluginManager::getInstrumentDescriptions() const
 {
-    juce::Array<juce::PluginDescription> instruments;
+    std::vector<PluginDescriptor> instruments;
     for (const auto& desc : knownPluginList.getTypes())
         if (desc.isInstrument)
-            instruments.add (desc);
+            instruments.push_back (fromJuceDescription (desc));
     return instruments;
 }
 
-juce::Array<juce::PluginDescription> PluginManager::getEffectDescriptions() const
+std::vector<PluginDescriptor> PluginManager::getEffectDescriptions() const
 {
-    juce::Array<juce::PluginDescription> effects;
+    std::vector<PluginDescriptor> effects;
     for (const auto& desc : knownPluginList.getTypes())
         if (! desc.isInstrument)
-            effects.add (desc);
+            effects.push_back (fromJuceDescription (desc));
     return effects;
 }
 
@@ -671,7 +814,8 @@ PluginManager::createPluginInstance (const juce::File& pluginFile,
             knownPluginList.addType (*desc);
     saveCache();
 
-    return createPluginInstance (*typesFound.getFirst(), sampleRate, blockSize, errorMessage);
+    return createPluginInstance (fromJuceDescription (*typesFound.getFirst()),
+                                 sampleRate, blockSize, errorMessage);
 }
 
 namespace
@@ -690,11 +834,12 @@ void applyDefaultBusLayout (juce::AudioPluginInstance& instance)
 } // namespace
 
 std::unique_ptr<juce::AudioPluginInstance>
-PluginManager::createPluginInstance (const juce::PluginDescription& desc,
+PluginManager::createPluginInstance (const PluginDescriptor& desc,
                                       double sampleRate, int blockSize,
                                       juce::String& errorMessage)
 {
-    auto instance = formatManager.createPluginInstance (desc, sampleRate, blockSize, errorMessage);
+    auto instance = formatManager.createPluginInstance (
+        toJuceDescription (desc), sampleRate, blockSize, errorMessage);
     if (instance == nullptr)
         return nullptr;
 
@@ -703,7 +848,7 @@ PluginManager::createPluginInstance (const juce::PluginDescription& desc,
 }
 
 void PluginManager::createPluginInstanceAsync (
-    const juce::PluginDescription& desc, double sampleRate, int blockSize,
+    const PluginDescriptor& desc, double sampleRate, int blockSize,
     std::function<void (std::unique_ptr<juce::AudioPluginInstance>, juce::String)> callback)
 {
     // Off-thread creation for slow-to-instantiate formats. JUCE runs the
@@ -711,7 +856,7 @@ void PluginManager::createPluginInstanceAsync (
     // requiresUnblockedMessageThreadDuringCreation() == false, then fires this
     // callback ON THE MESSAGE THREAD with the fully-built instance - so the
     // caller's swap-in logic stays single-threaded.
-    formatManager.createPluginInstanceAsync (desc, sampleRate, blockSize,
+    formatManager.createPluginInstanceAsync (toJuceDescription (desc), sampleRate, blockSize,
         [cb = std::move (callback)]
         (std::unique_ptr<juce::AudioPluginInstance> instance, const juce::String& err)
     {
@@ -720,4 +865,64 @@ void PluginManager::createPluginInstanceAsync (
         cb (std::move (instance), err);
     });
 }
+
+PluginDescriptor PluginManager::descriptorForInstance (juce::AudioPluginInstance& instance) const
+{
+    juce::PluginDescription descriptor;
+    instance.fillInPluginDescription (descriptor);
+    return fromJuceDescription (descriptor);
+}
+
+bool PluginManager::descriptorFromLegacyXml (const juce::String& source,
+                                             PluginDescriptor& out) const
+{
+    const auto xml = juce::XmlDocument::parse (source);
+    if (xml == nullptr)
+        return false;
+    juce::PluginDescription descriptor;
+    if (! descriptor.loadFromXml (*xml))
+        return false;
+    out = fromJuceDescription (descriptor);
+    return true;
+}
+
+juce::String PluginManager::descriptorToLegacyXml (const PluginDescriptor& source) const
+{
+    const auto xml = toJuceDescription (source).createXml();
+    return xml != nullptr
+        ? xml->toString (juce::XmlElement::TextFormat().singleLine())
+        : juce::String();
+}
+
+#if defined(DUSKSTUDIO_TESTS)
+PluginDescriptor PluginManager::descriptorFromJuceForTest (
+    const juce::PluginDescription& source)
+{
+    return fromJuceDescription (source);
+}
+
+juce::PluginDescription PluginManager::descriptorToJuceForTest (
+    const PluginDescriptor& source)
+{
+    return toJuceDescription (source);
+}
+
+std::vector<PluginDescriptor> PluginManager::importLegacyNativeCacheForTest (
+    const juce::String& xml,
+    const std::function<bool (const juce::File&)>& locationExists)
+{
+    return importLegacyNativeCache (xml, locationExists).value_or (
+        std::vector<PluginDescriptor> {});
+}
+
+bool PluginManager::loadNativeCacheSourcesForTest (
+    const std::optional<std::string>& jsonSource,
+    const std::optional<juce::String>& legacyXmlSource,
+    const std::function<bool (const juce::File&)>& locationExists,
+    std::vector<PluginDescriptor>& into)
+{
+    return loadNativeCacheSources (
+        jsonSource, legacyXmlSource, locationExists, into);
+}
+#endif
 } // namespace duskstudio

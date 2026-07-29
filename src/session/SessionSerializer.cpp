@@ -37,6 +37,20 @@ using JObj = nlohmann::ordered_json;
 
 inline std::string toStd (const juce::String& s) { return s.toStdString(); }
 
+inline JObj descriptorToObject (const PluginDescriptor& descriptor)
+{
+    return descriptor.toJsonObject();
+}
+
+inline std::optional<PluginDescriptor> descriptorFromObject (
+    const nlohmann::json& value) noexcept
+{
+    PluginDescriptor descriptor;
+    if (PluginDescriptor::fromJsonObject (value, descriptor))
+        return descriptor;
+    return std::nullopt;
+}
+
 // Bump whenever the JSON shape gains a NEW required field or changes
 // the meaning of an existing one. Adding optional fields that default
 // sensibly when absent does NOT require a bump - the load path
@@ -44,7 +58,7 @@ inline std::string toStd (const juce::String& s) { return s.toStdString(); }
 // Loader rejects sessions with version > kFormatVersion (newer Dusk Studio
 // can read older files via migrateSession; older Dusk Studio refusing
 // newer files is safer than silently dropping fields).
-constexpr int kFormatVersion = 3;
+constexpr int kFormatVersion = 4;
 
 // Store a float from JSON only when it's finite, so a corrupt or hand-edited
 // session.json can't push NaN / inf into a DSP parameter - the in-memory
@@ -230,6 +244,17 @@ bool migrateSession (nlohmann::json& root, int from)
                 ++v;
                 break;
 
+            case 3:
+                // v3 -> v4: plugin references may now be stored as structured
+                // plugin_descriptor objects. Existing v3 files keep their
+                // plugin_desc_xml values and are converted by the host restore
+                // boundary; stamping v4 makes pre-H4 readers refuse new
+                // structured saves instead of silently dropping plugin slots.
+                if (root.is_object())
+                    root["version"] = 4;
+                ++v;
+                break;
+
             default:
                 std::fprintf (stderr,
                               "[Dusk Studio/SessionSerializer] no migrator from v%d to v%d\n",
@@ -411,11 +436,10 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
     obj["name"]   = toStd (t.name);
     obj["colour"] = toStd (colourToHex (t.colour));
 
-    // Plugin-slot persistence. Empty strings (no plugin loaded) are written
-    // verbatim - round-trip restoreFromSavedState treats empty as "no
-    // plugin", which is the correct steady state for unused slots.
-    if (t.pluginDescriptionXml.isNotEmpty())
-        obj["plugin_desc_xml"] = toStd (t.pluginDescriptionXml);
+    if (t.pluginDescriptor.has_value())
+        obj["plugin_descriptor"] = descriptorToObject (*t.pluginDescriptor);
+    else if (t.pluginLegacyDescriptionXml.isNotEmpty())
+        obj["plugin_desc_xml"] = toStd (t.pluginLegacyDescriptionXml);
     if (t.pluginStateBase64.isNotEmpty())
         obj["plugin_state"] = toStd (t.pluginStateBase64);
     if (t.nativeClapPath.isNotEmpty())
@@ -816,7 +840,8 @@ JObj busToObject (const Bus& a)
     return obj;
 }
 
-void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
+void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
+                   double defaultRecordBpm,
                    const juce::File& sessionDir,
                    std::vector<juce::String>& missingFiles)
 {
@@ -824,10 +849,20 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
     if (auto s = json::getString (v, "name");   ! s.empty()) t.name = s;
     if (auto s = json::getString (v, "colour"); ! s.empty()) t.colour = hexToColour (s, t.colour);
 
-    // Plugin slot - strings remain empty when the property is absent (older
-    // sessions or unused slots). AudioEngine::consumePluginStateAfterLoad
-    // reads these back and asks each PluginSlot to reinstantiate.
-    t.pluginDescriptionXml = json::getString (v, "plugin_desc_xml");
+    t.pluginDescriptor.reset();
+    if (const auto it = v.find ("plugin_descriptor");
+        it != v.end() && it->is_object())
+    {
+        t.pluginDescriptor = descriptorFromObject (*it);
+        if (! t.pluginDescriptor.has_value())
+            std::fprintf (
+                stderr,
+                "[Dusk Studio/session] rejected plugin_descriptor for track %d; "
+                "using plugin_desc_xml fallback when present\n",
+                trackIndex + 1);
+    }
+    t.pluginLegacyDescriptionXml = t.pluginDescriptor.has_value()
+        ? juce::String() : json::getString (v, "plugin_desc_xml");
     t.pluginStateBase64    = json::getString (v, "plugin_state");
     t.nativeClapPath        = json::getString (v, "native_clap_path");
     t.nativeClapPluginId    = json::getString (v, "native_clap_plugin");
@@ -1324,13 +1359,17 @@ juce::String SessionSerializer::serialize (const Session& s)
         obj["return_level_db"] = lane.params.returnLevelDb.load();
         obj["mute"]            = lane.params.mute.load();
         obj["output_pair"]     = lane.params.outputPair.load();
-        // Per-slot plugin state. Empty strings serialise as empty - same
-        // pattern as Track.
+        // Per-slot plugin state.
         JObj slots = JObj::array();
         for (int p = 0; p < AuxLaneParams::kMaxLanePlugins; ++p)
         {
             JObj slot;
-            slot["plugin_desc_xml"] = toStd (lane.pluginDescriptionXml[(size_t) p]);
+            if (lane.pluginDescriptor[(size_t) p].has_value())
+                slot["plugin_descriptor"] = descriptorToObject (
+                    *lane.pluginDescriptor[(size_t) p]);
+            else if (lane.pluginLegacyDescriptionXml[(size_t) p].isNotEmpty())
+                slot["plugin_desc_xml"] = toStd (
+                    lane.pluginLegacyDescriptionXml[(size_t) p]);
             slot["plugin_state"]    = toStd (lane.pluginStateBase64[(size_t) p]);
 
             // Native CLAP slot (mutually exclusive with the JUCE plugin). Only emit
@@ -1609,7 +1648,8 @@ juce::String SessionSerializer::serialize (const Session& s)
     tport["oversampling_factor"] = s.oversamplingFactor.load();
     root["transport"] = std::move (tport);
 
-    return juce::String (root.dump (2));
+    return juce::String (root.dump (
+        2, ' ', false, JObj::error_handler_t::replace));
 }
 
 bool SessionSerializer::writeAtomic (const juce::File& target, const juce::String& json)
@@ -1736,7 +1776,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         // automation mode, plugin state).
         const nlohmann::json emptyTrack = nlohmann::json::object();
         for (int i = 0; i < Session::kNumTracks; ++i)
-            restoreTrack (s.track (i),
+            restoreTrack (s.track (i), i,
                           i < (int) tracks.size() ? tracks[(size_t) i] : emptyTrack,
                           sessionLoadBpm, s.getSessionDirectory(),
                           s.missingAudioFilesAfterLoad);
@@ -1776,7 +1816,22 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 {
                     const auto& sv = slots[(size_t) p];
                     if (! sv.is_object()) continue;
-                    lane.pluginDescriptionXml[(size_t) p] = json::getString (sv, "plugin_desc_xml");
+                    lane.pluginDescriptor[(size_t) p].reset();
+                    if (const auto it = sv.find ("plugin_descriptor");
+                        it != sv.end() && it->is_object())
+                    {
+                        lane.pluginDescriptor[(size_t) p] = descriptorFromObject (*it);
+                        if (! lane.pluginDescriptor[(size_t) p].has_value())
+                            std::fprintf (
+                                stderr,
+                                "[Dusk Studio/session] rejected plugin_descriptor "
+                                "for aux %d slot %d; using plugin_desc_xml fallback "
+                                "when present\n",
+                                i + 1, p + 1);
+                    }
+                    lane.pluginLegacyDescriptionXml[(size_t) p]
+                        = lane.pluginDescriptor[(size_t) p].has_value()
+                            ? juce::String() : json::getString (sv, "plugin_desc_xml");
                     lane.pluginStateBase64[(size_t) p]    = json::getString (sv, "plugin_state");
                     lane.nativeClapPath[(size_t) p]        = json::getString (sv, "native_clap_path");
                     lane.nativeClapPluginId[(size_t) p]    = json::getString (sv, "native_clap_plugin");
