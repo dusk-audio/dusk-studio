@@ -256,10 +256,11 @@ jobs:
           }
 
       - name: Publish MSI to the PRIVATE releases repo
-        # Only publish on a real release tag. Manual/branch dispatches are
-        # for build validation — publishing a build.N pre-release on each
-        # would pollute the private releases repo (and use the stale VERSION).
-        if: ${{ github.ref_type == 'tag' }}
+        # A v* tag publishes onto that tag's release. A manual dispatch
+        # publishes a v<VERSION>+build.<run> PRE-release instead, so testers
+        # can be handed a mid-cycle MSI without moving a shipped tag. The
+        # prerelease flag keeps those builds from displacing the real
+        # release as "Latest".
         shell: bash
         # MSI + SHA256SUMS.windows live at the repo root after
         # package-windows.ps1 moves them there (not build/).
@@ -279,9 +280,11 @@ jobs:
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             TAG="${GITHUB_REF_NAME}"
             NOTES="Automated Windows build."
+            PRERELEASE="--prerelease=false"
           else
             TAG="v$(tr -d '[:space:]' < VERSION)+build.${GITHUB_RUN_NUMBER}"
-            NOTES="Unsigned Windows build. SmartScreen may warn — choose More info -> Run anyway. Statically linked, no vc_redist needed."
+            NOTES="Unsigned Windows build from ${GITHUB_REF_NAME} @ ${GITHUB_SHA}. SmartScreen may warn — choose More info -> Run anyway. Statically linked, no vc_redist needed."
+            PRERELEASE="--prerelease=true"
           fi
 
           shopt -s nullglob
@@ -299,6 +302,7 @@ jobs:
               --repo "$RELEASES_REPO" \
               --title "Dusk Studio $TAG" \
               --notes "$NOTES" \
+              "$PRERELEASE" \
               "${ASSETS[@]}"
           else
             gh release upload "$TAG" --repo "$RELEASES_REPO" --clobber "${ASSETS[@]}"
