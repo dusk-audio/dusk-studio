@@ -1,10 +1,10 @@
 # Hosting tower H5 — native platform ports + AU (executable spec)
 
-Status: **SCOUTED 2026-07-29; MARC DECISIONS LOCKED; H5a.0 COMPLETE LOCALLY;
-H5a.1 NEXT.** H4 is merged as PR #119 at `3c5c901`. The H5 scout verified the
-live source/CMake/CI surface from that baseline. Windows LV2 is deferred. H5 is
-three sequential PRs: H5a macOS CLAP/LV2/VST3, H5b macOS AU, H5c Windows
-CLAP/VST3. No H5 branch is pushed without Marc's word.
+Status: **SCOUTED 2026-07-29; MARC DECISIONS LOCKED; H5a.0-H5a.1 COMPLETE
+LOCALLY; H5a.2 NEXT.** H4 is merged as PR #119 at `3c5c901`. The H5 scout
+verified the live source/CMake/CI surface from that baseline. Windows LV2 is
+deferred. H5 is three sequential PRs: H5a macOS CLAP/LV2/VST3, H5b macOS AU,
+H5c Windows CLAP/VST3. No H5 branch is pushed without Marc's word.
 
 Parent plan: [dejuce-hosting-plan.md](dejuce-hosting-plan.md). Campaign ritual:
 [dejuce-campaign.md](dejuce-campaign.md). H1d and H2 remain blocked on donor

@@ -4,8 +4,80 @@
 
 #include <dlfcn.h>
 
+#if defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
+
+#include <filesystem>
+#endif
+
 namespace duskstudio::clap
 {
+#if defined(__APPLE__)
+namespace
+{
+bool resolveBundleExecutable (const std::string& path,
+                              std::string& executablePath,
+                              std::string& errorOut)
+{
+    std::error_code ec;
+    if (! std::filesystem::is_directory (std::filesystem::u8path (path), ec))
+    {
+        executablePath = path;
+        return true;
+    }
+
+    const auto* bytes = reinterpret_cast<const UInt8*> (path.data());
+    auto* bundleUrl = CFURLCreateFromFileSystemRepresentation (
+        kCFAllocatorDefault, bytes, static_cast<CFIndex> (path.size()), true);
+    if (bundleUrl == nullptr)
+    {
+        errorOut = "could not create a URL for the CLAP bundle";
+        return false;
+    }
+
+    auto* bundle = CFBundleCreate (kCFAllocatorDefault, bundleUrl);
+    CFRelease (bundleUrl);
+    if (bundle == nullptr)
+    {
+        errorOut = "could not open the CLAP bundle";
+        return false;
+    }
+
+    auto* executableUrl = CFBundleCopyExecutableURL (bundle);
+    CFRelease (bundle);
+    if (executableUrl == nullptr)
+    {
+        errorOut = "CLAP bundle has no executable";
+        return false;
+    }
+
+    auto* executableString = CFURLCopyFileSystemPath (executableUrl, kCFURLPOSIXPathStyle);
+    CFRelease (executableUrl);
+    if (executableString == nullptr)
+    {
+        errorOut = "could not resolve the CLAP bundle executable path";
+        return false;
+    }
+
+    const auto capacity = CFStringGetMaximumSizeForEncoding (
+                              CFStringGetLength (executableString), kCFStringEncodingUTF8)
+                          + 1;
+    std::vector<char> utf8Path (static_cast<std::size_t> (capacity));
+    const bool converted = CFStringGetCString (
+        executableString, utf8Path.data(), capacity, kCFStringEncodingUTF8);
+    CFRelease (executableString);
+    if (! converted)
+    {
+        errorOut = "CLAP bundle executable path is not valid UTF-8";
+        return false;
+    }
+
+    executablePath = utf8Path.data();
+    return true;
+}
+} // namespace
+#endif
+
 bool PluginDesc::isInstrument() const
 {
     for (const auto& f : features)
@@ -20,9 +92,21 @@ bool ClapBundle::load (const std::string& path, std::string& errorOut)
     unload();
     bundlePath = path;
 
+#if defined(__APPLE__)
+    std::string executablePath;
+    if (! resolveBundleExecutable (path, executablePath, errorOut))
+    {
+        unload();
+        return false;
+    }
+    const char* libraryPath = executablePath.c_str();
+#else
+    const char* libraryPath = path.c_str();
+#endif
+
     // RTLD_LOCAL so a plugin's symbols don't leak into our (or another plugin's)
     // global namespace; RTLD_NOW so missing symbols surface here, not mid-process.
-    handle = dlopen (path.c_str(), RTLD_LOCAL | RTLD_NOW);
+    handle = dlopen (libraryPath, RTLD_LOCAL | RTLD_NOW);
     if (handle == nullptr)
     {
         const char* e = dlerror();

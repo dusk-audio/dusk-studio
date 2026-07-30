@@ -29,9 +29,14 @@ std::vector<stdfs::path> ClapScanner::defaultSearchPaths()
             if (! trimmed.empty()) add (stdfs::u8path (trimmed));
         }
 
+#if defined(__APPLE__)
+    add (dusk::fs::userHomeDir() / "Library/Audio/Plug-Ins/CLAP");
+    add ("/Library/Audio/Plug-Ins/CLAP");
+#else
     add (dusk::fs::userHomeDir() / ".clap");
     add ("/usr/lib/clap");
     add ("/usr/local/lib/clap");
+#endif
     return dirs;
 }
 
@@ -39,18 +44,39 @@ std::vector<stdfs::path> ClapScanner::findClapFiles (const std::vector<stdfs::pa
 {
     std::vector<stdfs::path> files;
     std::error_code ec;
+#if defined(__APPLE__)
+    auto add = [&] (const stdfs::path& bundle)
+    {
+        for (const auto& existing : files) if (existing == bundle) return;
+        files.push_back (bundle);
+    };
+#endif
+
     for (const auto& dirIn : dirs)
     {
         // Absolute so a cached bundle path (and its native identifier) stays
         // stable regardless of cwd, even for a relative $CLAP_PATH entry.
         const auto dir = stdfs::absolute (dirIn, ec);
         if (ec || ! stdfs::is_directory (dir, ec)) continue;
+#if defined(__APPLE__)
+        std::error_code walkEc, entryEc;
+        for (auto it = stdfs::recursive_directory_iterator (dir, walkEc);
+             ! walkEc && it != stdfs::recursive_directory_iterator(); it.increment (walkEc))
+        {
+            if (! it->is_directory (entryEc) || ! dusk::fs::hasExtension (it->path(), "clap"))
+                continue;
+
+            add (it->path());
+            it.disable_recursion_pending();
+        }
+#else
         for (const auto& f : dusk::fs::findChildFiles (dir, "*.clap", true))
         {
             bool seen = false;
             for (const auto& g : files) if (g == f) { seen = true; break; }
             if (! seen) files.push_back (f);
         }
+#endif
     }
     return files;
 }
