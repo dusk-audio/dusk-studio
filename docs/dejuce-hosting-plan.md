@@ -105,9 +105,9 @@ merges. Read `docs/dejuce-campaign.md` + the memory ledger first.
   Windows LV2 stays deferred. H5a must merge before H5b starts, and H5b must
   merge before H5c starts. Executable spec:
   [dejuce-hosting-h5-platform.md](dejuce-hosting-h5-platform.md). Verification
-  runs through macos-build.yml and windows-tests.yml; windows-build.yml's full
-  app remains workflow_dispatch. Runtime sign-off is owed to Marc's real
-  Mac/Windows bench.
+  runs through macos-build.yml, macos-release.yml, and windows-tests.yml;
+  windows-build.yml's full app remains workflow_dispatch. Runtime sign-off is
+  owed to Marc's real Mac/Windows bench.
 - **H6 — the drop.** Delete the JUCE hosting path everywhere at once (H5
   made mac/win self-sufficient), unlink juce_audio_processors on all
   platforms, retire tsan suppressions tied to deleted primitives in the

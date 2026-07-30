@@ -104,9 +104,11 @@ Files:
 Work:
 
 - Enable Objective-C++ only on Apple.
-- Make native CLAP and VST3 available on Linux and macOS. Select the VST3 SDK's
-  Linux or macOS module/thread-checker sources per platform; compile the macOS
-  Objective-C++ sources with ARC and link the SDK-required Cocoa frameworks.
+- Make native CLAP, LV2, and VST3 all available on Linux and macOS - every
+  one of the three needs its option, target, and gate wired on macOS; omitting
+  any of them fails H5a.0. Select the VST3 SDK's Linux or macOS
+  module/thread-checker sources per platform; compile the macOS Objective-C++
+  sources with ARC and link the SDK-required Cocoa frameworks.
 - Pre-route each native editor source by platform in CMake: compile the
   existing `*Editor.cpp` on Linux and the future `*Editor_Mac.mm` on Apple, so
   H5a.2, H5a.3, and H5a.5 stay within their five-file increment limits.
