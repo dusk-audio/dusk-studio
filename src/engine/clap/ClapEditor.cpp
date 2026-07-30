@@ -37,13 +37,13 @@ bool ClapEditor::open (const ::clap_plugin* p, ClapHost& host, std::string& erro
     return true;
 }
 
-bool ClapEditor::embed (unsigned long parentX11, int x, int y, int w, int h, std::string& errorOut)
+bool ClapEditor::embed (void* parentHandle, int x, int y, int w, int h, std::string& errorOut)
 {
     if (! created) { errorOut = "gui not created"; return false; }
 
     auto* dpy = XOpenDisplay (nullptr);
     if (dpy == nullptr) { errorOut = "XOpenDisplay failed"; return false; }
-    display = dpy;
+    platformContext = dpy;
 
     const int ww = w > 0 ? w : (prefW > 0 ? prefW : 400);
     const int hh = h > 0 ? h : (prefH > 0 ? prefH : 300);
@@ -60,20 +60,21 @@ bool ClapEditor::embed (unsigned long parentX11, int x, int y, int w, int h, std
     // x11-frames a managed adoption detaches the compositor-side surface
     // from the X-space parent-child position.
     swa.override_redirect = True;
-    hostWindow = XCreateWindow (dpy, (Window) parentX11, x, y,
-                                (unsigned) ww, (unsigned) hh, 0,
-                                CopyFromParent, InputOutput, CopyFromParent,
-                                CWBackPixel | CWBorderPixel | CWEventMask | CWOverrideRedirect, &swa);
+    containerHandle = (std::uintptr_t) XCreateWindow (
+        dpy, (Window) (std::uintptr_t) parentHandle, x, y,
+        (unsigned) ww, (unsigned) hh, 0,
+        CopyFromParent, InputOutput, CopyFromParent,
+        CWBackPixel | CWBorderPixel | CWEventMask | CWOverrideRedirect, &swa);
     // Map the host window BEFORE set_parent: some plugins (u-he Satin) abort() when
     // reparented into a non-viewable window. tryEmbed only runs when this component is
     // on-screen, so showing the host now is correct - it sits at the lane's coords with
     // a solid bg until the plugin paints (no stale content, no stray-window flash).
-    XMapWindow (dpy, hostWindow);
+    XMapWindow (dpy, (Window) containerHandle);
     XSync (dpy, False);
 
     clap_window_t win {};
     win.api = CLAP_WINDOW_API_X11;
-    win.x11 = (clap_xwnd) hostWindow;
+    win.x11 = (clap_xwnd) containerHandle;
     if (gui->set_parent == nullptr || ! gui->set_parent (plugin, &win))
     { errorOut = "gui set_parent() failed"; close(); return false; }
 
@@ -88,26 +89,26 @@ bool ClapEditor::embed (unsigned long parentX11, int x, int y, int w, int h, std
 
 void ClapEditor::setBounds (int x, int y, int w, int h)
 {
-    if (display == nullptr || hostWindow == 0) return;
-    auto* dpy = (Display*) display;
-    XMoveResizeWindow (dpy, hostWindow, x, y,
+    if (platformContext == nullptr || containerHandle == 0) return;
+    auto* dpy = (Display*) platformContext;
+    XMoveResizeWindow (dpy, (Window) containerHandle, x, y,
                        (unsigned) std::max (1, w), (unsigned) std::max (1, h));
     if (resizable && gui != nullptr && gui->set_size != nullptr && w > 0 && h > 0)
         gui->set_size (plugin, (uint32_t) w, (uint32_t) h);
     XFlush (dpy);
 }
 
-bool ClapEditor::getRootRelativePosition (unsigned long referenceWindow,
+bool ClapEditor::getRootRelativePosition (void* referenceHandle,
                                            int& relX, int& relY) const
 {
-    if (! embedded || display == nullptr || hostWindow == 0)
+    if (! embedded || platformContext == nullptr || containerHandle == 0)
         return false;
-    auto* dpy = (Display*) display;
+    auto* dpy = (Display*) platformContext;
     ::Window dummy {};
     int hx = 0, hy = 0, rx = 0, ry = 0;
-    if (! XTranslateCoordinates (dpy, (Window) hostWindow,
+    if (! XTranslateCoordinates (dpy, (Window) containerHandle,
                                  DefaultRootWindow (dpy), 0, 0, &hx, &hy, &dummy)
-        || ! XTranslateCoordinates (dpy, (Window) referenceWindow,
+        || ! XTranslateCoordinates (dpy, (Window) (std::uintptr_t) referenceHandle,
                                     DefaultRootWindow (dpy), 0, 0, &rx, &ry, &dummy))
         return false;
     relX = hx - rx; relY = hy - ry;
@@ -116,11 +117,11 @@ bool ClapEditor::getRootRelativePosition (unsigned long referenceWindow,
 
 bool ClapEditor::getActualGeometry (int& x, int& y, int& w, int& h) const
 {
-    if (! embedded || display == nullptr || hostWindow == 0)
+    if (! embedded || platformContext == nullptr || containerHandle == 0)
         return false;
     ::Window root {};
     unsigned int uw = 0, uh = 0, border = 0, depth = 0;
-    if (XGetGeometry ((Display*) display, (Window) hostWindow,
+    if (XGetGeometry ((Display*) platformContext, (Window) containerHandle,
                       &root, &x, &y, &uw, &uh, &border, &depth) == 0)
         return false;
     w = (int) uw; h = (int) uh;
@@ -129,17 +130,17 @@ bool ClapEditor::getActualGeometry (int& x, int& y, int& w, int& h) const
 
 void ClapEditor::reveal()
 {
-    if (display == nullptr || hostWindow == 0 || mapped) return;
-    XMapWindow ((Display*) display, hostWindow);
-    XFlush ((Display*) display);
+    if (platformContext == nullptr || containerHandle == 0 || mapped) return;
+    XMapWindow ((Display*) platformContext, (Window) containerHandle);
+    XFlush ((Display*) platformContext);
     mapped = true;
 }
 
 void ClapEditor::hide()
 {
-    if (display == nullptr || hostWindow == 0 || ! mapped) return;
-    XUnmapWindow ((Display*) display, hostWindow);
-    XFlush ((Display*) display);
+    if (platformContext == nullptr || containerHandle == 0 || ! mapped) return;
+    XUnmapWindow ((Display*) platformContext, (Window) containerHandle);
+    XFlush ((Display*) platformContext);
     mapped = false;
 }
 
@@ -153,16 +154,17 @@ void ClapEditor::close()
         if (gui->destroy != nullptr) gui->destroy (plugin);
     }
     if (hostPtr != nullptr) { hostPtr->setCallbacks (nullptr); hostPtr = nullptr; }
-    if (display != nullptr)
+    if (platformContext != nullptr)
     {
-        if (hostWindow != 0) XDestroyWindow ((Display*) display, hostWindow);
+        if (containerHandle != 0)
+            XDestroyWindow ((Display*) platformContext, (Window) containerHandle);
         // Let the server process the destroy (against a still-valid parent peer)
         // before we drop this connection - avoids a cross-connection teardown hang.
-        XSync ((Display*) display, False);
-        XCloseDisplay ((Display*) display);
-        display = nullptr;
+        XSync ((Display*) platformContext, False);
+        XCloseDisplay ((Display*) platformContext);
+        platformContext = nullptr;
     }
-    hostWindow = 0;
+    containerHandle = 0;
     gui = nullptr;
     plugin = nullptr;
     created = embedded = mapped = false;
@@ -200,8 +202,8 @@ void ClapEditor::drainPendingCallbacks()
         const int w = pendingW.load (std::memory_order_relaxed);
         const int h = pendingH.load (std::memory_order_relaxed);
         prefW = w; prefH = h;
-        if (display != nullptr && hostWindow != 0)
-            XResizeWindow ((Display*) display, hostWindow,
+        if (platformContext != nullptr && containerHandle != 0)
+            XResizeWindow ((Display*) platformContext, (Window) containerHandle,
                            (unsigned) std::max (1, w), (unsigned) std::max (1, h));
         if (onResize) onResize (w, h);
     }
@@ -219,9 +221,9 @@ void ClapEditor::pump (double elapsedMs)
     // Drain our host-window connection so its event queue (ConfigureNotify, etc.)
     // doesn't grow unbounded. The plugin's own window events ride its own fd,
     // pumped above via on_fd.
-    if (display != nullptr)
+    if (platformContext != nullptr)
     {
-        auto* dpy = (Display*) display;
+        auto* dpy = (Display*) platformContext;
         while (XPending (dpy) > 0)
         {
             XEvent e;

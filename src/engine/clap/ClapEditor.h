@@ -3,18 +3,18 @@
 #include "ClapHost.h"
 
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <string>
 
 namespace duskstudio::clap
 {
-// Native X11 editor embed for a CLAP plugin (Linux). Owns a host X11 window
-// created UNMAPPED as a child of the app's window; the plugin embeds its GUI into
-// it (set_parent + show), and we XMapWindow it ONLY on reveal() - so the first
-// open is an instant map with no stray-window flash, by construction. Drives the
-// plugin's fd/timer event pump (via ClapHost) on the message thread.
+// Native embedded editor for a CLAP plugin. The platform translation unit owns
+// an X11 child window on Linux or an NSView child container on macOS. Drives the
+// plugin's fd/timer event pump through ClapHost on the message thread.
 //
-// No X11 headers leak here: the host window + display are opaque handles.
+// Platform headers do not leak through this boundary. Native parent handles are
+// opaque pointers, so the API also remains safe on pointer-width Windows handles.
 class ClapEditor : public ClapHost::Callbacks
 {
 public:
@@ -23,24 +23,24 @@ public:
     ClapEditor (const ClapEditor&)            = delete;
     ClapEditor& operator= (const ClapEditor&) = delete;
 
-    // The plugin must be created + activated. Creates the embedded-X11 CLAP GUI
-    // and queries its preferred size. False (+errorOut) if the plugin has no
-    // embedded-X11 GUI or create() fails.
+    // The plugin must be created + activated. Creates the platform CLAP GUI and
+    // queries its preferred size. False (+errorOut) if no compatible embedded
+    // GUI exists or create() fails.
     bool open (const ::clap_plugin* plugin, ClapHost& host, std::string& errorOut);
 
-    // Create our host X11 window under parentX11 at (x,y,w,h) UNMAPPED, embed the
-    // plugin into it, and show() the plugin. Nothing is mapped on-screen yet.
-    bool embed (unsigned long parentX11, int x, int y, int w, int h, std::string& errorOut);
+    // Create a native child container under parentHandle at (x,y,w,h), embed the
+    // plugin into it, and call the plugin's show(). reveal() controls whether the
+    // container itself is visible.
+    bool embed (void* parentHandle, int x, int y, int w, int h, std::string& errorOut);
 
     void setBounds (int x, int y, int w, int h);
-    void reveal();   // XMapWindow - the instant first-open
-    void hide();     // XUnmapWindow
+    void reveal();
+    void hide();
     void close();
 
-    // The host window's REAL geometry (position relative to its X11 parent +
-    // size), so the owner can detect and correct drift the message flow
-    // missed. False when not embedded or the window is gone.
-    bool getRootRelativePosition (unsigned long referenceWindow,
+    // Linux geometry diagnostics. macOS uses logical component bounds directly,
+    // so these return false there.
+    bool getRootRelativePosition (void* referenceHandle,
                                   int& relX, int& relY) const;
     bool getActualGeometry (int& x, int& y, int& w, int& h) const;
 
@@ -49,7 +49,8 @@ public:
     // quit. close() then skips gui->hide/gui->destroy; the process is exiting anyway.
     void setLeakOnClose (bool b) noexcept { leakOnClose = b; }
 
-    // Message thread, ~60 Hz: pump the plugin's fds/timers + drain our X events.
+    // Message thread, ~60 Hz: apply queued GUI callbacks, pump the plugin's
+    // fds/timers, and drain any platform editor events.
     void pump (double elapsedMs);
 
     int  preferredWidth()  const noexcept { return prefW; }
@@ -71,15 +72,16 @@ private:
     // The plugin's gui host callbacks are [thread-safe] - it may call request_resize/
     // show/hide/closed from a non-message thread. Those handlers only stash these
     // atomics; drainPendingCallbacks() (from pump(), on the message thread) does all
-    // the X11 + JUCE work, so nothing touches Xlib / a JUCE Component off-thread.
+    // the native + JUCE work, so nothing touches a native view or a JUCE
+    // Component off-thread.
     void drainPendingCallbacks();
 
     const ::clap_plugin*     plugin = nullptr;
     const clap_plugin_gui_t* gui    = nullptr;
     ClapHost* hostPtr = nullptr;
 
-    void*         display    = nullptr;   // Display* (opaque)
-    unsigned long hostWindow = 0;         // Window
+    void*          platformContext = nullptr; // Display* on Linux; parent NSView* on macOS
+    std::uintptr_t containerHandle = 0;       // X11 Window or owned NSView*
     int  prefW = 0, prefH = 0;
     bool created = false, embedded = false, mapped = false;
     bool resizable = false;   // gui->can_resize: calling set_size when false aborts some plugins (u-he)

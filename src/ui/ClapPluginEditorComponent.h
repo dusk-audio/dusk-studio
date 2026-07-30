@@ -10,10 +10,9 @@
 namespace duskstudio
 {
 // JUCE bridge for a natively-hosted CLAP plugin editor: loads a .clap, creates +
-// activates the instance, opens its embedded-X11 editor through our own host, and
-// ties the native host window to this Component's peer / bounds / visibility. The
-// editor is embedded once (unmapped) the first time we're on a realised peer, and
-// revealed (instant X map) when shown - no JUCE plugin-editor hosting involved.
+// activates the instance, opens its native embedded editor through our own host,
+// and ties the platform child container to this Component's peer, bounds, and
+// visibility. No JUCE plugin-editor hosting is involved.
 //
 // The reusable editor piece for aux-lane hosting; also driven by the
 // DUSKSTUDIO_CLAP_EDITOR_TEST launch path for live verification.
@@ -47,8 +46,12 @@ private:
     void timerCallback() override;
     void tryEmbed();
     void pushBounds();
+#if defined(__linux__)
     void verifyGeometry();
-    unsigned long peerX11() const;
+#endif
+    void* peerNativeHandle() const;
+    juce::Rectangle<int> editorBoundsInPeer() const;
+    int componentExtentFromEditor (int extent) const;
 
     bool openEditorOn (clap::ClapInstance& inst, juce::String& errorOut);
 
@@ -61,9 +64,11 @@ private:
     bool loaded   = false;
     bool embedded = false;
     std::uint32_t lastPumpMs = 0;
+#if defined(__linux__)
     int  geometryCheckTick = 0;
     int  driftLogsLeft     = 10;
     bool geometryLostLogged = false;
     bool embedCheckLogged   = false;
+#endif
 };
 } // namespace duskstudio
