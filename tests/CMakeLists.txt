@@ -13,7 +13,7 @@ add_executable(dusk-studio-tests
     hosting_port_layout.cpp
     hosting_insert_adapter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/hosting/InsertAdapter.cpp
-    # Native CLAP tests + sources are Linux-only (dlopen/poll) — added conditionally below.
+    # Native CLAP tests + sources are added conditionally below.
     plugin_descriptor.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PluginDescriptor.cpp
     plugin_manager_descriptor.cpp
@@ -209,8 +209,8 @@ target_compile_definitions(dusk-studio-tests PRIVATE
     $<$<BOOL:${DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS}>:DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS=1>
     DUSKSTUDIO_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
-# Native CLAP host is Linux-only (dlopen/poll) — gate its tests + sources to match
-# the app build (DUSKSTUDIO_NATIVE_CLAP). clap_bundle_load also needs dladdr.
+# Gate native CLAP tests + sources to match the app build. The bundle-load test
+# follows the same platform implementation selected by DUSKSTUDIO_NATIVE_CLAP.
 if(DUSKSTUDIO_NATIVE_CLAP)
     target_sources(dusk-studio-tests PRIVATE
         clap_bundle_load.cpp
@@ -249,7 +249,6 @@ endif()
 if(DUSKSTUDIO_NATIVE_VST3)
     target_sources(dusk-studio-tests PRIVATE
         vst3_bundle_load.cpp
-        vst3_hostcontext_runloop.cpp
         vst3_instance_process.cpp
         vst3_native_slot.cpp
         vst3_scanner.cpp
@@ -259,6 +258,9 @@ if(DUSKSTUDIO_NATIVE_VST3)
         ${CMAKE_SOURCE_DIR}/src/engine/vst3/Vst3Scanner.cpp)
     target_link_libraries(dusk-studio-tests PRIVATE dusk-vst3-hosting)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_VST3=1)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_sources(dusk-studio-tests PRIVATE vst3_hostcontext_runloop.cpp)
+    endif()
 endif()
 
 target_link_libraries(dusk-studio-tests PRIVATE

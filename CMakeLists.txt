@@ -20,29 +20,43 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" DUSKSTUDIO_VERSION_RAW)
 string(STRIP "${DUSKSTUDIO_VERSION_RAW}" DUSKSTUDIO_VERSION)
 project(DuskStudio VERSION ${DUSKSTUDIO_VERSION} LANGUAGES C CXX)
 
-# Native CLAP host (src/engine/clap/ + the X11 editor) is POSIX + X11 — Linux only.
-# Default ON for Linux, OFF elsewhere; can be forced off on Linux for testing the
-# gated (DUSKSTUDIO_HAS_NATIVE_CLAP) build path with -DDUSKSTUDIO_NATIVE_CLAP=OFF.
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    option(DUSKSTUDIO_NATIVE_CLAP "Build the native CLAP plugin host (Linux/X11 only)" ON)
+if(APPLE)
+    enable_language(OBJCXX)
+endif()
+
+# Native CLAP host (src/engine/clap/) is available on Linux and macOS. Default
+# ON there, OFF elsewhere; it can be forced off to test the feature-gated path.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
+    option(DUSKSTUDIO_NATIVE_CLAP "Build the native CLAP plugin host (Linux/macOS)" ON)
 else()
     set(DUSKSTUDIO_NATIVE_CLAP OFF)
 endif()
 
-# Native LV2 host (src/engine/lv2/) via lilv + suil (both ISC). Linux-only, ON when
-# the dev libraries are present (like the optional LAME dep); OFF otherwise. The
-# pkg_check_modules IMPORTED_TARGETs (PkgConfig::LILV etc.) are linked further down.
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+# Native LV2 host (src/engine/lv2/) via lilv + suil (both ISC). On Linux it
+# remains optional when the development libraries are absent. On macOS CI
+# explicitly requests it, so a missing requested dependency must fail configure.
+# The pkg_check_modules IMPORTED_TARGETs are linked further down.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
     find_package(PkgConfig QUIET)
     if(PkgConfig_FOUND)
         # GLOBAL so the imported targets are visible in the tests/ subdirectory too.
         pkg_check_modules(LILV IMPORTED_TARGET GLOBAL lilv-0)
         pkg_check_modules(SUIL IMPORTED_TARGET GLOBAL suil-0)
         pkg_check_modules(LV2  IMPORTED_TARGET GLOBAL lv2)
-        pkg_check_modules(PIPEWIRE IMPORTED_TARGET GLOBAL libpipewire-0.3)
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            pkg_check_modules(PIPEWIRE IMPORTED_TARGET GLOBAL libpipewire-0.3)
+        endif()
     endif()
-    if(LILV_FOUND AND SUIL_FOUND AND LV2_FOUND)
-        option(DUSKSTUDIO_NATIVE_LV2 "Build the native LV2 plugin host (Linux, needs lilv/suil)" ON)
+    if(APPLE)
+        option(DUSKSTUDIO_NATIVE_LV2
+               "Build the native LV2 plugin host (Linux/macOS, needs lilv/suil/lv2)" ON)
+        if(DUSKSTUDIO_NATIVE_LV2 AND NOT (LILV_FOUND AND SUIL_FOUND AND LV2_FOUND))
+            message(FATAL_ERROR
+                "Native LV2 host was explicitly requested, but lilv/suil/lv2 were not all found")
+        endif()
+    elseif(LILV_FOUND AND SUIL_FOUND AND LV2_FOUND)
+        option(DUSKSTUDIO_NATIVE_LV2
+               "Build the native LV2 plugin host (Linux/macOS, needs lilv/suil/lv2)" ON)
     else()
         set(DUSKSTUDIO_NATIVE_LV2 OFF)
         message(STATUS "Native LV2 host: lilv/suil/lv2 not all found - disabled")
@@ -53,11 +67,18 @@ endif()
 
 # Native VST3 host — Steinberg SDK hosting subset from the Dusk-owned mirror
 # (external/vst3sdk submodule, tag dusk-vst3sdk-v1; see DUSK-MIRROR.md there).
-# GPL-3.0 arm of the SDK's dual license — see LICENSES.txt. Linux-only like the
-# other native hosts.
-if(UNIX AND NOT APPLE)
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/vst3sdk/pluginterfaces/base/funknown.cpp")
-        option(DUSKSTUDIO_NATIVE_VST3 "Build the native VST3 plugin host (Linux)" ON)
+# GPL-3.0 arm of the SDK's dual license — see LICENSES.txt.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
+    if(APPLE)
+        option(DUSKSTUDIO_NATIVE_VST3 "Build the native VST3 plugin host (Linux/macOS)" ON)
+        if(DUSKSTUDIO_NATIVE_VST3
+           AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/vst3sdk/pluginterfaces/base/funknown.cpp")
+            message(FATAL_ERROR
+                "Native VST3 host was explicitly requested, but external/vst3sdk is missing "
+                "(run: git submodule update --init external/vst3sdk)")
+        endif()
+    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/vst3sdk/pluginterfaces/base/funknown.cpp")
+        option(DUSKSTUDIO_NATIVE_VST3 "Build the native VST3 plugin host (Linux/macOS)" ON)
     else()
         set(DUSKSTUDIO_NATIVE_VST3 OFF)
         message(STATUS "Native VST3 host: external/vst3sdk submodule missing - disabled "
@@ -315,8 +336,7 @@ target_sources(DuskStudio PRIVATE
     src/DuskStudioApp.cpp
     src/foundation/Fft.cpp
     src/foundation/MessageThread.cpp
-    # Native CLAP host is Linux-only (dlopen + poll + X11 editor) — added in the
-    # UNIX-AND-NOT-APPLE block below, gated by DUSKSTUDIO_HAS_NATIVE_CLAP.
+    # Native CLAP sources are added below, gated by DUSKSTUDIO_HAS_NATIVE_CLAP.
     src/engine/AudioEngine.cpp
     src/engine/AudioWorkerPool.cpp
     src/engine/BounceEngine.cpp
@@ -620,28 +640,36 @@ if(DUSKSTUDIO_NATIVE_CLAP OR DUSKSTUDIO_NATIVE_LV2 OR DUSKSTUDIO_NATIVE_VST3
     target_sources(DuskStudio PRIVATE src/engine/hosting/InsertAdapter.cpp)
 endif()
 
-# Native CLAP host — POSIX (dlopen/poll) + X11 editor embed. Gated by DUSKSTUDIO_NATIVE_CLAP
-# (ON for Linux). DUSKSTUDIO_HAS_NATIVE_CLAP guards every #if in the source.
+# Native CLAP host, gated by DUSKSTUDIO_NATIVE_CLAP. DUSKSTUDIO_HAS_NATIVE_CLAP
+# guards every conditional native-host path in the source.
 if(DUSKSTUDIO_NATIVE_CLAP)
     target_sources(DuskStudio PRIVATE
         src/engine/clap/ClapBundle.cpp
         src/engine/clap/ClapHost.cpp
         src/engine/clap/ClapInstance.cpp
-        src/engine/clap/ClapEditor.cpp
         src/engine/clap/ClapScanner.cpp
         src/ui/ClapPluginEditorComponent.cpp)
+    if(APPLE)
+        target_sources(DuskStudio PRIVATE src/engine/clap/ClapEditor_Mac.mm)
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_sources(DuskStudio PRIVATE src/engine/clap/ClapEditor.cpp)
+    endif()
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_CLAP=1)
 endif()
 
 # Native LV2 host — lilv (discovery/instantiation) + suil (UI embed), both ISC.
-# Gated by DUSKSTUDIO_NATIVE_LV2 (ON on Linux when the dev libs are present).
+# Gated by DUSKSTUDIO_NATIVE_LV2 (ON on Linux/macOS when the dev libs are present).
 if(DUSKSTUDIO_NATIVE_LV2)
     target_sources(DuskStudio PRIVATE
         src/engine/lv2/Lv2Bundle.cpp
-        src/engine/lv2/Lv2Editor.cpp
         src/engine/lv2/Lv2Instance.cpp
         src/engine/lv2/Lv2Scanner.cpp
         src/ui/Lv2PluginEditorComponent.cpp)
+    if(APPLE)
+        target_sources(DuskStudio PRIVATE src/engine/lv2/Lv2Editor_Mac.mm)
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_sources(DuskStudio PRIVATE src/engine/lv2/Lv2Editor.cpp)
+    endif()
     target_link_libraries(DuskStudio PRIVATE PkgConfig::LILV PkgConfig::SUIL PkgConfig::LV2)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_LV2=1)
 endif()
@@ -672,30 +700,52 @@ if(DUSKSTUDIO_NATIVE_VST3)
         ${VST3SDK_DIR}/public.sdk/source/vst/vstinitiids.cpp
         ${VST3SDK_DIR}/public.sdk/source/common/commonstringconvert.cpp
         ${VST3SDK_DIR}/public.sdk/source/common/memorystream.cpp
-        ${VST3SDK_DIR}/public.sdk/source/common/threadchecker_linux.cpp
         ${VST3SDK_DIR}/public.sdk/source/vst/hosting/connectionproxy.cpp
         ${VST3SDK_DIR}/public.sdk/source/vst/hosting/eventlist.cpp
         ${VST3SDK_DIR}/public.sdk/source/vst/hosting/hostclasses.cpp
         ${VST3SDK_DIR}/public.sdk/source/vst/hosting/module.cpp
-        ${VST3SDK_DIR}/public.sdk/source/vst/hosting/module_linux.cpp
         ${VST3SDK_DIR}/public.sdk/source/vst/hosting/parameterchanges.cpp
         ${VST3SDK_DIR}/public.sdk/source/vst/hosting/pluginterfacesupport.cpp
         ${VST3SDK_DIR}/public.sdk/source/vst/hosting/plugprovider.cpp
         ${VST3SDK_DIR}/public.sdk/source/vst/hosting/processdata.cpp
         ${VST3SDK_DIR}/public.sdk/source/vst/utility/stringconvert.cpp)
+    if(APPLE)
+        set(VST3SDK_MACOS_SOURCES
+            ${VST3SDK_DIR}/public.sdk/source/common/threadchecker_mac.mm
+            ${VST3SDK_DIR}/public.sdk/source/vst/hosting/module_mac.mm)
+        target_sources(dusk-vst3-hosting PRIVATE ${VST3SDK_MACOS_SOURCES})
+        set_source_files_properties(${VST3SDK_MACOS_SOURCES}
+            PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+        find_library(DUSKSTUDIO_COCOA_FRAMEWORK Cocoa REQUIRED)
+        find_library(DUSKSTUDIO_COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
+        target_link_libraries(dusk-vst3-hosting PUBLIC
+            ${DUSKSTUDIO_COCOA_FRAMEWORK}
+            ${DUSKSTUDIO_COREFOUNDATION_FRAMEWORK})
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_sources(dusk-vst3-hosting PRIVATE
+            ${VST3SDK_DIR}/public.sdk/source/common/threadchecker_linux.cpp
+            ${VST3SDK_DIR}/public.sdk/source/vst/hosting/module_linux.cpp)
+    endif()
     target_include_directories(dusk-vst3-hosting SYSTEM PUBLIC ${VST3SDK_DIR})
     target_compile_definitions(dusk-vst3-hosting PUBLIC
         $<$<CONFIG:Debug>:DEVELOPMENT=1>
         $<$<NOT:$<CONFIG:Debug>>:RELEASE=1>)
-    target_compile_options(dusk-vst3-hosting PRIVATE -w)
+    target_compile_options(dusk-vst3-hosting PRIVATE
+        "$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/w>"
+        "$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-w>"
+        "$<$<COMPILE_LANG_AND_ID:OBJCXX,AppleClang,Clang,GNU>:-w>")
     target_link_libraries(dusk-vst3-hosting PUBLIC ${CMAKE_DL_LIBS})
     target_sources(DuskStudio PRIVATE
         src/engine/vst3/Vst3Bundle.cpp
-        src/engine/vst3/Vst3Editor.cpp
         src/engine/vst3/Vst3HostContext.cpp
         src/engine/vst3/Vst3Instance.cpp
         src/engine/vst3/Vst3Scanner.cpp
         src/ui/Vst3PluginEditorComponent.cpp)
+    if(APPLE)
+        target_sources(DuskStudio PRIVATE src/engine/vst3/Vst3Editor_Mac.mm)
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_sources(DuskStudio PRIVATE src/engine/vst3/Vst3Editor.cpp)
+    endif()
     target_link_libraries(DuskStudio PRIVATE dusk-vst3-hosting)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_VST3=1)
 endif()
