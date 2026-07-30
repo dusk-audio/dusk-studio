@@ -97,7 +97,8 @@ bool Vst3Editor::open (Vst3Instance& inst, std::string& errorOut)
     return true;
 }
 
-bool Vst3Editor::embed (unsigned long parentX11, int x, int y, int w, int h, std::string& errorOut)
+bool Vst3Editor::embed (std::uintptr_t parentHandle, int x, int y, int w, int h,
+                        std::string& errorOut)
 {
     if (! impl->view) { errorOut = "no view open"; return false; }
     if (impl->embedded) return true;
@@ -120,7 +121,7 @@ bool Vst3Editor::embed (unsigned long parentX11, int x, int y, int w, int h, std
     // x11-frames a managed adoption detaches the compositor-side surface
     // from the X-space parent-child position.
     swa.override_redirect = True;
-    impl->hostWindow = XCreateWindow (dpy, (Window) parentX11, x, y,
+    impl->hostWindow = XCreateWindow (dpy, (Window) parentHandle, x, y,
                                       (unsigned) ww, (unsigned) hh, 0,
                                       CopyFromParent, InputOutput, (Visual*) CopyFromParent,
                                       CWBackPixel | CWBorderPixel | CWEventMask | CWOverrideRedirect, &swa);
@@ -164,7 +165,7 @@ void Vst3Editor::setContentScale (float scale)
     impl->applyContentScale();
 }
 
-bool Vst3Editor::getRootRelativePosition (unsigned long referenceWindow,
+bool Vst3Editor::getRootRelativePosition (std::uintptr_t referenceHandle,
                                            int& relX, int& relY) const
 {
     if (! impl->embedded || impl->display == nullptr || impl->hostWindow == 0)
@@ -174,7 +175,7 @@ bool Vst3Editor::getRootRelativePosition (unsigned long referenceWindow,
     int hx = 0, hy = 0, rx = 0, ry = 0;
     if (! XTranslateCoordinates (dpy, (Window) impl->hostWindow,
                                  DefaultRootWindow (dpy), 0, 0, &hx, &hy, &dummy)
-        || ! XTranslateCoordinates (dpy, (Window) referenceWindow,
+        || ! XTranslateCoordinates (dpy, (Window) referenceHandle,
                                     DefaultRootWindow (dpy), 0, 0, &rx, &ry, &dummy))
         return false;
     relX = hx - rx; relY = hy - ry;
