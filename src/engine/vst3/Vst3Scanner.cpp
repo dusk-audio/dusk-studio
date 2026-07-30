@@ -29,9 +29,14 @@ std::vector<stdfs::path> Vst3Scanner::defaultSearchPaths()
             if (! trimmed.empty()) add (stdfs::u8path (trimmed));
         }
 
+#if defined(__APPLE__)
+    add (dusk::fs::userHomeDir() / "Library/Audio/Plug-Ins/VST3");
+    add ("/Library/Audio/Plug-Ins/VST3");
+#else
     add (dusk::fs::userHomeDir() / ".vst3");
     add ("/usr/lib/vst3");
     add ("/usr/local/lib/vst3");
+#endif
     return dirs;
 }
 

@@ -57,9 +57,9 @@ jobs:
           [[ "v$(tr -d '[:space:]' < VERSION)" == "${GITHUB_REF_NAME}" ]] || {
             echo "Tag ${GITHUB_REF_NAME} != VERSION v$(tr -d '[:space:]' < VERSION)"; exit 1; }
 
-      - name: Install ninja + ccache + lame
+      - name: Install build dependencies
         # lame: libmp3lame for MP3 bounce/export (CMake auto-detects it).
-        run: brew install ninja ccache lame libsndfile
+        run: brew install ninja ccache lame libsndfile lilv suil lv2
 
       - name: Cache ccache objects
         uses: actions/cache@v6
@@ -131,6 +131,7 @@ jobs:
 
       - name: Configure (Release)
         run: |
+          set -euo pipefail
           # Ad-hoc codesign identity "-" — free, and required for the .app
           # (plus the bundled dusk-studio-plugin-host helper) to launch on
           # Apple Silicon. No Developer ID, no Hardened Runtime, no notary.
@@ -139,7 +140,14 @@ jobs:
             -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
-            -DDUSKSTUDIO_CODESIGN_IDENTITY="-"
+            -DDUSKSTUDIO_CODESIGN_IDENTITY="-" \
+            -DDUSKSTUDIO_NATIVE_CLAP=ON \
+            -DDUSKSTUDIO_NATIVE_LV2=ON \
+            -DDUSKSTUDIO_NATIVE_VST3=ON
+          for option in DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_LV2 DUSKSTUDIO_NATIVE_VST3; do
+            grep -q "^${option}:BOOL=ON$" build/CMakeCache.txt || {
+              echo "::error::${option} was not enabled in the app configure" >&2; exit 1; }
+          done
 
       - name: Build (Release)
         run: cmake --build build -j
@@ -147,12 +155,20 @@ jobs:
       - name: Build + run tests (release gate)
         # No DMG ships unless the full Catch2 suite passes.
         run: |
+          set -euo pipefail
           cmake -S . -B build-tests -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
-            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
+            -DDUSKSTUDIO_NATIVE_CLAP=ON \
+            -DDUSKSTUDIO_NATIVE_LV2=ON \
+            -DDUSKSTUDIO_NATIVE_VST3=ON
+          for option in DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_LV2 DUSKSTUDIO_NATIVE_VST3; do
+            grep -q "^${option}:BOOL=ON$" build-tests/CMakeCache.txt || {
+              echo "::error::${option} was not enabled in the test configure" >&2; exit 1; }
+          done
           cmake --build build-tests --target dusk-studio-tests -j
           ctest --test-dir build-tests --output-on-failure
 

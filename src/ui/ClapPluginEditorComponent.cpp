@@ -1,6 +1,8 @@
 #include "ClapPluginEditorComponent.h"
 #include "EmbeddedModal.h"   // kPluginEditorTag
+#if ! defined(__APPLE__)
 #include "NativeEditorEmbedScale.h"
+#endif
 
 #include <algorithm>
 
@@ -55,17 +57,17 @@ bool ClapPluginEditorComponent::openEditorOn (clap::ClapInstance& inst, juce::St
     editor.onResize = [this] (int w, int h)
     {
         if (w > 0 && h > 0)
-            setSize (embedscale::fromPhysical (*this, w),
-                     embedscale::fromPhysical (*this, h));
+            setSize (componentExtentFromEditor (w),
+                     componentExtentFromEditor (h));
     };
     // GUI was_destroyed: tear down our state fully. Leaving `loaded` set would let
     // tryEmbed()/the timer keep poking an already-destroyed editor.
     editor.onClosed = [this] { embedded = false; loaded = false; stopTimer(); };
 
     const int w = editor.preferredWidth()  > 0
-                    ? embedscale::fromPhysical (*this, editor.preferredWidth())  : 480;
+                    ? componentExtentFromEditor (editor.preferredWidth())  : 480;
     const int h = editor.preferredHeight() > 0
-                    ? embedscale::fromPhysical (*this, editor.preferredHeight()) : 320;
+                    ? componentExtentFromEditor (editor.preferredHeight()) : 320;
     setSize (w, h);
 
     loaded = true;
@@ -74,11 +76,30 @@ bool ClapPluginEditorComponent::openEditorOn (clap::ClapInstance& inst, juce::St
     return true;
 }
 
-unsigned long ClapPluginEditorComponent::peerX11() const
+void* ClapPluginEditorComponent::peerNativeHandle() const
 {
     if (auto* peer = getPeer())
-        return (unsigned long) (juce::pointer_sized_uint) peer->getNativeHandle();
-    return 0;
+        return peer->getNativeHandle();
+    return nullptr;
+}
+
+juce::Rectangle<int> ClapPluginEditorComponent::editorBoundsInPeer() const
+{
+    const auto logical = getTopLevelComponent()->getLocalArea (this, getLocalBounds());
+#if defined(__APPLE__)
+    return logical;
+#else
+    return embedscale::toPhysical (*this, logical);
+#endif
+}
+
+int ClapPluginEditorComponent::componentExtentFromEditor (int extent) const
+{
+#if defined(__APPLE__)
+    return std::max (1, extent);
+#else
+    return embedscale::fromPhysical (*this, extent);
+#endif
 }
 
 void ClapPluginEditorComponent::tryEmbed()
@@ -88,11 +109,10 @@ void ClapPluginEditorComponent::tryEmbed()
     // + map when shown, exactly like the JUCE editor path. The kept-alive remap on a
     // later tab switch keeps re-opens instant.
     if (! loaded || embedded || ! isShowing()) return;
-    const auto parent = peerX11();
-    if (parent == 0) return;
+    auto* parent = peerNativeHandle();
+    if (parent == nullptr) return;
 
-    const auto area = embedscale::toPhysical (
-        *this, getTopLevelComponent()->getLocalArea (this, getLocalBounds()));
+    const auto area = editorBoundsInPeer();
     std::string err;
     if (editor.embed (parent, area.getX(), area.getY(),
                       std::max (1, area.getWidth()), std::max (1, area.getHeight()), err))
@@ -125,8 +145,7 @@ void ClapPluginEditorComponent::pushBounds()
     // degenerates to (0,0), slamming the native window to the origin. Skip
     // while unparented; parentHierarchyChanged re-syncs once re-added.
     if (getParentComponent() == nullptr || getPeer() == nullptr) return;
-    const auto area = embedscale::toPhysical (
-        *this, getTopLevelComponent()->getLocalArea (this, getLocalBounds()));
+    const auto area = editorBoundsInPeer();
     editor.setBounds (area.getX(), area.getY(),
                       std::max (1, area.getWidth()), std::max (1, area.getHeight()));
 }
@@ -155,6 +174,7 @@ void ClapPluginEditorComponent::leakForShutdown()
     editor.setLeakOnClose (true);
 }
 
+#if defined(__linux__)
 void ClapPluginEditorComponent::verifyGeometry()
 {
     // The message flow can miss a move (compositor interference, an event
@@ -164,14 +184,13 @@ void ClapPluginEditorComponent::verifyGeometry()
     if (++geometryCheckTick < 20) return;
     geometryCheckTick = 0;
 
-    const auto area = embedscale::toPhysical (
-        *this, getTopLevelComponent()->getLocalArea (this, getLocalBounds()));
+    const auto area = editorBoundsInPeer();
     int ax = 0, ay = 0, aw = 0, ah = 0;
     if (! embedCheckLogged)
     {
         embedCheckLogged = true;
         int relX = 0, relY = 0;
-        if (editor.getRootRelativePosition (peerX11(), relX, relY))
+        if (editor.getRootRelativePosition (peerNativeHandle(), relX, relY))
             std::fprintf (stderr,
                 "[%s editor] embed check: host rel to peer (%d,%d), intended (%d,%d)\n",
                 "clap", relX, relY, area.getX(), area.getY());
@@ -198,18 +217,21 @@ void ClapPluginEditorComponent::verifyGeometry()
         pushBounds();
     }
 }
+#endif
 
 void ClapPluginEditorComponent::timerCallback()
 {
-    // Keep the native X11 window's mapped state in sync with our real on-screen
+    // Keep the native child container's visible state in sync with our real on-screen
     // visibility. visibilityChanged() does NOT fire for ancestor (aux-tab / stage)
-    // changes, so without this poll the window stays mapped - floating over whatever
-    // view replaced the aux lane. reveal()/hide() are idempotent (guarded by `mapped`).
+    // changes, so without this poll the container stays visible over whatever view
+    // replaced the aux lane. reveal()/hide() are idempotent.
     if (embedded)
     {
         if (isShowing()) editor.reveal();
         else             editor.hide();
+#if defined(__linux__)
         verifyGeometry();
+#endif
     }
 
     const auto now = juce::Time::getMillisecondCounter();

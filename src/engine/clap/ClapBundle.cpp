@@ -4,8 +4,73 @@
 
 #include <dlfcn.h>
 
+#if defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
+
+#include <climits>
+#include <filesystem>
+#endif
+
 namespace duskstudio::clap
 {
+#if defined(__APPLE__)
+namespace
+{
+bool resolveBundleExecutable (const std::string& path,
+                              std::string& executablePath,
+                              std::string& errorOut)
+{
+    std::error_code ec;
+    if (! std::filesystem::is_directory (std::filesystem::u8path (path), ec))
+    {
+        executablePath = path;
+        return true;
+    }
+
+    const auto* bytes = reinterpret_cast<const UInt8*> (path.data());
+    auto* bundleUrl = CFURLCreateFromFileSystemRepresentation (
+        kCFAllocatorDefault, bytes, static_cast<CFIndex> (path.size()), true);
+    if (bundleUrl == nullptr)
+    {
+        errorOut = "could not create a URL for the CLAP bundle";
+        return false;
+    }
+
+    auto* bundle = CFBundleCreate (kCFAllocatorDefault, bundleUrl);
+    CFRelease (bundleUrl);
+    if (bundle == nullptr)
+    {
+        errorOut = "could not open the CLAP bundle";
+        return false;
+    }
+
+    auto* executableUrl = CFBundleCopyExecutableURL (bundle);
+    CFRelease (bundle);
+    if (executableUrl == nullptr)
+    {
+        errorOut = "CLAP bundle has no executable";
+        return false;
+    }
+
+    // Against the base: CFBundleCopyExecutableURL hands back a URL relative to the
+    // bundle, so a plain CFURLCopyFileSystemPath yields the bare executable NAME -
+    // dlopen would then search the dyld paths instead of the bundle.
+    UInt8 executableBuffer[PATH_MAX] {};
+    const bool resolved = CFURLGetFileSystemRepresentation (
+        executableUrl, true, executableBuffer, static_cast<CFIndex> (sizeof executableBuffer));
+    CFRelease (executableUrl);
+    if (! resolved)
+    {
+        errorOut = "could not resolve the CLAP bundle executable path";
+        return false;
+    }
+
+    executablePath = reinterpret_cast<const char*> (executableBuffer);
+    return true;
+}
+} // namespace
+#endif
+
 bool PluginDesc::isInstrument() const
 {
     for (const auto& f : features)
@@ -20,9 +85,21 @@ bool ClapBundle::load (const std::string& path, std::string& errorOut)
     unload();
     bundlePath = path;
 
+#if defined(__APPLE__)
+    std::string executablePath;
+    if (! resolveBundleExecutable (path, executablePath, errorOut))
+    {
+        unload();
+        return false;
+    }
+    const char* libraryPath = executablePath.c_str();
+#else
+    const char* libraryPath = path.c_str();
+#endif
+
     // RTLD_LOCAL so a plugin's symbols don't leak into our (or another plugin's)
     // global namespace; RTLD_NOW so missing symbols surface here, not mid-process.
-    handle = dlopen (path.c_str(), RTLD_LOCAL | RTLD_NOW);
+    handle = dlopen (libraryPath, RTLD_LOCAL | RTLD_NOW);
     if (handle == nullptr)
     {
         const char* e = dlerror();

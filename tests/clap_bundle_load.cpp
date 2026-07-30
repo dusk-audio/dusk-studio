@@ -1,14 +1,63 @@
-// Increment 0 of the native CLAP host: the ClapBundle loader compiles, links,
-// and fails cleanly on a bad path. A real load+enumerate test arrives with a
-// .clap fixture (DuskVerb-as-CLAP, increment 3). See docs/native-clap-host-plan.md.
+// CLAP loader failure paths run without a plugin fixture. Live bundle loading
+// remains covered by the environment-gated scanner test.
 
 #include <catch2/catch_test_macros.hpp>
 
 #include "engine/clap/ClapBundle.h"
 
+#include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <dlfcn.h>
+#include <filesystem>
+#include <fstream>
+#include <stdexcept>
 #include <string>
+#include <unistd.h>
+#include <vector>
+
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+
+namespace
+{
+namespace stdfs = std::filesystem;
+
+class TempDirectory
+{
+public:
+    explicit TempDirectory (const char* prefix)
+    {
+        // pid + tick: ctest runs the test cases as parallel processes, whose
+        // steady_clock reads can land on the same tick.
+        const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
+        value = stdfs::temp_directory_path()
+                / (std::string (prefix) + std::to_string (getpid()) + "_" + std::to_string (unique));
+        std::error_code ec;
+        if (! stdfs::create_directories (value, ec) || ec)
+            throw std::runtime_error ("could not create test directory: " + ec.message());
+    }
+
+    ~TempDirectory()
+    {
+        std::error_code ec;
+        stdfs::remove_all (value, ec);
+    }
+
+    const stdfs::path& path() const noexcept { return value; }
+
+private:
+    stdfs::path value;
+};
+
+bool writeText (const stdfs::path& path, const char* text)
+{
+    std::ofstream stream (path);
+    stream << text;
+    return stream.good();
+}
+} // namespace
+#endif
 
 TEST_CASE ("ClapBundle fails gracefully on a missing bundle", "[clap][bundle]")
 {
@@ -20,6 +69,7 @@ TEST_CASE ("ClapBundle fails gracefully on a missing bundle", "[clap][bundle]")
     REQUIRE_FALSE (b.isLoaded());
     REQUIRE (b.plugins().empty());
     REQUIRE (b.getFactory() == nullptr);
+    REQUIRE (b.getPath().empty());
 }
 
 TEST_CASE ("ClapBundle rejects a real shared object that is not a CLAP bundle", "[clap][bundle]")
@@ -40,3 +90,51 @@ TEST_CASE ("ClapBundle rejects a real shared object that is not a CLAP bundle", 
     REQUIRE_FALSE (err.empty());
     INFO ("rejection reason: " << err);
 }
+
+#if defined(__APPLE__)
+TEST_CASE ("ClapBundle resolves a directory bundle executable", "[clap][bundle]")
+{
+    TempDirectory parent ("dusk_clap_bundle_");
+    const auto temp = parent.path() / "Test.clap";
+    const auto contents = temp / "Contents";
+    const auto executableDir = contents / "MacOS";
+    std::error_code ec;
+    REQUIRE (std::filesystem::create_directories (executableDir, ec));
+    REQUIRE_FALSE (ec);
+    REQUIRE (writeText (contents / "Info.plist",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" "
+        "\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+        "<plist version=\"1.0\"><dict>\n"
+        "<key>CFBundleExecutable</key><string>TestClap</string>\n"
+        "<key>CFBundleIdentifier</key><string>com.duskaudio.test-clap</string>\n"
+        "<key>CFBundlePackageType</key><string>BNDL</string>\n"
+        "</dict></plist>\n"));
+
+    const auto executable = executableDir / "TestClap";
+    std::vector<char> runningExecutable (1024);
+    auto pathSize = static_cast<std::uint32_t> (runningExecutable.size());
+    if (_NSGetExecutablePath (runningExecutable.data(), &pathSize) != 0)
+    {
+        runningExecutable.resize (pathSize);
+        REQUIRE (_NSGetExecutablePath (runningExecutable.data(), &pathSize) == 0);
+    }
+    std::filesystem::copy_file (std::filesystem::u8path (runningExecutable.data()), executable,
+                                std::filesystem::copy_options::overwrite_existing, ec);
+    REQUIRE_FALSE (ec);
+
+    duskstudio::clap::ClapBundle b;
+    std::string err;
+    REQUIRE_FALSE (b.load (temp.u8string(), err));
+    INFO ("load error: " << err);
+    // Either dlopen took the executable and found no entry point, or it refused
+    // it - and then the reason must name the full inner executable path, which is
+    // what catches a resolver handing dlopen a bundle-relative name. Matching the
+    // tail rather than the absolute path: the temp dir reaches dlopen in its
+    // /private/var form.
+    REQUIRE ((err == "no clap_entry symbol"
+              || err.find ("Test.clap/Contents/MacOS/TestClap") != std::string::npos));
+    REQUIRE_FALSE (b.isLoaded());
+    REQUIRE (b.getPath().empty());
+}
+#endif
