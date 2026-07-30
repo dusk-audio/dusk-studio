@@ -7,6 +7,7 @@
 #if defined(__APPLE__)
 #include <CoreFoundation/CoreFoundation.h>
 
+#include <climits>
 #include <filesystem>
 #endif
 
@@ -51,28 +52,20 @@ bool resolveBundleExecutable (const std::string& path,
         return false;
     }
 
-    auto* executableString = CFURLCopyFileSystemPath (executableUrl, kCFURLPOSIXPathStyle);
+    // Against the base: CFBundleCopyExecutableURL hands back a URL relative to the
+    // bundle, so a plain CFURLCopyFileSystemPath yields the bare executable NAME -
+    // dlopen would then search the dyld paths instead of the bundle.
+    UInt8 executableBuffer[PATH_MAX] {};
+    const bool resolved = CFURLGetFileSystemRepresentation (
+        executableUrl, true, executableBuffer, static_cast<CFIndex> (sizeof executableBuffer));
     CFRelease (executableUrl);
-    if (executableString == nullptr)
+    if (! resolved)
     {
         errorOut = "could not resolve the CLAP bundle executable path";
         return false;
     }
 
-    const auto capacity = CFStringGetMaximumSizeForEncoding (
-                              CFStringGetLength (executableString), kCFStringEncodingUTF8)
-                          + 1;
-    std::vector<char> utf8Path (static_cast<std::size_t> (capacity));
-    const bool converted = CFStringGetCString (
-        executableString, utf8Path.data(), capacity, kCFStringEncodingUTF8);
-    CFRelease (executableString);
-    if (! converted)
-    {
-        errorOut = "CLAP bundle executable path is not valid UTF-8";
-        return false;
-    }
-
-    executablePath = utf8Path.data();
+    executablePath = reinterpret_cast<const char*> (executableBuffer);
     return true;
 }
 } // namespace

@@ -44,13 +44,11 @@ std::vector<stdfs::path> ClapScanner::findClapFiles (const std::vector<stdfs::pa
 {
     std::vector<stdfs::path> files;
     std::error_code ec;
-#if defined(__APPLE__)
     auto add = [&] (const stdfs::path& bundle)
     {
         for (const auto& existing : files) if (existing == bundle) return;
         files.push_back (bundle);
     };
-#endif
 
     for (const auto& dirIn : dirs)
     {
@@ -71,11 +69,7 @@ std::vector<stdfs::path> ClapScanner::findClapFiles (const std::vector<stdfs::pa
         }
 #else
         for (const auto& f : dusk::fs::findChildFiles (dir, "*.clap", true))
-        {
-            bool seen = false;
-            for (const auto& g : files) if (g == f) { seen = true; break; }
-            if (! seen) files.push_back (f);
-        }
+            add (f);
 #endif
     }
     return files;

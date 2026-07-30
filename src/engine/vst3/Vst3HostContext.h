@@ -44,7 +44,7 @@ public:
     void* hostApplication() const noexcept;   // Steinberg::Vst::IHostApplication*
     void* componentHandler() const noexcept;  // Steinberg::Vst::IComponentHandler*
     void* plugFrame() const noexcept;         // Steinberg::IPlugFrame*
-    void* runLoop() const noexcept;           // Steinberg::Linux::IRunLoop*
+    void* runLoop() const noexcept;           // Steinberg::Linux::IRunLoop*, nullptr off Linux
 
     // Message thread, ~60 Hz: poll the registered fds (dispatching onFDIsSet) and
     // advance the timers by elapsedMs (dispatching onTimerFired on cadence).

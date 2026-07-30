@@ -48,11 +48,22 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
         endif()
     endif()
     if(APPLE)
+        # The default follows the dev libs, as on Linux, so a Mac without them
+        # still configures. An EXPLICIT -DDUSKSTUDIO_NATIVE_LV2=ON with them
+        # missing (what CI passes) stays a configure error - a green build with
+        # the format silently OFF is not verification.
+        set(DUSKSTUDIO_LV2_DEPS_FOUND OFF)
+        if(LILV_FOUND AND SUIL_FOUND AND LV2_FOUND)
+            set(DUSKSTUDIO_LV2_DEPS_FOUND ON)
+        endif()
         option(DUSKSTUDIO_NATIVE_LV2
-               "Build the native LV2 plugin host (Linux/macOS, needs lilv/suil/lv2)" ON)
-        if(DUSKSTUDIO_NATIVE_LV2 AND NOT (LILV_FOUND AND SUIL_FOUND AND LV2_FOUND))
+               "Build the native LV2 plugin host (Linux/macOS, needs lilv/suil/lv2)"
+               ${DUSKSTUDIO_LV2_DEPS_FOUND})
+        if(DUSKSTUDIO_NATIVE_LV2 AND NOT DUSKSTUDIO_LV2_DEPS_FOUND)
             message(FATAL_ERROR
                 "Native LV2 host was explicitly requested, but lilv/suil/lv2 were not all found")
+        elseif(NOT DUSKSTUDIO_LV2_DEPS_FOUND)
+            message(STATUS "Native LV2 host: lilv/suil/lv2 not all found - disabled")
         endif()
     elseif(LILV_FOUND AND SUIL_FOUND AND LV2_FOUND)
         option(DUSKSTUDIO_NATIVE_LV2
@@ -69,15 +80,24 @@ endif()
 # (external/vst3sdk submodule, tag dusk-vst3sdk-v1; see DUSK-MIRROR.md there).
 # GPL-3.0 arm of the SDK's dual license — see LICENSES.txt.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
+    set(DUSKSTUDIO_VST3_SDK_PRESENT OFF)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/vst3sdk/pluginterfaces/base/funknown.cpp")
+        set(DUSKSTUDIO_VST3_SDK_PRESENT ON)
+    endif()
     if(APPLE)
-        option(DUSKSTUDIO_NATIVE_VST3 "Build the native VST3 plugin host (Linux/macOS)" ON)
-        if(DUSKSTUDIO_NATIVE_VST3
-           AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/vst3sdk/pluginterfaces/base/funknown.cpp")
+        # Same rule as the LV2 gate above: default follows the submodule, an
+        # explicit request without it is fatal.
+        option(DUSKSTUDIO_NATIVE_VST3 "Build the native VST3 plugin host (Linux/macOS)"
+               ${DUSKSTUDIO_VST3_SDK_PRESENT})
+        if(DUSKSTUDIO_NATIVE_VST3 AND NOT DUSKSTUDIO_VST3_SDK_PRESENT)
             message(FATAL_ERROR
                 "Native VST3 host was explicitly requested, but external/vst3sdk is missing "
                 "(run: git submodule update --init external/vst3sdk)")
+        elseif(NOT DUSKSTUDIO_VST3_SDK_PRESENT)
+            message(STATUS "Native VST3 host: external/vst3sdk submodule missing - disabled "
+                           "(git submodule update --init external/vst3sdk)")
         endif()
-    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/vst3sdk/pluginterfaces/base/funknown.cpp")
+    elseif(DUSKSTUDIO_VST3_SDK_PRESENT)
         option(DUSKSTUDIO_NATIVE_VST3 "Build the native VST3 plugin host (Linux/macOS)" ON)
     else()
         set(DUSKSTUDIO_NATIVE_VST3 OFF)

@@ -4,7 +4,9 @@
 #include <pluginterfaces/gui/iplugview.h>
 #include <pluginterfaces/vst/ivsteditcontroller.h>
 
+#if defined(__linux__)
 #include <poll.h>
+#endif
 
 #include <algorithm>
 #include <vector>
@@ -18,10 +20,15 @@ using namespace Steinberg;
 // One COM object exposing every host facet. Lifetime is the owning
 // Vst3HostContext (plugins addRef/release freely against the SDK's FUnknown
 // refcount from HostApplication, which never reaches zero while we hold ours).
+// Steinberg::Linux::IRunLoop is a Linux-only facet of the VST3 API: off Linux the
+// host object exposes only the portable host-application / component-handler /
+// plug-frame facets and keeps no fd or timer registry.
 class HostObject final : public Vst::HostApplication,
                          public Vst::IComponentHandler,
-                         public IPlugFrame,
-                         public Linux::IRunLoop
+                         public IPlugFrame
+#if defined(__linux__)
+                       , public Linux::IRunLoop
+#endif
 {
 public:
     explicit HostObject (Vst3HostContext::Callbacks*& cb) : callbacks (cb) {}
@@ -31,7 +38,9 @@ public:
     {
         QUERY_INTERFACE (iid, obj, Vst::IComponentHandler::iid, Vst::IComponentHandler)
         QUERY_INTERFACE (iid, obj, IPlugFrame::iid, IPlugFrame)
+#if defined(__linux__)
         QUERY_INTERFACE (iid, obj, Linux::IRunLoop::iid, Linux::IRunLoop)
+#endif
         return Vst::HostApplication::queryInterface (iid, obj);
     }
     uint32 PLUGIN_API addRef() override  { return Vst::HostApplication::addRef(); }
@@ -76,6 +85,7 @@ public:
         return ok ? kResultOk : kResultFalse;
     }
 
+#if defined(__linux__)
     // Linux::IRunLoop (fd + timer registry, pumped from the message thread)
     tresult PLUGIN_API registerEventHandler (Linux::IEventHandler* handler,
                                              Linux::FileDescriptor fd) override
@@ -125,9 +135,11 @@ public:
         }
         return found ? kResultOk : kResultFalse;
     }
+#endif
 
-    void pump (double elapsedMs)
+    void pump ([[maybe_unused]] double elapsedMs)
     {
+#if defined(__linux__)
         // Snapshot both registries before dispatching: a handler may
         // register/unregister from inside its own callback.
         if (! fdHandlers.empty())
@@ -158,20 +170,29 @@ public:
                 live->handler->onTimer();
             }
         }
+#endif
     }
 
     void teardown()
     {
+#if defined(__linux__)
         for (auto& e : fdHandlers) e.handler->release();
         for (auto& t : timers)     t.handler->release();
         fdHandlers.clear();
         timers.clear();
+#endif
     }
 
+#if defined(__linux__)
     int numEventHandlers() const { return (int) fdHandlers.size(); }
     int numTimerHandlers() const { return (int) timers.size(); }
+#else
+    int numEventHandlers() const { return 0; }
+    int numTimerHandlers() const { return 0; }
+#endif
 
 private:
+#if defined(__linux__)
     struct FdEntry    { Linux::IEventHandler* handler; Linux::FileDescriptor fd; };
     struct TimerEntry { Linux::ITimerHandler* handler; double intervalMs; double accumMs; };
 
@@ -186,9 +207,11 @@ private:
         return nullptr;
     }
 
-    Vst3HostContext::Callbacks*& callbacks;
     std::vector<FdEntry>    fdHandlers;
     std::vector<TimerEntry> timers;
+#endif
+
+    Vst3HostContext::Callbacks*& callbacks;
 };
 } // namespace
 
@@ -224,7 +247,11 @@ void* Vst3HostContext::plugFrame() const noexcept
 }
 void* Vst3HostContext::runLoop() const noexcept
 {
+#if defined(__linux__)
     return static_cast<Steinberg::Linux::IRunLoop*> (impl->host.get());
+#else
+    return nullptr;
+#endif
 }
 
 void Vst3HostContext::pump (double elapsedMs)     { impl->host->pump (elapsedMs); }

@@ -202,7 +202,9 @@ Work:
 
 - Compile the `Linux::IRunLoop` facet, `poll`, fd handlers, timers, and their QI
   only on Linux. Keep the portable host application, component-handler, and
-  plug-frame facets on every platform.
+  plug-frame facets on every platform. DONE EARLY: the host-context split landed
+  with the H5a.1 macOS build fix, alongside a placeholder `Vst3Editor_Mac.mm`
+  whose `open()` reports no embeddable view. Only the Cocoa attach below remains.
 - Keep the existing Linux run-loop API/test observable. On macOS, `pump()` has
   no Linux registry to service.
 - On macOS, create an `NSView` child container and attach `IPlugView` with
@@ -249,7 +251,9 @@ Work:
 - Preserve lilv discovery, instance, state-path, parameter, and audio behaviour.
   Lilv owns `$LV2_PATH` and platform default discovery.
 - Make the editor boundary pointer-width-safe. Preserve the X11+suil
-  implementation on Linux.
+  implementation on Linux. `Lv2Editor_Mac.mm` already exists as a placeholder
+  from the H5a.1 macOS build fix (`open()` reports no embeddable UI); replace
+  its body rather than creating the file.
 - On macOS, discover a UI that suil can wrap for a `LV2_UI__CocoaUI` container,
   create an `NSView` child container, pass `ui:parent` plus the existing
   instance/data/resize/idle features, and instantiate through suil.

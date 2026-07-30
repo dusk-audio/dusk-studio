@@ -14,6 +14,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <unistd.h>
 
 using duskstudio::clap::ClapScanner;
 
@@ -26,8 +27,11 @@ class TempDirectory
 public:
     explicit TempDirectory (const char* prefix)
     {
+        // pid + tick: ctest runs the test cases as parallel processes, whose
+        // steady_clock reads can land on the same tick.
         const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
-        value = stdfs::temp_directory_path() / (std::string (prefix) + std::to_string (unique));
+        value = stdfs::temp_directory_path()
+                / (std::string (prefix) + std::to_string (getpid()) + "_" + std::to_string (unique));
         std::error_code ec;
         if (! stdfs::create_directories (value, ec) || ec)
             throw std::runtime_error ("could not create test directory: " + ec.message());
@@ -154,7 +158,12 @@ TEST_CASE ("ClapScanner discovers and describes a real CLAP bundle", "[clap][sca
     }
 
     std::error_code ec;
-    const auto bundle = stdfs::absolute (stdfs::u8path (path), ec);
+    // Normalised: the scanner's bundle paths carry no trailing separator or "."
+    // component, so an env value like ".../CLAP/Plugin.clap/" must not miss.
+    // lexically_normal() resolves the dot elements but KEEPS a trailing
+    // separator, which then shows up as an empty final filename.
+    auto bundle = stdfs::absolute (stdfs::u8path (path), ec).lexically_normal();
+    if (! bundle.has_filename()) bundle = bundle.parent_path();
     REQUIRE_FALSE (ec);
     REQUIRE (stdfs::exists (bundle));
 

@@ -144,13 +144,21 @@ bool loadNativeCacheSources (
 }
 } // namespace
 
-#if DUSKSTUDIO_HAS_OOP_PLUGINS
+// Shared by both sandboxed scan paths - the OOP JUCE scanner below and the
+// native-bundle child further down, which are gated independently (macOS
+// without OOP support still scans native bundles through the child).
+#if DUSKSTUDIO_HAS_OOP_PLUGINS || DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
 namespace
 {
 // A plugin can take a few seconds to instantiate on a cold cache; give a
 // generous ceiling and treat anything past it as a hang.
 constexpr int kScanTimeoutMs = 30000;
+} // namespace
+#endif
 
+#if DUSKSTUDIO_HAS_OOP_PLUGINS
+namespace
+{
 // Routes third-party-binary plugin discovery through the dusk-studio-plugin-host
 // child so a plugin that segfaults or hangs in findAllTypesForFile takes down
 // only the child, not the app. Installed on knownPluginList for the duration

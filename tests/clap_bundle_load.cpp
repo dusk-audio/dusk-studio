@@ -6,12 +6,15 @@
 #include "engine/clap/ClapBundle.h"
 
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <dlfcn.h>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <unistd.h>
+#include <vector>
 
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
@@ -25,8 +28,11 @@ class TempDirectory
 public:
     explicit TempDirectory (const char* prefix)
     {
+        // pid + tick: ctest runs the test cases as parallel processes, whose
+        // steady_clock reads can land on the same tick.
         const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
-        value = stdfs::temp_directory_path() / (std::string (prefix) + std::to_string (unique));
+        value = stdfs::temp_directory_path()
+                / (std::string (prefix) + std::to_string (getpid()) + "_" + std::to_string (unique));
         std::error_code ec;
         if (! stdfs::create_directories (value, ec) || ec)
             throw std::runtime_error ("could not create test directory: " + ec.message());
@@ -120,7 +126,14 @@ TEST_CASE ("ClapBundle resolves a directory bundle executable", "[clap][bundle]"
     duskstudio::clap::ClapBundle b;
     std::string err;
     REQUIRE_FALSE (b.load (temp.u8string(), err));
-    REQUIRE ((err == "no clap_entry symbol" || err.rfind ("dlopen failed:", 0) == 0));
+    INFO ("load error: " << err);
+    // Either dlopen took the executable and found no entry point, or it refused
+    // it - and then the reason must name the full inner executable path, which is
+    // what catches a resolver handing dlopen a bundle-relative name. Matching the
+    // tail rather than the absolute path: the temp dir reaches dlopen in its
+    // /private/var form.
+    REQUIRE ((err == "no clap_entry symbol"
+              || err.find ("Test.clap/Contents/MacOS/TestClap") != std::string::npos));
     REQUIRE_FALSE (b.isLoaded());
     REQUIRE (b.getPath().empty());
 }
