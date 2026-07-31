@@ -712,6 +712,7 @@ bool JoinRegionsAction::perform()
         merged.lengthInSamples = totalLen;
         merged.fadeOutSamples  = latestEnding->fadeOutSamples;
         merged.fadeOutShape    = latestEnding->fadeOutShape;
+        merged.fadeOutAuto     = latestEnding->fadeOutAuto;
         merged.previousTakes   = beforeRegions.front().previousTakes;
 
         // indices is timeline-sorted, so the lead (earliest-starting) region
@@ -805,6 +806,7 @@ bool JoinRegionsAction::perform()
     merged.fadeInShape     = beforeRegions.front().fadeInShape;
     merged.fadeOutSamples  = latestEnding->fadeOutSamples;
     merged.fadeOutShape    = latestEnding->fadeOutShape;
+    merged.fadeOutAuto     = latestEnding->fadeOutAuto;
     merged.previousTakes.clear();
 
     // Same lead-index adjustment as the fast path above.

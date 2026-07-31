@@ -193,5 +193,11 @@ void LoudnessMeter::process (const float* L, const float* R, int numSamples) noe
                         ? dusk::audio::gainToDecibels (currentTruePeak, -100.0f)
                         : -100.0f,
                        std::memory_order_relaxed);
+
+    // Close the mid-block request window: finishBlock() and the true-peak
+    // publish above may have raced requestReset() after the entry check. Apply
+    // that request before returning so stale readings cannot reappear.
+    if (resetRequested.exchange (false, std::memory_order_acquire))
+        reset();
 }
 } // namespace duskstudio

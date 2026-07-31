@@ -307,11 +307,11 @@ public:
     // callback on its worker thread, the live MIDI-input path stays open (the
     // input devices are never closed) - so without this, live controller notes
     // arriving during a render would print into the deterministic file. Set true
-    // for the full duration of every offline render loop, false otherwise. Read
-    // relaxed on the driving thread: the render worker both sets it and drives
-    // the callback, and the live device path never sees it true.
+    // for the full duration of every offline render loop, false otherwise. The
+    // message-thread NativeParamDrain also reads it before a VST3 reactivation,
+    // so publish/consume it across threads.
     void setOfflineRenderActive (bool active) noexcept
-        { offlineRenderActive.store (active, std::memory_order_relaxed); }
+        { offlineRenderActive.store (active, std::memory_order_release); }
 
     // Cross-track Plugin Delay Compensation. Reads each track's reported insert
     // latency (plugin OR hardware, gated by mode; MIDI tracks count 0 because

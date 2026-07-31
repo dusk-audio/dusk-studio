@@ -50,12 +50,15 @@ public:
     // and ring wipes never race the audio thread.
     void requestReset() noexcept
     {
+        // Publish the request first. process() checks again after publishing a
+        // block, so an in-flight pass reapplies a mid-block request before it
+        // returns.
+        resetRequested.store (true, std::memory_order_release);
         momentaryLufs.store (-100.0f, std::memory_order_relaxed);
         shortTermLufs.store (-100.0f, std::memory_order_relaxed);
         integratedLufs.store (-100.0f, std::memory_order_relaxed);
         truePeakDb.store    (-100.0f, std::memory_order_relaxed);
         integratedCapped.store (false, std::memory_order_relaxed);
-        resetRequested.store (true, std::memory_order_release);
     }
 
     // Audio thread. L and R must each be at least `numSamples` floats.
