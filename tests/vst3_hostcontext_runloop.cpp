@@ -3,6 +3,8 @@
 // reaches onFDIsSet, timers fire on cadence, and unregistration sticks. Pure
 // host machinery, no plugin required.
 
+#if defined(__linux__)
+
 #include <catch2/catch_test_macros.hpp>
 
 #include "engine/vst3/Vst3HostContext.h"
@@ -105,3 +107,5 @@ TEST_CASE ("Vst3HostContext run loop dispatches fds and timers", "[vst3][hostcon
         REQUIRE (runLoop->unregisterEventHandler (&handler) == kResultFalse);
     }
 }
+
+#endif
