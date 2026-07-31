@@ -9,6 +9,9 @@
 #if DUSKSTUDIO_HAS_NATIVE_VST3
   #include "Vst3PluginEditorComponent.h"   // Linux-only native VST3 editor (IPlugView)
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+  #include "AuPluginEditorComponent.h"
+#endif
 #include "DuskAlerts.h"
 #include "DuskContextMenu.h"
 #include "EmbeddedModal.h"   // kPluginEditorTag
@@ -333,7 +336,7 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
         {
             auto& slotRef = strip.getPluginSlot (i);
             if (slotRef.isLoaded() || strip.isNativeClapLoaded (i) || strip.isNativeLv2Loaded (i)
-                || strip.isNativeVst3Loaded (i))
+                || strip.isNativeVst3Loaded (i) || strip.isNativeAuLoaded (i))
             {
                 // Native CLAP fills the inline editor area when loaded (same as a JUCE
                 // plugin); clicking the name must not re-open the picker over it.
@@ -372,6 +375,13 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
             if (strip.isNativeVst3Loaded (i))
             {
                 strip.getNativeVst3Slot (i).setBypassed (on);
+            }
+            else
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+            if (strip.isNativeAuLoaded (i))
+            {
+                strip.getNativeAuSlot (i).setBypassed (on);
             }
             else
 #endif
@@ -732,6 +742,24 @@ void AuxLaneComponent::refreshSlotControls (int i)
         return;
     }
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    if (strip.isNativeAuLoaded (i))
+    {
+        auto name = juce::String::fromUTF8 (strip.getNativeAuSlot (i).displayName().c_str());
+        if (name.isEmpty()) name = "Audio Unit";
+        if (name != ui.displayedName)
+        {
+            ui.displayedName = name;
+            ui.openOrAddButton.setButtonText (name);
+            resized();
+        }
+        ui.bypassButton.setVisible (true);
+        ui.bypassButton.setToggleState (strip.getNativeAuSlot (i).isBypassed(),
+                                        juce::dontSendNotification);
+        ui.removeButton.setVisible (true);
+        return;
+    }
+#endif
 
     if (slotRef.isLoaded())
     {
@@ -819,6 +847,14 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
             self->loadNativeVst3ForSlot (slotIdx, vst3File, id);
     };
 #endif
+    std::function<void (const juce::String&)> onAu;
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    onAu = [safe, slotIdx] (const juce::String& componentId)
+    {
+        if (auto* self = safe.getComponent())
+            self->loadNativeAuForSlot (slotIdx, componentId);
+    };
+#endif
     pluginpicker::openPickerMenu (strip.getPluginSlot (slotIdx),
                                     slots[(size_t) slotIdx].openOrAddButton,
                                     [safe, slotIdx]
@@ -835,15 +871,18 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
                                             if (self->strip.getPluginSlot (slotIdx).isLoaded()
                                                 && (self->strip.isNativeClapLoaded (slotIdx)
                                                     || self->strip.isNativeLv2Loaded (slotIdx)
-                                                    || self->strip.isNativeVst3Loaded (slotIdx)))
+                                                    || self->strip.isNativeVst3Loaded (slotIdx)
+                                                    || self->strip.isNativeAuLoaded (slotIdx)))
                                             {
                                                 self->detachClapEditorForSlot (slotIdx);
                                                 self->detachLv2EditorForSlot (slotIdx);
                                                 self->detachVst3EditorForSlot (slotIdx);
+                                                self->detachAuEditorForSlot (slotIdx);
                                                 self->engine.suspendProcessing();
                                                 self->strip.unloadNativeClap (slotIdx);
                                                 self->strip.unloadNativeLv2 (slotIdx);
                                                 self->strip.unloadNativeVst3 (slotIdx);
+                                                self->strip.unloadNativeAu (slotIdx);
                                                 self->engine.resumeProcessing();
                                                 self->lane.nativeClapPath[(size_t) slotIdx].clear();
                                                 self->lane.nativeClapPluginId[(size_t) slotIdx].clear();
@@ -854,6 +893,8 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
                                                 self->lane.nativeVst3Path[(size_t) slotIdx].clear();
                                                 self->lane.nativeVst3PluginId[(size_t) slotIdx].clear();
                                                 self->lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
+                                                self->lane.nativeAuIdentifier[(size_t) slotIdx].clear();
+                                                self->lane.nativeAuStateBase64[(size_t) slotIdx].clear();
                                             }
 
                                             self->refreshSlotControls (slotIdx);
@@ -870,7 +911,9 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
                                     /*suppressSecondaryButtons*/ false,
                                     std::move (onClap),
                                     std::move (onLv2),
-                                    std::move (onVst3));
+                                    std::move (onVst3),
+                                    {},
+                                    std::move (onAu));
 }
 
 void AuxLaneComponent::openHardwareInsertEditor (int slotIdx)
@@ -909,19 +952,22 @@ void AuxLaneComponent::unloadSlot (int slotIdx)
         self->detachHardwareInsertForSlot (slotIdx);
         const bool hadNative = self->strip.isNativeClapLoaded (slotIdx)
                             || self->strip.isNativeLv2Loaded (slotIdx)
-                            || self->strip.isNativeVst3Loaded (slotIdx);
+                            || self->strip.isNativeVst3Loaded (slotIdx)
+                            || self->strip.isNativeAuLoaded (slotIdx);
         if (hadNative) self->engine.suspendProcessing();
         // Tear the shared native editors down INSIDE the suspended window: their
         // destructors reach into the instance the audio path is reading.
         self->detachClapEditorForSlot (slotIdx);
         self->detachLv2EditorForSlot (slotIdx);
         self->detachVst3EditorForSlot (slotIdx);
+        self->detachAuEditorForSlot (slotIdx);
         self->strip.getPluginSlot (slotIdx).unload();
         if (hadNative)
         {
             self->strip.unloadNativeClap (slotIdx);
             self->strip.unloadNativeLv2 (slotIdx);
             self->strip.unloadNativeVst3 (slotIdx);
+            self->strip.unloadNativeAu (slotIdx);
             self->engine.resumeProcessing();
             self->lane.nativeClapPath[(size_t) slotIdx].clear();
             self->lane.nativeClapPluginId[(size_t) slotIdx].clear();
@@ -932,6 +978,8 @@ void AuxLaneComponent::unloadSlot (int slotIdx)
             self->lane.nativeVst3Path[(size_t) slotIdx].clear();
             self->lane.nativeVst3PluginId[(size_t) slotIdx].clear();
             self->lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
+            self->lane.nativeAuIdentifier[(size_t) slotIdx].clear();
+            self->lane.nativeAuStateBase64[(size_t) slotIdx].clear();
         }
         // Clear the model's enabled flag so any consumer that polls
         // lane.hardwareInserts[slotIdx].enabled sees a disabled slot
@@ -1005,6 +1053,7 @@ void AuxLaneComponent::loadNativeClapForSlot (int slotIdx, const juce::File& cla
     detachClapEditorForSlot (slotIdx);
     detachLv2EditorForSlot (slotIdx);
     detachVst3EditorForSlot (slotIdx);
+    detachAuEditorForSlot (slotIdx);
 
     // NativeClapSlot::load is NOT RT-safe (it tears down + rebuilds the instance),
     // so fence the audio thread with the engine process gate around the swap.
@@ -1028,6 +1077,8 @@ void AuxLaneComponent::loadNativeClapForSlot (int slotIdx, const juce::File& cla
         lane.nativeClapPath[(size_t) slotIdx].clear();
         lane.nativeClapPluginId[(size_t) slotIdx].clear();
         lane.nativeClapStateBase64[(size_t) slotIdx].clear();
+        lane.nativeAuIdentifier[(size_t) slotIdx].clear();
+        lane.nativeAuStateBase64[(size_t) slotIdx].clear();
         return;
     }
     lane.nativeClapPath[(size_t) slotIdx]     = clapFile.getFullPathName();
@@ -1042,6 +1093,8 @@ void AuxLaneComponent::loadNativeClapForSlot (int slotIdx, const juce::File& cla
     lane.nativeVst3Path[(size_t) slotIdx].clear();
     lane.nativeVst3PluginId[(size_t) slotIdx].clear();
     lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
+    lane.nativeAuIdentifier[(size_t) slotIdx].clear();
+    lane.nativeAuStateBase64[(size_t) slotIdx].clear();
     refreshSlotControls (slotIdx);
     rebuildSlots();
 }
@@ -1060,6 +1113,7 @@ void AuxLaneComponent::loadNativeLv2ForSlot (int slotIdx, const juce::File& bund
     detachClapEditorForSlot (slotIdx);
     detachLv2EditorForSlot (slotIdx);
     detachVst3EditorForSlot (slotIdx);
+    detachAuEditorForSlot (slotIdx);
 
     // NativeLv2Slot::load is NOT RT-safe; fence the audio thread around the swap.
     // loadNativeLv2 itself evicts the CLAP + JUCE occupants.
@@ -1080,6 +1134,8 @@ void AuxLaneComponent::loadNativeLv2ForSlot (int slotIdx, const juce::File& bund
         lane.nativeLv2Path[(size_t) slotIdx].clear();
         lane.nativeLv2PluginId[(size_t) slotIdx].clear();
         lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
+        lane.nativeAuIdentifier[(size_t) slotIdx].clear();
+        lane.nativeAuStateBase64[(size_t) slotIdx].clear();
         return;
     }
     lane.nativeLv2Path[(size_t) slotIdx]     = bundleDir.getFullPathName();
@@ -1091,6 +1147,8 @@ void AuxLaneComponent::loadNativeLv2ForSlot (int slotIdx, const juce::File& bund
     lane.nativeVst3Path[(size_t) slotIdx].clear();
     lane.nativeVst3PluginId[(size_t) slotIdx].clear();
     lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
+    lane.nativeAuIdentifier[(size_t) slotIdx].clear();
+    lane.nativeAuStateBase64[(size_t) slotIdx].clear();
     refreshSlotControls (slotIdx);
     rebuildSlots();
 }
@@ -1109,6 +1167,7 @@ void AuxLaneComponent::loadNativeVst3ForSlot (int slotIdx, const juce::File& vst
     detachClapEditorForSlot (slotIdx);
     detachLv2EditorForSlot (slotIdx);
     detachVst3EditorForSlot (slotIdx);
+    detachAuEditorForSlot (slotIdx);
 
     // NativeVst3Slot::load is NOT RT-safe; fence the audio thread around the swap.
     // loadNativeVst3 itself evicts the CLAP + LV2 + JUCE occupants.
@@ -1129,6 +1188,8 @@ void AuxLaneComponent::loadNativeVst3ForSlot (int slotIdx, const juce::File& vst
         lane.nativeVst3Path[(size_t) slotIdx].clear();
         lane.nativeVst3PluginId[(size_t) slotIdx].clear();
         lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
+        lane.nativeAuIdentifier[(size_t) slotIdx].clear();
+        lane.nativeAuStateBase64[(size_t) slotIdx].clear();
         return;
     }
     lane.nativeVst3Path[(size_t) slotIdx]     = vst3File.getFullPathName();
@@ -1140,10 +1201,67 @@ void AuxLaneComponent::loadNativeVst3ForSlot (int slotIdx, const juce::File& vst
     lane.nativeLv2Path[(size_t) slotIdx].clear();
     lane.nativeLv2PluginId[(size_t) slotIdx].clear();
     lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
+    lane.nativeAuIdentifier[(size_t) slotIdx].clear();
+    lane.nativeAuStateBase64[(size_t) slotIdx].clear();
     refreshSlotControls (slotIdx);
     rebuildSlots();
 }
 #endif // DUSKSTUDIO_HAS_NATIVE_VST3
+
+#if DUSKSTUDIO_HAS_NATIVE_AU
+void AuxLaneComponent::loadNativeAuForSlot (int slotIdx, const juce::String& componentId)
+{
+    if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return;
+
+    detachEditorForSlot (slotIdx);
+    detachHardwareInsertForSlot (slotIdx);
+    detachClapEditorForSlot (slotIdx);
+    detachLv2EditorForSlot (slotIdx);
+    detachVst3EditorForSlot (slotIdx);
+    detachAuEditorForSlot (slotIdx);
+
+    std::string err;
+    engine.suspendProcessing();
+    const bool ok = strip.loadNativeAu (slotIdx, componentId, err);
+    if (ok)
+        strip.insertMode[(size_t) slotIdx].store (AuxLaneStrip::kInsertPlugin,
+                                                  std::memory_order_release);
+    engine.resumeProcessing();
+
+    if (! ok)
+    {
+        std::fprintf (stderr, "[aux au] load failed: %s\n", err.c_str());
+        showDuskAlert (*this, "Couldn't load Audio Unit", componentId + ":\n" + juce::String (err));
+        lane.nativeAuIdentifier[(size_t) slotIdx].clear();
+        lane.nativeAuStateBase64[(size_t) slotIdx].clear();
+        lane.nativeClapPath[(size_t) slotIdx].clear();
+        lane.nativeClapPluginId[(size_t) slotIdx].clear();
+        lane.nativeClapStateBase64[(size_t) slotIdx].clear();
+        lane.nativeLv2Path[(size_t) slotIdx].clear();
+        lane.nativeLv2PluginId[(size_t) slotIdx].clear();
+        lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
+        lane.nativeVst3Path[(size_t) slotIdx].clear();
+        lane.nativeVst3PluginId[(size_t) slotIdx].clear();
+        lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
+        return;
+    }
+
+    lane.nativeAuIdentifier[(size_t) slotIdx] = juce::String::fromUTF8 (
+        strip.getNativeAuSlot (slotIdx).getPluginId().c_str());
+    lane.nativeAuStateBase64[(size_t) slotIdx].clear();
+    lane.nativeClapPath[(size_t) slotIdx].clear();
+    lane.nativeClapPluginId[(size_t) slotIdx].clear();
+    lane.nativeClapStateBase64[(size_t) slotIdx].clear();
+    lane.nativeLv2Path[(size_t) slotIdx].clear();
+    lane.nativeLv2PluginId[(size_t) slotIdx].clear();
+    lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
+    lane.nativeVst3Path[(size_t) slotIdx].clear();
+    lane.nativeVst3PluginId[(size_t) slotIdx].clear();
+    lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
+    refreshSlotControls (slotIdx);
+    rebuildSlots();
+}
+#endif // DUSKSTUDIO_HAS_NATIVE_AU
 
 void AuxLaneComponent::detachClapEditorForSlot (int slotIdx)
 {
@@ -1181,6 +1299,18 @@ void AuxLaneComponent::detachVst3EditorForSlot (int slotIdx)
 #endif
 }
 
+void AuxLaneComponent::detachAuEditorForSlot (int slotIdx)
+{
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    auto& ui = slots[(size_t) slotIdx];
+    if (ui.auEditor == nullptr) return;
+    removeChildComponent (ui.auEditor.get());
+    ui.auEditor.reset();
+#else
+    juce::ignoreUnused (slotIdx);
+#endif
+}
+
 void AuxLaneComponent::dropAllNativeEditors()
 {
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
@@ -1202,6 +1332,10 @@ void AuxLaneComponent::dropAllNativeEditors()
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
         detachVst3EditorForSlot (i);   // in-process C++ teardown - no leak path needed
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
+        detachAuEditorForSlot (i);
 #endif
 }
 
@@ -1272,6 +1406,10 @@ void AuxLaneComponent::layoutEditorForSlot (int slotIdx)
     else if (ui.vst3Editor != nullptr && ui.vst3Editor->getParentComponent() == this)
         body = ui.vst3Editor.get();
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    else if (ui.auEditor != nullptr && ui.auEditor->getParentComponent() == this)
+        body = ui.auEditor.get();
+#endif
     else if (ui.hwInsertEditor != nullptr && ui.hwInsertEditor->getParentComponent() == this)
         body = ui.hwInsertEditor.get();
     if (body == nullptr) return;
@@ -1281,7 +1419,7 @@ void AuxLaneComponent::layoutEditorForSlot (int slotIdx)
     const int mode = strip.insertMode[(size_t) slotIdx].load (std::memory_order_relaxed);
     if (slot.isLoaded() || slot.isOffline() || mode == AuxLaneStrip::kInsertHardware
         || strip.isNativeClapLoaded (slotIdx) || strip.isNativeLv2Loaded (slotIdx)
-        || strip.isNativeVst3Loaded (slotIdx))
+        || strip.isNativeVst3Loaded (slotIdx) || strip.isNativeAuLoaded (slotIdx))
         center.removeFromTop (kSlotHeaderH + 4);
 
     if (center.isEmpty()) return;
@@ -1429,6 +1567,32 @@ void AuxLaneComponent::rebuildSlots()
                 continue;
             }
             detachVst3EditorForSlot (i);
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+            if (strip.isNativeAuLoaded (i))
+            {
+                if (ui.editor != nullptr) detachEditorForSlot (i);
+                auto* auInst = strip.getNativeAuSlot (i).getInstance();
+                if (ui.auEditor == nullptr && auInst != nullptr)
+                {
+                    auto ed = std::make_unique<AuPluginEditorComponent>();
+                    juce::String err;
+                    if (ed->attach (*auInst, err))
+                    {
+                        ui.auEditor = std::move (ed);
+                        addAndMakeVisible (*ui.auEditor);
+                        layoutEditorForSlot (i);
+                    }
+                    else
+                        std::fprintf (stderr, "[aux au] editor attach failed: %s\n", err.toRawUTF8());
+                }
+                else if (ui.auEditor != nullptr)
+                {
+                    layoutEditorForSlot (i);
+                }
+                continue;
+            }
+            detachAuEditorForSlot (i);
 #endif
 
             auto* instance = strip.getPluginSlot (i).getInstance();
@@ -1604,7 +1768,7 @@ void AuxLaneComponent::resized()
     // mode - would never get bounds and the user couldn't dismiss
     // the HW insert.
     const bool nativeLoaded = strip.isNativeClapLoaded (0) || strip.isNativeLv2Loaded (0)
-                           || strip.isNativeVst3Loaded (0);
+                           || strip.isNativeVst3Loaded (0) || strip.isNativeAuLoaded (0);
     if (slot0.isLoaded() || slot0.isOffline() || hardware || nativeLoaded)
     {
         auto headerStrip = center.removeFromTop (kSlotHeaderH);
@@ -1708,7 +1872,8 @@ void AuxLaneComponent::mouseDown (const juce::MouseEvent& e)
         const bool loaded = strip.getPluginSlot (i).isLoaded()
                          || strip.isNativeClapLoaded (i)
                          || strip.isNativeLv2Loaded (i)
-                         || strip.isNativeVst3Loaded (i);
+                         || strip.isNativeVst3Loaded (i)
+                         || strip.isNativeAuLoaded (i);
         if (loaded)
             midilearn::showLearnMenu (ui.openOrAddButton, session,
                                         MidiBindingTarget::AuxPluginParam, laneIndex);
