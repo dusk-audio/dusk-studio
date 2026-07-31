@@ -359,6 +359,10 @@ private:
     std::unique_ptr<class Vst3PluginEditorComponent> vst3Editor;
     void loadNativeVst3ForChannel (const juce::File& vst3File, const juce::String& pluginId = {});
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    std::unique_ptr<class AuPluginEditorComponent> auEditor;
+    void loadNativeAuForChannel (const juce::String& componentId);
+#endif
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     // Multisample instrument editor - in-process Dusk UI over the strip's
     // NativeMultisampleSlot instance, same kept-alive/showBorrowed lifecycle.

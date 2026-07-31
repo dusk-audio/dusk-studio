@@ -34,6 +34,12 @@ struct AuSlotTraits
 class NativeAuSlot final : public hosting::NativeInsertSlot<AuSlotTraits>
 {
 public:
+    std::string displayName() const
+    {
+        return bundle != nullptr && ! bundle->plugins().empty()
+            ? bundle->plugins().front().name
+            : std::string {};
+    }
     int paramCount() const noexcept { return instance != nullptr ? instance->paramCount() : 0; }
     const AuInstance::ParamInfo* paramInfo (int index) const noexcept
         { return instance != nullptr ? instance->paramInfo (index) : nullptr; }
