@@ -9,15 +9,15 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <random>
 #include <string>
-#include <unistd.h>
 
 TEST_CASE ("Vst3Bundle rejects a nonexistent module cleanly", "[vst3][bundle]")
 {
-    const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto missing = std::filesystem::temp_directory_path()
-                         / ("dusk_missing_vst3_" + std::to_string (getpid())
-                            + "_" + std::to_string (unique) + ".vst3");
+                         / ("dusk_missing_vst3_" + std::to_string (tick) + "_"
+                            + std::to_string (std::random_device {}()) + ".vst3");
     REQUIRE_FALSE (std::filesystem::exists (missing));
 
     duskstudio::vst3::Vst3Bundle bundle;

@@ -12,9 +12,9 @@
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <random>
 #include <stdexcept>
 #include <string>
-#include <unistd.h>
 
 using duskstudio::vst3::Vst3Scanner;
 
@@ -22,14 +22,18 @@ namespace
 {
 namespace stdfs = std::filesystem;
 
+std::string uniqueSuffix()
+{
+    const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
+    return std::to_string (tick) + "_" + std::to_string (std::random_device {}());
+}
+
 class TempDirectory
 {
 public:
     explicit TempDirectory (const char* prefix)
     {
-        const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
-        value = stdfs::temp_directory_path()
-                / (std::string (prefix) + std::to_string (getpid()) + "_" + std::to_string (unique));
+        value = stdfs::temp_directory_path() / (std::string (prefix) + uniqueSuffix());
         std::error_code ec;
         if (! stdfs::create_directories (value, ec) || ec)
             throw std::runtime_error ("could not create test directory: " + ec.message());
@@ -55,16 +59,24 @@ public:
     {
         if (const char* current = std::getenv (variable))
             previous = current;
+#if defined(_WIN32)
+        if (_putenv_s (name.c_str(), value.c_str()) != 0)
+#else
         if (setenv (name.c_str(), value.c_str(), 1) != 0)
+#endif
             throw std::runtime_error ("could not set test environment variable");
     }
 
     ~ScopedEnvironment()
     {
+#if defined(_WIN32)
+        _putenv_s (name.c_str(), previous.has_value() ? previous->c_str() : "");
+#else
         if (previous.has_value())
             setenv (name.c_str(), previous->c_str(), 1);
         else
             unsetenv (name.c_str());
+#endif
     }
 
 private:
@@ -103,7 +115,11 @@ TEST_CASE ("Vst3Scanner keeps VST3_PATH ahead of platform defaults", "[vst3][sca
     REQUIRE (stdfs::create_directories (userDefault, ec));
     REQUIRE_FALSE (ec);
 
+#if defined(_WIN32)
+    ScopedEnvironment scopedHome ("USERPROFILE", home.u8string());
+#else
     ScopedEnvironment scopedHome ("HOME", home.u8string());
+#endif
     ScopedEnvironment scopedVst3Path ("VST3_PATH", overridePath.u8string());
     const auto paths = Vst3Scanner::defaultSearchPaths();
     REQUIRE (paths.size() >= 2);

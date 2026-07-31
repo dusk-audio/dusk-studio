@@ -37,8 +37,8 @@ public:
                 std::string& errorOut);
 
     void setBounds (int x, int y, int w, int h);
-    void reveal();   // XMapWindow (idempotent)
-    void hide();     // XUnmapWindow (idempotent)
+    void reveal();   // Show the native child container (idempotent).
+    void hide();     // Hide the native child container (idempotent).
     void close();
 
     // The host window's REAL geometry (position relative to its X11 parent +
@@ -52,7 +52,7 @@ public:
     // can hang on the way out (same rationale as the CLAP editor leak path).
     void setLeakOnClose (bool b) noexcept;
 
-    // Message thread, ~60 Hz: drive ui:idleInterface + drain our X connection.
+    // Message thread, ~60 Hz: drive ui:idleInterface and platform event work.
     void pump();
 
     int  preferredWidth()  const noexcept;
