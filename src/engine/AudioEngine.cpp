@@ -1696,7 +1696,6 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
         {
             auto& strip = auxLaneStrips[(size_t) a];
             auto& slot  = strip.getPluginSlot (s);
-
             lane.pluginDescriptor[(size_t) s] = slot.getDescriptorForSave (parkSleepMs);
             lane.pluginLegacyDescriptionXml[(size_t) s]
                 = slot.getLegacyDescriptionXmlForSave();

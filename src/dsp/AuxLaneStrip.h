@@ -156,6 +156,7 @@ public:
     void unloadNativeVst3 (int) noexcept {}
     bool nativeVst3ReloadFailed (int) const noexcept { return false; }
 #endif
+
     // MIDI Learn: last-touched parameter of whichever host owns the slot
     // (same precedence as the audio chain); -1 when empty or untouched.
     int insertLastTouchedParamIndex (int slotIdx) const noexcept
