@@ -2,6 +2,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "engine/au/AuBundle.h"
+#include "engine/au/AuHost.h"
 #include "engine/au/AuScanner.h"
 #include "engine/au/NativeAuSlot.h"
 
@@ -77,6 +78,53 @@ TEST_CASE ("Audio Unit scanner emits stable native descriptor rows", "[au][scann
         CHECK (row.isInstrument == AuBundle::isInstrumentType (id.type));
         CHECK (row.category == AuBundle::categoryForType (id.type));
     }
+}
+
+TEST_CASE ("Audio Unit host callbacks report musical and transport state",
+           "[au][host]")
+{
+    using Catch::Matchers::WithinAbs;
+    duskstudio::au::AuHost host;
+    host.setSampleRate (48000.0);
+
+    dusk::TransportPosition position;
+    position.bpm = 120.0;
+    position.ppqPosition = 7.5;
+    position.timeInSamples = 96000;
+    position.timeSignatureNumerator = 6;
+    position.timeSignatureDenominator = 8;
+    position.isPlaying = true;
+    position.isLooping = true;
+    host.beginBlock (&position, 128);
+
+    const auto& callbacks = host.callbacks();
+    UInt32 deltaToBeat = 0;
+    Float32 numerator = 0.0f;
+    UInt32 denominator = 0;
+    Float64 downBeat = 0.0;
+    REQUIRE (callbacks.musicalTimeLocationProc (
+                 callbacks.hostUserData, &deltaToBeat, &numerator,
+                 &denominator, &downBeat) == noErr);
+    CHECK (deltaToBeat == 12000);
+    CHECK_THAT (static_cast<double> (numerator), WithinAbs (6.0, 1.0e-12));
+    CHECK (denominator == 8);
+    CHECK_THAT (downBeat, WithinAbs (6.0, 1.0e-12));
+
+    Boolean playing = false;
+    Boolean changed = false;
+    Boolean cycling = true;
+    Float64 sample = 0.0;
+    Float64 cycleStart = -1.0;
+    Float64 cycleEnd = -1.0;
+    REQUIRE (callbacks.transportStateProc (
+                 callbacks.hostUserData, &playing, &changed, &sample, &cycling,
+                 &cycleStart, &cycleEnd) == noErr);
+    CHECK (playing);
+    CHECK (changed);
+    CHECK_FALSE (cycling); // loop bounds are not part of TransportPosition
+    CHECK_THAT (sample, WithinAbs (96000.0, 1.0e-12));
+    CHECK_THAT (cycleStart, WithinAbs (0.0, 1.0e-12));
+    CHECK_THAT (cycleEnd, WithinAbs (0.0, 1.0e-12));
 }
 
 TEST_CASE ("Native Audio Unit slot lifecycle, process, parameters, state, and latency",
