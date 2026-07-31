@@ -44,9 +44,11 @@ public:
     void hide();     // Hide the native child container (idempotent).
     void close();
 
-    // The host window's REAL geometry (position relative to its X11 parent +
-    // size), so the owner can detect and correct drift the message flow
-    // missed. False when not embedded or the window is gone.
+    // X11 geometry diagnostics: the host window's REAL geometry (position
+    // relative to its X11 parent + size), so the owner can detect and correct
+    // drift the message flow missed. False when not embedded or the window is
+    // gone. macOS drives the container from logical component bounds and has
+    // no equivalent to poll, so both always return false there.
     bool getRootRelativePosition (std::uintptr_t referenceHandle,
                                   int& relX, int& relY) const;
     bool getActualGeometry (int& x, int& y, int& w, int& h) const;

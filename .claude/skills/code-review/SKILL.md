@@ -14,10 +14,14 @@ The editors are per-platform translation units behind one shared header:
 `*Editor.cpp` on Linux, `*Editor_Mac.mm` on Apple. Review the pair, never one
 alone.
 
-- **Every method in the header has a definition in every platform TU.** A
-  missing `.mm` breaks configure ("Cannot find source file"), not just the
-  build, so CMake pre-routing of a file that does not exist yet fails the whole
-  macOS job. Verify the file list in `CMakeLists.txt` against `ls`.
+- **Every ungated method in the header has a definition in every platform TU.**
+  A method whose *declaration* sits under `#if defined(__linux__)` (the
+  wrappers' `verifyGeometry`) is defined only there; one declared
+  unconditionally needs a body everywhere, even if that body is
+  `return false;` - that is how `getActualGeometry` exists on macOS. A missing
+  `.mm` breaks configure ("Cannot find source file"), not just the build, so
+  CMake pre-routing of a file that does not exist yet fails the whole macOS
+  job. Verify the file list in `CMakeLists.txt` against `ls`.
 - **Header comments must not state one platform's behaviour as universal.**
   `embed()` maps the X11 window immediately but leaves the Cocoa container
   hidden until `reveal()`; a comment claiming either as the rule is wrong half
@@ -40,11 +44,16 @@ alone.
 ## Lifetime of deliberately-leaked resources
 
 `setLeakOnClose(true)` exists because foreign-toolkit UIs hang in teardown. When
-a resource is leaked on purpose, **everything it holds a pointer to must be
-leaked with it**. A leaked suil instance keeps its controller and `ui:resize`
+a resource is leaked on purpose, **anything it can still dereference has to
+outlive it too**. A leaked suil instance keeps its controller and `ui:resize`
 handle; a leaked CLAP GUI keeps its `ClapHost::Callbacks`. If the owning object
 is destroyed while the leaked resource can still tick a timer, that is a
-use-after-free at shutdown. Check both directions of the pointer graph.
+use-after-free at shutdown.
+
+Walk the reachable pointer graph from the leaked object and leak exactly that
+set. Objects the leaked resource cannot reach still get their normal cleanup -
+leaking more than the graph requires is its own bug. Check both directions:
+what the leaked resource points at, and what still points at it.
 
 ## Feature gates and defines
 
@@ -62,17 +71,24 @@ use-after-free at shutdown. Check both directions of the pointer graph.
 
 Verify the contract, do not assume the common case:
 
-- CoreFoundation URLs from `CFBundleCopyExecutableURL` are **bundle-relative**;
-  `CFURLCopyFileSystemPath` yields the bare executable name and `dlopen` then
-  searches the dyld paths. Use `CFURLGetFileSystemRepresentation(url, true, ...)`.
+- CoreFoundation URLs from `CFBundleCopyExecutableURL` are **relative to the
+  bundle**, so `CFURLCopyFileSystemPath` gives back a relative path - observed
+  here as the bare `TestClap`, which `dlopen` then treated as a name to search
+  the dyld paths for. Resolve against the base with
+  `CFURLGetFileSystemRepresentation(url, /*resolveAgainstBase*/ true, buf, len)`,
+  check its boolean return (it fails on a buffer too small), and `CFRelease` the
+  URL on every path.
 - Cocoa subview placement is governed by the **superview's** `isFlipped`, not the
   child's. JUCE's peer view is flipped, so top-left coordinates already land
   correctly - a claim that placement is inverted needs that checked first.
 
 ## Tests
 
-- Temp directories need a **collision-proof suffix** (pid or `random_device`
-  plus a clock tick); ctest runs cases as parallel processes.
+- Temp directories must be **created atomically**, not merely named uniquely:
+  `mkdtemp`, or `create_directory` whose false return means someone else won
+  the name, and retry with a fresh candidate. ctest runs cases as parallel
+  processes, so a pid / `random_device` / clock-tick suffix narrows the window
+  but does not close it.
 - Paths compared against scanner output must be **normalised** -
   `lexically_normal()` resolves `.` but keeps a trailing separator, which then
   shows up as an empty final filename.

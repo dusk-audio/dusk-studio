@@ -44,18 +44,17 @@ of H5/H6 but must land before the GUI tower.
 You are executing one phase of the Dusk Studio de-JUCE campaign in
 /Users/marckorte/projects/DuskStudio (or /home/marc/projects/DuskStudio on the
 Linux box). Read, in order: docs/dejuce-campaign.md (ritual + working
-agreement) and docs/dejuce-hosting-h5-platform.md (now on main; its status
-line is authoritative). If the memory ledger project_dejuce_roadmap.md exists
-in this machine's memory dir, read it; if absent, trust the spec's status line
+agreement) and docs/dejuce-hosting-h5-platform.md as it stands on
+dejuce/hosting-h5a3 — that copy's status line is the authoritative one, and it
+is ahead of the copy on main. If the memory ledger project_dejuce_roadmap.md
+exists in this machine's memory dir, read it; if absent, trust that status line
 and git log.
 
 State: H5a is CODE-COMPLETE. H5a.0–H5a.2 merged as PR #120 (2a8135d), H5a.3
 as PR #121 (12efe0d), and H5a.4–H5a.6 are committed and pushed on
 `dejuce/hosting-h5a3` (one commit per increment plus final review fixes). Do
-NOT re-execute any H5a
-increment and do not start a new branch: check out dejuce/hosting-h5a3, read
-its copy of the spec (its status line is the authoritative one — the copy on
-main predates it), and confirm the three increment commits are present. Only
+NOT re-execute any H5a increment and do not start a new branch: check out
+dejuce/hosting-h5a3 and confirm the three increment commits are present. Only
 if that branch is missing or an increment is absent from it should you rebuild
 the missing work from the spec's file lists.
 
