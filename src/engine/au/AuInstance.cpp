@@ -242,7 +242,17 @@ bool AuInstance::activate (double sampleRate, int maxBlockFrames, std::string& e
 
     maximumFrames = maxBlockFrames;
     currentSampleRate = sampleRate;
-    silence.assign (static_cast<std::size_t> (maximumFrames), 0.0f);
+    // We install a silence-producing callback on every advertised input bus,
+    // including extra buses the insert contract does not route. Size a unique
+    // stripe for the widest one so an in-place render can never make two
+    // unconnected channels alias each other.
+    silenceChannels = 1;
+    for (UInt32 bus = 0; bus < elementCount (audioUnit, kAudioUnitScope_Input); ++bus)
+        silenceChannels = std::max (
+            silenceChannels,
+            std::max<UInt32> (1, channelCount (audioUnit, kAudioUnitScope_Input, bus)));
+    silence.assign (static_cast<std::size_t> (silenceChannels)
+                        * static_cast<std::size_t> (maximumFrames), 0.0f);
     const auto outputListBytes = offsetof (AudioBufferList, mBuffers)
         + static_cast<std::size_t> (outputChannels) * sizeof (AudioBuffer);
     outputListStorage = std::make_unique<std::byte[]> (outputListBytes);
@@ -254,7 +264,9 @@ bool AuInstance::activate (double sampleRate, int maxBlockFrames, std::string& e
     {
         outputListStorage.reset();
         silence.clear();
+        silenceChannels = 0;
         maximumFrames = 0;
+        currentSampleRate = 0.0;
         errorOut = statusText ("AudioUnitInitialize", status);
         return false;
     }
@@ -277,6 +289,7 @@ void AuInstance::deactivate()
     }
     outputListStorage.reset();
     silence.clear();
+    silenceChannels = 0;
     maximumFrames = 0;
     currentSampleRate = 0.0;
     latencySamples.store (0, std::memory_order_relaxed);
@@ -302,7 +315,9 @@ OSStatus AuInstance::inputRenderCallback (void* ref, AudioUnitRenderActionFlags*
 
 OSStatus AuInstance::provideInput (UInt32 bus, UInt32 frames, AudioBufferList* data) noexcept
 {
-    if (currentIo == nullptr || data == nullptr || frames > static_cast<UInt32> (maximumFrames))
+    if (currentIo == nullptr || data == nullptr
+        || frames > static_cast<UInt32> (maximumFrames)
+        || data->mNumberBuffers > silenceChannels)
         return kAudioUnitErr_CannotDoInCurrentContext;
 
     float* const* source = nullptr;
@@ -321,13 +336,32 @@ OSStatus AuInstance::provideInput (UInt32 bus, UInt32 frames, AudioBufferList* d
     for (UInt32 channel = 0; channel < data->mNumberBuffers; ++channel)
     {
         auto& buffer = data->mBuffers[channel];
-        float* input = channel < static_cast<UInt32> (sourceChannels) && source != nullptr
-            && source[channel] != nullptr ? source[channel] : silence.data();
-        const auto bytes = static_cast<UInt32> (frames * sizeof (float));
-        if (buffer.mData != nullptr && buffer.mData != input)
-            std::memcpy (buffer.mData, input, bytes);
-        else
+        float* input = source != nullptr && channel < static_cast<UInt32> (sourceChannels)
+            && source[channel] != nullptr ? source[channel] : nullptr;
+        const auto bytes = static_cast<UInt32> (
+            static_cast<std::size_t> (frames) * sizeof (float));
+        if (buffer.mData != nullptr)
+        {
+            if (input != nullptr)
+            {
+                if (buffer.mData != input) std::memcpy (buffer.mData, input, bytes);
+            }
+            else
+                std::memset (buffer.mData, 0, bytes);
+        }
+        else if (input != nullptr)
             buffer.mData = input;
+        else
+        {
+            // The unit asked us to hand it a pointer, and it may render in place
+            // into what we hand over - so an unconnected channel gets its own
+            // zeroed stripe, never one shared buffer that every silent channel
+            // would alias (and the first in-place write would poison).
+            float* stripe = silence.data() + static_cast<std::size_t> (channel)
+                * static_cast<std::size_t> (maximumFrames);
+            std::memset (stripe, 0, bytes);
+            buffer.mData = stripe;
+        }
         buffer.mNumberChannels = 1;
         buffer.mDataByteSize = bytes;
     }
@@ -420,8 +454,11 @@ bool AuInstance::saveState (std::vector<std::uint8_t>& out) const
 bool AuInstance::loadState (const std::vector<std::uint8_t>& in)
 {
     if (audioUnit == nullptr || in.empty()) return false;
-    CFDataRef data = CFDataCreateWithBytesNoCopy (
-        kCFAllocatorDefault, in.data(), static_cast<CFIndex> (in.size()), kCFAllocatorNull);
+    // A copy, not CFDataCreateWithBytesNoCopy: an immutable property list may
+    // alias the bytes it was parsed from, and the unit can retain those objects
+    // long after this caller's vector dies.
+    CFDataRef data = CFDataCreate (kCFAllocatorDefault, in.data(),
+                                   static_cast<CFIndex> (in.size()));
     if (data == nullptr) return false;
     CFErrorRef error = nullptr;
     CFPropertyListRef state = CFPropertyListCreateWithData (

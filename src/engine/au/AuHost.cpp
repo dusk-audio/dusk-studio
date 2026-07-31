@@ -66,8 +66,12 @@ OSStatus AuHost::musicalTime (void* user, UInt32* deltaToBeat, Float32* numerato
         samples, 0.0, static_cast<double> (std::numeric_limits<UInt32>::max()))));
     setIfPresent (numerator, std::max (1, self.current.timeSignatureNumerator));
     setIfPresent (denominator, std::max (1, self.current.timeSignatureDenominator));
+    // ppqPosition is expressed in quarter-note beats. A measure therefore
+    // spans numerator * 4 / denominator of those beats (for example, 6/8 is
+    // three quarter-note beats, not six).
     const auto beatsPerBar = static_cast<double> (
-        std::max (1, self.current.timeSignatureNumerator));
+        std::max (1, self.current.timeSignatureNumerator)) * 4.0
+        / static_cast<double> (std::max (1, self.current.timeSignatureDenominator));
     setIfPresent (downBeat, std::floor (self.current.ppqPosition / beatsPerBar) * beatsPerBar);
     return noErr;
 }
@@ -80,7 +84,10 @@ OSStatus AuHost::transportState (void* user, Boolean* playing, Boolean* changed,
     setIfPresent (playing, self.current.isPlaying);
     setIfPresent (changed, self.stateChanged);
     setIfPresent (sample, self.current.timeInSamples);
-    setIfPresent (cycling, self.current.isLooping);
+    // TransportPosition carries no loop bounds, and a cycling flag with a
+    // zero-length range reads as a degenerate cycle - report not-cycling until
+    // real start/end beats exist to hand over.
+    setIfPresent (cycling, false);
     setIfPresent (cycleStart, 0.0);
     setIfPresent (cycleEnd, 0.0);
     self.stateChanged = false;

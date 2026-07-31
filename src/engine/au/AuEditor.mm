@@ -13,7 +13,6 @@ namespace duskstudio::au
 {
 struct AuEditor::Impl
 {
-    AuInstance* instance = nullptr;
     NSView* container = nil;
     NSView* pluginView = nil;
     int preferredWidth = 0;
@@ -76,10 +75,23 @@ bool AuEditor::open (AuInstance& instance, std::string& errorOut)
                     @selector (uiViewForAudioUnit:withSize:)])
             continue;
 
-        id<AUCocoaUIBase> factory = [[viewClass alloc] init];
-        NSView* view = [factory uiViewForAudioUnit:unit withSize:NSMakeSize (480, 320)];
-        if (view != nil) impl->pluginView = [view retain];
-        [(id) factory release];
+        // A third-party factory that raises must not unwind through the C++
+        // frames above (it would skip the CFRelease sweep below and reach the
+        // message loop) - drop this candidate so a later class can still try.
+        id<AUCocoaUIBase> factory = nil;
+        @try
+        {
+            factory = [[viewClass alloc] init];
+            NSView* view = [factory uiViewForAudioUnit:unit withSize:NSMakeSize (480, 320)];
+            if (view != nil) impl->pluginView = [view retain];
+        }
+        @catch (NSException*)
+        {
+        }
+        @finally
+        {
+            [(id) factory release];
+        }
     }
 
     for (std::size_t i = 0; i < classCount; ++i)
@@ -94,7 +106,6 @@ bool AuEditor::open (AuInstance& instance, std::string& errorOut)
         return false;
     }
 
-    impl->instance = &instance;
     const auto size = [impl->pluginView frame].size;
     impl->preferredWidth = std::max (1, static_cast<int> (size.width));
     impl->preferredHeight = std::max (1, static_cast<int> (size.height));
@@ -129,10 +140,22 @@ bool AuEditor::embed (std::uintptr_t parentHandle, int x, int y, int width, int 
     }
     [impl->container setAutoresizingMask:NSViewNotSizable];
     [impl->container setHidden:YES];
-    [impl->pluginView setFrame:NSMakeRect (0, 0, w, h)];
-    [impl->pluginView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-    [impl->container addSubview:impl->pluginView];
-    [parent addSubview:impl->container];
+    @try
+    {
+        [impl->pluginView setFrame:NSMakeRect (0, 0, w, h)];
+        [impl->pluginView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+        [impl->container addSubview:impl->pluginView];
+        [parent addSubview:impl->container];
+    }
+    @catch (NSException*)
+    {
+        [impl->pluginView removeFromSuperview];
+        [impl->container removeFromSuperview];
+        [impl->container release];
+        impl->container = nil;
+        errorOut = "Audio Unit Cocoa view could not be embedded";
+        return false;
+    }
     impl->embedded = true;
     return true;
 }
@@ -186,7 +209,6 @@ void AuEditor::close()
         [impl->container release];
         impl->container = nil;
     }
-    impl->instance = nullptr;
     impl->preferredWidth = impl->preferredHeight = 0;
     impl->embedded = impl->visible = false;
 }

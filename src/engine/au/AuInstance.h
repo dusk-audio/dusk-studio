@@ -98,6 +98,7 @@ private:
     UInt32 sidechainInputElement = std::numeric_limits<UInt32>::max();
     UInt32 mainOutputElement = 0;
     UInt32 outputChannels = 0;
+    UInt32 silenceChannels = 0;
     int maximumFrames = 0;
     double currentSampleRate = 0.0;
     double sampleTime = 0.0;
