@@ -107,6 +107,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/MasteringPlayer.cpp
     session_missing_sections.cpp
     session_save_as_consolidation.cpp
+    session_automation_load_publish.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiTimeCodeReceiver.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiTimeCodeEmitter.cpp
     ${CMAKE_SOURCE_DIR}/src/session/Session.cpp
