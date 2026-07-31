@@ -32,6 +32,14 @@ else()
     set(DUSKSTUDIO_NATIVE_CLAP OFF)
 endif()
 
+# Native Audio Unit host. The implementation is an AudioComponent/AudioUnit
+# host and Cocoa view factory, so it exists only on macOS.
+if(APPLE)
+    option(DUSKSTUDIO_NATIVE_AU "Build the native Audio Unit plugin host (macOS)" ON)
+else()
+    set(DUSKSTUDIO_NATIVE_AU OFF)
+endif()
+
 # Native LV2 host (src/engine/lv2/) via lilv + suil (both ISC). On Linux it
 # remains optional when the development libraries are absent. On macOS CI
 # explicitly requests it, so a missing requested dependency must fail configure.
@@ -656,8 +664,32 @@ endif()
 # per-format blocks below. The sfizz test mirrors the multisample gate further
 # down: that rung is platform-independent, so mac/win link it too.
 if(DUSKSTUDIO_NATIVE_CLAP OR DUSKSTUDIO_NATIVE_LV2 OR DUSKSTUDIO_NATIVE_VST3
+   OR DUSKSTUDIO_NATIVE_AU
    OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     target_sources(DuskStudio PRIVATE src/engine/hosting/InsertAdapter.cpp)
+endif()
+
+# Native macOS Audio Unit host. Registry discovery is metadata-only (no child
+# scanner needed); instantiation, rendering, state, and Cocoa views use the
+# platform AudioComponent/AudioUnit APIs directly.
+if(DUSKSTUDIO_NATIVE_AU)
+    target_sources(DuskStudio PRIVATE
+        src/engine/au/AuBundle.cpp
+        src/engine/au/AuHost.cpp
+        src/engine/au/AuInstance.cpp
+        src/engine/au/AuScanner.cpp
+        src/engine/au/AuEditor.mm
+        src/ui/AuPluginEditorComponent.cpp)
+    find_library(DUSKSTUDIO_AUDIOTOOLBOX_FRAMEWORK AudioToolbox REQUIRED)
+    find_library(DUSKSTUDIO_AUDIOUNIT_FRAMEWORK AudioUnit REQUIRED)
+    find_library(DUSKSTUDIO_COREAUDIOKIT_FRAMEWORK CoreAudioKit REQUIRED)
+    find_library(DUSKSTUDIO_AU_COCOA_FRAMEWORK Cocoa REQUIRED)
+    target_link_libraries(DuskStudio PRIVATE
+        ${DUSKSTUDIO_AUDIOTOOLBOX_FRAMEWORK}
+        ${DUSKSTUDIO_AUDIOUNIT_FRAMEWORK}
+        ${DUSKSTUDIO_COREAUDIOKIT_FRAMEWORK}
+        ${DUSKSTUDIO_AU_COCOA_FRAMEWORK})
+    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_AU=1)
 endif()
 
 # Native CLAP host, gated by DUSKSTUDIO_NATIVE_CLAP. DUSKSTUDIO_HAS_NATIVE_CLAP
