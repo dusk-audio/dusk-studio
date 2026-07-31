@@ -1591,6 +1591,7 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
         rangeEndSample   = rangeStartSample;
         rangeActive      = false;   // becomes true once the drag distance > 0
         dragMode         = DragMode::Range;
+        refreshStatusBarReadouts();
         repaint();
         return;
     }
@@ -1756,6 +1757,7 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
             rangeEndSample   = rangeStartSample;
             rangeActive      = false;
             dragMode         = DragMode::Range;
+            refreshStatusBarReadouts();
             repaint();
             return;
         }
@@ -1970,7 +1972,12 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
     // file-sample-based, so we round-trip through the focused slice's
     // sourceOffset -> timelineStart mapping.
     const bool bypassSnap = e.mods.isCommandDown();
-    const double sampleRate = engine.getCurrentSampleRate();
+    // File-native SR like every other snap path (snapFileSampleToGrid,
+    // keyPressed) - the raw engine rate drifts the drag grid off the
+    // click/keyboard grid after a device hot-swap.
+    const double sampleRate = juce::jmax (1.0,
+        loadedFileSampleRate > 0.0 ? loadedFileSampleRate
+                                    : engine.getCurrentSampleRate());
 
     auto snapFileSampleToTimelineGrid = [&] (std::int64_t fileSample) -> std::int64_t
     {
@@ -2052,6 +2059,7 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
         const auto snappedFileSample = snapFileSampleToTimelineGrid (sampleForX (e.x, waveArea));
         rangeEndSample = snappedFileSample;
         rangeActive = (rangeEndSample != rangeStartSample);
+        refreshStatusBarReadouts();
         repaint();
         return;
     }
@@ -2212,6 +2220,7 @@ void AudioRegionEditor::mouseUp (const juce::MouseEvent&)
         rangeActive = (rangeEndSample > rangeStartSample);
         dragMode = DragMode::None;
         snapGuideTimelineSample = -1;
+        refreshStatusBarReadouts();
         repaint();
         return;
     }
@@ -2566,6 +2575,7 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
         if (rangeActive)
         {
             rangeActive = false;
+            refreshStatusBarReadouts();
             repaint();
             return true;
         }

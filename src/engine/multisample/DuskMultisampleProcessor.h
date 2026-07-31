@@ -85,7 +85,7 @@ public:
         const juce::ScopedLock sl (sf2PresetsLock);
         return sf2Presets;
     }
-    int getSf2PresetIndex() const noexcept { return sf2PresetIndex; }
+    int getSf2PresetIndex() const noexcept { return sf2PresetIndex.load (std::memory_order_relaxed); }
 
     // True if a soundfont has been loaded. Used by editor UI to show
     // "(no file)" vs the loaded file name.
@@ -185,7 +185,9 @@ private:
     // snapshot getSf2Presets() copies out on the message thread.
     std::vector<Sf2PresetInfo> sf2Presets;
     juce::CriticalSection      sf2PresetsLock;
-    int                        sf2PresetIndex { 0 };
+    // Written by the loadPool thread, read by the message thread
+    // (getStateInformation, editor polls) - atomic, no ordering needed.
+    std::atomic<int>           sf2PresetIndex { 0 };
 
     // CC control plumbing. ccCache holds the last value the UI set per
     // CC (-1 = unset) for read-back + state save. ccFifo carries

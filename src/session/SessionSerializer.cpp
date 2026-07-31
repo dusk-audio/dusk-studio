@@ -994,25 +994,23 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
         if (json::has (hwi, "dry_wet"))        t.hardwareInsert.dryWet      .store (json::getFloat (hwi, "dry_wet", 0.0f));
     }
 
-    // Automation - per-strip mode + per-param point arrays. Lanes not in
-    // the JSON stay empty (default-constructed). 3c-i loads only; 3c-ii
-    // adds Write which mutates lanes mid-play via an atomic-swap pattern.
+    // Automation - per-strip mode + per-param point arrays. Each lane gets
+    // exactly ONE publish per load (empty when absent from the JSON):
+    // AtomicSnapshot retires only one previous value, so a clear-then-
+    // publish pair on the same lane would free the pre-load vector the
+    // audio thread can still be reading.
     //
-    // Note: we mutate automationLanes BEFORE publishing the new
-    // automationMode. Publishing the mode first would let the audio
-    // thread observe Read/Touch and pull from a half-rebuilt lane
-    // vector (mid-clear / mid-push_back). Release-store of the mode
-    // after all lane mutations pairs with the engine's acquire-load
-    // gating lane reads.
-    for (auto& lane : t.automationLanes)
-        lane.publishPoints ({});
+    // Note: lanes publish BEFORE the new automationMode. Publishing the
+    // mode first would let the audio thread observe Read/Touch and pull
+    // from a not-yet-loaded lane. Release-store of the mode after all
+    // lane publishes pairs with the engine's acquire-load gating lane
+    // reads.
     {
         const auto& autoVar = json::child (v, "automation");
         for (int p = 0; p < kNumAutomationParams; ++p)
         {
             const char* key = automationParamKey ((AutomationParam) p);
             const auto& pts = json::array (autoVar, key);
-            if (pts.empty()) continue;
             std::vector<AutomationPoint> tmp;
             tmp.reserve (pts.size());
             for (const auto& pv : pts)
@@ -1205,18 +1203,15 @@ void restoreBus (Bus& a, const nlohmann::json& v, double defaultRecordBpm)
     if (json::has (v, "comp_release_auto")) a.strip.compReleaseAuto.store (json::getBool (v, "comp_release_auto", false));
     if (json::has (v, "comp_makeup_db"))   a.strip.compMakeupDb .store (json::getFloat (v, "comp_makeup_db", 0.0f));
 
-    // Automation - mirror restoreTrack: clear lanes, rebuild from JSON, then
-    // release-store the mode so the audio thread never reads a half-rebuilt
-    // lane vector. Only FaderDb / Pan / Mute lanes are ever populated.
-    for (auto& lane : a.strip.automationLanes)
-        lane.publishPoints ({});
+    // Automation - mirror restoreTrack: exactly one publish per lane (empty
+    // when absent), then release-store the mode. Only FaderDb / Pan / Mute
+    // lanes are ever populated.
     {
         const auto& autoVar = json::child (v, "automation");
         for (int p = 0; p < kNumAutomationParams; ++p)
         {
             const char* key = automationParamKey ((AutomationParam) p);
             const auto& pts = json::array (autoVar, key);
-            if (pts.empty()) continue;
             std::vector<AutomationPoint> tmp;
             tmp.reserve (pts.size());
             for (const auto& pv : pts)
@@ -1734,18 +1729,16 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 }
             }
 
-            // Mode publish happens AFTER lane mutations below - same
-            // ordering rationale as the track-load block: avoid the
-            // audio thread reading half-rebuilt lane vectors.
-            for (auto& al : lane.params.automationLanes)
-                al.publishPoints ({});
+            // Mode publish happens AFTER the lane publishes below - same
+            // ordering rationale as the track-load block, and exactly one
+            // publish per lane (empty when absent) per the AtomicSnapshot
+            // one-publish-behind contract.
             {
                 const auto& autoObj = json::child (v, "automation");
                 for (int p = 0; p < kNumAutomationParams; ++p)
                 {
                     const char* key = automationParamKey ((AutomationParam) p);
                     const auto& pts = json::array (autoObj, key);
-                    if (pts.empty()) continue;
                     std::vector<AutomationPoint> tmp;
                     tmp.reserve (pts.size());
                     for (const auto& pv : pts)
@@ -1781,8 +1774,11 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 s.getMarkers()[(size_t) idx].colour = hexToColour (col, juce::Colour (0xffe0a050));
         }
     }
-    if (json::has (root, "master"))
     {
+        // json::child yields a shared empty object when "master" is absent,
+        // so a session without the key still resets master state and
+        // publishes every lane empty instead of inheriting the previously
+        // loaded session's.
         const auto& master = json::child (root, "master");
         // Reset to struct defaults when a key is absent - load() reuses the live
         // session (no pre-load reset), so a conditional store would inherit the
@@ -1832,17 +1828,15 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         loadMasterFloat (s.master().compReleaseMs,    "comp_release_ms");
         loadMasterBool  (s.master().compReleaseAuto,  "comp_release_auto");
         loadMasterFloat (s.master().compMakeupDb,     "comp_makeup_db");
-        // Mode publish happens AFTER lane mutations below - same
-        // ordering rationale as the track-load + aux-load blocks.
-        for (auto& al : s.master().automationLanes)
-            al.publishPoints ({});
+        // Mode publish happens AFTER the lane publishes below - same
+        // ordering rationale as the track-load + aux-load blocks, and
+        // exactly one publish per lane (empty when absent).
         {
             const auto& autoObj = json::child (master, "automation");
             for (int p = 0; p < kNumAutomationParams; ++p)
             {
                 const char* key = automationParamKey ((AutomationParam) p);
                 const auto& pts = json::array (autoObj, key);
-                if (pts.empty()) continue;
                 std::vector<AutomationPoint> tmp;
                 tmp.reserve (pts.size());
                 for (const auto& pv : pts)
@@ -1858,9 +1852,11 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 s.master().automationLanes[(size_t) p].publishPoints (std::move (tmp));
             }
         }
-        if (json::has (master, "automation_mode"))
-            s.master().automationMode.store (json::getInt (master, "automation_mode", 0),
-                                              std::memory_order_release);
+        // Unconditional, matching the track / bus / aux paths: a strip left
+        // in Write by the prior session must not keep writing over the
+        // loaded session's lanes.
+        s.master().automationMode.store (json::getInt (master, "automation_mode", 0),
+                                          std::memory_order_release);
     }
     // Always reset: a session without a saved mastering source must not
     // inherit the previously loaded session's file.

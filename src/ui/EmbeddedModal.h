@@ -506,6 +506,14 @@ private:
         if (hit != nullptr && hit->getScreenBounds().contains (e.getScreenPosition()))
             return;
 
+        // Every listening modal's global listener receives the same physical
+        // click, and once this layer pops itself off the stack the next
+        // listener's topmost guard passes too - one click would dismiss two
+        // stacked layers. Mark the event consumed so lower layers skip it.
+        static juce::Time lastConsumedOutsideClick;
+        if (e.eventTime == lastConsumedOutsideClick) return;
+        lastConsumedOutsideClick = e.eventTime;
+
         // Keep the callback alive across close(), which clears the dismiss
         // callbacks. Prefer the outside-click callback so the clicked control
         // keeps focus.

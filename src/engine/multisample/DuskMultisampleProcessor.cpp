@@ -174,7 +174,7 @@ void DuskMultisampleProcessor::clearLoadedFile()
         const juce::ScopedLock sl (sf2PresetsLock);
         sf2Presets.clear();
     }
-    sf2PresetIndex = -1;
+    sf2PresetIndex.store (-1, std::memory_order_relaxed);
     loadedFilePath.clear();
     lastLoadError.clear();
 }
@@ -335,7 +335,8 @@ bool DuskMultisampleProcessor::applySf2Preset (const juce::File& sf2,
         const juce::ScopedLock sl (sf2PresetsLock);
         presetCount = (int) sf2Presets.size();
     }
-    sf2PresetIndex = juce::jlimit (0, juce::jmax (0, presetCount - 1), presetIndex);
+    sf2PresetIndex.store (juce::jlimit (0, juce::jmax (0, presetCount - 1), presetIndex),
+                          std::memory_order_relaxed);
     loadedFilePath = sf2.getFullPathName();
     lastLoadError.clear();
     return true;
@@ -395,7 +396,7 @@ bool DuskMultisampleProcessor::loadSfzFile (const juce::File& sfz,
         const juce::ScopedLock sl (sf2PresetsLock);
         sf2Presets.clear();
     }
-    sf2PresetIndex = -1;
+    sf2PresetIndex.store (-1, std::memory_order_relaxed);
     loadedFilePath = sfz.getFullPathName();
     lastLoadError.clear();
     return true;
@@ -518,7 +519,7 @@ void DuskMultisampleProcessor::getStateInformation (juce::MemoryBlock& block)
     state.setProperty ("polyphony",
                         overrides.polyphony.load (std::memory_order_relaxed),
                         nullptr);
-    state.setProperty ("sf2Preset", sf2PresetIndex, nullptr);
+    state.setProperty ("sf2Preset", sf2PresetIndex.load (std::memory_order_relaxed), nullptr);
 
     // Persist any CC the UI has set (custom-UI knob/fader positions).
     // Only non-default (>= 0) entries are written so the blob stays
