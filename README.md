@@ -18,19 +18,6 @@ JUCE 8 / C++17. PipeWire (primary) via JUCE's JACK backend on Linux; native ALSA
 
 GPL source on this repo — build from source and the binary costs you nothing but compile time. If you want a precompiled, supported binary, pick one of the paid tiers below.
 
-| Tier | Price | What you get |
-|---|---|---|
-| **Source** | Free | Clone, build, audit. GPL-3.0. No support tier. |
-| **Patreon Supporter** | from $3 / month | Latest release binaries (Linux tarball + Windows MSI + macOS DMG, all unsigned) delivered as attachments on each release post. Name in plugin credits. Lapse keeps whatever build you've already downloaded. |
-| **Patreon Patron** | $5 / month | Everything above + early-access beta builds 1–2 weeks ahead of public. |
-| **Patreon Champion** | $10 / month | Everything above + DM support + roadmap-feature votes. |
-| **One-time licence** | **$27** | The current 0.x beta line and the upcoming 1.x production major — every 1.x minor + patch update included. 2.0 requires a new purchase (or the lifetime upgrade). |
-| **Lifetime** | $49 | The current 0.x beta line, the 1.x production major, and the next major (2.x). Two production majors of updates for less than two licences. |
-
-*Version-discipline contract: today's 0.x releases are the beta; they roll into the 1.0 production release at no extra cost. Major bumps (1.x → 2.x) mean roadmap-defining shifts — new stages, core-architecture changes — and are the first new-purchase boundary. Plugin additions, UI polish, performance work, and new DSP modules all stay within the current major.*
-
-Paid via [Patreon](https://www.patreon.com/cw/DuskAudio) (recurring) or [GitHub Sponsors](https://github.com/sponsors/marc-korte) (one-time, $27 + $49 amounts). Buyer gets invited to the private releases repo where every build lands.
-
 **First-time launch:** binaries are unsigned by design (no Apple Developer ID, no Windows Authenticode — neither is planned). macOS Gatekeeper + Windows SmartScreen will warn on first launch — see [MANUAL.md § Installing Dusk Studio](MANUAL.md#installing-dusk-studio) for the 30-second bypass per OS. The Linux tarball needs no bypass.
 
 ## Status
