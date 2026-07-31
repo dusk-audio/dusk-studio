@@ -3,10 +3,14 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "../engine/vst3/Vst3Editor.h"
+#if DUSKSTUDIO_HAS_NATIVE_AU
+#include "../engine/au/AuEditor.h"
+#endif
 #include "../foundation/MessageThread.h"
 
 namespace duskstudio
 {
+#if DUSKSTUDIO_HAS_NATIVE_VST3
 namespace vst3 { class Vst3Instance; }
 
 // JUCE bridge for a natively-hosted VST3 plugin editor: attaches to the slot's
@@ -55,4 +59,36 @@ private:
     bool embedCheckLogged   = false;
 #endif
 };
+#endif
+
+#if DUSKSTUDIO_HAS_NATIVE_AU
+namespace au { class AuInstance; }
+
+class AuPluginEditorComponent final : public juce::Component,
+                                      private dusk::Timer
+{
+public:
+    AuPluginEditorComponent();
+    ~AuPluginEditorComponent() override;
+
+    bool attach (au::AuInstance& instance, juce::String& errorOut);
+    bool isLoaded() const noexcept { return loaded; }
+
+    void resized() override;
+    void moved() override;
+    void parentHierarchyChanged() override;
+    void visibilityChanged() override;
+
+private:
+    void timerCallback() override;
+    void tryEmbed();
+    void pushBounds();
+    std::uintptr_t peerNativeHandle() const;
+    juce::Rectangle<int> editorBoundsInPeer() const;
+
+    au::AuEditor editor;
+    bool loaded = false;
+    bool embedded = false;
+};
+#endif
 } // namespace duskstudio

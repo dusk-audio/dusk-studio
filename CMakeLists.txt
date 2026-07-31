@@ -678,8 +678,7 @@ if(DUSKSTUDIO_NATIVE_AU)
         src/engine/au/AuHost.cpp
         src/engine/au/AuInstance.cpp
         src/engine/au/AuScanner.cpp
-        src/engine/au/AuEditor.mm
-        src/ui/AuPluginEditorComponent.cpp)
+        src/engine/au/AuEditor.mm)
     find_library(DUSKSTUDIO_AUDIOTOOLBOX_FRAMEWORK AudioToolbox REQUIRED)
     find_library(DUSKSTUDIO_AUDIOUNIT_FRAMEWORK AudioUnit REQUIRED)
     find_library(DUSKSTUDIO_COREAUDIOKIT_FRAMEWORK CoreAudioKit REQUIRED)
@@ -690,6 +689,13 @@ if(DUSKSTUDIO_NATIVE_AU)
         ${DUSKSTUDIO_COREAUDIOKIT_FRAMEWORK}
         ${DUSKSTUDIO_AU_COCOA_FRAMEWORK})
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_AU=1)
+endif()
+
+# The format-neutral Cocoa/X11 component bridge is already part of the
+# de-JUCE allowlist. Build it once when either of its native editor backends is
+# enabled rather than adding another GUI-coupled source file for Audio Units.
+if(DUSKSTUDIO_NATIVE_AU OR DUSKSTUDIO_NATIVE_VST3)
+    target_sources(DuskStudio PRIVATE src/ui/Vst3PluginEditorComponent.cpp)
 endif()
 
 # Native CLAP host, gated by DUSKSTUDIO_NATIVE_CLAP. DUSKSTUDIO_HAS_NATIVE_CLAP
@@ -791,8 +797,7 @@ if(DUSKSTUDIO_NATIVE_VST3)
         src/engine/vst3/Vst3Bundle.cpp
         src/engine/vst3/Vst3HostContext.cpp
         src/engine/vst3/Vst3Instance.cpp
-        src/engine/vst3/Vst3Scanner.cpp
-        src/ui/Vst3PluginEditorComponent.cpp)
+        src/engine/vst3/Vst3Scanner.cpp)
     if(APPLE)
         target_sources(DuskStudio PRIVATE src/engine/vst3/Vst3Editor_Mac.mm)
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
