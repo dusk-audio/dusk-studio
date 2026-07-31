@@ -158,8 +158,14 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
         processing = false;
         active = false;
 
-        if (componentCP && controller)  componentCP->disconnect (nullptr);
-        if (controllerCP && component)  controllerCP->disconnect (nullptr);
+        // No-arg disconnect(), same as the SDK's PlugProvider teardown: it
+        // disconnects the destination AND clears srcConnection. The
+        // IConnectionPoint overload treats nullptr as kInvalidArgument and
+        // leaves the peers wired - ComponentBase stores its peer without an
+        // addRef, so the terminate() calls below would then reach into the
+        // already-released proxies.
+        if (componentCP)  componentCP->disconnect();
+        if (controllerCP) controllerCP->disconnect();
         componentCP  = nullptr;
         controllerCP = nullptr;
 
