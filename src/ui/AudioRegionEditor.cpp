@@ -1972,7 +1972,12 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
     // file-sample-based, so we round-trip through the focused slice's
     // sourceOffset -> timelineStart mapping.
     const bool bypassSnap = e.mods.isCommandDown();
-    const double sampleRate = engine.getCurrentSampleRate();
+    // File-native SR like every other snap path (snapFileSampleToGrid,
+    // keyPressed) - the raw engine rate drifts the drag grid off the
+    // click/keyboard grid after a device hot-swap.
+    const double sampleRate = juce::jmax (1.0,
+        loadedFileSampleRate > 0.0 ? loadedFileSampleRate
+                                    : engine.getCurrentSampleRate());
 
     auto snapFileSampleToTimelineGrid = [&] (std::int64_t fileSample) -> std::int64_t
     {

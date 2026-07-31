@@ -1774,8 +1774,11 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 s.getMarkers()[(size_t) idx].colour = hexToColour (col, juce::Colour (0xffe0a050));
         }
     }
-    if (json::has (root, "master"))
     {
+        // json::child yields a shared empty object when "master" is absent,
+        // so a session without the key still resets master state and
+        // publishes every lane empty instead of inheriting the previously
+        // loaded session's.
         const auto& master = json::child (root, "master");
         // Reset to struct defaults when a key is absent - load() reuses the live
         // session (no pre-load reset), so a conditional store would inherit the
@@ -1849,9 +1852,11 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 s.master().automationLanes[(size_t) p].publishPoints (std::move (tmp));
             }
         }
-        if (json::has (master, "automation_mode"))
-            s.master().automationMode.store (json::getInt (master, "automation_mode", 0),
-                                              std::memory_order_release);
+        // Unconditional, matching the track / bus / aux paths: a strip left
+        // in Write by the prior session must not keep writing over the
+        // loaded session's lanes.
+        s.master().automationMode.store (json::getInt (master, "automation_mode", 0),
+                                          std::memory_order_release);
     }
     // Always reset: a session without a saved mastering source must not
     // inherit the previously loaded session's file.
