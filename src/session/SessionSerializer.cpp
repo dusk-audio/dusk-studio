@@ -1097,25 +1097,23 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
         if (json::has (hwi, "dry_wet"))        t.hardwareInsert.dryWet      .store (json::getFloat (hwi, "dry_wet", 0.0f));
     }
 
-    // Automation - per-strip mode + per-param point arrays. Lanes not in
-    // the JSON stay empty (default-constructed). 3c-i loads only; 3c-ii
-    // adds Write which mutates lanes mid-play via an atomic-swap pattern.
+    // Automation - per-strip mode + per-param point arrays. Each lane gets
+    // exactly ONE publish per load (empty when absent from the JSON):
+    // AtomicSnapshot retires only one previous value, so a clear-then-
+    // publish pair on the same lane would free the pre-load vector the
+    // audio thread can still be reading.
     //
-    // Note: we mutate automationLanes BEFORE publishing the new
-    // automationMode. Publishing the mode first would let the audio
-    // thread observe Read/Touch and pull from a half-rebuilt lane
-    // vector (mid-clear / mid-push_back). Release-store of the mode
-    // after all lane mutations pairs with the engine's acquire-load
-    // gating lane reads.
-    for (auto& lane : t.automationLanes)
-        lane.publishPoints ({});
+    // Note: lanes publish BEFORE the new automationMode. Publishing the
+    // mode first would let the audio thread observe Read/Touch and pull
+    // from a not-yet-loaded lane. Release-store of the mode after all
+    // lane publishes pairs with the engine's acquire-load gating lane
+    // reads.
     {
         const auto& autoVar = json::child (v, "automation");
         for (int p = 0; p < kNumAutomationParams; ++p)
         {
             const char* key = automationParamKey ((AutomationParam) p);
             const auto& pts = json::array (autoVar, key);
-            if (pts.empty()) continue;
             std::vector<AutomationPoint> tmp;
             tmp.reserve (pts.size());
             for (const auto& pv : pts)
@@ -1308,18 +1306,15 @@ void restoreBus (Bus& a, const nlohmann::json& v, double defaultRecordBpm)
     if (json::has (v, "comp_release_auto")) a.strip.compReleaseAuto.store (json::getBool (v, "comp_release_auto", false));
     if (json::has (v, "comp_makeup_db"))   a.strip.compMakeupDb .store (json::getFloat (v, "comp_makeup_db", 0.0f));
 
-    // Automation - mirror restoreTrack: clear lanes, rebuild from JSON, then
-    // release-store the mode so the audio thread never reads a half-rebuilt
-    // lane vector. Only FaderDb / Pan / Mute lanes are ever populated.
-    for (auto& lane : a.strip.automationLanes)
-        lane.publishPoints ({});
+    // Automation - mirror restoreTrack: exactly one publish per lane (empty
+    // when absent), then release-store the mode. Only FaderDb / Pan / Mute
+    // lanes are ever populated.
     {
         const auto& autoVar = json::child (v, "automation");
         for (int p = 0; p < kNumAutomationParams; ++p)
         {
             const char* key = automationParamKey ((AutomationParam) p);
             const auto& pts = json::array (autoVar, key);
-            if (pts.empty()) continue;
             std::vector<AutomationPoint> tmp;
             tmp.reserve (pts.size());
             for (const auto& pv : pts)
@@ -1881,18 +1876,16 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 }
             }
 
-            // Mode publish happens AFTER lane mutations below - same
-            // ordering rationale as the track-load block: avoid the
-            // audio thread reading half-rebuilt lane vectors.
-            for (auto& al : lane.params.automationLanes)
-                al.publishPoints ({});
+            // Mode publish happens AFTER the lane publishes below - same
+            // ordering rationale as the track-load block, and exactly one
+            // publish per lane (empty when absent) per the AtomicSnapshot
+            // one-publish-behind contract.
             {
                 const auto& autoObj = json::child (v, "automation");
                 for (int p = 0; p < kNumAutomationParams; ++p)
                 {
                     const char* key = automationParamKey ((AutomationParam) p);
                     const auto& pts = json::array (autoObj, key);
-                    if (pts.empty()) continue;
                     std::vector<AutomationPoint> tmp;
                     tmp.reserve (pts.size());
                     for (const auto& pv : pts)
@@ -1928,8 +1921,11 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 s.getMarkers()[(size_t) idx].colour = hexToColour (col, juce::Colour (0xffe0a050));
         }
     }
-    if (json::has (root, "master"))
     {
+        // json::child yields a shared empty object when "master" is absent,
+        // so a session without the key still resets master state and
+        // publishes every lane empty instead of inheriting the previously
+        // loaded session's.
         const auto& master = json::child (root, "master");
         // Reset to struct defaults when a key is absent - load() reuses the live
         // session (no pre-load reset), so a conditional store would inherit the
@@ -1983,48 +1979,57 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
 
         // Pultec EQ. Missing keys keep the in-memory default (matches
         // the per-track / per-bus pattern).
-        auto loadMasterFloat = [&master] (std::atomic<float>& dst, const char* key)
+        // With the master section present, a missing individual key keeps
+        // the in-memory value (matches the per-track / per-bus pattern);
+        // with the whole section absent, every field resets to the model
+        // default so nothing inherits the previously loaded session's
+        // master chain. Present-but-invalid values fall to the default too.
+        static const MasterBusParams kMasterDefaults;
+        const bool haveMaster = json::has (root, "master");
+        auto loadMasterFloat = [&master, haveMaster] (std::atomic<float>& dst,
+                                                      const std::atomic<float>& def,
+                                                      const char* key)
         {
             if (json::has (master, key))
-            {
-                const float v = json::getFloat (master, key, 0.0f);
-                if (std::isfinite (v)) dst.store (v);   // reject NaN/inf from a corrupt file - keep the default
-            }
+                dst.store (finiteFloatOr (master[key], def.load()));
+            else if (! haveMaster)
+                dst.store (def.load());
         };
-        auto loadMasterBool = [&master] (std::atomic<bool>& dst, const char* key)
+        auto loadMasterBool = [&master, haveMaster] (std::atomic<bool>& dst,
+                                                     const std::atomic<bool>& def,
+                                                     const char* key)
         {
-            if (json::has (master, key)) dst.store (json::getBool (master, key, false));
+            if (json::has (master, key)) dst.store (json::getBool (master, key, def.load()));
+            else if (! haveMaster)       dst.store (def.load());
         };
-        loadMasterBool  (s.master().eqEnabled,           "eq_enabled");
-        loadMasterFloat (s.master().eqLfBoost,           "eq_lf_boost");
-        loadMasterFloat (s.master().eqLfAtten,           "eq_lf_atten");
-        loadMasterFloat (s.master().eqLfFreq,            "eq_lf_freq");
-        loadMasterFloat (s.master().eqHfBoost,           "eq_hf_boost");
-        loadMasterFloat (s.master().eqHfBoostFreq,       "eq_hf_boost_freq");
-        loadMasterFloat (s.master().eqHfBoostBandwidth,  "eq_hf_boost_bandwidth");
-        loadMasterFloat (s.master().eqHfAtten,           "eq_hf_atten");
-        loadMasterFloat (s.master().eqHfAttenFreq,       "eq_hf_atten_freq");
-        loadMasterFloat (s.master().eqOutputGainDb,      "eq_output_gain_db");
+        loadMasterBool  (s.master().eqEnabled,           kMasterDefaults.eqEnabled,           "eq_enabled");
+        loadMasterFloat (s.master().eqLfBoost,           kMasterDefaults.eqLfBoost,           "eq_lf_boost");
+        loadMasterFloat (s.master().eqLfAtten,           kMasterDefaults.eqLfAtten,           "eq_lf_atten");
+        loadMasterFloat (s.master().eqLfFreq,            kMasterDefaults.eqLfFreq,            "eq_lf_freq");
+        loadMasterFloat (s.master().eqHfBoost,           kMasterDefaults.eqHfBoost,           "eq_hf_boost");
+        loadMasterFloat (s.master().eqHfBoostFreq,       kMasterDefaults.eqHfBoostFreq,       "eq_hf_boost_freq");
+        loadMasterFloat (s.master().eqHfBoostBandwidth,  kMasterDefaults.eqHfBoostBandwidth,  "eq_hf_boost_bandwidth");
+        loadMasterFloat (s.master().eqHfAtten,           kMasterDefaults.eqHfAtten,           "eq_hf_atten");
+        loadMasterFloat (s.master().eqHfAttenFreq,       kMasterDefaults.eqHfAttenFreq,       "eq_hf_atten_freq");
+        loadMasterFloat (s.master().eqOutputGainDb,      kMasterDefaults.eqOutputGainDb,      "eq_output_gain_db");
 
         // Bus comp.
-        loadMasterBool  (s.master().compEnabled,      "comp_enabled");
-        loadMasterFloat (s.master().compThreshDb,     "comp_thresh_db");
-        loadMasterFloat (s.master().compRatio,        "comp_ratio");
-        loadMasterFloat (s.master().compAttackMs,     "comp_attack_ms");
-        loadMasterFloat (s.master().compReleaseMs,    "comp_release_ms");
-        loadMasterBool  (s.master().compReleaseAuto,  "comp_release_auto");
-        loadMasterFloat (s.master().compMakeupDb,     "comp_makeup_db");
-        // Mode publish happens AFTER lane mutations below - same
-        // ordering rationale as the track-load + aux-load blocks.
-        for (auto& al : s.master().automationLanes)
-            al.publishPoints ({});
+        loadMasterBool  (s.master().compEnabled,      kMasterDefaults.compEnabled,      "comp_enabled");
+        loadMasterFloat (s.master().compThreshDb,     kMasterDefaults.compThreshDb,     "comp_thresh_db");
+        loadMasterFloat (s.master().compRatio,        kMasterDefaults.compRatio,        "comp_ratio");
+        loadMasterFloat (s.master().compAttackMs,     kMasterDefaults.compAttackMs,     "comp_attack_ms");
+        loadMasterFloat (s.master().compReleaseMs,    kMasterDefaults.compReleaseMs,    "comp_release_ms");
+        loadMasterBool  (s.master().compReleaseAuto,  kMasterDefaults.compReleaseAuto,  "comp_release_auto");
+        loadMasterFloat (s.master().compMakeupDb,     kMasterDefaults.compMakeupDb,     "comp_makeup_db");
+        // Mode publish happens AFTER the lane publishes below - same
+        // ordering rationale as the track-load + aux-load blocks, and
+        // exactly one publish per lane (empty when absent).
         {
             const auto& autoObj = json::child (master, "automation");
             for (int p = 0; p < kNumAutomationParams; ++p)
             {
                 const char* key = automationParamKey ((AutomationParam) p);
                 const auto& pts = json::array (autoObj, key);
-                if (pts.empty()) continue;
                 std::vector<AutomationPoint> tmp;
                 tmp.reserve (pts.size());
                 for (const auto& pv : pts)
@@ -2040,9 +2045,11 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 s.master().automationLanes[(size_t) p].publishPoints (std::move (tmp));
             }
         }
-        if (json::has (master, "automation_mode"))
-            s.master().automationMode.store (json::getInt (master, "automation_mode", 0),
-                                              std::memory_order_release);
+        // Unconditional, matching the track / bus / aux paths: a strip left
+        // in Write by the prior session must not keep writing over the
+        // loaded session's lanes.
+        s.master().automationMode.store (json::getInt (master, "automation_mode", 0),
+                                          std::memory_order_release);
     }
     // Always reset: a session without a saved mastering source must not
     // inherit the previously loaded session's file.

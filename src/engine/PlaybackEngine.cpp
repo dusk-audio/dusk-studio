@@ -353,10 +353,13 @@ void PlaybackEngine::readForTrack (int trackIndex,
         {
             const int idx = seam - i;
             if (idx < 0) break;
+            // g rises with distance from the seam: ~0 at the sample next to
+            // the wrap, 1 at the far edge of the fade window - so multiply by
+            // g directly to silence the seam and leave the far edge untouched.
             const float g = 0.5f - 0.5f * std::cos (juce::MathConstants<float>::pi
                                                      * (float) i / (float) kLoopSeamFade);
-            outL[idx] *= 1.0f - g;
-            if (outR != nullptr) outR[idx] *= 1.0f - g;
+            outL[idx] *= g;
+            if (outR != nullptr) outR[idx] *= g;
         }
         for (int i = 0; i < kLoopSeamFade; ++i)
         {

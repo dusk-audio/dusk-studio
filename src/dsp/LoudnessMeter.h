@@ -31,7 +31,9 @@ namespace duskstudio
 //      the last reset.
 //
 // Threading:
-//   - prepare() / reset() - message thread.
+//   - prepare() / reset() - message thread with audio quiesced (prepare path).
+//   - requestReset()      - any thread while audio runs; the state reset is
+//                            deferred to the next process() block.
 //   - process()           - audio thread, no allocation.
 //   - getXxxLufs() / getSamplePeakDb() - atomic loads, any thread.
 class LoudnessMeter
@@ -39,9 +41,25 @@ class LoudnessMeter
 public:
     LoudnessMeter();
 
-    // Message thread.
+    // Message thread, audio quiesced.
     void prepare (double sampleRate, int maxBlockSize);
     void reset();
+
+    // Safe with audio running: zeroes the published readings immediately and
+    // defers the state reset to the next process() block, so the vector clear
+    // and ring wipes never race the audio thread.
+    void requestReset() noexcept
+    {
+        // Publish the request first. process() checks again after publishing a
+        // block, so an in-flight pass reapplies a mid-block request before it
+        // returns.
+        resetRequested.store (true, std::memory_order_release);
+        momentaryLufs.store (-100.0f, std::memory_order_relaxed);
+        shortTermLufs.store (-100.0f, std::memory_order_relaxed);
+        integratedLufs.store (-100.0f, std::memory_order_relaxed);
+        truePeakDb.store    (-100.0f, std::memory_order_relaxed);
+        integratedCapped.store (false, std::memory_order_relaxed);
+    }
 
     // Audio thread. L and R must each be at least `numSamples` floats.
     // `numSamples` may exceed an internal block boundary; we wrap through
@@ -106,5 +124,6 @@ private:
     // sets via relaxed store on the first overflow, UI polls via the
     // public accessor.
     std::atomic<bool>  integratedCapped { false };
+    std::atomic<bool>  resetRequested   { false };
 };
 } // namespace duskstudio
