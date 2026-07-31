@@ -2,6 +2,7 @@
 
 #include "../hosting/INativeInstance.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -76,6 +77,10 @@ public:
     void*       lilvWorld()        const noexcept;
     const void* lilvPlugin()       const noexcept;
     void*       lilvInstance()     const noexcept;
+    // Bumped every time the LilvInstance is destroyed (deactivate, reactivate,
+    // teardown). An embedded UI compares this against the epoch it captured at
+    // embed time to detect that its instance-access handles went stale.
+    std::uint64_t instanceEpoch() const noexcept;
     void*       uridMapFeature()   const noexcept;
     void*       uridUnmapFeature() const noexcept;
 

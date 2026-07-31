@@ -5,6 +5,8 @@
 #include "../engine/lv2/Lv2Editor.h"
 #include "../foundation/MessageThread.h"
 
+#include <cstdint>
+
 namespace duskstudio
 {
 namespace lv2 { class Lv2Instance; }
@@ -48,6 +50,8 @@ private:
     int componentExtentFromEditor (int extent) const;
 
     lv2::Lv2Editor editor;
+    lv2::Lv2Instance* attachedInstance = nullptr;
+    std::uint64_t embeddedEpoch = 0;
     bool loaded    = false;
     bool embedded  = false;
     bool embedding = false;   // guards re-entry: instantiate fires ui:resize -> setSize -> resized()

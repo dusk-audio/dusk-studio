@@ -29,6 +29,8 @@ bool Lv2PluginEditorComponent::attach (lv2::Lv2Instance& shared, juce::String& e
     std::string err;
     if (! editor.open (shared, err))
     { errorOut = "editor: " + juce::String (err); return false; }
+    attachedInstance = &shared;
+    embeddedEpoch = shared.instanceEpoch();
 
     editor.onResize = [this] (int w, int h)
     {
@@ -92,7 +94,7 @@ void Lv2PluginEditorComponent::tryEmbed()
     // ui:resize synchronously -> onResize -> setSize -> resized() -> tryEmbed again,
     // which would build a SECOND UI instance and orphan the first (the black-
     // rectangle bug).
-    if (! loaded || embedded || embedding || ! isShowing()) return;
+    if (! loaded || ! editor.isOpen() || embedded || embedding || ! isShowing()) return;
     const auto parent = peerNativeHandle();
     if (parent == 0) return;
 
@@ -105,6 +107,7 @@ void Lv2PluginEditorComponent::tryEmbed()
     if (ok)
     {
         embedded = true;
+        embeddedEpoch = attachedInstance != nullptr ? attachedInstance->instanceEpoch() : 0;
         // Adopt the UI's own size once known so the modal/lane can fit to it.
         if (editor.preferredWidth() > 0 && editor.preferredHeight() > 0)
             setSize (componentExtentFromEditor (editor.preferredWidth()),
@@ -209,6 +212,39 @@ void Lv2PluginEditorComponent::verifyGeometry()
 
 void Lv2PluginEditorComponent::timerCallback()
 {
+    // reactivate() (device rate/block change) frees and rebuilds the
+    // LilvInstance this UI captured via instance-access at embed time. Tear
+    // the UI down BEFORE the pump below can drive its idle interface against
+    // the freed handle, then re-embed against the fresh instance. Reactivate
+    // and this timer both run on the message thread, so the check-then-pump
+    // sequence cannot interleave with the swap.
+    const auto currentEpoch = attachedInstance != nullptr
+                                ? attachedInstance->instanceEpoch() : embeddedEpoch;
+    if (currentEpoch != embeddedEpoch)
+    {
+        editor.close();
+        embedded = false;
+
+        // Consume the epoch only once the editor reopens against the new
+        // instance. While the instance is inactive (mid-reactivate, or a
+        // failed activate awaiting recovery) the stale epoch keeps this
+        // branch retrying every tick instead of leaving the editor closed
+        // for good; close() above is idempotent, and attach()'s onResize /
+        // onClosed callbacks live on the Lv2Editor across close/open.
+        if (attachedInstance->isActive())
+        {
+            std::string err;
+            if (! editor.open (*attachedInstance, err))
+            {
+                std::fprintf (stderr, "[lv2 editor] reopen failed: %s\n", err.c_str());
+                loaded = false;
+                stopTimer();
+                return;
+            }
+            embeddedEpoch = currentEpoch;
+        }
+    }
+
     // Ancestor visibility changes (tab switches) don't fire visibilityChanged -
     // poll like the CLAP editor so the native window can't float over another view.
     // The un-embedded poll covers the mirror case: a component created while its
