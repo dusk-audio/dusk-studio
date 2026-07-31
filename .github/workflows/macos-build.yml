@@ -8,9 +8,9 @@ name: macOS build
 
 on:
   push:
-    branches: [main]
+    branches: [main, "release/**"]
   pull_request:
-    branches: [main]
+    branches: [main, "release/**"]
   workflow_dispatch:
 
 # A new push to the same ref cancels an in-flight run — the macOS runner
@@ -60,11 +60,18 @@ jobs:
             https://github.com/juce-framework/JUCE.git \
             "${RUNNER_TEMP}/JUCE"
 
-      - name: Clone Dusk plugins (donor DSP)
+      - name: Clone Dusk plugins (donor DSP, pinned)
+        # Fetches the donor at DONOR_REV, matching the release workflows,
+        # so every job builds against the same reproducible donor snapshot.
+        # To move the donor forward, bump DONOR_REV everywhere together.
+        env:
+          DONOR_REV: 69f04318e3b7063e382c80ac1cde2388170e668b
         run: |
-          git clone --depth 1 \
-            https://github.com/dusk-audio/dusk-audio-plugins.git \
-            "${RUNNER_TEMP}/plugins-main"
+          git init -q "${RUNNER_TEMP}/plugins-main"
+          cd "${RUNNER_TEMP}/plugins-main"
+          git remote add origin https://github.com/dusk-audio/dusk-audio-plugins.git
+          git fetch --depth 1 origin "${DONOR_REV}"
+          git checkout -q "${DONOR_REV}"
 
       - name: Configure (Release)
         run: |

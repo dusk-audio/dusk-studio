@@ -31,8 +31,8 @@ namespace duskstudio::lv2
 {
 struct Lv2Instance::Impl
 {
-    // Bumped whenever reactivate() frees and rebuilds the LilvInstance, so an
-    // embedded UI holding instance-access handles can detect the swap.
+    // Bumped whenever a LilvInstance is destroyed, so an embedded UI holding
+    // instance-access handles can detect the swap.
     std::atomic<std::uint64_t> instanceEpoch { 0 };
 
     // URID map/unmap host feature (a simple intern table)
@@ -262,6 +262,10 @@ struct Lv2Instance::Impl
             if (active) lilv_instance_deactivate (instance);
             lilv_instance_free (instance);
             instance = nullptr;
+            // The instance an editor captured instance-access / data-access
+            // handles from is gone; every teardown path has to mark that embed
+            // stale, not just reactivate's.
+            instanceEpoch.fetch_add (1, std::memory_order_release);
         }
         active = false;
     }
@@ -657,11 +661,9 @@ bool Lv2Instance::reactivate (double sampleRate, int maxBlockFrames, std::string
     std::vector<uint8_t> blob;
     saveState (blob);
     const std::vector<float> saved = impl->portValues;
+    // freeInstance bumps the epoch before the rebuild, so a failed activate
+    // still leaves the embed marked stale.
     impl->freeInstance();
-    // The old LilvInstance is gone: any editor that captured instance-access /
-    // data-access handles from it must re-embed. Bumped before the rebuild so
-    // a failed activate still marks the embed stale.
-    impl->instanceEpoch.fetch_add (1, std::memory_order_release);
     if (! activate (sampleRate, maxBlockFrames, errorOut)) return false;
     if (! blob.empty())
     {

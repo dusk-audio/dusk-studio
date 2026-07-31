@@ -568,10 +568,6 @@ bool PluginSlot::loadFromFile (const juce::File& pluginFile, juce::String& error
 
     ownedInstance = std::move (fresh);
     {
-        // Blocking-acquire drains any in-flight process call before the
-        // watchdog reset + publish - its overrun accounting could otherwise
-        // land after the clear and re-bypass the fresh instance. Held through
-        // the publish; the audio side only try-locks, so it dry-passes.
         const juce::SpinLock::ScopedLockType processGuard (processLock);
         blocksSinceLoad     = 0;
         consecutiveOverruns = 0;
@@ -772,7 +768,6 @@ bool PluginSlot::installInProcessInstance (std::unique_ptr<juce::AudioPluginInst
 
     ownedInstance = std::move (fresh);
     {
-        // Same drain-then-reset-and-publish as loadFromFile above.
         const juce::SpinLock::ScopedLockType processGuard (processLock);
         blocksSinceLoad     = 0;
         consecutiveOverruns = 0;

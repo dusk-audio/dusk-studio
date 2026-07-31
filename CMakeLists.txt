@@ -40,9 +40,16 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         pkg_check_modules(SUIL IMPORTED_TARGET GLOBAL suil-0)
         pkg_check_modules(LV2  IMPORTED_TARGET GLOBAL lv2)
     endif()
+    # CI and release builds pass -DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON so a
+    # runner missing the lilv/suil packages fails the configure instead of
+    # silently shipping a build without the native LV2 host.
+    option(DUSKSTUDIO_REQUIRE_NATIVE_LV2 "Fail the configure when the native LV2 host deps are missing" OFF)
     if(LILV_FOUND AND SUIL_FOUND AND LV2_FOUND)
         option(DUSKSTUDIO_NATIVE_LV2 "Build the native LV2 plugin host (Linux, needs lilv/suil)" ON)
     else()
+        if(DUSKSTUDIO_REQUIRE_NATIVE_LV2)
+            message(FATAL_ERROR "Native LV2 host required but lilv/suil/lv2 dev packages were not all found")
+        endif()
         set(DUSKSTUDIO_NATIVE_LV2 OFF)
         message(STATUS "Native LV2 host: lilv/suil/lv2 not all found - disabled")
     endif()

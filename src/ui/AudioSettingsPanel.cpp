@@ -1012,9 +1012,9 @@ void AudioSettingsPanel::applyMcuOutputChange()
     const int idx = id - 2;
     if (idx < 0 || idx >= (int) devices.size()) return;
     session.mcu.outputIdentifier = devices[idx].identifier;
-    session.mcu.resolvedOutputIdx.store (idx, std::memory_order_release);
-    // Eagerly open so the first 30 Hz emit doesn't race with ALSA's
-    // synchronous snd_seq_connect.
+    // Open before publishing the index so the first 30 Hz emit doesn't race
+    // with ALSA's synchronous snd_seq_connect.
     engine.ensureMidiOutputOpen (idx);
+    session.mcu.resolvedOutputIdx.store (idx, std::memory_order_release);
 }
 } // namespace duskstudio

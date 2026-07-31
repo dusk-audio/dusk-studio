@@ -4,6 +4,7 @@
 #include <juce_core/juce_core.h>
 #include <alsa/asoundlib.h>
 #include <atomic>
+#include <memory>
 
 namespace duskstudio
 {
@@ -95,6 +96,13 @@ public:
     // it up. Real-device opens are covered by the existing backend cycle
     // section of AudioPipelineSelfTest, not here.
     static juce::String runSelfTest();
+
+    // A timed-out I/O thread still dereferences this whole object. Owners must
+    // destroy through destroyOrLeak(), which parks a wedged device in a
+    // process-lifetime holder instead of running its destructor under the
+    // live thread.
+    bool ioThreadWasAbandoned() const noexcept { return ioThreadWedged; }
+    static void destroyOrLeak (std::unique_ptr<AlsaAudioIODevice> device);
 
 private:
     void run() override;  // SCHED_RR I/O thread

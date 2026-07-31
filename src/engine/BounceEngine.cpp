@@ -1,5 +1,6 @@
 #include "BounceEngine.h"
 #include <cmath>
+#include <cstdio>
 #include "AudioEngine.h"
 #include "LameMp3Writer.h"
 #include "MasteringPlayer.h"
@@ -87,6 +88,8 @@ bool BounceEngine::processOfflineBlock (
     int numSamples,
     const juce::AudioIODeviceCallbackContext& context)
 {
+    constexpr int kMaxGateRetries = 5000;
+    int gateRetries = 0;
     while (! cancelRequested.load (std::memory_order_relaxed))
     {
         const auto gatedBefore = engine.getGatedBlockCount();
@@ -98,6 +101,24 @@ bool BounceEngine::processOfflineBlock (
                                                   context);
         if (engine.getGatedBlockCount() == gatedBefore)
             return true;
+
+        if (cancelRequested.load (std::memory_order_relaxed))
+            return false;
+
+        if (++gateRetries >= kMaxGateRetries)
+        {
+            const auto diagnostic =
+                "Offline render aborted: AudioEngine process gate "
+                "(processingSuspended=true) remained stuck for "
+                + juce::String (gateRetries) + " retries";
+            std::fprintf (stderr, "[Dusk Studio/BounceEngine] %s\n",
+                          diagnostic.toRawUTF8());
+            {
+                const juce::ScopedLock lock (lastErrorLock);
+                lastError = diagnostic;
+            }
+            return false;
+        }
 
         juce::Thread::sleep (1);
     }
@@ -422,7 +443,10 @@ void BounceEngine::run()
         if (! processOfflineBlock (inputPtrs.data(), kNumIn,
                                     outputPtrs.data(), kNumChannels,
                                     remaining, ctx))
+        {
+            succeeded = false;
             break;
+        }
 
         // Drop the leading PDC samples, then write the rest.
         int writeStart = 0;
@@ -590,7 +614,10 @@ bool BounceEngine::renderOneStem (const juce::File& outFile,
         if (! processOfflineBlock (inputPtrs.data(), kNumIn,
                                     outputPtrs.data(), kNumChannels,
                                     remaining, ctx))
+        {
+            ok = false;
             break;
+        }
 
         int writeStart = 0;
         if (dropped < leadIn)
@@ -904,7 +931,10 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
         if (! processOfflineBlock (inputPtrs.data(), kNumIn,
                                     outputPtrs.data(), kNumChannels,
                                     remaining, ctx))
+        {
+            ok = false;
             break;
+        }
 
         int writeStart = 0;
         if (dropped < leadIn)
