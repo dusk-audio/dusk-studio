@@ -1181,6 +1181,13 @@ bool PluginSlot::restoreFromSavedState (const juce::String& descriptionXml,
     }
 
     ownedInstance = std::move (fresh);
+    // Same watchdog reset as loadFromFile / installInProcessInstance -
+    // autoBypassed is cleared nowhere else, so without this a slot whose
+    // plugin tripped the time-budget watchdog stays silently bypassed
+    // across a session load.
+    blocksSinceLoad     = 0;
+    consecutiveOverruns = 0;
+    autoBypassed.store (false, std::memory_order_relaxed);
     if (hostPlayHead != nullptr)
         ownedInstance->setPlayHead (hostPlayHead);
     cachedLatencySamples.store (ownedInstance->getLatencySamples(),
