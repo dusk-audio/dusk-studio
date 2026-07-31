@@ -17,6 +17,10 @@
 #if DUSKSTUDIO_HAS_NATIVE_VST3
   #include "vst3/Vst3Scanner.h"   // Linux-only native VST3 discovery
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+  #include "au/AuBundle.h"
+  #include "au/AuScanner.h"
+#endif
 
 #include <map>
 
@@ -330,6 +334,9 @@ PluginManager::PluginManager()
     loadNativeCache (vst3NativeDescriptions, "vst3-native-cache.json",
                      "vst3-native-cache.xml", false);
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    loadAuCache();
+#endif
 }
 
 PluginManager::~PluginManager() = default;
@@ -534,6 +541,7 @@ int PluginManager::scanInstalledPlugins (
         scanClapPlugins();        // CLAP isn't a juce format - scan it alongside the JUCE pass
         scanLv2Plugins();         // native-LV2 rows are separate from JUCE's LV2 format
         scanVst3NativePlugins();  // native-VST3 rows are separate from JUCE's VST3 format
+        scanAuPlugins();          // native-AU rows come from the macOS component registry
     }
     return added;
 }
@@ -664,6 +672,28 @@ void PluginManager::loadNativeCache (std::vector<PluginDescriptor>& into,
     into.swap (fresh);
 }
 
+void PluginManager::loadAuCache()
+{
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    const auto file = nativeCacheFile ("au-native-cache.json");
+    if (file == juce::File() || ! file.existsAsFile())
+        return;
+
+    std::vector<PluginDescriptor> fresh;
+    if (! nativecache::parse (
+            file.loadFileAsString().toStdString(),
+            [] (std::string_view location)
+            {
+                return au::AuBundle::exists (std::string (location));
+            },
+            fresh))
+        return;
+
+    const juce::ScopedLock sl (nativeDescriptionsLock);
+    auDescriptions.swap (fresh);
+#endif
+}
+
 void PluginManager::saveNativeCache (const std::vector<PluginDescriptor>& from,
                                      const char* jsonFileName) const
 {
@@ -767,6 +797,28 @@ std::vector<PluginDescriptor> PluginManager::getVst3NativeEffectDescriptions() c
 std::vector<PluginDescriptor> PluginManager::getVst3NativeInstrumentDescriptions() const
 {
     return filterByInstrumentFlag (vst3NativeDescriptions, true);
+}
+
+void PluginManager::scanAuPlugins()
+{
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    auto fresh = au::AuScanner::scan();
+    {
+        const juce::ScopedLock sl (nativeDescriptionsLock);
+        auDescriptions.swap (fresh);
+    }
+    saveNativeCache (auDescriptions, "au-native-cache.json");
+#endif
+}
+
+std::vector<PluginDescriptor> PluginManager::getAuEffectDescriptions() const
+{
+    return filterByInstrumentFlag (auDescriptions, false);
+}
+
+std::vector<PluginDescriptor> PluginManager::getAuInstrumentDescriptions() const
+{
+    return filterByInstrumentFlag (auDescriptions, true);
 }
 
 std::vector<PluginDescriptor> PluginManager::getInstrumentDescriptions() const

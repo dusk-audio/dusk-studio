@@ -45,6 +45,10 @@ public:
     std::vector<PluginDescriptor> getVst3NativeInstrumentDescriptions() const;
     void scanVst3NativePlugins();
 
+    std::vector<PluginDescriptor> getAuEffectDescriptions() const;
+    std::vector<PluginDescriptor> getAuInstrumentDescriptions() const;
+    void scanAuPlugins();
+
     std::unique_ptr<juce::AudioPluginInstance>
     createPluginInstance (const juce::File& pluginFile,
                           double sampleRate, int blockSize,
@@ -94,6 +98,7 @@ private:
     std::vector<PluginDescriptor> clapDescriptions;
     std::vector<PluginDescriptor> lv2Descriptions;
     std::vector<PluginDescriptor> vst3NativeDescriptions;
+    std::vector<PluginDescriptor> auDescriptions;
     bool oopEnabled { false };
     std::atomic<int> lastScanSandboxSkips { 0 };
 
@@ -111,6 +116,7 @@ private:
     void loadNativeCache (std::vector<PluginDescriptor>& into,
                           const char* jsonFileName, const char* legacyXmlFileName,
                           bool bundleIsDirectory);
+    void loadAuCache();
     void saveNativeCache (const std::vector<PluginDescriptor>& from,
                           const char* jsonFileName) const;
 };
