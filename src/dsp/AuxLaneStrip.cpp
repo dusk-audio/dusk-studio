@@ -110,6 +110,35 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
         }
     }
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    for (int s = 0; s < kMaxPlugins; ++s)
+    {
+        auto& nas = nativeAuSlots[(size_t) s];
+        if (nas.isLoaded())
+        {
+            std::string err;
+            const bool ok = nas.reactivate (preparedSampleRate, preparedBlockSize, err);
+            auReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
+        }
+        else if (pendingAuIdentifier[(size_t) s].isNotEmpty())
+        {
+            if (! isNativeClapLoaded (s) && ! isNativeLv2Loaded (s)
+                && ! isNativeVst3Loaded (s))
+            {
+                std::string err;
+                const auto identifier = pendingAuIdentifier[(size_t) s].toStdString();
+                const bool ok = nas.load (std::filesystem::u8path (identifier),
+                                          preparedSampleRate, preparedBlockSize,
+                                          err, identifier);
+                if (ok && ! pendingAuState[(size_t) s].empty())
+                    nas.loadState (pendingAuState[(size_t) s]);
+                auReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
+            }
+            pendingAuIdentifier[(size_t) s].clear();
+            pendingAuState[(size_t) s].clear();
+        }
+    }
+#endif
 
     constexpr double rampSeconds = 0.020;
     returnGain.reset (sampleRate, rampSeconds);
@@ -156,6 +185,7 @@ bool AuxLaneStrip::loadNativeClap (int slotIdx, const juce::File& path, std::str
     // the audio thread around this call.
     unloadNativeLv2 (slotIdx);
     unloadNativeVst3 (slotIdx);
+    unloadNativeAu (slotIdx);
     slots[(size_t) slotIdx].unload();
     const bool ok = nativeClapSlots[(size_t) slotIdx].load (std::filesystem::u8path (path.getFullPathName().toStdString()),
                                                             preparedSampleRate, preparedBlockSize, errorOut, pluginId.toStdString());
@@ -196,6 +226,7 @@ bool AuxLaneStrip::loadNativeLv2 (int slotIdx, const juce::File& path, std::stri
     // One host per slot - see loadNativeClap.
     unloadNativeClap (slotIdx);
     unloadNativeVst3 (slotIdx);
+    unloadNativeAu (slotIdx);
     slots[(size_t) slotIdx].unload();
     const bool ok = nativeLv2Slots[(size_t) slotIdx].load (std::filesystem::u8path (path.getFullPathName().toStdString()),
                                                            preparedSampleRate, preparedBlockSize, errorOut, pluginId.toStdString());
@@ -236,6 +267,7 @@ bool AuxLaneStrip::loadNativeVst3 (int slotIdx, const juce::File& path, std::str
     // One host per slot - see loadNativeClap.
     unloadNativeClap (slotIdx);
     unloadNativeLv2 (slotIdx);
+    unloadNativeAu (slotIdx);
     slots[(size_t) slotIdx].unload();
     const bool ok = nativeVst3Slots[(size_t) slotIdx].load (std::filesystem::u8path (path.getFullPathName().toStdString()),
                                                             preparedSampleRate, preparedBlockSize, errorOut, pluginId.toStdString());
@@ -261,6 +293,44 @@ void AuxLaneStrip::setPendingNativeVst3 (int slotIdx, const juce::File& path,
     pendingVst3Path[(size_t) slotIdx]     = path.getFullPathName();
     pendingVst3PluginId[(size_t) slotIdx] = pluginId;
     pendingVst3State[(size_t) slotIdx]    = std::move (state);
+}
+#endif
+
+#if DUSKSTUDIO_HAS_NATIVE_AU
+bool AuxLaneStrip::loadNativeAu (int slotIdx, const juce::String& identifier,
+                                 std::string& errorOut)
+{
+    jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
+    if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
+    { errorOut = "aux lane not prepared"; return false; }
+    unloadNativeClap (slotIdx);
+    unloadNativeLv2 (slotIdx);
+    unloadNativeVst3 (slotIdx);
+    slots[(size_t) slotIdx].unload();
+    const auto stableId = identifier.toStdString();
+    const bool ok = nativeAuSlots[(size_t) slotIdx].load (
+        std::filesystem::u8path (stableId), preparedSampleRate,
+        preparedBlockSize, errorOut, stableId);
+    auReloadFailed[(size_t) slotIdx].store (false, std::memory_order_relaxed);
+    return ok;
+}
+
+void AuxLaneStrip::unloadNativeAu (int slotIdx) noexcept
+{
+    jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
+    nativeAuSlots[(size_t) slotIdx].unload();
+    auReloadFailed[(size_t) slotIdx].store (false, std::memory_order_relaxed);
+    pendingAuIdentifier[(size_t) slotIdx].clear();
+    pendingAuState[(size_t) slotIdx].clear();
+}
+
+void AuxLaneStrip::setPendingNativeAu (int slotIdx,
+                                       const juce::String& identifier,
+                                       std::vector<uint8_t> state) noexcept
+{
+    jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
+    pendingAuIdentifier[(size_t) slotIdx] = identifier;
+    pendingAuState[(size_t) slotIdx] = std::move (state);
 }
 #endif
 
@@ -371,6 +441,11 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
 #if DUSKSTUDIO_HAS_NATIVE_VST3
             if (nativeVst3Slots[sIdx].isLoaded())
                 nativeVst3Slots[sIdx].processStereo (L, R, L, R, numSamples);
+            else
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+            if (nativeAuSlots[sIdx].isLoaded())
+                nativeAuSlots[sIdx].processStereo (L, R, L, R, numSamples);
             else
 #endif
                 slots[sIdx].processStereoBlock (L, R, numSamples, pluginMidiScratch);

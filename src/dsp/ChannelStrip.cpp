@@ -176,6 +176,30 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         pendingVst3State.clear();
     }
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    if (nativeAuSlot.isLoaded())
+    {
+        std::string err;
+        const bool ok = nativeAuSlot.reactivate (preparedSampleRate, preparedBlockSize, err);
+        auReloadFailed.store (! ok, std::memory_order_relaxed);
+    }
+    else if (pendingAuIdentifier.isNotEmpty())
+    {
+        if (! isNativeClapLoaded() && ! isNativeLv2Loaded() && ! isNativeVst3Loaded())
+        {
+            std::string err;
+            const auto identifier = pendingAuIdentifier.toStdString();
+            const bool ok = nativeAuSlot.load (
+                std::filesystem::u8path (identifier), preparedSampleRate,
+                preparedBlockSize, err, identifier);
+            if (ok && ! pendingAuState.empty())
+                nativeAuSlot.loadState (pendingAuState);
+            auReloadFailed.store (! ok, std::memory_order_relaxed);
+        }
+        pendingAuIdentifier.clear();
+        pendingAuState.clear();
+    }
+#endif
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     if (nativeMultisampleSlot.isLoaded())
     {
@@ -185,7 +209,8 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     }
     else if (pendingMultisamplePath.isNotEmpty())
     {
-        if (! isNativeClapLoaded() && ! isNativeLv2Loaded() && ! isNativeVst3Loaded())
+        if (! isNativeClapLoaded() && ! isNativeLv2Loaded() && ! isNativeVst3Loaded()
+            && ! isNativeAuLoaded())
         {
             const juce::File p (pendingMultisamplePath);
             std::string err;
@@ -481,6 +506,7 @@ bool ChannelStrip::loadNativeClap (const juce::File& path, std::string& errorOut
     // at once. Callers fence the audio thread around this call.
     unloadNativeLv2();
     unloadNativeVst3();
+    unloadNativeAu();
     unloadNativeMultisample();
     pluginSlot.unload();
     const bool ok = nativeClapSlot.load (std::filesystem::u8path (path.getFullPathName().toStdString()),
@@ -519,6 +545,7 @@ bool ChannelStrip::loadNativeLv2 (const juce::File& path, std::string& errorOut,
     // One host per insert - see loadNativeClap.
     unloadNativeClap();
     unloadNativeVst3();
+    unloadNativeAu();
     unloadNativeMultisample();
     pluginSlot.unload();
     const bool ok = nativeLv2Slot.load (std::filesystem::u8path (path.getFullPathName().toStdString()),
@@ -557,6 +584,7 @@ bool ChannelStrip::loadNativeVst3 (const juce::File& path, std::string& errorOut
     // One host per insert - see loadNativeClap.
     unloadNativeClap();
     unloadNativeLv2();
+    unloadNativeAu();
     unloadNativeMultisample();
     pluginSlot.unload();
     const bool ok = nativeVst3Slot.load (std::filesystem::u8path (path.getFullPathName().toStdString()),
@@ -584,6 +612,40 @@ void ChannelStrip::setPendingNativeVst3 (const juce::File& path, std::vector<uin
 }
 #endif
 
+#if DUSKSTUDIO_HAS_NATIVE_AU
+bool ChannelStrip::loadNativeAu (const juce::String& identifier, std::string& errorOut)
+{
+    if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
+    { errorOut = "channel strip not prepared"; return false; }
+    unloadNativeClap();
+    unloadNativeLv2();
+    unloadNativeVst3();
+    unloadNativeMultisample();
+    pluginSlot.unload();
+    const auto stableId = identifier.toStdString();
+    const bool ok = nativeAuSlot.load (std::filesystem::u8path (stableId),
+                                       preparedSampleRate, preparedBlockSize,
+                                       errorOut, stableId);
+    auReloadFailed.store (false, std::memory_order_relaxed);
+    return ok;
+}
+
+void ChannelStrip::unloadNativeAu() noexcept
+{
+    nativeAuSlot.unload();
+    auReloadFailed.store (false, std::memory_order_relaxed);
+    pendingAuIdentifier.clear();
+    pendingAuState.clear();
+}
+
+void ChannelStrip::setPendingNativeAu (const juce::String& identifier,
+                                       std::vector<uint8_t> state) noexcept
+{
+    pendingAuIdentifier = identifier;
+    pendingAuState = std::move (state);
+}
+#endif
+
 #if DUSKSTUDIO_HAS_MULTISAMPLE
 bool ChannelStrip::loadNativeMultisample (const juce::File& soundfont, std::string& errorOut)
 {
@@ -596,6 +658,7 @@ bool ChannelStrip::loadNativeMultisample (const juce::File& soundfont, std::stri
     unloadNativeClap();
     unloadNativeLv2();
     unloadNativeVst3();
+    unloadNativeAu();
     pluginSlot.unload();
     const bool ok = nativeMultisampleSlot.load (
         std::filesystem::u8path (soundfont.getFullPathName().toStdString()),
@@ -631,6 +694,7 @@ bool ChannelStrip::commitNativeMultisample (NativeMultisampleSlot::PrimedLoad pr
     unloadNativeClap();
     unloadNativeLv2();
     unloadNativeVst3();
+    unloadNativeAu();
     pluginSlot.unload();
     const bool ok = nativeMultisampleSlot.commit (std::move (primed), preparedBlockSize);
     // A user-initiated load always ends any "failed restore" state (see loadNativeClap).
@@ -943,6 +1007,19 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             }
             else
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+            if (nativeAuSlot.isLoaded())
+            {
+                std::memcpy (insertScratchR.data(), tempMono.data(),
+                             sizeof (float) * (size_t) numSamples);
+                nativeAuSlot.processStereo (tempMono.data(), insertScratchR.data(),
+                                            tempMono.data(), insertScratchR.data(), numSamples);
+                for (int i = 0; i < numSamples; ++i)
+                    tempMono[(size_t) i] = 0.5f
+                        * (tempMono[(size_t) i] + insertScratchR[(size_t) i]);
+            }
+            else
+#endif
             {
                 pluginMidiScratch.clear();
                 pluginSlot.processMonoBlock (tempMono.data(), numSamples, pluginMidiScratch);
@@ -1112,6 +1189,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             // track later flips to audio mode. A native host owns the slot
             // when loaded - same precedence as the effect-insert path.
 #if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3 \
+    || DUSKSTUDIO_HAS_NATIVE_AU \
     || DUSKSTUDIO_HAS_MULTISAMPLE
             // Bridge the block's MIDI into dusk once for whichever native host runs.
             nativeMidiScratch.clear();
@@ -1131,6 +1209,11 @@ void ChannelStrip::processAndAccumulate (const float* inL,
 #if DUSKSTUDIO_HAS_NATIVE_VST3
             if (nativeVst3Slot.isLoaded())
                 nativeVst3Slot.processStereo (L, R, L, R, numSamples, &nativeMidiScratch);
+            else
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+            if (nativeAuSlot.isLoaded())
+                nativeAuSlot.processStereo (L, R, L, R, numSamples, &nativeMidiScratch);
             else
 #endif
 #if DUSKSTUDIO_HAS_MULTISAMPLE
@@ -1177,6 +1260,11 @@ void ChannelStrip::processAndAccumulate (const float* inL,
 #if DUSKSTUDIO_HAS_NATIVE_VST3
                 if (nativeVst3Slot.isLoaded())
                     nativeVst3Slot.processStereo (L, R, L, R, numSamples);
+                else
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+                if (nativeAuSlot.isLoaded())
+                    nativeAuSlot.processStereo (L, R, L, R, numSamples);
                 else
 #endif
                 {
