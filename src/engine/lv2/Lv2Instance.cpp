@@ -31,6 +31,10 @@ namespace duskstudio::lv2
 {
 struct Lv2Instance::Impl
 {
+    // Bumped whenever reactivate() frees and rebuilds the LilvInstance, so an
+    // embedded UI holding instance-access handles can detect the swap.
+    std::atomic<std::uint64_t> instanceEpoch { 0 };
+
     // URID map/unmap host feature (a simple intern table)
     std::unordered_map<std::string, uint32_t> uridForUri;
     std::vector<std::string> uriForUrid { std::string() };   // index 0 unused (URIDs start at 1)
@@ -654,6 +658,10 @@ bool Lv2Instance::reactivate (double sampleRate, int maxBlockFrames, std::string
     saveState (blob);
     const std::vector<float> saved = impl->portValues;
     impl->freeInstance();
+    // The old LilvInstance is gone: any editor that captured instance-access /
+    // data-access handles from it must re-embed. Bumped before the rebuild so
+    // a failed activate still marks the embed stale.
+    impl->instanceEpoch.fetch_add (1, std::memory_order_release);
     if (! activate (sampleRate, maxBlockFrames, errorOut)) return false;
     if (! blob.empty())
     {
@@ -878,6 +886,7 @@ bool Lv2Instance::loadState (const std::vector<uint8_t>& in)
 void*       Lv2Instance::lilvWorld()        const noexcept { return impl->world; }
 const void* Lv2Instance::lilvPlugin()       const noexcept { return impl->plugin; }
 void*       Lv2Instance::lilvInstance()     const noexcept { return impl->instance; }
+std::uint64_t Lv2Instance::instanceEpoch()  const noexcept { return impl->instanceEpoch.load (std::memory_order_acquire); }
 void*       Lv2Instance::uridMapFeature()   const noexcept { return &impl->mapFeatureStruct; }
 void*       Lv2Instance::uridUnmapFeature() const noexcept { return &impl->unmapFeatureStruct; }
 

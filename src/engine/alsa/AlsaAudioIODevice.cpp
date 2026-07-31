@@ -726,6 +726,17 @@ void AlsaAudioIODevice::close()
 {
     stop();
 
+    // A wedged I/O thread may still be inside snd_pcm calls on these
+    // handles; closing them under it is a use-after-free. Leak the device
+    // instead (mirrors stop()'s abandoned teardown).
+    if (ioThreadWedged)
+    {
+        std::fprintf (stderr,
+                      "[Dusk Studio/ALSA] close(): I/O thread still wedged; "
+                      "leaking the device handles\n");
+        return;
+    }
+
     if (outHandle != nullptr) { snd_pcm_close (outHandle); outHandle = nullptr; }
     if (inHandle  != nullptr) { snd_pcm_close (inHandle);  inHandle  = nullptr; }
 
@@ -864,7 +875,38 @@ void AlsaAudioIODevice::stop()
 
     isStarted.store (false, std::memory_order_release);
     signalThreadShouldExit();
-    stopThread (2000);
+    // Join without a kill: stopThread's timeout path pthread_cancels the I/O
+    // thread, and the cancellation lands on pthread_cond_timedwait inside the
+    // worker-pool join - a cancellation point whose forced unwind exits
+    // noexcept frames straight into std::terminate. Cancelling while the
+    // callback holds callbackLock instead deadlocks the swap below and races
+    // snd_pcm_drop against a live handle. The run loop polls
+    // threadShouldExit() with bounded waits, so an alive thread exits within
+    // ~one period; anything longer is a wedged callback. Bound the wait like
+    // PlaybackEngine::stopPlayback's drain and ABANDON teardown on timeout:
+    // the exit flag stays set so the thread parks itself if it ever
+    // unwedges, isStarted is restored so a later stop() retries the join,
+    // and close() skips the handle teardown while wedged. Leak beats UAF;
+    // a cancel would turn the leak into an abort.
+    bool joined = false;
+    for (int attempt = 0; attempt < 3 && ! joined; ++attempt)
+    {
+        joined = waitForThreadToExit (2000);
+        if (! joined)
+            std::fprintf (stderr,
+                          "[Dusk Studio/ALSA] stop(): waiting for the I/O thread "
+                          "to exit (audio callback still running)\n");
+    }
+    if (! joined)
+    {
+        ioThreadWedged = true;
+        isStarted.store (true, std::memory_order_release);
+        std::fprintf (stderr,
+                      "[Dusk Studio/ALSA] stop(): I/O thread did not exit within "
+                      "6 s; abandoning teardown (device left open)\n");
+        return;
+    }
+    ioThreadWedged = false;
 
     juce::AudioIODeviceCallback* cb = nullptr;
     {

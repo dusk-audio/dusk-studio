@@ -43,6 +43,38 @@ bool frozenLocked (Session& s, int trackIdx)
     return trackIdx >= 0 && trackIdx < Session::kNumTracks
         && s.track (trackIdx).frozen.load (std::memory_order_relaxed);
 }
+
+// Join helpers. The selection is timeline-sorted (lead = earliest start), so
+// the lead is not necessarily the lowest numeric index, and every erase below
+// it shifts it down one slot. The bounds check is separate so the slow path
+// can validate BEFORE rendering its WAV - failing afterwards would orphan it.
+bool joinSelectionInBounds (const std::vector<AudioRegion>& regs,
+                            const std::vector<int>& sortedDesc)
+{
+    return ! sortedDesc.empty()
+        && sortedDesc.front() < (int) regs.size()
+        && sortedDesc.back() >= 0;
+}
+
+// Erases every selected region except the lead and returns the lead's
+// post-erase slot; -1 (with regs untouched) when the selection is invalid.
+int eraseJoinedAndGetMergedSlot (std::vector<AudioRegion>& regs,
+                                 const std::vector<int>& indices,
+                                 const std::vector<int>& sortedDesc)
+{
+    if (indices.empty() || ! joinSelectionInBounds (regs, sortedDesc))
+        return -1;
+    const int leadIdx = indices.front();
+    int mergedIdx = leadIdx;
+    for (int idx : sortedDesc)
+        if (idx != leadIdx)
+        {
+            regs.erase (regs.begin() + idx);
+            if (idx < leadIdx)
+                --mergedIdx;
+        }
+    return mergedIdx;
+}
 } // namespace
 
 // RegionEditAction
@@ -715,21 +747,9 @@ bool JoinRegionsAction::perform()
         merged.fadeOutAuto     = latestEnding->fadeOutAuto;
         merged.previousTakes   = beforeRegions.front().previousTakes;
 
-        // indices is timeline-sorted, so the lead (earliest-starting) region
-        // is not necessarily the lowest numeric index. Every erase below it
-        // shifts it down one slot - track that or the merged write lands on
-        // (or past) the wrong region and the join silently loses audio.
-        if (sortedDesc.front() >= (int) regs.size() || sortedDesc.back() < 0)
+        const int mergedIdx = eraseJoinedAndGetMergedSlot (regs, indices, sortedDesc);
+        if (mergedIdx < 0)
             return false;
-        const int leadIdx = indices.front();
-        int mergedIdx = leadIdx;
-        for (int idx : sortedDesc)
-            if (idx != leadIdx)
-            {
-                regs.erase (regs.begin() + idx);
-                if (idx < leadIdx)
-                    --mergedIdx;
-            }
         resultInsertedAt = mergedIdx;
         regs[(size_t) resultInsertedAt] = merged;
         rebuildPlaybackIfStopped (engine);
@@ -740,6 +760,8 @@ bool JoinRegionsAction::perform()
     // selected region into one buffer at its proper timeline offset
     // (gaps become silence; overlaps sum). Uses the source files'
     // sample rate / channel count from the leading region.
+    if (! joinSelectionInBounds (regs, sortedDesc))
+        return false;
     juce::AudioFormatManager fm;
     fm.registerBasicFormats();
     auto firstReader = std::unique_ptr<juce::AudioFormatReader> (
@@ -809,18 +831,13 @@ bool JoinRegionsAction::perform()
     merged.fadeOutAuto     = latestEnding->fadeOutAuto;
     merged.previousTakes.clear();
 
-    // Same lead-index adjustment as the fast path above.
-    if (sortedDesc.front() >= (int) regs.size() || sortedDesc.back() < 0)
+    const int mergedIdx = eraseJoinedAndGetMergedSlot (regs, indices, sortedDesc);
+    if (mergedIdx < 0)
+    {
+        outFile.deleteFile();
+        renderedFile = juce::File();
         return false;
-    const int leadIdx = indices.front();
-    int mergedIdx = leadIdx;
-    for (int idx : sortedDesc)
-        if (idx != leadIdx)
-        {
-            regs.erase (regs.begin() + idx);
-            if (idx < leadIdx)
-                --mergedIdx;
-        }
+    }
     resultInsertedAt = mergedIdx;
     regs[(size_t) resultInsertedAt] = merged;
     rebuildPlaybackIfStopped (engine);

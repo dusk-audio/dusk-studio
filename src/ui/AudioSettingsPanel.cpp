@@ -945,10 +945,12 @@ void AudioSettingsPanel::applySyncOutputChange()
     const int idx = id - 2;
     if (idx < 0 || idx >= (int) devices.size()) return;
     session.syncOutputIdentifier = devices[idx].identifier;
-    session.syncOutputIdx.store (idx, std::memory_order_release);
-    // Eagerly open the port so the first audio-thread emission doesn't
-    // race with a synchronous ALSA snd_seq_connect.
+    // Open the port BEFORE publishing the index: the audio thread's
+    // acquire-load of syncOutputIdx expects the opened-port state to be
+    // visible (see the emit path in AudioEngine), and the eager open also
+    // keeps the first emission clear of a synchronous ALSA snd_seq_connect.
     engine.ensureMidiOutputOpen (idx);
+    session.syncOutputIdx.store (idx, std::memory_order_release);
 }
 
 void AudioSettingsPanel::populateMcuInputCombo()

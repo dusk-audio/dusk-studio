@@ -161,6 +161,9 @@ void MidiOutputBank::rebuild()
     outputs.clear();
     devices = enumerate();
     outputs.resize (devices.size());
+    openFlags = std::vector<std::atomic<bool>> (devices.size());
+    for (auto& f : openFlags)
+        f.store (false, std::memory_order_relaxed);
 }
 
 bool MidiOutputBank::ensureOpen (int index)
@@ -188,18 +191,25 @@ bool MidiOutputBank::ensureOpen (int index)
         const std::lock_guard<std::mutex> lock (bankMutex);
         outputs[(size_t) index] = std::move (out);
     }
+    if (index < (int) openFlags.size())
+        openFlags[(size_t) index].store (true, std::memory_order_release);
     return true;
 }
 
 void MidiOutputBank::closeAll()
 {
+    for (auto& f : openFlags)
+        f.store (false, std::memory_order_release);
     const std::lock_guard<std::mutex> lock (bankMutex);
     outputs.clear();
 }
 
 bool MidiOutputBank::isOpen (int index) const noexcept
 {
-    return index >= 0 && index < (int) outputs.size() && outputs[(size_t) index] != nullptr;
+    // Audio-thread callable: reads the atomic mirror, never the unique_ptr
+    // slot the message thread populates.
+    return index >= 0 && index < (int) openFlags.size()
+        && openFlags[(size_t) index].load (std::memory_order_acquire);
 }
 
 void MidiOutputBank::toJuceBuffer (const dusk::MidiBuffer& in, juce::MidiBuffer& out)

@@ -149,9 +149,16 @@ private:
     std::vector<MidiDeviceInfo> devices;
     std::vector<std::unique_ptr<juce::MidiOutput>> outputs;
 
+    // Audio-thread-readable mirror of "slot open": isOpen() runs on the audio
+    // thread while ensureOpen() populates outputs[] on the message thread, and
+    // a unique_ptr read is not atomic. Re-sized only in rebuild() (callback
+    // detached); ensureOpen release-stores its flag after the slot is fully
+    // populated, isOpen acquire-loads.
+    std::vector<std::atomic<bool>> openFlags;
+
     // Serialises the pump thread's port access against message-thread bank
-    // mutation (rebuild / ensureOpen). The audio thread never takes it - it only
-    // touches the FIFO writer side.
+    // mutation (rebuild / ensureOpen). The audio thread never takes it - it
+    // only touches the FIFO writer side and the openFlags mirror.
     std::mutex bankMutex;
 
     static constexpr int kQueueSlots = 64;

@@ -64,7 +64,8 @@ float DuskMultisampleProcessor::getHDCC (int cc) const noexcept
 
 juce::File DuskMultisampleProcessor::getControlImagePath() const
 {
-    if (impl == nullptr || impl->synth == nullptr || loadedFilePath.isEmpty()
+    const auto path = getLoadedFilePath();
+    if (impl == nullptr || impl->synth == nullptr || path.isEmpty()
         || isLoadPending())
         return {};
 
@@ -79,14 +80,20 @@ juce::File DuskMultisampleProcessor::getControlImagePath() const
                 && args != nullptr && args[0].s != nullptr)
                 *static_cast<juce::String*> (data) = juce::String::fromUTF8 (args[0].s);
         });
-    sfizz_send_message (impl->synth, client, 0, "/image", "", nullptr);
+    {
+        // sfizz documents send_message as an RT-thread call; serialise it
+        // against sfizz_render_block (which dry-passes on this lock) instead
+        // of racing the audio thread from here on the message thread.
+        const juce::SpinLock::ScopedLockType lock (sfizzLock);
+        sfizz_send_message (impl->synth, client, 0, "/image", "", nullptr);
+    }
     sfizz_delete_client (client);
 
     if (rel.isEmpty()) return {};
     if (juce::File::isAbsolutePath (rel))
         return juce::File (rel);
     // Relative to the loaded .sfz's directory.
-    return juce::File (loadedFilePath).getParentDirectory().getChildFile (rel);
+    return juce::File (path).getParentDirectory().getChildFile (rel);
 }
 
 std::vector<std::pair<int, juce::String>> DuskMultisampleProcessor::getControlCcLabels() const
@@ -123,6 +130,11 @@ void DuskMultisampleProcessor::prepareToPlay (double sampleRate, int blockSize)
     if (impl == nullptr) return;
     if (impl->synth != nullptr)
     {
+        // Both calls are CT+OFF in sfizz's thread contract: hold the render
+        // lock so processBlock dry-passes and a loadPool job's
+        // sfizz_load_string (seconds long on a GM bank) can't run
+        // concurrently with them.
+        const juce::SpinLock::ScopedLockType lock (sfizzLock);
         sfizz_set_sample_rate (impl->synth, (float) sampleRate);
         sfizz_set_samples_per_block (impl->synth, blockSize);
     }
@@ -143,12 +155,13 @@ int DuskMultisampleProcessor::getNumRegions() const noexcept
 
 bool DuskMultisampleProcessor::reloadCurrentFile (juce::String& errorMessage)
 {
-    if (loadedFilePath.isEmpty())
+    const auto path = getLoadedFilePath();
+    if (path.isEmpty())
     {
         errorMessage = "No file loaded";
         return false;
     }
-    const juce::File f (loadedFilePath);
+    const juce::File f (path);
     return f.getFileExtension().toLowerCase() == ".sf2"
              ? loadSf2File (f, errorMessage)
              : loadSfzFile (f, errorMessage);
@@ -175,8 +188,11 @@ void DuskMultisampleProcessor::clearLoadedFile()
         sf2Presets.clear();
     }
     sf2PresetIndex.store (-1, std::memory_order_relaxed);
-    loadedFilePath.clear();
-    lastLoadError.clear();
+    {
+        const juce::ScopedLock sl (loadInfoLock);
+        loadedFilePath.clear();
+        lastLoadError.clear();
+    }
 }
 
 bool DuskMultisampleProcessor::loadSf2File (const juce::File& sf2,
@@ -223,13 +239,14 @@ bool DuskMultisampleProcessor::loadSf2File (const juce::File& sf2,
 bool DuskMultisampleProcessor::loadSf2Preset (int presetIndex,
                                                 juce::String& errorMessage)
 {
-    if (loadedFilePath.isEmpty()
-        || juce::File (loadedFilePath).getFileExtension().toLowerCase() != ".sf2")
+    const auto path = getLoadedFilePath();
+    if (path.isEmpty()
+        || juce::File (path).getFileExtension().toLowerCase() != ".sf2")
     {
         errorMessage = "No SF2 loaded";
         return false;
     }
-    return applySf2Preset (juce::File (loadedFilePath), presetIndex, errorMessage);
+    return applySf2Preset (juce::File (path), presetIndex, errorMessage);
 }
 
 void DuskMultisampleProcessor::loadFileAsync (
@@ -240,13 +257,16 @@ void DuskMultisampleProcessor::loadFileAsync (
         if (onDone) onDone (false, "A load is already in progress");
         return;
     }
-    loadPool.addJob ([this, file, onDone = std::move (onDone)]
+    // Built here on the message thread: a WeakReference's first construction
+    // lazily creates the shared master reference, which must not race the
+    // destructor from the pool thread.
+    juce::WeakReference<DuskMultisampleProcessor> weak (this);
+    loadPool.addJob ([this, weak, file, onDone = std::move (onDone)]
     {
         juce::String err;
         const bool ok = file.getFileExtension().toLowerCase() == ".sf2"
                             ? loadSf2File (file, err)
                             : loadSfzFile (file, err);
-        juce::WeakReference<DuskMultisampleProcessor> weak (this);
         juce::MessageManager::callAsync ([weak, onDone, ok, err]
         {
             // Skip entirely if the processor was destroyed after posting this:
@@ -270,11 +290,11 @@ void DuskMultisampleProcessor::loadSf2PresetAsync (
         if (onDone) onDone (false, "A load is already in progress");
         return;
     }
-    loadPool.addJob ([this, presetIndex, onDone = std::move (onDone)]
+    juce::WeakReference<DuskMultisampleProcessor> weak (this);
+    loadPool.addJob ([this, weak, presetIndex, onDone = std::move (onDone)]
     {
         juce::String err;
         const bool ok = loadSf2Preset (presetIndex, err);
-        juce::WeakReference<DuskMultisampleProcessor> weak (this);
         juce::MessageManager::callAsync ([weak, onDone, ok, err]
         {
             auto* self = weak.get();
@@ -303,7 +323,10 @@ bool DuskMultisampleProcessor::applySf2Preset (const juce::File& sf2,
     if (! conv.ok)
     {
         errorMessage = conv.error;
-        lastLoadError = errorMessage;
+        {
+            const juce::ScopedLock sl (loadInfoLock);
+            lastLoadError = errorMessage;
+        }
         newDir.deleteRecursively();
         return false;
     }
@@ -316,11 +339,18 @@ bool DuskMultisampleProcessor::applySf2Preset (const juce::File& sf2,
     // Only the sfizz call itself is serialised against processBlock - the
     // expensive conversion above runs unlocked so the audio thread keeps
     // rendering during it.
-    const juce::SpinLock::ScopedLockType lock (sfizzLock);
-    if (! sfizz_load_string (impl->synth, pathStr.c_str(), body.c_str()))
+    bool ok = false;
+    {
+        const juce::SpinLock::ScopedLockType lock (sfizzLock);
+        ok = sfizz_load_string (impl->synth, pathStr.c_str(), body.c_str());
+    }
+    if (! ok)
     {
         errorMessage = "sfizz rejected the converted SF2 preset";
-        lastLoadError = errorMessage;
+        {
+            const juce::ScopedLock sl (loadInfoLock);
+            lastLoadError = errorMessage;
+        }
         newDir.deleteRecursively();
         return false;
     }
@@ -335,10 +365,19 @@ bool DuskMultisampleProcessor::applySf2Preset (const juce::File& sf2,
         const juce::ScopedLock sl (sf2PresetsLock);
         presetCount = (int) sf2Presets.size();
     }
-    sf2PresetIndex.store (juce::jlimit (0, juce::jmax (0, presetCount - 1), presetIndex),
+    // Clamp only against real metadata: sf2Presets is stale during
+    // loadSf2File's preset-0 load (previous file's list, committed after)
+    // and empty when the metadata parse failed - forcing the index into
+    // those ranges would misreport the preset the converter actually loaded.
+    sf2PresetIndex.store (presetCount > 0
+                            ? juce::jlimit (0, presetCount - 1, presetIndex)
+                            : juce::jmax (0, presetIndex),
                           std::memory_order_relaxed);
-    loadedFilePath = sf2.getFullPathName();
-    lastLoadError.clear();
+    {
+        const juce::ScopedLock sl (loadInfoLock);
+        loadedFilePath = sf2.getFullPathName();
+        lastLoadError.clear();
+    }
     return true;
 }
 
@@ -380,7 +419,10 @@ bool DuskMultisampleProcessor::loadSfzFile (const juce::File& sfz,
     if (! ok)
     {
         errorMessage = "sfizz_load_file failed for " + sfz.getFileName();
-        lastLoadError = errorMessage;
+        {
+            const juce::ScopedLock sl (loadInfoLock);
+            lastLoadError = errorMessage;
+        }
         return false;
     }
     // Drop any SF2-extracted temp samples - this slot is now a plain
@@ -397,8 +439,11 @@ bool DuskMultisampleProcessor::loadSfzFile (const juce::File& sfz,
         sf2Presets.clear();
     }
     sf2PresetIndex.store (-1, std::memory_order_relaxed);
-    loadedFilePath = sfz.getFullPathName();
-    lastLoadError.clear();
+    {
+        const juce::ScopedLock sl (loadInfoLock);
+        loadedFilePath = sfz.getFullPathName();
+        lastLoadError.clear();
+    }
     return true;
 }
 
@@ -509,7 +554,7 @@ void DuskMultisampleProcessor::processBlock (juce::AudioBuffer<float>& buf,
 void DuskMultisampleProcessor::getStateInformation (juce::MemoryBlock& block)
 {
     juce::ValueTree state ("DuskMultisample");
-    state.setProperty ("file", loadedFilePath, nullptr);
+    state.setProperty ("file", getLoadedFilePath(), nullptr);
     state.setProperty ("masterVolDb",
                         overrides.masterVolDb.load (std::memory_order_relaxed),
                         nullptr);
@@ -555,7 +600,7 @@ void DuskMultisampleProcessor::setStateInformation (const void* data, int size)
     // from the description (the common session-restore path). Loading a
     // soundfont is the single most expensive thing this plugin does (~1.5s of
     // sample decode); doing it twice per restored instance is pure waste.
-    if (path.isNotEmpty() && path != loadedFilePath)
+    if (path.isNotEmpty() && path != getLoadedFilePath())
     {
         const auto file = juce::File (path);
         const auto ext = file.getFileExtension().toLowerCase();
@@ -567,10 +612,14 @@ void DuskMultisampleProcessor::setStateInformation (const void* data, int size)
             // Non-fatal: processor stays in no-file state so the user
             // can pick a replacement via the editor. lastLoadError
             // surfaces the reason - editor polls + displays it.
-            lastLoadError = err.isNotEmpty()
-                              ? err
-                              : ("File not found: " + path);
-            DBG ("DuskMultisample setState: " << lastLoadError);
+            const auto msg = err.isNotEmpty()
+                               ? err
+                               : ("File not found: " + path);
+            {
+                const juce::ScopedLock sl (loadInfoLock);
+                lastLoadError = msg;
+            }
+            DBG ("DuskMultisample setState: " << msg);
         }
     }
 
@@ -634,7 +683,7 @@ void DuskMultisampleProcessor::fillInPluginDescription (juce::PluginDescription&
     desc.category            = "Instrument";
     desc.manufacturerName    = "Dusk Audio";
     desc.version             = "0.9.0";
-    desc.fileOrIdentifier    = loadedFilePath;   // empty until a file is loaded
+    desc.fileOrIdentifier    = getLoadedFilePath();   // empty until a file is loaded
     desc.isInstrument        = true;
     desc.numInputChannels    = 0;
     desc.numOutputChannels   = 2;

@@ -44,6 +44,8 @@ private:
     unsigned long peerX11() const;
 
     lv2::Lv2Editor editor;
+    lv2::Lv2Instance* attachedInstance = nullptr;
+    std::uint64_t embeddedEpoch = 0;
     bool loaded    = false;
     bool embedded  = false;
     bool embedding = false;   // guards re-entry: instantiate fires ui:resize -> setSize -> resized()
