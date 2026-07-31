@@ -30,7 +30,7 @@ Dusk Studio includes:
 - Four mix buses, each with a 3-band EQ and console-style bus compressor.
 - A master bus with tape saturation, a tube program EQ, bus compressor, and mono-sum check.
 - A dedicated mastering stage with 5-band digital EQ, multiband compressor, brick-wall limiter, and BS.1770 loudness metering.
-- VST3, LV2, AU, and CLAP plugin hosting, with optional out-of-process sandboxing for crash isolation. On Linux and macOS, CLAP, LV2 and VST3 — effects and instruments — run through Dusk Studio's own native hosts.
+- VST3, LV2, AU, and CLAP plugin hosting, with optional out-of-process sandboxing for crash isolation. On Linux and macOS, CLAP, LV2 and VST3 — effects and instruments — run through Dusk Studio's own native hosts; Audio Units do too on macOS.
 - External hardware insert per channel and per aux, with automatic latency measurement.
 - A multi-sampler that plays `.sfz` files and `.sf2` SoundFonts on MIDI tracks, both through the built-in sfizz engine (SF2 files are converted to SFZ on load — no external synth required).
 - MIDI Clock and MIDI Time Code chase and emit.
@@ -1396,7 +1396,7 @@ Dusk Studio scans and hosts:
 - **VST3** on Linux, macOS, and Windows. On Linux and macOS, effects AND instruments load through Dusk Studio's own native VST3 host (rows tagged **VST3-Native**); Windows uses the standard host.
 - **LV2** on Linux and macOS. Effects and instruments load through Dusk Studio's own native LV2 host (rows tagged **LV2-Native**). If a plugin update adds new instruments, run **Scan plugins** for them to appear.
 - **CLAP** on Linux and macOS, through the native host — effects and instruments.
-- **AU** on macOS only.
+- **AU** on macOS only, through Dusk Studio's native Audio Unit host — effects and instruments.
 - **Native multi-sampler** (`.sfz` and `.sf2` files, both via the built-in sfizz engine — SF2 is converted to SFZ on load) on all platforms.
 
 There is no VST2 support. See *Native plugin hosting (Linux and macOS)* below for what the native hosts change.
@@ -1411,7 +1411,7 @@ Plugin scan results are cached in:
 - macOS: `~/Library/Application Support/Dusk Studio/plugin-cache.xml`
 - Windows: `%APPDATA%\Dusk Studio\plugin-cache.xml`
 
-On Linux and macOS the native hosts keep their own sidecar caches next to it (`clap-cache.json`, `lv2-native-cache.json`, `vst3-native-cache.json`), rebuilt by the same **Scan plugins** button. Existing XML sidecars are used as a fallback whenever the matching JSON cache cannot be loaded, including when it is absent, malformed, or unusable; subsequent scans write JSON. The native LV2 scan reads only the bundles' manifests — it never loads the plugin binary, so a broken bundle cannot crash the scan; it is simply skipped (or reported when you try to load it).
+On Linux and macOS the native hosts keep their own sidecar caches next to it (`clap-cache.json`, `lv2-native-cache.json`, `vst3-native-cache.json`, plus `au-native-cache.json` on macOS), rebuilt by the same **Scan plugins** button. Existing XML sidecars are used as a fallback whenever the matching JSON cache cannot be loaded, including when it is absent, malformed, or unusable; subsequent scans write JSON. The native LV2 scan reads only the bundles' manifests, and the native AU scan reads the macOS Audio Component registry metadata; neither scan instantiates plugin code, so a broken plugin cannot crash that scan and is simply skipped (or reported when you try to load it).
 
 To re-scan on every launch, enable **Settings → General → Scan plugins on startup**. The startup scan runs in the background behind a progress window (it shows the plugin currently being scanned and a progress bar), so the app stays responsive instead of appearing to hang while a large collection is scanned.
 
@@ -1421,10 +1421,10 @@ In the **plugin picker** modal:
 
 - Use the filter field at the top to narrow by name.
 - The list is grouped by manufacturer. Click a manufacturer to expand or collapse.
-- Each row shows the plugin name and its format (VST3 / LV2 / AU / CLAP / LV2-Native / VST3-Native).
+- Each row shows the plugin name and its format (VST3 / LV2 / AudioUnit / CLAP / LV2-Native / VST3-Native).
 - Click a row to load and dismiss.
 
-On Linux and macOS, both the effect and instrument pickers list LV2 and VST3 plugins as **LV2-Native** / **VST3-Native** rows — the same plugins, hosted by Dusk Studio's native hosts instead of the standard one. Each plugin appears once; there is no duplicate plain-LV2 or plain-VST3 row.
+On Linux and macOS, both the effect and instrument pickers list LV2 and VST3 plugins as **LV2-Native** / **VST3-Native** rows — the same plugins, hosted by Dusk Studio's native hosts instead of the standard one. On macOS, Audio Units appear once as native **AudioUnit** rows. There are no duplicate standard-host rows for these formats.
 
 The picker filters by intent: only effect plugins appear when you're loading onto a channel insert or aux lane; only instruments appear when you're loading onto a MIDI track.
 
@@ -1443,17 +1443,17 @@ This holds on all platforms, including the macOS out-of-process sandbox. Rather 
 
 ## Native plugin hosting (Linux and macOS)
 
-On Linux and macOS, CLAP, LV2, and VST3 plugins — effects and instruments — are hosted by Dusk Studio's own plugin hosts rather than the standard hosting layer. The native hosts own the format lifecycle and editor embedding directly; on Linux this also sidesteps the standard layer's UI breakage on Wayland desktops.
+On Linux and macOS, CLAP, LV2, and VST3 plugins — effects and instruments — are hosted by Dusk Studio's own plugin hosts rather than the standard hosting layer. Audio Units use the native host on macOS too. The native hosts own the format lifecycle and editor embedding directly; on Linux this also sidesteps the standard layer's UI breakage on Wayland desktops.
 
 In practice the differences are small:
 
-- Rows tagged **CLAP**, **LV2-Native**, or **VST3-Native** in the picker load through the native hosts; everything else about picking, replacing, and removing is identical.
+- Rows tagged **CLAP**, **LV2-Native**, **VST3-Native**, or **AudioUnit** in the picker load through the native hosts; everything else about picking, replacing, and removing is identical.
 - Editors open the same way (centred modal on channel slots, inline on aux lanes) and their settings persist in the session like any other plugin.
-- Native-hosted plugins always run in-process; the OOP sandbox does not apply to them. Native LV2 discovery never executes plugin code; CLAP and native VST3 discovery load each module to read its factory, like any host's VST3 scan.
+- Native-hosted plugins always run in-process; the OOP sandbox does not apply to them. Native LV2 and Audio Unit discovery do not instantiate plugin code; CLAP and native VST3 discovery load each module to read its factory, like any host's VST3 scan.
 - Insert latency reported by a native-hosted plugin feeds plugin delay compensation like any other insert.
-- A slot holds one plugin regardless of host: loading a CLAP, an LV2-Native, a VST3-Native, or a standard-host plugin into the same slot replaces whatever was there.
+- A slot holds one plugin regardless of host: loading a CLAP, an LV2-Native, a VST3-Native, an AudioUnit, or a standard-host plugin into the same slot replaces whatever was there.
 
-One caveat: a plugin's saved state does not transfer between hosting layers. If a session carried a plugin under the standard LV2 or VST3 host and you load the same plugin as a native row (or vice versa), it starts from its defaults — set it up once and save.
+One caveat: a plugin's saved state does not generally transfer between hosting layers. If a session carried a plugin under the standard LV2 or VST3 host and you load the same plugin as a native row (or vice versa), it starts from its defaults — set it up once and save. Legacy sessions containing a JUCE-hosted Audio Unit are the exception: Dusk Studio migrates the component identifier and property-list state to the native AU slot on first load, and the next save writes only the native form.
 
 **LV2-Native** file-backed state (a sampler's loaded bank, a convolution reverb's impulse response) is snapshotted into the session's `state/lv2/` folder on save and travels with the session — including through **Save As**. The folder keeps the previous save as a fallback generation; treat it as part of the session like `audio/`.
 
@@ -1467,7 +1467,7 @@ OOP is supported on:
 - **Windows**: always.
 - **macOS**: requires macOS 14.4 or later. The plugin **editor** is hosted in-process via a shell instance and embeds as a centred modal like the other platforms — see *Opening the editor* above.
 
-Plugins run **in-process by default** — it gives the most responsive plugin editors and the lowest CPU cost. To run third-party binary plugins in the OOP sandbox instead, launch with `DUSKSTUDIO_USE_OOP_PLUGINS=1`; a plugin that crashes or hangs then takes down only the host child, not Dusk Studio. The switch reaches **standard-host rows only** (VST3 / LV2 / AU on the platforms where those load through the standard layer). Native rows — **CLAP**, **LV2-Native**, **VST3-Native** on Linux and macOS — always run in-process and ignore it, as *Native plugin hosting* above says. If the `dusk-studio-plugin-host` binary is missing the loader falls back to in-process automatically. Plugin **scanning** always runs in the sandboxed child, so a plugin that crashes while being probed is blacklisted instead of crashing the app. (Dusk Studio's own bundled plugins always run in-process.)
+Plugins run **in-process by default** — it gives the most responsive plugin editors and the lowest CPU cost. To run third-party binary plugins in the OOP sandbox instead, launch with `DUSKSTUDIO_USE_OOP_PLUGINS=1`; a plugin that crashes or hangs then takes down only the host child, not Dusk Studio. The switch reaches **standard-host rows only** on platforms where a format still uses that layer. Native rows — **CLAP**, **LV2-Native**, and **VST3-Native** on Linux and macOS, plus **AudioUnit** on macOS — always run in-process and ignore it, as *Native plugin hosting* above says. If the `dusk-studio-plugin-host` binary is missing the loader falls back to in-process automatically. Standard-host plugin **scanning** runs in the sandboxed child, so a plugin that crashes while being probed is blacklisted instead of crashing the app; native scanning follows the format-specific rules described under *Scanning*. (Dusk Studio's own bundled plugins always run in-process.)
 
 When a plugin crashes in OOP mode:
 
@@ -1629,7 +1629,7 @@ In addition to MCU support, any control in Dusk Studio can be bound to a MIDI CC
 
 The binding is captured and immediately active. The next time that CC arrives, the control responds.
 
-**Plugin parameters**: right-click a loaded insert slot and choose **MIDI Learn last-touched parameter**. Move the target knob in the plugin's own editor first, then trigger your controller — the binding targets whichever parameter you touched last. This works for standard-host plugins and for every native host on Linux and macOS (CLAP, LV2-Native, VST3-Native), including LV2 plugins whose parameters are atom "patch" properties (JUCE-built LV2s, notably).
+**Plugin parameters**: right-click a loaded insert slot and choose **MIDI Learn last-touched parameter**. Move the target knob in the plugin's own editor first, then trigger your controller — the binding targets whichever parameter you touched last. This works for standard-host plugins and for every native host on Linux and macOS (CLAP, LV2-Native, VST3-Native, and AudioUnit on macOS), including LV2 plugins whose parameters are atom "patch" properties (JUCE-built LV2s, notably).
 
 ## Trigger types
 
