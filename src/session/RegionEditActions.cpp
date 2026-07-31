@@ -374,6 +374,14 @@ struct CloneTrackAction::Impl
     std::vector<uint8_t> multisampleState;
 #endif
 
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    // Native Audio Unit identity and property-list state. Keep the persisted
+    // pair when the component is offline so clone/undo does not discard a
+    // missing unit that can be restored on a later machine.
+    juce::String         auIdentifier;
+    std::vector<uint8_t> auState;
+#endif
+
     // Region / MIDI region content.
     std::vector<AudioRegion> regions;
     std::vector<MidiRegion>  midiRegions;
@@ -448,6 +456,23 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
     s.plugin.descriptor = slot.getDescriptorForSave();
     s.plugin.legacyDescriptionXml = slot.getLegacyDescriptionXmlForSave();
     s.plugin.stateBase64 = slot.getStateBase64ForSave();
+
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    auto& auSlot = engine.getStrip (idx).getNativeAuSlot();
+    if (auSlot.isLoaded())
+    {
+        s.auIdentifier = juce::String::fromUTF8 (auSlot.getPluginId().c_str());
+        auSlot.saveState (s.auState);
+    }
+    else if (t.nativeAuIdentifier.isNotEmpty())
+    {
+        s.auIdentifier = t.nativeAuIdentifier;
+        juce::MemoryBlock state;
+        if (state.fromBase64Encoding (t.nativeAuStateBase64) && state.getSize() > 0)
+            s.auState.assign (static_cast<const uint8_t*> (state.getData()),
+                              static_cast<const uint8_t*> (state.getData()) + state.getSize());
+    }
+#endif
 
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     auto& msSlot = engine.getStrip (idx).getNativeMultisampleSlot();
@@ -555,6 +580,43 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
     // correctly. publishPluginStateForSave does this for ALL slots; for
     // a single track we mirror by hand.
     s.plugin.publishTo (t);
+
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    // Replay after the JUCE slot so the source's one-host winner is preserved.
+    // An empty source identifier also evicts an AU carried by the destination.
+    {
+        auto& strip = engine.getStrip (idx);
+        if (s.auIdentifier.isNotEmpty() || strip.isNativeAuLoaded())
+        {
+            engine.suspendProcessing();
+            bool auLoaded = false;
+            std::string auErr;
+            if (s.auIdentifier.isNotEmpty())
+            {
+                auLoaded = strip.loadNativeAu (s.auIdentifier, auErr);
+                if (auLoaded && ! s.auState.empty())
+                    strip.getNativeAuSlot().loadState (s.auState);
+            }
+            else
+            {
+                strip.unloadNativeAu();
+            }
+            engine.resumeProcessing();
+
+            if (! auLoaded && s.auIdentifier.isNotEmpty())
+            {
+                strip.markNativeAuRestoreFailed();
+                DBG ("CloneTrackAction: Audio Unit restore failed on strip " << idx
+                      << " (" << s.auIdentifier << "): " << auErr.c_str());
+            }
+        }
+
+        t.nativeAuIdentifier = s.auIdentifier;
+        t.nativeAuStateBase64 = s.auState.empty()
+            ? juce::String()
+            : juce::Base64::toBase64 (s.auState.data(), s.auState.size());
+    }
+#endif
 
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     // After the JUCE replay: a multisample load evicts the JUCE slot, so doing

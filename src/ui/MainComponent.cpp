@@ -3287,6 +3287,9 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
             const auto& lane = self->session.auxLane (a);
             for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
                 if (lane.nativeClapPath[(size_t) s].isNotEmpty()
+                    || lane.nativeLv2Path[(size_t) s].isNotEmpty()
+                    || lane.nativeVst3Path[(size_t) s].isNotEmpty()
+                    || lane.nativeAuIdentifier[(size_t) s].isNotEmpty()
                     || lane.pluginDescriptor[(size_t) s].has_value()
                     || lane.pluginLegacyDescriptionXml[(size_t) s].isNotEmpty())
                 { anyAuxInsert = true; break; }
