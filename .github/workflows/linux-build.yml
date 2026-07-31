@@ -77,11 +77,18 @@ jobs:
             modules/juce_dsp/native/juce_SIMDNativeOps_sse.h || {
             echo "ERROR: pinned JUCE missing the SIMDNativeOps<long long> alias." >&2; exit 1; }
 
-      - name: Clone Dusk plugins (donor DSP)
+      - name: Clone Dusk plugins (donor DSP, pinned)
+        # Pinned like the release workflows: an unpinned clone of donor
+        # main HEAD reds these jobs on any donor push with no repo change.
+        # To move the donor forward, bump DONOR_REV everywhere together.
+        env:
+          DONOR_REV: 69f04318e3b7063e382c80ac1cde2388170e668b
         run: |
-          git clone --depth 1 \
-            https://github.com/dusk-audio/dusk-audio-plugins.git \
-            "${RUNNER_TEMP}/plugins-main"
+          git init -q "${RUNNER_TEMP}/plugins-main"
+          cd "${RUNNER_TEMP}/plugins-main"
+          git remote add origin https://github.com/dusk-audio/dusk-audio-plugins.git
+          git fetch --depth 1 origin "${DONOR_REV}"
+          git checkout -q "${DONOR_REV}"
 
       - name: Configure (Release)
         run: |
@@ -172,11 +179,18 @@ jobs:
             modules/juce_dsp/native/juce_SIMDNativeOps_sse.h || {
             echo "ERROR: pinned JUCE missing the SIMDNativeOps<long long> alias." >&2; exit 1; }
 
-      - name: Clone Dusk plugins (donor DSP)
+      - name: Clone Dusk plugins (donor DSP, pinned)
+        # Pinned like the release workflows: an unpinned clone of donor
+        # main HEAD reds these jobs on any donor push with no repo change.
+        # To move the donor forward, bump DONOR_REV everywhere together.
+        env:
+          DONOR_REV: 69f04318e3b7063e382c80ac1cde2388170e668b
         run: |
-          git clone --depth 1 \
-            https://github.com/dusk-audio/dusk-audio-plugins.git \
-            "${RUNNER_TEMP}/plugins-main"
+          git init -q "${RUNNER_TEMP}/plugins-main"
+          cd "${RUNNER_TEMP}/plugins-main"
+          git remote add origin https://github.com/dusk-audio/dusk-audio-plugins.git
+          git fetch --depth 1 origin "${DONOR_REV}"
+          git checkout -q "${DONOR_REV}"
 
       - name: Configure tests
         run: |
