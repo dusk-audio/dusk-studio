@@ -82,8 +82,8 @@ jobs:
           fi
 
       - name: Clone Dusk plugins (donor DSP, pinned)
-        # Pinned like the release workflows: an unpinned clone of donor
-        # main HEAD reds these jobs on any donor push with no repo change.
+        # Fetches the donor at DONOR_REV, matching the release workflows,
+        # so every job builds against the same reproducible donor snapshot.
         # To move the donor forward, bump DONOR_REV everywhere together.
         env:
           DONOR_REV: 69f04318e3b7063e382c80ac1cde2388170e668b

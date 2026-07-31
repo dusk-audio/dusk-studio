@@ -474,6 +474,7 @@ static bool runHeadlessPipelineTest (const juce::String& pluginPath)
 
     auto session = std::make_unique<Session>();
     auto engine  = std::make_unique<AudioEngine> (*session);
+    bool sessionRestoreOk = true;
 
     // The ctor may have opened a real device + added the engine as its callback.
     // This path drives the callback manually below (including the BS-cycle
@@ -517,6 +518,10 @@ static bool runHeadlessPipelineTest (const juce::String& pluginPath)
         {
             std::fprintf (stderr, "FAIL: restoreFromSavedState: %s\n",
                           restoreErr.toRawUTF8());
+            // Keep going for the diagnostics below, but the gate must not
+            // report pass: consumePluginStateAfterLoad's retry can load the
+            // plugin anyway and produce audio despite the restore failure.
+            sessionRestoreOk = false;
         }
         else
         {
@@ -798,7 +803,7 @@ static bool runHeadlessPipelineTest (const juce::String& pluginPath)
 
     std::fprintf (stdout, "=== End of Pipeline Test ===\n");
     std::fflush (stdout);
-    return stripPeak > 1.0e-4f && masterPeak > 1.0e-4f;
+    return sessionRestoreOk && stripPeak > 1.0e-4f && masterPeak > 1.0e-4f;
 }
 
 // DUSKSTUDIO_PERF_SESSION=<path>: load a real session and play it
