@@ -79,6 +79,12 @@ public:
     void*       uridMapFeature()   const noexcept;
     void*       uridUnmapFeature() const noexcept;
 
+    // Bumped every time reactivate() destroys and rebuilds the LilvInstance.
+    // A UI embedded via instance-access/data-access holds handles into the
+    // instance it embedded against; the editor component polls this and
+    // re-embeds on change instead of dereferencing a freed handle.
+    std::uint64_t instanceEpoch() const noexcept;
+
     // UI -> plugin control-port write (ui:floatProtocol). Staged into a lock-free
     // ring; the audio thread applies it at the top of its next processBlock so
     // nothing writes portValues while run() reads it.

@@ -26,6 +26,7 @@ bool Lv2PluginEditorComponent::attach (lv2::Lv2Instance& shared, juce::String& e
     std::string err;
     if (! editor.open (shared, err))
     { errorOut = "editor: " + juce::String (err); return false; }
+    attachedInstance = &shared;
 
     editor.onResize = [this] (int w, int h)
     {
@@ -84,6 +85,7 @@ void Lv2PluginEditorComponent::tryEmbed()
     if (ok)
     {
         embedded = true;
+        embeddedEpoch = attachedInstance != nullptr ? attachedInstance->instanceEpoch() : 0;
         // Adopt the UI's own size once known so the modal/lane can fit to it.
         if (editor.preferredWidth() > 0 && editor.preferredHeight() > 0)
             setSize (embedscale::fromPhysical (*this, editor.preferredWidth()),
@@ -194,6 +196,19 @@ void Lv2PluginEditorComponent::timerCallback()
     // lane was hidden (session restore lands before the AUX tab is first shown)
     // gets no callback when an ANCESTOR becomes visible, so the first embed must
     // also be polled. tryEmbed no-ops until showing.
+    // reactivate() (device rate/block change) frees and rebuilds the
+    // LilvInstance this UI captured via instance-access at embed time. Tear
+    // the UI down BEFORE the pump below can drive its idle interface against
+    // the freed handle, then re-embed against the fresh instance. Reactivate
+    // and this timer both run on the message thread, so the check-then-pump
+    // sequence cannot interleave with the swap.
+    if (embedded && attachedInstance != nullptr
+        && attachedInstance->instanceEpoch() != embeddedEpoch)
+    {
+        editor.close();
+        embedded = false;
+    }
+
     if (embedded)
     {
         if (isShowing()) editor.reveal();
