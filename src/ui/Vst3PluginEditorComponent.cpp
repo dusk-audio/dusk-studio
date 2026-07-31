@@ -1,7 +1,9 @@
 #include "Vst3PluginEditorComponent.h"
 
 #include "EmbeddedModal.h"   // kPluginEditorTag
+#if ! defined(__APPLE__)
 #include "NativeEditorEmbedScale.h"
+#endif
 #include "../engine/vst3/Vst3Instance.h"
 
 #include <algorithm>
@@ -32,27 +34,46 @@ bool Vst3PluginEditorComponent::attach (vst3::Vst3Instance& shared, juce::String
     editor.onResize = [this] (int w, int h)
     {
         if (w > 0 && h > 0)
-            setSize (embedscale::fromPhysical (*this, w),
-                     embedscale::fromPhysical (*this, h));
+            setSize (componentExtentFromEditor (w),
+                     componentExtentFromEditor (h));
     };
 
     if (editor.preferredWidth() > 0 && editor.preferredHeight() > 0)
-        setSize (embedscale::fromPhysical (*this, editor.preferredWidth()),
-                 embedscale::fromPhysical (*this, editor.preferredHeight()));
+        setSize (componentExtentFromEditor (editor.preferredWidth()),
+                 componentExtentFromEditor (editor.preferredHeight()));
     else
         setSize (480, 320);
 
     loaded = true;
     lastPumpMs = juce::Time::getMillisecondCounterHiRes();
-    startTimerHz (60);   // IRunLoop fds/timers + X event drain
+    startTimerHz (60);
     return true;
 }
 
-unsigned long Vst3PluginEditorComponent::peerX11() const
+std::uintptr_t Vst3PluginEditorComponent::peerNativeHandle() const
 {
     if (auto* peer = getPeer())
-        return (unsigned long) (juce::pointer_sized_uint) peer->getNativeHandle();
+        return reinterpret_cast<std::uintptr_t> (peer->getNativeHandle());
     return 0;
+}
+
+juce::Rectangle<int> Vst3PluginEditorComponent::editorBoundsInPeer() const
+{
+    const auto logical = getTopLevelComponent()->getLocalArea (this, getLocalBounds());
+#if defined(__APPLE__)
+    return logical;
+#else
+    return embedscale::toPhysical (*this, logical);
+#endif
+}
+
+int Vst3PluginEditorComponent::componentExtentFromEditor (int extent) const
+{
+#if defined(__APPLE__)
+    return std::max (1, extent);
+#else
+    return embedscale::fromPhysical (*this, extent);
+#endif
 }
 
 void Vst3PluginEditorComponent::tryEmbed()
@@ -62,14 +83,15 @@ void Vst3PluginEditorComponent::tryEmbed()
     // cycle: attached() can fire resizeView synchronously -> onResize -> setSize
     // -> resized() -> tryEmbed again (the LV2 black-rectangle bug).
     if (! loaded || embedded || embedding || ! isShowing()) return;
-    const auto parent = peerX11();
+    const auto parent = peerNativeHandle();
     if (parent == 0) return;
 
+#if defined(__linux__)
     if (auto* peer = getPeer())
         editor.setContentScale ((float) peer->getPlatformScaleFactor());
+#endif
 
-    const auto area = embedscale::toPhysical (
-        *this, getTopLevelComponent()->getLocalArea (this, getLocalBounds()));
+    const auto area = editorBoundsInPeer();
     std::string err;
     embedding = true;
     const bool ok = editor.embed (parent, area.getX(), area.getY(),
@@ -80,8 +102,8 @@ void Vst3PluginEditorComponent::tryEmbed()
         embedded = true;
         // Adopt the view's own size once known so the modal/lane can fit to it.
         if (editor.preferredWidth() > 0 && editor.preferredHeight() > 0)
-            setSize (embedscale::fromPhysical (*this, editor.preferredWidth()),
-                     embedscale::fromPhysical (*this, editor.preferredHeight()));
+            setSize (componentExtentFromEditor (editor.preferredWidth()),
+                     componentExtentFromEditor (editor.preferredHeight()));
         // Re-sync unconditionally: a synchronous resizeView during embed can
         // move this component (modal recentre) while `embedded` was still
         // false, so the moved()/resized() pushes were skipped and the native
@@ -106,8 +128,7 @@ void Vst3PluginEditorComponent::pushBounds()
     // degenerates to (0,0), slamming the native window to the origin. Skip
     // while unparented; parentHierarchyChanged re-syncs once re-added.
     if (getParentComponent() == nullptr || getPeer() == nullptr) return;
-    const auto area = embedscale::toPhysical (
-        *this, getTopLevelComponent()->getLocalArea (this, getLocalBounds()));
+    const auto area = editorBoundsInPeer();
     editor.setBounds (area.getX(), area.getY(),
                       std::max (1, area.getWidth()), std::max (1, area.getHeight()));
 }
@@ -130,6 +151,7 @@ void Vst3PluginEditorComponent::visibilityChanged()
     }
 }
 
+#if defined(__linux__)
 void Vst3PluginEditorComponent::verifyGeometry()
 {
     // The message flow can miss a move (compositor interference, an event
@@ -139,14 +161,13 @@ void Vst3PluginEditorComponent::verifyGeometry()
     if (++geometryCheckTick < 20) return;
     geometryCheckTick = 0;
 
-    const auto area = embedscale::toPhysical (
-        *this, getTopLevelComponent()->getLocalArea (this, getLocalBounds()));
+    const auto area = editorBoundsInPeer();
     int ax = 0, ay = 0, aw = 0, ah = 0;
     if (! embedCheckLogged)
     {
         embedCheckLogged = true;
         int relX = 0, relY = 0;
-        if (editor.getRootRelativePosition (peerX11(), relX, relY))
+        if (editor.getRootRelativePosition (peerNativeHandle(), relX, relY))
             std::fprintf (stderr,
                 "[%s editor] embed check: host rel to peer (%d,%d), intended (%d,%d)\n",
                 "vst3", relX, relY, area.getX(), area.getY());
@@ -173,6 +194,7 @@ void Vst3PluginEditorComponent::verifyGeometry()
         pushBounds();
     }
 }
+#endif
 
 void Vst3PluginEditorComponent::timerCallback()
 {
@@ -186,7 +208,9 @@ void Vst3PluginEditorComponent::timerCallback()
     {
         if (isShowing()) editor.reveal();
         else             editor.hide();
+#if defined(__linux__)
         verifyGeometry();
+#endif
     }
     else
     {

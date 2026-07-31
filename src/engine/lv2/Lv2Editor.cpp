@@ -139,10 +139,12 @@ bool Lv2Editor::open (Lv2Instance& inst, std::string& errorOut)
     return true;
 }
 
-bool Lv2Editor::embed (unsigned long parentX11, int x, int y, int w, int h, std::string& errorOut)
+bool Lv2Editor::embed (std::uintptr_t parentHandle, int x, int y, int w, int h,
+                       std::string& errorOut)
 {
     if (! impl->discovered) { errorOut = "no UI discovered"; return false; }
     if (impl->embedded) return true;
+    if (parentHandle == 0) { errorOut = "null parent window"; return false; }
 
     auto* dpy = XOpenDisplay (nullptr);
     if (dpy == nullptr) { errorOut = "XOpenDisplay failed"; return false; }
@@ -162,7 +164,7 @@ bool Lv2Editor::embed (unsigned long parentX11, int x, int y, int w, int h, std:
     // x11-frames a managed adoption detaches the compositor-side surface
     // from the X-space parent-child position.
     swa.override_redirect = True;
-    impl->hostWindow = XCreateWindow (dpy, (Window) parentX11, x, y,
+    impl->hostWindow = XCreateWindow (dpy, (Window) parentHandle, x, y,
                                       (unsigned) ww, (unsigned) hh, 0,
                                       CopyFromParent, InputOutput, CopyFromParent,
                                       CWBackPixel | CWBorderPixel | CWEventMask | CWOverrideRedirect, &swa);
@@ -245,7 +247,7 @@ void Lv2Editor::setBounds (int x, int y, int w, int h)
     XFlush (dpy);
 }
 
-bool Lv2Editor::getRootRelativePosition (unsigned long referenceWindow,
+bool Lv2Editor::getRootRelativePosition (std::uintptr_t referenceHandle,
                                           int& relX, int& relY) const
 {
     if (! impl->embedded || impl->display == nullptr || impl->hostWindow == 0)
@@ -255,7 +257,7 @@ bool Lv2Editor::getRootRelativePosition (unsigned long referenceWindow,
     int hx = 0, hy = 0, rx = 0, ry = 0;
     if (! XTranslateCoordinates (dpy, (Window) impl->hostWindow,
                                  DefaultRootWindow (dpy), 0, 0, &hx, &hy, &dummy)
-        || ! XTranslateCoordinates (dpy, (Window) referenceWindow,
+        || ! XTranslateCoordinates (dpy, (Window) referenceHandle,
                                     DefaultRootWindow (dpy), 0, 0, &rx, &ry, &dummy))
         return false;
     relX = hx - rx; relY = hy - ry;
