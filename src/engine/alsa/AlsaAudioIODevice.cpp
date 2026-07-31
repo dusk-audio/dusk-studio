@@ -10,6 +10,7 @@
 #include <sys/resource.h>
 #include <pthread.h>
 #include <sched.h>
+#include <vector>
 
 namespace duskstudio
 {
@@ -282,6 +283,15 @@ juce::String cardOfHwId (const juce::String& id)
     return id.fromFirstOccurrenceOf ("hw:", false, false)
              .upToFirstOccurrenceOf (",", false, false);
 }
+
+// Process-lifetime holder for devices whose I/O threads failed to join. Raw
+// pointers are intentional: their live threads may never stop dereferencing
+// the enclosing objects.
+std::vector<AlsaAudioIODevice*>& abandonedDevices()
+{
+    static std::vector<AlsaAudioIODevice*> devices;
+    return devices;
+}
 } // namespace
 
 void AlsaAudioIODevice::setRequestedPeriods (int p) noexcept
@@ -291,6 +301,18 @@ void AlsaAudioIODevice::setRequestedPeriods (int p) noexcept
 int AlsaAudioIODevice::getRequestedPeriods() noexcept
 {
     return gRequestedPeriods.load (std::memory_order_relaxed);
+}
+
+void AlsaAudioIODevice::destroyOrLeak (std::unique_ptr<AlsaAudioIODevice> device)
+{
+    if (device == nullptr)
+        return;
+
+    // This is also the final retry used by settings-driven reopen. If the
+    // thread recovered after an earlier close(), normal destruction resumes.
+    device->close();
+    if (device->ioThreadWasAbandoned())
+        abandonedDevices().push_back (device.release());
 }
 
 // ============================================================================
@@ -308,6 +330,9 @@ AlsaAudioIODevice::AlsaAudioIODevice (const juce::String& name,
 AlsaAudioIODevice::~AlsaAudioIODevice()
 {
     close();
+    // Internal owners route through destroyOrLeak(), so a wedged device must
+    // never reach this point with its thread still accessing members.
+    jassert (! ioThreadWedged);
 }
 
 // ----- Capability queries ----------------------------------------------------
@@ -538,6 +563,19 @@ juce::String AlsaAudioIODevice::open (const juce::BigInteger& inputChannels,
     if (isDeviceOpen.load (std::memory_order_acquire))
         close();
 
+    // close() retries the join and only tears down when it succeeds. If the I/O
+    // thread is still wedged, the handles, the callback state and the scratch
+    // buffers all belong to that live thread: reopening handles over it leaks
+    // them, and re-sizing the buffers frees memory it is reading. Refuse the
+    // reconfiguration; the owner parks this device through destroyOrLeak() and
+    // creates a fresh one.
+    if (ioThreadWedged)
+    {
+        lastError = "the ALSA I/O thread for \"" + displayName + "\" is still running "
+                    "an audio callback; close this device and select it again";
+        return lastError;
+    }
+
     probeIfNeeded();
 
     currentInputChannels  = inputChannels;
@@ -726,14 +764,14 @@ void AlsaAudioIODevice::close()
 {
     stop();
 
-    // A wedged I/O thread may still be inside snd_pcm calls on these
-    // handles; closing them under it is a use-after-free. Leak the device
-    // instead (mirrors stop()'s abandoned teardown).
+    // A wedged I/O thread still dereferences the handles, callback state and
+    // scratch buffers. Release nothing here; the owner will park the whole
+    // device through destroyOrLeak() if the final retry also times out.
     if (ioThreadWedged)
     {
         std::fprintf (stderr,
                       "[Dusk Studio/ALSA] close(): I/O thread still wedged; "
-                      "leaking the device handles\n");
+                      "retaining the whole device for a later retry\n");
         return;
     }
 
@@ -879,8 +917,8 @@ void AlsaAudioIODevice::stop()
     // thread, and the cancellation lands on pthread_cond_timedwait inside the
     // worker-pool join - a cancellation point whose forced unwind exits
     // noexcept frames straight into std::terminate. Cancelling while the
-    // callback holds callbackLock instead deadlocks the swap below and races
-    // snd_pcm_drop against a live handle. The run loop polls
+    // callback holds callbackLock also races snd_pcm_drop against a live
+    // handle. The run loop polls
     // threadShouldExit() with bounded waits, so an alive thread exits within
     // ~one period; anything longer is a wedged callback. Bound the wait like
     // PlaybackEngine::stopPlayback's drain and ABANDON teardown on timeout:
@@ -899,11 +937,25 @@ void AlsaAudioIODevice::stop()
     }
     if (! joined)
     {
+        // The live thread may be wedged inside a client callback holding
+        // callbackLock, so a blocking lock here would defeat the bounded
+        // abandon path. When the lock is free, detach the callback before
+        // parking the device and balance audioDeviceAboutToStart.
+        juce::AudioIODeviceCallback* cb = nullptr;
+        if (callbackLock.tryEnter())
+        {
+            std::swap (cb, callback);
+            callbackLock.exit();
+        }
+        if (cb != nullptr)
+            cb->audioDeviceStopped();
+
         ioThreadWedged = true;
         isStarted.store (true, std::memory_order_release);
         std::fprintf (stderr,
                       "[Dusk Studio/ALSA] stop(): I/O thread did not exit within "
-                      "6 s; abandoning teardown (device left open)\n");
+                      "6 s; abandoning teardown (whole device will be leaked if "
+                      "the final retry also fails)\n");
         return;
     }
     ioThreadWedged = false;

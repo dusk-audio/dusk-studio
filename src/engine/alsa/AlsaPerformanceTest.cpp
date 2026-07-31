@@ -141,14 +141,24 @@ private:
 // snd_pcm_link, readi, and the deinterleave path - the input data isn't
 // analyzed by the buffer-sweep callback, but going through the code paths
 // is what catches duplex-only bugs (link drift, capture xrun, deinterleave
-// stride). Caller owns the device, must stop+close.
-std::unique_ptr<AlsaAudioIODevice> openDuplex (const juce::String& deviceId,
-                                                  unsigned int sampleRate,
-                                                  int          bufferSize,
-                                                  juce::AudioIODeviceCallback* callback,
-                                                  juce::String& errorOut)
+// stride). The abandonment-aware owner parks the whole device if its I/O
+// thread cannot be joined.
+struct AbandonAwareDeleter
 {
-    auto dev = std::make_unique<AlsaAudioIODevice> (deviceId, /*inId*/ deviceId, /*outId*/ deviceId);
+    void operator() (AlsaAudioIODevice* device) const
+    {
+        AlsaAudioIODevice::destroyOrLeak (std::unique_ptr<AlsaAudioIODevice> (device));
+    }
+};
+using AlsaDevicePtr = std::unique_ptr<AlsaAudioIODevice, AbandonAwareDeleter>;
+
+AlsaDevicePtr openDuplex (const juce::String& deviceId,
+                          unsigned int sampleRate,
+                          int          bufferSize,
+                          juce::AudioIODeviceCallback* callback,
+                          juce::String& errorOut)
+{
+    AlsaDevicePtr dev (new AlsaAudioIODevice (deviceId, /*inId*/ deviceId, /*outId*/ deviceId));
     juce::BigInteger outMask, inMask;
     outMask.setRange (0, 2, true);  // bits 0 + 1 of output
     inMask .setRange (0, 2, true);  // bits 0 + 1 of input
@@ -275,12 +285,13 @@ AlsaPerformanceTest::runOpenCloseStress (const Options& opts)
 
     for (int i = 0; i < opts.openCloseCycles; ++i)
     {
-        AlsaAudioIODevice dev (opts.deviceId, /*inId*/ opts.deviceId, /*outId*/ opts.deviceId);
+        AlsaDevicePtr dev (new AlsaAudioIODevice (opts.deviceId, /*inId*/ opts.deviceId,
+                                                  /*outId*/ opts.deviceId));
         juce::BigInteger outMask, inMask;
         outMask.setRange (0, 2, true);
         inMask .setRange (0, 2, true);
 
-        const auto err = dev.open (inMask, outMask, (double) opts.sampleRate, 1024);
+        const auto err = dev->open (inMask, outMask, (double) opts.sampleRate, 1024);
         if (err.isNotEmpty())
         {
             ++failures;
@@ -290,7 +301,7 @@ AlsaPerformanceTest::runOpenCloseStress (const Options& opts)
         }
         // No start/stop - just immediate close. Tests the unstart-then-close
         // path which is hit by "user changed their mind" UI flows.
-        dev.close();
+        dev->close();
     }
 
     r.passed  = failures == 0;
@@ -307,12 +318,13 @@ AlsaPerformanceTest::runStartStopRace (const Options& opts)
     r.testName = "start/stop race";
     r.configuration = juce::String::formatted ("cycles=%d", opts.startStopCycles);
 
-    AlsaAudioIODevice dev (opts.deviceId, /*inId*/ opts.deviceId, /*outId*/ opts.deviceId);
+    AlsaDevicePtr dev (new AlsaAudioIODevice (opts.deviceId, /*inId*/ opts.deviceId,
+                                              /*outId*/ opts.deviceId));
     juce::BigInteger outMask, inMask;
     outMask.setRange (0, 2, true);
     inMask .setRange (0, 2, true);
 
-    const auto err = dev.open (inMask, outMask, (double) opts.sampleRate, 1024);
+    const auto err = dev->open (inMask, outMask, (double) opts.sampleRate, 1024);
     if (err.isNotEmpty())
     {
         r.passed  = false;
@@ -327,7 +339,7 @@ AlsaPerformanceTest::runStartStopRace (const Options& opts)
 
     for (int i = 0; i < opts.startStopCycles; ++i)
     {
-        dev.start (&cb);
+        dev->start (&cb);
         // Brief moment so start() actually fires the device before stop kicks
         // in - 50ms = a few periods at 1024/48k. Without this, the test
         // measures only the queueing layer and misses real start_threshold
@@ -344,7 +356,7 @@ AlsaPerformanceTest::runStartStopRace (const Options& opts)
         // or a deeper open-state inconsistency).
         const int callbacksDuringRun = cb.totalCallbacks();
 
-        dev.stop();
+        dev->stop();
 
         if (callbacksDuringRun == 0)
         {
@@ -354,9 +366,9 @@ AlsaPerformanceTest::runStartStopRace (const Options& opts)
         }
     }
 
-    dev.close();
+    dev->close();
 
-    r.xruns   = dev.getXRunCount();
+    r.xruns   = dev->getXRunCount();
     r.passed  = failures == 0;
     r.verdict = failures == 0
                   ? juce::String ("SAFE")

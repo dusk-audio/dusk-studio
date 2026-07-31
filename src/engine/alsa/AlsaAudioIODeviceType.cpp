@@ -5,6 +5,48 @@
 
 namespace duskstudio
 {
+namespace
+{
+// JUCE's AudioDeviceManager owns AudioIODevice through a plain unique_ptr. The
+// handle gives that ownership boundary an abandonment-aware destructor so a
+// live, wedged AlsaAudioIODevice is parked rather than deleted.
+class AlsaDeviceHandle final : public juce::AudioIODevice
+{
+public:
+    explicit AlsaDeviceHandle (std::unique_ptr<AlsaAudioIODevice> d)
+        : juce::AudioIODevice (d->getName(), d->getTypeName()), device (std::move (d)) {}
+
+    ~AlsaDeviceHandle() override { AlsaAudioIODevice::destroyOrLeak (std::move (device)); }
+
+    AlsaAudioIODevice& inner() const noexcept { return *device; }
+
+    juce::StringArray getOutputChannelNames() override             { return device->getOutputChannelNames(); }
+    juce::StringArray getInputChannelNames() override              { return device->getInputChannelNames(); }
+    juce::Array<double> getAvailableSampleRates() override         { return device->getAvailableSampleRates(); }
+    juce::Array<int> getAvailableBufferSizes() override            { return device->getAvailableBufferSizes(); }
+    int getDefaultBufferSize() override                            { return device->getDefaultBufferSize(); }
+    juce::String open (const juce::BigInteger& in, const juce::BigInteger& out,
+                       double rate, int size) override             { return device->open (in, out, rate, size); }
+    void close() override                                          { device->close(); }
+    bool isOpen() override                                         { return device->isOpen(); }
+    void start (juce::AudioIODeviceCallback* cb) override          { device->start (cb); }
+    void stop() override                                           { device->stop(); }
+    bool isPlaying() override                                      { return device->isPlaying(); }
+    juce::String getLastError() override                           { return device->getLastError(); }
+    int getCurrentBufferSizeSamples() override                     { return device->getCurrentBufferSizeSamples(); }
+    double getCurrentSampleRate() override                         { return device->getCurrentSampleRate(); }
+    int getCurrentBitDepth() override                              { return device->getCurrentBitDepth(); }
+    juce::BigInteger getActiveOutputChannels() const override      { return device->getActiveOutputChannels(); }
+    juce::BigInteger getActiveInputChannels() const override       { return device->getActiveInputChannels(); }
+    int getOutputLatencyInSamples() override                       { return device->getOutputLatencyInSamples(); }
+    int getInputLatencyInSamples() override                        { return device->getInputLatencyInSamples(); }
+    int getXRunCount() const noexcept override                     { return device->getXRunCount(); }
+
+private:
+    std::unique_ptr<AlsaAudioIODevice> device;
+};
+} // namespace
+
 AlsaAudioIODeviceType::AlsaAudioIODeviceType()
     : juce::AudioIODeviceType ("ALSA")
 {
@@ -141,8 +183,11 @@ int AlsaAudioIODeviceType::getDefaultDeviceIndex (bool forInput) const
 int AlsaAudioIODeviceType::getIndexOfDevice (juce::AudioIODevice* device, bool asInput) const
 {
     jassert (hasScanned);
-    if (auto* alsa = dynamic_cast<AlsaAudioIODevice*> (device))
-        return (asInput ? inputIds : outputIds).indexOf (asInput ? alsa->inputId : alsa->outputId);
+    if (auto* handle = dynamic_cast<AlsaDeviceHandle*> (device))
+    {
+        const auto& alsa = handle->inner();
+        return (asInput ? inputIds : outputIds).indexOf (asInput ? alsa.inputId : alsa.outputId);
+    }
     return -1;
 }
 
@@ -160,7 +205,7 @@ juce::AudioIODevice* AlsaAudioIODeviceType::createDevice (const juce::String& ou
     const juce::String inId  = inIdx  >= 0 ? inputIds [inIdx]  : juce::String();
     const juce::String name  = outIdx >= 0 ? outputDeviceName : inputDeviceName;
 
-    return new AlsaAudioIODevice (name, inId, outId);
+    return new AlsaDeviceHandle (std::make_unique<AlsaAudioIODevice> (name, inId, outId));
 }
 
 void AlsaAudioIODeviceType::rescan()
