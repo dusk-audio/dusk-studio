@@ -1367,6 +1367,7 @@ juce::String AudioPipelineSelfTest::testAudioPlayAlongSends()
     engine.getPlaybackEngine().stopPlayback();   // tear down the probe's temp readers
     t0.frozen.store (savedFrozen, std::memory_order_release);
     t0.regions = std::move (savedRegions);
+    engine.getPlaybackEngine().preparePlayback(); // rebuild track 0 from its restored regions
     ts0.auxSendDb[0].store (savedSend, std::memory_order_relaxed);
     aux0.mute.store           (savedAuxMute, std::memory_order_relaxed);
     aux0.returnLevelDb.store  (savedAuxRet,  std::memory_order_relaxed);

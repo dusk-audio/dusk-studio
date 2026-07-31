@@ -1749,23 +1749,28 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
             if (b == 120)
             {
                 std::fprintf (stdout, "[Replace] swap B -> A (forces A's prev destructor in PluginSlot)...\n");
-                juce::PluginDescription descA;
-                if (auto* p = slot.getInstance())
-                    p->fillInPluginDescription (descA);
-                // Re-resolve A via the manager so we have a clean desc.
+                // Resolve A through the manager. The slot currently holds B, so
+                // there is no in-slot description to fall back on - a failed
+                // resolve has to fail the test rather than reload B.
                 auto& mgr = engine->getPluginManager();
                 juce::String scanErr;
                 auto probe = mgr.createPluginInstance (juce::File (pathA),
                                                           sampleRate, blockSize, scanErr);
-                if (probe != nullptr)
+                if (probe == nullptr)
                 {
+                    std::fprintf (stderr, "FAIL: scan A: %s\n", scanErr.toRawUTF8());
+                    swapsOk = false;
+                }
+                else
+                {
+                    juce::PluginDescription descA;
                     probe->fillInPluginDescription (descA);
                     probe.reset();
-                }
-                if (! slot.loadFromDescription (descA, err))
-                {
-                    std::fprintf (stderr, "FAIL: swap B->A: %s\n", err.toRawUTF8());
-                    swapsOk = false;
+                    if (! slot.loadFromDescription (descA, err))
+                    {
+                        std::fprintf (stderr, "FAIL: swap B->A: %s\n", err.toRawUTF8());
+                        swapsOk = false;
+                    }
                 }
             }
         }
