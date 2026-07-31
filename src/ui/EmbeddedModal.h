@@ -307,8 +307,11 @@ public:
     // message-thread state and crash compositors on next X11 round.
     void close (bool restoreFocus = true)
     {
-        if (host == nullptr) return;
-
+        // Registry / listener / editor cleanup runs even when the host died
+        // with the modal open (host is a SafePointer that nulls): bailing
+        // out first left a dangling entry in activeModalStack() - which the
+        // next close() dereferences - plus a leaked Desktop mouse listener
+        // and plugin editors stuck hidden behind orphaned hide tokens.
         removeFromModalStack();
         stopListeningForOutsideClicks();
 
@@ -316,6 +319,26 @@ public:
         // down the modal body. Done first so their setVisible(true)
         // doesn't fight with the message-loop teardown path below.
         restoreHiddenPluginEditors();
+
+        if (host == nullptr)
+        {
+            // The host's children went down with it, so only the owned
+            // objects and callbacks need dropping - and no body callback of
+            // ours can be on the stack, so in-place destruction is safe.
+            // No focus to restore: the hierarchy that owned it is gone.
+            if (borrowedBody_ != nullptr)
+            {
+                borrowedBody_->removeKeyListener (this);
+                borrowedBody_->removeComponentListener (this);
+                borrowedBody_ = nullptr;
+            }
+            body_.reset();
+            backdrop_.reset();
+            dim_.reset();
+            userOnDismiss = {};
+            userOnDismissOutside = {};
+            return;
+        }
 
         host->removeComponentListener (this);
         if (body_         != nullptr) host->removeChildComponent (body_.get());
@@ -506,6 +529,14 @@ private:
         juce::Component* hit = backdrop_ != nullptr ? backdrop_.get() : getBody();
         if (hit != nullptr && hit->getScreenBounds().contains (e.getScreenPosition()))
             return;
+
+        // Every listening modal's global listener receives the same physical
+        // click, and once this layer pops itself off the stack the next
+        // listener's topmost guard passes too - one click would dismiss two
+        // stacked layers. Mark the event consumed so lower layers skip it.
+        static juce::Time lastConsumedOutsideClick;
+        if (e.eventTime == lastConsumedOutsideClick) return;
+        lastConsumedOutsideClick = e.eventTime;
 
         // Keep the callback alive across close(), which clears the dismiss
         // callbacks. Prefer the outside-click callback so the clicked control

@@ -331,6 +331,12 @@ public:
     {
         if (useGrid)
         {
+            // The viewport width just changed; re-derive the scroll extent
+            // before clamping, or the clamp runs against the stale layout.
+            const int totalCols = (int) columns.size();
+            const int contentW  = totalCols > 0
+                                    ? totalCols * colWidth + (totalCols - 1) * kColGap : 0;
+            maxHScroll = juce::jmax (0, contentW - gridViewport().getWidth());
             setHScroll (hScroll);
             ensureColumnVisible (hoverCol);
         }
