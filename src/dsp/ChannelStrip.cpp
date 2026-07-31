@@ -689,6 +689,20 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             for (auto& s : busGain)     s.getNextValue();
             for (auto& s : auxSendGain) s.getNextValue();
         }
+        // The PDC lines still hold the last pdcAppliedSamples of pre-skip
+        // audio; a plain return would freeze it there and replay it into the
+        // mix on the next passing block (un-mute / un-solo). Output is cut
+        // for the whole skip, so the tail is dropped: clear the lines once
+        // and mark them drained, which also lets relatchPdcIfDrained take a
+        // pending latency retarget click-free on the next full pass.
+        // pdcSilentRun doubles as the once-latch - the full path zeroes it
+        // again on the first loud block.
+        if (pdcAppliedSamples > 0 && pdcSilentRun < (std::int64_t) kMaxPdcSamples)
+        {
+            pdcDelayL.reset();
+            pdcDelayR.reset();
+            pdcSilentRun = (std::int64_t) kMaxPdcSamples;
+        }
         return;
     }
 
@@ -889,6 +903,12 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 for (int i = 0; i < numSamples; ++i)
                 {
                     pdcDelayL.pushSample (tempMono[(size_t) i]);
+                    // Keep the R line fed with the same signal: a mono ->
+                    // stereo width flip that keeps the PDC length (so
+                    // relatchPdcIfDrained never resets) would otherwise
+                    // replay the R line's stale tail.
+                    pdcDelayR.pushSample (tempMono[(size_t) i]);
+                    pdcDelayR.popSample();
                     tempMono[(size_t) i] = pdcDelayL.popSample();
                 }
         }
