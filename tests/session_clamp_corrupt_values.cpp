@@ -140,3 +140,62 @@ TEST_CASE ("SessionSerializer::load sorts master automation + survives non-finit
 
     target.getParentDirectory().deleteRecursively();
 }
+
+TEST_CASE ("SessionSerializer::load defaults present invalid master floats",
+           "[session][serializer][corruption]")
+{
+    const auto target = writeSession (R"JSON(
+    {
+      "version": 3,
+      "master": {
+        "eq_lf_boost": "not-a-number",
+        "eq_lf_atten": 3.5,
+        "comp_thresh_db": 1e40
+      }
+    }
+    )JSON");
+
+    Session s;
+    s.master().eqLfBoost.store (7.0f);
+    s.master().eqLfAtten.store (8.0f);
+    s.master().compThreshDb.store (-12.0f);
+    s.master().compRatio.store (2.0f);
+
+    REQUIRE (SessionSerializer::load (s, target));
+    REQUIRE_THAT (s.master().eqLfBoost.load(), WithinAbs (0.0f, 1e-6f));
+    REQUIRE_THAT (s.master().eqLfAtten.load(), WithinAbs (3.5f, 1e-6f));
+    REQUIRE_THAT (s.master().compThreshDb.load(), WithinAbs (0.0f, 1e-6f));
+    // A missing key in a present master section retains the live value.
+    REQUIRE_THAT (s.master().compRatio.load(), WithinAbs (2.0f, 1e-6f));
+
+    target.getParentDirectory().deleteRecursively();
+}
+
+TEST_CASE ("SessionSerializer::load defaults present invalid master bools",
+           "[session][serializer][corruption]")
+{
+    const auto target = writeSession (R"JSON(
+    {
+      "version": 3,
+      "master": {
+        "eq_enabled": "maybe",
+        "comp_enabled": true,
+        "comp_release_auto": "maybe"
+      }
+    }
+    )JSON");
+
+    Session s;
+    s.master().eqEnabled.store (true);
+    s.master().compEnabled.store (false);
+    s.master().compReleaseAuto.store (false);
+
+    REQUIRE (SessionSerializer::load (s, target));
+    // Model defaults, not a blanket false: auto-release defaults to ON, so a
+    // corrupt value must not silently switch the bus comp to manual release.
+    REQUIRE (s.master().eqEnabled.load() == false);
+    REQUIRE (s.master().compEnabled.load() == true);
+    REQUIRE (s.master().compReleaseAuto.load() == true);
+
+    target.getParentDirectory().deleteRecursively();
+}

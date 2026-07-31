@@ -1807,10 +1807,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                                                       const char* key)
         {
             if (json::has (master, key))
-            {
-                const float v = json::getFloat (master, key, 0.0f);
-                if (std::isfinite (v)) dst.store (v);   // reject NaN/inf from a corrupt file - keep the default
-            }
+                dst.store (finiteFloatOr (master[key], def.load()));
             else if (! haveMaster)
                 dst.store (def.load());
         };
@@ -1818,7 +1815,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                                                      const std::atomic<bool>& def,
                                                      const char* key)
         {
-            if (json::has (master, key)) dst.store (json::getBool (master, key, false));
+            if (json::has (master, key)) dst.store (json::getBool (master, key, def.load()));
             else if (! haveMaster)       dst.store (def.load());
         };
         loadMasterBool  (s.master().eqEnabled,           kMasterDefaults.eqEnabled,           "eq_enabled");
