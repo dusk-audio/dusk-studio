@@ -864,7 +864,19 @@ void AlsaAudioIODevice::stop()
 
     isStarted.store (false, std::memory_order_release);
     signalThreadShouldExit();
-    stopThread (2000);
+    // Join without a kill: stopThread's timeout path pthread_cancels the I/O
+    // thread, and the cancellation lands on pthread_cond_timedwait inside the
+    // worker-pool join - a cancellation point whose forced unwind exits
+    // noexcept frames straight into std::terminate. Cancelling while the
+    // callback holds callbackLock instead deadlocks the swap below and races
+    // snd_pcm_drop against a live handle. The run loop polls
+    // threadShouldExit() with bounded waits, so an alive thread exits within
+    // ~one period; anything longer is a wedged callback that a cancel would
+    // only turn into an abort. Wait it out and say so.
+    while (! waitForThreadToExit (2000))
+        std::fprintf (stderr,
+                      "[Dusk Studio/ALSA] stop(): waiting for the I/O thread "
+                      "to exit (audio callback still running)\n");
 
     juce::AudioIODeviceCallback* cb = nullptr;
     {
