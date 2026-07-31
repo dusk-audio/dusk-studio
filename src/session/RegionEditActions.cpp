@@ -683,10 +683,16 @@ bool JoinRegionsAction::perform()
     // Latest end over ALL regions, not back()'s end: regions are sorted by
     // start, and an earlier-starting region can outlast the last-starting
     // one (overlap/containment). back()'s end would undersize the slow
-    // path's mix buffer and the merged length.
+    // path's mix buffer and the merged length. The latest-ending region is
+    // also the one whose audio closes the merged result, so its fade-out is
+    // the one both paths carry over.
     std::int64_t lastEnd = firstStart;
+    const AudioRegion* latestEnding = &beforeRegions.front();
     for (const auto& r : beforeRegions)
-        lastEnd = std::max (lastEnd, r.timelineStart + r.lengthInSamples);
+    {
+        const auto end = r.timelineStart + r.lengthInSamples;
+        if (end > lastEnd) { lastEnd = end; latestEnding = &r; }
+    }
     const auto totalLen = lastEnd - firstStart;
 
     // Sort descending so the larger indices erase first and the smaller
@@ -697,14 +703,15 @@ bool JoinRegionsAction::perform()
     if (sameFile && abuts)
     {
         // Cheap merge: keep the leading region, extend its length, drop
-        // the rest. Outer fadeIn / fadeOutShape from first / last are
-        // preserved; inner fades vanish along with the joints.
+        // the rest. Outer fadeIn from the first and fadeOut from the
+        // latest-ending region are preserved; inner fades vanish along
+        // with the joints.
         AudioRegion merged = beforeRegions.front();
         merged.timelineStart   = firstStart;
         merged.sourceOffset    = firstSrcOffset;
         merged.lengthInSamples = totalLen;
-        merged.fadeOutSamples  = beforeRegions.back().fadeOutSamples;
-        merged.fadeOutShape    = beforeRegions.back().fadeOutShape;
+        merged.fadeOutSamples  = latestEnding->fadeOutSamples;
+        merged.fadeOutShape    = latestEnding->fadeOutShape;
         merged.previousTakes   = beforeRegions.front().previousTakes;
 
         // indices is timeline-sorted, so the lead (earliest-starting) region
@@ -796,8 +803,8 @@ bool JoinRegionsAction::perform()
     merged.numChannels     = chs;
     merged.fadeInSamples   = beforeRegions.front().fadeInSamples;
     merged.fadeInShape     = beforeRegions.front().fadeInShape;
-    merged.fadeOutSamples  = beforeRegions.back().fadeOutSamples;
-    merged.fadeOutShape    = beforeRegions.back().fadeOutShape;
+    merged.fadeOutSamples  = latestEnding->fadeOutSamples;
+    merged.fadeOutShape    = latestEnding->fadeOutShape;
     merged.previousTakes.clear();
 
     // Same lead-index adjustment as the fast path above.

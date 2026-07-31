@@ -1591,6 +1591,7 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
         rangeEndSample   = rangeStartSample;
         rangeActive      = false;   // becomes true once the drag distance > 0
         dragMode         = DragMode::Range;
+        refreshStatusBarReadouts();
         repaint();
         return;
     }
@@ -1756,6 +1757,7 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
             rangeEndSample   = rangeStartSample;
             rangeActive      = false;
             dragMode         = DragMode::Range;
+            refreshStatusBarReadouts();
             repaint();
             return;
         }
@@ -2052,6 +2054,7 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
         const auto snappedFileSample = snapFileSampleToTimelineGrid (sampleForX (e.x, waveArea));
         rangeEndSample = snappedFileSample;
         rangeActive = (rangeEndSample != rangeStartSample);
+        refreshStatusBarReadouts();
         repaint();
         return;
     }
@@ -2212,6 +2215,7 @@ void AudioRegionEditor::mouseUp (const juce::MouseEvent&)
         rangeActive = (rangeEndSample > rangeStartSample);
         dragMode = DragMode::None;
         snapGuideTimelineSample = -1;
+        refreshStatusBarReadouts();
         repaint();
         return;
     }
@@ -2566,6 +2570,7 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
         if (rangeActive)
         {
             rangeActive = false;
+            refreshStatusBarReadouts();
             repaint();
             return true;
         }
