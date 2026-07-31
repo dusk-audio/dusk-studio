@@ -152,6 +152,12 @@ void LoudnessMeter::process (const float* L, const float* R, int numSamples) noe
 {
     if (sr <= 0.0 || L == nullptr || R == nullptr) return;
 
+    // Deferred requestReset(): applied on this thread so the history clear
+    // and ring wipes never race a concurrent process() pass. prepare()'s
+    // reserve keeps the clear-and-refill allocation-free.
+    if (resetRequested.exchange (false, std::memory_order_acquire))
+        reset();
+
     // K-weighted block accumulation (LUFS)
     for (int i = 0; i < numSamples; ++i)
     {
