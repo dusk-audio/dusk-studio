@@ -153,7 +153,8 @@ private:
 
     // Drive one offline callback block. A concurrent process-gate early-out
     // does not advance engine state, so wait for the gate and retry instead of
-    // committing its silent output. Returns false only when cancelled.
+    // committing its silent output. Returns false when cancelled or when the
+    // process gate stays raised past the bounded retry window.
     bool processOfflineBlock (const float* const* inputChannelData,
                               int numInputChannels,
                               float* const* outputChannelData,

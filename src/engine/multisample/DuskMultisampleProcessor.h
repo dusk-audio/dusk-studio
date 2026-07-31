@@ -176,10 +176,8 @@ private:
 
     double currentSampleRate { 48000.0 };
     int    currentBlockSize  { 512 };
-    // Written on the loadPool thread, read on the message thread
-    // (state save, editor polls). juce::String is refcounted COW - a
-    // concurrent assign corrupts the refcount - so every access goes
-    // through loadInfoLock.
+    // Written on the load worker and read by state saves / editor polls.
+    // juce::String is refcounted COW, so readers take snapshot copies.
     juce::String loadedFilePath;     // empty when no file loaded
     juce::String lastLoadError;      // most recent setState / load failure
     mutable juce::CriticalSection loadInfoLock;

@@ -3358,7 +3358,7 @@ void AudioRegionEditor::layoutStatusBar (juce::Rectangle<int> area)
     inner.removeFromLeft (4);
     fadeLabel    .setBounds (inner.removeFromLeft (162));
     inner.removeFromLeft (4);
-    samplesLabel .setBounds (inner.removeFromLeft (166));
+    samplesLabel .setBounds (inner.removeFromLeft (220));
     inner.removeFromLeft (10);
 
     // Right-aligned cluster: lock, mute, info readout.
