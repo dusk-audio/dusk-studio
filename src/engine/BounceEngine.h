@@ -151,6 +151,16 @@ private:
     // must unwind without touching engine state.
     bool runOnMessageThread (std::function<void()> fn);
 
+    // Drive one offline callback block. A concurrent process-gate early-out
+    // does not advance engine state, so wait for the gate and retry instead of
+    // committing its silent output. Returns false only when cancelled.
+    bool processOfflineBlock (const float* const* inputChannelData,
+                              int numInputChannels,
+                              float* const* outputChannelData,
+                              int numOutputChannels,
+                              int numSamples,
+                              const juce::AudioIODeviceCallbackContext& context);
+
     AudioEngine& engine;
     Session&     session;
     juce::AudioDeviceManager& deviceManager;

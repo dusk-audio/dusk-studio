@@ -78,3 +78,33 @@ TEST_CASE ("LoudnessMeter true peak tracks a hot signal", "[dsp][loudness]")
     REQUIRE (m.getTruePeakDb() < 1.5f);
     REQUIRE (m.getMomentaryLufs() > -30.0f);   // a hot tone is loud
 }
+
+TEST_CASE ("LoudnessMeter requestReset zeroes readings and drops the history", "[dsp][loudness]")
+{
+    constexpr double sr     = 48000.0;
+    constexpr double kTwoPi = 6.283185307179586476925286766559;
+    constexpr int    kSecond = 48000;
+    duskstudio::LoudnessMeter m;
+    m.prepare (sr, 512);
+
+    std::vector<float> L ((size_t) kSecond), R ((size_t) kSecond);
+    for (int i = 0; i < kSecond; ++i)
+        L[(size_t) i] = R[(size_t) i] = 0.5f * (float) std::sin (kTwoPi * 997.0 * i / sr);
+    for (int off = 0; off < kSecond; off += 512)
+        m.process (L.data() + off, R.data() + off, std::min (512, kSecond - off));
+    const float loud = m.getIntegratedLufs();
+    REQUIRE (loud > -40.0f);
+
+    // Published readings zero immediately, before any further processing.
+    m.requestReset();
+    REQUIRE_THAT (m.getIntegratedLufs(), WithinAbs (-100.0f, 1e-6f));
+    REQUIRE_THAT (m.getTruePeakDb(),     WithinAbs (-100.0f, 1e-6f));
+
+    // Quiet program after the reset: integrated must reflect only the new
+    // material (fresh block history), not an average with pre-reset blocks.
+    for (auto& v : L) v *= 0.01f;
+    for (auto& v : R) v *= 0.01f;
+    for (int off = 0; off < kSecond; off += 512)
+        m.process (L.data() + off, R.data() + off, std::min (512, kSecond - off));
+    REQUIRE (m.getIntegratedLufs() < loud - 20.0f);
+}

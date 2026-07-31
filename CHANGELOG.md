@@ -17,7 +17,8 @@ interfaces that misreport their round-trip latency.
   interfaces whose reported latency leaves overdubs drifting. Count-in, the
   write gate, and MIDI placement are unaffected; a shift that would cross
   timeline zero trims the take's head instead of playing it late, and a take
-  fully consumed by the offset is surfaced rather than silently discarded.
+  fully consumed by the offset is discarded with a visible warning rather
+  than silently.
 - **Sample readout in the region editor.** The status bar shows the cursor
   position - or range start and length - in raw samples, so a loopback
   calibration recording can be measured directly.

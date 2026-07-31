@@ -79,6 +79,31 @@ bool BounceEngine::runOnMessageThread (std::function<void()> fn)
     return true;
 }
 
+bool BounceEngine::processOfflineBlock (
+    const float* const* inputChannelData,
+    int numInputChannels,
+    float* const* outputChannelData,
+    int numOutputChannels,
+    int numSamples,
+    const juce::AudioIODeviceCallbackContext& context)
+{
+    while (! cancelRequested.load (std::memory_order_relaxed))
+    {
+        const auto gatedBefore = engine.getGatedBlockCount();
+        engine.audioDeviceIOCallbackWithContext (inputChannelData,
+                                                  numInputChannels,
+                                                  outputChannelData,
+                                                  numOutputChannels,
+                                                  numSamples,
+                                                  context);
+        if (engine.getGatedBlockCount() == gatedBefore)
+            return true;
+
+        juce::Thread::sleep (1);
+    }
+    return false;
+}
+
 std::unique_ptr<juce::AudioFormatWriter>
 BounceEngine::makeWriter (std::unique_ptr<juce::FileOutputStream> outStream,
                             juce::String& errOut) const
@@ -394,9 +419,10 @@ void BounceEngine::run()
         // Reset outputs each block.
         for (auto& o : outputs) std::fill (o.begin(), o.end(), 0.0f);
 
-        engine.audioDeviceIOCallbackWithContext (inputPtrs.data(), kNumIn,
-                                                   outputPtrs.data(), kNumChannels,
-                                                   remaining, ctx);
+        if (! processOfflineBlock (inputPtrs.data(), kNumIn,
+                                    outputPtrs.data(), kNumChannels,
+                                    remaining, ctx))
+            break;
 
         // Drop the leading PDC samples, then write the rest.
         int writeStart = 0;
@@ -561,9 +587,10 @@ bool BounceEngine::renderOneStem (const juce::File& outFile,
 
         for (auto& o : outputs) std::fill (o.begin(), o.end(), 0.0f);
 
-        engine.audioDeviceIOCallbackWithContext (inputPtrs.data(), kNumIn,
-                                                   outputPtrs.data(), kNumChannels,
-                                                   remaining, ctx);
+        if (! processOfflineBlock (inputPtrs.data(), kNumIn,
+                                    outputPtrs.data(), kNumChannels,
+                                    remaining, ctx))
+            break;
 
         int writeStart = 0;
         if (dropped < leadIn)
@@ -874,9 +901,10 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
         std::fill (capL.begin(), capL.end(), 0.0f);
         std::fill (capR.begin(), capR.end(), 0.0f);
 
-        engine.audioDeviceIOCallbackWithContext (inputPtrs.data(), kNumIn,
-                                                   outputPtrs.data(), kNumChannels,
-                                                   remaining, ctx);
+        if (! processOfflineBlock (inputPtrs.data(), kNumIn,
+                                    outputPtrs.data(), kNumChannels,
+                                    remaining, ctx))
+            break;
 
         int writeStart = 0;
         if (dropped < leadIn)

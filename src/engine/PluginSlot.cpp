@@ -1181,20 +1181,35 @@ bool PluginSlot::restoreFromSavedState (const juce::String& descriptionXml,
     }
 
     ownedInstance = std::move (fresh);
-    if (hostPlayHead != nullptr)
-        ownedInstance->setPlayHead (hostPlayHead);
-    cachedLatencySamples.store (ownedInstance->getLatencySamples(),
-                                  std::memory_order_relaxed);
-    // Re-install the last-touched listener on the restored instance so
-    // MIDI Learn's "last-touched parameter" works after session reload.
-    // Pre-existing miss: the OOP path inherits its own listener
-    // machinery on the child side, but the in-process fallback dropped
-    // it on the floor.
-    lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
-    lastTouchedListener = std::make_unique<LastTouchedListener> (lastTouchedParamIndex);
-    for (auto* p : ownedInstance->getParameters())
-        if (p != nullptr) p->addListener (lastTouchedListener.get());
-    currentInstance.store (ownedInstance.get(), std::memory_order_release);
+    {
+        // Same watchdog reset as loadFromFile / installInProcessInstance -
+        // autoBypassed is cleared nowhere else, so without this a slot whose
+        // plugin tripped the time-budget watchdog stays silently bypassed
+        // across a session load. Blocking-acquire the process lock so an
+        // audio block still running against the parked instance drains
+        // first; its overrun accounting could otherwise land after the
+        // clear and re-bypass the freshly restored plugin. Held through the
+        // publish; the audio side only try-locks, so it dry-passes instead
+        // of spinning.
+        const juce::SpinLock::ScopedLockType processGuard (processLock);
+        blocksSinceLoad     = 0;
+        consecutiveOverruns = 0;
+        autoBypassed.store (false, std::memory_order_relaxed);
+        if (hostPlayHead != nullptr)
+            ownedInstance->setPlayHead (hostPlayHead);
+        cachedLatencySamples.store (ownedInstance->getLatencySamples(),
+                                      std::memory_order_relaxed);
+        // Re-install the last-touched listener on the restored instance so
+        // MIDI Learn's "last-touched parameter" works after session reload.
+        // Pre-existing miss: the OOP path inherits its own listener
+        // machinery on the child side, but the in-process fallback dropped
+        // it on the floor.
+        lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
+        lastTouchedListener = std::make_unique<LastTouchedListener> (lastTouchedParamIndex);
+        for (auto* p : ownedInstance->getParameters())
+            if (p != nullptr) p->addListener (lastTouchedListener.get());
+        currentInstance.store (ownedInstance.get(), std::memory_order_release);
+    }
     offlineDescriptionXml.clear();
     offlineStateBase64.clear();
     return true;

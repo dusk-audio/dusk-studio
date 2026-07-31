@@ -83,7 +83,10 @@ int MasteringChain::readScopeLatest (float* dest, int count) const noexcept
 
 void MasteringChain::resetLoudness()
 {
-    loudnessMeter.reset();
+    // Message-thread entry (MasteringView's Reset I button) while the audio
+    // thread may be inside loudnessMeter.process() - defer, never reset
+    // directly.
+    loudnessMeter.requestReset();
 }
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
