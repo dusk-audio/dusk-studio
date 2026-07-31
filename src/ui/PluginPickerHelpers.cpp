@@ -553,6 +553,14 @@ void openPickerMenu (PluginSlot& slot,
         // successful async load).
         if (desc.backend == PluginBackend::Native)
         {
+            // AU first: its location is a component identifier, not a path, so
+            // building a juce::File from it would trip the absolute-path assert
+            // and resolve against the working directory.
+            if (desc.formatName == "AudioUnit")
+            {
+                if (onPickNativeAu) onPickNativeAu (juce::String (desc.location));
+                return;
+            }
             const juce::File bundle (desc.location);
             const juce::String pluginId (desc.pluginId);
             if (desc.formatName == "CLAP")
@@ -561,8 +569,6 @@ void openPickerMenu (PluginSlot& slot,
             { if (onPickNativeLv2)  onPickNativeLv2  (bundle, pluginId); }
             else if (desc.formatName == "VST3")
             { if (onPickNativeVst3) onPickNativeVst3 (bundle, pluginId); }
-            else if (desc.formatName == "AudioUnit")
-            { if (onPickNativeAu) onPickNativeAu (juce::String (desc.location)); }
             return;
         }
 

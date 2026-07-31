@@ -274,13 +274,20 @@ juce::Rectangle<int> AuPluginEditorComponent::editorBoundsInPeer() const
 
 void AuPluginEditorComponent::tryEmbed()
 {
-    if (! loaded || embedded || ! isShowing()) return;
+    // `embedding` breaks re-entry: addSubview can let the plugin's view run
+    // AppKit work that ticks this component's timer, and AuEditor only marks
+    // itself embedded at the END - a nested call would build a second container.
+    if (! loaded || embedded || embedding || ! isShowing()) return;
     const auto parent = peerNativeHandle();
     if (parent == 0) return;
     const auto area = editorBoundsInPeer();
     std::string error;
-    if (! editor.embed (parent, area.getX(), area.getY(),
-                        std::max (1, area.getWidth()), std::max (1, area.getHeight()), error))
+    embedding = true;
+    const bool ok = editor.embed (parent, area.getX(), area.getY(),
+                                  std::max (1, area.getWidth()),
+                                  std::max (1, area.getHeight()), error);
+    embedding = false;
+    if (! ok)
     {
         std::fprintf (stderr, "[au editor] embed failed: %s\n", error.c_str());
         loaded = false;

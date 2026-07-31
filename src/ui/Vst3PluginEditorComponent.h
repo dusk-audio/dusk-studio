@@ -89,6 +89,7 @@ private:
     au::AuEditor editor;
     bool loaded = false;
     bool embedded = false;
+    bool embedding = false;   // guards re-entry while embed() is adding subviews
 };
 #endif
 } // namespace duskstudio

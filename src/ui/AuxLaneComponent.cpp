@@ -1232,6 +1232,9 @@ void AuxLaneComponent::loadNativeAuForSlot (int slotIdx, const juce::String& com
     {
         std::fprintf (stderr, "[aux au] load failed: %s\n", err.c_str());
         showDuskAlert (*this, "Couldn't load Audio Unit", componentId + ":\n" + juce::String (err));
+        lane.pluginDescriptor[(size_t) slotIdx].reset();
+        lane.pluginLegacyDescriptionXml[(size_t) slotIdx].clear();
+        lane.pluginStateBase64[(size_t) slotIdx].clear();
         lane.nativeAuIdentifier[(size_t) slotIdx].clear();
         lane.nativeAuStateBase64[(size_t) slotIdx].clear();
         lane.nativeClapPath[(size_t) slotIdx].clear();
@@ -1243,6 +1246,8 @@ void AuxLaneComponent::loadNativeAuForSlot (int slotIdx, const juce::String& com
         lane.nativeVst3Path[(size_t) slotIdx].clear();
         lane.nativeVst3PluginId[(size_t) slotIdx].clear();
         lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
+        refreshSlotControls (slotIdx);
+        rebuildSlots();
         return;
     }
 
@@ -1258,6 +1263,9 @@ void AuxLaneComponent::loadNativeAuForSlot (int slotIdx, const juce::String& com
     lane.nativeVst3Path[(size_t) slotIdx].clear();
     lane.nativeVst3PluginId[(size_t) slotIdx].clear();
     lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
+    lane.pluginDescriptor[(size_t) slotIdx].reset();
+    lane.pluginLegacyDescriptionXml[(size_t) slotIdx].clear();
+    lane.pluginStateBase64[(size_t) slotIdx].clear();
     refreshSlotControls (slotIdx);
     rebuildSlots();
 }

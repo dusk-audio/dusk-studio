@@ -2965,8 +2965,26 @@ void ChannelStripComponent::loadNativeAuForChannel (const juce::String& componen
     {
         std::fprintf (stderr, "[chan au] load failed: %s\n", err.c_str());
         showDuskAlert (*this, "Couldn't load Audio Unit", componentId + ":\n" + juce::String (err));
+        // loadNativeAu evicts every other host before it can fail, so the whole
+        // insert is empty now - drop all of the slot's persisted references, not
+        // just the AU pair (matches AuxLaneComponent::loadNativeAuForSlot).
+        track.pluginDescriptor.reset();
+        track.pluginLegacyDescriptionXml.clear();
+        track.pluginStateBase64.clear();
         track.nativeAuIdentifier = {};
         track.nativeAuStateBase64 = {};
+        track.nativeClapPath = {};
+        track.nativeClapPluginId = {};
+        track.nativeClapStateBase64 = {};
+        track.nativeLv2Path = {};
+        track.nativeLv2PluginId = {};
+        track.nativeLv2StateBase64 = {};
+        track.nativeVst3Path = {};
+        track.nativeVst3PluginId = {};
+        track.nativeVst3StateBase64 = {};
+        track.nativeMultisamplePath = {};
+        track.nativeMultisampleStateBase64 = {};
+        refreshPluginSlotButton();
         return;
     }
 
@@ -2986,6 +3004,9 @@ void ChannelStripComponent::loadNativeAuForChannel (const juce::String& componen
     track.nativeVst3StateBase64 = {};
     track.nativeMultisamplePath = {};
     track.nativeMultisampleStateBase64 = {};
+    track.pluginDescriptor.reset();
+    track.pluginLegacyDescriptionXml.clear();
+    track.pluginStateBase64.clear();
     refreshPluginSlotButton();
     openPluginEditor();
 }
