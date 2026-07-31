@@ -1,4 +1,12 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(git fetch origin --prune)",
+      "Bash(git log origin/main --oneline -5)",
+      "Bash(git show origin/main:docs/dejuce-hosting-h5-platform.md)",
+      "Bash(git show --stat 2a8135d)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {

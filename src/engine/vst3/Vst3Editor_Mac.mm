@@ -11,6 +11,8 @@
 #include <pluginterfaces/gui/iplugview.h>
 #include <pluginterfaces/vst/ivsteditcontroller.h>
 
+#pragma clang diagnostic pop
+
 #include <algorithm>
 
 namespace duskstudio::vst3
@@ -206,5 +208,3 @@ void Vst3Editor::pump (double elapsedMs)
         impl->host->pump (elapsedMs);
 }
 } // namespace duskstudio::vst3
-
-#pragma clang diagnostic pop

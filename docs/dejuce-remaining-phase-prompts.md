@@ -9,10 +9,14 @@ status lines and `git log` over this file.
 ## State at time of writing
 
 - Merged on `main`: hosting H1a–c (PR #114), H3 (PR #118), H4 (PR #119),
-  plus everything in the campaign doc's Done list.
-- In flight: H5a on `dejuce/hosting-h5a` — H5a.0–H5a.2 complete, H5a.3
-  next. The H5 spec `docs/dejuce-hosting-h5-platform.md` exists only on
-  that branch until H5a merges.
+  H5a.0–H5a.2 (PR #120, squash-merged 2026-07-30; `origin/dejuce/hosting-h5a`
+  deleted), plus everything in the campaign doc's Done list.
+- Next: H5a.4–H5a.6 on `dejuce/hosting-h5a2`, where H5a.3 is already
+  committed locally and unpushed. The H5 spec
+  `docs/dejuce-hosting-h5-platform.md` is on `main` now; its status line is
+  authoritative. PR #120 shipped `Lv2Editor_Mac.mm` and `Vst3Editor_Mac.mm`
+  as compile stubs only — H5a.3 replaced the VST3 one, H5a.5 replaces the LV2
+  one.
 - Gate allowlist: 179 files. JUCE modules linked: 12.
 - The memory ledger `project_dejuce_roadmap.md` exists only on the Linux
   machine; sessions on other machines fall back to repo docs + git log.
@@ -20,7 +24,7 @@ status lines and `git log` over this file.
 ## Dependency order
 
 ```
-H5a (in flight) → H5b → H5c
+H5a remainder (H5a.3–.6) → H5b → H5c
 Donor consolidation → H1d
                    → H2-donor → H2-app
 H6 requires H5a+H5b+H5c and H2-app merged
@@ -38,19 +42,24 @@ of H5/H6 but must land before the GUI tower.
 You are executing one phase of the Dusk Studio de-JUCE campaign in
 /Users/marckorte/projects/DuskStudio (or /home/marc/projects/DuskStudio on the
 Linux box). Read, in order: docs/dejuce-campaign.md (ritual + working
-agreement), then check out the existing branch dejuce/hosting-h5a from origin
-and read docs/dejuce-hosting-h5-platform.md ON THAT BRANCH (it is not on main
-yet). If the memory ledger project_dejuce_roadmap.md exists in this machine's
-memory dir, read it; if absent, trust the spec's status line and git log.
+agreement) and docs/dejuce-hosting-h5-platform.md (now on main; its status
+line is authoritative). If the memory ledger project_dejuce_roadmap.md exists
+in this machine's memory dir, read it; if absent, trust the spec's status line
+and git log.
 
 State: H5a.0 (build gates + CI dependencies), H5a.1 (portable discovery + CLAP
-bundle loading), and H5a.2 (CLAP Cocoa editor) are complete on the branch;
-H5a.3's host-context split already landed with the macOS build fix, so only its
-Cocoa attach remains. Execute the first incomplete increment (H5a.3 VST3
-portable host context + Cocoa editor core, then H5a.4 VST3 Cocoa wrapper +
-cross-platform tests, H5a.5 LV2 Cocoa editor, H5a.6 closeout) — ONE increment
-per session, max five files each, exactly as the spec's per-increment file
-lists and work items dictate. Pause for review after each increment.
+bundle loading), and H5a.2 (CLAP Cocoa editor) are MERGED to main as PR #120
+(squash commit 2a8135d); origin/dejuce/hosting-h5a is deleted. PR #120 shipped
+Lv2Editor_Mac.mm and Vst3Editor_Mac.mm as compile stubs only. H5a.3 (VST3
+portable host context + Cocoa editor core) is COMMITTED LOCALLY, unpushed, on
+branch dejuce/hosting-h5a2. Check that branch out and confirm its H5a.3 commit
+against the spec's status line before touching anything; only if the branch is
+gone or its H5a.3 work is absent, update local main, recreate
+dejuce/hosting-h5a2 off it, and redo H5a.3 first. Execute the first incomplete
+increment (H5a.4 VST3 Cocoa wrapper + cross-platform tests, then H5a.5 LV2
+Cocoa editor, H5a.6 closeout) — ONE increment per session, max five files
+each, exactly as the spec's per-increment file lists and work items dictate.
+Pause for review after each increment.
 
 Rules: commit locally, NEVER push without Marc's word; no attribution trailers;
 Linux native hosting behaviour is an invariant; keep platform code behind the
@@ -68,11 +77,12 @@ updating the spec's status line and stating the resume phrase from the spec.
 
 ```
 You are executing one phase of the Dusk Studio de-JUCE campaign. Precondition:
-the H5a PR (branch dejuce/hosting-h5a) is MERGED — verify with git log before
-starting; if not merged, stop and report. Read, in order:
+ALL of H5a is merged — both PR #120 (H5a.0–.2) and the H5a-remainder PR
+(H5a.3–.6); verify with git log and the H5 spec's status line before starting;
+if not fully merged, stop and report. Read, in order:
 docs/dejuce-campaign.md, docs/dejuce-hosting-plan.md,
-docs/dejuce-hosting-h5-platform.md §H5b (on main once H5a merges), and the
-memory ledger project_dejuce_roadmap.md if present on this machine.
+docs/dejuce-hosting-h5-platform.md §H5b, and the memory ledger
+project_dejuce_roadmap.md if present on this machine.
 
 Create branch dejuce/hosting-h5b. Build the macOS-only native AU layer in
 src/engine/au/ — AuBundle (stable type/subtype/manufacturer identifier),

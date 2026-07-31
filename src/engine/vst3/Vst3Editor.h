@@ -33,8 +33,11 @@ public:
     // Keeps a reference to `inst` - the owner must keep it alive past this editor.
     bool open (Vst3Instance& inst, std::string& errorOut);
 
-    // Create a native child container under parentHandle at (x,y,w,h), attach
-    // the view into it, and make it ready for reveal().
+    // Create a native child container under parentHandle at (x,y,w,h) and
+    // attach the view into it. Visibility afterwards is platform-specific: the
+    // X11 host window is mapped here (toolkit editors can refuse to realise
+    // into an unmapped parent), while the Cocoa container stays hidden until
+    // reveal(). reveal()/hide() are idempotent on both.
     bool embed (std::uintptr_t parentHandle, int x, int y, int w, int h,
                 std::string& errorOut);
 
