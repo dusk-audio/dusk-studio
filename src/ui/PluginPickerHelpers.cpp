@@ -377,7 +377,8 @@ void openPickerMenu (PluginSlot& slot,
                       std::function<void (const juce::File&, const juce::String&)> onPickNativeClap,
                       std::function<void (const juce::File&, const juce::String&)> onPickNativeLv2,
                       std::function<void (const juce::File&, const juce::String&)> onPickNativeVst3,
-                      std::function<void (const juce::File&)> onPickSoundfont)
+                      std::function<void (const juce::File&)> onPickSoundfont,
+                      std::function<void (const juce::String&)> onPickNativeAu)
 {
     auto& manager = slot.getManagerForUi();
 
@@ -436,6 +437,26 @@ void openPickerMenu (PluginSlot& slot,
                              std::make_move_iterator (native.end()));
     }
 
+    // Native AU rows replace JUCE's AU rows one-for-one. Both use the same
+    // component registry, but only the native rows enter the H5b host.
+    if (onPickNativeAu)
+    {
+        descriptions.erase (
+            std::remove_if (descriptions.begin(), descriptions.end(),
+                [] (const PluginDescriptor& descriptor)
+                {
+                    return descriptor.backend == PluginBackend::JuceLegacy
+                        && descriptor.formatName == "AudioUnit";
+                }),
+            descriptions.end());
+        auto native = kind == PluginKind::Effects
+                        ? manager.getAuEffectDescriptions()
+                        : manager.getAuInstrumentDescriptions();
+        descriptions.insert (descriptions.end(),
+                             std::make_move_iterator (native.begin()),
+                             std::make_move_iterator (native.end()));
+    }
+
     auto* parent = target.getTopLevelComponent();
     if (parent == nullptr) parent = &target;
 
@@ -456,7 +477,7 @@ void openPickerMenu (PluginSlot& slot,
 
     cb.onScan = [closeModal, slotPtr, safeTarget, safeParent, onChange, kind,
                   onPickHardwareInsert, onPickNativeClap, onPickNativeLv2,
-                  onPickNativeVst3, onPickSoundfont]() mutable
+                  onPickNativeVst3, onPickNativeAu, onPickSoundfont]() mutable
     {
         closeModal();
 
@@ -467,7 +488,7 @@ void openPickerMenu (PluginSlot& slot,
         // on top), making the result message invisible.
         auto reopenPicker = [slotPtr, safeTarget, onChange, kind, onPickHardwareInsert,
                               onPickNativeClap, onPickNativeLv2, onPickNativeVst3,
-                              onPickSoundfont]() mutable
+                              onPickNativeAu, onPickSoundfont]() mutable
         {
             if (auto* t = safeTarget.getComponent())
                 openPickerMenu (*slotPtr, *t, std::move (onChange), kind, { -1, -1 },
@@ -475,7 +496,8 @@ void openPickerMenu (PluginSlot& slot,
                                   std::move (onPickNativeClap),
                                   std::move (onPickNativeLv2),
                                   std::move (onPickNativeVst3),
-                                  std::move (onPickSoundfont));
+                                  std::move (onPickSoundfont),
+                                  std::move (onPickNativeAu));
         };
         runScanModal (slotPtr->getManagerForUi(), safeParent.getComponent(),
                        std::move (reopenPicker));
@@ -517,7 +539,8 @@ void openPickerMenu (PluginSlot& slot,
    #endif
 
     cb.onPickPlugin = [closeModal, slotPtr, safeTarget, safeParent, onChange, kind,
-                       onPickNativeClap, onPickNativeLv2, onPickNativeVst3]
+                       onPickNativeClap, onPickNativeLv2, onPickNativeVst3,
+                       onPickNativeAu]
                         (const PluginDescriptor& desc) mutable
     {
         closeModal();
@@ -530,6 +553,14 @@ void openPickerMenu (PluginSlot& slot,
         // successful async load).
         if (desc.backend == PluginBackend::Native)
         {
+            // AU first: its location is a component identifier, not a path, so
+            // building a juce::File from it would trip the absolute-path assert
+            // and resolve against the working directory.
+            if (desc.formatName == "AudioUnit")
+            {
+                if (onPickNativeAu) onPickNativeAu (juce::String (desc.location));
+                return;
+            }
             const juce::File bundle (desc.location);
             const juce::String pluginId (desc.pluginId);
             if (desc.formatName == "CLAP")
@@ -650,7 +681,7 @@ public:
             sfBtn.onClick = [this] { if (onSfFn) onSfFn(); };
             addAndMakeVisible (sfBtn);
         }
-        pluginBtn.setButtonText ("Plugin (VST3 / CLAP / LV2)");
+        pluginBtn.setButtonText ("Plugin (VST3 / CLAP / LV2 / AU)");
         style (pluginBtn, juce::Colour (0xff385a38));
         pluginBtn.onClick = [this] { if (onPluginFn) onPluginFn(); };
         addAndMakeVisible (pluginBtn);
@@ -725,7 +756,8 @@ void openInsertChooser (PluginSlot& slot,
                          std::function<void (const juce::File&, const juce::String&)> onPickNativeClap,
                          std::function<void (const juce::File&, const juce::String&)> onPickNativeLv2,
                          std::function<void (const juce::File&, const juce::String&)> onPickNativeVst3,
-                         std::function<void (const juce::File&)> onPickSoundfont)
+                         std::function<void (const juce::File&)> onPickSoundfont,
+                         std::function<void (const juce::String&)> onPickNativeAu)
 {
     auto* parent = target.getTopLevelComponent();
     if (parent == nullptr) parent = &target;
@@ -762,8 +794,9 @@ void openInsertChooser (PluginSlot& slot,
        #endif
     };
 
-    auto onPlugin = [closeChooser, slotPtr, safeTarget,                        onChange, kind, onPickNativeClap, onPickNativeLv2,
-                       onPickNativeVst3]() mutable
+    auto onPlugin = [closeChooser, slotPtr, safeTarget, onChange, kind,
+                     onPickNativeClap, onPickNativeLv2, onPickNativeVst3,
+                     onPickNativeAu]() mutable
     {
         closeChooser();
         if (auto* t = safeTarget.getComponent())
@@ -772,7 +805,9 @@ void openInsertChooser (PluginSlot& slot,
                               /*suppressSecondaryButtons*/ true,
                               std::move (onPickNativeClap),
                               std::move (onPickNativeLv2),
-                              std::move (onPickNativeVst3));
+                              std::move (onPickNativeVst3),
+                              /*onPickSoundfont*/ {},
+                              std::move (onPickNativeAu));
     };
 
     auto onCancel = closeChooser;

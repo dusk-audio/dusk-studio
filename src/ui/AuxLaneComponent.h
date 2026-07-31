@@ -33,7 +33,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    // Shutdown: tear down this lane's native editors (CLAP, LV2, VST3) now, while
+    // Shutdown: tear down this lane's native editors (CLAP, LV2, VST3, AU) now, while
     // the main peer + message loop are alive. CLAP/LV2 leak their plugin UIs (a
     // foreign toolkit's destructor can hang on the way out) and every kind closes
     // its own X11 Display, which hangs if deferred to the destructor cascade. See
@@ -82,10 +82,14 @@ private:
     void loadNativeVst3ForSlot (int slotIdx, const juce::File& vst3File,
                                 const juce::String& pluginId = {});   // Linux-only
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    void loadNativeAuForSlot (int slotIdx, const juce::String& componentId);
+#endif
     // Stubbed (no-op body) off Linux so the many callers don't each need a guard.
     void detachClapEditorForSlot (int slotIdx);
     void detachLv2EditorForSlot (int slotIdx);
     void detachVst3EditorForSlot (int slotIdx);
+    void detachAuEditorForSlot (int slotIdx);
     void hideEditorsKeepingAlive();
     void layoutEditorForSlot (int slotIdx);
     void scheduleEditorRefits (int slotIdx);
@@ -165,6 +169,9 @@ private:
         // Native VST3 (IPlugView) editor - same contract as clapEditor.
 #if DUSKSTUDIO_HAS_NATIVE_VST3
         std::unique_ptr<class Vst3PluginEditorComponent> vst3Editor;
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+        std::unique_ptr<class AuPluginEditorComponent> auEditor;
 #endif
         juce::String displayedName;
     };

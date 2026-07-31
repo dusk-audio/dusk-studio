@@ -1,9 +1,11 @@
 # Hosting tower H5 — native platform ports + AU (executable spec)
 
 Status: **H5a.0-H5a.2 MERGED AS PR #120 AT `2a8135d`; H5a.3 MERGED AS PR
-#121 AT `12efe0d`; H5a.4-H5a.6 PUSHED AS DRAFT PR #122 ON
-`dejuce/hosting-h5a3`. MACOS CI, REVIEW, AND BENCH SIGN-OFF REMAIN OWED.** H4
-is merged as PR #119 at `3c5c901`. The H5
+#121 AT `12efe0d`; H5a.4-H5a.6 MERGED AS PR #122 AT `084196c`. H5a IS
+COMPLETE; MACOS BENCH SIGN-OFF REMAINS OWED. H5b IMPLEMENTATION AND LOCAL
+VERIFICATION ARE COMPLETE ON `dejuce/hosting-h5b`; DRAFT PR #154 IS OPEN AND
+MACOS CI IS GREEN. STOCK APPLE AU EFFECT + INSTRUMENT FULL-APP BENCH SIGN-OFF
+REMAINS OWED.** H4 is merged as PR #119 at `3c5c901`. The H5
 scout verified the live source/CMake/CI surface from that baseline. Windows
 LV2 is deferred. H5 is three sequential PRs: H5a macOS CLAP/LV2/VST3, H5b
 macOS AU, H5c Windows CLAP/VST3. No H5 branch is pushed without Marc's word.
@@ -378,7 +380,7 @@ H5 is complete only when:
 
 ## Resume phrase
 
-"Hosting H5a, spec docs/dejuce-hosting-h5-platform.md — on
-dejuce/hosting-h5a3, monitor the pushed H5a.4-H5a.6 PR, fix CI or review
-findings, and record the owed bench sign-off; do not start H5b until H5a
-merges."
+"Hosting H5b, spec docs/dejuce-hosting-h5-platform.md — on
+dejuce/hosting-h5b, monitor draft PR #154, fix macOS CI or review findings,
+and record the stock Apple AU effect + instrument bench sign-off; do not
+start H5c until H5b merges."

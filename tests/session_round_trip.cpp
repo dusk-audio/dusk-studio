@@ -223,6 +223,37 @@ TEST_CASE ("SessionSerializer round-trips native-VST3 slots", "[session][seriali
     dir.deleteRecursively();
 }
 
+// Audio Units use their stable type/subtype/manufacturer identifier in place
+// of a filesystem path.  Keep the keys additive on both channel and aux slots.
+TEST_CASE ("SessionSerializer round-trips native-AU slots", "[session][serializer][au]")
+{
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
+
+    const auto dir = makeTempSessionDir();
+    const auto target = dir.getChildFile ("session.json");
+
+    Session a;
+    a.track (2).nativeAuIdentifier = "AudioUnit:Effects/aufx,dely,appl";
+    a.track (2).nativeAuStateBase64 = "QVVTVEFURWJsb2I=";
+    auto& lane = a.auxLane (1);
+    lane.nativeAuIdentifier[0] = "AudioUnit:Effects/aufx,lpas,appl";
+    lane.nativeAuStateBase64[0] = "QVVTVEFURWJsb2I=";
+    REQUIRE (SessionSerializer::save (a, target));
+
+    Session b;
+    REQUIRE (SessionSerializer::load (b, target));
+    REQUIRE (b.track (2).nativeAuIdentifier == "AudioUnit:Effects/aufx,dely,appl");
+    REQUIRE (b.track (2).nativeAuStateBase64 == "QVVTVEFURWJsb2I=");
+    REQUIRE (b.auxLane (1).nativeAuIdentifier[0] == "AudioUnit:Effects/aufx,lpas,appl");
+    REQUIRE (b.auxLane (1).nativeAuStateBase64[0] == "QVVTVEFURWJsb2I=");
+
+    REQUIRE (b.track (0).nativeAuIdentifier.isEmpty());
+    REQUIRE (b.auxLane (0).nativeAuIdentifier[0].isEmpty());
+
+    dir.deleteRecursively();
+}
+
 TEST_CASE ("SessionSerializer round-trips native multisample references",
            "[session][serializer][multisample]")
 {

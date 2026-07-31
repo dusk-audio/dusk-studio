@@ -9,6 +9,9 @@
 #include "../session/RegionEditActions.h"
 #include "DeviceFallbackMessage.h"
 #include "../foundation/MessageThread.h"
+#if DUSKSTUDIO_HAS_NATIVE_AU
+ #include "au/AuBundle.h"
+#endif
 #if ! defined(__linux__)
  #include "midi/JuceMidiBackend.h"
 #endif
@@ -205,7 +208,7 @@ static std::filesystem::path lv2StateDirFor (Session& session, const juce::Strin
 #endif
 
 #if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3 \
-    || DUSKSTUDIO_HAS_MULTISAMPLE
+    || DUSKSTUDIO_HAS_NATIVE_AU || DUSKSTUDIO_HAS_MULTISAMPLE
 // Session-carried native plugin state blob (base64) -> bytes. Empty on any
 // decode failure - callers treat "no state" and "bad state" the same.
 static std::vector<uint8_t> decodeBase64Blob (const juce::String& s)
@@ -217,6 +220,40 @@ static std::vector<uint8_t> decodeBase64Blob (const juce::String& s)
         blob.assign (static_cast<const uint8_t*> (mb.getData()),
                      static_cast<const uint8_t*> (mb.getData()) + mb.getSize());
     return blob;
+}
+#endif
+
+#if DUSKSTUDIO_HAS_NATIVE_AU
+// JUCE's AU descriptor already carries the platform-stable component triple.
+// Move it and the carried property-list state onto the native keys once; a
+// subsequent save emits only the native form.
+static void migrateLegacyAuSlot (
+    std::optional<PluginDescriptor>& descriptor,
+    juce::String& legacyXml,
+    juce::String& legacyState,
+    juce::String& nativeIdentifier,
+    juce::String& nativeState,
+    PluginManager& manager)
+{
+    if (nativeIdentifier.isNotEmpty()) return;
+
+    auto candidate = descriptor;
+    if (! candidate.has_value() && legacyXml.isNotEmpty())
+    {
+        PluginDescriptor converted;
+        if (manager.descriptorFromLegacyXml (legacyXml, converted))
+            candidate = std::move (converted);
+    }
+    if (! candidate.has_value() || candidate->formatName != "AudioUnit") return;
+
+    au::ComponentId id;
+    if (! au::ComponentId::parse (candidate->location, id)) return;
+
+    nativeIdentifier = id.toString();
+    nativeState = legacyState;
+    descriptor.reset();
+    legacyXml.clear();
+    legacyState.clear();
 }
 #endif
 
@@ -304,7 +341,8 @@ void AudioEngine::printPerfTable()
     std::fflush (stderr);
 }
 
-#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3 \
+    || DUSKSTUDIO_HAS_NATIVE_AU
 // Message-thread drain for the native slots' MIDI-binding rings (the audio
 // thread's binding apply can't touch the instances' single-producer param
 // rings directly). 30 Hz matches PluginSlot's own drain cadence; a tick over
@@ -330,6 +368,9 @@ public:
 #if DUSKSTUDIO_HAS_NATIVE_VST3
             strip.getNativeVst3Slot().drainQueuedParamBindings();
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+            strip.getNativeAuSlot().drainQueuedParamBindings();
+#endif
         }
         for (int a = 0; a < Session::kNumAuxLanes; ++a)
         {
@@ -346,6 +387,9 @@ public:
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
                 lane.getNativeVst3Slot (s).drainQueuedParamBindings();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+                lane.getNativeAuSlot (s).drainQueuedParamBindings();
 #endif
             }
         }
@@ -383,6 +427,19 @@ public:
             }
         }
 #endif
+
+#if DUSKSTUDIO_HAS_NATIVE_AU
+        bool auLatencyChanged = false;
+        for (int t = 0; t < Session::kNumTracks; ++t)
+            auLatencyChanged |= engine.getChannelStrip (t)
+                                    .getNativeAuSlot().refreshLatencyIfChanged();
+        for (int a = 0; a < Session::kNumAuxLanes; ++a)
+            for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
+                auLatencyChanged |= engine.getAuxLaneStrip (a)
+                                        .getNativeAuSlot (s).refreshLatencyIfChanged();
+        if (auLatencyChanged)
+            engine.recomputePdc();
+#endif
     }
 private:
     AudioEngine& engine;
@@ -398,7 +455,8 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
         perfReporter = std::make_unique<PerfReporter> (*this);
     }
 
-#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3 \
+    || DUSKSTUDIO_HAS_NATIVE_AU
     nativeParamDrain = std::make_unique<NativeParamDrain> (*this);
 #endif
 
@@ -806,6 +864,11 @@ void AudioEngine::recomputePdc() noexcept
                     if (auto* inst = strip.getNativeVst3Slot().getInstance())
                         lat = inst->getLatencySamples();
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+                if (strip.isNativeAuLoaded() && ! strip.getNativeAuSlot().isBypassed())
+                    if (auto* inst = strip.getNativeAuSlot().getInstance())
+                        lat = inst->getLatencySamples();
+#endif
             }
         }
         latency[t] = std::clamp (lat, 0, ChannelStrip::kMaxPdcSamples);
@@ -847,6 +910,11 @@ void AudioEngine::recomputePdc() noexcept
 #if DUSKSTUDIO_HAS_NATIVE_VST3
                 if (lane.isNativeVst3Loaded (p) && ! lane.getNativeVst3Slot (p).isBypassed())
                     if (auto* inst = lane.getNativeVst3Slot (p).getInstance())
+                        slotLat = inst->getLatencySamples();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+                if (lane.isNativeAuLoaded (p) && ! lane.getNativeAuSlot (p).isBypassed())
+                    if (auto* inst = lane.getNativeAuSlot (p).getInstance())
                         slotLat = inst->getLatencySamples();
 #endif
                 laneLat += std::max (0, slotLat);
@@ -1583,6 +1651,20 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
             track.nativeVst3StateBase64.clear();
         }
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+        if (strip.isNativeAuLoaded())
+        {
+            track.nativeAuIdentifier = strip.getNativeAuSlot().getPluginId();
+            std::vector<uint8_t> blob;
+            if (strip.getNativeAuSlot().saveState (blob) && ! blob.empty())
+                track.nativeAuStateBase64 = juce::Base64::toBase64 (blob.data(), blob.size());
+        }
+        else if (! strip.nativeAuReloadFailed())
+        {
+            track.nativeAuIdentifier.clear();
+            track.nativeAuStateBase64.clear();
+        }
+#endif
 #if DUSKSTUDIO_HAS_MULTISAMPLE
         // The editor can swap or CLEAR the soundfont in place, so the live path
         // off the instance - not the slot's original bundle path - decides
@@ -1679,6 +1761,21 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
                 lane.nativeVst3StateBase64[(size_t) s].clear();
             }
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+            if (strip.isNativeAuLoaded (s))
+            {
+                lane.nativeAuIdentifier[(size_t) s] = strip.getNativeAuSlot (s).getPluginId();
+                std::vector<uint8_t> blob;
+                if (strip.getNativeAuSlot (s).saveState (blob) && ! blob.empty())
+                    lane.nativeAuStateBase64[(size_t) s]
+                        = juce::Base64::toBase64 (blob.data(), blob.size());
+            }
+            else if (! strip.nativeAuReloadFailed (s))
+            {
+                lane.nativeAuIdentifier[(size_t) s].clear();
+                lane.nativeAuStateBase64[(size_t) s].clear();
+            }
+#endif
         }
     }
 }
@@ -1710,6 +1807,9 @@ void AudioEngine::leakAllPluginInstancesForShutdown()
 #if DUSKSTUDIO_HAS_NATIVE_VST3
         strip.getNativeVst3Slot().leakForShutdown();
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+        strip.getNativeAuSlot().leakForShutdown();
+#endif
 #if DUSKSTUDIO_HAS_MULTISAMPLE
         // Same deliberate exit-time leak: destroying the instance joins its
         // loader pool, so quitting mid-GM-bank-load would block on the decode.
@@ -1728,6 +1828,9 @@ void AudioEngine::leakAllPluginInstancesForShutdown()
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
             laneStrip.getNativeVst3Slot (s).leakForShutdown();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+            laneStrip.getNativeAuSlot (s).leakForShutdown();
 #endif
         }
 }
@@ -1773,11 +1876,36 @@ void AudioEngine::consumePluginStateAfterLoad()
         return juce::String ("(unknown)");
     };
 
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    auto auName = [this] (const juce::String& identifier)
+    {
+        auto find = [&identifier] (const std::vector<PluginDescriptor>& rows)
+        {
+            for (const auto& row : rows)
+                if (row.location == identifier.toStdString())
+                    return juce::String (row.name);
+            return juce::String();
+        };
+        auto name = find (pluginManager.getAuEffectDescriptions());
+        if (name.isEmpty()) name = find (pluginManager.getAuInstrumentDescriptions());
+        return name.isNotEmpty() ? name : identifier;
+    };
+#endif
+
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto& track = session.track (t);
         auto& strip = strips[(size_t) t];
         auto& slot  = strip.getPluginSlot();
+
+#if DUSKSTUDIO_HAS_NATIVE_AU
+        migrateLegacyAuSlot (track.pluginDescriptor,
+                             track.pluginLegacyDescriptionXml,
+                             track.pluginStateBase64,
+                             track.nativeAuIdentifier,
+                             track.nativeAuStateBase64,
+                             pluginManager);
+#endif
 
         // Native CLAP insert (takes precedence over the JUCE plugin). load() needs the
         // sample rate: load directly when prepared (device running), else stash a
@@ -1817,6 +1945,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 // hosts unfenced (the prepared path's loadNativeClap evicts them).
                 strip.unloadNativeLv2();
                 strip.unloadNativeVst3();
+                strip.unloadNativeAu();
                 strip.unloadNativeMultisample();
                 strip.setPendingNativeClap (clapFile, std::move (blob), track.nativeClapPluginId);
             }
@@ -1856,6 +1985,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             {
                 strip.unloadNativeClap();   // see the CLAP pending branch above
                 strip.unloadNativeVst3();
+                strip.unloadNativeAu();
                 strip.unloadNativeMultisample();
                 strip.setPendingNativeLv2 (lv2File, std::move (blob), track.nativeLv2PluginId,
                                            lv2StateDirFor (session,
@@ -1893,8 +2023,42 @@ void AudioEngine::consumePluginStateAfterLoad()
             {
                 strip.unloadNativeClap();   // see the CLAP pending branch above
                 strip.unloadNativeLv2();
+                strip.unloadNativeAu();
                 strip.unloadNativeMultisample();
                 strip.setPendingNativeVst3 (vst3File, std::move (blob), track.nativeVst3PluginId);
+            }
+            continue;
+        }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+        if (track.nativeAuIdentifier.isNotEmpty())
+        {
+            slot.unload();
+            strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
+            auto blob = decodeBase64Blob (track.nativeAuStateBase64);
+            if (strip.isPrepared())
+            {
+                suspendProcessing();
+                std::string err;
+                const bool ok = strip.loadNativeAu (track.nativeAuIdentifier, err);
+                if (ok && ! blob.empty())
+                    strip.getNativeAuSlot().loadState (blob);
+                resumeProcessing();
+                if (! ok)
+                {
+                    strip.markNativeAuRestoreFailed();
+                    lastPluginLoadFailures.push_back ({
+                        "Track " + juce::String (t + 1),
+                        auName (track.nativeAuIdentifier) });
+                }
+            }
+            else
+            {
+                strip.unloadNativeClap();
+                strip.unloadNativeLv2();
+                strip.unloadNativeVst3();
+                strip.unloadNativeMultisample();
+                strip.setPendingNativeAu (track.nativeAuIdentifier, std::move (blob));
             }
             continue;
         }
@@ -1925,6 +2089,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 strip.unloadNativeClap();
                 strip.unloadNativeLv2();
                 strip.unloadNativeVst3();
+                strip.unloadNativeAu();
                 strip.unloadNativeMultisample();
                 bool ok = false;
                 if (primed) ok = strip.commitNativeMultisample (std::move (primed));
@@ -1943,6 +2108,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 strip.unloadNativeClap();   // see the CLAP pending branch above
                 strip.unloadNativeLv2();
                 strip.unloadNativeVst3();
+                strip.unloadNativeAu();
                 strip.setPendingNativeMultisample (soundfont, std::move (blob));
             }
             continue;
@@ -1953,6 +2119,7 @@ void AudioEngine::consumePluginStateAfterLoad()
         // instance carried over from the previously-loaded session before the JUCE
         // restore below (unload destroys the instance, so fence it when live).
         if (strip.isNativeClapLoaded() || strip.isNativeLv2Loaded() || strip.isNativeVst3Loaded()
+            || strip.isNativeAuLoaded()
             || strip.isNativeMultisampleLoaded())
         {
 #if DUSKSTUDIO_HAS_MULTISAMPLE
@@ -1964,6 +2131,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             strip.unloadNativeClap();
             strip.unloadNativeLv2();
             strip.unloadNativeVst3();
+            strip.unloadNativeAu();
             strip.unloadNativeMultisample();
             resumeProcessing();
         }
@@ -1972,6 +2140,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             strip.unloadNativeClap();   // no live instance: just clears any stale pending
             strip.unloadNativeLv2();
             strip.unloadNativeVst3();
+            strip.unloadNativeAu();
             strip.unloadNativeMultisample();
         }
 
@@ -2014,6 +2183,15 @@ void AudioEngine::consumePluginStateAfterLoad()
             auto& strip = auxLaneStrips[(size_t) a];
             auto& slot  = strip.getPluginSlot (s);
 
+#if DUSKSTUDIO_HAS_NATIVE_AU
+            migrateLegacyAuSlot (lane.pluginDescriptor[(size_t) s],
+                                 lane.pluginLegacyDescriptionXml[(size_t) s],
+                                 lane.pluginStateBase64[(size_t) s],
+                                 lane.nativeAuIdentifier[(size_t) s],
+                                 lane.nativeAuStateBase64[(size_t) s],
+                                 pluginManager);
+#endif
+
             // Native CLAP slot (takes precedence over the JUCE plugin). load() needs
             // the sample rate: load directly when the engine is already prepared (a
             // session opened while the device runs), else stash a pending restore that
@@ -2050,6 +2228,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                     // Not prepared -> no live audio; clear carried-over native hosts unfenced.
                     strip.unloadNativeLv2 (s);
                     strip.unloadNativeVst3 (s);
+                    strip.unloadNativeAu (s);
                     strip.setPendingNativeClap (s, clapFile, std::move (blob),
                                                 lane.nativeClapPluginId[(size_t) s]);
                 }
@@ -2091,6 +2270,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 {
                     strip.unloadNativeClap (s);   // see the CLAP pending branch above
                     strip.unloadNativeVst3 (s);
+                    strip.unloadNativeAu (s);
                     strip.setPendingNativeLv2 (s, lv2File, std::move (blob),
                                                lane.nativeLv2PluginId[(size_t) s],
                                                lv2StateDirFor (session,
@@ -2130,21 +2310,58 @@ void AudioEngine::consumePluginStateAfterLoad()
                 {
                     strip.unloadNativeClap (s);   // see the CLAP pending branch above
                     strip.unloadNativeLv2 (s);
+                    strip.unloadNativeAu (s);
                     strip.setPendingNativeVst3 (s, vst3File, std::move (blob),
                                                 lane.nativeVst3PluginId[(size_t) s]);
                 }
                 continue;   // native handled - skip the JUCE restore for this slot
             }
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+            if (lane.nativeAuIdentifier[(size_t) s].isNotEmpty())
+            {
+                slot.unload();
+                strip.insertMode[(size_t) s].store (
+                    AuxLaneStrip::kInsertPlugin, std::memory_order_release);
+                auto blob = decodeBase64Blob (lane.nativeAuStateBase64[(size_t) s]);
+                const auto identifier = lane.nativeAuIdentifier[(size_t) s];
+                if (strip.isPrepared())
+                {
+                    suspendProcessing();
+                    std::string err;
+                    const bool ok = strip.loadNativeAu (s, identifier, err);
+                    if (ok && ! blob.empty())
+                        strip.getNativeAuSlot (s).loadState (blob);
+                    resumeProcessing();
+                    if (! ok)
+                    {
+                        strip.markNativeAuRestoreFailed (s);
+                        lastPluginLoadFailures.push_back ({
+                            "Aux " + juce::String (a + 1) + " slot " + juce::String (s + 1),
+                            auName (identifier) });
+                    }
+                }
+                else
+                {
+                    strip.unloadNativeClap (s);
+                    strip.unloadNativeLv2 (s);
+                    strip.unloadNativeVst3 (s);
+                    strip.setPendingNativeAu (s, identifier, std::move (blob));
+                }
+                continue;
+            }
+#endif
 
             // No native host for this slot - tear down any instance carried over from
             // the previous session before the JUCE restore (fence when live).
-            if (strip.isNativeClapLoaded (s) || strip.isNativeLv2Loaded (s) || strip.isNativeVst3Loaded (s))
+            if (strip.isNativeClapLoaded (s) || strip.isNativeLv2Loaded (s)
+                || strip.isNativeVst3Loaded (s) || strip.isNativeAuLoaded (s))
             {
                 suspendProcessing();
                 strip.unloadNativeClap (s);
                 strip.unloadNativeLv2 (s);
                 strip.unloadNativeVst3 (s);
+                strip.unloadNativeAu (s);
                 resumeProcessing();
             }
             else
@@ -2152,6 +2369,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 strip.unloadNativeClap (s);   // clears any stale pending restore
                 strip.unloadNativeLv2 (s);
                 strip.unloadNativeVst3 (s);
+                strip.unloadNativeAu (s);
             }
 
             auto& descriptor = lane.pluginDescriptor[(size_t) s];
@@ -3634,6 +3852,14 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                     break;
                                 }
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+                                if (strip.isNativeAuLoaded())
+                                {
+                                    strip.getNativeAuSlot()
+                                        .queueParamBinding ((uint32_t) b.paramIndex, frac);
+                                    break;
+                                }
+#endif
                                 strip.getPluginSlot()
                                     .setParamNormalised (b.paramIndex, frac);
                             }
@@ -3668,6 +3894,14 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                 if (lane.isNativeVst3Loaded (0))
                                 {
                                     lane.getNativeVst3Slot (0)
+                                        .queueParamBinding ((uint32_t) b.paramIndex, frac);
+                                    break;
+                                }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+                                if (lane.isNativeAuLoaded (0))
+                                {
+                                    lane.getNativeAuSlot (0)
                                         .queueParamBinding ((uint32_t) b.paramIndex, frac);
                                     break;
                                 }

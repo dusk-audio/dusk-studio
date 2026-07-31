@@ -15,6 +15,9 @@
 #if DUSKSTUDIO_HAS_NATIVE_VST3
   #include "../engine/vst3/NativeVst3Slot.h"   // Linux-only native VST3 host
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+  #include "../engine/au/NativeAuSlot.h"
+#endif
 #include "HardwareInsertSlot.h"
 
 namespace duskstudio
@@ -93,6 +96,30 @@ public:
     bool nativeClapReloadFailed (int) const noexcept { return false; }
 #endif
 
+    // Native macOS Audio Unit host path - same slot contract, with a registry
+    // identifier in place of a bundle path.
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    bool loadNativeAu (int slotIdx, const juce::String& identifier,
+                       std::string& errorOut);
+    void unloadNativeAu (int slotIdx) noexcept;
+    bool isNativeAuLoaded (int slotIdx) const noexcept
+        { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); return nativeAuSlots[(size_t) slotIdx].isLoaded(); }
+    au::NativeAuSlot& getNativeAuSlot (int idx) noexcept
+        { jassert (idx >= 0 && idx < kMaxPlugins); return nativeAuSlots[(size_t) idx]; }
+    const au::NativeAuSlot& getNativeAuSlot (int idx) const noexcept
+        { jassert (idx >= 0 && idx < kMaxPlugins); return nativeAuSlots[(size_t) idx]; }
+    void setPendingNativeAu (int slotIdx, const juce::String& identifier,
+                             std::vector<uint8_t> state) noexcept;
+    bool nativeAuReloadFailed (int slotIdx) const noexcept
+        { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); return auReloadFailed[(size_t) slotIdx].load (std::memory_order_relaxed); }
+    void markNativeAuRestoreFailed (int slotIdx) noexcept
+        { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); auReloadFailed[(size_t) slotIdx].store (true, std::memory_order_relaxed); }
+#else
+    bool isNativeAuLoaded (int) const noexcept { return false; }
+    void unloadNativeAu (int) noexcept {}
+    bool nativeAuReloadFailed (int) const noexcept { return false; }
+#endif
+
     // Native LV2 host path - same contract as the CLAP block above.
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     bool loadNativeLv2   (int slotIdx, const juce::File& path, std::string& errorOut,
@@ -147,6 +174,10 @@ public:
         if (isNativeVst3Loaded (slotIdx))
             return nativeVst3Slots[(size_t) slotIdx].lastTouchedParamIndex();
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+        if (isNativeAuLoaded (slotIdx))
+            return nativeAuSlots[(size_t) slotIdx].lastTouchedParamIndex();
+#endif
         return slots[(size_t) slotIdx].getLastTouchedParamIndex();
     }
 
@@ -192,6 +223,12 @@ private:
     std::array<juce::String,         kMaxPlugins> pendingVst3Path;
     std::array<juce::String,         kMaxPlugins> pendingVst3PluginId;
     std::array<std::vector<uint8_t>, kMaxPlugins> pendingVst3State;
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    std::array<au::NativeAuSlot,       kMaxPlugins> nativeAuSlots;
+    std::array<std::atomic<bool>,      kMaxPlugins> auReloadFailed {};
+    std::array<juce::String,           kMaxPlugins> pendingAuIdentifier;
+    std::array<std::vector<uint8_t>,   kMaxPlugins> pendingAuState;
 #endif
 
     // Stashed in prepare so loadNativeClap (and re-prepare across a sample-rate

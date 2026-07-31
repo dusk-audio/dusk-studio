@@ -460,6 +460,11 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
         obj["native_vst3_plugin"] = toStd (t.nativeVst3PluginId);
         obj["native_vst3_state"]  = toStd (t.nativeVst3StateBase64);
     }
+    if (t.nativeAuIdentifier.isNotEmpty())
+    {
+        obj["native_au_identifier"] = toStd (t.nativeAuIdentifier);
+        obj["native_au_state"]      = toStd (t.nativeAuStateBase64);
+    }
     if (t.nativeMultisamplePath.isNotEmpty())
     {
         obj["native_multisample_path"]  = toStd (t.nativeMultisamplePath);
@@ -873,6 +878,8 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
     t.nativeVst3Path        = json::getString (v, "native_vst3_path");
     t.nativeVst3PluginId    = json::getString (v, "native_vst3_plugin");
     t.nativeVst3StateBase64 = json::getString (v, "native_vst3_state");
+    t.nativeAuIdentifier    = json::getString (v, "native_au_identifier");
+    t.nativeAuStateBase64   = json::getString (v, "native_au_state");
     t.nativeMultisamplePath        = json::getString (v, "native_multisample_path");
     t.nativeMultisampleStateBase64 = json::getString (v, "native_multisample_state");
 
@@ -1392,6 +1399,11 @@ juce::String SessionSerializer::serialize (const Session& s)
                 slot["native_vst3_plugin"] = toStd (lane.nativeVst3PluginId[(size_t) p]);
                 slot["native_vst3_state"]  = toStd (lane.nativeVst3StateBase64[(size_t) p]);
             }
+            if (lane.nativeAuIdentifier[(size_t) p].isNotEmpty())
+            {
+                slot["native_au_identifier"] = toStd (lane.nativeAuIdentifier[(size_t) p]);
+                slot["native_au_state"] = toStd (lane.nativeAuStateBase64[(size_t) p]);
+            }
 
             // Hardware-insert side of this slot. Same shape as the
             // Track::hardwareInsert block above.
@@ -1842,6 +1854,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     lane.nativeVst3Path[(size_t) p]        = json::getString (sv, "native_vst3_path");
                     lane.nativeVst3PluginId[(size_t) p]    = json::getString (sv, "native_vst3_plugin");
                     lane.nativeVst3StateBase64[(size_t) p] = json::getString (sv, "native_vst3_state");
+                    lane.nativeAuIdentifier[(size_t) p]    = json::getString (sv, "native_au_identifier");
+                    lane.nativeAuStateBase64[(size_t) p]   = json::getString (sv, "native_au_state");
 
                     // Same default-off rationale as the track hardware_insert.
                     lane.hardwareInserts[(size_t) p].enabled.store (

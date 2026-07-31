@@ -263,6 +263,20 @@ if(DUSKSTUDIO_NATIVE_VST3)
     endif()
 endif()
 
+# Native Audio Unit host — macOS registry/component API.
+if(DUSKSTUDIO_NATIVE_AU)
+    target_sources(dusk-studio-tests PRIVATE
+        au_native.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/au/AuBundle.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/au/AuHost.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/au/AuInstance.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/au/AuScanner.cpp)
+    target_link_libraries(dusk-studio-tests PRIVATE
+        ${DUSKSTUDIO_AUDIOTOOLBOX_FRAMEWORK}
+        ${DUSKSTUDIO_AUDIOUNIT_FRAMEWORK})
+    target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_AU=1)
+endif()
+
 target_link_libraries(dusk-studio-tests PRIVATE
     Catch2::Catch2WithMain
     ${CMAKE_DL_LIBS}   # dl: ClapBundle dlopen

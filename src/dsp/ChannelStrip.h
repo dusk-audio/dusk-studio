@@ -21,9 +21,13 @@
 #if DUSKSTUDIO_HAS_NATIVE_VST3
   #include "../engine/vst3/NativeVst3Slot.h"   // Linux-only native VST3 host
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+  #include "../engine/au/NativeAuSlot.h"
+#endif
 #if DUSKSTUDIO_HAS_MULTISAMPLE
   #include "../engine/multisample/NativeMultisampleSlot.h"
 #endif
+
 #include "HardwareInsertSlot.h"
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
@@ -132,6 +136,26 @@ public:
     bool nativeVst3ReloadFailed() const noexcept { return false; }
 #endif
 
+    // Native macOS Audio Unit host path. The identifier is the stable
+    // type/subtype/manufacturer triple, not a filesystem path.
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    bool loadNativeAu (const juce::String& identifier, std::string& errorOut);
+    void unloadNativeAu() noexcept;
+    bool isNativeAuLoaded() const noexcept { return nativeAuSlot.isLoaded(); }
+    au::NativeAuSlot&       getNativeAuSlot()       noexcept { return nativeAuSlot; }
+    const au::NativeAuSlot& getNativeAuSlot() const noexcept { return nativeAuSlot; }
+    void setPendingNativeAu (const juce::String& identifier,
+                             std::vector<uint8_t> state) noexcept;
+    bool nativeAuReloadFailed() const noexcept
+        { return auReloadFailed.load (std::memory_order_relaxed); }
+    void markNativeAuRestoreFailed() noexcept
+        { auReloadFailed.store (true, std::memory_order_relaxed); }
+#else
+    bool isNativeAuLoaded() const noexcept { return false; }
+    void unloadNativeAu() noexcept {}
+    bool nativeAuReloadFailed() const noexcept { return false; }
+#endif
+
     // Native multisample instrument (.sfz / .sf2 through sfizz) - same contract as
     // the CLAP block above, one rung below VST3. Instrument-only: it runs on the
     // MIDI-track instrument path, never the effect insert.
@@ -172,6 +196,9 @@ public:
 #if DUSKSTUDIO_HAS_NATIVE_VST3
         if (isNativeVst3Loaded()) return nativeVst3Slot.isLoadedInstrument();
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+        if (isNativeAuLoaded()) return nativeAuSlot.isLoadedInstrument();
+#endif
 #if DUSKSTUDIO_HAS_MULTISAMPLE
         if (isNativeMultisampleLoaded()) return nativeMultisampleSlot.isLoadedInstrument();
 #endif
@@ -190,6 +217,9 @@ public:
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
         if (isNativeVst3Loaded()) return nativeVst3Slot.lastTouchedParamIndex();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+        if (isNativeAuLoaded()) return nativeAuSlot.lastTouchedParamIndex();
 #endif
         return pluginSlot.getLastTouchedParamIndex();
     }
@@ -324,6 +354,10 @@ private:
     vst3::NativeVst3Slot nativeVst3Slot;   // native VST3 alternative to pluginSlot
     std::atomic<bool>    vst3ReloadFailed { false };
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    au::NativeAuSlot nativeAuSlot;
+    std::atomic<bool> auReloadFailed { false };
+#endif
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     NativeMultisampleSlot nativeMultisampleSlot;
     std::atomic<bool>     multisampleReloadFailed { false };
@@ -348,6 +382,10 @@ private:
     juce::String         pendingVst3Path;
     juce::String         pendingVst3PluginId;
     std::vector<uint8_t> pendingVst3State;
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    juce::String         pendingAuIdentifier;
+    std::vector<uint8_t> pendingAuState;
 #endif
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     juce::String         pendingMultisamplePath;
@@ -389,7 +427,7 @@ private:
     // effect. Held as member so the audio thread never default-constructs.
     juce::MidiBuffer pluginMidiScratch;
 
-    // Native hosts (CLAP/LV2/VST3) consume dusk::MidiBuffer; the JUCE PluginSlot
+    // Native hosts consume dusk::MidiBuffer; the JUCE PluginSlot
     // path keeps juce::MidiBuffer. This bridges the instrument block's MIDI into
     // dusk once per block. Pre-sized in prepare() so the refill never allocates.
     dusk::MidiBuffer nativeMidiScratch;
