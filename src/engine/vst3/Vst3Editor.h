@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -8,16 +9,17 @@ namespace duskstudio::vst3
 {
 class Vst3Instance;
 
-// Native X11 editor embed for a VST3 plugin view (Linux). Owns a host X11
-// window created as a child of the app's window; the controller's IPlugView
-// attaches to it via kPlatformTypeX11EmbedWindowID. Mirrors Lv2Editor's shape:
-// open() discovers/creates the view, embed() parents it on-screen.
+// Native editor embed for a VST3 plugin view. The platform translation unit
+// owns an X11 child window on Linux or an NSView child container on macOS.
+// open() discovers/creates the view; embed() attaches it to the native child.
 //
 // The frame is wired at open() - BEFORE attached() - so the view can reach the
-// IPlugFrame (and query the Linux IRunLoop through it) while attaching. Resize
-// requests round-trip resizeView -> host window resize -> onSize, per spec.
+// IPlugFrame while attaching. On Linux it can also query the IRunLoop. Resize
+// requests round-trip resizeView -> host container resize -> onSize, per spec.
 //
-// No X11 / Steinberg types leak here: everything lives behind the pImpl.
+// No platform / Steinberg types leak here: everything lives behind the pImpl.
+// Native handles use uintptr_t rather than X11's unsigned long, keeping the
+// boundary pointer-width-safe on every platform.
 class Vst3Editor
 {
 public:
@@ -27,29 +29,32 @@ public:
     Vst3Editor& operator= (const Vst3Editor&) = delete;
 
     // Create the controller's editor view and wire the frame + host callbacks.
-    // False (+errorOut) when the plugin ships no X11-embeddable editor. Keeps a
-    // reference to `inst` - the owner must keep it alive past this editor.
+    // False (+errorOut) when the plugin ships no compatible embedded editor.
+    // Keeps a reference to `inst` - the owner must keep it alive past this editor.
     bool open (Vst3Instance& inst, std::string& errorOut);
 
-    // Create the host X11 window under parentX11 at (x,y,w,h), attach the view
-    // into it, and map it.
-    bool embed (unsigned long parentX11, int x, int y, int w, int h, std::string& errorOut);
+    // Create a native child container under parentHandle at (x,y,w,h) and
+    // attach the view into it. Visibility afterwards is platform-specific: the
+    // X11 host window is mapped here (toolkit editors can refuse to realise
+    // into an unmapped parent), while the Cocoa container stays hidden until
+    // reveal(). reveal()/hide() are idempotent on both.
+    bool embed (std::uintptr_t parentHandle, int x, int y, int w, int h,
+                std::string& errorOut);
 
     void setBounds (int x, int y, int w, int h);
     void setContentScale (float scale);
-    void reveal();   // XMapWindow (idempotent)
-    void hide();     // XUnmapWindow (idempotent)
+    void reveal();
+    void hide();
     void close();
 
-    // The host window's REAL geometry (position relative to its X11 parent +
-    // size), so the owner can detect and correct drift the message flow
-    // missed. False when not embedded or the window is gone.
-    bool getRootRelativePosition (unsigned long referenceWindow,
+    // Linux geometry diagnostics. macOS uses logical component bounds directly,
+    // so these return false there.
+    bool getRootRelativePosition (std::uintptr_t referenceHandle,
                                   int& relX, int& relY) const;
     bool getActualGeometry (int& x, int& y, int& w, int& h) const;
 
-    // Message thread, ~60 Hz: pump the instance's IRunLoop (fds + timers) and
-    // drain our X connection.
+    // Message thread, ~60 Hz: pump the instance's host context and drain any
+    // platform editor events.
     void pump (double elapsedMs);
 
     int  preferredWidth()  const noexcept;
