@@ -79,5 +79,15 @@ TEST_CASE ("loop-aware readForTrack wraps at the loop boundary",
     // Seam declick: the first wrapped sample is fully faded in by +64.
     REQUIRE (std::abs (out[200]) < 1e-4f);
 
+    // Fade-out direction: attenuation deepens INTO the seam. The sample
+    // adjacent to the wrap (offset 199) is silenced, the far edge of the
+    // 64-sample window (offset 136) keeps full level, and the ramp between
+    // is monotonic. An inverted ramp leaves the seam discontinuity intact
+    // and swells backwards instead.
+    REQUIRE (std::abs (out[199]) < 1e-3f);
+    REQUIRE_THAT (out[136], WithinAbs (8936.0f * 1e-5f, 2e-3f));
+    REQUIRE (std::abs (out[199]) < std::abs (out[168]));
+    REQUIRE (std::abs (out[168]) < std::abs (out[136]));
+
     pe.stopPlayback();
 }
