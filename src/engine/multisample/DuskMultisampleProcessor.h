@@ -89,8 +89,8 @@ public:
 
     // True if a soundfont has been loaded. Used by editor UI to show
     // "(no file)" vs the loaded file name.
-    bool hasLoadedFile() const noexcept { return loadedFilePath.isNotEmpty(); }
-    const juce::String& getLoadedFilePath() const noexcept { return loadedFilePath; }
+    bool hasLoadedFile() const { const juce::ScopedLock sl (loadInfoLock); return loadedFilePath.isNotEmpty(); }
+    juce::String getLoadedFilePath() const { const juce::ScopedLock sl (loadInfoLock); return loadedFilePath; }
 
     // Number of regions sfizz parsed from the loaded .sfz. 0 when
     // no file is loaded. Editor polls this on its refresh timer.
@@ -132,7 +132,7 @@ public:
     // loadSfzFile when called from the deserialiser. Editor polls it
     // so a missing-file restore shows "(file not found)" instead of
     // silent emptiness. Cleared when a load succeeds.
-    juce::String getLastLoadError() const noexcept { return lastLoadError; }
+    juce::String getLastLoadError() const { const juce::ScopedLock sl (loadInfoLock); return lastLoadError; }
 
     // Override parameters. Phase 1 v1: master volume, master tune,
     // polyphony cap. Phase 2 widens to ADSR + filter + LFO overrides
@@ -176,8 +176,13 @@ private:
 
     double currentSampleRate { 48000.0 };
     int    currentBlockSize  { 512 };
+    // Written on the loadPool thread, read on the message thread
+    // (state save, editor polls). juce::String is refcounted COW - a
+    // concurrent assign corrupts the refcount - so every access goes
+    // through loadInfoLock.
     juce::String loadedFilePath;     // empty when no file loaded
     juce::String lastLoadError;      // most recent setState / load failure
+    mutable juce::CriticalSection loadInfoLock;
     Overrides overrides;
 
     // SF2 program switcher state: display metadata + active source index.
