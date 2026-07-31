@@ -56,6 +56,8 @@ enum class PluginKind { Effects, Instruments };
 // stay as the fallback host.
 // `onPickNativeVst3` is the VST3 twin: merges native VST3 rows (.vst3 bundle
 // paths), hides the JUCE-format "VST3" effect rows, and routes selection here.
+// `onPickNativeAu` is the macOS AU twin: merges registry rows, hides JUCE AU
+// duplicates, and routes the stable component identifier here.
 // `onPickSoundfont`, when set, adds the "Soundfont" button to an instrument
 // picker and hands the chosen .sfz / .sf2 to the caller's multisample rung.
 void openPickerMenu (PluginSlot& slot,
@@ -68,7 +70,8 @@ void openPickerMenu (PluginSlot& slot,
                       std::function<void (const juce::File&, const juce::String&)> onPickNativeClap = {},
                       std::function<void (const juce::File&, const juce::String&)> onPickNativeLv2 = {},
                       std::function<void (const juce::File&, const juce::String&)> onPickNativeVst3 = {},
-                      std::function<void (const juce::File&)> onPickSoundfont = {});
+                      std::function<void (const juce::File&)> onPickSoundfont = {},
+                      std::function<void (const juce::String&)> onPickNativeAu = {});
 
 // Two-step insert flow. Step 1 shows a small modal with three big
 // buttons - Hardware Insert / Soundfont / Plugin - letting the user
@@ -89,7 +92,8 @@ void openInsertChooser (PluginSlot& slot,
                          std::function<void (const juce::File&, const juce::String&)> onPickNativeClap = {},
                          std::function<void (const juce::File&, const juce::String&)> onPickNativeLv2 = {},
                          std::function<void (const juce::File&, const juce::String&)> onPickNativeVst3 = {},
-                         std::function<void (const juce::File&)> onPickSoundfont = {});
+                         std::function<void (const juce::File&)> onPickSoundfont = {},
+                         std::function<void (const juce::String&)> onPickNativeAu = {});
 
 // Synchronous scan. Blocks the message thread during scanInstalledPlugins().
 // Shows a Dusk in-window completion alert in `parent` (top-level Component)
