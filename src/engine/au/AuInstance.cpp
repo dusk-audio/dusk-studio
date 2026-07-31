@@ -371,7 +371,8 @@ void AuInstance::processBlock (const hosting::PortBuffers& io) noexcept
     {
         auto& buffer = output->mBuffers[channel];
         buffer.mNumberChannels = 1;
-        buffer.mDataByteSize = static_cast<UInt32> (io.numFrames * sizeof (float));
+        buffer.mDataByteSize = static_cast<UInt32> (
+            static_cast<std::size_t> (io.numFrames) * sizeof (float));
         buffer.mData = io.mainOut[channel];
     }
 

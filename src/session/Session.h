@@ -809,10 +809,10 @@ struct Track
     juce::String pluginStateBase64;
 
     // Native insert alternatives to the JUCE plugin above. An insert hosts at
-    // most ONE of {JUCE plugin, native CLAP, native LV2, native VST3, native
-    // multisample}: the non-empty native* identity names the host (precedence
-    // CLAP > LV2 > VST3 > AU > multisample if several are somehow set). Always
-    // present so non-Linux builds round-trip the fields untouched.
+    // most ONE of {JUCE plugin, native CLAP, native LV2, native VST3, native AU,
+    // native multisample}: the non-empty native* identity names the host
+    // (precedence CLAP > LV2 > VST3 > AU > multisample if several are somehow
+    // set). Always present so builds without a given host round-trip its fields.
     juce::String nativeClapPath;
     juce::String nativeClapPluginId;   // which plugin inside the bundle; empty = first effect
     juce::String nativeClapStateBase64;
@@ -981,10 +981,10 @@ struct AuxLane
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> pluginStateBase64;
 
     // Native host alternatives to the JUCE plugin above. A slot is JUCE /
-    // native-CLAP / native-LV2 / native-VST3 / hardware / empty - at most one
-    // host per slot (precedence CLAP > LV2 > VST3 > AU if several native identities are
-    // somehow set). Always present so non-Linux builds round-trip the fields
-    // untouched.
+    // native-CLAP / native-LV2 / native-VST3 / native-AU / hardware / empty -
+    // at most one host per slot (precedence CLAP > LV2 > VST3 > AU if several
+    // native identities are somehow set). Always present so builds without a
+    // given host round-trip its fields untouched.
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeClapPath;
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeClapPluginId;
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeClapStateBase64;

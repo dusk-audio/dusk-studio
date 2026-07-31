@@ -106,11 +106,14 @@ TEST_CASE ("Native Audio Unit slot lifecycle, process, parameters, state, and la
         right[i] = 0.7f * left[i];
     }
     slot.processStereo (left.data(), right.data(), left.data(), right.data(), 128);
+    float outputMagnitude = 0.0f;
     for (std::size_t i = 0; i < left.size(); ++i)
     {
         REQUIRE (std::isfinite (left[i]));
         REQUIRE (std::isfinite (right[i]));
+        outputMagnitude += std::abs (left[i]) + std::abs (right[i]);
     }
+    CHECK (outputMagnitude > 1.0e-4f);
 
     std::vector<std::uint8_t> saved;
     REQUIRE (slot.saveState (saved));
