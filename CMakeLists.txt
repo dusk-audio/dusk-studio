@@ -55,6 +55,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
             pkg_check_modules(PIPEWIRE IMPORTED_TARGET GLOBAL libpipewire-0.3)
         endif()
     endif()
+    option(DUSKSTUDIO_REQUIRE_NATIVE_LV2
+           "Fail the configure when the native LV2 host deps are missing" OFF)
     if(APPLE)
         # The default follows the dev libs, as on Linux, so a Mac without them
         # still configures. An EXPLICIT -DDUSKSTUDIO_NATIVE_LV2=ON with them
@@ -77,6 +79,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
         option(DUSKSTUDIO_NATIVE_LV2
                "Build the native LV2 plugin host (Linux/macOS, needs lilv/suil/lv2)" ON)
     else()
+        # CI and release builds pass -DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON so a
+        # runner missing the lilv/suil packages fails the configure instead of
+        # silently shipping a build without the native LV2 host.
+        if(DUSKSTUDIO_REQUIRE_NATIVE_LV2)
+            message(FATAL_ERROR "Native LV2 host required but lilv/suil/lv2 dev packages were not all found")
+        endif()
         set(DUSKSTUDIO_NATIVE_LV2 OFF)
         message(STATUS "Native LV2 host: lilv/suil/lv2 not all found - disabled")
     endif()
