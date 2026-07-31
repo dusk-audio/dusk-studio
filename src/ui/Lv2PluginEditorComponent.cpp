@@ -27,6 +27,7 @@ bool Lv2PluginEditorComponent::attach (lv2::Lv2Instance& shared, juce::String& e
     if (! editor.open (shared, err))
     { errorOut = "editor: " + juce::String (err); return false; }
     attachedInstance = &shared;
+    embeddedEpoch = shared.instanceEpoch();
 
     editor.onResize = [this] (int w, int h)
     {
@@ -71,7 +72,7 @@ void Lv2PluginEditorComponent::tryEmbed()
     // ui:resize synchronously -> onResize -> setSize -> resized() -> tryEmbed again,
     // which would build a SECOND UI instance and orphan the first (the black-
     // rectangle bug).
-    if (! loaded || embedded || embedding || ! isShowing()) return;
+    if (! loaded || ! editor.isOpen() || embedded || embedding || ! isShowing()) return;
     const auto parent = peerX11();
     if (parent == 0) return;
 
@@ -202,11 +203,31 @@ void Lv2PluginEditorComponent::timerCallback()
     // the freed handle, then re-embed against the fresh instance. Reactivate
     // and this timer both run on the message thread, so the check-then-pump
     // sequence cannot interleave with the swap.
-    if (embedded && attachedInstance != nullptr
-        && attachedInstance->instanceEpoch() != embeddedEpoch)
+    const auto currentEpoch = attachedInstance != nullptr
+                                ? attachedInstance->instanceEpoch() : embeddedEpoch;
+    if (currentEpoch != embeddedEpoch)
     {
         editor.close();
         embedded = false;
+
+        // Consume the epoch only once the editor reopens against the new
+        // instance. While the instance is inactive (mid-reactivate, or a
+        // failed activate awaiting recovery) the stale epoch keeps this
+        // branch retrying every tick instead of leaving the editor closed
+        // for good; close() above is idempotent, and attach()'s onResize /
+        // onClosed callbacks live on the Lv2Editor across close/open.
+        if (attachedInstance->isActive())
+        {
+            std::string err;
+            if (! editor.open (*attachedInstance, err))
+            {
+                std::fprintf (stderr, "[lv2 editor] reopen failed: %s\n", err.c_str());
+                loaded = false;
+                stopTimer();
+                return;
+            }
+            embeddedEpoch = currentEpoch;
+        }
     }
 
     if (embedded)

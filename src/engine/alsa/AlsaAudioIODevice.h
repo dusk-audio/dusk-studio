@@ -185,6 +185,9 @@ private:
     std::atomic<bool> isDeviceOpen { false };
     std::atomic<bool> isStarted    { false };
     std::atomic<int>  xrunCount    { 0 };
+    // Message-thread only: stop()'s bounded join timed out and teardown was
+    // abandoned; close() skips the handle teardown while set. Leak beats UAF.
+    bool ioThreadWedged = false;
 
     juce::String lastError;
 

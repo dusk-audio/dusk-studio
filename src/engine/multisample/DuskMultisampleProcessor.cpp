@@ -257,13 +257,16 @@ void DuskMultisampleProcessor::loadFileAsync (
         if (onDone) onDone (false, "A load is already in progress");
         return;
     }
-    loadPool.addJob ([this, file, onDone = std::move (onDone)]
+    // Built here on the message thread: a WeakReference's first construction
+    // lazily creates the shared master reference, which must not race the
+    // destructor from the pool thread.
+    juce::WeakReference<DuskMultisampleProcessor> weak (this);
+    loadPool.addJob ([this, weak, file, onDone = std::move (onDone)]
     {
         juce::String err;
         const bool ok = file.getFileExtension().toLowerCase() == ".sf2"
                             ? loadSf2File (file, err)
                             : loadSfzFile (file, err);
-        juce::WeakReference<DuskMultisampleProcessor> weak (this);
         juce::MessageManager::callAsync ([weak, onDone, ok, err]
         {
             // Skip entirely if the processor was destroyed after posting this:
@@ -287,11 +290,11 @@ void DuskMultisampleProcessor::loadSf2PresetAsync (
         if (onDone) onDone (false, "A load is already in progress");
         return;
     }
-    loadPool.addJob ([this, presetIndex, onDone = std::move (onDone)]
+    juce::WeakReference<DuskMultisampleProcessor> weak (this);
+    loadPool.addJob ([this, weak, presetIndex, onDone = std::move (onDone)]
     {
         juce::String err;
         const bool ok = loadSf2Preset (presetIndex, err);
-        juce::WeakReference<DuskMultisampleProcessor> weak (this);
         juce::MessageManager::callAsync ([weak, onDone, ok, err]
         {
             auto* self = weak.get();
@@ -336,8 +339,12 @@ bool DuskMultisampleProcessor::applySf2Preset (const juce::File& sf2,
     // Only the sfizz call itself is serialised against processBlock - the
     // expensive conversion above runs unlocked so the audio thread keeps
     // rendering during it.
-    const juce::SpinLock::ScopedLockType lock (sfizzLock);
-    if (! sfizz_load_string (impl->synth, pathStr.c_str(), body.c_str()))
+    bool ok = false;
+    {
+        const juce::SpinLock::ScopedLockType lock (sfizzLock);
+        ok = sfizz_load_string (impl->synth, pathStr.c_str(), body.c_str());
+    }
+    if (! ok)
     {
         errorMessage = "sfizz rejected the converted SF2 preset";
         {
@@ -358,7 +365,13 @@ bool DuskMultisampleProcessor::applySf2Preset (const juce::File& sf2,
         const juce::ScopedLock sl (sf2PresetsLock);
         presetCount = (int) sf2Presets.size();
     }
-    sf2PresetIndex.store (juce::jlimit (0, juce::jmax (0, presetCount - 1), presetIndex),
+    // Clamp only against real metadata: sf2Presets is stale during
+    // loadSf2File's preset-0 load (previous file's list, committed after)
+    // and empty when the metadata parse failed - forcing the index into
+    // those ranges would misreport the preset the converter actually loaded.
+    sf2PresetIndex.store (presetCount > 0
+                            ? juce::jlimit (0, presetCount - 1, presetIndex)
+                            : juce::jmax (0, presetIndex),
                           std::memory_order_relaxed);
     {
         const juce::ScopedLock sl (loadInfoLock);

@@ -567,22 +567,29 @@ bool PluginSlot::loadFromFile (const juce::File& pluginFile, juce::String& error
     logLoadedPlugin (*fresh);
 
     ownedInstance = std::move (fresh);
-    blocksSinceLoad     = 0;
-    consecutiveOverruns = 0;
-    autoBypassed.store (false, std::memory_order_relaxed);
-    if (hostPlayHead != nullptr)
-        ownedInstance->setPlayHead (hostPlayHead);
-    cachedLatencySamples.store (ownedInstance->getLatencySamples(),
-                                  std::memory_order_relaxed);
-    // MIDI Learn last-touched: install a parameter listener on every
-    // exposed parameter so the user's plugin-UI moves stamp
-    // lastTouchedParamIndex. Cheap on load (small enum) and lock-free
-    // at runtime.
-    lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
-    lastTouchedListener = std::make_unique<LastTouchedListener> (lastTouchedParamIndex);
-    for (auto* p : ownedInstance->getParameters())
-        if (p != nullptr) p->addListener (lastTouchedListener.get());
-    currentInstance.store (ownedInstance.get(), std::memory_order_release);
+    {
+        // Blocking-acquire drains any in-flight process call before the
+        // watchdog reset + publish - its overrun accounting could otherwise
+        // land after the clear and re-bypass the fresh instance. Held through
+        // the publish; the audio side only try-locks, so it dry-passes.
+        const juce::SpinLock::ScopedLockType processGuard (processLock);
+        blocksSinceLoad     = 0;
+        consecutiveOverruns = 0;
+        autoBypassed.store (false, std::memory_order_relaxed);
+        if (hostPlayHead != nullptr)
+            ownedInstance->setPlayHead (hostPlayHead);
+        cachedLatencySamples.store (ownedInstance->getLatencySamples(),
+                                      std::memory_order_relaxed);
+        // MIDI Learn last-touched: install a parameter listener on every
+        // exposed parameter so the user's plugin-UI moves stamp
+        // lastTouchedParamIndex. Cheap on load (small enum) and lock-free
+        // at runtime.
+        lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
+        lastTouchedListener = std::make_unique<LastTouchedListener> (lastTouchedParamIndex);
+        for (auto* p : ownedInstance->getParameters())
+            if (p != nullptr) p->addListener (lastTouchedListener.get());
+        currentInstance.store (ownedInstance.get(), std::memory_order_release);
+    }
     offlineDescriptionXml.clear();
     offlineStateBase64.clear();
     return true;
@@ -764,18 +771,22 @@ bool PluginSlot::installInProcessInstance (std::unique_ptr<juce::AudioPluginInst
     logLoadedPlugin (*fresh);
 
     ownedInstance = std::move (fresh);
-    blocksSinceLoad     = 0;
-    consecutiveOverruns = 0;
-    autoBypassed.store (false, std::memory_order_relaxed);
-    if (hostPlayHead != nullptr)
-        ownedInstance->setPlayHead (hostPlayHead);
-    cachedLatencySamples.store (ownedInstance->getLatencySamples(),
-                                  std::memory_order_relaxed);
-    lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
-    lastTouchedListener = std::make_unique<LastTouchedListener> (lastTouchedParamIndex);
-    for (auto* p : ownedInstance->getParameters())
-        if (p != nullptr) p->addListener (lastTouchedListener.get());
-    currentInstance.store (ownedInstance.get(), std::memory_order_release);
+    {
+        // Same drain-then-reset-and-publish as loadFromFile above.
+        const juce::SpinLock::ScopedLockType processGuard (processLock);
+        blocksSinceLoad     = 0;
+        consecutiveOverruns = 0;
+        autoBypassed.store (false, std::memory_order_relaxed);
+        if (hostPlayHead != nullptr)
+            ownedInstance->setPlayHead (hostPlayHead);
+        cachedLatencySamples.store (ownedInstance->getLatencySamples(),
+                                      std::memory_order_relaxed);
+        lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
+        lastTouchedListener = std::make_unique<LastTouchedListener> (lastTouchedParamIndex);
+        for (auto* p : ownedInstance->getParameters())
+            if (p != nullptr) p->addListener (lastTouchedListener.get());
+        currentInstance.store (ownedInstance.get(), std::memory_order_release);
+    }
     offlineDescriptionXml.clear();
     offlineStateBase64.clear();
     return true;

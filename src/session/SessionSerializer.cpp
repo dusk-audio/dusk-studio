@@ -1795,39 +1795,51 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         s.master().tapeHQ.store      (json::getBool (master, "tape_hq", false));
         s.master().tapeStateBase64 = json::getString (master, "tape_state");
 
-        // Pultec EQ. Missing keys keep the in-memory default (matches
-        // the per-track / per-bus pattern).
-        auto loadMasterFloat = [&master] (std::atomic<float>& dst, const char* key)
+        // Pultec EQ + bus comp. With the master section present, a missing
+        // individual key keeps the in-memory value (matches the per-track /
+        // per-bus pattern); with the whole section absent, every field
+        // resets to the model default so nothing inherits the previously
+        // loaded session's master chain.
+        static const MasterBusParams kMasterDefaults;
+        const bool haveMaster = json::has (root, "master");
+        auto loadMasterFloat = [&master, haveMaster] (std::atomic<float>& dst,
+                                                      const std::atomic<float>& def,
+                                                      const char* key)
         {
             if (json::has (master, key))
             {
                 const float v = json::getFloat (master, key, 0.0f);
                 if (std::isfinite (v)) dst.store (v);   // reject NaN/inf from a corrupt file - keep the default
             }
+            else if (! haveMaster)
+                dst.store (def.load());
         };
-        auto loadMasterBool = [&master] (std::atomic<bool>& dst, const char* key)
+        auto loadMasterBool = [&master, haveMaster] (std::atomic<bool>& dst,
+                                                     const std::atomic<bool>& def,
+                                                     const char* key)
         {
             if (json::has (master, key)) dst.store (json::getBool (master, key, false));
+            else if (! haveMaster)       dst.store (def.load());
         };
-        loadMasterBool  (s.master().eqEnabled,           "eq_enabled");
-        loadMasterFloat (s.master().eqLfBoost,           "eq_lf_boost");
-        loadMasterFloat (s.master().eqLfAtten,           "eq_lf_atten");
-        loadMasterFloat (s.master().eqLfFreq,            "eq_lf_freq");
-        loadMasterFloat (s.master().eqHfBoost,           "eq_hf_boost");
-        loadMasterFloat (s.master().eqHfBoostFreq,       "eq_hf_boost_freq");
-        loadMasterFloat (s.master().eqHfBoostBandwidth,  "eq_hf_boost_bandwidth");
-        loadMasterFloat (s.master().eqHfAtten,           "eq_hf_atten");
-        loadMasterFloat (s.master().eqHfAttenFreq,       "eq_hf_atten_freq");
-        loadMasterFloat (s.master().eqOutputGainDb,      "eq_output_gain_db");
+        loadMasterBool  (s.master().eqEnabled,           kMasterDefaults.eqEnabled,           "eq_enabled");
+        loadMasterFloat (s.master().eqLfBoost,           kMasterDefaults.eqLfBoost,           "eq_lf_boost");
+        loadMasterFloat (s.master().eqLfAtten,           kMasterDefaults.eqLfAtten,           "eq_lf_atten");
+        loadMasterFloat (s.master().eqLfFreq,            kMasterDefaults.eqLfFreq,            "eq_lf_freq");
+        loadMasterFloat (s.master().eqHfBoost,           kMasterDefaults.eqHfBoost,           "eq_hf_boost");
+        loadMasterFloat (s.master().eqHfBoostFreq,       kMasterDefaults.eqHfBoostFreq,       "eq_hf_boost_freq");
+        loadMasterFloat (s.master().eqHfBoostBandwidth,  kMasterDefaults.eqHfBoostBandwidth,  "eq_hf_boost_bandwidth");
+        loadMasterFloat (s.master().eqHfAtten,           kMasterDefaults.eqHfAtten,           "eq_hf_atten");
+        loadMasterFloat (s.master().eqHfAttenFreq,       kMasterDefaults.eqHfAttenFreq,       "eq_hf_atten_freq");
+        loadMasterFloat (s.master().eqOutputGainDb,      kMasterDefaults.eqOutputGainDb,      "eq_output_gain_db");
 
         // Bus comp.
-        loadMasterBool  (s.master().compEnabled,      "comp_enabled");
-        loadMasterFloat (s.master().compThreshDb,     "comp_thresh_db");
-        loadMasterFloat (s.master().compRatio,        "comp_ratio");
-        loadMasterFloat (s.master().compAttackMs,     "comp_attack_ms");
-        loadMasterFloat (s.master().compReleaseMs,    "comp_release_ms");
-        loadMasterBool  (s.master().compReleaseAuto,  "comp_release_auto");
-        loadMasterFloat (s.master().compMakeupDb,     "comp_makeup_db");
+        loadMasterBool  (s.master().compEnabled,      kMasterDefaults.compEnabled,      "comp_enabled");
+        loadMasterFloat (s.master().compThreshDb,     kMasterDefaults.compThreshDb,     "comp_thresh_db");
+        loadMasterFloat (s.master().compRatio,        kMasterDefaults.compRatio,        "comp_ratio");
+        loadMasterFloat (s.master().compAttackMs,     kMasterDefaults.compAttackMs,     "comp_attack_ms");
+        loadMasterFloat (s.master().compReleaseMs,    kMasterDefaults.compReleaseMs,    "comp_release_ms");
+        loadMasterBool  (s.master().compReleaseAuto,  kMasterDefaults.compReleaseAuto,  "comp_release_auto");
+        loadMasterFloat (s.master().compMakeupDb,     kMasterDefaults.compMakeupDb,     "comp_makeup_db");
         // Mode publish happens AFTER the lane publishes below - same
         // ordering rationale as the track-load + aux-load blocks, and
         // exactly one publish per lane (empty when absent).
