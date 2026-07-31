@@ -75,6 +75,15 @@ public:
     void suspendProcessing();
     void resumeProcessing() noexcept;
 
+    // Count of callbacks the process gate turned into silent early-outs.
+    // BounceEngine compares it around each offline-render callback: a gated
+    // block wrote silence without advancing engine state and must be re-run,
+    // not committed to the file.
+    std::int64_t getGatedBlockCount() const noexcept
+    {
+        return earlyOutBlocks.load (std::memory_order_relaxed);
+    }
+
     // Test-only. Immediately stop+start the pool to `n` workers. Safe only when
     // no audio callback is concurrently in runBlock() - the offline self-test
     // drives the callback synchronously, so the A/B harness can flip the count

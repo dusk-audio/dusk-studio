@@ -394,9 +394,20 @@ void BounceEngine::run()
         // Reset outputs each block.
         for (auto& o : outputs) std::fill (o.begin(), o.end(), 0.0f);
 
+        // A message-thread suspendProcessing (plugin load, device change)
+        // makes the callback clear the outputs and return without advancing
+        // engine state; committing that block would splice silence into the
+        // bounce at the correct length with no error. Detect the gated
+        // callback and re-run the block once the gate reopens.
+        const auto gatedBefore = engine.getGatedBlockCount();
         engine.audioDeviceIOCallbackWithContext (inputPtrs.data(), kNumIn,
                                                    outputPtrs.data(), kNumChannels,
                                                    remaining, ctx);
+        if (engine.getGatedBlockCount() != gatedBefore)
+        {
+            juce::Thread::sleep (1);
+            continue;
+        }
 
         // Drop the leading PDC samples, then write the rest.
         int writeStart = 0;
