@@ -82,6 +82,15 @@ public:
     void suspendProcessing();
     void resumeProcessing() noexcept;
 
+    // Count of callbacks the process gate turned into silent early-outs.
+    // BounceEngine compares it around each offline-render callback: a gated
+    // block wrote silence without advancing engine state and must be re-run,
+    // not committed to the file.
+    std::int64_t getGatedBlockCount() const noexcept
+    {
+        return earlyOutBlocks.load (std::memory_order_relaxed);
+    }
+
     // Test-only. Immediately stop+start the pool to `n` workers. Safe only when
     // no audio callback is concurrently in runBlock() - the offline self-test
     // drives the callback synchronously, so the A/B harness can flip the count
@@ -321,11 +330,11 @@ public:
     // callback on its worker thread, the live MIDI-input path stays open (the
     // input devices are never closed) - so without this, live controller notes
     // arriving during a render would print into the deterministic file. Set true
-    // for the full duration of every offline render loop, false otherwise. Read
-    // relaxed on the driving thread: the render worker both sets it and drives
-    // the callback, and the live device path never sees it true.
+    // for the full duration of every offline render loop, false otherwise. The
+    // message-thread NativeParamDrain also reads it before a VST3 reactivation,
+    // so publish/consume it across threads.
     void setOfflineRenderActive (bool active) noexcept
-        { offlineRenderActive.store (active, std::memory_order_relaxed); }
+        { offlineRenderActive.store (active, std::memory_order_release); }
 
     // Stem capture for bus groups and aux lanes (the per-track taps live on
     // ChannelStrip::setStemCapture). When set, the audio path accumulates the

@@ -2,6 +2,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <vector>
 #include "AudioEngine.h"
 #include "LameMp3Writer.h"
@@ -83,6 +84,51 @@ bool BounceEngine::runOnMessageThread (std::function<void()> fn)
             return false;
         }
     return true;
+}
+
+bool BounceEngine::processOfflineBlock (
+    const float* const* inputChannelData,
+    int numInputChannels,
+    float* const* outputChannelData,
+    int numOutputChannels,
+    int numSamples,
+    const device::CallbackContext& context)
+{
+    constexpr int kMaxGateRetries = 5000;
+    int gateRetries = 0;
+    while (! cancelRequested.load (std::memory_order_relaxed))
+    {
+        const auto gatedBefore = engine.getGatedBlockCount();
+        engine.audioDeviceIOCallback (inputChannelData,
+                                      numInputChannels,
+                                      outputChannelData,
+                                      numOutputChannels,
+                                      numSamples,
+                                      context);
+        if (engine.getGatedBlockCount() == gatedBefore)
+            return true;
+
+        if (cancelRequested.load (std::memory_order_relaxed))
+            return false;
+
+        if (++gateRetries >= kMaxGateRetries)
+        {
+            const auto diagnostic =
+                "Offline render aborted: AudioEngine process gate "
+                "(processingSuspended=true) remained stuck for "
+                + std::to_string (gateRetries) + " retries";
+            std::fprintf (stderr, "[Dusk Studio/BounceEngine] %s\n",
+                          diagnostic.c_str());
+            {
+                const juce::ScopedLock lock (lastErrorLock);
+                lastError = diagnostic;
+            }
+            return false;
+        }
+
+        juce::Thread::sleep (1);
+    }
+    return false;
 }
 
 std::unique_ptr<dusk::audio::IFileWriteSink>
@@ -407,9 +453,13 @@ void BounceEngine::run()
         // Reset outputs each block.
         for (auto& o : outputs) std::fill (o.begin(), o.end(), 0.0f);
 
-        engine.audioDeviceIOCallback (inputPtrs.data(), kNumIn,
-                                                   outputPtrs.data(), kNumChannels,
-                                                   remaining, ctx);
+        if (! processOfflineBlock (inputPtrs.data(), kNumIn,
+                                    outputPtrs.data(), kNumChannels,
+                                    remaining, ctx))
+        {
+            succeeded = false;
+            break;
+        }
 
         // Drop the leading PDC samples, then write the rest.
         int writeStart = 0;
@@ -667,9 +717,13 @@ bool BounceEngine::runStemsMode()
                 juce::FloatVectorOperations::clear (capR[(size_t) i].data(), remaining);
             }
 
-            engine.audioDeviceIOCallback (inputPtrs.data(), kNumIn,
-                                                       outputPtrs.data(), kNumChannels,
-                                                       remaining, ctx);
+            if (! processOfflineBlock (inputPtrs.data(), kNumIn,
+                                        outputPtrs.data(), kNumChannels,
+                                        remaining, ctx))
+            {
+                succeeded = false;
+                break;
+            }
 
             std::int64_t minWritten = totalSamples;
             for (int i = 0; i < numStems; ++i)
@@ -1137,9 +1191,13 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
         std::fill (capL.begin(), capL.end(), 0.0f);
         std::fill (capR.begin(), capR.end(), 0.0f);
 
-        engine.audioDeviceIOCallback (inputPtrs.data(), kNumIn,
-                                                   outputPtrs.data(), kNumChannels,
-                                                   remaining, ctx);
+        if (! processOfflineBlock (inputPtrs.data(), kNumIn,
+                                    outputPtrs.data(), kNumChannels,
+                                    remaining, ctx))
+        {
+            ok = false;
+            break;
+        }
 
         int writeStart = 0;
         if (dropped < leadIn)

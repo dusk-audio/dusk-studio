@@ -483,7 +483,7 @@ static void runHeadlessToneTest()
 //
 // Usage:
 //   DUSKSTUDIO_INSTRUMENT_TEST=/home/marc/.vst3/u-he/Diva.vst3 ./Dusk Studio
-static void runHeadlessInstrumentTest (const juce::String& pluginPath)
+static bool runHeadlessInstrumentTest (const juce::String& pluginPath)
 {
     constexpr double sampleRate = 48000.0;
     constexpr int    blockSize  = 256;
@@ -516,7 +516,7 @@ static void runHeadlessInstrumentTest (const juce::String& pluginPath)
                             sampleRate, blockSize, msErr))
         {
             std::fprintf (stderr, "FAIL: soundfont load: %s\n", msErr.c_str());
-            return;
+            return false;
         }
     }
 #endif
@@ -525,7 +525,7 @@ static void runHeadlessInstrumentTest (const juce::String& pluginPath)
     if (! isSoundfont && ! slot.loadFromFile (juce::File (pluginPath), err))
     {
         std::fprintf (stderr, "FAIL: loadFromFile: %s\n", err.toRawUTF8());
-        return;
+        return false;
     }
 
     // C-major triad on channel 1, MIDI velocity 100. Note On at sample 0
@@ -584,6 +584,7 @@ static void runHeadlessInstrumentTest (const juce::String& pluginPath)
         std::fprintf (stdout, "VERDICT: AUDIO PRESENT - plugin produced output.\n");
     std::fprintf (stdout, "=== End of Instrument Test ===\n");
     std::fflush (stdout);
+    return peak >= 1.0e-6f;
 }
 
 // Headless pipeline test: drive the full Engine + Session pipeline with
@@ -601,7 +602,7 @@ static void runHeadlessInstrumentTest (const juce::String& pluginPath)
 //   DUSKSTUDIO_PIPELINE_TEST=/home/marc/.vst3/u-he/Diva.vst3 \
 //     DUSKSTUDIO_PIPELINE_TEST_SESSION=/home/marc/Music/Dusk Studio/Untitled/session.json.autosave \
 //     ./Dusk Studio
-static void runHeadlessPipelineTest (const juce::String& pluginPath)
+static bool runHeadlessPipelineTest (const juce::String& pluginPath)
 {
     constexpr double sampleRate = 48000.0;
     constexpr int    blockSize  = 256;
@@ -628,6 +629,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
 
     const char* sessionPath = std::getenv ("DUSKSTUDIO_PIPELINE_TEST_SESSION");
     const bool useSession = (sessionPath != nullptr && *sessionPath != '\0');
+    bool sessionRestoreOk = true;
 
     if (useSession)
     {
@@ -635,7 +637,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
         if (! SessionSerializer::load (*session, juce::File (sessionPath)))
         {
             std::fprintf (stderr, "FAIL: SessionSerializer::load returned false\n");
-            return;
+            return false;
         }
         // A soundfont track leaves the JUCE slot empty by design, so its
         // restore has to be reported off the native slot instead.
@@ -693,6 +695,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
                 {
                     std::fprintf (stderr, "FAIL: restoreFromSavedState: %s\n",
                                   restoreErr.toRawUTF8());
+                    sessionRestoreOk = false;
                 }
                 else
                 {
@@ -741,7 +744,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
             if (! engine->getStrip (0).loadNativeMultisample (juce::File (pluginPath), msErr))
             {
                 std::fprintf (stderr, "FAIL: soundfont load: %s\n", msErr.c_str());
-                return;
+                return false;
             }
         }
         else
@@ -751,7 +754,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
             if (! engine->getStrip (0).getPluginSlot().loadFromFile (juce::File (pluginPath), err))
             {
                 std::fprintf (stderr, "FAIL: loadFromFile: %s\n", err.toRawUTF8());
-                return;
+                return false;
             }
         }
     }
@@ -811,7 +814,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
     if (! insertLoaded())
     {
         std::fprintf (stderr, "FAIL: track 0 has no plugin loaded after setup; aborting.\n");
-        return;
+        return false;
     }
 
     // Decide which input index to inject MIDI on. Both the test driver
@@ -1018,6 +1021,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
 
     std::fprintf (stdout, "=== End of Pipeline Test ===\n");
     std::fflush (stdout);
+    return sessionRestoreOk && stripPeak > 1.0e-4f && masterPeak > 1.0e-4f;
 }
 
 // DUSKSTUDIO_PERF_SESSION=<path>: load a real session and play it
@@ -1026,7 +1030,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
 // table. Measures the full mixer path (region playback, automation,
 // buses, aux, master) with no audio device - for attributing a DSP-load
 // report to a specific section of the callback.
-static void runHeadlessSessionPerf (const juce::String& sessionPath)
+static bool runHeadlessSessionPerf (const juce::String& sessionPath)
 {
     constexpr double sampleRate = 48000.0;
     constexpr int    blockSize  = 256;
@@ -1052,13 +1056,13 @@ static void runHeadlessSessionPerf (const juce::String& sessionPath)
     if (! f.existsAsFile())
     {
         std::fprintf (stderr, "FAIL: no session.json at %s\n", f.getFullPathName().toRawUTF8());
-        return;
+        return false;
     }
     session->setSessionDirectory (f.getParentDirectory());
     if (! SessionSerializer::load (*session, f))
     {
         std::fprintf (stderr, "FAIL: SessionSerializer::load returned false\n");
-        return;
+        return false;
     }
     engine->consumePluginStateAfterLoad();
     engine->consumeTransportStateAfterLoad();
@@ -1130,9 +1134,10 @@ static void runHeadlessSessionPerf (const juce::String& sessionPath)
     engine->printPerfTable();
     std::fprintf (stdout, "=== End of Session Perf ===\n");
     std::fflush (stdout);
+    return true;
 }
 
-static void runHeadlessSelfTest()
+static bool runHeadlessSelfTest()
 {
     // Heap-allocated so destruction order matches the GUI path: AudioEngine
     // first, then Session, before this function returns and DuskStudioApp::quit()
@@ -1171,6 +1176,7 @@ static void runHeadlessSelfTest()
 
     std::fprintf (stdout, "%s\n", report.c_str());
     std::fflush (stdout);
+    return report.find ("[FAIL]") == std::string::npos;
 }
 
 // Headless bounce regression harness: DUSKSTUDIO_BOUNCE_TEST=<plugin path>.
@@ -1811,21 +1817,21 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
 
     if (envFlagSet ("DUSKSTUDIO_RUN_SELFTEST"))
     {
-        runHeadlessSelfTest();
+        setApplicationReturnValue (runHeadlessSelfTest() ? 0 : 1);
         quit();
         return;
     }
 
     if (const char* path = std::getenv ("DUSKSTUDIO_INSTRUMENT_TEST"); path != nullptr && *path)
     {
-        runHeadlessInstrumentTest (juce::String (path));
+        setApplicationReturnValue (runHeadlessInstrumentTest (juce::String (path)) ? 0 : 1);
         quit();
         return;
     }
 
     if (const char* path = std::getenv ("DUSKSTUDIO_PIPELINE_TEST"); path != nullptr && *path)
     {
-        runHeadlessPipelineTest (juce::String (path));
+        setApplicationReturnValue (runHeadlessPipelineTest (juce::String (path)) ? 0 : 1);
         quit();
         return;
     }
@@ -1848,7 +1854,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
 
     if (const char* path = std::getenv ("DUSKSTUDIO_PERF_SESSION"); path != nullptr && *path)
     {
-        runHeadlessSessionPerf (juce::String (path));
+        setApplicationReturnValue (runHeadlessSessionPerf (juce::String (path)) ? 0 : 1);
         quit();
         return;
     }
@@ -2008,6 +2014,10 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
 
         auto session = std::make_unique<Session>();
         auto engine  = std::make_unique<AudioEngine> (*session);
+        // This path drives the callback manually below, so detach the real
+        // device before prepareForSelfTest mutates DSP state (matches
+        // runHeadlessPipelineTest / runHeadlessSessionPerf).
+        engine->detachAudioCallback();
         engine->prepareForSelfTest (sampleRate, blockSize);
         session->track (0).mode.store ((int) Track::Mode::Midi, std::memory_order_relaxed);
 
@@ -2022,6 +2032,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         if (! slot.loadFromFile (juce::File (pathA), err))
         {
             std::fprintf (stderr, "FAIL: initial load: %s\n", err.toRawUTF8());
+            setApplicationReturnValue (1);
             quit();
             return;
         }
@@ -2039,6 +2050,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
             else
             {
                 std::fprintf (stderr, "FAIL: scan B: %s\n", scanErr.toRawUTF8());
+                setApplicationReturnValue (1);
                 quit();
                 return;
             }
@@ -2060,6 +2072,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         // therefore destroy Diva from the message thread DURING the
         // third swap. Run extra blocks after each swap so the audio
         // thread has many chances to dereference a stale pointer.
+        bool swapsOk = true;
         for (int b = 0; b < 200; ++b)
         {
             engine->audioDeviceIOCallback (
@@ -2068,7 +2081,10 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
             {
                 std::fprintf (stdout, "[Replace] swap A -> B...\n");
                 if (! slot.loadFromDescriptor (descB, err))
+                {
                     std::fprintf (stderr, "FAIL: swap A->B: %s\n", err.toRawUTF8());
+                    swapsOk = false;
+                }
             }
             if (b == 120)
             {
@@ -2084,18 +2100,23 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
                     err = scanErr;
                     std::fprintf (stderr, "FAIL: swap B->A re-resolve: %s\n",
                                   err.toRawUTF8());
+                    swapsOk = false;
                 }
                 else
                 {
                     descA = mgr.descriptorForInstance (*probe);
                     probe.reset();
                     if (! slot.loadFromDescriptor (descA, err))
+                    {
                         std::fprintf (stderr, "FAIL: swap B->A: %s\n",
                                       err.toRawUTF8());
+                        swapsOk = false;
+                    }
                 }
             }
         }
         std::fprintf (stdout, "[Replace] survived 200 blocks across two swaps.\n");
+        setApplicationReturnValue (swapsOk ? 0 : 1);
         quit();
         return;
     }
