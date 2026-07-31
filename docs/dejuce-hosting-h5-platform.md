@@ -2,8 +2,8 @@
 
 Status: **H5a.0-H5a.2 MERGED AS PR #120 AT `2a8135d`; H5a.3 MERGED AS PR
 #121 AT `12efe0d`; H5a.4-H5a.6 COMPLETE LOCALLY ON
-`dejuce/hosting-h5a3`. H5a AWAITS MARC'S REVIEW AND PUSH WORD; MACOS CI AND
-BENCH SIGN-OFF REMAIN OWED.** H4 is merged as PR #119 at `3c5c901`. The H5
+`dejuce/hosting-h5a3`. PUSH AUTHORISED BY MARC 2026-07-31; MACOS CI, REVIEW,
+AND BENCH SIGN-OFF REMAIN OWED.** H4 is merged as PR #119 at `3c5c901`. The H5
 scout verified the live source/CMake/CI surface from that baseline. Windows
 LV2 is deferred. H5 is three sequential PRs: H5a macOS CLAP/LV2/VST3, H5b
 macOS AU, H5c Windows CLAP/VST3. No H5 branch is pushed without Marc's word.
@@ -379,6 +379,6 @@ H5 is complete only when:
 ## Resume phrase
 
 "Hosting H5a, spec docs/dejuce-hosting-h5-platform.md — on
-dejuce/hosting-h5a3, review the completed H5a.4-H5a.6 branch; never push
-without Marc's word. After Marc authorises the push, verify macOS CI and record
-the owed bench sign-off."
+dejuce/hosting-h5a3, monitor the pushed H5a.4-H5a.6 PR, fix CI or review
+findings, and record the owed bench sign-off; do not start H5b until H5a
+merges."

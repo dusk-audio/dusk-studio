@@ -31,8 +31,11 @@ public:
     // Keeps a reference to `inst` - the slot owning it must outlive this editor.
     bool open (Lv2Instance& inst, std::string& errorOut);
 
-    // Create the native child container under parentHandle at (x,y,w,h),
-    // instantiate the UI into it via suil, and make it ready for reveal().
+    // Create the native child container under parentHandle at (x,y,w,h) and
+    // instantiate the UI into it via suil. Visibility afterwards is
+    // platform-specific: the X11 host window is mapped here (suil-wrapped
+    // toolkits can refuse to realise into an unmapped parent), while the Cocoa
+    // container stays hidden until reveal().
     bool embed (std::uintptr_t parentHandle, int x, int y, int w, int h,
                 std::string& errorOut);
 

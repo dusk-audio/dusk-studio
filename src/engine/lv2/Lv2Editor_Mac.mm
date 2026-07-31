@@ -76,7 +76,7 @@ struct Lv2Editor::Impl
             [self->uiView setFrame:NSMakeRect (
                 0.0, 0.0, static_cast<CGFloat> (w), static_cast<CGFloat> (h))];
 
-        if (self->owner->onResize)
+        if (self->owner != nullptr && self->owner->onResize)
             self->owner->onResize (w, h);
         return 0;
     }
@@ -271,6 +271,23 @@ void Lv2Editor::hide()
 
 void Lv2Editor::close()
 {
+    if (impl->leakOnClose && impl->suilInstance != nullptr)
+    {
+        // Shutdown path: the suil instance is deliberately leaked because a
+        // foreign-toolkit UI can hang in its own teardown. That leaked UI still
+        // holds this Impl as its suil controller and ui:resize handle, so the
+        // Impl has to outlive us too - a UI ticking its own NSTimer would
+        // otherwise write ports through freed memory.
+        impl->owner = nullptr;
+        static auto* leakedAtShutdown = new std::vector<std::unique_ptr<Impl>>;
+        if (impl->container != nil)
+            [impl->container removeFromSuperview];
+        leakedAtShutdown->push_back (std::move (impl));
+        impl = std::make_unique<Impl>();
+        impl->owner = this;
+        return;
+    }
+
     if (impl->uiView != nil)
     {
         [impl->uiView removeFromSuperview];
