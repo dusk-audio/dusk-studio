@@ -164,15 +164,16 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 | 6   | Loop             | Toggles loop playback between the loop brackets.                                 |
 | 7   | Punch            | Toggles automatic punch in / punch out using the punch brackets.                 |
 | 8   | Virtual keyboard | Opens the on-screen MIDI keyboard overlay.                                       |
-| 9   | Metronome        | Click on / off. Right-click for the click settings.                              |
-| 10  | C/I              | Count-in toggle. One bar of click before record starts.                          |
-| 11  | BPM              | Tempo at the playhead. Double-click to set it directly (in a session with tempo changes, edits the change governing the playhead); or set the tempo from the timeline ruler. **TAP** sets the starting tempo. |
-| 12  | TAP              | Tap repeatedly to set the **starting** tempo from your wrist.                    |
-| 13  | Time signature   | Click to choose. Custom signatures supported.                                    |
-| 14  | Clock display    | Bars.Beats.Ticks or mm:ss.mmm; right-click to flip.                              |
-| 15  | Tuner            | Opens the chromatic tuner against the selected input.                            |
-| 16  | TIMELINE / TAPE   | Same as the tape strip toggle below the bar.                                     |
-| 17  | − / + / Fit      | Timeline zoom out / in / fit-to-window (in the timeline toolbar above the tape strip, shown when the timeline is expanded). |
+| 9   | Notepad          | Opens the session notepad for lyrics and notes (markdown, saved with the session). |
+| 10  | Metronome        | Click on / off. Right-click for the click settings.                              |
+| 11  | C/I              | Count-in toggle. One bar of click before record starts.                          |
+| 12  | BPM              | Tempo at the playhead. Double-click to set it directly (in a session with tempo changes, edits the change governing the playhead); or set the tempo from the timeline ruler. **TAP** sets the starting tempo. |
+| 13  | TAP              | Tap repeatedly to set the **starting** tempo from your wrist.                    |
+| 14  | Time signature   | Click to choose. Custom signatures supported.                                    |
+| 15  | Clock display    | Bars.Beats.Ticks or mm:ss.mmm; right-click to flip.                              |
+| 16  | Tuner            | Opens the chromatic tuner against the selected input.                            |
+| 17  | TIMELINE / TAPE   | Same as the tape strip toggle below the bar.                                     |
+| 18  | − / + / Fit      | Timeline zoom out / in / fit-to-window (in the timeline toolbar above the tape strip, shown when the timeline is expanded). |
 
 In compact mode (window narrower than 1850 px) labels shorten: `TIMELINE` becomes `▾` and the time-format toggle hides; right-click the clock display to flip format instead.
 
@@ -520,6 +521,7 @@ From left to right:
 - **Loop** (⟳). Toggles loop playback.
 - **Punch** (◉). Toggles punch recording. Right-click to enable/disable pre-roll and post-roll and set their seconds.
 - **Virtual keyboard** (⌨). Opens an on-screen MIDI keyboard.
+- **Notepad**. Opens the session notepad — see below.
 - **Metronome** (♩). Toggles the click. Right-click for click settings.
 - **C/I**. Toggles count-in (one bar of click before record starts).
 - **BPM**. The tempo at the playhead (it follows tempo-map changes). Double-click it to set the tempo directly (in a session with tempo changes, this edits the change governing the playhead); you can also set it from the timeline ruler. **TAP** sets the starting tempo.
@@ -536,6 +538,12 @@ When the timeline is expanded, a toolbar row sits directly above the tape strip:
 - **Chase**. When on, the timeline scrolls during playback to keep the playhead in view. Its launch default is set by **Follow playhead by default** in Settings.
 
 In compact mode (window narrower than 1850 pixels), `TIMELINE` becomes `▾` and the time-format toggle hides; right-click the clock display to flip format instead.
+
+## The notepad
+
+![Session notepad.](docs/images/np-12-notepad.png)
+
+A scratch pad for lyrics and session notes, opened from the transport bar. The text is plain markdown; the toolbar buttons insert heading, bold, italic, quote, code, link, and list syntax around the caret or selection. Notes are saved to `notepad.md` in the session folder when the notepad closes and on every session save, and they follow the session on Save As. Typing in the notepad never triggers transport shortcuts.
 
 \newpage
 

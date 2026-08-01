@@ -268,6 +268,7 @@ private:
     EmbeddedModal scanModal;
     EmbeddedModal shortcutsModal;
     EmbeddedModal supportersModal;
+    EmbeddedModal notepadModal;
     void openShortcuts();
 
     // Scan-on-startup runs asynchronously behind a progress modal. Triggered
@@ -285,6 +286,15 @@ private:
     void maybeStartStartupPluginScan();
 
     void toggleVirtualKeyboard();
+
+    // Session notepad (lyrics/notes). The live text mirrors the open panel via
+    // its onTextChanged; notepad.md is written on modal dismiss and on every
+    // session save. Deliberately does NOT dirty the session - the sidecar is
+    // invisible to the serialize() diff by design.
+    void toggleNotepad();
+    void saveNotepadNow();
+    juce::String notepadText;
+    bool notepadDirty = false;
 
     // True once the audio callback is removed for shutdown - makes
     // detach idempotent and signals publishPluginStateForSave that the

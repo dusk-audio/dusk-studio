@@ -1702,6 +1702,20 @@ bool SessionSerializer::save (const Session& s, const juce::File& target)
     return writeAtomic (target, serialize (s));
 }
 
+bool SessionSerializer::saveNotepad (const juce::File& sessionDir, const juce::String& text)
+{
+    if (sessionDir == juce::File()) return false;
+    const auto target = sessionDir.getChildFile ("notepad.md");
+    if (text.isEmpty() && ! target.existsAsFile()) return true;
+    return writeAtomic (target, text);
+}
+
+juce::String SessionSerializer::loadNotepad (const juce::File& sessionDir)
+{
+    const auto source = sessionDir.getChildFile ("notepad.md");
+    return source.existsAsFile() ? source.loadFileAsString() : juce::String();
+}
+
 bool SessionSerializer::load (Session& s, const juce::File& source)
 {
     if (! source.existsAsFile()) return false;

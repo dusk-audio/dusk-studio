@@ -50,6 +50,7 @@ rest are manual (transient states, popup menus, OS dialogs) with notes below.
 | `np-09-tape-strip.png`              | L274, L1000 | ✅ | Tape strip with regions, a marker, and a loop bracket. (Reused at both lines.) |
 | `np-10-region-editor.png`           | L288   | ✅   | Audio region editor modal.                                  |
 | `np-11-piano-roll.png`              | L300   | ✅   | Piano roll modal.                                           |
+| `np-12-notepad.png`                 | L522   | ✅   | Session notepad modal with sample lyrics.                   |
 
 ## Chapter figures
 

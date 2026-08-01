@@ -10,6 +10,7 @@
 #include "PluginScanModal.h"
 #include "ShortcutsPanel.h"
 #include "SupportersPanel.h"
+#include "NotepadPanel.h"
 #include "DuskContextMenu.h"
 #include "../session/MidiBindings.h"
 #include "ConsoleView.h"
@@ -565,6 +566,7 @@ MainComponent::MainComponent()
     transportBar = std::make_unique<TransportBar> (engine);
     transportBar->onTunerToggle = [this] { toggleTuner(); };
     transportBar->onVirtualKeyboardToggle = [this] { toggleVirtualKeyboard(); };
+    transportBar->onNotepadToggle = [this] { toggleNotepad(); };
     transportBar->onTapeStripToggle = [this] (bool expanded)
     {
         // Collapse each track strip's EQ + COMP into popup buttons while the
@@ -997,6 +999,7 @@ MainComponent::~MainComponent()
     importTargetModal    .closeAndDeleteBodyNow();
     shortcutsModal       .closeAndDeleteBodyNow();
     supportersModal      .closeAndDeleteBodyNow();
+    notepadModal         .closeAndDeleteBodyNow();
 
     // Intentionally NO auto-save here. Standard DAW behavior is to require
     // an explicit Save before exit. The previous auto-save on destruct
@@ -2421,6 +2424,10 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
             deleteAutosaveFor (oldDir);
         }
         RecentSessions::add (toPath (dir));
+        // Notepad sidecar rides along on every save; `dir` is already the new
+        // folder on Save As, so the markdown follows the session.
+        SessionSerializer::saveNotepad (dir, notepadText);
+        notepadDirty = false;
         // A successful manual save makes the autosave stale - drop it so the
         // recovery prompt doesn't fire on the next clean load.
         deleteAutosaveFor (dir);
@@ -3031,6 +3038,12 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
         return false;
     }
     const auto tAfterParse = juce::Time::getMillisecondCounterHiRes();
+
+    // The notepad is session-bound: drop any open panel from the previous
+    // session and adopt the new session's sidecar.
+    notepadModal.close();
+    notepadText  = SessionSerializer::loadNotepad (dir);
+    notepadDirty = false;
 
     const bool loadedFromAutosave =
         sourceJson.getFileName().endsWithIgnoreCase (".autosave");
@@ -5147,5 +5160,52 @@ void MainComponent::toggleVirtualKeyboard()
     };
 
     virtualKeyboardModal.show (*this, std::move (body));
+}
+
+void MainComponent::toggleNotepad()
+{
+    if (notepadModal.isOpen())
+    {
+        notepadModal.close();
+        saveNotepadNow();
+        return;
+    }
+
+    auto body = std::make_unique<NotepadPanel>();
+    body->setText (notepadText);
+
+    juce::Component::SafePointer<MainComponent> safeThis (this);
+    body->onTextChanged = [safeThis] (const juce::String& text)
+    {
+        if (auto* self = safeThis.getComponent())
+        {
+            self->notepadText  = text;
+            self->notepadDirty = true;
+        }
+    };
+    auto closeAndSave = [safeThis]
+    {
+        if (auto* self = safeThis.getComponent())
+        {
+            self->notepadModal.close();
+            self->saveNotepadNow();
+        }
+    };
+    body->onCloseRequested = closeAndSave;
+
+    // forwardShortcuts=false: typing lyrics must not fire transport hotkeys
+    // (Space, R, L...).
+    notepadModal.show (*this, std::move (body), closeAndSave,
+                       true, true, 0.55f, true, true,
+                       /*forwardShortcuts*/ false);
+}
+
+void MainComponent::saveNotepadNow()
+{
+    if (! notepadDirty) return;
+    const auto dir = session.getSessionDirectory();
+    if (dir == juce::File()) return;   // untitled: persisted by the first save
+    if (SessionSerializer::saveNotepad (dir, notepadText))
+        notepadDirty = false;
 }
 } // namespace duskstudio

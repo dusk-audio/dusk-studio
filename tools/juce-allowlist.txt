@@ -134,6 +134,7 @@ src/ui/MiniTimelineStrip.h
 src/ui/MultiImportTargetPicker.cpp
 src/ui/MultiImportTargetPicker.h
 src/ui/NativeEditorEmbedScale.h
+src/ui/NotepadPanel.h
 src/ui/PianoRollComponent.cpp
 src/ui/PianoRollComponent.h
 src/ui/PlatformWindowing.h

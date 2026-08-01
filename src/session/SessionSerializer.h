@@ -24,6 +24,12 @@ public:
     // the autosave path. Returns true on success.
     static bool writeAtomic (const juce::File& target, const juce::String& json);
 
+    // Notepad sidecar: <sessionDir>/notepad.md, written atomically like
+    // session.json. Empty text with no existing file is a no-op so untouched
+    // sessions never grow an empty sidecar; load returns "" when absent.
+    static bool saveNotepad (const juce::File& sessionDir, const juce::String& text);
+    static juce::String loadNotepad (const juce::File& sessionDir);
+
     // Save As support: copy every session-owned audio file (regions, take
     // history, freeze WAVs, a session-local mastering source) into
     // newSessionDir and repoint the in-memory model, so the subsequent
