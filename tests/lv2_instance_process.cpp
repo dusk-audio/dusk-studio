@@ -116,6 +116,29 @@ TEST_CASE ("Lv2Instance instantiates + processes an LV2 effect via InsertAdapter
         REQUIRE_FALSE (blob2.empty());
     }
 
+    SECTION ("instanceEpoch bumps only when the LilvInstance is destroyed")
+    {
+        // An embedded UI captures instance-access handles off the LilvInstance
+        // and compares this epoch to notice they went stale. Processing must
+        // not move it, or the editor tears down and re-embeds every timer tick.
+        const auto embedEpoch = inst.instanceEpoch();
+        std::fill (L.begin(), L.end(), 0.0f);
+        std::fill (R.begin(), R.end(), 0.0f);
+        for (int b = 0; b < 8; ++b)
+            adapter.process (inst, L.data(), R.data(), kBlock);
+        REQUIRE (inst.instanceEpoch() == embedEpoch);
+
+        REQUIRE (inst.reactivate (48000.0, kBlock, err));
+        const auto afterReactivate = inst.instanceEpoch();
+        REQUIRE (afterReactivate != embedEpoch);
+
+        // deactivate() frees the instance too, so it must mark the embed stale
+        // on its own - reactivate is not the only teardown path.
+        inst.deactivate();
+        REQUIRE_FALSE (inst.isActive());
+        REQUIRE (inst.instanceEpoch() != afterReactivate);
+    }
+
     SECTION ("reactivate keeps state (fresh save matches post-reactivate save)")
     {
         // Same rate, different block size: a rate change may legitimately alter a

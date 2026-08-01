@@ -725,8 +725,21 @@ static bool runHeadlessPipelineTest (const juce::String& pluginPath)
                               msStrip.getNativeMultisampleSlot()
                                      .getLoadedSoundfontPath().c_str());
             else
+            {
                 std::fprintf (stderr, "FAIL: multisample restore (restoreFailed=%d)\n",
                               (int) msStrip.nativeMultisampleReloadFailed());
+                sessionRestoreOk = false;
+            }
+        }
+        else if (legacyMultisample)
+        {
+            // The legacy branch above deferred to the migration inside
+            // consumePluginStateAfterLoad; an empty path here means it
+            // produced nothing, which no other check would report.
+            std::fprintf (stderr,
+                          "FAIL: legacy DuskMultisample migration produced no "
+                          "native soundfont path\n");
+            sessionRestoreOk = false;
         }
 #endif
         // Re-prepare so the just-loaded plugin sees the right SR/BS.

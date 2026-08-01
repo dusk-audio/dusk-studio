@@ -162,9 +162,10 @@ TEST_CASE ("SessionSerializer::load defaults present invalid master floats",
     s.master().compRatio.store (2.0f);
 
     REQUIRE (SessionSerializer::load (s, target));
-    REQUIRE_THAT (s.master().eqLfBoost.load(), WithinAbs (0.0f, 1e-6f));
+    const duskstudio::MasterBusParams def;
+    REQUIRE_THAT (s.master().eqLfBoost.load(), WithinAbs (def.eqLfBoost.load(), 1e-6f));
     REQUIRE_THAT (s.master().eqLfAtten.load(), WithinAbs (3.5f, 1e-6f));
-    REQUIRE_THAT (s.master().compThreshDb.load(), WithinAbs (0.0f, 1e-6f));
+    REQUIRE_THAT (s.master().compThreshDb.load(), WithinAbs (def.compThreshDb.load(), 1e-6f));
     // A missing key in a present master section retains the live value.
     REQUIRE_THAT (s.master().compRatio.load(), WithinAbs (2.0f, 1e-6f));
 
