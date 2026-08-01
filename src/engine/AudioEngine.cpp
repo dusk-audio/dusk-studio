@@ -403,7 +403,12 @@ public:
         bool anyLatencyChanged = false;
         const double sr    = engine.getCurrentSampleRate();
         const int    block = engine.getCurrentBlockSize();
-        if (sr > 0.0 && block > 0)
+        // Deferred while an offline bounce drives the callback: the
+        // suspendProcessing below would gate the render into silent blocks.
+        // consumeLatencyChanged flags stay set, so the cycle runs on the
+        // first tick after the render ends.
+        if (sr > 0.0 && block > 0
+            && ! engine.offlineRenderActive.load (std::memory_order_acquire))
         {
             auto cycle = [&] (auto& slot)
             {
@@ -2993,6 +2998,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     if (processingSuspended.load (std::memory_order_acquire))
     {
         callbacksInFlight.fetch_sub (1, std::memory_order_acq_rel);
+        earlyOutBlocks.fetch_add (1, std::memory_order_relaxed);
         clearOutputs();
         return;
     }
@@ -4146,9 +4152,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
 
     // Offline renders must be deterministic - live input never prints. An offline
     // bounce/stem/freeze drives this callback from a worker thread while the MIDI
-    // input path stays open, so this latch gates every live-MIDI pull below. Read
-    // once per callback (relaxed: the render worker sets it and drives this call).
-    const bool offlineRender = offlineRenderActive.load (std::memory_order_relaxed);
+    // input path stays open, so this latch gates every live-MIDI pull below.
+    const bool offlineRender = offlineRenderActive.load (std::memory_order_acquire);
 
     // Loop-aware disk reads: mirrors the wrap gate at the bottom of the
     // callback (plain playback only - recording keeps the playhead linear).
@@ -5365,7 +5370,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // The click is a monitoring aid and must never print: an offline
         // bounce captures the mix it is about to be added to, so suppress it
         // for the render. (Realtime bounces capture pre-click, upstream.)
-        if (offlineRenderActive.load (std::memory_order_relaxed))
+        if (offlineRender)
             clickRolling = false;
 
         // The click mixes post-master, AFTER the master-stage aux PDC delayed

@@ -331,6 +331,9 @@ public:
     {
         if (useGrid)
         {
+            // The viewport width just changed; re-derive the scroll extent
+            // before clamping, or the clamp runs against the stale layout.
+            recomputeMaxHScroll();
             setHScroll (hScroll);
             ensureColumnVisible (hoverCol);
         }
@@ -678,12 +681,18 @@ private:
         }
     }
 
-    // Recompute horizontal-scroll extent and the focused cell.
-    void finishGrid (bool fromFilter)
+    void recomputeMaxHScroll()
     {
         const int totalCols = (int) columns.size();
         const int contentW  = totalCols > 0 ? totalCols * colWidth + (totalCols - 1) * kColGap : 0;
         maxHScroll = juce::jmax (0, contentW - gridViewport().getWidth());
+    }
+
+    // Recompute horizontal-scroll extent and the focused cell.
+    void finishGrid (bool fromFilter)
+    {
+        recomputeMaxHScroll();
+        const int totalCols = (int) columns.size();
 
         hoverCol = hoverRow = -1;
         if (fromFilter)

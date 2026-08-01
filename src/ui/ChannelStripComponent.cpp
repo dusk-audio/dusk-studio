@@ -1458,6 +1458,11 @@ ChannelStripComponent::~ChannelStripComponent()
     compEditorModal.closeAndDeleteBodyNow();
     auxEditorModal.closeAndDeleteBodyNow();
     ioConfigModal.closeAndDeleteBodyNow();
+    // FreezeDialog's destructor cancels a BounceEngine render against the
+    // engine and the HW-insert editor talks to the strip - both must run
+    // now, not on a deferred message-loop tick after members are gone.
+    hardwareInsertModal.closeAndDeleteBodyNow();
+    freezeModal.closeAndDeleteBodyNow();
     // Drop the cached editor BEFORE the strip's PluginSlot destructs,
     // since the editor's destructor calls editorBeingDeleted on its
     // owning AudioProcessor. dropPluginEditor() also closes the modal.
@@ -1888,8 +1893,10 @@ void ChannelStripComponent::openHardwareInsertEditor()
         /*allowMono*/ track.mode.load (std::memory_order_relaxed)
                           == (int) Track::Mode::Mono);
 
-    auto* parent = findParentComponentOfClass<juce::Component>();
-    if (parent == nullptr) parent = this;
+    // Top-level host like every sibling modal - hosting on the immediate
+    // parent (ConsoleView) leaves the transport and menu clickable outside
+    // the dim, and a stage switch hides the modal with the view.
+    auto* parent = getTopLevelComponent();
     hardwareInsertModal.show (*parent, std::move (editor));
 }
 
@@ -3437,8 +3444,9 @@ void ChannelStripComponent::handleFreezeClick()
         }
     };
 
-    auto* parent = findParentComponentOfClass<juce::Component>();
-    if (parent == nullptr) parent = this;
+    // Top-level host: on the immediate parent (ConsoleView) a stage switch
+    // hides the running render's only Cancel / Close controls with the view.
+    auto* parent = getTopLevelComponent();
     // Non-dismissable by stray click / Escape: only the dialog's Cancel / Close
     // buttons drive teardown, so a render is never torn down out from under the
     // worker (which would join the thread on the message thread mid-render).

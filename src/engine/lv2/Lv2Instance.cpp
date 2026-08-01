@@ -31,6 +31,10 @@ namespace duskstudio::lv2
 {
 struct Lv2Instance::Impl
 {
+    // Bumped whenever a LilvInstance is destroyed, so an embedded UI holding
+    // instance-access handles can detect the swap.
+    std::atomic<std::uint64_t> instanceEpoch { 0 };
+
     // URID map/unmap host feature (a simple intern table)
     std::unordered_map<std::string, uint32_t> uridForUri;
     std::vector<std::string> uriForUrid { std::string() };   // index 0 unused (URIDs start at 1)
@@ -258,6 +262,10 @@ struct Lv2Instance::Impl
             if (active) lilv_instance_deactivate (instance);
             lilv_instance_free (instance);
             instance = nullptr;
+            // The instance an editor captured instance-access / data-access
+            // handles from is gone; every teardown path has to mark that embed
+            // stale, not just reactivate's.
+            instanceEpoch.fetch_add (1, std::memory_order_release);
         }
         active = false;
     }
@@ -653,6 +661,8 @@ bool Lv2Instance::reactivate (double sampleRate, int maxBlockFrames, std::string
     std::vector<uint8_t> blob;
     saveState (blob);
     const std::vector<float> saved = impl->portValues;
+    // freeInstance bumps the epoch before the rebuild, so a failed activate
+    // still leaves the embed marked stale.
     impl->freeInstance();
     if (! activate (sampleRate, maxBlockFrames, errorOut)) return false;
     if (! blob.empty())
@@ -878,6 +888,7 @@ bool Lv2Instance::loadState (const std::vector<uint8_t>& in)
 void*       Lv2Instance::lilvWorld()        const noexcept { return impl->world; }
 const void* Lv2Instance::lilvPlugin()       const noexcept { return impl->plugin; }
 void*       Lv2Instance::lilvInstance()     const noexcept { return impl->instance; }
+std::uint64_t Lv2Instance::instanceEpoch()  const noexcept { return impl->instanceEpoch.load (std::memory_order_acquire); }
 void*       Lv2Instance::uridMapFeature()   const noexcept { return &impl->mapFeatureStruct; }
 void*       Lv2Instance::uridUnmapFeature() const noexcept { return &impl->unmapFeatureStruct; }
 

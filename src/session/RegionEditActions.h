@@ -247,9 +247,9 @@ private:
     bool firstPerformDone = false;
 };
 
-// MIDI counterpart to DeleteRegionAction. Mutates through the
-// AtomicSnapshot's currentMutable() since midiRegions is a swap-load
-// vector; same race profile every other piano-roll edit accepts.
+// MIDI counterpart to DeleteRegionAction. Erase/insert reshape the
+// vector, so both go through mutate() (copy + publish) - never
+// currentMutable() while the audio thread iterates the snapshot.
 class DeleteMidiRegionAction final : public juce::UndoableAction
 {
 public:

@@ -33,6 +33,14 @@ RecordManager::~RecordManager()
     // audio-thread caller that already entered, then discard the uncommitted
     // capture. The normal stopRecording path mutates the session by creating
     // regions, which must only happen through an explicit engine stop.
+    //
+    // The wait is deliberately unbounded, unlike stopRecording's capped spin.
+    // stopRecording can bail past its cap because it leaves writers[] /
+    // midiCaptures[] alive for later reclaim; a destructor cannot - every
+    // member (including the audioInFlight atomic the in-flight thread still
+    // decrements) is destroyed when it returns, so proceeding would trade
+    // the wait for a use-after-free. By this point the engine has detached
+    // the audio callback, so the drain is at most one block.
     active.store (false, std::memory_order_release);
     while (audioInFlight.load (std::memory_order_acquire) > 0)
         std::this_thread::yield();

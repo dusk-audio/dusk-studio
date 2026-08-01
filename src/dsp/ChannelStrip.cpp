@@ -712,16 +712,16 @@ void ChannelStrip::setPendingNativeMultisample (const juce::File& soundfont,
 
 void ChannelStrip::relatchPdcIfDrained (float blockPeakAbs, int numSamples) noexcept
 {
-    // Track how long the signal feeding the delay has been silent. We only
-    // change the delay length once the line has fully drained (silent for at
-    // least the currently-applied length) - then a reset() drops only silence,
-    // so the latency change is click-free. A continuously-loud track defers the
-    // change to its next silent gap (latency edits happen on plugin load, which
-    // is normally done with the transport stopped -> silent -> immediate).
-    constexpr float kSilenceEps = 1.0e-6f;
-    if (blockPeakAbs < kSilenceEps) pdcSilentRun += numSamples;
-    else                            pdcSilentRun = 0;
-
+    // The delay length changes only once the line has fully drained (silent
+    // for at least the currently-applied length) - then a reset() drops only
+    // silence, so the latency change is click-free. Both callers run this
+    // BEFORE pushing the block into the line, so the decision uses the drain
+    // state ahead of this block: a loud block ending a fully-drained stretch
+    // (un-mute, skip-path exit) still relatches immediately instead of
+    // deferring to the next silent gap. A continuously-loud track defers the
+    // change to its next silent gap (latency edits happen on plugin load,
+    // which is normally done with the transport stopped -> silent ->
+    // immediate).
     const int target = pdcTargetSamples.load (std::memory_order_relaxed);
     if (target != pdcAppliedSamples && pdcSilentRun >= (std::int64_t) pdcAppliedSamples)
     {
@@ -731,6 +731,10 @@ void ChannelStrip::relatchPdcIfDrained (float blockPeakAbs, int numSamples) noex
         pdcDelayR.reset();
         pdcAppliedSamples = target;
     }
+
+    constexpr float kSilenceEps = 1.0e-6f;
+    if (blockPeakAbs < kSilenceEps) pdcSilentRun += numSamples;
+    else                            pdcSilentRun = 0;
 }
 
 void ChannelStrip::processAndAccumulate (const float* inL,
@@ -850,6 +854,23 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             faderGain.getNextValue();
             for (auto& s : busGain)     s.getNextValue();
             for (auto& s : auxSendGain) s.getNextValue();
+        }
+        // The PDC lines still hold the last pdcAppliedSamples of pre-skip
+        // audio (and the oversampler's half-band FIRs hold osLatencySamples
+        // more); a plain return would freeze that there and replay it into
+        // the mix on the next passing block (un-mute / un-solo). Output is
+        // cut for the whole skip, so the tail is dropped: clear the lines
+        // and FIR history once and mark them drained, which also lets
+        // relatchPdcIfDrained take a pending latency retarget click-free on
+        // the next full pass. pdcSilentRun doubles as the once-latch - the
+        // full path zeroes it again on the first loud block.
+        if ((pdcAppliedSamples > 0 || osLatencySamples > 0)
+            && pdcSilentRun < (std::int64_t) kMaxPdcSamples)
+        {
+            pdcDelayL.reset();
+            pdcDelayR.reset();
+            oversampler.reset();
+            pdcSilentRun = (std::int64_t) kMaxPdcSamples;
         }
         return;
     }
@@ -1064,6 +1085,12 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 for (int i = 0; i < numSamples; ++i)
                 {
                     pdcDelayL.pushSample (tempMono[(size_t) i]);
+                    // Keep the R line fed with the same signal: a mono ->
+                    // stereo width flip that keeps the PDC length (so
+                    // relatchPdcIfDrained never resets) would otherwise
+                    // replay the R line's stale tail.
+                    pdcDelayR.pushSample (tempMono[(size_t) i]);
+                    pdcDelayR.popSample();
                     tempMono[(size_t) i] = pdcDelayL.popSample();
                 }
         }

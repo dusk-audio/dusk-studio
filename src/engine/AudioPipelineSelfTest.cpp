@@ -7,6 +7,7 @@
 #if defined(DUSKSTUDIO_HAS_PIPEWIRE)
  #include "pipewire/PipeWireAudioIODevice.h"
 #endif
+#include <array>
 #include <cmath>
 
 namespace duskstudio
@@ -1288,9 +1289,35 @@ std::string AudioPipelineSelfTest::testAudioPlayAlongSends()
     auto& ts0 = t0.strip;
     auto& aux0 = session.auxLane (0).params;
 
-    // Snapshot the atoms the outer runAll restore doesn't cover.
+    // Snapshot the atoms the outer runAll restore doesn't cover. Aux 0's return
+    // level / mute / automation mode all steer meterPostL, so normalise them to
+    // a known empty-lane-at-unity state for the probe and restore afterwards.
     const float savedSend    = ts0.auxSendDb[0].load (std::memory_order_relaxed);
     const bool  savedAuxMute = aux0.mute.load (std::memory_order_relaxed);
+    const float savedAuxRet  = aux0.returnLevelDb.load (std::memory_order_relaxed);
+    const int   savedAuxMode = aux0.automationMode.load (std::memory_order_relaxed);
+    const int   savedTrkMode = t0.automationMode.load (std::memory_order_relaxed);
+
+    // The dry-pass assumption above only holds with aux 0's insert slots empty;
+    // a plugin / hardware insert left by the loaded session would reshape the
+    // send and mask a dropped monitor path. Snapshot each slot's mode, force it
+    // empty for the probe, restore afterward.
+    auto& auxStrip0 = engine.getAuxLaneStrip (0);
+    std::array<int, AuxLaneStrip::kMaxPlugins> savedInsertMode {};
+    for (int s = 0; s < AuxLaneStrip::kMaxPlugins; ++s)
+    {
+        savedInsertMode[(size_t) s] = auxStrip0.insertMode[(size_t) s].load (std::memory_order_acquire);
+        auxStrip0.insertMode[(size_t) s].store (AuxLaneStrip::kInsertEmpty, std::memory_order_release);
+    }
+
+    // Track 0's own channel-strip insert sits upstream of the aux send (it runs
+    // pre-EQ), so a plugin / hardware insert left by the loaded session would
+    // reshape the monitored signal before it reaches the send and mask a dropped
+    // path just as an aux insert would. prepareCleanState resets the strip's
+    // params but not its DSP insert slot - neutralise it here, restore after.
+    auto& chStrip0 = engine.getChannelStrip (0);
+    const int savedTrkInsertMode = chStrip0.insertMode.load (std::memory_order_acquire);
+    chStrip0.insertMode.store (ChannelStrip::kInsertEmpty, std::memory_order_release);
 
     // Track 0: mono, input-monitored, listening to input channel 0, sending to
     // aux lane 0 at unity. Other tracks muted so only track 0 can drive aux 0.
@@ -1298,14 +1325,27 @@ std::string AudioPipelineSelfTest::testAudioPlayAlongSends()
     t0.inputSource.store  (0, std::memory_order_relaxed);
     t0.inputMonitor.store (true, std::memory_order_relaxed);
     t0.recordArmed.store  (false, std::memory_order_relaxed);
+    // Off so Read/Touch automation on the loaded session's track 0 can't
+    // override the manual fader / mute / send set below.
+    t0.automationMode.store ((int) AutomationMode::Off, std::memory_order_relaxed);
     ts0.mute.store        (false, std::memory_order_relaxed);
     ts0.faderDb.store     (0.0f, std::memory_order_relaxed);
     ts0.auxSendDb[0].store (0.0f, std::memory_order_relaxed);
-    aux0.mute.store       (false, std::memory_order_relaxed);
+    aux0.mute.store           (false, std::memory_order_relaxed);
+    aux0.returnLevelDb.store  (0.0f,  std::memory_order_relaxed);   // unity return
+    aux0.automationMode.store (0,     std::memory_order_relaxed);   // Off: honour the manual return/mute above
+    // Snapshot + neutralise each other track's automation mode. Read/Touch mute
+    // automation on the loaded session would otherwise un-mute the track at the
+    // current playhead during the Playing probe and let it drive aux 0, defeating
+    // the isolation. Restored below (SavedState doesn't round-trip automationMode).
+    std::array<int, Session::kNumTracks> savedOtherTrkMode {};
     for (int t = 1; t < Session::kNumTracks; ++t)
     {
-        session.track (t).inputMonitor.store (false, std::memory_order_relaxed);
-        session.track (t).strip.mute.store (true, std::memory_order_relaxed);
+        auto& tt = session.track (t);
+        savedOtherTrkMode[(size_t) t] = tt.automationMode.load (std::memory_order_relaxed);
+        tt.inputMonitor.store (false, std::memory_order_relaxed);
+        tt.strip.mute.store (true, std::memory_order_relaxed);
+        tt.automationMode.store ((int) AutomationMode::Off, std::memory_order_relaxed);
     }
     session.recomputeRtCounters();
 
@@ -1340,13 +1380,36 @@ std::string AudioPipelineSelfTest::testAudioPlayAlongSends()
         return aux0.meterPostL.load (std::memory_order_relaxed);
     };
 
+    // Isolate the monitored-input send path: the meter must reflect the live
+    // overlay alone, never a disk take on track 0. Empty track 0's playback
+    // source and rebuild the readers via play()'s prep path so streams[0] is
+    // null (no disk audio) in both transport states - otherwise a stray disk
+    // region would prop the meter up and mask a dropped send while rolling.
+    auto savedRegions      = std::move (t0.regions);
+    t0.regions.clear();
+    const bool savedFrozen = t0.frozen.load (std::memory_order_acquire);
+    t0.frozen.store (false, std::memory_order_release);
+    engine.getPlaybackEngine().preparePlayback();
+
     const float stoppedDb = probe (Transport::State::Stopped);
     const float playingDb  = probe (Transport::State::Playing);
 
     // Restore.
     engine.getTransport().setState (Transport::State::Stopped);
+    engine.getPlaybackEngine().stopPlayback();   // tear down the probe's temp readers
+    t0.frozen.store (savedFrozen, std::memory_order_release);
+    t0.regions = std::move (savedRegions);
+    engine.getPlaybackEngine().preparePlayback(); // rebuild track 0 from its restored regions
     ts0.auxSendDb[0].store (savedSend, std::memory_order_relaxed);
-    aux0.mute.store        (savedAuxMute, std::memory_order_relaxed);
+    aux0.mute.store           (savedAuxMute, std::memory_order_relaxed);
+    aux0.returnLevelDb.store  (savedAuxRet,  std::memory_order_relaxed);
+    aux0.automationMode.store (savedAuxMode, std::memory_order_relaxed);
+    t0.automationMode.store   (savedTrkMode, std::memory_order_relaxed);
+    for (int t = 1; t < Session::kNumTracks; ++t)
+        session.track (t).automationMode.store (savedOtherTrkMode[(size_t) t], std::memory_order_relaxed);
+    for (int s = 0; s < AuxLaneStrip::kMaxPlugins; ++s)
+        auxStrip0.insertMode[(size_t) s].store (savedInsertMode[(size_t) s], std::memory_order_release);
+    chStrip0.insertMode.store (savedTrkInsertMode, std::memory_order_release);
 
     constexpr float kFloorDb = -60.0f;
     const bool stoppedOK = stoppedDb > kFloorDb;

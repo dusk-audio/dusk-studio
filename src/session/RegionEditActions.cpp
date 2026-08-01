@@ -50,6 +50,38 @@ bool frozenLocked (Session& s, int trackIdx)
     return trackIdx >= 0 && trackIdx < Session::kNumTracks
         && s.track (trackIdx).frozen.load (std::memory_order_relaxed);
 }
+
+// Join helpers. The selection is timeline-sorted (lead = earliest start), so
+// the lead is not necessarily the lowest numeric index, and every erase below
+// it shifts it down one slot. The bounds check is separate so the slow path
+// can validate BEFORE rendering its WAV - failing afterwards would orphan it.
+bool joinSelectionInBounds (const std::vector<AudioRegion>& regs,
+                            const std::vector<int>& sortedDesc)
+{
+    return ! sortedDesc.empty()
+        && sortedDesc.front() < (int) regs.size()
+        && sortedDesc.back() >= 0;
+}
+
+// Erases every selected region except the lead and returns the lead's
+// post-erase slot; -1 (with regs untouched) when the selection is invalid.
+int eraseJoinedAndGetMergedSlot (std::vector<AudioRegion>& regs,
+                                 const std::vector<int>& indices,
+                                 const std::vector<int>& sortedDesc)
+{
+    if (indices.empty() || ! joinSelectionInBounds (regs, sortedDesc))
+        return -1;
+    const int leadIdx = indices.front();
+    int mergedIdx = leadIdx;
+    for (int idx : sortedDesc)
+        if (idx != leadIdx)
+        {
+            regs.erase (regs.begin() + idx);
+            if (idx < leadIdx)
+                --mergedIdx;
+        }
+    return mergedIdx;
+}
 } // namespace
 
 // RegionEditAction
@@ -88,13 +120,24 @@ MidiRegionEditAction::MidiRegionEditAction (Session& s, AudioEngine& e,
       beforeState (b), afterState (a)
 {}
 
+// Assigning a whole MidiRegion frees the old notes/ccs storage, so this
+// must swap-publish like Create/RecordCommit - currentMutable() is only
+// safe for value edits inside existing entries.
 bool MidiRegionEditAction::perform()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
     if (frozenLocked (session, trackIdx)) return false;
-    auto& v = session.track (trackIdx).midiRegions.currentMutable();
-    if (regionIdx < 0 || regionIdx >= (int) v.size()) return false;
-    v[(size_t) regionIdx] = afterState;
+    bool applied = false;
+    session.track (trackIdx).midiRegions.mutate (
+        [this, &applied] (std::vector<MidiRegion>& mregs)
+        {
+            if (regionIdx >= 0 && regionIdx < (int) mregs.size())
+            {
+                mregs[(size_t) regionIdx] = afterState;
+                applied = true;
+            }
+        });
+    if (! applied) return false;
     rebuildPlaybackIfStopped (engine);
     return true;
 }
@@ -103,9 +146,17 @@ bool MidiRegionEditAction::undo()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
     if (frozenLocked (session, trackIdx)) return false;
-    auto& v = session.track (trackIdx).midiRegions.currentMutable();
-    if (regionIdx < 0 || regionIdx >= (int) v.size()) return false;
-    v[(size_t) regionIdx] = beforeState;
+    bool applied = false;
+    session.track (trackIdx).midiRegions.mutate (
+        [this, &applied] (std::vector<MidiRegion>& mregs)
+        {
+            if (regionIdx >= 0 && regionIdx < (int) mregs.size())
+            {
+                mregs[(size_t) regionIdx] = beforeState;
+                applied = true;
+            }
+        });
+    if (! applied) return false;
     rebuildPlaybackIfStopped (engine);
     return true;
 }
@@ -300,11 +351,19 @@ bool DeleteMidiRegionAction::perform()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
     if (frozenLocked (session, trackIdx)) return false;
-    auto& v = session.track (trackIdx).midiRegions.currentMutable();
-    if (regionIdx < 0 || regionIdx >= (int) v.size()) return false;
-    removed = v[(size_t) regionIdx];
-    haveRemoved = true;
-    v.erase (v.begin() + regionIdx);
+    bool erased = false;
+    session.track (trackIdx).midiRegions.mutate (
+        [this, &erased] (std::vector<MidiRegion>& mregs)
+        {
+            if (regionIdx >= 0 && regionIdx < (int) mregs.size())
+            {
+                removed = mregs[(size_t) regionIdx];
+                haveRemoved = true;
+                mregs.erase (mregs.begin() + regionIdx);
+                erased = true;
+            }
+        });
+    if (! erased) return false;
     rebuildPlaybackIfStopped (engine);
     return true;
 }
@@ -314,9 +373,12 @@ bool DeleteMidiRegionAction::undo()
     if (! haveRemoved) return false;
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
     if (frozenLocked (session, trackIdx)) return false;
-    auto& v = session.track (trackIdx).midiRegions.currentMutable();
-    const int insertAt = std::min (regionIdx, (int) v.size());
-    v.insert (v.begin() + insertAt, removed);
+    session.track (trackIdx).midiRegions.mutate (
+        [this] (std::vector<MidiRegion>& mregs)
+        {
+            const int insertAt = std::min (regionIdx, (int) mregs.size());
+            mregs.insert (mregs.begin() + insertAt, removed);
+        });
     rebuildPlaybackIfStopped (engine);
     return true;
 }
@@ -1039,8 +1101,19 @@ bool JoinRegionsAction::perform()
 
     const auto firstStart = beforeRegions.front().timelineStart;
     const auto firstSrcOffset = beforeRegions.front().sourceOffset;
-    const auto lastEnd = beforeRegions.back().timelineStart
-                         + beforeRegions.back().lengthInSamples;
+    // Latest end over ALL regions, not back()'s end: regions are sorted by
+    // start, and an earlier-starting region can outlast the last-starting
+    // one (overlap/containment). back()'s end would undersize the slow
+    // path's mix buffer and the merged length. The latest-ending region is
+    // also the one whose audio closes the merged result, so its fade-out is
+    // the one both paths carry over.
+    std::int64_t lastEnd = firstStart;
+    const AudioRegion* latestEnding = &beforeRegions.front();
+    for (const auto& r : beforeRegions)
+    {
+        const auto end = r.timelineStart + r.lengthInSamples;
+        if (end > lastEnd) { lastEnd = end; latestEnding = &r; }
+    }
     const auto totalLen = lastEnd - firstStart;
 
     // Sort descending so the larger indices erase first and the smaller
@@ -1051,23 +1124,23 @@ bool JoinRegionsAction::perform()
     if (sameFile && abuts)
     {
         // Cheap merge: keep the leading region, extend its length, drop
-        // the rest. Outer fadeIn / fadeOutShape from first / last are
-        // preserved; inner fades vanish along with the joints.
+        // the rest. Outer fadeIn from the first and fadeOut from the
+        // latest-ending region are preserved; inner fades vanish along
+        // with the joints.
         AudioRegion merged = beforeRegions.front();
         merged.timelineStart   = firstStart;
         merged.sourceOffset    = firstSrcOffset;
         merged.lengthInSamples = totalLen;
-        merged.fadeOutSamples  = beforeRegions.back().fadeOutSamples;
-        merged.fadeOutShape    = beforeRegions.back().fadeOutShape;
+        merged.fadeOutSamples  = latestEnding->fadeOutSamples;
+        merged.fadeOutShape    = latestEnding->fadeOutShape;
+        merged.fadeOutAuto     = latestEnding->fadeOutAuto;
         merged.previousTakes   = beforeRegions.front().previousTakes;
 
-        const int leadIdx = indices.front();
-        for (int idx : sortedDesc)
-            if (idx != leadIdx)
-                regs.erase (regs.begin() + idx);
-        resultInsertedAt = leadIdx;
-        if (resultInsertedAt >= 0 && resultInsertedAt < (int) regs.size())
-            regs[(size_t) resultInsertedAt] = merged;
+        const int mergedIdx = eraseJoinedAndGetMergedSlot (regs, indices, sortedDesc);
+        if (mergedIdx < 0)
+            return false;
+        resultInsertedAt = mergedIdx;
+        regs[(size_t) resultInsertedAt] = merged;
         rebuildPlaybackIfStopped (engine);
         return true;
     }
@@ -1076,6 +1149,8 @@ bool JoinRegionsAction::perform()
     // selected region into one buffer at its proper timeline offset
     // (gaps become silence; overlaps sum). Uses the source files'
     // sample rate / channel count from the leading region.
+    if (! joinSelectionInBounds (regs, sortedDesc))
+        return false;
     auto firstReader = dusk::audio::FileReader::open (
         audioPath (beforeRegions.front().file));
     if (firstReader == nullptr) return false;
@@ -1139,17 +1214,20 @@ bool JoinRegionsAction::perform()
     merged.numChannels     = chs;
     merged.fadeInSamples   = beforeRegions.front().fadeInSamples;
     merged.fadeInShape     = beforeRegions.front().fadeInShape;
-    merged.fadeOutSamples  = beforeRegions.back().fadeOutSamples;
-    merged.fadeOutShape    = beforeRegions.back().fadeOutShape;
+    merged.fadeOutSamples  = latestEnding->fadeOutSamples;
+    merged.fadeOutShape    = latestEnding->fadeOutShape;
+    merged.fadeOutAuto     = latestEnding->fadeOutAuto;
     merged.previousTakes.clear();
 
-    const int leadIdx = indices.front();
-    for (int idx : sortedDesc)
-        if (idx != leadIdx)
-            regs.erase (regs.begin() + idx);
-    resultInsertedAt = leadIdx;
-    if (resultInsertedAt >= 0 && resultInsertedAt < (int) regs.size())
-        regs[(size_t) resultInsertedAt] = merged;
+    const int mergedIdx = eraseJoinedAndGetMergedSlot (regs, indices, sortedDesc);
+    if (mergedIdx < 0)
+    {
+        outFile.deleteFile();
+        renderedFile = juce::File();
+        return false;
+    }
+    resultInsertedAt = mergedIdx;
+    regs[(size_t) resultInsertedAt] = merged;
     rebuildPlaybackIfStopped (engine);
     return true;
 }

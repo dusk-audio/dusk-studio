@@ -12,6 +12,7 @@
 namespace duskstudio
 {
 class AudioEngine;
+namespace device { struct CallbackContext; }
 
 // Offline bounce. Detaches the engine from AudioDeviceManager and drives
 // audioDeviceIOCallbackWithContext in a tight loop on its own worker
@@ -267,6 +268,17 @@ private:
     // the engine was NOT detached/re-prepared (or re-attached), so the caller
     // must unwind without touching engine state.
     bool runOnMessageThread (std::function<void()> fn);
+
+    // Drive one offline callback block. A concurrent process-gate early-out
+    // does not advance engine state, so wait for the gate and retry instead of
+    // committing its silent output. Returns false when cancelled or when the
+    // process gate stays raised past the bounded retry window.
+    bool processOfflineBlock (const float* const* inputChannelData,
+                              int numInputChannels,
+                              float* const* outputChannelData,
+                              int numOutputChannels,
+                              int numSamples,
+                              const device::CallbackContext& context);
 
     AudioEngine& engine;
     Session&     session;
