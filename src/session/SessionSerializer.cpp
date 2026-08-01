@@ -1977,15 +1977,16 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 migrateTapeStateBlob (json::getString (master, "tape_state"), t);
         }
 
-        // Pultec EQ. Missing keys keep the in-memory default (matches
-        // the per-track / per-bus pattern).
         // With the master section present, a missing individual key keeps
         // the in-memory value (matches the per-track / per-bus pattern);
         // with the whole section absent, every field resets to the model
         // default so nothing inherits the previously loaded session's
         // master chain. Present-but-invalid values fall to the default too.
+        // Mirror json::child's resolution above: it yields the shared empty
+        // object unless "master" is an object, so a non-object must count as
+        // absent here or every field silently inherits.
         static const MasterBusParams kMasterDefaults;
-        const bool haveMaster = json::has (root, "master");
+        const bool haveMaster = json::has (root, "master") && root["master"].is_object();
         auto loadMasterFloat = [&master, haveMaster] (std::atomic<float>& dst,
                                                       const std::atomic<float>& def,
                                                       const char* key)

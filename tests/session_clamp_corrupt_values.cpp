@@ -199,3 +199,30 @@ TEST_CASE ("SessionSerializer::load defaults present invalid master bools",
 
     target.getParentDirectory().deleteRecursively();
 }
+
+TEST_CASE ("SessionSerializer::load treats a non-object master as absent",
+           "[session][serializer][corruption]")
+{
+    const auto target = writeSession (R"JSON(
+    {
+      "version": 3,
+      "master": 5
+    }
+    )JSON");
+
+    Session s;
+    s.master().eqLfBoost.store (7.0f);
+    s.master().compRatio.store (9.0f);
+    s.master().compReleaseAuto.store (false);
+
+    REQUIRE (SessionSerializer::load (s, target));
+    // "master" is not an object, so the section never parsed - every field has
+    // to fall back to the model default rather than inherit what the previously
+    // loaded session left in the live Session.
+    const duskstudio::MasterBusParams def;
+    REQUIRE_THAT (s.master().eqLfBoost.load(), WithinAbs (def.eqLfBoost.load(), 1e-6f));
+    REQUIRE_THAT (s.master().compRatio.load(), WithinAbs (def.compRatio.load(), 1e-6f));
+    REQUIRE (s.master().compReleaseAuto.load() == def.compReleaseAuto.load());
+
+    target.getParentDirectory().deleteRecursively();
+}
