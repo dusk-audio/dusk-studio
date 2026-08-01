@@ -712,16 +712,16 @@ void ChannelStrip::setPendingNativeMultisample (const juce::File& soundfont,
 
 void ChannelStrip::relatchPdcIfDrained (float blockPeakAbs, int numSamples) noexcept
 {
-    // Track how long the signal feeding the delay has been silent. We only
-    // change the delay length once the line has fully drained (silent for at
-    // least the currently-applied length) - then a reset() drops only silence,
-    // so the latency change is click-free. A continuously-loud track defers the
-    // change to its next silent gap (latency edits happen on plugin load, which
-    // is normally done with the transport stopped -> silent -> immediate).
-    constexpr float kSilenceEps = 1.0e-6f;
-    if (blockPeakAbs < kSilenceEps) pdcSilentRun += numSamples;
-    else                            pdcSilentRun = 0;
-
+    // The delay length changes only once the line has fully drained (silent
+    // for at least the currently-applied length) - then a reset() drops only
+    // silence, so the latency change is click-free. Both callers run this
+    // BEFORE pushing the block into the line, so the decision uses the drain
+    // state ahead of this block: a loud block ending a fully-drained stretch
+    // (un-mute, skip-path exit) still relatches immediately instead of
+    // deferring to the next silent gap. A continuously-loud track defers the
+    // change to its next silent gap (latency edits happen on plugin load,
+    // which is normally done with the transport stopped -> silent ->
+    // immediate).
     const int target = pdcTargetSamples.load (std::memory_order_relaxed);
     if (target != pdcAppliedSamples && pdcSilentRun >= (std::int64_t) pdcAppliedSamples)
     {
@@ -731,6 +731,10 @@ void ChannelStrip::relatchPdcIfDrained (float blockPeakAbs, int numSamples) noex
         pdcDelayR.reset();
         pdcAppliedSamples = target;
     }
+
+    constexpr float kSilenceEps = 1.0e-6f;
+    if (blockPeakAbs < kSilenceEps) pdcSilentRun += numSamples;
+    else                            pdcSilentRun = 0;
 }
 
 void ChannelStrip::processAndAccumulate (const float* inL,
