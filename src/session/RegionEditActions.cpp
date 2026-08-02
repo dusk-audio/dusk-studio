@@ -1114,7 +1114,21 @@ bool JoinRegionsAction::perform()
     std::vector<int> sortedDesc = indices;
     std::sort (sortedDesc.begin(), sortedDesc.end(), std::greater<int>());
 
-    if (sameFile && abuts)
+    // The cheap merge keeps the lead region's gainDb / muted for the whole
+    // result, which is only right when every joined region carries the same
+    // values - a muted or re-gained later region must go through the render
+    // path, which bakes those per region. Exact float compare is fine: equal
+    // means untouched-default or the same drag, anything else renders.
+    bool uniformGainMute = true;
+    for (std::size_t i = 1; i < beforeRegions.size(); ++i)
+        if (beforeRegions[i].muted != beforeRegions.front().muted
+            || beforeRegions[i].gainDb != beforeRegions.front().gainDb)
+        {
+            uniformGainMute = false;
+            break;
+        }
+
+    if (sameFile && abuts && uniformGainMute)
     {
         // Cheap merge: keep the leading region, extend its length, drop
         // the rest. Outer fadeIn from the first and fadeOut from the

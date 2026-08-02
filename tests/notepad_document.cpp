@@ -47,7 +47,7 @@ TEST_CASE ("Notepad document formatting mutates Markdown and remains selectable"
     auto editedText = document.documentText();
     editedText.replace (boldSelection.start, boldSelection.end - boldSelection.start,
                         "still bold");
-    document.replaceDocumentText (editedText);
+    REQUIRE (document.replaceDocumentText (editedText));
     CHECK (document.markdown().find ("**still bold**") != std::string::npos);
 
     const NotepadDocument::Selection editedBold {
@@ -272,5 +272,7 @@ TEST_CASE ("Notepad ordered-list numbers survive an absurd digit run",
 
     const auto info = document.lineInfoAt (0);
     CHECK (info.block == NotepadDocument::BlockStyle::numbers);
-    CHECK (info.orderedNumber > 0);
+    // The accumulator stops before the multiply-add that would overflow:
+    // nine 9s land, the tenth trips the guard.
+    CHECK (info.orderedNumber == 999999999);
 }

@@ -1623,7 +1623,9 @@ private:
         drawRibbon();
 
         const float statusHeight = 28.0f;
-        drawEditor (height - 62.0f - 62.0f - statusHeight);
+        // Tiling WMs can ignore the minimum-size hint; never hand a negative
+        // extent to the editor child.
+        drawEditor (std::max (0.0f, height - 62.0f - 62.0f - statusHeight));
 
         ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (0x181920ff));
         ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (18.0f, 6.0f));

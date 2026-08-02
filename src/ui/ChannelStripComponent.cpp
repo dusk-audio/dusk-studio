@@ -243,6 +243,8 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     eqTypeChip.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
     eqTypeChip.setClickingTogglesState (true);
     eqTypeChip.setTooltip ("EQ type: E (Brown) / G (Black)");
+    eqTypeChip.setTitle ("EQ type");
+    eqTypeChip.setHelpText ("Switches the channel EQ between the E (Brown) and G (Black) curves.");
     eqTypeChip.setToggleState (track.strip.eqBlackMode.load (std::memory_order_relaxed),
                                  juce::dontSendNotification);
     eqTypeChip.setButtonText (eqTypeChip.getToggleState() ? "G" : "E");
@@ -284,6 +286,8 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         [this] { openEqEditorPopup(); });
     eqHeaderBtn->setLabelText ("EQ");
     eqHeaderBtn->setTooltip ("Left-click to enable / disable. Right-click for the EQ menu. Double-click to open the editor.");
+    eqHeaderBtn->setTitle ("EQ enable");
+    eqHeaderBtn->setHelpText ("Enables or disables the channel EQ section.");
     addAndMakeVisible (eqHeaderBtn.get());
 
     // COMP region

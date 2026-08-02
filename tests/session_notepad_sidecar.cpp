@@ -8,20 +8,22 @@ using namespace duskstudio;
 
 namespace
 {
-juce::File makeTempDir()
+// RAII so a failing REQUIRE mid-section still deletes the directory.
+struct ScopedTempDir
 {
-    auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                  .getChildFile ("dusk-notepad-"
-                                   + juce::String (juce::Random::getSystemRandom().nextInt()));
-    dir.createDirectory();
-    return dir;
-}
+    juce::File dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                        .getNonexistentChildFile ("dusk-notepad", "");
+
+    ScopedTempDir()  { dir.createDirectory(); }
+    ~ScopedTempDir() { dir.deleteRecursively(); }
+};
 } // namespace
 
 TEST_CASE ("Notepad sidecar round-trips through the session directory",
            "[session][notepad]")
 {
-    const auto dir = makeTempDir();
+    const ScopedTempDir temp;
+    const auto& dir = temp.dir;
 
     SECTION ("save then load returns the text")
     {
@@ -61,6 +63,4 @@ TEST_CASE ("Notepad sidecar round-trips through the session directory",
     {
         REQUIRE (! SessionSerializer::saveNotepad (juce::File(), "text"));
     }
-
-    dir.deleteRecursively();
 }

@@ -548,10 +548,11 @@ The default **Document** view is a wrapped, page-style editor: formatting is
 shown in place, headings use document typography, links are underlined, and
 bullets, numbering, quotes, and clickable task boxes render as real document
 elements. Use the toolbar or Ctrl+B / Ctrl+I to set the typing style at the
-caret or format a selection; Ctrl+Z and Ctrl+Y undo and redo both text and
-formatting. Numbered and bulleted lists continue when you press Enter, and a
-second Enter on an empty list item returns to body text. Ctrl-click an `http`,
-`https`, or `mailto` link to open it.
+caret or format a selection; Ctrl+Z undoes and Ctrl+Y or Ctrl+Shift+Z redoes
+both text and formatting. On macOS, Cmd works wherever Ctrl is listed,
+including link activation. Numbered and bulleted lists continue when you press
+Enter, and a second Enter on an empty list item returns to body text.
+Ctrl-click an `http`, `https`, or `mailto` link to open it.
 
 The **Markdown** tab exposes the compatible `notepad.md` source for users who
 prefer direct editing. Switching views preserves the selection. The footer

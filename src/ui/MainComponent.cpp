@@ -81,10 +81,10 @@ NativeNotepadWindow::EmbeddedGeometry notepadGeometryFor (const juce::Component&
     const auto margin = std::max (0, juce::roundToInt (16.0 * scaleFactor));
     const auto width = std::max (
         2, std::min (hostBounds.getWidth() - margin * 2,
-                     juce::roundToInt (NativeNotepadWindow::preferredWidth * scaleFactor)));
+                     juce::roundToInt (NativeNotepadWindow::kPreferredWidth * scaleFactor)));
     const auto height = std::max (
         2, std::min (hostBounds.getHeight() - margin * 2,
-                     juce::roundToInt (NativeNotepadWindow::preferredHeight * scaleFactor)));
+                     juce::roundToInt (NativeNotepadWindow::kPreferredHeight * scaleFactor)));
     return {
         hostBounds.getX() + (hostBounds.getWidth() - width) / 2,
         hostBounds.getY() + (hostBounds.getHeight() - height) / 2,

@@ -10,8 +10,8 @@ namespace duskstudio
 class NativeNotepadWindow final
 {
 public:
-    static constexpr std::uint32_t preferredWidth = 940;
-    static constexpr std::uint32_t preferredHeight = 700;
+    static constexpr std::uint32_t kPreferredWidth = 940;
+    static constexpr std::uint32_t kPreferredHeight = 700;
 
     struct EmbeddedGeometry
     {

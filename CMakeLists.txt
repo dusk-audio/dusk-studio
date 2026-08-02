@@ -374,9 +374,25 @@ endif()
 # fallbacks are the eventual pinned release dependencies.
 # OFF drops the notepad window (DUSKSTUDIO_HAS_NATIVE_NOTEPAD guards its call
 # sites) so a configure without the DPF checkouts - a test-only tree, say - is
-# still possible.
+# still possible. The default follows the checkouts, same as the native LV2
+# host follows its dev libs: a machine without DPF still configures, while an
+# EXPLICIT -DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON with them missing (what CI
+# effectively exercises by passing DPF_PATH) stays a configure error.
+set(DUSKSTUDIO_NOTEPAD_DEPS_FOUND OFF)
+if((DEFINED DPF_PATH
+    OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../DPF/CMakeLists.txt"
+    OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/DPF/CMakeLists.txt")
+   AND (DEFINED DPF_WIDGETS_PATH
+    OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../DPF-Widgets/opengl/DearImGui.hpp"
+    OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/DPF-Widgets/opengl/DearImGui.hpp"))
+    set(DUSKSTUDIO_NOTEPAD_DEPS_FOUND ON)
+endif()
 option(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD
-       "Build the native DPF/DGL + Dear ImGui session notepad window" ON)
+       "Build the native DPF/DGL + Dear ImGui session notepad window"
+       ${DUSKSTUDIO_NOTEPAD_DEPS_FOUND})
+if(NOT DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD AND NOT DUSKSTUDIO_NOTEPAD_DEPS_FOUND)
+    message(STATUS "Native notepad: DPF / DPF-Widgets not found - disabled")
+endif()
 
 if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
     if(DEFINED DPF_PATH)
