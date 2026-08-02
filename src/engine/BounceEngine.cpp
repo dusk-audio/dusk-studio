@@ -94,7 +94,9 @@ bool BounceEngine::processOfflineBlock (
     int numSamples,
     const device::CallbackContext& context)
 {
-    constexpr int kMaxGateRetries = 5000;
+    // Ceiling exists only to fail a truly wedged gate; sized well past any
+    // legitimate suspend (plugin instantiation, consolidate file I/O).
+    constexpr int kMaxGateRetries = 60000;
     int gateRetries = 0;
     while (! cancelRequested.load (std::memory_order_relaxed))
     {

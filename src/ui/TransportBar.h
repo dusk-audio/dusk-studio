@@ -14,7 +14,7 @@ class TransportIconButton final : public juce::Button
 {
 public:
     enum class Icon { Stop, Play, Record, Rewind, Forward, Loop, Punch, Keyboard,
-                       Bars, TimeClock, Metronome, Tuner };
+                       Notepad, Bars, TimeClock, Metronome, Tuner };
 
     TransportIconButton (const juce::String& name, Icon icon, juce::Colour activeColour);
 
@@ -118,6 +118,8 @@ private:
                                           juce::Colour (0xffd05a5a) };
     TransportIconButton keyboardButton { "VKB",    TransportIconButton::Icon::Keyboard,
                                           juce::Colour (0xff7fa0d0) };
+    TransportIconButton notepadButton  { "Notepad", TransportIconButton::Icon::Notepad,
+                                          juce::Colour (0xffd0b070) };
 
     // < threshold = brief press (marker jump / stop modifier on mouse-up).
     // >= threshold = hold (scrub timer drives playhead until release).
@@ -220,6 +222,9 @@ public:
 
     // MainComponent owns the VirtualKeyboardComponent embedded modal.
     std::function<void()> onVirtualKeyboardToggle;
+
+    // MainComponent owns the DPF notepad embedded in its native parent window.
+    std::function<void()> onNotepadToggle;
 
     void setTapeStripExpanded (bool expanded);
     bool isTapeStripExpanded() const;

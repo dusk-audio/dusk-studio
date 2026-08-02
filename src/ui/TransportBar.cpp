@@ -173,6 +173,34 @@ void TransportIconButton::paintButton (juce::Graphics& g, bool isMouseOver,
                                                      keyW, keyH));
             break;
         }
+        case Icon::Notepad:
+        {
+            // Notepad glyph: a page outline with a folded top-right corner
+            // and three ruled text lines.
+            const float w = iconBox.getWidth();
+            const float h = iconBox.getHeight();
+            const float foldW = w * 0.28f;
+            const float x0 = iconBox.getX(), y0 = iconBox.getY();
+
+            juce::Path page;
+            page.startNewSubPath (x0, y0);
+            page.lineTo (x0 + w - foldW, y0);
+            page.lineTo (x0 + w, y0 + foldW);
+            page.lineTo (x0 + w, y0 + h);
+            page.lineTo (x0, y0 + h);
+            page.closeSubPath();
+            g.strokePath (page, juce::PathStrokeType (1.4f));
+            g.drawLine (x0 + w - foldW, y0, x0 + w - foldW, y0 + foldW, 1.2f);
+            g.drawLine (x0 + w - foldW, y0 + foldW, x0 + w, y0 + foldW, 1.2f);
+
+            const float inset = w * 0.20f;
+            for (int i = 0; i < 3; ++i)
+            {
+                const float ly = y0 + h * (0.38f + 0.18f * (float) i);
+                g.drawLine (x0 + inset, ly, x0 + w - inset, ly, 1.2f);
+            }
+            break;
+        }
         case Icon::Bars:
         {
             // Bars/beats glyph: four ascending vertical bars representing a
@@ -512,6 +540,10 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     keyboardButton.setTooltip ("Virtual MIDI Keyboard (K) - type on your keyboard to play notes.");
     keyboardButton.onClick = [this] { if (onVirtualKeyboardToggle) onVirtualKeyboardToggle(); };
     addAndMakeVisible (keyboardButton);
+
+    notepadButton.setTooltip ("Notepad - lyrics and session notes, saved with the session.");
+    notepadButton.onClick = [this] { if (onNotepadToggle) onNotepadToggle(); };
+    addAndMakeVisible (notepadButton);
 
     // Metronome toggle + BPM editable display.
     clickToggle.setClickingTogglesState (true);
@@ -1093,6 +1125,14 @@ void TransportBar::resized()
         auto rect = area.removeFromRight (kBtnDia);
         const int pad = std::max (0, (rect.getHeight() - kBtnDia) / 2);
         tuneButton.setBounds (rect.reduced (0, pad));
+    }
+    area.removeFromRight (kBtnGap);
+    // Session notes are a utility, not a transport action - park the notepad
+    // beside the tuner in the utility cluster instead of the playback row.
+    {
+        auto rect = area.removeFromRight (kBtnDia);
+        const int pad = std::max (0, (rect.getHeight() - kBtnDia) / 2);
+        notepadButton.setBounds (rect.reduced (0, pad));
     }
     area.removeFromRight (compact ? 8 : 12);
 

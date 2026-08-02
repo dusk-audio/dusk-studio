@@ -1702,6 +1702,21 @@ bool SessionSerializer::save (const Session& s, const juce::File& target)
     return writeAtomic (target, serialize (s));
 }
 
+bool SessionSerializer::saveNotepad (const juce::File& sessionDir, const juce::String& text)
+{
+    if (sessionDir == juce::File()) return false;
+    const auto target = sessionDir.getChildFile ("notepad.md");
+    if (text.isEmpty() && ! target.existsAsFile()) return true;
+    return writeAtomic (target, text);
+}
+
+juce::String SessionSerializer::loadNotepad (const juce::File& sessionDir)
+{
+    if (sessionDir == juce::File()) return {};
+    const auto source = sessionDir.getChildFile ("notepad.md");
+    return source.existsAsFile() ? source.loadFileAsString() : juce::String();
+}
+
 bool SessionSerializer::load (Session& s, const juce::File& source)
 {
     if (! source.existsAsFile()) return false;
@@ -1764,10 +1779,19 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     // an empty object is not enough to blank them: substitute the serialized
     // sections of a default Session, which carry every key at its model
     // default.
+    // A listed-but-non-object bus / aux entry ("buses": [null]) is restored from
+    // the defaults too, so the default sections have to be there for it as well.
+    const auto hasNonObject = [] (const nlohmann::json& arr)
+    {
+        return std::any_of (arr.begin(), arr.end(),
+                            [] (const nlohmann::json& v) { return ! v.is_object(); });
+    };
     nlohmann::json sectionDefaults;
     if (json::array (root, "tracks").empty()
         || (int) json::array (root, "buses").size() < Session::kNumBuses
-        || (int) json::array (root, "aux_lanes").size() < Session::kNumAuxLanes)
+        || (int) json::array (root, "aux_lanes").size() < Session::kNumAuxLanes
+        || hasNonObject (json::array (root, "buses"))
+        || hasNonObject (json::array (root, "aux_lanes")))
         sectionDefaults = nlohmann::json::parse (serialize (Session{}).toStdString(), nullptr, false);
 
     {
@@ -1780,11 +1804,14 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         // ghost content that still plays back. Driving an absent slot through
         // restoreTrack with an empty object runs the same unconditional clears
         // the present-track path uses (regions, midiRegions, automation lanes,
-        // automation mode, plugin state).
+        // automation mode, plugin state). A slot that IS listed but isn't an
+        // object (e.g. "tracks": [null]) takes the same route - restoreTrack
+        // returns early on a non-object, which would leave the slot ghosted.
         const nlohmann::json emptyTrack = nlohmann::json::object();
         for (int i = 0; i < Session::kNumTracks; ++i)
             restoreTrack (s.track (i), i,
-                          i < (int) tracks.size() ? tracks[(size_t) i] : emptyTrack,
+                          i < (int) tracks.size() && tracks[(size_t) i].is_object()
+                              ? tracks[(size_t) i] : emptyTrack,
                           sessionLoadBpm, s.getSessionDirectory(),
                           s.missingAudioFilesAfterLoad);
     }
@@ -1794,7 +1821,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         const auto& busDefaults = json::array (sectionDefaults, "buses");
         for (int i = 0; i < Session::kNumBuses; ++i)
             restoreBus (s.bus (i),
-                        i < (int) busesArr.size() ? busesArr[(size_t) i] : busDefaults[(size_t) i],
+                        i < (int) busesArr.size() && busesArr[(size_t) i].is_object()
+                            ? busesArr[(size_t) i] : busDefaults[(size_t) i],
                         sessionLoadBpm);
     }
     {
@@ -1803,8 +1831,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         const auto& auxDefaults  = json::array (sectionDefaults, "aux_lanes");
         for (int i = 0; i < Session::kNumAuxLanes; ++i)
         {
-            const auto& v = i < (int) auxLanesArr.size() ? auxLanesArr[(size_t) i] : auxDefaults[(size_t) i];
-            if (! v.is_object()) continue;
+            const auto& v = i < (int) auxLanesArr.size() && auxLanesArr[(size_t) i].is_object()
+                                ? auxLanesArr[(size_t) i] : auxDefaults[(size_t) i];
             auto& lane = s.auxLane (i);
             if (auto str = json::getString (v, "name");   ! str.empty()) lane.name   = str;
             if (auto str = json::getString (v, "colour"); ! str.empty()) lane.colour = hexToColour (str, lane.colour);

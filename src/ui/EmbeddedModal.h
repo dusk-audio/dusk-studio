@@ -165,6 +165,8 @@ public:
                     // one click tears down both layers.
                     if (activeModalStack().empty() || activeModalStack().back() != this)
                         return;
+                    consumedOutsideClickTime() = juce::Desktop::getInstance()
+                                                     .getMainMouseSource().getLastMouseDownTime();
                     // Local copy BEFORE invoking - the user's callback may
                     // close() this modal, which resets the dismiss callbacks
                     // and destroys the closure (with captures) mid-call.
@@ -243,6 +245,8 @@ public:
             // survives close().
             if (activeModalStack().empty() || activeModalStack().back() != this)
                 return;
+            consumedOutsideClickTime() = juce::Desktop::getInstance()
+                                             .getMainMouseSource().getLastMouseDownTime();
             if (auto cb = userOnDismiss) cb();
             else                          close();
         };
@@ -442,16 +446,20 @@ public:
         stopListeningForOutsideClicks();
         restoreHiddenPluginEditors();
 
+        // A borrowed body outlives this modal (the strip owns the plugin editor),
+        // so its listeners must come off even when the host SafePointer nulled -
+        // otherwise they dangle. Only the child removals need a live host.
+        if (borrowedBody_ != nullptr)
+        {
+            borrowedBody_->removeKeyListener (this);
+            borrowedBody_->removeComponentListener (this);
+        }
+
         if (host != nullptr)
         {
             host->removeComponentListener (this);
             if (body_         != nullptr) host->removeChildComponent (body_.get());
-            if (borrowedBody_ != nullptr)
-            {
-                borrowedBody_->removeKeyListener (this);
-                borrowedBody_->removeComponentListener (this);
-                host->removeChildComponent (borrowedBody_);
-            }
+            if (borrowedBody_ != nullptr) host->removeChildComponent (borrowedBody_);
             if (backdrop_ != nullptr) host->removeChildComponent (backdrop_.get());
             if (dim_      != nullptr) host->removeChildComponent (dim_.get());
         }
@@ -513,6 +521,18 @@ private:
         stack.erase (std::remove (stack.begin(), stack.end(), this), stack.end());
     }
 
+    // Timestamp of the outside click already spent on dismissing a layer, shared
+    // by the dim overlays and the global mouse listeners. JUCE dispatches a
+    // component's mouseDown (the dim) BEFORE the global listener pass, so a dim
+    // dismissal pops its modal off the stack and the same event then reaches a
+    // lower listening modal (DuskComboBox's popup) as topmost - two layers, one
+    // click. Whoever consumes the click stamps it here; the rest skip it.
+    static juce::Time& consumedOutsideClickTime()
+    {
+        static juce::Time t;
+        return t;
+    }
+
     void mouseDown (const juce::MouseEvent& e) override
     {
         if (! listeningForOutsideClicks) return;
@@ -530,13 +550,9 @@ private:
         if (hit != nullptr && hit->getScreenBounds().contains (e.getScreenPosition()))
             return;
 
-        // Every listening modal's global listener receives the same physical
-        // click, and once this layer pops itself off the stack the next
-        // listener's topmost guard passes too - one click would dismiss two
-        // stacked layers. Mark the event consumed so lower layers skip it.
-        static juce::Time lastConsumedOutsideClick;
-        if (e.eventTime == lastConsumedOutsideClick) return;
-        lastConsumedOutsideClick = e.eventTime;
+        // One click may only dismiss one layer - see consumedOutsideClickTime().
+        if (e.eventTime == consumedOutsideClickTime()) return;
+        consumedOutsideClickTime() = e.eventTime;
 
         // Keep the callback alive across close(), which clears the dismiss
         // callbacks. Prefer the outside-click callback so the clicked control

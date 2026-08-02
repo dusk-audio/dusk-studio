@@ -35,9 +35,9 @@ private:
         std::unique_ptr<juce::Slider> gain;
         std::unique_ptr<juce::Slider> freq;
         std::unique_ptr<juce::Slider> q;     // bell bands only (HM, LM); null for shelves
-        juce::Label qLabel;                  // "Q" caption, only used when q != null
     };
     std::array<BandRow, 4> rows;
+    juce::Label gainColumnLabel, freqColumnLabel, qColumnLabel;
 
     // HPF + LPF row at the top of the popup, mirroring the strip's
     // SSL 9000 J white-filter top section.

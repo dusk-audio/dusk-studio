@@ -235,10 +235,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     lpfKnob.onValueChange = [this] { onLpfKnobChanged(); };
     addAndMakeVisible (lpfKnob);
 
-    // EQ type chip (E/G) - small toggle that lives mid-strip between
-    // the HM and LM rows in the freq column. Replaces the chip that
-    // used to sit on the EQ header pill so the type indicator is more
-    // prominent on the EQ panel itself.
+    // EQ type chip (E/G) - section-wide mode control beside the EQ header.
     eqTypeChip.setMouseClickGrabsKeyboardFocus (false);
     eqTypeChip.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff5a3a20));   // brown default
     eqTypeChip.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff202024));   // black when G
@@ -246,6 +243,8 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     eqTypeChip.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
     eqTypeChip.setClickingTogglesState (true);
     eqTypeChip.setTooltip ("EQ type: E (Brown) / G (Black)");
+    eqTypeChip.setTitle ("EQ type");
+    eqTypeChip.setHelpText ("Switches the channel EQ between the E (Brown) and G (Black) curves.");
     eqTypeChip.setToggleState (track.strip.eqBlackMode.load (std::memory_order_relaxed),
                                  juce::dontSendNotification);
     eqTypeChip.setButtonText (eqTypeChip.getToggleState() ? "G" : "E");
@@ -256,6 +255,18 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         eqTypeChip.setButtonText (nowBlack ? "G" : "E");
     };
     addAndMakeVisible (eqTypeChip);
+
+    auto setupEqColumnLabel = [this] (juce::Label& label, const char* text)
+    {
+        label.setText (text, juce::dontSendNotification);
+        label.setJustificationType (juce::Justification::centred);
+        label.setColour (juce::Label::textColourId, juce::Colour (0xff8e9298));
+        label.setFont (juce::Font (juce::FontOptions (8.0f, juce::Font::bold)));
+        addAndMakeVisible (label);
+    };
+    setupEqColumnLabel (eqGainColumnLabel, "GAIN");
+    setupEqColumnLabel (eqFreqColumnLabel, "FREQ");
+    setupEqColumnLabel (eqQColumnLabel,    "Q");
 
     //  EQ region 
     // Single EQ header button - unified section grammar. Left-click
@@ -275,6 +286,8 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         [this] { openEqEditorPopup(); });
     eqHeaderBtn->setLabelText ("EQ");
     eqHeaderBtn->setTooltip ("Left-click to enable / disable. Right-click for the EQ menu. Double-click to open the editor.");
+    eqHeaderBtn->setTitle ("EQ enable");
+    eqHeaderBtn->setHelpText ("Enables or disables the channel EQ section.");
     addAndMakeVisible (eqHeaderBtn.get());
 
     // COMP region
@@ -577,11 +590,6 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
             row.q->addMouseListener (this, false);   // right-click -> MIDI Learn (TrackEqQ)
             addAndMakeVisible (row.q.get());
 
-            row.qLabel.setText ("Q", juce::dontSendNotification);
-            row.qLabel.setJustificationType (juce::Justification::centred);
-            row.qLabel.setColour (juce::Label::textColourId, spec.accent.brighter (0.2f));
-            row.qLabel.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
-            addAndMakeVisible (row.qLabel);
         }
         {
             auto* atomicPtr = spec.freqPtr (track.strip);
@@ -1538,6 +1546,9 @@ void ChannelStripComponent::setEqSectionVisible (bool visible)
     hpfLabel.setVisible (visible);
     lpfKnob.setVisible (visible);
     lpfLabel.setVisible (visible);
+    eqGainColumnLabel.setVisible (visible);
+    eqFreqColumnLabel.setVisible (visible);
+    eqQColumnLabel   .setVisible (visible);
     eqTypeChip.setVisible (visible);
     if (eqHeaderBtn != nullptr) eqHeaderBtn->setVisible (visible);
     for (auto& row : eqRows)
@@ -1545,10 +1556,7 @@ void ChannelStripComponent::setEqSectionVisible (bool visible)
         if (row.gain) row.gain->setVisible (visible);
         if (row.freq) row.freq->setVisible (visible);
         if (row.q)    row.q   ->setVisible (visible);
-        row.labelLeft .setVisible (visible);
-        row.labelRight.setVisible (visible);
         row.rowLabel  .setVisible (visible);
-        row.qLabel    .setVisible (visible);
     }
 }
 
@@ -3493,7 +3501,7 @@ void ChannelStripComponent::openEqEditorPopup()
     if (auxEditorModal.isOpen())  auxEditorModal.close();
 
     auto panel = std::make_unique<ChannelEqEditor> (track);
-    panel->setSize (380, 648);   // match ChannelEqEditor's intrinsic height (full bell rows)
+    panel->setSize (380, 500);
 
     auto* topLevel = getTopLevelComponent();
     if (topLevel == nullptr) topLevel = this;
@@ -5138,6 +5146,13 @@ void ChannelStripComponent::paint (juce::Graphics& g)
         g.fillRoundedRectangle (eqArea.toFloat(), 3.0f);
         g.setColour (juce::Colour (0xff80c090).withAlpha (0.40f));
         g.drawRoundedRectangle (eqArea.toFloat().reduced (0.5f), 3.0f, 0.8f);
+        if (eqFilterSeparatorY > 0)
+        {
+            g.setColour (juce::Colour (0xff80c090).withAlpha (0.18f));
+            g.drawHorizontalLine (eqFilterSeparatorY,
+                                    (float) eqArea.getX() + 8.0f,
+                                    (float) eqArea.getRight() - 8.0f);
+        }
     }
 
     if (! compArea.isEmpty())
@@ -5488,65 +5503,47 @@ void ChannelStripComponent::resized()
         area.removeFromTop (8);
         eqArea   = juce::Rectangle<int>();
         compArea = juce::Rectangle<int>();
+        eqFilterSeparatorY = 0;
     }
     else
     {
 
-    // EQ block SSL 9000J / E-EQ inspired layout.
-    //   - Each band is a 2-column pair: GAIN on the left, FREQ on the right
-    //     (same Y, prominent same-size knobs).
-    //   - Bell bands (HM, LM) add a Q knob STACKED BELOW the gain in
-    //     the same left column - no third column competing for horizontal
-    //     space, freq stays on the right.
-    //   - HPF lives at the top of the block as a single centred knob.
-    //   - Shelf rows are short; bell rows are taller (gain block + Q block).
-    // EQ knobs sit just a touch larger than the 24 px AUX / COMP knobs - big
-    // enough for the SSL milled-skirt knob to read, small enough that the EQ
-    // block doesn't eat fader height. Q matches gain/freq; no subordinate size.
-    constexpr int kKnobSize    = 26;
-    constexpr int kValueLabelH = 12;
-    constexpr int kKnobBlockH  = kKnobSize + kValueLabelH + 2;
-    constexpr int kQKnobSize   = 26;
-    constexpr int kQBlockH     = kQKnobSize + kValueLabelH;
-    constexpr int kFreqYStagger = 2;                                  // tighter SSL nudge - was 4
-    constexpr int kEqHeaderH   = 16;  // matches COMP header row height for visual parity
-    constexpr int kFilterLabelH = 10;                                 // small HPF/LPF captions above the white knobs
-    constexpr int kEqHpfRowH    = kFilterLabelH + kKnobBlockH;        // 48 - label strip + knob row
-    constexpr int kEqShelfRowH  = kKnobBlockH + kFreqYStagger + 2;    // 42 - tighter than before
-    constexpr int kEqBellRowH   = kKnobBlockH + kQBlockH;             // 74
-    constexpr int kEqTypeChipH  = 16;                                 // E/G chip slot between HM (row 1) and LM (row 2)
+    // Compact SSL-style EQ: filters stay at the top, then every band occupies
+    // one GAIN / FREQ / Q row. Shelf bands leave Q empty. Keeping each band on
+    // one horizontal scan line preserves direct console operation while giving
+    // the fader the vertical priority it needs.
+    constexpr int kKnobSize       = 26;
+    constexpr int kValueLabelH    = 12;
+    constexpr int kKnobBlockH     = kKnobSize + kValueLabelH + 2;
+    constexpr int kEqHeaderH      = 16;
+    constexpr int kFilterLabelH   = 10;
+    constexpr int kEqHpfRowH      = kFilterLabelH + kKnobBlockH;
+    constexpr int kFilterBandGap  = 5;
+    constexpr int kColumnHeaderH  = 10;
+    constexpr int kEqBandRowH     = kKnobBlockH;
+    constexpr int kEqBandGap      = 2;
+    constexpr int kRowLabelW      = 28;
+    constexpr int kEqBandCount    = 4;
 
-    // 1 HPF row + 2 shelf rows (HF, LF) + 2 bell rows (HM, LM). No vertical
-    // reduce - every pixel of EQ height is used so the knobs hug the header.
-    eqArea = area.removeFromTop (kEqHeaderH + kEqHpfRowH
-                                    + 2 * kEqShelfRowH + 2 * kEqBellRowH
-                                    + kEqTypeChipH);
+    eqArea = area.removeFromTop (kEqHeaderH + kEqHpfRowH + kFilterBandGap
+                                    + kColumnHeaderH
+                                    + kEqBandCount * kEqBandRowH
+                                    + (kEqBandCount - 1) * kEqBandGap);
     {
         auto s = eqArea.reduced (3, 0);
-        const auto header = s.removeFromTop (kEqHeaderH);
-        // Single CompHeaderButton-style EQ header. Left-click toggles
-        // eqEnabled (LED reflects state); right-click pops the
-        // Brown/Black type picker. Bounds = full header for the same
-        // visual rhythm as the COMP header button.
+        auto header = s.removeFromTop (kEqHeaderH);
+        auto typeSlot = header.removeFromRight (28);
+        header.removeFromRight (2);
+        eqTypeChip.setBounds (typeSlot.reduced (1, 1));
         if (eqHeaderBtn != nullptr) eqHeaderBtn->setBounds (header);
 
-        constexpr int kRowLabelW = 28;
-
-        // Filter row - HPF | LPF aligned with the band-row columns
-        // below. Label strip on top (centred captions over each knob),
-        // knob strip below sized identically to band gain/freq knobs
-        // (same colW, same kKnobBlockH) so the white knobs read as the
-        // same size as the coloured ones.
+        // Centre the HPF / LPF pair across the full EQ panel. The band rows
+        // below keep their left label gutter, but carrying that offset into
+        // the filter row makes the pair read as shifted to the right.
         {
-            constexpr int kFilterLabelH = 10;
             auto labelRow = s.removeFromTop (kFilterLabelH);
             auto knobRow  = s.removeFromTop (kKnobBlockH);
 
-            // Skip kRowLabelW on the left so the filter columns line
-            // up with the band rows' gain/freq columns (which also
-            // carve out kRowLabelW for the "HF"/"HM"/etc row labels).
-            labelRow.removeFromLeft (kRowLabelW);
-            knobRow .removeFromLeft (kRowLabelW);
             const int colW = knobRow.getWidth() / 2;
             const int leftX  = knobRow.getX();
             const int rightX = leftX + colW;
@@ -5557,72 +5554,32 @@ void ChannelStripComponent::resized()
             lpfKnob .setBounds (rightX, knobRow.getY(),  colW, kKnobBlockH);
         }
 
-        // Band rows. Knobs are top-aligned within each row (no leading
-        // padding) - keeps everything pulled up toward the EQ header.
+        eqFilterSeparatorY = s.removeFromTop (kFilterBandGap).getCentreY();
+        auto columnHeader = s.removeFromTop (kColumnHeaderH);
+        columnHeader.removeFromLeft (kRowLabelW);
+        const int headerColW = columnHeader.getWidth() / 3;
+        eqGainColumnLabel.setBounds (columnHeader.removeFromLeft (headerColW));
+        eqFreqColumnLabel.setBounds (columnHeader.removeFromLeft (headerColW));
+        eqQColumnLabel   .setBounds (columnHeader);
+
         for (size_t i = 0; i < eqRows.size(); ++i)
         {
-            const bool hasQ = eqRows[i].q != nullptr;
-            const int rowH = hasQ ? kEqBellRowH : kEqShelfRowH;
-            auto row = s.removeFromTop (rowH);
-            // LM row (i == 2) shifted up a few pixels so it sits closer
-            // to the HM row above. Overlaps the bottom of HM's Q value
-            // label slot - that slot has padding so visible text isn't
-            // clipped. Pure visual lift; rowH still reserves the same
-            // vertical chunk so downstream rows (LF) stay put.
-            if (i == 2)
-                row.translate (0, -6);
-            // Row-label area, vertically aligned to the rotary's centre so
-            // "HM" / "LM" / etc sit next to the actual knob, not centred
-            // within the row's full height (which puts them next to the
-            // value text instead). The label box is sized to the rotary
-            // area only (kKnobSize) - JUCE's centred Label vertical-centres
-            // the text within those bounds.
+            auto row = s.removeFromTop (kEqBandRowH);
             auto labelArea = row.removeFromLeft (kRowLabelW);
-            const int rotaryH = kKnobSize;  // height of the actual rotary
             eqRows[i].rowLabel.setBounds (labelArea.getX(), row.getY(),
-                                           labelArea.getWidth(), rotaryH);
-            if (hasQ)
-            {
-                const int qRotaryH = kQKnobSize;
-                const int qY       = row.getY() + kKnobBlockH;
-                eqRows[i].qLabel.setBounds (labelArea.getX(), qY,
-                                             labelArea.getWidth(), qRotaryH);
-            }
+                                           labelArea.getWidth(), kKnobSize);
 
-            const int colW = row.getWidth() / 2;
-            const int leftX  = row.getX();
-            const int rightX = row.getX() + colW;
-            const int gainY = row.getY();
-            // Bell rows have a Q knob stacked under the gain on the left;
-            // the freq sits in its own column on the right and is now
-            // vertically centred inside the FULL bell row (between the
-            // gain and Q rows). Shelf rows keep the small SSL nudge.
-            const int freqY = hasQ
-                ? row.getY() + (rowH - kKnobBlockH) / 2
-                : gainY + kFreqYStagger;
+            const int colW = row.getWidth() / 3;
+            auto gainCell = row.removeFromLeft (colW);
+            auto freqCell = row.removeFromLeft (colW);
+            auto qCell = row;
+            eqRows[i].gain->setBounds (gainCell);
+            eqRows[i].freq->setBounds (freqCell);
+            if (eqRows[i].q != nullptr)
+                eqRows[i].q->setBounds (qCell);
 
-            eqRows[i].gain->setBounds (leftX,  gainY, colW, kKnobBlockH);
-            eqRows[i].freq->setBounds (rightX, freqY, colW, kKnobBlockH);
-
-            if (hasQ)
-            {
-                const int qW    = std::min (colW, 44);
-                const int qX    = leftX + (colW - qW) / 2;
-                const int qY    = gainY + kKnobBlockH;
-                eqRows[i].q->setBounds (qX, qY, qW, kQBlockH);
-            }
-
-            // E/G type chip slot between HM (i==1) and LM (i==2),
-            // positioned in the freq column so it sits between the
-            // HM freq knob above and the LM freq knob below - the
-            // user-requested mid-strip prominence.
-            if (i == 1)
-            {
-                auto chipSlot = s.removeFromTop (kEqTypeChipH);
-                const int chipW  = std::min (colW - 8, 28);
-                const int chipX  = rightX + (colW - chipW) / 2;
-                eqTypeChip.setBounds (chipX, chipSlot.getY() + 1, chipW, kEqTypeChipH - 2);
-            }
+            if (i + 1 < eqRows.size())
+                s.removeFromTop (kEqBandGap);
         }
     }
     area.removeFromTop (3);
@@ -5800,9 +5757,11 @@ void ChannelStripComponent::resized()
         constexpr int kAuxStaggerY  = 10;     // odd knobs offset down by this much
         constexpr int kAuxValueH    = 10;
         constexpr int kAuxBlockH    = kAuxStaggerY + kAuxKnobSize + 2 + kAuxValueH;
+        constexpr int kAuxTopInset  = 3;
         constexpr int kAuxLabelH    = 11;
         constexpr int kAuxLabelGap  = 1;
-        constexpr int kAuxRowTotalH = kAuxLabelH + kAuxLabelGap + kAuxBlockH;
+        constexpr int kAuxRowTotalH = kAuxTopInset + kAuxLabelH
+                                      + kAuxLabelGap + kAuxBlockH;
 
         // Capture the framed-box bounds for paint() (drawn in the same
         // style as eqArea / compArea, with the SEND purple accent).
@@ -5811,6 +5770,7 @@ void ChannelStripComponent::resized()
         // Lay out the label + knob block inside the box, with a small
         // horizontal padding so the SEND knobs don't kiss the frame.
         auto inner = auxRowArea.reduced (3, 0);
+        inner.removeFromTop (kAuxTopInset);
         auto headerRow = inner.removeFromTop (kAuxLabelH);
         inner.removeFromTop (kAuxLabelGap);
 
@@ -5999,10 +5959,14 @@ void ChannelStripComponent::resized()
                                     peakRow.getHeight());
     }
 
-    // Track-3: trim only enough to leave the slider's 6-px track padding
-    // so the meter bottom lands exactly on the "off" tick. Default layout
-    // still reserves the peak-readout label space below the meter.
-    const int bottomTrim = usesFaderThresholdLayout() ? 6 : (kPeakLabelH + 2);
+    // Match the meter bottoms to the fader's "off" tick. The visible fader
+    // track ends kFaderTrackPad above the slider bounds; compact mode also
+    // reserves a value-label slot below its shorter slider.
+    constexpr int kCompactFaderBottomTrim = 26;
+    const int bottomTrim = usesFaderThresholdLayout()
+                             ? (int) duskstudio::kFaderTrackPad
+                                 + (compactMode ? kCompactFaderBottomTrim : 0)
+                             : (kPeakLabelH + 2);
     meterColumn = meterColumn.withTrimmedBottom (bottomTrim);
     scaleColumn = scaleColumn.withTrimmedBottom (bottomTrim);
 
@@ -6053,19 +6017,28 @@ void ChannelStripComponent::resized()
     if (usesFaderThresholdLayout())
     {
         // Cap (36 px tall) centres on the value Y. Trim top so cap.top
-        // at max value clears the PAN knob above. Trim bottom enough
-        // that the cap at min sits comfortably above the standalone
-        // value label hosted below the slider.
-        sliderBounds = sliderBounds.withTrimmedTop (kTrack3ExtraTrim).withTrimmedBottom (26);
+        // at max value clears the PAN knob above. In the full-height layout,
+        // the shared peak-readout row already leaves room below the slider,
+        // so use all of the remaining fader height. Compact mode keeps the
+        // shorter geometry because the TIMELINE is consuming that space.
+        sliderBounds = sliderBounds.withTrimmedTop (kTrack3ExtraTrim);
+        if (compactMode)
+            sliderBounds = sliderBounds.withTrimmedBottom (kCompactFaderBottomTrim);
 
-        // Reserve a slot AT the slider's bottom edge for faderValueLabel.
-        // The label sits just below the cap's lowest position so the
-        // engineer always sees the current value as a separate readout.
+        // Full-height strips align the fader value with the input peak
+        // readout (for example "0.8" and "-inf") in one bottom row. Compact
+        // strips retain the value slot immediately below the shorter fader.
         const int kFaderValueH = 18;
-        faderValueLabel.setBounds (sliderBounds.getX(),
-                                      sliderBounds.getBottom() + 6,
-                                      sliderBounds.getWidth(),
-                                      kFaderValueH);
+        if (compactMode)
+            faderValueLabel.setBounds (sliderBounds.getX(),
+                                          sliderBounds.getBottom() + 6,
+                                          sliderBounds.getWidth(),
+                                          kFaderValueH);
+        else
+            faderValueLabel.setBounds (sliderBounds.getX(),
+                                          peakRow.getY(),
+                                          sliderBounds.getWidth(),
+                                          peakRow.getHeight());
     }
     faderSlider.setBounds (sliderBounds);
 

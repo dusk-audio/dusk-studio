@@ -367,6 +367,98 @@ else()
         "the plugins repo to ../plugins (sibling directory).")
 endif()
 
+# Native first-party UI surface for the session notepad. The editor is built on
+# the same DPF/DGL + Dear ImGui stack selected for the final GUI tower, so the
+# feature does not add another JUCE widget that would need to be ported later.
+# During development, explicit paths win over sibling checkouts; the external/
+# fallbacks are the eventual pinned release dependencies.
+# OFF drops the notepad window (DUSKSTUDIO_HAS_NATIVE_NOTEPAD guards its call
+# sites) so a configure without the DPF checkouts - a test-only tree, say - is
+# still possible. The default follows the checkouts, same as the native LV2
+# host follows its dev libs: a machine without DPF still configures, while an
+# EXPLICIT -DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON with them missing (what CI
+# effectively exercises by passing DPF_PATH) stays a configure error.
+set(DUSKSTUDIO_NOTEPAD_DEPS_FOUND OFF)
+if((DEFINED DPF_PATH
+    OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../DPF/CMakeLists.txt"
+    OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/DPF/CMakeLists.txt")
+   AND (DEFINED DPF_WIDGETS_PATH
+    OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../DPF-Widgets/opengl/DearImGui.hpp"
+    OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/DPF-Widgets/opengl/DearImGui.hpp"))
+    set(DUSKSTUDIO_NOTEPAD_DEPS_FOUND ON)
+endif()
+option(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD
+       "Build the native DPF/DGL + Dear ImGui session notepad window"
+       ${DUSKSTUDIO_NOTEPAD_DEPS_FOUND})
+if(NOT DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD AND NOT DUSKSTUDIO_NOTEPAD_DEPS_FOUND)
+    message(STATUS "Native notepad: DPF / DPF-Widgets not found - disabled")
+endif()
+
+if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
+    if(DEFINED DPF_PATH)
+        if(NOT EXISTS "${DPF_PATH}/CMakeLists.txt")
+            message(FATAL_ERROR
+                "DPF_PATH=${DPF_PATH} has no CMakeLists.txt - it is not a DPF checkout.")
+        endif()
+        set(DUSKSTUDIO_DPF_SOURCE_DIR "${DPF_PATH}")
+    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../DPF/CMakeLists.txt")
+        set(DUSKSTUDIO_DPF_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../DPF")
+    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/DPF/CMakeLists.txt")
+        set(DUSKSTUDIO_DPF_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/DPF")
+    else()
+        message(FATAL_ERROR
+            "DPF is required for the native notepad UI. Set -DDPF_PATH=/path/to/DPF, "
+            "clone it to ../DPF, initialise external/DPF, or configure with "
+            "-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=OFF.")
+    endif()
+
+    if(DEFINED DPF_WIDGETS_PATH)
+        if(NOT EXISTS "${DPF_WIDGETS_PATH}/opengl/DearImGui.hpp")
+            message(FATAL_ERROR
+                "DPF_WIDGETS_PATH=${DPF_WIDGETS_PATH} has no opengl/DearImGui.hpp - "
+                "it is not a DPF-Widgets checkout.")
+        endif()
+        set(DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR "${DPF_WIDGETS_PATH}")
+    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../DPF-Widgets/opengl/DearImGui.hpp")
+        set(DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../DPF-Widgets")
+    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/DPF-Widgets/opengl/DearImGui.hpp")
+        set(DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/DPF-Widgets")
+    else()
+        message(FATAL_ERROR
+            "DPF-Widgets is required for the native notepad UI. Set "
+            "-DDPF_WIDGETS_PATH=/path/to/DPF-Widgets, clone it to ../DPF-Widgets, "
+            "initialise external/DPF-Widgets, or configure with "
+            "-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=OFF.")
+    endif()
+
+    message(STATUS "Using DPF from: ${DUSKSTUDIO_DPF_SOURCE_DIR}")
+    message(STATUS "Using DPF-Widgets from: ${DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR}")
+
+    set(DPF_LIBRARIES OFF CACHE BOOL "Build DPF's complete library set" FORCE)
+    set(DPF_EXAMPLES OFF CACHE BOOL "Build DPF examples" FORCE)
+    add_subdirectory("${DUSKSTUDIO_DPF_SOURCE_DIR}"
+                     "${CMAKE_CURRENT_BINARY_DIR}/DPF" EXCLUDE_FROM_ALL)
+    dpf__add_dgl_opengl3(TRUE FALSE FALSE)
+    target_compile_options(dgl-opengl3 PRIVATE
+        $<$<COMPILE_LANG_AND_ID:CXX,GNU>:-Wno-cpp;-Wno-stringop-overflow>
+        $<$<COMPILE_LANG_AND_ID:CXX,Clang,AppleClang>:-Wno-cpp>)
+
+    add_library(dusk_notepad_ui STATIC
+        src/ui/NotepadDocument.cpp
+        src/ui/NativeNotepadWindow.cpp
+        "${DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp")
+    target_include_directories(dusk_notepad_ui PRIVATE
+        "${DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR}/opengl")
+    target_link_libraries(dusk_notepad_ui PRIVATE
+        dgl-opengl3
+        dgl-opengl3-definitions
+        dgl-system-libs-definitions)
+    target_compile_features(dusk_notepad_ui PUBLIC cxx_std_17)
+
+    target_link_libraries(DuskStudio PRIVATE dusk_notepad_ui)
+    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_NOTEPAD=1)
+endif()
+
 target_sources(DuskStudio PRIVATE
     src/Main.cpp
     src/DuskStudioApp.cpp

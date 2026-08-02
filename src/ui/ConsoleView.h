@@ -50,8 +50,8 @@ public:
     static constexpr int kRefMasterWidth  = 260;
 
     // Auto-compact triggers (TIMELINE mode independent of user toggle):
-    //   Height: EQ+COMP eat ~230 px fixed; below this the fader is
-    //           squeezed too far.
+    //   Height: the recording-stage module stack leaves about 185 px of
+    //           visible fader travel at this boundary; below it, collapse.
     //   Width:  only fires when layout already pushed strips well below
     //           the floor. At kMin the knobs are still readable.
     static constexpr int kAutoCompactStripHeight = 820;

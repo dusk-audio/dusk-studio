@@ -122,6 +122,9 @@ add_executable(dusk-studio-tests
     session_missing_sections.cpp
     session_save_as_consolidation.cpp
     session_automation_load_publish.cpp
+    session_notepad_sidecar.cpp
+    notepad_document.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/NotepadDocument.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiTimeCodeReceiver.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiTimeCodeEmitter.cpp
     ${CMAKE_SOURCE_DIR}/src/session/Session.cpp

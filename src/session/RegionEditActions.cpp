@@ -4,6 +4,7 @@
 #include "../engine/Transport.h"
 #include "../engine/audiofile/FileReader.h"
 #include "../engine/audiofile/FileWriter.h"
+#include "../foundation/Decibels.h"
 
 #include <algorithm>
 
@@ -127,17 +128,16 @@ bool MidiRegionEditAction::perform()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
     if (frozenLocked (session, trackIdx)) return false;
-    bool applied = false;
+    // Bail before mutate(): a no-op publish would burn the snapshot's single
+    // retire slot on an identical vector.
+    if (regionIdx < 0
+        || regionIdx >= (int) session.track (trackIdx).midiRegions.current().size())
+        return false;
     session.track (trackIdx).midiRegions.mutate (
-        [this, &applied] (std::vector<MidiRegion>& mregs)
+        [this] (std::vector<MidiRegion>& mregs)
         {
-            if (regionIdx >= 0 && regionIdx < (int) mregs.size())
-            {
-                mregs[(size_t) regionIdx] = afterState;
-                applied = true;
-            }
+            mregs[(size_t) regionIdx] = afterState;
         });
-    if (! applied) return false;
     rebuildPlaybackIfStopped (engine);
     return true;
 }
@@ -146,17 +146,14 @@ bool MidiRegionEditAction::undo()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
     if (frozenLocked (session, trackIdx)) return false;
-    bool applied = false;
+    if (regionIdx < 0
+        || regionIdx >= (int) session.track (trackIdx).midiRegions.current().size())
+        return false;
     session.track (trackIdx).midiRegions.mutate (
-        [this, &applied] (std::vector<MidiRegion>& mregs)
+        [this] (std::vector<MidiRegion>& mregs)
         {
-            if (regionIdx >= 0 && regionIdx < (int) mregs.size())
-            {
-                mregs[(size_t) regionIdx] = beforeState;
-                applied = true;
-            }
+            mregs[(size_t) regionIdx] = beforeState;
         });
-    if (! applied) return false;
     rebuildPlaybackIfStopped (engine);
     return true;
 }
@@ -351,19 +348,15 @@ bool DeleteMidiRegionAction::perform()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
     if (frozenLocked (session, trackIdx)) return false;
-    bool erased = false;
+    const auto& mregsNow = session.track (trackIdx).midiRegions.current();
+    if (regionIdx < 0 || regionIdx >= (int) mregsNow.size()) return false;
+    removed = mregsNow[(size_t) regionIdx];
+    haveRemoved = true;
     session.track (trackIdx).midiRegions.mutate (
-        [this, &erased] (std::vector<MidiRegion>& mregs)
+        [this] (std::vector<MidiRegion>& mregs)
         {
-            if (regionIdx >= 0 && regionIdx < (int) mregs.size())
-            {
-                removed = mregs[(size_t) regionIdx];
-                haveRemoved = true;
-                mregs.erase (mregs.begin() + regionIdx);
-                erased = true;
-            }
+            mregs.erase (mregs.begin() + regionIdx);
         });
-    if (! erased) return false;
     rebuildPlaybackIfStopped (engine);
     return true;
 }
@@ -1121,7 +1114,21 @@ bool JoinRegionsAction::perform()
     std::vector<int> sortedDesc = indices;
     std::sort (sortedDesc.begin(), sortedDesc.end(), std::greater<int>());
 
-    if (sameFile && abuts)
+    // The cheap merge keeps the lead region's gainDb / muted for the whole
+    // result, which is only right when every joined region carries the same
+    // values - a muted or re-gained later region must go through the render
+    // path, which bakes those per region. Exact float compare is fine: equal
+    // means untouched-default or the same drag, anything else renders.
+    bool uniformGainMute = true;
+    for (std::size_t i = 1; i < beforeRegions.size(); ++i)
+        if (beforeRegions[i].muted != beforeRegions.front().muted
+            || beforeRegions[i].gainDb != beforeRegions.front().gainDb)
+        {
+            uniformGainMute = false;
+            break;
+        }
+
+    if (sameFile && abuts && uniformGainMute)
     {
         // Cheap merge: keep the leading region, extend its length, drop
         // the rest. Outer fadeIn from the first and fadeOut from the
@@ -1165,6 +1172,7 @@ bool JoinRegionsAction::perform()
 
     for (const auto& reg : beforeRegions)
     {
+        if (reg.muted) continue;
         auto rdr = dusk::audio::FileReader::open (audioPath (reg.file));
         if (rdr == nullptr) continue;
         const int regSamples = (int) std::clamp<std::int64_t> (
@@ -1176,6 +1184,8 @@ bool JoinRegionsAction::perform()
                        regSamples) != regSamples)
             return false;   // unreadable region body - abort the join, leave regions unchanged
                             // (no output file created yet, nothing to clean up)
+        tmp.applyGain (dusk::audio::decibelsToGain (
+            std::clamp (reg.gainDb, -60.0f, 24.0f), -60.0f));
         const int destOffset = (int) (reg.timelineStart - firstStart);
         for (int c = 0; c < chs; ++c)
             mixBuf.addFrom (c, destOffset, tmp, c, 0, regSamples);
@@ -1204,7 +1214,6 @@ bool JoinRegionsAction::perform()
         return false;
     }
     writer.reset();
-    renderedFile = outFile;
 
     AudioRegion merged = beforeRegions.front();
     merged.file            = outFile;
@@ -1218,12 +1227,14 @@ bool JoinRegionsAction::perform()
     merged.fadeOutShape    = latestEnding->fadeOutShape;
     merged.fadeOutAuto     = latestEnding->fadeOutAuto;
     merged.previousTakes.clear();
+    // Gain and mute are baked into the rendered file.
+    merged.gainDb          = 0.0f;
+    merged.muted           = false;
 
     const int mergedIdx = eraseJoinedAndGetMergedSlot (regs, indices, sortedDesc);
     if (mergedIdx < 0)
     {
         outFile.deleteFile();
-        renderedFile = juce::File();
         return false;
     }
     resultInsertedAt = mergedIdx;
@@ -1373,7 +1384,6 @@ bool ReverseRegionAction::perform()
         }
         writer.reset();   // close the file before any delete
         if (! ioOk) { outFile.deleteFile(); return false; }
-        renderedFile = outFile;
 
         afterState = beforeState;
         afterState.file            = outFile;

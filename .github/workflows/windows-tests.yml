@@ -69,6 +69,10 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
             echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
 
+      - name: Clone DPF stack (dusk-audio forks, pinned)
+        # Pins + rationale live in .github/actions/clone-dpf-stack.
+        uses: ./.github/actions/clone-dpf-stack
+
       - name: Fetch Steinberg ASIO SDK
         # Test binary itself doesn't use ASIO, but the top-level CMake
         # configure pass evaluates the main DuskStudio target which
@@ -106,12 +110,18 @@ jobs:
       - name: Configure tests (CMake / Visual Studio 17 2022 / x64)
         shell: bash
         run: |
+          # DPF's cmake re-parses these paths, so backslashes from RUNNER_TEMP
+          # become invalid \-escapes there; hand it forward slashes (same
+          # conversion the vcpkg prefix uses above).
+          RT_UNIX="${RUNNER_TEMP//\\//}"
           cmake -S . -B build-tests \
             -G "Visual Studio 17 2022" -A x64 \
             -DCMAKE_BUILD_TYPE=Release \
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
+            -DDPF_PATH="${RT_UNIX}/DPF" \
+            -DDPF_WIDGETS_PATH="${RT_UNIX}/DPF-Widgets" \
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
             -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}"
 

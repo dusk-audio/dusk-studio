@@ -137,7 +137,7 @@ TEST_CASE ("Native Audio Unit slot lifecycle, process, parameters, state, and la
     const auto identifier = loadAppleEffect (slot);
     if (identifier.empty())
     {
-        SUCCEED ("No loadable stock Apple effect Audio Unit — bench coverage remains owed");
+        SUCCEED ("No loadable stock Apple effect Audio Unit - bench coverage remains owed");
         return;
     }
 

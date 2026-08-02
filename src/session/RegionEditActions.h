@@ -216,7 +216,6 @@ private:
     std::vector<int> indices;            // sorted by timelineStart
     std::vector<AudioRegion> beforeRegions;
     int  resultInsertedAt = -1;
-    juce::File renderedFile;             // only set on the slow path
     bool firstPerformDone = false;
 };
 
@@ -243,7 +242,6 @@ private:
     int regionIdx;
     AudioRegion beforeState;
     AudioRegion afterState;
-    juce::File  renderedFile;
     bool firstPerformDone = false;
 };
 

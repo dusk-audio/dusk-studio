@@ -737,6 +737,26 @@ void ChannelStrip::relatchPdcIfDrained (float blockPeakAbs, int numSamples) noex
     else                            pdcSilentRun = 0;
 }
 
+void ChannelStrip::drainPdcForSkip() noexcept
+{
+    // Same series-tail length the per-track silent skip uses: PDC delay and
+    // oversampler are chained, so when both are active the held tail is the SUM.
+    // Comparing against kMaxPdcSamples instead would skip the reset once
+    // pdcAppliedSamples reached the clamp, leaving the oversampler's FIR history
+    // to replay on resume.
+    const std::int64_t requiredDrain =
+        (pdcAppliedSamples > 0 && osLatencySamples > 0)
+            ? (std::int64_t) pdcAppliedSamples + (std::int64_t) osLatencySamples
+            : (std::int64_t) std::max (pdcAppliedSamples, osLatencySamples);
+    if (requiredDrain > 0 && pdcSilentRun < requiredDrain)
+    {
+        pdcDelayL.reset();
+        pdcDelayR.reset();
+        oversampler.reset();
+        pdcSilentRun = requiredDrain;
+    }
+}
+
 void ChannelStrip::processAndAccumulate (const float* inL,
                                          const float* inR,
                                          juce::MidiBuffer& trackMidi,
@@ -825,6 +845,11 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             for (auto& s : busGain)     s.getNextValue();
             for (auto& s : auxSendGain) s.getNextValue();
         }
+        // Same rationale as the not-passing skip below: output is cut for the
+        // whole bail, so the held PDC / oversampler tail is dropped rather than
+        // replayed on resume, and the drained latch lets a latency retarget
+        // requested while stopped land click-free on the next full pass.
+        drainPdcForSkip();
         return;
     }
 
@@ -864,14 +889,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         // relatchPdcIfDrained take a pending latency retarget click-free on
         // the next full pass. pdcSilentRun doubles as the once-latch - the
         // full path zeroes it again on the first loud block.
-        if ((pdcAppliedSamples > 0 || osLatencySamples > 0)
-            && pdcSilentRun < (std::int64_t) kMaxPdcSamples)
-        {
-            pdcDelayL.reset();
-            pdcDelayR.reset();
-            oversampler.reset();
-            pdcSilentRun = (std::int64_t) kMaxPdcSamples;
-        }
+        drainPdcForSkip();
         return;
     }
 

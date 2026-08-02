@@ -112,13 +112,14 @@ private:
     bool insertSlotOccupied() const;
 
     juce::Rectangle<int> eqArea, compArea;
+    int eqFilterSeparatorY = 0;
 
     juce::Slider hpfKnob   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
     juce::Slider lpfKnob   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
     juce::Label  hpfLabel;
     juce::Label  lpfLabel;
-    // Small EQ-type toggle parked between HM and LM rows. Mid-strip so
-    // the type cue reads even when the eye is on band rows.
+    juce::Label  eqGainColumnLabel, eqFreqColumnLabel, eqQColumnLabel;
+    // Section-wide EQ type belongs in the header beside the EQ enable control.
     juce::TextButton eqTypeChip { "E" };
 
     // Same grammar as the COMP header. Left = toggle eqEnabled. Right
@@ -130,9 +131,7 @@ private:
         std::unique_ptr<juce::Slider> freq;
         // populated only for mid (HM/LM) bell bands; nullptr for HF/LF shelves.
         std::unique_ptr<juce::Slider> q;
-        juce::Label labelLeft, labelRight;
         juce::Label rowLabel;
-        juce::Label qLabel;
     };
     std::array<BandRow, 4> eqRows;
 

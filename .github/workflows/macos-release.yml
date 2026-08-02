@@ -97,6 +97,10 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
             echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
 
+      - name: Clone DPF stack (dusk-audio forks, pinned)
+        # Pins + rationale live in .github/actions/clone-dpf-stack.
+        uses: ./.github/actions/clone-dpf-stack
+
       - name: Refresh Patreon supporters (best-effort)
         # See linux-release.yml for the rationale. Bakes the live list into the
         # DMG; best-effort, ships the committed list with no secrets / on failure.
@@ -140,6 +144,8 @@ jobs:
             -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
+            -DDPF_PATH="${RUNNER_TEMP}/DPF" \
+            -DDPF_WIDGETS_PATH="${RUNNER_TEMP}/DPF-Widgets" \
             -DDUSKSTUDIO_CODESIGN_IDENTITY="-" \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
             -DDUSKSTUDIO_NATIVE_LV2=ON \
@@ -162,6 +168,8 @@ jobs:
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
+            -DDPF_PATH="${RUNNER_TEMP}/DPF" \
+            -DDPF_WIDGETS_PATH="${RUNNER_TEMP}/DPF-Widgets" \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
             -DDUSKSTUDIO_NATIVE_LV2=ON \
             -DDUSKSTUDIO_NATIVE_VST3=ON

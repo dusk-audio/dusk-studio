@@ -1,6 +1,6 @@
 # Dusk Studio — Manual Screenshot List
 
-The 31 unique PNGs referenced by `MANUAL.md` (32 refs — `np-09-tape-strip.png`
+The 32 unique PNGs referenced by `MANUAL.md` (33 refs — `np-09-tape-strip.png`
 is used twice). Capture target: `docs/images/<name>.png`. Filenames must match
 the markers embedded in `MANUAL.md` exactly.
 
@@ -50,6 +50,7 @@ rest are manual (transient states, popup menus, OS dialogs) with notes below.
 | `np-09-tape-strip.png`              | L274, L1000 | ✅ | Tape strip with regions, a marker, and a loop bracket. (Reused at both lines.) |
 | `np-10-region-editor.png`           | L288   | ✅   | Audio region editor modal.                                  |
 | `np-11-piano-roll.png`              | L300   | ✅   | Piano roll modal.                                           |
+| `np-12-notepad.png`                 | L544   | ❌   | Native Document view with styled sample lyrics and lists.   |
 
 ## Chapter figures
 
@@ -99,6 +100,29 @@ The harness renders the track I/O config popup in all three modes. No
 
 ## Manual-only shots (notes)
 
+- **`np-12-notepad.png`**: the notepad is a separate DPF/DGL native window, so
+  JUCE's `createComponentSnapshot` cannot capture it. Open the notepad, use the
+  Markdown tab to paste the sample below, switch back to Document, and capture
+  the native window.
+
+  ```markdown
+  # Little Angel — verse 1
+
+  Sang this one **too fast** at the *first* session; keep the pocket lazy and
+  let the last word of every line trail off before the downbeat, otherwise the
+  chorus lands early and the whole take rushes.
+
+  Reference: [rough mix](https://example.com/little-angel-rough)
+
+  - warm up the tape echo before take 1
+  - double the hook an octave down
+
+  1. tune down a half step
+  2. print the vocal dry
+
+  - [x] comp the verse
+  - [ ] re-cut the bridge harmony
+  ```
 - **`sync-02-mtc-rates.png`** (⚠️): the frame-rate list is a native popup menu;
   `createComponentSnapshot` can't grab it. Open `Settings → MIDI sync`, click the
   MTC rate dropdown, capture the window with `gnome-screenshot -w` while the menu

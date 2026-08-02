@@ -45,7 +45,7 @@ jobs:
             libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev \
             libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
             libxinerama-dev libxrandr-dev libxrender-dev libxss-dev \
-            libwebkit2gtk-4.0-dev libglu1-mesa-dev xvfb \
+            libwebkit2gtk-4.0-dev libgl1-mesa-dev libglu1-mesa-dev xvfb \
             libwayland-dev libxkbcommon-dev libdecor-0-dev
 
       - name: Clone JUCE (Dusk-owned Wayland mirror, pinned)
@@ -94,6 +94,10 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
             echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
 
+      - name: Clone DPF stack (dusk-audio forks, pinned)
+        # Pins + rationale live in .github/actions/clone-dpf-stack.
+        uses: ./.github/actions/clone-dpf-stack
+
       - name: Configure (Release)
         run: |
           cmake -S . -B build-linux -G Ninja \
@@ -101,7 +105,9 @@ jobs:
             -DDUSKSTUDIO_SKIP_FORK_CHECK=ON \
             -DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
-            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
+            -DDPF_PATH="${RUNNER_TEMP}/DPF" \
+            -DDPF_WIDGETS_PATH="${RUNNER_TEMP}/DPF-Widgets"
 
       - name: Build (Release)
         run: cmake --build build-linux -j
@@ -158,7 +164,7 @@ jobs:
             libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev \
             libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
             libxinerama-dev libxrandr-dev libxrender-dev libxss-dev \
-            libwebkit2gtk-4.0-dev libglu1-mesa-dev \
+            libwebkit2gtk-4.0-dev libgl1-mesa-dev libglu1-mesa-dev \
             libwayland-dev libxkbcommon-dev libdecor-0-dev
 
       - name: Clone JUCE (Dusk-owned Wayland mirror, pinned)
@@ -200,6 +206,10 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
             echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
 
+      - name: Clone DPF stack (dusk-audio forks, pinned)
+        # Pins + rationale live in .github/actions/clone-dpf-stack.
+        uses: ./.github/actions/clone-dpf-stack
+
       - name: Configure tests
         run: |
           cmake -S . -B build-tests -G Ninja \
@@ -208,7 +218,9 @@ jobs:
             -DDUSKSTUDIO_SKIP_FORK_CHECK=ON \
             -DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
-            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
+            -DDPF_PATH="${RUNNER_TEMP}/DPF" \
+            -DDPF_WIDGETS_PATH="${RUNNER_TEMP}/DPF-Widgets"
 
       - name: Build tests
         run: cmake --build build-tests --target dusk-studio-tests -j
