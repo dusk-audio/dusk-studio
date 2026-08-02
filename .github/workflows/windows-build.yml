@@ -90,6 +90,34 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
             echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
 
+      - name: Clone DPF stack (dusk-audio forks, pinned)
+        # Pinned DPF + DPF-Widgets for the native notepad UI; see
+        # linux-build.yml for the rationale. Keep the revs in lockstep across
+        # every workflow.
+        shell: bash
+        env:
+          DPF_REPO: https://github.com/dusk-audio/DPF.git
+          DPF_REV: 213336ad25be357a2510609e90392c7d8411633b
+          DPF_WIDGETS_REPO: https://github.com/dusk-audio/DPF-Widgets.git
+          DPF_WIDGETS_REV: 730da6397904da66d99667c1cb30fc77fc3d794a
+        run: |
+          set -euo pipefail
+          git init -q "${RUNNER_TEMP}/DPF"
+          cd "${RUNNER_TEMP}/DPF"
+          git remote add origin "${DPF_REPO}"
+          git fetch --depth 1 origin "${DPF_REV}"
+          git checkout -q "${DPF_REV}"
+          [[ "$(git rev-parse HEAD)" == "${DPF_REV}" ]] || {
+            echo "ERROR: DPF checkout $(git rev-parse HEAD) != pinned ${DPF_REV}" >&2; exit 1; }
+          git submodule update --init --depth 1
+          git init -q "${RUNNER_TEMP}/DPF-Widgets"
+          cd "${RUNNER_TEMP}/DPF-Widgets"
+          git remote add origin "${DPF_WIDGETS_REPO}"
+          git fetch --depth 1 origin "${DPF_WIDGETS_REV}"
+          git checkout -q "${DPF_WIDGETS_REV}"
+          [[ "$(git rev-parse HEAD)" == "${DPF_WIDGETS_REV}" ]] || {
+            echo "ERROR: DPF-Widgets checkout $(git rev-parse HEAD) != pinned ${DPF_WIDGETS_REV}" >&2; exit 1; }
+
       - name: Refresh Patreon supporters (best-effort)
         # See linux-release.yml for the rationale. Bakes the live list into the
         # MSI; best-effort, ships the committed list with no secrets / on failure.
@@ -170,6 +198,8 @@ jobs:
             -G "Visual Studio 17 2022" -A x64 \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
+            -DDPF_PATH="${RUNNER_TEMP}/DPF" \
+            -DDPF_WIDGETS_PATH="${RUNNER_TEMP}/DPF-Widgets" \
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
             -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}" \
             -DDUSKSTUDIO_ENABLE_LTO=ON
@@ -192,6 +222,8 @@ jobs:
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
+            -DDPF_PATH="${RUNNER_TEMP}/DPF" \
+            -DDPF_WIDGETS_PATH="${RUNNER_TEMP}/DPF-Widgets" \
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
             -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}"
           cmake --build build-tests --config Release --target dusk-studio-tests -j
