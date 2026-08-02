@@ -82,8 +82,46 @@ Verify the contract, do not assume the common case:
   child's. JUCE's peer view is flipped, so top-left coordinates already land
   correctly - a claim that placement is inverted needs that checked first.
 
+## Session load (`SessionSerializer::load`)
+
+`load()` mutates the **live** Session rather than constructing a fresh one, and
+almost every setter is `if (json::has (v, key))`. Two consequences that have
+each shipped as a bug:
+
+- **An empty object does not blank a slot.** Driving a surplus track/bus/aux
+  slot through restore with `{}` clears the things written unconditionally
+  (regions, MIDI, automation, plugin state) and leaves everything conditional -
+  name, colour, fader, pan, sends, hardware routing - holding the *previous*
+  session's values. Blank a slot from the serialized default object, not `{}`.
+  A partially-populated slot object has the same hole for its absent keys.
+- **A newly persisted field must reset when absent**, or the previous session's
+  value survives into a file that predates the key. Write
+  `store (has (k) ? v : modelDefault)`, and pin it with a test that loads a
+  cut-down `{"version":N,"transport":{}}` after setting the live value.
+
+Anything a corrupt file can reach that feeds DSP needs a finite guard **and** a
+range clamp - `std::clamp` passes NaN straight through, so clamping alone is
+not sanitising. Clamp to the range the corresponding control enforces, not an
+invented one.
+
+## Deferred callbacks on the engine
+
+`AudioEngine` posts to the message thread with `dusk::callAsync` from paths that
+can outlive it (device error from the I/O thread, hot-unplug from a change
+broadcast). The house pattern is a `std::shared_ptr<std::atomic<bool>>` latch
+captured by value - `midiHotplugAlive`, `changeListenersAlive`,
+`deviceCallbacksAlive` - cleared first thing in `~AudioEngine`, with the lambda
+checking it before touching `this`. A new deferral needs one of these; adding a
+fresh mechanism alongside them is the review finding, not the fix.
+
 ## Tests
 
+- **A read issued straight after `preparePlayback()` races the prefetch.**
+  `BufferedFileReader::prefetch` only wakes a background worker, and `readRt`
+  returns silence on a miss rather than blocking, so an immediate assertion is
+  a flake that looks like a DSP bug. The loop-start pre-cache is filled
+  synchronously in `primeLoopCaches`, so a test that needs deterministic samples
+  enables a loop over the region and reads through the cache.
 - Temp directories must be **created atomically**, not merely named uniquely:
   `mkdtemp`, or `create_directory` whose false return means someone else won
   the name, and retry with a fresh candidate. ctest runs cases as parallel

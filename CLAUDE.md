@@ -14,8 +14,14 @@ Dusk Studio is a portastudio-style DAW for Linux, C++17. It is being actively de
 
 Dusk Studio is being re-platformed to remove **all** JUCE by 1.0, incrementally, tower by tower (campaign map + tower order in [docs/dejuce-campaign.md](docs/dejuce-campaign.md); live state in the [de-JUCE roadmap memory](../../.claude/projects/-home-marc-projects-DuskStudio/memory/project_dejuce_roadmap.md)). Much of the code documented below still uses `juce::` — that is the *migration surface*, not a pattern to copy. **New code must not add JUCE.** Reach for the JUCE-free seam first; fall back to `juce::` only inside a file that is already coupled and has no seam yet.
 
-**The gate.** [tools/juce-gate.sh](tools/juce-gate.sh) (CI, via `linux-build.yml`) is a ratchet over `src/`: a *clean* file that gains `juce::`/`<juce_` and isn't on `tools/juce-allowlist.txt` **fails the build**, and allowlisted files may only leave the list, never rejoin. Two things the gate can't catch — you must:
-- **Don't pile more `juce::` into an already-allowlisted file.** The gate is silent there (the file is already coupled), yet most feature work lands in coupled files (AudioEngine, Session, `src/ui/*`) — exactly where new JUCE sneaks in. Use the seam anyway.
+**The gate.** [tools/juce-gate.sh](tools/juce-gate.sh) (CI, via `linux-build.yml`) is a ratchet over `src/`, enforcing three one-way rules against `tools/juce-allowlist.txt` (`path<TAB>count`, one line per coupled file):
+- A *clean* file that gains `juce::`/`<juce_` and isn't listed **fails the build**.
+- A listed file that carries **more** occurrences than its recorded count **fails the build**. Most feature work lands in already-coupled files (AudioEngine, Session, `src/ui/*`), which is where new JUCE actually accumulates — the count is what stops it. Use the seam instead.
+- A listed file that is now JUCE-free must be deleted from the list. Files leave and never rejoin.
+
+`tools/juce-gate.sh --update` re-records the list after migration work, and is itself a ratchet: it **refuses** to add a path or raise a count, so the command everyone runs after a migration can't launder a regression into the baseline. An addition that is genuinely unavoidable is a hand edit to the allowlist, which then shows up in review as its own line and needs justifying in the PR body. The allowlist must hold exactly one `path<TAB>count` record per file, counts decimal with no leading zero — anything else fails closed rather than silently skipping that file's ceiling.
+
+Two things the gate still can't catch — you must:
 - **Never write the literal `juce::` token in a comment** — the gate greps text, so `// mirrors juce::Foo` trips it. Write "JUCE's Foo" by name instead.
 - The gate scans `src/` only. `tests/` may reference JUCE (the A/B-vs-JUCE parity tests need it); `tools/` and `packaging/` should not gain it.
 

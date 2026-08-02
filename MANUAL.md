@@ -449,6 +449,8 @@ A single button opens the **MIDI Bindings** panel, which lists every CC-to-contr
 - **Emit MTC**: emit MTC quarter-frame messages.
 - **MTC frame rate**: 24, 25, 29.97 drop-frame, or 30 frames per second.
 
+All seven are saved with the session, so a project that syncs to an external clock reopens ready to sync.
+
 ### General
 
 - **UI scale**: a global zoom factor for the entire interface. Restart Dusk Studio after changing this for best results.

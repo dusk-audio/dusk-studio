@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "session/Session.h"
 #include "session/SessionSerializer.h"
@@ -6,6 +7,7 @@
 #include <juce_core/juce_core.h>
 
 using namespace duskstudio;
+using Catch::Matchers::WithinAbs;
 
 // Loading a session must REPLACE the model, not merge into it. A session.json
 // with fewer tracks than this build (hand-edited, or written by a tool like the
@@ -57,4 +59,62 @@ TEST_CASE ("loading a session with fewer tracks blanks the surplus slots",
     REQUIRE (s.track (5).pluginLegacyDescriptionXml.isEmpty());
     REQUIRE (s.track (5).pluginStateBase64.isEmpty());
     REQUIRE (s.track (5).automationLanes[0].pointsConst().empty());
+}
+
+// The mixer half of the same contract. Every setter in restoreTrack is
+// conditional on its key being present, so driving a surplus slot from an empty
+// object cleared the regions but left the previous session's name, colour,
+// fader, sends and hardware routing on the strip.
+TEST_CASE ("loading a session with fewer tracks blanks the surplus mixer state",
+           "[session][serializer][paths]")
+{
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                        .getChildFile ("dusk-shrink-mixer-"
+                                         + juce::String (juce::Random::getSystemRandom().nextInt()));
+    dir.createDirectory();
+    const struct ScopedDir { juce::File d; ~ScopedDir() { d.deleteRecursively(); } } scopedDir { dir };
+
+    Session s;
+    s.setSessionDirectory (dir);
+
+    const auto defaultName   = s.track (5).name;
+    const auto defaultColour = s.track (5).colour;
+
+    auto& ghost = s.track (5);
+    ghost.name = "Ghost";
+    ghost.colour = juce::Colours::red;
+    ghost.strip.faderDb.store (-18.0f);
+    ghost.strip.pan.store (0.75f);
+    ghost.strip.mute.store (true);
+    ghost.strip.busAssign[2].store (true);
+    ghost.strip.auxSendDb[1].store (-12.0f);
+    ghost.strip.auxSendPreFader[1].store (true);
+    ghost.strip.hpfFreq.store (120.0f);
+    ghost.strip.lpfFreq.store (8000.0f);
+    ghost.hardwareInsert.enabled.store (true);
+    ghost.hardwareInsert.outputGainDb.store (6.0f);
+    ghost.hardwareInsert.dryWet.store (0.5f);
+
+    const auto target = dir.getChildFile ("session.json");
+    REQUIRE (target.replaceWithText (R"({"version":3,"tracks":[{"name":"A"},{"name":"B"}]})"));
+
+    REQUIRE (SessionSerializer::load (s, target));
+
+    const auto& t = s.track (5);
+    REQUIRE (t.name == defaultName);
+    REQUIRE (t.colour == defaultColour);
+    REQUIRE_THAT (t.strip.faderDb.load(), WithinAbs (0.0f, 1e-6f));
+    REQUIRE_THAT (t.strip.pan.load(), WithinAbs (0.0f, 1e-6f));
+    REQUIRE_FALSE (t.strip.mute.load());
+    REQUIRE_FALSE (t.strip.busAssign[2].load());
+    REQUIRE_THAT (t.strip.auxSendDb[1].load(),
+                  WithinAbs (ChannelStripParams::kAuxSendOffDb, 1e-6f));
+    REQUIRE_FALSE (t.strip.auxSendPreFader[1].load());
+    REQUIRE_THAT (t.strip.hpfFreq.load(),
+                  WithinAbs (ChannelStripParams::kHpfOffHz, 1e-6f));
+    REQUIRE_THAT (t.strip.lpfFreq.load(),
+                  WithinAbs (ChannelStripParams::kLpfOffHz, 1e-3f));
+    REQUIRE_FALSE (t.hardwareInsert.enabled.load());
+    REQUIRE_THAT (t.hardwareInsert.outputGainDb.load(), WithinAbs (0.0f, 1e-6f));
+    REQUIRE_THAT (t.hardwareInsert.dryWet.load(), WithinAbs (1.0f, 1e-6f));
 }

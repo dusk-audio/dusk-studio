@@ -227,3 +227,66 @@ TEST_CASE ("SessionSerializer::load treats a non-object master as absent",
 
     target.getParentDirectory().deleteRecursively();
 }
+
+// Strip, comp and hardware-insert values feed DSP directly. A hand-edited file
+// can carry a fader of 1e39 (inf once narrowed), a pan of 3.0, or an aux send
+// that is not a number at all. None of them may reach the mix, and a junk aux
+// send in particular must resolve to OFF: 0 dB is a unity send, so the corrupt
+// file would come back feedback-loud.
+TEST_CASE ("SessionSerializer::load clamps corrupt strip and hardware values",
+           "[session][serializer][corruption]")
+{
+    const auto target = writeSession (R"JSON(
+    {
+      "version": 3,
+      "tracks": [
+        {
+          "fader_db": 1e40,
+          "pan": 3.0,
+          "bus_assign": [true],
+          "aux_send_db": ["bad", -12.0, 1e40, -60.0],
+          "hpf": { "freq": -5.0 },
+          "lpf": { "freq": 1e40 },
+          "comp": { "mode": 99, "vca_ratio": 500.0, "fet_attack": 0.0 },
+          "hardware_insert": { "output_gain_db": 100.0, "dry_wet": -1.0 }
+        }
+      ],
+      "buses": [ { "fader_db": -200.0, "comp_ratio": 99.0, "eq_lf_db": 50.0 } ]
+    }
+    )JSON");
+
+    Session s;
+    auto& track = s.track (0);
+    for (auto& assigned : track.strip.busAssign) assigned.store (true);
+    for (auto& level : track.strip.auxSendDb)    level.store (-6.0f);
+
+    REQUIRE (SessionSerializer::load (s, target));
+
+    REQUIRE_THAT (track.strip.faderDb.load(), WithinAbs (0.0f, 1e-6f));
+    REQUIRE_THAT (track.strip.pan.load(), WithinAbs (1.0f, 1e-6f));
+    REQUIRE (track.strip.busAssign[0].load());
+    for (size_t i = 1; i < track.strip.busAssign.size(); ++i)
+        REQUIRE_FALSE (track.strip.busAssign[i].load());
+
+    // "bad" and the overflowing literal collapse to OFF, not unity. -60 sits AT
+    // the knob floor, which the strip itself stores as the OFF sentinel.
+    REQUIRE_THAT (track.strip.auxSendDb[0].load(), WithinAbs (-100.0f, 1e-6f));
+    REQUIRE_THAT (track.strip.auxSendDb[1].load(), WithinAbs (-12.0f, 1e-6f));
+    REQUIRE_THAT (track.strip.auxSendDb[2].load(), WithinAbs (-100.0f, 1e-6f));
+    REQUIRE_THAT (track.strip.auxSendDb[3].load(), WithinAbs (-100.0f, 1e-6f));
+
+    REQUIRE_THAT (track.strip.hpfFreq.load(), WithinAbs (20.0f, 1e-6f));
+    REQUIRE_THAT (track.strip.lpfFreq.load(), WithinAbs (20000.0f, 1e-3f));
+    REQUIRE (track.strip.compMode.load() == 2);
+    REQUIRE_THAT (track.strip.compVcaRatio.load(), WithinAbs (120.0f, 1e-6f));
+    REQUIRE_THAT (track.strip.compFetAttack.load(), WithinAbs (0.02f, 1e-6f));
+    REQUIRE_THAT (track.hardwareInsert.outputGainDb.load(), WithinAbs (12.0f, 1e-6f));
+    REQUIRE_THAT (track.hardwareInsert.dryWet.load(), WithinAbs (0.0f, 1e-6f));
+
+    const auto& bus = s.bus (0).strip;
+    REQUIRE_THAT (bus.faderDb.load(), WithinAbs (-100.0f, 1e-6f));
+    REQUIRE_THAT (bus.compRatio.load(), WithinAbs (10.0f, 1e-6f));
+    REQUIRE_THAT (bus.eqLfGainDb.load(), WithinAbs (9.0f, 1e-6f));
+
+    target.getParentDirectory().deleteRecursively();
+}

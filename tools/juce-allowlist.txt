@@ -1,179 +1,179 @@
-src/DuskStudioApp.cpp
-src/DuskStudioApp.h
-src/dsp/AuxLaneStrip.cpp
-src/dsp/AuxLaneStrip.h
-src/dsp/ChannelStrip.cpp
-src/dsp/ChannelStrip.h
-src/dsp/MasterBus.cpp
-src/dsp/MasterBus.h
-src/dsp/MasteringChain.h
-src/engine/AudioEngine.cpp
-src/engine/AudioEngine.h
-src/engine/AudioPipelineSelfTest.cpp
-src/engine/BounceEngine.cpp
-src/engine/BounceEngine.h
-src/engine/DpAligner.cpp
-src/engine/DpAligner.h
-src/engine/DpImporter.cpp
-src/engine/DpImporter.h
-src/engine/DuskStudioPlayHead.h
-src/engine/FileImporter.cpp
-src/engine/FileImporter.h
-src/engine/JuceCompat.h
-src/engine/MasteringPlayer.cpp
-src/engine/MasteringPlayer.h
-src/engine/PlaybackEngine.cpp
-src/engine/PlaybackEngine.h
-src/engine/PluginManager.cpp
-src/engine/PluginManager.h
-src/engine/PluginSlot.cpp
-src/engine/PluginSlot.h
-src/engine/RecordManager.cpp
-src/engine/RecordManager.h
-src/engine/device/DeviceManager.h
-src/engine/device/DeviceManagerJuce.cpp
-src/engine/hosting/NativePluginId.h
-src/engine/ipc/IpcSelfTest.cpp
-src/engine/ipc/PluginHostMain.cpp
-src/engine/midi/JuceMidiBackend.cpp
-src/engine/midi/JuceMidiBackend.h
-src/engine/multisample/AriaBank.cpp
-src/engine/multisample/AriaBank.h
-src/engine/multisample/AriaGui.cpp
-src/engine/multisample/AriaGui.h
-src/engine/multisample/DuskMultisampleProcessor.cpp
-src/engine/multisample/DuskMultisampleProcessor.h
-src/engine/multisample/Sf2ToSfz.cpp
-src/engine/multisample/Sf2ToSfz.h
-src/foundation/MessageThread.cpp
-src/session/MarkerEditActions.h
-src/session/MidiBindings.cpp
-src/session/MidiBindings.h
-src/session/ParamEditAction.h
-src/session/RegionEditActions.cpp
-src/session/RegionEditActions.h
-src/session/Session.cpp
-src/session/Session.h
-src/session/SessionSerializer.cpp
-src/session/SessionSerializer.h
-src/session/SessionTemplates.cpp
-src/ui/AnalogVuMeter.cpp
-src/ui/AnalogVuMeter.h
-src/ui/AudioRegionEditor.cpp
-src/ui/AudioRegionEditor.h
-src/ui/AudioSettingsPanel.cpp
-src/ui/AudioSettingsPanel.h
-src/ui/AuxLaneComponent.cpp
-src/ui/AuxLaneComponent.h
-src/ui/AuxView.cpp
-src/ui/AuxView.h
-src/ui/BounceDialog.cpp
-src/ui/BounceDialog.h
-src/ui/BusComponent.cpp
-src/ui/BusComponent.h
-src/ui/ChannelCompEditor.cpp
-src/ui/ChannelCompEditor.h
-src/ui/ChannelEqEditor.cpp
-src/ui/ChannelEqEditor.h
-src/ui/ChannelStripComponent.cpp
-src/ui/ChannelStripComponent.h
-src/ui/ClapPluginEditorComponent.cpp
-src/ui/ClapPluginEditorComponent.h
-src/ui/CompBypassLed.h
-src/ui/CompHeaderButton.h
-src/ui/CompMeterStrip.cpp
-src/ui/CompMeterStrip.h
-src/ui/ConsoleView.cpp
-src/ui/ConsoleView.h
-src/ui/CursorOverlay.cpp
-src/ui/CursorOverlay.h
-src/ui/DimOverlay.cpp
-src/ui/DimOverlay.h
-src/ui/DpImportDialog.h
-src/ui/DuskAlerts.cpp
-src/ui/DuskAlerts.h
-src/ui/DuskAudioDeviceSelector.cpp
-src/ui/DuskAudioDeviceSelector.h
-src/ui/DuskComboBox.cpp
-src/ui/DuskComboBox.h
-src/ui/DuskContextMenu.cpp
-src/ui/DuskContextMenu.h
-src/ui/DuskFileBrowser.cpp
-src/ui/DuskFileBrowser.h
-src/ui/DuskLabelEditor.h
-src/ui/DuskMenuBar.h
-src/ui/DuskStudioLookAndFeel.h
-src/ui/EditCursors.cpp
-src/ui/EditCursors.h
-src/ui/EditModeToolbar.cpp
-src/ui/EditModeToolbar.h
-src/ui/EmbeddedModal.h
-src/ui/FadeCurve.h
-src/ui/FreezeDialog.cpp
-src/ui/FreezeDialog.h
-src/ui/HardwareInsertEditor.cpp
-src/ui/HardwareInsertEditor.h
-src/ui/ImportTargetPicker.cpp
-src/ui/ImportTargetPicker.h
-src/ui/Lv2PluginEditorComponent.cpp
-src/ui/Lv2PluginEditorComponent.h
-src/ui/MainComponent.cpp
-src/ui/MainComponent.h
-src/ui/MasterStripComponent.cpp
-src/ui/MasterStripComponent.h
-src/ui/MasteringEqEditor.cpp
-src/ui/MasteringEqEditor.h
-src/ui/MasteringLimiterEditor.cpp
-src/ui/MasteringLimiterEditor.h
-src/ui/MasteringView.cpp
-src/ui/MasteringView.h
-src/ui/MidiBindingsPanel.cpp
-src/ui/MidiBindingsPanel.h
-src/ui/MiniTimelineStrip.cpp
-src/ui/MiniTimelineStrip.h
-src/ui/MultiImportTargetPicker.cpp
-src/ui/MultiImportTargetPicker.h
-src/ui/NativeEditorEmbedScale.h
-src/ui/PianoRollComponent.cpp
-src/ui/PianoRollComponent.h
-src/ui/PlatformWindowing.h
-src/ui/PlatformWindowing_Linux.cpp
-src/ui/PlatformWindowing_Mac.mm
-src/ui/PlatformWindowing_Windows.cpp
-src/ui/PluginPickerHelpers.cpp
-src/ui/PluginPickerHelpers.h
-src/ui/PluginPickerPanel.cpp
-src/ui/PluginPickerPanel.h
-src/ui/PluginScanModal.cpp
-src/ui/PluginScanModal.h
-src/ui/ScreenshotCapture.cpp
-src/ui/SectionPillButton.h
-src/ui/SelfTestPanel.cpp
-src/ui/SelfTestPanel.h
-src/ui/ShortcutsPanel.h
-src/ui/StartupDialog.cpp
-src/ui/StartupDialog.h
-src/ui/SteppedKnob.h
-src/ui/SupportersPanel.h
-src/ui/SystemStatusBar.cpp
-src/ui/SystemStatusBar.h
-src/ui/TapePanel.cpp
-src/ui/TapePanel.h
-src/ui/TapeStrip.cpp
-src/ui/TapeStrip.h
-src/ui/TransportBar.cpp
-src/ui/TransportBar.h
-src/ui/TunerOverlay.h
-src/ui/UpdateChecker.h
-src/ui/VirtualKeyboardComponent.cpp
-src/ui/VirtualKeyboardComponent.h
-src/ui/Vst3PluginEditorComponent.cpp
-src/ui/Vst3PluginEditorComponent.h
-src/ui/WindowState.cpp
-src/ui/WindowState.h
-src/ui/multisample/AriaGuiComponent.cpp
-src/ui/multisample/AriaGuiComponent.h
-src/ui/multisample/DuskMultisampleEditor.cpp
-src/ui/multisample/DuskMultisampleEditor.h
-src/util/CrashHandler.cpp
-src/util/CrashHandler.h
+src/DuskStudioApp.cpp	130
+src/DuskStudioApp.h	7
+src/dsp/AuxLaneStrip.cpp	20
+src/dsp/AuxLaneStrip.h	26
+src/dsp/ChannelStrip.cpp	34
+src/dsp/ChannelStrip.h	32
+src/dsp/MasterBus.cpp	3
+src/dsp/MasterBus.h	7
+src/dsp/MasteringChain.h	5
+src/engine/AudioEngine.cpp	140
+src/engine/AudioEngine.h	20
+src/engine/AudioPipelineSelfTest.cpp	26
+src/engine/BounceEngine.cpp	47
+src/engine/BounceEngine.h	18
+src/engine/DpAligner.cpp	5
+src/engine/DpAligner.h	3
+src/engine/DpImporter.cpp	41
+src/engine/DpImporter.h	6
+src/engine/DuskStudioPlayHead.h	4
+src/engine/FileImporter.cpp	20
+src/engine/FileImporter.h	4
+src/engine/JuceCompat.h	5
+src/engine/MasteringPlayer.cpp	3
+src/engine/MasteringPlayer.h	8
+src/engine/PlaybackEngine.cpp	6
+src/engine/PlaybackEngine.h	4
+src/engine/PluginManager.cpp	112
+src/engine/PluginManager.h	29
+src/engine/PluginSlot.cpp	73
+src/engine/PluginSlot.h	42
+src/engine/RecordManager.cpp	4
+src/engine/RecordManager.h	5
+src/engine/device/DeviceManager.h	3
+src/engine/device/DeviceManagerJuce.cpp	46
+src/engine/hosting/NativePluginId.h	8
+src/engine/ipc/IpcSelfTest.cpp	5
+src/engine/ipc/PluginHostMain.cpp	52
+src/engine/midi/JuceMidiBackend.cpp	14
+src/engine/midi/JuceMidiBackend.h	3
+src/engine/multisample/AriaBank.cpp	12
+src/engine/multisample/AriaBank.h	9
+src/engine/multisample/AriaGui.cpp	23
+src/engine/multisample/AriaGui.h	18
+src/engine/multisample/DuskMultisampleProcessor.cpp	70
+src/engine/multisample/DuskMultisampleProcessor.h	25
+src/engine/multisample/Sf2ToSfz.cpp	9
+src/engine/multisample/Sf2ToSfz.h	4
+src/foundation/MessageThread.cpp	4
+src/session/MarkerEditActions.h	4
+src/session/MidiBindings.cpp	47
+src/session/MidiBindings.h	10
+src/session/ParamEditAction.h	2
+src/session/RegionEditActions.cpp	36
+src/session/RegionEditActions.h	16
+src/session/Session.cpp	10
+src/session/Session.h	76
+src/session/SessionSerializer.cpp	83
+src/session/SessionSerializer.h	13
+src/session/SessionTemplates.cpp	3
+src/ui/AnalogVuMeter.cpp	113
+src/ui/AnalogVuMeter.h	7
+src/ui/AudioRegionEditor.cpp	339
+src/ui/AudioRegionEditor.h	86
+src/ui/AudioSettingsPanel.cpp	96
+src/ui/AudioSettingsPanel.h	39
+src/ui/AuxLaneComponent.cpp	168
+src/ui/AuxLaneComponent.h	28
+src/ui/AuxView.cpp	60
+src/ui/AuxView.h	5
+src/ui/BounceDialog.cpp	45
+src/ui/BounceDialog.h	12
+src/ui/BusComponent.cpp	329
+src/ui/BusComponent.h	47
+src/ui/ChannelCompEditor.cpp	133
+src/ui/ChannelCompEditor.h	20
+src/ui/ChannelEqEditor.cpp	93
+src/ui/ChannelEqEditor.h	13
+src/ui/ChannelStripComponent.cpp	786
+src/ui/ChannelStripComponent.h	111
+src/ui/ClapPluginEditorComponent.cpp	11
+src/ui/ClapPluginEditorComponent.h	7
+src/ui/CompBypassLed.h	10
+src/ui/CompHeaderButton.h	35
+src/ui/CompMeterStrip.cpp	53
+src/ui/CompMeterStrip.h	14
+src/ui/ConsoleView.cpp	4
+src/ui/ConsoleView.h	4
+src/ui/CursorOverlay.cpp	18
+src/ui/CursorOverlay.h	13
+src/ui/DimOverlay.cpp	3
+src/ui/DimOverlay.h	4
+src/ui/DpImportDialog.h	46
+src/ui/DuskAlerts.cpp	100
+src/ui/DuskAlerts.h	19
+src/ui/DuskAudioDeviceSelector.cpp	20
+src/ui/DuskAudioDeviceSelector.h	8
+src/ui/DuskComboBox.cpp	190
+src/ui/DuskComboBox.h	5
+src/ui/DuskContextMenu.cpp	51
+src/ui/DuskContextMenu.h	8
+src/ui/DuskFileBrowser.cpp	75
+src/ui/DuskFileBrowser.h	13
+src/ui/DuskLabelEditor.h	3
+src/ui/DuskMenuBar.h	29
+src/ui/DuskStudioLookAndFeel.h	119
+src/ui/EditCursors.cpp	58
+src/ui/EditCursors.h	7
+src/ui/EditModeToolbar.cpp	48
+src/ui/EditModeToolbar.h	10
+src/ui/EmbeddedModal.h	68
+src/ui/FadeCurve.h	10
+src/ui/FreezeDialog.cpp	36
+src/ui/FreezeDialog.h	9
+src/ui/HardwareInsertEditor.cpp	86
+src/ui/HardwareInsertEditor.h	23
+src/ui/ImportTargetPicker.cpp	97
+src/ui/ImportTargetPicker.h	11
+src/ui/Lv2PluginEditorComponent.cpp	3
+src/ui/Lv2PluginEditorComponent.h	4
+src/ui/MainComponent.cpp	472
+src/ui/MainComponent.h	57
+src/ui/MasterStripComponent.cpp	402
+src/ui/MasterStripComponent.h	59
+src/ui/MasteringEqEditor.cpp	112
+src/ui/MasteringEqEditor.h	18
+src/ui/MasteringLimiterEditor.cpp	144
+src/ui/MasteringLimiterEditor.h	15
+src/ui/MasteringView.cpp	148
+src/ui/MasteringView.h	28
+src/ui/MidiBindingsPanel.cpp	49
+src/ui/MidiBindingsPanel.h	15
+src/ui/MiniTimelineStrip.cpp	19
+src/ui/MiniTimelineStrip.h	10
+src/ui/MultiImportTargetPicker.cpp	78
+src/ui/MultiImportTargetPicker.h	11
+src/ui/NativeEditorEmbedScale.h	12
+src/ui/PianoRollComponent.cpp	381
+src/ui/PianoRollComponent.h	61
+src/ui/PlatformWindowing.h	14
+src/ui/PlatformWindowing_Linux.cpp	16
+src/ui/PlatformWindowing_Mac.mm	19
+src/ui/PlatformWindowing_Windows.cpp	7
+src/ui/PluginPickerHelpers.cpp	136
+src/ui/PluginPickerHelpers.h	23
+src/ui/PluginPickerPanel.cpp	70
+src/ui/PluginPickerPanel.h	13
+src/ui/PluginScanModal.cpp	28
+src/ui/PluginScanModal.h	10
+src/ui/ScreenshotCapture.cpp	31
+src/ui/SectionPillButton.h	7
+src/ui/SelfTestPanel.cpp	10
+src/ui/SelfTestPanel.h	7
+src/ui/ShortcutsPanel.h	37
+src/ui/StartupDialog.cpp	104
+src/ui/StartupDialog.h	32
+src/ui/SteppedKnob.h	12
+src/ui/SupportersPanel.h	42
+src/ui/SystemStatusBar.cpp	31
+src/ui/SystemStatusBar.h	11
+src/ui/TapePanel.cpp	77
+src/ui/TapePanel.h	14
+src/ui/TapeStrip.cpp	351
+src/ui/TapeStrip.h	53
+src/ui/TransportBar.cpp	183
+src/ui/TransportBar.h	32
+src/ui/TunerOverlay.h	58
+src/ui/UpdateChecker.h	27
+src/ui/VirtualKeyboardComponent.cpp	78
+src/ui/VirtualKeyboardComponent.h	15
+src/ui/Vst3PluginEditorComponent.cpp	8
+src/ui/Vst3PluginEditorComponent.h	7
+src/ui/WindowState.cpp	7
+src/ui/WindowState.h	5
+src/ui/multisample/AriaGuiComponent.cpp	90
+src/ui/multisample/AriaGuiComponent.h	17
+src/ui/multisample/DuskMultisampleEditor.cpp	71
+src/ui/multisample/DuskMultisampleEditor.h	21
+src/util/CrashHandler.cpp	32
+src/util/CrashHandler.h	4

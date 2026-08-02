@@ -1523,7 +1523,12 @@ std::string AudioPipelineSelfTest::runAll()
 
     report.push_back (testBackendsOpenCleanly());
     report.push_back ("");
+   #if defined(__linux__)
+    // Selects the ALSA device type by name and reopens real hw: PCMs. There is
+    // no such type on macOS / Windows, so the probe would churn the user's
+    // device for a report it cannot produce.
     report.push_back (probeUMC1820AlsaFormat());
+   #endif
 
     // Probe done (devices opened/closed) - reinstate the user's real session.
     restoreState (savedSession);
