@@ -171,6 +171,10 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
 {
     dusk::audio::ScopedNoDenormals noDenormals;
 
+    // JACK and the ALSA backend both hand out empty blocks across device
+    // transitions; the meter stores at the bottom would drop to -inf on one.
+    if (numSamples == 0) return;
+
     const bool tapeOn = paramsRef != nullptr
                        && paramsRef->tapeEnabled.load (std::memory_order_relaxed);
 

@@ -169,8 +169,18 @@ void MasteringChain::processInPlace (float* L, float* R, int numSamples) noexcep
 {
     dusk::audio::ScopedNoDenormals noDenormals;
 
-    jassert (numSamples <= preparedBlockSize);
     if (numSamples == 0) return;
+    // A host block larger than what prepare() sized the scratch for cannot be
+    // processed in part: the smoothers and meters below would desync from the
+    // audio. Clear and skip, as AuxLaneStrip does on the identical contract -
+    // leaving the buffer untouched would leak the unprocessed mix to the output.
+    jassert (numSamples <= preparedBlockSize);
+    if (numSamples > preparedBlockSize)
+    {
+        std::memset (L, 0, sizeof (float) * (size_t) numSamples);
+        std::memset (R, 0, sizeof (float) * (size_t) numSamples);
+        return;
+    }
 
     // 5-band digital EQ - replaces the Tube EQ that the master strip
     // uses in Mixing. Mastering wants a clean parametric EQ.

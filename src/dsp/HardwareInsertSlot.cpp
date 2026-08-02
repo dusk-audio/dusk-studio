@@ -173,6 +173,12 @@ void HardwareInsertSlot::processStereoBlock (float* L, float* R, int numSamples,
         cachedLatencySamples.store (requestedLatency, std::memory_order_relaxed);
         dryDelayL.setDelay (requestedLatency);
         dryDelayR.setDelay (requestedLatency);
+        // Moving the read head without clearing replays whatever history now
+        // sits at the new offset, which clicks on every drag of the latency
+        // setpoint. Dropping the line's contents costs the dry tail instead,
+        // the same trade ChannelStrip makes when it relatches its PDC.
+        dryDelayL.reset();
+        dryDelayR.reset();
     }
 
     // Pull the latest knob values onto the smoother targets.
