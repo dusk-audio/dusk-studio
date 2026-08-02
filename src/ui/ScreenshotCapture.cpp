@@ -21,7 +21,6 @@
 #include "ChannelCompEditor.h"
 #include "TapePanel.h"
 #include "AudioSettingsPanel.h"
-#include "NotepadPanel.h"
 #include "MidiBindingsPanel.h"
 #include "HardwareInsertEditor.h"
 #include "StartupDialog.h"
@@ -354,13 +353,6 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
     {
         AudioSettingsPanel p (engine.getDeviceManager(), engine, session);
         modalShot (p, 720, 560, "qg-02-audio-settings.png", 400);
-    }
-    {
-        NotepadPanel p;
-        p.setText ("# Verse 1\n\nCity lights are fading out\n"
-                   "Tape is rolling, no more doubt\n\n"
-                   "## Chorus\n\n**Hold that note** and *let it ring*\n");
-        modalShot (p, 560, 480, "np-12-notepad.png", 300);
     }
     {
         MidiBindingsPanel p (session, engine, [] {});

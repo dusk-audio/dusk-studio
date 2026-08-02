@@ -543,7 +543,23 @@ In compact mode (window narrower than 1850 pixels), `TIMELINE` becomes `▾` and
 
 ![Session notepad.](docs/images/np-12-notepad.png)
 
-A scratch pad for lyrics and session notes, opened from the transport bar. The text is plain markdown; the toolbar buttons insert heading, bold, italic, quote, code, link, and list syntax around the caret or selection. Notes are saved to `notepad.md` in the session folder when the notepad closes and on every session save, and they follow the session on Save As. Typing in the notepad never triggers transport shortcuts.
+A document editor for lyrics and session notes, opened from the transport bar.
+The default **Document** view is a wrapped, page-style editor: formatting is
+shown in place, headings use document typography, links are underlined, and
+bullets, numbering, quotes, and clickable task boxes render as real document
+elements. Use the toolbar or Ctrl+B / Ctrl+I to set the typing style at the
+caret or format a selection; Ctrl+Z and Ctrl+Y undo and redo both text and
+formatting. Numbered and bulleted lists continue when you press Enter, and a
+second Enter on an empty list item returns to body text. Ctrl-click an `http`,
+`https`, or `mailto` link to open it.
+
+The **Markdown** tab exposes the compatible `notepad.md` source for users who
+prefer direct editing. Switching views preserves the selection. The footer
+distinguishes saved, unsaved, untitled, and failed-save states. Notes are saved
+atomically to `notepad.md` when the notepad closes and on every session save;
+they follow the session on Save As. A failed sidecar write remains dirty and
+blocks a session switch instead of discarding the outgoing notes. Typing in
+either view never triggers transport shortcuts.
 
 \newpage
 

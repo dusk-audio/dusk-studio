@@ -1063,7 +1063,7 @@ void TransportBar::resized()
 
     constexpr int kBtnDia = 36;
     constexpr int kBtnGap = 4;
-    auto buttons = area.removeFromLeft (kBtnDia * 9 + kBtnGap * 8);
+    auto buttons = area.removeFromLeft (kBtnDia * 8 + kBtnGap * 7);
     const int yPad = std::max (0, (buttons.getHeight() - kBtnDia) / 2);
     auto buttonRow = buttons.reduced (0, yPad);
 
@@ -1081,7 +1081,6 @@ void TransportBar::resized()
     place (loopButton);
     place (punchButton);
     place (keyboardButton);
-    place (notepadButton);
 
     const bool compact = getWidth() < kCompactTransportWidth;
     syncCompactLabels (compact);
@@ -1126,6 +1125,14 @@ void TransportBar::resized()
         auto rect = area.removeFromRight (kBtnDia);
         const int pad = std::max (0, (rect.getHeight() - kBtnDia) / 2);
         tuneButton.setBounds (rect.reduced (0, pad));
+    }
+    area.removeFromRight (kBtnGap);
+    // Session notes are a utility, not a transport action - park the notepad
+    // beside the tuner in the utility cluster instead of the playback row.
+    {
+        auto rect = area.removeFromRight (kBtnDia);
+        const int pad = std::max (0, (rect.getHeight() - kBtnDia) / 2);
+        notepadButton.setBounds (rect.reduced (0, pad));
     }
     area.removeFromRight (compact ? 8 : 12);
 

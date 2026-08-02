@@ -140,15 +140,21 @@ private:
         int end = sel.isEmpty() ? caret : sel.getEnd();
 
         auto block = all.substring (lineStart, end);
+        // A selection ending right after a newline must keep that newline in the
+        // replacement, otherwise the prefixed block is glued to the line below.
+        const bool trailingNewline = block.endsWithChar ('\n');
         juce::StringArray lines;
         lines.addLines (block);
+        if (trailingNewline && ! lines.isEmpty() && lines[lines.size() - 1].isEmpty())
+            lines.remove (lines.size() - 1);
         if (lines.isEmpty()) lines.add ({});
         juce::StringArray out;
         for (int i = 0; i < lines.size(); ++i)
             out.add ((numbered ? juce::String (i + 1) + ". " : prefix) + lines[i]);
 
         editor.setHighlightedRegion ({ lineStart, end });
-        editor.insertTextAtCaret (out.joinIntoString ("\n"));
+        editor.insertTextAtCaret (out.joinIntoString ("\n")
+                                  + (trailingNewline ? "\n" : ""));
     }
 
     void applyHeading() { prefixSelectedLines ("# "); }

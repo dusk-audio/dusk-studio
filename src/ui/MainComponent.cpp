@@ -10,7 +10,10 @@
 #include "PluginScanModal.h"
 #include "ShortcutsPanel.h"
 #include "SupportersPanel.h"
-#include "NotepadPanel.h"
+#if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+ #include "NativeNotepadWindow.h"
+ #include "NativeEditorEmbedScale.h"
+#endif
 #include "DuskContextMenu.h"
 #include "../session/MidiBindings.h"
 #include "ConsoleView.h"
@@ -69,6 +72,28 @@ juce::Array<juce::File> toFileArray (const std::vector<std::filesystem::path>& p
     for (auto& p : paths) out.add (toFile (p));
     return out;
 }
+
+#if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+NativeNotepadWindow::EmbeddedGeometry notepadGeometryFor (const juce::Component& topLevel)
+{
+    const auto hostBounds = embedscale::toPhysical (topLevel, topLevel.getLocalBounds());
+    const auto scaleFactor = embedscale::factor (topLevel);
+    const auto margin = std::max (0, juce::roundToInt (16.0 * scaleFactor));
+    const auto width = std::max (
+        2, std::min (hostBounds.getWidth() - margin * 2,
+                     juce::roundToInt (NativeNotepadWindow::preferredWidth * scaleFactor)));
+    const auto height = std::max (
+        2, std::min (hostBounds.getHeight() - margin * 2,
+                     juce::roundToInt (NativeNotepadWindow::preferredHeight * scaleFactor)));
+    return {
+        hostBounds.getX() + (hostBounds.getWidth() - width) / 2,
+        hostBounds.getY() + (hostBounds.getHeight() - height) / 2,
+        static_cast<std::uint32_t> (width),
+        static_cast<std::uint32_t> (height),
+        scaleFactor
+    };
+}
+#endif
 
 // Shared helpers for the file-import flow (both menu-driven and
 // drag-and-drop). Lives at file scope so the TapeStrip drop callback
@@ -961,6 +986,11 @@ MainComponent::~MainComponent()
 {
     stopTimer();   // halt autosave before tearing down engine / session
 
+    // The notepad owns its own DGL application and embedded native child. Drop it
+    // while the main peer and message loop are still alive, and suppress its
+    // normal close callback because the component is already being destroyed.
+    dismissNotepad (false);
+
     // Close every plugin editor window (real top-level juce::DocumentWindows
     // with their own native X11 peers) BEFORE the rest of the UI cascade
     // tears down. Without this, ChannelStripComponent destructors run
@@ -978,6 +1008,11 @@ MainComponent::~MainComponent()
     // rather than leave them for the late ~AuxView cascade.
     if (auxView != nullptr)
         auxView->dropAllNativeEditors();
+
+    // Sidecar flush for abnormal quit paths that bypass requestQuit's combined
+    // session/notepad dirty prompt. Normal Save and Don't Save paths have
+    // already cleared notepadDirty before reaching destruction.
+    (void) saveNotepadNow();
 
     // Force-delete any modal body we launched, synchronously. close()
     // would defer body destruction to the next message-loop tick - but
@@ -999,7 +1034,6 @@ MainComponent::~MainComponent()
     importTargetModal    .closeAndDeleteBodyNow();
     shortcutsModal       .closeAndDeleteBodyNow();
     supportersModal      .closeAndDeleteBodyNow();
-    notepadModal         .closeAndDeleteBodyNow();
 
     // Intentionally NO auto-save here. Standard DAW behavior is to require
     // an explicit Save before exit. The previous auto-save on destruct
@@ -1850,6 +1884,12 @@ void MainComponent::resized()
                                        .withSizeKeepingCentre (startupDialog->getWidth(),
                                                                   startupDialog->getHeight()));
     }
+
+   #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+    if (notepadWindow != nullptr && notepadWindow->isOpen())
+        if (auto* const topLevel = getTopLevelComponent())
+            notepadWindow->setEmbeddedGeometry (notepadGeometryFor (*topLevel));
+   #endif
 }
 
 void MainComponent::refreshSnapUi()
@@ -2363,6 +2403,27 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
                                 + " missing audio file(s) were not copied to", dir);
     }
 
+    // Sidecar before the JSON: the notepad and session.json are one user-visible
+    // save, so a sidecar failure has to abort while the session still points at
+    // its old directory, rather than leave a "Saved" session whose notes never
+    // landed. writeAtomic creates the folder, so this works on a first save too.
+    const auto notepadTarget = dir.getChildFile ("notepad.md");
+    if (! SessionSerializer::saveNotepad (dir, notepadText))
+    {
+        notepadDirty = true;
+       #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+        if (notepadWindow != nullptr)
+            notepadWindow->markSaveFailed();
+       #endif
+        setStatusForPath ("Notepad save failed", notepadTarget);
+        showDuskAlert (*this, "Notepad save failed",
+                       "Dusk Studio could not write:\n\n    "
+                       + notepadTarget.getFullPathName() + "\n\n"
+                       "The session was not saved. Your notes are still open in memory. "
+                       "Check disk space and folder permissions, then save again.");
+        return false;
+    }
+
     // setSessionDirectory creates the dir + audio subdir if missing - safe
     // to call even when the user picked an existing session folder.
     session.setSessionDirectory (dir);
@@ -2407,6 +2468,12 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
 
     if (saveOk)
     {
+        notepadDirty = false;
+       #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+        if (notepadWindow != nullptr)
+            notepadWindow->markSaved();
+       #endif
+
         if (isSaveAs)
         {
             // Undo actions snapshot whole AudioRegions including their files -
@@ -2424,10 +2491,6 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
             deleteAutosaveFor (oldDir);
         }
         RecentSessions::add (toPath (dir));
-        // Notepad sidecar rides along on every save; `dir` is already the new
-        // folder on Save As, so the markdown follows the session.
-        SessionSerializer::saveNotepad (dir, notepadText);
-        notepadDirty = false;
         // A successful manual save makes the autosave stale - drop it so the
         // recovery prompt doesn't fire on the next clean load.
         deleteAutosaveFor (dir);
@@ -2640,7 +2703,7 @@ void MainComponent::requestQuit()
     // the prompt and silently lose the change). autosaveIsNewerThan
     // stays as a belt-and-braces fallback for sessions where we somehow
     // didn't seed lastSavedSessionJson.
-    const bool dirty = currentSessionDirty();
+    const bool dirty = currentSessionDirty() || notepadDirty;
 
     if (! dirty)
     {
@@ -2700,6 +2763,11 @@ void MainComponent::requestQuit()
             if (auto* self = safeThis.getComponent())
             {
                 self->deleteAutosaveFor (self->session.getSessionDirectory());
+                // The user explicitly chose Don't Save for every dirty part of
+                // the session, including the notepad sidecar. Prevent the
+                // staged shutdown's normal sidecar flush from overriding that
+                // choice.
+                self->notepadDirty = false;
                 self->quitModal.close();
                 self->beginSafeShutdown();
             }
@@ -2771,6 +2839,9 @@ void MainComponent::beginSafeShutdown()
 
     markPhase ("phase 1: stop autosave timer");
     stopTimer();
+
+    markPhase ("phase 1b: close native session notepad");
+    dismissNotepad (true);
 
     markPhase ("phase 2: stop transport (commits in-flight recording)");
     auto& transport = engine.getTransport();
@@ -3029,6 +3100,20 @@ bool MainComponent::loadSessionFromJson (const juce::File& sessionJson)
 bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
                                                  const juce::File& dir)
 {
+    // Flush the outgoing session's notepad while getSessionDirectory() still
+    // points at it. A write failure leaves the outgoing document dirty and
+    // aborts the switch instead of replacing its in-memory text.
+    if (! saveNotepadNow())
+    {
+        showDuskAlert (*this, "Notepad save failed",
+                       "Dusk Studio could not write the current session's notepad, so it "
+                       "did not switch sessions - loading now would discard your notes.\n\n"
+                       "They are still open in memory. If this session has never been "
+                       "saved, save it first; otherwise check disk space and folder "
+                       "permissions, then try again.");
+        return false;
+    }
+
     const auto t0 = juce::Time::getMillisecondCounterHiRes();
     session.setSessionDirectory (dir);
 
@@ -3039,9 +3124,9 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     }
     const auto tAfterParse = juce::Time::getMillisecondCounterHiRes();
 
-    // The notepad is session-bound: drop any open panel from the previous
+    // The notepad is session-bound: drop any open editor from the previous
     // session and adopt the new session's sidecar.
-    notepadModal.close();
+    dismissNotepad (false);
     notepadText  = SessionSerializer::loadNotepad (dir);
     notepadDirty = false;
 
@@ -5164,48 +5249,130 @@ void MainComponent::toggleVirtualKeyboard()
 
 void MainComponent::toggleNotepad()
 {
-    if (notepadModal.isOpen())
+#if ! DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+    statusLabel.setText ("Notepad unavailable: built without the native notepad UI",
+                         juce::dontSendNotification);
+#else
+    if (notepadWindow != nullptr && notepadWindow->isOpen())
     {
-        notepadModal.close();
-        saveNotepadNow();
+        // The close callback restores the DAW and flushes the sidecar once the
+        // embedded DPF child has actually disappeared.
+        notepadWindow->close();
         return;
     }
 
-    auto body = std::make_unique<NotepadPanel>();
-    body->setText (notepadText);
+    if (notepadWindow == nullptr)
+        notepadWindow = std::make_unique<NativeNotepadWindow>();
+
+    auto* const topLevel = getTopLevelComponent();
+    auto* const peer = topLevel != nullptr ? topLevel->getPeer() : nullptr;
+    if (peer == nullptr || peer->getNativeHandle() == nullptr)
+    {
+        statusLabel.setText ("Notepad unavailable: main window is not ready",
+                             juce::dontSendNotification);
+        return;
+    }
 
     juce::Component::SafePointer<MainComponent> safeThis (this);
-    body->onTextChanged = [safeThis] (const juce::String& text)
-    {
-        if (auto* self = safeThis.getComponent())
+    notepadWindow->setCallbacks (
+        [safeThis] (const std::string& text, bool dirty)
         {
-            self->notepadText  = text;
-            self->notepadDirty = true;
-        }
-    };
-    auto closeAndSave = [safeThis]
-    {
-        if (auto* self = safeThis.getComponent())
+            if (auto* self = safeThis.getComponent())
+            {
+                self->notepadText = juce::String::fromUTF8 (text.c_str());
+                self->notepadDirty = dirty;
+            }
+        },
+        [safeThis]
         {
-            self->notepadModal.close();
-            self->saveNotepadNow();
-        }
-    };
-    body->onCloseRequested = closeAndSave;
+            if (auto* self = safeThis.getComponent())
+            {
+                self->setEnabled (true);
+                if (auto* window = self->getTopLevelComponent())
+                    window->toFront (true);
+                // The native notepad held keyboard focus; pull it back so
+                // transport / edit shortcuts work without a stray click first
+                // (same reason as dismissStartupDialog).
+                if (self->isShowing())
+                    self->grabKeyboardFocus();
+                self->saveNotepadNow();
+            }
+        },
+        [safeThis] (const std::string& target)
+        {
+            if (auto* self = safeThis.getComponent())
+            {
+                const auto value = juce::String::fromUTF8 (target.c_str());
+                if (value.startsWithIgnoreCase ("https://")
+                    || value.startsWithIgnoreCase ("http://")
+                    || value.startsWithIgnoreCase ("mailto:"))
+                    juce::URL (value).launchInDefaultBrowser();
+                else
+                    self->statusLabel.setText ("Link not opened: only http, https, and mailto links are supported",
+                                               juce::dontSendNotification);
+            }
+        });
 
-    // forwardShortcuts=false: typing lyrics must not fire transport hotkeys
-    // (Space, R, L...).
-    notepadModal.show (*this, std::move (body), closeAndSave,
-                       true, true, 0.55f, true, true,
-                       /*forwardShortcuts*/ false);
+    notepadWindow->open (
+        reinterpret_cast<std::uintptr_t> (peer->getNativeHandle()),
+        notepadGeometryFor (*topLevel),
+        notepadText.toStdString(),
+        session.getSessionDirectory() != juce::File(),
+        notepadDirty);
+
+    if (notepadWindow->isOpen())
+        setEnabled (false); // embedded DPF editor is application-modal to the DAW
+    else
+        statusLabel.setText ("Unable to embed session notepad with the current display backend",
+                             juce::dontSendNotification);
+#endif
 }
 
-void MainComponent::saveNotepadNow()
+void MainComponent::dismissNotepad (bool saveChanges)
 {
-    if (! notepadDirty) return;
+   #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+    if (notepadWindow != nullptr)
+    {
+        notepadWindow->setCallbacks ({}, {}, {});
+        notepadWindow->close();
+        notepadWindow.reset();
+    }
+   #endif
+
+    setEnabled (true);
+    if (saveChanges)
+        saveNotepadNow();
+}
+
+bool MainComponent::saveNotepadNow()
+{
+    if (! notepadDirty) return true;
     const auto dir = session.getSessionDirectory();
-    if (dir == juce::File()) return;   // untitled: persisted by the first save
+    if (dir == juce::File())
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+        if (notepadWindow != nullptr)
+            notepadWindow->markSaveFailed();
+       #endif
+        statusLabel.setText ("Notepad unsaved: save the session first",
+                             juce::dontSendNotification);
+        return false;
+    }
     if (SessionSerializer::saveNotepad (dir, notepadText))
+    {
         notepadDirty = false;
+       #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+        if (notepadWindow != nullptr)
+            notepadWindow->markSaved();
+       #endif
+        return true;
+    }
+
+   #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+    if (notepadWindow != nullptr)
+        notepadWindow->markSaveFailed();
+   #endif
+    setStatusForPath ("Notepad save failed", dir.getChildFile ("notepad.md"));
+    return false;
 }
 } // namespace duskstudio

@@ -223,7 +223,7 @@ public:
     // MainComponent owns the VirtualKeyboardComponent embedded modal.
     std::function<void()> onVirtualKeyboardToggle;
 
-    // MainComponent owns the NotepadPanel embedded modal.
+    // MainComponent owns the DPF notepad embedded in its native parent window.
     std::function<void()> onNotepadToggle;
 
     void setTapeStripExpanded (bool expanded);

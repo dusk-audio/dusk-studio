@@ -16,6 +16,7 @@
 namespace duskstudio
 {
 namespace dp { struct SongScan; }
+class NativeNotepadWindow;
 
 class MainComponent final : public juce::Component,
                              public juce::MenuBarModel,
@@ -268,7 +269,6 @@ private:
     EmbeddedModal scanModal;
     EmbeddedModal shortcutsModal;
     EmbeddedModal supportersModal;
-    EmbeddedModal notepadModal;
     void openShortcuts();
 
     // Scan-on-startup runs asynchronously behind a progress modal. Triggered
@@ -287,12 +287,18 @@ private:
 
     void toggleVirtualKeyboard();
 
-    // Session notepad (lyrics/notes). The live text mirrors the open panel via
-    // its onTextChanged; notepad.md is written on modal dismiss and on every
-    // session save. Deliberately does NOT dirty the session - the sidecar is
-    // invisible to the serialize() diff by design.
+    // Session notepad (lyrics/notes). The editor is a native DPF/DGL + Dear
+    // ImGui child window embedded in the DAW; this legacy shell only supplies
+    // the native parent/geometry and blocks the DAW while the modal is open.
+    // The live text mirrors the editor callback; notepad.md is written on dismiss and on
+    // every session save. The sidecar is invisible to serialize(), so its own
+    // dirty flag participates explicitly in quit/load protection.
     void toggleNotepad();
-    void saveNotepadNow();
+    void dismissNotepad (bool saveChanges);
+    bool saveNotepadNow();
+   #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+    std::unique_ptr<NativeNotepadWindow> notepadWindow;
+   #endif
     juce::String notepadText;
     bool notepadDirty = false;
 
