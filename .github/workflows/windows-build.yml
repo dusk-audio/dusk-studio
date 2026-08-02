@@ -170,12 +170,14 @@ jobs:
       - name: Configure (CMake / Visual Studio 17 2022 / x64)
         shell: bash
         run: |
+          # Forward slashes for DPF's cmake - see windows-tests.yml.
+          RT_UNIX="${RUNNER_TEMP//\\//}"
           cmake -S . -B build \
             -G "Visual Studio 17 2022" -A x64 \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
-            -DDPF_PATH="${RUNNER_TEMP}/DPF" \
-            -DDPF_WIDGETS_PATH="${RUNNER_TEMP}/DPF-Widgets" \
+            -DDPF_PATH="${RT_UNIX}/DPF" \
+            -DDPF_WIDGETS_PATH="${RT_UNIX}/DPF-Widgets" \
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
             -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}" \
             -DDUSKSTUDIO_ENABLE_LTO=ON
@@ -192,14 +194,16 @@ jobs:
         # importAudio retries both file opens to harden real imports.
         shell: bash
         run: |
+          # Forward slashes for DPF's cmake - see windows-tests.yml.
+          RT_UNIX="${RUNNER_TEMP//\\//}"
           cmake -S . -B build-tests \
             -G "Visual Studio 17 2022" -A x64 \
             -DCMAKE_BUILD_TYPE=Release \
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
-            -DDPF_PATH="${RUNNER_TEMP}/DPF" \
-            -DDPF_WIDGETS_PATH="${RUNNER_TEMP}/DPF-Widgets" \
+            -DDPF_PATH="${RT_UNIX}/DPF" \
+            -DDPF_WIDGETS_PATH="${RT_UNIX}/DPF-Widgets" \
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
             -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}"
           cmake --build build-tests --config Release --target dusk-studio-tests -j
