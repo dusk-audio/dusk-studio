@@ -110,6 +110,7 @@ void PlaybackEngine::preparePlayback()
 
             auto rawReader = dusk::audio::FileReader::open (audioPath (region.file));
             if (rawReader == nullptr) continue;
+            const auto sourceInfo = rawReader->info();
 
             // 96000 frames is ~1 s at 96 kHz / ~2 s at 44.1 kHz - generous
             // given block sizes are 256-2048 - but a region shorter than that
@@ -140,7 +141,12 @@ void PlaybackEngine::preparePlayback()
             rs.fadeOutSamples  = std::max ((std::int64_t) 0, region.fadeOutSamples);
             rs.fadeInShape     = region.fadeInShape;
             rs.fadeOutShape    = region.fadeOutShape;
-            rs.numChannels     = std::clamp (region.numChannels, 1, 2);
+            // Channel count comes from the DECODED file, not the model's copy:
+            // region.numChannels can disagree with what is on disk (hand-edited
+            // session, file replaced), and reading by it either truncates a
+            // stereo take to its left channel or asks a mono file for a right
+            // one. Captured before the reader moves into the buffering wrapper.
+            rs.numChannels     = std::clamp (sourceInfo.numChannels, 1, 2);
             // Convert dB once on the message thread; the audio loop
             // multiplies by the linear factor per sample. Clamp the
             // dB at extreme values to avoid wild values from a hand-

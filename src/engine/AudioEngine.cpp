@@ -1255,6 +1255,7 @@ AudioEngine::~AudioEngine()
     // remove it. Clearing the flag makes it land on a no-op.
     midiHotplugAlive->store (false, std::memory_order_release);
     changeListenersAlive->store (false, std::memory_order_release);
+    deviceCallbacksAlive->store (false, std::memory_order_release);
     changeListeners.clear();
     midiHotplugTimer.stopTimer();
     diagTimer.stopTimer();
@@ -2741,8 +2742,9 @@ void AudioEngine::audioDeviceError (const std::string& message)
                   message.c_str());
 
     dusk::callAsync (
-        [this, message]
+        [this, alive = deviceCallbacksAlive, message]
         {
+            if (! alive->load (std::memory_order_acquire)) return;
             juce::Logger::writeToLog (juce::String ("[Dusk Studio/AudioEngine] audioDeviceError: ")
                                           + juce::String (message));
             audioDeviceStopped();
@@ -2840,8 +2842,9 @@ void AudioEngine::onDeviceManagerChanged()
     // later.
     const bool fromDeliberateChange = deviceManager.isDeviceChangePending();
 
-    dusk::callAsync ([this, fromDeliberateChange]
+    dusk::callAsync ([this, alive = deviceCallbacksAlive, fromDeliberateChange]
     {
+        if (! alive->load (std::memory_order_acquire)) return;
         if (deviceManager.getCurrentDevice() != nullptr) return;
         if (! hadLiveDevice_.load (std::memory_order_acquire)) return;
         if (fromDeliberateChange) return;

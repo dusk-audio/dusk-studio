@@ -832,6 +832,13 @@ private:
     std::atomic<bool> changeBroadcastPending { false };
     std::shared_ptr<std::atomic<bool>> changeListenersAlive
         { std::make_shared<std::atomic<bool>> (true) };
+
+    // Same latch for the two device-callback deferrals. audioDeviceError fires
+    // from the I/O thread as the device dies, and the hot-unplug detector posts
+    // from a change broadcast; either can be sitting in the queue when a quit
+    // tears the engine down.
+    std::shared_ptr<std::atomic<bool>> deviceCallbacksAlive
+        { std::make_shared<std::atomic<bool>> (true) };
     void broadcastChange();
     void fireChangeListeners();
 
