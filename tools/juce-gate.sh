@@ -28,8 +28,18 @@ ALLOW=tools/juce-allowlist.txt
 juce_count() { grep -oE 'juce::|<juce_' "$1" 2>/dev/null | wc -l | tr -d ' '; }
 
 scan() {
-    local f
-    grep -rlE 'juce::|<juce_' src | sort | while IFS= read -r f; do
+    local files rc f
+    files="$(grep -rlE 'juce::|<juce_' src)" && rc=0 || rc=$?
+    # grep exits 1 for "no match", which is the end state this whole campaign is
+    # aiming at, not a failure - under set -e that would abort the run and take
+    # --update with it. Anything above 1 (unreadable path, bad regex) is real.
+    if (( rc > 1 )); then
+        echo "ERROR: scanning src/ failed (grep exit $rc)" >&2
+        return "$rc"
+    fi
+    [[ -z "$files" ]] && return 0
+
+    printf '%s\n' "$files" | sort | while IFS= read -r f; do
         printf '%s\t%s\n' "$f" "$(juce_count "$f")"
     done
 }
@@ -44,6 +54,22 @@ fi
 
 if [[ ! -f "$ALLOW" ]]; then
     echo "ERROR: $ALLOW missing. Run: tools/juce-gate.sh --update" >&2
+    exit 2
+fi
+
+# Fail closed on a malformed record. A line without its count silently loses
+# ratchet coverage for that file (the count lookup below yields nothing and the
+# check is skipped), which would let anyone disable rule 2 for a file by
+# deleting one field - and is also what a rebase onto the pre-count allowlist
+# format looks like.
+malformed="$(awk -F'\t' 'NF == 0 { next }
+                         (NF != 2 || $1 == "" || $2 !~ /^[0-9]+$/) \
+                             { printf "  line %d: %s\n", NR, $0 }' "$ALLOW")"
+if [[ -n "$malformed" ]]; then
+    echo "ERROR: $ALLOW has malformed records (want: path<TAB>count):" >&2
+    printf '%s\n' "$malformed" >&2
+    echo "Fix them, or run tools/juce-gate.sh --update once you have checked the" >&2
+    echo "counts only go down." >&2
     exit 2
 fi
 
