@@ -165,6 +165,18 @@ inline float finiteFloatOr (const nlohmann::json& src, float fallback) noexcept
     return fallback;
 }
 
+// Finite-guard AND range-clamp in one step, for the mixer parameters that feed
+// DSP directly. Clamping alone is not enough: a non-finite value passes through
+// std::clamp unchanged (NaN compares false against both bounds), and the
+// fallback covers the case where the value is not a number at all.
+inline void storeFiniteClampedFloat (std::atomic<float>& dst,
+                                     const nlohmann::json& src,
+                                     float fallback, float minimum, float maximum) noexcept
+{
+    dst.store (std::clamp (finiteFloatOr (src, fallback), minimum, maximum),
+               std::memory_order_relaxed);
+}
+
 // Parse one automation point from JSON, hardening every field against a
 // hand-edited or truncated file: timeSamples >= 0 and recordedAtBPM finite.
 // The lane evaluator's binary search assumes non-negative, sorted times, and
@@ -883,9 +895,11 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
     t.nativeMultisamplePath        = json::getString (v, "native_multisample_path");
     t.nativeMultisampleStateBase64 = json::getString (v, "native_multisample_state");
 
-    auto setFloat = [&v] (std::atomic<float>& a, const char* key)
+    auto setFloat = [&v] (std::atomic<float>& a, const char* key,
+                          float fallback, float minimum, float maximum)
     {
-        if (json::has (v, key)) a.store (json::getFloat (v, key, 0.0f), std::memory_order_relaxed);
+        if (json::has (v, key))
+            storeFiniteClampedFloat (a, v[key], fallback, minimum, maximum);
     };
     auto setBool = [&v] (std::atomic<bool>& a, const char* key)
     {
@@ -896,8 +910,9 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
         if (json::has (v, key)) a.store (json::getInt (v, key, 0), std::memory_order_relaxed);
     };
 
-    setFloat (t.strip.faderDb,      "fader_db");
-    setFloat (t.strip.pan,          "pan");
+    setFloat (t.strip.faderDb, "fader_db", 0.0f,
+              ChannelStripParams::kFaderMinDb, ChannelStripParams::kFaderMaxDb);
+    setFloat (t.strip.pan, "pan", 0.0f, -1.0f, 1.0f);
     setBool  (t.strip.mute,         "mute");
     setBool  (t.strip.solo,         "solo");
     setBool  (t.strip.phaseInvert,  "phase_invert");
@@ -981,6 +996,8 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
 
     {
         const auto& buses = json::array (v, "bus_assign");
+        for (auto& assigned : t.strip.busAssign)
+            assigned.store (false, std::memory_order_relaxed);
         const int n = std::min (ChannelStripParams::kNumBuses, (int) buses.size());
         for (int i = 0; i < n; ++i)
             t.strip.busAssign[(size_t) i].store (buses[(size_t) i].is_boolean() && buses[(size_t) i].get<bool>(),
@@ -989,14 +1006,29 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
 
     {
         const auto& auxLevels = json::array (v, "aux_send_db");
+        for (auto& level : t.strip.auxSendDb)
+            level.store (ChannelStripParams::kAuxSendOffDb, std::memory_order_relaxed);
         const int n = std::min (ChannelStripParams::kNumAuxSends, (int) auxLevels.size());
         for (int i = 0; i < n; ++i)
-            t.strip.auxSendDb[(size_t) i].store (auxLevels[(size_t) i].is_number()
-                                                     ? (float) auxLevels[(size_t) i].get<double>() : 0.0f,
-                                                 std::memory_order_relaxed);
+        {
+            // A junk entry means OFF, not 0 dB: unity is the loudest useful send
+            // and the old fallback turned a corrupt file into a feedback-loud mix.
+            // At or below the knob floor collapses to the OFF sentinel, matching
+            // what the strip's own fully-CCW position stores.
+            const float loaded = finiteFloatOr (auxLevels[(size_t) i],
+                                                ChannelStripParams::kAuxSendOffDb);
+            const float level = loaded <= ChannelStripParams::kAuxSendMinDb + 0.01f
+                                  ? ChannelStripParams::kAuxSendOffDb
+                                  : std::clamp (loaded,
+                                                ChannelStripParams::kAuxSendMinDb,
+                                                ChannelStripParams::kAuxSendMaxDb);
+            t.strip.auxSendDb[(size_t) i].store (level, std::memory_order_relaxed);
+        }
     }
     {
         const auto& auxPrePost = json::array (v, "aux_send_pre_fader");
+        for (auto& preFader : t.strip.auxSendPreFader)
+            preFader.store (false, std::memory_order_relaxed);
         const int n = std::min (ChannelStripParams::kNumAuxSends, (int) auxPrePost.size());
         for (int i = 0; i < n; ++i)
             t.strip.auxSendPreFader[(size_t) i].store (auxPrePost[(size_t) i].is_boolean()
@@ -1007,13 +1039,21 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
     {
         const auto& hpf = json::child (v, "hpf");
         if (json::has (hpf, "enabled")) t.strip.hpfEnabled.store (json::getBool (hpf, "enabled", false));
-        if (json::has (hpf, "freq"))    t.strip.hpfFreq.store (json::getFloat (hpf, "freq", 0.0f));
+        if (json::has (hpf, "freq"))
+            storeFiniteClampedFloat (t.strip.hpfFreq, hpf["freq"],
+                                     ChannelStripParams::kHpfOffHz,
+                                     ChannelStripParams::kHpfMinHz,
+                                     ChannelStripParams::kHpfMaxHz);
     }
 
     {
         const auto& lpf = json::child (v, "lpf");
         if (json::has (lpf, "enabled")) t.strip.lpfEnabled.store (json::getBool (lpf, "enabled", false));
-        if (json::has (lpf, "freq"))    t.strip.lpfFreq.store (json::getFloat (lpf, "freq", 0.0f));
+        if (json::has (lpf, "freq"))
+            storeFiniteClampedFloat (t.strip.lpfFreq, lpf["freq"],
+                                     ChannelStripParams::kLpfOffHz,
+                                     ChannelStripParams::kLpfMinHz,
+                                     ChannelStripParams::kLpfMaxHz);
     }
 
     {
@@ -1023,28 +1063,44 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
             t.strip.eqBlackMode.store (type == "black");
 
         auto restoreBand = [&eq] (const char* key, std::atomic<float>* gain,
-                                   std::atomic<float>* freq, std::atomic<float>* q)
+                                   std::atomic<float>* freq, std::atomic<float>* q,
+                                   float freqDefault, float freqMin, float freqMax)
         {
             const auto& b = json::child (eq, key);
-            if (gain && json::has (b, "gain")) storeFiniteFloat (*gain, b["gain"]);
-            if (freq && json::has (b, "freq")) storeFiniteFloat (*freq, b["freq"]);
-            if (q    && json::has (b, "q"))    storeFiniteFloat (*q,    b["q"]);
+            if (gain && json::has (b, "gain"))
+                storeFiniteClampedFloat (*gain, b["gain"], 0.0f,
+                                         ChannelStripParams::kBandGainMin,
+                                         ChannelStripParams::kBandGainMax);
+            if (freq && json::has (b, "freq"))
+                storeFiniteClampedFloat (*freq, b["freq"], freqDefault, freqMin, freqMax);
+            if (q && json::has (b, "q"))
+                storeFiniteClampedFloat (*q, b["q"], 0.7f,
+                                         ChannelStripParams::kBandQMin,
+                                         ChannelStripParams::kBandQMax);
         };
-        restoreBand ("lf", &t.strip.lfGainDb, &t.strip.lfFreq, nullptr);
-        restoreBand ("lm", &t.strip.lmGainDb, &t.strip.lmFreq, &t.strip.lmQ);
-        restoreBand ("hm", &t.strip.hmGainDb, &t.strip.hmFreq, &t.strip.hmQ);
-        restoreBand ("hf", &t.strip.hfGainDb, &t.strip.hfFreq, nullptr);
+        restoreBand ("lf", &t.strip.lfGainDb, &t.strip.lfFreq, nullptr, 100.0f,
+                     ChannelStripParams::kLfFreqMin, ChannelStripParams::kLfFreqMax);
+        restoreBand ("lm", &t.strip.lmGainDb, &t.strip.lmFreq, &t.strip.lmQ, 600.0f,
+                     ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax);
+        restoreBand ("hm", &t.strip.hmGainDb, &t.strip.hmFreq, &t.strip.hmQ, 2000.0f,
+                     ChannelStripParams::kHmFreqMin, ChannelStripParams::kHmFreqMax);
+        restoreBand ("hf", &t.strip.hfGainDb, &t.strip.hfFreq, nullptr, 8000.0f,
+                     ChannelStripParams::kHfFreqMin, ChannelStripParams::kHfFreqMax);
     }
 
     {
         const auto& comp = json::child (v, "comp");
-        auto loadF = [&] (const char* key, std::atomic<float>& dst)
+        auto loadF = [&] (const char* key, std::atomic<float>& dst,
+                          float fallback, float minimum, float maximum)
         {
-            if (json::has (comp, key)) dst.store (json::getFloat (comp, key, 0.0f));
+            if (json::has (comp, key))
+                storeFiniteClampedFloat (dst, comp[key], fallback, minimum, maximum);
         };
-        auto loadI = [&] (const char* key, std::atomic<int>& dst)
+        auto loadI = [&] (const char* key, std::atomic<int>& dst,
+                          int fallback, int minimum, int maximum)
         {
-            if (json::has (comp, key)) dst.store (json::getInt (comp, key, 0));
+            if (json::has (comp, key))
+                dst.store (std::clamp (json::getInt (comp, key, fallback), minimum, maximum));
         };
         auto loadB = [&] (const char* key, std::atomic<bool>& dst)
         {
@@ -1052,22 +1108,22 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
         };
         loadB ("enabled",     t.strip.compEnabled);
         loadB ("mode_picked", t.strip.compModePicked);
-        loadI ("mode",        t.strip.compMode);
-        loadF ("threshold_db", t.strip.compThresholdDb);
-        loadF ("opto_peak_red", t.strip.compOptoPeakRed);
-        loadF ("opto_gain",     t.strip.compOptoGain);
+        loadI ("mode", t.strip.compMode, 0, 0, 2);
+        loadF ("threshold_db", t.strip.compThresholdDb, 0.0f, -60.0f, 0.0f);
+        loadF ("opto_peak_red", t.strip.compOptoPeakRed, 0.0f, 0.0f, 100.0f);
+        loadF ("opto_gain", t.strip.compOptoGain, 50.0f, 0.0f, 100.0f);
         loadB ("opto_limit",    t.strip.compOptoLimit);
-        loadF ("fet_input",        t.strip.compFetInput);
-        loadF ("fet_output",       t.strip.compFetOutput);
-        loadF ("fet_attack",       t.strip.compFetAttack);
-        loadF ("fet_release",      t.strip.compFetRelease);
-        loadI ("fet_ratio",        t.strip.compFetRatio);
-        loadF ("fet_threshold_db", t.strip.compFetThresholdDb);
-        loadF ("vca_thresh_db", t.strip.compVcaThreshDb);
-        loadF ("vca_ratio",     t.strip.compVcaRatio);
-        loadF ("vca_attack",    t.strip.compVcaAttack);
-        loadF ("vca_release",   t.strip.compVcaRelease);
-        loadF ("vca_output",    t.strip.compVcaOutput);
+        loadF ("fet_input", t.strip.compFetInput, 0.0f, -20.0f, 40.0f);
+        loadF ("fet_output", t.strip.compFetOutput, 0.0f, -20.0f, 20.0f);
+        loadF ("fet_attack", t.strip.compFetAttack, 0.2f, 0.02f, 80.0f);
+        loadF ("fet_release", t.strip.compFetRelease, 400.0f, 50.0f, 1100.0f);
+        loadI ("fet_ratio", t.strip.compFetRatio, 0, 0, 4);
+        loadF ("fet_threshold_db", t.strip.compFetThresholdDb, -10.0f, -60.0f, 0.0f);
+        loadF ("vca_thresh_db", t.strip.compVcaThreshDb, 12.0f, -38.0f, 12.0f);
+        loadF ("vca_ratio", t.strip.compVcaRatio, 4.0f, 1.0f, 120.0f);
+        loadF ("vca_attack", t.strip.compVcaAttack, 1.0f, 0.1f, 50.0f);
+        loadF ("vca_release", t.strip.compVcaRelease, 100.0f, 10.0f, 5000.0f);
+        loadF ("vca_output", t.strip.compVcaOutput, 0.0f, -20.0f, 20.0f);
         loadB ("vca_overeasy",  t.strip.compVcaOverEasy);
         loadB ("vca_detector_classic", t.strip.compVcaDetectorClassic);
     }
@@ -1092,9 +1148,14 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
         if (json::has (hwi, "format"))          fresh->format         = json::getInt (hwi, "format", 0);
         t.hardwareInsert.routing.publish (std::move (fresh));
 
-        if (json::has (hwi, "output_gain_db")) t.hardwareInsert.outputGainDb.store (json::getFloat (hwi, "output_gain_db", 0.0f));
-        if (json::has (hwi, "input_gain_db"))  t.hardwareInsert.inputGainDb .store (json::getFloat (hwi, "input_gain_db", 0.0f));
-        if (json::has (hwi, "dry_wet"))        t.hardwareInsert.dryWet      .store (json::getFloat (hwi, "dry_wet", 0.0f));
+        if (json::has (hwi, "output_gain_db"))
+            storeFiniteClampedFloat (t.hardwareInsert.outputGainDb, hwi["output_gain_db"],
+                                     0.0f, -24.0f, 12.0f);
+        if (json::has (hwi, "input_gain_db"))
+            storeFiniteClampedFloat (t.hardwareInsert.inputGainDb, hwi["input_gain_db"],
+                                     0.0f, -24.0f, 12.0f);
+        if (json::has (hwi, "dry_wet"))
+            storeFiniteClampedFloat (t.hardwareInsert.dryWet, hwi["dry_wet"], 1.0f, 0.0f, 1.0f);
     }
 
     // Automation - per-strip mode + per-param point arrays. Each lane gets
@@ -1288,23 +1349,33 @@ void restoreBus (Bus& a, const nlohmann::json& v, double defaultRecordBpm)
     if (! v.is_object()) return;
     if (auto s = json::getString (v, "name");   ! s.empty()) a.name = s;
     if (auto s = json::getString (v, "colour"); ! s.empty()) a.colour = hexToColour (s, a.colour);
-    if (json::has (v, "fader_db")) a.strip.faderDb.store (json::getFloat (v, "fader_db", 0.0f));
-    if (json::has (v, "pan"))      a.strip.pan.store     (json::getFloat (v, "pan", 0.0f));
+    if (json::has (v, "fader_db"))
+        storeFiniteClampedFloat (a.strip.faderDb, v["fader_db"], 0.0f, -100.0f, 12.0f);
+    if (json::has (v, "pan"))
+        storeFiniteClampedFloat (a.strip.pan, v["pan"], 0.0f, -1.0f, 1.0f);
     if (json::has (v, "mute"))     a.strip.mute.store (json::getBool (v, "mute", false));
     if (json::has (v, "solo"))     a.strip.solo.store (json::getBool (v, "solo", false));
 
     if (json::has (v, "eq_enabled")) a.strip.eqEnabled.store (json::getBool (v, "eq_enabled", false));
-    if (json::has (v, "eq_lf_db"))   storeFiniteFloat (a.strip.eqLfGainDb,  v["eq_lf_db"]);
-    if (json::has (v, "eq_mid_db"))  storeFiniteFloat (a.strip.eqMidGainDb, v["eq_mid_db"]);
-    if (json::has (v, "eq_hf_db"))   storeFiniteFloat (a.strip.eqHfGainDb,  v["eq_hf_db"]);
+    if (json::has (v, "eq_lf_db"))
+        storeFiniteClampedFloat (a.strip.eqLfGainDb,  v["eq_lf_db"],  0.0f, -9.0f, 9.0f);
+    if (json::has (v, "eq_mid_db"))
+        storeFiniteClampedFloat (a.strip.eqMidGainDb, v["eq_mid_db"], 0.0f, -9.0f, 9.0f);
+    if (json::has (v, "eq_hf_db"))
+        storeFiniteClampedFloat (a.strip.eqHfGainDb,  v["eq_hf_db"],  0.0f, -9.0f, 9.0f);
 
     if (json::has (v, "comp_enabled"))     a.strip.compEnabled  .store (json::getBool (v, "comp_enabled", false));
-    if (json::has (v, "comp_thresh_db"))   a.strip.compThreshDb .store (json::getFloat (v, "comp_thresh_db", 0.0f));
-    if (json::has (v, "comp_ratio"))       a.strip.compRatio    .store (json::getFloat (v, "comp_ratio", 0.0f));
-    if (json::has (v, "comp_attack_ms"))   a.strip.compAttackMs .store (json::getFloat (v, "comp_attack_ms", 0.0f));
-    if (json::has (v, "comp_release_ms"))  a.strip.compReleaseMs.store (json::getFloat (v, "comp_release_ms", 0.0f));
+    if (json::has (v, "comp_thresh_db"))
+        storeFiniteClampedFloat (a.strip.compThreshDb, v["comp_thresh_db"], 0.0f, -60.0f, 0.0f);
+    if (json::has (v, "comp_ratio"))
+        storeFiniteClampedFloat (a.strip.compRatio, v["comp_ratio"], 4.0f, 1.0f, 10.0f);
+    if (json::has (v, "comp_attack_ms"))
+        storeFiniteClampedFloat (a.strip.compAttackMs, v["comp_attack_ms"], 10.0f, 0.1f, 50.0f);
+    if (json::has (v, "comp_release_ms"))
+        storeFiniteClampedFloat (a.strip.compReleaseMs, v["comp_release_ms"], 100.0f, 50.0f, 1000.0f);
     if (json::has (v, "comp_release_auto")) a.strip.compReleaseAuto.store (json::getBool (v, "comp_release_auto", false));
-    if (json::has (v, "comp_makeup_db"))   a.strip.compMakeupDb .store (json::getFloat (v, "comp_makeup_db", 0.0f));
+    if (json::has (v, "comp_makeup_db"))
+        storeFiniteClampedFloat (a.strip.compMakeupDb, v["comp_makeup_db"], 0.0f, -10.0f, 20.0f);
 
     // Automation - mirror restoreTrack: exactly one publish per lane (empty
     // when absent), then release-store the mode. Only FaderDb / Pan / Mute
@@ -1606,6 +1677,9 @@ juce::String SessionSerializer::serialize (const Session& s)
     tport["sync_chase_transport"] = s.externalSyncChasesTransport.load();
     tport["sync_output"]         = toStd (s.syncOutputIdentifier);
     tport["sync_emit_clock"]     = s.syncOutputEmitClock.load();
+    tport["sync_chase_timecode"] = s.externalTimeCodeChasesTransport.load();
+    tport["sync_emit_timecode"]  = s.syncOutputEmitTimeCode.load();
+    tport["sync_timecode_frame_rate"] = s.syncOutputTimeCodeFrameRate.load();
 
     // Mackie Control Universal device pair + last-used assign mode.
     // Bank + selectedChannel are session-runtime state and intentionally
@@ -1787,12 +1861,23 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                             [] (const nlohmann::json& v) { return ! v.is_object(); });
     };
     nlohmann::json sectionDefaults;
-    if (json::array (root, "tracks").empty()
+    if ((int) json::array (root, "tracks").size() < Session::kNumTracks
         || (int) json::array (root, "buses").size() < Session::kNumBuses
         || (int) json::array (root, "aux_lanes").size() < Session::kNumAuxLanes
+        || hasNonObject (json::array (root, "tracks"))
         || hasNonObject (json::array (root, "buses"))
         || hasNonObject (json::array (root, "aux_lanes")))
+    {
         sectionDefaults = nlohmann::json::parse (serialize (Session{}).toStdString(), nullptr, false);
+        // Re-parsing our own output cannot fail in practice, but a discarded
+        // value degrades straight back into the ghost-content bug the defaults
+        // exist to prevent, so say so rather than letting it pass unremarked.
+        if (sectionDefaults.is_discarded())
+            std::fprintf (stderr,
+                          "[Dusk Studio/SessionSerializer] the default-session template failed "
+                          "to parse; slots this file does not describe keep the previously "
+                          "loaded session's state\n");
+    }
 
     {
         const auto& tracks = ! json::array (root, "tracks").empty()
@@ -1801,17 +1886,17 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         // with fewer tracks than this build (hand-edited, or written by a tool
         // like the DP importer) must blank the surplus slots - otherwise they
         // keep the PREVIOUS session's regions / MIDI / automation / plugin, i.e.
-        // ghost content that still plays back. Driving an absent slot through
-        // restoreTrack with an empty object runs the same unconditional clears
-        // the present-track path uses (regions, midiRegions, automation lanes,
-        // automation mode, plugin state). A slot that IS listed but isn't an
-        // object (e.g. "tracks": [null]) takes the same route - restoreTrack
-        // returns early on a non-object, which would leave the slot ghosted.
-        const nlohmann::json emptyTrack = nlohmann::json::object();
+        // ghost content that still plays back. An empty object is not enough:
+        // every mixer setter here is conditional on its key being present, so a
+        // slot driven from {} keeps the prior session's name, colour, fader, pan,
+        // sends and hardware routing. Drive it from the serialized default track,
+        // which carries every key at its model default. A slot that IS listed but
+        // isn't an object ("tracks": [null]) takes the same route.
+        const auto& trackDefaults = json::array (sectionDefaults, "tracks");
         for (int i = 0; i < Session::kNumTracks; ++i)
             restoreTrack (s.track (i), i,
                           i < (int) tracks.size() && tracks[(size_t) i].is_object()
-                              ? tracks[(size_t) i] : emptyTrack,
+                              ? tracks[(size_t) i] : trackDefaults[(size_t) i],
                           sessionLoadBpm, s.getSessionDirectory(),
                           s.missingAudioFilesAfterLoad);
     }
@@ -1897,9 +1982,14 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                         if (json::has (hwi, "format"))          fresh->format         = json::getInt (hwi, "format", 0);
                         hw.routing.publish (std::move (fresh));
 
-                        if (json::has (hwi, "output_gain_db")) hw.outputGainDb.store (json::getFloat (hwi, "output_gain_db", 0.0f));
-                        if (json::has (hwi, "input_gain_db"))  hw.inputGainDb .store (json::getFloat (hwi, "input_gain_db", 0.0f));
-                        if (json::has (hwi, "dry_wet"))        hw.dryWet      .store (json::getFloat (hwi, "dry_wet", 0.0f));
+                        if (json::has (hwi, "output_gain_db"))
+                            storeFiniteClampedFloat (hw.outputGainDb, hwi["output_gain_db"],
+                                                     0.0f, -24.0f, 12.0f);
+                        if (json::has (hwi, "input_gain_db"))
+                            storeFiniteClampedFloat (hw.inputGainDb, hwi["input_gain_db"],
+                                                     0.0f, -24.0f, 12.0f);
+                        if (json::has (hwi, "dry_wet"))
+                            storeFiniteClampedFloat (hw.dryWet, hwi["dry_wet"], 1.0f, 0.0f, 1.0f);
                     }
                 }
             }
@@ -2134,6 +2224,13 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         if (json::has (mast, "target_preset"))
             m.targetPresetIndex.store (json::getInt (mast, "target_preset", 0));
     }
+    // Reset-when-absent: these are newer than most sessions on disk, and the
+    // load reuses the live Session, so a conditional store would leave the
+    // previously loaded session's MTC settings in place.
+    s.externalTimeCodeChasesTransport.store (false, std::memory_order_relaxed);
+    s.syncOutputEmitTimeCode.store (false, std::memory_order_relaxed);
+    s.syncOutputTimeCodeFrameRate.store (3, std::memory_order_relaxed);
+
     if (json::has (root, "transport"))
     {
         const auto& tport = json::child (root, "transport");
@@ -2205,6 +2302,14 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             s.syncOutputIdentifier = json::getString (tport, "sync_output");
         if (json::has (tport, "sync_emit_clock"))
             s.syncOutputEmitClock.store (json::getBool (tport, "sync_emit_clock", false));
+        s.externalTimeCodeChasesTransport.store (
+            json::getBool (tport, "sync_chase_timecode", false), std::memory_order_relaxed);
+        s.syncOutputEmitTimeCode.store (
+            json::getBool (tport, "sync_emit_timecode", false), std::memory_order_relaxed);
+        // 0..3 = 24 / 25 / 29.97 DF / 30, matching the settings combo.
+        s.syncOutputTimeCodeFrameRate.store (
+            std::clamp (json::getInt (tport, "sync_timecode_frame_rate", 3), 0, 3),
+            std::memory_order_relaxed);
         if (json::has (tport, "mcu_input_id"))
             s.mcu.inputIdentifier = json::getString (tport, "mcu_input_id");
         if (json::has (tport, "mcu_output_id"))

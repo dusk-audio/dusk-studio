@@ -104,6 +104,44 @@ TEST_CASE ("SessionSerializer round-trip preserves transport + per-track state",
     dir.deleteRecursively();
 }
 
+// The MTC settings were written by the Audio Settings panel but never
+// serialized, so chase / emit / frame rate reset on every reload. Absent keys
+// must reset to the model default rather than inherit the previous session's.
+TEST_CASE ("SessionSerializer round-trips the MTC sync settings",
+           "[session][serializer][sync]")
+{
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
+
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                        .getChildFile ("dusk-mtc-"
+                                         + juce::String (juce::Random::getSystemRandom().nextInt()));
+    dir.createDirectory();
+    const struct ScopedDir { juce::File d; ~ScopedDir() { d.deleteRecursively(); } } scopedDir { dir };
+    const auto target = dir.getChildFile ("session.json");
+
+    Session a;
+    a.setSessionDirectory (dir);
+    a.externalTimeCodeChasesTransport.store (true, std::memory_order_relaxed);
+    a.syncOutputEmitTimeCode.store (true, std::memory_order_relaxed);
+    a.syncOutputTimeCodeFrameRate.store (2, std::memory_order_relaxed);
+    REQUIRE (SessionSerializer::save (a, target));
+
+    Session b;
+    b.setSessionDirectory (dir);
+    REQUIRE (SessionSerializer::load (b, target));
+    REQUIRE (b.externalTimeCodeChasesTransport.load (std::memory_order_relaxed));
+    REQUIRE (b.syncOutputEmitTimeCode.load (std::memory_order_relaxed));
+    REQUIRE (b.syncOutputTimeCodeFrameRate.load (std::memory_order_relaxed) == 2);
+
+    // A session predating the keys resets to the defaults, not the live values.
+    REQUIRE (target.replaceWithText (R"({"version":3,"transport":{}})"));
+    REQUIRE (SessionSerializer::load (b, target));
+    REQUIRE_FALSE (b.externalTimeCodeChasesTransport.load (std::memory_order_relaxed));
+    REQUIRE_FALSE (b.syncOutputEmitTimeCode.load (std::memory_order_relaxed));
+    REQUIRE (b.syncOutputTimeCodeFrameRate.load (std::memory_order_relaxed) == 3);
+}
+
 TEST_CASE ("SessionSerializer save is atomic - tmp file gone after success",
            "[session][serializer]")
 {
