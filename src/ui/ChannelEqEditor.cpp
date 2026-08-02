@@ -88,6 +88,18 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
     };
     addAndMakeVisible (enableButton);
 
+    auto setupColumnLabel = [this] (juce::Label& label, const char* text)
+    {
+        label.setText (text, juce::dontSendNotification);
+        label.setJustificationType (juce::Justification::centred);
+        label.setColour (juce::Label::textColourId, juce::Colour (0xff969aa2));
+        label.setFont (juce::Font (juce::FontOptions (12.0f, juce::Font::bold)));
+        addAndMakeVisible (label);
+    };
+    setupColumnLabel (gainColumnLabel, "GAIN");
+    setupColumnLabel (freqColumnLabel, "FREQ");
+    setupColumnLabel (qColumnLabel,    "Q");
+
     // HPF + LPF - SSL 9000 J white-filter top section. Both knobs share
     // the white accent so they read as a filter pair (matches the
     // inline strip's filter row).
@@ -255,23 +267,11 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
                 };
                 addAndMakeVisible (row.q.get());
 
-                // "Q" caption next to the Q knob, in the band's accent
-                // colour - matches the strip's Q label.
-                row.qLabel.setText ("Q", juce::dontSendNotification);
-                row.qLabel.setJustificationType (juce::Justification::centred);
-                row.qLabel.setColour (juce::Label::textColourId, spec.accent.brighter (0.2f));
-                row.qLabel.setFont (juce::Font (juce::FontOptions (12.0f, juce::Font::bold)));
-                addAndMakeVisible (row.qLabel);
             }
         }
     }
 
-    // Tight fit to resized()'s layout: header 24 + gap 8 + HPF 80 + gap 4
-    // + rows[ HF 84 + HM 160 + LM 160 + LF 84, each + 4 gap = 504 ] = 620 inner,
-    // + outer reduced(12) padding 24 = 644, + 4 px bottom breathing room = 648. The
-    // bell rows are full-height because the Q block matches the gain/freq block
-    // (kQBlockH == kKnobBlockH).
-    setSize (380, 648);
+    setSize (380, 500);
 }
 
 ChannelEqEditor::~ChannelEqEditor() = default;
@@ -298,29 +298,19 @@ void ChannelEqEditor::resized()
     typeButton  .setBounds (header.removeFromRight (40));
     area.removeFromTop (8);
 
-    // Layout matches the inline strip's EQ section so the TIMELINE popup
-    // is visually identical: HPF row at top (single centred knob), then
-    // each band row. Shelves (HF, LF) are gain | freq pairs; bell bands
-    // (HM, LM) stack gain on top-left + Q below it on the left, with the
-    // freq knob in the right column vertically centred between them.
+    // Match the inline strip's control order at a larger editing scale:
+    // filter pair first, then one GAIN / FREQ / Q row per band.
     constexpr int kRowLabelW    = 36;
     constexpr int kKnobSize     = 56;
     constexpr int kValueH       = 18;
-    constexpr int kKnobBlockH   = kKnobSize + kValueH + 6;            // 80
-    constexpr int kQKnobSize    = 56;
-    constexpr int kQBlockH      = kKnobBlockH;   // match gain/freq so the Q knob renders the same diameter
-    constexpr int kFreqYStagger = 2;
+    constexpr int kKnobBlockH   = kKnobSize + kValueH + 6;
     constexpr int kHpfRowH      = kKnobBlockH;
-    constexpr int kShelfRowH    = kKnobBlockH + kFreqYStagger + 2;
-    constexpr int kBellRowH     = kKnobBlockH + kQBlockH;
+    constexpr int kColumnHeaderH = 16;
     constexpr int kRowGap       = 4;
 
     // Filter row - HPF | LPF side-by-side, white-faced SSL 9000 J top.
     {
         auto row = area.removeFromTop (kHpfRowH);
-        // Carve same kRowLabelW gutter as the band rows so the filter
-        // columns line up with the gain / freq columns below.
-        row.removeFromLeft (kRowLabelW);
         const int colW = row.getWidth() / 2;
         auto hpfCell = row.removeFromLeft (colW);
         auto lpfCell = row;
@@ -336,48 +326,33 @@ void ChannelEqEditor::resized()
         area.removeFromTop (kRowGap);
     }
 
+    auto columnHeader = area.removeFromTop (kColumnHeaderH);
+    columnHeader.removeFromLeft (kRowLabelW);
+    const int headerColW = columnHeader.getWidth() / 3;
+    gainColumnLabel.setBounds (columnHeader.removeFromLeft (headerColW));
+    freqColumnLabel.setBounds (columnHeader.removeFromLeft (headerColW));
+    qColumnLabel   .setBounds (columnHeader);
+    area.removeFromTop (2);
+
     for (size_t i = 0; i < rows.size(); ++i)
     {
-        const bool hasQ = rows[i].q != nullptr;
-        const int  rowH = hasQ ? kBellRowH : kShelfRowH;
-
-        auto row = area.removeFromTop (rowH);
+        auto row = area.removeFromTop (kKnobBlockH);
         auto labelArea = row.removeFromLeft (kRowLabelW);
 
-        // Band-name label - vertically centred to the gain rotary so it
-        // sits next to the actual knob rather than the centre of the row.
         rows[i].nameLabel.setBounds (labelArea.getX(), row.getY(),
                                        labelArea.getWidth(), kKnobSize);
 
-        if (hasQ)
-        {
-            const int qY = row.getY() + kKnobBlockH;
-            rows[i].qLabel.setBounds (labelArea.getX(), qY,
-                                        labelArea.getWidth(), kQKnobSize);
-        }
+        const int colW = row.getWidth() / 3;
+        auto gainCell = row.removeFromLeft (colW);
+        auto freqCell = row.removeFromLeft (colW);
+        auto qCell = row;
+        rows[i].gain->setBounds (gainCell);
+        rows[i].freq->setBounds (freqCell);
+        if (rows[i].q != nullptr)
+            rows[i].q->setBounds (qCell);
 
-        const int colW   = row.getWidth() / 2;
-        const int leftX  = row.getX();
-        const int rightX = row.getX() + colW;
-        const int gainY  = row.getY();
-        // Bell rows: freq is vertically centred inside the FULL bell row
-        // (between gain and Q). Shelves keep the small SSL nudge.
-        const int freqY  = hasQ
-            ? row.getY() + (rowH - kKnobBlockH) / 2
-            : gainY + kFreqYStagger;
-
-        rows[i].gain->setBounds (leftX,  gainY, colW, kKnobBlockH);
-        rows[i].freq->setBounds (rightX, freqY, colW, kKnobBlockH);
-
-        if (hasQ)
-        {
-            const int qW = std::min (colW, 80);
-            const int qX = leftX + (colW - qW) / 2;
-            const int qY = gainY + kKnobBlockH;
-            rows[i].q->setBounds (qX, qY, qW, kQBlockH);
-        }
-
-        area.removeFromTop (kRowGap);
+        if (i + 1 < rows.size())
+            area.removeFromTop (kRowGap);
     }
 }
 } // namespace duskstudio
