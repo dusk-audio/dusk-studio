@@ -16,8 +16,10 @@ Dusk Studio is being re-platformed to remove **all** JUCE by 1.0, incrementally,
 
 **The gate.** [tools/juce-gate.sh](tools/juce-gate.sh) (CI, via `linux-build.yml`) is a ratchet over `src/`, enforcing three one-way rules against `tools/juce-allowlist.txt` (`path<TAB>count`, one line per coupled file):
 - A *clean* file that gains `juce::`/`<juce_` and isn't listed **fails the build**.
-- A listed file that carries **more** occurrences than its recorded count **fails the build**. Most feature work lands in already-coupled files (AudioEngine, Session, `src/ui/*`), which is where new JUCE actually accumulates — the count is what stops it. Use the seam instead; `tools/juce-gate.sh --update` re-records the numbers and every one of them must go **down** in the diff.
+- A listed file that carries **more** occurrences than its recorded count **fails the build**. Most feature work lands in already-coupled files (AudioEngine, Session, `src/ui/*`), which is where new JUCE actually accumulates — the count is what stops it. Use the seam instead.
 - A listed file that is now JUCE-free must be deleted from the list. Files leave and never rejoin.
+
+`tools/juce-gate.sh --update` re-records the list after migration work, and is itself a ratchet: it **refuses** to add a path or raise a count, so the command everyone runs after a migration can't launder a regression into the baseline. An addition that is genuinely unavoidable is a hand edit to the allowlist, which then shows up in review as its own line and needs justifying in the PR body. The allowlist must hold exactly one `path<TAB>count` record per file, counts decimal with no leading zero — anything else fails closed rather than silently skipping that file's ceiling.
 
 Two things the gate still can't catch — you must:
 - **Never write the literal `juce::` token in a comment** — the gate greps text, so `// mirrors juce::Foo` trips it. Write "JUCE's Foo" by name instead.

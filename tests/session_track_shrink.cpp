@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "session/Session.h"
 #include "session/SessionSerializer.h"
@@ -6,6 +7,7 @@
 #include <juce_core/juce_core.h>
 
 using namespace duskstudio;
+using Catch::Matchers::WithinAbs;
 
 // Loading a session must REPLACE the model, not merge into it. A session.json
 // with fewer tracks than this build (hand-edited, or written by a tool like the
@@ -101,15 +103,18 @@ TEST_CASE ("loading a session with fewer tracks blanks the surplus mixer state",
     const auto& t = s.track (5);
     REQUIRE (t.name == defaultName);
     REQUIRE (t.colour == defaultColour);
-    REQUIRE (t.strip.faderDb.load() == 0.0f);
-    REQUIRE (t.strip.pan.load() == 0.0f);
+    REQUIRE_THAT (t.strip.faderDb.load(), WithinAbs (0.0f, 1e-6f));
+    REQUIRE_THAT (t.strip.pan.load(), WithinAbs (0.0f, 1e-6f));
     REQUIRE_FALSE (t.strip.mute.load());
     REQUIRE_FALSE (t.strip.busAssign[2].load());
-    REQUIRE (t.strip.auxSendDb[1].load() == ChannelStripParams::kAuxSendOffDb);
+    REQUIRE_THAT (t.strip.auxSendDb[1].load(),
+                  WithinAbs (ChannelStripParams::kAuxSendOffDb, 1e-6f));
     REQUIRE_FALSE (t.strip.auxSendPreFader[1].load());
-    REQUIRE (t.strip.hpfFreq.load() == ChannelStripParams::kHpfOffHz);
-    REQUIRE (t.strip.lpfFreq.load() == ChannelStripParams::kLpfOffHz);
+    REQUIRE_THAT (t.strip.hpfFreq.load(),
+                  WithinAbs (ChannelStripParams::kHpfOffHz, 1e-6f));
+    REQUIRE_THAT (t.strip.lpfFreq.load(),
+                  WithinAbs (ChannelStripParams::kLpfOffHz, 1e-3f));
     REQUIRE_FALSE (t.hardwareInsert.enabled.load());
-    REQUIRE (t.hardwareInsert.outputGainDb.load() == 0.0f);
-    REQUIRE (t.hardwareInsert.dryWet.load() == 1.0f);
+    REQUIRE_THAT (t.hardwareInsert.outputGainDb.load(), WithinAbs (0.0f, 1e-6f));
+    REQUIRE_THAT (t.hardwareInsert.dryWet.load(), WithinAbs (1.0f, 1e-6f));
 }

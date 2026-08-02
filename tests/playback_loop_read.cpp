@@ -93,3 +93,110 @@ TEST_CASE ("loop-aware readForTrack wraps at the loop boundary",
 
     pe.stopPlayback();
 }
+
+namespace
+{
+// numCh-channel WAV where channel c holds the constant level[c]. Constants (not
+// a ramp) so a channel swap or a silent channel is unambiguous in the assert.
+juce::File writeConstantWav (const juce::File& dir, const juce::String& name,
+                             const std::vector<float>& level, int numFrames)
+{
+    const auto wav = dir.getChildFile ("audio").getChildFile (name);
+    wav.getParentDirectory().createDirectory();
+    juce::WavAudioFormat fmt;
+    std::unique_ptr<juce::AudioFormatWriter> writer (
+        fmt.createWriterFor (wav.createOutputStream().release(),
+                              48000.0, (unsigned) level.size(), 24, {}, 0));
+    REQUIRE (writer != nullptr);
+    juce::AudioBuffer<float> buf ((int) level.size(), numFrames);
+    for (size_t c = 0; c < level.size(); ++c)
+        for (int n = 0; n < numFrames; ++n)
+            buf.setSample ((int) c, n, level[c]);
+    REQUIRE (writer->writeFromAudioSampleBuffer (buf, 0, numFrames));
+    return wav;
+}
+} // namespace
+
+// The channel count that decides whether the right channel is read comes from
+// the decoded file, not AudioRegion::numChannels. The model's copy can disagree
+// with what is on disk (hand-edited session, replaced take), and believing it
+// either truncates a stereo take to its left channel or asks a mono file for a
+// right one it does not have.
+//
+// Read through the loop-start pre-cache: primeLoopCaches fills it synchronously
+// on the message thread, whereas the reader's own window is warmed by a
+// background worker that a read issued immediately after preparePlayback would
+// race (returning silence, not a channel bug). The cache fill consults the same
+// per-region channel count, so it pins the same decision deterministically.
+TEST_CASE ("readForTrack takes the channel count from the file, not the region",
+           "[playback][channels]")
+{
+    constexpr int kFrames = 4096;
+    constexpr int kBlock  = 256;
+
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                        .getChildFile ("dusk-chan-"
+                                         + juce::String (juce::Random::getSystemRandom().nextInt()));
+    dir.createDirectory();
+    const struct ScopedDir { juce::File d; ~ScopedDir() { d.deleteRecursively(); } } scopedDir { dir };
+
+    SECTION ("mono file, region claims stereo - duplicated to both outputs")
+    {
+        const auto wav = writeConstantWav (dir, "mono.wav", { 0.5f }, kFrames);
+
+        Session session;
+        session.setSessionDirectory (dir);
+        AudioRegion r;
+        r.file            = wav;
+        r.timelineStart   = 0;
+        r.lengthInSamples = kFrames;
+        r.numChannels     = 2;   // wrong on purpose
+        session.track (0).regions.push_back (r);
+
+        Transport transport;
+        transport.setLoopRange (0, kFrames);
+        transport.setLoopEnabled (true);
+        PlaybackEngine pe (session);
+        pe.bindTransport (transport);
+        pe.prepare (kBlock);
+        pe.preparePlayback();
+
+        std::vector<float> outL ((size_t) kBlock, -1.0f), outR ((size_t) kBlock, -1.0f);
+        pe.readForTrack (0, 0, outL.data(), outR.data(), kBlock, 0, kFrames);
+
+        // A mono source must land on BOTH outputs, not leave the right silent.
+        REQUIRE_THAT (outL[kBlock / 2], WithinAbs (0.5f, 2e-4f));
+        REQUIRE_THAT (outR[kBlock / 2], WithinAbs (0.5f, 2e-4f));
+        pe.stopPlayback();
+    }
+
+    SECTION ("stereo file, region claims mono - channels stay independent")
+    {
+        const auto wav = writeConstantWav (dir, "stereo.wav", { 0.5f, -0.25f }, kFrames);
+
+        Session session;
+        session.setSessionDirectory (dir);
+        AudioRegion r;
+        r.file            = wav;
+        r.timelineStart   = 0;
+        r.lengthInSamples = kFrames;
+        r.numChannels     = 1;   // wrong on purpose
+        session.track (0).regions.push_back (r);
+
+        Transport transport;
+        transport.setLoopRange (0, kFrames);
+        transport.setLoopEnabled (true);
+        PlaybackEngine pe (session);
+        pe.bindTransport (transport);
+        pe.prepare (kBlock);
+        pe.preparePlayback();
+
+        std::vector<float> outL ((size_t) kBlock, 0.0f), outR ((size_t) kBlock, 0.0f);
+        pe.readForTrack (0, 0, outL.data(), outR.data(), kBlock, 0, kFrames);
+
+        // Reading by the region's claim would have duplicated L over R.
+        REQUIRE_THAT (outL[kBlock / 2], WithinAbs ( 0.5f,  2e-4f));
+        REQUIRE_THAT (outR[kBlock / 2], WithinAbs (-0.25f, 2e-4f));
+        pe.stopPlayback();
+    }
+}
