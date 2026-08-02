@@ -2673,9 +2673,9 @@ int AudioEngine::resolveTargetWorkers() const noexcept
 
 void AudioEngine::suspendProcessing()
 {
-    processingSuspended.store (true, std::memory_order_release);
+    processingSuspended.store (true, std::memory_order_seq_cst);
     int waitedMs = 0;
-    while (callbacksInFlight.load (std::memory_order_acquire) > 0)
+    while (callbacksInFlight.load (std::memory_order_seq_cst) > 0)
     {
         juce::Thread::sleep (1);
         if (++waitedMs % 1000 == 0)
@@ -2981,6 +2981,12 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     // callback - from ANY backend thread, joined or not - emits one silent
     // buffer instead of touching engine state mid-reconfigure. The double
     // check around the counter closes the raise-after-first-load window.
+    // The flag-store-then-counter-load (suspend side) against
+    // counter-add-then-flag-load (callback side) is Dekker's: only a total
+    // order over those four ops excludes both sides passing, so they are
+    // seq_cst - release/acquire permits the StoreLoad reordering that leaks a
+    // live callback into the suspended region. On x86 the seq_cst loads and
+    // RMWs cost nothing; the single fenced store sits on the cold suspend path.
     auto clearOutputs = [&]
     {
         if (outputChannelData == nullptr) return;   // matches the guard below
@@ -2988,14 +2994,14 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             if (auto* out = outputChannelData[ch])
                 juce::FloatVectorOperations::clear (out, numSamples);
     };
-    if (processingSuspended.load (std::memory_order_acquire))
+    if (processingSuspended.load (std::memory_order_seq_cst))
     {
         earlyOutBlocks.fetch_add (1, std::memory_order_relaxed);   // drained by diagTimer
         clearOutputs();
         return;
     }
-    callbacksInFlight.fetch_add (1, std::memory_order_acq_rel);
-    if (processingSuspended.load (std::memory_order_acquire))
+    callbacksInFlight.fetch_add (1, std::memory_order_seq_cst);
+    if (processingSuspended.load (std::memory_order_seq_cst))
     {
         callbacksInFlight.fetch_sub (1, std::memory_order_acq_rel);
         earlyOutBlocks.fetch_add (1, std::memory_order_relaxed);

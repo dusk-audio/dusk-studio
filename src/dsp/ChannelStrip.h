@@ -412,6 +412,7 @@ private:
     int          pdcAppliedSamples = 0;
     std::int64_t  pdcSilentRun = 0;
     void relatchPdcIfDrained (float blockPeakAbs, int numSamples) noexcept;
+    void drainPdcForSkip() noexcept;
 
     // The per-strip oversampler's rounded internal latency (half-band filter
     // state). The EQ - which carries the always-on console saturation - runs

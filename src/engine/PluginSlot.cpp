@@ -728,18 +728,22 @@ bool PluginSlot::loadFromDescriptor (const PluginDescriptor& descriptor,
                 }
                 else
                 {
-                    remoteNumIn .store (numIn,  std::memory_order_relaxed);
-                    remoteNumOut.store (numOut, std::memory_order_relaxed);
-                    remoteIsInstrument.store (isInstrument,
-                                                std::memory_order_relaxed);
-                    cachedLatencySamples.store (latency, std::memory_order_relaxed);
-                    blocksSinceLoad     = 0;
-                    consecutiveOverruns = 0;
-                    autoBypassed .store (false, std::memory_order_relaxed);
-                    remoteCrashed.store (false, std::memory_order_relaxed);
                     ownedRemote = std::move (remote);
-                    currentRemote.store (ownedRemote.get(),
-                                            std::memory_order_release);
+                    {
+                        // Same drain-then-reset-and-publish as loadFromFile above.
+                        const juce::SpinLock::ScopedLockType processGuard (processLock);
+                        remoteNumIn .store (numIn,  std::memory_order_relaxed);
+                        remoteNumOut.store (numOut, std::memory_order_relaxed);
+                        remoteIsInstrument.store (isInstrument,
+                                                    std::memory_order_relaxed);
+                        cachedLatencySamples.store (latency, std::memory_order_relaxed);
+                        blocksSinceLoad     = 0;
+                        consecutiveOverruns = 0;
+                        autoBypassed .store (false, std::memory_order_relaxed);
+                        remoteCrashed.store (false, std::memory_order_relaxed);
+                        currentRemote.store (ownedRemote.get(),
+                                                std::memory_order_release);
+                    }
                     reaperTimer.startTimer (kReaperPeriodMs);
                     fixedDescriptor.isInstrument = isInstrument;
                     fixedDescriptor.numInputChannels = numIn;
