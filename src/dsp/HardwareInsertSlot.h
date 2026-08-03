@@ -71,7 +71,17 @@ public:
     // covers the full latency-slider range at any sample rate.
     // Correlation runs ~256 candidate lags per block.
     static constexpr int kChirpMaxSamples   = 9600;
-    static constexpr int kCorrelationsPerBlock = 256;
+    // The correlator's per-block budget, expressed as multiply-accumulates per
+    // SECOND of audio rather than a fixed number of candidate lags. A fixed
+    // count spends the same work whatever the buffer size, while the time
+    // available scales with it and the cost of one lag scales with the chirp
+    // (itself 100 ms of the session rate). 256 lags therefore measured 94% of a
+    // 64-sample block at 48 kHz and 422% of one at 96 kHz - the correlator alone
+    // taking the block the mixer needed. Deriving the count instead holds it at
+    // ~15% everywhere, and the whole sweep of kMaxDelaySamples lags lands in
+    // about 0.5 s at 48 kHz and 1.1 s at 96 kHz, which is what the UI's
+    // "Measuring..." covers.
+    static constexpr double kCorrelationMacsPerSecond = 1.5e8;
 
 private:
     const HardwareInsertParams* paramsRef = nullptr;
