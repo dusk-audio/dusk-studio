@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <deque>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -380,6 +381,12 @@ TEST_CASE ("HardwareInsertSlot: ping measures loopback round-trip exactly",
     SECTION ("96 kHz - chirp longer than the old fixed capture window")
     {
         REQUIRE (runPingLoopback (96000.0, 1500) == 1500);
+    }
+
+    SECTION ("invalid sample rate uses the nominal fallback")
+    {
+        REQUIRE (runPingLoopback (0.0, 1500) == 1500);
+        REQUIRE (runPingLoopback (std::numeric_limits<double>::infinity(), 1500) == 1500);
     }
 
     SECTION ("96 kHz / 64 samples spreads correlation across callbacks")

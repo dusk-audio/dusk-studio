@@ -77,7 +77,6 @@ public:
 private:
     const HardwareInsertParams* paramsRef = nullptr;
     double prepSampleRate = 0.0;
-    int    prepBlockSize  = 0;
 
     dusk::audio::IntDelayLine dryDelayL;
     dusk::audio::IntDelayLine dryDelayR;

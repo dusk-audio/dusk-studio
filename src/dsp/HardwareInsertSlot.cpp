@@ -13,10 +13,11 @@ namespace { constexpr double kPi = 3.141592653589793238; }
 HardwareInsertSlot::HardwareInsertSlot() = default;
 HardwareInsertSlot::~HardwareInsertSlot() = default;
 
-void HardwareInsertSlot::prepare (double sampleRate, int blockSize)
+void HardwareInsertSlot::prepare (double sampleRate, int)
 {
-    prepSampleRate = sampleRate;
-    prepBlockSize  = blockSize;
+    const double sr = (sampleRate > 0.0 && std::isfinite (sampleRate))
+                        ? sampleRate : 48000.0;
+    prepSampleRate = sr;
 
     dryDelayL.setMaximumDelayInSamples (kMaxDelaySamples);
     dryDelayR.setMaximumDelayInSamples (kMaxDelaySamples);
@@ -31,7 +32,7 @@ void HardwareInsertSlot::prepare (double sampleRate, int blockSize)
     // still reaches a lag of exactly kMaxDelaySamples (the latency clamp's
     // inclusive upper bound), not just kMaxDelaySamples - 1.
     chirpBuffer.assign ((size_t) kChirpMaxSamples, 0.0f);
-    renderChirp (sampleRate);
+    renderChirp (sr);
     captureBuffer.assign ((size_t) (chirpLength + kMaxDelaySamples + 1), 0.0f);
     pingState = PingState::Idle;
     pingPlayPos = pingCapturePos = pingCorrelateK = 0;
@@ -43,9 +44,9 @@ void HardwareInsertSlot::prepare (double sampleRate, int blockSize)
     // zipper noise on a user drag, short enough that the control still
     // feels responsive.
     constexpr double kSmoothMs = 20.0;
-    outGainLin .reset (sampleRate, kSmoothMs * 0.001);
-    inGainLin  .reset (sampleRate, kSmoothMs * 0.001);
-    dryWetSmooth.reset (sampleRate, kSmoothMs * 0.001);
+    outGainLin .reset (sr, kSmoothMs * 0.001);
+    inGainLin  .reset (sr, kSmoothMs * 0.001);
+    dryWetSmooth.reset (sr, kSmoothMs * 0.001);
     outGainLin .setCurrentAndTargetValue (1.0f);
     inGainLin  .setCurrentAndTargetValue (1.0f);
     dryWetSmooth.setCurrentAndTargetValue (1.0f);
@@ -206,7 +207,7 @@ void HardwareInsertSlot::processStereoBlock (float* L, float* R, int numSamples,
 
     // Ping state machine. Runs once per block (state) plus per-sample
     // play/capture in the loop below. Correlation work is budgeted against the
-    // block's real duration so the audio thread never blows its time budget.
+    // block's real duration.
     if (pingState == PingState::Correlating)
     {
         const int chirpLen = std::min (chirpLength, (int) chirpBuffer.size());
@@ -266,8 +267,7 @@ void HardwareInsertSlot::processStereoBlock (float* L, float* R, int numSamples,
                         && routing.inputChR < numDeviceInputs
                         && deviceInputs != nullptr
                         && deviceInputs[routing.inputChR] != nullptr;
-    const bool outValid = outLValid || outRValid;
-    const bool inValid  = inLValid  || inRValid;
+    const bool inValid = inLValid || inRValid;
 
     for (int i = 0; i < numSamples; ++i)
     {
