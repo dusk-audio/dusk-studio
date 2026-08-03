@@ -70,9 +70,8 @@ public:
     // chirpLength + kMaxDelaySamples, so the correlator's lag search
     // covers the full latency-slider range at any sample rate.
     static constexpr int kChirpMaxSamples   = 9600;
-    // Scaling the multiply-accumulate budget by audio duration keeps the
-    // callback share stable across block sizes. Dividing by chirp length also
-    // accounts for the sample-rate-dependent cost of each candidate lag.
+    // Correlation budget in multiply-accumulates per second of audio. Credit
+    // follows callback duration, and each candidate lag consumes chirpLength MACs.
     static constexpr double kCorrelationMacsPerSecond = 1.5e8;
 
 private:
@@ -99,6 +98,7 @@ private:
     int       pingPlayPos      = 0;
     int       pingCapturePos   = 0;
     int       pingCorrelateK   = 0;
+    double    pingCorrelationCredit = 0.0;
     float     pingBestPeak     = 0.0f;
     int       pingBestK        = -1;
     float     pingAutoPeak     = 0.0f;   // chirp's auto-correlation peak for threshold

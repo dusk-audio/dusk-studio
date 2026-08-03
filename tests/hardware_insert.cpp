@@ -389,6 +389,26 @@ TEST_CASE ("HardwareInsertSlot: ping measures loopback round-trip exactly",
         REQUIRE (blocksUsed > 1800);
         REQUIRE (blocksUsed < 2300);
     }
+
+    SECTION ("fractional candidate credit does not overspend on tiny blocks")
+    {
+        constexpr double sampleRate = 96000.0;
+        constexpr int blockSize = 4;
+        constexpr int chirpLength = duskstudio::HardwareInsertSlot::kChirpMaxSamples;
+        constexpr int candidateCount = duskstudio::HardwareInsertSlot::kMaxDelaySamples + 1;
+        constexpr double candidatesPerBlock =
+            duskstudio::HardwareInsertSlot::kCorrelationMacsPerSecond
+            * ((double) blockSize / sampleRate) / (double) chirpLength;
+        constexpr int captureBlocks =
+            (chirpLength + candidateCount + blockSize - 1) / blockSize;
+        const int minimumBlocks = captureBlocks
+                                + (int) std::ceil ((double) candidateCount
+                                                   / candidatesPerBlock);
+
+        int blocksUsed = 0;
+        REQUIRE (runPingLoopback (sampleRate, 1500, 40000, blockSize, &blocksUsed) == 1500);
+        REQUIRE (blocksUsed >= minimumBlocks);
+    }
 }
 
 TEST_CASE ("HardwareInsertSlot: ping with silent return reports -1",

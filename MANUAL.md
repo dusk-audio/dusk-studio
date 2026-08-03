@@ -1559,7 +1559,10 @@ The status label shows one of:
 
 - `Measuring…`
 - `Detected: N samples (X.X ms)` — measurement succeeded, the value is filled in.
-- `Ping failed — check level / cables` — no correlation peak found.
+- `No input signal — check routing / device` — the selected return input is unavailable or invalid, so capture cannot run.
+- `Ping failed — check level / cables` — the return input is valid, but the capture was silent, too quiet, or contained no clear correlation peak.
+
+Measurement time varies with sample rate and block size; the tested range is roughly 1.0 seconds at 48 kHz and 1.3 seconds at 96 kHz with 64-sample blocks. Correlation is spread across audio callbacks so it stays within its processing budget; smaller buffers use more callbacks, with fractional work carried between them.
 
 Run the ping after any change to your interface routing or your external gear's settings. There is no automatic re-ping on session load; you ping when you set up the insert and re-ping if anything in the chain changes.
 
@@ -2235,8 +2238,8 @@ Two variants:
 
 The hardware-insert ping reports its result inline on the editor (not a modal), colour-coded:
 
-- **No input signal** (red): "No input signal - check routing / device." — capture stall, no audio came back at all.
-- **Ping failed** (red): "Ping failed - check level / cables." — audio came back but cross-correlation found no clear peak.
+- **No input signal** (red): "No input signal - check routing / device." — the selected return input is unavailable or invalid, so capture cannot run.
+- **Ping failed** (red): "Ping failed - check level / cables." — the return input is valid, but the capture was silent, too quiet, or contained no clear correlation peak.
 - **Success** (green): "Detected: [N] sam ([X.X] ms)" — measurement succeeded; latency is filled in.
 
 ## Tempo

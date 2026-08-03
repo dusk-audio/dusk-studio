@@ -35,6 +35,7 @@ void HardwareInsertSlot::prepare (double sampleRate, int blockSize)
     captureBuffer.assign ((size_t) (chirpLength + kMaxDelaySamples + 1), 0.0f);
     pingState = PingState::Idle;
     pingPlayPos = pingCapturePos = pingCorrelateK = 0;
+    pingCorrelationCredit = 0.0;
     pingBestPeak = 0.0f;
     pingBestK    = -1;
 
@@ -123,6 +124,7 @@ void HardwareInsertSlot::startPing()
     pingPlayPos            = 0;
     pingCapturePos         = 0;
     pingCorrelateK         = 0;
+    pingCorrelationCredit  = 0.0;
     pingBestPeak           = 0.0f;
     pingBestK              = -1;
     pingCaptureStallSamples = 0;
@@ -209,15 +211,12 @@ void HardwareInsertSlot::processStereoBlock (float* L, float* R, int numSamples,
     {
         const int chirpLen = std::min (chirpLength, (int) chirpBuffer.size());
         const int maxK = std::max (0, (int) captureBuffer.size() - chirpLen);
-        // Each candidate lag costs chirpLen multiply-accumulates. Scaling by
-        // numSamples / sampleRate keeps the callback share stable.
         const double blockSeconds = prepSampleRate > 0.0
                                       ? (double) numSamples / prepSampleRate
                                       : 0.0;
-        const int perBlock = std::max (1, (int) (kCorrelationMacsPerSecond * blockSeconds
-                                                   / (double) std::max (1, chirpLen)));
-        int kCount = 0;
-        while (pingCorrelateK < maxK && kCount < perBlock)
+        pingCorrelationCredit += kCorrelationMacsPerSecond * blockSeconds
+                                   / (double) std::max (1, chirpLen);
+        while (pingCorrelateK < maxK && pingCorrelationCredit >= 1.0)
         {
             float corr = 0.0f;
             for (int i = 0; i < chirpLen; ++i)
@@ -230,7 +229,7 @@ void HardwareInsertSlot::processStereoBlock (float* L, float* R, int numSamples,
                 pingBestK    = pingCorrelateK;
             }
             ++pingCorrelateK;
-            ++kCount;
+            pingCorrelationCredit -= 1.0;
         }
         if (pingCorrelateK >= maxK)
         {
