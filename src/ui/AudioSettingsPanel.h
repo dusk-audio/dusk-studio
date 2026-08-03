@@ -144,6 +144,10 @@ private:
 
 #if defined(__linux__)
     void applyPeriodsChange();
+    // Point the combo at whatever period count is actually in force. Shared by
+    // construction and by the rollback when a reopen at a new count fails, so
+    // the dropdown never advertises a value the device is not running.
+    void syncPeriodsComboFromRequested();
 #endif
     void applyOversamplingChange();
     void applyMulticoreChange();

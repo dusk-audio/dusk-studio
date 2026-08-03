@@ -2,6 +2,7 @@
 #include "AppConfig.h"
 #include <algorithm>
 #include <limits>
+#include "DuskAlerts.h"
 #include "MidiBindingsPanel.h"
 #include "SelfTestPanel.h"
 #include "../engine/AudioEngine.h"
@@ -51,15 +52,7 @@ AudioSettingsPanel::AudioSettingsPanel (device::DeviceManager& dm,
     // latency but give the kernel more headroom against scheduler jitter.
     for (int p : { 2, 3, 4, 8, 16 })
         periodsCombo.addItem (juce::String (p), p);
-    {
-        // getRequestedPeriods() is clamped to [2,16] but the combo only exposes
-        // a discrete subset; fall back to 4 (JUCE default) for any value that
-        // doesn't have a corresponding item, otherwise the combo renders blank.
-        const int requested = AlsaAudioIODevice::getRequestedPeriods();
-        const bool inSet = (requested == 2 || requested == 3 || requested == 4
-                            || requested == 8 || requested == 16);
-        periodsCombo.setSelectedId (inSet ? requested : 4, juce::dontSendNotification);
-    }
+    syncPeriodsComboFromRequested();
     periodsCombo.setTooltip ("ALSA period count. Only applies to ALSA backend. "
                               "Increase if you hear xruns or distortion at low "
                               "buffer sizes; decrease for lower latency.");
@@ -758,11 +751,23 @@ void AudioSettingsPanel::applyRescan()
 }
 
 #if defined(__linux__)
+void AudioSettingsPanel::syncPeriodsComboFromRequested()
+{
+    // getRequestedPeriods() is clamped to [2,16] but the combo only exposes a
+    // discrete subset; fall back to 4 for any value with no matching item,
+    // otherwise the combo renders blank.
+    const int requested = AlsaAudioIODevice::getRequestedPeriods();
+    const bool inSet = (requested == 2 || requested == 3 || requested == 4
+                        || requested == 8 || requested == 16);
+    periodsCombo.setSelectedId (inSet ? requested : 4, juce::dontSendNotification);
+}
+
 void AudioSettingsPanel::applyPeriodsChange()
 {
     const int p = periodsCombo.getSelectedId();
     if (p <= 0) return;
 
+    const int previousPeriods = AlsaAudioIODevice::getRequestedPeriods();
     AlsaAudioIODevice::setRequestedPeriods (p);
 
     // The period count is read in AlsaAudioIODevice::open(), so the device has
@@ -774,10 +779,25 @@ void AudioSettingsPanel::applyPeriodsChange()
     // be an audible interruption for nothing.
     const auto* type = deviceManager.getCurrentDeviceType();
     if (type == nullptr || type->getTypeName() != "ALSA") return;
+    // With nothing open there is nothing to recreate, and the reopen below would
+    // START a device the user never asked this panel to start.
+    if (deviceManager.getCurrentDevice() == nullptr) return;
 
     const auto setup = deviceManager.getSetup();
     deviceManager.closeDevice();
+
+    const auto error = deviceManager.setSetup (setup, /*treatAsChosen*/ true);
+    if (error.empty()) return;
+
+    // The device would not come back at the new count. Put the count back and
+    // reopen at the old one: the alternative is leaving the user closed, silent
+    // and uninformed because they touched a dropdown.
+    AlsaAudioIODevice::setRequestedPeriods (previousPeriods);
+    syncPeriodsComboFromRequested();
     deviceManager.setSetup (setup, /*treatAsChosen*/ true);
+
+    if (auto* top = getTopLevelComponent())
+        showDuskAlert (*top, "Audio device error", error);
 }
 #endif
 
