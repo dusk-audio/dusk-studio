@@ -1458,7 +1458,7 @@ The picker filters by intent: only effect plugins appear when you're loading ont
 At the bottom of the picker are alternative buttons:
 
 - **Hardware insert**: configure the slot as an external hardware insert instead of a plugin.
-- **Load Soundfont**: open a file chooser for `.sfz` or `.sf2` files.
+- **Load Soundfont**: open a file chooser for `.sfz`, `.sf2`, and `.bank.xml` files. Shown on the instrument picker only - see *Multi-sample instruments*.
 - **Browse file…**: load a plugin by file path (useful for plugins not yet in the scan cache).
 - **Scan plugins**: re-scan.
 
@@ -1494,7 +1494,7 @@ OOP is supported on:
 - **Windows**: always.
 - **macOS**: requires macOS 14.4 or later. The plugin **editor** is hosted in-process via a shell instance and embeds as a centred modal like the other platforms — see *Opening the editor* above.
 
-Plugins run **in-process by default** — it gives the most responsive plugin editors and the lowest CPU cost. To run third-party binary plugins in the OOP sandbox instead, launch with `DUSKSTUDIO_USE_OOP_PLUGINS=1`; a plugin that crashes or hangs then takes down only the host child, not Dusk Studio. The switch reaches **standard-host rows only** on platforms where a format still uses that layer. Native rows — **CLAP**, **LV2-Native**, and **VST3-Native** on Linux and macOS, plus **AudioUnit** on macOS — always run in-process and ignore it, as *Native plugin hosting* above says. If the `dusk-studio-plugin-host` binary is missing the loader falls back to in-process automatically. Standard-host plugin **scanning** runs in the sandboxed child, so a plugin that crashes while being probed is blacklisted instead of crashing the app; native scanning follows the format-specific rules described under *Scanning*. (Dusk Studio's own bundled plugins always run in-process.)
+Plugins run **in-process by default** — it gives the most responsive plugin editors and the lowest CPU cost. To run third-party binary plugins in the OOP sandbox instead, launch with `DUSKSTUDIO_USE_OOP_PLUGINS=1`; a plugin that crashes or hangs then takes down only the host child, not Dusk Studio. The variable applies to standard-hosted plugins only: on Linux, rows tagged **CLAP**, **LV2-Native**, or **VST3-Native** go through Dusk Studio's own hosts and always run in-process regardless of the setting (see *Native plugin hosting*). The switch reaches **standard-host rows only** on platforms where a format still uses that layer. Native rows — **CLAP**, **LV2-Native**, and **VST3-Native** on Linux and macOS, plus **AudioUnit** on macOS — always run in-process and ignore it, as *Native plugin hosting* above says. If the `dusk-studio-plugin-host` binary is missing the loader falls back to in-process automatically. Standard-host plugin **scanning** runs in the sandboxed child, so a plugin that crashes while being probed is blacklisted instead of crashing the app; native scanning follows the format-specific rules described under *Scanning*. (Dusk Studio's own bundled plugins always run in-process.)
 
 When a plugin crashes in OOP mode:
 
@@ -1519,7 +1519,7 @@ When you load a session:
 
 ## Multi-sample instruments
 
-Click a MIDI track's **Insert** slot and choose **Load Soundfont** to pick a `.sfz` or `.sf2` file and load it through the **sfizz** engine. Most SoundFont and SFZ instrument libraries work directly. The processor exposes three runtime overrides:
+Click a MIDI track's **Insert** slot and choose **Load Soundfont** to load one through the **sfizz** engine. The chooser accepts `.sfz`, `.sf2`, and `.bank.xml` (an ARIA bank manifest, which Dusk Studio resolves to the bank's first program). Most SoundFont and SFZ instrument libraries work directly. The processor exposes three runtime overrides:
 
 - **Master volume**: −60 to +12 dB.
 - **Master tune**: −100 to +100 cents.
@@ -1543,7 +1543,7 @@ Right-click any insert slot (channel or aux) → **Configure as hardware insert*
 
 The configuration panel has six controls:
 
-- **Output channel**: which audio device output the channel's pre-insert signal is sent to. Choose a stereo pair on a stereo track; a single output on a mono track.
+- **Output channel**: which audio device output the channel's pre-insert signal is sent to. Stereo and Mid/Side send to an output pair; Mono sends to a single output (see **Format** below).
 - **Output volume**: a level trim on the send side, 0.0 to 1.0 (linear).
 - **Input channel**: which audio device input the returned signal is read from.
 - **Input volume**: a level trim on the return side, 0.0 to 1.0.

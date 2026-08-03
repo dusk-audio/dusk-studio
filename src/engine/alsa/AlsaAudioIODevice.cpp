@@ -281,6 +281,10 @@ const int kCandidateBufferSizes[] = {
 // cross-card duplex doesn't silently drift), and exercised by runSelfTest().
 std::string cardOfHwId (const std::string& id)
 {
+    // Prefix test, not a substring search: "plughw:1,0" CONTAINS "hw:" at offset
+    // 4, so the search alone would parse it as card "1" and link a plug device
+    // to an unrelated raw one.
+    if (! dusk::text::startsWith (id, "hw:")) return {};
     return dusk::text::upToFirstOccurrenceOf (
                dusk::text::fromFirstOccurrenceOf (id, "hw:", false), ",", false);
 }
@@ -655,7 +659,10 @@ std::string AlsaAudioIODevice::open (const device::ChannelSet& inputChannels,
         const auto outCard = cardOfHwId (outputId);
         const auto inCard  = cardOfHwId (inputId);
 
-        if (outCard == inCard)
+        // An id we cannot resolve yields an empty card, and two of those would
+        // compare equal and link a pair whose clock domain is unknown - the exact
+        // drift this guard exists to prevent.
+        if (! outCard.empty() && outCard == inCard)
         {
             snd_pcm_link (outHandle, inHandle);
         }
@@ -1403,6 +1410,7 @@ std::string AlsaAudioIODevice::runSelfTest()
             { "hw:0,0",               "0"       },  // numeric card id
             { "hw:UMC1820,0,2",       "UMC1820" },  // sub-device suffix
             { "front:CARD=UMC1820",   ""        },  // not hw: -> reject
+            { "plughw:1,0",           ""        },  // CONTAINS hw: but isn't one
             { "",                     ""        },
         };
         bool allOk = true;

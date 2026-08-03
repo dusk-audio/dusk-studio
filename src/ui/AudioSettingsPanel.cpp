@@ -765,10 +765,18 @@ void AudioSettingsPanel::applyPeriodsChange()
 
     AlsaAudioIODevice::setRequestedPeriods (p);
 
-    // Re-open the device with the same setup so setParameters() runs and
-    // picks up the new period count. Without this, the change only takes
-    // effect on the next manual device switch.
-    auto setup = deviceManager.getSetup();
+    // The period count is read in AlsaAudioIODevice::open(), so the device has
+    // to be recreated for it to apply. Re-submitting the SAME setup does not do
+    // that: setSetup short-circuits when the setup matches and the device is
+    // live, so the change silently waited for the next manual device switch.
+    // Closing first makes the re-apply a real open - but only for ALSA. On the
+    // PipeWire/JACK backend the setting is inert, and dropping the device would
+    // be an audible interruption for nothing.
+    const auto* type = deviceManager.getCurrentDeviceType();
+    if (type == nullptr || type->getTypeName() != "ALSA") return;
+
+    const auto setup = deviceManager.getSetup();
+    deviceManager.closeDevice();
     deviceManager.setSetup (setup, /*treatAsChosen*/ true);
 }
 #endif
