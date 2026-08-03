@@ -79,7 +79,7 @@ public:
         // tuner needle stays put instead of flickering to "no signal".
         samplesSinceScan_ += numSamples;
         if (samplesSinceScan_ < scanInterval_) return;
-        samplesSinceScan_ = 0;
+        samplesSinceScan_ %= scanInterval_;
 
         // YIN-style: d(τ) = Σ (x[k] - x[k+τ])² with running cumulative-
         // mean normalisation (CMNDF). Frame length = N - maxLag so
@@ -102,7 +102,7 @@ public:
         bool  inDip      = false;
         constexpr float kCMNDThreshold = 0.15f;  // YIN's harmonic threshold
 
-        for (int tau = minLag_; tau <= maxLag_; ++tau)
+        for (int tau = 1; tau <= maxLag_; ++tau)
         {
             float d = 0.0f;
             for (int k = 0; k < frameLen; k += kFrameStride)
@@ -113,7 +113,9 @@ public:
                 d += diff * diff;
             }
             runningCMND += d;
-            const float meanD = runningCMND / static_cast<float> (tau - minLag_ + 1);
+            if (tau < minLag_) continue;
+
+            const float meanD = runningCMND / static_cast<float> (tau);
             const float cmnd  = (meanD > 0.0f) ? d / meanD : 1.0f;
 
             // YIN absolute-threshold step: once cmnd dips below the threshold,
