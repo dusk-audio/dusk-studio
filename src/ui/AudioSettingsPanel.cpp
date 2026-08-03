@@ -754,13 +754,17 @@ void AudioSettingsPanel::applyRescan()
 #if defined(__linux__)
 void AudioSettingsPanel::syncPeriodsComboFromRequested()
 {
-    // getRequestedPeriods() is clamped to [2,16] but the combo only exposes a
-    // discrete subset; fall back to 4 for any value with no matching item,
-    // otherwise the combo renders blank.
+    // Select the count actually in force, or nothing. getRequestedPeriods() is
+    // clamped to [2,16] while the menu carries a curated subset, and pointing at
+    // a nearby item instead would state a period count the device is not
+    // running. Only this panel and the built-in default of 3 ever write the
+    // value, so every write today is already a menu id; leaving the no-match
+    // case blank keeps it honest rather than confident if that changes.
     const int requested = AlsaAudioIODevice::getRequestedPeriods();
-    const bool inSet = (requested == 2 || requested == 3 || requested == 4
-                        || requested == 8 || requested == 16);
-    periodsCombo.setSelectedId (inSet ? requested : 4, juce::dontSendNotification);
+    int matchIndex = -1;
+    for (int i = 0; i < periodsCombo.getNumItems(); ++i)
+        if (periodsCombo.getItemId (i) == requested) { matchIndex = i; break; }
+    periodsCombo.setSelectedItemIndex (matchIndex, juce::dontSendNotification);
 }
 
 void AudioSettingsPanel::applyPeriodsChange()
