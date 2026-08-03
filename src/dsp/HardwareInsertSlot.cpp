@@ -204,16 +204,13 @@ void HardwareInsertSlot::processStereoBlock (float* L, float* R, int numSamples,
 
     // Ping state machine. Runs once per block (state) plus per-sample
     // play/capture in the loop below. Correlation work is budgeted against the
-    // block's real duration so the audio thread never blows its time budget;
-    // the result lands a few blocks after capture finishes.
+    // block's real duration so the audio thread never blows its time budget.
     if (pingState == PingState::Correlating)
     {
         const int chirpLen = std::min (chirpLength, (int) chirpBuffer.size());
         const int maxK = std::max (0, (int) captureBuffer.size() - chirpLen);
-        // Each candidate lag costs chirpLen multiply-accumulates, and the block
-        // affords numSamples / sampleRate seconds of them. Deriving the count
-        // keeps the correlator at the same small share of the budget across
-        // every buffer size and sample rate instead of scaling inversely to both.
+        // Each candidate lag costs chirpLen multiply-accumulates. Scaling by
+        // numSamples / sampleRate keeps the callback share stable.
         const double blockSeconds = prepSampleRate > 0.0
                                       ? (double) numSamples / prepSampleRate
                                       : 0.0;

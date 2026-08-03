@@ -319,7 +319,7 @@ namespace
 // the slot writes to device output ch 0 reappears on device input ch 0
 // exactly `loopDelay` samples later. Returns the measured pingResult.
 int runPingLoopback (double sampleRate, int loopDelay, int maxBlocks = 2000,
-                     int blockSize = kBlock)
+                     int blockSize = kBlock, int* blocksUsed = nullptr)
 {
     duskstudio::HardwareInsertParams params;
     setRouting (params, 0, 1, 0, 1, 0, 0);
@@ -336,8 +336,9 @@ int runPingLoopback (double sampleRate, int loopDelay, int maxBlocks = 2000,
     std::vector<float> L ((size_t) blockSize, 0.0f), R ((size_t) blockSize, 0.0f);
     DeviceBuffers dev (2, blockSize);
 
-    for (int b = 0; b < maxBlocks
-         && params.pingPending.load (std::memory_order_acquire); ++b)
+    int processedBlocks = 0;
+    for (; processedBlocks < maxBlocks
+         && params.pingPending.load (std::memory_order_acquire); ++processedBlocks)
     {
         for (int i = 0; i < blockSize; ++i)
         {
@@ -356,6 +357,9 @@ int runPingLoopback (double sampleRate, int loopDelay, int maxBlocks = 2000,
             loopR.push_back (dev.outStore[1][(size_t) i]);
         }
     }
+
+    if (blocksUsed != nullptr)
+        *blocksUsed = processedBlocks;
 
     REQUIRE_FALSE (params.pingPending.load (std::memory_order_acquire));
     return params.pingResult.load (std::memory_order_relaxed);
@@ -376,15 +380,14 @@ TEST_CASE ("HardwareInsertSlot: ping measures loopback round-trip exactly",
     SECTION ("96 kHz - chirp longer than the old fixed capture window")
     {
         REQUIRE (runPingLoopback (96000.0, 1500) == 1500);
-
-    // The correlator's per-block budget is derived from the block's duration,
-    // so the smallest buffer at the highest rate gets the fewest candidate lags
-    // per block. It still has to sweep all kMaxDelaySamples of them rather than
-    // crawl to a halt, which is what a budget rounding to zero would do.
-    SECTION ("64-sample blocks at 96 kHz still converge")
-    {
-        REQUIRE (runPingLoopback (96000.0, 1500, 3000, 64) == 1500);
     }
+
+    SECTION ("96 kHz / 64 samples spreads correlation across callbacks")
+    {
+        int blocksUsed = 0;
+        REQUIRE (runPingLoopback (96000.0, 1500, 3000, 64, &blocksUsed) == 1500);
+        REQUIRE (blocksUsed > 1800);
+        REQUIRE (blocksUsed < 2300);
     }
 }
 
@@ -398,7 +401,7 @@ TEST_CASE ("HardwareInsertSlot: ping with silent return reports -1",
     params.pingResult .store (-1,   std::memory_order_relaxed);
     params.pingPending.store (true, std::memory_order_release);
 
-    std::vector<float> L ((size_t) kBlock, 0.0f), R ((size_t) kBlock, 0.0f);
+    std::vector<float> L (kBlock, 0.0f), R (kBlock, 0.0f);
     DeviceBuffers dev (2, kBlock);   // inputs stay all-zero
 
     for (int b = 0; b < 2000
@@ -426,7 +429,7 @@ TEST_CASE ("HardwareInsertSlot: ping with invalid input routing reports -2",
     params.pingResult .store (-1,   std::memory_order_relaxed);
     params.pingPending.store (true, std::memory_order_release);
 
-    std::vector<float> L ((size_t) kBlock, 0.0f), R ((size_t) kBlock, 0.0f);
+    std::vector<float> L (kBlock, 0.0f), R (kBlock, 0.0f);
     DeviceBuffers dev (2, kBlock);
 
     for (int b = 0; b < 2000
