@@ -2,6 +2,8 @@
 #include "AppConfig.h"
 #include <algorithm>
 #include <limits>
+#include <string>
+#include "DuskAlerts.h"
 #include "MidiBindingsPanel.h"
 #include "SelfTestPanel.h"
 #include "../engine/AudioEngine.h"
@@ -51,15 +53,7 @@ AudioSettingsPanel::AudioSettingsPanel (device::DeviceManager& dm,
     // latency but give the kernel more headroom against scheduler jitter.
     for (int p : { 2, 3, 4, 8, 16 })
         periodsCombo.addItem (juce::String (p), p);
-    {
-        // getRequestedPeriods() is clamped to [2,16] but the combo only exposes
-        // a discrete subset; fall back to 4 (JUCE default) for any value that
-        // doesn't have a corresponding item, otherwise the combo renders blank.
-        const int requested = AlsaAudioIODevice::getRequestedPeriods();
-        const bool inSet = (requested == 2 || requested == 3 || requested == 4
-                            || requested == 8 || requested == 16);
-        periodsCombo.setSelectedId (inSet ? requested : 4, juce::dontSendNotification);
-    }
+    syncPeriodsComboFromRequested();
     periodsCombo.setTooltip ("ALSA period count. Only applies to ALSA backend. "
                               "Increase if you hear xruns or distortion at low "
                               "buffer sizes; decrease for lower latency.");
@@ -758,18 +752,69 @@ void AudioSettingsPanel::applyRescan()
 }
 
 #if defined(__linux__)
+void AudioSettingsPanel::syncPeriodsComboFromRequested()
+{
+    // Select the requested count, or nothing. getRequestedPeriods() is
+    // clamped to [2,16] while the menu carries a curated subset, and pointing at
+    // a nearby item would misstate the setting used for the next ALSA open.
+    // Only this panel and the built-in default of 3 ever write the
+    // value, so every write today is already a menu id; leaving the no-match
+    // case blank keeps it honest rather than confident if that changes.
+    const int requested = AlsaAudioIODevice::getRequestedPeriods();
+    int matchIndex = -1;
+    for (int i = 0; i < periodsCombo.getNumItems(); ++i)
+        if (periodsCombo.getItemId (i) == requested) { matchIndex = i; break; }
+    periodsCombo.setSelectedItemIndex (matchIndex, juce::dontSendNotification);
+}
+
 void AudioSettingsPanel::applyPeriodsChange()
 {
     const int p = periodsCombo.getSelectedId();
     if (p <= 0) return;
 
+    const int previousPeriods = AlsaAudioIODevice::getRequestedPeriods();
     AlsaAudioIODevice::setRequestedPeriods (p);
 
-    // Re-open the device with the same setup so setParameters() runs and
-    // picks up the new period count. Without this, the change only takes
-    // effect on the next manual device switch.
-    auto setup = deviceManager.getSetup();
-    deviceManager.setSetup (setup, /*treatAsChosen*/ true);
+    // The period count is read in AlsaAudioIODevice::open(), so the device has
+    // to be recreated for it to apply. Re-submitting the SAME setup does not do
+    // that: setSetup short-circuits when the setup matches and the device is
+    // live, so the change silently waited for the next manual device switch.
+    // Closing first makes the re-apply a real open - but only for ALSA. On the
+    // PipeWire/JACK backend the setting is inert, and dropping the device would
+    // be an audible interruption for nothing.
+    const auto* type = deviceManager.getCurrentDeviceType();
+    if (type == nullptr || type->getTypeName() != "ALSA") return;
+    // With nothing open there is nothing to recreate, and the reopen below would
+    // START a device the user never asked this panel to start.
+    if (deviceManager.getCurrentDevice() == nullptr) return;
+
+    const auto setup = deviceManager.getSetup();
+    deviceManager.closeDevice();
+
+    const auto error = deviceManager.setSetup (setup, /*treatAsChosen*/ true);
+    if (error.empty()) return;
+
+    // The device would not come back at the new count. Put the count back and
+    // reopen at the old one: the alternative is leaving the user closed, silent
+    // and uninformed because they touched a dropdown. The rollback can fail too
+    // (the interface went away mid-change), and that outcome is worse than the
+    // one that started this, so it has to reach the user rather than the
+    // original error alone.
+    AlsaAudioIODevice::setRequestedPeriods (previousPeriods);
+    const auto rollbackError = deviceManager.setSetup (setup, /*treatAsChosen*/ true);
+    syncPeriodsComboFromRequested();
+
+    std::string message = "Could not reopen the audio device with "
+                        + std::to_string (p) + " periods:\n\n" + error;
+    if (rollbackError.empty())
+        message += "\n\nReverted to " + std::to_string (previousPeriods) + " periods.";
+    else
+        message += "\n\nReverting to " + std::to_string (previousPeriods)
+                 + " periods also failed:\n\n" + rollbackError
+                 + "\n\nNo audio device is open. Pick one in Audio Settings.";
+
+    if (auto* top = getTopLevelComponent())
+        showDuskAlert (*top, "Audio device error", message);
 }
 #endif
 

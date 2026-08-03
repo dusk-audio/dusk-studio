@@ -1424,7 +1424,7 @@ Dusk Studio scans and hosts:
 - **LV2** on Linux and macOS. Effects and instruments load through Dusk Studio's own native LV2 host (rows tagged **LV2-Native**). If a plugin update adds new instruments, run **Scan plugins** for them to appear.
 - **CLAP** on Linux and macOS, through the native host — effects and instruments.
 - **AU** on macOS only, through Dusk Studio's native Audio Unit host — effects and instruments.
-- **Native multi-sampler** (`.sfz` and `.sf2` files, both via the built-in sfizz engine — SF2 is converted to SFZ on load) on all platforms.
+- **Native multi-sampler** (`.sfz`, `.sf2`, and ARIA `.bank.xml` files via the built-in sfizz engine — SF2 is converted to SFZ on load, while a bank manifest opens its first program) on all platforms.
 
 There is no VST2 support. See *Native plugin hosting (Linux and macOS)* below for what the native hosts change.
 
@@ -1455,10 +1455,10 @@ On Linux and macOS, both the effect and instrument pickers list LV2 and VST3 plu
 
 The picker filters by intent: only effect plugins appear when you're loading onto a channel insert or aux lane; only instruments appear when you're loading onto a MIDI track.
 
-At the bottom of the picker are alternative buttons:
+The insert chooser and the bottom of the picker also provide these actions where applicable:
 
 - **Hardware insert**: configure the slot as an external hardware insert instead of a plugin.
-- **Load Soundfont**: open a file chooser for `.sfz` or `.sf2` files.
+- **Soundfont (.sfz / .sf2 / .bank.xml)**: open a soundfont directly. Choosing this on an audio track converts the track to MIDI; see *Multi-sample instruments*.
 - **Browse file…**: load a plugin by file path (useful for plugins not yet in the scan cache).
 - **Scan plugins**: re-scan.
 
@@ -1494,7 +1494,7 @@ OOP is supported on:
 - **Windows**: always.
 - **macOS**: requires macOS 14.4 or later. The plugin **editor** is hosted in-process via a shell instance and embeds as a centred modal like the other platforms — see *Opening the editor* above.
 
-Plugins run **in-process by default** — it gives the most responsive plugin editors and the lowest CPU cost. To run third-party binary plugins in the OOP sandbox instead, launch with `DUSKSTUDIO_USE_OOP_PLUGINS=1`; a plugin that crashes or hangs then takes down only the host child, not Dusk Studio. The switch reaches **standard-host rows only** on platforms where a format still uses that layer. Native rows — **CLAP**, **LV2-Native**, and **VST3-Native** on Linux and macOS, plus **AudioUnit** on macOS — always run in-process and ignore it, as *Native plugin hosting* above says. If the `dusk-studio-plugin-host` binary is missing the loader falls back to in-process automatically. Standard-host plugin **scanning** runs in the sandboxed child, so a plugin that crashes while being probed is blacklisted instead of crashing the app; native scanning follows the format-specific rules described under *Scanning*. (Dusk Studio's own bundled plugins always run in-process.)
+Plugins run **in-process by default** — it gives the most responsive plugin editors and the lowest CPU cost. To run third-party binary plugins in the OOP sandbox instead, launch with `DUSKSTUDIO_USE_OOP_PLUGINS=1`; a plugin that crashes or hangs then takes down only the host child, not Dusk Studio. The switch reaches standard-host rows only. Native rows — **CLAP**, **LV2-Native**, and **VST3-Native** on Linux and macOS, plus **AudioUnit** on macOS — always run in-process and ignore it, as *Native plugin hosting* above says. If the `dusk-studio-plugin-host` binary is missing the loader falls back to in-process automatically. Standard-host plugin **scanning** runs in the sandboxed child, so a plugin that crashes while being probed is blacklisted instead of crashing the app; native scanning follows the format-specific rules described under *Scanning*. (Dusk Studio's own bundled plugins always run in-process.)
 
 When a plugin crashes in OOP mode:
 
@@ -1519,7 +1519,7 @@ When you load a session:
 
 ## Multi-sample instruments
 
-Click a MIDI track's **Insert** slot and choose **Load Soundfont** to pick a `.sfz` or `.sf2` file and load it through the **sfizz** engine. Most SoundFont and SFZ instrument libraries work directly. The processor exposes three runtime overrides:
+Click a track's **Insert** slot and choose **Soundfont (.sfz / .sf2 / .bank.xml)** to load one through the **sfizz** engine. If the track is not already MIDI, Dusk Studio converts it automatically. An ARIA bank manifest resolves to the bank's first program. Most SoundFont and SFZ instrument libraries work directly. The processor exposes three runtime overrides:
 
 - **Master volume**: −60 to +12 dB.
 - **Master tune**: −100 to +100 cents.
@@ -1541,9 +1541,9 @@ A hardware insert routes a channel or aux's signal out through one of your audio
 
 Right-click any insert slot (channel or aux) → **Configure as hardware insert**, or click **Hardware insert** in the plugin picker.
 
-The configuration panel has six controls:
+The configuration panel has seven controls:
 
-- **Output channel**: which audio device output the channel's pre-insert signal is sent to. Choose a stereo pair on a stereo track; a single output on a mono track.
+- **Output channel**: which audio device output the channel's pre-insert signal is sent to. Stereo and Mid/Side send to an output pair; Mono sends to a single output (see **Format** below).
 - **Output volume**: a level trim on the send side, 0.0 to 1.0 (linear).
 - **Input channel**: which audio device input the returned signal is read from.
 - **Input volume**: a level trim on the return side, 0.0 to 1.0.

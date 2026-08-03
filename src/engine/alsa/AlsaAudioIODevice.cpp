@@ -281,6 +281,10 @@ const int kCandidateBufferSizes[] = {
 // cross-card duplex doesn't silently drift), and exercised by runSelfTest().
 std::string cardOfHwId (const std::string& id)
 {
+    // Prefix test, not a substring search: "plughw:1,0" CONTAINS "hw:" at offset
+    // 4, so the search alone would parse it as card "1" and link a plug device
+    // to an unrelated raw one.
+    if (! dusk::text::startsWith (id, "hw:")) return {};
     return dusk::text::upToFirstOccurrenceOf (
                dusk::text::fromFirstOccurrenceOf (id, "hw:", false), ",", false);
 }
@@ -655,9 +659,17 @@ std::string AlsaAudioIODevice::open (const device::ChannelSet& inputChannels,
         const auto outCard = cardOfHwId (outputId);
         const auto inCard  = cardOfHwId (inputId);
 
-        if (outCard == inCard)
+        // An id we cannot resolve yields an empty card, and two of those would
+        // compare equal and link a pair whose clock domain is unknown - the exact
+        // drift this guard exists to prevent.
+        if (! outCard.empty() && outCard == inCard)
         {
-            snd_pcm_link (outHandle, inHandle);
+            const int linkResult = snd_pcm_link (outHandle, inHandle);
+            if (linkResult < 0)
+                std::fprintf (stderr,
+                              "[Dusk Studio/ALSA] WARNING: could not link input \"%s\" "
+                              "and output \"%s\": %s. Starting them independently.\n",
+                              inputId.c_str(), outputId.c_str(), snd_strerror (linkResult));
         }
         else
         {
@@ -856,7 +868,21 @@ void AlsaAudioIODevice::start (device::IODeviceCallback* newCallback)
     if (startHandle != nullptr
         && snd_pcm_state (startHandle) != SND_PCM_STATE_RUNNING)
     {
-        snd_pcm_start (startHandle);
+        const int startResult = snd_pcm_start (startHandle);
+        if (startResult < 0)
+            std::fprintf (stderr, "[Dusk Studio/ALSA] WARNING: stream start failed: %s\n",
+                          snd_strerror (startResult));
+    }
+
+    // Cross-card duplex is intentionally unlinked, and a same-card link can be
+    // rejected by the driver. In either case starting playback does not start
+    // capture, so make sure the input is running before its first wait.
+    if (inHandle != nullptr && snd_pcm_state (inHandle) != SND_PCM_STATE_RUNNING)
+    {
+        const int inputStartResult = snd_pcm_start (inHandle);
+        if (inputStartResult < 0)
+            std::fprintf (stderr, "[Dusk Studio/ALSA] WARNING: capture start failed: %s\n",
+                          snd_strerror (inputStartResult));
     }
 
     // The I/O thread self-promotes to SCHED_RR as its first act (see
@@ -1403,6 +1429,7 @@ std::string AlsaAudioIODevice::runSelfTest()
             { "hw:0,0",               "0"       },  // numeric card id
             { "hw:UMC1820,0,2",       "UMC1820" },  // sub-device suffix
             { "front:CARD=UMC1820",   ""        },  // not hw: -> reject
+            { "plughw:1,0",           ""        },  // CONTAINS hw: but isn't one
             { "",                     ""        },
         };
         bool allOk = true;

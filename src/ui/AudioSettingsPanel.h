@@ -144,6 +144,9 @@ private:
 
 #if defined(__linux__)
     void applyPeriodsChange();
+    // Point the combo at the period count requested for the next ALSA open.
+    // Shared by construction and rollback so the dropdown follows the setting.
+    void syncPeriodsComboFromRequested();
 #endif
     void applyOversamplingChange();
     void applyMulticoreChange();
