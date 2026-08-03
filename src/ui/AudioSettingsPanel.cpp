@@ -754,10 +754,10 @@ void AudioSettingsPanel::applyRescan()
 #if defined(__linux__)
 void AudioSettingsPanel::syncPeriodsComboFromRequested()
 {
-    // Select the count actually in force, or nothing. getRequestedPeriods() is
+    // Select the requested count, or nothing. getRequestedPeriods() is
     // clamped to [2,16] while the menu carries a curated subset, and pointing at
-    // a nearby item instead would state a period count the device is not
-    // running. Only this panel and the built-in default of 3 ever write the
+    // a nearby item would misstate the setting used for the next ALSA open.
+    // Only this panel and the built-in default of 3 ever write the
     // value, so every write today is already a menu id; leaving the no-match
     // case blank keeps it honest rather than confident if that changes.
     const int requested = AlsaAudioIODevice::getRequestedPeriods();

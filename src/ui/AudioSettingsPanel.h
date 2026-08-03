@@ -144,9 +144,8 @@ private:
 
 #if defined(__linux__)
     void applyPeriodsChange();
-    // Point the combo at whatever period count is actually in force. Shared by
-    // construction and by the rollback when a reopen at a new count fails, so
-    // the dropdown never advertises a value the device is not running.
+    // Point the combo at the period count requested for the next ALSA open.
+    // Shared by construction and rollback so the dropdown follows the setting.
     void syncPeriodsComboFromRequested();
 #endif
     void applyOversamplingChange();
