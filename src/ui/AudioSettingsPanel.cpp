@@ -2,6 +2,7 @@
 #include "AppConfig.h"
 #include <algorithm>
 #include <limits>
+#include <string>
 #include "DuskAlerts.h"
 #include "MidiBindingsPanel.h"
 #include "SelfTestPanel.h"
@@ -791,13 +792,25 @@ void AudioSettingsPanel::applyPeriodsChange()
 
     // The device would not come back at the new count. Put the count back and
     // reopen at the old one: the alternative is leaving the user closed, silent
-    // and uninformed because they touched a dropdown.
+    // and uninformed because they touched a dropdown. The rollback can fail too
+    // (the interface went away mid-change), and that outcome is worse than the
+    // one that started this, so it has to reach the user rather than the
+    // original error alone.
     AlsaAudioIODevice::setRequestedPeriods (previousPeriods);
+    const auto rollbackError = deviceManager.setSetup (setup, /*treatAsChosen*/ true);
     syncPeriodsComboFromRequested();
-    deviceManager.setSetup (setup, /*treatAsChosen*/ true);
+
+    std::string message = "Could not reopen the audio device with "
+                        + std::to_string (p) + " periods:\n\n" + error;
+    if (rollbackError.empty())
+        message += "\n\nReverted to " + std::to_string (previousPeriods) + " periods.";
+    else
+        message += "\n\nReverting to " + std::to_string (previousPeriods)
+                 + " periods also failed:\n\n" + rollbackError
+                 + "\n\nNo audio device is open. Pick one in Audio Settings.";
 
     if (auto* top = getTopLevelComponent())
-        showDuskAlert (*top, "Audio device error", error);
+        showDuskAlert (*top, "Audio device error", message);
 }
 #endif
 
