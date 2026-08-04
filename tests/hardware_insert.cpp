@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <deque>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -318,12 +319,13 @@ namespace
 // Drive the slot's ping through a simulated device loopback: everything
 // the slot writes to device output ch 0 reappears on device input ch 0
 // exactly `loopDelay` samples later. Returns the measured pingResult.
-int runPingLoopback (double sampleRate, int loopDelay, int maxBlocks = 2000)
+int runPingLoopback (double sampleRate, int loopDelay, int maxBlocks = 2000,
+                     int blockSize = kBlock, int* blocksUsed = nullptr)
 {
     duskstudio::HardwareInsertParams params;
     setRouting (params, 0, 1, 0, 1, 0, 0);
     auto slot = std::make_unique<duskstudio::HardwareInsertSlot>();
-    slot->prepare (sampleRate, kBlock);
+    slot->prepare (sampleRate, blockSize);
     slot->bind (params);
 
     std::deque<float> loopL ((size_t) loopDelay, 0.0f);
@@ -332,13 +334,14 @@ int runPingLoopback (double sampleRate, int loopDelay, int maxBlocks = 2000)
     params.pingResult .store (-1,   std::memory_order_relaxed);
     params.pingPending.store (true, std::memory_order_release);
 
-    std::vector<float> L (kBlock, 0.0f), R (kBlock, 0.0f);
-    DeviceBuffers dev (2, kBlock);
+    std::vector<float> L ((size_t) blockSize, 0.0f), R ((size_t) blockSize, 0.0f);
+    DeviceBuffers dev (2, blockSize);
 
-    for (int b = 0; b < maxBlocks
-         && params.pingPending.load (std::memory_order_acquire); ++b)
+    int processedBlocks = 0;
+    for (; processedBlocks < maxBlocks
+         && params.pingPending.load (std::memory_order_acquire); ++processedBlocks)
     {
-        for (int i = 0; i < kBlock; ++i)
+        for (int i = 0; i < blockSize; ++i)
         {
             dev.inStore[0][(size_t) i] = loopL.front(); loopL.pop_front();
             dev.inStore[1][(size_t) i] = loopR.front(); loopR.pop_front();
@@ -346,15 +349,18 @@ int runPingLoopback (double sampleRate, int loopDelay, int maxBlocks = 2000)
         std::fill (L.begin(), L.end(), 0.0f);
         std::fill (R.begin(), R.end(), 0.0f);
         dev.zeroOutputs();
-        slot->processStereoBlock (L.data(), R.data(), kBlock,
+        slot->processStereoBlock (L.data(), R.data(), blockSize,
                                     dev.inPtrs.data(), 2,
                                     dev.outPtrs.data(), 2);
-        for (int i = 0; i < kBlock; ++i)
+        for (int i = 0; i < blockSize; ++i)
         {
             loopL.push_back (dev.outStore[0][(size_t) i]);
             loopR.push_back (dev.outStore[1][(size_t) i]);
         }
     }
+
+    if (blocksUsed != nullptr)
+        *blocksUsed = processedBlocks;
 
     REQUIRE_FALSE (params.pingPending.load (std::memory_order_acquire));
     return params.pingResult.load (std::memory_order_relaxed);
@@ -375,6 +381,40 @@ TEST_CASE ("HardwareInsertSlot: ping measures loopback round-trip exactly",
     SECTION ("96 kHz - chirp longer than the old fixed capture window")
     {
         REQUIRE (runPingLoopback (96000.0, 1500) == 1500);
+    }
+
+    SECTION ("invalid sample rate uses the nominal fallback")
+    {
+        REQUIRE (runPingLoopback (0.0, 1500) == 1500);
+        REQUIRE (runPingLoopback (std::numeric_limits<double>::infinity(), 1500) == 1500);
+    }
+
+    SECTION ("96 kHz / 64 samples spreads correlation across callbacks")
+    {
+        int blocksUsed = 0;
+        REQUIRE (runPingLoopback (96000.0, 1500, 3000, 64, &blocksUsed) == 1500);
+        REQUIRE (blocksUsed > 1800);
+        REQUIRE (blocksUsed < 2300);
+    }
+
+    SECTION ("fractional candidate credit does not overspend on tiny blocks")
+    {
+        constexpr double sampleRate = 96000.0;
+        constexpr int blockSize = 4;
+        constexpr int chirpLength = duskstudio::HardwareInsertSlot::kChirpMaxSamples;
+        constexpr int candidateCount = duskstudio::HardwareInsertSlot::kMaxDelaySamples + 1;
+        constexpr double candidatesPerBlock =
+            duskstudio::HardwareInsertSlot::kCorrelationMacsPerSecond
+            * ((double) blockSize / sampleRate) / (double) chirpLength;
+        constexpr int captureBlocks =
+            (chirpLength + candidateCount + blockSize - 1) / blockSize;
+        const int minimumBlocks = captureBlocks
+                                + (int) std::ceil ((double) candidateCount
+                                                   / candidatesPerBlock);
+
+        int blocksUsed = 0;
+        REQUIRE (runPingLoopback (sampleRate, 1500, 40000, blockSize, &blocksUsed) == 1500);
+        REQUIRE (blocksUsed >= minimumBlocks);
     }
 }
 
