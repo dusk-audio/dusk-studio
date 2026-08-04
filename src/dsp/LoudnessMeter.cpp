@@ -131,14 +131,6 @@ void LoudnessMeter::finishBlock()
     // Mean squared over this 100 ms block (sum of L^2 + R^2 across both
     // channels, normalized by samples × 2 channels of weight 1.0).
     const double ms = blockSumSquared / std::max (1, blockSize);
-    if (ms > kAbsoluteGateMS)
-    {
-        absoluteGateSum += ms;
-        ++absoluteGateCount;
-        const int bin = gateBinFor (ms);
-        gateBinSum   [(size_t) bin] += ms;
-        gateBinCount [(size_t) bin] += 1;
-    }
 
     momentaryRingMS [(size_t) (ringWritePos % kMomentaryBlocks)] = ms;
     shortTermRingMS [(size_t) (ringWritePos % kShortTermBlocks)] = ms;
@@ -155,6 +147,20 @@ void LoudnessMeter::finishBlock()
     const double sMean = mean (shortTermRingMS, kShortTermBlocks);
     momentaryLufs.store (msToLUFS (mMean), std::memory_order_relaxed);
     shortTermLufs.store (msToLUFS (sMean), std::memory_order_relaxed);
+
+    // BS.1770-4 gates 400 ms blocks overlapping by 75 %, i.e. one gating block
+    // per 100 ms step once a full window exists. The sub-blocks are equal
+    // length, so the mean of the momentary ring IS that window's mean square -
+    // gating the 100 ms sub-blocks directly instead discards short dips that
+    // the 400 ms window rides over, and disagrees with R128 compliance meters.
+    if (ringWritePos >= kMomentaryBlocks && mMean > kAbsoluteGateMS)
+    {
+        absoluteGateSum += mMean;
+        ++absoluteGateCount;
+        const int bin = gateBinFor (mMean);
+        gateBinSum   [(size_t) bin] += mMean;
+        gateBinCount [(size_t) bin] += 1;
+    }
 
     publishIntegrated();
 

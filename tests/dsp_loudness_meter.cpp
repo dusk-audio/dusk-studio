@@ -157,10 +157,18 @@ TEST_CASE ("LoudnessMeter integrated gating", "[dsp][loudness]")
         feedTone (m, sr, 0.5f, 12);
         const float loud = m.getMomentaryLufs();
 
-        // 20 dB down: above the -70 LUFS absolute gate, so these blocks reach
+        // 20 dB down: above the -70 LUFS absolute gate, so these windows reach
         // the histogram, but below the relative gate once the loud half sets
-        // the mean. Averaging them in instead would read ~2.97 LU lower.
+        // the mean.
         feedTone (m, sr, 0.05f, 12);
-        REQUIRE_THAT (m.getIntegratedLufs(), WithinAbs (loud, 0.3f));
+
+        // Gating windows are 400 ms stepping 100 ms, so three of them straddle
+        // the level change and survive the relative gate alongside the fully
+        // loud ones, landing ~0.6 LU below the loud passage. The bounds bracket
+        // that: gating 100 ms sub-blocks directly would sit back up at `loud`,
+        // and averaging the quiet half in ungated would read ~3 LU lower.
+        const float integrated = m.getIntegratedLufs();
+        REQUIRE (integrated < loud - 0.3f);
+        REQUIRE (integrated > loud - 1.0f);
     }
 }

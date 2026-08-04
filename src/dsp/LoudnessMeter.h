@@ -26,8 +26,8 @@ namespace duskstudio
 //      atomic unit of BS.1770 measurement.
 //   3. Each completed block is pushed into a ring buffer; sliding-window
 //      means over the last 4 blocks (M) and 30 blocks (S) give those
-//      readings. The integrated reading averages all gated blocks since
-//      the last reset.
+//      readings. The integrated reading averages the gated 400 ms windows
+//      (the M window, one per 100 ms step) since the last reset.
 //
 // Threading:
 //   - prepare() / reset() - message thread with audio quiesced (prepare path).
