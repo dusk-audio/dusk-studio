@@ -857,6 +857,44 @@ JObj busToObject (const Bus& a)
     return obj;
 }
 
+// RFC 7396 reads a null member as "delete this key". Here a null can only mean
+// "unspecified", and deleting the key would drop the slot back onto whatever
+// the previously loaded session left in the live Session - the exact hole the
+// overlay exists to close. Objects are filtered recursively; arrays pass
+// through untouched so they keep replacing wholesale.
+nlohmann::json withoutNulls (const nlohmann::json& v)
+{
+    if (! v.is_object()) return v;
+    nlohmann::json out = nlohmann::json::object();
+    for (auto it = v.begin(); it != v.end(); ++it)
+        if (! it.value().is_null())
+            out[it.key()] = withoutNulls (it.value());
+    return out;
+}
+
+const nlohmann::json& objectAt (const nlohmann::json& arr, int index)
+{
+    static const nlohmann::json empty = nlohmann::json::object();
+    return index >= 0 && index < (int) arr.size() && arr[(size_t) index].is_object()
+               ? arr[(size_t) index] : empty;
+}
+
+// Every mixer setter in the restore path is conditional on its key being
+// present, so a slot that omits one keeps the previously loaded session's
+// value for it. Overlay what the file gives on the serialized model default,
+// which carries every key, so an absent key resolves to the model default
+// instead of to live state. A slot that is missing, not an object, or empty
+// comes back as the default whole.
+nlohmann::json slotWithDefaults (const nlohmann::json& defaults,
+                                 const nlohmann::json& arr, int index)
+{
+    nlohmann::json merged = objectAt (defaults, index);
+    const auto& fromFile = objectAt (arr, index);
+    if (! fromFile.empty())
+        merged.merge_patch (withoutNulls (fromFile));
+    return merged;
+}
+
 void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
                    double defaultRecordBpm,
                    const juce::File& sessionDir,
@@ -929,9 +967,13 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
     // unrouted rather than pointing at whatever now sits at the old slot. The
     // legacy raw int is still honoured for sessions saved before identifiers
     // existed.
-    if (json::has (v, "midi_input_id"))
+    // Keyed on a NON-EMPTY identifier, not on the key being present: an unrouted
+    // track serializes midi_input_id as "", so presence alone would send a
+    // session that only carries the legacy index down the identifier path and
+    // discard the index.
+    if (auto id = json::getString (v, "midi_input_id"); ! id.empty())
     {
-        t.midiInputIdentifier = json::getString (v, "midi_input_id");
+        t.midiInputIdentifier = id;
         t.midiInputIndex.store (-1, std::memory_order_relaxed);
     }
     else
@@ -940,9 +982,9 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
         t.midiInputIdentifier = juce::String();
     }
     // Same shape on the external-MIDI-output side.
-    if (json::has (v, "midi_output_id"))
+    if (auto id = json::getString (v, "midi_output_id"); ! id.empty())
     {
-        t.midiOutputIdentifier = json::getString (v, "midi_output_id");
+        t.midiOutputIdentifier = id;
         t.midiOutputIndex.store (-1, std::memory_order_relaxed);
     }
     else
@@ -1855,29 +1897,19 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     // default.
     // A listed-but-non-object bus / aux entry ("buses": [null]) is restored from
     // the defaults too, so the default sections have to be there for it as well.
-    const auto hasNonObject = [] (const nlohmann::json& arr)
-    {
-        return std::any_of (arr.begin(), arr.end(),
-                            [] (const nlohmann::json& v) { return ! v.is_object(); });
-    };
-    nlohmann::json sectionDefaults;
-    if ((int) json::array (root, "tracks").size() < Session::kNumTracks
-        || (int) json::array (root, "buses").size() < Session::kNumBuses
-        || (int) json::array (root, "aux_lanes").size() < Session::kNumAuxLanes
-        || hasNonObject (json::array (root, "tracks"))
-        || hasNonObject (json::array (root, "buses"))
-        || hasNonObject (json::array (root, "aux_lanes")))
-    {
-        sectionDefaults = nlohmann::json::parse (serialize (Session{}).toStdString(), nullptr, false);
-        // Re-parsing our own output cannot fail in practice, but a discarded
-        // value degrades straight back into the ghost-content bug the defaults
-        // exist to prevent, so say so rather than letting it pass unremarked.
-        if (sectionDefaults.is_discarded())
-            std::fprintf (stderr,
-                          "[Dusk Studio/SessionSerializer] the default-session template failed "
-                          "to parse; slots this file does not describe keep the previously "
-                          "loaded session's state\n");
-    }
+    // Built for every load, not just short files: a slot that IS listed can be
+    // partially populated, and each key it omits needs the same model default a
+    // missing slot gets.
+    nlohmann::json sectionDefaults = nlohmann::json::parse (
+        serialize (Session{}).toStdString(), nullptr, false);
+    // Re-parsing our own output cannot fail in practice, but a discarded
+    // value degrades straight back into the ghost-content bug the defaults
+    // exist to prevent, so say so rather than letting it pass unremarked.
+    if (sectionDefaults.is_discarded())
+        std::fprintf (stderr,
+                      "[Dusk Studio/SessionSerializer] the default-session template failed "
+                      "to parse; keys this file does not describe keep the previously "
+                      "loaded session's state\n");
 
     {
         const auto& tracks = ! json::array (root, "tracks").empty()
@@ -1891,12 +1923,13 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         // slot driven from {} keeps the prior session's name, colour, fader, pan,
         // sends and hardware routing. Drive it from the serialized default track,
         // which carries every key at its model default. A slot that IS listed but
-        // isn't an object ("tracks": [null]) takes the same route.
+        // isn't an object ("tracks": [null]) takes the same route, and one that is
+        // listed but only partially populated gets the default for each key it
+        // leaves out.
         const auto& trackDefaults = json::array (sectionDefaults, "tracks");
         for (int i = 0; i < Session::kNumTracks; ++i)
             restoreTrack (s.track (i), i,
-                          i < (int) tracks.size() && tracks[(size_t) i].is_object()
-                              ? tracks[(size_t) i] : trackDefaults[(size_t) i],
+                          slotWithDefaults (trackDefaults, tracks, i),
                           sessionLoadBpm, s.getSessionDirectory(),
                           s.missingAudioFilesAfterLoad);
     }
@@ -1905,9 +1938,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                                      ? json::array (root, "buses") : json::array (sectionDefaults, "buses");
         const auto& busDefaults = json::array (sectionDefaults, "buses");
         for (int i = 0; i < Session::kNumBuses; ++i)
-            restoreBus (s.bus (i),
-                        i < (int) busesArr.size() && busesArr[(size_t) i].is_object()
-                            ? busesArr[(size_t) i] : busDefaults[(size_t) i],
+            restoreBus (s.bus (i), slotWithDefaults (busDefaults, busesArr, i),
                         sessionLoadBpm);
     }
     {
@@ -1916,8 +1947,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         const auto& auxDefaults  = json::array (sectionDefaults, "aux_lanes");
         for (int i = 0; i < Session::kNumAuxLanes; ++i)
         {
-            const auto& v = i < (int) auxLanesArr.size() && auxLanesArr[(size_t) i].is_object()
-                                ? auxLanesArr[(size_t) i] : auxDefaults[(size_t) i];
+            const auto v = slotWithDefaults (auxDefaults, auxLanesArr, i);
             auto& lane = s.auxLane (i);
             if (auto str = json::getString (v, "name");   ! str.empty()) lane.name   = str;
             if (auto str = json::getString (v, "colour"); ! str.empty()) lane.colour = hexToColour (str, lane.colour);
