@@ -972,6 +972,8 @@ Right of the chain are three loudness readouts:
 
 A streaming-platform preset picker (Spotify, Apple Music, YouTube, Netflix, etc.) colour-codes the integrated LUFS and true-peak readings according to that platform's target. Pressing **Reset integrated** clears the integrated reading so you can re-measure from a known point.
 
+The integrated reading measures up to an hour of program. Past that it holds where it is rather than continuing to absorb material, so for anything longer, reset it and measure the section you actually care about.
+
 ## Exporting the master
 
 **Export master…** renders the mastering chain offline. Pick a delivery preset first — **WAV 24-bit at the session rate** (archive/streaming), **WAV 16-bit 44.1 kHz with TPDF dither** (CD spec), or **MP3 320 kbps** — then a destination (defaults to `master.wav` / `master.mp3` in the session folder). A progress dialog shows the output path and a bar; the render runs as fast as the CPU allows and you can cancel mid-render.
