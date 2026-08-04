@@ -107,7 +107,11 @@ private:
     // proportion to elapsed audio (the budgeting the hardware-insert ping
     // uses), completing inside one 100 ms gating period. One unamortised pass
     // measures 27 us, which is 16 % of a 16-sample callback at 96 kHz.
-    static constexpr int kMaxWindows = 36000;   // 1 hour at one per 100 ms
+    // Capacity for RETAINED windows. Anything under the absolute gate is never
+    // retained, so this bounds an hour of material that counts toward the
+    // reading rather than an hour of wall clock - a session left running
+    // between takes keeps integrating instead of freezing on elapsed time.
+    static constexpr int kMaxWindows = 36000;   // 1 hour of gated-in windows
 
     // Sized once in prepare() so reset() - which runs on the audio thread for a
     // deferred requestReset - never allocates. Saturating at kMaxWindows freezes

@@ -220,6 +220,27 @@ TEST_CASE ("LoudnessMeter relative gate excludes quiet material", "[dsp][loudnes
     REQUIRE (integrated > loud - 1.0f);
 }
 
+// Windows under the absolute gate are never retained, so the one-hour capacity
+// bounds an hour of material that counts rather than an hour of wall clock.
+// Any amount of trailing silence has to leave the reading exactly where it was.
+TEST_CASE ("LoudnessMeter silence does not consume integrated capacity",
+            "[dsp][loudness]")
+{
+    constexpr double sr = 48000.0;
+    auto readAfterSilence = [sr] (int silentBlocks)
+    {
+        duskstudio::LoudnessMeter m;
+        m.prepare (sr, 480);
+        feedTone (m, sr, 0.5f, 12);
+        feedTone (m, sr, 0.0f, silentBlocks);
+        return m.getIntegratedLufs();
+    };
+
+    const float brief = readAfterSilence (10);
+    REQUIRE (brief > -40.0f);
+    REQUIRE_THAT (readAfterSilence (120), WithinAbs (brief, 1.0e-4f));
+}
+
 // The relative threshold is only known at publish time, so the second pass has
 // to apply it to the windows themselves. Summarising them into buckets bounds
 // the work but decides the bucket holding the threshold as a group, which for a
