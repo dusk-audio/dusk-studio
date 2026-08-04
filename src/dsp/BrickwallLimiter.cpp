@@ -46,8 +46,10 @@ void BrickwallLimiter::prepare (double sampleRate, int maxBlockSize, double init
     const int bs = std::max (1, maxBlockSize);
 
     // Linear-phase halfband FIR so the limiter doesn't smear transients with
-    // phase distortion; the group delay is a whole number of base-rate samples
-    // so delay compensation stays exact.
+    // phase distortion. At 4x the round trip is 26.5 base-rate samples, which
+    // integer PDC cannot express: osLatencyBase rounds to 27, so the reported
+    // latency runs half a sample long. The lookahead below is quantised in
+    // base-rate samples to keep from adding any more.
     oversampler.setFactor (osFactor);
     oversampler.prepare (bs);
 
