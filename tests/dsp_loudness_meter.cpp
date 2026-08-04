@@ -108,3 +108,59 @@ TEST_CASE ("LoudnessMeter requestReset zeroes readings and drops the history", "
         m.process (L.data() + off, R.data() + off, std::min (512, kSecond - off));
     REQUIRE (m.getIntegratedLufs() < loud - 20.0f);
 }
+
+namespace
+{
+// Feeds `blocks` x 100 ms of a 997 Hz sine at `amp`, in 480-sample chunks so
+// every chunk divides the 4800-sample gating block exactly.
+void feedTone (duskstudio::LoudnessMeter& m, double sr, float amp, int blocks)
+{
+    constexpr double twoPi = 6.283185307179586476925286766559;
+    const int chunk = 480;
+    const int total = blocks * (int) (sr * 0.1);
+    std::vector<float> L ((size_t) chunk), R ((size_t) chunk);
+    for (int done = 0; done < total; done += chunk)
+    {
+        for (int i = 0; i < chunk; ++i)
+            L[(size_t) i] = R[(size_t) i] =
+                amp * (float) std::sin (twoPi * 997.0 * (done + i) / sr);
+        m.process (L.data(), R.data(), chunk);
+    }
+}
+} // namespace
+
+// The integrated reading is gated, and the gating runs off a loudness
+// histogram rather than a per-block scan. Both gates have to keep behaving:
+// a histogram that mis-bins puts the relative gate on the wrong side of the
+// quiet material and the reading silently drifts.
+TEST_CASE ("LoudnessMeter integrated gating", "[dsp][loudness]")
+{
+    constexpr double sr = 48000.0;
+
+    SECTION ("uniform program reads the same integrated as momentary")
+    {
+        duskstudio::LoudnessMeter m;
+        m.prepare (sr, 480);
+        feedTone (m, sr, 0.5f, 12);
+
+        // Every block carries the same energy, so the relative gate lands 10 LU
+        // below all of them and excludes nothing.
+        const float momentary = m.getMomentaryLufs();
+        REQUIRE (momentary > -40.0f);
+        REQUIRE_THAT (m.getIntegratedLufs(), WithinAbs (momentary, 0.1f));
+    }
+
+    SECTION ("relative gate excludes quiet material")
+    {
+        duskstudio::LoudnessMeter m;
+        m.prepare (sr, 480);
+        feedTone (m, sr, 0.5f, 12);
+        const float loud = m.getMomentaryLufs();
+
+        // 20 dB down: above the -70 LUFS absolute gate, so these blocks reach
+        // the histogram, but below the relative gate once the loud half sets
+        // the mean. Averaging them in instead would read ~2.97 LU lower.
+        feedTone (m, sr, 0.05f, 12);
+        REQUIRE_THAT (m.getIntegratedLufs(), WithinAbs (loud, 0.3f));
+    }
+}

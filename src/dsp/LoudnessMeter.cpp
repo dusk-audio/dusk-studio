@@ -37,6 +37,15 @@ inline float msToLUFS (double meanSquared)
     if (meanSquared <= 1.0e-10) return -100.0f;
     return (float) (-0.691 + 10.0 * std::log10 (meanSquared));
 }
+
+inline double lufsToMS (double lufs)
+{
+    return std::pow (10.0, (lufs + 0.691) / 10.0);
+}
+
+// BS.1770-4's absolute gate. Blocks below it are excluded for good, so they
+// never enter the histogram.
+const double kAbsoluteGateMS = lufsToMS (-70.0);
 } // namespace
 
 LoudnessMeter::LoudnessMeter() = default;
@@ -66,8 +75,10 @@ void LoudnessMeter::reset()
 
     blockSamplesRemaining = blockSize;
     blockSumSquared = 0.0;
-    blockHistory.clear();
-    blockHistory.reserve ((size_t) kMaxHistoryBlocks);
+    for (auto& v : gateBinSum)   v = 0.0;
+    for (auto& v : gateBinCount) v = 0;
+    absoluteGateSum   = 0.0;
+    absoluteGateCount = 0;
     for (auto& v : momentaryRingMS)  v = 0.0;
     for (auto& v : shortTermRingMS)  v = 0.0;
     ringWritePos = 0;
@@ -79,7 +90,40 @@ void LoudnessMeter::reset()
     shortTermLufs.store (-100.0f, std::memory_order_relaxed);
     integratedLufs.store (-100.0f, std::memory_order_relaxed);
     truePeakDb.store    (-100.0f, std::memory_order_relaxed);
-    integratedCapped.store (false, std::memory_order_relaxed);
+}
+
+int LoudnessMeter::gateBinFor (double meanSquared) noexcept
+{
+    const double lufs = (double) msToLUFS (meanSquared);
+    const int bin = (int) std::floor ((lufs - kGateFloorLufs)
+                                        * (double) kGateBinsPerLu);
+    return std::clamp (bin, 0, kGateBins - 1);
+}
+
+void LoudnessMeter::publishIntegrated() noexcept
+{
+    if (absoluteGateCount == 0)
+    {
+        integratedLufs.store (-100.0f, std::memory_order_relaxed);
+        return;
+    }
+
+    // Relative gate: 10 LU below the mean of everything above the absolute
+    // gate. Both gates apply, so the effective threshold is the higher one.
+    const double meanPass1 = absoluteGateSum / absoluteGateCount;
+    const double gateMS = std::max (kAbsoluteGateMS,
+                                      lufsToMS ((double) msToLUFS (meanPass1) - 10.0));
+
+    double sum = 0.0;
+    int    count = 0;
+    for (int b = gateBinFor (gateMS); b < kGateBins; ++b)
+    {
+        sum   += gateBinSum   [(size_t) b];
+        count += gateBinCount [(size_t) b];
+    }
+
+    integratedLufs.store (count > 0 ? msToLUFS (sum / count) : -100.0f,
+                           std::memory_order_relaxed);
 }
 
 void LoudnessMeter::finishBlock()
@@ -87,11 +131,13 @@ void LoudnessMeter::finishBlock()
     // Mean squared over this 100 ms block (sum of L^2 + R^2 across both
     // channels, normalized by samples × 2 channels of weight 1.0).
     const double ms = blockSumSquared / std::max (1, blockSize);
-    if (blockHistory.size() < (size_t) kMaxHistoryBlocks)
+    if (ms > kAbsoluteGateMS)
     {
-        blockHistory.push_back (ms);
-        if (blockHistory.size() == (size_t) kMaxHistoryBlocks)
-            integratedCapped.store (true, std::memory_order_relaxed);
+        absoluteGateSum += ms;
+        ++absoluteGateCount;
+        const int bin = gateBinFor (ms);
+        gateBinSum   [(size_t) bin] += ms;
+        gateBinCount [(size_t) bin] += 1;
     }
 
     momentaryRingMS [(size_t) (ringWritePos % kMomentaryBlocks)] = ms;
@@ -110,39 +156,7 @@ void LoudnessMeter::finishBlock()
     momentaryLufs.store (msToLUFS (mMean), std::memory_order_relaxed);
     shortTermLufs.store (msToLUFS (sMean), std::memory_order_relaxed);
 
-    // Integrated - gated mean of all blocks. First gate: absolute,
-    // -70 LUFS. Then compute mean of those blocks; second gate: relative,
-    // -10 LU below the first-pass mean. Final integrated = mean of blocks
-    // passing both gates.
-    const double absoluteMS = std::pow (10.0, (-70.0 + 0.691) / 10.0);
-    double sumPass1 = 0.0;
-    int    countPass1 = 0;
-    for (auto v : blockHistory)
-        if (v > absoluteMS) { sumPass1 += v; ++countPass1; }
-
-    if (countPass1 == 0)
-    {
-        integratedLufs.store (-100.0f, std::memory_order_relaxed);
-    }
-    else
-    {
-        const double meanPass1 = sumPass1 / countPass1;
-        const double relativeGateLUFS = msToLUFS (meanPass1) - 10.0;
-        const double relativeMS = std::pow (10.0,
-                                              (relativeGateLUFS + 0.691) / 10.0);
-        const double gateMS = std::max (absoluteMS, relativeMS);
-
-        double sumPass2 = 0.0;
-        int    countPass2 = 0;
-        for (auto v : blockHistory)
-            if (v > gateMS) { sumPass2 += v; ++countPass2; }
-
-        if (countPass2 == 0)
-            integratedLufs.store (-100.0f, std::memory_order_relaxed);
-        else
-            integratedLufs.store (msToLUFS (sumPass2 / countPass2),
-                                   std::memory_order_relaxed);
-    }
+    publishIntegrated();
 
     blockSumSquared = 0.0;
     blockSamplesRemaining = blockSize;
@@ -152,9 +166,8 @@ void LoudnessMeter::process (const float* L, const float* R, int numSamples) noe
 {
     if (sr <= 0.0 || L == nullptr || R == nullptr) return;
 
-    // Deferred requestReset(): applied on this thread so the history clear
-    // and ring wipes never race a concurrent process() pass. prepare()'s
-    // reserve keeps the clear-and-refill allocation-free.
+    // Deferred requestReset(): applied on this thread so the histogram and
+    // ring wipes never race a concurrent process() pass.
     if (resetRequested.exchange (false, std::memory_order_acquire))
         reset();
 

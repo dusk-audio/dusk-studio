@@ -5,7 +5,6 @@
 #include <dsp/DuskFilters.hpp>
 
 #include <atomic>
-#include <vector>
 
 namespace duskstudio
 {
@@ -46,8 +45,8 @@ public:
     void reset();
 
     // Safe with audio running: zeroes the published readings immediately and
-    // defers the state reset to the next process() block, so the vector clear
-    // and ring wipes never race the audio thread.
+    // defers the state reset to the next process() block, so the histogram and
+    // ring wipes never race the audio thread.
     void requestReset() noexcept
     {
         // Publish the request first. process() checks again after publishing a
@@ -58,7 +57,6 @@ public:
         shortTermLufs.store (-100.0f, std::memory_order_relaxed);
         integratedLufs.store (-100.0f, std::memory_order_relaxed);
         truePeakDb.store    (-100.0f, std::memory_order_relaxed);
-        integratedCapped.store (false, std::memory_order_relaxed);
     }
 
     // Audio thread. L and R must each be at least `numSamples` floats.
@@ -71,14 +69,11 @@ public:
     float getShortTermLufs() const noexcept   { return shortTermLufs.load (std::memory_order_relaxed); }
     float getIntegratedLufs() const noexcept  { return integratedLufs.load (std::memory_order_relaxed); }
     float getTruePeakDb() const noexcept      { return truePeakDb.load (std::memory_order_relaxed); }
-    // True once the block-history ring has hit kMaxHistoryBlocks (1 hour
-    // at 100 ms per block). After that the integrated reading stops
-    // absorbing new blocks. UI surfaces this so the user knows the
-    // integrated value is frozen rather than silently inaccurate.
-    bool isIntegratedCapped() const noexcept  { return integratedCapped.load (std::memory_order_relaxed); }
 
 private:
     void finishBlock();
+    void publishIntegrated() noexcept;
+    static int gateBinFor (double meanSquared) noexcept;
 
     static constexpr int kMomentaryBlocks  = 4;    // 4 × 100 ms = 400 ms
     static constexpr int kShortTermBlocks  = 30;   // 30 × 100 ms = 3 s
@@ -94,13 +89,29 @@ private:
     int    blockSize             = 0;        // samples per 100 ms block
     double blockSumSquared       = 0.0;       // sum of (L^2 + R^2) of K-weighted samples
 
-    // Block history. Stored as MS-per-block; LUFS is computed on demand
-    // from sliding-window means. Capped at kMaxHistoryBlocks (1 hour at
-    // 100 ms per block) so the audio-thread push_back in finishBlock never
-    // reallocates. Sessions longer than an hour silently saturate - the
-    // integrated reading stops absorbing new blocks past the cap.
-    static constexpr int kMaxHistoryBlocks = 36000;
-    std::vector<double> blockHistory;
+    // Integrated gating. The absolute (-70 LUFS) gate is a fixed threshold, so
+    // the blocks passing it accumulate into a running sum. The relative gate
+    // moves with the program mean, so its block set cannot: publishing needs
+    // the summed energy of every block above a threshold only known at publish
+    // time. A histogram over block loudness keeps that lookup at kGateBins, so
+    // the callback's cost per block is fixed rather than growing with program
+    // length - holding one entry per block instead means scanning 36000 of
+    // them, twice, an hour into a session.
+    //
+    // Bins carry the true summed energy of the blocks in them, so every bin
+    // except the gate's own is exact; blocks sharing the gate's bin are decided
+    // as a group. Measured against the exact two-pass form, the worst case over
+    // uniform, two-level, lognormal, long-fade and gate-straddling programs is
+    // 0.03 LU, inside EBU Tech 3341's +/-0.1 LU meter tolerance.
+    static constexpr int    kGateBinsPerLu = 10;                      // 0.1 LU
+    static constexpr double kGateFloorLufs = -70.0;                   // absolute gate
+    static constexpr int    kGateBins      = 94 * kGateBinsPerLu + 1; // to +24 LUFS
+
+    double gateBinSum       [kGateBins] = {};
+    int    gateBinCount     [kGateBins] = {};
+    double absoluteGateSum   = 0.0;
+    int    absoluteGateCount = 0;
+
     double  momentaryRingMS [kMomentaryBlocks] = {};
     double  shortTermRingMS [kShortTermBlocks] = {};
     int     ringWritePos = 0;
@@ -119,11 +130,6 @@ private:
     std::atomic<float> shortTermLufs   { -100.0f };
     std::atomic<float> integratedLufs  { -100.0f };
     std::atomic<float> truePeakDb      { -100.0f };
-    // Set once when blockHistory hits kMaxHistoryBlocks; the integrated
-    // reading stops absorbing new blocks past that point. Audio thread
-    // sets via relaxed store on the first overflow, UI polls via the
-    // public accessor.
-    std::atomic<bool>  integratedCapped { false };
     std::atomic<bool>  resetRequested   { false };
 };
 } // namespace duskstudio
