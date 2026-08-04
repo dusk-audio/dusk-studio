@@ -5,6 +5,7 @@
 #include <dsp/DuskFilters.hpp>
 
 #include <atomic>
+#include <vector>
 
 namespace duskstudio
 {
@@ -45,7 +46,7 @@ public:
     void reset();
 
     // Safe with audio running: zeroes the published readings immediately and
-    // defers the state reset to the next process() block, so the histogram and
+    // defers the state reset to the next process() block, so the window and
     // ring wipes never race the audio thread.
     void requestReset() noexcept
     {
@@ -72,8 +73,8 @@ public:
 
 private:
     void finishBlock();
-    void publishIntegrated() noexcept;
-    static int gateBinFor (double meanSquared) noexcept;
+    void startRelativeScan() noexcept;
+    void advanceRelativeScan (int numSamples) noexcept;
 
     static constexpr int kMomentaryBlocks  = 4;    // 4 × 100 ms = 400 ms
     static constexpr int kShortTermBlocks  = 30;   // 30 × 100 ms = 3 s
@@ -90,27 +91,41 @@ private:
     double blockSumSquared       = 0.0;       // sum of (L^2 + R^2) of K-weighted samples
 
     // Integrated gating. The absolute (-70 LUFS) gate is a fixed threshold, so
-    // the blocks passing it accumulate into a running sum. The relative gate
-    // moves with the program mean, so its block set cannot: publishing needs
-    // the summed energy of every block above a threshold only known at publish
-    // time. A histogram over block loudness keeps that lookup at kGateBins, so
-    // the callback's cost per block is fixed rather than growing with program
-    // length - holding one entry per block instead means scanning 36000 of
-    // them, twice, an hour into a session.
+    // the windows passing it accumulate into running sums, exactly and in O(1).
+    // The relative gate moves with the program mean, so its window set has to
+    // be recomputed against a threshold only known at publish time.
     //
-    // Bins carry the true summed energy of the blocks in them, so every bin
-    // except the gate's own is exact; blocks sharing the gate's bin are decided
-    // as a group. Measured against the exact two-pass form, the worst case over
-    // uniform, two-level, lognormal, long-fade and gate-straddling programs is
-    // 0.03 LU, inside EBU Tech 3341's +/-0.1 LU meter tolerance.
-    static constexpr int    kGateBinsPerLu = 10;                      // 0.1 LU
-    static constexpr double kGateFloorLufs = -70.0;                   // absolute gate
-    static constexpr int    kGateBins      = 94 * kGateBinsPerLu + 1; // to +24 LUFS
+    // That second pass reads every retained window rather than a bucketed
+    // summary of them. Bucketing bounds the work but cannot be made exact: the
+    // gate can fall inside a bucket, and the windows sharing it then have to be
+    // included or excluded as a group. On a program whose quiet material sits
+    // at the gate - a single loud window against ten 0.01 LU below it - that is
+    // 10 LU of error, and no choice of bucket edge or width fixes it, since
+    // equal-valued windows always share a bucket.
+    //
+    // Scanning is what costs, so the scan is spread across callbacks in
+    // proportion to elapsed audio (the budgeting the hardware-insert ping
+    // uses), completing inside one 100 ms gating period. One unamortised pass
+    // measures 27 us, which is 16 % of a 16-sample callback at 96 kHz.
+    static constexpr int kMaxWindows = 36000;   // 1 hour at one per 100 ms
 
-    double gateBinSum       [kGateBins] = {};
-    int    gateBinCount     [kGateBins] = {};
+    // Sized once in prepare() so reset() - which runs on the audio thread for a
+    // deferred requestReset - never allocates. Saturating at kMaxWindows freezes
+    // the integrated reading rather than dropping the oldest material, which
+    // would silently redefine "entire program".
+    std::vector<double> windowMS;
+    int    windowCount       = 0;
     double absoluteGateSum   = 0.0;
     int    absoluteGateCount = 0;
+
+    // In-flight relative-gate scan over windowMS[0, scanLimit). scanLimit == 0
+    // means idle; finishBlock starts the next pass once one completes.
+    double scanGateMS = 0.0;
+    double scanSum    = 0.0;
+    double scanCredit = 0.0;
+    int    scanCount  = 0;
+    int    scanPos    = 0;
+    int    scanLimit  = 0;
 
     double  momentaryRingMS [kMomentaryBlocks] = {};
     double  shortTermRingMS [kShortTermBlocks] = {};

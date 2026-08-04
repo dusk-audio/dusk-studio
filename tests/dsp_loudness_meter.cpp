@@ -6,6 +6,7 @@
 #include <dsp/DuskFilters.hpp>
 #include <juce_dsp/juce_dsp.h>
 
+#include <algorithm>
 #include <cmath>
 #include <random>
 #include <vector>
@@ -111,11 +112,12 @@ TEST_CASE ("LoudnessMeter requestReset zeroes readings and drops the history", "
 
 namespace
 {
+constexpr double kTau = 6.283185307179586476925286766559;
+
 // Feeds `blocks` x 100 ms of a 997 Hz sine at `amp`, in 480-sample chunks so
 // every chunk divides the 4800-sample gating block exactly.
 void feedTone (duskstudio::LoudnessMeter& m, double sr, float amp, int blocks)
 {
-    constexpr double twoPi = 6.283185307179586476925286766559;
     const int chunk = 480;
     const int total = blocks * (int) (sr * 0.1);
     std::vector<float> L ((size_t) chunk), R ((size_t) chunk);
@@ -123,52 +125,135 @@ void feedTone (duskstudio::LoudnessMeter& m, double sr, float amp, int blocks)
     {
         for (int i = 0; i < chunk; ++i)
             L[(size_t) i] = R[(size_t) i] =
-                amp * (float) std::sin (twoPi * 997.0 * (done + i) / sr);
+                amp * (float) std::sin (kTau * 997.0 * (done + i) / sr);
         m.process (L.data(), R.data(), chunk);
+    }
+}
+
+double msToLufsT (double ms) { return ms <= 1.0e-10 ? -100.0
+                                                    : -0.691 + 10.0 * std::log10 (ms); }
+double lufsToMsT (double l)  { return std::pow (10.0, (l + 0.691) / 10.0); }
+
+struct GateResult
+{
+    double lufs;             // exact gated mean of the windows
+    double nearestToGateLu;  // closest any retained window sits to the threshold
+};
+
+// BS.1770-4 gating applied straight to the window list with no bucketing:
+// absolute gate at -70 LUFS, then 10 LU below the mean of what survives it.
+GateResult exactGating (const std::vector<double>& windows)
+{
+    const double absGate = lufsToMsT (-70.0);
+    double s1 = 0.0;
+    int    c1 = 0;
+    for (double v : windows)
+        if (v > absGate) { s1 += v; ++c1; }
+    if (c1 == 0) return { -100.0, 1.0e9 };
+
+    const double gate = std::max (absGate, lufsToMsT (msToLufsT (s1 / c1) - 10.0));
+    double s2 = 0.0;
+    int    c2 = 0;
+    double nearest = 1.0e9;
+    for (double v : windows)
+    {
+        if (v <= absGate) continue;
+        nearest = std::min (nearest, std::fabs (msToLufsT (v) - msToLufsT (gate)));
+        if (v > gate) { s2 += v; ++c2; }
+    }
+    return { c2 > 0 ? msToLufsT (s2 / c2) : -100.0, nearest };
+}
+
+// Drives the meter one 100 ms gating step at a time, collecting the 400 ms
+// windows it gates on. Momentary IS that window, so the meter hands back its
+// own gating input and the test can re-gate it independently.
+void feedSteps (duskstudio::LoudnessMeter& m, double sr, float amp, int steps,
+                std::vector<double>& windows, int& step)
+{
+    const int len = (int) (sr * 0.1);
+    std::vector<float> L ((size_t) len), R ((size_t) len);
+    for (int s = 0; s < steps; ++s)
+    {
+        for (int i = 0; i < len; ++i)
+            L[(size_t) i] = R[(size_t) i] =
+                amp * (float) std::sin (kTau * 997.0 * (step * len + i) / sr);
+        m.process (L.data(), R.data(), len);
+        ++step;
+        if (step >= 4) windows.push_back (lufsToMsT ((double) m.getMomentaryLufs()));
     }
 }
 } // namespace
 
-// The integrated reading is gated, and the gating runs off a loudness
-// histogram rather than a per-block scan. Both gates have to keep behaving:
-// a histogram that mis-bins puts the relative gate on the wrong side of the
-// quiet material and the reading silently drifts.
-TEST_CASE ("LoudnessMeter integrated gating", "[dsp][loudness]")
+TEST_CASE ("LoudnessMeter integrated equals momentary on a uniform program",
+            "[dsp][loudness]")
+{
+    duskstudio::LoudnessMeter m;
+    m.prepare (48000.0, 480);
+    feedTone (m, 48000.0, 0.5f, 12);
+
+    // Every block carries the same energy, so the relative gate lands 10 LU
+    // below all of them and excludes nothing.
+    const float momentary = m.getMomentaryLufs();
+    REQUIRE (momentary > -40.0f);
+    REQUIRE_THAT (m.getIntegratedLufs(), WithinAbs (momentary, 0.1f));
+}
+
+TEST_CASE ("LoudnessMeter relative gate excludes quiet material", "[dsp][loudness]")
 {
     constexpr double sr = 48000.0;
+    duskstudio::LoudnessMeter m;
+    m.prepare (sr, 480);
+    feedTone (m, sr, 0.5f, 12);
+    const float loud = m.getMomentaryLufs();
 
-    SECTION ("uniform program reads the same integrated as momentary")
+    // 20 dB down: above the -70 LUFS absolute gate, so these windows are
+    // retained, but below the relative gate once the loud half sets the mean.
+    feedTone (m, sr, 0.05f, 12);
+
+    // Gating windows are 400 ms stepping 100 ms, so three of them straddle the
+    // level change and survive the relative gate alongside the fully loud ones,
+    // landing ~0.6 LU below the loud passage. The bounds bracket that: gating
+    // 100 ms sub-blocks directly would sit back up at `loud`, and averaging the
+    // quiet half in ungated would read ~3 LU lower.
+    const float integrated = m.getIntegratedLufs();
+    REQUIRE (integrated < loud - 0.3f);
+    REQUIRE (integrated > loud - 1.0f);
+}
+
+// The relative threshold is only known at publish time, so the second pass has
+// to apply it to the windows themselves. Summarising them into buckets bounds
+// the work but decides the bucket holding the threshold as a group, which for a
+// quiet passage landing inside it is ~10 LU of error. Sweep the quiet level
+// across the threshold and require the meter to agree with an independent exact
+// gating of the very windows it measured.
+TEST_CASE ("LoudnessMeter gating is exact for windows sitting on the threshold",
+            "[dsp][loudness]")
+{
+    constexpr double sr = 48000.0;
+    bool sawNearThreshold = false;
+
+    for (int stepDb = 0; stepDb <= 30; ++stepDb)
     {
-        duskstudio::LoudnessMeter m;
-        m.prepare (sr, 480);
-        feedTone (m, sr, 0.5f, 12);
+        const double quietDb = -16.0 + 0.1 * stepDb;
+        const float  quietAmp = 0.5f * (float) std::pow (10.0, quietDb / 20.0);
 
-        // Every block carries the same energy, so the relative gate lands 10 LU
-        // below all of them and excludes nothing.
-        const float momentary = m.getMomentaryLufs();
-        REQUIRE (momentary > -40.0f);
-        REQUIRE_THAT (m.getIntegratedLufs(), WithinAbs (momentary, 0.1f));
+        duskstudio::LoudnessMeter m;
+        m.prepare (sr, (int) (sr * 0.1));
+
+        std::vector<double> windows;
+        int step = 0;
+        feedSteps (m, sr, 0.5f, 10, windows, step);
+        feedSteps (m, sr, quietAmp, 20, windows, step);
+        // Silence drains the in-flight pass. Pure-silence windows fall below
+        // the absolute gate, so they move neither the meter nor the reference.
+        feedSteps (m, sr, 0.0f, 8, windows, step);
+
+        const auto ref = exactGating (windows);
+        if (ref.nearestToGateLu < 0.1) sawNearThreshold = true;
+        REQUIRE_THAT ((double) m.getIntegratedLufs(), WithinAbs (ref.lufs, 0.01));
     }
 
-    SECTION ("relative gate excludes quiet material")
-    {
-        duskstudio::LoudnessMeter m;
-        m.prepare (sr, 480);
-        feedTone (m, sr, 0.5f, 12);
-        const float loud = m.getMomentaryLufs();
-
-        // 20 dB down: above the -70 LUFS absolute gate, so these windows reach
-        // the histogram, but below the relative gate once the loud half sets
-        // the mean.
-        feedTone (m, sr, 0.05f, 12);
-
-        // Gating windows are 400 ms stepping 100 ms, so three of them straddle
-        // the level change and survive the relative gate alongside the fully
-        // loud ones, landing ~0.6 LU below the loud passage. The bounds bracket
-        // that: gating 100 ms sub-blocks directly would sit back up at `loud`,
-        // and averaging the quiet half in ungated would read ~3 LU lower.
-        const float integrated = m.getIntegratedLufs();
-        REQUIRE (integrated < loud - 0.3f);
-        REQUIRE (integrated > loud - 1.0f);
-    }
+    // Without this the sweep could pass while never reaching the case that
+    // separates exact gating from a bucketed approximation.
+    REQUIRE (sawNearThreshold);
 }

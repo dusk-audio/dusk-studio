@@ -43,8 +43,8 @@ inline double lufsToMS (double lufs)
     return std::pow (10.0, (lufs + 0.691) / 10.0);
 }
 
-// BS.1770-4's absolute gate. Blocks below it are excluded for good, so they
-// never enter the histogram.
+// BS.1770-4's absolute gate. Windows below it are excluded for good, so they
+// are never retained.
 const double kAbsoluteGateMS = lufsToMS (-70.0);
 } // namespace
 
@@ -59,6 +59,8 @@ void LoudnessMeter::prepare (double sampleRate, int maxBlockSize)
     preparedMaxBlockSize = std::max (1, maxBlockSize);
     oversampler.setFactor (4);   // ITU BS.1770 Annex 2 true-peak
     oversampler.prepare (preparedMaxBlockSize);
+
+    windowMS.assign ((size_t) kMaxWindows, 0.0);
 
     const auto s1 = makeKStage1 (sampleRate);
     const auto s2 = makeKStage2 (sampleRate);
@@ -75,10 +77,11 @@ void LoudnessMeter::reset()
 
     blockSamplesRemaining = blockSize;
     blockSumSquared = 0.0;
-    for (auto& v : gateBinSum)   v = 0.0;
-    for (auto& v : gateBinCount) v = 0;
+    windowCount       = 0;
     absoluteGateSum   = 0.0;
     absoluteGateCount = 0;
+    scanGateMS = scanSum = scanCredit = 0.0;
+    scanCount = scanPos = scanLimit = 0;
     for (auto& v : momentaryRingMS)  v = 0.0;
     for (auto& v : shortTermRingMS)  v = 0.0;
     ringWritePos = 0;
@@ -92,38 +95,50 @@ void LoudnessMeter::reset()
     truePeakDb.store    (-100.0f, std::memory_order_relaxed);
 }
 
-int LoudnessMeter::gateBinFor (double meanSquared) noexcept
+void LoudnessMeter::startRelativeScan() noexcept
 {
-    const double lufs = (double) msToLUFS (meanSquared);
-    const int bin = (int) std::floor ((lufs - kGateFloorLufs)
-                                        * (double) kGateBinsPerLu);
-    return std::clamp (bin, 0, kGateBins - 1);
-}
-
-void LoudnessMeter::publishIntegrated() noexcept
-{
-    if (absoluteGateCount == 0)
-    {
-        integratedLufs.store (-100.0f, std::memory_order_relaxed);
-        return;
-    }
-
     // Relative gate: 10 LU below the mean of everything above the absolute
     // gate. Both gates apply, so the effective threshold is the higher one.
+    // The mean is exact, so the threshold is too - only the window set below
+    // has to be recomputed.
     const double meanPass1 = absoluteGateSum / absoluteGateCount;
-    const double gateMS = std::max (kAbsoluteGateMS,
-                                      lufsToMS ((double) msToLUFS (meanPass1) - 10.0));
+    scanGateMS = std::max (kAbsoluteGateMS,
+                            lufsToMS ((double) msToLUFS (meanPass1) - 10.0));
+    scanSum    = 0.0;
+    scanCredit = 0.0;
+    scanCount  = 0;
+    scanPos    = 0;
+    scanLimit  = windowCount;
+}
 
-    double sum = 0.0;
-    int    count = 0;
-    for (int b = gateBinFor (gateMS); b < kGateBins; ++b)
+void LoudnessMeter::advanceRelativeScan (int numSamples) noexcept
+{
+    if (scanLimit <= 0) return;
+
+    // Budget the pass against elapsed audio so it lands inside one gating
+    // period whatever the buffer size, instead of one callback wearing all of
+    // it. Windows past scanLimit were appended mid-pass and wait for the next.
+    scanCredit += (double) scanLimit * (double) numSamples
+                    / (double) std::max (1, blockSize);
+    while (scanPos < scanLimit && scanCredit >= 1.0)
     {
-        sum   += gateBinSum   [(size_t) b];
-        count += gateBinCount [(size_t) b];
+        const double v = windowMS[(size_t) scanPos];
+        if (v > scanGateMS)
+        {
+            scanSum += v;
+            ++scanCount;
+        }
+        ++scanPos;
+        scanCredit -= 1.0;
     }
 
-    integratedLufs.store (count > 0 ? msToLUFS (sum / count) : -100.0f,
-                           std::memory_order_relaxed);
+    if (scanPos >= scanLimit)
+    {
+        integratedLufs.store (scanCount > 0 ? msToLUFS (scanSum / scanCount)
+                                            : -100.0f,
+                               std::memory_order_relaxed);
+        scanLimit = 0;
+    }
 }
 
 void LoudnessMeter::finishBlock()
@@ -153,16 +168,17 @@ void LoudnessMeter::finishBlock()
     // length, so the mean of the momentary ring IS that window's mean square -
     // gating the 100 ms sub-blocks directly instead discards short dips that
     // the 400 ms window rides over, and disagrees with R128 compliance meters.
-    if (ringWritePos >= kMomentaryBlocks && mMean > kAbsoluteGateMS)
+    if (ringWritePos >= kMomentaryBlocks && mMean > kAbsoluteGateMS
+        && windowCount < kMaxWindows)
     {
+        windowMS[(size_t) windowCount] = mMean;
+        ++windowCount;
         absoluteGateSum += mMean;
         ++absoluteGateCount;
-        const int bin = gateBinFor (mMean);
-        gateBinSum   [(size_t) bin] += mMean;
-        gateBinCount [(size_t) bin] += 1;
     }
 
-    publishIntegrated();
+    if (scanLimit == 0 && absoluteGateCount > 0)
+        startRelativeScan();
 
     blockSumSquared = 0.0;
     blockSamplesRemaining = blockSize;
@@ -172,8 +188,8 @@ void LoudnessMeter::process (const float* L, const float* R, int numSamples) noe
 {
     if (sr <= 0.0 || L == nullptr || R == nullptr) return;
 
-    // Deferred requestReset(): applied on this thread so the histogram and
-    // ring wipes never race a concurrent process() pass.
+    // Deferred requestReset(): applied on this thread so the window and ring
+    // wipes never race a concurrent process() pass.
     if (resetRequested.exchange (false, std::memory_order_acquire))
         reset();
 
@@ -186,6 +202,8 @@ void LoudnessMeter::process (const float* L, const float* R, int numSamples) noe
         blockSumSquared += (double) kL * kL + (double) kR * kR;
         if (--blockSamplesRemaining == 0) finishBlock();
     }
+
+    advanceRelativeScan (numSamples);
 
     // True-peak detection (4× oversampled)
     // Per ITU BS.1770 Annex 2, true-peak is measured on the 4×-upsampled
