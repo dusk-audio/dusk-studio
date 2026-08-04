@@ -267,3 +267,50 @@ TEST_CASE ("a legacy MIDI index survives the default overlay", "[session][serial
     REQUIRE (s.track (0).midiOutputIndex.load (std::memory_order_acquire) == 3);
     REQUIRE (s.track (0).midiInputIdentifier.isEmpty());
 }
+
+// plugin_slots is an array, so it replaces the default wholesale. Stopping the
+// restore at whatever the file's array carries therefore left a position the
+// file does not describe holding the previous session's plugin. Every position
+// is driven, each overlaid on the matching default.
+TEST_CASE ("an aux lane's undescribed plugin slot drops the previous plugin",
+           "[session][serializer]")
+{
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                        .getChildFile ("dusk-aux-slot-"
+                                         + juce::String (juce::Random::getSystemRandom().nextInt()));
+    dir.createDirectory();
+    const struct ScopedDir { juce::File d; ~ScopedDir() { d.deleteRecursively(); } } scopedDir { dir };
+
+    Session s;
+    s.setSessionDirectory (dir);
+
+    s.auxLane (0).pluginLegacyDescriptionXml[0] = "<PLUGIN/>";
+    s.auxLane (0).pluginStateBase64[0]          = "ABCD";
+    s.auxLane (0).nativeClapPath[0]             = "/tmp/ghost.clap";
+    s.auxLane (0).nativeClapPluginId[0]         = "com.ghost.plugin";
+    {
+        auto ghostRouting = std::make_unique<HardwareInsertRouting>();
+        ghostRouting->outputChL = 6;
+        ghostRouting->inputChL  = 7;
+        s.auxLane (0).hardwareInserts[0].routing.publish (std::move (ghostRouting));
+        s.auxLane (0).hardwareInserts[0].enabled.store (true);
+    }
+
+    // The lane is described, but its plugin slot is not.
+    const auto target = dir.getChildFile ("session.json");
+    target.replaceWithText (
+        R"({"version":3,"aux_lanes":[{"name":"A","plugin_slots":[]}]})");
+
+    REQUIRE (SessionSerializer::load (s, target));
+
+    REQUIRE (s.auxLane (0).name == "A");
+    REQUIRE (s.auxLane (0).pluginLegacyDescriptionXml[0].isEmpty());
+    REQUIRE (s.auxLane (0).pluginStateBase64[0].isEmpty());
+    REQUIRE (s.auxLane (0).nativeClapPath[0].isEmpty());
+    REQUIRE (s.auxLane (0).nativeClapPluginId[0].isEmpty());
+    REQUIRE_FALSE (s.auxLane (0).hardwareInserts[0].enabled.load());
+
+    const auto routing = s.auxLane (0).hardwareInserts[0].routing.current();
+    REQUIRE (routing.outputChL == -1);
+    REQUIRE (routing.inputChL  == -1);
+}

@@ -1960,12 +1960,17 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             else
                 lane.params.outputPair.store (-1);   // model default: Master only
             {
-                const auto& slots = json::array (v, "plugin_slots");
-                const int sn = std::min (AuxLaneParams::kMaxLanePlugins, (int) slots.size());
-                for (int p = 0; p < sn; ++p)
+                // Drive every slot position, overlaying each on the matching
+                // default rather than stopping at what the array happens to
+                // carry: "plugin_slots": [] or [null] otherwise leaves the
+                // position holding the previous session's plugin, state blob,
+                // native paths and insert routing.
+                const auto& slots        = json::array (v, "plugin_slots");
+                const auto& slotDefaults = json::array (objectAt (auxDefaults, i),
+                                                        "plugin_slots");
+                for (int p = 0; p < AuxLaneParams::kMaxLanePlugins; ++p)
                 {
-                    const auto& sv = slots[(size_t) p];
-                    if (! sv.is_object()) continue;
+                    const auto sv = slotWithDefaults (slotDefaults, slots, p);
                     lane.pluginDescriptor[(size_t) p].reset();
                     if (const auto it = sv.find ("plugin_descriptor");
                         it != sv.end() && it->is_object())
