@@ -860,10 +860,8 @@ private:
         const auto chordNames = document.uniqueChordNames();
         const auto key = notepad::chords::detectKey (chordNames);
         const auto sections = document.sectionCount();
-        std::string summary;
-        if (sections != 0)
-            summary += std::to_string (sections)
-                     + (sections == 1 ? " section" : " sections") + "  |  ";
+        std::string summary = std::to_string (sections)
+                            + (sections == 1 ? " section" : " sections") + "  |  ";
         summary += std::to_string (chordNames.size())
                  + (chordNames.size() == 1 ? " chord" : " chords");
         if (! key.empty())
