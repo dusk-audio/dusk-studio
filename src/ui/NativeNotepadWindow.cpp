@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <optional>
@@ -625,49 +626,113 @@ private:
         return clicked;
     }
 
-    bool drawGlyphToggle (const char* id, bool rightSelected,
-                          const char* leftGlyph, const char* rightGlyph,
-                          const char* tooltip, float width)
+    enum class SegmentIcon { sun, moon, eye, code };
+
+    // Vector icons: the bundled document font carries no symbol coverage that
+    // survives every platform's fallback, and the segments are small enough
+    // that hinted glyphs would read fuzzy next to the ribbon.
+    void drawSegmentIcon (ImDrawList& drawList, SegmentIcon icon, ImVec2 centre,
+                          ImU32 iconColour, ImU32 backdrop)
     {
-        const bool clicked = ImGui::InvisibleButton (id, ImVec2 (width, 30.0f));
+        switch (icon)
+        {
+            case SegmentIcon::sun:
+            {
+                drawList.AddCircleFilled (centre, 3.3f, iconColour, 20);
+                for (int i = 0; i < 8; ++i)
+                {
+                    const auto angle = (float) i * 0.785398f;
+                    const auto dx = std::cos (angle);
+                    const auto dy = std::sin (angle);
+                    drawList.AddLine (ImVec2 (centre.x + dx * 5.4f, centre.y + dy * 5.4f),
+                                      ImVec2 (centre.x + dx * 7.4f, centre.y + dy * 7.4f),
+                                      iconColour, 1.5f);
+                }
+                break;
+            }
+            case SegmentIcon::moon:
+                // Crescent by subtraction: the bite is the segment's own
+                // background punched back over a filled disc.
+                drawList.AddCircleFilled (ImVec2 (centre.x - 0.6f, centre.y), 6.3f,
+                                          iconColour, 24);
+                drawList.AddCircleFilled (ImVec2 (centre.x + 3.0f, centre.y - 2.0f), 5.8f,
+                                          backdrop, 24);
+                break;
+            case SegmentIcon::eye:
+            {
+                // Lens: two arcs of radius R meeting at (+-a, 0), R^2 = a^2 + d^2.
+                constexpr float a = 7.0f;
+                constexpr float d = 5.0f;
+                const auto radius = std::sqrt (a * a + d * d);
+                const auto corner = std::atan2 (d, a);
+                drawList.PathArcTo (ImVec2 (centre.x, centre.y + d), radius,
+                                    -3.14159265f + corner, -corner);
+                drawList.PathArcTo (ImVec2 (centre.x, centre.y - d), radius,
+                                    corner, 3.14159265f - corner);
+                drawList.PathStroke (iconColour, ImDrawFlags_Closed, 1.6f);
+                drawList.AddCircleFilled (centre, 2.2f, iconColour, 16);
+                break;
+            }
+            case SegmentIcon::code:
+            {
+                const auto size = ImGui::CalcTextSize ("</>");
+                drawList.AddText (ImVec2 (centre.x - size.x * 0.5f,
+                                          centre.y - size.y * 0.5f),
+                                  iconColour, "</>");
+                break;
+            }
+        }
+    }
+
+    // Two-segment icon switch: dark track, active half lifted in a lighter
+    // rounded fill. Returns the clicked segment (0 left, 1 right), or -1.
+    int drawSegmentedToggle (const char* id, bool rightSelected,
+                             SegmentIcon leftIcon, SegmentIcon rightIcon,
+                             const char* leftTooltip, const char* rightTooltip)
+    {
+        constexpr float segmentWidth = 32.0f;
+        constexpr float padding = 3.0f;
+        const bool clicked = ImGui::InvisibleButton (
+            id, ImVec2 (segmentWidth * 2.0f + padding * 2.0f, 30.0f));
         const auto min = ImGui::GetItemRectMin();
         const auto max = ImGui::GetItemRectMax();
-        const auto centre = ImVec2 ((min.x + max.x) * 0.5f,
-                                    (min.y + max.y) * 0.5f);
         const bool hovered = ImGui::IsItemHovered();
-        auto* const drawList = ImGui::GetWindowDrawList();
+        const auto split = (min.x + max.x) * 0.5f;
+        const bool pointerOnRight = ImGui::GetIO().MousePos.x >= split;
+        auto& drawList = *ImGui::GetWindowDrawList();
 
-        const auto selectedColour = ImGui::GetColorU32 (colour (0xe7e8edff));
-        const auto mutedColour = ImGui::GetColorU32 (
-            colour (hovered ? 0xb5b6c0ff : 0x868892ff));
-        const auto trackColour = ImGui::GetColorU32 (
-            colour (hovered ? 0x6b5796ff : 0x5a4880ff));
-        const auto knobColour = ImGui::GetColorU32 (colour (0xf0eff4ff));
+        const auto trackColour = ImGui::GetColorU32 (colour (0x24252fff));
+        const auto pillColour = ImGui::GetColorU32 (
+            colour (hovered ? 0x494a5aff : 0x3d3e4cff));
+        drawList.AddRectFilled (min, max, trackColour, 9.0f);
+        drawList.AddRectFilled (
+            ImVec2 (rightSelected ? split : min.x + padding, min.y + padding),
+            ImVec2 (rightSelected ? max.x - padding : split, max.y - padding),
+            pillColour, 7.0f);
 
-        const auto drawCentredGlyph = [&] (const char* glyph, float x, bool selected)
+        const auto activeColour = ImGui::GetColorU32 (colour (0xf1f1f5ff));
+        const auto restingColour = ImGui::GetColorU32 (colour (0x8b8c97ff));
+        const auto hoverColour = ImGui::GetColorU32 (colour (0xc3c4ceff));
+        const auto centreY = (min.y + max.y) * 0.5f;
+
+        const auto drawSegment = [&] (SegmentIcon icon, float centreX, bool selected,
+                                      bool pointerOver)
         {
-            const auto size = ImGui::CalcTextSize (glyph);
-            drawList->AddText (ImVec2 (x - size.x * 0.5f,
-                                       centre.y - size.y * 0.5f),
-                               selected ? selectedColour : mutedColour, glyph);
+            drawSegmentIcon (drawList, icon, ImVec2 (centreX, centreY),
+                             selected ? activeColour
+                                      : hovered && pointerOver ? hoverColour
+                                                               : restingColour,
+                             selected ? pillColour : trackColour);
         };
 
-        drawCentredGlyph (leftGlyph, min.x + 11.0f, ! rightSelected);
-        drawCentredGlyph (rightGlyph, max.x - 13.0f, rightSelected);
-
-        constexpr float halfTrackWidth = 20.0f;
-        constexpr float halfTrackHeight = 7.0f;
-        drawList->AddRectFilled (
-            ImVec2 (centre.x - halfTrackWidth, centre.y - halfTrackHeight),
-            ImVec2 (centre.x + halfTrackWidth, centre.y + halfTrackHeight),
-            trackColour, halfTrackHeight);
-        drawList->AddCircleFilled (
-            ImVec2 (centre.x + (rightSelected ? 12.0f : -12.0f), centre.y),
-            5.0f, knobColour);
+        drawSegment (leftIcon, (min.x + padding + split) * 0.5f, ! rightSelected,
+                     ! pointerOnRight);
+        drawSegment (rightIcon, (split + max.x - padding) * 0.5f, rightSelected,
+                     pointerOnRight);
 
         if (hovered)
-            ImGui::SetTooltip ("%s", tooltip);
-        return clicked;
+            ImGui::SetTooltip ("%s", pointerOnRight ? rightTooltip : leftTooltip);
+        return clicked ? (pointerOnRight ? 1 : 0) : -1;
     }
 
     void drawRibbon()
@@ -913,17 +978,21 @@ private:
         ImGui::TextUnformatted ("Lyrics and session notes");
         ImGui::PopStyleColor();
 
-        ImGui::SetCursorPos (ImVec2 (width - 210.0f, 16.0f));
-        if (drawGlyphToggle ("##page-theme", darkDocumentPage, "☀", "☾",
-                             "Light page / Dark page", 82.0f))
+        ImGui::SetCursorPos (ImVec2 (width - 170.0f, 16.0f));
+        const int pageSegment = drawSegmentedToggle ("##page-theme", darkDocumentPage,
+                                                     SegmentIcon::sun, SegmentIcon::moon,
+                                                     "Light page", "Dark page");
+        if (pageSegment >= 0 && (pageSegment == 1) != darkDocumentPage)
         {
-            darkDocumentPage = ! darkDocumentPage;
+            darkDocumentPage = pageSegment == 1;
             editor.setDarkPage (darkDocumentPage);
         }
-        ImGui::SameLine (0.0f, 5.0f);
-        if (drawGlyphToggle ("##editor-mode", markdownMode, "▤", "M↓",
-                             "Document / Markdown", 100.0f))
-            setMode (! markdownMode);
+        ImGui::SameLine (0.0f, 8.0f);
+        const int modeSegment = drawSegmentedToggle ("##editor-mode", markdownMode,
+                                                     SegmentIcon::eye, SegmentIcon::code,
+                                                     "Document view", "Markdown source");
+        if (modeSegment >= 0)
+            setMode (modeSegment == 1);
 
         ImGui::SetCursorPosY (62.0f);
         drawRibbon();
