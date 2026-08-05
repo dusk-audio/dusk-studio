@@ -18,6 +18,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/PluginDescriptor.cpp
     plugin_manager_descriptor.cpp
     plugin_slot_persistence.cpp
+    plugin_slot_lifecycle.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PluginManager.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PluginSlot.cpp
     native_plugin_cache.cpp

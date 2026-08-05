@@ -499,6 +499,16 @@ void PluginSlot::setTemporarilyInactivePersistenceForTest (
     loadedDescriptor = std::move (descriptor);
     lastKnownStateBase64 = stateBase64;
 }
+
+bool PluginSlot::installInProcessInstanceForTest (
+    PluginInstancePtr instance)
+{
+    PluginDescriptor descriptor;
+    descriptor.name = instance != nullptr ? instance->getName().toStdString()
+                                          : std::string();
+    descriptor.formatName = "Test";
+    return installInProcessInstance (std::move (instance), std::move (descriptor));
+}
 #endif
 
 juce::String PluginSlot::getOfflineName() const

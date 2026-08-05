@@ -33,6 +33,8 @@ class PluginManager;
 // setters from the render context. See timerCallback() + paramFifo.
 class PluginSlot : private dusk::Timer
 {
+    using PluginInstancePtr = std::unique_ptr<juce::AudioPluginInstance>;
+
 public:
     PluginSlot();
     ~PluginSlot() override;
@@ -206,6 +208,11 @@ public:
     // temporarily unpublished (device inactive or OOP child already gone).
     void setTemporarilyInactivePersistenceForTest (
         PluginDescriptor descriptor, const juce::String& stateBase64);
+
+    // Lifecycle seam: installs an in-process test instance through the same
+    // prepare-and-publish path used by descriptor loads.
+    bool installInProcessInstanceForTest (
+        PluginInstancePtr instance);
    #endif
 
    #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
@@ -248,7 +255,7 @@ private:
     // Message-thread install tail shared by descriptor-based sync and async
     // loads. Primes + atomically swaps in the
     // already-built instance; caller has already rotated the keep-alive ring.
-    bool installInProcessInstance (std::unique_ptr<juce::AudioPluginInstance> fresh,
+    bool installInProcessInstance (PluginInstancePtr fresh,
                                    PluginDescriptor descriptor);
 
     // Liveness token for async-load completions: a completion captures a
