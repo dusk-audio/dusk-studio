@@ -237,6 +237,49 @@ TEST_CASE ("Notepad editor layout wraps body text at the content width",
         CHECK (layout.rows[i].start == layout.rows[i - 1].end);
 }
 
+TEST_CASE ("Notepad editor layout reserves a band only on rows with chords",
+           "[notepad][editor][layout][chords]")
+{
+    NotepadDocument document;
+    document.setMarkdown ("[Am]alpha\nbeta");
+
+    const auto layout = notepad::buildLayout (document, 400.0f, 10.0f,
+                                              fixedAdvance (2.0f, 10.0f));
+
+    REQUIRE (layout.rows.size() == 2);
+    CHECK (layout.rows[0].chordTop == notepad::chordBandHeight (10.0f));
+    CHECK (layout.rows[1].chordTop == 0.0f);
+    CHECK (layout.rows[0].height == layout.rows[1].height + layout.rows[0].chordTop);
+    // The band is part of the row, so the following row starts below it.
+    CHECK (layout.rows[1].y == layout.rows[0].y + layout.rows[0].height);
+
+    SECTION ("an open chord slot reserves the same band before it is committed")
+    {
+        NotepadDocument plain;
+        plain.setMarkdown ("alpha\nbeta");
+
+        const auto pending = notepad::buildLayout (plain, 400.0f, 10.0f,
+                                                   fixedAdvance (2.0f, 10.0f), 0);
+        REQUIRE (pending.rows.size() == 2);
+        CHECK (pending.rows[0].chordTop == notepad::chordBandHeight (10.0f));
+        CHECK (pending.rows[1].chordTop == 0.0f);
+    }
+
+    SECTION ("a chord on a soft-wrapped row bands only that row")
+    {
+        NotepadDocument wrapped;
+        wrapped.setMarkdown ("aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii [C]jjjj");
+
+        // 10 units per byte against 400 units of content: the line wraps before
+        // the chord, which must band the second row only.
+        const auto rows = notepad::buildLayout (wrapped, 400.0f, 10.0f,
+                                                fixedAdvance (10.0f, 10.0f)).rows;
+        REQUIRE (rows.size() == 2);
+        CHECK (rows[0].chordTop == 0.0f);
+        CHECK (rows[1].chordTop > 0.0f);
+    }
+}
+
 TEST_CASE ("Notepad editor layout gives headings their own metrics",
            "[notepad][editor][layout]")
 {

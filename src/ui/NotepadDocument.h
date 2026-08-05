@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace duskstudio
@@ -53,6 +54,15 @@ public:
         bool operator!= (const TextStyle& other) const noexcept { return ! (*this == other); }
     };
 
+    // A ChordPro bracket hidden from the projection. documentOffset is the
+    // character the chord sits over; a chord parked at the end of a line
+    // anchors on that line's newline.
+    struct Chord
+    {
+        std::size_t documentOffset = 0;
+        std::string name;
+    };
+
     // Per-line block metadata for the document renderer: list markers are NOT
     // part of the projected text (the source prefixes are hidden wholesale),
     // so the editor draws bullets / numbers / checkboxes itself from this.
@@ -88,6 +98,16 @@ public:
     void setDocumentInlineStyle (Selection selection, InlineStyle style, bool enabled);
     void setDocumentBlockStyle (Selection selection, BlockStyle style);
 
+    const std::vector<Chord>& chords() const noexcept { return projectedChords; }
+    // Empty when no chord is anchored at that exact offset.
+    std::string chordAt (std::size_t documentOffset) const;
+    // Inserts, replaces, or (empty name) removes the chord anchored at the
+    // offset. Names that don't parse as a chord are rejected, so a stray
+    // bracket can never be minted from the document view.
+    bool setChordAt (std::size_t documentOffset, const std::string& name);
+    void transposeChords (int semitones, bool preferFlats);
+    bool hasChords() const noexcept { return ! projectedChords.empty(); }
+
     TextStyle styleAt (std::size_t documentOffset) const noexcept;
     std::string linkTargetAt (std::size_t documentOffset) const;
     bool selectionHasInlineStyle (Selection selection, InlineStyle style) const noexcept;
@@ -106,5 +126,9 @@ private:
     std::vector<std::size_t> documentBoundaryToSource { 0 };
     std::vector<TextStyle> projectedStyles;
     std::vector<std::string> projectedLinkTargets;
+    std::vector<Chord> projectedChords;
+    // Source spans of the bracket tokens behind projectedChords, index-parallel,
+    // so an edit rewrites the exact token instead of re-scanning for it.
+    std::vector<std::pair<std::size_t, std::size_t>> chordSourceSpans;
 };
 } // namespace duskstudio

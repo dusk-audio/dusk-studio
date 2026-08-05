@@ -1,8 +1,10 @@
 #include "NotepadDocument.h"
+#include "NotepadChords.h"
 
 #include <algorithm>
 #include <cctype>
 #include <limits>
+#include <string_view>
 
 namespace duskstudio
 {
@@ -42,6 +44,8 @@ struct ProjectionBuilder
     std::vector<std::size_t> boundaries;
     std::vector<NotepadDocument::TextStyle> styles;
     std::vector<std::string> links;
+    std::vector<NotepadDocument::Chord> chords;
+    std::vector<std::pair<std::size_t, std::size_t>> chordSpans;
     NotepadDocument::BlockStyle blockStyle = NotepadDocument::BlockStyle::body;
 };
 
@@ -146,6 +150,22 @@ void projectInline (ProjectionBuilder& out, std::size_t start, std::size_t end,
 
         if (source[i] == '[')
         {
+            // ChordPro brackets are hidden like any other syntax; the chord
+            // anchors on whatever character the projection appends next, so it
+            // stays over its syllable as the lyric is edited around it.
+            const auto chordEnd = findUnescaped (source, "]", i + 1, end);
+            if (chordEnd != std::string::npos
+                && (chordEnd + 1 >= end || source[chordEnd + 1] != '(')
+                && notepad::chords::isChord (std::string_view (source).substr (i + 1, chordEnd - (i + 1))))
+            {
+                out.chords.push_back ({ out.text.size(),
+                                        source.substr (i + 1, chordEnd - (i + 1)) });
+                out.chordSpans.emplace_back (i, chordEnd + 1);
+                out.skipTo (chordEnd + 1);
+                i = chordEnd + 1;
+                continue;
+            }
+
             const auto labelEnd = findUnescaped (source, "](", i + 1, end);
             if (labelEnd != std::string::npos)
             {
@@ -647,6 +667,56 @@ NotepadDocument::TextStyle NotepadDocument::styleAt (std::size_t documentOffset)
     return projectedStyles[documentOffset];
 }
 
+std::string NotepadDocument::chordAt (std::size_t documentOffset) const
+{
+    for (const auto& chord : projectedChords)
+        if (chord.documentOffset == documentOffset)
+            return chord.name;
+    return {};
+}
+
+bool NotepadDocument::setChordAt (std::size_t documentOffset, const std::string& name)
+{
+    if (! name.empty() && ! notepad::chords::isChord (name))
+        return false;
+
+    for (std::size_t i = 0; i < projectedChords.size(); ++i)
+    {
+        if (projectedChords[i].documentOffset != documentOffset)
+            continue;
+
+        const auto [start, end] = chordSourceSpans[i];
+        markdownText.replace (start, end - start,
+                              name.empty() ? std::string() : "[" + name + "]");
+        rebuildProjection();
+        return true;
+    }
+
+    if (name.empty())
+        return false;
+
+    documentOffset = std::min (documentOffset, documentBoundaryToSource.size() - 1);
+    markdownText.insert (documentBoundaryToSource[documentOffset], "[" + name + "]");
+    rebuildProjection();
+    return true;
+}
+
+void NotepadDocument::transposeChords (int semitones, bool preferFlats)
+{
+    if (projectedChords.empty())
+        return;
+
+    // Back to front: every rewrite can change the token's length, and a span
+    // ahead of the cursor would shift under the next replace.
+    for (auto i = chordSourceSpans.size(); i-- > 0;)
+    {
+        const auto [start, end] = chordSourceSpans[i];
+        const auto shifted = notepad::chords::transpose (projectedChords[i].name, semitones, preferFlats);
+        markdownText.replace (start, end - start, "[" + shifted + "]");
+    }
+    rebuildProjection();
+}
+
 std::string NotepadDocument::linkTargetAt (std::size_t documentOffset) const
 {
     if (projectedLinkTargets.empty())
@@ -761,5 +831,7 @@ void NotepadDocument::rebuildProjection()
     documentBoundaryToSource = std::move (out.boundaries);
     projectedStyles = std::move (out.styles);
     projectedLinkTargets = std::move (out.links);
+    projectedChords = std::move (out.chords);
+    chordSourceSpans = std::move (out.chordSpans);
 }
 } // namespace duskstudio

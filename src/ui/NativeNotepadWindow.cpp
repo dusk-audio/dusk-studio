@@ -805,6 +805,25 @@ private:
         if (linkToolbarButton())
             ImGui::OpenPopup ("Insert link");
 
+        ImGui::SameLine (0.0f, 16.0f);
+        if (toolbarButton ("♯", "Chord over the word at the caret (Ctrl+K)",
+                           editor.chordEntryActive()))
+        {
+            editor.beginChordEntry();
+            focusEditorNextFrame = true;
+        }
+        // Transpose only has meaning once the sheet carries chords, and in
+        // Markdown mode the source is edited directly.
+        const bool canTranspose = ! markdownMode && document.hasChords();
+        ImGui::BeginDisabled (! canTranspose);
+        ImGui::SameLine (0.0f, 5.0f);
+        if (toolbarButton ("−", "Transpose down a semitone", false))
+            editor.transposeChords (-1);
+        ImGui::SameLine (0.0f, 5.0f);
+        if (toolbarButton ("+", "Transpose up a semitone", false))
+            editor.transposeChords (1);
+        ImGui::EndDisabled();
+
         if (ImGui::BeginPopupModal ("Insert link", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         {
             ImGui::TextUnformatted ("Link destination");

@@ -445,6 +445,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
 
     add_library(dusk_notepad_ui STATIC
         src/ui/NotepadDocument.cpp
+        src/ui/NotepadChords.cpp
         src/ui/NotepadEditorCore.cpp
         src/ui/NotepadEditor.cpp
         src/ui/NativeNotepadWindow.cpp

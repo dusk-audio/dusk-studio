@@ -560,6 +560,16 @@ triple-click a line, Ctrl+arrow jumps by word, Home, End, and Page Up/Down move
 within the page, Ctrl+A selects everything, and cut, copy, and paste use the
 system clipboard.
 
+**Chords over lyrics.** Put the caret in the word a chord lands on and press
+Ctrl+K, or use the chord toolbar button: a slot opens above that word. Type the
+chord name and press Enter to commit it, Esc to cancel, or commit an empty name
+to remove it. Click a chord to edit it again. Chords float above their syllable
+and move with the lyric as you edit around them. The transpose buttons shift
+every chord in the notepad by a semitone, spelled with sharps going up and flats
+coming down. Notes are stored as ChordPro brackets in `notepad.md`
+(`[Am]like this`), so the file opens in any chord-sheet app; bracketed text that
+is not a chord name, such as `[Chorus]`, stays literal.
+
 The view switch in the header flips between the document view (eye) and the
 compatible `notepad.md` source (`</>`) for users who prefer direct editing.
 Switching views preserves the selection. The switch beside it sets the document

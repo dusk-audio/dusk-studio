@@ -49,6 +49,15 @@ public:
     void applyInlineStyle (NotepadDocument::InlineStyle style);
     void applyBlockStyle (NotepadDocument::BlockStyle style);
     void insertLink (const std::string& url);
+
+    // Opens the chord slot over the word at the caret, seeded with the chord
+    // already anchored there. Enter commits, Esc cancels, an empty name
+    // removes the chord.
+    void beginChordEntry();
+    bool chordEntryActive() const noexcept { return chordEditing; }
+    // Sharps going up, flats coming down: the spelling a chart would use for
+    // the direction the singer asked for.
+    void transposeChords (int semitones);
     bool inlineStyleActive (NotepadDocument::InlineStyle style) const;
     NotepadDocument::BlockStyle blockStyle() const;
 
@@ -93,6 +102,10 @@ private:
 
     void handleMouse (ImVec2 frameMin, ImVec2 frameMax, bool hovered, float bodySize);
     void handleKeyboard (float viewportHeight, float bodySize);
+    // Consumes input while the chord slot is open. Returns false once it has
+    // closed, so the same frame's remaining keys reach the text editor.
+    bool handleChordEntry();
+    void commitChordEntry();
     void render (ImVec2 frameMin, ImVec2 frameMax, float bodySize, bool active) const;
 
     std::size_t hitTest (ImVec2 position, ImVec2 frameMin, float bodySize) const;
@@ -107,6 +120,9 @@ private:
 
     std::size_t caret = 0;
     std::size_t anchor = 0;
+    std::size_t chordAnchor = 0;
+    std::string chordDraft;
+    bool chordEditing = false;
     float desiredX = -1.0f;
     float scrollY = 0.0f;
     float layoutWidth = -1.0f;
