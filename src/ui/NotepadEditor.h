@@ -64,8 +64,9 @@ public:
     void beginChordEntry();
     void insertSectionMarker (const std::string& label);
     bool chordEntryActive() const noexcept { return chordEditing; }
-    // Sharps going up, flats coming down: the spelling a chart would use for
-    // the direction the singer asked for.
+    bool cycleChordCandidate (int direction);
+    bool acceptChordCandidate();
+    // Keeps the document's accidental preference stable across a round trip.
     void transposeChords (int semitones);
     bool inlineStyleActive (NotepadDocument::InlineStyle style) const;
     NotepadDocument::BlockStyle blockStyle() const;
@@ -138,6 +139,7 @@ private:
     std::string chordDraft;
     std::vector<std::string> chordCandidates;
     std::size_t chordCandidateIndex = 0;
+    bool chordSuggestionAccepted = false;
     bool chordEditing = false;
     float desiredX = -1.0f;
     float scrollY = 0.0f;

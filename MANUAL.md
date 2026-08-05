@@ -569,10 +569,9 @@ chords come first; otherwise the choices are alphabetical. Ctrl+Shift+K repeats
 the preceding chord at the caret. Click a chord to edit it again. Chords float
 above their syllable and move with the lyric as you edit around them. The
 transpose buttons shift every chord in the notepad by a semitone, spelled with
-sharps going up and flats coming down, matching whichever accidental the
-notepad already uses so that transposing away and back returns your own
-spelling. Chord entry and transposition both work in either view. Notes are
-stored as ChordPro brackets in `notepad.md`
+the notepad's existing accidental preference so that transposing away and back
+returns your own spelling. Chord entry and transposition both work in either
+view. Notes are stored as ChordPro brackets in `notepad.md`
 (`[Am]like this`), so the file opens in any chord-sheet app; bracketed text that
 is not a chord name, such as `[Chorus]`, stays literal.
 
@@ -583,16 +582,16 @@ thing: any bracketed word that is not a chord name stays literal.
 The toolbar leads with the chord tools, then heading, bold, and italic. Heading
 levels, inline code, quotes, the three list styles, and links live behind the
 overflow button at its right end. Undo and redo dim when there is nothing to
-undo or redo. The footer counts the lyric itself in both views, so headings
-markers and chord brackets never count towards it.
+undo or redo. The footer shows the current save state, the latest save time when
+available, the `notepad.md` filename, section count, unique chord count, and the
+detected key when enough chords identify one.
 
 A switch at the top right of the header flips between the chart (eye) and the
 compatible `notepad.md` source (`</>`) for users who prefer direct editing;
 switching views preserves the selection. Click the dimmed area outside the
-notepad to close it.
-The footer distinguishes saved, unsaved, untitled, and failed-save states. Notes are saved atomically to
-`notepad.md` when the notepad closes and on every session save; they follow the
-session on Save As. A failed sidecar write remains dirty and can be retried by
+notepad to close it. Notes are saved atomically to `notepad.md` when the notepad
+closes and on every session save; they follow the session on Save As. A failed
+sidecar write remains dirty and can be retried by
 saving the session again; it blocks a session switch instead of discarding the
 outgoing notes. Typing in either view never triggers transport shortcuts.
 

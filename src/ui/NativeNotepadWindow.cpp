@@ -110,6 +110,13 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
             owner.draw (static_cast<float> (getWidth()), static_cast<float> (getHeight()));
         }
 
+        bool onKeyboard (const DGL::Widget::KeyboardEvent& event) override
+        {
+            if (owner.handleChordEntryNavigation (event))
+                return true;
+            return DGL::ImGuiTopLevelWidget::onKeyboard (event);
+        }
+
     private:
         Impl& owner;
     };
@@ -283,6 +290,31 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
     }
 
 private:
+    bool handleChordEntryNavigation (const DGL::Widget::KeyboardEvent& event)
+    {
+        if (! editor.chordEntryActive())
+            return false;
+
+        if (event.key == DGL::kKeyUp || event.key == DGL::kKeyDown)
+        {
+            if (event.press)
+                editor.cycleChordCandidate (event.key == DGL::kKeyUp ? -1 : 1);
+            return true;
+        }
+        if (event.key == DGL::kKeyTab)
+        {
+            if (event.press)
+            {
+                if ((event.mod & DGL::kModifierShift) != 0)
+                    editor.cycleChordCandidate (-1);
+                else
+                    editor.acceptChordCandidate();
+            }
+            return true;
+        }
+        return false;
+    }
+
     notepad::Snapshot currentSnapshot() const
     {
         return { document.markdown(), editor.selection(), markdownMode };
@@ -543,12 +575,12 @@ private:
         return leftClicked ? 0 : rightClicked ? 1 : -1;
     }
 
-    void drawRibbon()
+    void drawRibbon (float height)
     {
         ImGui::PushStyleVar (ImGuiStyleVar_ChildRounding, 0.0f);
         ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (22.0f, 13.0f));
         ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (notepad::kStagePalette.shell));
-        ImGui::BeginChild ("ribbon", ImVec2 (0.0f, kRibbonHeight),
+        ImGui::BeginChild ("ribbon", ImVec2 (0.0f, height),
                            ImGuiChildFlags_AlwaysUseWindowPadding,
                            ImGuiWindowFlags_NoScrollbar);
 
@@ -718,19 +750,22 @@ private:
         const float editorWidth = std::min (kContentWidth, std::max (0.0f, available.x));
         ImGui::SetCursorPosX (ImGui::GetCursorPosX() + (available.x - editorWidth) * 0.5f);
 
-        ImGui::PushStyleVar (ImGuiStyleVar_ChildRounding, 0.0f);
-        ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (34.0f, 26.0f));
-        ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (notepad::kStagePalette.stage));
-        // A borderless child drops WindowPadding unless asked, which left the
-        // lyric running edge to edge with no gutter.
-        ImGui::BeginChild ("chart", ImVec2 (editorWidth, std::max (0.0f, available.y)),
-                           ImGuiChildFlags_AlwaysUseWindowPadding);
+        if (editorWidth > 0.0f && available.y > 0.0f)
+        {
+            ImGui::PushStyleVar (ImGuiStyleVar_ChildRounding, 0.0f);
+            ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (34.0f, 26.0f));
+            ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (notepad::kStagePalette.stage));
+            // A borderless child drops WindowPadding unless asked, which left the
+            // lyric running edge to edge with no gutter.
+            ImGui::BeginChild ("chart", ImVec2 (editorWidth, available.y),
+                               ImGuiChildFlags_AlwaysUseWindowPadding);
 
-        editor.draw (ImGui::GetFontSize());
+            editor.draw (ImGui::GetFontSize());
 
-        ImGui::EndChild();
-        ImGui::PopStyleColor();
-        ImGui::PopStyleVar (2);
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+            ImGui::PopStyleVar (2);
+        }
         ImGui::EndChild();
         ImGui::PopStyleVar();
         ImGui::PopStyleColor();
@@ -789,53 +824,58 @@ private:
                                                   statusHeight);
 
         ImGui::SetCursorPosY (bands.header);
-        drawRibbon();
-        drawEditor (bands.chart);
+        if (bands.ribbon > 0.0f)
+            drawRibbon (bands.ribbon);
+        if (bands.chart > 0.0f)
+            drawEditor (bands.chart);
 
-        ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (notepad::kStagePalette.shell));
-        ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (18.0f, statusPadding));
-        ImGui::BeginChild ("status", ImVec2 (0.0f, bands.status),
-                           ImGuiChildFlags_AlwaysUseWindowPadding,
-                           ImGuiWindowFlags_NoScrollbar);
-        ImGui::PushStyleColor (ImGuiCol_Text,
-                              saveFailed ? colour (0xe48a8aff) : colour (notepad::kStagePalette.muted));
-        const char* saveState = saveFailed
-                              ? "Save failed, the notes are still unsaved"
-                              : documentDirty && hasSessionFile
-                                  ? "Unsaved changes, saved when this closes"
-                              : documentDirty
-                                  ? "Unsaved changes, save the session to keep them"
-                              : hasSessionFile ? "Saved with the session"
-                                               : "Untitled session, saves on first save";
-        ImGui::TextUnformatted (saveState);
-        if (! savedAtLabel.empty() && ! documentDirty && ! saveFailed)
+        if (bands.status > 0.0f)
         {
-            ImGui::SameLine (0.0f, 6.0f);
-            ImGui::TextUnformatted (savedAtLabel.c_str());
-        }
-        ImGui::SameLine (0.0f, 8.0f);
-        ImGui::TextUnformatted ("notepad.md");
-        ImGui::PopStyleColor();
+            ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (notepad::kStagePalette.shell));
+            ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (18.0f, statusPadding));
+            ImGui::BeginChild ("status", ImVec2 (0.0f, bands.status),
+                               ImGuiChildFlags_AlwaysUseWindowPadding,
+                               ImGuiWindowFlags_NoScrollbar);
+            ImGui::PushStyleColor (ImGuiCol_Text,
+                                  saveFailed ? colour (0xe48a8aff) : colour (notepad::kStagePalette.muted));
+            const char* saveState = saveFailed
+                                  ? "Save failed, the notes are still unsaved"
+                                  : documentDirty && hasSessionFile
+                                      ? "Unsaved changes, saved when this closes"
+                                  : documentDirty
+                                      ? "Unsaved changes, save the session to keep them"
+                                  : hasSessionFile ? "Saved with the session"
+                                                   : "Untitled session, saves on first save";
+            ImGui::TextUnformatted (saveState);
+            if (! savedAtLabel.empty() && ! documentDirty && ! saveFailed)
+            {
+                ImGui::SameLine (0.0f, 6.0f);
+                ImGui::TextUnformatted (savedAtLabel.c_str());
+            }
+            ImGui::SameLine (0.0f, 8.0f);
+            ImGui::TextUnformatted ("notepad.md");
+            ImGui::PopStyleColor();
 
-        // What a songwriter wants from a glance: how the song is built, what it
-        // is built from, and what it is in.
-        const auto chordNames = document.uniqueChordNames();
-        const auto key = notepad::chords::detectKey (chordNames);
-        const auto sections = document.sectionCount();
-        std::string summary = std::to_string (sections)
-                            + (sections == 1 ? " section" : " sections") + "  |  ";
-        summary += std::to_string (chordNames.size())
-                 + (chordNames.size() == 1 ? " chord" : " chords");
-        if (! key.empty())
-            summary += "  |  key of " + key;
-        ImGui::PushStyleColor (ImGuiCol_Text, colour (notepad::kStagePalette.muted));
-        const auto summaryWidth = ImGui::CalcTextSize (summary.c_str()).x;
-        ImGui::SameLine (std::max (300.0f, width - summaryWidth - 20.0f));
-        ImGui::TextUnformatted (summary.c_str());
-        ImGui::PopStyleColor();
-        ImGui::EndChild();
-        ImGui::PopStyleVar();
-        ImGui::PopStyleColor();
+            // What a songwriter wants from a glance: how the song is built, what it
+            // is built from, and what it is in.
+            const auto chordNames = document.uniqueChordNames();
+            const auto key = notepad::chords::detectKey (chordNames);
+            const auto sections = document.sectionCount();
+            std::string summary = std::to_string (sections)
+                                + (sections == 1 ? " section" : " sections") + "  |  ";
+            summary += std::to_string (chordNames.size())
+                     + (chordNames.size() == 1 ? " chord" : " chords");
+            if (! key.empty())
+                summary += "  |  key of " + key;
+            ImGui::PushStyleColor (ImGuiCol_Text, colour (notepad::kStagePalette.muted));
+            const auto summaryWidth = ImGui::CalcTextSize (summary.c_str()).x;
+            ImGui::SameLine (std::max (300.0f, width - summaryWidth - 20.0f));
+            ImGui::TextUnformatted (summary.c_str());
+            ImGui::PopStyleColor();
+            ImGui::EndChild();
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor();
+        }
 
         ImGui::End();
         ImGui::PopStyleColor();

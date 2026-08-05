@@ -650,7 +650,8 @@ NotepadDocument::LineInfo NotepadDocument::lineInfoAt (std::size_t documentOffse
 
     LineInfo info;
     info.block = blockStyleAtLine (markdownText, start, end);
-    info.section = isSectionLine (markdownText, start, end);
+    const auto contentStart = start + blockPrefixLength (markdownText, start, end);
+    info.section = isSectionLine (markdownText, contentStart, end);
     if (info.block == BlockStyle::numbers)
     {
         int number = 0;
@@ -799,8 +800,9 @@ bool NotepadDocument::repeatPreviousChordAt (std::size_t documentOffset)
 
 bool NotepadDocument::insertSectionMarker (std::size_t documentOffset, const std::string& label)
 {
-    if (label.empty() || label.find (']') != std::string::npos
-        || label.find ('\n') != std::string::npos)
+    if (label.empty() || label.find ('[') != std::string::npos
+        || label.find (']') != std::string::npos || label.find ('\n') != std::string::npos
+        || notepad::chords::isChord (label))
         return false;
 
     documentOffset = std::min (documentOffset, documentBoundaryToSource.size() - 1);
@@ -935,7 +937,9 @@ std::size_t NotepadDocument::sectionCount() const noexcept
     while (lineStart <= markdownText.size())
     {
         const auto lineEnd = lineEndAt (markdownText, lineStart);
-        if (isSectionLine (markdownText, lineStart, lineEnd))
+        const auto contentStart = lineStart
+                                + blockPrefixLength (markdownText, lineStart, lineEnd);
+        if (isSectionLine (markdownText, contentStart, lineEnd))
             ++count;
         if (lineEnd == markdownText.size())
             break;

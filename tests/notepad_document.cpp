@@ -376,4 +376,28 @@ TEST_CASE ("Section markers project as their label", "[notepad][document][sectio
         document.setMarkdown ("[Am]\nline\n");
         CHECK_FALSE (document.lineInfoAt (0).section);
     }
+
+    SECTION ("a hidden block prefix does not hide the section semantics")
+    {
+        document.setMarkdown ("- [Chorus]\nline\n");
+        CHECK (document.documentText() == "Chorus\nline\n");
+        CHECK (document.lineInfoAt (0).block == NotepadDocument::BlockStyle::bullets);
+        CHECK (document.lineInfoAt (0).section);
+        CHECK (document.sectionCount() == 1);
+    }
+
+    SECTION ("inserted labels must produce recognizable sections")
+    {
+        document.setMarkdown ("line\n");
+        const auto unchanged = document.markdown();
+        for (const auto* const label : { "[Verse", "Verse]", "Am", "line\nbreak" })
+        {
+            CHECK_FALSE (document.insertSectionMarker (0, label));
+            CHECK (document.markdown() == unchanged);
+        }
+
+        REQUIRE (document.insertSectionMarker (0, "Verse"));
+        CHECK (document.lineInfoAt (0).section);
+        CHECK (document.sectionCount() == 1);
+    }
 }
