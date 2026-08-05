@@ -18,8 +18,14 @@ bool isChord (std::string_view token) noexcept;
 // unchanged so a caller can run this over a whole document blindly.
 std::string transpose (std::string_view token, int semitones, bool preferFlats);
 
-// Best-fitting major or minor key for a set of chord names, scored by how many
-// roots are diatonic to it, with the first chord's root breaking ties the way
-// a chart usually resolves. Empty when there is too little to go on.
-std::string detectKey (const std::vector<std::string>& names, bool preferFlats);
+// Best-fitting key for a set of chord names, or empty when the evidence does
+// not support a claim. The rule, which is not to be tuned against a sample
+// document:
+//   - Power chords and suspensions carry no third. They count towards the root
+//     set and never towards major or minor.
+//   - At least three distinct roots must carry a third before a key is named.
+//   - If more than one key scores the maximum, the answer is blank.
+// The result is spelled the way key signatures are written (C#m, not Dbm),
+// independent of how the document spells its chords.
+std::string detectKey (const std::vector<std::string>& names);
 } // namespace duskstudio::notepad::chords

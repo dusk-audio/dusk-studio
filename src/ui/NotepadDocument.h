@@ -106,10 +106,18 @@ public:
     void setDocumentBlockStyle (Selection selection, BlockStyle style);
 
     const std::vector<Chord>& chords() const noexcept { return projectedChords; }
-    // The spelling a transpose should write: whichever accidental the document
-    // already uses, so a round trip returns the notation the user typed. Ties
-    // and chord-free documents take sharps.
-    bool prefersFlats() const noexcept { return flatSpelling; }
+    // How a transpose spells its accidentals. followDocument infers from the
+    // chords already written and keeps that reading even after a transpose
+    // lands them all on naturals; the other two are the user overriding it.
+    enum class Spelling { followDocument, sharps, flats };
+
+    void setSpelling (Spelling value) noexcept { spelling = value; }
+    Spelling spellingMode() const noexcept { return spelling; }
+    bool prefersFlats() const noexcept
+    {
+        return spelling == Spelling::flats
+            || (spelling == Spelling::followDocument && flatSpelling);
+    }
     // Empty when no chord is anchored at that exact offset.
     std::string chordAt (std::size_t documentOffset) const;
     // Inserts, replaces, or (empty name) removes the chord anchored at the
@@ -172,5 +180,6 @@ private:
     // the evidence: re-deriving it there would spell the way back in sharps
     // and hand a flat writer a document they did not write.
     bool flatSpelling = false;
+    Spelling spelling = Spelling::followDocument;
 };
 } // namespace duskstudio

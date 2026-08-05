@@ -297,19 +297,47 @@ TEST_CASE ("Chord commands and counts survive the source view")
     }
 }
 
-TEST_CASE ("Key detection reads the chords a chart is built from")
+TEST_CASE ("Key detection only claims a key the evidence supports")
 {
-    CHECK (chords::detectKey ({ "Am", "F", "C", "G" }, false) == "Am");
-    CHECK (chords::detectKey ({ "C", "F", "G", "Am" }, false) == "C");
-    CHECK (chords::detectKey ({ "D", "G", "A" }, false) == "D");
-
-    // Too little to distinguish a key from a single stab.
-    CHECK (chords::detectKey ({ "C" }, false).empty());
-    CHECK (chords::detectKey ({}, false).empty());
-
-    SECTION ("spelling follows the document")
+    SECTION ("a clear diatonic progression names its key")
     {
-        CHECK (chords::detectKey ({ "Bb", "Eb", "F" }, true) == "Bb");
+        CHECK (chords::detectKey ({ "Am", "F", "C", "G" }) == "Am");
+        CHECK (chords::detectKey ({ "C", "F", "G", "Am" }) == "C");
+        CHECK (chords::detectKey ({ "D", "G", "A", "Bm" }) == "D");
+    }
+
+    SECTION ("power chords and suspensions carry no third")
+    {
+        // Roots enough for a key, but nothing that can argue major or minor.
+        CHECK (chords::detectKey ({ "A5", "D5", "E5", "G5" }).empty());
+        CHECK (chords::detectKey ({ "Asus4", "Dsus2", "Esus4" }).empty());
+
+        // A power chord still joins the root set, so it cannot flip the mode
+        // its neighbours establish.
+        CHECK (chords::detectKey ({ "Am", "Gb5" }).empty());
+        CHECK (chords::detectKey ({ "Am", "F", "C", "E5" }) == "Am");
+    }
+
+    SECTION ("two chords are not evidence")
+    {
+        CHECK (chords::detectKey ({ "Am", "F" }).empty());
+        CHECK (chords::detectKey ({ "C" }).empty());
+        CHECK (chords::detectKey ({}).empty());
+    }
+
+    SECTION ("a modal progression is not forced into a label")
+    {
+        // Dorian on D: the roots fit C major and D minor equally, so neither
+        // may be claimed.
+        CHECK (chords::detectKey ({ "Dm", "Em", "Dm", "Em" }).empty());
+    }
+
+    SECTION ("keys are spelled the way key signatures are written")
+    {
+        // C# minor, never Db minor, whatever the chords themselves use.
+        CHECK (chords::detectKey ({ "C#m", "F#m", "G#m", "A" }) == "C#m");
+        CHECK (chords::detectKey ({ "Dbm", "Gbm", "Abm", "A" }) == "C#m");
+        CHECK (chords::detectKey ({ "Eb", "Ab", "Bb", "Cm" }) == "Eb");
     }
 }
 
@@ -324,5 +352,34 @@ TEST_CASE ("Section markers are bracketed lines that are not chords")
     {
         document.setMarkdown ("[Am]\nline\n");
         CHECK (document.sectionCount() == 0);
+    }
+}
+
+TEST_CASE ("Chord spelling follows the song until the user overrides it")
+{
+    NotepadDocument document;
+    document.setMarkdown ("[Bb]one [Eb]two");
+    CHECK (document.spellingMode() == NotepadDocument::Spelling::followDocument);
+    CHECK (document.prefersFlats());
+
+    // The inferred reading is sticky across a transpose onto naturals, which
+    // is why it has to be overridable rather than merely re-derived.
+    document.transposeChords (2, document.prefersFlats());
+    CHECK (document.markdown() == "[C]one [F]two");
+    CHECK (document.prefersFlats());
+
+    SECTION ("an override wins over the inference")
+    {
+        document.setSpelling (NotepadDocument::Spelling::sharps);
+        CHECK_FALSE (document.prefersFlats());
+        document.transposeChords (1, document.prefersFlats());
+        CHECK (document.markdown() == "[C#]one [F#]two");
+    }
+
+    SECTION ("returning to follow restores the song's own reading")
+    {
+        document.setSpelling (NotepadDocument::Spelling::sharps);
+        document.setSpelling (NotepadDocument::Spelling::followDocument);
+        CHECK (document.prefersFlats());
     }
 }

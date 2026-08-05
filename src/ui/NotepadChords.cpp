@@ -1,5 +1,7 @@
 #include "NotepadChords.h"
 
+#include <algorithm>
+#include <utility>
 #include <array>
 #include <cctype>
 #include <vector>
@@ -174,33 +176,64 @@ std::string transpose (std::string_view token, int semitones, bool preferFlats)
     }
     return result;
 }
-std::string detectKey (const std::vector<std::string>& names, bool preferFlats)
+// Key signatures as they are actually written: minor keys take sharps at C#,
+// F# and G#, majors take flats at Db, Eb, Ab and Bb, and the enharmonic pair
+// at 6 accidentals resolves to F# either way.
+namespace
 {
-    // Two chords is the least that can distinguish a key from a single stab.
-    if (names.size() < 2)
-        return {};
+const char* keyName (int tonic, bool minor) noexcept
+{
+    constexpr std::array<const char*, 12> kMajorKeys {
+        "C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"
+    };
+    constexpr std::array<const char*, 12> kMinorKeys {
+        "C", "C#", "D", "Eb", "E", "F", "F#", "G", "G#", "A", "Bb", "B"
+    };
+    const auto index = static_cast<std::size_t> (tonic);
+    return minor ? kMinorKeys[index] : kMajorKeys[index];
+}
 
-    struct Root { int pitch; bool minor; };
+// A suspension replaces the third and a power chord omits it, so neither says
+// anything about mode.
+bool carriesThird (const std::string& suffix) noexcept
+{
+    if (suffix.compare (0, 3, "sus") == 0)
+        return false;
+    for (const auto ch : suffix)
+        if (ch != '5' && ch != '(' && ch != ')')
+            return true;
+    return suffix.find ('5') == std::string::npos;
+}
+} // namespace
+
+std::string detectKey (const std::vector<std::string>& names)
+{
+    struct Root { int pitch; bool minor; bool third; };
     std::vector<Root> roots;
     for (const auto& name : names)
     {
         ParsedChord parsed;
         if (! parse (name, parsed))
             continue;
-        const auto quality = parsed.suffix;
-        const bool minor = ! quality.empty() && quality[0] == 'm'
-                        && quality.compare (0, 3, "maj") != 0;
-        roots.push_back ({ parsed.root, minor });
+        const bool third = carriesThird (parsed.suffix);
+        const bool minor = third && ! parsed.suffix.empty() && parsed.suffix[0] == 'm'
+                        && parsed.suffix.compare (0, 3, "maj") != 0;
+        roots.push_back ({ parsed.root, minor, third });
     }
-    if (roots.size() < 2)
+
+    std::vector<int> thirdRoots;
+    for (const auto& root : roots)
+        if (root.third && std::find (thirdRoots.begin(), thirdRoots.end(), root.pitch)
+                              == thirdRoots.end())
+            thirdRoots.push_back (root.pitch);
+    if (thirdRoots.size() < 3)
         return {};
 
     constexpr std::array<int, 7> kMajorDegrees { 0, 2, 4, 5, 7, 9, 11 };
     constexpr std::array<int, 7> kMinorDegrees { 0, 2, 3, 5, 7, 8, 10 };
 
-    int bestScore = -1;
-    int bestTonic = 0;
-    bool bestMinor = false;
+    std::vector<std::pair<int, bool>> best;
+    int bestScore = 0;
     for (int tonic = 0; tonic < 12; ++tonic)
     {
         for (const bool minor : { false, true })
@@ -208,27 +241,44 @@ std::string detectKey (const std::vector<std::string>& names, bool preferFlats)
             const auto& degrees = minor ? kMinorDegrees : kMajorDegrees;
             int score = 0;
             for (const auto& root : roots)
-                for (const auto degree : degrees)
-                    if ((tonic + degree) % 12 == root.pitch)
-                    {
-                        ++score;
-                        break;
-                    }
-            // The opening chord usually states the key, so it settles ties
-            // rather than leaving the choice to iteration order.
-            if (roots.front().pitch == tonic && roots.front().minor == minor)
-                ++score;
+            {
+                const bool diatonic = std::find_if (degrees.begin(), degrees.end(),
+                                                    [&] (int degree)
+                                                    {
+                                                        return (tonic + degree) % 12 == root.pitch;
+                                                    }) != degrees.end();
+                if (diatonic)
+                    ++score;
+            }
             if (score > bestScore)
             {
                 bestScore = score;
-                bestTonic = tonic;
-                bestMinor = minor;
+                best.clear();
             }
+            if (score == bestScore)
+                best.emplace_back (tonic, minor);
         }
     }
 
-    const auto& spelling = preferFlats ? kFlatNames : kSharpNames;
-    return std::string (spelling[static_cast<std::size_t> (bestTonic)])
-         + (bestMinor ? "m" : "");
+    // A key and its relative always share a pitch set, so diatonic fit alone
+    // cannot separate them. The opening triad is what states the tonic; when it
+    // is not one of the tied candidates, the evidence is genuinely ambiguous
+    // and the answer is blank.
+    if (bestScore == 0 || best.empty())
+        return {};
+    if (best.size() > 1)
+    {
+        const auto opening = std::find_if (roots.begin(), roots.end(),
+                                           [] (const Root& root) { return root.third; });
+        if (opening == roots.end())
+            return {};
+        const std::pair<int, bool> stated { opening->pitch, opening->minor };
+        if (std::find (best.begin(), best.end(), stated) == best.end())
+            return {};
+        best.assign (1, stated);
+    }
+
+    const auto [bestTonic, bestMinor] = best.front();
+    return std::string (keyName (bestTonic, bestMinor)) + (bestMinor ? "m" : "");
 }
 } // namespace duskstudio::notepad::chords

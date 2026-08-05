@@ -679,6 +679,20 @@ private:
         blockItem ("Numbered list", NotepadDocument::BlockStyle::numbers);
         blockItem ("Checklist", NotepadDocument::BlockStyle::tasks);
         ImGui::Separator();
+        // The inferred reading is sticky, so it needs somewhere visible to be
+        // seen and overridden.
+        const auto spelling = document.spellingMode();
+        const auto spellingItem = [&] (const char* label, NotepadDocument::Spelling value)
+        {
+            if (ImGui::Selectable (label, spelling == value))
+                document.setSpelling (value);
+        };
+        spellingItem (document.prefersFlats() ? "Spell chords: follow the song (flats)"
+                                              : "Spell chords: follow the song (sharps)",
+                      NotepadDocument::Spelling::followDocument);
+        spellingItem ("Spell chords with sharps", NotepadDocument::Spelling::sharps);
+        spellingItem ("Spell chords with flats", NotepadDocument::Spelling::flats);
+        ImGui::Separator();
         if (ImGui::Selectable ("Link the selected text"))
         {
             ImGui::CloseCurrentPopup();
@@ -844,7 +858,7 @@ private:
         // What a songwriter wants from a glance: how the song is built, what it
         // is built from, and what it is in.
         const auto chordNames = document.uniqueChordNames();
-        const auto key = notepad::chords::detectKey (chordNames, document.prefersFlats());
+        const auto key = notepad::chords::detectKey (chordNames);
         const auto sections = document.sectionCount();
         std::string summary;
         if (sections != 0)
