@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../session/Session.h"
+#include "../session/SessionLayout.h"
 
 #include <algorithm>
 
@@ -17,7 +17,9 @@ inline int hardwareBankForScreenBank (int screenBank, int screenStride) noexcept
 {
     if (screenStride <= 0) return 0;
     const int firstTrack = std::max (0, screenBank) * screenStride;
-    return std::clamp (firstTrack / Session::kBankSize, 0, Session::kNumBanks - 1);
+    return std::clamp (firstTrack / SessionLayout::kBankSize,
+                       0,
+                       SessionLayout::kNumBanks - 1);
 }
 
 inline int screenBankForHardwareBank (int hardwareBank,
@@ -25,8 +27,27 @@ inline int screenBankForHardwareBank (int hardwareBank,
                                       int screenBankCount) noexcept
 {
     if (screenStride <= 0 || screenBankCount <= 1) return 0;
-    const int firstTrack = std::clamp (hardwareBank, 0, Session::kNumBanks - 1)
-                         * Session::kBankSize;
+    const int firstTrack = std::clamp (hardwareBank, 0, SessionLayout::kNumBanks - 1)
+                         * SessionLayout::kBankSize;
     return std::clamp (firstTrack / screenStride, 0, screenBankCount - 1);
+}
+
+struct ScreenBankResizeState
+{
+    int currentBank;
+    int lastKnownMcuBank;
+    int activeBank;
+    int mcuBank;
+};
+
+inline ScreenBankResizeState screenBankStateAfterResize (int currentBank,
+                                                          int screenBankCount,
+                                                          int screenStride) noexcept
+{
+    const int clampedBank = std::clamp (currentBank,
+                                        0,
+                                        std::max (0, screenBankCount - 1));
+    const int hardwareBank = hardwareBankForScreenBank (clampedBank, screenStride);
+    return { clampedBank, hardwareBank, hardwareBank, hardwareBank };
 }
 } // namespace duskstudio

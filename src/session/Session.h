@@ -11,6 +11,7 @@
 #include <vector>
 #include "AtomicSnapshot.h"
 #include "MidiBindings.h"
+#include "SessionLayout.h"
 #include "../engine/PluginDescriptor.h"
 
 namespace duskstudio
@@ -1155,11 +1156,11 @@ struct MasteringParams
 class Session
 {
 public:
-    static constexpr int kNumTracks   = 24;  // three banks of 8
+    static constexpr int kNumTracks   = SessionLayout::kNumTracks;
     static constexpr int kNumBuses    = 4;
     static constexpr int kNumAuxLanes = 4;
-    static constexpr int kBankSize    = 8;
-    static constexpr int kNumBanks    = kNumTracks / kBankSize;
+    static constexpr int kBankSize    = SessionLayout::kBankSize;
+    static constexpr int kNumBanks    = SessionLayout::kNumBanks;
 
     Session();
 

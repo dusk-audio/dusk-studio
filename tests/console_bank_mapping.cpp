@@ -1,6 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "session/Session.h"
 #include "ui/BankMapping.h"
 
 using namespace duskstudio;
@@ -57,7 +56,7 @@ TEST_CASE ("Bank mapping: screen page resolves to the bank holding its first tra
 
     SECTION ("stride 24 - no banking, the single page starts at bank 0")
     {
-        REQUIRE (hardwareBankForScreenBank (0, Session::kNumTracks) == 0);
+        REQUIRE (hardwareBankForScreenBank (0, SessionLayout::kNumTracks) == 0);
     }
 }
 
@@ -108,8 +107,8 @@ TEST_CASE ("Bank mapping: hardware bank resolves to the page showing its first t
 
     SECTION ("stride 24 - every bank maps to the single page")
     {
-        for (int hw = 0; hw < Session::kNumBanks; ++hw)
-            REQUIRE (screenBankForHardwareBank (hw, Session::kNumTracks, 1) == 0);
+        for (int hw = 0; hw < SessionLayout::kNumBanks; ++hw)
+            REQUIRE (screenBankForHardwareBank (hw, SessionLayout::kNumTracks, 1) == 0);
     }
 }
 
@@ -118,10 +117,10 @@ TEST_CASE ("Bank mapping: indices past the end of a range clamp into it", "[cons
     SECTION ("a page past the last track can't name a bank past the last bank")
     {
         // First track 24 - one past kNumTracks, so the raw quotient is 3.
-        REQUIRE (hardwareBankForScreenBank (3, 8) == Session::kNumBanks - 1);
-        REQUIRE (hardwareBankForScreenBank (4, 6) == Session::kNumBanks - 1);
+        REQUIRE (hardwareBankForScreenBank (3, 8) == SessionLayout::kNumBanks - 1);
+        REQUIRE (hardwareBankForScreenBank (4, 6) == SessionLayout::kNumBanks - 1);
         // First track 32 - raw quotient 4.
-        REQUIRE (hardwareBankForScreenBank (2, 16) == Session::kNumBanks - 1);
+        REQUIRE (hardwareBankForScreenBank (2, 16) == SessionLayout::kNumBanks - 1);
     }
 
     SECTION ("a bank past the last page clamps to the last page")
@@ -133,7 +132,7 @@ TEST_CASE ("Bank mapping: indices past the end of a range clamp into it", "[cons
 
     SECTION ("a bank past kNumBanks clamps before it is resolved")
     {
-        REQUIRE (screenBankForHardwareBank (Session::kNumBanks, 8, 3) == 2);
+        REQUIRE (screenBankForHardwareBank (SessionLayout::kNumBanks, 8, 3) == 2);
     }
 
     SECTION ("negative and zero inputs")
@@ -159,9 +158,25 @@ TEST_CASE ("Bank mapping: the widest page count the console builds stays in rang
     {
         const int hw = hardwareBankForScreenBank (page, kNarrowestStride);
         REQUIRE (hw >= 0);
-        REQUIRE (hw < Session::kNumBanks);
-        REQUIRE (hw * Session::kBankSize + Session::kBankSize <= Session::kNumTracks);
+        REQUIRE (hw < SessionLayout::kNumBanks);
+        REQUIRE (hw * SessionLayout::kBankSize + SessionLayout::kBankSize
+                 <= SessionLayout::kNumTracks);
     }
 
     REQUIRE (hardwareBankForScreenBank (kMostPages - 1, kNarrowestStride) == 2);
+}
+
+TEST_CASE ("Bank mapping: a resize republishes the clamped page hardware bank",
+           "[console][bank]")
+{
+    // Page 3 at stride 6 begins at track 18 (hardware bank 2). Widening to
+    // stride 12 leaves only two pages, so the screen clamps to page 1 and all
+    // screen-owned hardware-bank state must follow its first track (track 12).
+    REQUIRE (hardwareBankForScreenBank (3, 6) == 2);
+    const auto state = screenBankStateAfterResize (3, 2, 12);
+
+    REQUIRE (state.currentBank == 1);
+    REQUIRE (state.lastKnownMcuBank == 1);
+    REQUIRE (state.activeBank == 1);
+    REQUIRE (state.mcuBank == 1);
 }

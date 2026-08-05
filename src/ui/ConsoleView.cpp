@@ -234,18 +234,22 @@ void ConsoleView::resized()
     const int stride = bankStride();
     const int pages  = numBanks();
     // Re-clamp the screen page against the (possibly changed) numBanks so a
-    // window-shrink doesn't leave us viewing an empty page past the end.
-    currentBank = std::clamp (currentBank, 0, std::max (0, pages - 1));
+    // width change doesn't leave us viewing an empty page past the end.
+    const auto remappedBanks = screenBankStateAfterResize (currentBank, pages, stride);
+    currentBank = remappedBanks.currentBank;
 
     // Both the page index and the stride under it are width-derived, so a
     // resize moves which hardware bank the page sits in - re-derive, or
     // bank-relative bindings keep driving whichever strips the OLD width put
-    // under the page. mcu.bank is deliberately untouched: the surface's own
-    // position is width-independent, and with a single page the screen has no
-    // bank opinion to impose in the first place.
+    // under the page. When the screen owns the bank, keep the MCU latch, binding
+    // base, and surface bank together; with a single page the screen has no bank
+    // opinion to impose in the first place.
     if (pages > 1 && activeBankFollowsScreen)
-        sessionRef.activeBank.store (hardwareBankForScreenBank (currentBank, stride),
-                                     std::memory_order_relaxed);
+    {
+        lastKnownMcuBank = remappedBanks.lastKnownMcuBank;
+        sessionRef.activeBank.store (remappedBanks.activeBank, std::memory_order_relaxed);
+        sessionRef.mcu.bank.store (remappedBanks.mcuBank, std::memory_order_release);
+    }
     updateBankVisibility();
 
     int visibleChannels;
