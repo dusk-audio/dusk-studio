@@ -72,6 +72,7 @@ public:
         BlockStyle block = BlockStyle::body;
         int  orderedNumber = 0;      // 1-based, numbers lines only
         bool taskChecked = false;    // tasks lines only
+        bool section = false;        // a bracketed non-chord line: [Chorus]
     };
 
     void setMarkdown (std::string text);

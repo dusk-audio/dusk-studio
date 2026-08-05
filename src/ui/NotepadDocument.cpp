@@ -295,6 +295,14 @@ std::string escapeDocumentInsertion (const std::string& text, bool atLineStart)
     return escaped;
 }
 
+bool isSectionLine (const std::string& text, std::size_t lineStart, std::size_t lineEnd)
+{
+    const auto length = lineEnd - lineStart;
+    return length >= 3 && text[lineStart] == '[' && text[lineEnd - 1] == ']'
+        && ! notepad::chords::isChord (
+                std::string_view (text).substr (lineStart + 1, length - 2));
+}
+
 std::size_t lineStartAt (const std::string& text, std::size_t offset)
 {
     offset = std::min (offset, text.size());
@@ -328,7 +336,18 @@ ProjectionBuilder buildProjection (const std::string& markdown)
             out.skipTo (contentStart);
         }
 
-        projectInline (out, contentStart, lineEnd);
+        // A section marker's brackets are syntax like any other: the chart
+        // shows the label, the file keeps the hand-editable form.
+        if (isSectionLine (markdown, contentStart, lineEnd))
+        {
+            out.skipTo (contentStart + 1);
+            projectInline (out, contentStart + 1, lineEnd - 1);
+            out.skipTo (lineEnd);
+        }
+        else
+        {
+            projectInline (out, contentStart, lineEnd);
+        }
         if (lineEnd < markdown.size())
             out.appendSourceRange (lineEnd, lineEnd + 1);
         if (lineEnd == markdown.size())
@@ -631,6 +650,7 @@ NotepadDocument::LineInfo NotepadDocument::lineInfoAt (std::size_t documentOffse
 
     LineInfo info;
     info.block = blockStyleAtLine (markdownText, start, end);
+    info.section = isSectionLine (markdownText, start, end);
     if (info.block == BlockStyle::numbers)
     {
         int number = 0;
@@ -895,11 +915,7 @@ std::size_t NotepadDocument::sectionCount() const noexcept
     while (lineStart <= markdownText.size())
     {
         const auto lineEnd = lineEndAt (markdownText, lineStart);
-        const auto length = lineEnd - lineStart;
-        if (length >= 3 && markdownText[lineStart] == '['
-            && markdownText[lineEnd - 1] == ']'
-            && ! notepad::chords::isChord (
-                    std::string_view (markdownText).substr (lineStart + 1, length - 2)))
+        if (isSectionLine (markdownText, lineStart, lineEnd))
             ++count;
         if (lineEnd == markdownText.size())
             break;

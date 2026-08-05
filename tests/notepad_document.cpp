@@ -359,3 +359,21 @@ TEST_CASE ("Notepad source mode projects the Markdown one to one",
         CHECK (document.lineInfoAt (0).block == NotepadDocument::BlockStyle::heading1);
     }
 }
+
+TEST_CASE ("Section markers project as their label", "[notepad][document][sections]")
+{
+    NotepadDocument document;
+    document.setMarkdown ("[Chorus]\nline one\n");
+
+    // The brackets are syntax, so the chart shows the label alone.
+    CHECK (document.documentText() == "Chorus\nline one\n");
+    CHECK (document.lineInfoAt (0).section);
+    CHECK_FALSE (document.lineInfoAt (7).section);
+    CHECK (document.markdown() == "[Chorus]\nline one\n");
+
+    SECTION ("a chord line is not a section")
+    {
+        document.setMarkdown ("[Am]\nline\n");
+        CHECK_FALSE (document.lineInfoAt (0).section);
+    }
+}
