@@ -18,6 +18,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/PluginDescriptor.cpp
     plugin_manager_descriptor.cpp
     plugin_slot_persistence.cpp
+    plugin_slot_lifecycle.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PluginManager.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PluginSlot.cpp
     native_plugin_cache.cpp
@@ -224,6 +225,7 @@ if(DUSKSTUDIO_NATIVE_CLAP)
         clap_native_slot.cpp
         clap_scanner.cpp
         clap_params.cpp
+        clap_host_thread_check.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapBundle.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapHost.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapInstance.cpp

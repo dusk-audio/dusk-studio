@@ -80,6 +80,44 @@ TEST_CASE ("Vst3HostContext run loop dispatches fds and timers", "[vst3][hostcon
         ::close (fds[1]);
     }
 
+    SECTION ("a writable-but-not-readable fd is never dispatched")
+    {
+        // The write end of an empty pipe is POLLOUT-ready on every pump and
+        // never readable: polling for anything but read-readiness would fire
+        // onFDIsSet at pump rate for the life of the editor.
+        int fds[2] {};
+        REQUIRE (::pipe (fds) == 0);
+
+        FdHandler handler;
+        REQUIRE (runLoop->registerEventHandler (&handler, fds[1]) == kResultOk);
+
+        for (int i = 0; i < 5; ++i) ctx.pump (16.0);
+        REQUIRE (handler.fires == 0);
+
+        REQUIRE (runLoop->unregisterEventHandler (&handler) == kResultOk);
+        ::close (fds[0]);
+        ::close (fds[1]);
+    }
+
+    SECTION ("an fd closed behind our back is dropped, not dispatched forever")
+    {
+        int fds[2] {};
+        REQUIRE (::pipe (fds) == 0);
+
+        FdHandler handler;
+        REQUIRE (runLoop->registerEventHandler (&handler, fds[0]) == kResultOk);
+        ::close (fds[0]);   // plugin dropped the fd without unregistering
+
+        ctx.pump (16.0);
+        REQUIRE (handler.fires == 0);
+        REQUIRE (ctx.numEventHandlers() == 0);   // POLLNVAL latches - handler must go
+
+        ctx.pump (16.0);
+        REQUIRE (handler.fires == 0);
+
+        ::close (fds[1]);
+    }
+
     SECTION ("timer fires on cadence, not per pump")
     {
         TimerHandler timer;

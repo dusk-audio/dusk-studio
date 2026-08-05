@@ -149,13 +149,27 @@ public:
             pfds.reserve (fdHandlers.size());
             for (const auto& e : fdHandlers)
             {
-                pfds.push_back ({ e.fd, POLLIN | POLLOUT | POLLERR, 0 });
+                // Read-readiness only: IRunLoop has no direction flags, and a
+                // socket is almost always writable, so requesting POLLOUT makes
+                // revents nonzero every pump and fires onFDIsSet for every fd.
+                // POLLERR/POLLHUP arrive unrequested.
+                pfds.push_back ({ e.fd, POLLIN, 0 });
                 handlers.push_back (e.handler);
             }
             if (::poll (pfds.data(), (nfds_t) pfds.size(), 0) > 0)
                 for (size_t i = 0; i < pfds.size(); ++i)
-                    if (pfds[i].revents != 0 && stillRegistered (handlers[i]))
+                {
+                    const short revents = pfds[i].revents;
+                    if (revents == 0 || ! stillRegistered (handlers[i]))
+                        continue;
+                    // A plugin that closed its fd without unregistering leaves poll
+                    // reporting POLLNVAL immediately on every pump. Drop the handler
+                    // rather than dispatch a dead fd at message-thread rate forever.
+                    if ((revents & POLLNVAL) != 0)
+                        (void) unregisterEventHandler (handlers[i]);
+                    else if ((revents & (POLLIN | POLLHUP | POLLERR)) != 0)
                         handlers[i]->onFDIsSet (pfds[i].fd);
+                }
         }
 
         auto snapshot = timers;

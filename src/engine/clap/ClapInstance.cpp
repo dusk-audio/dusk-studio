@@ -226,9 +226,13 @@ void ClapInstance::deactivate()
             // stop_processing is [audio-thread], but deactivate runs on the message
             // thread (the engine process gate has quiesced the real audio thread, so
             // exactly one thread is the "audio thread" right now). Re-designate this
-            // thread so the plugin's thread-check inside stop_processing is satisfied.
-            hostObj.setAudioThread (std::this_thread::get_id());
+            // thread so the plugin's thread-check inside stop_processing is satisfied,
+            // then hand the stamp back - process() only re-stamps on its next start,
+            // which a bypassed slot never reaches.
+            const auto previousAudioThread =
+                hostObj.exchangeAudioThread (std::this_thread::get_id());
             plugin->stop_processing (plugin);
+            hostObj.restoreAudioThread (previousAudioThread);
         }
         processing  = false;
         startFailed = false;

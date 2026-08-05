@@ -372,6 +372,10 @@ void PluginSlot::prepareToPlay (double sampleRate, int blockSize)
         ownedInstance->prepareToPlay (sampleRate, preparedBlockSize);
         cachedLatencySamples.store (ownedInstance->getLatencySamples(),
                                       std::memory_order_relaxed);
+        // Re-publish the live instance last: releaseResources() nulls
+        // currentInstance while keeping ownedInstance, so without this a
+        // release / re-prepare cycle leaves the slot silent until a reload.
+        currentInstance.store (ownedInstance.get(), std::memory_order_release);
         return;
     }
 
@@ -494,6 +498,16 @@ void PluginSlot::setTemporarilyInactivePersistenceForTest (
     unload();
     loadedDescriptor = std::move (descriptor);
     lastKnownStateBase64 = stateBase64;
+}
+
+bool PluginSlot::installInProcessInstanceForTest (
+    PluginInstancePtr instance)
+{
+    PluginDescriptor descriptor;
+    descriptor.name = instance != nullptr ? instance->getName().toStdString()
+                                          : std::string();
+    descriptor.formatName = "Test";
+    return installInProcessInstance (std::move (instance), std::move (descriptor));
 }
 #endif
 

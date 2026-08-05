@@ -54,7 +54,12 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
     Vst::HostProcessData     processData;
     Vst::ProcessContext      processContext {};
     Vst::ParameterChanges    inParams, outParams;
-    Vst::EventList           inEvents, outEvents;
+    // The SDK's EventList defaults to 50 and addEvent() silently drops past
+    // that - dense MIDI would strand note-offs. Sized like the CLAP path's
+    // per-block event scratch.
+    static constexpr int32 kMaxEventsPerBlock = 1024;
+    Vst::EventList           inEvents  { kMaxEventsPerBlock },
+                             outEvents { kMaxEventsPerBlock };
     std::vector<float>       silence;                 // shared silent input scratch
     std::vector<float>       sink;                    // shared output sink scratch
     std::vector<float*>      scratchPtrs;             // per-channel pointer scratch
@@ -175,6 +180,7 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
         if (controller && ! controllerIsComponent)
             controller->terminate();
         controller = nullptr;
+        controllerIsComponent = false;   // create() only ever sets it true
         processor = nullptr;
         if (component)
             component->terminate();
