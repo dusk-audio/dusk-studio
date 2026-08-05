@@ -85,6 +85,7 @@ add_executable(dusk-studio-tests
     session_fader_group.cpp
     transport_state_machine.cpp
     session_mcu_roundtrip.cpp
+    console_bank_mapping.cpp
     mcu_receiver_decode.cpp
     mcu_controller_emit.cpp
     mcu_fader_taper.cpp

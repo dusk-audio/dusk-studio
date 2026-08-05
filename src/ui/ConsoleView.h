@@ -87,6 +87,8 @@ public:
     static std::pair<int, int> rangeForBankAtWidth (int bankIndex,
                                                       int componentWidth) noexcept;
 
+    // Screen page index (0..numBanks()-1), NOT a hardware bank. The matching
+    // hardware bank is derived and published in setBank - see BankMapping.h.
     void setBank (int bankIndex);
     int  getBank() const noexcept { return currentBank; }
 
@@ -131,6 +133,14 @@ private:
     std::unique_ptr<MasterStripComponent> masterStrip;
 
     int currentBank = 0;
+    // Last value of session.mcu.bank this view knows about, whether the surface
+    // moved it or setBank did. Suppresses the echo of our own store.
+    int lastKnownMcuBank = 0;
+    // Whether activeBank was last set from the screen page or from the surface.
+    // Only a screen-derived value depends on the stride, so only that one gets
+    // re-derived on a resize; the surface's own position is width-independent
+    // and must survive one.
+    bool activeBankFollowsScreen = false;
     bool showingAllTracks = false;
 
     // -1 = none. Drives the focus ring + (via stripFocusCb) the A/S/X target.
@@ -139,9 +149,10 @@ private:
     void focusStrip (int track);
 
     void updateBankVisibility();
+    void applyBankChange();
 
     // Polls session.mcu.bank so the MCU surface's Bank Left/Right buttons
-    // (handled on the audio thread) drive the visible bank + bank-relative
+    // (handled on the audio thread) drive the visible page + bank-relative
     // bindings, keeping the surface and the on-screen view on the same 8.
     void timerCallback() override;
 };

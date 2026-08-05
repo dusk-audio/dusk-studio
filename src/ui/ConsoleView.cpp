@@ -1,5 +1,7 @@
 #include "ConsoleView.h"
 
+#include "BankMapping.h"
+
 #include <algorithm>
 
 namespace duskstudio
@@ -141,22 +143,38 @@ std::pair<int, int> ConsoleView::rangeForBank (int bankIndex) const noexcept
 
 void ConsoleView::setBank (int bankIndex)
 {
-    const int requested = bankIndex;
-    bankIndex = std::clamp (bankIndex, 0, std::max (0, numBanks() - 1));
+    const int pages = numBanks();
+    bankIndex = std::clamp (bankIndex, 0, std::max (0, pages - 1));
+    // Must stay a no-op when the page doesn't move: focusStrip calls this on
+    // every strip click and arrow-key move, naming the page already on screen.
+    // Moving the surface from there would snap it away under the user with no
+    // on-screen feedback, once per click.
     if (bankIndex == currentBank) return;
     currentBank = bankIndex;
-    // Publish the active bank to the audio thread so bank-relative MIDI
-    // bindings (TrackFaderBank etc.) resolve to the visible 8 tracks.
-    sessionRef.activeBank.store (bankIndex, std::memory_order_relaxed);
-    // Keep the MCU surface on the same bank ONLY when the requested bank was a
-    // valid screen bank (Cmd+1/2/3 within numBanks). The MCU has its own fixed
-    // 3-bank range (kNumBanks); when this call is the timer mirroring a
-    // hardware bank the screen can't show (numBanks collapsed because all
-    // tracks fit at once), the request clamps - writing the clamped value back
-    // would force the surface off banks 9-16/17-24. Skip the store then.
-    if (requested == bankIndex)
-        sessionRef.mcu.bank.store (bankIndex, std::memory_order_relaxed);
 
+    // A page is stride-wide (6..24); the surface and the bank-relative bindings
+    // are kBankSize-wide, so the page index is never a valid bank - publish the
+    // hardware bank holding the page's first track instead. With every track on
+    // screen there is only one page and it carries no bank opinion at all, so
+    // the surface keeps wherever its own Bank Left/Right left it.
+    if (pages > 1)
+    {
+        const int hardwareBank = hardwareBankForScreenBank (currentBank, bankStride());
+        // Latch before the store: timerCallback mirrors mcu.bank back into the
+        // screen page, and the hardware bank rarely lines up with the page.
+        // Without the latch our own store reads back as a surface move and
+        // drags the view off the page the user just picked.
+        lastKnownMcuBank = hardwareBank;
+        activeBankFollowsScreen = true;
+        sessionRef.activeBank.store (hardwareBank, std::memory_order_relaxed);
+        sessionRef.mcu.bank.store (hardwareBank, std::memory_order_release);
+    }
+
+    applyBankChange();
+}
+
+void ConsoleView::applyBankChange()
+{
     updateBankVisibility();
     resized();
 
@@ -169,12 +187,23 @@ void ConsoleView::setBank (int bankIndex)
 void ConsoleView::timerCallback()
 {
     // The MCU Bank Left/Right buttons write session.mcu.bank on the audio
-    // thread; mirror it into the visible bank here so the on-screen view +
-    // bank-relative bindings follow the surface. setBank no-ops when the
-    // value already matches, so this doesn't churn.
-    const int mcuBank = sessionRef.mcu.bank.load (std::memory_order_relaxed);
-    if (mcuBank != currentBank)
-        setBank (mcuBank);
+    // thread. Mirror it into the bank-relative binding base and scroll the
+    // screen onto the page holding those tracks. The mcu.bank store is
+    // deliberately NOT echoed back: the surface owns its own position, and the
+    // page it maps onto maps back to a different hardware bank whenever the
+    // stride isn't kBankSize. Binding base follows even when the screen can't
+    // page (window wide enough to show all 24 at once).
+    const int mcuBank = sessionRef.mcu.bank.load (std::memory_order_acquire);
+    if (mcuBank == lastKnownMcuBank) return;
+    lastKnownMcuBank = mcuBank;
+    activeBankFollowsScreen = false;
+    sessionRef.activeBank.store (std::clamp (mcuBank, 0, Session::kNumBanks - 1),
+                                 std::memory_order_relaxed);
+
+    const int screenBank = screenBankForHardwareBank (mcuBank, bankStride(), numBanks());
+    if (screenBank == currentBank) return;
+    currentBank = screenBank;
+    applyBankChange();
 }
 
 void ConsoleView::updateBankVisibility()
@@ -201,24 +230,28 @@ void ConsoleView::resized()
     // master column. Below this we fall back to dynamic banking - bank
     // stride = channelsThatFit().
     showingAllTracks = (area.getWidth() >= fixedWidthFor16Tracks() - 12);
-    // Re-clamp the active bank index against the (possibly changed)
-    // numBanks so a window-shrink doesn't leave us viewing an empty
-    // bank past the end.
-    const int preClampBank = currentBank;
-    currentBank = std::clamp (currentBank, 0, std::max (0, numBanks() - 1));
-    if (currentBank != preClampBank)
+
+    const int stride = bankStride();
+    const int pages  = numBanks();
+    // Re-clamp the screen page against the (possibly changed) numBanks so a
+    // width change doesn't leave us viewing an empty page past the end.
+    const auto remappedBanks = screenBankStateAfterResize (currentBank, pages, stride);
+    currentBank = remappedBanks.currentBank;
+
+    // Both the page index and the stride under it are width-derived, so a
+    // resize moves which hardware bank the page sits in - re-derive, or
+    // bank-relative bindings keep driving whichever strips the OLD width put
+    // under the page. When the screen owns the bank, keep the MCU latch, binding
+    // base, and surface bank together; with a single page the screen has no bank
+    // opinion to impose in the first place.
+    if (pages > 1 && activeBankFollowsScreen)
     {
-        // Republish the clamped SCREEN bank so bank-relative MIDI bindings
-        // don't stay pointed past the end. Do NOT clamp mcu.bank here - the
-        // MCU surface owns its own fixed 3-bank range (kNumBanks) independent
-        // of the width-driven screen banking; clamping it to numBanks would
-        // strand the surface on bank 0 whenever the window is wide enough to
-        // show every track at once.
-        sessionRef.activeBank.store (currentBank, std::memory_order_relaxed);
+        lastKnownMcuBank = remappedBanks.lastKnownMcuBank;
+        sessionRef.activeBank.store (remappedBanks.activeBank, std::memory_order_relaxed);
+        sessionRef.mcu.bank.store (remappedBanks.mcuBank, std::memory_order_release);
     }
     updateBankVisibility();
 
-    const int stride = bankStride();
     int visibleChannels;
     if (showingAllTracks)
     {
