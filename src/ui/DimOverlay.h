@@ -31,10 +31,18 @@ public:
     void mouseDown (const juce::MouseEvent& e) override;
     void parentSizeChanged() override;
 
+    // Region covered by an embedded native child window, in this overlay's
+    // coordinates. JUCE selects XInput2 on the top-level while a raw X11
+    // child (DPF/pugl, plugin editors) takes core events, so a press over the
+    // child is delivered to both: the child acts on it AND the overlay sees an
+    // XI2 press it must not read as a click-outside dismissal.
+    void setNativeChildArea (juce::Rectangle<int> area);
+
     std::function<void()> onClick;
 
 private:
     float fillAlpha;
+    juce::Rectangle<int> nativeChildArea;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DimOverlay)
 };
