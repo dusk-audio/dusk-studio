@@ -1,10 +1,13 @@
 #include "NotepadEditor.h"
+#include "NotepadChords.h"
 #include "NotepadTheme.h"
 
 #include <DearImGui/imgui_internal.h>
 
 #include <algorithm>
+#include <array>
 #include <cfloat>
+#include <cctype>
 #include <cmath>
 
 namespace duskstudio
@@ -29,6 +32,18 @@ ImU32 colourOf (unsigned int hex)
 float scrollThumbHeight (float viewport, float content)
 {
     return std::max (28.0f, viewport * viewport / std::max (1.0f, content));
+}
+
+bool hasPrefixIgnoringCase (const std::string& text, const std::string& prefix) noexcept
+{
+    if (prefix.size() > text.size())
+        return false;
+    return std::equal (prefix.begin(), prefix.end(), text.begin(),
+                       [] (char a, char b)
+                       {
+                           return std::tolower (static_cast<unsigned char> (a))
+                                == std::tolower (static_cast<unsigned char> (b));
+                       });
 }
 } // namespace
 
@@ -654,6 +669,11 @@ void NotepadEditor::handleKeyboard (float viewportHeight, float bodySize)
         selectAll();
         return;
     }
+    if (command && shift && ImGui::IsKeyPressed (ImGuiKey_K, false))
+    {
+        repeatPreviousChord();
+        return;
+    }
     if (command && ImGui::IsKeyPressed (ImGuiKey_K, false))
     {
         beginChordEntry();
@@ -781,13 +801,55 @@ void NotepadEditor::beginChordEntry()
     // Chords land on syllables, so the slot anchors on the word under the
     // caret rather than the caret itself: click anywhere in "morning" and the
     // chord sits over its first letter.
-    const auto& text = document.documentText();
-    const auto word = notepad::wordAt (text, caret);
-    chordAnchor = word.start < word.end ? word.start : caret;
+    chordAnchor = chordAnchorAtCaret();
     chordDraft = document.chordAt (chordAnchor);
+    refreshChordCandidates();
+    chordCandidateIndex = 0;
     chordEditing = true;
     layoutDirty = true;
     resetBlink();
+}
+
+std::size_t NotepadEditor::chordAnchorAtCaret() const
+{
+    const auto& text = document.documentText();
+    const auto word = notepad::wordAt (text, caret);
+    return word.start < word.end ? word.start : caret;
+}
+
+void NotepadEditor::refreshChordCandidates()
+{
+    auto candidates = document.uniqueChordNames();
+    constexpr std::array<const char*, 12> sharpRoots {
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
+    };
+    constexpr std::array<const char*, 12> flatRoots {
+        "C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"
+    };
+    const auto& roots = document.prefersFlats() ? flatRoots : sharpRoots;
+    for (const auto* const root : roots)
+    {
+        candidates.emplace_back (root);
+        candidates.emplace_back (std::string (root) + "m");
+        candidates.emplace_back (std::string (root) + "dim");
+    }
+    const auto key = notepad::chords::detectKey (document.uniqueChordNames());
+    chordCandidates = notepad::chords::rankCandidates (std::move (candidates), key);
+}
+
+std::vector<const std::string*> NotepadEditor::matchingChordCandidates() const
+{
+    std::vector<const std::string*> matches;
+    for (const auto& candidate : chordCandidates)
+        if (hasPrefixIgnoringCase (candidate, chordDraft))
+            matches.push_back (&candidate);
+    return matches;
+}
+
+const std::string* NotepadEditor::selectedChordCandidate() const
+{
+    const auto matches = matchingChordCandidates();
+    return matches.empty() ? nullptr : matches[chordCandidateIndex % matches.size()];
 }
 
 void NotepadEditor::insertSectionMarker (const std::string& label)
@@ -813,7 +875,21 @@ void NotepadEditor::commitChordEntry()
     documentMutated();
     chordEditing = false;
     chordDraft.clear();
+    chordCandidates.clear();
+    chordCandidateIndex = 0;
     layoutDirty = true;
+}
+
+void NotepadEditor::repeatPreviousChord()
+{
+    const auto target = chordAnchorAtCaret();
+    const auto before = snapshot();
+    if (! document.repeatPreviousChordAt (target))
+        return;
+
+    history.breakRun();
+    history.record (notepad::EditKind::structural, before, caret);
+    documentMutated();
 }
 
 bool NotepadEditor::handleChordEntry()
@@ -826,18 +902,47 @@ bool NotepadEditor::handleChordEntry()
     {
         chordEditing = false;
         chordDraft.clear();
+        chordCandidates.clear();
+        chordCandidateIndex = 0;
         layoutDirty = true;
         io.InputQueueCharacters.resize (0);
         return true;
     }
+    const auto matches = matchingChordCandidates();
+    if (! matches.empty()
+        && (ImGui::IsKeyPressed (ImGuiKey_UpArrow)
+            || ImGui::IsKeyPressed (ImGuiKey_DownArrow)))
+    {
+        if (ImGui::IsKeyPressed (ImGuiKey_UpArrow))
+            chordCandidateIndex = (chordCandidateIndex + matches.size() - 1) % matches.size();
+        else
+            chordCandidateIndex = (chordCandidateIndex + 1) % matches.size();
+        io.InputQueueCharacters.resize (0);
+        resetBlink();
+        return true;
+    }
+    if (! matches.empty() && ImGui::IsKeyPressed (ImGuiKey_Tab))
+    {
+        chordDraft = *matches[chordCandidateIndex % matches.size()];
+        chordCandidateIndex = 0;
+        io.InputQueueCharacters.resize (0);
+        resetBlink();
+        return true;
+    }
     if (ImGui::IsKeyPressed (ImGuiKey_Enter) || ImGui::IsKeyPressed (ImGuiKey_KeypadEnter))
     {
+        if (! matches.empty() && ! notepad::chords::isChord (chordDraft))
+            chordDraft = *matches[chordCandidateIndex % matches.size()];
         commitChordEntry();
         io.InputQueueCharacters.resize (0);
         return true;
     }
+    bool draftChanged = false;
     if (ImGui::IsKeyPressed (ImGuiKey_Backspace) && ! chordDraft.empty())
+    {
         chordDraft.pop_back();
+        draftChanged = true;
+    }
 
     for (int i = 0; i < io.InputQueueCharacters.Size; ++i)
     {
@@ -847,8 +952,13 @@ bool NotepadEditor::handleChordEntry()
         std::string candidate;
         notepad::appendUtf8 (candidate, character);
         if (chordDraft.size() + candidate.size() <= kMaxChordDraftBytes)
+        {
             chordDraft += candidate;
+            draftChanged = true;
+        }
     }
+    if (draftChanged)
+        chordCandidateIndex = 0;
     io.InputQueueCharacters.resize (0);
     resetBlink();
     return true;
@@ -1014,23 +1124,42 @@ void NotepadEditor::render (ImVec2 frameMin, ImVec2 frameMax, float bodySize, bo
                 const auto slotX = originX
                     + notepad::offsetX (document, row, std::min (chordAnchor, row.end),
                                         bodySize, measure);
+                const auto* const suggestion = selectedChordCandidate();
+                const auto preview = suggestion != nullptr ? *suggestion : chordDraft;
+                const auto display = "[" + preview + "]";
                 const auto width = std::max (26.0f,
                                              fonts.bold->CalcTextSizeA (chordSize, FLT_MAX, 0.0f,
-                                                                        chordDraft.c_str()).x + 8.0f);
+                                                                        display.c_str()).x + 8.0f);
                 drawList->AddRectFilled (ImVec2 (slotX - 3.0f, bandTop - 2.0f),
                                          ImVec2 (slotX + width, bandTop + chordSize + 2.0f),
                                          codeBackground, 3.0f);
                 drawList->AddRect (ImVec2 (slotX - 3.0f, bandTop - 2.0f),
                                    ImVec2 (slotX + width, bandTop + chordSize + 2.0f),
                                    chordColour, 3.0f, 0, 1.2f);
-                if (! chordDraft.empty())
-                    drawList->AddText (fonts.bold, chordSize, ImVec2 (slotX, bandTop),
-                                       chordColour, chordDraft.c_str());
+                const auto typed = "[" + chordDraft;
+                drawList->AddText (fonts.bold, chordSize, ImVec2 (slotX, bandTop),
+                                   chordColour, typed.c_str());
+                auto completionX = slotX
+                    + fonts.bold->CalcTextSizeA (chordSize, FLT_MAX, 0.0f, typed.c_str()).x;
+                if (preview.size() > chordDraft.size())
+                {
+                    const auto completion = preview.substr (chordDraft.size());
+                    drawList->AddText (fonts.bold, chordSize, ImVec2 (completionX, bandTop),
+                                       mutedColour, completion.c_str());
+                    completionX += fonts.bold->CalcTextSizeA (chordSize, FLT_MAX, 0.0f,
+                                                               completion.c_str()).x;
+                }
+                drawList->AddText (fonts.bold, chordSize, ImVec2 (completionX, bandTop),
+                                   chordColour, "]");
+                if (suggestion != nullptr)
+                    drawList->AddText (fonts.bold, std::max (9.0f, chordSize - 4.0f),
+                                       ImVec2 (slotX + width + 5.0f, bandTop + 2.0f),
+                                       mutedColour, "Up/Down  Tab");
                 if (caretVisible)
                 {
                     const auto caretX = slotX
                         + fonts.bold->CalcTextSizeA (chordSize, FLT_MAX, 0.0f,
-                                                     chordDraft.c_str()).x + 1.0f;
+                                                     typed.c_str()).x + 1.0f;
                     drawList->AddLine (ImVec2 (caretX, bandTop),
                                        ImVec2 (caretX, bandTop + chordSize), chordColour, 1.2f);
                 }

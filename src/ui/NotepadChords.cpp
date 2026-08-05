@@ -176,6 +176,89 @@ std::string transpose (std::string_view token, int semitones, bool preferFlats)
     }
     return result;
 }
+
+namespace
+{
+enum class Triad { major, minor, diminished, other };
+
+Triad triadFor (const ParsedChord& chord) noexcept
+{
+    if (chord.suffix.compare (0, 3, "dim") == 0)
+        return Triad::diminished;
+    if (! chord.suffix.empty() && chord.suffix[0] == 'm'
+        && chord.suffix.compare (0, 3, "maj") != 0)
+        return Triad::minor;
+    if (chord.suffix.compare (0, 3, "sus") == 0
+        || chord.suffix.compare (0, 3, "aug") == 0
+        || (! chord.suffix.empty() && chord.suffix[0] == '+')
+        || chord.suffix == "5")
+        return Triad::other;
+    return Triad::major;
+}
+
+int diatonicRank (const ParsedChord& candidate, int tonic, bool minor) noexcept
+{
+    constexpr std::array<int, 7> kMajorDegrees { 0, 2, 4, 5, 7, 9, 11 };
+    constexpr std::array<Triad, 7> kMajorTriads {
+        Triad::major, Triad::minor, Triad::minor, Triad::major,
+        Triad::major, Triad::minor, Triad::diminished
+    };
+    constexpr std::array<int, 7> kMinorDegrees { 0, 2, 3, 5, 7, 8, 10 };
+    constexpr std::array<Triad, 7> kMinorTriads {
+        Triad::minor, Triad::diminished, Triad::major, Triad::minor,
+        Triad::minor, Triad::major, Triad::major
+    };
+
+    const auto& degrees = minor ? kMinorDegrees : kMajorDegrees;
+    const auto& triads = minor ? kMinorTriads : kMajorTriads;
+    for (std::size_t i = 0; i < degrees.size(); ++i)
+    {
+        if ((tonic + degrees[i]) % 12 != candidate.root)
+            continue;
+        return triadFor (candidate) == triads[i] ? 0 : 1;
+    }
+    return 2;
+}
+
+bool alphabeticallyBefore (const std::string& left, const std::string& right) noexcept
+{
+    return std::lexicographical_compare (
+        left.begin(), left.end(), right.begin(), right.end(),
+        [] (char a, char b)
+        {
+            return std::tolower (static_cast<unsigned char> (a))
+                 < std::tolower (static_cast<unsigned char> (b));
+        });
+}
+} // namespace
+
+std::vector<std::string> rankCandidates (std::vector<std::string> candidates,
+                                         std::string_view detectedKey)
+{
+    candidates.erase (std::remove_if (candidates.begin(), candidates.end(),
+                                      [] (const std::string& name) { return ! isChord (name); }),
+                      candidates.end());
+    std::sort (candidates.begin(), candidates.end(), alphabeticallyBefore);
+    candidates.erase (std::unique (candidates.begin(), candidates.end()), candidates.end());
+
+    ParsedChord key;
+    if (! parse (detectedKey, key) || key.bass != kInvalidPitch
+        || (! key.suffix.empty() && key.suffix != "m"))
+        return candidates;
+    const bool minor = key.suffix == "m";
+    std::stable_sort (candidates.begin(), candidates.end(),
+                      [&] (const std::string& left, const std::string& right)
+                      {
+                          ParsedChord parsedLeft;
+                          ParsedChord parsedRight;
+                          (void) parse (left, parsedLeft);
+                          (void) parse (right, parsedRight);
+                          return diatonicRank (parsedLeft, key.root, minor)
+                               < diatonicRank (parsedRight, key.root, minor);
+                      });
+    return candidates;
+}
+
 // Key signatures as they are actually written: minor keys take sharps at C#,
 // F# and G#, majors take flats at Db, Eb, Ab and Bb, and the enharmonic pair
 // at 6 accidentals resolves to F# either way.

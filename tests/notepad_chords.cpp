@@ -56,6 +56,29 @@ TEST_CASE ("transpose shifts the root and keeps the quality")
     }
 }
 
+TEST_CASE ("Chord entry candidates use a claimed key and otherwise sort alphabetically")
+{
+    const std::vector<std::string> candidates {
+        "F#m", "A", "D", "Ebm", "C#dim", "C", "A", "Chorus"
+    };
+
+    SECTION ("diatonic triads lead when key detection has made a claim")
+    {
+        CHECK (chords::rankCandidates (candidates, "D")
+               == std::vector<std::string> { "A", "C#dim", "D", "F#m", "C", "Ebm" });
+    }
+
+    SECTION ("blank and invalid keys never influence the order")
+    {
+        const std::vector<std::string> alphabetical {
+            "A", "C", "C#dim", "D", "Ebm", "F#m"
+        };
+        CHECK (chords::rankCandidates (candidates, {}) == alphabetical);
+        CHECK (chords::rankCandidates (candidates, "not a key") == alphabetical);
+        CHECK (chords::rankCandidates (candidates, "D7") == alphabetical);
+    }
+}
+
 TEST_CASE ("chord brackets are hidden from the document projection")
 {
     NotepadDocument document;
@@ -185,6 +208,31 @@ TEST_CASE ("setChordAt inserts, replaces and removes")
     {
         CHECK_FALSE (document.setChordAt (2, ""));
         CHECK (document.markdown() == "one two");
+    }
+}
+
+TEST_CASE ("repeatPreviousChordAt copies the preceding chord in either view")
+{
+    NotepadDocument document;
+    document.setMarkdown ("[Am]one [F]two three");
+
+    SECTION ("the rendered chart repeats onto the lyric anchor")
+    {
+        REQUIRE (document.repeatPreviousChordAt (8));
+        CHECK (document.markdown() == "[Am]one [F]two [F]three");
+    }
+
+    SECTION ("the Markdown source uses the preceding visible token")
+    {
+        document.setSourceMode (true);
+        REQUIRE (document.repeatPreviousChordAt (document.documentText().size()));
+        CHECK (document.markdown() == "[Am]one [F]two three[F]");
+    }
+
+    SECTION ("there is nothing to repeat before the first chord")
+    {
+        CHECK_FALSE (document.repeatPreviousChordAt (0));
+        CHECK (document.markdown() == "[Am]one [F]two three");
     }
 }
 

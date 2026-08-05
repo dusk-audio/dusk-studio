@@ -561,15 +561,18 @@ within the page, Ctrl+A selects everything, and cut, copy, and paste use the
 system clipboard.
 
 **Chords over lyrics.** Put the caret in the word a chord lands on and press
-Ctrl+K, or use the chord toolbar button: a slot opens above that word. Type the
-chord name and press Enter to commit it, Esc to cancel, or commit an empty name
-to remove it. Click a chord to edit it again. Chords float above their syllable
-and move with the lyric as you edit around them. The transpose buttons shift
-every chord in the notepad by a semitone, spelled with sharps going up and flats
-coming down, matching whichever accidental the notepad already uses so that
-transposing away and back returns your own spelling. Chord entry and
-transposition both work in either view. Notes are stored as ChordPro brackets
-in `notepad.md`
+Ctrl+K, or use the chord toolbar button: a bracketed slot opens above that word.
+Type the chord name and press Enter to commit it, Esc to cancel, or commit an
+empty name to remove it. The slot shows ranked completions; use Up/Down to
+choose one and Tab to accept it. When the notepad can detect a key, diatonic
+chords come first; otherwise the choices are alphabetical. Ctrl+Shift+K repeats
+the preceding chord at the caret. Click a chord to edit it again. Chords float
+above their syllable and move with the lyric as you edit around them. The
+transpose buttons shift every chord in the notepad by a semitone, spelled with
+sharps going up and flats coming down, matching whichever accidental the
+notepad already uses so that transposing away and back returns your own
+spelling. Chord entry and transposition both work in either view. Notes are
+stored as ChordPro brackets in `notepad.md`
 (`[Am]like this`), so the file opens in any chord-sheet app; bracketed text that
 is not a chord name, such as `[Chorus]`, stays literal.
 

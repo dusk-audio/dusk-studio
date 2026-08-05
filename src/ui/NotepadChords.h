@@ -18,6 +18,12 @@ bool isChord (std::string_view token) noexcept;
 // unchanged so a caller can run this over a whole document blindly.
 std::string transpose (std::string_view token, int semitones, bool preferFlats);
 
+// Sorts chord-entry suggestions by diatonic triad fit when detectedKey names a
+// supported key. With no claimed key, or an invalid one, candidates are simply
+// alphabetical. Invalid and duplicate chord names are omitted.
+std::vector<std::string> rankCandidates (std::vector<std::string> candidates,
+                                         std::string_view detectedKey);
+
 // Best-fitting key for a set of chord names, or empty when the evidence does
 // not support a claim. The rule, which is not to be tuned against a sample
 // document:

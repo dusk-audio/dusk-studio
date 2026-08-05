@@ -7,6 +7,7 @@
 
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace duskstudio
 {
@@ -114,6 +115,11 @@ private:
     // closed, so the same frame's remaining keys reach the text editor.
     bool handleChordEntry();
     void commitChordEntry();
+    void repeatPreviousChord();
+    std::size_t chordAnchorAtCaret() const;
+    void refreshChordCandidates();
+    std::vector<const std::string*> matchingChordCandidates() const;
+    const std::string* selectedChordCandidate() const;
     void render (ImVec2 frameMin, ImVec2 frameMax, float bodySize, bool active) const;
 
     std::size_t hitTest (ImVec2 position, ImVec2 frameMin, float bodySize) const;
@@ -130,6 +136,8 @@ private:
     std::size_t anchor = 0;
     std::size_t chordAnchor = 0;
     std::string chordDraft;
+    std::vector<std::string> chordCandidates;
+    std::size_t chordCandidateIndex = 0;
     bool chordEditing = false;
     float desiredX = -1.0f;
     float scrollY = 0.0f;

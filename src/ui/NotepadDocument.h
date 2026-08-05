@@ -124,6 +124,10 @@ public:
     // offset. Names that don't parse as a chord are rejected, so a stray
     // bracket can never be minted from the document view.
     bool setChordAt (std::size_t documentOffset, const std::string& name);
+    // Copies the last chord before documentOffset into a slot at that offset.
+    // Source mode resolves both offsets against the visible Markdown, while the
+    // rendered mode uses lyric anchors.
+    bool repeatPreviousChordAt (std::size_t documentOffset);
     void transposeChords (int semitones, bool preferFlats);
     // Writes "[Label]" on its own line above documentOffset's line, straight
     // into the source: a section marker is plain text the user can edit by

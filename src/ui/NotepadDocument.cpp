@@ -777,6 +777,26 @@ bool NotepadDocument::setChordAt (std::size_t documentOffset, const std::string&
     return true;
 }
 
+bool NotepadDocument::repeatPreviousChordAt (std::size_t documentOffset)
+{
+    const auto sourceOffset = sourceMode
+                            ? std::min (documentOffset, markdownText.size())
+                            : documentBoundaryToSource[std::min (
+                                  documentOffset, documentBoundaryToSource.size() - 1)];
+    const ChordToken* previous = nullptr;
+    for (const auto& token : chordTokens)
+    {
+        if (token.end > sourceOffset)
+            break;
+        previous = &token;
+    }
+    if (previous == nullptr || chordAt (documentOffset) == previous->name)
+        return false;
+
+    const auto name = previous->name;
+    return setChordAt (documentOffset, name);
+}
+
 bool NotepadDocument::insertSectionMarker (std::size_t documentOffset, const std::string& label)
 {
     if (label.empty() || label.find (']') != std::string::npos

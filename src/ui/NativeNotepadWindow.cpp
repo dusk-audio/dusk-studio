@@ -565,7 +565,7 @@ private:
         // Chord tools lead: they are what this editor is for. Formatting that a
         // lyric sheet rarely needs lives under the overflow.
         ImGui::SameLine (0.0f, 16.0f);
-        if (toolbarButton ("♯", "Put a chord over the word at the caret (Ctrl+K)",
+        if (toolbarButton ("♯", "Chord at the caret (Ctrl+K); repeat previous (Ctrl+Shift+K)",
                            editor.chordEntryActive()))
         {
             editor.beginChordEntry();
