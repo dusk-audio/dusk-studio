@@ -4464,7 +4464,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
                 // shows the alert if loadSessionFromJson fails.
                 recents.addItem (kMenuFileRecentBase + i,
                                   dir.getFileName()
-                                    + juce::String (juce::CharPointer_UTF8 ("  \xe2\x80\x94  "))
+                                    + juce::String (juce::CharPointer_UTF8 ("  \xc2\xb7  "))
                                     + parent);
                 juce::ignoreUnused (json);
             }

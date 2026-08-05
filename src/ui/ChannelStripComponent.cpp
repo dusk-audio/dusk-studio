@@ -3169,7 +3169,7 @@ public:
 
         const auto title = trackName.isNotEmpty() ? trackName
                                                    : "Track " + juce::String (trackIndex + 1);
-        titleLabel.setText (title + " \xe2\x80\x94 Input", juce::dontSendNotification);
+        titleLabel.setText (title + " \xc2\xb7 Input", juce::dontSendNotification);
         titleLabel.setJustificationType (juce::Justification::centredLeft);
         titleLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe0e0e6));
         titleLabel.setFont (juce::Font (juce::FontOptions (14.0f, juce::Font::bold)));

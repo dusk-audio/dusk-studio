@@ -766,9 +766,9 @@ void MasteringView::doExport()
     // the render's rate/depth.
     juce::PopupMenu m;
     m.addSectionHeader ("Export master as");
-    m.addItem (1, "WAV 24-bit " + juce::String (juce::CharPointer_UTF8 ("\xe2\x80\x94"))
+    m.addItem (1, "WAV 24-bit " + juce::String (juce::CharPointer_UTF8 ("\xc2\xb7"))
                   + " session rate");
-    m.addItem (2, "WAV 16-bit 44.1 kHz " + juce::String (juce::CharPointer_UTF8 ("\xe2\x80\x94"))
+    m.addItem (2, "WAV 16-bit 44.1 kHz " + juce::String (juce::CharPointer_UTF8 ("\xc2\xb7"))
                   + " dithered (CD)");
    #if DUSKSTUDIO_HAS_LAME
     m.addItem (3, "MP3 320 kbps");

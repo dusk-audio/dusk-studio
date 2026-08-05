@@ -38,8 +38,7 @@ public:
         s << shown << (shown == 1 ? " track" : " tracks");
         if ((int) scan.tracks.size() > maxTracks)
             s << " (of " << (int) scan.tracks.size()
-              << juce::String (juce::CharPointer_UTF8 (" found \xe2\x80\x94 "))
-              << maxTracks << "-track limit)";
+              << " found, " << maxTracks << "-track limit)";
         if (scan.stereoPairs > 0)
             s << dot << scan.stereoPairs
               << (scan.stereoPairs == 1 ? " stereo pair" : " stereo pairs");
