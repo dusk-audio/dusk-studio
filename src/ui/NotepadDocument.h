@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -104,6 +105,10 @@ public:
     void setDocumentBlockStyle (Selection selection, BlockStyle style);
 
     const std::vector<Chord>& chords() const noexcept { return projectedChords; }
+    // The spelling a transpose should write: whichever accidental the document
+    // already uses, so a round trip returns the notation the user typed. Ties
+    // and chord-free documents take sharps.
+    bool prefersFlats() const noexcept { return flatSpelling; }
     // Empty when no chord is anchored at that exact offset.
     std::string chordAt (std::size_t documentOffset) const;
     // Inserts, replaces, or (empty name) removes the chord anchored at the
@@ -111,7 +116,7 @@ public:
     // bracket can never be minted from the document view.
     bool setChordAt (std::size_t documentOffset, const std::string& name);
     void transposeChords (int semitones, bool preferFlats);
-    bool hasChords() const noexcept { return ! projectedChords.empty(); }
+    bool hasChords() const noexcept { return ! chordTokens.empty(); }
 
     TextStyle styleAt (std::size_t documentOffset) const noexcept;
     std::string linkTargetAt (std::size_t documentOffset) const;
@@ -119,9 +124,12 @@ public:
     BlockStyle blockStyleForSelection (Selection selection) const noexcept;
 
     std::size_t wordCount() const noexcept;
+    std::size_t characterCount() const noexcept;
 
 private:
     void rebuildProjection();
+    void scanChordTokens();
+    const std::string& renderedText() const;
 
     std::string markdownText;
     std::string projectedText;
@@ -133,8 +141,23 @@ private:
     std::vector<std::string> projectedLinkTargets;
     bool sourceMode = false;
     std::vector<Chord> projectedChords;
-    // Source spans of the bracket tokens behind projectedChords, index-parallel,
-    // so an edit rewrites the exact token instead of re-scanning for it.
-    std::vector<std::pair<std::size_t, std::size_t>> chordSourceSpans;
+    struct ChordToken
+    {
+        std::size_t start = 0;   // the '[' in markdownText
+        std::size_t end = 0;     // one past the ']'
+        std::string name;
+    };
+    // Every bracket token in the Markdown, parsed in both modes: chord commands
+    // act on the source, so they keep working while the source view is up.
+    // projectedChords is the subset the rendered lane can anchor and is empty
+    // in source mode.
+    std::vector<ChordToken> chordTokens;
+    // Word and character counts describe the lyric, so they are measured on the
+    // rendered projection in both modes: never the syntax the source shows.
+    mutable std::optional<std::string> renderedTextCache;
+    // Sticky, because a transpose can land every chord on a natural and erase
+    // the evidence: re-deriving it there would spell the way back in sharps
+    // and hand a flat writer a document they did not write.
+    bool flatSpelling = false;
 };
 } // namespace duskstudio

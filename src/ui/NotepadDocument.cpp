@@ -306,6 +306,30 @@ std::size_t lineEndAt (const std::string& text, std::size_t offset)
     const auto found = text.find ('\n', std::min (offset, text.size()));
     return found == std::string::npos ? text.size() : found;
 }
+std::string projectRendered (const std::string& markdown)
+{
+    ProjectionBuilder out (markdown);
+    std::size_t lineStart = 0;
+    while (lineStart <= markdown.size())
+    {
+        const auto lineEnd = lineEndAt (markdown, lineStart);
+        auto contentStart = lineStart;
+        out.blockStyle = blockStyleAtLine (markdown, lineStart, lineEnd);
+        if (const auto prefix = blockPrefixLength (markdown, lineStart, lineEnd); prefix != 0)
+        {
+            contentStart += prefix;
+            out.skipTo (contentStart);
+        }
+        projectInline (out, contentStart, lineEnd);
+        if (lineEnd < markdown.size())
+            out.appendSourceRange (lineEnd, lineEnd + 1);
+        if (lineEnd == markdown.size())
+            break;
+        lineStart = lineEnd + 1;
+    }
+    return std::move (out.text);
+}
+
 } // namespace
 
 void NotepadDocument::setMarkdown (std::string text)
@@ -687,10 +711,6 @@ std::string NotepadDocument::chordAt (std::size_t documentOffset) const
 
 bool NotepadDocument::setChordAt (std::size_t documentOffset, const std::string& name)
 {
-    // Source mode projects raw Markdown, so it carries no chord anchors: a
-    // mutation here would splice brackets in at an offset that means nothing.
-    if (sourceMode)
-        return false;
     if (! name.empty() && ! notepad::chords::isChord (name))
         return false;
 
@@ -699,8 +719,8 @@ bool NotepadDocument::setChordAt (std::size_t documentOffset, const std::string&
         if (projectedChords[i].documentOffset != documentOffset)
             continue;
 
-        const auto [start, end] = chordSourceSpans[i];
-        markdownText.replace (start, end - start,
+        const auto& token = chordTokens[i];
+        markdownText.replace (token.start, token.end - token.start,
                               name.empty() ? std::string() : "[" + name + "]");
         rebuildProjection();
         return true;
@@ -717,16 +737,16 @@ bool NotepadDocument::setChordAt (std::size_t documentOffset, const std::string&
 
 void NotepadDocument::transposeChords (int semitones, bool preferFlats)
 {
-    if (sourceMode || projectedChords.empty())
+    if (chordTokens.empty())
         return;
 
     // Back to front: every rewrite can change the token's length, and a span
     // ahead of the cursor would shift under the next replace.
-    for (auto i = chordSourceSpans.size(); i-- > 0;)
+    for (auto i = chordTokens.size(); i-- > 0;)
     {
-        const auto [start, end] = chordSourceSpans[i];
-        const auto shifted = notepad::chords::transpose (projectedChords[i].name, semitones, preferFlats);
-        markdownText.replace (start, end - start, "[" + shifted + "]");
+        const auto& token = chordTokens[i];
+        const auto shifted = notepad::chords::transpose (token.name, semitones, preferFlats);
+        markdownText.replace (token.start, token.end - token.start, "[" + shifted + "]");
     }
     rebuildProjection();
 }
@@ -793,24 +813,72 @@ NotepadDocument::BlockStyle NotepadDocument::blockStyleForSelection (Selection s
     return initial;
 }
 
+const std::string& NotepadDocument::renderedText() const
+{
+    if (! renderedTextCache.has_value())
+    {
+        if (! sourceMode)
+            renderedTextCache = projectedText;
+        else
+            renderedTextCache = projectRendered (markdownText);
+    }
+    return *renderedTextCache;
+}
+
 std::size_t NotepadDocument::wordCount() const noexcept
 {
+    const auto& text = renderedText();
     std::size_t count = 0;
     std::size_t start = 0;
-    while (start < projectedText.size())
+    while (start < text.size())
     {
-        while (start < projectedText.size()
-               && std::isspace (static_cast<unsigned char> (projectedText[start])) != 0)
+        while (start < text.size()
+               && std::isspace (static_cast<unsigned char> (text[start])) != 0)
             ++start;
         auto end = start;
-        while (end < projectedText.size()
-               && std::isspace (static_cast<unsigned char> (projectedText[end])) == 0)
+        while (end < text.size()
+               && std::isspace (static_cast<unsigned char> (text[end])) == 0)
             ++end;
         if (end > start)
             ++count;
         start = end;
     }
     return count;
+}
+
+std::size_t NotepadDocument::characterCount() const noexcept
+{
+    return renderedText().size();
+}
+
+void NotepadDocument::scanChordTokens()
+{
+    chordTokens.clear();
+    for (std::size_t i = 0; i < markdownText.size(); ++i)
+    {
+        if (markdownText[i] != '[')
+            continue;
+        const auto close = findUnescaped (markdownText, "]", i + 1, markdownText.size());
+        if (close == std::string::npos)
+            break;
+        if (close + 1 < markdownText.size() && markdownText[close + 1] == '(')
+            continue;
+        auto name = markdownText.substr (i + 1, close - (i + 1));
+        if (! notepad::chords::isChord (name))
+            continue;
+        chordTokens.push_back ({ i, close + 1, std::move (name) });
+        i = close;
+    }
+
+    std::size_t flats = 0;
+    std::size_t sharps = 0;
+    for (const auto& token : chordTokens)
+    {
+        flats += token.name.find ('b') != std::string::npos ? 1u : 0u;
+        sharps += token.name.find ('#') != std::string::npos ? 1u : 0u;
+    }
+    if (flats != 0 || sharps != 0)
+        flatSpelling = flats > sharps;
 }
 
 void NotepadDocument::setSourceMode (bool showSource)
@@ -823,6 +891,8 @@ void NotepadDocument::setSourceMode (bool showSource)
 
 void NotepadDocument::rebuildProjection()
 {
+    renderedTextCache.reset();
+    scanChordTokens();
     if (sourceMode)
     {
         projectedText = markdownText;
@@ -832,7 +902,6 @@ void NotepadDocument::rebuildProjection()
         projectedStyles.assign (markdownText.size(), TextStyle {});
         projectedLinkTargets.assign (markdownText.size(), std::string {});
         projectedChords.clear();
-        chordSourceSpans.clear();
         return;
     }
 
@@ -867,6 +936,5 @@ void NotepadDocument::rebuildProjection()
     projectedStyles = std::move (out.styles);
     projectedLinkTargets = std::move (out.links);
     projectedChords = std::move (out.chords);
-    chordSourceSpans = std::move (out.chordSpans);
 }
 } // namespace duskstudio

@@ -778,9 +778,6 @@ void NotepadEditor::handleKeyboard (float viewportHeight, float bodySize)
 
 void NotepadEditor::beginChordEntry()
 {
-    if (document.isSourceMode())
-        return;
-
     // Chords land on syllables, so the slot anchors on the word under the
     // caret rather than the caret itself: click anywhere in "morning" and the
     // chord sits over its first letter.
@@ -847,11 +844,11 @@ bool NotepadEditor::handleChordEntry()
 
 void NotepadEditor::transposeChords (int semitones)
 {
-    if (document.isSourceMode() || ! document.hasChords() || semitones == 0)
+    if (! document.hasChords() || semitones == 0)
         return;
 
     const auto before = snapshot();
-    document.transposeChords (semitones, semitones < 0);
+    document.transposeChords (semitones, document.prefersFlats());
     history.breakRun();
     history.record (notepad::EditKind::structural, before, caret);
     documentMutated();

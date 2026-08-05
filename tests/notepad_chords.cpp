@@ -171,3 +171,51 @@ TEST_CASE ("transposeChords rewrites every chord in the source")
         CHECK (flats.markdown() == "[Db]x");
     }
 }
+
+TEST_CASE ("Transpose keeps the notation the document already uses")
+{
+    NotepadDocument document;
+    document.setMarkdown ("[F#5]one [C#m]two");
+    CHECK_FALSE (document.prefersFlats());
+
+    // A round trip must return the user's own spelling: the direction of
+    // travel is not allowed to rename a chord.
+    document.transposeChords (1, document.prefersFlats());
+    document.transposeChords (-1, document.prefersFlats());
+    CHECK (document.markdown() == "[F#5]one [C#m]two");
+
+    SECTION ("a flat document keeps its flats")
+    {
+        NotepadDocument flats;
+        flats.setMarkdown ("[Bb]one [Eb]two");
+        CHECK (flats.prefersFlats());
+        flats.transposeChords (2, flats.prefersFlats());
+        flats.transposeChords (-2, flats.prefersFlats());
+        CHECK (flats.markdown() == "[Bb]one [Eb]two");
+    }
+}
+
+TEST_CASE ("Chord commands and counts survive the source view")
+{
+    NotepadDocument document;
+    document.setMarkdown ("# Title\n\n[Am]one two");
+    const auto renderedWords = document.wordCount();
+    const auto renderedCharacters = document.characterCount();
+
+    document.setSourceMode (true);
+    CHECK (document.hasChords());
+    CHECK (document.wordCount() == renderedWords);
+    CHECK (document.characterCount() == renderedCharacters);
+
+    SECTION ("transpose still rewrites the source")
+    {
+        document.transposeChords (2, document.prefersFlats());
+        CHECK (document.markdown() == "# Title\n\n[Bm]one two");
+    }
+
+    SECTION ("a chord can be inserted at a source offset")
+    {
+        REQUIRE (document.setChordAt (document.markdown().size(), "G"));
+        CHECK (document.markdown() == "# Title\n\n[Am]one two[G]");
+    }
+}
