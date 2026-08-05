@@ -28,6 +28,7 @@
 #include "foundation/MessageThread.h"
 #include "session/SessionSerializer.h"
 #include "util/CrashHandler.h"
+#include "util/SingleInstance.h"
 #if JUCE_LINUX
  #include "engine/ipc/IpcSelfTest.h"
 #endif
@@ -1225,9 +1226,10 @@ struct DuskStudioApp::BounceTest : private dusk::Timer
 
     ~BounceTest() override { stopTimer(); }
 
-    // Synchronous setup on the message thread. Returns false if setup failed
-    // (return value + [FAIL] already emitted); the caller then quits immediately.
-    bool begin()
+    // Synchronous setup on the message thread. A setup failure ends the run
+    // through finish() like any other terminal state, so the log always closes
+    // with the RESULT line a scraper looks for.
+    void begin()
     {
         std::fprintf (stdout, "=== Dusk Studio Headless Bounce Test ===\n");
         std::fprintf (stdout, "Plugin: %s\nSR=%.0f BS=%d\n\n", pluginPath.toRawUTF8(), sr, bs);
@@ -1256,14 +1258,16 @@ struct DuskStudioApp::BounceTest : private dusk::Timer
         if (! synthesiseContent())
         {
             exitCode = 1;
-            return false;
+            finish();
+            return;
         }
 
         if (! loadPluginByExtension())
         {
             // loadPluginByExtension already printed the [FAIL] line.
             exitCode = 1;
-            return false;
+            finish();
+            return;
         }
 
         std::fprintf (stdout, "[INFO] loaded %s insert on track 0: %s\n\n",
@@ -1287,13 +1291,13 @@ struct DuskStudioApp::BounceTest : private dusk::Timer
             std::fprintf (stdout, "[FAIL] MasterMix bounce start() returned false: %s\n",
                           bounce->getLastError().c_str());
             exitCode = 1;
-            return false;
+            finish();
+            return;
         }
 
         phase = Phase::WaitMaster;
         phaseStartMs = juce::Time::getMillisecondCounter();
         startTimer (25);
-        return true;
     }
 
 private:
@@ -1857,11 +1861,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
     if (const char* path = std::getenv ("DUSKSTUDIO_BOUNCE_TEST"); path != nullptr && *path)
     {
         bounceTest = std::make_unique<BounceTest> (*this, juce::String (path));
-        if (! bounceTest->begin())
-        {
-            setApplicationReturnValue (1);
-            quit();
-        }
+        bounceTest->begin();
         return;
     }
 
@@ -1886,6 +1886,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         if (! comp->load (juce::File (juce::String (path)), err))
         {
             std::fprintf (stderr, "[clap editor test] load failed: %s\n", err.toRawUTF8());
+            setApplicationReturnValue (1);
             quit();
             return;
         }
@@ -1926,6 +1927,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         if (! lv2EditorTest->slot.load (std::filesystem::u8path (path), 48000.0, 1024, err))
         {
             std::fprintf (stderr, "[lv2 editor test] load failed: %s\n", err.c_str());
+            setApplicationReturnValue (1);
             quit();
             return;
         }
@@ -1935,6 +1937,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         if (inst == nullptr || ! comp->attach (*inst, jerr))
         {
             std::fprintf (stderr, "[lv2 editor test] attach failed: %s\n", jerr.toRawUTF8());
+            setApplicationReturnValue (1);
             quit();
             return;
         }
@@ -1970,6 +1973,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         if (! vst3EditorTest->bundle.load (path, err))
         {
             std::fprintf (stderr, "[vst3 editor test] load failed: %s\n", err.c_str());
+            setApplicationReturnValue (1);
             quit();
             return;
         }
@@ -1982,6 +1986,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         {
             std::fprintf (stderr, "[vst3 editor test] create failed: %s\n",
                           classId.empty() ? "no effect class in module" : err.c_str());
+            setApplicationReturnValue (1);
             quit();
             return;
         }
@@ -1990,6 +1995,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         if (! comp->attach (vst3EditorTest->instance, jerr))
         {
             std::fprintf (stderr, "[vst3 editor test] attach failed: %s\n", jerr.toRawUTF8());
+            setApplicationReturnValue (1);
             quit();
             return;
         }
@@ -2250,6 +2256,29 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         return;
     }
 
+    // One instance per user + display. The .desktop entry and the session
+    // MIME handler both pass %f, so opening a session from a file manager
+    // launches the binary again; without this it would be a second engine
+    // contending for the device and a second autosave loop writing the same
+    // session directory. A launch that finds an instance already running
+    // hands the session over (-> anotherInstanceStarted) and exits. Placed
+    // after every headless env-gate above so self-test / bounce / perf runs
+    // never take part in the handshake.
+    //
+    // What travels is the resolved path, quoted, not the raw tokens: the
+    // running instance would resolve a relative one against its own working
+    // directory rather than the launching shell's, so `cd ~/Sessions &&
+    // DuskStudio mysong/session.json` would quietly open nothing.
+    const auto handoffPath = sessionPathFromCommandLine (commandLine).getFullPathName();
+    const auto handoff = handoffPath.isNotEmpty() ? handoffPath.quoted().toStdString()
+                                                  : std::string();
+    if (! single_instance::acquire (handoff,
+                                    [this] (std::string cl) { anotherInstanceStarted (cl); }))
+    {
+        quit();
+        return;
+    }
+
     // Install crash handler + FileLogger AFTER every selftest env-gate
     // above has had its chance to quit. Self-test paths don't want
     // stray daily log files littering the user's data dir (or CI
@@ -2285,6 +2314,10 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
 
 void DuskStudioApp::shutdown()
 {
+    // Stop the single-instance listener first: a handoff arriving mid-teardown
+    // would target a window that is about to go away.
+    single_instance::release();
+
     // Persist window geometry before tearing down the window. Reading
     // getWindowStateAsString() AFTER mainWindow.reset() would crash; doing
     // it here captures the user's last visible position/size/fullscreen.

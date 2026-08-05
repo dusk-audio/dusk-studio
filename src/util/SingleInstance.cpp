@@ -1,0 +1,334 @@
+#include "SingleInstance.h"
+
+#include "../foundation/MessageThread.h"
+
+#include <atomic>
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <thread>
+#include <utility>
+
+#if defined (__linux__)
+ #include <cerrno>
+ #include <fcntl.h>
+ #include <poll.h>
+ #include <sys/socket.h>
+ #include <sys/stat.h>
+ #include <sys/un.h>
+ #include <unistd.h>
+#endif
+
+namespace duskstudio::single_instance
+{
+#if defined (__linux__)
+namespace
+{
+constexpr std::size_t kMaxPayloadBytes = 64 * 1024;
+constexpr int kReadBudgetMs = 2000;
+
+struct Listener
+{
+    std::thread thread;
+    std::atomic<int> listenFd { -1 };
+    std::atomic<bool> unlinked { false };
+    int wakeFds[2] = { -1, -1 };
+    std::string socketPath;
+    std::function<void (std::string)> onCommandLine;
+};
+
+// Raw, never owned by a static destructor: a plugin that calls exit() on a
+// license failure skips shutdown(), and destroying a still-joinable thread at
+// static teardown is std::terminate. release() is the only path that frees it;
+// an abnormal exit leaks it, which the process exit cleans up anyway.
+Listener* listener = nullptr;
+
+std::uint64_t hashOf (const char* s) noexcept
+{
+    std::uint64_t h = 1469598103934665603ull;
+    for (; *s != '\0'; ++s)
+    {
+        h ^= (std::uint64_t) (unsigned char) *s;
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
+// $XDG_RUNTIME_DIR/dusk-studio/instance-<display hash>.sock. The runtime dir is
+// per-user and 0700, which is the permission bit an abstract-namespace socket
+// does not have: without it any local process of any uid could bind the name
+// first (every real launch then hands off to nobody and quits) or connect and
+// feed the running instance a session of its choosing, whose plugin references
+// get loaded. The display is hashed rather than embedded because it can be an
+// absolute path, and a name long enough to truncate would collapse two
+// displays onto one slot.
+bool makeSocketPath (std::string& out)
+{
+    const char* runtimeDir = std::getenv ("XDG_RUNTIME_DIR");
+    if (runtimeDir == nullptr || *runtimeDir != '/') return false;
+
+    const std::string dir = std::string (runtimeDir) + "/dusk-studio";
+    if (::mkdir (dir.c_str(), 0700) != 0 && errno != EEXIST) return false;
+
+    struct stat st {};
+    if (::lstat (dir.c_str(), &st) != 0) return false;
+    if (! S_ISDIR (st.st_mode)
+        || st.st_uid != ::getuid()
+        || (st.st_mode & (S_IRWXG | S_IRWXO)) != 0)
+        return false;
+
+    const char* display = std::getenv ("WAYLAND_DISPLAY");
+    if (display == nullptr || *display == '\0') display = std::getenv ("DISPLAY");
+    if (display == nullptr) display = "";
+
+    char name[40] = {};
+    std::snprintf (name, sizeof name, "/instance-%016llx.sock",
+                   (unsigned long long) hashOf (display));
+    out = dir + name;
+    return out.size() < sizeof (sockaddr_un::sun_path);
+}
+
+void makeAddress (const std::string& path, sockaddr_un& addr, socklen_t& len)
+{
+    std::memset (&addr, 0, sizeof addr);
+    addr.sun_family = AF_UNIX;
+    std::memcpy (addr.sun_path, path.c_str(), path.size());
+    len = (socklen_t) (offsetof (sockaddr_un, sun_path) + path.size() + 1);
+}
+
+// Closing the listening fd is what makes a later launch fall back to acting as
+// primary; leaving it bound but unserviced would strand every launch after it.
+// Both exchanges keep this safe to call from the listener thread and from
+// release() without double-closing or unlinking a socket file that a newer
+// primary has since created at the same path.
+void teardown (Listener& l)
+{
+    const int fd = l.listenFd.exchange (-1);
+    if (fd >= 0) ::close (fd);
+    if (! l.unlinked.exchange (true) && ! l.socketPath.empty())
+        ::unlink (l.socketPath.c_str());
+}
+
+bool peerIsThisUser (int fd)
+{
+    ucred cred {};
+    socklen_t len = sizeof cred;
+    if (::getsockopt (fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) != 0) return false;
+    return len == sizeof cred && cred.uid == ::getuid();
+}
+
+bool writeAll (int fd, const std::string& payload)
+{
+    std::size_t sent = 0;
+    while (sent < payload.size())
+    {
+        const ssize_t n = ::send (fd, payload.data() + sent, payload.size() - sent, MSG_NOSIGNAL);
+        if (n > 0) { sent += (std::size_t) n; continue; }
+        if (n < 0 && errno == EINTR) continue;
+        return false;
+    }
+    return true;
+}
+
+// One deadline for the whole exchange, not per read: a peer dribbling a byte
+// at a time under a per-read timeout would hold the listener open forever, and
+// release() waits on this thread.
+std::string readPayload (int fd)
+{
+    const auto deadline = std::chrono::steady_clock::now()
+                            + std::chrono::milliseconds (kReadBudgetMs);
+    std::string payload;
+    char buf[1024];
+
+    while (payload.size() < kMaxPayloadBytes)
+    {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline) break;
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds> (deadline - now);
+
+        pollfd p {};
+        p.fd = fd;
+        p.events = POLLIN;
+        const int ready = ::poll (&p, 1, (int) remaining.count());
+        if (ready < 0)
+        {
+            if (errno == EINTR) continue;
+            break;
+        }
+        if (ready == 0) break;
+
+        const ssize_t got = ::read (fd, buf, sizeof buf);
+        if (got > 0) { payload.append (buf, (std::size_t) got); continue; }
+        if (got < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
+        break;
+    }
+    return payload;
+}
+
+void listenLoop (Listener* l)
+{
+    for (;;)
+    {
+        const int fd = l->listenFd.load();
+        if (fd < 0) return;
+
+        pollfd fds[2] {};
+        fds[0].fd = fd;
+        fds[0].events = POLLIN;
+        fds[1].fd = l->wakeFds[0];
+        fds[1].events = POLLIN;
+
+        if (::poll (fds, 2, -1) < 0)
+        {
+            if (errno == EINTR) continue;
+            teardown (*l);
+            return;
+        }
+        if (fds[1].revents != 0) return;                        // release() woke us
+        if ((fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
+        {
+            teardown (*l);
+            return;
+        }
+        if ((fds[0].revents & POLLIN) == 0) continue;
+
+        const int peer = ::accept4 (fd, nullptr, nullptr, SOCK_CLOEXEC | SOCK_NONBLOCK);
+        if (peer < 0)
+        {
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK || errno == ECONNABORTED)
+                continue;
+            // Out of descriptors and the like: the fd stays readable, so
+            // continuing here would spin the thread at 100% CPU.
+            teardown (*l);
+            return;
+        }
+
+        if (peerIsThisUser (peer))
+        {
+            const auto payload = readPayload (peer);
+            ::close (peer);
+            auto fn = l->onCommandLine;
+            dusk::callAsync ([fn, payload] { fn (payload); });
+        }
+        else
+        {
+            ::close (peer);
+        }
+    }
+}
+
+bool startListener (int fd, const std::string& path,
+                    std::function<void (std::string)> onCommandLine)
+{
+    if (::listen (fd, 8) != 0) return false;
+
+    auto* l = new Listener();
+    if (::pipe2 (l->wakeFds, O_CLOEXEC) != 0)
+    {
+        delete l;
+        return false;
+    }
+    l->listenFd.store (fd);
+    l->socketPath = path;
+    l->onCommandLine = std::move (onCommandLine);
+    listener = l;
+    l->thread = std::thread (listenLoop, l);
+    return true;
+}
+
+// A fresh socket per attempt: a connect that failed leaves the fd unusable for
+// a second try.
+bool handOver (const sockaddr_un& addr, socklen_t len, const std::string& payload)
+{
+    for (int attempt = 0; attempt < 2; ++attempt)
+    {
+        const int fd = ::socket (AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (fd < 0) return false;
+
+        if (::connect (fd, (const sockaddr*) &addr, len) == 0)
+        {
+            const bool sent = writeAll (fd, payload);
+            if (sent) ::shutdown (fd, SHUT_WR);
+            ::close (fd);
+            return sent;
+        }
+        const int connectErr = errno;
+        ::close (fd);
+        if (connectErr != ECONNREFUSED) return false;
+
+        // A primary that has bound but not yet called listen() refuses
+        // connections for a moment. Retry once before reading the refusal as
+        // "the file outlived the process that made it".
+        if (attempt == 0)
+            std::this_thread::sleep_for (std::chrono::milliseconds (50));
+    }
+    return false;
+}
+} // namespace
+
+bool acquire (const std::string& payload, std::function<void (std::string)> onCommandLine)
+{
+    std::string path;
+    if (! makeSocketPath (path)) return true;
+
+    sockaddr_un addr {};
+    socklen_t len = 0;
+    makeAddress (path, addr, len);
+
+    for (int attempt = 0; attempt < 2; ++attempt)
+    {
+        const int fd = ::socket (AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (fd < 0) return true;
+
+        if (::bind (fd, (const sockaddr*) &addr, len) == 0)
+        {
+            if (! startListener (fd, path, std::move (onCommandLine)))
+            {
+                ::close (fd);
+                ::unlink (path.c_str());
+            }
+            return true;
+        }
+        const int bindErr = errno;
+        ::close (fd);
+        if (bindErr != EADDRINUSE) return true;
+
+        if (handOver (addr, len, payload)) return false;
+
+        // Nothing is listening: a primary died without cleaning up. Drop the
+        // file and take the slot on the next pass.
+        if (::unlink (path.c_str()) != 0 && errno != ENOENT) return true;
+    }
+    return true;
+}
+
+void release()
+{
+    Listener* l = listener;
+    if (l == nullptr) return;
+    listener = nullptr;
+
+    if (l->wakeFds[1] >= 0)
+    {
+        const char wake = 0;
+        while (::write (l->wakeFds[1], &wake, 1) < 0 && errno == EINTR) {}
+    }
+    if (l->thread.joinable()) l->thread.join();
+
+    teardown (*l);
+    if (l->wakeFds[0] >= 0) ::close (l->wakeFds[0]);
+    if (l->wakeFds[1] >= 0) ::close (l->wakeFds[1]);
+    delete l;
+}
+
+#else
+
+bool acquire (const std::string&, std::function<void (std::string)>) { return true; }
+void release() {}
+
+#endif
+} // namespace duskstudio::single_instance

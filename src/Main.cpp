@@ -22,11 +22,14 @@ struct ForceXWaylandByDefault
     ForceXWaylandByDefault()
     {
         // Truthy per the DUSKSTUDIO_* env-flag convention (envFlagSet): a
-        // non-zero integer or "true". Unset, "0" or junk keep the XWayland
-        // default - setting the flag to 0 must not enable the native path.
+        // non-zero integer, "true" or "yes". Unset, "0" or junk keep the
+        // XWayland default - setting the flag to 0 must not enable the
+        // native path.
         const char* v = std::getenv ("DUSKSTUDIO_NATIVE_WAYLAND");
         const bool nativeWayland = v != nullptr
-                                    && (std::atoi (v) != 0 || strcasecmp (v, "true") == 0);
+                                    && (std::atoi (v) != 0
+                                        || strcasecmp (v, "true") == 0
+                                        || strcasecmp (v, "yes") == 0);
         if (! nativeWayland)
             setenv ("JUCE_XWAYLAND", "1", 0);
     }

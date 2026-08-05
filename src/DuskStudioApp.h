@@ -12,6 +12,14 @@ public:
 
     const juce::String getApplicationName() override       { return JUCE_APPLICATION_NAME_STRING; }
     const juce::String getApplicationVersion() override    { return JUCE_APPLICATION_VERSION_STRING; }
+    // Stays open on every platform. The framework's own gate runs before
+    // initialise(), so it would swallow the headless env-gated runs
+    // (DUSKSTUDIO_RUN_SELFTEST, BOUNCE_TEST, the editor tests) whenever a GUI
+    // instance happens to be open - and on Linux it could not deliver the
+    // handoff anyway, its cross-process broadcast having no implementation
+    // there. Single-instance behaviour is Linux's own handshake in
+    // initialise() (single_instance::acquire), which sits after those env
+    // gates and dispatches into anotherInstanceStarted.
     bool moreThanOneInstanceAllowed() override             { return true; }
 
     void initialise (const juce::String& commandLine) override;
