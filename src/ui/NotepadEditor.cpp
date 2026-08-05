@@ -1122,6 +1122,12 @@ void NotepadEditor::draw (float bodySize)
         };
         for (const auto key : ownedKeys)
             ImGui::SetKeyOwner (key, id);
+        // The page holds the active id so typing survives a toolbar click, but
+        // ItemHoverable refuses to hover any other item while a foreign id is
+        // active. Without this the ribbon needed one click to drop the page's
+        // id and a second to actually press the button, and tooltips never
+        // appeared at all.
+        g.ActiveIdAllowOverlap = true;
         g.ActiveIdUsingNavDirMask |= (1u << ImGuiDir_Left) | (1u << ImGuiDir_Right)
                                    | (1u << ImGuiDir_Up) | (1u << ImGuiDir_Down);
         g.WantTextInputNextFrame = 1;
