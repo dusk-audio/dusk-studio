@@ -124,7 +124,6 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
         };
         editor.onUndoRequested = [this] { restoreHistory (false); };
         editor.onRedoRequested = [this] { restoreHistory (true); };
-        editor.setDarkPage (darkDocumentPage);
     }
 
     void buildFontAtlas (float size)
@@ -256,11 +255,6 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
             return;
         closeRequested = true;
         closeWasPumped = false;
-    }
-
-    const notepad::Palette& theme() const noexcept
-    {
-        return notepad::palette (darkDocumentPage);
     }
 
     bool isOpen() const noexcept { return window != nullptr; }
@@ -451,38 +445,16 @@ private:
         return clicked;
     }
 
-    enum class SegmentIcon { sun, moon, eye, code };
+    enum class SegmentIcon { eye, code };
 
     // Vector icons: the bundled document font carries no symbol coverage that
     // survives every platform's fallback, and the segments are small enough
     // that hinted glyphs would read fuzzy next to the ribbon.
     void drawSegmentIcon (ImDrawList& drawList, SegmentIcon icon, ImVec2 centre,
-                          ImU32 iconColour, ImU32 backdrop)
+                          ImU32 iconColour)
     {
         switch (icon)
         {
-            case SegmentIcon::sun:
-            {
-                drawList.AddCircleFilled (centre, 3.3f, iconColour, 20);
-                for (int i = 0; i < 8; ++i)
-                {
-                    const auto angle = (float) i * 0.785398f;
-                    const auto dx = std::cos (angle);
-                    const auto dy = std::sin (angle);
-                    drawList.AddLine (ImVec2 (centre.x + dx * 5.4f, centre.y + dy * 5.4f),
-                                      ImVec2 (centre.x + dx * 7.4f, centre.y + dy * 7.4f),
-                                      iconColour, 1.5f);
-                }
-                break;
-            }
-            case SegmentIcon::moon:
-                // Crescent by subtraction: the bite is the segment's own
-                // background punched back over a filled disc.
-                drawList.AddCircleFilled (ImVec2 (centre.x - 0.6f, centre.y), 6.3f,
-                                          iconColour, 24);
-                drawList.AddCircleFilled (ImVec2 (centre.x + 3.0f, centre.y - 2.0f), 5.8f,
-                                          backdrop, 24);
-                break;
             case SegmentIcon::eye:
             {
                 // Lens: two arcs of radius R meeting at (+-a, 0), R^2 = a^2 + d^2.
@@ -558,8 +530,7 @@ private:
             drawSegmentIcon (drawList, icon, ImVec2 (centreX, centreY),
                              selected ? activeColour
                                       : pointerOver ? hoverColour
-                                                    : restingColour,
-                             selected ? pillColour : trackColour);
+                                                    : restingColour);
         };
 
         drawSegment (leftIcon, (min.x + padding + split) * 0.5f, ! rightSelected, leftHovered);
@@ -749,7 +720,7 @@ private:
 
         ImGui::PushStyleVar (ImGuiStyleVar_ChildRounding, 0.0f);
         ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (34.0f, 26.0f));
-        ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (theme().stage));
+        ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (notepad::kStagePalette.stage));
         // A borderless child drops WindowPadding unless asked, which left the
         // lyric running edge to edge with no gutter.
         ImGui::BeginChild ("chart", ImVec2 (editorWidth, std::max (0.0f, available.y)),
@@ -802,16 +773,7 @@ private:
         ImGui::TextUnformatted ("Lyrics and session notes");
         ImGui::PopStyleColor();
 
-        ImGui::SetCursorPos (ImVec2 (width - 170.0f, 16.0f));
-        const int pageSegment = drawSegmentedToggle ("##page-theme", darkDocumentPage,
-                                                     SegmentIcon::sun, SegmentIcon::moon,
-                                                     "Show the chart on a light page", "Show the chart on a dark page");
-        if (pageSegment >= 0 && (pageSegment == 1) != darkDocumentPage)
-        {
-            darkDocumentPage = pageSegment == 1;
-            editor.setDarkPage (darkDocumentPage);
-        }
-        ImGui::SameLine (0.0f, 8.0f);
+        ImGui::SetCursorPos (ImVec2 (width - 92.0f, 16.0f));
         const int modeSegment = drawSegmentedToggle ("##editor-mode", markdownMode,
                                                      SegmentIcon::eye, SegmentIcon::code,
                                                      "Read the chart", "Edit the Markdown source");
@@ -899,7 +861,6 @@ private:
     std::string savedAtLabel;
     bool linkRequested = false;
     bool markdownMode = false;
-    bool darkDocumentPage = true;
     bool closeRequested = false;
     bool closeWasPumped = false;
     bool hasSessionFile = false;

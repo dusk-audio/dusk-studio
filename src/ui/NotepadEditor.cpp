@@ -872,7 +872,7 @@ void NotepadEditor::render (ImVec2 frameMin, ImVec2 frameMax, float bodySize, bo
     const auto& text = document.documentText();
     const auto target = selection();
 
-    const auto& theme = notepad::palette (darkPage);
+    const auto& theme = notepad::kStagePalette;
     const auto textColour = colourOf (theme.lyric);
     const auto mutedColour = colourOf (theme.muted);
     // Links and code spans are demoted furniture: they read through weight and

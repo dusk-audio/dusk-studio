@@ -6,10 +6,7 @@
 
 namespace duskstudio::notepad
 {
-// Every colour the notepad draws, as 0xRRGGBBAA, in two surfaces: stage (dark,
-// the default) and paper (light). Chrome stays dark in both because the host
-// DAW has no light theme, so the paper choice re-skins the writing surface
-// only.
+// Every colour the notepad draws, as 0xRRGGBBAA.
 struct Palette
 {
     std::uint32_t shell;   // header, toolbar, status bar
@@ -24,17 +21,8 @@ inline constexpr Palette kStagePalette {
     0x15161bff, 0x1b1d24ff, 0xe4e5eaff, 0x8a8d99ff, 0xe89b34ff, 0x2a2d37ff
 };
 
-inline constexpr Palette kPaperPalette {
-    0xe8e7e3ff, 0xf3f3f1ff, 0x22232aff, 0x5e6069ff, 0x744008ff, 0xd3d2ccff
-};
-
-inline constexpr const Palette& palette (bool darkPage) noexcept
-{
-    return darkPage ? kStagePalette : kPaperPalette;
-}
-
 // Selection and code washes are derived from a named colour rather than named
-// themselves, so they follow the page with no second literal to keep in sync.
+// themselves, so they stay in step with the palette.
 inline constexpr std::uint32_t withAlpha (std::uint32_t rgba, std::uint8_t alpha) noexcept
 {
     return (rgba & 0xffffff00u) | alpha;

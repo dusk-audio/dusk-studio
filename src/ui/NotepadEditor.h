@@ -36,7 +36,6 @@ public:
     std::function<void()> onRedoRequested;
 
     void setFonts (const Fonts& value);
-    void setDarkPage (bool dark) noexcept { darkPage = dark; }
 
     // Adopts the document as it stands now - used on open, mode switch and
     // history restore, and whenever an edit was refused by the model.
@@ -146,6 +145,5 @@ private:
     bool keepFocus = false;
     bool draggingSelection = false;
     bool draggingScrollbar = false;
-    bool darkPage = true;
 };
 } // namespace duskstudio

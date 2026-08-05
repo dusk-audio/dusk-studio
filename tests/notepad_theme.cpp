@@ -23,30 +23,21 @@ void checkLegible (const notepad::Palette& p)
 }
 } // namespace
 
-TEST_CASE ("Notepad palette stays legible on both surfaces", "[notepad][theme]")
+TEST_CASE ("Notepad palette stays legible", "[notepad][theme]")
 {
-    SECTION ("stage")
-    {
-        checkLegible (notepad::kStagePalette);
-    }
-
-    SECTION ("paper")
-    {
-        checkLegible (notepad::kPaperPalette);
-    }
+    checkLegible (notepad::kStagePalette);
 }
 
-TEST_CASE ("Notepad palette keeps the surfaces distinguishable", "[notepad][theme]")
+TEST_CASE ("Notepad palette keeps the chrome and writing surface distinguishable",
+           "[notepad][theme]")
 {
-    for (const auto& p : { notepad::kStagePalette, notepad::kPaperPalette })
-    {
-        // Chrome and writing surface must separate without a border doing the
-        // work, but not so far apart that the panel reads as two windows.
-        const auto separation = notepad::contrastRatio (p.shell, p.stage);
-        CHECK (separation > 1.05);
-        CHECK (separation < 2.0);
-        CHECK (notepad::contrastRatio (p.rule, p.stage) < 2.0);
-    }
+    const auto& p = notepad::kStagePalette;
+    // Chrome and writing surface must separate without a border doing the
+    // work, but not so far apart that the panel reads as two windows.
+    const auto separation = notepad::contrastRatio (p.shell, p.stage);
+    CHECK (separation > 1.05);
+    CHECK (separation < 2.0);
+    CHECK (notepad::contrastRatio (p.rule, p.stage) < 2.0);
 }
 
 TEST_CASE ("Notepad reading steps scale monotonically around the writing size",

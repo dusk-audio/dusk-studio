@@ -583,10 +583,10 @@ overflow button at its right end. Undo and redo dim when there is nothing to
 undo or redo. The footer counts the lyric itself in both views, so headings
 markers and chord brackets never count towards it.
 
-Two switches sit at the top right of the header. The left one sets the page to
-light or dark. The right one flips between the chart (eye) and the compatible
-`notepad.md` source (`</>`) for users who prefer direct editing; switching views
-preserves the selection. Click the dimmed area outside the notepad to close it.
+A switch at the top right of the header flips between the chart (eye) and the
+compatible `notepad.md` source (`</>`) for users who prefer direct editing;
+switching views preserves the selection. Click the dimmed area outside the
+notepad to close it.
 The footer distinguishes saved, unsaved, untitled, and failed-save states. Notes are saved atomically to
 `notepad.md` when the notepad closes and on every session save; they follow the
 session on Save As. A failed sidecar write remains dirty and can be retried by
