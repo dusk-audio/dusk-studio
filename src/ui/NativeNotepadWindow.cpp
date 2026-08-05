@@ -775,8 +775,7 @@ private:
                                                : "Untitled session - saves on first session save";
         ImGui::TextUnformatted (saveState);
         const auto summary = std::to_string (document.wordCount()) + " words  |  "
-                           + std::to_string (document.documentText().size()) + " characters  |  "
-                           + (markdownMode ? "Markdown" : "Document");
+                           + std::to_string (document.characterCount()) + " characters";
         const auto summaryWidth = ImGui::CalcTextSize (summary.c_str()).x;
         ImGui::SameLine (std::max (300.0f, width - summaryWidth - 20.0f));
         ImGui::TextUnformatted (summary.c_str());
