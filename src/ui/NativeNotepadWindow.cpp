@@ -428,7 +428,7 @@ private:
         drawList->AddCircle (ImVec2 (centre.x + 4.0f, centre.y), 5.5f,
                              iconColour, 16, 1.6f);
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip ("Insert link");
+            ImGui::SetTooltip ("Link the selected text");
         return clicked;
     }
 
@@ -549,10 +549,10 @@ private:
         ImGui::BeginChild ("ribbon", ImVec2 (0.0f, 62.0f), false,
                            ImGuiWindowFlags_NoScrollbar);
 
-        if (toolbarButton ("↶", "Undo (Ctrl+Z)", false))
+        if (toolbarButton ("↶", "Undo the last edit (Ctrl+Z)", false))
             restoreHistory (false);
         ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("↷", "Redo (Ctrl+Y)", false))
+        if (toolbarButton ("↷", "Redo the last edit (Ctrl+Y)", false))
             restoreHistory (true);
         ImGui::SameLine (0.0f, 10.0f);
 
@@ -578,33 +578,35 @@ private:
             ImGui::EndCombo();
         }
         ImGui::PopStyleVar();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip ("Set the style of the lines you have selected");
         ImGui::SameLine (0.0f, 10.0f);
         const bool bold = inlineStyleActive (NotepadDocument::InlineStyle::bold);
         const bool italic = inlineStyleActive (NotepadDocument::InlineStyle::italic);
         const bool code = inlineStyleActive (NotepadDocument::InlineStyle::code);
-        if (toolbarButton ("B", "Bold (Ctrl+B)", bold, 34.0f, boldFont))
+        if (toolbarButton ("B", "Bold the selection (Ctrl+B)", bold, 34.0f, boldFont))
             applyInline (NotepadDocument::InlineStyle::bold);
         ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("I", "Italic (Ctrl+I)", italic))
+        if (toolbarButton ("I", "Italicise the selection (Ctrl+I)", italic))
             applyInline (NotepadDocument::InlineStyle::italic);
         ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("</>", "Inline code", code, 42.0f))
+        if (toolbarButton ("</>", "Set the selection in a fixed-width face", code, 42.0f))
             applyInline (NotepadDocument::InlineStyle::code);
 
         ImGui::SameLine (0.0f, 16.0f);
-        if (toolbarButton ("❝", "Quote selected paragraphs",
+        if (toolbarButton ("❝", "Quote the selected lines",
                            blockStyle == NotepadDocument::BlockStyle::quote))
             applyBlock (NotepadDocument::BlockStyle::quote);
         ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("•≡", "Bulleted list",
+        if (toolbarButton ("•≡", "Bullet the selected lines",
                            blockStyle == NotepadDocument::BlockStyle::bullets, 42.0f))
             applyBlock (NotepadDocument::BlockStyle::bullets);
         ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("1≡", "Numbered list",
+        if (toolbarButton ("1≡", "Number the selected lines",
                            blockStyle == NotepadDocument::BlockStyle::numbers, 42.0f))
             applyBlock (NotepadDocument::BlockStyle::numbers);
         ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("☑", "Checklist",
+        if (toolbarButton ("☑", "Turn the selected lines into a checklist",
                            blockStyle == NotepadDocument::BlockStyle::tasks))
             applyBlock (NotepadDocument::BlockStyle::tasks);
         ImGui::SameLine (0.0f, 5.0f);
@@ -612,7 +614,7 @@ private:
             ImGui::OpenPopup ("Insert link");
 
         ImGui::SameLine (0.0f, 16.0f);
-        if (toolbarButton ("♯", "Chord over the word at the caret (Ctrl+K)",
+        if (toolbarButton ("♯", "Put a chord over the word at the caret (Ctrl+K)",
                            editor.chordEntryActive()))
         {
             editor.beginChordEntry();
@@ -623,10 +625,10 @@ private:
         const bool canTranspose = ! markdownMode && document.hasChords();
         ImGui::BeginDisabled (! canTranspose);
         ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("−", "Transpose down a semitone", false))
+        if (toolbarButton ("−", "Transpose every chord down a semitone", false))
             editor.transposeChords (-1);
         ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("+", "Transpose up a semitone", false))
+        if (toolbarButton ("+", "Transpose every chord up a semitone", false))
             editor.transposeChords (1);
         ImGui::EndDisabled();
 
@@ -726,7 +728,7 @@ private:
         ImGui::SetCursorPos (ImVec2 (width - 170.0f, 16.0f));
         const int pageSegment = drawSegmentedToggle ("##page-theme", darkDocumentPage,
                                                      SegmentIcon::sun, SegmentIcon::moon,
-                                                     "Light page", "Dark page");
+                                                     "Show the chart on a light page", "Show the chart on a dark page");
         if (pageSegment >= 0 && (pageSegment == 1) != darkDocumentPage)
         {
             darkDocumentPage = pageSegment == 1;
@@ -735,7 +737,7 @@ private:
         ImGui::SameLine (0.0f, 8.0f);
         const int modeSegment = drawSegmentedToggle ("##editor-mode", markdownMode,
                                                      SegmentIcon::eye, SegmentIcon::code,
-                                                     "Document view", "Markdown source");
+                                                     "Read the chart", "Edit the Markdown source");
         if (modeSegment >= 0)
             setMode (modeSegment == 1);
 
