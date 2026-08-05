@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cctype>
+#include <vector>
 
 namespace duskstudio::notepad::chords
 {
@@ -172,5 +173,62 @@ std::string transpose (std::string_view token, int semitones, bool preferFlats)
         result += names[static_cast<std::size_t> (shiftPitch (parsed.bass, semitones))];
     }
     return result;
+}
+std::string detectKey (const std::vector<std::string>& names, bool preferFlats)
+{
+    // Two chords is the least that can distinguish a key from a single stab.
+    if (names.size() < 2)
+        return {};
+
+    struct Root { int pitch; bool minor; };
+    std::vector<Root> roots;
+    for (const auto& name : names)
+    {
+        ParsedChord parsed;
+        if (! parse (name, parsed))
+            continue;
+        const auto quality = parsed.suffix;
+        const bool minor = ! quality.empty() && quality[0] == 'm'
+                        && quality.compare (0, 3, "maj") != 0;
+        roots.push_back ({ parsed.root, minor });
+    }
+    if (roots.size() < 2)
+        return {};
+
+    constexpr std::array<int, 7> kMajorDegrees { 0, 2, 4, 5, 7, 9, 11 };
+    constexpr std::array<int, 7> kMinorDegrees { 0, 2, 3, 5, 7, 8, 10 };
+
+    int bestScore = -1;
+    int bestTonic = 0;
+    bool bestMinor = false;
+    for (int tonic = 0; tonic < 12; ++tonic)
+    {
+        for (const bool minor : { false, true })
+        {
+            const auto& degrees = minor ? kMinorDegrees : kMajorDegrees;
+            int score = 0;
+            for (const auto& root : roots)
+                for (const auto degree : degrees)
+                    if ((tonic + degree) % 12 == root.pitch)
+                    {
+                        ++score;
+                        break;
+                    }
+            // The opening chord usually states the key, so it settles ties
+            // rather than leaving the choice to iteration order.
+            if (roots.front().pitch == tonic && roots.front().minor == minor)
+                ++score;
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestTonic = tonic;
+                bestMinor = minor;
+            }
+        }
+    }
+
+    const auto& spelling = preferFlats ? kFlatNames : kSharpNames;
+    return std::string (spelling[static_cast<std::size_t> (bestTonic)])
+         + (bestMinor ? "m" : "");
 }
 } // namespace duskstudio::notepad::chords

@@ -888,6 +888,35 @@ std::size_t NotepadDocument::characterCount() const noexcept
     return count;
 }
 
+std::size_t NotepadDocument::sectionCount() const noexcept
+{
+    std::size_t count = 0;
+    std::size_t lineStart = 0;
+    while (lineStart <= markdownText.size())
+    {
+        const auto lineEnd = lineEndAt (markdownText, lineStart);
+        const auto length = lineEnd - lineStart;
+        if (length >= 3 && markdownText[lineStart] == '['
+            && markdownText[lineEnd - 1] == ']'
+            && ! notepad::chords::isChord (
+                    std::string_view (markdownText).substr (lineStart + 1, length - 2)))
+            ++count;
+        if (lineEnd == markdownText.size())
+            break;
+        lineStart = lineEnd + 1;
+    }
+    return count;
+}
+
+std::vector<std::string> NotepadDocument::uniqueChordNames() const
+{
+    std::vector<std::string> names;
+    for (const auto& token : chordTokens)
+        if (std::find (names.begin(), names.end(), token.name) == names.end())
+            names.push_back (token.name);
+    return names;
+}
+
 void NotepadDocument::setSourceMode (bool showSource)
 {
     if (sourceMode == showSource)

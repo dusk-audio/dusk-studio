@@ -2,6 +2,7 @@
 
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace duskstudio::notepad::chords
 {
@@ -16,4 +17,9 @@ bool isChord (std::string_view token) noexcept;
 // preferFlats is set and sharps otherwise. Non-chord tokens are returned
 // unchanged so a caller can run this over a whole document blindly.
 std::string transpose (std::string_view token, int semitones, bool preferFlats);
+
+// Best-fitting major or minor key for a set of chord names, scored by how many
+// roots are diatonic to it, with the first chord's root breaking ties the way
+// a chart usually resolves. Empty when there is too little to go on.
+std::string detectKey (const std::vector<std::string>& names, bool preferFlats);
 } // namespace duskstudio::notepad::chords

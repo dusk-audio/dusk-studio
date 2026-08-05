@@ -296,3 +296,33 @@ TEST_CASE ("Chord commands and counts survive the source view")
         CHECK_FALSE (document.hasChords());
     }
 }
+
+TEST_CASE ("Key detection reads the chords a chart is built from")
+{
+    CHECK (chords::detectKey ({ "Am", "F", "C", "G" }, false) == "Am");
+    CHECK (chords::detectKey ({ "C", "F", "G", "Am" }, false) == "C");
+    CHECK (chords::detectKey ({ "D", "G", "A" }, false) == "D");
+
+    // Too little to distinguish a key from a single stab.
+    CHECK (chords::detectKey ({ "C" }, false).empty());
+    CHECK (chords::detectKey ({}, false).empty());
+
+    SECTION ("spelling follows the document")
+    {
+        CHECK (chords::detectKey ({ "Bb", "Eb", "F" }, true) == "Bb");
+    }
+}
+
+TEST_CASE ("Section markers are bracketed lines that are not chords")
+{
+    NotepadDocument document;
+    document.setMarkdown ("[Verse]\nline [Am]one\n[Chorus]\nline two\n");
+    CHECK (document.sectionCount() == 2);
+    CHECK (document.uniqueChordNames().size() == 1);
+
+    SECTION ("a chord alone on a line is not a section")
+    {
+        document.setMarkdown ("[Am]\nline\n");
+        CHECK (document.sectionCount() == 0);
+    }
+}

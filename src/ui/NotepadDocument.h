@@ -129,6 +129,10 @@ public:
 
     std::size_t wordCount() const noexcept;
     std::size_t characterCount() const noexcept;
+    // A line whose whole content is one bracketed non-chord word, which is how
+    // section markers are written.
+    std::size_t sectionCount() const noexcept;
+    std::vector<std::string> uniqueChordNames() const;
 
 private:
     struct ChordToken

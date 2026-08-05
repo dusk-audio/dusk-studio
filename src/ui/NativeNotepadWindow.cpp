@@ -1,6 +1,7 @@
 #include "NativeNotepadWindow.h"
 #include "NotepadDocument.h"
 #include "NotepadEditor.h"
+#include "NotepadChords.h"
 #include "NotepadEditorCore.h"
 #include "NotepadTheme.h"
 #include "../foundation/MessageThread.h"
@@ -15,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <ctime>
 #include <filesystem>
 #include <optional>
 #include <utility>
@@ -56,6 +58,20 @@ ImFont* addPlatformFont (ImFontAtlas& atlas,
                 return font;
     }
     return nullptr;
+}
+
+std::string clockLabel()
+{
+    const auto now = std::time (nullptr);
+    std::tm local {};
+   #if defined (_WIN32)
+    localtime_s (&local, &now);
+   #else
+    localtime_r (&now, &local);
+   #endif
+    char buffer[6] {};
+    std::strftime (buffer, sizeof (buffer), "%H:%M", &local);
+    return buffer;
 }
 
 ImVec4 colour (unsigned int hex)
@@ -257,6 +273,7 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
 
     void markSaved()
     {
+        savedAtLabel = "at " + clockLabel();
         documentDirty = false;
         saveFailed = false;
         hasSessionFile = true;
@@ -558,7 +575,8 @@ private:
         ImGui::PushStyleVar (ImGuiStyleVar_ChildRounding, 0.0f);
         ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (22.0f, 13.0f));
         ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (notepad::kStagePalette.shell));
-        ImGui::BeginChild ("ribbon", ImVec2 (0.0f, 62.0f), false,
+        ImGui::BeginChild ("ribbon", ImVec2 (0.0f, 62.0f),
+                           ImGuiChildFlags_AlwaysUseWindowPadding,
                            ImGuiWindowFlags_NoScrollbar);
 
         ImGui::BeginDisabled (! history.canUndo());
@@ -702,7 +720,8 @@ private:
     {
         ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (notepad::kStagePalette.shell));
         ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (22.0f, 18.0f));
-        ImGui::BeginChild ("workspace", ImVec2 (0.0f, height), false,
+        ImGui::BeginChild ("workspace", ImVec2 (0.0f, height),
+                           ImGuiChildFlags_AlwaysUseWindowPadding,
                            ImGuiWindowFlags_NoScrollbar);
 
         // Both views render into the same measure at the same metrics, so the
@@ -715,7 +734,10 @@ private:
         ImGui::PushStyleVar (ImGuiStyleVar_ChildRounding, 0.0f);
         ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (34.0f, 26.0f));
         ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (theme().stage));
-        ImGui::BeginChild ("chart", ImVec2 (editorWidth, std::max (0.0f, available.y)), false);
+        // A borderless child drops WindowPadding unless asked, which left the
+        // lyric running edge to edge with no gutter.
+        ImGui::BeginChild ("chart", ImVec2 (editorWidth, std::max (0.0f, available.y)),
+                           ImGuiChildFlags_AlwaysUseWindowPadding);
 
         editor.draw (ImGui::GetFontSize());
 
@@ -790,20 +812,43 @@ private:
 
         ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (notepad::kStagePalette.shell));
         ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (18.0f, 6.0f));
-        ImGui::BeginChild ("status", ImVec2 (0.0f, statusHeight), false,
+        ImGui::BeginChild ("status", ImVec2 (0.0f, statusHeight),
+                           ImGuiChildFlags_AlwaysUseWindowPadding,
                            ImGuiWindowFlags_NoScrollbar);
         ImGui::PushStyleColor (ImGuiCol_Text,
                               saveFailed ? colour (0xe48a8aff) : colour (notepad::kStagePalette.muted));
-        const char* saveState = saveFailed ? "Save failed - changes are still unsaved"
+        const char* saveState = saveFailed
+                              ? "Save failed, the notes are still unsaved"
                               : documentDirty && hasSessionFile
-                                  ? "Unsaved changes - saved when closed"
+                                  ? "Unsaved changes, saved when this closes"
                               : documentDirty
-                                  ? "Unsaved changes - save the session to keep them"
-                              : hasSessionFile ? "Saved with session  |  notepad.md"
-                                               : "Untitled session - saves on first session save";
+                                  ? "Unsaved changes, save the session to keep them"
+                              : hasSessionFile ? "Saved with the session"
+                                               : "Untitled session, saves on first save";
         ImGui::TextUnformatted (saveState);
-        const auto summary = std::to_string (document.wordCount()) + " words  |  "
-                           + std::to_string (document.characterCount()) + " characters";
+        if (! savedAtLabel.empty() && ! documentDirty && ! saveFailed)
+        {
+            ImGui::SameLine (0.0f, 6.0f);
+            ImGui::TextUnformatted (savedAtLabel.c_str());
+        }
+        ImGui::SameLine (0.0f, 8.0f);
+        ImGui::TextUnformatted ("notepad.md");
+        ImGui::PopStyleColor();
+
+        // What a songwriter wants from a glance: how the song is built, what it
+        // is built from, and what it is in.
+        const auto chordNames = document.uniqueChordNames();
+        const auto key = notepad::chords::detectKey (chordNames, document.prefersFlats());
+        const auto sections = document.sectionCount();
+        std::string summary;
+        if (sections != 0)
+            summary += std::to_string (sections)
+                     + (sections == 1 ? " section" : " sections") + "  |  ";
+        summary += std::to_string (chordNames.size())
+                 + (chordNames.size() == 1 ? " chord" : " chords");
+        if (! key.empty())
+            summary += "  |  key of " + key;
+        ImGui::PushStyleColor (ImGuiCol_Text, colour (notepad::kStagePalette.muted));
         const auto summaryWidth = ImGui::CalcTextSize (summary.c_str()).x;
         ImGui::SameLine (std::max (300.0f, width - summaryWidth - 20.0f));
         ImGui::TextUnformatted (summary.c_str());
@@ -833,6 +878,7 @@ private:
     ImFont* monoFont = nullptr;
     std::array<char, 384> linkUrl {};
     std::optional<std::string> savedMarkdown;
+    std::string savedAtLabel;
     bool linkRequested = false;
     bool markdownMode = false;
     bool darkDocumentPage = true;
