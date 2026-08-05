@@ -566,11 +566,22 @@ chord name and press Enter to commit it, Esc to cancel, or commit an empty name
 to remove it. Click a chord to edit it again. Chords float above their syllable
 and move with the lyric as you edit around them. The transpose buttons shift
 every chord in the notepad by a semitone, spelled with sharps going up and flats
-coming down. Chord entry and transposition act on the rendered chart, so both
-are unavailable in the source view, where you edit the brackets directly.
-Notes are stored as ChordPro brackets in `notepad.md`
+coming down, matching whichever accidental the notepad already uses so that
+transposing away and back returns your own spelling. Chord entry and
+transposition both work in either view. Notes are stored as ChordPro brackets
+in `notepad.md`
 (`[Am]like this`), so the file opens in any chord-sheet app; bracketed text that
 is not a chord name, such as `[Chorus]`, stays literal.
+
+**Sections.** The section button writes a marker such as `[Chorus]` on its own
+line above the caret. Markers are plain text, so typing one by hand is the same
+thing: any bracketed word that is not a chord name stays literal.
+
+The toolbar leads with the chord tools, then heading, bold, and italic. Heading
+levels, inline code, quotes, the three list styles, and links live behind the
+overflow button at its right end. Undo and redo dim when there is nothing to
+undo or redo. The footer counts the lyric itself in both views, so headings
+markers and chord brackets never count towards it.
 
 Two switches sit at the top right of the header. The left one sets the page to
 light or dark. The right one flips between the chart (eye) and the compatible
