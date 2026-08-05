@@ -28,6 +28,8 @@ namespace
 // The measure both views share: wide enough for a long lyric line, narrow
 // enough that the eye does not lose the line it is reading.
 constexpr float kContentWidth = 760.0f;
+constexpr float kHeaderHeight = 62.0f;
+constexpr float kRibbonHeight = 62.0f;
 
 // DejaVu Sans covers these ranges in the embedded fallback. Platform fonts can
 // contribute additional glyphs, but the editor never intentionally truncates
@@ -575,7 +577,7 @@ private:
         ImGui::PushStyleVar (ImGuiStyleVar_ChildRounding, 0.0f);
         ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (22.0f, 13.0f));
         ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (notepad::kStagePalette.shell));
-        ImGui::BeginChild ("ribbon", ImVec2 (0.0f, 62.0f),
+        ImGui::BeginChild ("ribbon", ImVec2 (0.0f, kRibbonHeight),
                            ImGuiChildFlags_AlwaysUseWindowPadding,
                            ImGuiWindowFlags_NoScrollbar);
 
@@ -802,17 +804,21 @@ private:
         if (modeSegment >= 0)
             setMode (modeSegment == 1);
 
-        ImGui::SetCursorPosY (62.0f);
-        drawRibbon();
+        // The status bar is a line of text plus its own padding: sizing it by a
+        // constant left it a few pixels short of a full line once the child
+        // asked for that padding, and it clipped its own glyphs.
+        const auto statusPadding = 6.0f;
+        const auto statusHeight = ImGui::GetTextLineHeight() + statusPadding * 2.0f;
+        const auto bands = notepad::layoutChrome (height, kHeaderHeight, kRibbonHeight,
+                                                  statusHeight);
 
-        const float statusHeight = 28.0f;
-        // Tiling WMs can ignore the minimum-size hint; never hand a negative
-        // extent to the editor child.
-        drawEditor (std::max (0.0f, height - 62.0f - 62.0f - statusHeight));
+        ImGui::SetCursorPosY (bands.header);
+        drawRibbon();
+        drawEditor (bands.chart);
 
         ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (notepad::kStagePalette.shell));
-        ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (18.0f, 6.0f));
-        ImGui::BeginChild ("status", ImVec2 (0.0f, statusHeight),
+        ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (18.0f, statusPadding));
+        ImGui::BeginChild ("status", ImVec2 (0.0f, bands.status),
                            ImGuiChildFlags_AlwaysUseWindowPadding,
                            ImGuiWindowFlags_NoScrollbar);
         ImGui::PushStyleColor (ImGuiCol_Text,

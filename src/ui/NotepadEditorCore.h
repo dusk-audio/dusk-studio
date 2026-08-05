@@ -65,6 +65,23 @@ float blockIndent (NotepadDocument::BlockStyle block) noexcept;
 // Height of the chord band drawn above a row that carries chords.
 float chordBandHeight (float bodySize) noexcept;
 
+// Vertical bands of the panel. The chrome keeps its stated heights and the
+// chart absorbs whatever is left, so a band can never be handed a fraction of
+// a line and clip its own text mid-glyph. When even the chrome cannot fit, the
+// bands shrink from the bottom rather than overflowing the window.
+struct ChromeBands
+{
+    float header = 0.0f;
+    float ribbon = 0.0f;
+    float chart = 0.0f;
+    float status = 0.0f;
+
+    float total() const noexcept { return header + ribbon + chart + status; }
+};
+
+ChromeBands layoutChrome (float windowHeight, float headerHeight, float ribbonHeight,
+                          float statusHeight) noexcept;
+
 // Width of documentText()[begin, end) drawn at fontSize inside a block of the
 // given style. The renderer supplies the font metrics; the layout math stays
 // free of any toolkit so it can be unit tested against a synthetic advance.

@@ -448,6 +448,19 @@ bool rowCarriesChord (const NotepadDocument& document, std::size_t start, std::s
 }
 } // namespace
 
+ChromeBands layoutChrome (float windowHeight, float headerHeight, float ribbonHeight,
+                          float statusHeight) noexcept
+{
+    ChromeBands bands;
+    windowHeight = std::max (0.0f, windowHeight);
+    bands.header = std::min (headerHeight, windowHeight);
+    bands.ribbon = std::min (ribbonHeight, windowHeight - bands.header);
+    bands.status = std::min (statusHeight,
+                             windowHeight - bands.header - bands.ribbon);
+    bands.chart = windowHeight - bands.header - bands.ribbon - bands.status;
+    return bands;
+}
+
 Layout buildLayout (const NotepadDocument& document, float width, float bodySize,
                     const MeasureFn& measure, std::size_t pendingChordAnchor)
 {

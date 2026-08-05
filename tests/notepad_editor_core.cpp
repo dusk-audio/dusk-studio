@@ -493,3 +493,32 @@ TEST_CASE ("Notepad editor undo history is bounded", "[notepad][editor][undo]")
     REQUIRE (history.undo ({ "current", { 0, 0 }, false }, restored));
     CHECK (restored.markdown.size() == notepad::UndoStack::kMaxEntries + 19);
 }
+
+TEST_CASE ("Notepad chrome bands fit inside the window", "[notepad][editor][layout]")
+{
+    const auto bands = notepad::layoutChrome (700.0f, 62.0f, 62.0f, 28.0f);
+    CHECK (bands.header == 62.0f);
+    CHECK (bands.ribbon == 62.0f);
+    CHECK (bands.status == 28.0f);
+    CHECK (bands.chart == 548.0f);
+    CHECK_THAT (bands.total(), Catch::Matchers::WithinAbs (700.0f, 1e-4));
+
+    SECTION ("the chart absorbs the shortfall before any chrome is cut")
+    {
+        const auto tight = notepad::layoutChrome (160.0f, 62.0f, 62.0f, 28.0f);
+        CHECK (tight.status == 28.0f);
+        CHECK (tight.chart == 8.0f);
+        CHECK_THAT (tight.total(), Catch::Matchers::WithinAbs (160.0f, 1e-4));
+    }
+
+    SECTION ("a window too small for the chrome never overflows it")
+    {
+        for (const auto height : { 0.0f, 30.0f, 100.0f, 151.9f })
+        {
+            const auto bands = notepad::layoutChrome (height, 62.0f, 62.0f, 28.0f);
+            CHECK (bands.chart >= 0.0f);
+            CHECK (bands.status >= 0.0f);
+            CHECK (bands.total() <= height + 1e-4f);
+        }
+    }
+}
