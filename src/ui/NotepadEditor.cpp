@@ -890,7 +890,11 @@ void NotepadEditor::render (ImVec2 frameMin, ImVec2 frameMax, float bodySize, bo
         // selection, markers, caret - hangs off textTop, not the row origin.
         const float textTop = rowY + row.chordTop;
         const float textHeight = row.height - row.chordTop;
-        const float textY = textTop + std::max (0.0f, (textHeight - fontSize) * 0.38f);
+        // Inset from the row top by a share of the glyph size, not of the row:
+        // centring inside the row makes a heading's baseline depend on its row
+        // height, so the title jumped when the source view drew the same line
+        // at body metrics.
+        const float textY = textTop + fontSize * 0.17f;
         const float originX = frameMin.x + row.indent;
 
         const auto selectedStart = std::max (target.start, row.start);
