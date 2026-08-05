@@ -139,6 +139,92 @@ TEST_CASE ("MidiCollector: monotone input yields non-decreasing offsets", "[midi
     }
 }
 
+// The engine's per-input block buffer is reserveBytes()-capped, so a burst can
+// outrun it. Delivering the head of the block and dropping the tail would let a
+// note-on through while its note-off was lost, hanging the note - the whole
+// block goes instead, the same policy the MIDI out path applies.
+TEST_CASE ("MidiCollector drops the whole block when the destination is capped",
+           "[midi][collector]")
+{
+    const std::uint8_t on[]  = { 0x90, 0x40, 0x7F };
+    const std::uint8_t off[] = { 0x80, 0x40, 0x00 };
+
+    // Header (2 ints) + 3 payload bytes = 11 bytes per event, so this cap holds
+    // exactly one of the pair.
+    dusk::MidiBuffer out;
+    out.reserveBytes (11);
+
+    MidiCollector c;
+    c.reset (48000.0, 0.0);
+    REQUIRE (c.addMessage (on,  3, 1.0));
+    REQUIRE (c.addMessage (off, 3, 2.0));
+    c.removeNextBlock (out, 512, 3.0);
+    REQUIRE (out.isEmpty());
+
+    // The ring was still drained, so the next block starts clean and a pair
+    // that fits is delivered in full.
+    REQUIRE (c.addMessage (on, 3, 4.0));
+    c.removeNextBlock (out, 512, 5.0);
+    REQUIRE (offsets (out).size() == 1u);
+}
+
+// The squeeze path (backlog longer than the block) adds events through its own
+// branch, so the cap has to be honoured there too.
+TEST_CASE ("MidiCollector drops a squeezed block whole when the cap is hit",
+           "[midi][collector]")
+{
+    dusk::MidiBuffer out;
+    out.reserveBytes (22);   // two 3-byte events
+
+    MidiCollector c;
+    c.reset (48000.0, 0.0);
+    const std::uint8_t note[] = { 0x90, 0x40, 0x7F };
+    REQUIRE (c.addMessage (note, 3, 0.0));
+    REQUIRE (c.addMessage (note, 3, 10.0));
+    REQUIRE (c.addMessage (note, 3, 20.0));
+
+    // numSourceSamples 960 > 512 - the squeeze branch, as in the offsets test
+    // above. The third event overruns the cap and takes the block with it.
+    c.removeNextBlock (out, 512, 20.0);
+    REQUIRE (out.isEmpty());
+}
+
+// A record no cap could ever hold is undeliverable however the block is cut, so
+// failing the block over it would silence that input for as long as the device
+// keeps sending them. A DX7-class bulk dump is well inside the ring's capacity
+// and well past the destination's, which is exactly the case that has to drop
+// on its own.
+TEST_CASE ("MidiCollector drops an oversized record alone", "[midi][collector]")
+{
+    std::vector<std::uint8_t> sysex (4104, 0x7F);
+    sysex.front() = 0xF0;
+    sysex.back()  = 0xF7;
+
+    const std::uint8_t on[]  = { 0x90, 0x40, 0x7F };
+    const std::uint8_t off[] = { 0x80, 0x40, 0x00 };
+
+    dusk::MidiBuffer out;
+    out.reserveBytes (4096);
+
+    MidiCollector c (16384);
+    c.reset (48000.0, 0.0);
+    REQUIRE (c.addMessage (on, 3, 1.0));
+    REQUIRE (c.addMessage (sysex.data(), (int) sysex.size(), 1.5));
+    REQUIRE (c.addMessage (off, 3, 2.0));
+
+    c.removeNextBlock (out, 512, 3.0);
+
+    // The note pair survives intact; only the dump is gone.
+    int n = 0;
+    for (const auto meta : out)
+    {
+        REQUIRE (meta.numBytes == 3);
+        REQUIRE (meta.data[0] == (n == 0 ? 0x90 : 0x80));
+        ++n;
+    }
+    REQUIRE (n == 2);
+}
+
 TEST_CASE ("MidiCollector: full ring drops the overflowing message", "[midi][collector]")
 {
     // Tiny ring: one 3-byte record is 15 bytes, so a 16-byte ring holds exactly

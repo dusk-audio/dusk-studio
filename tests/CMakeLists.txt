@@ -95,6 +95,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/McuController.cpp
     ${CMAKE_SOURCE_DIR}/src/foundation/MessageThread.cpp
     multisample_state_roundtrip.cpp
+    multisample_hdcc_coalescing.cpp
     bounce_stem_filename.cpp
     bounce_stem_targets.cpp
     dp_importer_parse.cpp

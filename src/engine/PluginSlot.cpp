@@ -1322,9 +1322,7 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
             inPtrs[0] = nullptr;
         }
 
-        oopMidiScratch.clear();
-        for (const auto meta : midiMessages)
-            oopMidiScratch.addEvent (meta.data, meta.numBytes, meta.samplePosition);
+        dusk::copyEventsWhole (midiMessages, oopMidiScratch);
         if (! r->processBlockSync (inPtrs, std::max (rNumIn, 0),
                                        std::max (rNumOut, 0),
                                        numSamples, oopMidiScratch,
@@ -1505,9 +1503,7 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
             return;
         }
 
-        oopMidiScratch.clear();
-        for (const auto meta : midiMessages)
-            oopMidiScratch.addEvent (meta.data, meta.numBytes, meta.samplePosition);
+        dusk::copyEventsWhole (midiMessages, oopMidiScratch);
         if (! r->processBlockSync (inPtrs, std::max (rNumIn, 0),
                                        std::max (rNumOut, 0),
                                        numSamples, oopMidiScratch,

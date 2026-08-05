@@ -52,15 +52,9 @@ void DuskMultisampleProcessor::setHDCC (int cc, float normValue)
     const float v = std::clamp (normValue, 0.0f, 1.0f);
     ccCache[(size_t) cc].store (v, std::memory_order_relaxed);
 
-    // Queue for the audio thread. If the FIFO is momentarily full
-    // (user spamming a control faster than the audio block rate), drop
-    // the oldest-unread by simply not writing - the cache still holds
-    // the latest value and the next change re-queues it.
-    const auto scope = ccFifo.write (1);
-    if (scope.blockSize1 > 0)
-        ccQueue[(size_t) scope.startIndex1] = { cc, v };
-    else if (scope.blockSize2 > 0)
-        ccQueue[(size_t) scope.startIndex2] = { cc, v };
+    // Release-flag after the store so the audio thread's acquire-exchange
+    // cannot see the bit without the value that set it.
+    ccDirty[(size_t) (cc / 64)].fetch_or (1ull << (cc % 64), std::memory_order_release);
 }
 
 float DuskMultisampleProcessor::getHDCC (int cc) const noexcept
@@ -537,24 +531,23 @@ void DuskMultisampleProcessor::processBlock (const hosting::PortBuffers& io) noe
         }
     }
 
-    // Drain UI-driven CC changes (ARIA custom-UI knobs/faders) queued
-    // by setHDCC on the message thread. sfizz_send_hdcc is the RT-side
-    // entry point; delay 0 applies at block start.
+    // Push UI-driven CC changes (ARIA custom-UI knobs/faders) flagged by
+    // setHDCC on the message thread. sfizz_send_hdcc is the RT-side entry
+    // point; delay 0 applies at block start. Bits left set by a block that
+    // bailed early are picked up by the next one.
+    for (size_t w = 0; w < ccDirty.size(); ++w)
     {
-        const auto ready = ccFifo.getNumReady();
-        if (ready > 0)
+        auto bits = ccDirty[w].exchange (0, std::memory_order_acquire);
+        for (int b = 0; bits != 0; ++b, bits >>= 1)
         {
-            const auto scope = ccFifo.read (ready);
-            for (int i = 0; i < scope.blockSize1; ++i)
-            {
-                const auto& c = ccQueue[(size_t) (scope.startIndex1 + i)];
-                sfizz_send_hdcc (impl->synth, 0, c.cc, c.value);
-            }
-            for (int i = 0; i < scope.blockSize2; ++i)
-            {
-                const auto& c = ccQueue[(size_t) (scope.startIndex2 + i)];
-                sfizz_send_hdcc (impl->synth, 0, c.cc, c.value);
-            }
+            if ((bits & 1ull) == 0) continue;
+            const size_t cc = w * 64 + (size_t) b;
+            const float value = ccCache[cc].load (std::memory_order_relaxed);
+            sfizz_send_hdcc (impl->synth, 0, (int) cc, value);
+           #if defined(DUSKSTUDIO_TESTS)
+            if (hdccDispatchObserver != nullptr)
+                hdccDispatchObserver (hdccDispatchObserverContext, (int) cc, value);
+           #endif
         }
     }
 
