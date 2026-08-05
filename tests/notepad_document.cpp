@@ -315,12 +315,11 @@ TEST_CASE ("Notepad source mode projects the Markdown one to one",
         CHECK (document.documentSelection (selection).end == selection.end);
     }
 
-    SECTION ("chord mutations are refused")
+    SECTION ("chord commands still reach the source")
     {
-        const auto before = document.markdown();
-        CHECK_FALSE (document.setChordAt (0, "C"));
-        document.transposeChords (2, false);
-        CHECK (document.markdown() == before);
+        CHECK (document.hasChords());
+        document.transposeChords (2, document.prefersFlats());
+        CHECK (document.markdown() == "# Title\n\nline [Bm]one\n");
     }
 
     SECTION ("typed Markdown syntax round-trips unescaped")

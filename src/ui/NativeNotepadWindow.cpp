@@ -626,17 +626,14 @@ private:
             ImGui::OpenPopup ("Insert link");
 
         ImGui::SameLine (0.0f, 16.0f);
-        ImGui::BeginDisabled (markdownMode);
         if (toolbarButton ("♯", "Put a chord over the word at the caret (Ctrl+K)",
                            editor.chordEntryActive()))
         {
             editor.beginChordEntry();
             editor.requestFocus();
         }
-        ImGui::EndDisabled();
-        // Transpose only has meaning once the sheet carries chords, and in
-        // Markdown mode the source is edited directly.
-        const bool canTranspose = ! markdownMode && document.hasChords();
+        // Transpose only has meaning once the sheet carries chords.
+        const bool canTranspose = document.hasChords();
         ImGui::BeginDisabled (! canTranspose);
         ImGui::SameLine (0.0f, 5.0f);
         if (toolbarButton ("−", "Transpose every chord down a semitone", false))
