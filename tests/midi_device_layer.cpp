@@ -1,9 +1,13 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "engine/midi/MidiBackend.h"
 #include "engine/midi/MidiDevices.h"
 #include "foundation/MidiBuffer.h"
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 using duskstudio::midi::MidiInputClient;
 using duskstudio::midi::MidiOutputBank;
@@ -117,3 +121,134 @@ TEST_CASE ("Seam resolves saved identifiers back to bank indices", "[midi][devic
 // What queueRt actually delivers is asserted end to end in alsa_seq_midi.cpp,
 // where a real port receives the bytes; there is no way to observe it here
 // without a device.
+
+namespace
+{
+constexpr std::uint8_t kProbeNote[3] { 0x90, 64, 96 };
+
+// A backend at its most hostile: at the moment the seam subscribes a source it
+// inspects the bank that source's bytes would have to route through, and hands
+// the seam a first byte-run to route right then.
+class ProbeBackend final : public duskstudio::midi::IMidiInputBackend
+{
+public:
+    std::vector<duskstudio::midi::BackendDeviceInfo> enumerate() override
+    {
+        return { { "Probe A", "probe:a" }, { "Probe B", "probe:b" } };
+    }
+
+    void setReceiver (Receiver r) override { receiver = std::move (r); }
+    std::string migrateIdentifier (const std::string&) override { return {}; }
+
+    bool enable (const std::string& identifier) override
+    {
+        ++enableCount;
+        enabledWhileDispatching = enabledWhileDispatching || dispatching;
+
+        if (client != nullptr)
+        {
+            // This source's own route, and the bank as a whole: the synthetic
+            // slot is appended last, so it sitting at the end is what says the
+            // collector vector is finished rather than mid-append.
+            const int idx = client->resolveIndex (identifier);
+            routeReady  = routeReady && idx >= 0 && idx < client->getNumInputs();
+            bankBuilt   = bankBuilt
+                            && client->getVirtualKeyboardIndex() == client->getNumInputs() - 1;
+        }
+
+        if (receiver)
+            receiver (identifier, kProbeNote, 3, duskstudio::midi::backendClockMs());
+        return true;
+    }
+
+    void disableAll() override {}
+    void start() override { dispatching = true; }
+    void stop()  override { dispatching = false; ++stopCount; }
+
+    MidiInputClient* client      = nullptr;
+    Receiver receiver;
+    bool dispatching             = false;
+    bool enabledWhileDispatching = false;
+    bool routeReady              = true;
+    bool bankBuilt               = true;
+    int  enableCount             = 0;
+    int  stopCount               = 0;
+};
+
+int countProbeNotes (const dusk::MidiBuffer& buf)
+{
+    int count = 0;
+    for (const auto meta : buf)
+    {
+        ++count;
+        REQUIRE (meta.numBytes == 3);
+        REQUIRE (meta.data[0] == kProbeNote[0]);
+        REQUIRE (meta.data[1] == kProbeNote[1]);
+        REQUIRE (meta.data[2] == kProbeNote[2]);
+    }
+    return count;
+}
+} // namespace
+
+TEST_CASE ("MidiInputClient wires every route before it enables an input", "[midi][devices]")
+{
+    auto owned = std::make_unique<ProbeBackend>();
+    auto* probe = owned.get();
+
+    MidiInputClient client (std::move (owned));
+    probe->client = &client;
+
+    // 1 Hz, not a real rate: the collectors' retime is relative to the clock
+    // they were seeded with at the top of rebuild, and events below
+    // (elapsed - (numSamples << 5)) samples are dropped at drain time. Scaling
+    // the whole conversion by the sample rate makes that window
+    // (512 << 5) / 1 Hz = over four hours wide, so the delivery assertion below
+    // measures routing rather than how long this process took to reach it.
+    client.rebuild (1.0);
+
+    REQUIRE (probe->enableCount == 2);
+    REQUIRE (probe->routeReady);
+    REQUIRE (probe->bankBuilt);
+
+    dusk::MidiBuffer out;
+    out.reserveBytes (256);
+
+    // Both events were routed from inside enable(), so each landing in its own
+    // collector is what proves the route existed before the enable.
+    for (int i = 0; i < 2; ++i)
+    {
+        client.drainBlock (i, out, 512);
+        REQUIRE (countProbeNotes (out) == 1);
+    }
+
+    // The synthetic slot is bound to no backend source, so nothing routes there.
+    client.drainBlock (client.getVirtualKeyboardIndex(), out, 512);
+    REQUIRE (out.isEmpty());
+}
+
+TEST_CASE ("MidiInputClient rebuild fences the backend's dispatch", "[midi][devices]")
+{
+    auto owned = std::make_unique<ProbeBackend>();
+    auto* probe = owned.get();
+
+    MidiInputClient client (std::move (owned));
+    client.rebuild (48000.0);
+    client.attachCallback();
+    REQUIRE (probe->dispatching);
+
+    const int stopsBefore = probe->stopCount;
+    client.rebuild (48000.0);
+
+    // Stopped for the mutation, restored after it - a caller that skipped the
+    // detach fence still never has the MIDI thread reading a half-built bank.
+    REQUIRE (probe->stopCount == stopsBefore + 1);
+    REQUIRE (probe->dispatching);
+    REQUIRE (! probe->enabledWhileDispatching);
+
+    client.detachCallback();
+    REQUIRE (! probe->dispatching);
+
+    // A rebuild with dispatch already stopped leaves it stopped.
+    client.rebuild (48000.0);
+    REQUIRE (! probe->dispatching);
+}

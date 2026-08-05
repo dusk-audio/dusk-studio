@@ -42,13 +42,27 @@ public:
     static constexpr const char* kVirtualKeyboardIdentifier = "Dusk Studio:virtual-keyboard";
 
     MidiInputClient();
+
+    // Test seam: the same client over a caller-supplied backend, so the
+    // enable-vs-dispatch ordering can be driven without an OS device.
+    explicit MidiInputClient (std::unique_ptr<IMidiInputBackend> backendIn);
+
     ~MidiInputClient();
 
-    // Message thread, input callback DETACHED. Enumerate the hardware inputs,
-    // enable each on the backend, build a per-input collector, then append the
-    // synthetic Virtual-Keyboard slot last (fixed identifier, no OS device).
-    // Mutating the bank with the callback active is UB - see the detach/attach
-    // fence.
+    // Message thread, audio callback DETACHED, disableAllDevices() first.
+    // Enumerate the hardware inputs, build the whole bank (one collector per
+    // input plus the synthetic Virtual-Keyboard slot last, fixed identifier, no
+    // OS device), and only then enable the inputs on the backend: a source can
+    // deliver the instant it is subscribed, so none is subscribed before the
+    // route its bytes need exists.
+    //
+    // Stopping the backend's dispatch for the duration (restored after, if it
+    // was running) is the one part of the fence this owns. The other two stay
+    // with the caller: the audio thread drains these same collectors in
+    // drainBlock while they are cleared and reallocated here, and only
+    // disableAllDevices() clears the backend's source-address -> identifier map,
+    // without which a vanished port's reused address demuxes a new device's
+    // bytes under the dead identifier.
     void rebuild (double sampleRate);
 
     // Message thread, before the first attachCallback. Forwarded to the backend,
@@ -107,6 +121,10 @@ private:
     // Identifier -> collector index for the receiver's demux. Rebuilt only with
     // the backend stopped, so the MIDI thread reads it without synchronisation.
     std::unordered_map<std::string, int> indexByIdentifier;
+
+    // Message thread only. Mirrors whether the backend's dispatch is started, so
+    // rebuild can fence itself against a caller that skipped detachCallback.
+    bool dispatchRunning = false;
 
     int virtualKeyboardIndex = -1;
 };
