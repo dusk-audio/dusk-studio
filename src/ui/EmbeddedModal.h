@@ -43,6 +43,17 @@ inline bool isModalForwardableShortcut (const juce::KeyPress& k) noexcept
         || k == juce::KeyPress::F11Key;
 }
 
+// Implemented by a modal body that binds bare typing keys to its own input -
+// the virtual keyboard's note letters. EmbeddedModal asks before forwarding a
+// shortcut, so a claimed key plays its note instead of toggling record / punch
+// on the arrangement behind the modal. keyCode is JUCE's key code; modifier
+// chords never reach here (isModalForwardableShortcut rejects them first).
+struct ModalKeyClaimant
+{
+    virtual ~ModalKeyClaimant() = default;
+    virtual bool claimsKeyCode (int keyCode) const = 0;
+};
+
 // Component-properties tag marking a plugin-editor component (JUCE editor, OOP
 // embed, native CLAP/LV2 editor). EmbeddedModal hides tagged components while a
 // modal is up - native editor windows otherwise paint above the modal regardless
@@ -590,6 +601,15 @@ private:
         // keys before this fires, so typing isn't affected.
         if (forwardShortcuts_ && isModalForwardableShortcut (k))
         {
+            // Returning false hands the key to the body's own keyPressed - and,
+            // if the body declines it, on up every ancestor to MainComponent,
+            // which is exactly the handler this forwarder targets. So a claimed
+            // key stays suppressed ONLY because the body consumes every code it
+            // claims: claim implies consume.
+            auto* claimant = dynamic_cast<ModalKeyClaimant*> (getBody());
+            if (claimant != nullptr && claimant->claimsKeyCode (k.getKeyCode()))
+                return false;
+
             if (auto* mc = focusRestoreTarget().getComponent())
                 return mc->keyPressed (k);
         }
@@ -743,9 +763,14 @@ public:
         return t;
     }
 
-    bool keyPressed (const juce::KeyPress& k, juce::Component*) override
+    bool keyPressed (const juce::KeyPress& k, juce::Component* target) override
     {
         if (! isModalForwardableShortcut (k)) return false;
+        // Same claim contract as EmbeddedModal's forwarder: a body that binds
+        // this key to its own input keeps it (and must consume it).
+        if (auto* claimant = dynamic_cast<ModalKeyClaimant*> (target))
+            if (claimant->claimsKeyCode (k.getKeyCode()))
+                return false;
         if (auto* mc = EmbeddedModal::focusRestoreTarget().getComponent())
             return mc->keyPressed (k);
         return false;

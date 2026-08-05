@@ -49,6 +49,17 @@ const KeyMap& keyMap()
     return k;
 }
 
+// Layout membership, deliberately independent of centreNote: the octave decides
+// which note a key sounds, not whether the keyboard owns it. A key the centre
+// pushes past MIDI 127 must stay owned, or its app shortcut fires behind the
+// modal (see claimsKeyCode / keyPressed).
+bool isLayoutKeyCode (int keyCode) noexcept
+{
+    if (keyCode < 0 || keyCode >= (int) keyMap().offset.size())
+        return false;
+    return keyMap().offset[(size_t) keyCode] >= 0;
+}
+
 bool isBlackKey (int midiNote) noexcept
 {
     const int pc = ((midiNote % 12) + 12) % 12;
@@ -135,6 +146,11 @@ int VirtualKeyboardComponent::noteForKeyCode (int keyCode) const noexcept
     return note;
 }
 
+bool VirtualKeyboardComponent::claimsKeyCode (int keyCode) const
+{
+    return isLayoutKeyCode (keyCode);
+}
+
 bool VirtualKeyboardComponent::keyPressed (const juce::KeyPress& k)
 {
     const int code = k.getKeyCode();
@@ -156,11 +172,20 @@ bool VirtualKeyboardComponent::keyPressed (const juce::KeyPress& k)
         return true;
     }
 
+    // Claim implies consume, so no claimed code may fall out here: every layout
+    // key has to be indexable in `held` or it would escape to MainComponent.
+    static_assert (std::tuple_size<decltype (KeyMap::offset)>::value
+                       <= std::tuple_size<decltype (held)>::value,
+                   "layout table must fit the held-note slots");
     if (code < 0 || code >= (int) held.size())
         return false;
 
+    // A layout key the octave pushed past MIDI 127 sounds nothing but must
+    // still die here: an unconsumed key walks the parent chain, and the modal
+    // body is a direct child of MainComponent, so M / X / S / P / R would drop
+    // a marker / mute / solo / punch / record instead.
     const int note = noteForKeyCode (code);
-    if (note < 0) return false;
+    if (note < 0) return isLayoutKeyCode (code);
 
     // keyPressed fires again for an already-held key from two sources:
     //   - auto-repeat - the key never left the board; silentScans stays 0

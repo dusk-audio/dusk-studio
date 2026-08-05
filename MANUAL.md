@@ -1334,6 +1334,8 @@ The note-creation grid is set from the toolbar dropdown; there is no keyboard sh
 
 Open the virtual keyboard from the transport bar (the keyboard icon, or **K**). Each note you press in the keyboard is entered at the current edit cursor. When all keys are released, the cursor advances by one snap step. This is the fastest way to enter a chord progression without playing in real time.
 
+While the keyboard is open, every letter and digit in its layout belongs to the keyboard, not to the shortcuts — **P** and **R** play their notes instead of toggling punch and record, at any octave (shift the octave high enough that a key runs past the top of the MIDI range and it simply does nothing). Keys outside the layout still work as usual, so **Space**, **.**, **L**, **[** / **]** keep driving the transport, and **K** or **Esc** closes the keyboard.
+
 ## Navigation
 
 - **Cmd/Ctrl+]** / **Cmd/Ctrl+[**: jump to the next / previous MIDI region on the same track.
