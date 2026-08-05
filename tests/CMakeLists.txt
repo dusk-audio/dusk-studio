@@ -129,6 +129,7 @@ add_executable(dusk-studio-tests
     notepad_document.cpp
     notepad_editor_core.cpp
     notepad_chords.cpp
+    notepad_theme.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/NotepadDocument.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/NotepadEditorCore.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/NotepadChords.cpp

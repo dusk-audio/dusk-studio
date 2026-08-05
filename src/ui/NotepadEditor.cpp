@@ -1,4 +1,5 @@
 #include "NotepadEditor.h"
+#include "NotepadTheme.h"
 
 #include <DearImGui/imgui_internal.h>
 
@@ -837,14 +838,18 @@ void NotepadEditor::render (ImVec2 frameMin, ImVec2 frameMax, float bodySize, bo
     const auto& text = document.documentText();
     const auto target = selection();
 
-    const auto textColour = colourOf (darkPage ? 0xe7e8edff : 0x24242aff);
-    const auto mutedColour = colourOf (darkPage ? 0xa9abb5ff : 0x67656dff);
-    const auto linkColour = colourOf (darkPage ? 0x8eb4ffff : 0x315fbdff);
-    const auto codeColour = colourOf (darkPage ? 0xd5a4f0ff : 0x5e367cff);
-    const auto selectionColour = colourOf (darkPage ? 0x516aa6cc : 0xb9c8f0cc);
-    const auto codeBackground = colourOf (darkPage ? 0x34313fff : 0xebe6f1ff);
-    const auto accentColour = colourOf (darkPage ? 0xb28bd4ff : 0x8061a4ff);
-    const auto chordColour = colourOf (darkPage ? 0x8fc8ffff : 0x2f6ab0ff);
+    const auto& theme = notepad::palette (darkPage);
+    const auto textColour = colourOf (theme.lyric);
+    const auto mutedColour = colourOf (theme.muted);
+    // Links and code spans are demoted furniture: they read through weight and
+    // underline rather than a colour of their own, so the panel keeps exactly
+    // one accent and it belongs to the chord lane.
+    const auto linkColour = colourOf (theme.lyric);
+    const auto codeColour = colourOf (theme.lyric);
+    const auto selectionColour = colourOf (notepad::withAlpha (theme.muted, 0x66));
+    const auto codeBackground = colourOf (notepad::withAlpha (theme.rule, 0xcc));
+    const auto accentColour = colourOf (theme.muted);
+    const auto chordColour = colourOf (theme.chord);
 
     const bool caretVisible = active
         && std::fmod (ImGui::GetTime() - blinkStart, 1.06) < 0.56;
@@ -952,7 +957,8 @@ void NotepadEditor::render (ImVec2 frameMin, ImVec2 frameMax, float bodySize, bo
                                     || (chordAnchor == row.end && row.lastRowOfLine));
         if ((row.chordTop > 0.0f || slotOnThisRow) && fonts.bold != nullptr)
         {
-            const auto chordSize = std::max (10.0f, bodySize * 0.78f);
+            const auto chordSize = std::max (10.0f, bodySize
+                * (notepad::kTypeScale.chord / notepad::kTypeScale.lyric));
             const float bandTop = rowY + std::max (row.chordTop,
                                                    notepad::chordBandHeight (bodySize))
                                 - chordSize - 1.0f;

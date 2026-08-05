@@ -2,6 +2,7 @@
 #include "NotepadDocument.h"
 #include "NotepadEditor.h"
 #include "NotepadEditorCore.h"
+#include "NotepadTheme.h"
 #include "../foundation/MessageThread.h"
 
 #include <Application.hpp>
@@ -23,9 +24,6 @@ namespace duskstudio
 {
 namespace
 {
-constexpr auto kLightDocumentPaperColour = 0xf7f6f3ff;
-constexpr auto kDarkDocumentPaperColour = 0x22242cff;
-
 // DejaVu Sans covers these ranges in the embedded fallback. Platform fonts can
 // contribute additional glyphs, but the editor never intentionally truncates
 // the atlas to Latin-1 as the first native prototype did.
@@ -207,7 +205,8 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
     {
     public:
         EditorWidget (DGL::Window& window, Impl& ownerRef)
-            : DGL::ImGuiTopLevelWidget (window, 15.0f), owner (ownerRef) {}
+            : DGL::ImGuiTopLevelWidget (window, notepad::kTypeScale.lyric),
+              owner (ownerRef) {}
 
     protected:
         void onImGuiDisplay() override
@@ -349,7 +348,8 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
         {
             DGL::Window::ScopedGraphicsContext context (*window);
             editorWidget = std::make_unique<EditorWidget> (*window, *this);
-            buildFontAtlas (static_cast<float> (15.0 * window->getScaleFactor()));
+            buildFontAtlas (static_cast<float> (notepad::kTypeScale.lyric
+                                                * window->getScaleFactor()));
         }
         window->focus();
         startTimer (16);
@@ -362,6 +362,11 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
             return;
         closeRequested = true;
         closeWasPumped = false;
+    }
+
+    const notepad::Palette& theme() const noexcept
+    {
+        return notepad::palette (darkDocumentPage);
     }
 
     bool isOpen() const noexcept { return window != nullptr; }
@@ -589,8 +594,8 @@ private:
     {
         if (active)
         {
-            ImGui::PushStyleColor (ImGuiCol_Button, colour (0x5a4880ff));
-            ImGui::PushStyleColor (ImGuiCol_ButtonHovered, colour (0x6b5796ff));
+            ImGui::PushStyleColor (ImGuiCol_Button, colour (theme().rule));
+            ImGui::PushStyleColor (ImGuiCol_ButtonHovered, colour (0x393b47ff));
         }
         if (labelFont != nullptr)
             ImGui::PushFont (labelFont);
@@ -701,7 +706,7 @@ private:
         const bool pointerOnRight = ImGui::GetIO().MousePos.x >= split;
         auto& drawList = *ImGui::GetWindowDrawList();
 
-        const auto trackColour = ImGui::GetColorU32 (colour (0x24252fff));
+        const auto trackColour = ImGui::GetColorU32 (colour (notepad::kStagePalette.rule));
         const auto pillColour = ImGui::GetColorU32 (
             colour (hovered ? 0x494a5aff : 0x3d3e4cff));
         drawList.AddRectFilled (min, max, trackColour, 9.0f);
@@ -710,8 +715,8 @@ private:
             ImVec2 (rightSelected ? max.x - padding : split, max.y - padding),
             pillColour, 7.0f);
 
-        const auto activeColour = ImGui::GetColorU32 (colour (0xf1f1f5ff));
-        const auto restingColour = ImGui::GetColorU32 (colour (0x8b8c97ff));
+        const auto activeColour = ImGui::GetColorU32 (colour (notepad::kStagePalette.lyric));
+        const auto restingColour = ImGui::GetColorU32 (colour (notepad::kStagePalette.muted));
         const auto hoverColour = ImGui::GetColorU32 (colour (0xc3c4ceff));
         const auto centreY = (min.y + max.y) * 0.5f;
 
@@ -739,7 +744,7 @@ private:
     {
         ImGui::PushStyleVar (ImGuiStyleVar_ChildRounding, 0.0f);
         ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (22.0f, 13.0f));
-        ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (0x20212aff));
+        ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (notepad::kStagePalette.shell));
         ImGui::BeginChild ("ribbon", ImVec2 (0.0f, 62.0f), false,
                            ImGuiWindowFlags_NoScrollbar);
 
@@ -853,7 +858,7 @@ private:
 
     void drawEditor (float height)
     {
-        ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (0x111218ff));
+        ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (notepad::kStagePalette.shell));
         ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (22.0f, 18.0f));
         ImGui::BeginChild ("workspace", ImVec2 (0.0f, height), false,
                            ImGuiWindowFlags_NoScrollbar);
@@ -867,10 +872,7 @@ private:
                              markdownMode ? ImVec2 (20.0f, 18.0f) : ImVec2 (58.0f, 46.0f));
         // The page switch owns both views: Markdown keeps its own darker
         // shade of the dark page, but a light page is the same paper in both.
-        ImGui::PushStyleColor (ImGuiCol_ChildBg,
-                              colour (! darkDocumentPage ? kLightDocumentPaperColour
-                                    : markdownMode       ? 0x181922ff
-                                                         : kDarkDocumentPaperColour));
+        ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (theme().stage));
         ImGui::BeginChild (markdownMode ? "markdown-source" : "document-page",
                            ImVec2 (editorWidth, available.y), true);
 
@@ -889,13 +891,10 @@ private:
 
     void drawMarkdownSource()
     {
-        ImGui::PushStyleColor (ImGuiCol_FrameBg,
-                              colour (darkDocumentPage ? 0x181922ff
-                                                       : kLightDocumentPaperColour));
-        ImGui::PushStyleColor (ImGuiCol_Text,
-                              colour (darkDocumentPage ? 0xd7d9e0ff : 0x24242aff));
+        ImGui::PushStyleColor (ImGuiCol_FrameBg, colour (theme().stage));
+        ImGui::PushStyleColor (ImGuiCol_Text, colour (theme().lyric));
         ImGui::PushStyleColor (ImGuiCol_TextSelectedBg,
-                              colour (darkDocumentPage ? 0x70599aaa : 0xb9c8f0cc));
+                              colour (notepad::withAlpha (theme().muted, 0x66)));
         ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2 (0.0f, 0.0f));
 
         if (focusEditorNextFrame)
@@ -976,21 +975,21 @@ private:
         style.ItemSpacing = ImVec2 (8.0f, 6.0f);
         style.Colors[ImGuiCol_Button] = colour (0x2b2c35ff);
         style.Colors[ImGuiCol_ButtonHovered] = colour (0x393b47ff);
-        style.Colors[ImGuiCol_ButtonActive] = colour (0x4b3f66ff);
+        style.Colors[ImGuiCol_ButtonActive] = colour (0x4a4c5aff);
         style.Colors[ImGuiCol_FrameBg] = colour (0x292a33ff);
         style.Colors[ImGuiCol_FrameBgHovered] = colour (0x32343eff);
         style.Colors[ImGuiCol_FrameBgActive] = colour (0x373944ff);
-        style.Colors[ImGuiCol_Header] = colour (0x4b3f66ff);
-        style.Colors[ImGuiCol_HeaderHovered] = colour (0x5a4880ff);
-        style.Colors[ImGuiCol_PopupBg] = colour (0x20212aff);
-        style.Colors[ImGuiCol_Border] = colour (0x3a3b46ff);
-        style.Colors[ImGuiCol_Text] = colour (0xe6e5eaff);
-        style.Colors[ImGuiCol_TextDisabled] = colour (0x8f909aff);
+        style.Colors[ImGuiCol_Header] = colour (0x393b47ff);
+        style.Colors[ImGuiCol_HeaderHovered] = colour (0x4a4c5aff);
+        style.Colors[ImGuiCol_PopupBg] = colour (notepad::kStagePalette.shell);
+        style.Colors[ImGuiCol_Border] = colour (notepad::kStagePalette.rule);
+        style.Colors[ImGuiCol_Text] = colour (notepad::kStagePalette.lyric);
+        style.Colors[ImGuiCol_TextDisabled] = colour (notepad::kStagePalette.muted);
 
         ImGui::SetNextWindowPos (ImVec2 (0.0f, 0.0f));
         ImGui::SetNextWindowSize (ImVec2 (width, height));
         ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (0.0f, 0.0f));
-        ImGui::PushStyleColor (ImGuiCol_WindowBg, colour (0x181920ff));
+        ImGui::PushStyleColor (ImGuiCol_WindowBg, colour (notepad::kStagePalette.shell));
         ImGui::Begin ("Session Notepad", nullptr,
                       ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove
                       | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar);
@@ -998,7 +997,7 @@ private:
         ImGui::SetCursorPos (ImVec2 (22.0f, 14.0f));
         ImGui::TextUnformatted ("SESSION NOTEPAD");
         ImGui::SetCursorPos (ImVec2 (22.0f, 34.0f));
-        ImGui::PushStyleColor (ImGuiCol_Text, colour (0x92939dff));
+        ImGui::PushStyleColor (ImGuiCol_Text, colour (notepad::kStagePalette.muted));
         ImGui::TextUnformatted ("Lyrics and session notes");
         ImGui::PopStyleColor();
 
@@ -1026,12 +1025,12 @@ private:
         // extent to the editor child.
         drawEditor (std::max (0.0f, height - 62.0f - 62.0f - statusHeight));
 
-        ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (0x181920ff));
+        ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (notepad::kStagePalette.shell));
         ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (18.0f, 6.0f));
         ImGui::BeginChild ("status", ImVec2 (0.0f, statusHeight), false,
                            ImGuiWindowFlags_NoScrollbar);
         ImGui::PushStyleColor (ImGuiCol_Text,
-                              saveFailed ? colour (0xe48a8aff) : colour (0x8f909aff));
+                              saveFailed ? colour (0xe48a8aff) : colour (notepad::kStagePalette.muted));
         const char* saveState = saveFailed ? "Save failed - changes are still unsaved"
                               : documentDirty && hasSessionFile
                                   ? "Unsaved changes - saved when closed"
