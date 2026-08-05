@@ -125,7 +125,7 @@ AnalogVuMeter::AnalogVuMeter (const std::atomic<float>* l, const std::atomic<flo
     startTimerHz ((int) kRefreshHz);
 }
 
-AnalogVuMeter::~AnalogVuMeter() = default;
+AnalogVuMeter::~AnalogVuMeter() { stopTimer(); }
 
 void AnalogVuMeter::setReferenceLevelDb (float refDb)
 {

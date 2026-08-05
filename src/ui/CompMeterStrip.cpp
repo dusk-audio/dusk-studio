@@ -119,7 +119,7 @@ CompMeterStrip::CompMeterStrip (Track& t)
 {
 }
 
-CompMeterStrip::~CompMeterStrip() = default;
+CompMeterStrip::~CompMeterStrip() { stopTimer(); }
 
 float CompMeterStrip::dbToFrac (float db) const noexcept
 {

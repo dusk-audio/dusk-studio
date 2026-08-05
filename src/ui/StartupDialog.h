@@ -21,6 +21,7 @@ class StartupDialog final : public juce::Component,
 {
 public:
     explicit StartupDialog (juce::Array<juce::File> recentSessions);
+    ~StartupDialog() override;
 
     void resized() override;
     void paint (juce::Graphics&) override;

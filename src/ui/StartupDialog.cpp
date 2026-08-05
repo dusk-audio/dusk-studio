@@ -220,6 +220,10 @@ StartupDialog::StartupDialog (juce::Array<juce::File> r)
     setWantsKeyboardFocus (true);
 }
 
+// Dismissing the dialog inside the ~5 s update-banner blink would otherwise leave
+// the timer live until the base dtor, after updateLabel is gone.
+StartupDialog::~StartupDialog() { stopTimer(); }
+
 bool StartupDialog::keyPressed (const juce::KeyPress& key)
 {
     // Banner activation only while the banner itself holds focus - Return

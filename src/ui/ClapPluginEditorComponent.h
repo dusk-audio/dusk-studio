@@ -61,8 +61,9 @@ private:
     clap::ClapInstance instance;
     clap::ClapEditor   editor;
     bool ownsInstance = false;
-    bool loaded   = false;
-    bool embedded = false;
+    bool loaded    = false;
+    bool embedded  = false;
+    bool embedding = false;   // guards re-entry: a nested dispatch inside set_parent/show lets the timer poll re-enter tryEmbed
     std::uint32_t lastPumpMs = 0;
 #if defined(__linux__)
     int  geometryCheckTick = 0;

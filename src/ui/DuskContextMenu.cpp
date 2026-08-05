@@ -114,8 +114,8 @@ public:
             {
                 g.setColour (juce::Colour (0xff2a2a30));
                 g.drawHorizontalLine (y + kSepH / 2,
-                                        (float) getX() + 4.0f,
-                                        (float) getRight() - 4.0f);
+                                        4.0f,
+                                        (float) getWidth() - 4.0f);
                 y += kSepH;
                 continue;
             }

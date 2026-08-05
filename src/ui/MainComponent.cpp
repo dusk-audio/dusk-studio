@@ -275,6 +275,10 @@ public:
         startTimerHz (20);
     }
 
+    // The base timer dtor runs after these members are gone; a 20 Hz tick landing
+    // in that window would read the freed job reference.
+    ~DpImportProgressPanel() override { stopTimer(); }
+
     std::function<void()> onFinished;
 
     void paint (juce::Graphics& g) override { g.fillAll (juce::Colour (0xff202024)); }
@@ -1021,9 +1025,11 @@ MainComponent::~MainComponent()
     // gone. AudioSettingsPanel's destructor removes listeners from both;
     // PluginScanModal's stops a worker that calls into the engine-owned
     // PluginManager; BounceDialog's cancels + joins a BounceEngine
-    // rendering through the engine. All of those must run while the
-    // engine is still alive. No body callback can be on the stack here
-    // (the dtor runs from app shutdown), so in-place destruction is safe.
+    // rendering through the engine; DpImportProgressPanel holds a
+    // DpImportJob& and a 20 Hz timer, so a leaked body outlives the job
+    // it polls. All of those must run while the engine is still alive.
+    // No body callback can be on the stack here (the dtor runs from app
+    // shutdown), so in-place destruction is safe.
     audioSettingsModal   .closeAndDeleteBodyNow();
     mixdownModal         .closeAndDeleteBodyNow();
     bounceModal          .closeAndDeleteBodyNow();
@@ -1034,6 +1040,7 @@ MainComponent::~MainComponent()
     importTargetModal    .closeAndDeleteBodyNow();
     shortcutsModal       .closeAndDeleteBodyNow();
     supportersModal      .closeAndDeleteBodyNow();
+    dpImportProgressModal.closeAndDeleteBodyNow();
 
     // Intentionally NO auto-save here. Standard DAW behavior is to require
     // an explicit Save before exit. The previous auto-save on destruct

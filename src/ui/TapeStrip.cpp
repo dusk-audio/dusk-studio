@@ -259,6 +259,7 @@ TapeStrip::TapeStrip (Session& s, AudioEngine& e)
 
 TapeStrip::~TapeStrip()
 {
+    stopTimer();
     showAllToggle.setLookAndFeel (nullptr);
     engine.getUndoManager().removeChangeListener (this);
 }
