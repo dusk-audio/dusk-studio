@@ -1,7 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <fstream>
-#include <sstream>
+#include <optional>
 #include <string>
 
 // Regression guard: outside the per-platform PlatformWindowing
@@ -27,13 +27,26 @@
 
 namespace
 {
-std::string readEntireFile (const std::string& path)
+// Nullopt on failure so the caller can tell "audited file is gone /
+// unreadable" apart from "audited file is clean" - the guard has to fail on
+// the former, or renaming an audited path silently retires it.
+std::optional<std::string> readEntireFile (const std::string& path)
 {
     std::ifstream in (path);
     if (! in.is_open()) return {};
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    return ss.str();
+
+    std::string contents;
+    char buffer[4096];
+    for (;;)
+    {
+        in.read (buffer, sizeof buffer);
+        const auto count = in.gcount();
+        if (count > 0) contents.append (buffer, (std::size_t) count);
+
+        if (in.bad()) return {};
+        if (in.eof()) return contents;
+        if (in.fail()) return {};
+    }
 }
 
 // DUSKSTUDIO_SOURCE_DIR is defined by the test target's CMake so the
@@ -43,10 +56,8 @@ std::string readEntireFile (const std::string& path)
  #define DUSKSTUDIO_SOURCE_DIR "."
 #endif
 
-bool fileContainsXOpenDisplayNull (const std::string& relativePath)
+bool containsXOpenDisplayNull (const std::string& contents)
 {
-    const auto contents = readEntireFile (
-        std::string (DUSKSTUDIO_SOURCE_DIR) + "/" + relativePath);
     // Match `XOpenDisplay(nullptr)` and `XOpenDisplay (nullptr)`.
     // We don't try to be clever about comments — a literal in a
     // doc comment would also flag, which is fine: the comment
@@ -72,6 +83,9 @@ TEST_CASE ("XOpenDisplay(nullptr) is confined to PlatformWindowing impls",
     for (const auto* path : shouldBeClean)
     {
         INFO ("file under audit: " << path);
-        REQUIRE_FALSE (fileContainsXOpenDisplayNull (path));
+        const auto contents = readEntireFile (std::string (DUSKSTUDIO_SOURCE_DIR) + "/" + path);
+        REQUIRE (contents.has_value());
+        REQUIRE_FALSE (contents->empty());
+        REQUIRE_FALSE (containsXOpenDisplayNull (*contents));
     }
 }

@@ -146,7 +146,7 @@ echo
 echo "Next steps:"
 echo "  1) Refresh patrons:   scripts/update-patrons.py   (commit in the plugins repo)"
 echo "  2) Review the diff:   git diff VERSION $APPDATA"
-echo "  3) Rebuild + smoke:   cmake --build build -j && build/.../DuskStudio --selftest"
+echo "  3) Rebuild + smoke:   cmake --build build -j && DUSKSTUDIO_RUN_SELFTEST=1 build/.../DuskStudio"
 echo "  4) Commit:            git commit -am \"Release v$NEW_VERSION\""
 echo "  5) Tag:               git tag -a v$NEW_VERSION -m \"Dusk Studio $NEW_VERSION\""
 echo "  6) Package:           scripts/package-{tarball,macos}.sh, scripts/package-windows.ps1"

@@ -507,6 +507,7 @@ target_sources(DuskStudio PRIVATE
     src/session/SessionSerializer.cpp
     src/session/SessionTemplates.cpp
     src/util/CrashHandler.cpp
+    src/util/SingleInstance.cpp
     src/ui/AnalogVuMeter.cpp
     src/ui/AppConfig.cpp
     src/ui/AudioRegionEditor.cpp
@@ -1332,9 +1333,10 @@ endif()
 # AddressSanitizer + UBSan. Off by default; opt-in via
 # -DDUSKSTUDIO_ENABLE_ASAN=ON. Applied build-wide (directory-level options)
 # because sanitizer-instrumented code can't link against
-# non-instrumented code without symbol-resolution drama. CI runs the
-# test binary under ASAN to catch heap corruption / use-after-free /
-# undefined-behaviour from a long-running session's worth of edits.
+# non-instrumented code without symbol-resolution drama. Local-only: the
+# sanitizer workflow in CI runs TSan, so an ASAN pass over the test binary
+# (heap corruption / use-after-free / undefined behaviour) is something you
+# run by hand before a release.
 # Not for production builds — overhead is ~2× CPU and ~3× memory.
 option(DUSKSTUDIO_ENABLE_ASAN "Enable AddressSanitizer + UBSan" OFF)
 

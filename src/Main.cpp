@@ -1,6 +1,7 @@
 #include "DuskStudioApp.h"
 
 #if defined (__linux__)
+#include <cerrno>
 #include <cstdlib>
 #include <strings.h>
 
@@ -17,16 +18,28 @@
 // framework's entry-point macro.
 namespace
 {
+bool nativeWaylandRequested (const char* value) noexcept
+{
+    if (value == nullptr) return false;
+    if (strcasecmp (value, "true") == 0 || strcasecmp (value, "yes") == 0)
+        return true;
+
+    char* end = nullptr;
+    errno = 0;
+    const long parsed = std::strtol (value, &end, 10);
+    return errno != ERANGE && end != value && *end == '\0' && parsed != 0;
+}
+
 struct ForceXWaylandByDefault
 {
     ForceXWaylandByDefault()
     {
         // Truthy per the DUSKSTUDIO_* env-flag convention (envFlagSet): a
-        // non-zero integer or "true". Unset, "0" or junk keep the XWayland
-        // default - setting the flag to 0 must not enable the native path.
+        // non-zero integer, "true" or "yes". Unset, "0" or junk keep the
+        // XWayland default - setting the flag to 0 must not enable the
+        // native path.
         const char* v = std::getenv ("DUSKSTUDIO_NATIVE_WAYLAND");
-        const bool nativeWayland = v != nullptr
-                                    && (std::atoi (v) != 0 || strcasecmp (v, "true") == 0);
+        const bool nativeWayland = nativeWaylandRequested (v);
         if (! nativeWayland)
             setenv ("JUCE_XWAYLAND", "1", 0);
     }

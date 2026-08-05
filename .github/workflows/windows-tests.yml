@@ -10,9 +10,9 @@ name: Windows tests
 
 on:
   push:
-    branches: [main, develop, 'release/**']
+    branches: [main, 'release/**']
   pull_request:
-    branches: [main, develop, 'release/**']
+    branches: [main, 'release/**']
   workflow_dispatch:
 
 permissions:
