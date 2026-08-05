@@ -29,6 +29,28 @@ if (-not (Get-Command "candle.exe" -ErrorAction SilentlyContinue)) {
     Write-Error "WIX Toolset not on PATH — install from https://wixtoolset.org/"
 }
 
+# CPack consumes CMake's install rules. Validate that layout before building
+# the MSI so a compiled-but-uninstalled helper cannot silently ship again.
+$InstallCheckDir = Join-Path ([System.IO.Path]::GetTempPath()) `
+    ("dusk-studio-install-check-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $InstallCheckDir | Out-Null
+try {
+    & cmake --install $BuildDir --config Release --prefix $InstallCheckDir
+    if ($LASTEXITCODE -ne 0) {
+        throw "cmake --install validation failed with exit $LASTEXITCODE"
+    }
+
+    foreach ($RequiredExe in @("DuskStudio.exe", "dusk-studio-plugin-host.exe")) {
+        $InstalledExe = Join-Path (Join-Path $InstallCheckDir "bin") $RequiredExe
+        if (-not (Test-Path -PathType Leaf $InstalledExe)) {
+            throw "install layout missing required executable: $InstalledExe"
+        }
+    }
+    Write-Host "Validated install layout: app + plugin scan host"
+} finally {
+    Remove-Item -Recurse -Force $InstallCheckDir -ErrorAction SilentlyContinue
+}
+
 Push-Location $BuildDir
 try {
     & cpack -G WIX -C Release
