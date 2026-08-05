@@ -218,6 +218,18 @@ void NotepadEditor::selectAll()
     history.breakRun();
 }
 
+float NotepadEditor::caretViewportOffset() const noexcept
+{
+    if (layout.rows.empty())
+        return 0.0f;
+    return layout.rows[layout.rowForOffset (caret, caretAtRowEnd)].y - scrollY;
+}
+
+void NotepadEditor::keepCaretAtViewportOffset (float offset) noexcept
+{
+    pendingCaretViewport = offset;
+}
+
 void NotepadEditor::keepCaretVisible (float viewportHeight, float bodySize)
 {
     ensureLayout (layoutWidth, bodySize);
@@ -1110,6 +1122,14 @@ void NotepadEditor::draw (float bodySize)
         handleKeyboard (size.y, bodySize);
     ensureLayout (size.x, bodySize);
 
+    if (pendingCaretViewport >= 0.0f)
+    {
+        if (! layout.rows.empty())
+            scrollY = layout.rows[layout.rowForOffset (caret, caretAtRowEnd)].y
+                    - pendingCaretViewport;
+        pendingCaretViewport = -1.0f;
+        scrollToCaret = false;
+    }
     if (scrollToCaret)
     {
         keepCaretVisible (size.y, bodySize);

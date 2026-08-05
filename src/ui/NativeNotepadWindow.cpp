@@ -15,7 +15,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstring>
 #include <filesystem>
 #include <optional>
 #include <utility>
@@ -24,6 +23,10 @@ namespace duskstudio
 {
 namespace
 {
+// The measure both views share: wide enough for a long lyric line, narrow
+// enough that the eye does not lose the line it is reading.
+constexpr float kContentWidth = 760.0f;
+
 // DejaVu Sans covers these ranges in the embedded fallback. Platform fonts can
 // contribute additional glyphs, but the editor never intentionally truncates
 // the atlas to Latin-1 as the first native prototype did.
@@ -61,131 +64,6 @@ ImVec4 colour (unsigned int hex)
                    ((hex >> 16) & 0xff) / 255.0f,
                    ((hex >> 8) & 0xff) / 255.0f,
                    (hex & 0xff) / 255.0f);
-}
-
-struct EditorBuffer
-{
-    std::string text;
-    int selectionStart = 0;
-    int selectionEnd = 0;
-    int pendingSelectionStart = -1;
-    int pendingSelectionEnd = -1;
-
-    void assign (const std::string& value)
-    {
-        text = value;
-        text.reserve (std::max<std::size_t> (4096, text.size() + 1024));
-        selectionStart = selectionEnd = std::min<int> (selectionEnd,
-                                                        static_cast<int> (text.size()));
-    }
-
-    static int callback (ImGuiInputTextCallbackData* data)
-    {
-        auto& self = *static_cast<EditorBuffer*> (data->UserData);
-        if (data->EventFlag == ImGuiInputTextFlags_CallbackResize)
-        {
-            self.text.resize (static_cast<std::size_t> (data->BufTextLen));
-            data->Buf = self.text.data();
-        }
-        else if (data->EventFlag == ImGuiInputTextFlags_CallbackAlways)
-        {
-            if (self.pendingSelectionStart >= 0)
-            {
-                data->SelectionStart = self.pendingSelectionStart;
-                data->SelectionEnd = self.pendingSelectionEnd;
-                data->CursorPos = self.pendingSelectionEnd;
-                self.pendingSelectionStart = self.pendingSelectionEnd = -1;
-            }
-            if (data->SelectionStart == data->SelectionEnd)
-                self.selectionStart = self.selectionEnd = data->CursorPos;
-            else
-            {
-                self.selectionStart = data->SelectionStart;
-                self.selectionEnd = data->SelectionEnd;
-            }
-        }
-        return 0;
-    }
-
-    NotepadDocument::Selection selection() const noexcept
-    {
-        const auto start = static_cast<std::size_t> (std::max (0, selectionStart));
-        const auto end = static_cast<std::size_t> (std::max (0, selectionEnd));
-        return { std::min (start, end), std::max (start, end) };
-    }
-
-    void restoreSelection (NotepadDocument::Selection selection)
-    {
-        const auto limit = text.size();
-        selectionStart = pendingSelectionStart
-            = static_cast<int> (std::min (selection.start, limit));
-        selectionEnd = pendingSelectionEnd
-            = static_cast<int> (std::min (selection.end, limit));
-    }
-};
-
-std::size_t sourceLineStart (const std::string& text, std::size_t offset)
-{
-    offset = std::min (offset, text.size());
-    const auto found = offset == 0 ? std::string::npos : text.rfind ('\n', offset - 1);
-    return found == std::string::npos ? 0 : found + 1;
-}
-
-std::size_t sourceLineEnd (const std::string& text, std::size_t offset)
-{
-    const auto found = text.find ('\n', std::min (offset, text.size()));
-    return found == std::string::npos ? text.size() : found;
-}
-
-std::size_t sourceBlockPrefixLength (const std::string& text,
-                                     std::size_t start,
-                                     std::size_t end)
-{
-    auto i = start;
-    while (i < end && text[i] == '#' && i - start < 6)
-        ++i;
-    if (i > start && i < end && text[i] == ' ')
-        return i + 1 - start;
-
-    i = start;
-    while (i < end && text[i] >= '0' && text[i] <= '9')
-        ++i;
-    if (i > start && i + 1 < end && text[i] == '.' && text[i + 1] == ' ')
-        return i + 2 - start;
-
-    if (text.compare (start, std::min<std::size_t> (6, end - start), "- [ ] ") == 0
-        || text.compare (start, std::min<std::size_t> (6, end - start), "- [x] ") == 0)
-        return 6;
-    if (end - start >= 2 && text[start + 1] == ' '
-        && (text[start] == '-' || text[start] == '*' || text[start] == '+' || text[start] == '>'))
-        return 2;
-    return 0;
-}
-
-NotepadDocument::BlockStyle sourceBlockStyle (const std::string& text,
-                                              NotepadDocument::Selection selection)
-{
-    const auto lineStart = sourceLineStart (text, selection.start);
-    const auto lineEnd = sourceLineEnd (text, selection.start);
-    const auto prefixLength = sourceBlockPrefixLength (text, lineStart, lineEnd);
-    if (prefixLength == 0)
-        return NotepadDocument::BlockStyle::body;
-
-    if (text[lineStart] == '#')
-    {
-        const auto count = prefixLength - 1;
-        if (count == 1) return NotepadDocument::BlockStyle::heading1;
-        if (count == 2) return NotepadDocument::BlockStyle::heading2;
-        return NotepadDocument::BlockStyle::heading3;
-    }
-    if (text[lineStart] == '>')
-        return NotepadDocument::BlockStyle::quote;
-    if (text.compare (lineStart, std::min<std::size_t> (6, lineEnd - lineStart), "- [ ] ") == 0
-        || text.compare (lineStart, std::min<std::size_t> (6, lineEnd - lineStart), "- [x] ") == 0)
-        return NotepadDocument::BlockStyle::tasks;
-    if (text[lineStart] >= '0' && text[lineStart] <= '9')
-        return NotepadDocument::BlockStyle::numbers;
-    return NotepadDocument::BlockStyle::bullets;
 }
 
 } // namespace
@@ -307,8 +185,7 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
 
         document.setMarkdown (markdown);
         markdownMode = false;
-        buffer.assign (document.markdown());
-        buffer.restoreSelection ({ 0, 0 });
+        document.setSourceMode (false);
         editor.reset ({ 0, 0 });
         editor.requestFocus();
         closeRequested = false;
@@ -396,9 +273,7 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
 private:
     notepad::Snapshot currentSnapshot() const
     {
-        return { document.markdown(),
-                 markdownMode ? buffer.selection() : editor.selection(),
-                 markdownMode };
+        return { document.markdown(), editor.selection(), markdownMode };
     }
 
     NotepadDocument::Selection selectionForCurrentMode (const notepad::Snapshot& state) const
@@ -418,17 +293,8 @@ private:
 
         document.setMarkdown (restored.markdown);
         const auto selection = selectionForCurrentMode (restored);
-        if (markdownMode)
-        {
-            buffer.assign (document.markdown());
-            buffer.restoreSelection (selection);
-            focusEditorNextFrame = true;
-        }
-        else
-        {
-            editor.reset (selection);
-            editor.requestFocus();
-        }
+        editor.reset (selection);
+        editor.requestFocus();
         notifyTextChanged();
     }
 
@@ -486,107 +352,42 @@ private:
     {
         if (markdownMode == useMarkdown)
             return;
-        const auto oldSelection = markdownMode ? buffer.selection() : editor.selection();
+
+        const auto viewport = editor.caretViewportOffset();
+        const auto oldSelection = editor.selection();
+        const auto mapped = useMarkdown ? document.sourceSelection (oldSelection)
+                                        : document.documentSelection (oldSelection);
         markdownMode = useMarkdown;
         history.breakRun();
-        if (markdownMode)
-        {
-            buffer.assign (document.markdown());
-            buffer.restoreSelection (document.sourceSelection (oldSelection));
-            focusEditorNextFrame = true;
-        }
-        else
-        {
-            editor.reset (document.documentSelection (oldSelection));
-            editor.requestFocus();
-        }
+        document.setSourceMode (useMarkdown);
+        editor.reset (mapped);
+        editor.keepCaretAtViewportOffset (viewport);
+        editor.requestFocus();
     }
 
-    void applyInline (NotepadDocument::InlineStyle inlineStyle,
-                      const std::string& prefix, const std::string& suffix)
+    void applyInline (NotepadDocument::InlineStyle inlineStyle)
     {
-        if (! markdownMode)
-        {
-            editor.applyInlineStyle (inlineStyle);
-            return;
-        }
-
-        const auto selection = buffer.selection();
-        auto before = currentSnapshot();
-        auto transformed = notepad::toggleMarkdownInline (
-            document.markdown(), selection, prefix, suffix);
-        document.setMarkdown (std::move (transformed.markdown));
-        buffer.assign (document.markdown());
-        buffer.restoreSelection (transformed.selection);
-        history.record (notepad::EditKind::structural, std::move (before),
-                        transformed.selection.end);
-        focusEditorNextFrame = true;
-        notifyTextChanged();
+        editor.applyInlineStyle (inlineStyle);
     }
 
     void applyBlock (NotepadDocument::BlockStyle style)
     {
-        if (! markdownMode)
-        {
-            editor.applyBlockStyle (style);
-            return;
-        }
-
-        const auto selection = buffer.selection();
-        if (selectedBlockStyle() == style)
-            style = NotepadDocument::BlockStyle::body;
-        auto before = currentSnapshot();
-        auto transformed = notepad::setMarkdownBlockStyle (
-            document.markdown(), selection, style);
-        document.setMarkdown (std::move (transformed.markdown));
-        buffer.assign (document.markdown());
-        buffer.restoreSelection (transformed.selection);
-        history.record (notepad::EditKind::structural, std::move (before),
-                        transformed.selection.end);
-        focusEditorNextFrame = true;
-        notifyTextChanged();
+        editor.applyBlockStyle (style);
     }
 
     void insertLink (const std::string& url)
     {
-        if (! markdownMode)
-        {
-            editor.insertLink (url);
-            return;
-        }
-
-        const auto selection = buffer.selection();
-        auto before = currentSnapshot();
-        auto source = document.markdown();
-        const auto label = selection.empty()
-                         ? std::string ("Link text")
-                         : source.substr (selection.start, selection.end - selection.start);
-        const auto replacement = "[" + label + "](" + url + ")";
-        source.replace (selection.start, selection.end - selection.start, replacement);
-        document.setMarkdown (std::move (source));
-        buffer.assign (document.markdown());
-        buffer.restoreSelection ({ selection.start + 1, selection.start + 1 + label.size() });
-        history.record (notepad::EditKind::structural, std::move (before),
-                        selection.start + 1 + label.size());
-        focusEditorNextFrame = true;
-        notifyTextChanged();
+        editor.insertLink (url);
     }
 
-    bool inlineStyleActive (NotepadDocument::InlineStyle style,
-                            const std::string& prefix,
-                            const std::string& suffix) const
+    bool inlineStyleActive (NotepadDocument::InlineStyle style) const
     {
-        return markdownMode
-             ? notepad::markdownInlineActive (document.markdown(), buffer.selection(),
-                                               prefix, suffix)
-             : editor.inlineStyleActive (style);
+        return editor.inlineStyleActive (style);
     }
 
     NotepadDocument::BlockStyle selectedBlockStyle() const
     {
-        return markdownMode
-             ? sourceBlockStyle (document.markdown(), buffer.selection())
-             : editor.blockStyle();
+        return editor.blockStyle();
     }
 
     bool toolbarButton (const char* label, const char* tooltip, bool active,
@@ -778,17 +579,17 @@ private:
         }
         ImGui::PopStyleVar();
         ImGui::SameLine (0.0f, 10.0f);
-        const bool bold = inlineStyleActive (NotepadDocument::InlineStyle::bold, "**", "**");
-        const bool italic = inlineStyleActive (NotepadDocument::InlineStyle::italic, "*", "*");
-        const bool code = inlineStyleActive (NotepadDocument::InlineStyle::code, "`", "`");
+        const bool bold = inlineStyleActive (NotepadDocument::InlineStyle::bold);
+        const bool italic = inlineStyleActive (NotepadDocument::InlineStyle::italic);
+        const bool code = inlineStyleActive (NotepadDocument::InlineStyle::code);
         if (toolbarButton ("B", "Bold (Ctrl+B)", bold, 34.0f, boldFont))
-            applyInline (NotepadDocument::InlineStyle::bold, "**", "**");
+            applyInline (NotepadDocument::InlineStyle::bold);
         ImGui::SameLine (0.0f, 5.0f);
         if (toolbarButton ("I", "Italic (Ctrl+I)", italic))
-            applyInline (NotepadDocument::InlineStyle::italic, "*", "*");
+            applyInline (NotepadDocument::InlineStyle::italic);
         ImGui::SameLine (0.0f, 5.0f);
         if (toolbarButton ("</>", "Inline code", code, 42.0f))
-            applyInline (NotepadDocument::InlineStyle::code, "`", "`");
+            applyInline (NotepadDocument::InlineStyle::code);
 
         ImGui::SameLine (0.0f, 16.0f);
         if (toolbarButton ("❝", "Quote selected paragraphs",
@@ -863,23 +664,19 @@ private:
         ImGui::BeginChild ("workspace", ImVec2 (0.0f, height), false,
                            ImGuiWindowFlags_NoScrollbar);
 
+        // Both views render into the same measure at the same metrics, so the
+        // toggle reads as flipping one sheet over rather than opening another
+        // document. No page card: the stage is the paper.
         const auto available = ImGui::GetContentRegionAvail();
-        const float editorWidth = markdownMode ? available.x : std::min (760.0f, available.x);
+        const float editorWidth = std::min (kContentWidth, available.x);
         ImGui::SetCursorPosX (ImGui::GetCursorPosX() + (available.x - editorWidth) * 0.5f);
 
-        ImGui::PushStyleVar (ImGuiStyleVar_ChildRounding, 3.0f);
-        ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding,
-                             markdownMode ? ImVec2 (20.0f, 18.0f) : ImVec2 (58.0f, 46.0f));
-        // The page switch owns both views: Markdown keeps its own darker
-        // shade of the dark page, but a light page is the same paper in both.
+        ImGui::PushStyleVar (ImGuiStyleVar_ChildRounding, 0.0f);
+        ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (34.0f, 26.0f));
         ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (theme().stage));
-        ImGui::BeginChild (markdownMode ? "markdown-source" : "document-page",
-                           ImVec2 (editorWidth, available.y), true);
+        ImGui::BeginChild ("chart", ImVec2 (editorWidth, available.y), false);
 
-        if (markdownMode)
-            drawMarkdownSource();
-        else
-            editor.draw (ImGui::GetFontSize());
+        editor.draw (ImGui::GetFontSize());
 
         ImGui::EndChild();
         ImGui::PopStyleColor();
@@ -887,81 +684,6 @@ private:
         ImGui::EndChild();
         ImGui::PopStyleVar();
         ImGui::PopStyleColor();
-    }
-
-    void drawMarkdownSource()
-    {
-        ImGui::PushStyleColor (ImGuiCol_FrameBg, colour (theme().stage));
-        ImGui::PushStyleColor (ImGuiCol_Text, colour (theme().lyric));
-        ImGui::PushStyleColor (ImGuiCol_TextSelectedBg,
-                              colour (notepad::withAlpha (theme().muted, 0x66)));
-        ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2 (0.0f, 0.0f));
-
-        if (focusEditorNextFrame)
-        {
-            ImGui::SetKeyboardFocusHere();
-            focusEditorNextFrame = false;
-        }
-
-        const auto flags = ImGuiInputTextFlags_AllowTabInput
-                         | ImGuiInputTextFlags_CallbackResize
-                         | ImGuiInputTextFlags_CallbackAlways
-                         | ImGuiInputTextFlags_NoUndoRedo;
-        const auto selectionBefore = buffer.selection();
-        const bool changed = ImGui::InputTextMultiline (
-            "##notepad-editor", buffer.text.data(), buffer.text.capacity() + 1,
-            ImGui::GetContentRegionAvail(), flags, EditorBuffer::callback, &buffer);
-        const bool editorActive = ImGui::IsItemActive();
-        if (auto* const state = ImGui::GetInputTextState (ImGui::GetItemID()))
-        {
-            // CallbackAlways can observe the selection before the current
-            // character edit is committed. The live input state is the
-            // authority after InputTextMultiline returns.
-            if (state->HasSelection())
-            {
-                buffer.selectionStart = state->GetSelectionStart();
-                buffer.selectionEnd = state->GetSelectionEnd();
-            }
-            else
-            {
-                buffer.selectionStart = buffer.selectionEnd = state->GetCursorPos();
-            }
-        }
-
-        if (changed)
-        {
-            auto before = currentSnapshot();
-            before.selection = selectionBefore;
-            buffer.text.resize (std::strlen (buffer.text.c_str()));
-            // Deletions must not join a typing run, or a backspace burst would
-            // undo the text it was correcting along with itself.
-            const auto kind = buffer.text.size() < before.markdown.size()
-                            ? notepad::EditKind::deleting
-                            : notepad::EditKind::typing;
-            document.setMarkdown (buffer.text);
-            history.record (kind, std::move (before), buffer.selection().end);
-            notifyTextChanged();
-        }
-        else if (selectionBefore.start != buffer.selection().start
-                 || selectionBefore.end != buffer.selection().end)
-        {
-            history.breakRun();
-        }
-
-        const auto& io = ImGui::GetIO();
-        const bool shortcut = ! notepad::acceptsTextInput (
-            io.KeyCtrl, io.KeyAlt, io.KeySuper);
-        if (editorActive && shortcut && ImGui::IsKeyPressed (ImGuiKey_Z, false))
-            restoreHistory (io.KeyShift);
-        else if (editorActive && shortcut && ImGui::IsKeyPressed (ImGuiKey_Y, false))
-            restoreHistory (true);
-        else if (editorActive && shortcut && ImGui::IsKeyPressed (ImGuiKey_B, false))
-            applyInline (NotepadDocument::InlineStyle::bold, "**", "**");
-        else if (editorActive && shortcut && ImGui::IsKeyPressed (ImGuiKey_I, false))
-            applyInline (NotepadDocument::InlineStyle::italic, "*", "*");
-
-        ImGui::PopStyleVar();
-        ImGui::PopStyleColor (3);
     }
 
     void draw (float width, float height)
@@ -1061,7 +783,6 @@ private:
     NotepadDocument document;
     notepad::UndoStack history;
     NotepadEditor editor { document, history };
-    EditorBuffer buffer;
     TextChangedCallback onTextChanged;
     ClosedCallback onClosed;
     LinkOpenedCallback onLinkOpened;

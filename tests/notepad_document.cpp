@@ -287,3 +287,39 @@ TEST_CASE ("Notepad ordered-list numbers survive an absurd digit run",
     // nine 9s land, the tenth trips the guard.
     CHECK (info.orderedNumber == 999999999);
 }
+
+TEST_CASE ("Notepad source mode projects the Markdown one to one",
+           "[notepad][document][source]")
+{
+    NotepadDocument document;
+    document.setMarkdown ("# Title\n\nline [Am]one\n");
+    REQUIRE (document.chords().size() == 1);
+
+    document.setSourceMode (true);
+    CHECK (document.isSourceMode());
+    CHECK (document.documentText() == document.markdown());
+    CHECK (document.chords().empty());
+
+    // Every line is body text in source mode, so a heading keeps its metrics
+    // across the toggle and the reader's line does not move.
+    CHECK (document.lineInfoAt (0).block == NotepadDocument::BlockStyle::body);
+    CHECK (document.styleAt (0).block == NotepadDocument::BlockStyle::body);
+    CHECK_FALSE (document.styleAt (0).bold);
+
+    SECTION ("offsets map through unchanged")
+    {
+        const NotepadDocument::Selection selection { 2, 7 };
+        CHECK (document.sourceSelection (selection).start == selection.start);
+        CHECK (document.sourceSelection (selection).end == selection.end);
+        CHECK (document.documentSelection (selection).start == selection.start);
+        CHECK (document.documentSelection (selection).end == selection.end);
+    }
+
+    SECTION ("switching back restores the rendered projection")
+    {
+        document.setSourceMode (false);
+        CHECK (document.documentText() == "Title\n\nline one\n");
+        CHECK (document.chords().size() == 1);
+        CHECK (document.lineInfoAt (0).block == NotepadDocument::BlockStyle::heading1);
+    }
+}

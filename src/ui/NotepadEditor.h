@@ -10,9 +10,10 @@
 
 namespace duskstudio
 {
-// Rich-text editor for the notepad's Document mode. It owns wrapping, caret,
-// selection, input and painting; every text mutation goes through
-// NotepadDocument's projection so the Markdown source stays authoritative.
+// The notepad's editor, driving both views: the document projection and the
+// Markdown source, which differ only in what NotepadDocument projects. It owns
+// wrapping, caret, selection, input and painting; every text mutation goes
+// through the projection so the Markdown source stays authoritative.
 class NotepadEditor final
 {
 public:
@@ -43,6 +44,13 @@ public:
     void setSelection (NotepadDocument::Selection value);
     NotepadDocument::Selection selection() const noexcept;
     void requestFocus() noexcept { focusRequested = true; }
+
+    // Distance from the top of the viewport to the caret's row. Captured
+    // before a mode switch and handed back after it, so the line under the
+    // reader's eye stays where it was even though the two projections wrap at
+    // different offsets.
+    float caretViewportOffset() const noexcept;
+    void keepCaretAtViewportOffset (float offset) noexcept;
 
     void draw (float bodySize);
 
@@ -125,6 +133,7 @@ private:
     bool chordEditing = false;
     float desiredX = -1.0f;
     float scrollY = 0.0f;
+    float pendingCaretViewport = -1.0f;
     float layoutWidth = -1.0f;
     float layoutBodySize = -1.0f;
     double blinkStart = 0.0;

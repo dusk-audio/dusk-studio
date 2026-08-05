@@ -579,6 +579,12 @@ void NotepadDocument::setDocumentBlockStyle (Selection selection, BlockStyle sty
 
 NotepadDocument::LineInfo NotepadDocument::lineInfoAt (std::size_t documentOffset) const noexcept
 {
+    // Source mode shows the syntax rather than acting on it, so every line is
+    // body text: a heading keeps its metrics between the two views and the
+    // toggle moves nothing.
+    if (sourceMode)
+        return {};
+
     documentOffset = std::min (documentOffset, projectedText.size());
     const auto sourceOffset = documentBoundaryToSource[documentOffset];
     const auto start = lineStartAt (markdownText, sourceOffset);
@@ -799,8 +805,29 @@ std::size_t NotepadDocument::wordCount() const noexcept
     return count;
 }
 
+void NotepadDocument::setSourceMode (bool showSource)
+{
+    if (sourceMode == showSource)
+        return;
+    sourceMode = showSource;
+    rebuildProjection();
+}
+
 void NotepadDocument::rebuildProjection()
 {
+    if (sourceMode)
+    {
+        projectedText = markdownText;
+        documentBoundaryToSource.resize (markdownText.size() + 1);
+        for (std::size_t i = 0; i <= markdownText.size(); ++i)
+            documentBoundaryToSource[i] = i;
+        projectedStyles.assign (markdownText.size(), TextStyle {});
+        projectedLinkTargets.assign (markdownText.size(), std::string {});
+        projectedChords.clear();
+        chordSourceSpans.clear();
+        return;
+    }
+
     ProjectionBuilder out (markdownText);
     std::size_t lineStart = 0;
 

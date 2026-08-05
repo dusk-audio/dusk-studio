@@ -74,6 +74,11 @@ public:
     };
 
     void setMarkdown (std::string text);
+    // Source mode projects the Markdown 1:1, with no hidden syntax, styles or
+    // chords, so the same editor drives both views: one set of layout metrics,
+    // one caret, one undo stack.
+    void setSourceMode (bool showSource);
+    bool isSourceMode() const noexcept { return sourceMode; }
     // False when the edit could not be mapped back onto the Markdown source and
     // was dropped to keep it intact - the caller must resync its editor buffer
     // from documentText().
@@ -126,6 +131,7 @@ private:
     std::vector<std::size_t> documentBoundaryToSource { 0 };
     std::vector<TextStyle> projectedStyles;
     std::vector<std::string> projectedLinkTargets;
+    bool sourceMode = false;
     std::vector<Chord> projectedChords;
     // Source spans of the bracket tokens behind projectedChords, index-parallel,
     // so an edit rewrites the exact token instead of re-scanning for it.
