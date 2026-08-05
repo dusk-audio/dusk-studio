@@ -580,12 +580,13 @@ line above the caret. Markers are plain text, so typing one by hand is the same
 thing: any bracketed word that is not a chord name stays literal. Chart view
 shows only the section label; source view keeps its brackets visible.
 
-The toolbar leads with the chord tools, then heading, bold, and italic. Heading
-levels, inline code, quotes, the three list styles, and links live behind the
-overflow button at its right end. Undo and redo dim when there is nothing to
-undo or redo. The footer shows the current save state, the latest save time when
-available, the `notepad.md` filename, section count, unique chord count, and the
-detected key when enough chords identify one.
+The toolbar keeps every editing option visible: chord and section insertion,
+transposition, body text and three heading levels, bold, italic, inline code,
+quotes, the three list styles, links, and chord-spelling preference. Undo and
+redo dim when there is nothing to undo or redo. The footer shows the current
+save state, the latest save time when available, the `notepad.md` filename,
+section count, unique chord count, and the detected key when enough chords
+identify one.
 
 A switch at the top right of the header flips between the chart (eye) and the
 compatible `notepad.md` source (`</>`) for users who prefer direct editing;

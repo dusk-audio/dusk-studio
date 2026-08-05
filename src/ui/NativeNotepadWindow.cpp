@@ -594,9 +594,10 @@ private:
             restoreHistory (true);
         ImGui::EndDisabled();
 
-        // Chord tools lead: they are what this editor is for. Formatting that a
-        // lyric sheet rarely needs lives under the overflow.
-        ImGui::SameLine (0.0f, 16.0f);
+        // Chord tools lead: they are what this editor is for. The remaining
+        // width holds every formatting action so nothing is hidden in an
+        // overflow menu.
+        ImGui::SameLine (0.0f, 14.0f);
         if (toolbarButton ("♯", "Chord at the caret (Ctrl+K); repeat previous (Ctrl+Shift+K)",
                            editor.chordEntryActive()))
         {
@@ -618,12 +619,27 @@ private:
         ImGui::EndDisabled();
 
         const auto blockStyle = selectedBlockStyle();
-        ImGui::SameLine (0.0f, 16.0f);
-        if (toolbarButton ("H", "Make this line a heading",
+        ImGui::SameLine (0.0f, 14.0f);
+        if (toolbarButton ("¶", "Body text",
+                           blockStyle == NotepadDocument::BlockStyle::body))
+            applyBlock (NotepadDocument::BlockStyle::body);
+        ImGui::SameLine (0.0f, 5.0f);
+        if (toolbarButton ("H1", "Heading 1",
                            blockStyle == NotepadDocument::BlockStyle::heading1,
                            34.0f, boldFont))
             applyBlock (NotepadDocument::BlockStyle::heading1);
         ImGui::SameLine (0.0f, 5.0f);
+        if (toolbarButton ("H2", "Heading 2",
+                           blockStyle == NotepadDocument::BlockStyle::heading2,
+                           34.0f, boldFont))
+            applyBlock (NotepadDocument::BlockStyle::heading2);
+        ImGui::SameLine (0.0f, 5.0f);
+        if (toolbarButton ("H3", "Heading 3",
+                           blockStyle == NotepadDocument::BlockStyle::heading3,
+                           34.0f, boldFont))
+            applyBlock (NotepadDocument::BlockStyle::heading3);
+
+        ImGui::SameLine (0.0f, 14.0f);
         if (toolbarButton ("B", "Bold the selection (Ctrl+B)",
                            inlineStyleActive (NotepadDocument::InlineStyle::bold),
                            34.0f, boldFont))
@@ -632,13 +648,47 @@ private:
         if (toolbarButton ("I", "Italicise the selection (Ctrl+I)",
                            inlineStyleActive (NotepadDocument::InlineStyle::italic)))
             applyInline (NotepadDocument::InlineStyle::italic);
+        ImGui::SameLine (0.0f, 5.0f);
+        if (toolbarButton ("</>", "Inline code",
+                           inlineStyleActive (NotepadDocument::InlineStyle::code),
+                           42.0f, monoFont))
+            applyInline (NotepadDocument::InlineStyle::code);
 
-        ImGui::SameLine (0.0f, 16.0f);
-        if (toolbarButton ("⋯", "More formatting"))
-            ImGui::OpenPopup ("overflow-menu");
+        ImGui::SameLine (0.0f, 14.0f);
+        if (toolbarButton (">", "Quote",
+                           blockStyle == NotepadDocument::BlockStyle::quote))
+            applyBlock (NotepadDocument::BlockStyle::quote);
+        ImGui::SameLine (0.0f, 5.0f);
+        if (toolbarButton ("•", "Bulleted list",
+                           blockStyle == NotepadDocument::BlockStyle::bullets))
+            applyBlock (NotepadDocument::BlockStyle::bullets);
+        ImGui::SameLine (0.0f, 5.0f);
+        if (toolbarButton ("1.", "Numbered list",
+                           blockStyle == NotepadDocument::BlockStyle::numbers))
+            applyBlock (NotepadDocument::BlockStyle::numbers);
+        ImGui::SameLine (0.0f, 5.0f);
+        if (toolbarButton ("☐", "Checklist",
+                           blockStyle == NotepadDocument::BlockStyle::tasks))
+            applyBlock (NotepadDocument::BlockStyle::tasks);
+        ImGui::SameLine (0.0f, 5.0f);
+        if (linkToolbarButton())
+            linkRequested = true;
+
+        const auto spelling = document.spellingMode();
+        ImGui::SameLine (0.0f, 14.0f);
+        if (toolbarButton ("Auto##spell-auto", "Follow the song's chord spelling",
+                           spelling == NotepadDocument::Spelling::followDocument, 46.0f))
+            document.setSpelling (NotepadDocument::Spelling::followDocument);
+        ImGui::SameLine (0.0f, 4.0f);
+        if (toolbarButton ("♯##spell-sharps", "Spell chords with sharps",
+                           spelling == NotepadDocument::Spelling::sharps))
+            document.setSpelling (NotepadDocument::Spelling::sharps);
+        ImGui::SameLine (0.0f, 4.0f);
+        if (toolbarButton ("♭##spell-flats", "Spell chords with flats",
+                           spelling == NotepadDocument::Spelling::flats))
+            document.setSpelling (NotepadDocument::Spelling::flats);
 
         drawSectionMenu();
-        drawOverflowMenu (blockStyle);
         drawLinkPopup();
 
         ImGui::EndChild();
@@ -657,50 +707,6 @@ private:
                                          "Bridge", "Solo", "Outro" })
             if (ImGui::Selectable (label))
                 editor.insertSectionMarker (label);
-        ImGui::EndPopup();
-    }
-
-    void drawOverflowMenu (NotepadDocument::BlockStyle blockStyle)
-    {
-        if (! ImGui::BeginPopup ("overflow-menu"))
-            return;
-
-        const auto blockItem = [&] (const char* label, NotepadDocument::BlockStyle style)
-        {
-            if (ImGui::Selectable (label, blockStyle == style))
-                applyBlock (style);
-        };
-        blockItem ("Body text", NotepadDocument::BlockStyle::body);
-        blockItem ("Heading 2", NotepadDocument::BlockStyle::heading2);
-        blockItem ("Heading 3", NotepadDocument::BlockStyle::heading3);
-        ImGui::Separator();
-        if (ImGui::Selectable ("Inline code",
-                               inlineStyleActive (NotepadDocument::InlineStyle::code)))
-            applyInline (NotepadDocument::InlineStyle::code);
-        blockItem ("Quote", NotepadDocument::BlockStyle::quote);
-        blockItem ("Bulleted list", NotepadDocument::BlockStyle::bullets);
-        blockItem ("Numbered list", NotepadDocument::BlockStyle::numbers);
-        blockItem ("Checklist", NotepadDocument::BlockStyle::tasks);
-        ImGui::Separator();
-        // The inferred reading is sticky, so it needs somewhere visible to be
-        // seen and overridden.
-        const auto spelling = document.spellingMode();
-        const auto spellingItem = [&] (const char* label, NotepadDocument::Spelling value)
-        {
-            if (ImGui::Selectable (label, spelling == value))
-                document.setSpelling (value);
-        };
-        spellingItem (document.prefersFlats() ? "Spell chords: follow the song (flats)"
-                                              : "Spell chords: follow the song (sharps)",
-                      NotepadDocument::Spelling::followDocument);
-        spellingItem ("Spell chords with sharps", NotepadDocument::Spelling::sharps);
-        spellingItem ("Spell chords with flats", NotepadDocument::Spelling::flats);
-        ImGui::Separator();
-        if (ImGui::Selectable ("Link the selected text"))
-        {
-            ImGui::CloseCurrentPopup();
-            linkRequested = true;
-        }
         ImGui::EndPopup();
     }
 
