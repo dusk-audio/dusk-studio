@@ -1236,10 +1236,10 @@ void ChannelStrip::processAndAccumulate (const float* inL,
 #if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3 \
     || DUSKSTUDIO_HAS_NATIVE_AU \
     || DUSKSTUDIO_HAS_MULTISAMPLE
-            // Bridge the block's MIDI into dusk once for whichever native host runs.
-            nativeMidiScratch.clear();
-            for (const auto meta : trackMidi)
-                nativeMidiScratch.addEvent (meta.data, meta.numBytes, meta.samplePosition);
+            // Bridge the block's MIDI into dusk once for whichever native host
+            // runs. This is the last hop before the instrument, so a torn copy
+            // here is a hung note: the bridge is whole-block-or-nothing.
+            dusk::copyEventsWhole (trackMidi, nativeMidiScratch);
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
             if (nativeClapSlot.isLoaded())

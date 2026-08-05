@@ -59,6 +59,15 @@ public:
     // Consumer (audio thread), once per block. Retimes the pending events into
     // out with offsets in [0, numSamples-1]. nowMs is the current hi-res ms
     // clock. Drains the ring (destructive) - call exactly once per block.
+    //
+    // out must be EMPTY on entry - an over-cap block is delivered by clearing
+    // it, which discards anything the caller left in there.
+    //
+    // Whole-block-or-nothing: if the block cumulatively overruns out's reserved
+    // cap it is delivered empty, because keeping the head would let a note-on
+    // through while its note-off fell off the tail, hanging the note. A single
+    // record too big for out even when empty is undeliverable at any cut, so it
+    // drops alone and the rest of the block survives.
     void removeNextBlock (dusk::MidiBuffer& out, int numSamples, double nowMs) noexcept
     {
         const double prevLast = lastCallbackTime;
@@ -92,6 +101,7 @@ public:
 
         int numSourceSamples = std::max (1, roundToInt ((nowMs - prevLast) * 0.001 * sampleRate));
         int startSample = 0;
+        bool overCap = false;
 
         if (numSourceSamples > numSamples)
         {
@@ -111,7 +121,9 @@ public:
                 const int s = toSample (timeMs, prevLast);
                 if (s < floorS) return;
                 const int pos = ((s - startSample) * scale) >> 10;
-                out.addEvent (bytes, n, std::clamp (pos, 0, numSamples - 1));
+                if (! out.addEvent (bytes, n, std::clamp (pos, 0, numSamples - 1))
+                      && out.fitsWhenEmpty (n))
+                    overCap = true;
             });
         }
         else
@@ -122,9 +134,13 @@ public:
             {
                 const int s = toSample (timeMs, prevLast);
                 if (s < dropBelow) return;
-                out.addEvent (bytes, n, std::clamp (s + startSample, 0, numSamples - 1));
+                if (! out.addEvent (bytes, n, std::clamp (s + startSample, 0, numSamples - 1))
+                      && out.fitsWhenEmpty (n))
+                    overCap = true;
             });
         }
+
+        if (overCap) out.clear();
     }
 
 private:

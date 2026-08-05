@@ -121,3 +121,71 @@ TEST_CASE ("dusk::MidiBuffer drops past its reserved cap instead of growing",
     for (int i = 0; i < 1000; ++i)
         REQUIRE (unbounded.addEvent (note, 3, i));
 }
+
+// copyEventsWhole is the RT bridge every capped scratch buffer refills through
+// (the native-host bridge in ChannelStrip, the OOP scratch in PluginSlot). Those
+// call sites need the full engine to exercise, so the policy is asserted here on
+// the shared helper instead.
+TEST_CASE ("dusk::copyEventsWhole delivers a block whole or not at all",
+           "[foundation][midi]")
+{
+    const std::uint8_t on[3]  { 0x90, 60, 100 };
+    const std::uint8_t off[3] { 0x80, 60, 0 };
+
+    dusk::MidiBuffer src;
+    src.addEvent (on,  3, 0);
+    src.addEvent (off, 3, 64);
+
+    SECTION ("a block that fits copies through unchanged")
+    {
+        dusk::MidiBuffer dest;
+        dest.reserveBytes (64);
+        dusk::copyEventsWhole (src, dest);
+
+        int n = 0;
+        for (const auto meta : dest)
+        {
+            REQUIRE (meta.numBytes == 3);
+            REQUIRE (meta.data[0] == (n == 0 ? 0x90 : 0x80));
+            ++n;
+        }
+        REQUIRE (n == 2);
+    }
+
+    SECTION ("a block that overruns the cap arrives empty, not truncated")
+    {
+        // Room for the note-on alone: delivering it without the note-off would
+        // hang the note.
+        dusk::MidiBuffer dest;
+        dest.reserveBytes (11);
+        dusk::copyEventsWhole (src, dest);
+        REQUIRE (dest.isEmpty());
+    }
+
+    SECTION ("a record too big for the cap drops alone")
+    {
+        // A bulk sysex no cap could ever hold must not silence the notes around
+        // it - it is undeliverable however the block is cut.
+        std::vector<std::uint8_t> sysex (200, 0x7F);
+        sysex.front() = 0xF0;
+        sysex.back()  = 0xF7;
+
+        dusk::MidiBuffer big;
+        big.addEvent (on, 3, 0);
+        big.addEvent (sysex.data(), (int) sysex.size(), 32);
+        big.addEvent (off, 3, 64);
+
+        dusk::MidiBuffer dest;
+        dest.reserveBytes (64);
+        REQUIRE_FALSE (dest.fitsWhenEmpty ((int) sysex.size()));
+        dusk::copyEventsWhole (big, dest);
+
+        int n = 0;
+        for (const auto meta : dest)
+        {
+            REQUIRE (meta.numBytes == 3);
+            ++n;
+        }
+        REQUIRE (n == 2);
+    }
+}

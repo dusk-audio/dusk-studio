@@ -251,7 +251,8 @@ Sf2Conversion convertSf2Preset(const juce::File& sf2,
                 else if (type == 2) pan =  100.0;            // right
             }
 
-            // Loop
+            // Loop. 1 = loop forever, 3 = loop until the key is released and
+            // then play the tail out (SFZ calls that loop_sustain).
             const int sampleModes = genOr(eff, kGenSampleModes, 0);
             const bool loops = (sampleModes == 1 || sampleModes == 3);
 
@@ -319,14 +320,20 @@ Sf2Conversion convertSf2Preset(const juce::File& sf2,
                           + " lokey=" + std::to_string(loKey) + " hikey=" + std::to_string(hiKey)
                           + " lovel=" + std::to_string(loVel) + " hivel=" + std::to_string(hiVel)
                           + " pitch_keycenter=" + std::to_string(rootKey);
-            if (coarse != 0) r += " transpose=" + std::to_string(coarse);
-            if (fine   != 0) r += " tune=" + std::to_string(std::clamp(fine, -100, 100));
+            // The three fine-tune contributions sum to as much as +/-325 cents,
+            // well past the +/-100 SFZ tune allows, so the whole semitones fold
+            // into transpose and only the remainder stays in tune.
+            const int transposeSemis = coarse + fine / 100;
+            const int tuneCents      = fine % 100;
+            if (transposeSemis != 0) r += " transpose=" + std::to_string(transposeSemis);
+            if (tuneCents      != 0) r += " tune=" + std::to_string(tuneCents);
             if (std::abs(volumeDb) > 0.01) r += " volume=" + fmtF(volumeDb, 2);
             if (std::abs(pan) > 0.01)      r += " pan=" + fmtF(pan, 1);
             if (loops && smp.endLoop > smp.startLoop && smp.startLoop >= smp.start
                 && smp.endLoop <= smp.end)
             {
-                r += " loop_mode=loop_continuous";
+                r += sampleModes == 3 ? " loop_mode=loop_sustain"
+                                      : " loop_mode=loop_continuous";
                 r += " loop_start=" + std::to_string((int) (smp.startLoop - smp.start));
                 r += " loop_end="   + std::to_string((int) (smp.endLoop   - smp.start - 1));
             }

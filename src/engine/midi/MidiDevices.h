@@ -88,8 +88,10 @@ public:
     // Audio thread. Retime this input's pending events into the dusk boundary
     // buffer. RT-safe: the collector's ring is pre-sized and never grows (an
     // over-capacity burst drops whole records), and `out` was reserveBytes()'d
-    // off the RT path by the caller. Call once per input index per block - the
-    // drain is destructive.
+    // off the RT path by the caller. A block that overruns that cap arrives
+    // empty rather than truncated, matching the out path: a torn tail would let
+    // a note-on through while its note-off was dropped. Call once per input
+    // index per block - the drain is destructive.
     void drainBlock (int inputIndex, dusk::MidiBuffer& out, int numSamples) noexcept;
 
 private:

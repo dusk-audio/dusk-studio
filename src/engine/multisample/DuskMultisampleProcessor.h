@@ -157,8 +157,9 @@ public:
 
     // High-definition CC control (drives ARIA custom-UI widgets)
     // setHDCC is called from the message thread (editor widget drag);
-    // it caches the value + queues it lock-free for the audio thread,
-    // which drains the queue at block top and calls sfizz_send_hdcc.
+    // it caches the value and flags the CC lock-free, and the audio thread
+    // pushes the cached value to sfizz_send_hdcc at block top. Repeated sets
+    // between two blocks collapse - sfizz sees only the newest value.
     // cc is 0..kNumHdcc-1 (sfizz's extended CC space). normValue 0..1.
     static constexpr int kNumHdcc = 512;
     void  setHDCC (int cc, float normValue);
@@ -210,14 +211,14 @@ private:
     std::atomic<int>           sf2PresetIndex { 0 };
 
     // CC control plumbing. ccCache holds the last value the UI set per
-    // CC (-1 = unset) for read-back + state save. ccFifo carries
-    // (cc,value) changes from the message thread to the audio thread,
-    // drained at the top of processBlock. SPSC: editor pushes, audio
-    // drains.
-    struct CcChange { int cc; float value; };
-    std::array<std::atomic<float>, kNumHdcc> ccCache;
-    juce::AbstractFifo            ccFifo { 2048 };
-    std::array<CcChange, 2048>    ccQueue;
+    // CC (-1 = unset) for read-back + state save. ccDirty flags which of
+    // those the audio thread has still to hand to sfizz, which reads the
+    // value back out of the cache at drain time: a knob moved faster than
+    // the block rate collapses onto its newest value instead of settling
+    // sfizz on a stale one the cache and the UI disagree with.
+    static constexpr int kCcDirtyWords = (kNumHdcc + 63) / 64;
+    std::array<std::atomic<float>, kNumHdcc>              ccCache;
+    std::array<std::atomic<std::uint64_t>, kCcDirtyWords> ccDirty {};
 
     // Cached "last applied" override values so processBlock only
     // hits sfizz's setter when the user has actually moved a knob.

@@ -59,6 +59,16 @@ public:
     // freely like a plain vector.
     void reserveBytes (std::size_t n) { data.reserve (n); capBytes = n; }
 
+    // Whether a record of this size fits an EMPTY buffer. A failed addEvent
+    // means either "this block has run out of room" or "this record can never
+    // be delivered here at all"; whole-block-or-nothing callers must tell those
+    // apart, because dropping the block over a record no cap could ever hold
+    // silences it forever rather than once.
+    bool fitsWhenEmpty (int numBytes) const noexcept
+    {
+        return numBytes > 0 && kHeader + (std::size_t) numBytes <= capBytes;
+    }
+
     // Returns false when the event was dropped (invalid, or over the reserved
     // cap) so RT callers can keep whole-block semantics instead of splitting
     // paired events at the cap.
@@ -107,4 +117,30 @@ private:
     std::vector<std::uint8_t> data;
     std::size_t capBytes = kUnbounded;
 };
+
+// Refill dest with every event of src (any buffer whose iteration yields
+// .data / .numBytes / .samplePosition), whole-block-or-nothing: if the events
+// cumulatively overrun dest's reserved cap, dest is left empty rather than
+// holding a torn prefix - a note-on delivered without the note-off that fell
+// off the end hangs the note. A single record too big for dest even when empty
+// is undeliverable no matter how the block is cut, so it drops on its own and
+// the rest of the block still gets through (an oversized sysex must not silence
+// the notes around it).
+//
+// Audio-thread safe: dest must have been reserveBytes()'d off the RT path.
+template <typename SourceBuffer>
+inline void copyEventsWhole (const SourceBuffer& src, MidiBuffer& dest)
+{
+    dest.clear();
+    for (const auto meta : src)
+    {
+        if (dest.addEvent (meta.data, meta.numBytes, meta.samplePosition))
+            continue;
+        if (dest.fitsWhenEmpty (meta.numBytes))
+        {
+            dest.clear();
+            return;
+        }
+    }
+}
 } // namespace dusk
