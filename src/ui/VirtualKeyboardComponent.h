@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <array>
+#include "EmbeddedModal.h"
 #include "../engine/AudioEngine.h"
 #include "../foundation/MessageThread.h"
 
@@ -39,6 +40,7 @@ namespace duskstudio
 // auto-repeat keyPressed resets it as a "still-held" heartbeat for the
 // fallback path.
 class VirtualKeyboardComponent final : public juce::Component,
+                                          public ModalKeyClaimant,
                                           private dusk::Timer
 {
 public:
@@ -51,6 +53,14 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp   (const juce::MouseEvent&) override;
+
+    // The layout's letters overlap single-key app shortcuts (P punch, R
+    // record); claiming them keeps the modal from forwarding those keys, so
+    // they reach keyPressed. Claim is layout membership, not the note the
+    // current octave resolves to - keyPressed swallows a key shifted past MIDI
+    // 127 rather than let its shortcut through. Keys outside the layout stay
+    // unclaimed, so Space / '.' / L / brackets still drive the transport.
+    bool claimsKeyCode (int keyCode) const override;
 
     // Fired immediately after a Note On / Note Off is queued into
     // the engine's collector. Used by step-record into the piano
