@@ -20,6 +20,8 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <utility>
+#include <vector>
 
 namespace duskstudio
 {
@@ -857,19 +859,28 @@ JObj busToObject (const Bus& a)
     return obj;
 }
 
-// RFC 7396 reads a null member as "delete this key". Here a null can only mean
-// "unspecified", and deleting the key would drop the slot back onto whatever
-// the previously loaded session left in the live Session - the exact hole the
-// overlay exists to close. Objects are filtered recursively; arrays pass
-// through untouched so they keep replacing wholesale.
-nlohmann::json withoutNulls (const nlohmann::json& v)
+// Copying a slot and filling it both recurse once per nesting level, and a
+// hand-edited file can nest one as deep as it likes. Nothing this serializer
+// writes goes past aux_lane -> plugin_slots -> hardware_insert, so a slot
+// nested past this bound holds nothing the restore path reads: treat it as
+// unusable rather than running the stack out on it. The depth walk is itself
+// iterative for the same reason.
+constexpr int kMaxSlotDepth = 32;
+
+bool withinSlotDepth (const nlohmann::json& v)
 {
-    if (! v.is_object()) return v;
-    nlohmann::json out = nlohmann::json::object();
-    for (auto it = v.begin(); it != v.end(); ++it)
-        if (! it.value().is_null())
-            out[it.key()] = withoutNulls (it.value());
-    return out;
+    std::vector<std::pair<const nlohmann::json*, int>> pending { { &v, 0 } };
+    while (! pending.empty())
+    {
+        const auto* node  = pending.back().first;
+        const int   depth = pending.back().second;
+        pending.pop_back();
+        if (! node->is_structured()) continue;
+        if (depth >= kMaxSlotDepth) return false;
+        for (const auto& child : *node)
+            pending.push_back ({ &child, depth + 1 });
+    }
+    return true;
 }
 
 const nlohmann::json& objectAt (const nlohmann::json& arr, int index)
@@ -879,19 +890,44 @@ const nlohmann::json& objectAt (const nlohmann::json& arr, int index)
                ? arr[(size_t) index] : empty;
 }
 
+// RFC 7396 reads a null member as "delete this key". Here a null can only mean
+// "unspecified", and a key the merged slot lacks leaves its setter skipped,
+// dropping the slot back onto whatever the previously loaded session left in
+// the live Session - the exact hole the fill exists to close. So a null is
+// erased and then refilled from the default like any other absent key. Arrays
+// are values rather than maps: the file's array stands as it is, replacing the
+// default's wholesale.
+void fillFromDefaults (nlohmann::json& slot, const nlohmann::json& defaults)
+{
+    for (auto it = slot.begin(); it != slot.end(); )
+    {
+        if (it.value().is_null()) { it = slot.erase (it); continue; }
+        if (it.value().is_object())
+            fillFromDefaults (it.value(), json::child (defaults, it.key().c_str()));
+        ++it;
+    }
+    for (auto it = defaults.begin(); it != defaults.end(); ++it)
+        if (! slot.contains (it.key()))
+            slot[it.key()] = it.value();
+}
+
 // Every mixer setter in the restore path is conditional on its key being
 // present, so a slot that omits one keeps the previously loaded session's
-// value for it. Overlay what the file gives on the serialized model default,
-// which carries every key, so an absent key resolves to the model default
-// instead of to live state. A slot that is missing, not an object, or empty
-// comes back as the default whole.
+// value for it. Fill each key the file leaves out from the serialized model
+// default, which carries every one, so an absent key resolves to the model
+// default instead of to live state. The file's slot is copied once and filled
+// in place - it carries the regions, MIDI and takes, and load runs this for
+// every slot in the session. A slot that is missing, not an object, empty, or
+// nested past the depth bound comes back as the default whole.
 nlohmann::json slotWithDefaults (const nlohmann::json& defaults,
                                  const nlohmann::json& arr, int index)
 {
-    nlohmann::json merged = objectAt (defaults, index);
     const auto& fromFile = objectAt (arr, index);
-    if (! fromFile.empty())
-        merged.merge_patch (withoutNulls (fromFile));
+    if (fromFile.empty() || ! withinSlotDepth (fromFile))
+        return objectAt (defaults, index);
+
+    nlohmann::json merged = fromFile;
+    fillFromDefaults (merged, objectAt (defaults, index));
     return merged;
 }
 
@@ -2130,11 +2166,12 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 migrateTapeStateBlob (json::getString (master, "tape_state"), t);
         }
 
-        // With the master section present, a missing individual key keeps
-        // the in-memory value (matches the per-track / per-bus pattern);
-        // with the whole section absent, every field resets to the model
-        // default so nothing inherits the previously loaded session's
-        // master chain. Present-but-invalid values fall to the default too.
+        // Master deliberately diverges from the per-track / per-bus default
+        // fill: with the section present, a key it omits keeps the in-memory
+        // value instead of resetting to the model default - the clamp tests
+        // pin that retention. Only a wholly absent section resets every field,
+        // so nothing inherits the previously loaded session's master chain.
+        // Present-but-invalid values fall to the default too.
         // Mirror json::child's resolution above: it yields the shared empty
         // object unless "master" is an object, so a non-object must count as
         // absent here or every field silently inherits.

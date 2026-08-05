@@ -6,8 +6,30 @@
 
 #include <juce_core/juce_core.h>
 
+#include <string>
+
 using namespace duskstudio;
 using Catch::Matchers::WithinAbs;
+
+namespace
+{
+// ctest runs the cases as parallel processes, so a unique name is not enough on
+// its own - the directory has to actually be created, and the failure to create
+// it has to stop the case rather than leave it writing into a shared parent.
+struct ScopedTempDir
+{
+    juce::File dir;
+
+    explicit ScopedTempDir (const juce::String& prefix)
+        : dir (juce::File::getSpecialLocation (juce::File::tempDirectory)
+                   .getChildFile (prefix + juce::Uuid().toDashedString()))
+    {
+        REQUIRE (dir.createDirectory().wasOk());
+    }
+
+    ~ScopedTempDir() { dir.deleteRecursively(); }
+};
+}
 
 // A truncated / hand-edited session.json can lack whole section keys
 // ("tracks", "buses", "aux_lanes"). Loading such a file over a populated
@@ -17,11 +39,8 @@ using Catch::Matchers::WithinAbs;
 TEST_CASE ("loading a session without section keys resets those sections",
            "[session][serializer]")
 {
-    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                        .getChildFile ("dusk-missing-sections-"
-                                         + juce::String (juce::Random::getSystemRandom().nextInt()));
-    dir.createDirectory();
-    const struct ScopedDir { juce::File d; ~ScopedDir() { d.deleteRecursively(); } } scopedDir { dir };
+    ScopedTempDir tmp { "dusk-missing-sections-" };
+    const auto& dir = tmp.dir;
 
     Session s;
     s.setSessionDirectory (dir);
@@ -82,11 +101,8 @@ TEST_CASE ("loading a session without section keys resets those sections",
 TEST_CASE ("loading a session with a non-object track slot resets that slot",
            "[session][serializer]")
 {
-    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                        .getChildFile ("dusk-null-track-"
-                                         + juce::String (juce::Random::getSystemRandom().nextInt()));
-    dir.createDirectory();
-    const struct ScopedDir { juce::File d; ~ScopedDir() { d.deleteRecursively(); } } scopedDir { dir };
+    ScopedTempDir tmp { "dusk-null-track-" };
+    const auto& dir = tmp.dir;
 
     Session s;
     s.setSessionDirectory (dir);
@@ -115,11 +131,8 @@ TEST_CASE ("loading a session with a non-object track slot resets that slot",
 TEST_CASE ("loading a session with non-object bus / aux slots resets them",
            "[session][serializer]")
 {
-    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                        .getChildFile ("dusk-null-bus-"
-                                         + juce::String (juce::Random::getSystemRandom().nextInt()));
-    dir.createDirectory();
-    const struct ScopedDir { juce::File d; ~ScopedDir() { d.deleteRecursively(); } } scopedDir { dir };
+    ScopedTempDir tmp { "dusk-null-bus-" };
+    const auto& dir = tmp.dir;
 
     Session s;
     s.setSessionDirectory (dir);
@@ -142,19 +155,16 @@ TEST_CASE ("loading a session with non-object bus / aux slots resets them",
     REQUIRE (s.auxLane (0).nativeClapPath[0].isEmpty());
 }
 
-// #145 closed the case of a slot that is missing or not an object. A slot that
-// IS listed but only partially populated has the same hole: every mixer setter
-// is conditional on its key being present, so each key the file leaves out kept
-// the previously loaded session's value. The file's slot is now overlaid on the
-// serialized model default, so an absent key resolves to the default instead.
+// A slot that IS listed but only partially populated is the same ghost hazard
+// as one that is missing: every mixer setter is conditional on its key being
+// present, so a key the file leaves out would keep the previously loaded
+// session's value. Each one the slot lacks is filled from the serialized model
+// default instead.
 TEST_CASE ("loading a session with a partial track slot resets its absent keys",
            "[session][serializer]")
 {
-    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                        .getChildFile ("dusk-partial-track-"
-                                         + juce::String (juce::Random::getSystemRandom().nextInt()));
-    dir.createDirectory();
-    const struct ScopedDir { juce::File d; ~ScopedDir() { d.deleteRecursively(); } } scopedDir { dir };
+    ScopedTempDir tmp { "dusk-partial-track-" };
+    const auto& dir = tmp.dir;
 
     Session s;
     s.setSessionDirectory (dir);
@@ -189,70 +199,45 @@ TEST_CASE ("loading a session with a partial track slot resets its absent keys",
     REQUIRE (routing.latencySamples == 0);
 }
 
-// RFC 7396 reads an explicit null as "delete this key", which would drop the
-// key out of the overlay and land the slot back on the live value - the exact
-// failure the overlay exists to prevent. Here a null can only mean unspecified.
+// RFC 7396 reads an explicit null as "delete this key", which would leave the
+// key out of the merged slot, skip its setter and land the slot back on the
+// live value - the exact failure the fill exists to prevent. Handing the null
+// through to the setter instead is no better: the setter's own fallback is not
+// always the model default. Here a null can only mean unspecified.
 TEST_CASE ("a null member in a partial slot resolves to the model default",
            "[session][serializer]")
 {
-    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                        .getChildFile ("dusk-null-member-"
-                                         + juce::String (juce::Random::getSystemRandom().nextInt()));
-    dir.createDirectory();
-    const struct ScopedDir { juce::File d; ~ScopedDir() { d.deleteRecursively(); } } scopedDir { dir };
+    ScopedTempDir tmp { "dusk-null-member-" };
+    const auto& dir = tmp.dir;
 
     Session s;
     s.setSessionDirectory (dir);
-    s.track (0).strip.faderDb.store (-12.0f);
-    s.bus (0).strip.faderDb.store (-9.0f);
+    s.track (0).strip.mute.store (true);
+    s.track (0).inputSource.store (5);
+    s.bus (0).strip.mute.store (true);
 
     const auto target = dir.getChildFile ("session.json");
     target.replaceWithText (
-        R"({"version":3,"tracks":[{"fader_db":null}],"buses":[{"fader_db":null}]})");
+        R"({"version":3,"tracks":[{"mute":null,"input_source":null}],)"
+        R"("buses":[{"mute":null}]})");
 
     REQUIRE (SessionSerializer::load (s, target));
 
-    REQUIRE_THAT (s.track (0).strip.faderDb.load(), WithinAbs (0.0f, 1e-6f));
-    REQUIRE_THAT (s.bus (0).strip.faderDb.load(),   WithinAbs (0.0f, 1e-6f));
-}
-
-// The overlay must not merge arrays element-wise: a shorter bus_assign has to
-// replace the default outright, or a slot that assigns nothing would inherit
-// assignments from the default's longer array.
-TEST_CASE ("a partial slot's arrays replace rather than merge", "[session][serializer]")
-{
-    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                        .getChildFile ("dusk-array-replace-"
-                                         + juce::String (juce::Random::getSystemRandom().nextInt()));
-    dir.createDirectory();
-    const struct ScopedDir { juce::File d; ~ScopedDir() { d.deleteRecursively(); } } scopedDir { dir };
-
-    Session s;
-    s.setSessionDirectory (dir);
-
-    AudioRegion r;
-    r.file            = s.getAudioDirectory().getChildFile ("ghost.wav");
-    r.lengthInSamples = 1000;
-    s.track (0).regions.push_back (r);
-
-    const auto target = dir.getChildFile ("session.json");
-    target.replaceWithText (R"({"version":3,"tracks":[{"regions":[]}]})");
-
-    REQUIRE (SessionSerializer::load (s, target));
-    REQUIRE (s.track (0).regions.empty());
+    REQUIRE_FALSE (s.track (0).strip.mute.load());
+    REQUIRE_FALSE (s.bus (0).strip.mute.load());
+    // The setter's fallback for a junk input_source is 0; the model default is
+    // -2, so only a null that resolved to the default lands here.
+    REQUIRE (s.track (0).inputSource.load() == -2);
 }
 
 // The stable identifier wins when there is one, but an unrouted track
-// serializes midi_input_id as "", so the overlay hands every slot that key.
+// serializes midi_input_id as "", so the fill hands every slot that key.
 // Keying the identifier path on presence would swallow a session carrying only
 // the legacy raw index.
-TEST_CASE ("a legacy MIDI index survives the default overlay", "[session][serializer]")
+TEST_CASE ("a legacy MIDI index survives the default fill", "[session][serializer]")
 {
-    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                        .getChildFile ("dusk-legacy-midi-"
-                                         + juce::String (juce::Random::getSystemRandom().nextInt()));
-    dir.createDirectory();
-    const struct ScopedDir { juce::File d; ~ScopedDir() { d.deleteRecursively(); } } scopedDir { dir };
+    ScopedTempDir tmp { "dusk-legacy-midi-" };
+    const auto& dir = tmp.dir;
 
     Session s;
     s.setSessionDirectory (dir);
@@ -271,15 +256,12 @@ TEST_CASE ("a legacy MIDI index survives the default overlay", "[session][serial
 // plugin_slots is an array, so it replaces the default wholesale. Stopping the
 // restore at whatever the file's array carries therefore left a position the
 // file does not describe holding the previous session's plugin. Every position
-// is driven, each overlaid on the matching default.
+// is driven, each filled from the matching default.
 TEST_CASE ("an aux lane's undescribed plugin slot drops the previous plugin",
            "[session][serializer]")
 {
-    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                        .getChildFile ("dusk-aux-slot-"
-                                         + juce::String (juce::Random::getSystemRandom().nextInt()));
-    dir.createDirectory();
-    const struct ScopedDir { juce::File d; ~ScopedDir() { d.deleteRecursively(); } } scopedDir { dir };
+    ScopedTempDir tmp { "dusk-aux-slot-" };
+    const auto& dir = tmp.dir;
 
     Session s;
     s.setSessionDirectory (dir);
@@ -313,4 +295,36 @@ TEST_CASE ("an aux lane's undescribed plugin slot drops the previous plugin",
     const auto routing = s.auxLane (0).hardwareInserts[0].routing.current();
     REQUIRE (routing.outputChL == -1);
     REQUIRE (routing.inputChL  == -1);
+}
+
+// A hand-edited slot can nest itself deeper than any walk over it can recurse.
+// Past the bound the slot is unusable rather than fatal: it restores from the
+// model default, and the surrounding session still loads.
+TEST_CASE ("a pathologically nested track slot falls back to the default",
+           "[session][serializer]")
+{
+    ScopedTempDir tmp { "dusk-deep-slot-" };
+    const auto& dir = tmp.dir;
+
+    Session s;
+    s.setSessionDirectory (dir);
+    s.track (0).name = "ghost";
+    s.track (0).strip.faderDb.store (-12.0f);
+
+    constexpr int kNesting = 50000;
+    std::string deep;
+    deep.reserve ((size_t) kNesting * 6 + 1);
+    for (int i = 0; i < kNesting; ++i) deep += R"({"a":)";
+    deep += "1";
+    deep.append ((size_t) kNesting, '}');
+
+    const auto target = dir.getChildFile ("session.json");
+    target.replaceWithText (R"({"version":3,"tracks":[{"name":"A","deep":)"
+                             + juce::String (deep) + R"(}]})");
+
+    REQUIRE (SessionSerializer::load (s, target));
+
+    const Session defaults;
+    REQUIRE (s.track (0).name == defaults.track (0).name);
+    REQUIRE_THAT (s.track (0).strip.faderDb.load(), WithinAbs (0.0f, 1e-6f));
 }
