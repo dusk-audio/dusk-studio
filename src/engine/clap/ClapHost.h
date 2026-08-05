@@ -42,6 +42,15 @@ public:
     // release on publish, acquire on read.
     void setAudioThread (std::thread::id id) noexcept
         { audioThreadHash.store (std::hash<std::thread::id>{} (id), std::memory_order_release); }
+    // For the message thread temporarily designating itself the audio thread to
+    // satisfy a plugin's thread-check inside an [audio-thread] call. The stamp
+    // MUST be handed back: left in place, the message thread answers true to both
+    // is_audio_thread and is_main_thread for as long as the instance lives.
+    std::size_t exchangeAudioThread (std::thread::id id) noexcept
+        { return audioThreadHash.exchange (std::hash<std::thread::id>{} (id),
+                                           std::memory_order_acq_rel); }
+    void restoreAudioThread (std::size_t previous) noexcept
+        { audioThreadHash.store (previous, std::memory_order_release); }
     void setPlugin (const clap_plugin* p) noexcept    { plugin = p; }
     // The gui request callbacks (request_resize/show/hide) are CLAP [thread-safe] -
     // the plugin may fire them from its own thread while teardown swaps this target on
