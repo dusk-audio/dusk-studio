@@ -5294,7 +5294,7 @@ void MainComponent::toggleNotepad()
         {
             if (auto* self = safeThis.getComponent())
             {
-                self->setEnabled (true);
+                self->notepadDim.reset();
                 if (auto* window = self->getTopLevelComponent())
                     window->toFront (true);
                 // The native notepad held keyboard focus; pull it back so
@@ -5320,18 +5320,34 @@ void MainComponent::toggleNotepad()
             }
         });
 
-    notepadWindow->open (
+    // A JUCE sibling beneath the embedded native child blocks the DAW and
+    // receives clicks outside the notepad. Keep dismissal at this native host
+    // boundary: the DPF/ImGui editor owns document editing only, while close()
+    // preserves the deferred native teardown -> onClosed -> saveNotepadNow()
+    // sequence above.
+    notepadDim = std::make_unique<DimOverlay> (0.80f);
+    notepadDim->setBounds (getLocalBounds());
+    notepadDim->onClick = [safeThis]
+    {
+        if (auto* self = safeThis.getComponent())
+            if (self->notepadWindow != nullptr && self->notepadWindow->isOpen())
+                self->notepadWindow->close();
+    };
+    addAndMakeVisible (notepadDim.get());
+
+    const bool opened = notepadWindow->open (
         reinterpret_cast<std::uintptr_t> (peer->getNativeHandle()),
         notepadGeometryFor (*topLevel),
         notepadText.toStdString(),
         session.getSessionDirectory() != juce::File(),
         notepadDirty);
 
-    if (notepadWindow->isOpen())
-        setEnabled (false); // embedded DPF editor is application-modal to the DAW
-    else
+    if (! opened)
+    {
+        notepadDim.reset();
         statusLabel.setText ("Unable to embed session notepad with the current display backend",
                              juce::dontSendNotification);
+    }
 #endif
 }
 
@@ -5344,11 +5360,11 @@ void MainComponent::dismissNotepad (bool saveChanges)
         notepadWindow->close();
         notepadWindow.reset();
     }
+    notepadDim.reset();
    #endif
 
-    setEnabled (true);
     if (saveChanges)
-        saveNotepadNow();
+        (void) saveNotepadNow();
 }
 
 bool MainComponent::saveNotepadNow()

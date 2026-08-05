@@ -580,7 +580,8 @@ void NotepadEditor::handleKeyboard (float viewportHeight, float bodySize)
 {
     auto& io = ImGui::GetIO();
     const auto& text = document.documentText();
-    const bool command = io.KeyCtrl || io.KeySuper;
+    const bool acceptsText = notepad::acceptsTextInput (io.KeyCtrl, io.KeyAlt, io.KeySuper);
+    const bool command = ! acceptsText;
     const bool shift = io.KeyShift;
     const bool byWord = io.KeyCtrl || io.KeyAlt;
 
@@ -705,7 +706,7 @@ void NotepadEditor::handleKeyboard (float viewportHeight, float bodySize)
     if (io.InputQueueCharacters.Size > 0)
     {
         std::string typed;
-        if (! command)
+        if (acceptsText)
         {
             for (int i = 0; i < io.InputQueueCharacters.Size; ++i)
             {

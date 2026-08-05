@@ -561,12 +561,13 @@ within the page, Ctrl+A selects everything, and cut, copy, and paste use the
 system clipboard.
 
 The **Markdown** tab exposes the compatible `notepad.md` source for users who
-prefer direct editing. Switching views preserves the selection. The footer
-distinguishes saved, unsaved, untitled, and failed-save states. Notes are saved
-atomically to `notepad.md` when the notepad closes and on every session save;
-they follow the session on Save As. A failed sidecar write remains dirty and
-blocks a session switch instead of discarding the outgoing notes. Typing in
-either view never triggers transport shortcuts.
+prefer direct editing. Switching views preserves the selection. Click the
+dimmed area outside the notepad to close it. The footer distinguishes saved,
+unsaved, untitled, and failed-save states. Notes are saved atomically to
+`notepad.md` when the notepad closes and on every session save; they follow the
+session on Save As. A failed sidecar write remains dirty and can be retried by
+saving the session again; it blocks a session switch instead of discarding the
+outgoing notes. Typing in either view never triggers transport shortcuts.
 
 \newpage
 

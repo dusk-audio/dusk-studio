@@ -76,6 +76,102 @@ TEST_CASE ("Notepad editor word jumps stop at word and line boundaries",
     CHECK (atLineEnd.end == 10);
 }
 
+TEST_CASE ("Notepad editor accepts AltGr text without turning command chords into text",
+           "[notepad][editor][input]")
+{
+    CHECK_FALSE (notepad::acceptsTextInput (true, false, false));  // Ctrl
+    CHECK_FALSE (notepad::acceptsTextInput (false, false, true));  // Super / Cmd
+    CHECK (notepad::acceptsTextInput (true, true, false));         // Ctrl+Alt / AltGr
+    CHECK (notepad::acceptsTextInput (false, true, false));        // Alt
+    CHECK (notepad::acceptsTextInput (false, false, false));
+}
+
+TEST_CASE ("Notepad Markdown inline commands toggle matching wrappers",
+           "[notepad][editor][markdown]")
+{
+    SECTION ("selection inside wrappers removes them and keeps the label selected")
+    {
+        const auto result = notepad::toggleMarkdownInline ("**bold**", { 2, 6 }, "**", "**");
+        CHECK (result.markdown == "bold");
+        CHECK (result.selection.start == 0);
+        CHECK (result.selection.end == 4);
+    }
+
+    SECTION ("marker-inclusive selection removes markers and selects the label")
+    {
+        const auto result = notepad::toggleMarkdownInline ("**bold**", { 0, 8 }, "**", "**");
+        CHECK (result.markdown == "bold");
+        CHECK (result.selection.start == 0);
+        CHECK (result.selection.end == 4);
+    }
+
+    SECTION ("unformatted selection gains wrappers and keeps the label selected")
+    {
+        const auto result = notepad::toggleMarkdownInline ("bold", { 0, 4 }, "**", "**");
+        CHECK (result.markdown == "**bold**");
+        CHECK (result.selection.start == 2);
+        CHECK (result.selection.end == 6);
+        CHECK (notepad::markdownInlineActive (result.markdown, result.selection,
+                                              "**", "**"));
+    }
+
+    SECTION ("collapsed caret lands between a new empty wrapper pair")
+    {
+        const auto result = notepad::toggleMarkdownInline ("ab", { 1, 1 }, "**", "**");
+        CHECK (result.markdown == "a****b");
+        CHECK (result.selection.start == 3);
+        CHECK (result.selection.end == 3);
+    }
+}
+
+TEST_CASE ("Notepad Markdown block commands preserve source selections",
+           "[notepad][editor][markdown]")
+{
+    using Block = NotepadDocument::BlockStyle;
+
+    SECTION ("single-line add moves the selection with its original text")
+    {
+        const auto result = notepad::setMarkdownBlockStyle ("alpha", { 0, 5 },
+                                                            Block::heading1);
+        CHECK (result.markdown == "# alpha");
+        CHECK (result.selection.start == 2);
+        CHECK (result.selection.end == 7);
+        CHECK (result.markdown.substr (result.selection.start,
+                                      result.selection.end - result.selection.start)
+               == "alpha");
+    }
+
+    SECTION ("single-line remove keeps the content selected")
+    {
+        const auto result = notepad::setMarkdownBlockStyle ("# alpha", { 2, 7 },
+                                                            Block::body);
+        CHECK (result.markdown == "alpha");
+        CHECK (result.selection.start == 0);
+        CHECK (result.selection.end == 5);
+    }
+
+    SECTION ("single-line change tracks a differently-sized prefix")
+    {
+        const auto result = notepad::setMarkdownBlockStyle ("# alpha", { 2, 7 },
+                                                            Block::heading3);
+        CHECK (result.markdown == "### alpha");
+        CHECK (result.selection.start == 4);
+        CHECK (result.selection.end == 9);
+    }
+
+    SECTION ("multi-line edit keeps the first and last selected text boundaries")
+    {
+        const auto result = notepad::setMarkdownBlockStyle (
+            "one\n## two\nthree", { 0, 10 }, Block::bullets);
+        CHECK (result.markdown == "- one\n- two\nthree");
+        CHECK (result.selection.start == 2);
+        CHECK (result.selection.end == 11);
+        CHECK (result.markdown.substr (result.selection.start,
+                                      result.selection.end - result.selection.start)
+               == "one\n- two");
+    }
+}
+
 TEST_CASE ("Notepad editor resolves the line a new break ends",
            "[notepad][editor]")
 {

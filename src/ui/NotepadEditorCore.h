@@ -29,6 +29,29 @@ struct Range
 Range wordAt (const std::string& text, std::size_t offset) noexcept;
 void appendUtf8 (std::string& text, unsigned int codepoint);
 
+// AltGr is reported by ImGui as Ctrl+Alt on platforms that use it. Treat that
+// pair as text input while keeping Ctrl-only and Super combinations available
+// for editor commands.
+bool acceptsTextInput (bool control, bool alt, bool super) noexcept;
+
+struct MarkdownTransform
+{
+    std::string markdown;
+    NotepadDocument::Selection selection;
+};
+
+bool markdownInlineActive (const std::string& markdown,
+                           NotepadDocument::Selection selection,
+                           const std::string& prefix,
+                           const std::string& suffix);
+MarkdownTransform toggleMarkdownInline (const std::string& markdown,
+                                        NotepadDocument::Selection selection,
+                                        const std::string& prefix,
+                                        const std::string& suffix);
+MarkdownTransform setMarkdownBlockStyle (const std::string& markdown,
+                                         NotepadDocument::Selection selection,
+                                         NotepadDocument::BlockStyle style);
+
 bool isHeading (NotepadDocument::BlockStyle block) noexcept;
 bool isList (NotepadDocument::BlockStyle block) noexcept;
 float blockFontSize (NotepadDocument::BlockStyle block, float bodySize) noexcept;

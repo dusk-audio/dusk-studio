@@ -163,22 +163,6 @@ std::size_t sourceBlockPrefixLength (const std::string& text,
     return 0;
 }
 
-std::string blockPrefix (NotepadDocument::BlockStyle style, std::size_t number)
-{
-    switch (style)
-    {
-        case NotepadDocument::BlockStyle::heading1: return "# ";
-        case NotepadDocument::BlockStyle::heading2: return "## ";
-        case NotepadDocument::BlockStyle::heading3: return "### ";
-        case NotepadDocument::BlockStyle::quote:    return "> ";
-        case NotepadDocument::BlockStyle::bullets:  return "- ";
-        case NotepadDocument::BlockStyle::numbers:  return std::to_string (number) + ". ";
-        case NotepadDocument::BlockStyle::tasks:    return "- [ ] ";
-        case NotepadDocument::BlockStyle::body:     return {};
-    }
-    return {};
-}
-
 NotepadDocument::BlockStyle sourceBlockStyle (const std::string& text,
                                               NotepadDocument::Selection selection)
 {
@@ -203,25 +187,6 @@ NotepadDocument::BlockStyle sourceBlockStyle (const std::string& text,
     if (text[lineStart] >= '0' && text[lineStart] <= '9')
         return NotepadDocument::BlockStyle::numbers;
     return NotepadDocument::BlockStyle::bullets;
-}
-
-bool sourceSelectionHasWrapper (const std::string& text,
-                                NotepadDocument::Selection selection,
-                                const std::string& prefix,
-                                const std::string& suffix)
-{
-    selection.start = std::min (selection.start, text.size());
-    selection.end = std::min (selection.end, text.size());
-    if (selection.start > selection.end)
-        std::swap (selection.start, selection.end);
-
-    const bool prefixOutside = selection.start >= prefix.size()
-                            && text.compare (selection.start - prefix.size(), prefix.size(), prefix) == 0;
-    const bool suffixOutside = text.compare (selection.end, suffix.size(), suffix) == 0;
-    const bool includesMarkers = selection.end >= selection.start + prefix.size() + suffix.size()
-                              && text.compare (selection.start, prefix.size(), prefix) == 0
-                              && text.compare (selection.end - suffix.size(), suffix.size(), suffix) == 0;
-    return (prefixOutside && suffixOutside) || includesMarkers;
 }
 
 // The destination is emitted inside "](...)", so a bracket or parenthesis the
@@ -488,9 +453,9 @@ private:
     void timerCallback() override
     {
         app.idle();
-        // The Done button is handled inside the ImGui display callback. Wait
-        // until DPF returns from the event pump before destroying its embedded
-        // widget and native child.
+        // Close requests come from the native host boundary. Wait until DPF
+        // returns from the event pump before destroying its embedded widget
+        // and native child.
         if (closeRequested && window != nullptr)
         {
             destroyEmbeddedWindow();
@@ -566,15 +531,13 @@ private:
 
         const auto selection = buffer.selection();
         auto before = currentSnapshot();
-        auto source = document.markdown();
-        source.insert (selection.end, suffix);
-        source.insert (selection.start, prefix);
-        document.setMarkdown (std::move (source));
+        auto transformed = notepad::toggleMarkdownInline (
+            document.markdown(), selection, prefix, suffix);
+        document.setMarkdown (std::move (transformed.markdown));
         buffer.assign (document.markdown());
-        buffer.restoreSelection ({ selection.start + prefix.size(),
-                                   selection.end + prefix.size() });
+        buffer.restoreSelection (transformed.selection);
         history.record (notepad::EditKind::structural, std::move (before),
-                        selection.end + prefix.size());
+                        transformed.selection.end);
         focusEditorNextFrame = true;
         notifyTextChanged();
     }
@@ -591,29 +554,13 @@ private:
         if (selectedBlockStyle() == style)
             style = NotepadDocument::BlockStyle::body;
         auto before = currentSnapshot();
-
-        auto source = document.markdown();
-        const auto first = sourceLineStart (source, selection.start);
-        const auto last = sourceLineEnd (source, selection.end);
-        std::vector<std::pair<std::size_t, std::size_t>> lines;
-        for (auto start = first; start <= last;)
-        {
-            const auto end = sourceLineEnd (source, start);
-            lines.emplace_back (start, end);
-            if (end == source.size())
-                break;
-            start = end + 1;
-        }
-        for (std::size_t index = lines.size(); index-- > 0;)
-        {
-            const auto [start, end] = lines[index];
-            source.erase (start, sourceBlockPrefixLength (source, start, end));
-            source.insert (start, blockPrefix (style, index + 1));
-        }
-        document.setMarkdown (std::move (source));
+        auto transformed = notepad::setMarkdownBlockStyle (
+            document.markdown(), selection, style);
+        document.setMarkdown (std::move (transformed.markdown));
         buffer.assign (document.markdown());
-        buffer.restoreSelection (selection);
-        history.record (notepad::EditKind::structural, std::move (before), selection.end);
+        buffer.restoreSelection (transformed.selection);
+        history.record (notepad::EditKind::structural, std::move (before),
+                        transformed.selection.end);
         focusEditorNextFrame = true;
         notifyTextChanged();
     }
@@ -648,7 +595,8 @@ private:
                             const std::string& suffix) const
     {
         return markdownMode
-             ? sourceSelectionHasWrapper (document.markdown(), buffer.selection(), prefix, suffix)
+             ? notepad::markdownInlineActive (document.markdown(), buffer.selection(),
+                                               prefix, suffix)
              : editor.inlineStyleActive (style);
     }
 
@@ -936,7 +884,8 @@ private:
         }
 
         const auto& io = ImGui::GetIO();
-        const bool shortcut = io.KeyCtrl || io.KeySuper;
+        const bool shortcut = ! notepad::acceptsTextInput (
+            io.KeyCtrl, io.KeyAlt, io.KeySuper);
         if (editorActive && shortcut && ImGui::IsKeyPressed (ImGuiKey_Z, false))
             restoreHistory (io.KeyShift);
         else if (editorActive && shortcut && ImGui::IsKeyPressed (ImGuiKey_Y, false))
@@ -987,7 +936,7 @@ private:
         ImGui::TextUnformatted ("Lyrics and session notes");
         ImGui::PopStyleColor();
 
-        ImGui::SetCursorPos (ImVec2 (width - 300.0f, 16.0f));
+        ImGui::SetCursorPos (ImVec2 (width - 210.0f, 16.0f));
         if (drawGlyphToggle ("##page-theme", darkDocumentPage, "☀", "☾",
                              "Light page / Dark page", 82.0f))
         {
@@ -998,11 +947,6 @@ private:
         if (drawGlyphToggle ("##editor-mode", markdownMode, "▤", "M↓",
                              "Document / Markdown", 100.0f))
             setMode (! markdownMode);
-        ImGui::SameLine (0.0f, 12.0f);
-        ImGui::PushStyleColor (ImGuiCol_Button, colour (0x305a82ff));
-        if (ImGui::Button ("Done", ImVec2 (76.0f, 30.0f)))
-            close();
-        ImGui::PopStyleColor();
 
         ImGui::SetCursorPosY (62.0f);
         drawRibbon();
@@ -1020,7 +964,7 @@ private:
                               saveFailed ? colour (0xe48a8aff) : colour (0x8f909aff));
         const char* saveState = saveFailed ? "Save failed - changes are still unsaved"
                               : documentDirty && hasSessionFile
-                                  ? "Unsaved changes - saved when Done"
+                                  ? "Unsaved changes - saved when closed"
                               : documentDirty
                                   ? "Unsaved changes - save the session to keep them"
                               : hasSessionFile ? "Saved with session  |  notepad.md"
