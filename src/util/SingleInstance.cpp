@@ -2,6 +2,7 @@
 
 #include "../foundation/MessageThread.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -30,6 +31,8 @@ namespace
 {
 constexpr std::size_t kMaxPayloadBytes = 64 * 1024;
 constexpr int kReadBudgetMs = 2000;
+constexpr int kDeliveryBudgetMs = 2000;
+using Deadline = std::chrono::steady_clock::time_point;
 
 struct Listener
 {
@@ -121,14 +124,39 @@ bool peerIsThisUser (int fd)
     return len == sizeof cred && cred.uid == ::getuid();
 }
 
-bool writeAll (int fd, const std::string& payload)
+int pollUntil (int fd, short events, const Deadline deadline)
+{
+    for (;;)
+    {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline) return 0;
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds> (
+            deadline - now);
+
+        pollfd p {};
+        p.fd = fd;
+        p.events = events;
+        const int ready = ::poll (&p, 1, std::max (1, (int) remaining.count()));
+        if (ready > 0) return p.revents;
+        if (ready == 0) return 0;
+        if (errno != EINTR) return 0;
+    }
+}
+
+bool writeAll (int fd, const std::string& payload, const Deadline deadline)
 {
     std::size_t sent = 0;
     while (sent < payload.size())
     {
+        if (std::chrono::steady_clock::now() >= deadline) return false;
         const ssize_t n = ::send (fd, payload.data() + sent, payload.size() - sent, MSG_NOSIGNAL);
         if (n > 0) { sent += (std::size_t) n; continue; }
         if (n < 0 && errno == EINTR) continue;
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+        {
+            const int revents = pollUntil (fd, POLLOUT, deadline);
+            if ((revents & POLLOUT) != 0) continue;
+        }
         return false;
     }
     return true;
@@ -137,11 +165,10 @@ bool writeAll (int fd, const std::string& payload)
 // One deadline for the whole exchange, not per read: a peer dribbling a byte
 // at a time under a per-read timeout would hold the listener open forever, and
 // release() waits on this thread.
-std::string readPayload (int fd)
+bool readPayload (int fd, int wakeFd, std::string& payload)
 {
     const auto deadline = std::chrono::steady_clock::now()
                             + std::chrono::milliseconds (kReadBudgetMs);
-    std::string payload;
     char buf[1024];
 
     while (payload.size() < kMaxPayloadBytes)
@@ -150,23 +177,27 @@ std::string readPayload (int fd)
         if (now >= deadline) break;
         const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds> (deadline - now);
 
-        pollfd p {};
-        p.fd = fd;
-        p.events = POLLIN;
-        const int ready = ::poll (&p, 1, (int) remaining.count());
+        pollfd fds[2] {};
+        fds[0].fd = fd;
+        fds[0].events = POLLIN;
+        fds[1].fd = wakeFd;
+        fds[1].events = POLLIN;
+        const int ready = ::poll (fds, 2, std::max (1, (int) remaining.count()));
         if (ready < 0)
         {
             if (errno == EINTR) continue;
             break;
         }
         if (ready == 0) break;
+        if (fds[1].revents != 0) return false;
+        if (fds[0].revents == 0) continue;
 
         const ssize_t got = ::read (fd, buf, sizeof buf);
         if (got > 0) { payload.append (buf, (std::size_t) got); continue; }
         if (got < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
         break;
     }
-    return payload;
+    return true;
 }
 
 void listenLoop (Listener* l)
@@ -209,8 +240,10 @@ void listenLoop (Listener* l)
 
         if (peerIsThisUser (peer))
         {
-            const auto payload = readPayload (peer);
+            std::string payload;
+            const bool completed = readPayload (peer, l->wakeFds[0], payload);
             ::close (peer);
+            if (! completed) return;
             auto fn = l->onCommandLine;
             dusk::callAsync ([fn, payload] { fn (payload); });
         }
@@ -246,17 +279,44 @@ bool handOver (const sockaddr_un& addr, socklen_t len, const std::string& payloa
 {
     for (int attempt = 0; attempt < 2; ++attempt)
     {
-        const int fd = ::socket (AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        const int fd = ::socket (AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
         if (fd < 0) return false;
 
+        const auto deadline = std::chrono::steady_clock::now()
+                                + std::chrono::milliseconds (kDeliveryBudgetMs);
+        bool connected = false;
+        int connectErr = 0;
         if (::connect (fd, (const sockaddr*) &addr, len) == 0)
         {
-            const bool sent = writeAll (fd, payload);
+            connected = true;
+        }
+        else
+        {
+            connectErr = errno;
+            if (connectErr == EINPROGRESS || connectErr == EALREADY
+                || connectErr == EINTR || connectErr == EAGAIN
+                || connectErr == EWOULDBLOCK)
+            {
+                const int revents = pollUntil (fd, POLLOUT, deadline);
+                if ((revents & POLLNVAL) == 0 && revents != 0)
+                {
+                    socklen_t errorLen = sizeof connectErr;
+                    if (::getsockopt (fd, SOL_SOCKET, SO_ERROR,
+                                      &connectErr, &errorLen) == 0)
+                        connected = connectErr == 0;
+                    else
+                        connectErr = errno;
+                }
+            }
+        }
+
+        if (connected)
+        {
+            const bool sent = writeAll (fd, payload, deadline);
             if (sent) ::shutdown (fd, SHUT_WR);
             ::close (fd);
             return sent;
         }
-        const int connectErr = errno;
         ::close (fd);
         if (connectErr != ECONNREFUSED) return false;
 

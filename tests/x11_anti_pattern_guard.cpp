@@ -2,7 +2,6 @@
 
 #include <fstream>
 #include <optional>
-#include <sstream>
 #include <string>
 
 // Regression guard: outside the per-platform PlatformWindowing
@@ -35,9 +34,19 @@ std::optional<std::string> readEntireFile (const std::string& path)
 {
     std::ifstream in (path);
     if (! in.is_open()) return {};
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    return ss.str();
+
+    std::string contents;
+    char buffer[4096];
+    for (;;)
+    {
+        in.read (buffer, sizeof buffer);
+        const auto count = in.gcount();
+        if (count > 0) contents.append (buffer, (std::size_t) count);
+
+        if (in.bad()) return {};
+        if (in.eof()) return contents;
+        if (in.fail()) return {};
+    }
 }
 
 // DUSKSTUDIO_SOURCE_DIR is defined by the test target's CMake so the
