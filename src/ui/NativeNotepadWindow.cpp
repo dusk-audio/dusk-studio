@@ -582,7 +582,7 @@ private:
         ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (notepad::kStagePalette.shell));
         ImGui::BeginChild ("ribbon", ImVec2 (0.0f, height),
                            ImGuiChildFlags_AlwaysUseWindowPadding,
-                           ImGuiWindowFlags_NoScrollbar);
+                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
         ImGui::BeginDisabled (! history.canUndo());
         if (toolbarButton ("↶", "Undo the last edit (Ctrl+Z)", false))
@@ -741,7 +741,7 @@ private:
         ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (22.0f, 18.0f));
         ImGui::BeginChild ("workspace", ImVec2 (0.0f, height),
                            ImGuiChildFlags_AlwaysUseWindowPadding,
-                           ImGuiWindowFlags_NoScrollbar);
+                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
         // Both views render into the same measure at the same metrics, so the
         // toggle reads as flipping one sheet over rather than opening another
@@ -758,7 +758,8 @@ private:
             // A borderless child drops WindowPadding unless asked, which left the
             // lyric running edge to edge with no gutter.
             ImGui::BeginChild ("chart", ImVec2 (editorWidth, available.y),
-                               ImGuiChildFlags_AlwaysUseWindowPadding);
+                               ImGuiChildFlags_AlwaysUseWindowPadding,
+                               ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
             editor.draw (ImGui::GetFontSize());
 
@@ -799,7 +800,8 @@ private:
         ImGui::PushStyleColor (ImGuiCol_WindowBg, colour (notepad::kStagePalette.shell));
         ImGui::Begin ("Session Notepad", nullptr,
                       ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove
-                      | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar);
+                      | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar
+                      | ImGuiWindowFlags_NoScrollWithMouse);
 
         ImGui::SetCursorPos (ImVec2 (22.0f, 14.0f));
         ImGui::TextUnformatted ("SESSION NOTEPAD");
@@ -823,19 +825,28 @@ private:
         const auto bands = notepad::layoutChrome (height, kHeaderHeight, kRibbonHeight,
                                                   statusHeight);
 
-        ImGui::SetCursorPosY (bands.header);
+        const auto ribbonTop = bands.header;
+        const auto chartTop = ribbonTop + bands.ribbon;
+        const auto statusTop = chartTop + bands.chart;
         if (bands.ribbon > 0.0f)
+        {
+            ImGui::SetCursorPos (ImVec2 (0.0f, ribbonTop));
             drawRibbon (bands.ribbon);
+        }
         if (bands.chart > 0.0f)
+        {
+            ImGui::SetCursorPos (ImVec2 (0.0f, chartTop));
             drawEditor (bands.chart);
+        }
 
         if (bands.status > 0.0f)
         {
+            ImGui::SetCursorPos (ImVec2 (0.0f, statusTop));
             ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (notepad::kStagePalette.shell));
             ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (18.0f, statusPadding));
             ImGui::BeginChild ("status", ImVec2 (0.0f, bands.status),
                                ImGuiChildFlags_AlwaysUseWindowPadding,
-                               ImGuiWindowFlags_NoScrollbar);
+                               ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
             ImGui::PushStyleColor (ImGuiCol_Text,
                                   saveFailed ? colour (0xe48a8aff) : colour (notepad::kStagePalette.muted));
             const char* saveState = saveFailed

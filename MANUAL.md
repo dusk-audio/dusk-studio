@@ -589,8 +589,10 @@ detected key when enough chords identify one.
 A switch at the top right of the header flips between the chart (eye) and the
 compatible `notepad.md` source (`</>`) for users who prefer direct editing;
 switching views preserves the selection. Click the dimmed area outside the
-notepad to close it. Notes are saved atomically to `notepad.md` when the notepad
-closes and on every session save; they follow the session on Save As. A failed
+notepad to close it. The header, toolbar, and footer stay fixed; mouse-wheel
+scrolling moves only the note within its writing area. Notes are saved atomically
+to `notepad.md` when the notepad closes and on every session save; they follow
+the session on Save As. A failed
 sidecar write remains dirty and can be retried by
 saving the session again; it blocks a session switch instead of discarding the
 outgoing notes. Typing in either view never triggers transport shortcuts.
