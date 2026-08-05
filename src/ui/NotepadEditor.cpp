@@ -790,6 +790,18 @@ void NotepadEditor::beginChordEntry()
     resetBlink();
 }
 
+void NotepadEditor::insertSectionMarker (const std::string& label)
+{
+    auto before = snapshot();
+    if (! document.insertSectionMarker (selection().start, label))
+        return;
+
+    history.breakRun();
+    history.record (notepad::EditKind::structural, std::move (before), caret);
+    focusRequested = true;
+    documentMutated();
+}
+
 void NotepadEditor::commitChordEntry()
 {
     const auto before = snapshot();
@@ -1091,7 +1103,11 @@ void NotepadEditor::draw (float bodySize)
     // The page is the only text surface in the window, so it takes the caret
     // back once a toolbar button has finished with the active id - otherwise
     // every format button would cost the user a click to resume typing.
-    const bool reclaim = keepFocus && g.ActiveId == 0 && ! clicked;
+    // Reclaiming focus refocuses the host window, which dismisses any popup
+    // over it: a toolbar menu would open and shut on the same frame.
+    const bool popupOpen = ImGui::IsPopupOpen (nullptr, ImGuiPopupFlags_AnyPopupId
+                                                        | ImGuiPopupFlags_AnyPopupLevel);
+    const bool reclaim = keepFocus && g.ActiveId == 0 && ! clicked && ! popupOpen;
 
     if (focusRequested || reclaim || (hovered && clicked))
     {

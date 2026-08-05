@@ -116,6 +116,10 @@ public:
     // bracket can never be minted from the document view.
     bool setChordAt (std::size_t documentOffset, const std::string& name);
     void transposeChords (int semitones, bool preferFlats);
+    // Writes "[Label]" on its own line above documentOffset's line, straight
+    // into the source: a section marker is plain text the user can edit by
+    // hand, so it must not go through the document view's escaping.
+    bool insertSectionMarker (std::size_t documentOffset, const std::string& label);
     bool hasChords() const noexcept { return ! chordTokens.empty(); }
 
     TextStyle styleAt (std::size_t documentOffset) const noexcept;
@@ -127,8 +131,18 @@ public:
     std::size_t characterCount() const noexcept;
 
 private:
+    struct ChordToken
+    {
+        std::size_t start = 0;   // the '[' in markdownText
+        std::size_t end = 0;     // one past the ']'
+        std::string name;
+        // Where the rendered projection anchors it; meaningless in source mode,
+        // which resolves a chord by the caret's position inside the token.
+        std::size_t documentOffset = 0;
+    };
+
     void rebuildProjection();
-    void scanChordTokens();
+    const ChordToken* chordTokenAt (std::size_t documentOffset) const noexcept;
     const std::string& renderedText() const;
 
     std::string markdownText;
@@ -141,20 +155,14 @@ private:
     std::vector<std::string> projectedLinkTargets;
     bool sourceMode = false;
     std::vector<Chord> projectedChords;
-    struct ChordToken
-    {
-        std::size_t start = 0;   // the '[' in markdownText
-        std::size_t end = 0;     // one past the ']'
-        std::string name;
-    };
-    // Every bracket token in the Markdown, parsed in both modes: chord commands
-    // act on the source, so they keep working while the source view is up.
-    // projectedChords is the subset the rendered lane can anchor and is empty
-    // in source mode.
+    // The source span of every chord the projection renders, kept in both modes:
+    // chord commands act on the source, so they keep working while the source
+    // view is up and projectedChords is empty.
     std::vector<ChordToken> chordTokens;
     // Word and character counts describe the lyric, so they are measured on the
     // rendered projection in both modes: never the syntax the source shows.
-    mutable std::optional<std::string> renderedTextCache;
+    // Only source mode fills this; the rendered view counts projectedText.
+    std::optional<std::string> renderedTextCache;
     // Sticky, because a transpose can land every chord on a natural and erase
     // the evidence: re-deriving it there would spell the way back in sharps
     // and hand a flat writer a document they did not write.

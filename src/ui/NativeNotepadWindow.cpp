@@ -389,7 +389,7 @@ private:
         return editor.blockStyle();
     }
 
-    bool toolbarButton (const char* label, const char* tooltip, bool active,
+    bool toolbarButton (const char* label, const char* tooltip, bool active = false,
                         float width = 34.0f, ImFont* labelFont = nullptr)
     {
         if (active)
@@ -561,70 +561,18 @@ private:
         ImGui::BeginChild ("ribbon", ImVec2 (0.0f, 62.0f), false,
                            ImGuiWindowFlags_NoScrollbar);
 
+        ImGui::BeginDisabled (! history.canUndo());
         if (toolbarButton ("↶", "Undo the last edit (Ctrl+Z)", false))
             restoreHistory (false);
+        ImGui::EndDisabled();
         ImGui::SameLine (0.0f, 5.0f);
+        ImGui::BeginDisabled (! history.canRedo());
         if (toolbarButton ("↷", "Redo the last edit (Ctrl+Y)", false))
             restoreHistory (true);
-        ImGui::SameLine (0.0f, 10.0f);
+        ImGui::EndDisabled();
 
-        static const std::array<const char*, 4> styleNames {
-            "Body text", "Heading 1", "Heading 2", "Heading 3"
-        };
-        const auto blockStyle = selectedBlockStyle();
-        const auto paragraphStyle = blockStyle >= NotepadDocument::BlockStyle::body
-                                 && blockStyle <= NotepadDocument::BlockStyle::heading3
-                                  ? static_cast<int> (blockStyle)
-                                  : 0;
-        ImGui::SetNextItemWidth (118.0f);
-        ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2 (8.0f, 8.5f));
-        if (ImGui::BeginCombo ("##paragraph-style", styleNames[static_cast<std::size_t> (paragraphStyle)]))
-        {
-            for (int i = 0; i < static_cast<int> (styleNames.size()); ++i)
-            {
-                if (ImGui::Selectable (styleNames[static_cast<std::size_t> (i)], paragraphStyle == i))
-                {
-                    applyBlock (static_cast<NotepadDocument::BlockStyle> (i));
-                }
-            }
-            ImGui::EndCombo();
-        }
-        ImGui::PopStyleVar();
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip ("Set the style of the lines you have selected");
-        ImGui::SameLine (0.0f, 10.0f);
-        const bool bold = inlineStyleActive (NotepadDocument::InlineStyle::bold);
-        const bool italic = inlineStyleActive (NotepadDocument::InlineStyle::italic);
-        const bool code = inlineStyleActive (NotepadDocument::InlineStyle::code);
-        if (toolbarButton ("B", "Bold the selection (Ctrl+B)", bold, 34.0f, boldFont))
-            applyInline (NotepadDocument::InlineStyle::bold);
-        ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("I", "Italicise the selection (Ctrl+I)", italic))
-            applyInline (NotepadDocument::InlineStyle::italic);
-        ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("</>", "Set the selection in a fixed-width face", code, 42.0f))
-            applyInline (NotepadDocument::InlineStyle::code);
-
-        ImGui::SameLine (0.0f, 16.0f);
-        if (toolbarButton ("❝", "Quote the selected lines",
-                           blockStyle == NotepadDocument::BlockStyle::quote))
-            applyBlock (NotepadDocument::BlockStyle::quote);
-        ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("•≡", "Bullet the selected lines",
-                           blockStyle == NotepadDocument::BlockStyle::bullets, 42.0f))
-            applyBlock (NotepadDocument::BlockStyle::bullets);
-        ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("1≡", "Number the selected lines",
-                           blockStyle == NotepadDocument::BlockStyle::numbers, 42.0f))
-            applyBlock (NotepadDocument::BlockStyle::numbers);
-        ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("☑", "Turn the selected lines into a checklist",
-                           blockStyle == NotepadDocument::BlockStyle::tasks))
-            applyBlock (NotepadDocument::BlockStyle::tasks);
-        ImGui::SameLine (0.0f, 5.0f);
-        if (linkToolbarButton())
-            ImGui::OpenPopup ("Insert link");
-
+        // Chord tools lead: they are what this editor is for. Formatting that a
+        // lyric sheet rarely needs lives under the overflow.
         ImGui::SameLine (0.0f, 16.0f);
         if (toolbarButton ("♯", "Put a chord over the word at the caret (Ctrl+K)",
                            editor.chordEntryActive()))
@@ -632,42 +580,122 @@ private:
             editor.beginChordEntry();
             editor.requestFocus();
         }
-        // Transpose only has meaning once the sheet carries chords.
+        ImGui::SameLine (0.0f, 5.0f);
+        if (toolbarButton ("§", "Start a section above this line"))
+            ImGui::OpenPopup ("section-menu");
+
         const bool canTranspose = document.hasChords();
         ImGui::BeginDisabled (! canTranspose);
         ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("−", "Transpose every chord down a semitone", false))
+        if (toolbarButton ("−", "Transpose every chord down a semitone"))
             editor.transposeChords (-1);
         ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("+", "Transpose every chord up a semitone", false))
+        if (toolbarButton ("+", "Transpose every chord up a semitone"))
             editor.transposeChords (1);
         ImGui::EndDisabled();
 
-        if (ImGui::BeginPopupModal ("Insert link", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
-        {
-            ImGui::TextUnformatted ("Link destination");
-            ImGui::SetNextItemWidth (360.0f);
-            if (ImGui::IsWindowAppearing())
-                ImGui::SetKeyboardFocusHere();
-            ImGui::InputTextWithHint ("##link-url", "https://", linkUrl.data(), linkUrl.size());
-            if (ImGui::Button ("Insert", ImVec2 (90.0f, 30.0f)))
-            {
-                const auto url = linkUrl[0] == '\0' ? std::string ("https://")
-                                                   : notepad::encodeMarkdownLinkTarget (
-                                                         linkUrl.data());
-                insertLink (url);
-                linkUrl.fill ('\0');
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::SameLine();
-            if (ImGui::Button ("Cancel", ImVec2 (90.0f, 30.0f)))
-                ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
-        }
+        const auto blockStyle = selectedBlockStyle();
+        ImGui::SameLine (0.0f, 16.0f);
+        if (toolbarButton ("H", "Make this line a heading",
+                           blockStyle == NotepadDocument::BlockStyle::heading1,
+                           34.0f, boldFont))
+            applyBlock (NotepadDocument::BlockStyle::heading1);
+        ImGui::SameLine (0.0f, 5.0f);
+        if (toolbarButton ("B", "Bold the selection (Ctrl+B)",
+                           inlineStyleActive (NotepadDocument::InlineStyle::bold),
+                           34.0f, boldFont))
+            applyInline (NotepadDocument::InlineStyle::bold);
+        ImGui::SameLine (0.0f, 5.0f);
+        if (toolbarButton ("I", "Italicise the selection (Ctrl+I)",
+                           inlineStyleActive (NotepadDocument::InlineStyle::italic)))
+            applyInline (NotepadDocument::InlineStyle::italic);
+
+        ImGui::SameLine (0.0f, 16.0f);
+        if (toolbarButton ("⋯", "More formatting"))
+            ImGui::OpenPopup ("overflow-menu");
+
+        drawSectionMenu();
+        drawOverflowMenu (blockStyle);
+        drawLinkPopup();
 
         ImGui::EndChild();
         ImGui::PopStyleColor();
         ImGui::PopStyleVar (2);
+    }
+
+    void drawSectionMenu()
+    {
+        if (! ImGui::BeginPopup ("section-menu"))
+            return;
+
+        // Markers are plain "[Label]" lines, so a hand-typed section is the
+        // same thing this writes.
+        for (const auto* const label : { "Intro", "Verse", "Pre-chorus", "Chorus",
+                                         "Bridge", "Solo", "Outro" })
+            if (ImGui::Selectable (label))
+                editor.insertSectionMarker (label);
+        ImGui::EndPopup();
+    }
+
+    void drawOverflowMenu (NotepadDocument::BlockStyle blockStyle)
+    {
+        if (! ImGui::BeginPopup ("overflow-menu"))
+            return;
+
+        const auto blockItem = [&] (const char* label, NotepadDocument::BlockStyle style)
+        {
+            if (ImGui::Selectable (label, blockStyle == style))
+                applyBlock (style);
+        };
+        blockItem ("Body text", NotepadDocument::BlockStyle::body);
+        blockItem ("Heading 2", NotepadDocument::BlockStyle::heading2);
+        blockItem ("Heading 3", NotepadDocument::BlockStyle::heading3);
+        ImGui::Separator();
+        if (ImGui::Selectable ("Inline code",
+                               inlineStyleActive (NotepadDocument::InlineStyle::code)))
+            applyInline (NotepadDocument::InlineStyle::code);
+        blockItem ("Quote", NotepadDocument::BlockStyle::quote);
+        blockItem ("Bulleted list", NotepadDocument::BlockStyle::bullets);
+        blockItem ("Numbered list", NotepadDocument::BlockStyle::numbers);
+        blockItem ("Checklist", NotepadDocument::BlockStyle::tasks);
+        ImGui::Separator();
+        if (ImGui::Selectable ("Link the selected text"))
+        {
+            ImGui::CloseCurrentPopup();
+            linkRequested = true;
+        }
+        ImGui::EndPopup();
+    }
+
+    void drawLinkPopup()
+    {
+        if (linkRequested)
+        {
+            ImGui::OpenPopup ("Insert link");
+            linkRequested = false;
+        }
+        if (! ImGui::BeginPopupModal ("Insert link", nullptr,
+                                      ImGuiWindowFlags_AlwaysAutoResize))
+            return;
+
+        ImGui::TextUnformatted ("Link destination");
+        ImGui::SetNextItemWidth (360.0f);
+        if (ImGui::IsWindowAppearing())
+            ImGui::SetKeyboardFocusHere();
+        ImGui::InputTextWithHint ("##link-url", "https://", linkUrl.data(), linkUrl.size());
+        if (ImGui::Button ("Insert", ImVec2 (90.0f, 30.0f)))
+        {
+            const auto url = linkUrl[0] == '\0'
+                           ? std::string ("https://")
+                           : notepad::encodeMarkdownLinkTarget (linkUrl.data());
+            insertLink (url);
+            linkUrl.fill ('\0');
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button ("Cancel", ImVec2 (90.0f, 30.0f)))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
     }
 
     void drawEditor (float height)
@@ -805,6 +833,7 @@ private:
     ImFont* monoFont = nullptr;
     std::array<char, 384> linkUrl {};
     std::optional<std::string> savedMarkdown;
+    bool linkRequested = false;
     bool markdownMode = false;
     bool darkDocumentPage = true;
     bool closeRequested = false;

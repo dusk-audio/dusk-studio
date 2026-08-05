@@ -288,6 +288,26 @@ TEST_CASE ("Notepad ordered-list numbers survive an absurd digit run",
     CHECK (info.orderedNumber == 999999999);
 }
 
+TEST_CASE ("Notepad counts characters the way the editor navigates them",
+           "[notepad][document]")
+{
+    NotepadDocument document;
+    // "café 😀" - three ASCII letters, an e-acute (2 bytes), a space and an
+    // emoji (4 bytes): six characters, ten bytes.
+    document.setMarkdown ("caf\xc3\xa9 \xf0\x9f\x98\x80");
+    REQUIRE (document.documentText().size() == 10);
+    CHECK (document.characterCount() == 6);
+    CHECK (document.wordCount() == 2);
+
+    SECTION ("hidden syntax is not counted in either mode")
+    {
+        document.setMarkdown ("**caf\xc3\xa9**");
+        CHECK (document.characterCount() == 4);
+        document.setSourceMode (true);
+        CHECK (document.characterCount() == 4);
+    }
+}
+
 TEST_CASE ("Notepad source mode projects the Markdown one to one",
            "[notepad][document][source]")
 {

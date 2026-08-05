@@ -82,6 +82,7 @@ TEST_CASE ("chord brackets are hidden from the document projection")
         document.setMarkdown ("[C](https://example.com)");
         CHECK (document.documentText() == "C");
         CHECK (document.chords().empty());
+        CHECK_FALSE (document.hasChords());
         CHECK (document.linkTargetAt (0) == "https://example.com");
     }
 
@@ -91,6 +92,45 @@ TEST_CASE ("chord brackets are hidden from the document projection")
         REQUIRE (document.documentText() == "one\ntwo");
         REQUIRE (document.chords().size() == 1);
         CHECK (document.chords()[0].documentOffset == 3);
+    }
+}
+
+TEST_CASE ("bracket text the projection keeps is never a chord token")
+{
+    NotepadDocument document;
+
+    SECTION ("an escaped bracket stays literal")
+    {
+        document.setMarkdown ("\\[Am]one");
+        CHECK (document.documentText() == "[Am]one");
+        CHECK (document.chords().empty());
+        CHECK_FALSE (document.hasChords());
+
+        document.transposeChords (2, false);
+        CHECK (document.markdown() == "\\[Am]one");
+    }
+
+    SECTION ("a bracket inside a code span stays literal")
+    {
+        document.setMarkdown ("`[Am]` one");
+        CHECK (document.documentText() == "[Am] one");
+        CHECK (document.chords().empty());
+        CHECK_FALSE (document.hasChords());
+
+        document.transposeChords (2, false);
+        CHECK (document.markdown() == "`[Am]` one");
+    }
+
+    SECTION ("a bracket inside a link destination stays part of the URL")
+    {
+        document.setMarkdown ("[song](https://example.com/[Am])");
+        CHECK (document.documentText() == "song");
+        CHECK (document.chords().empty());
+        CHECK_FALSE (document.hasChords());
+
+        document.transposeChords (2, false);
+        CHECK (document.markdown() == "[song](https://example.com/[Am])");
+        CHECK (document.linkTargetAt (0) == "https://example.com/[Am]");
     }
 }
 
@@ -193,6 +233,29 @@ TEST_CASE ("Transpose keeps the notation the document already uses")
         flats.transposeChords (-2, flats.prefersFlats());
         CHECK (flats.markdown() == "[Bb]one [Eb]two");
     }
+
+    SECTION ("a transpose onto naturals keeps the spelling it was given")
+    {
+        NotepadDocument flats;
+        flats.setMarkdown ("[Db]x");
+        REQUIRE (flats.prefersFlats());
+        flats.transposeChords (-1, flats.prefersFlats());
+        CHECK (flats.markdown() == "[C]x");
+        CHECK (flats.prefersFlats());
+    }
+
+    SECTION ("loading another document starts from sharps again")
+    {
+        NotepadDocument flats;
+        flats.setMarkdown ("[Bb]one");
+        REQUIRE (flats.prefersFlats());
+
+        flats.setMarkdown ("[C]one");
+        CHECK_FALSE (flats.prefersFlats());
+
+        flats.setMarkdown ("[Eb]one");
+        CHECK (flats.prefersFlats());
+    }
 }
 
 TEST_CASE ("Chord commands and counts survive the source view")
@@ -217,5 +280,19 @@ TEST_CASE ("Chord commands and counts survive the source view")
     {
         REQUIRE (document.setChordAt (document.markdown().size(), "G"));
         CHECK (document.markdown() == "# Title\n\n[Am]one two[G]");
+    }
+
+    SECTION ("a caret inside a token edits that chord instead of nesting one")
+    {
+        // The token runs [9, 13); the caret sits on its 'm'.
+        REQUIRE (document.markdown().compare (9, 4, "[Am]") == 0);
+        CHECK (document.chordAt (11) == "Am");
+
+        REQUIRE (document.setChordAt (11, "C"));
+        CHECK (document.markdown() == "# Title\n\n[C]one two");
+
+        REQUIRE (document.setChordAt (10, ""));
+        CHECK (document.markdown() == "# Title\n\none two");
+        CHECK_FALSE (document.hasChords());
     }
 }

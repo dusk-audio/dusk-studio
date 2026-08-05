@@ -1,5 +1,6 @@
 #include "NotepadDocument.h"
 #include "NotepadChords.h"
+#include "NotepadEditorCore.h"
 
 #include <algorithm>
 #include <cctype>
@@ -306,20 +307,27 @@ std::size_t lineEndAt (const std::string& text, std::size_t offset)
     const auto found = text.find ('\n', std::min (offset, text.size()));
     return found == std::string::npos ? text.size() : found;
 }
-std::string projectRendered (const std::string& markdown)
+
+ProjectionBuilder buildProjection (const std::string& markdown)
 {
     ProjectionBuilder out (markdown);
     std::size_t lineStart = 0;
+
     while (lineStart <= markdown.size())
     {
         const auto lineEnd = lineEndAt (markdown, lineStart);
         auto contentStart = lineStart;
         out.blockStyle = blockStyleAtLine (markdown, lineStart, lineEnd);
+
+        // Every block prefix is hidden wholesale; the renderer draws list
+        // markers itself (LineInfo) so the projected text carries only what
+        // the user can edit. Ordered prefixes count too.
         if (const auto prefix = blockPrefixLength (markdown, lineStart, lineEnd); prefix != 0)
         {
             contentStart += prefix;
             out.skipTo (contentStart);
         }
+
         projectInline (out, contentStart, lineEnd);
         if (lineEnd < markdown.size())
             out.appendSourceRange (lineEnd, lineEnd + 1);
@@ -327,7 +335,7 @@ std::string projectRendered (const std::string& markdown)
             break;
         lineStart = lineEnd + 1;
     }
-    return std::move (out.text);
+    return out;
 }
 
 } // namespace
@@ -335,6 +343,9 @@ std::string projectRendered (const std::string& markdown)
 void NotepadDocument::setMarkdown (std::string text)
 {
     markdownText = std::move (text);
+    // A new document brings its own notation: the spelling only stays sticky
+    // across edits to the document that established it.
+    flatSpelling = false;
     rebuildProjection();
 }
 
@@ -701,12 +712,27 @@ NotepadDocument::TextStyle NotepadDocument::styleAt (std::size_t documentOffset)
     return projectedStyles[documentOffset];
 }
 
+const NotepadDocument::ChordToken*
+    NotepadDocument::chordTokenAt (std::size_t documentOffset) const noexcept
+{
+    for (const auto& token : chordTokens)
+    {
+        // Source mode edits the bracket itself, so the caret only has to be
+        // somewhere inside the token; the rendered view anchors chords on a
+        // character, and there the offset is the anchor.
+        const bool hit = sourceMode
+                       ? documentOffset >= token.start && documentOffset < token.end
+                       : documentOffset == token.documentOffset;
+        if (hit)
+            return &token;
+    }
+    return nullptr;
+}
+
 std::string NotepadDocument::chordAt (std::size_t documentOffset) const
 {
-    for (const auto& chord : projectedChords)
-        if (chord.documentOffset == documentOffset)
-            return chord.name;
-    return {};
+    const auto* const token = chordTokenAt (documentOffset);
+    return token != nullptr ? token->name : std::string();
 }
 
 bool NotepadDocument::setChordAt (std::size_t documentOffset, const std::string& name)
@@ -714,13 +740,9 @@ bool NotepadDocument::setChordAt (std::size_t documentOffset, const std::string&
     if (! name.empty() && ! notepad::chords::isChord (name))
         return false;
 
-    for (std::size_t i = 0; i < projectedChords.size(); ++i)
+    if (const auto* const token = chordTokenAt (documentOffset); token != nullptr)
     {
-        if (projectedChords[i].documentOffset != documentOffset)
-            continue;
-
-        const auto& token = chordTokens[i];
-        markdownText.replace (token.start, token.end - token.start,
+        markdownText.replace (token->start, token->end - token->start,
                               name.empty() ? std::string() : "[" + name + "]");
         rebuildProjection();
         return true;
@@ -731,6 +753,20 @@ bool NotepadDocument::setChordAt (std::size_t documentOffset, const std::string&
 
     documentOffset = std::min (documentOffset, documentBoundaryToSource.size() - 1);
     markdownText.insert (documentBoundaryToSource[documentOffset], "[" + name + "]");
+    rebuildProjection();
+    return true;
+}
+
+bool NotepadDocument::insertSectionMarker (std::size_t documentOffset, const std::string& label)
+{
+    if (label.empty() || label.find (']') != std::string::npos
+        || label.find ('\n') != std::string::npos)
+        return false;
+
+    documentOffset = std::min (documentOffset, documentBoundaryToSource.size() - 1);
+    const auto lineStart = lineStartAt (markdownText,
+                                        documentBoundaryToSource[documentOffset]);
+    markdownText.insert (lineStart, "[" + label + "]\n");
     rebuildProjection();
     return true;
 }
@@ -815,14 +851,7 @@ NotepadDocument::BlockStyle NotepadDocument::blockStyleForSelection (Selection s
 
 const std::string& NotepadDocument::renderedText() const
 {
-    if (! renderedTextCache.has_value())
-    {
-        if (! sourceMode)
-            renderedTextCache = projectedText;
-        else
-            renderedTextCache = projectRendered (markdownText);
-    }
-    return *renderedTextCache;
+    return renderedTextCache.has_value() ? *renderedTextCache : projectedText;
 }
 
 std::size_t NotepadDocument::wordCount() const noexcept
@@ -848,37 +877,15 @@ std::size_t NotepadDocument::wordCount() const noexcept
 
 std::size_t NotepadDocument::characterCount() const noexcept
 {
-    return renderedText().size();
-}
-
-void NotepadDocument::scanChordTokens()
-{
-    chordTokens.clear();
-    for (std::size_t i = 0; i < markdownText.size(); ++i)
-    {
-        if (markdownText[i] != '[')
-            continue;
-        const auto close = findUnescaped (markdownText, "]", i + 1, markdownText.size());
-        if (close == std::string::npos)
-            break;
-        if (close + 1 < markdownText.size() && markdownText[close + 1] == '(')
-            continue;
-        auto name = markdownText.substr (i + 1, close - (i + 1));
-        if (! notepad::chords::isChord (name))
-            continue;
-        chordTokens.push_back ({ i, close + 1, std::move (name) });
-        i = close;
-    }
-
-    std::size_t flats = 0;
-    std::size_t sharps = 0;
-    for (const auto& token : chordTokens)
-    {
-        flats += token.name.find ('b') != std::string::npos ? 1u : 0u;
-        sharps += token.name.find ('#') != std::string::npos ? 1u : 0u;
-    }
-    if (flats != 0 || sharps != 0)
-        flatSpelling = flats > sharps;
+    // The editor navigates by codepoint, so the count has to agree with it:
+    // an accent or an emoji is one character, not the two to four bytes it
+    // occupies.
+    const auto& text = renderedText();
+    std::size_t count = 0;
+    for (std::size_t offset = 0; offset < text.size();
+         offset = notepad::nextOffset (text, offset))
+        ++count;
+    return count;
 }
 
 void NotepadDocument::setSourceMode (bool showSource)
@@ -892,9 +899,33 @@ void NotepadDocument::setSourceMode (bool showSource)
 void NotepadDocument::rebuildProjection()
 {
     renderedTextCache.reset();
-    scanChordTokens();
+
+    // One traversal feeds both lanes, so the tokens the chord commands rewrite
+    // are exactly the chords the projection renders: an escaped bracket, a code
+    // span and a link destination stay literal text in both.
+    auto out = buildProjection (markdownText);
+
+    chordTokens.clear();
+    chordTokens.reserve (out.chords.size());
+    for (std::size_t i = 0; i < out.chords.size(); ++i)
+        chordTokens.push_back ({ out.chordSpans[i].first, out.chordSpans[i].second,
+                                 out.chords[i].name, out.chords[i].documentOffset });
+
+    std::size_t flats = 0;
+    std::size_t sharps = 0;
+    for (const auto& token : chordTokens)
+    {
+        flats += token.name.find ('b') != std::string::npos ? 1u : 0u;
+        sharps += token.name.find ('#') != std::string::npos ? 1u : 0u;
+    }
+    if (flats != 0 || sharps != 0)
+        flatSpelling = flats > sharps;
+
     if (sourceMode)
     {
+        // The counts describe the lyric in both modes, so they measure the
+        // rendered text this walk just produced rather than the syntax.
+        renderedTextCache = std::move (out.text);
         projectedText = markdownText;
         documentBoundaryToSource.resize (markdownText.size() + 1);
         for (std::size_t i = 0; i <= markdownText.size(); ++i)
@@ -903,32 +934,6 @@ void NotepadDocument::rebuildProjection()
         projectedLinkTargets.assign (markdownText.size(), std::string {});
         projectedChords.clear();
         return;
-    }
-
-    ProjectionBuilder out (markdownText);
-    std::size_t lineStart = 0;
-
-    while (lineStart <= markdownText.size())
-    {
-        const auto lineEnd = lineEndAt (markdownText, lineStart);
-        auto contentStart = lineStart;
-        out.blockStyle = blockStyleAtLine (markdownText, lineStart, lineEnd);
-
-        // Every block prefix is hidden wholesale; the renderer draws list
-        // markers itself (LineInfo) so the projected text carries only what
-        // the user can edit. Ordered prefixes count too.
-        if (const auto prefix = blockPrefixLength (markdownText, lineStart, lineEnd); prefix != 0)
-        {
-            contentStart += prefix;
-            out.skipTo (contentStart);
-        }
-
-        projectInline (out, contentStart, lineEnd);
-        if (lineEnd < markdownText.size())
-            out.appendSourceRange (lineEnd, lineEnd + 1);
-        if (lineEnd == markdownText.size())
-            break;
-        lineStart = lineEnd + 1;
     }
 
     projectedText = std::move (out.text);

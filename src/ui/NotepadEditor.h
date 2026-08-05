@@ -62,6 +62,7 @@ public:
     // already anchored there. Enter commits, Esc cancels, an empty name
     // removes the chord.
     void beginChordEntry();
+    void insertSectionMarker (const std::string& label);
     bool chordEntryActive() const noexcept { return chordEditing; }
     // Sharps going up, flats coming down: the spelling a chart would use for
     // the direction the singer asked for.
