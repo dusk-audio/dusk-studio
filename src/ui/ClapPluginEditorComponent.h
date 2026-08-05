@@ -5,7 +5,9 @@
 #include "../engine/clap/ClapBundle.h"
 #include "../engine/clap/ClapInstance.h"
 #include "../engine/clap/ClapEditor.h"
+#include "../engine/clap/NativeClapSlot.h"
 #include "../foundation/MessageThread.h"
+#include "NativeEditorOwner.h"
 
 namespace duskstudio
 {
@@ -34,8 +36,24 @@ public:
 
     bool isLoaded() const noexcept { return loaded; }
 
+    // Bind to the slot that owns the attached instance, so the pump tick notices
+    // it being destroyed or replaced. See NativeEditorOwner.h.
+    void bindOwner (clap::NativeClapSlot& slot) noexcept
+    { owner.stamp (slot); ownerSlot = &slot; }
+
+    bool ownerIsStale() const noexcept
+    { return ownerSlot != nullptr && owner.isStale (*ownerSlot); }
+
+    // Set once this editor tore itself down on one of its own guards - the reap
+    // needs it because abandoning unbinds the slot.
+    bool wasAbandoned() const noexcept { return abandoned; }
+
     // App shutdown: stop pumping + leak the plugin GUI (u-he hangs in gui->destroy).
     void leakForShutdown();
+
+    // The instance is gone: stop pumping, drop the plugin-side handles, and
+    // release what this host owns. See NativeEditorOwner.h.
+    void abandonInstance();
 
     void resized() override;
     void parentHierarchyChanged() override;
@@ -60,6 +78,9 @@ private:
     clap::ClapBundle   bundle;
     clap::ClapInstance instance;
     clap::ClapEditor   editor;
+    NativeEditorOwner      owner;
+    clap::NativeClapSlot*  ownerSlot = nullptr;
+    bool abandoned = false;
     bool ownsInstance = false;
     bool loaded    = false;
     bool embedded  = false;

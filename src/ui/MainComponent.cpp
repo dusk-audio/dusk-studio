@@ -1004,14 +1004,14 @@ MainComponent::~MainComponent()
     // requestQuit's onSave / onDontSave handlers above (e.g. SIGTERM,
     // window-manager-initiated kill).
     if (consoleView != nullptr)
-        consoleView->dropAllPluginEditors();
+        consoleView->dropAllPluginEditors (NativeEditorTeardown::LeakForExit);
 
     // Aux native editors (CLAP, LV2, VST3) need the same early teardown while the
     // main peer + message loop are still alive. beginSafeShutdown() does this, but
     // a quit path that skips it (SIGTERM / WM kill) must still tear them down here
     // rather than leave them for the late ~AuxView cascade.
     if (auxView != nullptr)
-        auxView->dropAllNativeEditors();
+        auxView->dropAllNativeEditors (NativeEditorTeardown::LeakForExit);
 
     // Sidecar flush for abnormal quit paths that bypass requestQuit's combined
     // session/notepad dirty prompt. Normal Save and Don't Save paths have
@@ -2877,7 +2877,7 @@ void MainComponent::beginSafeShutdown()
 
     markPhase ("phase 4: drop plugin editor windows");
     if (consoleView != nullptr)
-        consoleView->dropAllPluginEditors();
+        consoleView->dropAllPluginEditors (NativeEditorTeardown::LeakForExit);
     // JUCE AUX plugin editors tear down fine with the normal ~MainWindow -> ~AuxView
     // cascade. NATIVE editors (CLAP, LV2, VST3) do NOT: each opens its own X11
     // Display + a host window parented into the main peer, and its close (plugin-UI
@@ -2885,7 +2885,7 @@ void MainComponent::beginSafeShutdown()
     // peer is gone - CLAP/LV2 additionally leak their plugin UIs there. Tear them
     // down here - main peer + message loop alive, audio callback detached (phase 3).
     if (auxView != nullptr)
-        auxView->dropAllNativeEditors();
+        auxView->dropAllNativeEditors (NativeEditorTeardown::LeakForExit);
 
     markPhase ("phase 5: flush window operations");
     duskstudio::platform::flushWindowOperations();
@@ -3214,15 +3214,15 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     engine.getUndoManager().clearUndoHistory();
 
     // Native plugin editors (CLAP/LV2/VST3) reference the instances the
-    // reload below evicts - a suil/plugin UI whose pump timer ticks after
-    // the instance is gone crashes inside the plugin's own event loop.
-    // Tear every editor down NOW, while the instances are still alive
-    // (same order the strip loaders use). The console is rebuilt after
-    // the load anyway; aux lanes lazily re-embed on next show.
+    // reload below evicts. Tear every editor down NOW, while the instances
+    // are still alive (same order the strip loaders use). The console is
+    // rebuilt after the load anyway; aux lanes lazily re-embed on next show.
+    // AbandonInstance, not the exit path: the app runs on, so leaking each
+    // editor's private display connection would cost an X client slot per load.
     if (consoleView != nullptr)
-        consoleView->dropAllPluginEditors();
+        consoleView->dropAllPluginEditors (NativeEditorTeardown::AbandonInstance);
     if (auxView != nullptr)
-        auxView->dropAllNativeEditors();
+        auxView->dropAllNativeEditors (NativeEditorTeardown::AbandonInstance);
 
     engine.consumePluginStateAfterLoad();
     // Surface any plugin restore failures as a single summary dialog so

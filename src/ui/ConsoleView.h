@@ -104,7 +104,7 @@ public:
     // Called from MainComponent::requestQuit before systemRequestedQuit
     // so editor windows (real top-level DocumentWindows on Linux) die
     // in a quiet window rather than racing Mutter's teardown.
-    void dropAllPluginEditors();
+    void dropAllPluginEditors (NativeEditorTeardown teardown);
 
 private:
     Session& sessionRef;

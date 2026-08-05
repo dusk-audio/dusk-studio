@@ -9,6 +9,7 @@
 #include "CompHeaderButton.h"
 #include "EmbeddedModal.h"
 #include "DuskComboBox.h"
+#include "NativeEditorOwner.h"
 #include "SectionPillButton.h"
 #include "../session/Session.h"
 #include "../foundation/MessageThread.h"
@@ -358,6 +359,9 @@ private:
     std::unique_ptr<class Vst3PluginEditorComponent> vst3Editor;
     void loadNativeVst3ForChannel (const juce::File& vst3File, const juce::String& pluginId = {});
 #endif
+    // Reap any native editor that already abandoned its instance on its own pump
+    // tick. Polled from refreshPluginSlotButton; the tick is what closes the UAF.
+    void syncNativeEditorOwners();
 #if DUSKSTUDIO_HAS_NATIVE_AU
     std::unique_ptr<class AuPluginEditorComponent> auEditor;
     void loadNativeAuForChannel (const juce::String& componentId);
@@ -401,7 +405,7 @@ public:
     // editors on shutdown BEFORE the chain destructs. Tearing down a
     // plugin's native X11 window during Mutter's cascade-shutdown of
     // the main window race-crashes the compositor on Linux/Wayland.
-    void dropPluginEditor();
+    void dropPluginEditor (NativeEditorTeardown teardown);
 
 private:
 

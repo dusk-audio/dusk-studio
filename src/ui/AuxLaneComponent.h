@@ -7,6 +7,7 @@
 #include <memory>
 #include "../session/Session.h"
 #include "DuskComboBox.h"
+#include "NativeEditorOwner.h"
 #include "../engine/device/ChannelSet.h"
 
 namespace duskstudio
@@ -38,7 +39,7 @@ public:
     // foreign toolkit's destructor can hang on the way out) and every kind closes
     // its own X11 Display, which hangs if deferred to the destructor cascade. See
     // MainComponent::beginSafeShutdown phase 4.
-    void dropAllNativeEditors();
+    void dropAllNativeEditors (NativeEditorTeardown teardown);
 
     void childBoundsChanged (juce::Component* child) override;
     void mouseDown (const juce::MouseEvent&) override;
@@ -90,6 +91,9 @@ private:
     void detachLv2EditorForSlot (int slotIdx);
     void detachVst3EditorForSlot (int slotIdx);
     void detachAuEditorForSlot (int slotIdx);
+    // Reap any native editor on this slot that already abandoned its instance on
+    // its own pump tick. Polled from timerCallback and rebuildSlots.
+    void syncNativeEditorOwnersForSlot (int slotIdx);
     void hideEditorsKeepingAlive();
     void layoutEditorForSlot (int slotIdx);
     void scheduleEditorRefits (int slotIdx);

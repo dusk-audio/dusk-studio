@@ -1474,7 +1474,7 @@ ChannelStripComponent::~ChannelStripComponent()
     // Drop the cached editor BEFORE the strip's PluginSlot destructs,
     // since the editor's destructor calls editorBeingDeleted on its
     // owning AudioProcessor. dropPluginEditor() also closes the modal.
-    dropPluginEditor();
+    dropPluginEditor (NativeEditorTeardown::Destroy);
 }
 
 void ChannelStripComponent::rebuildMidiInputDropdown()
@@ -2125,10 +2125,11 @@ bool ChannelStripComponent::insertSlotOccupied() const
 
 void ChannelStripComponent::refreshPluginSlotButton()
 {
-#if DUSKSTUDIO_HAS_MULTISAMPLE
     // Before any of the per-rung early-returns below: a clone / undo replay can
-    // destroy or replace the multisample instance without going through the UI,
-    // and the editor holds a reference to it on a live timer.
+    // destroy or replace an instance without going through the UI, and the editors
+    // hold a reference to it on a live timer.
+    syncNativeEditorOwners();
+#if DUSKSTUDIO_HAS_MULTISAMPLE
     syncMultisampleEditorOwner();
 #endif
     // Native CLAP insert - name from the loaded .clap bundle. The JUCE pluginSlot is
@@ -2271,14 +2272,14 @@ void ChannelStripComponent::refreshPluginSlotButton()
     // now-being-destructed AudioProcessor. Drop it before that processor
     // disappears so we don't leave a dangling pointer in pluginEditor.
     if (name.isEmpty())
-        dropPluginEditor();
+        dropPluginEditor (NativeEditorTeardown::Destroy);
     else if (pluginEditor != nullptr
              && pluginEditorOwner != pluginSlot.getInstance())
     {
         // Plugin was Replaced - the cached editor belongs to the prior
         // instance. Drop it so the next Open Editor builds a fresh one
         // for the new instance.
-        dropPluginEditor();
+        dropPluginEditor (NativeEditorTeardown::Destroy);
     }
 }
 
@@ -2324,6 +2325,7 @@ void ChannelStripComponent::openPluginEditor()
             clapEditor = std::make_unique<ClapPluginEditorComponent>();
             juce::String err;
             if (! clapEditor->attach (*inst, err)) { clapEditor.reset(); return; }
+            clapEditor->bindOwner (engine.getChannelStrip (trackIndex).getNativeClapSlot());
         }
         pluginEditorModal.showBorrowed (*parent, *clapEditor, onClose);
         return;
@@ -2344,6 +2346,7 @@ void ChannelStripComponent::openPluginEditor()
                 lv2Editor.reset();
                 return;
             }
+            lv2Editor->bindOwner (engine.getChannelStrip (trackIndex).getNativeLv2Slot());
         }
         pluginEditorModal.showBorrowed (*parent, *lv2Editor, onClose);
         return;
@@ -2364,6 +2367,7 @@ void ChannelStripComponent::openPluginEditor()
                 vst3Editor.reset();
                 return;
             }
+            vst3Editor->bindOwner (engine.getChannelStrip (trackIndex).getNativeVst3Slot());
         }
         pluginEditorModal.showBorrowed (*parent, *vst3Editor, onClose);
         return;
@@ -2553,7 +2557,7 @@ void ChannelStripComponent::openPluginEditor()
     if (instance == nullptr) return;
 
     if (pluginEditor != nullptr && pluginEditorOwner != instance)
-        dropPluginEditor();
+        dropPluginEditor (NativeEditorTeardown::Destroy);
 
     if (pluginEditor == nullptr)
     {
@@ -2618,29 +2622,35 @@ void ChannelStripComponent::closePluginEditor()
    #endif
 }
 
-void ChannelStripComponent::dropPluginEditor()
+void ChannelStripComponent::dropPluginEditor (NativeEditorTeardown teardown)
 {
     closePluginEditor();
 
-    // Native CLAP editor: leak rather than destroy - u-he plugins hang in
-    // gui->destroy on shutdown (same class as the JUCE leak-on-shutdown). The
-    // shared instance is leaked separately by the engine's shutdown loop. Linux-only.
+    // Only an exiting process leaks the plugin GUI (u-he hangs in gui->destroy);
+    // the instance is leaked to match by the engine's shutdown loop. Linux-only.
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     if (clapEditor != nullptr)
     {
-        clapEditor->leakForShutdown();
+        if (teardown == NativeEditorTeardown::LeakForExit)          clapEditor->leakForShutdown();
+        else if (teardown == NativeEditorTeardown::AbandonInstance) clapEditor->abandonInstance();
         clapEditor.reset();
     }
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     if (lv2Editor != nullptr)
     {
-        lv2Editor->leakForShutdown();
+        if (teardown == NativeEditorTeardown::LeakForExit)          lv2Editor->leakForShutdown();
+        else if (teardown == NativeEditorTeardown::AbandonInstance) lv2Editor->abandonInstance();
         lv2Editor.reset();
     }
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-    vst3Editor.reset();   // in-process C++ teardown - no leak path needed
+    if (vst3Editor != nullptr)
+    {
+        // In-process C++ teardown - no leak path needed.
+        if (teardown == NativeEditorTeardown::AbandonInstance) vst3Editor->abandonInstance();
+        vst3Editor.reset();
+    }
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_AU
     auEditor.reset();
@@ -3026,6 +3036,26 @@ void ChannelStripComponent::loadNativeAuForChannel (const juce::String& componen
     openPluginEditor();
 }
 #endif // DUSKSTUDIO_HAS_NATIVE_AU
+
+void ChannelStripComponent::syncNativeEditorOwners()
+{
+    // Dismiss the modal FIRST - it borrows the body by raw pointer, so leaving it
+    // showing (or re-showable) past the reset is a second use-after-free.
+    [[maybe_unused]] auto dismiss = [this] (auto& body)
+    {
+        if (pluginEditorModal.getBody() == &body)
+            pluginEditorModal.close();
+    };
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    syncNativeEditorOwner (clapEditor, dismiss);
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    syncNativeEditorOwner (lv2Editor, dismiss);
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    syncNativeEditorOwner (vst3Editor, dismiss);
+#endif
+}
 
 #if DUSKSTUDIO_HAS_MULTISAMPLE
 void ChannelStripComponent::syncMultisampleEditorOwner()

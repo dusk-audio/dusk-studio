@@ -11,6 +11,7 @@ ClapEditor::~ClapEditor() { close(); }
 bool ClapEditor::open (const ::clap_plugin* p, ClapHost& host, std::string& errorOut)
 {
     if (p == nullptr) { errorOut = "null plugin"; return false; }
+    if (host.isGuiLeaked()) { errorOut = "gui was leaked on a previous close"; return false; }
 
     gui = static_cast<const clap_plugin_gui_t*> (p->get_extension (p, CLAP_EXT_GUI));
     if (gui == nullptr) { errorOut = "plugin has no gui extension"; return false; }
@@ -146,9 +147,34 @@ void ClapEditor::hide()
 
 void ClapEditor::close()
 {
-    // On shutdown, leak the plugin GUI - u-he's gui->destroy hangs. Otherwise tear
-    // it down normally.
-    if (plugin != nullptr && gui != nullptr && ! leakOnClose)
+    // Leak path: the plugin GUI stays created - u-he's gui->destroy hangs. It is
+    // still drawing into our container window over our display connection, so both
+    // are leaked with it rather than pulled out from under a live GUI. Callbacks go
+    // first: the GUI can fire request_resize from its own thread.
+    if (leakOnClose && created)
+    {
+        if (hostPtr != nullptr)
+        {
+            hostPtr->markGuiLeaked();
+            hostPtr->setCallbacks (nullptr);
+            hostPtr = nullptr;
+        }
+        // Unmap rather than destroy: the GUI keeps the window, but an abandoned
+        // editor must not leave it painting over whatever replaces this view.
+        if (platformContext != nullptr && containerHandle != 0)
+        {
+            XUnmapWindow ((Display*) platformContext, (Window) containerHandle);
+            XFlush ((Display*) platformContext);
+        }
+        platformContext = nullptr;
+        containerHandle = 0;
+        gui = nullptr;
+        plugin = nullptr;
+        created = embedded = mapped = false;
+        return;
+    }
+
+    if (plugin != nullptr && gui != nullptr)
     {
         if (gui->hide != nullptr)    gui->hide (plugin);
         if (gui->destroy != nullptr) gui->destroy (plugin);

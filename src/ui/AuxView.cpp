@@ -241,11 +241,11 @@ void AuxView::setActiveLane (int index)
     resized();
 }
 
-void AuxView::dropAllNativeEditors()
+void AuxView::dropAllNativeEditors (NativeEditorTeardown teardown)
 {
     for (auto& lane : lanes)
         if (lane != nullptr)
-            lane->dropAllNativeEditors();
+            lane->dropAllNativeEditors (teardown);
 }
 
 void AuxView::visibilityChanged()

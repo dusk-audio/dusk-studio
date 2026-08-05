@@ -47,6 +47,12 @@ public:
     void hide();
     void close();
 
+    // The instance was destroyed out from under this editor. Drops the view
+    // without releasing it and without the removed()/setFrame() teardown - the
+    // module those calls live in was unloaded with the instance. close() then
+    // only releases the host container.
+    void abandonPlugin() noexcept;
+
     // Linux geometry diagnostics. macOS uses logical component bounds directly,
     // so these return false there.
     bool getRootRelativePosition (std::uintptr_t referenceHandle,

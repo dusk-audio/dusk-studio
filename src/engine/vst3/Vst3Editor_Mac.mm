@@ -172,6 +172,14 @@ void Vst3Editor::hide()
     impl->visible = false;
 }
 
+void Vst3Editor::abandonPlugin() noexcept
+{
+    (void) impl->view.take();
+    impl->instance = nullptr;
+    impl->host     = nullptr;
+    impl->embedded = false;
+}
+
 void Vst3Editor::close()
 {
     if (impl->view)
