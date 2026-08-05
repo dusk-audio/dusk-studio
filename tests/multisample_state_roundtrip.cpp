@@ -11,6 +11,27 @@
 
 using Catch::Matchers::WithinAbs;
 
+TEST_CASE ("DuskMultisampleProcessor loads an SFZ file path with spaces", "[multisample][sfz]")
+{
+    const auto sfz = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                         .getNonexistentChildFile ("Dusk SFZ load test", ".sfz", false);
+    struct ScopedFileCleanup
+    {
+        juce::File file;
+        ~ScopedFileCleanup() { file.deleteFile(); }
+    } cleanup { sfz };
+
+    REQUIRE (sfz.replaceWithText ("<region> key=60 sample=*sine\n"));
+
+    duskstudio::DuskMultisampleProcessor processor;
+    juce::String error;
+    REQUIRE (processor.loadSfzFile (sfz, error));
+    REQUIRE (error.isEmpty());
+    REQUIRE (processor.hasLoadedFile());
+    REQUIRE (processor.getLoadedFilePath() == sfz.getFullPathName());
+    REQUIRE (processor.getNumRegions() == 1);
+}
+
 namespace
 {
 // Hand-build a valid two-preset SF2 (both presets share one instrument zone +
