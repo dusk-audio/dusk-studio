@@ -566,14 +566,16 @@ chord name and press Enter to commit it, Esc to cancel, or commit an empty name
 to remove it. Click a chord to edit it again. Chords float above their syllable
 and move with the lyric as you edit around them. The transpose buttons shift
 every chord in the notepad by a semitone, spelled with sharps going up and flats
-coming down. Notes are stored as ChordPro brackets in `notepad.md`
+coming down. Chord entry and transposition act on the rendered chart, so both
+are unavailable in the source view, where you edit the brackets directly.
+Notes are stored as ChordPro brackets in `notepad.md`
 (`[Am]like this`), so the file opens in any chord-sheet app; bracketed text that
 is not a chord name, such as `[Chorus]`, stays literal.
 
-The view switch in the header flips between the document view (eye) and the
-compatible `notepad.md` source (`</>`) for users who prefer direct editing.
-Switching views preserves the selection. The switch beside it sets the document
-page to light or dark. Click the dimmed area outside the notepad to close it.
+Two switches sit at the top right of the header. The left one sets the page to
+light or dark. The right one flips between the chart (eye) and the compatible
+`notepad.md` source (`</>`) for users who prefer direct editing; switching views
+preserves the selection. Click the dimmed area outside the notepad to close it.
 The footer distinguishes saved, unsaved, untitled, and failed-save states. Notes are saved atomically to
 `notepad.md` when the notepad closes and on every session save; they follow the
 session on Save As. A failed sidecar write remains dirty and can be retried by
