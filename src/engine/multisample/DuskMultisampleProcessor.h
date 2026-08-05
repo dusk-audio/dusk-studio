@@ -167,6 +167,19 @@ public:
     // its own default). Read on the message thread by the editor.
     float getHDCC (int cc) const noexcept;
 
+   #if defined(DUSKSTUDIO_TESTS)
+    // Observes successful sfizz_send_hdcc dispatches at block top. Kept out
+    // of production builds; tests use it to verify the coalescer without
+    // reaching through the sfizz pimpl.
+    using HdccDispatchObserverForTest = void (*) (void*, int, float);
+    void setHdccDispatchObserverForTest (void* context,
+                                         HdccDispatchObserverForTest observer) noexcept
+    {
+        hdccDispatchObserverContext = context;
+        hdccDispatchObserver = observer;
+    }
+   #endif
+
     // Control-block metadata for the stock auto-skin (non-ARIA SFZ that
     // declares `image=` + `label_cc&`). Queried via sfizz's messaging
     // API. Message-thread only.
@@ -219,6 +232,11 @@ private:
     static constexpr int kCcDirtyWords = (kNumHdcc + 63) / 64;
     std::array<std::atomic<float>, kNumHdcc>              ccCache;
     std::array<std::atomic<std::uint64_t>, kCcDirtyWords> ccDirty {};
+
+   #if defined(DUSKSTUDIO_TESTS)
+    void* hdccDispatchObserverContext { nullptr };
+    HdccDispatchObserverForTest hdccDispatchObserver { nullptr };
+   #endif
 
     // Cached "last applied" override values so processBlock only
     // hits sfizz's setter when the user has actually moved a knob.

@@ -542,8 +542,12 @@ void DuskMultisampleProcessor::processBlock (const hosting::PortBuffers& io) noe
         {
             if ((bits & 1ull) == 0) continue;
             const size_t cc = w * 64 + (size_t) b;
-            sfizz_send_hdcc (impl->synth, 0, (int) cc,
-                             ccCache[cc].load (std::memory_order_relaxed));
+            const float value = ccCache[cc].load (std::memory_order_relaxed);
+            sfizz_send_hdcc (impl->synth, 0, (int) cc, value);
+           #if defined(DUSKSTUDIO_TESTS)
+            if (hdccDispatchObserver != nullptr)
+                hdccDispatchObserver (hdccDispatchObserverContext, (int) cc, value);
+           #endif
         }
     }
 
