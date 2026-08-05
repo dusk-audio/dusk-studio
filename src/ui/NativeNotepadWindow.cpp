@@ -14,7 +14,6 @@
 #endif
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <ctime>
 #include <filesystem>
@@ -208,7 +207,6 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
             return false;
 
         document.setMarkdown (markdown);
-        markdownMode = false;
         document.setSourceMode (false);
         editor.reset ({ 0, 0 });
         editor.requestFocus();
@@ -317,15 +315,13 @@ private:
 
     notepad::Snapshot currentSnapshot() const
     {
-        return { document.markdown(), editor.selection(), markdownMode };
+        return { document.markdown(), editor.selection(), false };
     }
 
     NotepadDocument::Selection selectionForCurrentMode (const notepad::Snapshot& state) const
     {
-        if (state.selectionIsSource == markdownMode)
-            return state.selection;
-        return markdownMode ? document.sourceSelection (state.selection)
-                            : document.documentSelection (state.selection);
+        return state.selectionIsSource ? document.documentSelection (state.selection)
+                                       : state.selection;
     }
 
     void restoreHistory (bool redo)
@@ -392,23 +388,6 @@ private:
             onTextChanged (document.markdown(), documentDirty);
     }
 
-    void setMode (bool useMarkdown)
-    {
-        if (markdownMode == useMarkdown)
-            return;
-
-        const auto viewport = editor.caretViewportOffset();
-        const auto oldSelection = editor.selection();
-        const auto mapped = useMarkdown ? document.sourceSelection (oldSelection)
-                                        : document.documentSelection (oldSelection);
-        markdownMode = useMarkdown;
-        history.breakRun();
-        document.setSourceMode (useMarkdown);
-        editor.reset (mapped);
-        editor.keepCaretAtViewportOffset (viewport);
-        editor.requestFocus();
-    }
-
     void applyInline (NotepadDocument::InlineStyle inlineStyle)
     {
         editor.applyInlineStyle (inlineStyle);
@@ -417,11 +396,6 @@ private:
     void applyBlock (NotepadDocument::BlockStyle style)
     {
         editor.applyBlockStyle (style);
-    }
-
-    void insertLink (const std::string& url)
-    {
-        editor.insertLink (url);
     }
 
     bool inlineStyleActive (NotepadDocument::InlineStyle style) const
@@ -455,126 +429,6 @@ private:
         return clicked;
     }
 
-    bool linkToolbarButton()
-    {
-        const bool clicked = ImGui::Button ("##insert-link", ImVec2 (34.0f, 32.0f));
-        const auto min = ImGui::GetItemRectMin();
-        const auto max = ImGui::GetItemRectMax();
-        const auto centre = ImVec2 ((min.x + max.x) * 0.5f,
-                                    (min.y + max.y) * 0.5f);
-        const auto iconColour = ImGui::GetColorU32 (ImGuiCol_Text);
-        auto* const drawList = ImGui::GetWindowDrawList();
-
-        // Two overlapping outlined rings read as a chain link at toolbar size
-        // and avoid relying on an emoji glyph that is absent from the bundled
-        // cross-platform document font.
-        drawList->AddCircle (ImVec2 (centre.x - 4.0f, centre.y), 5.5f,
-                             iconColour, 16, 1.6f);
-        drawList->AddCircle (ImVec2 (centre.x + 4.0f, centre.y), 5.5f,
-                             iconColour, 16, 1.6f);
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip ("Link the selected text");
-        return clicked;
-    }
-
-    enum class SegmentIcon { eye, code };
-
-    // Vector icons: the bundled document font carries no symbol coverage that
-    // survives every platform's fallback, and the segments are small enough
-    // that hinted glyphs would read fuzzy next to the ribbon.
-    void drawSegmentIcon (ImDrawList& drawList, SegmentIcon icon, ImVec2 centre,
-                          ImU32 iconColour)
-    {
-        switch (icon)
-        {
-            case SegmentIcon::eye:
-            {
-                // Lens: two arcs of radius R meeting at (+-a, 0), R^2 = a^2 + d^2.
-                constexpr float a = 7.0f;
-                constexpr float d = 5.0f;
-                const auto radius = std::sqrt (a * a + d * d);
-                const auto corner = std::atan2 (d, a);
-                drawList.PathArcTo (ImVec2 (centre.x, centre.y + d), radius,
-                                    -3.14159265f + corner, -corner);
-                drawList.PathArcTo (ImVec2 (centre.x, centre.y - d), radius,
-                                    corner, 3.14159265f - corner);
-                drawList.PathStroke (iconColour, ImDrawFlags_Closed, 1.6f);
-                drawList.AddCircleFilled (centre, 2.2f, iconColour, 16);
-                break;
-            }
-            case SegmentIcon::code:
-            {
-                const auto size = ImGui::CalcTextSize ("</>");
-                drawList.AddText (ImVec2 (centre.x - size.x * 0.5f,
-                                          centre.y - size.y * 0.5f),
-                                  iconColour, "</>");
-                break;
-            }
-        }
-    }
-
-    // Two-segment icon switch: dark track, active half lifted in a lighter
-    // rounded fill. Each half is its own hit region, so keyboard activation
-    // picks a segment rather than reading the pointer, which is somewhere else
-    // entirely. Returns the clicked segment (0 left, 1 right), or -1.
-    int drawSegmentedToggle (const char* id, bool rightSelected,
-                             SegmentIcon leftIcon, SegmentIcon rightIcon,
-                             const char* leftTooltip, const char* rightTooltip)
-    {
-        constexpr float segmentWidth = 32.0f;
-        constexpr float padding = 3.0f;
-        const ImVec2 half (segmentWidth + padding, 30.0f);
-
-        ImGui::PushID (id);
-        const bool leftClicked = ImGui::InvisibleButton ("left", half);
-        const auto leftMin = ImGui::GetItemRectMin();
-        const auto leftMax = ImGui::GetItemRectMax();
-        const bool leftHovered = ImGui::IsItemHovered();
-        ImGui::SameLine (0.0f, 0.0f);
-        const bool rightClicked = ImGui::InvisibleButton ("right", half);
-        const auto rightMax = ImGui::GetItemRectMax();
-        const bool rightHovered = ImGui::IsItemHovered();
-        ImGui::PopID();
-
-        const auto min = leftMin;
-        const auto max = rightMax;
-        const auto split = leftMax.x;
-        const bool hovered = leftHovered || rightHovered;
-        auto& drawList = *ImGui::GetWindowDrawList();
-
-        const auto trackColour = ImGui::GetColorU32 (colour (notepad::kStagePalette.rule));
-        const auto pillColour = ImGui::GetColorU32 (
-            colour (hovered ? 0x494a5aff : 0x3d3e4cff));
-        drawList.AddRectFilled (min, max, trackColour, 9.0f);
-        drawList.AddRectFilled (
-            ImVec2 (rightSelected ? split : min.x + padding, min.y + padding),
-            ImVec2 (rightSelected ? max.x - padding : split, max.y - padding),
-            pillColour, 7.0f);
-
-        const auto activeColour = ImGui::GetColorU32 (colour (notepad::kStagePalette.lyric));
-        const auto restingColour = ImGui::GetColorU32 (colour (notepad::kStagePalette.muted));
-        const auto hoverColour = ImGui::GetColorU32 (colour (0xc3c4ceff));
-        const auto centreY = (min.y + max.y) * 0.5f;
-
-        const auto drawSegment = [&] (SegmentIcon icon, float centreX, bool selected,
-                                      bool pointerOver)
-        {
-            drawSegmentIcon (drawList, icon, ImVec2 (centreX, centreY),
-                             selected ? activeColour
-                                      : pointerOver ? hoverColour
-                                                    : restingColour);
-        };
-
-        drawSegment (leftIcon, (min.x + padding + split) * 0.5f, ! rightSelected, leftHovered);
-        drawSegment (rightIcon, (split + max.x - padding) * 0.5f, rightSelected, rightHovered);
-
-        if (leftHovered)
-            ImGui::SetTooltip ("%s", leftTooltip);
-        else if (rightHovered)
-            ImGui::SetTooltip ("%s", rightTooltip);
-        return leftClicked ? 0 : rightClicked ? 1 : -1;
-    }
-
     void drawRibbon (float height)
     {
         ImGui::PushStyleVar (ImGuiStyleVar_ChildRounding, 0.0f);
@@ -594,52 +448,43 @@ private:
             restoreHistory (true);
         ImGui::EndDisabled();
 
-        // Chord tools lead: they are what this editor is for. The remaining
-        // width holds every formatting action so nothing is hidden in an
-        // overflow menu.
-        ImGui::SameLine (0.0f, 14.0f);
-        if (toolbarButton ("♯", "Chord at the caret (Ctrl+K); repeat previous (Ctrl+Shift+K)",
-                           editor.chordEntryActive()))
+        // The ribbon stays centred on a songwriter's working loop: structure,
+        // chords and just enough lyric styling to distinguish the title and
+        // add emphasis. General-purpose Markdown authoring belongs in the
+        // compatible notepad.md file rather than competing with those actions.
+        ImGui::SameLine (0.0f, 16.0f);
+        if (toolbarButton ("Chord", "Add or edit a chord (Ctrl+K); repeat the previous chord (Ctrl+Shift+K)",
+                           editor.chordEntryActive(), 58.0f))
         {
             editor.beginChordEntry();
             editor.requestFocus();
         }
         ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("§", "Start a section above this line"))
+        if (toolbarButton ("Section", "Add or remove a song section", false, 64.0f))
             ImGui::OpenPopup ("section-menu");
 
         const bool canTranspose = document.hasChords();
         ImGui::BeginDisabled (! canTranspose);
         ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("−", "Transpose every chord down a semitone"))
+        if (toolbarButton ("−1", "Transpose every chord down one semitone", false, 38.0f))
             editor.transposeChords (-1);
         ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("+", "Transpose every chord up a semitone"))
+        if (toolbarButton ("+1", "Transpose every chord up one semitone", false, 38.0f))
             editor.transposeChords (1);
         ImGui::EndDisabled();
 
         const auto blockStyle = selectedBlockStyle();
-        ImGui::SameLine (0.0f, 14.0f);
-        if (toolbarButton ("¶", "Body text",
-                           blockStyle == NotepadDocument::BlockStyle::body))
+        ImGui::SameLine (0.0f, 16.0f);
+        if (toolbarButton ("Lyrics", "Use lyric or note text",
+                           blockStyle == NotepadDocument::BlockStyle::body, 54.0f))
             applyBlock (NotepadDocument::BlockStyle::body);
         ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("H1", "Heading 1",
+        if (toolbarButton ("Title", "Make this line the song title",
                            blockStyle == NotepadDocument::BlockStyle::heading1,
-                           34.0f, boldFont))
+                           48.0f, boldFont))
             applyBlock (NotepadDocument::BlockStyle::heading1);
-        ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("H2", "Heading 2",
-                           blockStyle == NotepadDocument::BlockStyle::heading2,
-                           34.0f, boldFont))
-            applyBlock (NotepadDocument::BlockStyle::heading2);
-        ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("H3", "Heading 3",
-                           blockStyle == NotepadDocument::BlockStyle::heading3,
-                           34.0f, boldFont))
-            applyBlock (NotepadDocument::BlockStyle::heading3);
 
-        ImGui::SameLine (0.0f, 14.0f);
+        ImGui::SameLine (0.0f, 16.0f);
         if (toolbarButton ("B", "Bold the selection (Ctrl+B)",
                            inlineStyleActive (NotepadDocument::InlineStyle::bold),
                            34.0f, boldFont))
@@ -648,35 +493,10 @@ private:
         if (toolbarButton ("I", "Italicise the selection (Ctrl+I)",
                            inlineStyleActive (NotepadDocument::InlineStyle::italic)))
             applyInline (NotepadDocument::InlineStyle::italic);
-        ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("</>", "Inline code",
-                           inlineStyleActive (NotepadDocument::InlineStyle::code),
-                           42.0f, monoFont))
-            applyInline (NotepadDocument::InlineStyle::code);
-
-        ImGui::SameLine (0.0f, 14.0f);
-        if (toolbarButton (">", "Quote",
-                           blockStyle == NotepadDocument::BlockStyle::quote))
-            applyBlock (NotepadDocument::BlockStyle::quote);
-        ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("•", "Bulleted list",
-                           blockStyle == NotepadDocument::BlockStyle::bullets))
-            applyBlock (NotepadDocument::BlockStyle::bullets);
-        ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("1.", "Numbered list",
-                           blockStyle == NotepadDocument::BlockStyle::numbers))
-            applyBlock (NotepadDocument::BlockStyle::numbers);
-        ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("☐", "Checklist",
-                           blockStyle == NotepadDocument::BlockStyle::tasks))
-            applyBlock (NotepadDocument::BlockStyle::tasks);
-        ImGui::SameLine (0.0f, 5.0f);
-        if (linkToolbarButton())
-            linkRequested = true;
 
         const auto spelling = document.spellingMode();
-        ImGui::SameLine (0.0f, 14.0f);
-        if (toolbarButton ("Auto##spell-auto", "Follow the song's chord spelling",
+        ImGui::SameLine (0.0f, 16.0f);
+        if (toolbarButton ("Auto##spell-auto", "Match the song's existing sharps or flats",
                            spelling == NotepadDocument::Spelling::followDocument, 46.0f))
             document.setSpelling (NotepadDocument::Spelling::followDocument);
         ImGui::SameLine (0.0f, 4.0f);
@@ -689,7 +509,6 @@ private:
             document.setSpelling (NotepadDocument::Spelling::flats);
 
         drawSectionMenu();
-        drawLinkPopup();
 
         ImGui::EndChild();
         ImGui::PopStyleColor();
@@ -701,43 +520,19 @@ private:
         if (! ImGui::BeginPopup ("section-menu"))
             return;
 
+        if (document.lineInfoAt (editor.selection().start).section)
+        {
+            if (ImGui::Selectable ("Remove current section"))
+                editor.removeSectionMarker();
+            ImGui::Separator();
+        }
+
         // Markers are plain "[Label]" lines, so a hand-typed section is the
         // same thing this writes.
         for (const auto* const label : { "Intro", "Verse", "Pre-chorus", "Chorus",
                                          "Bridge", "Solo", "Outro" })
             if (ImGui::Selectable (label))
                 editor.insertSectionMarker (label);
-        ImGui::EndPopup();
-    }
-
-    void drawLinkPopup()
-    {
-        if (linkRequested)
-        {
-            ImGui::OpenPopup ("Insert link");
-            linkRequested = false;
-        }
-        if (! ImGui::BeginPopupModal ("Insert link", nullptr,
-                                      ImGuiWindowFlags_AlwaysAutoResize))
-            return;
-
-        ImGui::TextUnformatted ("Link destination");
-        ImGui::SetNextItemWidth (360.0f);
-        if (ImGui::IsWindowAppearing())
-            ImGui::SetKeyboardFocusHere();
-        ImGui::InputTextWithHint ("##link-url", "https://", linkUrl.data(), linkUrl.size());
-        if (ImGui::Button ("Insert", ImVec2 (90.0f, 30.0f)))
-        {
-            const auto url = linkUrl[0] == '\0'
-                           ? std::string ("https://")
-                           : notepad::encodeMarkdownLinkTarget (linkUrl.data());
-            insertLink (url);
-            linkUrl.fill ('\0');
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button ("Cancel", ImVec2 (90.0f, 30.0f)))
-            ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 
@@ -749,9 +544,8 @@ private:
                            ImGuiChildFlags_AlwaysUseWindowPadding,
                            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
-        // Both views render into the same measure at the same metrics, so the
-        // toggle reads as flipping one sheet over rather than opening another
-        // document. No page card: the stage is the paper.
+        // No page card: the stage is the paper, with a readable measure centred
+        // inside the surrounding workspace.
         const auto available = ImGui::GetContentRegionAvail();
         const float editorWidth = std::min (kContentWidth, std::max (0.0f, available.x));
         ImGui::SetCursorPosX (ImGui::GetCursorPosX() + (available.x - editorWidth) * 0.5f);
@@ -816,12 +610,11 @@ private:
         ImGui::TextUnformatted ("Lyrics and session notes");
         ImGui::PopStyleColor();
 
-        ImGui::SetCursorPos (ImVec2 (width - 92.0f, 16.0f));
-        const int modeSegment = drawSegmentedToggle ("##editor-mode", markdownMode,
-                                                     SegmentIcon::eye, SegmentIcon::code,
-                                                     "Read the chart", "Edit the Markdown source");
-        if (modeSegment >= 0)
-            setMode (modeSegment == 1);
+        ImGui::SetCursorPos (ImVec2 (width - 90.0f, 16.0f));
+        if (ImGui::Button ("Done", ImVec2 (68.0f, 30.0f)))
+            close();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip ("Close the notepad; changes stay with this session");
 
         // The status bar is a line of text plus its own padding: sizing it by a
         // constant left it a few pixels short of a full line once the child
@@ -913,11 +706,8 @@ private:
     ImFont* italicFont = nullptr;
     ImFont* boldItalicFont = nullptr;
     ImFont* monoFont = nullptr;
-    std::array<char, 384> linkUrl {};
     std::optional<std::string> savedMarkdown;
     std::string savedAtLabel;
-    bool linkRequested = false;
-    bool markdownMode = false;
     bool closeRequested = false;
     bool closeWasPumped = false;
     bool hasSessionFile = false;

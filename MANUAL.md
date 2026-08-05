@@ -570,34 +570,33 @@ the preceding chord at the caret. Click a chord to edit it again. Chords float
 above their syllable and move with the lyric as you edit around them. The
 transpose buttons shift every chord in the notepad by a semitone, spelled with
 the notepad's existing accidental preference so that transposing away and back
-returns your own spelling. Chord entry and transposition both work in either
-view. Notes are stored as ChordPro brackets in `notepad.md`
+returns your own spelling. Notes are stored as ChordPro brackets in `notepad.md`
 (`[Am]like this`), so the file opens in any chord-sheet app; bracketed text that
 is not a chord name, such as `[Chorus]`, stays literal.
 
 **Sections.** The section button writes a marker such as `[Chorus]` on its own
 line above the caret. Markers are plain text, so typing one by hand is the same
-thing: any bracketed word that is not a chord name stays literal. Chart view
-shows only the section label; source view keeps its brackets visible.
+thing: any bracketed word that is not a chord name stays literal. To remove one,
+put the caret on the marker line, click the **Section** button, and choose
+**Remove current section**, or select and delete the label directly. The chart
+shows only the section label; the compatible `notepad.md` file keeps its
+brackets visible.
 
-The toolbar keeps every editing option visible: chord and section insertion,
-transposition, body text and three heading levels, bold, italic, inline code,
-quotes, the three list styles, links, and chord-spelling preference. Undo and
-redo dim when there is nothing to undo or redo. The footer shows the current
-save state, the latest save time when available, the `notepad.md` filename,
-section count, unique chord count, and the detected key when enough chords
-identify one.
+The songwriter-focused toolbar keeps chord and section insertion,
+transposition, lyric and title styles, bold, italic, undo and redo, and the
+chord-spelling preference visible. Undo and redo dim when there is nothing to
+undo or redo. The footer shows the current save state, the latest save time when
+available, the `notepad.md` filename, section count, unique chord count, and the
+detected key when enough chords identify one.
 
-A switch at the top right of the header flips between the chart (eye) and the
-compatible `notepad.md` source (`</>`) for users who prefer direct editing;
-switching views preserves the selection. Click the dimmed area outside the
-notepad to close it. The header, toolbar, and footer stay fixed; mouse-wheel
-scrolling moves only the note within its writing area. Notes are saved atomically
-to `notepad.md` when the notepad closes and on every session save; they follow
-the session on Save As. A failed
+Click **Done** or the dimmed area outside the notepad to close it. The header,
+toolbar, and footer stay fixed; mouse-wheel scrolling moves only the note within
+its writing area. Notes are saved atomically to the compatible `notepad.md` file
+when the notepad closes and on every session save; they follow the session on
+Save As. A failed
 sidecar write remains dirty and can be retried by
 saving the session again; it blocks a session switch instead of discarding the
-outgoing notes. Typing in either view never triggers transport shortcuts.
+outgoing notes. Typing in the notepad never triggers transport shortcuts.
 
 \newpage
 

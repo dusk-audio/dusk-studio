@@ -16,7 +16,6 @@ namespace
 {
 constexpr float kScrollbarWidth = 10.0f;
 constexpr float kWheelStep = 42.0f;
-constexpr char kLinkPlaceholder[] = "Link text";
 // The chord grammar refuses a token longer than this, so the draft cannot grow
 // past what a commit would accept.
 constexpr std::size_t kMaxChordDraftBytes = 16;
@@ -453,32 +452,6 @@ void NotepadEditor::applyBlockStyle (NotepadDocument::BlockStyle style)
     documentMutated();
 }
 
-void NotepadEditor::insertLink (const std::string& url)
-{
-    auto target = selection();
-    auto before = snapshot();
-
-    if (target.empty())
-    {
-        auto text = document.documentText();
-        text.insert (target.start, kLinkPlaceholder);
-        if (! document.replaceDocumentText (text))
-        {
-            reset (target);
-            return;
-        }
-        target.end = target.start + sizeof (kLinkPlaceholder) - 1;
-    }
-
-    document.wrapDocumentSelection (
-        target, "[", "](" + notepad::encodeMarkdownLinkTarget (url) + ")");
-    history.record (notepad::EditKind::structural, std::move (before), target.end);
-    setSelection (target);
-    sticky = {};
-    focusRequested = true;
-    documentMutated();
-}
-
 bool NotepadEditor::inlineStyleActive (NotepadDocument::InlineStyle style) const
 {
     if (sticky.active && selection().empty())
@@ -891,6 +864,21 @@ void NotepadEditor::insertSectionMarker (const std::string& label)
 
     const auto caretShift = label.size() + (document.isSourceMode() ? 3u : 1u);
     caret = anchor = std::min (caret + caretShift, document.documentText().size());
+    history.breakRun();
+    history.record (notepad::EditKind::structural, std::move (before), caret);
+    focusRequested = true;
+    documentMutated();
+}
+
+void NotepadEditor::removeSectionMarker()
+{
+    const auto target = selection().start;
+    const auto lineStart = notepad::lineStartOffset (document.documentText(), target);
+    auto before = snapshot();
+    if (! document.removeSectionMarker (target))
+        return;
+
+    caret = anchor = std::min (lineStart, document.documentText().size());
     history.breakRun();
     history.record (notepad::EditKind::structural, std::move (before), caret);
     focusRequested = true;

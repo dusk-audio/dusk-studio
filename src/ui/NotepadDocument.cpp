@@ -396,6 +396,21 @@ bool NotepadDocument::replaceDocumentText (const std::string& text)
     // hidden closing marker; deleting that character must stop before the
     // marker or the edit would create invalid Markdown and flatten the run.
     auto source = sourceSelection ({ prefix, oldEnd });
+
+    // A section label is projected without its brackets. Deleting the entire
+    // visible label therefore needs to include the hidden source prefix (and
+    // any block prefix on a hand-authored marker); otherwise "[Verse]" would
+    // become "[" and the projection-integrity check below would reject the
+    // edit. Keep the newline so ordinary text deletion leaves an empty line.
+    const auto insertedLength = text.size() - prefix - suffix;
+    if (! sourceMode && insertedLength == 0 && prefix < oldEnd)
+    {
+        const auto projectedLineStart = lineStartAt (projectedText, prefix);
+        const auto projectedLineEnd = lineEndAt (projectedText, prefix);
+        if (prefix == projectedLineStart && oldEnd >= projectedLineEnd
+            && lineInfoAt (prefix).section)
+            source.start = lineStartAt (markdownText, source.start);
+    }
     if (prefix == oldEnd && prefix > 0)
     {
         // At the right edge of a styled run the projected boundary sits after
@@ -809,6 +824,23 @@ bool NotepadDocument::insertSectionMarker (std::size_t documentOffset, const std
     const auto lineStart = lineStartAt (markdownText,
                                         documentBoundaryToSource[documentOffset]);
     markdownText.insert (lineStart, "[" + label + "]\n");
+    rebuildProjection();
+    return true;
+}
+
+bool NotepadDocument::removeSectionMarker (std::size_t documentOffset)
+{
+    documentOffset = std::min (documentOffset, documentBoundaryToSource.size() - 1);
+    const auto lineStart = lineStartAt (markdownText,
+                                        documentBoundaryToSource[documentOffset]);
+    const auto lineEnd = lineEndAt (markdownText, lineStart);
+    const auto contentStart = lineStart + blockPrefixLength (markdownText, lineStart,
+                                                             lineEnd);
+    if (! isSectionLine (markdownText, contentStart, lineEnd))
+        return false;
+
+    const auto eraseEnd = lineEnd < markdownText.size() ? lineEnd + 1 : lineEnd;
+    markdownText.erase (lineStart, eraseEnd - lineStart);
     rebuildProjection();
     return true;
 }

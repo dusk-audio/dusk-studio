@@ -371,6 +371,25 @@ TEST_CASE ("Section markers project as their label", "[notepad][document][sectio
     CHECK_FALSE (document.lineInfoAt (7).section);
     CHECK (document.markdown() == "[Chorus]\nline one\n");
 
+    SECTION ("deleting the projected label removes its hidden marker syntax")
+    {
+        auto edited = document.documentText();
+        edited.erase (0, std::string ("Chorus").size());
+        REQUIRE (document.replaceDocumentText (edited));
+        CHECK (document.markdown() == "\nline one\n");
+        CHECK (document.documentText() == "\nline one\n");
+        CHECK (document.sectionCount() == 0);
+    }
+
+    SECTION ("the explicit removal path removes the complete section line")
+    {
+        REQUIRE (document.removeSectionMarker (2));
+        CHECK (document.markdown() == "line one\n");
+        CHECK (document.documentText() == "line one\n");
+        CHECK (document.sectionCount() == 0);
+        CHECK_FALSE (document.removeSectionMarker (0));
+    }
+
     SECTION ("a chord line is not a section")
     {
         document.setMarkdown ("[Am]\nline\n");

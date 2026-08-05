@@ -56,13 +56,13 @@ public:
 
     void applyInlineStyle (NotepadDocument::InlineStyle style);
     void applyBlockStyle (NotepadDocument::BlockStyle style);
-    void insertLink (const std::string& url);
 
     // Opens the chord slot over the word at the caret, seeded with the chord
     // already anchored there. Enter commits, Esc cancels, an empty name
     // removes the chord.
     void beginChordEntry();
     void insertSectionMarker (const std::string& label);
+    void removeSectionMarker();
     bool chordEntryActive() const noexcept { return chordEditing; }
     bool cycleChordCandidate (int direction);
     bool acceptChordCandidate();

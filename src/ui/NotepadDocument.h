@@ -133,6 +133,9 @@ public:
     // into the source: a section marker is plain text the user can edit by
     // hand, so it must not go through the document view's escaping.
     bool insertSectionMarker (std::size_t documentOffset, const std::string& label);
+    // Removes the complete source line for the section containing the offset,
+    // including its hidden brackets and trailing newline when present.
+    bool removeSectionMarker (std::size_t documentOffset);
     bool hasChords() const noexcept { return ! chordTokens.empty(); }
 
     TextStyle styleAt (std::size_t documentOffset) const noexcept;
