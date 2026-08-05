@@ -577,7 +577,8 @@ is not a chord name, such as `[Chorus]`, stays literal.
 
 **Sections.** The section button writes a marker such as `[Chorus]` on its own
 line above the caret. Markers are plain text, so typing one by hand is the same
-thing: any bracketed word that is not a chord name stays literal.
+thing: any bracketed word that is not a chord name stays literal. Chart view
+shows only the section label; source view keeps its brackets visible.
 
 The toolbar leads with the chord tools, then heading, bold, and italic. Heading
 levels, inline code, quotes, the three list styles, and links live behind the

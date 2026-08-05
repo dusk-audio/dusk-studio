@@ -1076,13 +1076,6 @@ void NotepadEditor::render (ImVec2 frameMin, ImVec2 frameMax, float bodySize, bo
                                      selectionColour, 2.0f);
         }
 
-        // A section reads as a quiet label against an accent rule: the chart's
-        // structure should be findable without competing with the lyric.
-        if (row.lineInfo.section && row.firstRowOfLine)
-            drawList->AddRectFilled (ImVec2 (frameMin.x + 3.0f, textTop + 1.0f),
-                                     ImVec2 (frameMin.x + 6.0f, rowY + row.height - 1.0f),
-                                     chordColour, 1.0f);
-
         if (row.firstRowOfLine)
         {
             const float markerRight = originX - 9.0f;

@@ -14,7 +14,7 @@ struct Palette
     std::uint32_t lyric;   // lyric and source text
     std::uint32_t muted;   // section labels, status bar, secondary text
     std::uint32_t chord;   // chords, and nothing else in the panel
-    std::uint32_t rule;    // hairlines, section rules, focus rings
+    std::uint32_t rule;    // hairlines and focus rings
 };
 
 inline constexpr Palette kStagePalette {
