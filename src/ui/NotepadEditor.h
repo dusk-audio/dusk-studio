@@ -26,6 +26,8 @@ public:
     };
 
     NotepadEditor (NotepadDocument& documentToEdit, notepad::UndoStack& undoHistory);
+    NotepadEditor (const NotepadEditor&) = delete;
+    NotepadEditor& operator= (const NotepadEditor&) = delete;
 
     std::function<void()> onDocumentChanged;
     std::function<void (const std::string&)> onLinkActivated;

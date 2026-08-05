@@ -437,7 +437,8 @@ void NotepadEditor::insertLink (const std::string& url)
         target.end = target.start + sizeof (kLinkPlaceholder) - 1;
     }
 
-    document.wrapDocumentSelection (target, "[", "](" + url + ")");
+    document.wrapDocumentSelection (
+        target, "[", "](" + notepad::encodeMarkdownLinkTarget (url) + ")");
     history.record (notepad::EditKind::structural, std::move (before), target.end);
     setSelection (target);
     sticky = {};
@@ -702,6 +703,10 @@ void NotepadEditor::handleKeyboard (float viewportHeight, float bodySize)
         deleteForward (byWord);
     if (ImGui::IsKeyPressed (ImGuiKey_Enter) || ImGui::IsKeyPressed (ImGuiKey_KeypadEnter))
         insertNewline();
+    // Match Markdown mode's ImGuiInputTextFlags_AllowTabInput semantics.
+    if (! io.KeyCtrl && ! io.KeyAlt && ! io.KeySuper && ! shift
+        && ImGui::IsKeyPressed (ImGuiKey_Tab))
+        insertText ("\t");
 
     if (io.InputQueueCharacters.Size > 0)
     {

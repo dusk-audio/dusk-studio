@@ -189,30 +189,6 @@ NotepadDocument::BlockStyle sourceBlockStyle (const std::string& text,
     return NotepadDocument::BlockStyle::bullets;
 }
 
-// The destination is emitted inside "](...)", so a bracket or parenthesis the
-// user typed would close it early and leave raw syntax in the document.
-std::string percentEncodeUrl (const std::string& url)
-{
-    static constexpr char hexDigits[] = "0123456789ABCDEF";
-    std::string encoded;
-    encoded.reserve (url.size());
-    for (const auto ch : url)
-    {
-        const auto byte = static_cast<unsigned char> (ch);
-        if (byte <= 0x20 || byte == 0x7f || ch == '(' || ch == ')' || ch == '['
-            || ch == ']' || ch == '<' || ch == '>' || ch == '"' || ch == '\\')
-        {
-            encoded.push_back ('%');
-            encoded.push_back (hexDigits[byte >> 4]);
-            encoded.push_back (hexDigits[byte & 0x0f]);
-        }
-        else
-        {
-            encoded.push_back (ch);
-        }
-    }
-    return encoded;
-}
 } // namespace
 
 struct NativeNotepadWindow::Impl final : private dusk::Timer
@@ -774,7 +750,8 @@ private:
             if (ImGui::Button ("Insert", ImVec2 (90.0f, 30.0f)))
             {
                 const auto url = linkUrl[0] == '\0' ? std::string ("https://")
-                                                   : percentEncodeUrl (linkUrl.data());
+                                                   : notepad::encodeMarkdownLinkTarget (
+                                                         linkUrl.data());
                 insertLink (url);
                 linkUrl.fill ('\0');
                 ImGui::CloseCurrentPopup();

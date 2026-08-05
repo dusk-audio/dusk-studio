@@ -234,6 +234,29 @@ bool acceptsTextInput (bool control, bool alt, bool super) noexcept
     return ! super && (! control || alt);
 }
 
+std::string encodeMarkdownLinkTarget (const std::string& target)
+{
+    static constexpr char hexDigits[] = "0123456789ABCDEF";
+    std::string encoded;
+    encoded.reserve (target.size());
+    for (const auto ch : target)
+    {
+        const auto byte = static_cast<unsigned char> (ch);
+        if (byte <= 0x20 || byte == 0x7f || ch == '(' || ch == ')' || ch == '['
+            || ch == ']' || ch == '<' || ch == '>' || ch == '"' || ch == '\\')
+        {
+            encoded.push_back ('%');
+            encoded.push_back (hexDigits[byte >> 4]);
+            encoded.push_back (hexDigits[byte & 0x0f]);
+        }
+        else
+        {
+            encoded.push_back (ch);
+        }
+    }
+    return encoded;
+}
+
 bool markdownInlineActive (const std::string& markdown,
                            NotepadDocument::Selection selection,
                            const std::string& prefix,

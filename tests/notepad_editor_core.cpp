@@ -86,6 +86,20 @@ TEST_CASE ("Notepad editor accepts AltGr text without turning command chords int
     CHECK (notepad::acceptsTextInput (false, false, false));
 }
 
+TEST_CASE ("Notepad Markdown link targets encode parser delimiters and controls",
+           "[notepad][editor][markdown]")
+{
+    const auto encoded = notepad::encodeMarkdownLinkTarget (
+        "https://example.test/a b)\n[x]\\tail");
+    CHECK (encoded == "https://example.test/a%20b%29%0A%5Bx%5D%5Ctail");
+    CHECK (notepad::encodeMarkdownLinkTarget (encoded) == encoded);
+
+    NotepadDocument document;
+    document.setMarkdown ("[label](" + encoded + ")");
+    CHECK (document.documentText() == "label");
+    CHECK (document.linkTargetAt (0) == encoded);
+}
+
 TEST_CASE ("Notepad Markdown inline commands toggle matching wrappers",
            "[notepad][editor][markdown]")
 {
@@ -169,6 +183,18 @@ TEST_CASE ("Notepad Markdown block commands preserve source selections",
         CHECK (result.markdown.substr (result.selection.start,
                                       result.selection.end - result.selection.start)
                == "one\n- two");
+    }
+
+    SECTION ("numbered lines receive sequential markers and preserve outer text bounds")
+    {
+        const auto result = notepad::setMarkdownBlockStyle (
+            "alpha\nbeta", { 0, 10 }, Block::numbers);
+        CHECK (result.markdown == "1. alpha\n2. beta");
+        CHECK (result.selection.start == 3);
+        CHECK (result.selection.end == 16);
+        CHECK (result.markdown.substr (result.selection.start,
+                                      result.selection.end - result.selection.start)
+               == "alpha\n2. beta");
     }
 }
 

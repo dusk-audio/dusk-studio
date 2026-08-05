@@ -34,6 +34,11 @@ void appendUtf8 (std::string& text, unsigned int codepoint);
 // for editor commands.
 bool acceptsTextInput (bool control, bool alt, bool super) noexcept;
 
+// Produces a target safe for this editor's Markdown link parser. Percent
+// encoding avoids both early ')' termination and backslashes leaking into the
+// URL returned by NotepadDocument::linkTargetAt().
+std::string encodeMarkdownLinkTarget (const std::string& target);
+
 struct MarkdownTransform
 {
     std::string markdown;

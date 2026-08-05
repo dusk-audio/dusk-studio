@@ -96,6 +96,17 @@ TEST_CASE ("Notepad document edits preserve wrappers at formatting boundaries",
                                              NotepadDocument::InlineStyle::italic));
 }
 
+TEST_CASE ("Notepad document projection preserves a typed indentation tab",
+           "[notepad][document][input]")
+{
+    NotepadDocument document;
+    document.setMarkdown ("ab");
+
+    REQUIRE (document.replaceDocumentText ("a\tb"));
+    CHECK (document.markdown() == "a\tb");
+    CHECK (document.documentText() == "a\tb");
+}
+
 TEST_CASE ("Notepad inline commands split and rejoin styled runs safely",
            "[notepad][document]")
 {
