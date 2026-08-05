@@ -13,6 +13,8 @@ namespace notepad
 {
 std::size_t nextOffset (const std::string& text, std::size_t offset) noexcept;
 std::size_t previousOffset (const std::string& text, std::size_t offset) noexcept;
+// Rounds an offset down onto the start of the codepoint that contains it.
+std::size_t snapToBoundary (const std::string& text, std::size_t offset) noexcept;
 std::size_t lineStartOffset (const std::string& text, std::size_t offset) noexcept;
 std::size_t lineEndOffset (const std::string& text, std::size_t offset) noexcept;
 std::size_t wordLeft (const std::string& text, std::size_t offset) noexcept;

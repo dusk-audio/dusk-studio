@@ -59,9 +59,12 @@ void NotepadEditor::reset (NotepadDocument::Selection value)
 
 void NotepadEditor::setSelection (NotepadDocument::Selection value)
 {
-    const auto limit = document.documentText().size();
-    anchor = std::min (value.start, limit);
-    caret = std::min (value.end, limit);
+    // A restored selection can carry offsets from a different projection, so it
+    // is snapped: a caret inside a codepoint splits the sequence on the next
+    // edit and truncates a copy.
+    const auto& text = document.documentText();
+    anchor = notepad::snapToBoundary (text, value.start);
+    caret = notepad::snapToBoundary (text, value.end);
 }
 
 NotepadDocument::Selection NotepadEditor::selection() const noexcept
@@ -119,14 +122,17 @@ void NotepadEditor::ensureLayout (float width, float bodySize)
     layoutDirty = false;
 }
 
+// Every mutation path ends here, once, after all of its model operations: the
+// host caches the Markdown this hands out, so a notification that races a
+// follow-up edit (a sticky wrapper, a continued list marker) would strand it.
 void NotepadEditor::documentMutated()
 {
     layoutDirty = true;
     scrollToCaret = true;
     resetBlink();
-    const auto limit = document.documentText().size();
-    caret = std::min (caret, limit);
-    anchor = std::min (anchor, limit);
+    const auto& text = document.documentText();
+    caret = notepad::snapToBoundary (text, caret);
+    anchor = notepad::snapToBoundary (text, anchor);
     if (onDocumentChanged)
         onDocumentChanged();
 }
@@ -250,7 +256,6 @@ bool NotepadEditor::replaceRange (std::size_t start, std::size_t end, const std:
     caret = anchor = std::min (caretAfter, document.documentText().size());
     caretAtRowEnd = false;
     desiredX = -1.0f;
-    documentMutated();
     return true;
 }
 
@@ -265,6 +270,7 @@ void NotepadEditor::insertText (const std::string& value)
 
     if (sticky.active)
         applyStickyStyles ({ target.start, target.start + value.size() });
+    documentMutated();
 }
 
 void NotepadEditor::applyStickyStyles (NotepadDocument::Selection inserted)
@@ -272,7 +278,6 @@ void NotepadEditor::applyStickyStyles (NotepadDocument::Selection inserted)
     document.setDocumentInlineStyle (inserted, NotepadDocument::InlineStyle::bold, sticky.bold);
     document.setDocumentInlineStyle (inserted, NotepadDocument::InlineStyle::italic, sticky.italic);
     document.setDocumentInlineStyle (inserted, NotepadDocument::InlineStyle::code, sticky.code);
-    layoutDirty = true;
 }
 
 void NotepadEditor::insertNewline()
@@ -299,15 +304,17 @@ void NotepadEditor::insertNewline()
         return;
 
     const auto newLine = caret;
-    const auto previous = document.lineInfoAt (newLine > 1 ? newLine - 2 : 0);
+    // The line that the new break ends, not the byte before it: on a blank line
+    // that byte is the terminator of the line above, whose style is not ours.
+    const auto previous = document.lineInfoAt (notepad::lineStartOffset (text, newLine - 1));
     if (notepad::isList (previous.block))
     {
         document.setDocumentBlockStyle ({ newLine, newLine }, previous.block);
         if (previous.block == NotepadDocument::BlockStyle::numbers)
             document.renumberOrderedRunAt (newLine);
-        layoutDirty = true;
     }
     sticky = {};
+    documentMutated();
 }
 
 void NotepadEditor::deleteBackward (bool wholeWord)
@@ -315,7 +322,8 @@ void NotepadEditor::deleteBackward (bool wholeWord)
     const auto target = selection();
     if (! target.empty())
     {
-        replaceRange (target.start, target.end, {}, notepad::EditKind::deleting);
+        if (replaceRange (target.start, target.end, {}, notepad::EditKind::deleting))
+            documentMutated();
         return;
     }
     if (caret == 0)
@@ -324,7 +332,8 @@ void NotepadEditor::deleteBackward (bool wholeWord)
     const auto& text = document.documentText();
     const auto from = wholeWord ? notepad::wordLeft (text, caret)
                                 : notepad::previousOffset (text, caret);
-    replaceRange (from, caret, {}, notepad::EditKind::deleting);
+    if (replaceRange (from, caret, {}, notepad::EditKind::deleting))
+        documentMutated();
 }
 
 void NotepadEditor::deleteForward (bool wholeWord)
@@ -332,7 +341,8 @@ void NotepadEditor::deleteForward (bool wholeWord)
     const auto target = selection();
     if (! target.empty())
     {
-        replaceRange (target.start, target.end, {}, notepad::EditKind::deleting);
+        if (replaceRange (target.start, target.end, {}, notepad::EditKind::deleting))
+            documentMutated();
         return;
     }
 
@@ -342,7 +352,8 @@ void NotepadEditor::deleteForward (bool wholeWord)
 
     const auto to = wholeWord ? notepad::wordRight (text, caret)
                               : notepad::nextOffset (text, caret);
-    replaceRange (caret, to, {}, notepad::EditKind::deleting);
+    if (replaceRange (caret, to, {}, notepad::EditKind::deleting))
+        documentMutated();
 }
 
 void NotepadEditor::toggleTaskLine (std::size_t lineStart)
@@ -612,8 +623,9 @@ void NotepadEditor::handleKeyboard (float viewportHeight, float bodySize)
         if (! target.empty())
         {
             ImGui::SetClipboardText (text.substr (target.start, target.end - target.start).c_str());
-            if (ImGui::IsKeyPressed (ImGuiKey_X, false))
-                replaceRange (target.start, target.end, {}, notepad::EditKind::structural);
+            if (ImGui::IsKeyPressed (ImGuiKey_X, false)
+                && replaceRange (target.start, target.end, {}, notepad::EditKind::structural))
+                documentMutated();
         }
         return;
     }
@@ -628,7 +640,9 @@ void NotepadEditor::handleKeyboard (float viewportHeight, float bodySize)
             if (! pasted.empty())
             {
                 const auto target = selection();
-                replaceRange (target.start, target.end, pasted, notepad::EditKind::structural);
+                if (replaceRange (target.start, target.end, pasted,
+                                  notepad::EditKind::structural))
+                    documentMutated();
             }
         }
         return;

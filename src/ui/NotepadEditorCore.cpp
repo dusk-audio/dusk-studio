@@ -57,6 +57,14 @@ std::size_t previousOffset (const std::string& text, std::size_t offset) noexcep
     return offset;
 }
 
+std::size_t snapToBoundary (const std::string& text, std::size_t offset) noexcept
+{
+    offset = std::min (offset, text.size());
+    while (offset > 0 && offset < text.size() && isContinuation (text, offset))
+        --offset;
+    return offset;
+}
+
 std::size_t lineStartOffset (const std::string& text, std::size_t offset) noexcept
 {
     offset = std::min (offset, text.size());

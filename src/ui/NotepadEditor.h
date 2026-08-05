@@ -65,6 +65,8 @@ private:
                         NotepadDocument::BlockStyle block) const;
 
     void ensureLayout (float width, float bodySize);
+    // Closes a mutation: exactly one call per edit, after every model operation
+    // that edit performs.
     void documentMutated();
     notepad::Snapshot snapshot() const;
 
@@ -74,6 +76,8 @@ private:
     void selectAll();
     void keepCaretVisible (float viewportHeight, float bodySize);
 
+    // Applies the edit and records it; the caller owns the closing
+    // documentMutated() so post-edit model work joins the same notification.
     bool replaceRange (std::size_t start, std::size_t end, const std::string& insert,
                        notepad::EditKind kind);
     void insertText (const std::string& value);

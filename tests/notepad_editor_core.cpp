@@ -43,6 +43,14 @@ TEST_CASE ("Notepad editor UTF-8 caret movement steps whole codepoints",
     CHECK (notepad::previousOffset (text, 3) == 1);
     CHECK (notepad::previousOffset (text, 1) == 0);
     CHECK (notepad::previousOffset (text, 0) == 0);
+
+    // A caret restored from an older projection can land mid-sequence; snapping
+    // is what keeps the next edit from splitting the codepoint.
+    CHECK (notepad::snapToBoundary (text, 2) == 1);
+    CHECK (notepad::snapToBoundary (text, 4) == 3);
+    CHECK (notepad::snapToBoundary (text, 5) == 3);
+    CHECK (notepad::snapToBoundary (text, 6) == 6);
+    CHECK (notepad::snapToBoundary (text, 99) == text.size());
 }
 
 TEST_CASE ("Notepad editor word jumps stop at word and line boundaries",
@@ -66,6 +74,19 @@ TEST_CASE ("Notepad editor word jumps stop at word and line boundaries",
     const auto atLineEnd = notepad::wordAt (text, 10);
     CHECK (atLineEnd.start == 6);
     CHECK (atLineEnd.end == 10);
+}
+
+TEST_CASE ("Notepad editor resolves the line a new break ends",
+           "[notepad][editor]")
+{
+    // List continuation probes the line the inserted break terminates. On a
+    // blank line that is the blank line itself, not the line above it, or
+    // Enter would revive a marker the user just dismissed.
+    const std::string text = "one\n\n";
+
+    CHECK (notepad::lineStartOffset (text, 4) == 4);
+    CHECK (notepad::lineStartOffset (text, 3) == 0);
+    CHECK (notepad::lineEndOffset (text, 4) == 4);
 }
 
 TEST_CASE ("Notepad editor layout wraps body text at the content width",
@@ -152,6 +173,41 @@ TEST_CASE ("Notepad editor hit testing round-trips against caret positions",
     CHECK (notepad::offsetAtX (document, row, 1000.0f, 10.0f, measure) == row.end);
 }
 
+TEST_CASE ("Notepad editor layout walks multi-byte text by codepoint",
+           "[notepad][editor][layout]")
+{
+    NotepadDocument document;
+    document.setMarkdown ("héllo wörld – ünïcode");
+
+    const auto& text = document.documentText();
+    const auto measure = fixedAdvance (10.0f, 10.0f);
+    const auto layout = notepad::buildLayout (document, 108.0f, 10.0f, measure);
+
+    REQUIRE (layout.rows.size() > 1);
+    for (const auto& row : layout.rows)
+    {
+        // No row may start or end inside a UTF-8 sequence.
+        CHECK (notepad::snapToBoundary (text, row.start) == row.start);
+        CHECK (notepad::snapToBoundary (text, row.end) == row.end);
+    }
+
+    const auto& row = layout.rows.front();
+    for (auto offset = row.start; offset <= row.end;
+         offset = notepad::nextOffset (text, offset))
+    {
+        const auto x = notepad::offsetX (document, row, offset, 10.0f, measure);
+        CHECK (notepad::offsetAtX (document, row, x, 10.0f, measure) == offset);
+        if (offset == row.end)
+            break;
+    }
+
+    // Rejoining the rows reproduces the line, so no byte was dropped or split.
+    std::string rebuilt;
+    for (const auto& r : layout.rows)
+        rebuilt += rowText (document, r);
+    CHECK (rebuilt == text);
+}
+
 TEST_CASE ("Notepad editor rows resolve caret rows at wrap boundaries",
            "[notepad][editor][layout]")
 {
@@ -229,6 +285,21 @@ TEST_CASE ("Notepad editor undo breaks runs on caret moves and structural edits"
     history.record (notepad::EditKind::typing, { "**ab**", { 2, 2 }, false }, 3);
     CHECK (history.undoDepth() == depthAfterUndo + 1);
     CHECK_FALSE (history.canRedo());
+}
+
+TEST_CASE ("Notepad editor undo never coalesces across editing modes",
+           "[notepad][editor][undo]")
+{
+    notepad::UndoStack history;
+
+    // Document mode records projected offsets, Markdown mode source offsets.
+    // They can meet at the same number and still mean different places.
+    history.record (notepad::EditKind::typing, { "a", { 1, 1 }, false }, 2);
+    history.record (notepad::EditKind::typing, { "ab", { 2, 2 }, true }, 3);
+    CHECK (history.undoDepth() == 2);
+
+    history.record (notepad::EditKind::typing, { "abc", { 3, 3 }, true }, 4);
+    CHECK (history.undoDepth() == 2);
 }
 
 TEST_CASE ("Notepad editor undo replacing a selection is its own step",

@@ -359,11 +359,11 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
                const std::string& markdown,
                bool sessionExists, bool unsavedChanges)
     {
+        stopTimer();
+        destroyEmbeddedWindow();
         if (nativeParent == 0 || geometry.width < 2 || geometry.height < 2)
             return false;
 
-        stopTimer();
-        destroyEmbeddedWindow();
         document.setMarkdown (markdown);
         markdownMode = false;
         buffer.assign (document.markdown());
@@ -920,9 +920,13 @@ private:
             auto before = currentSnapshot();
             before.selection = selectionBefore;
             buffer.text.resize (std::strlen (buffer.text.c_str()));
+            // Deletions must not join a typing run, or a backspace burst would
+            // undo the text it was correcting along with itself.
+            const auto kind = buffer.text.size() < before.markdown.size()
+                            ? notepad::EditKind::deleting
+                            : notepad::EditKind::typing;
             document.setMarkdown (buffer.text);
-            history.record (notepad::EditKind::typing, std::move (before),
-                            buffer.selection().end);
+            history.record (kind, std::move (before), buffer.selection().end);
             notifyTextChanged();
         }
         else if (selectionBefore.start != buffer.selection().start
