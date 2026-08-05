@@ -51,7 +51,12 @@ std::unique_ptr<IMidiOutputBackend> makeOutputBackend()
 // MidiInputClient
 
 MidiInputClient::MidiInputClient()
-    : backend (makeInputBackend())
+    : MidiInputClient (makeInputBackend())
+{
+}
+
+MidiInputClient::MidiInputClient (std::unique_ptr<IMidiInputBackend> backendIn)
+    : backend (std::move (backendIn))
 {
     backend->setReceiver ([this] (const std::string& identifier,
                                   const std::uint8_t* bytes, int numBytes, double timeMs)
@@ -67,6 +72,14 @@ MidiInputClient::~MidiInputClient()
 
 void MidiInputClient::rebuild (double sampleRate)
 {
+    // Dispatch off for the whole rebuild, whoever the caller is: the MIDI thread
+    // demuxes through indexByIdentifier and collectors without synchronisation,
+    // so it must not be live while either is being rebuilt. The backend's stop()
+    // joins that side, and start() at the end re-publishes the finished bank to
+    // it.
+    const bool resumeDispatch = dispatchRunning;
+    if (resumeDispatch) detachCallback();
+
     devices.clear();
     collectors.clear();
     indexByIdentifier.clear();
@@ -88,14 +101,6 @@ void MidiInputClient::rebuild (double sampleRate)
         auto col = std::make_unique<dusk::MidiCollector> (kInputRingBytes);
         col->reset (rate, now);
 
-        // Failure usually = OS denied access (another app exclusively owns the
-        // port). Keep the slot: it stays addressable, it just never fires.
-        if (! backend->enable (d.identifier))
-            std::fprintf (stderr,
-                          "[Dusk Studio/MidiDevices] WARNING: failed to enable MIDI input \"%s\" "
-                          "(id %s). Another application may be holding it open.\n",
-                          d.name.c_str(), d.identifier.c_str());
-
         indexByIdentifier[d.identifier] = (int) collectors.size();
         devices.push_back ({ d.name, d.identifier });
         collectors.push_back (std::move (col));
@@ -111,6 +116,22 @@ void MidiInputClient::rebuild (double sampleRate)
         collectors.push_back (std::move (vkb));
     }
     virtualKeyboardIndex = (int) collectors.size() - 1;
+
+    // Enabling is the last step: a source can deliver the instant it is
+    // subscribed, and every route those bytes can land on exists by now -
+    // whichever thread the backend ends up delivering them on.
+    for (const auto& d : avail)
+    {
+        // Failure usually = OS denied access (another app exclusively owns the
+        // port). Keep the slot: it stays addressable, it just never fires.
+        if (! backend->enable (d.identifier))
+            std::fprintf (stderr,
+                          "[Dusk Studio/MidiDevices] WARNING: failed to enable MIDI input \"%s\" "
+                          "(id %s). Another application may be holding it open.\n",
+                          d.name.c_str(), d.identifier.c_str());
+    }
+
+    if (resumeDispatch) attachCallback();
 }
 
 void MidiInputClient::setDeviceChangeHandler (std::function<void()> h)
@@ -118,9 +139,9 @@ void MidiInputClient::setDeviceChangeHandler (std::function<void()> h)
     backend->setDeviceChangeHandler (std::move (h));
 }
 
-void MidiInputClient::detachCallback()  { backend->stop(); }
+void MidiInputClient::detachCallback()  { backend->stop();  dispatchRunning = false; }
 void MidiInputClient::disableAllDevices() { backend->disableAll(); }
-void MidiInputClient::attachCallback()  { backend->start(); }
+void MidiInputClient::attachCallback()  { backend->start(); dispatchRunning = true; }
 
 void MidiInputClient::resetCollectors (double sampleRate)
 {
