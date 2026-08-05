@@ -108,14 +108,23 @@ void ClapPluginEditorComponent::tryEmbed()
     // to set_parent/show into a parent that isn't viewable yet - so no pre-warm: build
     // + map when shown, exactly like the JUCE editor path. The kept-alive remap on a
     // later tab switch keeps re-opens instant.
-    if (! loaded || embedded || ! isShowing()) return;
+    // `embedding` guards re-entry. Unlike LV2, a CLAP request_resize can't reach us
+    // synchronously - it only records atomics, and onResize dispatches later from
+    // drainPendingCallbacks() inside pump(). The vector here is the timer poll below:
+    // a plugin that spins a nested message dispatch inside gui->set_parent/show lets
+    // a tick re-enter tryEmbed while the first embed is still in flight, which would
+    // build a SECOND GUI and orphan the first (the LV2 black-rectangle bug).
+    if (! loaded || embedded || embedding || ! isShowing()) return;
     auto* parent = peerNativeHandle();
     if (parent == nullptr) return;
 
     const auto area = editorBoundsInPeer();
     std::string err;
-    if (editor.embed (parent, area.getX(), area.getY(),
-                      std::max (1, area.getWidth()), std::max (1, area.getHeight()), err))
+    embedding = true;
+    const bool ok = editor.embed (parent, area.getX(), area.getY(),
+                                  std::max (1, area.getWidth()), std::max (1, area.getHeight()), err);
+    embedding = false;
+    if (ok)
     {
         embedded = true;
         // Re-sync unconditionally: a synchronous gui resize during embed can
@@ -225,6 +234,10 @@ void ClapPluginEditorComponent::timerCallback()
     // visibility. visibilityChanged() does NOT fire for ancestor (aux-tab / stage)
     // changes, so without this poll the container stays visible over whatever view
     // replaced the aux lane. reveal()/hide() are idempotent.
+    // The un-embedded poll covers the mirror case: a component created while its
+    // lane was hidden (session restore lands before the AUX tab is first shown)
+    // gets no callback when an ANCESTOR becomes visible, so the first embed must
+    // also be polled. tryEmbed no-ops until showing.
     if (embedded)
     {
         if (isShowing()) editor.reveal();
@@ -232,6 +245,10 @@ void ClapPluginEditorComponent::timerCallback()
 #if defined(__linux__)
         verifyGeometry();
 #endif
+    }
+    else
+    {
+        tryEmbed();
     }
 
     const auto now = juce::Time::getMillisecondCounter();

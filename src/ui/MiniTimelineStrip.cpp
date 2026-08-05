@@ -32,6 +32,7 @@ MiniTimelineStrip::MiniTimelineStrip (Session& s, AudioEngine& e)
 
 MiniTimelineStrip::~MiniTimelineStrip()
 {
+    stopTimer();
     engine.getUndoManager().removeChangeListener (this);
 }
 
