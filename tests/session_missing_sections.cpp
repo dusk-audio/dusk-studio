@@ -230,6 +230,54 @@ TEST_CASE ("a null member in a partial slot resolves to the model default",
     REQUIRE (s.track (0).inputSource.load() == -2);
 }
 
+// A section the file gives as a scalar reaches the restore path as the shared
+// empty object, which passes the section's presence check and then skips every
+// conditional setter inside it - the previously loaded session's routing and
+// trims survive a slot that never described them. A type that contradicts the
+// default is no more readable than an absent key, so the default section
+// replaces it.
+TEST_CASE ("a non-object where the default holds a section resets that section",
+           "[session][serializer]")
+{
+    ScopedTempDir tmp { "dusk-type-mismatch-" };
+    const auto& dir = tmp.dir;
+
+    Session s;
+    s.setSessionDirectory (dir);
+
+    {
+        auto ghostRouting = std::make_unique<HardwareInsertRouting>();
+        ghostRouting->outputChL      = 6;
+        ghostRouting->outputChR      = 7;
+        ghostRouting->inputChL       = 8;
+        ghostRouting->inputChR       = 9;
+        ghostRouting->latencySamples = 512;
+        ghostRouting->format         = 1;
+        s.track (0).hardwareInsert.routing.publish (std::move (ghostRouting));
+    }
+    s.track (0).hardwareInsert.outputGainDb.store (-6.0f);
+    s.track (0).hardwareInsert.inputGainDb .store ( 3.0f);
+    s.track (0).hardwareInsert.dryWet      .store (0.25f);
+
+    const auto target = dir.getChildFile ("session.json");
+    target.replaceWithText (R"({"version":3,"tracks":[{"hardware_insert":42}]})");
+
+    REQUIRE (SessionSerializer::load (s, target));
+
+    const HardwareInsertRouting defaults;
+    const auto routing = s.track (0).hardwareInsert.routing.current();
+    REQUIRE (routing.outputChL      == defaults.outputChL);
+    REQUIRE (routing.outputChR      == defaults.outputChR);
+    REQUIRE (routing.inputChL       == defaults.inputChL);
+    REQUIRE (routing.inputChR       == defaults.inputChR);
+    REQUIRE (routing.latencySamples == defaults.latencySamples);
+    REQUIRE (routing.format         == defaults.format);
+
+    REQUIRE_THAT (s.track (0).hardwareInsert.outputGainDb.load(), WithinAbs (0.0f, 1e-6f));
+    REQUIRE_THAT (s.track (0).hardwareInsert.inputGainDb .load(), WithinAbs (0.0f, 1e-6f));
+    REQUIRE_THAT (s.track (0).hardwareInsert.dryWet      .load(), WithinAbs (1.0f, 1e-6f));
+}
+
 // The stable identifier wins when there is one, but an unrouted track
 // serializes midi_input_id as "", so the fill hands every slot that key.
 // Keying the identifier path on presence would swallow a session carrying only

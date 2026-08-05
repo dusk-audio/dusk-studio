@@ -897,13 +897,31 @@ const nlohmann::json& objectAt (const nlohmann::json& arr, int index)
 // erased and then refilled from the default like any other absent key. Arrays
 // are values rather than maps: the file's array stands as it is, replacing the
 // default's wholesale.
+//
+// A member the default carries as an OBJECT but the file gives as something
+// else ("hardware_insert": 42) diverges from RFC 7396 the same way: the section
+// resolves to the shared empty object, every setter inside it is skipped, and
+// the live state survives just as an absent key would. The default object
+// replaces it wholesale rather than a scalar standing where a section belongs.
 void fillFromDefaults (nlohmann::json& slot, const nlohmann::json& defaults)
 {
+    static const nlohmann::json noDefault = nlohmann::json::object();
+
     for (auto it = slot.begin(); it != slot.end(); )
     {
         if (it.value().is_null()) { it = slot.erase (it); continue; }
-        if (it.value().is_object())
-            fillFromDefaults (it.value(), json::child (defaults, it.key().c_str()));
+
+        // Resolved off `defaults` directly: json::child answers the shared
+        // empty object for a missing or non-object member, which reads as
+        // "there is an object default here" for every key.
+        const auto def = defaults.find (it.key());
+        const bool defaultIsObject = def != defaults.end() && def->is_object();
+
+        if (defaultIsObject && ! it.value().is_object())
+            it.value() = *def;
+        else if (it.value().is_object())
+            fillFromDefaults (it.value(), defaultIsObject ? *def : noDefault);
+
         ++it;
     }
     for (auto it = defaults.begin(); it != defaults.end(); ++it)
