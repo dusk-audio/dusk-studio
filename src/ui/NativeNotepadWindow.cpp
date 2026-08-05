@@ -846,11 +846,12 @@ private:
         ImGui::PushStyleVar (ImGuiStyleVar_ChildRounding, 3.0f);
         ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding,
                              markdownMode ? ImVec2 (20.0f, 18.0f) : ImVec2 (58.0f, 46.0f));
+        // The page switch owns both views: Markdown keeps its own darker
+        // shade of the dark page, but a light page is the same paper in both.
         ImGui::PushStyleColor (ImGuiCol_ChildBg,
-                              markdownMode ? colour (0x181922ff)
-                                           : colour (darkDocumentPage
-                                                        ? kDarkDocumentPaperColour
-                                                        : kLightDocumentPaperColour));
+                              colour (! darkDocumentPage ? kLightDocumentPaperColour
+                                    : markdownMode       ? 0x181922ff
+                                                         : kDarkDocumentPaperColour));
         ImGui::BeginChild (markdownMode ? "markdown-source" : "document-page",
                            ImVec2 (editorWidth, available.y), true);
 
@@ -869,9 +870,13 @@ private:
 
     void drawMarkdownSource()
     {
-        ImGui::PushStyleColor (ImGuiCol_FrameBg, colour (0x181922ff));
-        ImGui::PushStyleColor (ImGuiCol_Text, colour (0xd7d9e0ff));
-        ImGui::PushStyleColor (ImGuiCol_TextSelectedBg, colour (0x70599aaa));
+        ImGui::PushStyleColor (ImGuiCol_FrameBg,
+                              colour (darkDocumentPage ? 0x181922ff
+                                                       : kLightDocumentPaperColour));
+        ImGui::PushStyleColor (ImGuiCol_Text,
+                              colour (darkDocumentPage ? 0xd7d9e0ff : 0x24242aff));
+        ImGui::PushStyleColor (ImGuiCol_TextSelectedBg,
+                              colour (darkDocumentPage ? 0x70599aaa : 0xb9c8f0cc));
         ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2 (0.0f, 0.0f));
 
         if (focusEditorNextFrame)
