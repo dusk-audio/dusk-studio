@@ -1,0 +1,933 @@
+#include "NotepadEditor.h"
+
+#include <DearImGui/imgui_internal.h>
+
+#include <algorithm>
+#include <cfloat>
+#include <cmath>
+
+namespace duskstudio
+{
+namespace
+{
+constexpr float kScrollbarWidth = 10.0f;
+constexpr float kWheelStep = 42.0f;
+constexpr char kLinkPlaceholder[] = "Link text";
+
+ImU32 colourOf (unsigned int hex)
+{
+    return ImGui::GetColorU32 (ImVec4 (((hex >> 24) & 0xff) / 255.0f,
+                                       ((hex >> 16) & 0xff) / 255.0f,
+                                       ((hex >> 8) & 0xff) / 255.0f,
+                                       (hex & 0xff) / 255.0f));
+}
+
+float scrollThumbHeight (float viewport, float content)
+{
+    return std::max (28.0f, viewport * viewport / std::max (1.0f, content));
+}
+} // namespace
+
+NotepadEditor::NotepadEditor (NotepadDocument& documentToEdit, notepad::UndoStack& undoHistory)
+    : document (documentToEdit), history (undoHistory)
+{
+    measure = [this] (std::size_t begin, std::size_t end, float fontSize,
+                      NotepadDocument::BlockStyle block)
+    {
+        return measureRange (begin, end, fontSize, block);
+    };
+}
+
+void NotepadEditor::setFonts (const Fonts& value)
+{
+    fonts = value;
+    layoutDirty = true;
+}
+
+void NotepadEditor::reset (NotepadDocument::Selection value)
+{
+    setSelection (value);
+    sticky = {};
+    desiredX = -1.0f;
+    caretAtRowEnd = false;
+    draggingSelection = false;
+    draggingScrollbar = false;
+    layoutDirty = true;
+    scrollToCaret = true;
+    resetBlink();
+}
+
+void NotepadEditor::setSelection (NotepadDocument::Selection value)
+{
+    const auto limit = document.documentText().size();
+    anchor = std::min (value.start, limit);
+    caret = std::min (value.end, limit);
+}
+
+NotepadDocument::Selection NotepadEditor::selection() const noexcept
+{
+    return { std::min (anchor, caret), std::max (anchor, caret) };
+}
+
+ImFont* NotepadEditor::fontForStyle (NotepadDocument::TextStyle style,
+                                     NotepadDocument::BlockStyle block) const noexcept
+{
+    if (style.code)
+        return fonts.mono;
+    const bool bold = style.bold || notepad::isHeading (block);
+    if (bold && style.italic)
+        return fonts.boldItalic;
+    if (bold)
+        return fonts.bold;
+    if (style.italic)
+        return fonts.italic;
+    return fonts.body;
+}
+
+float NotepadEditor::measureRange (std::size_t begin, std::size_t end, float fontSize,
+                                   NotepadDocument::BlockStyle block) const
+{
+    const auto& text = document.documentText();
+    begin = std::min (begin, text.size());
+    end = std::min (end, text.size());
+
+    float width = 0.0f;
+    while (begin < end)
+    {
+        const auto style = document.styleAt (begin);
+        auto runEnd = notepad::nextOffset (text, begin);
+        while (runEnd < end && document.styleAt (runEnd) == style)
+            runEnd = notepad::nextOffset (text, runEnd);
+        runEnd = std::min (runEnd, end);
+        if (auto* const font = fontForStyle (style, block))
+            width += font->CalcTextSizeA (fontSize, FLT_MAX, 0.0f,
+                                          text.data() + begin, text.data() + runEnd).x;
+        begin = runEnd;
+    }
+    return width;
+}
+
+void NotepadEditor::ensureLayout (float width, float bodySize)
+{
+    if (! layoutDirty && std::abs (width - layoutWidth) < 0.5f
+        && std::abs (bodySize - layoutBodySize) < 0.01f)
+        return;
+
+    layout = notepad::buildLayout (document, width, bodySize, measure);
+    layoutWidth = width;
+    layoutBodySize = bodySize;
+    layoutDirty = false;
+}
+
+void NotepadEditor::documentMutated()
+{
+    layoutDirty = true;
+    scrollToCaret = true;
+    resetBlink();
+    const auto limit = document.documentText().size();
+    caret = std::min (caret, limit);
+    anchor = std::min (anchor, limit);
+    if (onDocumentChanged)
+        onDocumentChanged();
+}
+
+notepad::Snapshot NotepadEditor::snapshot() const
+{
+    return { document.markdown(), selection(), false };
+}
+
+void NotepadEditor::resetBlink()
+{
+    if (ImGui::GetCurrentContext() != nullptr)
+        blinkStart = ImGui::GetTime();
+}
+
+void NotepadEditor::moveCaret (std::size_t offset, bool extend, bool preferRowEnd)
+{
+    caret = std::min (offset, document.documentText().size());
+    if (! extend)
+        anchor = caret;
+    caretAtRowEnd = preferRowEnd;
+    desiredX = -1.0f;
+    sticky = {};
+    scrollToCaret = true;
+    resetBlink();
+    history.breakRun();
+}
+
+void NotepadEditor::moveVertical (int direction, bool extend, float bodySize)
+{
+    ensureLayout (layoutWidth, bodySize);
+    if (layout.rows.empty())
+        return;
+
+    const auto rowIndex = layout.rowForOffset (caret, caretAtRowEnd);
+    const auto x = desiredX >= 0.0f
+                 ? desiredX
+                 : notepad::offsetX (document, layout.rows[rowIndex], caret, bodySize, measure);
+
+    if ((direction < 0 && rowIndex == 0)
+        || (direction > 0 && rowIndex + 1 == layout.rows.size()))
+    {
+        moveCaret (direction < 0 ? 0 : document.documentText().size(), extend);
+        return;
+    }
+
+    const auto targetIndex = static_cast<std::size_t> (static_cast<int> (rowIndex) + direction);
+    const auto& row = layout.rows[targetIndex];
+    const auto offset = notepad::offsetAtX (document, row, x, bodySize, measure);
+    moveCaret (offset, extend, offset == row.end && ! row.lastRowOfLine);
+    desiredX = x;
+}
+
+void NotepadEditor::movePage (int direction, bool extend, float viewportHeight, float bodySize)
+{
+    ensureLayout (layoutWidth, bodySize);
+    if (layout.rows.empty())
+        return;
+
+    const auto rowIndex = layout.rowForOffset (caret, caretAtRowEnd);
+    const auto x = desiredX >= 0.0f
+                 ? desiredX
+                 : notepad::offsetX (document, layout.rows[rowIndex], caret, bodySize, measure);
+    const auto targetY = layout.rows[rowIndex].y
+                       + static_cast<float> (direction) * std::max (40.0f, viewportHeight - 24.0f);
+    const auto& row = layout.rows[layout.rowAtY (std::max (0.0f, targetY))];
+    const auto offset = notepad::offsetAtX (document, row, x, bodySize, measure);
+    moveCaret (offset, extend, offset == row.end && ! row.lastRowOfLine);
+    desiredX = x;
+    scrollY += static_cast<float> (direction) * std::max (40.0f, viewportHeight - 24.0f);
+}
+
+void NotepadEditor::selectAll()
+{
+    anchor = 0;
+    caret = document.documentText().size();
+    caretAtRowEnd = false;
+    desiredX = -1.0f;
+    sticky = {};
+    scrollToCaret = true;
+    history.breakRun();
+}
+
+void NotepadEditor::keepCaretVisible (float viewportHeight, float bodySize)
+{
+    ensureLayout (layoutWidth, bodySize);
+    if (layout.rows.empty())
+        return;
+
+    const auto& row = layout.rows[layout.rowForOffset (caret, caretAtRowEnd)];
+    if (row.y < scrollY)
+        scrollY = row.y;
+    else if (row.y + row.height > scrollY + viewportHeight)
+        scrollY = row.y + row.height - viewportHeight;
+}
+
+bool NotepadEditor::replaceRange (std::size_t start, std::size_t end, const std::string& insert,
+                                  notepad::EditKind kind)
+{
+    if (start > end)
+        std::swap (start, end);
+
+    auto text = document.documentText();
+    start = std::min (start, text.size());
+    end = std::min (end, text.size());
+    if (start == end && insert.empty())
+        return false;
+
+    auto before = snapshot();
+    text.replace (start, end - start, insert);
+    if (! document.replaceDocumentText (text))
+    {
+        // The model refused the edit to keep the Markdown intact; the editor
+        // must fall back onto the projection it still holds.
+        reset (selection());
+        return false;
+    }
+
+    const auto caretAfter = start + insert.size();
+    history.record (kind, std::move (before), caretAfter);
+    caret = anchor = std::min (caretAfter, document.documentText().size());
+    caretAtRowEnd = false;
+    desiredX = -1.0f;
+    documentMutated();
+    return true;
+}
+
+void NotepadEditor::insertText (const std::string& value)
+{
+    if (value.empty())
+        return;
+
+    const auto target = selection();
+    if (! replaceRange (target.start, target.end, value, notepad::EditKind::typing))
+        return;
+
+    if (sticky.active)
+        applyStickyStyles ({ target.start, target.start + value.size() });
+}
+
+void NotepadEditor::applyStickyStyles (NotepadDocument::Selection inserted)
+{
+    document.setDocumentInlineStyle (inserted, NotepadDocument::InlineStyle::bold, sticky.bold);
+    document.setDocumentInlineStyle (inserted, NotepadDocument::InlineStyle::italic, sticky.italic);
+    document.setDocumentInlineStyle (inserted, NotepadDocument::InlineStyle::code, sticky.code);
+    layoutDirty = true;
+}
+
+void NotepadEditor::insertNewline()
+{
+    const auto target = selection();
+    const auto& text = document.documentText();
+    const auto info = document.lineInfoAt (target.start);
+    const bool emptyLine = notepad::lineStartOffset (text, target.start)
+                        == notepad::lineEndOffset (text, target.start);
+
+    if (target.empty() && emptyLine && notepad::isList (info.block))
+    {
+        // Enter on an empty list item leaves the list instead of stacking
+        // another marker onto a line the user did not fill in.
+        auto before = snapshot();
+        document.setDocumentBlockStyle (target, NotepadDocument::BlockStyle::body);
+        history.record (notepad::EditKind::structural, std::move (before), target.start);
+        sticky = {};
+        documentMutated();
+        return;
+    }
+
+    if (! replaceRange (target.start, target.end, "\n", notepad::EditKind::structural))
+        return;
+
+    const auto newLine = caret;
+    const auto previous = document.lineInfoAt (newLine > 1 ? newLine - 2 : 0);
+    if (notepad::isList (previous.block))
+    {
+        document.setDocumentBlockStyle ({ newLine, newLine }, previous.block);
+        if (previous.block == NotepadDocument::BlockStyle::numbers)
+            document.renumberOrderedRunAt (newLine);
+        layoutDirty = true;
+    }
+    sticky = {};
+}
+
+void NotepadEditor::deleteBackward (bool wholeWord)
+{
+    const auto target = selection();
+    if (! target.empty())
+    {
+        replaceRange (target.start, target.end, {}, notepad::EditKind::deleting);
+        return;
+    }
+    if (caret == 0)
+        return;
+
+    const auto& text = document.documentText();
+    const auto from = wholeWord ? notepad::wordLeft (text, caret)
+                                : notepad::previousOffset (text, caret);
+    replaceRange (from, caret, {}, notepad::EditKind::deleting);
+}
+
+void NotepadEditor::deleteForward (bool wholeWord)
+{
+    const auto target = selection();
+    if (! target.empty())
+    {
+        replaceRange (target.start, target.end, {}, notepad::EditKind::deleting);
+        return;
+    }
+
+    const auto& text = document.documentText();
+    if (caret >= text.size())
+        return;
+
+    const auto to = wholeWord ? notepad::wordRight (text, caret)
+                              : notepad::nextOffset (text, caret);
+    replaceRange (caret, to, {}, notepad::EditKind::deleting);
+}
+
+void NotepadEditor::toggleTaskLine (std::size_t lineStart)
+{
+    auto before = snapshot();
+    document.toggleTaskAt (lineStart);
+    history.record (notepad::EditKind::structural, std::move (before), caret);
+    documentMutated();
+}
+
+bool& NotepadEditor::stickyValue (NotepadDocument::InlineStyle style) noexcept
+{
+    switch (style)
+    {
+        case NotepadDocument::InlineStyle::italic: return sticky.italic;
+        case NotepadDocument::InlineStyle::code:   return sticky.code;
+        case NotepadDocument::InlineStyle::bold:   break;
+    }
+    return sticky.bold;
+}
+
+void NotepadEditor::toggleSticky (NotepadDocument::InlineStyle style)
+{
+    if (! sticky.active)
+    {
+        const auto current = document.styleAt (caret);
+        sticky = { true, current.bold, current.italic, current.code };
+    }
+    auto& value = stickyValue (style);
+    value = ! value;
+}
+
+void NotepadEditor::applyInlineStyle (NotepadDocument::InlineStyle style)
+{
+    const auto target = selection();
+    if (target.empty())
+    {
+        toggleSticky (style);
+        focusRequested = true;
+        return;
+    }
+
+    auto before = snapshot();
+    const bool enable = ! document.selectionHasInlineStyle (target, style);
+    document.setDocumentInlineStyle (target, style, enable);
+    history.record (notepad::EditKind::structural, std::move (before), target.end);
+    focusRequested = true;
+    documentMutated();
+}
+
+void NotepadEditor::applyBlockStyle (NotepadDocument::BlockStyle style)
+{
+    const auto target = selection();
+    if (blockStyle() == style)
+        style = NotepadDocument::BlockStyle::body;
+
+    auto before = snapshot();
+    document.setDocumentBlockStyle (target, style);
+    if (style == NotepadDocument::BlockStyle::numbers)
+        document.renumberOrderedRunAt (target.start);
+    history.record (notepad::EditKind::structural, std::move (before), target.end);
+    sticky = {};
+    focusRequested = true;
+    documentMutated();
+}
+
+void NotepadEditor::insertLink (const std::string& url)
+{
+    auto target = selection();
+    auto before = snapshot();
+
+    if (target.empty())
+    {
+        auto text = document.documentText();
+        text.insert (target.start, kLinkPlaceholder);
+        if (! document.replaceDocumentText (text))
+        {
+            reset (target);
+            return;
+        }
+        target.end = target.start + sizeof (kLinkPlaceholder) - 1;
+    }
+
+    document.wrapDocumentSelection (target, "[", "](" + url + ")");
+    history.record (notepad::EditKind::structural, std::move (before), target.end);
+    setSelection (target);
+    sticky = {};
+    focusRequested = true;
+    documentMutated();
+}
+
+bool NotepadEditor::inlineStyleActive (NotepadDocument::InlineStyle style) const
+{
+    if (sticky.active && selection().empty())
+    {
+        switch (style)
+        {
+            case NotepadDocument::InlineStyle::bold:   return sticky.bold;
+            case NotepadDocument::InlineStyle::italic: return sticky.italic;
+            case NotepadDocument::InlineStyle::code:   return sticky.code;
+        }
+    }
+    return document.selectionHasInlineStyle (selection(), style);
+}
+
+NotepadDocument::BlockStyle NotepadEditor::blockStyle() const
+{
+    return document.blockStyleForSelection (selection());
+}
+
+std::size_t NotepadEditor::hitTest (ImVec2 position, ImVec2 frameMin, float bodySize) const
+{
+    if (layout.rows.empty())
+        return 0;
+    const auto& row = layout.rows[layout.rowAtY (std::max (0.0f, position.y - frameMin.y + scrollY))];
+    return notepad::offsetAtX (document, row, position.x - frameMin.x - row.indent,
+                               bodySize, measure);
+}
+
+void NotepadEditor::handleMouse (ImVec2 frameMin, ImVec2 frameMax, bool hovered, float bodySize)
+{
+    auto& io = ImGui::GetIO();
+    const auto viewport = std::max (1.0f, frameMax.y - frameMin.y);
+    const auto maxScroll = std::max (0.0f, layout.contentHeight - viewport);
+
+    if (hovered && io.MouseWheel != 0.0f)
+        scrollY = std::clamp (scrollY - io.MouseWheel * kWheelStep, 0.0f, maxScroll);
+
+    if (draggingScrollbar || (hovered && maxScroll > 0.0f
+                              && ImGui::IsMouseClicked (ImGuiMouseButton_Left)
+                              && io.MousePos.x >= frameMax.x - kScrollbarWidth))
+    {
+        if (ImGui::IsMouseDown (ImGuiMouseButton_Left))
+        {
+            draggingScrollbar = true;
+            const auto thumb = scrollThumbHeight (viewport, layout.contentHeight);
+            const auto travel = std::max (1.0f, viewport - thumb);
+            scrollY = std::clamp ((io.MousePos.y - frameMin.y - thumb * 0.5f) / travel * maxScroll,
+                                  0.0f, maxScroll);
+        }
+        else
+        {
+            draggingScrollbar = false;
+        }
+        return;
+    }
+
+    if (layout.rows.empty())
+        return;
+
+    const auto& text = document.documentText();
+    if (hovered)
+    {
+        const auto over = hitTest (io.MousePos, frameMin, bodySize);
+        const bool onLink = over < text.size() && ! document.linkTargetAt (over).empty();
+        ImGui::SetMouseCursor (onLink ? ImGuiMouseCursor_Hand : ImGuiMouseCursor_TextInput);
+    }
+
+    if (hovered && ImGui::IsMouseClicked (ImGuiMouseButton_Left))
+    {
+        const auto clicks = io.MouseClickedCount[ImGuiMouseButton_Left];
+        const auto& row = layout.rows[layout.rowAtY (
+            std::max (0.0f, io.MousePos.y - frameMin.y + scrollY))];
+
+        if (clicks == 1 && row.firstRowOfLine
+            && row.block == NotepadDocument::BlockStyle::tasks
+            && io.MousePos.x >= frameMin.x && io.MousePos.x <= frameMin.x + row.indent - 4.0f)
+        {
+            toggleTaskLine (row.lineStart);
+            return;
+        }
+
+        const auto offset = hitTest (io.MousePos, frameMin, bodySize);
+        if (clicks == 1 && (io.KeyCtrl || io.KeySuper) && offset < text.size())
+        {
+            const auto target = document.linkTargetAt (offset);
+            if (! target.empty())
+            {
+                if (onLinkActivated)
+                    onLinkActivated (target);
+                return;
+            }
+        }
+
+        if (clicks >= 3)
+        {
+            anchor = row.lineStart;
+            moveCaret (row.lineEnd, true, true);
+        }
+        else if (clicks == 2)
+        {
+            const auto word = notepad::wordAt (text, offset);
+            anchor = word.start;
+            moveCaret (word.end, true);
+        }
+        else if (io.KeyShift)
+        {
+            moveCaret (offset, true, offset == row.end && ! row.lastRowOfLine);
+            draggingSelection = true;
+        }
+        else
+        {
+            moveCaret (offset, false, offset == row.end && ! row.lastRowOfLine);
+            draggingSelection = true;
+        }
+    }
+    else if (draggingSelection && ImGui::IsMouseDown (ImGuiMouseButton_Left))
+    {
+        const auto offset = hitTest (io.MousePos, frameMin, bodySize);
+        if (offset != caret)
+            moveCaret (offset, true);
+
+        if (io.MousePos.y < frameMin.y)
+            scrollY = std::max (0.0f, scrollY - kWheelStep * 0.5f);
+        else if (io.MousePos.y > frameMax.y)
+            scrollY = std::min (maxScroll, scrollY + kWheelStep * 0.5f);
+    }
+
+    if (ImGui::IsMouseReleased (ImGuiMouseButton_Left))
+        draggingSelection = false;
+}
+
+void NotepadEditor::handleKeyboard (float viewportHeight, float bodySize)
+{
+    auto& io = ImGui::GetIO();
+    const auto& text = document.documentText();
+    const bool command = io.KeyCtrl || io.KeySuper;
+    const bool shift = io.KeyShift;
+    const bool byWord = io.KeyCtrl || io.KeyAlt;
+
+    if (command && ImGui::IsKeyPressed (ImGuiKey_Z, false))
+    {
+        if (shift)
+        {
+            if (onRedoRequested) onRedoRequested();
+        }
+        else if (onUndoRequested)
+        {
+            onUndoRequested();
+        }
+        return;
+    }
+    if (command && ImGui::IsKeyPressed (ImGuiKey_Y, false))
+    {
+        if (onRedoRequested)
+            onRedoRequested();
+        return;
+    }
+    if (command && ImGui::IsKeyPressed (ImGuiKey_A, false))
+    {
+        selectAll();
+        return;
+    }
+    if (command && ImGui::IsKeyPressed (ImGuiKey_B, false))
+    {
+        applyInlineStyle (NotepadDocument::InlineStyle::bold);
+        return;
+    }
+    if (command && ImGui::IsKeyPressed (ImGuiKey_I, false))
+    {
+        applyInlineStyle (NotepadDocument::InlineStyle::italic);
+        return;
+    }
+    if (command && (ImGui::IsKeyPressed (ImGuiKey_C, false) || ImGui::IsKeyPressed (ImGuiKey_X, false)))
+    {
+        const auto target = selection();
+        if (! target.empty())
+        {
+            ImGui::SetClipboardText (text.substr (target.start, target.end - target.start).c_str());
+            if (ImGui::IsKeyPressed (ImGuiKey_X, false))
+                replaceRange (target.start, target.end, {}, notepad::EditKind::structural);
+        }
+        return;
+    }
+    if (command && ImGui::IsKeyPressed (ImGuiKey_V, false))
+    {
+        if (const auto* const clipboard = ImGui::GetClipboardText())
+        {
+            std::string pasted;
+            for (const auto* character = clipboard; *character != '\0'; ++character)
+                if (*character != '\r')
+                    pasted.push_back (*character);
+            if (! pasted.empty())
+            {
+                const auto target = selection();
+                replaceRange (target.start, target.end, pasted, notepad::EditKind::structural);
+            }
+        }
+        return;
+    }
+
+    if (ImGui::IsKeyPressed (ImGuiKey_LeftArrow))
+    {
+        const auto target = selection();
+        if (! shift && ! target.empty() && ! byWord)
+            moveCaret (target.start, false);
+        else
+            moveCaret (byWord ? notepad::wordLeft (text, caret)
+                              : notepad::previousOffset (text, caret), shift);
+    }
+    else if (ImGui::IsKeyPressed (ImGuiKey_RightArrow))
+    {
+        const auto target = selection();
+        if (! shift && ! target.empty() && ! byWord)
+            moveCaret (target.end, false);
+        else
+            moveCaret (byWord ? notepad::wordRight (text, caret)
+                              : notepad::nextOffset (text, caret), shift);
+    }
+    else if (ImGui::IsKeyPressed (ImGuiKey_UpArrow))
+    {
+        moveVertical (-1, shift, bodySize);
+    }
+    else if (ImGui::IsKeyPressed (ImGuiKey_DownArrow))
+    {
+        moveVertical (1, shift, bodySize);
+    }
+    else if (ImGui::IsKeyPressed (ImGuiKey_PageUp))
+    {
+        movePage (-1, shift, viewportHeight, bodySize);
+    }
+    else if (ImGui::IsKeyPressed (ImGuiKey_PageDown))
+    {
+        movePage (1, shift, viewportHeight, bodySize);
+    }
+    else if (ImGui::IsKeyPressed (ImGuiKey_Home))
+    {
+        ensureLayout (layoutWidth, bodySize);
+        const auto& row = layout.rows[layout.rowForOffset (caret, caretAtRowEnd)];
+        moveCaret (command ? 0 : row.start, shift);
+    }
+    else if (ImGui::IsKeyPressed (ImGuiKey_End))
+    {
+        ensureLayout (layoutWidth, bodySize);
+        const auto& row = layout.rows[layout.rowForOffset (caret, caretAtRowEnd)];
+        moveCaret (command ? text.size() : row.end, shift, true);
+    }
+
+    if (ImGui::IsKeyPressed (ImGuiKey_Backspace))
+        deleteBackward (byWord);
+    if (ImGui::IsKeyPressed (ImGuiKey_Delete))
+        deleteForward (byWord);
+    if (ImGui::IsKeyPressed (ImGuiKey_Enter) || ImGui::IsKeyPressed (ImGuiKey_KeypadEnter))
+        insertNewline();
+
+    if (io.InputQueueCharacters.Size > 0)
+    {
+        std::string typed;
+        if (! command)
+        {
+            for (int i = 0; i < io.InputQueueCharacters.Size; ++i)
+            {
+                const auto character = static_cast<unsigned int> (io.InputQueueCharacters[i]);
+                if (character < 0x20u || character == 0x7fu)
+                    continue;
+                notepad::appendUtf8 (typed, character);
+            }
+        }
+        io.InputQueueCharacters.resize (0);
+        insertText (typed);
+    }
+}
+
+void NotepadEditor::render (ImVec2 frameMin, ImVec2 frameMax, float bodySize, bool active) const
+{
+    auto* const drawList = ImGui::GetWindowDrawList();
+    const auto& text = document.documentText();
+    const auto target = selection();
+
+    const auto textColour = colourOf (darkPage ? 0xe7e8edff : 0x24242aff);
+    const auto mutedColour = colourOf (darkPage ? 0xa9abb5ff : 0x67656dff);
+    const auto linkColour = colourOf (darkPage ? 0x8eb4ffff : 0x315fbdff);
+    const auto codeColour = colourOf (darkPage ? 0xd5a4f0ff : 0x5e367cff);
+    const auto selectionColour = colourOf (darkPage ? 0x516aa6cc : 0xb9c8f0cc);
+    const auto codeBackground = colourOf (darkPage ? 0x34313fff : 0xebe6f1ff);
+    const auto accentColour = colourOf (darkPage ? 0xb28bd4ff : 0x8061a4ff);
+
+    const bool caretVisible = active
+        && std::fmod (ImGui::GetTime() - blinkStart, 1.06) < 0.56;
+    const auto caretRow = layout.rowForOffset (caret, caretAtRowEnd);
+
+    drawList->PushClipRect (frameMin, frameMax, true);
+    for (std::size_t rowIndex = 0; rowIndex < layout.rows.size(); ++rowIndex)
+    {
+        const auto& row = layout.rows[rowIndex];
+        const float rowY = frameMin.y + row.y - scrollY;
+        if (rowY + row.height < frameMin.y || rowY > frameMax.y)
+            continue;
+
+        const auto fontSize = notepad::blockFontSize (row.block, bodySize);
+        const float textY = rowY + std::max (0.0f, (row.height - fontSize) * 0.38f);
+        const float originX = frameMin.x + row.indent;
+
+        const auto selectedStart = std::max (target.start, row.start);
+        const auto selectedEnd = std::min (target.end, row.end);
+        // A selection that runs past a hard line break also covers the newline,
+        // which has no glyph - show it as a stub past the last character.
+        const bool newlineSelected = row.lastRowOfLine && target.start <= row.end
+                                  && target.end > row.end;
+        if (selectedStart < selectedEnd || newlineSelected)
+        {
+            const auto x1 = originX + notepad::offsetX (document, row, selectedStart,
+                                                        bodySize, measure);
+            const auto x2 = originX + notepad::offsetX (document, row, selectedEnd,
+                                                        bodySize, measure)
+                          + (newlineSelected ? 6.0f : 0.0f);
+            drawList->AddRectFilled (ImVec2 (x1, rowY + 1.0f),
+                                     ImVec2 (std::max (x1 + 2.0f, x2), rowY + row.height - 1.0f),
+                                     selectionColour, 2.0f);
+        }
+
+        if (row.firstRowOfLine)
+        {
+            const float markerRight = originX - 9.0f;
+            const float markerY = rowY + row.height * 0.53f;
+            if (row.block == NotepadDocument::BlockStyle::quote)
+                drawList->AddRectFilled (ImVec2 (frameMin.x + 3.0f, rowY + 1.0f),
+                                         ImVec2 (frameMin.x + 6.0f, rowY + row.height - 1.0f),
+                                         accentColour, 1.0f);
+            else if (row.block == NotepadDocument::BlockStyle::bullets)
+                drawList->AddCircleFilled (ImVec2 (markerRight - 4.0f, markerY), 3.0f, textColour);
+            else if (row.block == NotepadDocument::BlockStyle::numbers && fonts.body != nullptr)
+            {
+                const auto marker = std::to_string (row.lineInfo.orderedNumber) + ".";
+                const auto width = fonts.body->CalcTextSizeA (bodySize, FLT_MAX, 0.0f,
+                                                              marker.c_str()).x;
+                drawList->AddText (fonts.body, bodySize,
+                                   ImVec2 (markerRight - width, textY), mutedColour,
+                                   marker.c_str());
+            }
+            else if (row.block == NotepadDocument::BlockStyle::tasks)
+            {
+                const ImVec2 boxMin (markerRight - 14.0f, markerY - 7.0f);
+                const ImVec2 boxMax (markerRight, markerY + 7.0f);
+                drawList->AddRect (boxMin, boxMax, mutedColour, 2.0f, 0, 1.5f);
+                if (row.lineInfo.taskChecked)
+                {
+                    drawList->AddLine (ImVec2 (boxMin.x + 3.0f, markerY),
+                                       ImVec2 (boxMin.x + 6.0f, boxMax.y - 3.0f),
+                                       accentColour, 2.0f);
+                    drawList->AddLine (ImVec2 (boxMin.x + 6.0f, boxMax.y - 3.0f),
+                                       ImVec2 (boxMax.x - 2.0f, boxMin.y + 3.0f),
+                                       accentColour, 2.0f);
+                }
+            }
+        }
+
+        float x = originX;
+        for (auto runStart = row.start; runStart < row.end;)
+        {
+            const auto style = document.styleAt (runStart);
+            auto runEnd = notepad::nextOffset (text, runStart);
+            while (runEnd < row.end && document.styleAt (runEnd) == style)
+                runEnd = notepad::nextOffset (text, runEnd);
+            runEnd = std::min (runEnd, row.end);
+
+            auto* const font = fontForStyle (style, row.block);
+            const auto runWidth = measureRange (runStart, runEnd, fontSize, row.block);
+            if (style.code)
+                drawList->AddRectFilled (ImVec2 (x - 2.0f, rowY + 2.0f),
+                                         ImVec2 (x + runWidth + 2.0f, rowY + row.height - 2.0f),
+                                         codeBackground, 2.0f);
+            if (font != nullptr)
+                drawList->AddText (font, fontSize, ImVec2 (x, textY),
+                                   style.link ? linkColour : style.code ? codeColour : textColour,
+                                   text.data() + runStart, text.data() + runEnd);
+            if (style.link)
+                drawList->AddLine (ImVec2 (x, textY + fontSize + 1.0f),
+                                   ImVec2 (x + runWidth, textY + fontSize + 1.0f),
+                                   linkColour, 1.0f);
+            x += runWidth;
+            runStart = runEnd;
+        }
+
+        if (caretVisible && rowIndex == caretRow)
+        {
+            const auto caretX = originX + notepad::offsetX (document, row, caret, bodySize, measure);
+            drawList->AddLine (ImVec2 (caretX, rowY + 2.0f),
+                               ImVec2 (caretX, rowY + row.height - 2.0f), textColour, 1.4f);
+        }
+    }
+
+    const auto viewport = frameMax.y - frameMin.y;
+    if (layout.contentHeight > viewport)
+    {
+        const auto thumb = scrollThumbHeight (viewport, layout.contentHeight);
+        const auto travel = viewport - thumb;
+        const auto thumbY = frameMin.y + travel * scrollY
+                          / std::max (1.0f, layout.contentHeight - viewport);
+        drawList->AddRectFilled (ImVec2 (frameMax.x - 4.0f, thumbY),
+                                 ImVec2 (frameMax.x - 1.0f, thumbY + thumb),
+                                 colourOf (0xaaa7b0aa), 2.0f);
+    }
+    drawList->PopClipRect();
+}
+
+void NotepadEditor::draw (float bodySize)
+{
+    auto& g = *ImGui::GetCurrentContext();
+    auto* const host = ImGui::GetCurrentWindow();
+    if (host->SkipItems)
+        return;
+
+    const auto origin = ImGui::GetCursorScreenPos();
+    const auto available = ImGui::GetContentRegionAvail();
+    const ImVec2 size (std::max (32.0f, available.x), std::max (32.0f, available.y));
+    const ImVec2 frameMin = origin;
+    const ImVec2 frameMax (origin.x + size.x, origin.y + size.y);
+    const ImRect frame (frameMin, frameMax);
+
+    const auto id = host->GetID ("##notepad-document");
+    ImGui::ItemSize (size);
+    if (! ImGui::ItemAdd (frame, id, &frame, ImGuiItemFlags_Inputable))
+        return;
+
+    const bool hovered = ImGui::IsItemHovered();
+    const bool clicked = ImGui::IsMouseClicked (ImGuiMouseButton_Left);
+
+    // A modal (the link dialog) owns the keyboard while it is up; hand the
+    // focus back only once it has closed and asked for it.
+    if (ImGui::GetTopMostPopupModal() != nullptr)
+    {
+        if (g.ActiveId == id)
+            ImGui::ClearActiveID();
+        ensureLayout (size.x, bodySize);
+        scrollY = std::clamp (scrollY, 0.0f, std::max (0.0f, layout.contentHeight - size.y));
+        render (frameMin, frameMax, bodySize, false);
+        return;
+    }
+
+    // The page is the only text surface in the window, so it takes the caret
+    // back once a toolbar button has finished with the active id - otherwise
+    // every format button would cost the user a click to resume typing.
+    const bool reclaim = keepFocus && g.ActiveId == 0 && ! clicked;
+
+    if (focusRequested || reclaim || (hovered && clicked))
+    {
+        if (g.ActiveId != id)
+        {
+            ImGui::SetActiveID (id, host);
+            ImGui::SetFocusID (id, host);
+            ImGui::FocusWindow (host);
+        }
+        focusRequested = false;
+        keepFocus = true;
+    }
+    else if (g.ActiveId == id && clicked && ! hovered)
+    {
+        ImGui::ClearActiveID();
+        keepFocus = false;
+    }
+
+    const bool active = g.ActiveId == id;
+    if (active)
+    {
+        // Same ownership set as ImGui's own multiline text input: without it
+        // keyboard navigation eats the arrows and Tab moves focus away.
+        static const ImGuiKey ownedKeys[] = {
+            ImGuiKey_LeftArrow, ImGuiKey_RightArrow, ImGuiKey_UpArrow, ImGuiKey_DownArrow,
+            ImGuiKey_Home, ImGuiKey_End, ImGuiKey_PageUp, ImGuiKey_PageDown,
+            ImGuiKey_Enter, ImGuiKey_KeypadEnter, ImGuiKey_Delete, ImGuiKey_Backspace,
+            ImGuiKey_Tab
+        };
+        for (const auto key : ownedKeys)
+            ImGui::SetKeyOwner (key, id);
+        g.ActiveIdUsingNavDirMask |= (1u << ImGuiDir_Left) | (1u << ImGuiDir_Right)
+                                   | (1u << ImGuiDir_Up) | (1u << ImGuiDir_Down);
+        g.WantTextInputNextFrame = 1;
+    }
+    // The page scrolls itself, so the wheel must not also scroll the child.
+    ImGui::SetItemKeyOwner (ImGuiKey_MouseWheelY, ImGuiInputFlags_None);
+
+    ensureLayout (size.x, bodySize);
+    handleMouse (frameMin, frameMax, hovered, bodySize);
+    if (active)
+        handleKeyboard (size.y, bodySize);
+    ensureLayout (size.x, bodySize);
+
+    if (scrollToCaret)
+    {
+        keepCaretVisible (size.y, bodySize);
+        scrollToCaret = false;
+    }
+    scrollY = std::clamp (scrollY, 0.0f, std::max (0.0f, layout.contentHeight - size.y));
+
+    render (frameMin, frameMax, bodySize, active);
+}
+} // namespace duskstudio

@@ -31,7 +31,10 @@ public:
 
     void setCallbacks (TextChangedCallback textChanged, ClosedCallback closed,
                        LinkOpenedCallback linkOpened = {});
-    void open (std::uintptr_t nativeParent, EmbeddedGeometry geometry,
+    // False when the embedded native child could not be created - no usable GL
+    // context, or a display backend that cannot embed a foreign surface. The
+    // window owns nothing afterwards, so isOpen() also reads false.
+    bool open (std::uintptr_t nativeParent, EmbeddedGeometry geometry,
                const std::string& markdown,
                bool hasSessionFile, bool hasUnsavedChanges);
     void setEmbeddedGeometry (EmbeddedGeometry geometry);

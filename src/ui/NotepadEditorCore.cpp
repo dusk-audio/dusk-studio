@@ -1,0 +1,419 @@
+#include "NotepadEditorCore.h"
+
+#include <algorithm>
+#include <cmath>
+
+namespace duskstudio
+{
+namespace notepad
+{
+namespace
+{
+bool isContinuation (const std::string& text, std::size_t offset) noexcept
+{
+    return (static_cast<unsigned char> (text[offset]) & 0xc0u) == 0x80u;
+}
+
+enum class CharClass
+{
+    word,
+    space,
+    punctuation,
+    newline
+};
+
+CharClass classify (const std::string& text, std::size_t offset) noexcept
+{
+    const auto byte = static_cast<unsigned char> (text[offset]);
+    if (byte == '\n' || byte == '\r')
+        return CharClass::newline;
+    if (byte == ' ' || byte == '\t')
+        return CharClass::space;
+    if (byte >= 0x80 || byte == '_' || (byte >= '0' && byte <= '9')
+        || (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z'))
+        return CharClass::word;
+    return CharClass::punctuation;
+}
+} // namespace
+
+std::size_t nextOffset (const std::string& text, std::size_t offset) noexcept
+{
+    if (offset >= text.size())
+        return text.size();
+    ++offset;
+    while (offset < text.size() && isContinuation (text, offset))
+        ++offset;
+    return offset;
+}
+
+std::size_t previousOffset (const std::string& text, std::size_t offset) noexcept
+{
+    offset = std::min (offset, text.size());
+    if (offset == 0)
+        return 0;
+    --offset;
+    while (offset > 0 && isContinuation (text, offset))
+        --offset;
+    return offset;
+}
+
+std::size_t lineStartOffset (const std::string& text, std::size_t offset) noexcept
+{
+    offset = std::min (offset, text.size());
+    const auto found = offset == 0 ? std::string::npos : text.rfind ('\n', offset - 1);
+    return found == std::string::npos ? 0 : found + 1;
+}
+
+std::size_t lineEndOffset (const std::string& text, std::size_t offset) noexcept
+{
+    const auto found = text.find ('\n', std::min (offset, text.size()));
+    return found == std::string::npos ? text.size() : found;
+}
+
+std::size_t wordLeft (const std::string& text, std::size_t offset) noexcept
+{
+    offset = std::min (offset, text.size());
+    while (offset > 0)
+    {
+        const auto previous = previousOffset (text, offset);
+        const auto category = classify (text, previous);
+        if (category != CharClass::space && category != CharClass::newline)
+            break;
+        offset = previous;
+        if (category == CharClass::newline)
+            return offset;
+    }
+    if (offset == 0)
+        return 0;
+    const auto category = classify (text, previousOffset (text, offset));
+    while (offset > 0)
+    {
+        const auto previous = previousOffset (text, offset);
+        if (classify (text, previous) != category)
+            break;
+        offset = previous;
+    }
+    return offset;
+}
+
+std::size_t wordRight (const std::string& text, std::size_t offset) noexcept
+{
+    offset = std::min (offset, text.size());
+    if (offset < text.size() && classify (text, offset) == CharClass::newline)
+        return nextOffset (text, offset);
+
+    const auto category = offset < text.size() ? classify (text, offset) : CharClass::space;
+    while (offset < text.size() && classify (text, offset) == category
+           && category != CharClass::space)
+        offset = nextOffset (text, offset);
+    while (offset < text.size() && classify (text, offset) == CharClass::space)
+        offset = nextOffset (text, offset);
+    return offset;
+}
+
+Range wordAt (const std::string& text, std::size_t offset) noexcept
+{
+    offset = std::min (offset, text.size());
+    if (text.empty())
+        return { 0, 0 };
+
+    auto probe = offset;
+    if (probe == text.size() || classify (text, probe) == CharClass::newline)
+    {
+        if (probe == 0)
+            return { probe, probe };
+        const auto previous = previousOffset (text, probe);
+        if (classify (text, previous) == CharClass::newline)
+            return { probe, probe };
+        probe = previous;
+    }
+
+    const auto category = classify (text, probe);
+    auto start = probe;
+    while (start > 0)
+    {
+        const auto previous = previousOffset (text, start);
+        if (classify (text, previous) != category)
+            break;
+        start = previous;
+    }
+    auto end = probe;
+    while (end < text.size() && classify (text, end) == category)
+        end = nextOffset (text, end);
+    return { start, end };
+}
+
+void appendUtf8 (std::string& text, unsigned int codepoint)
+{
+    if (codepoint < 0x80u)
+    {
+        text.push_back (static_cast<char> (codepoint));
+    }
+    else if (codepoint < 0x800u)
+    {
+        text.push_back (static_cast<char> (0xc0u | (codepoint >> 6)));
+        text.push_back (static_cast<char> (0x80u | (codepoint & 0x3fu)));
+    }
+    else if (codepoint < 0x10000u)
+    {
+        text.push_back (static_cast<char> (0xe0u | (codepoint >> 12)));
+        text.push_back (static_cast<char> (0x80u | ((codepoint >> 6) & 0x3fu)));
+        text.push_back (static_cast<char> (0x80u | (codepoint & 0x3fu)));
+    }
+    else if (codepoint <= 0x10ffffu)
+    {
+        text.push_back (static_cast<char> (0xf0u | (codepoint >> 18)));
+        text.push_back (static_cast<char> (0x80u | ((codepoint >> 12) & 0x3fu)));
+        text.push_back (static_cast<char> (0x80u | ((codepoint >> 6) & 0x3fu)));
+        text.push_back (static_cast<char> (0x80u | (codepoint & 0x3fu)));
+    }
+}
+
+bool isHeading (NotepadDocument::BlockStyle block) noexcept
+{
+    return block == NotepadDocument::BlockStyle::heading1
+        || block == NotepadDocument::BlockStyle::heading2
+        || block == NotepadDocument::BlockStyle::heading3;
+}
+
+bool isList (NotepadDocument::BlockStyle block) noexcept
+{
+    return block == NotepadDocument::BlockStyle::bullets
+        || block == NotepadDocument::BlockStyle::numbers
+        || block == NotepadDocument::BlockStyle::tasks;
+}
+
+float blockFontSize (NotepadDocument::BlockStyle block, float bodySize) noexcept
+{
+    switch (block)
+    {
+        case NotepadDocument::BlockStyle::heading1: return bodySize + 11.0f;
+        case NotepadDocument::BlockStyle::heading2: return bodySize + 7.0f;
+        case NotepadDocument::BlockStyle::heading3: return bodySize + 3.5f;
+        default: return bodySize;
+    }
+}
+
+float blockRowHeight (NotepadDocument::BlockStyle block, float bodySize) noexcept
+{
+    const auto fontSize = blockFontSize (block, bodySize);
+    return std::ceil (fontSize * (isHeading (block) ? 1.32f : 1.48f));
+}
+
+float blockIndent (NotepadDocument::BlockStyle block) noexcept
+{
+    if (isList (block))
+        return 30.0f;
+    return block == NotepadDocument::BlockStyle::quote ? 18.0f : 0.0f;
+}
+
+Layout buildLayout (const NotepadDocument& document, float width, float bodySize,
+                    const MeasureFn& measure)
+{
+    Layout layout;
+    const auto& text = document.documentText();
+    float y = 0.0f;
+    std::size_t lineStart = 0;
+
+    while (lineStart <= text.size())
+    {
+        const auto found = text.find ('\n', lineStart);
+        const auto lineEnd = found == std::string::npos ? text.size() : found;
+        const auto info = document.lineInfoAt (lineStart);
+        const auto fontSize = blockFontSize (info.block, bodySize);
+        const auto rowHeight = blockRowHeight (info.block, bodySize);
+        const auto indent = blockIndent (info.block);
+        const auto wrapWidth = std::max (60.0f, width - indent - 8.0f);
+
+        if (isHeading (info.block) && ! layout.rows.empty())
+            y += 8.0f;
+
+        const auto firstRowIndex = layout.rows.size();
+        auto rowStart = lineStart;
+        if (rowStart == lineEnd)
+        {
+            layout.rows.push_back ({ rowStart, rowStart, lineStart, lineEnd, info.block,
+                                     info, y, rowHeight, indent, true, true });
+            y += rowHeight;
+        }
+        while (rowStart < lineEnd)
+        {
+            auto offset = rowStart;
+            auto rowEnd = rowStart;
+            auto lastBreak = std::string::npos;
+            float used = 0.0f;
+            while (offset < lineEnd)
+            {
+                const auto next = nextOffset (text, offset);
+                const auto advance = measure (offset, std::min (next, lineEnd), fontSize,
+                                              info.block);
+                if (used + advance > wrapWidth && offset > rowStart)
+                {
+                    rowEnd = lastBreak != std::string::npos && lastBreak > rowStart
+                           ? lastBreak : offset;
+                    break;
+                }
+                used += advance;
+                rowEnd = std::min (next, lineEnd);
+                if (text[offset] == ' ' || text[offset] == '\t')
+                    lastBreak = rowEnd;
+                offset = rowEnd;
+            }
+            if (rowEnd == rowStart)
+                rowEnd = std::min (nextOffset (text, rowStart), lineEnd);
+            layout.rows.push_back ({ rowStart, rowEnd, lineStart, lineEnd, info.block, info,
+                                     y, rowHeight, indent,
+                                     layout.rows.size() == firstRowIndex, rowEnd == lineEnd });
+            y += rowHeight;
+            rowStart = rowEnd;
+        }
+
+        if (isHeading (info.block))
+            y += 4.0f;
+        else if (info.block == NotepadDocument::BlockStyle::quote)
+            y += 2.0f;
+
+        if (found == std::string::npos)
+            break;
+        lineStart = found + 1;
+    }
+
+    layout.contentHeight = std::max (y, bodySize);
+    return layout;
+}
+
+std::size_t Layout::rowForOffset (std::size_t offset, bool preferRowEnd) const noexcept
+{
+    if (rows.empty())
+        return 0;
+
+    std::size_t match = 0;
+    bool found = false;
+    for (std::size_t i = 0; i < rows.size(); ++i)
+    {
+        if (rows[i].start > offset)
+            break;
+        if (offset > rows[i].end)
+            continue;
+        match = i;
+        found = true;
+        if (offset < rows[i].end || preferRowEnd)
+            break;
+    }
+    return found ? match : rows.size() - 1;
+}
+
+std::size_t Layout::rowAtY (float y) const noexcept
+{
+    if (rows.empty())
+        return 0;
+    for (std::size_t i = 0; i < rows.size(); ++i)
+        if (y < rows[i].y + rows[i].height)
+            return i;
+    return rows.size() - 1;
+}
+
+float offsetX (const NotepadDocument& document, const Row& row, std::size_t offset,
+               float bodySize, const MeasureFn& measure)
+{
+    const auto& text = document.documentText();
+    const auto fontSize = blockFontSize (row.block, bodySize);
+    offset = std::clamp (offset, row.start, std::min (row.end, text.size()));
+
+    float x = 0.0f;
+    for (auto runStart = row.start; runStart < offset;)
+    {
+        const auto style = document.styleAt (runStart);
+        auto runEnd = nextOffset (text, runStart);
+        while (runEnd < offset && document.styleAt (runEnd) == style)
+            runEnd = nextOffset (text, runEnd);
+        runEnd = std::min (runEnd, offset);
+        x += measure (runStart, runEnd, fontSize, row.block);
+        runStart = runEnd;
+    }
+    return x;
+}
+
+std::size_t offsetAtX (const NotepadDocument& document, const Row& row, float localX,
+                       float bodySize, const MeasureFn& measure)
+{
+    const auto& text = document.documentText();
+    const auto fontSize = blockFontSize (row.block, bodySize);
+    float x = 0.0f;
+    for (auto offset = row.start; offset < row.end;)
+    {
+        const auto next = std::min (nextOffset (text, offset), row.end);
+        const auto advance = measure (offset, next, fontSize, row.block);
+        if (localX < x + advance * 0.5f)
+            return offset;
+        x += advance;
+        offset = next;
+    }
+    return row.end;
+}
+
+void UndoStack::clear() noexcept
+{
+    undoEntries.clear();
+    redoEntries.clear();
+    runBroken = true;
+}
+
+void UndoStack::breakRun() noexcept
+{
+    runBroken = true;
+}
+
+void UndoStack::record (EditKind kind, Snapshot before, std::size_t caretAfter)
+{
+    redoEntries.clear();
+
+    const bool coalesce = ! runBroken
+                       && kind != EditKind::structural
+                       && ! undoEntries.empty()
+                       && undoEntries.back().kind == kind
+                       && undoEntries.back().state.selectionIsSource == before.selectionIsSource
+                       && undoEntries.back().caretAfter == before.selection.start
+                       && before.selection.empty();
+    runBroken = kind == EditKind::structural;
+
+    if (coalesce)
+    {
+        undoEntries.back().caretAfter = caretAfter;
+        return;
+    }
+
+    undoEntries.push_back ({ kind, std::move (before), caretAfter });
+    if (undoEntries.size() > kMaxEntries)
+        undoEntries.erase (undoEntries.begin());
+}
+
+bool UndoStack::undo (const Snapshot& current, Snapshot& restored)
+{
+    if (undoEntries.empty())
+        return false;
+
+    redoEntries.push_back ({ EditKind::structural, current, current.selection.end });
+    if (redoEntries.size() > kMaxEntries)
+        redoEntries.erase (redoEntries.begin());
+    restored = std::move (undoEntries.back().state);
+    undoEntries.pop_back();
+    runBroken = true;
+    return true;
+}
+
+bool UndoStack::redo (const Snapshot& current, Snapshot& restored)
+{
+    if (redoEntries.empty())
+        return false;
+
+    undoEntries.push_back ({ EditKind::structural, current, current.selection.end });
+    if (undoEntries.size() > kMaxEntries)
+        undoEntries.erase (undoEntries.begin());
+    restored = std::move (redoEntries.back().state);
+    redoEntries.pop_back();
+    runBroken = true;
+    return true;
+}
+} // namespace notepad
+} // namespace duskstudio

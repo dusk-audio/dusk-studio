@@ -554,7 +554,11 @@ caret or format a selection; Ctrl+Z undoes and Ctrl+Y or Ctrl+Shift+Z redoes
 both text and formatting. On macOS, Cmd works wherever Ctrl is listed,
 including link activation. Numbered and bulleted lists continue when you press
 Enter, and a second Enter on an empty list item returns to body text.
-Ctrl-click an `http`, `https`, or `mailto` link to open it.
+Ctrl-click an `http`, `https`, or `mailto` link to open it. Selection and
+navigation follow the usual conventions: double-click selects a word,
+triple-click a line, Ctrl+arrow jumps by word, Home, End, and Page Up/Down move
+within the page, Ctrl+A selects everything, and cut, copy, and paste use the
+system clipboard.
 
 The **Markdown** tab exposes the compatible `notepad.md` source for users who
 prefer direct editing. Switching views preserves the selection. The footer
