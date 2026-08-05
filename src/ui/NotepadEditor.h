@@ -133,7 +133,8 @@ private:
     bool chordEditing = false;
     float desiredX = -1.0f;
     float scrollY = 0.0f;
-    float pendingCaretViewport = -1.0f;
+    float pendingCaretViewport = 0.0f;
+    bool caretViewportPending = false;
     float layoutWidth = -1.0f;
     float layoutBodySize = -1.0f;
     double blinkStart = 0.0;

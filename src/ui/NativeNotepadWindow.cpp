@@ -190,7 +190,6 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
         editor.requestFocus();
         closeRequested = false;
         closeWasPumped = false;
-        focusEditorNextFrame = false;
         hasSessionFile = sessionExists;
         documentDirty = unsavedChanges;
         saveFailed = false;
@@ -395,8 +394,9 @@ private:
     {
         if (active)
         {
-            ImGui::PushStyleColor (ImGuiCol_Button, colour (theme().rule));
-            ImGui::PushStyleColor (ImGuiCol_ButtonHovered, colour (0x393b47ff));
+            ImGui::PushStyleColor (ImGuiCol_Button, colour (notepad::kStagePalette.rule));
+            ImGui::PushStyleColor (ImGuiCol_ButtonHovered,
+                                   colour (notepad::kStagePalette.shell));
         }
         if (labelFont != nullptr)
             ImGui::PushFont (labelFont);
@@ -491,20 +491,32 @@ private:
     }
 
     // Two-segment icon switch: dark track, active half lifted in a lighter
-    // rounded fill. Returns the clicked segment (0 left, 1 right), or -1.
+    // rounded fill. Each half is its own hit region, so keyboard activation
+    // picks a segment rather than reading the pointer, which is somewhere else
+    // entirely. Returns the clicked segment (0 left, 1 right), or -1.
     int drawSegmentedToggle (const char* id, bool rightSelected,
                              SegmentIcon leftIcon, SegmentIcon rightIcon,
                              const char* leftTooltip, const char* rightTooltip)
     {
         constexpr float segmentWidth = 32.0f;
         constexpr float padding = 3.0f;
-        const bool clicked = ImGui::InvisibleButton (
-            id, ImVec2 (segmentWidth * 2.0f + padding * 2.0f, 30.0f));
-        const auto min = ImGui::GetItemRectMin();
-        const auto max = ImGui::GetItemRectMax();
-        const bool hovered = ImGui::IsItemHovered();
-        const auto split = (min.x + max.x) * 0.5f;
-        const bool pointerOnRight = ImGui::GetIO().MousePos.x >= split;
+        const ImVec2 half (segmentWidth + padding, 30.0f);
+
+        ImGui::PushID (id);
+        const bool leftClicked = ImGui::InvisibleButton ("left", half);
+        const auto leftMin = ImGui::GetItemRectMin();
+        const auto leftMax = ImGui::GetItemRectMax();
+        const bool leftHovered = ImGui::IsItemHovered();
+        ImGui::SameLine (0.0f, 0.0f);
+        const bool rightClicked = ImGui::InvisibleButton ("right", half);
+        const auto rightMax = ImGui::GetItemRectMax();
+        const bool rightHovered = ImGui::IsItemHovered();
+        ImGui::PopID();
+
+        const auto min = leftMin;
+        const auto max = rightMax;
+        const auto split = leftMax.x;
+        const bool hovered = leftHovered || rightHovered;
         auto& drawList = *ImGui::GetWindowDrawList();
 
         const auto trackColour = ImGui::GetColorU32 (colour (notepad::kStagePalette.rule));
@@ -526,19 +538,19 @@ private:
         {
             drawSegmentIcon (drawList, icon, ImVec2 (centreX, centreY),
                              selected ? activeColour
-                                      : hovered && pointerOver ? hoverColour
-                                                               : restingColour,
+                                      : pointerOver ? hoverColour
+                                                    : restingColour,
                              selected ? pillColour : trackColour);
         };
 
-        drawSegment (leftIcon, (min.x + padding + split) * 0.5f, ! rightSelected,
-                     ! pointerOnRight);
-        drawSegment (rightIcon, (split + max.x - padding) * 0.5f, rightSelected,
-                     pointerOnRight);
+        drawSegment (leftIcon, (min.x + padding + split) * 0.5f, ! rightSelected, leftHovered);
+        drawSegment (rightIcon, (split + max.x - padding) * 0.5f, rightSelected, rightHovered);
 
-        if (hovered)
-            ImGui::SetTooltip ("%s", pointerOnRight ? rightTooltip : leftTooltip);
-        return clicked ? (pointerOnRight ? 1 : 0) : -1;
+        if (leftHovered)
+            ImGui::SetTooltip ("%s", leftTooltip);
+        else if (rightHovered)
+            ImGui::SetTooltip ("%s", rightTooltip);
+        return leftClicked ? 0 : rightClicked ? 1 : -1;
     }
 
     void drawRibbon()
@@ -614,12 +626,14 @@ private:
             ImGui::OpenPopup ("Insert link");
 
         ImGui::SameLine (0.0f, 16.0f);
+        ImGui::BeginDisabled (markdownMode);
         if (toolbarButton ("♯", "Put a chord over the word at the caret (Ctrl+K)",
                            editor.chordEntryActive()))
         {
             editor.beginChordEntry();
-            focusEditorNextFrame = true;
+            editor.requestFocus();
         }
+        ImGui::EndDisabled();
         // Transpose only has meaning once the sheet carries chords, and in
         // Markdown mode the source is edited directly.
         const bool canTranspose = ! markdownMode && document.hasChords();
@@ -670,13 +684,13 @@ private:
         // toggle reads as flipping one sheet over rather than opening another
         // document. No page card: the stage is the paper.
         const auto available = ImGui::GetContentRegionAvail();
-        const float editorWidth = std::min (kContentWidth, available.x);
+        const float editorWidth = std::min (kContentWidth, std::max (0.0f, available.x));
         ImGui::SetCursorPosX (ImGui::GetCursorPosX() + (available.x - editorWidth) * 0.5f);
 
         ImGui::PushStyleVar (ImGuiStyleVar_ChildRounding, 0.0f);
         ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (34.0f, 26.0f));
         ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (theme().stage));
-        ImGui::BeginChild ("chart", ImVec2 (editorWidth, available.y), false);
+        ImGui::BeginChild ("chart", ImVec2 (editorWidth, std::max (0.0f, available.y)), false);
 
         editor.draw (ImGui::GetFontSize());
 
@@ -799,7 +813,6 @@ private:
     bool darkDocumentPage = true;
     bool closeRequested = false;
     bool closeWasPumped = false;
-    bool focusEditorNextFrame = false;
     bool hasSessionFile = false;
     bool documentDirty = false;
     bool saveFailed = false;

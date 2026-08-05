@@ -328,6 +328,10 @@ bool NotepadDocument::replaceDocumentText (const std::string& text)
 
     const auto escapeAt = [this] (std::size_t sourceOffset, const std::string& value)
     {
+        // Source mode edits the Markdown directly, so its syntax characters are
+        // the point: escaping them there would turn a typed '*' into '\\*'.
+        if (sourceMode)
+            return value;
         return escapeDocumentInsertion (
             value, sourceOffset == 0 || markdownText[sourceOffset - 1] == '\n');
     };
@@ -683,6 +687,10 @@ std::string NotepadDocument::chordAt (std::size_t documentOffset) const
 
 bool NotepadDocument::setChordAt (std::size_t documentOffset, const std::string& name)
 {
+    // Source mode projects raw Markdown, so it carries no chord anchors: a
+    // mutation here would splice brackets in at an offset that means nothing.
+    if (sourceMode)
+        return false;
     if (! name.empty() && ! notepad::chords::isChord (name))
         return false;
 
@@ -709,7 +717,7 @@ bool NotepadDocument::setChordAt (std::size_t documentOffset, const std::string&
 
 void NotepadDocument::transposeChords (int semitones, bool preferFlats)
 {
-    if (projectedChords.empty())
+    if (sourceMode || projectedChords.empty())
         return;
 
     // Back to front: every rewrite can change the token's length, and a span

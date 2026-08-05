@@ -14,6 +14,9 @@ namespace
 constexpr float kScrollbarWidth = 10.0f;
 constexpr float kWheelStep = 42.0f;
 constexpr char kLinkPlaceholder[] = "Link text";
+// The chord grammar refuses a token longer than this, so the draft cannot grow
+// past what a commit would accept.
+constexpr std::size_t kMaxChordDraftBytes = 16;
 
 ImU32 colourOf (unsigned int hex)
 {
@@ -228,6 +231,7 @@ float NotepadEditor::caretViewportOffset() const noexcept
 void NotepadEditor::keepCaretAtViewportOffset (float offset) noexcept
 {
     pendingCaretViewport = offset;
+    caretViewportPending = true;
 }
 
 void NotepadEditor::keepCaretVisible (float viewportHeight, float bodySize)
@@ -551,7 +555,9 @@ void NotepadEditor::handleMouse (ImVec2 frameMin, ImVec2 frameMax, bool hovered,
                                                   bodySize, measure);
             for (const auto& chord : document.chords())
             {
-                if (chord.documentOffset < row.start || chord.documentOffset > row.end)
+                if (chord.documentOffset < row.start
+                    || chord.documentOffset > row.end
+                    || (chord.documentOffset == row.end && ! row.lastRowOfLine))
                     continue;
                 const auto reach = chord.documentOffset + chord.name.size();
                 if (over >= chord.documentOffset && over <= reach)
@@ -772,6 +778,9 @@ void NotepadEditor::handleKeyboard (float viewportHeight, float bodySize)
 
 void NotepadEditor::beginChordEntry()
 {
+    if (document.isSourceMode())
+        return;
+
     // Chords land on syllables, so the slot anchors on the word under the
     // caret rather than the caret itself: click anywhere in "morning" and the
     // chord sits over its first letter.
@@ -787,12 +796,12 @@ void NotepadEditor::beginChordEntry()
 void NotepadEditor::commitChordEntry()
 {
     const auto before = snapshot();
-    if (document.setChordAt (chordAnchor, chordDraft))
-    {
-        history.breakRun();
-        history.record (notepad::EditKind::structural, before, caret);
-        documentMutated();
-    }
+    if (! document.setChordAt (chordAnchor, chordDraft))
+        return;
+
+    history.breakRun();
+    history.record (notepad::EditKind::structural, before, caret);
+    documentMutated();
     chordEditing = false;
     chordDraft.clear();
     layoutDirty = true;
@@ -824,8 +833,12 @@ bool NotepadEditor::handleChordEntry()
     for (int i = 0; i < io.InputQueueCharacters.Size; ++i)
     {
         const auto character = static_cast<unsigned int> (io.InputQueueCharacters[i]);
-        if (character >= 0x20u && character != 0x7fu && chordDraft.size() < 16)
-            notepad::appendUtf8 (chordDraft, character);
+        if (character < 0x20u || character == 0x7fu)
+            continue;
+        std::string candidate;
+        notepad::appendUtf8 (candidate, character);
+        if (chordDraft.size() + candidate.size() <= kMaxChordDraftBytes)
+            chordDraft += candidate;
     }
     io.InputQueueCharacters.resize (0);
     resetBlink();
@@ -834,7 +847,7 @@ bool NotepadEditor::handleChordEntry()
 
 void NotepadEditor::transposeChords (int semitones)
 {
-    if (! document.hasChords() || semitones == 0)
+    if (document.isSourceMode() || ! document.hasChords() || semitones == 0)
         return;
 
     const auto before = snapshot();
@@ -1122,12 +1135,12 @@ void NotepadEditor::draw (float bodySize)
         handleKeyboard (size.y, bodySize);
     ensureLayout (size.x, bodySize);
 
-    if (pendingCaretViewport >= 0.0f)
+    if (caretViewportPending)
     {
         if (! layout.rows.empty())
             scrollY = layout.rows[layout.rowForOffset (caret, caretAtRowEnd)].y
                     - pendingCaretViewport;
-        pendingCaretViewport = -1.0f;
+        caretViewportPending = false;
         scrollToCaret = false;
     }
     if (scrollToCaret)

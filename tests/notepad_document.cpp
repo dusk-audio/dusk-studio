@@ -315,6 +315,23 @@ TEST_CASE ("Notepad source mode projects the Markdown one to one",
         CHECK (document.documentSelection (selection).end == selection.end);
     }
 
+    SECTION ("chord mutations are refused")
+    {
+        const auto before = document.markdown();
+        CHECK_FALSE (document.setChordAt (0, "C"));
+        document.transposeChords (2, false);
+        CHECK (document.markdown() == before);
+    }
+
+    SECTION ("typed Markdown syntax round-trips unescaped")
+    {
+        auto edited = document.documentText();
+        edited.insert (edited.size(), "*star* [Am]bracket");
+        REQUIRE (document.replaceDocumentText (edited));
+        CHECK (document.markdown() == edited);
+        CHECK (document.documentText() == edited);
+    }
+
     SECTION ("switching back restores the rendered projection")
     {
         document.setSourceMode (false);
