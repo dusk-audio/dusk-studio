@@ -74,14 +74,13 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     pdcDelayR.reset();
     pdcSilentRun = (std::int64_t) kMaxPdcSamples;
 
-    // Pre-size the MIDI scratch buffers so the audio thread's addEvent /
-    // processBlock calls never grow them. 4 KB covers ~400-800 typical
-    // channel-voice messages per block; far above any sane density even
-    // for instrument plugins generating dense controller streams.
+    // Headroom for what the hosted plugin emits. Only a hint - a plugin whose
+    // MIDI output runs past it still grows the buffer on the audio thread.
     pluginMidiScratch.ensureSize (4096);
-    // Same headroom for the native-host bridge; reserveBytes caps it so the
-    // per-block juce->dusk refill drops any overflow instead of allocating.
-    nativeMidiScratch.reserveBytes (4096);
+    // The native bridge is a hard cap instead, and the refill through it is
+    // whole-block-or-nothing, so it takes the shared MIDI ceiling: below that, a
+    // burst the input ring delivered whole would arrive here as nothing at all.
+    nativeMidiScratch.reserveBytes (dusk::kMidiBlockBytes);
 
     // Plugin slot - prepared at the same SR/BS so the audio thread never
     // sees an unprepared instance. If the slot has no plugin loaded, this

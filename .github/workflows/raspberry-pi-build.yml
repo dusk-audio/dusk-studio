@@ -2,9 +2,10 @@ name: Raspberry Pi build (arm64)
 
 # Build-check for Raspberry Pi 4 / 5 (64-bit) and other aarch64 Linux. Runs on
 # GitHub's native ARM64 runner — no cross-compile, no QEMU. Compiles Dusk
-# Studio, then smoke-launches the binary and drives the headless self-test so a
-# link/startup regression specific to arm64 is caught early. No artifact is
-# published (binaries are paid; the source is open).
+# Studio, smoke-launches the binary, drives the headless self-test so a
+# link/startup regression specific to arm64 is caught early, then runs the
+# Catch2 suite for arm coverage of the DSP paths. No artifact is published
+# (binaries are paid; the source is open).
 
 on:
   push:
@@ -15,8 +16,15 @@ on:
 
 jobs:
   build:
-    name: Build Dusk Studio (GCC Release, Ubuntu 22.04, arm64)
+    name: Build + tests (GCC Release, Ubuntu 22.04, arm64)
     runs-on: ubuntu-22.04-arm
+
+    env:
+      # CMakeLists.txt auto-detects ccache and sets the compiler launchers,
+      # so installing it and persisting this directory across runs is the
+      # whole wiring. build-linux and build-tests share the one cache.
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 500M
 
     steps:
       - name: Checkout Dusk Studio
@@ -39,7 +47,7 @@ jobs:
           ok=0
           for i in 1 2 3; do
             sudo apt-get update && sudo apt-get install -y --no-install-recommends \
-              build-essential cmake ninja-build pkg-config \
+              build-essential cmake ninja-build pkg-config ccache \
               libasound2-dev libjack-jackd2-dev libmp3lame-dev libsndfile1-dev \
               liblilv-dev libsuil-dev lv2-dev \
               ladspa-sdk \
@@ -51,6 +59,14 @@ jobs:
             echo "apt attempt $i failed; retrying in 20s"; sleep 20
           done
           [ "$ok" = 1 ] || { echo "apt failed after 3 attempts"; exit 1; }
+
+      - name: Cache ccache objects
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-linux-arm64-${{ github.sha }}
+          restore-keys: |
+            ccache-linux-arm64-
 
       - name: Clone JUCE (Dusk-owned Wayland mirror, pinned)
         # Same pinned Dusk-owned mirror snapshot as linux-build.yml. The
@@ -139,3 +155,25 @@ jobs:
           timeout 60 xvfb-run --auto-servernum \
             env DUSKSTUDIO_RUN_SELFTEST=1 \
             build-linux/DuskStudio_artefacts/Release/DuskStudio
+
+      - name: Configure tests
+        run: |
+          cmake -S . -B build-tests -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSKSTUDIO_BUILD_TESTS=ON \
+            -DDUSKSTUDIO_SKIP_FORK_CHECK=ON \
+            -DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
+            -DDPF_PATH="${RUNNER_TEMP}/DPF" \
+            -DDPF_WIDGETS_PATH="${RUNNER_TEMP}/DPF-Widgets"
+
+      - name: Build tests
+        run: cmake --build build-tests --target dusk-studio-tests -j
+
+      - name: Run tests
+        run: ctest --test-dir build-tests --output-on-failure
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s

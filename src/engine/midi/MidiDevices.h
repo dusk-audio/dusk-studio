@@ -206,7 +206,6 @@ private:
     // it only touches the queue's writer side.
     std::mutex bankMutex;
 
-    static constexpr int kSlotBytes  = 4096;
     struct QueuedMidiOut
     {
         int              port       = -1;
