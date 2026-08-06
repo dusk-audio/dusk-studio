@@ -9,6 +9,7 @@
 #include "EmbeddedModal.h"
 #include "HardwareInsertEditor.h"
 #include "PluginPickerHelpers.h"
+#include "../engine/CompMakeupMap.h"
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
   #include "ClapPluginEditorComponent.h"   // Linux-only native CLAP editor
 #endif
@@ -350,13 +351,12 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     setupCompKnob (optoGainKnob, optoGainLabel, "MAK",
                    0.0, 100.0, 50.0, 0.0, "Output gain (50 % = unity = 0 dB)",
                    track.strip.compOptoGain, "", 0);
-    // Display the OPTO gain in dB (matches the popup editor's GAIN knob).
-    // Storage stays in percent (0..100, 50 = unity) per the donor's
-    // opto_gain parameter contract: dB = (pct - 50) / 2.5.
+    // Display the OPTO gain in dB. Storage stays in percent (0..100,
+    // 50 = unity) - the dial-to-dB conversion is the donor's, and the
+    // popup editor's MAKEUP knob reads the same helper.
     optoGainKnob.textFromValueFunction = [] (double pct) -> juce::String
     {
-        const double db = (pct - 50.0) / 2.5;
-        return juce::String (db, 1) + " dB";
+        return juce::String (comp::optoGainPctToMakeupDb ((float) pct), 1) + " dB";
     };
     optoGainKnob.updateText();
     // Comp threshold + makeup right-click hooks. Each per-mode "threshold-

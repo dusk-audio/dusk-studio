@@ -6,6 +6,7 @@
 #include "McuReceiver.h"
 #include "McuController.h"
 #include "FaderBindingMap.h"
+#include "CompMakeupMap.h"
 #include "../session/RegionEditActions.h"
 #include "DeviceFallbackMessage.h"
 #include "../foundation/MessageThread.h"
@@ -125,12 +126,7 @@ static float currentFracForTarget (Session& session, const MidiBinding& b) noexc
             const auto& s = session.track (b.targetIndex).strip;
             const int mode = std::clamp (s.compMode.load (std::memory_order_relaxed), 0, 2);
             if (b.target == MidiBindingTarget::TrackCompMakeup)
-                switch (mode)
-                {
-                    case 0:  return inv (s.compOptoGain .load (std::memory_order_relaxed),   0.0f, 100.0f);
-                    case 1:  return inv (s.compFetOutput.load (std::memory_order_relaxed), -20.0f,  20.0f);
-                    default: return inv (s.compVcaOutput.load (std::memory_order_relaxed), -20.0f,  20.0f);
-                }
+                return comp::makeupBindingFrac (s);
             switch (mode)
             {
                 case 0:  return inv (s.compOptoPeakRed.load (std::memory_order_relaxed),   0.0f, 100.0f);
@@ -3767,16 +3763,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                             };
                             if (isMakeup)
                             {
-                                switch (mode)
-                                {
-                                    case 0: strip.compOptoGain.store (remap (0.0f, 100.0f), std::memory_order_relaxed); break;
-                                    case 1: strip.compFetOutput.store (remap (-20.0f, 20.0f), std::memory_order_relaxed); break;
-                                    case 2: strip.compVcaOutput.store (remap (-20.0f, 20.0f), std::memory_order_relaxed); break;
-                                }
-                                // Mirror to the unified makeup atom so the
-                                // FET threshold math stays composed (see
-                                // ChannelStripParams::compMakeupDb comment).
-                                strip.compMakeupDb.store (remap (-20.0f, 20.0f), std::memory_order_relaxed);
+                                comp::applyTrackCompMakeupDb (
+                                    strip, comp::makeupBindingFracToDb (strip, frac));
                             }
                             else // threshold
                             {

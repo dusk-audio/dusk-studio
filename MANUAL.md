@@ -718,7 +718,7 @@ The channel compressor has three mutually-exclusive modes. Settings are remember
 
 Left-click the **COMP** header to enable. Right-click the header for the COMP menu — the mode (**Opto**, **FET**, **VCA**), **Reset comp**, and **Open editor…** — and double-click the header to open the editor directly.
 
-All three modes share one set of knobs — **THRESHOLD, RATIO, ATTACK, RELEASE, MAKEUP** — that route to the right underlying parameter for whichever mode is active. Set the **threshold** by dragging the triangle handle on the gain-reduction meter strip (this also engages the compressor); the remaining knobs sit in a 2×2 grid below the header. The **MAKEUP** knob is the shared makeup gain (−12 to +24 dB) and is available in every mode. Knob ranges retune per mode, as listed below.
+All three modes share one set of knobs — **THRESHOLD, RATIO, ATTACK, RELEASE, MAKEUP** — that route to the right underlying parameter for whichever mode is active. Set the **threshold** by dragging the triangle handle on the gain-reduction meter strip (this also engages the compressor); the remaining knobs sit in a 2×2 grid below the header. The **MAKEUP** knob is the shared makeup gain and is available in every mode; its range follows the active mode — −40 to +40 dB in Opto (the optical gain dial's full span), −20 to +20 dB in FET and VCA. Knob ranges retune per mode, as listed below.
 
 ### Opto (optical style)
 
@@ -2345,7 +2345,7 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | VCA      | Release        | 10–5000 ms                    | 100 ms   |
 | VCA      | Soft knee      | Off / On                      | Off      |
 | VCA      | Detector       | Adaptive / Classic            | Adaptive |
-| Comp     | Makeup         | −12 to +24 dB                 | 0 dB     |
+| Comp     | Makeup         | −40 to +40 dB (Opto), −20 to +20 dB (FET / VCA) | 0 dB |
 | Send 1–4 | Level          | −60 to +6 dB (or OFF)         | OFF      |
 | Send 1–4 | Pre/Post       | Pre / Post                    | Post     |
 | Pan      | Position       | −1.0 to +1.0                  | 0        |

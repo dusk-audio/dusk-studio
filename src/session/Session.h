@@ -267,12 +267,6 @@ struct ChannelStripParams
     // Audio thread does NOT read directly; see ChannelStrip::updateCompParameters.
     std::atomic<float> compThresholdDb { 0.0f };
 
-    // FET threshold reads this back when recomputing compFetOutput so
-    // threshold + makeup compose (without it, threshold's chain
-    // compensation overwrites makeup). VCA / Opto write here for
-    // consistency / save state.
-    std::atomic<float> compMakeupDb    { 0.0f };
-
     // Engine writes liveFaderDb at the top of every block: Off mode
     // mirrors faderDb; Read mode carries lane value. ChannelStrip
     // reads liveFaderDb, not faderDb, so Off/Read hand-off lives in
