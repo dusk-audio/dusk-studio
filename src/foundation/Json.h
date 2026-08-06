@@ -51,11 +51,6 @@ inline double getDouble (const Json& j, const char* key, double def)
     return v.is_number() ? v.get<double>() : def;
 }
 
-inline float getFloat (const Json& j, const char* key, float def)
-{
-    return (float) getDouble (j, key, (double) def);
-}
-
 inline int getInt (const Json& j, const char* key, int def)
 {
     if (! has (j, key)) return def;
@@ -118,16 +113,20 @@ inline std::string getString (const Json& j, const char* key, const std::string&
 }
 
 // Finite-guarded float: rejects NaN / inf / out-of-float-range doubles from a
-// corrupt file before narrowing (the narrowing cast would be UB). Mirrors the
-// former finiteFloatOr helper.
-inline float getFiniteFloat (const Json& j, const char* key, float fallback)
+// corrupt file before narrowing (the narrowing cast would be UB).
+inline float finiteFloat (const Json& v, float fallback)
 {
-    if (! has (j, key)) return fallback;
-    const auto& v = j[key];
     if (! v.is_number()) return fallback;
     const double d = v.get<double>();
     if (std::isfinite (d) && std::abs (d) <= (double) std::numeric_limits<float>::max())
         return (float) d;
     return fallback;
+}
+
+// Key-addressed sibling of finiteFloat, for reads that resolve off the parent
+// object rather than off an already-extracted value node.
+inline float getFiniteFloat (const Json& j, const char* key, float fallback)
+{
+    return has (j, key) ? finiteFloat (j[key], fallback) : fallback;
 }
 } // namespace dusk::json

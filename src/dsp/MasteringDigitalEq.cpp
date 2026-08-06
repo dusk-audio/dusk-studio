@@ -227,7 +227,11 @@ void MasteringDigitalEq::rebuildIfDirty (int idx) noexcept
 
     const float freq = std::clamp (b.freq.load (std::memory_order_relaxed), 10.0f, (float) (sr * 0.49));
     const float qVal = std::clamp (b.q.load (std::memory_order_relaxed), 0.1f, 10.0f);
-    const float dB   = b.gainDb.load (std::memory_order_relaxed);
+    // computeCoeffs drops a gain whose taps overflow, but one that merely
+    // dwarfs the editor's +/-12 dB (a hand-edited 300) still yields finite
+    // coefficients and a boost that would wreck the mix. Bound it at twice the
+    // editor range: wide enough that no legal setting is reshaped.
+    const float dB   = std::clamp (b.gainDb.load (std::memory_order_relaxed), -24.0f, 24.0f);
 
     // Compute + write in place - no heap allocation on the audio thread.
     const Coeffs c = computeCoeffs (idx, sr, freq, qVal, dB);

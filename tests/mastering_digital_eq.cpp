@@ -11,6 +11,7 @@
 #include <dsp/DuskFilters.hpp>
 #include <juce_dsp/juce_dsp.h>
 
+#include <algorithm>
 #include <cmath>
 #include <random>
 #include <vector>
@@ -198,4 +199,38 @@ TEST_CASE ("MasteringDigitalEq per-block param re-push is inert", "[mastering][e
         if (! identical) break;
     }
     REQUIRE (identical);
+}
+
+TEST_CASE ("MasteringDigitalEq bounds an absurd band gain", "[mastering][eq]")
+{
+    // computeCoeffs falls back to passthrough only when the taps actually
+    // overflow. A gain that merely dwarfs the editor's range (a hand-edited
+    // 300 dB) stays finite all the way to the filter and multiplies the mix by
+    // billions. The rebuild's clamp keeps the band a filter instead.
+    MasteringDigitalEq eq;
+    eq.prepare (kSr, 256);
+    eq.setEnabled (true);
+    eq.setBandFreq (2, 1000.0f);
+    eq.setBandQ (2, 1.0f);
+    eq.setBandGainDb (2, 300.0f);
+
+    const float w = juce::MathConstants<float>::twoPi * 1000.0f / (float) kSr;
+    float peak = 0.0f;
+    bool finite = true;
+    for (int blk = 0; blk < 16; ++blk)
+    {
+        std::vector<float> l (256), r (256);
+        for (int i = 0; i < 256; ++i)
+            l[(size_t) i] = r[(size_t) i] = 0.25f * std::sin (w * (float) (blk * 256 + i));
+        eq.processInPlace (l.data(), r.data(), 256);
+
+        for (int i = 0; i < 256; ++i)
+        {
+            finite = finite && std::isfinite (l[(size_t) i]) && std::isfinite (r[(size_t) i]);
+            peak = std::max (peak, std::max (std::abs (l[(size_t) i]), std::abs (r[(size_t) i])));
+        }
+    }
+    REQUIRE (finite);
+    // +24 dB on a 0.25 input settles near 4; unclamped it reaches ~2e9.
+    REQUIRE (peak < 100.0f);
 }

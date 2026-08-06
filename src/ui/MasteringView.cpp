@@ -161,6 +161,10 @@ constexpr MasteringTarget kMasteringTargets[] =
     { "Broadcast (EBU R128)", -23.0f,  -1.0f },
 };
 constexpr int kNumMasteringTargets = (int) (sizeof (kMasteringTargets) / sizeof (kMasteringTargets[0]));
+// The session loader clamps the saved index without seeing this table; adding a
+// preset here without widening the clamp would silently drop it on reload.
+static_assert (kNumMasteringTargets == MasteringParams::kNumTargetPresets,
+               "kMasteringTargets and MasteringParams::kNumTargetPresets must agree");
 } // namespace
 
 MasteringView::MasteringView (Session& s, AudioEngine& e)

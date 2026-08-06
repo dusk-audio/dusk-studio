@@ -23,7 +23,7 @@ TEST_CASE ("dusk::json accessors coerce-or-default like juce::var", "[foundation
         REQUIRE (json::getBool  (j, "bnum", false) == true);   // number coerces to bool
         REQUIRE (json::getString(j, "s")       == "hi");
         REQUIRE (json::getInt   (j, "neg", 0)  == -7);
-        REQUIRE_THAT (json::getFloat (j, "f", 0.0f), WithinAbs (0.25f, 1e-12));
+        REQUIRE_THAT (json::getFiniteFloat (j, "f", 0.0f), WithinAbs (0.25f, 1e-12));
     }
 
     SECTION ("missing keys return defaults")

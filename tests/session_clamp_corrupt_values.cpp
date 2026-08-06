@@ -331,3 +331,191 @@ TEST_CASE ("SessionSerializer::load clamps corrupt strip and hardware values",
 
     target.getParentDirectory().deleteRecursively();
 }
+
+// 1e30 survives the finite guard - it is a perfectly good float - but no
+// mastering control can dial it, and it still reaches DSP: band gains become
+// biquad coefficients, and the comp / limiter values go straight into the
+// donor's parameter atoms. Each has to land on its control's edge instead.
+TEST_CASE ("SessionSerializer::load clamps out-of-range mastering values",
+           "[session][serializer][corruption]")
+{
+    const auto target = writeSession (R"JSON(
+    {
+      "version": 3,
+      "mastering": {
+        "eq_band_0_freq": -1e30,
+        "eq_band_2_freq": 1e30,
+        "eq_band_2_gain_db": 1e30,
+        "eq_band_2_q": -1e30,
+        "eq_tube_drive": 1e30,
+        "comp_thresh_db": -1e30,
+        "comp_ratio": 1e30,
+        "comp_makeup_db": 1e30,
+        "limiter_drive_db": 1e30,
+        "limiter_ceiling_db": 1e30,
+        "limiter_release_ms": -1e30,
+        "limiter_lookahead_ms": 1e30,
+        "limiter_mode": 99,
+        "target_preset": 99
+      }
+    }
+    )JSON");
+
+    Session s;
+    REQUIRE (SessionSerializer::load (s, target));
+    const auto& m = s.mastering();
+
+    // Per-band sweep limits of the editor's frequency knobs.
+    REQUIRE_THAT (m.eqBandFreq[0].load(), WithinAbs (20.0f, 1e-3f));
+    REQUIRE_THAT (m.eqBandFreq[2].load(), WithinAbs (6000.0f, 1e-3f));
+    REQUIRE_THAT (m.eqBandGainDb[2].load(), WithinAbs (12.0f, 1e-6f));
+    REQUIRE_THAT (m.eqBandQ[2].load(), WithinAbs (0.3f, 1e-6f));
+    REQUIRE_THAT (m.eqTubeDrive.load(), WithinAbs (1.0f, 1e-6f));
+
+    REQUIRE_THAT (m.compThreshDb.load(), WithinAbs (-60.0f, 1e-6f));
+    REQUIRE_THAT (m.compRatio.load(), WithinAbs (10.0f, 1e-6f));
+    REQUIRE_THAT (m.compMakeupDb.load(), WithinAbs (20.0f, 1e-6f));
+
+    REQUIRE_THAT (m.limiterDriveDb.load(), WithinAbs (20.0f, 1e-6f));
+    REQUIRE_THAT (m.limiterCeilingDb.load(), WithinAbs (0.0f, 1e-6f));
+    REQUIRE_THAT (m.limiterReleaseMs.load(), WithinAbs (10.0f, 1e-6f));
+    // Clamped at load as well as in the limiter's setter: this atom is what the
+    // editor reads back and what the next save writes.
+    REQUIRE_THAT (m.limiterLookaheadMs.load(), WithinAbs (10.0f, 1e-6f));
+    REQUIRE (m.limiterMode.load() == 2);
+    REQUIRE (m.targetPresetIndex.load() == duskstudio::MasteringParams::kNumTargetPresets - 1);
+
+    target.getParentDirectory().deleteRecursively();
+}
+
+// Same contract on the master strip: every track and bus equivalent clamps, so
+// the master must not be the one path where a hand-edited value reaches the
+// tube EQ and bus comp untouched.
+TEST_CASE ("SessionSerializer::load clamps out-of-range master values",
+           "[session][serializer][corruption]")
+{
+    const auto target = writeSession (R"JSON(
+    {
+      "version": 3,
+      "master": {
+        "fader_db": 1e30,
+        "eq_lf_boost": 1e30,
+        "eq_hf_atten_freq": -1e30,
+        "eq_output_gain_db": 1e30,
+        "comp_ratio": 1e30,
+        "comp_attack_ms": -1e30
+      }
+    }
+    )JSON");
+
+    Session s;
+    REQUIRE (SessionSerializer::load (s, target));
+    const auto& mb = s.master();
+
+    REQUIRE_THAT (mb.faderDb.load(), WithinAbs (12.0f, 1e-6f));
+    REQUIRE_THAT (mb.eqLfBoost.load(), WithinAbs (10.0f, 1e-6f));
+    REQUIRE_THAT (mb.eqHfAttenFreq.load(), WithinAbs (5000.0f, 1e-3f));
+    REQUIRE_THAT (mb.eqOutputGainDb.load(), WithinAbs (12.0f, 1e-6f));
+    REQUIRE_THAT (mb.compRatio.load(), WithinAbs (10.0f, 1e-6f));
+    REQUIRE_THAT (mb.compAttackMs.load(), WithinAbs (0.1f, 1e-6f));
+
+    target.getParentDirectory().deleteRecursively();
+}
+
+// 1e40 overflows to inf when narrowed to float, and a clamp alone would pin it
+// at the ceiling - loading a corrupt file at maximum aux return / metronome
+// level with a 5-minute pre-roll. The model default is the only safe landing.
+// The wrong-type fallbacks in the same block are pinned here too: a fallback of
+// false where the model says true silently flips the feature off.
+TEST_CASE ("SessionSerializer::load rejects non-finite transport and aux values",
+           "[session][serializer][corruption]")
+{
+    const auto target = writeSession (R"JSON(
+    {
+      "version": 3,
+      "aux_lanes": [ { "return_level_db": 1e40 } ],
+      "tracks": [
+        { "automation": { "fader_db": [ { "t": 0, "v": 0.5 } ] } }
+      ],
+      "transport": {
+        "metronome_vol_db": 1e40,
+        "pre_roll_seconds": 1e40,
+        "post_roll_seconds": -1e40,
+        "piano_roll_key_snap": "maybe",
+        "sync_follow_tempo": "maybe",
+        "metronome_click_recording": "maybe",
+        "tempo_bpm": "fast"
+      }
+    }
+    )JSON");
+
+    Session s;
+    s.auxLane (0).params.returnLevelDb.store (-20.0f);
+    s.metronomeVolDb.store (3.0f);
+    s.preRollSeconds.store (5.0f);
+    s.postRollSeconds.store (5.0f);
+    s.tempoBpm.store (90.0f);
+
+    REQUIRE (SessionSerializer::load (s, target));
+
+    REQUIRE_THAT (s.auxLane (0).params.returnLevelDb.load(), WithinAbs (0.0f, 1e-6f));
+    REQUIRE_THAT (s.metronomeVolDb.load(), WithinAbs (-12.0f, 1e-6f));
+    REQUIRE_THAT (s.preRollSeconds.load(), WithinAbs (0.0f, 1e-6f));
+    REQUIRE_THAT (s.postRollSeconds.load(), WithinAbs (0.0f, 1e-6f));
+
+    REQUIRE (s.pianoRollKeySnap == true);
+    REQUIRE (s.externalSyncFollowsTempo.load() == true);
+    REQUIRE (s.metronomeClickWhileRecording.load() == true);
+    // A non-numeric tempo keeps the running one rather than collapsing to the
+    // 30 BPM floor a zero fallback would clamp to - and the pre-track peek that
+    // anchors automation / region tempo has to reach the same conclusion. The
+    // two are read from the same key by separate code paths, so pin them
+    // together: a peek that disagreed would anchor the points at 30.
+    REQUIRE_THAT (s.tempoBpm.load(), WithinAbs (90.0f, 1e-3f));
+    const auto& pts = s.track (0).automationLanes[(size_t) AutomationParam::FaderDb].pointsConst();
+    REQUIRE (pts.size() == 1);
+    REQUIRE_THAT (pts[0].recordedAtBPM, WithinAbs (90.0f, 1e-3f));
+
+    target.getParentDirectory().deleteRecursively();
+}
+
+// The pre-track tempo peek and the transport block read the same key through
+// separate code paths, and the anchor they hand to automation / region tempo
+// must never disagree with the tempo the session ends up running at. The
+// absent, out-of-float-range and non-numeric shapes are pinned by the cases
+// above; this covers the numeric ones, in range and past it.
+TEST_CASE ("SessionSerializer::load agrees on tempo between the peek and the block",
+           "[session][serializer][corruption]")
+{
+    auto loadWithTempo = [] (const char* literal, float& sessionBpm, float& anchorBpm)
+    {
+        const auto target = writeSession (juce::String (R"JSON(
+        {
+          "version": 3,
+          "tracks": [
+            { "automation": { "fader_db": [ { "t": 0, "v": 0.5 } ] } }
+          ],
+          "transport": { "tempo_bpm": )JSON") + literal + " }\n}");
+
+        Session s;
+        s.tempoBpm.store (90.0f);
+        REQUIRE (SessionSerializer::load (s, target));
+
+        const auto& pts = s.track (0).automationLanes[(size_t) AutomationParam::FaderDb].pointsConst();
+        REQUIRE (pts.size() == 1);
+        sessionBpm = s.tempoBpm.load();
+        anchorBpm  = pts[0].recordedAtBPM;
+        target.getParentDirectory().deleteRecursively();
+    };
+
+    float sessionBpm = 0.0f, anchorBpm = 0.0f;
+
+    loadWithTempo ("145.0", sessionBpm, anchorBpm);
+    REQUIRE_THAT (sessionBpm, WithinAbs (145.0f, 1e-3f));
+    REQUIRE_THAT (anchorBpm, WithinAbs (145.0f, 1e-3f));
+
+    // Past the 30-300 range both sides clamp, and they clamp to the same value.
+    loadWithTempo ("5000.0", sessionBpm, anchorBpm);
+    REQUIRE_THAT (sessionBpm, WithinAbs (300.0f, 1e-3f));
+    REQUIRE_THAT (anchorBpm, WithinAbs (300.0f, 1e-3f));
+}
