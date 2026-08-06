@@ -3427,9 +3427,12 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     // 0..kBankSize-1 (or packed pos*N+sub); rewrite into the
                     // matching absolute target + absolute track index by
                     // adding activeBank * kBankSize to the position. The
-                    // load is relaxed because the bank index is owned by
-                    // the message thread (ConsoleView::setBank) and only
-                    // changes on explicit user action.
+                    // load is relaxed because the bank index is written
+                    // only from the message thread - a page press, or the
+                    // console's poll tick mirroring the MCU surface and
+                    // any move a resize queued for it - and a binding
+                    // resolving against the previous bank for one block
+                    // is not worth ordering the whole dispatch for.
                     MidiBinding b = sourceBinding;
                     if (isBankRelativeTarget (b.target))
                     {
