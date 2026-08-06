@@ -57,6 +57,11 @@ public:
     // can hang on the way out (same rationale as the CLAP editor leak path).
     void setLeakOnClose (bool b) noexcept;
 
+    // The DSP instance was destroyed out from under this editor. Drops the
+    // reference the suil callbacks dereference, so close() can still free the UI
+    // without writing ports into a freed plugin.
+    void abandonPlugin() noexcept;
+
     // Message thread, ~60 Hz: drive ui:idleInterface and platform event work.
     void pump();
 

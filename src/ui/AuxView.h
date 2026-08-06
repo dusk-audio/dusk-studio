@@ -6,6 +6,7 @@
 #include <memory>
 #include "../session/Session.h"
 #include "EmbeddedModal.h"
+#include "NativeEditorOwner.h"
 
 namespace duskstudio
 {
@@ -41,7 +42,7 @@ public:
     // Shutdown: close every lane's native editors (CLAP, LV2, VST3 - each owns an
     // X11 Display + host window) while the main peer + message loop are still
     // alive. See MainComponent::beginSafeShutdown phase 4.
-    void dropAllNativeEditors();
+    void dropAllNativeEditors (NativeEditorTeardown teardown);
 
 private:
     void timerCallback() override;

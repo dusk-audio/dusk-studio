@@ -19,6 +19,9 @@ ClapPluginEditorComponent::ClapPluginEditorComponent()
 ClapPluginEditorComponent::~ClapPluginEditorComponent()
 {
     stopTimer();
+    // Every reset path lands here, and gui->destroy would call into the bundle
+    // that was unloaded with the instance.
+    if (ownerIsStale()) editor.abandonPlugin();
     editor.close();
     if (ownsInstance) instance.deactivate();   // attach() mode: the slot owns it
 }
@@ -104,6 +107,10 @@ int ClapPluginEditorComponent::componentExtentFromEditor (int extent) const
 
 void ClapPluginEditorComponent::tryEmbed()
 {
+    // Layout / hierarchy events reach here in the same message-loop turn as an
+    // undo-triggered unload, so this is a plugin-code entry point like the pump.
+    if (ownerIsStale()) { abandonInstance(); return; }
+
     // Embed ONLY when actually on-screen. Some plugins (u-he Satin) abort() if asked
     // to set_parent/show into a parent that isn't viewable yet - so no pre-warm: build
     // + map when shown, exactly like the JUCE editor path. The kept-alive remap on a
@@ -148,6 +155,7 @@ void ClapPluginEditorComponent::tryEmbed()
 
 void ClapPluginEditorComponent::pushBounds()
 {
+    if (ownerIsStale()) return;   // setBounds drives gui->set_size on the plugin
     if (! embedded) return;
     // Borrowed bodies get setBounds'd by EmbeddedModal BEFORE being re-added
     // to a parent - getTopLevelComponent() is then `this` and the area
@@ -180,7 +188,20 @@ void ClapPluginEditorComponent::visibilityChanged()
 void ClapPluginEditorComponent::leakForShutdown()
 {
     stopTimer();
+    // The engine leaks its slots first, which bumps the generation - unbind so
+    // that cannot read as stale and divert the destructor into a destroy.
+    ownerSlot = nullptr;
     editor.setLeakOnClose (true);
+}
+
+void ClapPluginEditorComponent::abandonInstance()
+{
+    stopTimer();
+    editor.abandonPlugin();
+    editor.close();   // plugin handles are gone; this releases only what we own
+    ownerSlot = nullptr;
+    abandoned = true;
+    loaded = embedded = embedding = false;
 }
 
 #if defined(__linux__)
@@ -230,6 +251,8 @@ void ClapPluginEditorComponent::verifyGeometry()
 
 void ClapPluginEditorComponent::timerCallback()
 {
+    if (ownerIsStale()) { abandonInstance(); return; }
+
     // Keep the native child container's visible state in sync with our real on-screen
     // visibility. visibilityChanged() does NOT fire for ancestor (aux-tab / stage)
     // changes, so without this poll the container stays visible over whatever view

@@ -86,6 +86,7 @@ Lv2Editor::Lv2Editor() : impl (std::make_unique<Impl>()) { impl->owner = this; }
 Lv2Editor::~Lv2Editor() { close(); }
 
 void Lv2Editor::setLeakOnClose (bool b) noexcept { impl->leakOnClose = b; }
+void Lv2Editor::abandonPlugin() noexcept { impl->instance = nullptr; }
 int  Lv2Editor::preferredWidth()  const noexcept { return impl->prefW; }
 int  Lv2Editor::preferredHeight() const noexcept { return impl->prefH; }
 bool Lv2Editor::isOpen()     const noexcept { return impl->discovered; }
@@ -277,8 +278,11 @@ void Lv2Editor::close()
         // foreign-toolkit UI can hang in its own teardown. That leaked UI still
         // holds this Impl as its suil controller and ui:resize handle, so the
         // Impl has to outlive us too - a UI ticking its own NSTimer would
-        // otherwise write ports through freed memory.
-        impl->owner = nullptr;
+        // otherwise write ports through freed memory. The DSP instance is NOT
+        // leaked (the slot may unload it right after), so the pointer to it
+        // goes first.
+        impl->owner    = nullptr;
+        impl->instance = nullptr;
         static auto* leakedAtShutdown = new std::vector<std::unique_ptr<Impl>>;
         if (impl->container != nil)
             [impl->container removeFromSuperview];

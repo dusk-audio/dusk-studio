@@ -3,10 +3,14 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "../engine/vst3/Vst3Editor.h"
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+#include "../engine/vst3/NativeVst3Slot.h"
+#endif
 #if DUSKSTUDIO_HAS_NATIVE_AU
 #include "../engine/au/AuEditor.h"
 #endif
 #include "../foundation/MessageThread.h"
+#include "NativeEditorOwner.h"
 
 namespace duskstudio
 {
@@ -31,6 +35,22 @@ public:
 
     bool isLoaded() const noexcept { return loaded; }
 
+    // Bind to the slot that owns the attached instance, so the pump tick notices
+    // it being destroyed or replaced. See NativeEditorOwner.h.
+    void bindOwner (vst3::NativeVst3Slot& slot) noexcept
+    { owner.stamp (slot); ownerSlot = &slot; }
+
+    bool ownerIsStale() const noexcept
+    { return ownerSlot != nullptr && owner.isStale (*ownerSlot); }
+
+    // Set once this editor tore itself down on one of its own guards - the reap
+    // needs it because abandoning unbinds the slot.
+    bool wasAbandoned() const noexcept { return abandoned; }
+
+    // The instance is gone: stop pumping, drop the plugin-side handles, and
+    // release what this host owns. See NativeEditorOwner.h.
+    void abandonInstance();
+
     void resized() override;
     void parentHierarchyChanged() override;
     void visibilityChanged() override;
@@ -48,6 +68,9 @@ private:
     int componentExtentFromEditor (int extent) const;
 
     vst3::Vst3Editor editor;
+    NativeEditorOwner      owner;
+    vst3::NativeVst3Slot*  ownerSlot = nullptr;
+    bool abandoned = false;
     double lastPumpMs = 0.0;
     bool loaded    = false;
     bool embedded  = false;

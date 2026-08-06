@@ -21,6 +21,9 @@ Lv2PluginEditorComponent::Lv2PluginEditorComponent()
 Lv2PluginEditorComponent::~Lv2PluginEditorComponent()
 {
     stopTimer();
+    // Every reset path lands here, and the suil callbacks still hold the
+    // instance that went.
+    if (ownerIsStale()) editor.abandonPlugin();
     editor.close();
 }
 
@@ -87,6 +90,10 @@ int Lv2PluginEditorComponent::componentExtentFromEditor (int extent) const
 
 void Lv2PluginEditorComponent::tryEmbed()
 {
+    // Layout / hierarchy events reach here in the same message-loop turn as an
+    // undo-triggered unload, so this is a plugin-code entry point like the pump.
+    if (ownerIsStale()) { abandonInstance(); return; }
+
     // Embed ONLY when actually on-screen: the UI instantiates directly into our
     // host window, and toolkit wrappers can abort realising into a non-viewable
     // parent (same rule as the CLAP editor).
@@ -130,6 +137,7 @@ void Lv2PluginEditorComponent::tryEmbed()
 
 void Lv2PluginEditorComponent::pushBounds()
 {
+    if (ownerIsStale()) return;   // setBounds resizes the UI's own widget window
     if (! embedded) return;
     // Borrowed bodies get setBounds'd by EmbeddedModal BEFORE being re-added
     // to a parent - getTopLevelComponent() is then `this` and the area
@@ -162,7 +170,21 @@ void Lv2PluginEditorComponent::visibilityChanged()
 void Lv2PluginEditorComponent::leakForShutdown()
 {
     stopTimer();
+    // The engine leaks its slots first, which bumps the generation - unbind so
+    // that cannot read as stale and divert the destructor into a destroy.
+    ownerSlot = nullptr;
     editor.setLeakOnClose (true);
+}
+
+void Lv2PluginEditorComponent::abandonInstance()
+{
+    stopTimer();
+    editor.abandonPlugin();
+    editor.close();   // plugin handles are gone; this releases only what we own
+    ownerSlot = nullptr;
+    abandoned = true;
+    attachedInstance = nullptr;
+    loaded = embedded = embedding = false;
 }
 
 #if defined(__linux__)
@@ -212,6 +234,9 @@ void Lv2PluginEditorComponent::verifyGeometry()
 
 void Lv2PluginEditorComponent::timerCallback()
 {
+    // Ahead of the epoch read below, which dereferences the instance.
+    if (ownerIsStale()) { abandonInstance(); return; }
+
     // reactivate() (device rate/block change) frees and rebuilds the
     // LilvInstance this UI captured via instance-access at embed time. Tear
     // the UI down BEFORE the pump below can drive its idle interface against

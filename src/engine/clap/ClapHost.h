@@ -57,6 +57,12 @@ public:
     // the message thread. Publish atomically; the trampolines load-acquire before deref.
     void setCallbacks (Callbacks* c) noexcept         { callbacks.store (c, std::memory_order_release); }
 
+    // An editor that closed on the leak path left the plugin's GUI created. CLAP
+    // allows one GUI per instance, so the next editor over this instance must not
+    // call create() again. Latched for the instance's lifetime - message thread.
+    void markGuiLeaked() noexcept    { guiLeaked = true; }
+    bool isGuiLeaked() const noexcept { return guiLeaked; }
+
     // Message thread: poll the plugin's registered fds (level-triggered) and fire
     // its registered timers, so the embedded GUI processes its X11 events + repaints.
     void pumpGui (double elapsedMs);
@@ -93,6 +99,7 @@ private:
 
     const clap_plugin*       plugin = nullptr;
     std::atomic<Callbacks*>  callbacks { nullptr };
+    bool                     guiLeaked = false;
 
     struct RegFd    { int fd; clap_posix_fd_flags_t flags; };
     struct RegTimer { clap_id id; uint32_t periodMs; double accumMs; };

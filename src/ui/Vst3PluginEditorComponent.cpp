@@ -28,6 +28,9 @@ Vst3PluginEditorComponent::Vst3PluginEditorComponent()
 Vst3PluginEditorComponent::~Vst3PluginEditorComponent()
 {
     stopTimer();
+    // Every reset path lands here, and releasing the view calls into the module
+    // that was unloaded with the instance.
+    if (ownerIsStale()) editor.abandonPlugin();
     editor.close();
 }
 
@@ -84,6 +87,10 @@ int Vst3PluginEditorComponent::componentExtentFromEditor (int extent) const
 
 void Vst3PluginEditorComponent::tryEmbed()
 {
+    // Layout / hierarchy events reach here in the same message-loop turn as an
+    // undo-triggered unload, so this is a plugin-code entry point like the pump.
+    if (ownerIsStale()) { abandonInstance(); return; }
+
     // Embed ONLY when actually on-screen (toolkit-backed editors can abort
     // realising into a non-viewable parent). `embedding` breaks the re-entry
     // cycle: attached() can fire resizeView synchronously -> onResize -> setSize
@@ -128,6 +135,7 @@ void Vst3PluginEditorComponent::tryEmbed()
 
 void Vst3PluginEditorComponent::pushBounds()
 {
+    if (ownerIsStale()) return;   // setBounds drives IPlugView::onSize
     if (! embedded) return;
     // Borrowed bodies get setBounds'd by EmbeddedModal BEFORE being re-added
     // to a parent - getTopLevelComponent() is then `this` and the area
@@ -155,6 +163,16 @@ void Vst3PluginEditorComponent::visibilityChanged()
     {
         editor.hide();
     }
+}
+
+void Vst3PluginEditorComponent::abandonInstance()
+{
+    stopTimer();
+    editor.abandonPlugin();
+    editor.close();   // plugin handles are gone; this releases only what we own
+    ownerSlot = nullptr;
+    abandoned = true;
+    loaded = embedded = embedding = false;
 }
 
 #if defined(__linux__)
@@ -204,6 +222,8 @@ void Vst3PluginEditorComponent::verifyGeometry()
 
 void Vst3PluginEditorComponent::timerCallback()
 {
+    if (ownerIsStale()) { abandonInstance(); return; }
+
     // Ancestor visibility changes (tab switches) don't fire visibilityChanged -
     // poll like the CLAP/LV2 editors so the native window can't float over
     // another view. The un-embedded poll covers the mirror case: a component

@@ -6,6 +6,7 @@
 #include "SpscRing.h"
 
 #include <atomic>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <memory>
@@ -73,6 +74,7 @@ public:
         adapter.prepare (instance->portLayout(), maxBlock);   // size the fold scratch
         loadedPath     = path.u8string();
         loadedPluginId = pickedId;
+        gen.fetch_add (1, std::memory_order_relaxed);
         ready.store (true, std::memory_order_release);
         return true;
     }
@@ -80,6 +82,7 @@ public:
     void unload()
     {
         ready.store (false, std::memory_order_release);
+        gen.fetch_add (1, std::memory_order_relaxed);
         instance.reset();   // destroy the plugin first - its vtables live in the bundle
         bundle.reset();     // then unload the .so / world backing them
         loadedPath.clear();
@@ -106,6 +109,7 @@ public:
     void leakForShutdown() noexcept
     {
         ready.store (false, std::memory_order_release);
+        gen.fetch_add (1, std::memory_order_relaxed);
         (void) instance.release();
         (void) bundle.release();
         loadedPath.clear();
@@ -193,6 +197,12 @@ public:
     Instance* getInstance() noexcept
         { return ready.load (std::memory_order_acquire) ? instance.get() : nullptr; }
 
+    // Bumped on every load / unload. An attached editor pairs this with the
+    // instance pointer it was built against: a reload can place the successor at
+    // the address the previous instance was freed from, which the pointer alone
+    // cannot tell apart. Identity only - it gates no audio read, so relaxed.
+    std::uint64_t generation() const noexcept { return gen.load (std::memory_order_relaxed); }
+
     // MIDI-binding parameter writes
     // The MIDI apply loop runs on the AUDIO thread, but the instances' param
     // rings are single-producer (message thread: host sets + editor edits), so
@@ -228,8 +238,9 @@ protected:
     // Folds the mixer's stereo insert onto the plugin's negotiated layout. Prepared
     // on load / reactivate; owns its own scratch (no plugin refs, teardown order-free).
     InsertAdapter     adapter;
-    std::atomic<bool> ready    { false };
-    std::atomic<bool> bypassed { false };
+    std::atomic<bool>          ready    { false };
+    std::atomic<bool>          bypassed { false };
+    std::atomic<std::uint64_t> gen      { 0 };
     std::string       loadedPath;
     std::string       loadedPluginId;
 

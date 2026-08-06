@@ -49,6 +49,17 @@ public:
     // quit. close() then skips gui->hide/gui->destroy; the process is exiting anyway.
     void setLeakOnClose (bool b) noexcept { leakOnClose = b; }
 
+    // The plugin was destroyed out from under this editor. Drop every plugin-side
+    // handle WITHOUT calling through it - the vtables went with the bundle - so
+    // close() only releases the container this host owns.
+    void abandonPlugin() noexcept
+    {
+        plugin  = nullptr;
+        gui     = nullptr;
+        hostPtr = nullptr;
+        created = embedded = false;
+    }
+
     // Message thread, ~60 Hz: apply queued GUI callbacks, pump the plugin's
     // fds/timers, and drain any platform editor events.
     void pump (double elapsedMs);

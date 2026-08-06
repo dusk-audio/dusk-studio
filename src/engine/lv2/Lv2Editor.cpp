@@ -79,7 +79,7 @@ struct Lv2Editor::Impl
                            (unsigned) w, (unsigned) h);
             XFlush ((Display*) self->display);
         }
-        if (self->owner->onResize) self->owner->onResize (w, h);
+        if (self->owner != nullptr && self->owner->onResize) self->owner->onResize (w, h);
         return 0;
     }
 };
@@ -88,6 +88,7 @@ Lv2Editor::Lv2Editor() : impl (std::make_unique<Impl>()) { impl->owner = this; }
 Lv2Editor::~Lv2Editor() { close(); }
 
 void Lv2Editor::setLeakOnClose (bool b) noexcept { impl->leakOnClose = b; }
+void Lv2Editor::abandonPlugin() noexcept { impl->instance = nullptr; }
 int  Lv2Editor::preferredWidth()  const noexcept { return impl->prefW; }
 int  Lv2Editor::preferredHeight() const noexcept { return impl->prefH; }
 bool Lv2Editor::isOpen()     const noexcept { return impl->discovered; }
@@ -295,6 +296,31 @@ void Lv2Editor::hide()
 
 void Lv2Editor::close()
 {
+    if (impl->leakOnClose && impl->suilInstance != nullptr)
+    {
+        // Shutdown path: the suil instance is deliberately leaked because a
+        // foreign-toolkit UI can hang in its own teardown. That leaked UI still
+        // holds this Impl as its suil controller and ui:resize handle, and draws
+        // into the host window over the Impl's display connection, so the whole
+        // Impl is leaked with it - a UI ticking its own timer would otherwise
+        // write ports through freed memory. The DSP instance is NOT leaked (the
+        // slot may unload it right after), so the pointer to it goes first.
+        impl->owner    = nullptr;
+        impl->instance = nullptr;
+        // Unmap rather than destroy: the UI keeps the window, but an abandoned
+        // editor must not leave it painting over whatever replaces this view.
+        if (impl->display != nullptr && impl->hostWindow != 0)
+        {
+            XUnmapWindow ((Display*) impl->display, (Window) impl->hostWindow);
+            XFlush ((Display*) impl->display);
+        }
+        static auto* leakedAtShutdown = new std::vector<std::unique_ptr<Impl>>;
+        leakedAtShutdown->push_back (std::move (impl));
+        impl = std::make_unique<Impl>();
+        impl->owner = this;
+        return;
+    }
+
     if (! impl->leakOnClose)
     {
         if (impl->suilInstance != nullptr) suil_instance_free (impl->suilInstance);

@@ -6,11 +6,11 @@
 
 namespace duskstudio
 {
-void ConsoleView::dropAllPluginEditors()
+void ConsoleView::dropAllPluginEditors (NativeEditorTeardown teardown)
 {
     for (auto& strip : strips)
         if (strip != nullptr)
-            strip->dropPluginEditor();
+            strip->dropPluginEditor (teardown);
 }
 
 ConsoleView::ConsoleView (Session& session, AudioEngine& engine) : sessionRef (session)

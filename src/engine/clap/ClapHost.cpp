@@ -168,16 +168,23 @@ void ClapHost::pumpGui (double elapsedMs)
             if (::poll (pfds.data(), (nfds_t) pfds.size(), 0) > 0)
                 for (const auto& p : pfds)   // iterates the local snapshot - on_fd may (un)register
                 {
-                    clap_posix_fd_flags_t f = 0;
-                    if (p.revents & POLLIN)                          f |= CLAP_POSIX_FD_READ;
-                    if (p.revents & POLLOUT)                         f |= CLAP_POSIX_FD_WRITE;
-                    if (p.revents & (POLLERR | POLLHUP | POLLNVAL))  f |= CLAP_POSIX_FD_ERROR;
-                    if (f == 0) continue;
                     // A prior on_fd() in this loop may have unregistered this fd; skip
                     // it so we don't dispatch a stale descriptor (mirrors the timer path).
                     bool stillRegistered = false;
                     for (const auto& r : fds) if (r.fd == p.fd) { stillRegistered = true; break; }
-                    if (stillRegistered) fdSup->on_fd (plugin, p.fd, f);
+                    if (! stillRegistered) continue;
+
+                    // A plugin that closed its fd without unregistering leaves poll
+                    // reporting POLLNVAL immediately on every pump. Drop the
+                    // registration rather than dispatch an error at message-thread
+                    // rate forever.
+                    if (p.revents & POLLNVAL) { (void) unregisterFd (&host, p.fd); continue; }
+
+                    clap_posix_fd_flags_t f = 0;
+                    if (p.revents & POLLIN)                f |= CLAP_POSIX_FD_READ;
+                    if (p.revents & POLLOUT)               f |= CLAP_POSIX_FD_WRITE;
+                    if (p.revents & (POLLERR | POLLHUP))   f |= CLAP_POSIX_FD_ERROR;
+                    if (f != 0) fdSup->on_fd (plugin, p.fd, f);
                 }
         }
     }

@@ -117,7 +117,30 @@ void ClapEditor::hide()
 
 void ClapEditor::close()
 {
-    if (plugin != nullptr && gui != nullptr && ! leakOnClose)
+    // Leak path: the plugin GUI stays created (it hangs in gui->destroy) and keeps
+    // drawing into our container view, so the view is leaked with it rather than
+    // released out from under a live GUI.
+    if (leakOnClose && created)
+    {
+        if (hostPtr != nullptr)
+        {
+            hostPtr->markGuiLeaked();
+            hostPtr->setCallbacks (nullptr);
+            hostPtr = nullptr;
+        }
+        // Detach without releasing: left as a subview, the peer's dealloc would
+        // release the container out from under the live GUI.
+        if (auto* container = containerView (containerHandle); container != nil)
+            [container removeFromSuperview];
+        platformContext = nullptr;
+        containerHandle = 0;
+        gui = nullptr;
+        plugin = nullptr;
+        created = embedded = mapped = false;
+        return;
+    }
+
+    if (plugin != nullptr && gui != nullptr)
     {
         if (gui->hide != nullptr)    gui->hide (plugin);
         if (gui->destroy != nullptr) gui->destroy (plugin);

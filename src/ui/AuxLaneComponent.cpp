@@ -437,7 +437,12 @@ void AuxLaneComponent::timerCallback()
         nameLabel.setText (lane.name, juce::dontSendNotification);
 
     for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
+    {
+        // rebuildSlots only runs on lane edits, so without this the lane would
+        // hold an abandoned editor until the next one.
+        syncNativeEditorOwnersForSlot (i);
         refreshSlotControls (i);
+    }
     if (stripMeter != nullptr) stripMeter->repaint();
     if (sendPanel  != nullptr) sendPanel->repaint();
 
@@ -1319,27 +1324,55 @@ void AuxLaneComponent::detachAuEditorForSlot (int slotIdx)
 #endif
 }
 
-void AuxLaneComponent::dropAllNativeEditors()
+void AuxLaneComponent::syncNativeEditorOwnersForSlot (int slotIdx)
+{
+    [[maybe_unused]] auto& ui = slots[(size_t) slotIdx];
+    [[maybe_unused]] auto detach = [this] (auto& body) { removeChildComponent (&body); };
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    syncNativeEditorOwner (ui.clapEditor, detach);
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    syncNativeEditorOwner (ui.lv2Editor, detach);
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    syncNativeEditorOwner (ui.vst3Editor, detach);
+#endif
+}
+
+void AuxLaneComponent::dropAllNativeEditors (NativeEditorTeardown teardown)
 {
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
     {
-        if (slots[(size_t) i].clapEditor != nullptr)
-            slots[(size_t) i].clapEditor->leakForShutdown();   // u-he hangs in gui->destroy
+        if (auto& ed = slots[(size_t) i].clapEditor; ed != nullptr)
+        {
+            // Only an exiting process leaks the GUI (u-he hangs in gui->destroy).
+            if (teardown == NativeEditorTeardown::LeakForExit)          ed->leakForShutdown();
+            else if (teardown == NativeEditorTeardown::AbandonInstance) ed->abandonInstance();
+        }
         detachClapEditorForSlot (i);
     }
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
     {
-        if (slots[(size_t) i].lv2Editor != nullptr)
-            slots[(size_t) i].lv2Editor->leakForShutdown();
+        if (auto& ed = slots[(size_t) i].lv2Editor; ed != nullptr)
+        {
+            if (teardown == NativeEditorTeardown::LeakForExit)          ed->leakForShutdown();
+            else if (teardown == NativeEditorTeardown::AbandonInstance) ed->abandonInstance();
+        }
         detachLv2EditorForSlot (i);
     }
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
-        detachVst3EditorForSlot (i);   // in-process C++ teardown - no leak path needed
+    {
+        // In-process C++ teardown - no leak path needed.
+        if (auto& ed = slots[(size_t) i].vst3Editor;
+            ed != nullptr && teardown == NativeEditorTeardown::AbandonInstance)
+            ed->abandonInstance();
+        detachVst3EditorForSlot (i);
+    }
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_AU
     for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
@@ -1480,6 +1513,10 @@ void AuxLaneComponent::rebuildSlots()
 {
     for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
     {
+        // Reap editors that abandoned their instance on their own pump tick, so
+        // the pass below rebuilds against whatever the slot holds now.
+        syncNativeEditorOwnersForSlot (i);
+
         auto& ui = slots[(size_t) i];
         const int mode = strip.insertMode[(size_t) i].load (std::memory_order_relaxed);
 
@@ -1510,6 +1547,7 @@ void AuxLaneComponent::rebuildSlots()
                     if (ed->attach (*clapInst, err))
                     {
                         ui.clapEditor = std::move (ed);
+                        ui.clapEditor->bindOwner (strip.getNativeClapSlot (i));
                         addAndMakeVisible (*ui.clapEditor);
                         layoutEditorForSlot (i);
                     }
@@ -1536,6 +1574,7 @@ void AuxLaneComponent::rebuildSlots()
                     if (ed->attach (*lv2Inst, err))
                     {
                         ui.lv2Editor = std::move (ed);
+                        ui.lv2Editor->bindOwner (strip.getNativeLv2Slot (i));
                         addAndMakeVisible (*ui.lv2Editor);
                         layoutEditorForSlot (i);
                     }
@@ -1562,6 +1601,7 @@ void AuxLaneComponent::rebuildSlots()
                     if (ed->attach (*vst3Inst, err))
                     {
                         ui.vst3Editor = std::move (ed);
+                        ui.vst3Editor->bindOwner (strip.getNativeVst3Slot (i));
                         addAndMakeVisible (*ui.vst3Editor);
                         layoutEditorForSlot (i);
                     }
