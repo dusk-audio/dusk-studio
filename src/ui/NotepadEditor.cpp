@@ -964,7 +964,7 @@ bool NotepadEditor::handleChordEntry()
     bool draftChanged = false;
     if (ImGui::IsKeyPressed (ImGuiKey_Backspace) && ! chordDraft.empty())
     {
-        chordDraft.pop_back();
+        chordDraft.resize (notepad::previousOffset (chordDraft, chordDraft.size()));
         draftChanged = true;
     }
 

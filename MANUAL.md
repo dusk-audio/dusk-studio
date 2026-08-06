@@ -546,7 +546,7 @@ In compact mode (window narrower than 1850 pixels), `TIMELINE` becomes `▾` and
 ![Session notepad.](docs/images/np-12-notepad.png)
 
 A document editor for lyrics and session notes, opened from the transport bar.
-The default **Document** view is a wrapped, page-style editor: formatting is
+It is a wrapped, page-style editor: formatting is
 shown in place, headings use document typography, links are underlined, and
 bullets, numbering, quotes, and clickable task boxes render as real document
 elements. Use the toolbar or Ctrl+B / Ctrl+I to set the typing style at the

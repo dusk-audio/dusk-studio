@@ -298,9 +298,15 @@ std::string escapeDocumentInsertion (const std::string& text, bool atLineStart)
 bool isSectionLine (const std::string& text, std::size_t lineStart, std::size_t lineEnd)
 {
     const auto length = lineEnd - lineStart;
-    return length >= 3 && text[lineStart] == '[' && text[lineEnd - 1] == ']'
-        && ! notepad::chords::isChord (
-                std::string_view (text).substr (lineStart + 1, length - 2));
+    if (length < 3 || text[lineStart] != '[' || text[lineEnd - 1] != ']')
+        return false;
+    // A lyric line that starts and ends with chords also starts with '[' and
+    // ends with ']'; a real label never contains a bracket (insertSectionMarker
+    // refuses one).
+    const auto inner = std::string_view (text).substr (lineStart + 1, length - 2);
+    return inner.find ('[') == std::string_view::npos
+        && inner.find (']') == std::string_view::npos
+        && ! notepad::chords::isChord (inner);
 }
 
 std::size_t lineStartAt (const std::string& text, std::size_t offset)

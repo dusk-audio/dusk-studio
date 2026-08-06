@@ -215,6 +215,7 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
         hasSessionFile = sessionExists;
         documentDirty = unsavedChanges;
         saveFailed = false;
+        savedAtLabel.clear();
         savedMarkdown = unsavedChanges ? std::optional<std::string> {}
                                        : std::optional<std::string> { markdown };
         history.clear();
