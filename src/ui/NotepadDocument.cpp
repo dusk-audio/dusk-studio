@@ -87,7 +87,7 @@ void projectInline (ProjectionBuilder& out, std::size_t start, std::size_t end,
         // CommonMark's compact combined form must be recognized before the
         // two-star bold delimiter. Otherwise ***Heading*** is consumed as a
         // bold run containing a literal leading star, leaving the final star
-        // visible in Document mode.
+        // visible in the projection.
         if (i + 2 < end && source.compare (i, 3, "***") == 0)
         {
             const auto close = findUnescaped (source, "***", i + 3, end);
@@ -367,10 +367,15 @@ ProjectionBuilder buildProjection (const std::string& markdown)
 
 void NotepadDocument::setMarkdown (std::string text)
 {
-    markdownText = std::move (text);
     // A new document brings its own notation: the spelling only stays sticky
     // across edits to the document that established it.
     flatSpelling = false;
+    restoreMarkdown (std::move (text));
+}
+
+void NotepadDocument::restoreMarkdown (std::string text)
+{
+    markdownText = std::move (text);
     rebuildProjection();
 }
 
@@ -386,14 +391,25 @@ bool NotepadDocument::replaceDocumentText (const std::string& text)
            && projectedText[projectedText.size() - 1 - suffix] == text[text.size() - 1 - suffix])
         ++suffix;
 
-    const auto escapeAt = [this] (std::size_t sourceOffset, const std::string& value)
+    // A section label is projected without its brackets, so the boundary after
+    // its last character maps past the hidden ']' just as a bold run's does.
+    // An edit that stays inside the label has to land inside the brackets too,
+    // or the line stops being a marker and the integrity check below drops the
+    // keystroke. A range that already swallows the '[' is removing the whole
+    // marker and keeps its outward reach.
+    const auto keepInsideSectionLabel = [this] (Selection range)
     {
-        // Source mode edits the Markdown directly, so its syntax characters are
-        // the point: escaping them there would turn a typed '*' into '\\*'.
-        if (sourceMode)
-            return value;
-        return escapeDocumentInsertion (
-            value, sourceOffset == 0 || markdownText[sourceOffset - 1] == '\n');
+        if (range.end == 0 || markdownText[range.end - 1] != ']')
+            return range;
+        const auto lineStart = lineStartAt (markdownText, range.end);
+        if (lineEndAt (markdownText, lineStart) != range.end)
+            return range;
+        const auto contentStart = lineStart
+                                + blockPrefixLength (markdownText, lineStart, range.end);
+        if (range.start > contentStart
+            && isSectionLine (markdownText, contentStart, range.end))
+            --range.end;
+        return range;
     };
 
     const auto oldEnd = projectedText.size() - suffix;
@@ -403,36 +419,36 @@ bool NotepadDocument::replaceDocumentText (const std::string& text)
     // marker or the edit would create invalid Markdown and flatten the run.
     auto source = sourceSelection ({ prefix, oldEnd });
 
-    // A section label is projected without its brackets. Deleting the entire
-    // visible label therefore needs to include the hidden source prefix (and
-    // any block prefix on a hand-authored marker); otherwise "[Verse]" would
-    // become "[" and the projection-integrity check below would reject the
-    // edit. Keep the newline so ordinary text deletion leaves an empty line.
+    // Deleting the entire visible label needs to include the hidden source
+    // prefix (and any block prefix on a hand-authored marker); otherwise
+    // "[Verse]" would become "[". Keep the newline so ordinary text deletion
+    // leaves an empty line.
     const auto insertedLength = text.size() - prefix - suffix;
-    if (! sourceMode && insertedLength == 0 && prefix < oldEnd)
-    {
-        const auto projectedLineStart = lineStartAt (projectedText, prefix);
-        const auto projectedLineEnd = lineEndAt (projectedText, prefix);
-        if (prefix == projectedLineStart && oldEnd >= projectedLineEnd
-            && lineInfoAt (prefix).section)
-            source.start = lineStartAt (markdownText, source.start);
-    }
+    const bool wholeLabel = insertedLength == 0 && prefix < oldEnd
+                         && prefix == lineStartAt (projectedText, prefix)
+                         && oldEnd >= lineEndAt (projectedText, prefix)
+                         && lineInfoAt (prefix).section;
+    if (wholeLabel)
+        source.start = lineStartAt (markdownText, source.start);
+    else if (prefix < oldEnd)
+        source = keepInsideSectionLabel (source);
+
     if (prefix == oldEnd && prefix > 0)
     {
         // At the right edge of a styled run the projected boundary sits after
         // its hidden closing marker. Insert just inside that marker first; the
         // caller can then retain or clear the run's style without producing a
         // chain of adjacent wrappers for character-by-character typing.
-        const auto previousCharacter = sourceSelection ({ prefix - 1, prefix });
+        const auto previousCharacter = keepInsideSectionLabel (
+            sourceSelection ({ prefix - 1, prefix }));
         source.start = source.end = previousCharacter.end;
     }
-    const auto sourceStart = source.start;
-    const auto sourceEnd = source.end;
-
+    const auto atLineStart = source.start == 0 || markdownText[source.start - 1] == '\n';
     auto previousMarkdown = markdownText;
-    markdownText.replace (sourceStart, sourceEnd - sourceStart,
-                          escapeAt (sourceStart,
-                                    text.substr (prefix, text.size() - prefix - suffix)));
+    markdownText.replace (
+        source.start, source.end - source.start,
+        escapeDocumentInsertion (text.substr (prefix, text.size() - prefix - suffix),
+                                 atLineStart));
     rebuildProjection();
     if (projectedText == text)
         return true;
@@ -476,50 +492,6 @@ NotepadDocument::Selection NotepadDocument::sourceSelection (Selection selection
     }
 
     return { sourceStart, sourceEnd };
-}
-
-NotepadDocument::Selection NotepadDocument::documentSelection (Selection selection) const noexcept
-{
-    selection.start = std::min (selection.start, markdownText.size());
-    selection.end = std::min (selection.end, markdownText.size());
-    if (selection.start > selection.end)
-        std::swap (selection.start, selection.end);
-
-    const auto boundaryFor = [this] (std::size_t sourceOffset)
-    {
-        const auto found = std::lower_bound (documentBoundaryToSource.begin(),
-                                             documentBoundaryToSource.end(),
-                                             sourceOffset);
-        return static_cast<std::size_t> (std::distance (documentBoundaryToSource.begin(),
-                                                       found));
-    };
-    return { std::min (boundaryFor (selection.start), projectedText.size()),
-             std::min (boundaryFor (selection.end), projectedText.size()) };
-}
-
-void NotepadDocument::wrapDocumentSelection (Selection selection,
-                                             const std::string& prefix,
-                                             const std::string& suffix)
-{
-    const auto source = sourceSelection (selection);
-    const bool hasPrefix = source.start >= prefix.size()
-                        && markdownText.compare (source.start - prefix.size(), prefix.size(), prefix) == 0;
-    const bool hasSuffixBeforeEnd = source.end >= suffix.size()
-                                 && markdownText.compare (source.end - suffix.size(), suffix.size(), suffix) == 0;
-    const bool hasSuffixAfterEnd = markdownText.compare (source.end, suffix.size(), suffix) == 0;
-
-    if (hasPrefix && (hasSuffixBeforeEnd || hasSuffixAfterEnd))
-    {
-        const auto suffixStart = hasSuffixBeforeEnd ? source.end - suffix.size() : source.end;
-        markdownText.erase (suffixStart, suffix.size());
-        markdownText.erase (source.start - prefix.size(), prefix.size());
-    }
-    else
-    {
-        markdownText.insert (source.end, suffix);
-        markdownText.insert (source.start, prefix);
-    }
-    rebuildProjection();
 }
 
 void NotepadDocument::setDocumentInlineStyle (Selection selection,
@@ -658,12 +630,6 @@ void NotepadDocument::setDocumentBlockStyle (Selection selection, BlockStyle sty
 
 NotepadDocument::LineInfo NotepadDocument::lineInfoAt (std::size_t documentOffset) const noexcept
 {
-    // Source mode shows the syntax rather than acting on it, so every line is
-    // body text: a heading keeps its metrics between the two views and the
-    // toggle moves nothing.
-    if (sourceMode)
-        return {};
-
     documentOffset = std::min (documentOffset, projectedText.size());
     const auto sourceOffset = documentBoundaryToSource[documentOffset];
     const auto start = lineStartAt (markdownText, sourceOffset);
@@ -758,16 +724,8 @@ const NotepadDocument::ChordToken*
     NotepadDocument::chordTokenAt (std::size_t documentOffset) const noexcept
 {
     for (const auto& token : chordTokens)
-    {
-        // Source mode edits the bracket itself, so the caret only has to be
-        // somewhere inside the token; the rendered view anchors chords on a
-        // character, and there the offset is the anchor.
-        const bool hit = sourceMode
-                       ? documentOffset >= token.start && documentOffset < token.end
-                       : documentOffset == token.documentOffset;
-        if (hit)
+        if (documentOffset == token.documentOffset)
             return &token;
-    }
     return nullptr;
 }
 
@@ -784,6 +742,11 @@ bool NotepadDocument::setChordAt (std::size_t documentOffset, const std::string&
 
     if (const auto* const token = chordTokenAt (documentOffset); token != nullptr)
     {
+        // Rewriting a chord as itself leaves the Markdown byte-identical.
+        // Saying so is what keeps a re-commit of an unchanged slot out of the
+        // undo history, where it would also discard the redo stack.
+        if (token->name == name)
+            return false;
         markdownText.replace (token->start, token->end - token->start,
                               name.empty() ? std::string() : "[" + name + "]");
         rebuildProjection();
@@ -801,10 +764,8 @@ bool NotepadDocument::setChordAt (std::size_t documentOffset, const std::string&
 
 bool NotepadDocument::repeatPreviousChordAt (std::size_t documentOffset)
 {
-    const auto sourceOffset = sourceMode
-                            ? std::min (documentOffset, markdownText.size())
-                            : documentBoundaryToSource[std::min (
-                                  documentOffset, documentBoundaryToSource.size() - 1)];
+    const auto sourceOffset = documentBoundaryToSource[std::min (
+        documentOffset, documentBoundaryToSource.size() - 1)];
     const ChordToken* previous = nullptr;
     for (const auto& token : chordTokens)
     {
@@ -929,14 +890,9 @@ NotepadDocument::BlockStyle NotepadDocument::blockStyleForSelection (Selection s
     return initial;
 }
 
-const std::string& NotepadDocument::renderedText() const
-{
-    return renderedTextCache.has_value() ? *renderedTextCache : projectedText;
-}
-
 std::size_t NotepadDocument::wordCount() const noexcept
 {
-    const auto& text = renderedText();
+    const auto& text = projectedText;   // the lyric, never the syntax behind it
     std::size_t count = 0;
     std::size_t start = 0;
     while (start < text.size())
@@ -960,7 +916,7 @@ std::size_t NotepadDocument::characterCount() const noexcept
     // The editor navigates by codepoint, so the count has to agree with it:
     // an accent or an emoji is one character, not the two to four bytes it
     // occupies.
-    const auto& text = renderedText();
+    const auto& text = projectedText;
     std::size_t count = 0;
     for (std::size_t offset = 0; offset < text.size();
          offset = notepad::nextOffset (text, offset))
@@ -995,21 +951,11 @@ std::vector<std::string> NotepadDocument::uniqueChordNames() const
     return names;
 }
 
-void NotepadDocument::setSourceMode (bool showSource)
-{
-    if (sourceMode == showSource)
-        return;
-    sourceMode = showSource;
-    rebuildProjection();
-}
-
 void NotepadDocument::rebuildProjection()
 {
-    renderedTextCache.reset();
-
-    // One traversal feeds both lanes, so the tokens the chord commands rewrite
-    // are exactly the chords the projection renders: an escaped bracket, a code
-    // span and a link destination stay literal text in both.
+    // One traversal feeds the text and the chord lane, so the tokens the chord
+    // commands rewrite are exactly the chords the projection renders: an
+    // escaped bracket, a code span and a link destination stay literal in both.
     auto out = buildProjection (markdownText);
 
     chordTokens.clear();
@@ -1027,21 +973,6 @@ void NotepadDocument::rebuildProjection()
     }
     if (flats != 0 || sharps != 0)
         flatSpelling = flats > sharps;
-
-    if (sourceMode)
-    {
-        // The counts describe the lyric in both modes, so they measure the
-        // rendered text this walk just produced rather than the syntax.
-        renderedTextCache = std::move (out.text);
-        projectedText = markdownText;
-        documentBoundaryToSource.resize (markdownText.size() + 1);
-        for (std::size_t i = 0; i <= markdownText.size(); ++i)
-            documentBoundaryToSource[i] = i;
-        projectedStyles.assign (markdownText.size(), TextStyle {});
-        projectedLinkTargets.assign (markdownText.size(), std::string {});
-        projectedChords.clear();
-        return;
-    }
 
     projectedText = std::move (out.text);
     documentBoundaryToSource = std::move (out.boundaries);

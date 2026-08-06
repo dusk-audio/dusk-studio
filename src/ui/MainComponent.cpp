@@ -74,39 +74,27 @@ juce::Array<juce::File> toFileArray (const std::vector<std::filesystem::path>& p
 }
 
 #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
-NativeNotepadWindow::EmbeddedGeometry notepadGeometryFor (const juce::Component& topLevel)
+// Where the embedded notepad child sits inside the top-level window, in
+// logical coordinates. The native child's geometry and the dim overlay's
+// click-outside test are the same rectangle in two coordinate spaces.
+juce::Rectangle<int> notepadChildBounds (const juce::Component& topLevel)
 {
-    const auto hostBounds = embedscale::toPhysical (topLevel, topLevel.getLocalBounds());
-    const auto scaleFactor = embedscale::factor (topLevel);
-    const auto margin = std::max (0, juce::roundToInt (16.0 * scaleFactor));
-    const auto width = std::max (
-        2, std::min (hostBounds.getWidth() - margin * 2,
-                     juce::roundToInt (NativeNotepadWindow::kPreferredWidth * scaleFactor)));
-    const auto height = std::max (
-        2, std::min (hostBounds.getHeight() - margin * 2,
-                     juce::roundToInt (NativeNotepadWindow::kPreferredHeight * scaleFactor)));
-    return {
-        hostBounds.getX() + (hostBounds.getWidth() - width) / 2,
-        hostBounds.getY() + (hostBounds.getHeight() - height) / 2,
-        static_cast<std::uint32_t> (width),
-        static_cast<std::uint32_t> (height),
-        scaleFactor
-    };
+    // A window narrower than the margin would otherwise centre a negative
+    // extent, which offsets the origin instead of shrinking the child.
+    return topLevel.getLocalBounds().withSizeKeepingCentre (
+        std::clamp (topLevel.getWidth() - 32, 0, (int) NativeNotepadWindow::kPreferredWidth),
+        std::clamp (topLevel.getHeight() - 32, 0, (int) NativeNotepadWindow::kPreferredHeight));
 }
 
-// notepadGeometryFor's logical twin: where the embedded child lands in
-// target's coordinates, for the dim overlay's click-outside test. One pixel of
-// slack absorbs the rounding between the two.
-auto notepadChildArea (const juce::Component& target, const juce::Component& topLevel)
+NativeNotepadWindow::EmbeddedGeometry notepadGeometryFor (const juce::Component& topLevel)
 {
-    const auto width  = std::min (topLevel.getWidth() - 32,
-                                  (int) NativeNotepadWindow::kPreferredWidth);
-    const auto height = std::min (topLevel.getHeight() - 32,
-                                  (int) NativeNotepadWindow::kPreferredHeight);
-    return target.getLocalArea (&topLevel,
-                                topLevel.getLocalBounds()
-                                    .withSizeKeepingCentre (width, height))
-        .expanded (1);
+    const auto bounds = embedscale::toPhysical (topLevel, notepadChildBounds (topLevel));
+    return {
+        bounds.getX(), bounds.getY(),
+        static_cast<std::uint32_t> (std::max (2, bounds.getWidth())),
+        static_cast<std::uint32_t> (std::max (2, bounds.getHeight())),
+        embedscale::factor (topLevel)
+    };
 }
 #endif
 
@@ -1914,7 +1902,8 @@ void MainComponent::resized()
         {
             notepadWindow->setEmbeddedGeometry (notepadGeometryFor (*topLevel));
             if (notepadDim != nullptr)
-                notepadDim->setNativeChildArea (notepadChildArea (*this, *topLevel));
+                notepadDim->setNativeChildArea (
+                    getLocalArea (topLevel, notepadChildBounds (*topLevel)).expanded (1));
         }
     }
    #endif
@@ -5348,7 +5337,10 @@ void MainComponent::toggleNotepad()
     // sequence above.
     notepadDim = std::make_unique<DimOverlay> (0.80f);
     notepadDim->setBounds (getLocalBounds());
-    notepadDim->setNativeChildArea (notepadChildArea (*this, *topLevel));
+    // One pixel of slack absorbs the rounding between the logical overlay and
+    // the physical child.
+    notepadDim->setNativeChildArea (
+        getLocalArea (topLevel, notepadChildBounds (*topLevel)).expanded (1));
     notepadDim->onClick = [safeThis]
     {
         if (auto* self = safeThis.getComponent())
@@ -5378,8 +5370,10 @@ void MainComponent::dismissNotepad (bool saveChanges)
    #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
     if (notepadWindow != nullptr)
     {
-        notepadWindow->setCallbacks ({}, {}, {});
+        // close() commits an open chord slot, which reports the new text through
+        // onTextChanged; clearing the callbacks first would drop that final edit.
         notepadWindow->close();
+        notepadWindow->setCallbacks ({}, {}, {});
         notepadWindow.reset();
     }
     notepadDim.reset();

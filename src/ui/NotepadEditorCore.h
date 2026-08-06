@@ -34,11 +34,6 @@ void appendUtf8 (std::string& text, unsigned int codepoint);
 // for editor commands.
 bool acceptsTextInput (bool control, bool alt, bool super) noexcept;
 
-// Produces a target safe for this editor's Markdown link parser. Percent
-// encoding avoids both early ')' termination and backslashes leaking into the
-// URL returned by NotepadDocument::linkTargetAt().
-std::string encodeMarkdownLinkTarget (const std::string& target);
-
 struct MarkdownTransform
 {
     std::string markdown;
@@ -64,6 +59,8 @@ float blockRowHeight (NotepadDocument::BlockStyle block, float bodySize) noexcep
 float blockIndent (NotepadDocument::BlockStyle block) noexcept;
 // Height of the chord band drawn above a row that carries chords.
 float chordBandHeight (float bodySize) noexcept;
+// Point size the chord lane is drawn at above lyrics of the given size.
+float chordFontSize (float bodySize) noexcept;
 
 // Vertical bands of the panel. The chrome keeps its stated heights and the
 // chart absorbs whatever is left, so a band can never be handed a fraction of
@@ -129,6 +126,28 @@ float offsetX (const NotepadDocument& document, const Row& row, std::size_t offs
 std::size_t offsetAtX (const NotepadDocument& document, const Row& row, float localX,
                        float bodySize, const MeasureFn& measure);
 
+// Width of a chord label drawn in the chord lane. Supplied by the renderer for
+// the same reason MeasureFn is: the geometry stays free of any toolkit.
+using LabelWidthFn = std::function<float (const std::string&)>;
+
+struct ChordPlacement
+{
+    std::size_t chordIndex = 0;   // into NotepadDocument::chords()
+    float x = 0.0f;               // from the row's indent
+    float width = 0.0f;
+};
+
+// The chords anchored on a row, left to right, each with the span its label
+// occupies. A label is truncated where the next chord's anchor starts, and two
+// chords sharing an anchor are set side by side, so the spans never overlap and
+// every label is both visible and reachable by exactly one click.
+std::vector<ChordPlacement> rowChordPlacements (const NotepadDocument& document, const Row& row,
+                                                float bodySize, const MeasureFn& measure,
+                                                const LabelWidthFn& labelWidth);
+// Index into NotepadDocument::chords() for the label covering localX, or npos
+// when the click landed on bare band.
+std::size_t chordAtX (const std::vector<ChordPlacement>& placements, float localX) noexcept;
+
 enum class EditKind
 {
     typing,
@@ -140,9 +159,6 @@ struct Snapshot
 {
     std::string markdown;
     NotepadDocument::Selection selection;
-    // Selections are recorded in the coordinate space of the mode that made the
-    // edit; the restoring side maps them when the mode has changed since.
-    bool selectionIsSource = false;
 };
 
 class UndoStack final

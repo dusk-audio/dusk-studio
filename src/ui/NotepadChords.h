@@ -24,6 +24,11 @@ std::string transpose (std::string_view token, int semitones, bool preferFlats);
 std::vector<std::string> rankCandidates (std::vector<std::string> candidates,
                                          std::string_view detectedKey);
 
+// True when a partly typed name completes to this candidate. Case-insensitive,
+// because chord charts are typed in a hurry and "am" means Am. An empty draft
+// completes nothing: a slot with nothing in it suggests nothing.
+bool completes (std::string_view candidate, std::string_view draft) noexcept;
+
 // Best-fitting key for a set of chord names, or empty when the evidence does
 // not support a claim. The rule, which is not to be tuned against a sample
 // document:

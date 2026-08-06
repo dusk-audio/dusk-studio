@@ -566,21 +566,27 @@ Type the chord name and press Enter to commit it, Esc to cancel, or commit an
 empty name to remove it. The slot shows ranked completions; use Up/Down to
 choose one and Tab to accept it. When the notepad can detect a key, diatonic
 chords come first; otherwise the choices are alphabetical. Ctrl+Shift+K repeats
-the preceding chord at the caret. Click a chord to edit it again. Chords float
-above their syllable and move with the lyric as you edit around them. The
-transpose buttons shift every chord in the notepad by a semitone, spelled with
-the notepad's existing accidental preference so that transposing away and back
-returns your own spelling. Notes are stored as ChordPro brackets in `notepad.md`
-(`[Am]like this`), so the file opens in any chord-sheet app; bracketed text that
-is not a chord name, such as `[Chorus]`, stays literal.
+the preceding chord at the caret. Clicking elsewhere, reaching for a toolbar
+button, and closing the notepad all commit the slot the same way Enter does,
+including the completion it is showing. Click a chord label to edit it again;
+each label answers for the space it occupies, so two chords a syllable apart
+are both reachable. Chords float above their syllable and move with the lyric
+as you edit around them. The transpose buttons shift every chord in the notepad
+by a semitone, spelled with the notepad's existing accidental preference so that
+transposing away and back returns your own spelling. Notes are stored as
+ChordPro brackets in `notepad.md` (`[Am]like this`), so the file opens in any
+chord-sheet app; bracketed text that is not a chord name, such as `[Chorus]`,
+stays literal.
 
 **Sections.** The section button writes a marker such as `[Chorus]` on its own
 line above the caret. Markers are plain text, so typing one by hand is the same
-thing: any bracketed word that is not a chord name stays literal. To remove one,
-put the caret on the marker line, click the **Section** button, and choose
-**Remove current section**, or select and delete the label directly. The chart
-shows only the section label; the compatible `notepad.md` file keeps its
-brackets visible.
+thing: any bracketed word that is not a chord name stays literal. Rename a
+marker by editing its label in the chart. The label has to stay a label, so an
+edit that would put a bracket inside it, or turn it into a chord name, is
+refused and the marker is left as it was. To remove one, put the caret on the
+marker line, click the **Section** button, and choose **Remove current
+section**, or select and delete the label directly. The chart shows only the
+section label; the compatible `notepad.md` file keeps its brackets visible.
 
 The songwriter-focused toolbar keeps chord and section insertion,
 transposition, lyric and title styles, bold, italic, undo and redo, and the

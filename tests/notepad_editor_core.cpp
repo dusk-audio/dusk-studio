@@ -86,20 +86,6 @@ TEST_CASE ("Notepad editor accepts AltGr text without turning command chords int
     CHECK (notepad::acceptsTextInput (false, false, false));
 }
 
-TEST_CASE ("Notepad Markdown link targets encode parser delimiters and controls",
-           "[notepad][editor][markdown]")
-{
-    const auto encoded = notepad::encodeMarkdownLinkTarget (
-        "https://example.test/a b)\n[x]\\tail");
-    CHECK (encoded == "https://example.test/a%20b%29%0A%5Bx%5D%5Ctail");
-    CHECK (notepad::encodeMarkdownLinkTarget (encoded) == encoded);
-
-    NotepadDocument document;
-    document.setMarkdown ("[label](" + encoded + ")");
-    CHECK (document.documentText() == "label");
-    CHECK (document.linkTargetAt (0) == encoded);
-}
-
 TEST_CASE ("Notepad Markdown inline commands toggle matching wrappers",
            "[notepad][editor][markdown]")
 {
@@ -338,6 +324,86 @@ TEST_CASE ("Notepad editor hit testing round-trips against caret positions",
     CHECK (notepad::offsetAtX (document, row, 1000.0f, 10.0f, measure) == row.end);
 }
 
+TEST_CASE ("Notepad chord labels claim the span they are drawn in",
+           "[notepad][editor][layout][chords]")
+{
+    // "on " is three characters wide, so the second chord's anchor lands inside
+    // the reach of the first chord's much longer name.
+    NotepadDocument document;
+    document.setMarkdown ("[Cmaj7]on [G]two");
+    REQUIRE (document.documentText() == "on two");
+    REQUIRE (document.chords().size() == 2);
+    REQUIRE (document.chords()[1].documentOffset == 3);
+
+    const auto measure = fixedAdvance (10.0f, 10.0f);
+    const auto layout = notepad::buildLayout (document, 400.0f, 10.0f, measure);
+    REQUIRE (layout.rows.size() == 1);
+
+    const notepad::LabelWidthFn labelWidth = [] (const std::string& name)
+    {
+        return static_cast<float> (name.size()) * 8.0f;
+    };
+    const auto placements = notepad::rowChordPlacements (document, layout.rows[0], 10.0f,
+                                                          measure, labelWidth);
+    REQUIRE (placements.size() == 2);
+    CHECK (placements[0].x == 0.0f);
+    CHECK (placements[1].x == 30.0f);
+    // "Cmaj7" would draw 40 units wide; it stops where the next anchor starts.
+    CHECK (placements[0].width == 30.0f);
+
+    // Each chord answers for its own span, and the one behind a long name is
+    // still reachable.
+    CHECK (notepad::chordAtX (placements, 0.0f) == 0);
+    CHECK (notepad::chordAtX (placements, 29.0f) == 0);
+    CHECK (notepad::chordAtX (placements, 30.0f) == 1);
+    CHECK (notepad::chordAtX (placements, 44.0f) == 1);
+
+    SECTION ("bare band belongs to no chord")
+    {
+        CHECK (notepad::chordAtX (placements, -4.0f) == std::string::npos);
+        CHECK (notepad::chordAtX (placements, 200.0f) == std::string::npos);
+    }
+
+    SECTION ("a one-letter label still offers a usable target")
+    {
+        NotepadDocument lone;
+        lone.setMarkdown ("[C]one");
+        const auto row = notepad::buildLayout (lone, 400.0f, 10.0f, measure).rows[0];
+        const auto single = notepad::rowChordPlacements (lone, row, 10.0f, measure,
+                                                          labelWidth);
+        REQUIRE (single.size() == 1);
+        CHECK (single[0].width > labelWidth ("C"));
+    }
+
+    SECTION ("two chords on one character sit side by side")
+    {
+        // They share an anchor, so neither owns the syllable. Stacking them
+        // would draw one over the other and leave it unreachable by click.
+        NotepadDocument stacked;
+        stacked.setMarkdown ("[Am][C]one");
+        const auto row = notepad::buildLayout (stacked, 400.0f, 10.0f, measure).rows[0];
+        const auto both = notepad::rowChordPlacements (stacked, row, 10.0f, measure,
+                                                        labelWidth);
+        REQUIRE (both.size() == 2);
+        CHECK (both[0].x == 0.0f);
+        CHECK (both[1].x == both[0].x + both[0].width);
+        CHECK (notepad::chordAtX (both, both[0].x) == 0);
+        CHECK (notepad::chordAtX (both, both[1].x) == 1);
+    }
+
+    SECTION ("chords on other rows are not offered")
+    {
+        NotepadDocument wrapped;
+        wrapped.setMarkdown ("[Am]aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii [C]jjjj");
+        const auto rows = notepad::buildLayout (wrapped, 400.0f, 10.0f, measure).rows;
+        REQUIRE (rows.size() == 2);
+        CHECK (notepad::rowChordPlacements (wrapped, rows[0], 10.0f, measure,
+                                            labelWidth).size() == 1);
+        CHECK (notepad::rowChordPlacements (wrapped, rows[1], 10.0f, measure,
+                                            labelWidth).size() == 1);
+    }
+}
+
 TEST_CASE ("Notepad editor layout walks multi-byte text by codepoint",
            "[notepad][editor][layout]")
 {
@@ -399,7 +465,7 @@ TEST_CASE ("Notepad editor undo coalesces a typing run into one step",
 
     const auto typed = [&history] (const std::string& before, std::size_t caret)
     {
-        history.record (notepad::EditKind::typing, { before, { caret, caret }, false },
+        history.record (notepad::EditKind::typing, { before, { caret, caret } },
                         caret + 1);
     };
 
@@ -409,14 +475,14 @@ TEST_CASE ("Notepad editor undo coalesces a typing run into one step",
     CHECK (history.undoDepth() == 1);
 
     notepad::Snapshot restored;
-    REQUIRE (history.undo ({ "abc", { 3, 3 }, false }, restored));
+    REQUIRE (history.undo ({ "abc", { 3, 3 } }, restored));
     CHECK (restored.markdown.empty());
     CHECK (restored.selection.start == 0);
     CHECK (history.undoDepth() == 0);
     CHECK (history.canRedo());
 
     notepad::Snapshot redone;
-    REQUIRE (history.redo ({ "", { 0, 0 }, false }, redone));
+    REQUIRE (history.redo ({ "", { 0, 0 } }, redone));
     CHECK (redone.markdown == "abc");
 }
 
@@ -425,46 +491,31 @@ TEST_CASE ("Notepad editor undo breaks runs on caret moves and structural edits"
 {
     notepad::UndoStack history;
 
-    history.record (notepad::EditKind::typing, { "", { 0, 0 }, false }, 1);
-    history.record (notepad::EditKind::typing, { "a", { 1, 1 }, false }, 2);
+    history.record (notepad::EditKind::typing, { "", { 0, 0 } }, 1);
+    history.record (notepad::EditKind::typing, { "a", { 1, 1 } }, 2);
     CHECK (history.undoDepth() == 1);
 
     // A caret move between keystrokes starts a new step even though the kind
     // and the offsets still line up.
     history.breakRun();
-    history.record (notepad::EditKind::typing, { "ab", { 2, 2 }, false }, 3);
+    history.record (notepad::EditKind::typing, { "ab", { 2, 2 } }, 3);
     CHECK (history.undoDepth() == 2);
 
     // Deletions never join a typing run, and every toolbar edit stands alone.
-    history.record (notepad::EditKind::deleting, { "abc", { 3, 3 }, false }, 2);
+    history.record (notepad::EditKind::deleting, { "abc", { 3, 3 } }, 2);
     CHECK (history.undoDepth() == 3);
-    history.record (notepad::EditKind::structural, { "ab", { 2, 2 }, false }, 2);
-    history.record (notepad::EditKind::structural, { "**ab**", { 2, 2 }, false }, 2);
+    history.record (notepad::EditKind::structural, { "ab", { 2, 2 } }, 2);
+    history.record (notepad::EditKind::structural, { "**ab**", { 2, 2 } }, 2);
     CHECK (history.undoDepth() == 5);
 
     // Typing after an undo starts a fresh step rather than extending the one
     // that was just restored.
     notepad::Snapshot restored;
-    REQUIRE (history.undo ({ "***ab***", { 2, 2 }, false }, restored));
+    REQUIRE (history.undo ({ "***ab***", { 2, 2 } }, restored));
     const auto depthAfterUndo = history.undoDepth();
-    history.record (notepad::EditKind::typing, { "**ab**", { 2, 2 }, false }, 3);
+    history.record (notepad::EditKind::typing, { "**ab**", { 2, 2 } }, 3);
     CHECK (history.undoDepth() == depthAfterUndo + 1);
     CHECK_FALSE (history.canRedo());
-}
-
-TEST_CASE ("Notepad editor undo never coalesces across editing modes",
-           "[notepad][editor][undo]")
-{
-    notepad::UndoStack history;
-
-    // Document mode records projected offsets, Markdown mode source offsets.
-    // They can meet at the same number and still mean different places.
-    history.record (notepad::EditKind::typing, { "a", { 1, 1 }, false }, 2);
-    history.record (notepad::EditKind::typing, { "ab", { 2, 2 }, true }, 3);
-    CHECK (history.undoDepth() == 2);
-
-    history.record (notepad::EditKind::typing, { "abc", { 3, 3 }, true }, 4);
-    CHECK (history.undoDepth() == 2);
 }
 
 TEST_CASE ("Notepad editor undo replacing a selection is its own step",
@@ -472,10 +523,10 @@ TEST_CASE ("Notepad editor undo replacing a selection is its own step",
 {
     notepad::UndoStack history;
 
-    history.record (notepad::EditKind::typing, { "", { 0, 0 }, false }, 1);
+    history.record (notepad::EditKind::typing, { "", { 0, 0 } }, 1);
     // Typing over a selection starts at the same offset the previous run ended
     // at, but it must not be folded into it.
-    history.record (notepad::EditKind::typing, { "a", { 1, 4 }, false }, 2);
+    history.record (notepad::EditKind::typing, { "a", { 1, 4 } }, 2);
     CHECK (history.undoDepth() == 2);
 }
 
@@ -485,12 +536,12 @@ TEST_CASE ("Notepad editor undo history is bounded", "[notepad][editor][undo]")
 
     for (std::size_t i = 0; i < notepad::UndoStack::kMaxEntries + 20; ++i)
         history.record (notepad::EditKind::structural,
-                        { std::string (i, 'x'), { i, i }, false }, i);
+                        { std::string (i, 'x'), { i, i } }, i);
 
     CHECK (history.undoDepth() == notepad::UndoStack::kMaxEntries);
 
     notepad::Snapshot restored;
-    REQUIRE (history.undo ({ "current", { 0, 0 }, false }, restored));
+    REQUIRE (history.undo ({ "current", { 0, 0 } }, restored));
     CHECK (restored.markdown.size() == notepad::UndoStack::kMaxEntries + 19);
 }
 

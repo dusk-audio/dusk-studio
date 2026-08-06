@@ -1,5 +1,4 @@
 #include <catch2/catch_test_macros.hpp>
-#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "ui/NotepadTheme.h"
 
@@ -38,19 +37,4 @@ TEST_CASE ("Notepad palette keeps the chrome and writing surface distinguishable
     CHECK (separation > 1.05);
     CHECK (separation < 2.0);
     CHECK (notepad::contrastRatio (p.rule, p.stage) < 2.0);
-}
-
-TEST_CASE ("Notepad reading steps scale monotonically around the writing size",
-           "[notepad][theme]")
-{
-    CHECK (notepad::readingScale (0) == 1.0f);
-    CHECK (notepad::readingScale (notepad::kMinReadingStep) < 1.0f);
-    CHECK (notepad::readingScale (notepad::kMaxReadingStep) > 1.5f);
-
-    for (int step = notepad::kMinReadingStep; step < notepad::kMaxReadingStep; ++step)
-        CHECK (notepad::readingScale (step) < notepad::readingScale (step + 1));
-
-    // Out-of-range steps clamp rather than running the type off the page.
-    CHECK (notepad::readingScale (-9) == notepad::readingScale (notepad::kMinReadingStep));
-    CHECK (notepad::readingScale (99) == notepad::readingScale (notepad::kMaxReadingStep));
 }

@@ -1,4 +1,5 @@
 #include "NotepadEditorCore.h"
+#include "NotepadTheme.h"
 
 #include <algorithm>
 #include <cmath>
@@ -234,29 +235,6 @@ bool acceptsTextInput (bool control, bool alt, bool super) noexcept
     return ! super && (! control || alt);
 }
 
-std::string encodeMarkdownLinkTarget (const std::string& target)
-{
-    static constexpr char hexDigits[] = "0123456789ABCDEF";
-    std::string encoded;
-    encoded.reserve (target.size());
-    for (const auto ch : target)
-    {
-        const auto byte = static_cast<unsigned char> (ch);
-        if (byte <= 0x20 || byte == 0x7f || ch == '(' || ch == ')' || ch == '['
-            || ch == ']' || ch == '<' || ch == '>' || ch == '"' || ch == '\\')
-        {
-            encoded.push_back ('%');
-            encoded.push_back (hexDigits[byte >> 4]);
-            encoded.push_back (hexDigits[byte & 0x0f]);
-        }
-        else
-        {
-            encoded.push_back (ch);
-        }
-    }
-    return encoded;
-}
-
 bool markdownInlineActive (const std::string& markdown,
                            NotepadDocument::Selection selection,
                            const std::string& prefix,
@@ -423,6 +401,11 @@ float blockIndent (NotepadDocument::BlockStyle block) noexcept
 float chordBandHeight (float bodySize) noexcept
 {
     return std::max (12.0f, bodySize * 1.05f);
+}
+
+float chordFontSize (float bodySize) noexcept
+{
+    return std::max (10.0f, bodySize * (kTypeScale.chord / kTypeScale.lyric));
 }
 
 namespace
@@ -617,6 +600,46 @@ std::size_t offsetAtX (const NotepadDocument& document, const Row& row, float lo
     return row.end;
 }
 
+std::vector<ChordPlacement> rowChordPlacements (const NotepadDocument& document, const Row& row,
+                                                float bodySize, const MeasureFn& measure,
+                                                const LabelWidthFn& labelWidth)
+{
+    // A one-letter chord is narrower than a comfortable target, so a lone label
+    // reaches a little past its glyphs. The clamp below still keeps it short of
+    // its neighbour.
+    constexpr float kMinLabelReach = 16.0f;
+
+    std::vector<ChordPlacement> placements;
+    const auto& chords = document.chords();
+    for (std::size_t i = 0; i < chords.size(); ++i)
+    {
+        if (! inRow (chords[i].documentOffset, row.start, row.end, row.lastRowOfLine))
+            continue;
+        auto x = offsetX (document, row, chords[i].documentOffset, bodySize, measure);
+        // Two chords written onto the same character share an anchor and have
+        // no syllable to tell them apart. Set the second beside the first
+        // rather than on top of it, or one of them is invisible and no click
+        // can ever reach it.
+        if (! placements.empty() && x <= placements.back().x)
+            x = placements.back().x + placements.back().width;
+        placements.push_back ({ i, x, std::max (kMinLabelReach,
+                                                labelWidth (chords[i].name)) });
+    }
+
+    for (std::size_t i = 0; i + 1 < placements.size(); ++i)
+        placements[i].width = std::min (placements[i].width,
+                                        placements[i + 1].x - placements[i].x);
+    return placements;
+}
+
+std::size_t chordAtX (const std::vector<ChordPlacement>& placements, float localX) noexcept
+{
+    for (const auto& placement : placements)
+        if (localX >= placement.x && localX < placement.x + placement.width)
+            return placement.chordIndex;
+    return std::string::npos;
+}
+
 void UndoStack::clear() noexcept
 {
     undoEntries.clear();
@@ -637,7 +660,6 @@ void UndoStack::record (EditKind kind, Snapshot before, std::size_t caretAfter)
                        && kind != EditKind::structural
                        && ! undoEntries.empty()
                        && undoEntries.back().kind == kind
-                       && undoEntries.back().state.selectionIsSource == before.selectionIsSource
                        && undoEntries.back().caretAfter == before.selection.start
                        && before.selection.empty();
     runBroken = kind == EditKind::structural;
