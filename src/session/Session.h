@@ -1149,7 +1149,9 @@ struct MasteringParams
     mutable std::atomic<float> meterTruePeakDb      { -100.0f };
 
     // Drives I-LUFS / true-peak cell colour-coding in MasteringView.
-    // 0 = Off (neutral). See kMasteringTargets for the preset table.
+    // 0 = Off (neutral). See kMasteringTargets for the preset table - it
+    // static_asserts against this count, which is what the loader clamps to.
+    static constexpr int kNumTargetPresets = 6;
     std::atomic<int> targetPresetIndex { 0 };
 };
 

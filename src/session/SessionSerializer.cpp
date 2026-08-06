@@ -155,18 +155,6 @@ inline void migrateTapeStateBlob (const std::string& base64, TapeParams& t)
     }
 }
 
-// Scalar sibling for plain-float fields (region gain, etc.) that aren't atomics.
-inline float finiteFloatOr (const nlohmann::json& src, float fallback) noexcept
-{
-    if (src.is_number())
-    {
-        const double d = src.get<double>();
-        if (std::isfinite (d) && std::abs (d) <= (double) std::numeric_limits<float>::max())
-            return (float) d;
-    }
-    return fallback;
-}
-
 // Finite-guard AND range-clamp in one step, for the mixer parameters that feed
 // DSP directly. Clamping alone is not enough: a non-finite value passes through
 // std::clamp unchanged (NaN compares false against both bounds), and the
@@ -175,7 +163,17 @@ inline void storeFiniteClampedFloat (std::atomic<float>& dst,
                                      const nlohmann::json& src,
                                      float fallback, float minimum, float maximum) noexcept
 {
-    dst.store (std::clamp (finiteFloatOr (src, fallback), minimum, maximum),
+    dst.store (std::clamp (json::finiteFloat (src, fallback), minimum, maximum),
+               std::memory_order_relaxed);
+}
+
+// Same contract addressed by key, for the fields that are written unconditionally
+// (an absent key resets to the fallback rather than retaining the live value).
+inline void storeFiniteClampedFloat (std::atomic<float>& dst,
+                                     const nlohmann::json& parent, const char* key,
+                                     float fallback, float minimum, float maximum) noexcept
+{
+    dst.store (std::clamp (json::getFiniteFloat (parent, key, fallback), minimum, maximum),
                std::memory_order_relaxed);
 }
 
@@ -197,16 +195,13 @@ inline AutomationPoint parseAutomationPoint (const nlohmann::json& pv, double fa
     const double rawT = json::getDouble (pv, "t", 0.0);
     pt.timeSamples   = (std::isfinite (rawT) && rawT > 0.0 && rawT < 9223372036854775808.0)
                            ? (std::int64_t) rawT : (std::int64_t) 0;
-    // NaN slips through jlimit unchanged (NaN compares false both ways), so it
-    // would otherwise poison the lane's binary search / a DSP param. Map it to a
-    // safe default; ±inf is already clamped to the [0,1] range by jlimit.
-    float rawV = json::getFloat (pv, "v", 0.0f);
-    if (std::isnan (rawV)) rawV = 0.0f;
-    pt.value         = jlimit (0.0f, 1.0f, rawV);
-    const float bpm  = json::getFloat (pv, "bpm", safeFallback);
-    // A zero / negative bpm would break tempo-retime math (division by it),
-    // so accept only a finite, strictly-positive value; else fall back.
-    pt.recordedAtBPM = (std::isfinite (bpm) && bpm > 0.0f) ? bpm : safeFallback;
+    // Guarded before the narrowing rather than after it: a NaN would slip
+    // through jlimit unchanged (it compares false both ways) and a double past
+    // float range is UB to cast at all. Both resolve to the fallback.
+    pt.value         = jlimit (0.0f, 1.0f, json::getFiniteFloat (pv, "v", 0.0f));
+    const float bpm  = json::getFiniteFloat (pv, "bpm", safeFallback);
+    // A zero / negative bpm would break tempo-retime math (division by it).
+    pt.recordedAtBPM = bpm > 0.0f ? bpm : safeFallback;
     return pt;
 }
 } // namespace
@@ -1111,8 +1106,8 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
             // and the old fallback turned a corrupt file into a feedback-loud mix.
             // At or below the knob floor collapses to the OFF sentinel, matching
             // what the strip's own fully-CCW position stores.
-            const float loaded = finiteFloatOr (auxLevels[(size_t) i],
-                                                ChannelStripParams::kAuxSendOffDb);
+            const float loaded = json::finiteFloat (auxLevels[(size_t) i],
+                                                    ChannelStripParams::kAuxSendOffDb);
             const float level = loaded <= ChannelStripParams::kAuxSendMinDb + 0.01f
                                   ? ChannelStripParams::kAuxSendOffDb
                                   : std::clamp (loaded,
@@ -1323,7 +1318,7 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
             r.fadeInAuto      = json::getBool (rv, "fade_in_auto", false);
             r.fadeOutAuto     = json::getBool (rv, "fade_out_auto", false);
             r.numChannels     = jlimit (1, 2, json::getInt (rv, "num_channels", 1));
-            r.gainDb          = json::has (rv, "gain_db") ? finiteFloatOr (rv["gain_db"], 0.0f) : 0.0f;
+            r.gainDb          = json::getFiniteFloat (rv, "gain_db", 0.0f);
             r.customColour    = json::has (rv, "custom_colour")
                                  ? juce::Colour::fromString (juce::String (json::getString (rv, "custom_colour")))
                                  : juce::Colour();
@@ -1961,7 +1956,11 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     double sessionLoadBpm = (double) s.tempoBpm.load (std::memory_order_relaxed);
     if (json::has (transportSection, "tempo_bpm"))
     {
-        const double peeked = json::getDouble (transportSection, "tempo_bpm", 0.0);
+        // Wrong-typed values fall back to the running tempo, matching the block
+        // below: a 0 fallback would anchor the regions at 30 while the block
+        // kept the real tempo, and the two must never disagree.
+        const double peeked = json::getDouble (transportSection, "tempo_bpm",
+                                               (double) s.tempoBpm.load (std::memory_order_relaxed));
         // Clamp to the same 30-300 range the final tempoBpm store uses, so
         // the automation / MIDI fallback tempo stays aligned with the loaded
         // session tempo instead of using a raw out-of-range value. Reject a
@@ -2011,7 +2010,9 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             if (auto str = json::getString (v, "name");   ! str.empty()) lane.name   = str;
             if (auto str = json::getString (v, "colour"); ! str.empty()) lane.colour = hexToColour (str, lane.colour);
             if (json::has (v, "return_level_db"))
-                lane.params.returnLevelDb.store (jlimit (-100.0f, 12.0f, json::getFloat (v, "return_level_db", 0.0f)));
+                storeFiniteClampedFloat (lane.params.returnLevelDb, v["return_level_db"], 0.0f,
+                                         ChannelStripParams::kFaderMinDb,
+                                         ChannelStripParams::kFaderMaxDb);
             if (json::has (v, "mute"))
                 lane.params.mute.store (json::getBool (v, "mute", false));
             if (json::has (v, "output_pair"))
@@ -2143,7 +2144,9 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         // session (no pre-load reset), so a conditional store would inherit the
         // previously-loaded session's value. (Audible master state: level /
         // routing / mute.)
-        s.master().faderDb.store    (master.contains ("fader_db")    ? jlimit (-100.0f, 12.0f, json::getFloat (master, "fader_db", 0.0f)) : 0.0f);
+        storeFiniteClampedFloat (s.master().faderDb, master, "fader_db", 0.0f,
+                                 ChannelStripParams::kFaderMinDb,
+                                 ChannelStripParams::kFaderMaxDb);
         s.master().outputPair.store (json::getInt  (master, "output_pair", -1));
         s.master().mute.store       (json::getBool (master, "mute", false));
         // Reset-when-absent too (same rationale as the level/routing/mute lines
@@ -2200,12 +2203,16 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         // absent here or every field silently inherits.
         static const MasterBusParams kMasterDefaults;
         const bool haveMaster = json::has (root, "master") && root["master"].is_object();
+        // Ranges mirror what the master strip's own controls enforce, so a
+        // hand-edited file can't push the tube EQ / bus comp past any setting
+        // the UI can produce.
         auto loadMasterFloat = [&master, haveMaster] (std::atomic<float>& dst,
                                                       const std::atomic<float>& def,
-                                                      const char* key)
+                                                      const char* key,
+                                                      float minimum, float maximum)
         {
             if (json::has (master, key))
-                dst.store (finiteFloatOr (master[key], def.load()));
+                storeFiniteClampedFloat (dst, master[key], def.load(), minimum, maximum);
             else if (! haveMaster)
                 dst.store (def.load());
         };
@@ -2217,24 +2224,24 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             else if (! haveMaster)       dst.store (def.load());
         };
         loadMasterBool  (s.master().eqEnabled,           kMasterDefaults.eqEnabled,           "eq_enabled");
-        loadMasterFloat (s.master().eqLfBoost,           kMasterDefaults.eqLfBoost,           "eq_lf_boost");
-        loadMasterFloat (s.master().eqLfAtten,           kMasterDefaults.eqLfAtten,           "eq_lf_atten");
-        loadMasterFloat (s.master().eqLfFreq,            kMasterDefaults.eqLfFreq,            "eq_lf_freq");
-        loadMasterFloat (s.master().eqHfBoost,           kMasterDefaults.eqHfBoost,           "eq_hf_boost");
-        loadMasterFloat (s.master().eqHfBoostFreq,       kMasterDefaults.eqHfBoostFreq,       "eq_hf_boost_freq");
-        loadMasterFloat (s.master().eqHfBoostBandwidth,  kMasterDefaults.eqHfBoostBandwidth,  "eq_hf_boost_bandwidth");
-        loadMasterFloat (s.master().eqHfAtten,           kMasterDefaults.eqHfAtten,           "eq_hf_atten");
-        loadMasterFloat (s.master().eqHfAttenFreq,       kMasterDefaults.eqHfAttenFreq,       "eq_hf_atten_freq");
-        loadMasterFloat (s.master().eqOutputGainDb,      kMasterDefaults.eqOutputGainDb,      "eq_output_gain_db");
+        loadMasterFloat (s.master().eqLfBoost,           kMasterDefaults.eqLfBoost,           "eq_lf_boost",           0.0f, 10.0f);
+        loadMasterFloat (s.master().eqLfAtten,           kMasterDefaults.eqLfAtten,           "eq_lf_atten",           0.0f, 10.0f);
+        loadMasterFloat (s.master().eqLfFreq,            kMasterDefaults.eqLfFreq,            "eq_lf_freq",           20.0f, 100.0f);
+        loadMasterFloat (s.master().eqHfBoost,           kMasterDefaults.eqHfBoost,           "eq_hf_boost",           0.0f, 10.0f);
+        loadMasterFloat (s.master().eqHfBoostFreq,       kMasterDefaults.eqHfBoostFreq,       "eq_hf_boost_freq",   3000.0f, 16000.0f);
+        loadMasterFloat (s.master().eqHfBoostBandwidth,  kMasterDefaults.eqHfBoostBandwidth,  "eq_hf_boost_bandwidth", 0.0f, 10.0f);
+        loadMasterFloat (s.master().eqHfAtten,           kMasterDefaults.eqHfAtten,           "eq_hf_atten",           0.0f, 10.0f);
+        loadMasterFloat (s.master().eqHfAttenFreq,       kMasterDefaults.eqHfAttenFreq,       "eq_hf_atten_freq",   5000.0f, 20000.0f);
+        loadMasterFloat (s.master().eqOutputGainDb,      kMasterDefaults.eqOutputGainDb,      "eq_output_gain_db",   -12.0f, 12.0f);
 
         // Bus comp.
         loadMasterBool  (s.master().compEnabled,      kMasterDefaults.compEnabled,      "comp_enabled");
-        loadMasterFloat (s.master().compThreshDb,     kMasterDefaults.compThreshDb,     "comp_thresh_db");
-        loadMasterFloat (s.master().compRatio,        kMasterDefaults.compRatio,        "comp_ratio");
-        loadMasterFloat (s.master().compAttackMs,     kMasterDefaults.compAttackMs,     "comp_attack_ms");
-        loadMasterFloat (s.master().compReleaseMs,    kMasterDefaults.compReleaseMs,    "comp_release_ms");
+        loadMasterFloat (s.master().compThreshDb,     kMasterDefaults.compThreshDb,     "comp_thresh_db",  -60.0f, 0.0f);
+        loadMasterFloat (s.master().compRatio,        kMasterDefaults.compRatio,        "comp_ratio",        1.0f, 10.0f);
+        loadMasterFloat (s.master().compAttackMs,     kMasterDefaults.compAttackMs,     "comp_attack_ms",    0.1f, 50.0f);
+        loadMasterFloat (s.master().compReleaseMs,    kMasterDefaults.compReleaseMs,    "comp_release_ms",  50.0f, 1000.0f);
         loadMasterBool  (s.master().compReleaseAuto,  kMasterDefaults.compReleaseAuto,  "comp_release_auto");
-        loadMasterFloat (s.master().compMakeupDb,     kMasterDefaults.compMakeupDb,     "comp_makeup_db");
+        loadMasterFloat (s.master().compMakeupDb,     kMasterDefaults.compMakeupDb,     "comp_makeup_db",  -10.0f, 20.0f);
         // Mode publish happens AFTER the lane publishes below - same
         // ordering rationale as the track-load + aux-load blocks, and
         // exactly one publish per lane (empty when absent).
@@ -2284,10 +2291,14 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             m.sourceFile = resolvePortablePath (json::getString (mast, "source_file"),
                                                 s.getSessionDirectory(),
                                                 s.missingAudioFilesAfterLoad);
+        // Ranges match what the mastering editors enforce. The legacy tube-EQ
+        // atoms and the comp floats have no editor of their own, so they take
+        // the master strip's - the comp floats reach the same donor params.
         auto loadF = [&mast, haveMastering] (const char* k, std::atomic<float>& dst,
-                                             const std::atomic<float>& def)
+                                             const std::atomic<float>& def,
+                                             float minimum, float maximum)
         {
-            if (json::has (mast, k))  dst.store (json::getFiniteFloat (mast, k, def.load()));
+            if (json::has (mast, k))  storeFiniteClampedFloat (dst, mast[k], def.load(), minimum, maximum);
             else if (! haveMastering) dst.store (def.load());
         };
         auto loadB = [&mast, haveMastering] (const char* k, std::atomic<bool>& dst,
@@ -2297,47 +2308,55 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             else if (! haveMastering) dst.store (def.load());
         };
         loadB ("eq_enabled",        m.eqEnabled,       kMasteringDefaults.eqEnabled);
+        // Per-band sweep limits of the mastering EQ's frequency knobs. The
+        // bands overlap on purpose, so each carries its own pair.
+        static constexpr float kEqBandFreqMin[MasteringParams::kNumEqBands] = {  20.0f,   60.0f,  200.0f,   800.0f,  2000.0f };
+        static constexpr float kEqBandFreqMax[MasteringParams::kNumEqBands] = { 400.0f, 1500.0f, 6000.0f, 12000.0f, 20000.0f };
         for (int b = 0; b < MasteringParams::kNumEqBands; ++b)
         {
             const auto idx = std::string ("eq_band_") + std::to_string (b);
-            loadF ((idx + "_freq").c_str(),    m.eqBandFreq[b],   kMasteringDefaults.eqBandFreq[b]);
-            loadF ((idx + "_gain_db").c_str(), m.eqBandGainDb[b], kMasteringDefaults.eqBandGainDb[b]);
-            loadF ((idx + "_q").c_str(),       m.eqBandQ[b],      kMasteringDefaults.eqBandQ[b]);
+            loadF ((idx + "_freq").c_str(),    m.eqBandFreq[b],   kMasteringDefaults.eqBandFreq[b],
+                   kEqBandFreqMin[b], kEqBandFreqMax[b]);
+            loadF ((idx + "_gain_db").c_str(), m.eqBandGainDb[b], kMasteringDefaults.eqBandGainDb[b], -12.0f, 12.0f);
+            loadF ((idx + "_q").c_str(),       m.eqBandQ[b],      kMasteringDefaults.eqBandQ[b],        0.3f,  6.0f);
         }
-        loadF ("eq_lf_boost",       m.eqLfBoost,       kMasteringDefaults.eqLfBoost);
-        loadF ("eq_hf_boost",       m.eqHfBoost,       kMasteringDefaults.eqHfBoost);
-        loadF ("eq_hf_atten",       m.eqHfAtten,       kMasteringDefaults.eqHfAtten);
-        loadF ("eq_tube_drive",     m.eqTubeDrive,     kMasteringDefaults.eqTubeDrive);
-        loadF ("eq_output_gain_db", m.eqOutputGainDb,  kMasteringDefaults.eqOutputGainDb);
+        loadF ("eq_lf_boost",       m.eqLfBoost,       kMasteringDefaults.eqLfBoost,       0.0f, 10.0f);
+        loadF ("eq_hf_boost",       m.eqHfBoost,       kMasteringDefaults.eqHfBoost,       0.0f, 10.0f);
+        loadF ("eq_hf_atten",       m.eqHfAtten,       kMasteringDefaults.eqHfAtten,       0.0f, 10.0f);
+        loadF ("eq_tube_drive",     m.eqTubeDrive,     kMasteringDefaults.eqTubeDrive,     0.0f, 1.0f);
+        loadF ("eq_output_gain_db", m.eqOutputGainDb,  kMasteringDefaults.eqOutputGainDb, -12.0f, 12.0f);
         loadB ("comp_enabled",      m.compEnabled,     kMasteringDefaults.compEnabled);
-        loadF ("comp_thresh_db",    m.compThreshDb,    kMasteringDefaults.compThreshDb);
-        loadF ("comp_ratio",        m.compRatio,       kMasteringDefaults.compRatio);
-        loadF ("comp_attack_ms",    m.compAttackMs,    kMasteringDefaults.compAttackMs);
-        loadF ("comp_release_ms",   m.compReleaseMs,   kMasteringDefaults.compReleaseMs);
+        loadF ("comp_thresh_db",    m.compThreshDb,    kMasteringDefaults.compThreshDb,  -60.0f, 0.0f);
+        loadF ("comp_ratio",        m.compRatio,       kMasteringDefaults.compRatio,       1.0f, 10.0f);
+        loadF ("comp_attack_ms",    m.compAttackMs,    kMasteringDefaults.compAttackMs,    0.1f, 50.0f);
+        loadF ("comp_release_ms",   m.compReleaseMs,   kMasteringDefaults.compReleaseMs,  50.0f, 1000.0f);
         loadB ("comp_release_auto", m.compReleaseAuto, kMasteringDefaults.compReleaseAuto);
-        loadF ("comp_makeup_db",    m.compMakeupDb,    kMasteringDefaults.compMakeupDb);
+        loadF ("comp_makeup_db",    m.compMakeupDb,    kMasteringDefaults.compMakeupDb,  -10.0f, 20.0f);
         // The limiter is newer than the section around it, so a session saved
         // before it exists still carries "mastering" - these reset on an absent
         // key whether the section is there or not, rather than retaining.
         m.limiterEnabled.store (json::getBool (mast, "limiter_enabled",
                                                kMasteringDefaults.limiterEnabled.load()));
-        m.limiterDriveDb.store (json::getFiniteFloat (mast, "limiter_drive_db",
-                                                      kMasteringDefaults.limiterDriveDb.load()));
-        m.limiterCeilingDb.store (json::getFiniteFloat (mast, "limiter_ceiling_db",
-                                                        kMasteringDefaults.limiterCeilingDb.load()));
-        m.limiterReleaseMs.store (json::getFiniteFloat (mast, "limiter_release_ms",
-                                                        kMasteringDefaults.limiterReleaseMs.load()));
-        // Finite-guarded like the rest: a NaN/inf lookahead would otherwise sit
-        // in the limiter param (and the UI knob) until the next set.
-        m.limiterLookaheadMs.store (json::getFiniteFloat (mast, "limiter_lookahead_ms",
-                                                          kMasteringDefaults.limiterLookaheadMs.load()));
-        m.limiterMode.store (json::getInt (mast, "limiter_mode",
-                                           kMasteringDefaults.limiterMode.load()));
+        storeFiniteClampedFloat (m.limiterDriveDb, mast, "limiter_drive_db",
+                                 kMasteringDefaults.limiterDriveDb.load(), 0.0f, 20.0f);
+        storeFiniteClampedFloat (m.limiterCeilingDb, mast, "limiter_ceiling_db",
+                                 kMasteringDefaults.limiterCeilingDb.load(), -12.0f, 0.0f);
+        storeFiniteClampedFloat (m.limiterReleaseMs, mast, "limiter_release_ms",
+                                 kMasteringDefaults.limiterReleaseMs.load(), 10.0f, 1000.0f);
+        // The limiter's own setter clamps to this range, but the session atom is
+        // what the editor reads back and what the next save writes - left raw, a
+        // corrupt lookahead would never converge and would round-trip forever.
+        storeFiniteClampedFloat (m.limiterLookaheadMs, mast, "limiter_lookahead_ms",
+                                 kMasteringDefaults.limiterLookaheadMs.load(), 0.1f, 10.0f);
+        // 0 Modern, 1 Transparent, 2 Punchy.
+        m.limiterMode.store (std::clamp (json::getInt (mast, "limiter_mode",
+                                                       kMasteringDefaults.limiterMode.load()), 0, 2));
         m.limiterStereoLink.store (json::getBool (mast, "limiter_stereo_link",
                                                   kMasteringDefaults.limiterStereoLink.load()));
         if (json::has (mast, "target_preset"))
-            m.targetPresetIndex.store (json::getInt (mast, "target_preset",
-                                                     kMasteringDefaults.targetPresetIndex.load()));
+            m.targetPresetIndex.store (std::clamp (json::getInt (mast, "target_preset",
+                                                                 kMasteringDefaults.targetPresetIndex.load()),
+                                                   0, MasteringParams::kNumTargetPresets - 1));
         else if (! haveMastering)
             m.targetPresetIndex.store (kMasteringDefaults.targetPresetIndex.load());
     }
@@ -2370,7 +2389,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         s.midiEditorSnap  = json::has (tport, "midi_editor_snap")
                               ? json::getBool (tport, "midi_editor_snap", true)   : true;
         if (json::has (tport, "piano_roll_key_snap"))
-            s.pianoRollKeySnap = json::getBool (tport, "piano_roll_key_snap", false);
+            s.pianoRollKeySnap = json::getBool (tport, "piano_roll_key_snap", true);
         if (json::has (tport, "snap_resolution"))
         {
             const int i = json::getInt (tport, "snap_resolution", 0);
@@ -2385,8 +2404,10 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             // Guard the value before narrowing to float: a value past float range
             // (e.g. a hand-edited 1e40) would be UB to cast and would otherwise
             // clamp to 300, silently overwriting the session's real tempo. Reject
-            // it and keep the existing tempo instead.
-            const double bpm = json::getDouble (tport, "tempo_bpm", 0.0);
+            // it and keep the existing tempo instead - which is also why the
+            // wrong-type fallback is that tempo and not 0 (which would clamp to 30).
+            const double bpm = json::getDouble (tport, "tempo_bpm",
+                                                (double) s.tempoBpm.load (std::memory_order_relaxed));
             if (std::isfinite (bpm) && std::abs (bpm) <= (double) std::numeric_limits<float>::max())
                 s.tempoBpm.store (jlimit (30.0f, 300.0f, (float) bpm));
         }
@@ -2411,7 +2432,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         if (json::has (tport, "sync_source_input"))
             s.syncSourceInputIdentifier = json::getString (tport, "sync_source_input");
         if (json::has (tport, "sync_follow_tempo"))
-            s.externalSyncFollowsTempo.store (json::getBool (tport, "sync_follow_tempo", false));
+            s.externalSyncFollowsTempo.store (json::getBool (tport, "sync_follow_tempo", true));
         if (json::has (tport, "sync_chase_transport"))
             s.externalSyncChasesTransport.store (json::getBool (tport, "sync_chase_transport", false));
         if (json::has (tport, "sync_output"))
@@ -2438,9 +2459,10 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         if (json::has (tport, "beats_per_bar"))     s.beatsPerBar.store      (jlimit (1, 32, json::getInt (tport, "beats_per_bar", 4)));
         if (json::has (tport, "beat_unit"))         s.beatUnit.store         (jlimit (1, 32, json::getInt (tport, "beat_unit", 4)));
         if (json::has (tport, "metronome_enabled")) s.metronomeEnabled.store (json::getBool (tport, "metronome_enabled", false));
-        if (json::has (tport, "metronome_vol_db"))  s.metronomeVolDb.store   (jlimit (-60.0f, 12.0f, json::getFloat (tport, "metronome_vol_db", 0.0f)));
+        if (json::has (tport, "metronome_vol_db"))
+            storeFiniteClampedFloat (s.metronomeVolDb, tport["metronome_vol_db"], -12.0f, -60.0f, 12.0f);
         if (json::has (tport, "metronome_click_recording"))
-            s.metronomeClickWhileRecording.store (json::getBool (tport, "metronome_click_recording", false));
+            s.metronomeClickWhileRecording.store (json::getBool (tport, "metronome_click_recording", true));
         if (json::has (tport, "metronome_click_playing"))
             s.metronomeClickWhilePlaying  .store (json::getBool (tport, "metronome_click_playing", false));
         if (json::has (tport, "metronome_only_countin"))
@@ -2455,8 +2477,10 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         // silently ignore the legacy field on load so older session.json
         // files still parse cleanly.
         if (json::has (tport, "last_record_point")) s.lastRecordPointSamples.store (json::getInt64 (tport, "last_record_point", 0));
-        if (json::has (tport, "pre_roll_seconds"))  s.preRollSeconds.store   (jlimit (0.0f, 300.0f, json::getFloat (tport, "pre_roll_seconds", 0.0f)));
-        if (json::has (tport, "post_roll_seconds")) s.postRollSeconds.store  (jlimit (0.0f, 300.0f, json::getFloat (tport, "post_roll_seconds", 0.0f)));
+        if (json::has (tport, "pre_roll_seconds"))
+            storeFiniteClampedFloat (s.preRollSeconds, tport["pre_roll_seconds"], 0.0f, 0.0f, 300.0f);
+        if (json::has (tport, "post_roll_seconds"))
+            storeFiniteClampedFloat (s.postRollSeconds, tport["post_roll_seconds"], 0.0f, 0.0f, 300.0f);
         // Default true when absent (Session.h) so an older file lacking the key
         // doesn't inherit a disabled flag from a previously-loaded session.
         s.preRollEnabled.store  (json::getBool (tport, "pre_roll_enabled", true));
