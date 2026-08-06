@@ -1922,25 +1922,6 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                                   ? sr : 0.0;
     }
 
-    // Peek at transport.tempo_bpm BEFORE the track loop so legacy sessions
-    // (no recorded_at_bpm field on MidiRegion) get anchored to their own
-    // saved tempo rather than the struct default of 120. The transport
-    // block is parsed in full further down; this is a read-only peek.
-    double sessionLoadBpm = (double) s.tempoBpm.load (std::memory_order_relaxed);
-    {
-        const auto& tportPeek = json::child (root, "transport");
-        if (json::has (tportPeek, "tempo_bpm"))
-        {
-            const double peeked = json::getDouble (tportPeek, "tempo_bpm", 0.0);
-            // Clamp to the same 30-300 range the final tempoBpm store uses, so
-            // the automation / MIDI fallback tempo stays aligned with the loaded
-            // session tempo instead of using a raw out-of-range value. Reject a
-            // value past float range before it narrows (UB) - keep the seeded tempo.
-            if (std::isfinite (peeked) && std::abs (peeked) <= (double) std::numeric_limits<float>::max())
-                sessionLoadBpm = jlimit (30.0, 300.0, peeked);
-        }
-    }
-
     // A truncated / hand-edited file may lack whole section keys, or list
     // fewer buses / aux lanes than this build has. Every slot must still be
     // driven through restore - skipping any leaves the PREVIOUS session's
@@ -1964,6 +1945,30 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                       "[Dusk Studio/SessionSerializer] the default-session template failed "
                       "to parse; keys this file does not describe keep the previously "
                       "loaded session's state\n");
+
+    // Resolved once, here, and consumed twice: by the tempo peek below and by
+    // the transport block far further down. A section the file doesn't describe
+    // (absent, or not an object) reads from the serialized defaults, so the
+    // anchor tempo and the tempo the session ends up running at cannot disagree.
+    const auto& transportSection = json::has (root, "transport") && root["transport"].is_object()
+                                       ? json::child (root, "transport")
+                                       : json::child (sectionDefaults, "transport");
+
+    // Peek at transport.tempo_bpm BEFORE the track loop so legacy sessions
+    // (no recorded_at_bpm field on MidiRegion) get anchored to their own
+    // saved tempo rather than the struct default of 120. The transport
+    // block is parsed in full further down; this is a read-only peek.
+    double sessionLoadBpm = (double) s.tempoBpm.load (std::memory_order_relaxed);
+    if (json::has (transportSection, "tempo_bpm"))
+    {
+        const double peeked = json::getDouble (transportSection, "tempo_bpm", 0.0);
+        // Clamp to the same 30-300 range the final tempoBpm store uses, so
+        // the automation / MIDI fallback tempo stays aligned with the loaded
+        // session tempo instead of using a raw out-of-range value. Reject a
+        // value past float range before it narrows (UB) - keep the seeded tempo.
+        if (std::isfinite (peeked) && std::abs (peeked) <= (double) std::numeric_limits<float>::max())
+            sessionLoadBpm = jlimit (30.0, 300.0, peeked);
+    }
 
     {
         const auto& tracks = ! json::array (root, "tracks").empty()
@@ -2263,67 +2268,88 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     // Always reset: a session without a saved mastering source must not
     // inherit the previously loaded session's file.
     s.mastering().sourceFile = juce::File();
-    if (json::has (root, "mastering"))
     {
+        // Mastering diverges from the per-track fill exactly like the master
+        // strip above: with the section present, a key it omits keeps the
+        // in-memory value; only a wholly absent section resets every field, so
+        // nothing inherits the previously loaded session's chain. A non-object
+        // counts as absent - json::child resolves it to the shared empty
+        // object, which would otherwise read as present-but-empty and retain
+        // everything.
+        static const MasteringParams kMasteringDefaults;
+        const bool haveMastering = json::has (root, "mastering") && root["mastering"].is_object();
         const auto& mast = json::child (root, "mastering");
         auto& m = s.mastering();
         if (json::has (mast, "source_file"))
             m.sourceFile = resolvePortablePath (json::getString (mast, "source_file"),
                                                 s.getSessionDirectory(),
                                                 s.missingAudioFilesAfterLoad);
-        auto loadF = [&] (const char* k, std::atomic<float>& dst)
-            { if (json::has (mast, k)) dst.store (json::getFloat (mast, k, 0.0f)); };
-        auto loadB = [&] (const char* k, std::atomic<bool>& dst)
-            { if (json::has (mast, k)) dst.store (json::getBool (mast, k, false)); };
-        loadB ("eq_enabled",        m.eqEnabled);
+        auto loadF = [&mast, haveMastering] (const char* k, std::atomic<float>& dst,
+                                             const std::atomic<float>& def)
+        {
+            if (json::has (mast, k))  dst.store (json::getFiniteFloat (mast, k, def.load()));
+            else if (! haveMastering) dst.store (def.load());
+        };
+        auto loadB = [&mast, haveMastering] (const char* k, std::atomic<bool>& dst,
+                                             const std::atomic<bool>& def)
+        {
+            if (json::has (mast, k))  dst.store (json::getBool (mast, k, def.load()));
+            else if (! haveMastering) dst.store (def.load());
+        };
+        loadB ("eq_enabled",        m.eqEnabled,       kMasteringDefaults.eqEnabled);
         for (int b = 0; b < MasteringParams::kNumEqBands; ++b)
         {
             const auto idx = std::string ("eq_band_") + std::to_string (b);
-            loadF ((idx + "_freq").c_str(),    m.eqBandFreq[b]);
-            loadF ((idx + "_gain_db").c_str(), m.eqBandGainDb[b]);
-            loadF ((idx + "_q").c_str(),       m.eqBandQ[b]);
+            loadF ((idx + "_freq").c_str(),    m.eqBandFreq[b],   kMasteringDefaults.eqBandFreq[b]);
+            loadF ((idx + "_gain_db").c_str(), m.eqBandGainDb[b], kMasteringDefaults.eqBandGainDb[b]);
+            loadF ((idx + "_q").c_str(),       m.eqBandQ[b],      kMasteringDefaults.eqBandQ[b]);
         }
-        loadF ("eq_lf_boost",       m.eqLfBoost);
-        loadF ("eq_hf_boost",       m.eqHfBoost);
-        loadF ("eq_hf_atten",       m.eqHfAtten);
-        loadF ("eq_tube_drive",     m.eqTubeDrive);
-        loadF ("eq_output_gain_db", m.eqOutputGainDb);
-        loadB ("comp_enabled",      m.compEnabled);
-        loadF ("comp_thresh_db",    m.compThreshDb);
-        loadF ("comp_ratio",        m.compRatio);
-        loadF ("comp_attack_ms",    m.compAttackMs);
-        loadF ("comp_release_ms",   m.compReleaseMs);
-        loadB ("comp_release_auto", m.compReleaseAuto);
-        loadF ("comp_makeup_db",    m.compMakeupDb);
-        // Limiter fields are newly persisted, so old sessions lack them - reset
-        // to the struct defaults when absent instead of inheriting the prior
-        // session's limiter state (loadB/loadF conditional-store, no reset).
-        m.limiterEnabled.store    (json::getBool  (mast, "limiter_enabled", true));
-        m.limiterDriveDb.store    (json::getFloat (mast, "limiter_drive_db", 0.0f));
-        m.limiterCeilingDb.store  (json::getFloat (mast, "limiter_ceiling_db", -0.3f));
-        m.limiterReleaseMs.store  (json::getFloat (mast, "limiter_release_ms", 100.0f));
-        {
-            // Validate before storing: a NaN/±inf here would otherwise sit in the
-            // limiter param (and the UI knob) until the next set; fall back to the
-            // default so a corrupt session can't strand non-finite lookahead.
-            const float la = json::getFloat (mast, "limiter_lookahead_ms", 2.0f);
-            m.limiterLookaheadMs.store (std::isfinite (la) ? la : 2.0f);
-        }
-        m.limiterMode.store       (json::getInt  (mast, "limiter_mode", 0));
-        m.limiterStereoLink.store (json::getBool (mast, "limiter_stereo_link", true));
+        loadF ("eq_lf_boost",       m.eqLfBoost,       kMasteringDefaults.eqLfBoost);
+        loadF ("eq_hf_boost",       m.eqHfBoost,       kMasteringDefaults.eqHfBoost);
+        loadF ("eq_hf_atten",       m.eqHfAtten,       kMasteringDefaults.eqHfAtten);
+        loadF ("eq_tube_drive",     m.eqTubeDrive,     kMasteringDefaults.eqTubeDrive);
+        loadF ("eq_output_gain_db", m.eqOutputGainDb,  kMasteringDefaults.eqOutputGainDb);
+        loadB ("comp_enabled",      m.compEnabled,     kMasteringDefaults.compEnabled);
+        loadF ("comp_thresh_db",    m.compThreshDb,    kMasteringDefaults.compThreshDb);
+        loadF ("comp_ratio",        m.compRatio,       kMasteringDefaults.compRatio);
+        loadF ("comp_attack_ms",    m.compAttackMs,    kMasteringDefaults.compAttackMs);
+        loadF ("comp_release_ms",   m.compReleaseMs,   kMasteringDefaults.compReleaseMs);
+        loadB ("comp_release_auto", m.compReleaseAuto, kMasteringDefaults.compReleaseAuto);
+        loadF ("comp_makeup_db",    m.compMakeupDb,    kMasteringDefaults.compMakeupDb);
+        // The limiter is newer than the section around it, so a session saved
+        // before it exists still carries "mastering" - these reset on an absent
+        // key whether the section is there or not, rather than retaining.
+        m.limiterEnabled.store (json::getBool (mast, "limiter_enabled",
+                                               kMasteringDefaults.limiterEnabled.load()));
+        m.limiterDriveDb.store (json::getFiniteFloat (mast, "limiter_drive_db",
+                                                      kMasteringDefaults.limiterDriveDb.load()));
+        m.limiterCeilingDb.store (json::getFiniteFloat (mast, "limiter_ceiling_db",
+                                                        kMasteringDefaults.limiterCeilingDb.load()));
+        m.limiterReleaseMs.store (json::getFiniteFloat (mast, "limiter_release_ms",
+                                                        kMasteringDefaults.limiterReleaseMs.load()));
+        // Finite-guarded like the rest: a NaN/inf lookahead would otherwise sit
+        // in the limiter param (and the UI knob) until the next set.
+        m.limiterLookaheadMs.store (json::getFiniteFloat (mast, "limiter_lookahead_ms",
+                                                          kMasteringDefaults.limiterLookaheadMs.load()));
+        m.limiterMode.store (json::getInt (mast, "limiter_mode",
+                                           kMasteringDefaults.limiterMode.load()));
+        m.limiterStereoLink.store (json::getBool (mast, "limiter_stereo_link",
+                                                  kMasteringDefaults.limiterStereoLink.load()));
         if (json::has (mast, "target_preset"))
-            m.targetPresetIndex.store (json::getInt (mast, "target_preset", 0));
+            m.targetPresetIndex.store (json::getInt (mast, "target_preset",
+                                                     kMasteringDefaults.targetPresetIndex.load()));
+        else if (! haveMastering)
+            m.targetPresetIndex.store (kMasteringDefaults.targetPresetIndex.load());
     }
-    // Reset-when-absent: these are newer than most sessions on disk, and the
-    // load reuses the live Session, so a conditional store would leave the
-    // previously loaded session's MTC settings in place.
-    s.externalTimeCodeChasesTransport.store (false, std::memory_order_relaxed);
-    s.syncOutputEmitTimeCode.store (false, std::memory_order_relaxed);
-    s.syncOutputTimeCodeFrameRate.store (3, std::memory_order_relaxed);
 
-    if (json::has (root, "transport"))
     {
-        const auto& tport = json::child (root, "transport");
+        // The section resolved up with the tempo peek. Present, it keeps the
+        // same per-key retention as master and mastering above; absent or not
+        // an object, it reads from the serialized defaults rather than being
+        // skipped, so the previously loaded session's loop and punch ranges,
+        // tempo map, sync / MCU identifiers and MIDI bindings don't stay live
+        // under the new session. Either way every field below is written once.
+        const auto& tport = transportSection;
         if (json::has (tport, "loop_enabled"))  s.savedLoopEnabled  = json::getBool  (tport, "loop_enabled", false);
         if (json::has (tport, "loop_start"))    s.savedLoopStart    = json::getInt64 (tport, "loop_start", 0);
         if (json::has (tport, "loop_end"))      s.savedLoopEnd      = json::getInt64 (tport, "loop_end", 0);

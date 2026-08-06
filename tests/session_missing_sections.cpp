@@ -376,3 +376,290 @@ TEST_CASE ("a pathologically nested track slot falls back to the default",
     REQUIRE (s.track (0).name == defaults.track (0).name);
     REQUIRE_THAT (s.track (0).strip.faderDb.load(), WithinAbs (0.0f, 1e-6f));
 }
+
+// The mastering chain was restored entirely inside a "mastering" presence
+// check, so a file without the key left every field holding the previous
+// session's chain - and the Mastering stage then processed the newly loaded
+// mix through it.
+TEST_CASE ("loading a session without a mastering section resets the chain",
+           "[session][serializer]")
+{
+    ScopedTempDir tmp { "dusk-missing-mastering-" };
+    const auto& dir = tmp.dir;
+
+    Session s;
+    s.setSessionDirectory (dir);
+
+    auto& m = s.mastering();
+    m.sourceFile = dir.getChildFile ("ghost-mix.wav");
+    m.eqEnabled.store (true);
+    for (int b = 0; b < MasteringParams::kNumEqBands; ++b)
+    {
+        m.eqBandFreq[b]  .store (777.0f + (float) b);
+        m.eqBandGainDb[b].store (6.0f + (float) b);
+        m.eqBandQ[b]     .store (3.5f + (float) b);
+    }
+    m.eqLfBoost      .store (5.0f);
+    m.eqHfBoost      .store (4.0f);
+    m.eqHfAtten      .store (3.0f);
+    m.eqTubeDrive    .store (0.9f);
+    m.eqOutputGainDb .store (2.0f);
+    m.compEnabled    .store (true);
+    m.compThreshDb   .store (-18.0f);
+    m.compRatio      .store (8.0f);
+    m.compAttackMs   .store (1.0f);
+    m.compReleaseMs  .store (500.0f);
+    m.compReleaseAuto.store (false);
+    m.compMakeupDb   .store (6.0f);
+    m.limiterEnabled   .store (false);
+    m.limiterDriveDb   .store (9.0f);
+    m.limiterCeilingDb .store (-6.0f);
+    m.limiterReleaseMs .store (400.0f);
+    m.limiterMode      .store (2);
+    m.limiterStereoLink.store (false);
+    m.limiterLookaheadMs.store (8.0f);
+    m.targetPresetIndex.store (3);
+
+    const auto target = dir.getChildFile ("session.json");
+
+    SECTION ("mastering key absent")
+    {
+        target.replaceWithText (R"({"version":3})");
+    }
+    SECTION ("mastering key present but not an object")
+    {
+        target.replaceWithText (R"({"version":3,"mastering":42})");
+    }
+
+    REQUIRE (SessionSerializer::load (s, target));
+
+    const MasteringParams def;
+    REQUIRE (m.sourceFile == juce::File());
+    REQUIRE (m.eqEnabled.load() == def.eqEnabled.load());
+    for (int b = 0; b < MasteringParams::kNumEqBands; ++b)
+    {
+        REQUIRE_THAT (m.eqBandFreq[b]  .load(), WithinAbs (def.eqBandFreq[b]  .load(), 1e-6f));
+        REQUIRE_THAT (m.eqBandGainDb[b].load(), WithinAbs (def.eqBandGainDb[b].load(), 1e-6f));
+        REQUIRE_THAT (m.eqBandQ[b]     .load(), WithinAbs (def.eqBandQ[b]     .load(), 1e-6f));
+    }
+    REQUIRE_THAT (m.eqLfBoost     .load(), WithinAbs (def.eqLfBoost     .load(), 1e-6f));
+    REQUIRE_THAT (m.eqHfBoost     .load(), WithinAbs (def.eqHfBoost     .load(), 1e-6f));
+    REQUIRE_THAT (m.eqHfAtten     .load(), WithinAbs (def.eqHfAtten     .load(), 1e-6f));
+    REQUIRE_THAT (m.eqTubeDrive   .load(), WithinAbs (def.eqTubeDrive   .load(), 1e-6f));
+    REQUIRE_THAT (m.eqOutputGainDb.load(), WithinAbs (def.eqOutputGainDb.load(), 1e-6f));
+    REQUIRE (m.compEnabled.load() == def.compEnabled.load());
+    REQUIRE_THAT (m.compThreshDb  .load(), WithinAbs (def.compThreshDb  .load(), 1e-6f));
+    REQUIRE_THAT (m.compRatio     .load(), WithinAbs (def.compRatio     .load(), 1e-6f));
+    REQUIRE_THAT (m.compAttackMs  .load(), WithinAbs (def.compAttackMs  .load(), 1e-6f));
+    REQUIRE_THAT (m.compReleaseMs .load(), WithinAbs (def.compReleaseMs .load(), 1e-6f));
+    REQUIRE (m.compReleaseAuto.load() == def.compReleaseAuto.load());
+    REQUIRE_THAT (m.compMakeupDb  .load(), WithinAbs (def.compMakeupDb  .load(), 1e-6f));
+    REQUIRE (m.limiterEnabled.load() == def.limiterEnabled.load());
+    REQUIRE_THAT (m.limiterDriveDb    .load(), WithinAbs (def.limiterDriveDb    .load(), 1e-6f));
+    REQUIRE_THAT (m.limiterCeilingDb  .load(), WithinAbs (def.limiterCeilingDb  .load(), 1e-6f));
+    REQUIRE_THAT (m.limiterReleaseMs  .load(), WithinAbs (def.limiterReleaseMs  .load(), 1e-6f));
+    REQUIRE_THAT (m.limiterLookaheadMs.load(), WithinAbs (def.limiterLookaheadMs.load(), 1e-6f));
+    REQUIRE (m.limiterMode.load()       == def.limiterMode.load());
+    REQUIRE (m.limiterStereoLink.load() == def.limiterStereoLink.load());
+    REQUIRE (m.targetPresetIndex.load() == def.targetPresetIndex.load());
+}
+
+// Mastering follows the master strip rather than the per-track fill: a section
+// that IS there describes the chain, and a key it omits keeps the live value.
+// The limiter is the exception - it postdates the section, so a file written
+// before it must not inherit one.
+TEST_CASE ("a partial mastering section retains the keys it omits",
+           "[session][serializer]")
+{
+    ScopedTempDir tmp { "dusk-partial-mastering-" };
+    const auto& dir = tmp.dir;
+
+    Session s;
+    s.setSessionDirectory (dir);
+
+    auto& m = s.mastering();
+    m.eqEnabled       .store (true);
+    m.eqLfBoost       .store (5.0f);
+    m.eqOutputGainDb  .store (2.0f);
+    m.compRatio       .store (8.0f);
+    m.limiterCeilingDb.store (-6.0f);
+
+    const auto target = dir.getChildFile ("session.json");
+    target.replaceWithText (
+        R"({"version":3,"mastering":{"comp_ratio":6.0,"eq_output_gain_db":1e40}})");
+
+    REQUIRE (SessionSerializer::load (s, target));
+
+    const MasteringParams def;
+    REQUIRE_THAT (m.compRatio.load(), WithinAbs (6.0f, 1e-6f));
+    // Past float range: unusable, so the model default rather than the file's
+    // value or the live one.
+    REQUIRE_THAT (m.eqOutputGainDb.load(), WithinAbs (def.eqOutputGainDb.load(), 1e-6f));
+    REQUIRE (m.eqEnabled.load());
+    REQUIRE_THAT (m.eqLfBoost.load(), WithinAbs (5.0f, 1e-6f));
+    REQUIRE_THAT (m.limiterCeilingDb.load(), WithinAbs (def.limiterCeilingDb.load(), 1e-6f));
+}
+
+// Transport had the same presence check around it, with a wider blast radius:
+// loop and punch ranges, tempo and the whole tempo map, sync / MCU identifiers
+// and the MIDI bindings the audio thread reads all survived a file that never
+// described them.
+TEST_CASE ("loading a session without a transport section resets transport state",
+           "[session][serializer]")
+{
+    ScopedTempDir tmp { "dusk-missing-transport-" };
+    const auto& dir = tmp.dir;
+
+    Session s;
+    s.setSessionDirectory (dir);
+
+    s.savedLoopEnabled  = true;
+    s.savedLoopStart    = 48000;
+    s.savedLoopEnd      = 96000;
+    s.savedPunchEnabled = true;
+    s.savedPunchIn      = 24000;
+    s.savedPunchOut     = 72000;
+    s.snapToGrid        = true;
+    s.audioEditorSnap   = true;
+    s.midiEditorSnap    = false;
+    s.pianoRollKeySnap  = false;
+    s.snapResolution    = SnapResolution::CDFrames;
+    s.tempoBpm.store (90.0f);
+    s.tempoMap.setPoints ({ { 0, 100.0f }, { 48000, 140.0f } });
+    s.uiStage.store (2);
+    s.syncSourceInputIdentifier = "ghost-in";
+    s.externalSyncFollowsTempo   .store (false);
+    s.externalSyncChasesTransport.store (true);
+    s.syncOutputIdentifier = "ghost-out";
+    s.syncOutputEmitClock.store (true);
+    s.externalTimeCodeChasesTransport.store (true,  std::memory_order_relaxed);
+    s.syncOutputEmitTimeCode         .store (true,  std::memory_order_relaxed);
+    s.syncOutputTimeCodeFrameRate    .store (0,     std::memory_order_relaxed);
+    s.mcu.inputIdentifier  = "ghost-mcu-in";
+    s.mcu.outputIdentifier = "ghost-mcu-out";
+    s.mcu.assignMode.store (5, std::memory_order_relaxed);
+    s.beatsPerBar.store (7);
+    s.beatUnit   .store (8);
+    s.metronomeEnabled           .store (true);
+    s.metronomeVolDb             .store (6.0f);
+    s.metronomeClickWhileRecording.store (false);
+    s.metronomeClickWhilePlaying .store (true);
+    s.metronomeOnlyDuringCountIn .store (true);
+    s.metronomePolyphonic        .store (true);
+    s.countInEnabled  .store (true);
+    s.timeDisplayMode .store (1);
+    s.lastRecordPointSamples.store (123456);
+    s.preRollSeconds .store (4.0f);
+    s.postRollSeconds.store (5.0f);
+    s.preRollEnabled .store (false);
+    s.postRollEnabled.store (false);
+    s.oversamplingFactor.store (4, std::memory_order_relaxed);
+    {
+        MidiBinding b;
+        b.channel     = 1;
+        b.dataNumber  = 7;
+        b.trigger     = MidiBindingTrigger::CC;
+        b.target      = MidiBindingTarget::TransportPlay;
+        auto ghost = std::make_unique<std::vector<MidiBinding>>();
+        ghost->push_back (b);
+        s.midiBindings.publish (std::move (ghost));
+    }
+
+    // The track carries a legacy MIDI region (no recorded_at_bpm), whose anchor
+    // is stamped from the tempo peeked off the transport section.
+    const auto target = dir.getChildFile ("session.json");
+    const juce::String legacyMidiTrack =
+        R"(,"tracks":[{"midi_regions":[{"timeline_start":0,"length_samples":48000,"length_ticks":1920}]}])";
+
+    SECTION ("transport key absent")
+    {
+        target.replaceWithText (R"({"version":3)" + legacyMidiTrack + "}");
+    }
+    SECTION ("transport key present but not an object")
+    {
+        target.replaceWithText (R"({"version":3,"transport":42)" + legacyMidiTrack + "}");
+    }
+
+    REQUIRE (SessionSerializer::load (s, target));
+
+    const Session def;
+    REQUIRE (s.savedLoopEnabled  == def.savedLoopEnabled);
+    REQUIRE (s.savedLoopStart    == def.savedLoopStart);
+    REQUIRE (s.savedLoopEnd      == def.savedLoopEnd);
+    REQUIRE (s.savedPunchEnabled == def.savedPunchEnabled);
+    REQUIRE (s.savedPunchIn      == def.savedPunchIn);
+    REQUIRE (s.savedPunchOut     == def.savedPunchOut);
+    REQUIRE (s.snapToGrid       == def.snapToGrid);
+    REQUIRE (s.audioEditorSnap  == def.audioEditorSnap);
+    REQUIRE (s.midiEditorSnap   == def.midiEditorSnap);
+    REQUIRE (s.pianoRollKeySnap == def.pianoRollKeySnap);
+    REQUIRE (s.snapResolution   == def.snapResolution);
+    REQUIRE_THAT (s.tempoBpm.load(), WithinAbs (def.tempoBpm.load(), 1e-6f));
+    REQUIRE (s.tempoMap.empty());
+    REQUIRE (s.uiStage.load() == def.uiStage.load());
+    REQUIRE (s.syncSourceInputIdentifier.isEmpty());
+    REQUIRE (s.externalSyncFollowsTempo.load()    == def.externalSyncFollowsTempo.load());
+    REQUIRE (s.externalSyncChasesTransport.load() == def.externalSyncChasesTransport.load());
+    REQUIRE (s.syncOutputIdentifier.isEmpty());
+    REQUIRE (s.syncOutputEmitClock.load() == def.syncOutputEmitClock.load());
+    REQUIRE (s.externalTimeCodeChasesTransport.load (std::memory_order_relaxed)
+               == def.externalTimeCodeChasesTransport.load (std::memory_order_relaxed));
+    REQUIRE (s.syncOutputEmitTimeCode.load (std::memory_order_relaxed)
+               == def.syncOutputEmitTimeCode.load (std::memory_order_relaxed));
+    REQUIRE (s.syncOutputTimeCodeFrameRate.load (std::memory_order_relaxed)
+               == def.syncOutputTimeCodeFrameRate.load (std::memory_order_relaxed));
+    REQUIRE (s.mcu.inputIdentifier.isEmpty());
+    REQUIRE (s.mcu.outputIdentifier.isEmpty());
+    REQUIRE (s.mcu.assignMode.load (std::memory_order_relaxed)
+               == def.mcu.assignMode.load (std::memory_order_relaxed));
+    REQUIRE (s.beatsPerBar.load() == def.beatsPerBar.load());
+    REQUIRE (s.beatUnit   .load() == def.beatUnit   .load());
+    REQUIRE (s.metronomeEnabled.load() == def.metronomeEnabled.load());
+    REQUIRE_THAT (s.metronomeVolDb.load(), WithinAbs (def.metronomeVolDb.load(), 1e-6f));
+    REQUIRE (s.metronomeClickWhileRecording.load() == def.metronomeClickWhileRecording.load());
+    REQUIRE (s.metronomeClickWhilePlaying  .load() == def.metronomeClickWhilePlaying  .load());
+    REQUIRE (s.metronomeOnlyDuringCountIn  .load() == def.metronomeOnlyDuringCountIn  .load());
+    REQUIRE (s.metronomePolyphonic         .load() == def.metronomePolyphonic         .load());
+    REQUIRE (s.countInEnabled .load() == def.countInEnabled .load());
+    REQUIRE (s.timeDisplayMode.load() == def.timeDisplayMode.load());
+    REQUIRE (s.lastRecordPointSamples.load() == def.lastRecordPointSamples.load());
+    REQUIRE_THAT (s.preRollSeconds .load(), WithinAbs (def.preRollSeconds .load(), 1e-6f));
+    REQUIRE_THAT (s.postRollSeconds.load(), WithinAbs (def.postRollSeconds.load(), 1e-6f));
+    REQUIRE (s.preRollEnabled .load() == def.preRollEnabled .load());
+    REQUIRE (s.postRollEnabled.load() == def.postRollEnabled.load());
+    REQUIRE (s.midiBindings.current().empty());
+    REQUIRE (s.oversamplingFactor.load (std::memory_order_relaxed)
+               == def.oversamplingFactor.load (std::memory_order_relaxed));
+
+    // The anchor the legacy region was stamped with has to be the tempo the
+    // session actually ends up at. Anchoring it to the seeded 90 while the
+    // transport resets to 120 mis-retimes the region on the first tempo change.
+    const auto& midi = s.track (0).midiRegions.current();
+    REQUIRE (midi.size() == 1);
+    REQUIRE_THAT (midi[0].recordedAtBPM, WithinAbs ((double) def.tempoBpm.load(), 1e-6));
+}
+
+// The other half of the transport contract: a section that IS there is the
+// session's description of its transport, and a key it leaves out keeps the
+// live value rather than snapping to the model default.
+TEST_CASE ("a partial transport section retains the keys it omits",
+           "[session][serializer]")
+{
+    ScopedTempDir tmp { "dusk-partial-transport-" };
+    const auto& dir = tmp.dir;
+
+    Session s;
+    s.setSessionDirectory (dir);
+    s.beatsPerBar.store (7);
+    s.uiStage.store (2);
+    s.savedLoopEnabled = true;
+
+    const auto target = dir.getChildFile ("session.json");
+    target.replaceWithText (R"({"version":3,"transport":{"beats_per_bar":3}})");
+
+    REQUIRE (SessionSerializer::load (s, target));
+
+    REQUIRE (s.beatsPerBar.load() == 3);
+    REQUIRE (s.uiStage.load() == 2);
+    REQUIRE (s.savedLoopEnabled);
+}
