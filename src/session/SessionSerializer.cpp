@@ -1888,8 +1888,6 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     nlohmann::json root = nlohmann::json::parse (source.loadFileAsString().toStdString(), nullptr, false);
     if (! root.is_object()) return false;
 
-    s.missingAudioFilesAfterLoad.clear();
-
     // Format version gate. Missing key (pre-versioning sessions) is
     // treated as v1 - the format was effectively stable at v1 when the
     // version field landed. Future-versioned sessions are rejected up
@@ -1908,6 +1906,11 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     }
     if (fileVersion < kFormatVersion && ! migrateSession (root, fileVersion))
         return false;
+
+    // First write to the Session, and past every return above it: a caller that
+    // has to undo a failed load (the session directory moves before this runs)
+    // can rely on a false return leaving the model exactly as it was.
+    s.missingAudioFilesAfterLoad.clear();
 
     // Unconditional (reset-when-absent): a pre-SR-aware file must not inherit
     // the previous session's rate - 0 tells the load UI to adopt the device's.

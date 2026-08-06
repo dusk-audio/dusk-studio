@@ -109,6 +109,14 @@ private:
     // Recent / New-from-Template so none of them silently discards unsaved work.
     void guardUnsavedThen (const juce::String& title, const juce::String& message,
                             std::function<void()> proceed);
+    // Commit any in-flight take and silence both transports.
+    void stopTransportForSessionSwitch();
+    // The front half of every session switch: refuses while a bounce or another
+    // prompt is up, parks the transport, then runs guardUnsavedThen. Reaching
+    // for guardUnsavedThen directly on a switch path leaves the dirty check
+    // reading a session that is missing the take still being recorded.
+    void guardSessionSwitchThen (const char* title, const char* message,
+                                   std::function<void()> proceed);
     void newSessionPrompt();
     // The folder-pick + create half of newSessionPrompt - runs only once any
     // unsaved-changes prompt has been resolved.
@@ -322,6 +330,9 @@ private:
     void setStatusForPath (const juce::String& prefix,
                               const juce::File& path,
                               bool isAutosave = false);
+    // Same bar, for a message that names no file: clears the path tooltip
+    // rather than leaving the previous action's path hanging off it.
+    void setStatusText (const char* text);
     std::unique_ptr<ConsoleView> consoleView;
     std::unique_ptr<class TransportBar>      transportBar;
     std::unique_ptr<class TapeStrip>         tapeStrip;

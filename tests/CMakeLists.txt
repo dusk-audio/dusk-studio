@@ -314,6 +314,14 @@ if(TARGET sfizz_static)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_MULTISAMPLE=1)
 endif()
 
+# Single-instance socket lifecycle. Linux only: everywhere else acquire() is
+# the no-op that always reports primary, so there is no socket to test.
+if (UNIX AND NOT APPLE)
+    target_sources(dusk-studio-tests PRIVATE
+        single_instance_socket_lifecycle.cpp
+        ${CMAKE_SOURCE_DIR}/src/util/SingleInstance.cpp)
+endif()
+
 # IPC round-trip regression — Linux + Windows + macOS 14.4+. The test
 # spawns the dusk-studio-plugin-host child in --ipc-stub mode, so we
 # hard-depend on that target being built first. DUSKSTUDIO_PLUGIN_HOST_PATH

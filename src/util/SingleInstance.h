@@ -16,7 +16,11 @@ namespace duskstudio::single_instance
 // ones against its own working directory, not the launching shell's.
 //
 // A failed handshake reports "primary" rather than blocking the launch: a
-// broken socket must not stop the app from starting. Linux only - the slot
+// broken socket must not stop the app from starting. Only a refused connection
+// is read as "the primary is gone" and clears the slot; every other handshake
+// failure leaves the existing socket untouched and this launch runs without
+// owning the slot, because the process behind it may still be alive and two
+// primaries would contend for one audio device. Linux only - the slot
 // lives under XDG_RUNTIME_DIR, whose per-user ownership is half of what keeps
 // a hostile local process out of the handoff, and the .desktop %f double
 // launch it guards against is a Linux problem. Elsewhere this is a no-op that

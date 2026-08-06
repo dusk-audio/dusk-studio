@@ -41,6 +41,9 @@ struct Listener
     std::atomic<bool> unlinked { false };
     int wakeFds[2] = { -1, -1 };
     std::string socketPath;
+    dev_t socketDev = 0;
+    ino_t socketIno = 0;
+    bool socketIdentified = false;
     std::function<void (std::string)> onCommandLine;
 };
 
@@ -106,13 +109,21 @@ void makeAddress (const std::string& path, sockaddr_un& addr, socklen_t& len)
 // Closing the listening fd is what makes a later launch fall back to acting as
 // primary; leaving it bound but unserviced would strand every launch after it.
 // Both exchanges keep this safe to call from the listener thread and from
-// release() without double-closing or unlinking a socket file that a newer
-// primary has since created at the same path.
+// release() without double-closing.
 void teardown (Listener& l)
 {
     const int fd = l.listenFd.exchange (-1);
     if (fd >= 0) ::close (fd);
-    if (! l.unlinked.exchange (true) && ! l.socketPath.empty())
+    if (l.unlinked.exchange (true) || ! l.socketIdentified) return;
+
+    // Remove only the file this process bound. A newer primary may already have
+    // created its own socket at the same name, and unlinking that one would
+    // leave it listening on a path no launch can reach. fstat on the listening
+    // fd cannot settle the identity: it reports the sockfs inode, not the
+    // directory entry bind() made, hence the dev+inode recorded from the path.
+    struct stat named {};
+    if (::lstat (l.socketPath.c_str(), &named) != 0) return;
+    if (named.st_dev == l.socketDev && named.st_ino == l.socketIno)
         ::unlink (l.socketPath.c_str());
 }
 
@@ -267,20 +278,36 @@ bool startListener (int fd, const std::string& path,
     }
     l->listenFd.store (fd);
     l->socketPath = path;
+    struct stat bound {};
+    if (::lstat (path.c_str(), &bound) == 0)
+    {
+        l->socketDev = bound.st_dev;
+        l->socketIno = bound.st_ino;
+        l->socketIdentified = true;
+    }
     l->onCommandLine = std::move (onCommandLine);
     listener = l;
     l->thread = std::thread (listenLoop, l);
     return true;
 }
 
+// Refused is the only outcome that says the socket file outlived the process
+// that made it. Failed covers a peer we could not reach for any other reason -
+// no permission, a wedged primary, a backlog with no room - all of which leave
+// a socket whose owner may still be running.
+enum class Handoff { Delivered, Refused, Failed };
+
 // A fresh socket per attempt: a connect that failed leaves the fd unusable for
-// a second try.
-bool handOver (const sockaddr_un& addr, socklen_t len, const std::string& payload)
+// a second try. failureErrno carries what went wrong on Failed, for the log
+// line that is the only trace a second unattached instance leaves.
+Handoff handOver (const sockaddr_un& addr, socklen_t len, const std::string& payload,
+                  int& failureErrno)
 {
+    failureErrno = 0;
     for (int attempt = 0; attempt < 2; ++attempt)
     {
         const int fd = ::socket (AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
-        if (fd < 0) return false;
+        if (fd < 0) { failureErrno = errno; return Handoff::Failed; }
 
         const auto deadline = std::chrono::steady_clock::now()
                                 + std::chrono::milliseconds (kDeliveryBudgetMs);
@@ -314,11 +341,16 @@ bool handOver (const sockaddr_un& addr, socklen_t len, const std::string& payloa
         {
             const bool sent = writeAll (fd, payload, deadline);
             if (sent) ::shutdown (fd, SHUT_WR);
+            else      failureErrno = errno;   // before close(), which clobbers it
             ::close (fd);
-            return sent;
+            return sent ? Handoff::Delivered : Handoff::Failed;
         }
         ::close (fd);
-        if (connectErr != ECONNREFUSED) return false;
+        if (connectErr != ECONNREFUSED)
+        {
+            failureErrno = connectErr;
+            return Handoff::Failed;
+        }
 
         // A primary that has bound but not yet called listen() refuses
         // connections for a moment. Retry once before reading the refusal as
@@ -326,7 +358,7 @@ bool handOver (const sockaddr_un& addr, socklen_t len, const std::string& payloa
         if (attempt == 0)
             std::this_thread::sleep_for (std::chrono::milliseconds (50));
     }
-    return false;
+    return Handoff::Refused;
 }
 } // namespace
 
@@ -357,7 +389,23 @@ bool acquire (const std::string& payload, std::function<void (std::string)> onCo
         ::close (fd);
         if (bindErr != EADDRINUSE) return true;
 
-        if (handOver (addr, len, payload)) return false;
+        int handoffErrno = 0;
+        const Handoff outcome = handOver (addr, len, payload, handoffErrno);
+        if (outcome == Handoff::Delivered) return false;
+        // Anything short of a refusal may be a primary we could not talk to.
+        // Run unattached rather than clear its slot: unlinking here promotes
+        // this launch to a second primary, and two of those contend for one
+        // audio device and one session directory. Say so - an unattached
+        // instance is otherwise indistinguishable from a normal launch.
+        if (outcome != Handoff::Refused)
+        {
+            std::fprintf (stderr,
+                          "[Dusk Studio/SingleInstance] could not reach the running instance "
+                          "(%s) - starting without the single-instance slot; this window will "
+                          "not receive sessions opened from the desktop\n",
+                          std::strerror (handoffErrno));
+            return true;
+        }
 
         // Nothing is listening: a primary died without cleaning up. Drop the
         // file and take the slot on the next pass.
