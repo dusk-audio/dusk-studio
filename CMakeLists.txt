@@ -1410,6 +1410,25 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/DuskStudio.appdata.xml"
         DESTINATION share/metainfo)
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/DuskStudio.mime.xml"
         DESTINATION share/mime/packages)
+# GPL section 4: the license text must accompany every binary distribution, so
+# it ships as a file inside the package - CPACK_RESOURCE_FILE_LICENSE only
+# feeds the installer's EULA page and leaves nothing on disk. Linux packages
+# use the FHS location, and deb additionally wants share/doc/<pkg>/copyright.
+# The DMG and the MSI take the texts at the install root instead: writing into
+# DuskStudio.app would invalidate the ad-hoc signature scripts/package-macos.sh
+# applies before cpack stages the bundle.
+if(UNIX AND NOT APPLE)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+                  "${CMAKE_CURRENT_SOURCE_DIR}/LICENSES.txt"
+            DESTINATION share/doc/dusk-studio)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+            DESTINATION share/doc/dusk-studio
+            RENAME copyright)
+else()
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+                  "${CMAKE_CURRENT_SOURCE_DIR}/LICENSES.txt"
+            DESTINATION .)
+endif()
 # Packaging icon: hard requirement only when DUSKSTUDIO_PACKAGE_BUILD=ON
 # (release packaging path). The icon is a brand asset not committed to
 # the repo, so dev builds and CI tests stay buildable without it.

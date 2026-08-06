@@ -67,6 +67,82 @@ pffft (FFT backend behind dusk::audio::Fft — spectrum analyser, DP alignment)
              FFTPACKv5 license text applies and is reproduced in full at the
              top of external/pffft/pffft.h.
 
+DPF / DGL (DISTRHO Plugin Framework graphics layer — backs the native notepad UI)
+  Version  : dusk-audio/DPF rev f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+             (CI pin DPF_REV in .github/actions/clone-dpf-stack/action.yml)
+  License  : ISC — Copyright (C) 2012-2025 Filipe Coelho <falktx@falktx.com>
+             (DPF/LICENSE)
+  Path     : not in tree — sibling checkout ../DPF, -DDPF_PATH=..., or
+             external/DPF. Only the DGL OpenGL3 subset is built
+             (dpf__add_dgl_opengl3); the resulting dgl-opengl3 static library
+             is linked into the Dusk Studio binary. No plugin wrappers, no
+             examples.
+  Upstream : https://github.com/DISTRHO/DPF
+  Notes    : The sub-components below ship vendored inside DGL and ARE compiled
+             into the Dusk Studio binary; each keeps its own license (full text
+             beside each path):
+               - pugl          ISC   dgl/src/pugl-upstream/COPYING
+                               (David Robillard 2011-2022 per COPYING, to 2023
+                               in individual sources, which also carry Ben
+                               Loftis / Harrison Consoles 2011-2012 and Robin
+                               Gareus 2013 under the same ISC terms;
+                               submodule dusk-audio/pugl rev
+                               5e2621d714ddf1cb0f86e852f8ba5dffe04aa3a3)
+               - NanoVG        zlib  dgl/src/nanovg/LICENSE.txt
+                               (Mikko Mononen 2013)
+               - fontstash     zlib  dgl/src/nanovg/fontstash.h
+                               (Mikko Mononen 2009-2013)
+               - stb_truetype  MIT / public domain dual, caller's choice
+                               (Sean Barrett 2017); the two alternatives are
+                               spelled out at the foot of
+                               dgl/src/nanovg/stb_truetype.h
+               - stb_image     public domain ONLY — the dedication at
+                               dgl/src/nanovg/stb_image.h offers no MIT
+                               alternative, unlike stb_truetype (Sean Barrett)
+               - DejaVu Sans   Bitstream Vera Fonts License, DejaVu's own
+                               changes public domain;
+                               dgl/src/resources/LICENSE-DejaVuSans.ttf.txt.
+                               The .ttf is embedded verbatim as a byte array by
+                               dgl/src/Resources.cpp, so it ships in the binary.
+               - Khronos GL headers  MIT  dgl/src/khronos/ (glext.h,
+                               khrplatform.h — The Khronos Group Inc.,
+                               2013-2026 and 2008-2018 respectively; on the
+                               include path for MSVC builds only)
+
+DPF-Widgets (DGL / Dear ImGui bridge — the notepad's immediate-mode UI layer)
+  Version  : dusk-audio/DPF-Widgets rev 730da6397904da66d99667c1cb30fc77fc3d794a
+             (CI pin DPF_WIDGETS_REV in .github/actions/clone-dpf-stack/action.yml)
+  License  : ISC — Copyright (C) 2012-2021 Filipe Coelho <falktx@falktx.com>
+             (DPF-Widgets/LICENSE)
+  Path     : not in tree — sibling checkout ../DPF-Widgets,
+             -DDPF_WIDGETS_PATH=..., or external/DPF-Widgets;
+             opengl/DearImGui.cpp compiles into the dusk_notepad_ui library.
+  Upstream : https://github.com/DISTRHO/DPF-Widgets
+
+Dear ImGui (immediate-mode GUI — notepad editor, toolbar, chord charts)
+  Version  : 1.91.9b (IMGUI_VERSION in opengl/DearImGui/imgui.h)
+  License  : MIT — Copyright (c) 2014-2025 Omar Cornut
+             (DPF-Widgets/opengl/DearImGui/LICENSE.txt)
+  Path     : vendored inside DPF-Widgets at opengl/DearImGui/; pulled into the
+             build as one translation unit by that repo's DearImGui.cpp.
+  Upstream : https://github.com/ocornut/imgui
+  Notes    : DearImGui.cpp also #includes three further projects into the same
+             translation unit, so they compile into the Dusk Studio binary
+             alongside Dear ImGui itself:
+               - imgui-knobs   MIT   opengl/DearImGuiKnobs/LICENSE
+                               (Copyright (c) 2022 Simon Altschuler)
+               - imgui_toggle  ISC-style permission grant
+                               opengl/DearImGuiToggle/LICENSE
+                               (Copyright (c) 2022 nitz - chris marc dailey,
+                               https://cmd.wtf)
+               - ProggyClean.ttf  MIT  (Copyright (c) 2004, 2005 Tristan
+                               Grimmer; notice at
+                               opengl/DearImGui/imgui_draw.cpp). DPF hands the
+                               notepad DejaVu Sans, but
+                               IMGUI_DISABLE_DEFAULT_FONT stays commented out
+                               in opengl/DearImGui/imconfig.h, so the
+                               compressed ProggyClean bytes ship regardless.
+
 Steinberg VST3 SDK (native VST3 host — Linux builds only)
   Version  : 3.8.0 (upstream tag v3.8.0_build_66)
   License  : Dual-licensed — GPL-3.0 (used here) OR Steinberg VST3 proprietary
@@ -80,6 +156,14 @@ Steinberg VST3 SDK (native VST3 host — Linux builds only)
              distribution of Dusk Studio may bundle any third-party plugin —
              shipping even a demo proprietary VST3 would void GPL compliance
              for the whole binary.
+
+CLAP headers (native CLAP plugin host)
+  Version  : 1.2.9
+  License  : MIT — Copyright (c) 2021 Alexandre BIQUE (external/clap/LICENSE)
+  Path     : external/clap/include/ (git submodule of free-audio/clap). Headers
+             only: the API declarations compile into the host, no CLAP source
+             file is built and nothing from the repo is shipped as a file.
+  Upstream : https://github.com/free-audio/clap
 
 Catch2 (test framework — TEST BUILDS ONLY, not bundled in Dusk Studio)
   Version  : v3.5.4
@@ -123,6 +207,19 @@ LAME / libmp3lame (MP3 bounce export — optional)
              the build was configured with libmp3lame available.
   Upstream : https://lame.sourceforge.io/
 
+System shared libraries (Linux builds — linked dynamically, never bundled)
+  License  : PipeWire MIT; ALSA / libasound LGPL-2.1-or-later; libX11 MIT;
+             libGL supplied by the system OpenGL driver (Mesa: MIT)
+  Path     : not vendored — pkg-config libpipewire-0.3, find_package(OpenGL),
+             and a plain link by name for asound / X11. PipeWire is the primary
+             audio backend, ALSA the fallback backend and the MIDI transport,
+             X11 the plugin-editor embedding host, and GL the renderer the
+             native notepad UI draws through.
+  Notes    : Dusk Studio redistributes none of these — they come from the
+             user's distribution. Listed so the link surface is complete.
+  Upstream : https://pipewire.org/ , https://www.alsa-project.org/ ,
+             https://www.x.org/ , https://mesa3d.org/
+
 
 Steinberg ASIO SDK (Windows only, optional)
   License  : Steinberg ASIO SDK Licensing Agreement (proprietary)
@@ -144,4 +241,9 @@ Paid Patreon binaries  : You are paying for support, packaging, and
                           still GPL — your binary's compliance with the
                           GPL is unaffected by the payment.
 Redistribute the binary: Allowed under GPL-3.0 terms. Include LICENSE,
-                          this file, and source-code availability.
+                          this file, and source-code availability. Every
+                          Dusk Studio package already carries both texts:
+                          /usr/share/doc/dusk-studio/ in the deb and rpm
+                          (plus a Debian-policy `copyright` copy), the top
+                          level of the Linux tarball, and beside the app in
+                          the macOS DMG and the Windows MSI.

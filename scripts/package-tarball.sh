@@ -41,6 +41,9 @@ for f in "$BINARY" "$HOST"; do
     [[ -x "$f" ]] || { echo "error: $f missing - build $BUILD_DIR (Release) first" >&2; exit 1; }
 done
 [[ -f "$ICON_SRC" ]] || { echo "error: $ICON_SRC missing (brand icon)" >&2; exit 1; }
+for f in LICENSE LICENSES.txt; do
+    [[ -f "$f" ]] || { echo "error: $f missing - GPL section 4 requires it in the tarball" >&2; exit 1; }
+done
 
 ICON_TOOL=""
 command -v magick  >/dev/null 2>&1 && ICON_TOOL="magick"
@@ -70,9 +73,13 @@ cp packaging/DuskStudio.mime.xml       "$APPDIR/share/mime/packages/"
 "$ICON_TOOL" "$ICON_SRC" -resize 256x256 \
     "$APPDIR/share/icons/hicolor/256x256/apps/DuskStudio.png"
 
-# Installer + readme live at the tarball top level, beside the program dir.
+# Installer, readme, and the license texts live at the tarball top level, beside
+# the program dir. LICENSE + LICENSES.txt are not optional: GPL section 4 makes
+# them part of any binary distribution.
 install -m 0755 scripts/install-linux.sh "$STAGE/$TOPDIR/install.sh"
-cp packaging/README-linux.txt "$STAGE/$TOPDIR/README-linux.txt"
+install -m 0644 packaging/README-linux.txt "$STAGE/$TOPDIR/README-linux.txt"
+install -m 0644 LICENSE                    "$STAGE/$TOPDIR/LICENSE"
+install -m 0644 LICENSES.txt               "$STAGE/$TOPDIR/LICENSES.txt"
 
 OUTPUT="${TOPDIR}.tar.xz"
 rm -f "$OUTPUT"
