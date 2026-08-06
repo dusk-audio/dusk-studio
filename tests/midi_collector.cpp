@@ -3,6 +3,7 @@
 #include "foundation/MidiBuffer.h"
 #include "foundation/MidiCollector.h"
 
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -239,4 +240,55 @@ TEST_CASE ("MidiCollector: full ring drops the overflowing message", "[midi][col
     dusk::MidiBuffer out;
     c.removeNextBlock (out, 512, 2.0);
     REQUIRE (offsets (out).size() == 1u);   // only the accepted message survives
+}
+
+// Whole-block-or-nothing only holds the hung-note line if the destination can
+// take everything the ring can. A destination smaller than the ring turns a
+// mid-size backlog into an EMPTY block - every note-off in it lost, for notes
+// whose note-ons went out in an earlier block. Both sides come from
+// kMidiBlockBytes so the drop can only mean "the ring itself overflowed".
+TEST_CASE ("MidiCollector delivers a ring-full backlog into a matching destination",
+           "[midi][collector]")
+{
+    MidiCollector c (dusk::kMidiBlockBytes);
+    c.reset (48000.0, 0.0);
+
+    // Measure how many 3-byte messages the ring really holds rather than
+    // deriving it from the record header sizes, so this still fills the ring if
+    // either header changes. Kept on a pair boundary so the backlog ends on a
+    // note-off; 372 is what the old 4 KB destination could take.
+    int ringMessages = 0;
+    {
+        MidiCollector probe (dusk::kMidiBlockBytes);
+        const std::uint8_t filler[3] { 0x90, 0x40, 0x7F };
+        while (probe.addMessage (filler, 3, 1.0)) ++ringMessages;
+    }
+    const int numMessages = ringMessages & ~1;
+    REQUIRE (numMessages > 372);
+
+    std::vector<std::array<std::uint8_t, 3>> pushed;
+    for (int i = 0; i < numMessages; ++i)
+    {
+        const bool noteOn = (i % 2) == 0;
+        const std::array<std::uint8_t, 3> msg { (std::uint8_t) (noteOn ? 0x90 : 0x80),
+                                                (std::uint8_t) (36 + (i / 2) % 60),
+                                                (std::uint8_t) (noteOn ? 0x7F : 0x00) };
+        REQUIRE (c.addMessage (msg.data(), 3, 1.0 + 0.0005 * i));
+        pushed.push_back (msg);
+    }
+
+    dusk::MidiBuffer out;
+    out.reserveBytes (dusk::kMidiBlockBytes);
+    c.removeNextBlock (out, 512, 2.0);
+
+    std::vector<std::array<std::uint8_t, 3>> got;
+    for (const auto meta : out)
+    {
+        REQUIRE (meta.numBytes == 3);
+        got.push_back ({ meta.data[0], meta.data[1], meta.data[2] });
+    }
+
+    REQUIRE (got.size() == pushed.size());
+    REQUIRE (got == pushed);            // every message, in order
+    REQUIRE (got.back()[0] == 0x80);    // including the release at the tail
 }

@@ -349,6 +349,11 @@ void PluginSlot::prepareToPlay (double sampleRate, int blockSize)
     stereoScratch.setSize (2, preparedBlockSize, false, false, true);
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
+    // The wire format sets this one, not the shared ceiling - but it must not
+    // fall under it, or the OOP path alone would start emptying blocks the rest
+    // of the MIDI path delivers.
+    static_assert (duskstudio::ipc::kMidiBytes >= dusk::kMidiBlockBytes,
+                   "IPC MIDI cap must not sit below the shared MIDI ceiling");
     oopMidiScratch.reserveBytes (duskstudio::ipc::kMidiBytes);
    #endif
 

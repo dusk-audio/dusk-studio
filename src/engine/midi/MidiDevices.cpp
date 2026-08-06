@@ -13,11 +13,6 @@ namespace duskstudio::midi
 {
 namespace
 {
-// Per-input ring capacity. Sized well past a dense controller burst plus a
-// 1 kB-class sysex so the drop-whole-record policy only fires when the audio
-// thread has genuinely stopped draining.
-constexpr std::size_t kInputRingBytes = 16384;
-
 // Stand-in rate for a collector built before the audio device reports one.
 constexpr double kFallbackSampleRate = 48000.0;
 
@@ -98,7 +93,7 @@ void MidiInputClient::rebuild (double sampleRate)
     const double rate = sampleRate > 0.0 ? sampleRate : kFallbackSampleRate;
     for (const auto& d : avail)
     {
-        auto col = std::make_unique<dusk::MidiCollector> (kInputRingBytes);
+        auto col = std::make_unique<dusk::MidiCollector> (dusk::kMidiBlockBytes);
         col->reset (rate, now);
 
         indexByIdentifier[d.identifier] = (int) collectors.size();
@@ -111,7 +106,7 @@ void MidiInputClient::rebuild (double sampleRate)
     // collector directly; the audio thread drains it like any other input.
     devices.push_back ({ "Virtual Keyboard (Dusk Studio)", kVirtualKeyboardIdentifier });
     {
-        auto vkb = std::make_unique<dusk::MidiCollector> (kInputRingBytes);
+        auto vkb = std::make_unique<dusk::MidiCollector> (dusk::kMidiBlockBytes);
         vkb->reset (rate, now);
         collectors.push_back (std::move (vkb));
     }
@@ -192,9 +187,10 @@ MidiOutputBank::MidiOutputBank()
 {
     // Pre-size every slot buffer so the audio-thread copy in queueRt never
     // allocates - reserveBytes also caps it, so an over-cap block is dropped by
-    // addEvent rather than reallocated.
+    // addEvent rather than reallocated. Sized from the shared ceiling so a burst
+    // that survived the input ring is not thrown away at the last hop out.
     for (auto& slot : queue)
-        slot.events.reserveBytes (kSlotBytes);
+        slot.events.reserveBytes (dusk::kMidiBlockBytes);
 }
 
 MidiOutputBank::~MidiOutputBank()
@@ -327,20 +323,13 @@ void MidiOutputBank::queueRt (int port, const dusk::MidiBuffer& events, double s
         return;   // pump stalled - drop the block
 
     auto& slot = queue[(size_t) (w % (std::uint32_t) kQueueDepth)];
-    slot.events.clear();   // keeps the pre-sized capacity
 
-    // A block past the pre-sized cap is dropped whole (same policy as
-    // queue-full) rather than split: addEvent refuses to grow, so a partial copy
-    // would tear paired events apart. The reserved slot is simply left
-    // uncommitted.
-    for (const auto meta : events)
-    {
-        if (! slot.events.addEvent (meta.data, meta.numBytes, meta.samplePosition))
-        {
-            slot.events.clear();
-            return;
-        }
-    }
+    // Whole-block or nothing: a partial copy would tear paired events apart, so
+    // an over-cap block leaves the reserved slot uncommitted, same as when the
+    // queue is full. The copy clears first and keeps the reserved capacity, so
+    // nothing allocates here.
+    dusk::copyEventsWhole (events, slot.events);
+    if (slot.events.isEmpty()) return;
 
     slot.port       = port;
     slot.timeMs     = backendClockMs();
