@@ -59,11 +59,10 @@ TEST_CASE ("SessionSerializer::load clamps corrupt automation + EQ values",
     )JSON");
 
     Session s;
-    // Seed an explicit, non-default session tempo so the per-point bpm fallback is
-    // tested against a known value rather than coupling the assertion to whatever the
-    // Session default tempo happens to be. The fixture JSON sets no transport tempo,
-    // so this seeded value survives the load and is what the corrupt (+inf) point
-    // falls back to.
+    // Seed a non-default tempo the load has to overwrite: the fixture carries no
+    // transport section, so the tempo AND the anchor the corrupt (+inf) point
+    // falls back to both come from the model default (120), not from whatever the
+    // previously loaded session was running at.
     s.tempoBpm.store (100.0f);
     REQUIRE (SessionSerializer::load (s, target));
 
@@ -81,9 +80,10 @@ TEST_CASE ("SessionSerializer::load clamps corrupt automation + EQ values",
     REQUIRE_THAT (pts[0].value, WithinAbs (1.0f, 1e-6f));
     REQUIRE_THAT (pts[1].value, WithinAbs (0.25f, 1e-6f));
 
-    // Non-finite bpm rejected — falls back to the seeded session tempo (100).
+    // Non-finite bpm rejected - falls back to the loaded session tempo (120).
     REQUIRE (std::isfinite (pts[0].recordedAtBPM));
-    REQUIRE_THAT (pts[0].recordedAtBPM, WithinAbs (100.0f, 1e-3f));
+    REQUIRE_THAT (pts[0].recordedAtBPM, WithinAbs (120.0f, 1e-3f));
+    REQUIRE_THAT (s.tempoBpm.load(), WithinAbs (120.0f, 1e-3f));
 
     // Non-finite EQ gain rejected — the in-memory default (0 dB) is kept.
     const float lmGain = s.track (0).strip.lmGainDb.load();
@@ -197,6 +197,47 @@ TEST_CASE ("SessionSerializer::load defaults present invalid master bools",
     REQUIRE (s.master().eqEnabled.load() == false);
     REQUIRE (s.master().compEnabled.load() == true);
     REQUIRE (s.master().compReleaseAuto.load() == true);
+
+    target.getParentDirectory().deleteRecursively();
+}
+
+// The mastering chain reads its values the same way the master strip does, so
+// a value of the wrong type resolves to the model default rather than to a
+// blanket zero / false. comp_ratio 0 would divide into the compressor's ratio
+// math, and auto-release defaults ON, so neither can be the silent fallback.
+TEST_CASE ("SessionSerializer::load defaults present invalid mastering values",
+           "[session][serializer][corruption]")
+{
+    const auto target = writeSession (R"JSON(
+    {
+      "version": 3,
+      "mastering": {
+        "comp_ratio": "x",
+        "comp_attack_ms": 12.0,
+        "comp_thresh_db": 1e40,
+        "comp_release_auto": "maybe",
+        "eq_enabled": true
+      }
+    }
+    )JSON");
+
+    Session s;
+    s.mastering().compRatio.store (8.0f);
+    s.mastering().compAttackMs.store (99.0f);
+    s.mastering().compThreshDb.store (-24.0f);
+    s.mastering().compReleaseAuto.store (false);
+    s.mastering().eqEnabled.store (false);
+    s.mastering().compMakeupDb.store (6.0f);
+
+    REQUIRE (SessionSerializer::load (s, target));
+    const duskstudio::MasteringParams def;
+    REQUIRE_THAT (s.mastering().compRatio.load(), WithinAbs (def.compRatio.load(), 1e-6f));
+    REQUIRE_THAT (s.mastering().compAttackMs.load(), WithinAbs (12.0f, 1e-6f));
+    REQUIRE_THAT (s.mastering().compThreshDb.load(), WithinAbs (def.compThreshDb.load(), 1e-6f));
+    REQUIRE (s.mastering().compReleaseAuto.load() == def.compReleaseAuto.load());
+    REQUIRE (s.mastering().eqEnabled.load() == true);
+    // A missing key in a present mastering section retains the live value.
+    REQUIRE_THAT (s.mastering().compMakeupDb.load(), WithinAbs (6.0f, 1e-6f));
 
     target.getParentDirectory().deleteRecursively();
 }
