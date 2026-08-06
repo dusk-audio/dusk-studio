@@ -1540,6 +1540,12 @@ void MainComponent::setStatusForPath (const juce::String& prefix,
     statusLabel.setTooltip (path.getFullPathName());
 }
 
+void MainComponent::setStatusText (const char* text)
+{
+    statusLabel.setText (text, juce::dontSendNotification);
+    statusLabel.setTooltip ({});
+}
+
 void MainComponent::syncBankButtons (int desiredCount)
 {
     // Grow / shrink the bank-button vector to match. Shrinking destroys
@@ -1587,10 +1593,10 @@ void MainComponent::maybeStartStartupPluginScan()
     // yet, or that later call would no-op. (resized() may call us repeatedly
     // meanwhile; each just returns here until the dialog closes.)
     if (startupDialogPending) return;
-    // Defer past an open crash-recovery prompt so the scan's progress modal
-    // doesn't stack over the user's recover/discard decision. The recovery
+    // Defer past an open crash-recovery or unsaved-changes prompt so the scan's
+    // progress modal doesn't stack over the user's decision. Both prompts'
     // exit paths re-invoke us once that choice is made.
-    if (recoveryModal.isOpen()) return;
+    if (recoveryModal.isOpen() || quitModal.isOpen()) return;
     startupScanTriggered = true;   // fire exactly once, whatever the toggle says
 
     const bool enabled = appconfig::getScanPluginsOnStartup();
@@ -2282,10 +2288,18 @@ void MainComponent::guardUnsavedThen (const juce::String& title,
     dialog->setSize (440, 200);
     juce::Component::SafePointer<MainComponent> safe (this);
     auto go = std::make_shared<std::function<void()>> (std::move (proceed));
+    // Every exit re-invokes the startup plugin scan, which holds off while this
+    // prompt is up so its progress modal can't stack over the decision.
     dialog->onCancel = [safe]
     {
         dusk::callAsync ([safe]
-            { if (auto* s = safe.getComponent()) s->quitModal.close(); });
+        {
+            if (auto* s = safe.getComponent())
+            {
+                s->quitModal.close();
+                s->maybeStartStartupPluginScan();
+            }
+        });
     };
     dialog->onDontSave = [safe, go]
     {
@@ -2300,6 +2314,7 @@ void MainComponent::guardUnsavedThen (const juce::String& title,
                 s->deleteAutosaveFor (s->session.getSessionDirectory());
                 (*go)();
             }
+            if (auto* s = safe.getComponent()) s->maybeStartStartupPluginScan();
         });
     };
     dialog->onSave = [safe, go]
@@ -2313,17 +2328,75 @@ void MainComponent::guardUnsavedThen (const juce::String& title,
             {
                 if (ok && safe.getComponent() != nullptr)
                     (*go)();
+                if (auto* self = safe.getComponent())
+                    self->maybeStartStartupPluginScan();
             });
         });
     };
+    // Shortcuts stay off under this prompt: Space would restart the transport
+    // the switch path just parked, putting a take back in flight behind a
+    // dirty check that has already run.
     quitModal.show (*this, std::move (dialog), /*onDismiss*/ {},
-                      /*dismissOnClickOutside*/ false, /*dismissOnEscape*/ false);
+                      /*dismissOnClickOutside*/ false, /*dismissOnEscape*/ false,
+                      /*dimAlpha*/ 0.55f, /*hidePluginEditors*/ true,
+                      /*useOverlay*/ true, /*forwardShortcuts*/ false);
+}
+
+void MainComponent::stopTransportForSessionSwitch()
+{
+    // In the Mastering stage the mixdown player is the audible source and the
+    // multitrack transport is not, so a switch has to silence both. Nothing
+    // else will: the loaded session often lands on the same stage, and the
+    // stage setter returns early on that.
+    auto& mastering = engine.getMasteringPlayer();
+    if (mastering.isPlaying()) mastering.stop();
+
+    auto& transport = engine.getTransport();
+    if (! transport.isRecording() && ! transport.isPlaying()) return;
+
+    engine.stop();
+    if (transportBar != nullptr)
+    {
+        transportBar->notifyRecordStopped();
+        // Consumed: the errors belong to the outgoing session, and leaving them
+        // latched pops the same alert again over the incoming one.
+        engine.getRecordManager().clearLastRecordErrors();
+    }
+}
+
+void MainComponent::guardSessionSwitchThen (const char* title,
+                                              const char* message,
+                                              std::function<void()> proceed)
+{
+    // A bounce owns the transport and fails outright if anything stops it, and
+    // its modal is the only thing standing between the user and these entries.
+    // Mixdown drives the same dialog through mixdownModal.
+    if (bounceModal.isOpen() || mixdownModal.isOpen())
+    {
+        setStatusText ("Session not switched: finish or cancel the bounce first");
+        return;
+    }
+    // guardUnsavedThen would drop the request on a busy modal, and the recovery
+    // prompt would be replaced mid-decision - either way silently, and after
+    // the stop below had already taken the transport down for nothing.
+    if (quitModal.isOpen() || recoveryModal.isOpen())
+    {
+        setStatusText ("Session not switched: close the open prompt first");
+        return;
+    }
+
+    // Ahead of the guard, not after it: the dirty check serializes the session,
+    // and a take still running is not in it yet. Stopping here commits the take
+    // first, so the prompt offers to save the work rather than passing a
+    // recording session off as clean and discarding it at the load.
+    stopTransportForSessionSwitch();
+    guardUnsavedThen (title, message, std::move (proceed));
 }
 
 void MainComponent::newSessionPrompt()
 {
     // Starting a new session blanks the current one - guard unsaved work first.
-    guardUnsavedThen (
+    guardSessionSwitchThen (
         "Save changes before starting a new session?",
         "Your current session has unsaved changes. If you don't save, "
         "those changes are discarded when the new session opens.",
@@ -3040,8 +3113,22 @@ void MainComponent::openSessionPath (const juce::File& path)
         juce::Component::SafePointer<MainComponent> safeThis (this);
         dismissStartupDialog ([safeThis, sessionJson]
         {
-            if (safeThis != nullptr)
-                safeThis->loadSessionFromJson (sessionJson);   // shows its own alert on failure
+            auto* self = safeThis.getComponent();
+            if (self == nullptr) return;
+
+            // Unannounced - a double-click in a file manager, on a window that
+            // may hold hours of unsaved work - so it takes the same route the
+            // in-app open paths take.
+            self->guardSessionSwitchThen (
+                "Save changes before opening another session?",
+                "Another session was opened from outside Dusk Studio, and your "
+                "current session has unsaved changes. If you don't save, those "
+                "changes are discarded when the other session opens.",
+                [safeThis, sessionJson]
+            {
+                if (auto* s = safeThis.getComponent())
+                    s->loadSessionFromJson (sessionJson);   // shows its own alert on failure
+            });
         });
     }
 }
@@ -3131,11 +3218,23 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
         return false;
     }
 
+    // Every session switch lands here, and none may move the directory with a
+    // take still running - RecordManager resolves its writers against it.
+    stopTransportForSessionSwitch();
+
     const auto t0 = juce::Time::getMillisecondCounterHiRes();
+
+    // load() resolves the session's relative audio and mastering paths against
+    // getSessionDirectory(), so the directory moves first. It also returns
+    // false before touching the model, and a session describing one folder
+    // while pointing at another writes itself, and its notepad, over the folder
+    // it failed to read.
+    const auto previousDir = session.getSessionDirectory();
     session.setSessionDirectory (dir);
 
     if (! SessionSerializer::load (session, sourceJson))
     {
+        session.setSessionDirectory (previousDir);
         setStatusForPath ("Load failed", sourceJson);
         return false;
     }
@@ -3419,7 +3518,7 @@ void MainComponent::openFromFilePrompt()
 {
     // Opening another session discards the current one - guard unsaved work
     // before the browser appears (mirrors New Session / Open Recent).
-    guardUnsavedThen (
+    guardSessionSwitchThen (
         "Save changes before opening another session?",
         "Your current session has unsaved changes. If you don't save, "
         "those changes are discarded when the other session opens.",
@@ -4654,7 +4753,7 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
                 if (idx >= 0 && idx < menuRecentSessions.size())
                 {
                     const auto dir = menuRecentSessions.getReference (idx);
-                    guardUnsavedThen (
+                    guardSessionSwitchThen (
                         "Save changes before opening another session?",
                         "Your current session has unsaved changes. If you don't save, "
                         "those changes are discarded when the other session opens.",
@@ -4669,7 +4768,7 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
                 const auto tmpl = (SessionTemplate) (menuItemID - kMenuFileTemplateBase);
                 // Applying a template rewrites the current session in place -
                 // guard unsaved work first (mirrors New / Open).
-                guardUnsavedThen (
+                guardSessionSwitchThen (
                     "Save changes before applying a template?",
                     "Your current session has unsaved changes. If you don't save, "
                     "those changes are discarded when the template is applied.",
@@ -5267,8 +5366,7 @@ void MainComponent::toggleVirtualKeyboard()
 void MainComponent::toggleNotepad()
 {
 #if ! DUSKSTUDIO_HAS_NATIVE_NOTEPAD
-    statusLabel.setText ("Notepad unavailable: built without the native notepad UI",
-                         juce::dontSendNotification);
+    setStatusText ("Notepad unavailable: built without the native notepad UI");
 #else
     if (notepadWindow != nullptr && notepadWindow->isOpen())
     {
@@ -5285,8 +5383,7 @@ void MainComponent::toggleNotepad()
     auto* const peer = topLevel != nullptr ? topLevel->getPeer() : nullptr;
     if (peer == nullptr || peer->getNativeHandle() == nullptr)
     {
-        statusLabel.setText ("Notepad unavailable: main window is not ready",
-                             juce::dontSendNotification);
+        setStatusText ("Notepad unavailable: main window is not ready");
         return;
     }
 
@@ -5325,8 +5422,7 @@ void MainComponent::toggleNotepad()
                     || value.startsWithIgnoreCase ("mailto:"))
                     juce::URL (value).launchInDefaultBrowser();
                 else
-                    self->statusLabel.setText ("Link not opened: only http, https, and mailto links are supported",
-                                               juce::dontSendNotification);
+                    self->setStatusText ("Link not opened: only http, https, and mailto links are supported");
             }
         });
 
@@ -5359,8 +5455,7 @@ void MainComponent::toggleNotepad()
     if (! opened)
     {
         notepadDim.reset();
-        statusLabel.setText ("Unable to embed session notepad with the current display backend",
-                             juce::dontSendNotification);
+        setStatusText ("Unable to embed session notepad with the current display backend");
     }
 #endif
 }
@@ -5393,8 +5488,7 @@ bool MainComponent::saveNotepadNow()
         if (notepadWindow != nullptr)
             notepadWindow->markSaveFailed();
        #endif
-        statusLabel.setText ("Notepad unsaved: save the session first",
-                             juce::dontSendNotification);
+        setStatusText ("Notepad unsaved: save the session first");
         return false;
     }
     if (SessionSerializer::saveNotepad (dir, notepadText))

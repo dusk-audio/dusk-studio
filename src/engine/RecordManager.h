@@ -67,6 +67,7 @@ public:
     {
         return lastRecordErrors;
     }
+    void clearLastRecordErrors() noexcept { lastRecordErrors.clear(); }
 
     // BEFORE / AFTER snapshots so AudioEngine can wrap stopRecording
     // in an UndoableAction (Ctrl+Z reverts the take).

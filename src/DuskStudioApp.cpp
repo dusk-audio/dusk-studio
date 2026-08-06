@@ -2381,8 +2381,13 @@ void DuskStudioApp::anotherInstanceStarted (const juce::String& commandLine)
 {
     // Single-instance app: a second launch (e.g. opening a session from the
     // file manager) routes here. Bring the window forward and open the path.
+    // toFront alone loses to the window manager's focus-stealing prevention
+    // when the click came from another application, and the open can raise an
+    // unsaved-changes prompt the user has to see to answer.
     if (mainWindow == nullptr) return;
     mainWindow->toFront (true);
+    if (auto* peer = mainWindow->getPeer())
+        duskstudio::platform::bringWindowToFront (*peer);
     if (const auto sessionPath = sessionPathFromCommandLine (commandLine);
         sessionPath != juce::File())
         if (auto* main = dynamic_cast<MainComponent*> (mainWindow->getContentComponent()))
