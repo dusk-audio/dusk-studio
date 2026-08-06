@@ -35,6 +35,13 @@ jobs:
       #   listed JUCE entry points are skipped.
       TSAN_OPTIONS: "second_deadlock_stack=1 halt_on_error=1 exitcode=66 suppressions=${{ github.workspace }}/tools/tsan_suppressions.txt"
 
+      # CMakeLists.txt auto-detects ccache and sets the compiler launchers,
+      # so installing it and persisting this directory across runs is the
+      # whole wiring. Sanitizer objects are not interchangeable with the
+      # Release ones, so this job carries its own cache key.
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 500M
+
     steps:
       - name: Checkout Dusk Studio
         uses: actions/checkout@v7
@@ -45,7 +52,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Linux build deps
-        # Same set as linux-build.yml's tests job. xvfb stays even though
+        # Same set as linux-build.yml's build job. xvfb stays even though
         # the Catch2 binary itself is headless because some narrow-linked
         # units pull in juce_gui_basics for jassert helpers and the
         # initialiser path touches X11. Cheap to keep, prevents flaky
@@ -53,7 +60,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config \
+            build-essential cmake ninja-build pkg-config ccache \
             llvm \
             libasound2-dev libjack-jackd2-dev libmp3lame-dev libsndfile1-dev \
             liblilv-dev libsuil-dev lv2-dev \
@@ -63,6 +70,14 @@ jobs:
             libxinerama-dev libxrandr-dev libxrender-dev libxss-dev \
             libwebkit2gtk-4.0-dev libgl1-mesa-dev libglu1-mesa-dev xvfb \
             libwayland-dev libxkbcommon-dev libdecor-0-dev
+
+      - name: Cache ccache objects
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-linux-tsan-${{ github.sha }}
+          restore-keys: |
+            ccache-linux-tsan-
 
       - name: Clone JUCE (Dusk-owned Wayland mirror, pinned)
         # Same pinned Dusk-owned mirror snapshot as linux-build.yml; the
@@ -138,3 +153,7 @@ jobs:
         run: |
           ctest --test-dir build-tsan --output-on-failure \
                 -E "VCA detector mode toggle is a no-op|FET has no GR-driven sub-bass HPF"
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s

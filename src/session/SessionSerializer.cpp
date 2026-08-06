@@ -15,6 +15,7 @@
 #endif
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <map>
@@ -898,9 +899,29 @@ const nlohmann::json& objectAt (const nlohmann::json& arr, int index)
 // resolves to the shared empty object, every setter inside it is skipped, and
 // the live state survives just as an absent key would. The default object
 // replaces it wholesale rather than a scalar standing where a section belongs.
+//
+// A member the default carries as a READABLE STRING - a name, a colour, an EQ
+// type - reaches a setter that keys on the value rather than on the key being
+// present. "name": "" and "name": 42 both read as no string at all there, skip
+// the setter and leave the live value standing exactly as an absent key would,
+// so they resolve to the default as well.
 void fillFromDefaults (nlohmann::json& slot, const nlohmann::json& defaults)
 {
     static const nlohmann::json noDefault = nlohmann::json::object();
+
+    // A colour is scraped for hex digits rather than parsed, so a string that
+    // is not one still yields a colour: "not-a-hex" scrapes down to 0x000000ae,
+    // a fully transparent strip. Only 6 or 8 hex digits read as a colour.
+    auto isReadableString = [] (const std::string& key, const nlohmann::json& v)
+    {
+        if (! v.is_string()) return false;
+        const auto& s = v.get_ref<const nlohmann::json::string_t&>();
+        if (key != "colour")
+            return ! s.empty();
+        return (s.size() == 6 || s.size() == 8)
+            && std::all_of (s.begin(), s.end(),
+                            [] (char c) { return std::isxdigit ((unsigned char) c) != 0; });
+    };
 
     for (auto it = slot.begin(); it != slot.end(); )
     {
@@ -911,8 +932,11 @@ void fillFromDefaults (nlohmann::json& slot, const nlohmann::json& defaults)
         // "there is an object default here" for every key.
         const auto def = defaults.find (it.key());
         const bool defaultIsObject = def != defaults.end() && def->is_object();
+        const bool defaultIsString = def != defaults.end() && isReadableString (it.key(), *def);
 
         if (defaultIsObject && ! it.value().is_object())
+            it.value() = *def;
+        else if (defaultIsString && ! isReadableString (it.key(), it.value()))
             it.value() = *def;
         else if (it.value().is_object())
             fillFromDefaults (it.value(), defaultIsObject ? *def : noDefault);
