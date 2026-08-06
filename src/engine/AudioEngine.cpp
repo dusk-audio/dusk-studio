@@ -1140,8 +1140,10 @@ void AudioEngine::rebuildMidiBanks()
 
     // One drained-block buffer per input, reserved off the RT path so the
     // per-block drain + test-inject merge never allocate on the audio thread.
+    // Sized to the collector ring: anything smaller turns a backlog that fits
+    // the ring into an empty block under the drain's whole-block contract.
     perInputMidi.assign ((size_t) midiIn.getNumInputs(), dusk::MidiBuffer{});
-    for (auto& m : perInputMidi) m.reserveBytes (4096);
+    for (auto& m : perInputMidi) m.reserveBytes (dusk::kMidiBlockBytes);
 
     // Re-resolve the session's sync + MCU wiring against the fresh banks so a
     // hot-plug doesn't strand an index at a stale slot (STAYS in the engine -
@@ -2631,9 +2633,13 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     for (auto& v : auxLaneR)  v.assign ((size_t) bs, 0.0f);
     for (auto& v : playbackScratch)  v.assign ((size_t) bs, 0.0f);
     for (auto& v : playbackScratchR) v.assign ((size_t) bs, 0.0f);
-    for (auto& m : perTrackMidiScratch) m.ensureSize (4096);
-    midiClockOutScratch.reserveBytes (4096);
-    midiOutTrackScratch.reserveBytes (4096);
+    // Growth hint only, but it has to track the dusk ceiling: this buffer is
+    // refilled from perInputMidi every block, and a juce event costs 6 bytes of
+    // header against dusk's 8, so a hint at the shared size means one drained
+    // block never reallocs here on the audio thread.
+    for (auto& m : perTrackMidiScratch) m.ensureSize (dusk::kMidiBlockBytes);
+    midiClockOutScratch.reserveBytes (dusk::kMidiBlockBytes);
+    midiOutTrackScratch.reserveBytes (dusk::kMidiBlockBytes);
     silentInputScratch.assign ((size_t) bs, 0.0f);
 
     for (auto& a : laneAccum)
@@ -4732,16 +4738,11 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             {
                 // Bridge the juce per-track buffer into the dusk out-scratch
                 // (pre-reserved) for queueRt's dusk boundary. Whole-block or
-                // nothing: a partial copy on cap overflow could split paired
-                // events (note on/off), so mirror the pre-flip whole-block
-                // drop semantics.
-                midiOutTrackScratch.clear();
-                bool fits = true;
-                for (const auto meta : perTrackMidiScratch[(size_t) t])
-                    if (! midiOutTrackScratch.addEvent (meta.data, meta.numBytes,
-                                                        meta.samplePosition))
-                    { fits = false; break; }
-                if (fits)
+                // nothing, since a partial copy on cap overflow could split
+                // paired events (note on/off); empty means the block was
+                // dropped and there is nothing to send.
+                dusk::copyEventsWhole (perTrackMidiScratch[(size_t) t], midiOutTrackScratch);
+                if (! midiOutTrackScratch.isEmpty())
                     midiOut.queueRt (outIdx, midiOutTrackScratch,
                                      currentSampleRate.load (std::memory_order_relaxed));
             }
