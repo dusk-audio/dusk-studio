@@ -285,12 +285,18 @@ TEST_CASE ("MidiOutputBank RT queue delivers through the pump, bounded by its de
     REQUIRE (bank.isOpen (dst));
 
     // Past the slot cap: dropped whole rather than truncated, and likewise takes
-    // no slot.
+    // no slot. Filled to exactly what a slot holds and then one event beyond,
+    // keyed off the shared ceiling so raising that cannot quietly turn this into
+    // a block that fits.
     dusk::MidiBuffer big;
-    big.reserveBytes (1 << 16);
+    big.reserveBytes (dusk::kMidiBlockBytes * 2);
+    dusk::MidiBuffer slotSized;
+    slotSized.reserveBytes (dusk::kMidiBlockBytes);
     const std::uint8_t filler[3] { 0x90, 0x7f, 100 };
-    for (int i = 0; i < 4096; ++i)
-        REQUIRE (big.addEvent (filler, 3, i));
+    int n = 0;
+    for (; slotSized.addEvent (filler, 3, n); ++n)
+        REQUIRE (big.addEvent (filler, 3, n));
+    REQUIRE (big.addEvent (filler, 3, n));
     bank.queueRt (dst, big, 48000.0);
 
     // The pump is not running, so only kQueueDepth blocks can commit; the rest

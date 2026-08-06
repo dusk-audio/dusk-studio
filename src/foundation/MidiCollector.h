@@ -33,7 +33,7 @@ namespace dusk
 class MidiCollector
 {
 public:
-    explicit MidiCollector (std::size_t ringCapacityBytes = 8192)
+    explicit MidiCollector (std::size_t ringCapacityBytes = kMidiBlockBytes)
         : ring (ringCapacityBytes) {}
 
     // Off-RT only. Resize the backing ring.
@@ -67,7 +67,8 @@ public:
     // cap it is delivered empty, because keeping the head would let a note-on
     // through while its note-off fell off the tail, hanging the note. A single
     // record too big for out even when empty is undeliverable at any cut, so it
-    // drops alone and the rest of the block survives.
+    // drops alone and the rest of the block survives. Reserve out at the ring's
+    // capacity (kMidiBlockBytes) and the cumulative case cannot arise at all.
     void removeNextBlock (dusk::MidiBuffer& out, int numSamples, double nowMs) noexcept
     {
         const double prevLast = lastCallbackTime;
