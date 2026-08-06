@@ -30,6 +30,26 @@
   <content_rating type="oars-1.1"/>
   <releases>
     <!-- scripts/bump-version.sh prepends new <release> entries here. -->
+    <release version="0.12.6" date="2026-07-25">
+      <description>
+        <p>Manual recording latency offset with a sample readout for calibration; device restart and recording fixes.</p>
+      </description>
+    </release>
+    <release version="0.12.5" date="2026-07-18">
+      <description>
+        <p>Fixes the Windows build of 0.12.4.</p>
+      </description>
+    </release>
+    <release version="0.12.4" date="2026-07-18">
+      <description>
+        <p>Filterable program-grouped SoundFont preset browser.</p>
+      </description>
+    </release>
+    <release version="0.12.3" date="2026-07-15">
+      <description>
+        <p>Input monitoring now feeds aux sends during playback.</p>
+      </description>
+    </release>
     <release version="0.12.2" date="2026-07-12">
       <description>
         <p>Beta patch: fixes a mixdown/stems/freeze crash with CLAP (and VST3/LV2) plugin inserts.</p>

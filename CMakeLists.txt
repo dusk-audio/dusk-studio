@@ -1249,6 +1249,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
 endif()
 
 target_compile_definitions(DuskStudio PRIVATE
+    # Project version for JUCE-free code (the native CLAP host reports it to
+    # every hosted plugin). Sourced from the VERSION file via project().
+    DUSKSTUDIO_VERSION_STRING="${PROJECT_VERSION}"
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     $<$<BOOL:${DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS}>:DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS=1>
@@ -1410,24 +1413,12 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/DuskStudio.appdata.xml"
         DESTINATION share/metainfo)
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/DuskStudio.mime.xml"
         DESTINATION share/mime/packages)
-# Packaging icon: hard requirement only when DUSKSTUDIO_PACKAGE_BUILD=ON
-# (release packaging path). The icon is a brand asset not committed to
-# the repo, so dev builds and CI tests stay buildable without it.
-# scripts/package-appimage.sh sets the option (and would fail at runtime
-# if the icon were missing anyway). install() is gated on file presence
-# so a non-packaging dev build doesn't include a stale install rule.
-option(DUSKSTUDIO_PACKAGE_BUILD
-       "Enforce assets required for distribution packaging (icon, etc.)" OFF)
-if(DUSKSTUDIO_PACKAGE_BUILD AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/DuskStudio.png")
-    message(FATAL_ERROR
-        "packaging/DuskStudio.png is required for packaging. "
-        "Provide a 256x256 PNG at ${CMAKE_CURRENT_SOURCE_DIR}/packaging/DuskStudio.png "
-        "(brand asset, not committed to the repo).")
-endif()
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/DuskStudio.png")
-    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/DuskStudio.png"
-            DESTINATION share/icons/hicolor/256x256/apps)
-endif()
+# The hicolor size the .desktop Icon=DuskStudio key resolves. Committed rather
+# than derived at build time so cpack DEB/RPM cannot emit an iconless package;
+# regenerate from the master asset with
+# `magick assets/ds-icon.png -resize 256x256 -strip packaging/DuskStudio.png`.
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/DuskStudio.png"
+        DESTINATION share/icons/hicolor/256x256/apps)
 
 set(CPACK_PACKAGE_NAME              "dusk-studio")
 set(CPACK_PACKAGE_VENDOR            "Dusk Audio")

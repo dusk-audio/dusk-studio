@@ -12,7 +12,7 @@ A deliberately constrained, portastudio-style DAW for Linux, macOS, and Windows.
 
 > *"Fixed signal chain, finite track count, one page per stage. You commit, you move on."*
 
-JUCE 8 / C++17. PipeWire (primary) via JUCE's JACK backend on Linux; native ALSA backend with USB hot-unplug recovery; macOS CoreAudio + Windows WASAPI / ASIO via JUCE. Authoritative spec: [DuskStudio.md](DuskStudio.md). User manual: [MANUAL.md](MANUAL.md).
+JUCE 8 / C++17. Native PipeWire backend (primary) on Linux, with a native ALSA backend as the fallback and USB hot-unplug recovery; macOS CoreAudio + Windows WASAPI / ASIO via JUCE. Authoritative spec: [DuskStudio.md](DuskStudio.md). User manual: [MANUAL.md](MANUAL.md).
 
 ## Get Dusk Studio
 
@@ -22,14 +22,14 @@ GPL source on this repo — build from source and the binary costs you nothing b
 
 ## Status
 
-**v0.11.1 (Beta).** Built to a production bar; released as Beta. Feature backlog effectively closed: every spec phase, Tascam DP-24SD parity, MTC + MIDI Clock sync, automatic cross-track plugin delay compensation, broad undo coverage (notes, automation, tempo, renames), portable session folders (relative audio paths, move/copy between machines), an optional out-of-process plugin sandbox with always-sandboxed plugin scanning, a true-peak mastering limiter, a piecewise tempo map (changing tempo within a song), session open-with, an update notice on launch, and the rename to Dusk Studio have shipped. Plugins host in-process by default for the most responsive editors; `DUSKSTUDIO_USE_OOP_PLUGINS=1` opts into the crash-isolating sandbox. All three OSes ship unsigned binaries (Linux tarball + Windows MSI + macOS DMG) to the private releases repo on each tag. Remaining work toward the public 1.0 is release-engineering polish, low-spec/Raspberry-Pi performance, and deeper accessibility.
+**Beta.** Built to a production bar; released as Beta. See [CHANGELOG.md](CHANGELOG.md) for what shipped in each release and the [tags](https://github.com/dusk-audio/dusk-studio/tags) for the current version. Feature backlog effectively closed: every spec phase, Tascam DP-24SD parity, MTC + MIDI Clock sync, automatic cross-track plugin delay compensation, broad undo coverage (notes, automation, tempo, renames), portable session folders (relative audio paths, move/copy between machines), an optional out-of-process plugin sandbox with always-sandboxed plugin scanning, a true-peak mastering limiter, a piecewise tempo map (changing tempo within a song), session open-with, an update notice on launch, and the rename to Dusk Studio have shipped. Plugins host in-process by default for the most responsive editors; `DUSKSTUDIO_USE_OOP_PLUGINS=1` opts into the crash-isolating sandbox. All three OSes ship unsigned binaries (Linux tarball + Windows MSI + macOS DMG) to the private releases repo on each tag. Remaining work toward the public 1.0 is release-engineering polish, low-spec/Raspberry-Pi performance, and deeper accessibility.
 
 | Stage | Status |
 |---|---|
 | Live mixer (24 ch in 3 banks of 8 + 4 aux + 4 mix buses + master) | Working |
 | Multitrack recording / playback with disk-full + MIDI-overflow detection | Working |
 | Atomic session save + 30 s autosave with content-hash dirty check | Working |
-| Plugin hosting (per-channel VST3 / LV2 / AU + per-aux return) | Working |
+| Plugin hosting (per-channel CLAP / VST3 / LV2 / AU + per-aux return) | Working |
 | Native soundfonts (`.sfz` + `.sf2` via sfizz, no external synth) | Working |
 | Plugin offline-state preservation (missing plugin doesn't wipe save) | Working |
 | Out-of-process plugin sandbox — audio, opt-in (Linux + macOS + Windows; scanning always sandboxed) | Working |
@@ -47,12 +47,13 @@ GPL source on this repo — build from source and the binary costs you nothing b
 | MIDI bindings + MIDI Learn (transport / strip / sends / EQ / comp / plugin params) | Working |
 | Mackie Control surface (tested against Tascam DP-24SD) | Working |
 | Multi-file audio + MIDI import with target-track picker | Working |
+| Session notepad (lyrics / notes + chord chart, saved as `notepad.md`) | Working |
 | Windows MSI installer (unsigned) | Working (CI publishes to private releases repo on tag) |
 | Linux tarball | Working (CI publishes to private releases repo on tag) |
 | macOS DMG (unsigned, ad-hoc) | Working (CI publishes to private releases repo on tag) |
 | Deeper a11y (full screen-reader labels + keyboard-only mixer nav) | Floor only |
 
-234 Catch2 unit tests across 58 files. Linux (amd64 + arm64) + macOS + Windows builds run on every push; Windows tests run on every push + PR; Linux ThreadSanitizer runs on every PR + push.
+622 Catch2 unit tests across 142 files. Linux (amd64 + arm64) + macOS + Windows builds run on every push; Windows tests run on every push + PR; Linux ThreadSanitizer runs on every PR + push.
 
 ## Bug reports
 
@@ -88,7 +89,7 @@ Channels 1-24 ───────────────→ 4 Aux Buses ─�
 ```
 
 - **DSP** is extracted from the Dusk Audio plugin suite (4K EQ, Multi-Comp FET/Opto/VCA, Multi-Q, TapeMachine, shared AnalogEmulation) so the mixer and the standalone plugins share a single DSP source of truth.
-- **Plugin host**: VST3 + LV2 + AU on every channel strip; aux returns host reverb / delay. In-process by default; the **opt-in** out-of-process sandbox (`DUSKSTUDIO_USE_OOP_PLUGINS=1`) runs each plugin in a child via a per-platform IPC backend (Linux `memfd_create` + `futex`, macOS `shm_open` + `os_sync_wait_on_address`, Windows `CreateFileMapping` + `WaitOnAddress`) so a crashing plugin can't take the host down. (Plugin *scanning* is always sandboxed.)
+- **Plugin host**: CLAP + VST3 + LV2 + AU on every channel strip; aux returns host reverb / delay. In-process by default; the **opt-in** out-of-process sandbox (`DUSKSTUDIO_USE_OOP_PLUGINS=1`) runs each plugin in a child via a per-platform IPC backend (Linux `memfd_create` + `futex`, macOS `shm_open` + `os_sync_wait_on_address`, Windows `CreateFileMapping` + `WaitOnAddress`) so a crashing plugin can't take the host down. (Plugin *scanning* is always sandboxed.)
 - **Soundfonts**: `.sfz` and `.sf2` play through the built-in [sfizz](https://github.com/dusk-audio/sfizz) engine (SF2 → SFZ on load). No external synth required.
 
 ## Repository
@@ -102,7 +103,7 @@ src/
   session/     # Session model + JSON serialisation
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
   util/        # CrashHandler (FileLogger + signal-handler reports)
-tests/         # 234 Catch2 unit tests (session, recording, MIDI, IPC, DSP)
+tests/         # 622 Catch2 unit tests (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME, macOS bundle — for tarball + DMG builds
 DuskStudio.md  # authoritative product spec
 MANUAL.md      # end-user manual (Pandoc-buildable to PDF via packaging/build-pdf.sh)
@@ -116,7 +117,7 @@ Precompiled (unsigned) binaries delivered via Patreon — Linux tarball + Window
 |----------|-----|
 | Linux | [BUILDING-LINUX.md](BUILDING-LINUX.md) |
 | Windows | [BUILDING-WINDOWS.md](BUILDING-WINDOWS.md) |
-| macOS | Mirror of Linux flow; upstream JUCE 8.0.4 + sibling `plugins-main`. Smoke-built per push on `macos-14` (Apple Silicon Sonoma) — see [.github/workflows/macos-build.yml](.github/workflows/macos-build.yml). |
+| macOS | Mirror of Linux flow; upstream JUCE 8.0.4 + sibling `plugins`. Smoke-built per push on `macos-14` (Apple Silicon Sonoma) — see [.github/workflows/macos-build.yml](.github/workflows/macos-build.yml). |
 | Linux tarball packaging | [packaging/README.md](packaging/README.md) |
 | End-user manual / troubleshooting | [MANUAL.md](MANUAL.md) |
 
