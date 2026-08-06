@@ -230,6 +230,139 @@ TEST_CASE ("a null member in a partial slot resolves to the model default",
     REQUIRE (s.track (0).inputSource.load() == -2);
 }
 
+// The name and colour setters key on the value being a non-empty string rather
+// than on the key being present, so a slot carrying "name": "" or "name": 42
+// skipped them and kept the previously loaded session's name and colour - on
+// every track, bus and aux lane - which the next save then wrote out as the new
+// session's. An unreadable value resolves to the model default like an absent
+// key does.
+TEST_CASE ("an unreadable name or colour resolves to the model default",
+           "[session][serializer]")
+{
+    ScopedTempDir tmp { "dusk-unreadable-name-" };
+    const auto& dir = tmp.dir;
+
+    Session s;
+    s.setSessionDirectory (dir);
+
+    s.track (0).name     = "ghost track";
+    s.track (0).colour   = juce::Colour (0xff102030);
+    s.bus (0).name       = "ghost bus";
+    s.bus (0).colour     = juce::Colour (0xff405060);
+    s.auxLane (0).name   = "ghost aux";
+    s.auxLane (0).colour = juce::Colour (0xff708090);
+
+    const auto target = dir.getChildFile ("session.json");
+
+    SECTION ("empty strings")
+    {
+        target.replaceWithText (
+            R"({"version":3,"tracks":[{"name":"","colour":""}],)"
+            R"("buses":[{"name":"","colour":""}],)"
+            R"("aux_lanes":[{"name":"","colour":""}]})");
+    }
+    SECTION ("values that are not strings")
+    {
+        target.replaceWithText (
+            R"({"version":3,"tracks":[{"name":42,"colour":true}],)"
+            R"("buses":[{"name":42,"colour":true}],)"
+            R"("aux_lanes":[{"name":42,"colour":true}]})");
+    }
+    SECTION ("objects where the names belong")
+    {
+        target.replaceWithText (
+            R"({"version":3,"tracks":[{"name":{},"colour":{}}],)"
+            R"("buses":[{"name":{},"colour":{}}],)"
+            R"("aux_lanes":[{"name":{},"colour":{}}]})");
+    }
+    // A colour is scraped for hex digits rather than parsed, so a string that
+    // is not one loads as a stray-digit colour - here a fully transparent
+    // strip - instead of reading as unspecified.
+    SECTION ("a colour that is not hex")
+    {
+        target.replaceWithText (
+            R"({"version":3,"tracks":[{"name":"","colour":"not-a-hex"}],)"
+            R"("buses":[{"name":"","colour":"not-a-hex"}],)"
+            R"("aux_lanes":[{"name":"","colour":"not-a-hex"}]})");
+    }
+
+    REQUIRE (SessionSerializer::load (s, target));
+
+    const Session defaults;
+    REQUIRE (s.track (0).name     == defaults.track (0).name);
+    REQUIRE (s.track (0).colour   == defaults.track (0).colour);
+    REQUIRE (s.bus (0).name       == defaults.bus (0).name);
+    REQUIRE (s.bus (0).colour     == defaults.bus (0).colour);
+    REQUIRE (s.auxLane (0).name   == defaults.auxLane (0).name);
+    REQUIRE (s.auxLane (0).colour == defaults.auxLane (0).colour);
+}
+
+// The EQ type is the same shape one level down: a string the setter reads for a
+// "black" / "brown" spelling, so an unreadable one left the strip on the
+// previously loaded session's EQ model.
+TEST_CASE ("an unreadable EQ type resolves to the model default",
+           "[session][serializer]")
+{
+    ScopedTempDir tmp { "dusk-unreadable-eq-type-" };
+    const auto& dir = tmp.dir;
+
+    Session s;
+    s.setSessionDirectory (dir);
+    s.track (0).strip.eqBlackMode.store (true);
+
+    const auto target = dir.getChildFile ("session.json");
+
+    SECTION ("empty string")
+    {
+        target.replaceWithText (R"({"version":3,"tracks":[{"eq":{"type":""}}]})");
+    }
+    SECTION ("a value that is not a string")
+    {
+        target.replaceWithText (R"({"version":3,"tracks":[{"eq":{"type":42}}]})");
+    }
+    // An object one level down is the ordering case: the section it sits in is
+    // filled by the same walk that has to replace it.
+    SECTION ("an object where the type belongs")
+    {
+        target.replaceWithText (R"({"version":3,"tracks":[{"eq":{"type":{}}}]})");
+    }
+
+    REQUIRE (SessionSerializer::load (s, target));
+    REQUIRE_FALSE (s.track (0).strip.eqBlackMode.load());
+}
+
+// The other half of the same contract: a value the file does spell out has to
+// reach the session, or resolving the unreadable ones to defaults would just be
+// ignoring the file.
+TEST_CASE ("values the file spells out still apply",
+           "[session][serializer]")
+{
+    ScopedTempDir tmp { "dusk-named-slot-" };
+    const auto& dir = tmp.dir;
+
+    Session s;
+    s.setSessionDirectory (dir);
+    s.track (0).name = "ghost track";
+    s.bus (0).name   = "ghost bus";
+
+    const auto target = dir.getChildFile ("session.json");
+    target.replaceWithText (
+        R"({"version":3,)"
+        R"("tracks":[{"name":"Vocals","colour":"ff112233","eq":{"type":"black"}}],)"
+        R"("buses":[{"name":"Drums","colour":"ff445566"}],)"
+        R"("aux_lanes":[{"name":"Plate","colour":"ff778899"}]})");
+
+    REQUIRE (SessionSerializer::load (s, target));
+
+    REQUIRE (s.track (0).name     == "Vocals");
+    REQUIRE (s.track (0).colour   == juce::Colour (0xff112233));
+    REQUIRE (s.track (0).strip.eqBlackMode.load());
+    REQUIRE (s.bus (0).name       == "Drums");
+    REQUIRE (s.bus (0).colour     == juce::Colour (0xff445566));
+    REQUIRE (s.auxLane (0).name   == "Plate");
+    REQUIRE (s.auxLane (0).colour == juce::Colour (0xff778899));
+}
+
 // A section the file gives as a scalar reaches the restore path as the shared
 // empty object, which passes the section's presence check and then skips every
 // conditional setter inside it - the previously loaded session's routing and
