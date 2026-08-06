@@ -24,8 +24,8 @@ namespace duskstudio
 {
 namespace
 {
-// The measure both views share: wide enough for a long lyric line, narrow
-// enough that the eye does not lose the line it is reading.
+// The chart's measure: wide enough for a long lyric line, narrow enough that
+// the eye does not lose the line it is reading.
 constexpr float kContentWidth = 760.0f;
 constexpr float kHeaderHeight = 62.0f;
 constexpr float kRibbonHeight = 62.0f;
@@ -207,7 +207,6 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
             return false;
 
         document.setMarkdown (markdown);
-        document.setSourceMode (false);
         editor.reset ({ 0, 0 });
         editor.requestFocus();
         closeRequested = false;
@@ -259,6 +258,11 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
     {
         if (window == nullptr)
             return;
+        // Dismissal can arrive from the DAW side (the dim backdrop) without
+        // ever reaching the editor's own mouse handling, and the sidecar save
+        // follows immediately. Settle an open chord slot here so every route
+        // out of the notepad keeps the chord that was being typed.
+        editor.closeChordEntry();
         closeRequested = true;
         closeWasPumped = false;
     }
@@ -316,13 +320,7 @@ private:
 
     notepad::Snapshot currentSnapshot() const
     {
-        return { document.markdown(), editor.selection(), false };
-    }
-
-    NotepadDocument::Selection selectionForCurrentMode (const notepad::Snapshot& state) const
-    {
-        return state.selectionIsSource ? document.documentSelection (state.selection)
-                                       : state.selection;
+        return { document.markdown(), editor.selection() };
     }
 
     void restoreHistory (bool redo)
@@ -332,9 +330,8 @@ private:
                     : history.undo (currentSnapshot(), restored)))
             return;
 
-        document.setMarkdown (restored.markdown);
-        const auto selection = selectionForCurrentMode (restored);
-        editor.reset (selection);
+        document.restoreMarkdown (restored.markdown);
+        editor.reset (restored.selection);
         editor.requestFocus();
         notifyTextChanged();
     }
@@ -410,8 +407,14 @@ private:
     }
 
     bool toolbarButton (const char* label, const char* tooltip, bool active = false,
-                        float width = 34.0f, ImFont* labelFont = nullptr)
+                        ImFont* labelFont = nullptr)
     {
+        // The atlas is built at the display scale, so a fixed width clips its
+        // own label the moment the font grows. Measure what is about to be
+        // drawn instead - in the label's own font, and past the "##" id tail.
+        constexpr float kLabelPadding = 18.0f;
+        constexpr float kMinButtonWidth = 34.0f;
+
         if (active)
         {
             ImGui::PushStyleColor (ImGuiCol_Button, colour (notepad::kStagePalette.rule));
@@ -420,13 +423,24 @@ private:
         }
         if (labelFont != nullptr)
             ImGui::PushFont (labelFont);
+        const auto width = std::max (kMinButtonWidth,
+                                     ImGui::CalcTextSize (label, nullptr, true).x
+                                         + kLabelPadding);
         const bool clicked = ImGui::Button (label, ImVec2 (width, 32.0f));
         if (labelFont != nullptr)
             ImGui::PopFont();
         if (active)
             ImGui::PopStyleColor (2);
-        if (ImGui::IsItemHovered())
+        // A disabled button is exactly the one whose tooltip explains why it is
+        // disabled, so hovering has to register through BeginDisabled - and the
+        // tooltip has to escape the dimming that BeginDisabled folds into the
+        // global alpha, or the explanation is the hardest thing to read.
+        if (ImGui::IsItemHovered (ImGuiHoveredFlags_AllowWhenDisabled))
+        {
+            ImGui::PushStyleVar (ImGuiStyleVar_Alpha, 1.0f);
             ImGui::SetTooltip ("%s", tooltip);
+            ImGui::PopStyleVar();
+        }
         return clicked;
     }
 
@@ -455,40 +469,38 @@ private:
         // compatible notepad.md file rather than competing with those actions.
         ImGui::SameLine (0.0f, 16.0f);
         if (toolbarButton ("Chord", "Add or edit a chord (Ctrl+K); repeat the previous chord (Ctrl+Shift+K)",
-                           editor.chordEntryActive(), 58.0f))
+                           editor.chordEntryActive()))
         {
             editor.beginChordEntry();
             editor.requestFocus();
         }
         ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("Section", "Add or remove a song section", false, 64.0f))
+        if (toolbarButton ("Section", "Add or remove a song section"))
             ImGui::OpenPopup ("section-menu");
 
         const bool canTranspose = document.hasChords();
         ImGui::BeginDisabled (! canTranspose);
         ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("−1", "Transpose every chord down one semitone", false, 38.0f))
+        if (toolbarButton ("−1", "Transpose every chord down one semitone"))
             editor.transposeChords (-1);
         ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("+1", "Transpose every chord up one semitone", false, 38.0f))
+        if (toolbarButton ("+1", "Transpose every chord up one semitone"))
             editor.transposeChords (1);
         ImGui::EndDisabled();
 
         const auto blockStyle = selectedBlockStyle();
         ImGui::SameLine (0.0f, 16.0f);
         if (toolbarButton ("Lyrics", "Use lyric or note text",
-                           blockStyle == NotepadDocument::BlockStyle::body, 54.0f))
+                           blockStyle == NotepadDocument::BlockStyle::body))
             applyBlock (NotepadDocument::BlockStyle::body);
         ImGui::SameLine (0.0f, 5.0f);
         if (toolbarButton ("Title", "Make this line the song title",
-                           blockStyle == NotepadDocument::BlockStyle::heading1,
-                           48.0f, boldFont))
+                           blockStyle == NotepadDocument::BlockStyle::heading1, boldFont))
             applyBlock (NotepadDocument::BlockStyle::heading1);
 
         ImGui::SameLine (0.0f, 16.0f);
         if (toolbarButton ("B", "Bold the selection (Ctrl+B)",
-                           inlineStyleActive (NotepadDocument::InlineStyle::bold),
-                           34.0f, boldFont))
+                           inlineStyleActive (NotepadDocument::InlineStyle::bold), boldFont))
             applyInline (NotepadDocument::InlineStyle::bold);
         ImGui::SameLine (0.0f, 5.0f);
         if (toolbarButton ("I", "Italicise the selection (Ctrl+I)",
@@ -498,7 +510,7 @@ private:
         const auto spelling = document.spellingMode();
         ImGui::SameLine (0.0f, 16.0f);
         if (toolbarButton ("Auto##spell-auto", "Match the song's existing sharps or flats",
-                           spelling == NotepadDocument::Spelling::followDocument, 46.0f))
+                           spelling == NotepadDocument::Spelling::followDocument))
             document.setSpelling (NotepadDocument::Spelling::followDocument);
         ImGui::SameLine (0.0f, 4.0f);
         if (toolbarButton ("♯##spell-sharps", "Spell chords with sharps",

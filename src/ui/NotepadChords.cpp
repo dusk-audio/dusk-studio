@@ -108,12 +108,21 @@ bool readSuffix (std::string_view token, std::size_t& i) noexcept
     return true;
 }
 
+// A suspension is often infixed - "7sus4", "13sus4" - so the whole suffix is
+// searched rather than only its head.
+bool hasSuspension (std::string_view suffix) noexcept
+{
+    for (std::size_t i = 0; i + 3 <= suffix.size(); ++i)
+        if (matchesWord (suffix, i, "sus"))
+            return true;
+    return false;
+}
+
 struct ParsedChord
 {
     int  root = kInvalidPitch;
     std::string suffix;
     int  bass = kInvalidPitch;
-    std::string bassSuffix;   // empty for a well-formed slash bass
 };
 
 bool parse (std::string_view token, ParsedChord& out)
@@ -183,16 +192,18 @@ enum class Triad { major, minor, diminished, other };
 
 Triad triadFor (const ParsedChord& chord) noexcept
 {
+    // A suspension or an omitted third settles the question before any quality
+    // letter does: neither names a major or a minor triad.
+    if (hasSuspension (chord.suffix)
+        || chord.suffix.compare (0, 3, "aug") == 0
+        || (! chord.suffix.empty() && chord.suffix[0] == '+')
+        || chord.suffix == "5")
+        return Triad::other;
     if (chord.suffix.compare (0, 3, "dim") == 0)
         return Triad::diminished;
     if (! chord.suffix.empty() && chord.suffix[0] == 'm'
         && chord.suffix.compare (0, 3, "maj") != 0)
         return Triad::minor;
-    if (chord.suffix.compare (0, 3, "sus") == 0
-        || chord.suffix.compare (0, 3, "aug") == 0
-        || (! chord.suffix.empty() && chord.suffix[0] == '+')
-        || chord.suffix == "5")
-        return Triad::other;
     return Triad::major;
 }
 
@@ -220,17 +231,28 @@ int diatonicRank (const ParsedChord& candidate, int tonic, bool minor) noexcept
     return 2;
 }
 
+char lower (char c) noexcept
+{
+    return static_cast<char> (std::tolower (static_cast<unsigned char> (c)));
+}
+
 bool alphabeticallyBefore (const std::string& left, const std::string& right) noexcept
 {
     return std::lexicographical_compare (
         left.begin(), left.end(), right.begin(), right.end(),
-        [] (char a, char b)
-        {
-            return std::tolower (static_cast<unsigned char> (a))
-                 < std::tolower (static_cast<unsigned char> (b));
-        });
+        [] (char a, char b) { return lower (a) < lower (b); });
 }
 } // namespace
+
+bool completes (std::string_view candidate, std::string_view draft) noexcept
+{
+    if (draft.empty() || draft.size() > candidate.size())
+        return false;
+    for (std::size_t i = 0; i < draft.size(); ++i)
+        if (lower (draft[i]) != lower (candidate[i]))
+            return false;
+    return true;
+}
 
 std::vector<std::string> rankCandidates (std::vector<std::string> candidates,
                                          std::string_view detectedKey)
@@ -280,7 +302,7 @@ const char* keyName (int tonic, bool minor) noexcept
 // anything about mode.
 bool carriesThird (const std::string& suffix) noexcept
 {
-    if (suffix.compare (0, 3, "sus") == 0)
+    if (hasSuspension (suffix))
         return false;
     for (const auto ch : suffix)
         if (ch != '5' && ch != '(' && ch != ')')

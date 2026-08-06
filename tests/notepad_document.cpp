@@ -39,7 +39,7 @@ TEST_CASE ("Notepad document formatting mutates Markdown and remains selectable"
     const auto boldStart = document.documentText().find ("this bold");
     REQUIRE (boldStart != std::string::npos);
     const NotepadDocument::Selection boldSelection { boldStart, boldStart + 9 };
-    document.wrapDocumentSelection (boldSelection, "**", "**");
+    document.setDocumentInlineStyle (boldSelection, NotepadDocument::InlineStyle::bold, true);
     CHECK (document.markdown().find ("**this bold**") != std::string::npos);
     CHECK (document.selectionHasInlineStyle (
         boldSelection, NotepadDocument::InlineStyle::bold));
@@ -56,7 +56,7 @@ TEST_CASE ("Notepad document formatting mutates Markdown and remains selectable"
     CHECK (document.selectionHasInlineStyle (
         editedBold, NotepadDocument::InlineStyle::bold));
 
-    document.wrapDocumentSelection (editedBold, "**", "**");
+    document.setDocumentInlineStyle (editedBold, NotepadDocument::InlineStyle::bold, false);
     CHECK (document.markdown().find ("**still bold**") == std::string::npos);
 
     const auto headingStart = document.documentText().find ("Promote this line");
@@ -259,18 +259,18 @@ TEST_CASE ("Notepad document exposes list, task, and link presentation metadata"
     CHECK (document.lineInfoAt (numbered).orderedNumber == 1);
 }
 
-TEST_CASE ("Notepad source and document selections round-trip across hidden syntax",
+TEST_CASE ("Notepad projected selections map onto the text they show",
            "[notepad][document]")
 {
     NotepadDocument document;
     document.setMarkdown ("# A **bold** [link](https://example.com)");
     const auto start = document.documentText().find ("bold");
     REQUIRE (start != std::string::npos);
-    const NotepadDocument::Selection projected { start, start + 4 };
-    const auto source = document.sourceSelection (projected);
-    const auto roundTrip = document.documentSelection (source);
-    CHECK (roundTrip.start == projected.start);
-    CHECK (roundTrip.end == projected.end);
+
+    // The mapping lands on the label itself, inside every hidden marker: the
+    // heading prefix and the opening "**" ahead of it, the closing "**" after.
+    const auto source = document.sourceSelection ({ start, start + 4 });
+    CHECK (document.markdown().substr (source.start, source.end - source.start) == "bold");
 }
 
 // orderedPrefixLength accepts any run of digits, so the ordered-number
@@ -299,64 +299,10 @@ TEST_CASE ("Notepad counts characters the way the editor navigates them",
     CHECK (document.characterCount() == 6);
     CHECK (document.wordCount() == 2);
 
-    SECTION ("hidden syntax is not counted in either mode")
+    SECTION ("hidden syntax is not counted")
     {
         document.setMarkdown ("**caf\xc3\xa9**");
         CHECK (document.characterCount() == 4);
-        document.setSourceMode (true);
-        CHECK (document.characterCount() == 4);
-    }
-}
-
-TEST_CASE ("Notepad source mode projects the Markdown one to one",
-           "[notepad][document][source]")
-{
-    NotepadDocument document;
-    document.setMarkdown ("# Title\n\nline [Am]one\n");
-    REQUIRE (document.chords().size() == 1);
-
-    document.setSourceMode (true);
-    CHECK (document.isSourceMode());
-    CHECK (document.documentText() == document.markdown());
-    CHECK (document.chords().empty());
-
-    // Every line is body text in source mode, so a heading keeps its metrics
-    // across the toggle and the reader's line does not move.
-    CHECK (document.lineInfoAt (0).block == NotepadDocument::BlockStyle::body);
-    CHECK (document.styleAt (0).block == NotepadDocument::BlockStyle::body);
-    CHECK_FALSE (document.styleAt (0).bold);
-
-    SECTION ("offsets map through unchanged")
-    {
-        const NotepadDocument::Selection selection { 2, 7 };
-        CHECK (document.sourceSelection (selection).start == selection.start);
-        CHECK (document.sourceSelection (selection).end == selection.end);
-        CHECK (document.documentSelection (selection).start == selection.start);
-        CHECK (document.documentSelection (selection).end == selection.end);
-    }
-
-    SECTION ("chord commands still reach the source")
-    {
-        CHECK (document.hasChords());
-        document.transposeChords (2, document.prefersFlats());
-        CHECK (document.markdown() == "# Title\n\nline [Bm]one\n");
-    }
-
-    SECTION ("typed Markdown syntax round-trips unescaped")
-    {
-        auto edited = document.documentText();
-        edited.insert (edited.size(), "*star* [Am]bracket");
-        REQUIRE (document.replaceDocumentText (edited));
-        CHECK (document.markdown() == edited);
-        CHECK (document.documentText() == edited);
-    }
-
-    SECTION ("switching back restores the rendered projection")
-    {
-        document.setSourceMode (false);
-        CHECK (document.documentText() == "Title\n\nline one\n");
-        CHECK (document.chords().size() == 1);
-        CHECK (document.lineInfoAt (0).block == NotepadDocument::BlockStyle::heading1);
     }
 }
 
@@ -378,6 +324,56 @@ TEST_CASE ("Section markers project as their label", "[notepad][document][sectio
         REQUIRE (document.replaceDocumentText (edited));
         CHECK (document.markdown() == "\nline one\n");
         CHECK (document.documentText() == "\nline one\n");
+        CHECK (document.sectionCount() == 0);
+    }
+
+    SECTION ("backspace at the label's last character stays inside the brackets")
+    {
+        auto edited = document.documentText();
+        edited.erase (5, 1);   // Backspace over the 's' of "Chorus".
+        REQUIRE (document.replaceDocumentText (edited));
+        CHECK (document.markdown() == "[Choru]\nline one\n");
+        CHECK (document.documentText() == "Choru\nline one\n");
+        CHECK (document.lineInfoAt (0).section);
+    }
+
+    SECTION ("typing at the end of the label extends it")
+    {
+        auto edited = document.documentText();
+        edited.insert (6, "es");
+        REQUIRE (document.replaceDocumentText (edited));
+        CHECK (document.markdown() == "[Choruses]\nline one\n");
+        CHECK (document.documentText() == "Choruses\nline one\n");
+        CHECK (document.lineInfoAt (0).section);
+    }
+
+    SECTION ("replacing the label's tail keeps the marker intact")
+    {
+        auto edited = document.documentText();
+        edited.replace (3, 3, "ir");   // "Chorus" -> "Choir"
+        REQUIRE (document.replaceDocumentText (edited));
+        CHECK (document.markdown() == "[Choir]\nline one\n");
+        CHECK (document.sectionCount() == 1);
+    }
+
+    SECTION ("a hand-authored marker behind a block prefix edits the same way")
+    {
+        document.setMarkdown ("- [Chorus]\nline one\n");
+        auto edited = document.documentText();
+        edited.insert (6, "!");
+        REQUIRE (document.replaceDocumentText (edited));
+        CHECK (document.markdown() == "- [Chorus!]\nline one\n");
+        CHECK (document.lineInfoAt (0).section);
+    }
+
+    SECTION ("a deletion reaching into the label from outside still clears it")
+    {
+        document.setMarkdown ("line one\n[Chorus]\n");
+        auto edited = document.documentText();
+        // From mid-lyric through the whole label: the marker goes with it.
+        edited.erase (5, document.documentText().size() - 6);
+        REQUIRE (document.replaceDocumentText (edited));
+        CHECK (document.markdown() == "line \n");
         CHECK (document.sectionCount() == 0);
     }
 

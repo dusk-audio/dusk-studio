@@ -28,28 +28,16 @@ inline constexpr std::uint32_t withAlpha (std::uint32_t rgba, std::uint8_t alpha
     return (rgba & 0xffffff00u) | alpha;
 }
 
-// A 1.25 scale. Sizes are logical pixels before the display scale factor.
+// Sizes are logical pixels before the display scale factor. The window builds
+// its font atlas at the lyric size and derives the chord lane from the ratio,
+// so the two lanes keep their proportion at any display scale.
 struct TypeScale
 {
-    float ui = 12.0f;        // toolbar, tooltips, status bar
-    float section = 12.0f;   // section labels, tracked and uppercased
-    float chord = 15.0f;     // the chord lane
-    float lyric = 17.0f;     // lyrics, and the Markdown source
-    float title = 26.0f;     // the song title, once
+    float chord = 15.0f;
+    float lyric = 17.0f;
 };
 
 inline constexpr TypeScale kTypeScale {};
-
-// Reading mode steps the lyric and chord sizes together so the two lanes keep
-// their proportion at arm's length. Step 0 is the writing size.
-inline constexpr int kMinReadingStep = -1;
-inline constexpr int kMaxReadingStep = 4;
-
-inline float readingScale (int step) noexcept
-{
-    const auto clamped = std::clamp (step, kMinReadingStep, kMaxReadingStep);
-    return 1.0f + 0.15f * static_cast<float> (clamped);
-}
 
 // WCAG relative luminance and contrast ratio, so the palette's legibility is
 // asserted by a test rather than eyeballed against a screenshot.

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstddef>
-#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -76,11 +75,10 @@ public:
     };
 
     void setMarkdown (std::string text);
-    // Source mode projects the Markdown 1:1, with no hidden syntax, styles or
-    // chords, so the same editor drives both views: one set of layout metrics,
-    // one caret, one undo stack.
-    void setSourceMode (bool showSource);
-    bool isSourceMode() const noexcept { return sourceMode; }
+    // Puts an earlier state of the same document back. Unlike setMarkdown this
+    // keeps the accidental preference, which belongs to the document rather
+    // than to any one of its states.
+    void restoreMarkdown (std::string text);
     // False when the edit could not be mapped back onto the Markdown source and
     // was dropped to keep it intact - the caller must resync its editor buffer
     // from documentText().
@@ -98,10 +96,6 @@ public:
     void renumberOrderedRunAt (std::size_t documentOffset);
 
     Selection sourceSelection (Selection documentSelection) const noexcept;
-    Selection documentSelection (Selection sourceSelection) const noexcept;
-    void wrapDocumentSelection (Selection selection,
-                                const std::string& prefix,
-                                const std::string& suffix);
     void setDocumentInlineStyle (Selection selection, InlineStyle style, bool enabled);
     void setDocumentBlockStyle (Selection selection, BlockStyle style);
 
@@ -122,11 +116,12 @@ public:
     std::string chordAt (std::size_t documentOffset) const;
     // Inserts, replaces, or (empty name) removes the chord anchored at the
     // offset. Names that don't parse as a chord are rejected, so a stray
-    // bracket can never be minted from the document view.
+    // bracket can never be minted from the document view. False also means
+    // "nothing to do" - rewriting a chord as itself, or removing one that is
+    // not there - so a caller can tell an edit from a no-op before recording
+    // an undo step.
     bool setChordAt (std::size_t documentOffset, const std::string& name);
     // Copies the last chord before documentOffset into a slot at that offset.
-    // Source mode resolves both offsets against the visible Markdown, while the
-    // rendered mode uses lyric anchors.
     bool repeatPreviousChordAt (std::size_t documentOffset);
     void transposeChords (int semitones, bool preferFlats);
     // Writes "[Label]" on its own line above documentOffset's line, straight
@@ -156,14 +151,11 @@ private:
         std::size_t start = 0;   // the '[' in markdownText
         std::size_t end = 0;     // one past the ']'
         std::string name;
-        // Where the rendered projection anchors it; meaningless in source mode,
-        // which resolves a chord by the caret's position inside the token.
-        std::size_t documentOffset = 0;
+        std::size_t documentOffset = 0;   // where the projection anchors it
     };
 
     void rebuildProjection();
     const ChordToken* chordTokenAt (std::size_t documentOffset) const noexcept;
-    const std::string& renderedText() const;
 
     std::string markdownText;
     std::string projectedText;
@@ -173,16 +165,10 @@ private:
     std::vector<std::size_t> documentBoundaryToSource { 0 };
     std::vector<TextStyle> projectedStyles;
     std::vector<std::string> projectedLinkTargets;
-    bool sourceMode = false;
     std::vector<Chord> projectedChords;
-    // The source span of every chord the projection renders, kept in both modes:
-    // chord commands act on the source, so they keep working while the source
-    // view is up and projectedChords is empty.
+    // The source span of every chord the projection renders: chord commands act
+    // on the Markdown, the projection only shows where they landed.
     std::vector<ChordToken> chordTokens;
-    // Word and character counts describe the lyric, so they are measured on the
-    // rendered projection in both modes: never the syntax the source shows.
-    // Only source mode fills this; the rendered view counts projectedText.
-    std::optional<std::string> renderedTextCache;
     // Sticky, because a transpose can land every chord on a natural and erase
     // the evidence: re-deriving it there would spell the way back in sharps
     // and hand a flat writer a document they did not write.

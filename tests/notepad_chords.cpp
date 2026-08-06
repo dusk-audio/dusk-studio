@@ -77,6 +77,31 @@ TEST_CASE ("Chord entry candidates use a claimed key and otherwise sort alphabet
         CHECK (chords::rankCandidates (candidates, "not a key") == alphabetical);
         CHECK (chords::rankCandidates (candidates, "D7") == alphabetical);
     }
+
+    SECTION ("an infixed suspension is not the degree's major triad")
+    {
+        // F is the fourth of C and F7sus4 sits on it, but a suspension names no
+        // triad, so the plain fifth leads even though it sorts later.
+        CHECK (chords::rankCandidates ({ "F7sus4", "G" }, "C")
+               == std::vector<std::string> { "G", "F7sus4" });
+    }
+}
+
+TEST_CASE ("A partly typed chord name completes case-insensitively")
+{
+    // What the slot shows is what committing it places, so the match that
+    // drives the completion has to accept the casing a hurried writer types.
+    CHECK (chords::completes ("Am", "am"));
+    CHECK (chords::completes ("Am", "A"));
+    CHECK (chords::completes ("Cmaj7", "cM"));
+    CHECK (chords::completes ("Am", "Am"));
+
+    CHECK_FALSE (chords::completes ("Am", "Amj"));
+    CHECK_FALSE (chords::completes ("Am", "m"));
+    CHECK_FALSE (chords::completes ("A", "Am"));
+    // Nothing typed suggests nothing: an empty slot must not adopt the first
+    // ranked candidate when it closes.
+    CHECK_FALSE (chords::completes ("Am", ""));
 }
 
 TEST_CASE ("chord brackets are hidden from the document projection")
@@ -204,6 +229,16 @@ TEST_CASE ("setChordAt inserts, replaces and removes")
         CHECK (document.markdown() == "one two");
     }
 
+    SECTION ("rewriting a chord as itself reports that nothing changed")
+    {
+        // Closing a chord slot without editing it must not look like an edit:
+        // the caller records an undo step on true, and recording one would
+        // both add a phantom step and throw away the redo stack.
+        REQUIRE (document.setChordAt (4, "G"));
+        CHECK_FALSE (document.setChordAt (4, "G"));
+        CHECK (document.markdown() == "one [G]two");
+    }
+
     SECTION ("removing where no chord is anchored is a no-op")
     {
         CHECK_FALSE (document.setChordAt (2, ""));
@@ -220,13 +255,6 @@ TEST_CASE ("repeatPreviousChordAt copies the preceding chord in either view")
     {
         REQUIRE (document.repeatPreviousChordAt (8));
         CHECK (document.markdown() == "[Am]one [F]two [F]three");
-    }
-
-    SECTION ("the Markdown source uses the preceding visible token")
-    {
-        document.setSourceMode (true);
-        REQUIRE (document.repeatPreviousChordAt (document.documentText().size()));
-        CHECK (document.markdown() == "[Am]one [F]two three[F]");
     }
 
     SECTION ("there is nothing to repeat before the first chord")
@@ -304,44 +332,43 @@ TEST_CASE ("Transpose keeps the notation the document already uses")
         flats.setMarkdown ("[Eb]one");
         CHECK (flats.prefersFlats());
     }
+
+    SECTION ("stepping back through history keeps the document's own reading")
+    {
+        // Undo and redo put earlier states of the same document back. The state
+        // they restore can be all naturals, and re-deriving there would hand a
+        // flat writer a document spelled in sharps.
+        NotepadDocument flats;
+        flats.setMarkdown ("[Db]x");
+        REQUIRE (flats.prefersFlats());
+
+        flats.transposeChords (-1, flats.prefersFlats());
+        REQUIRE (flats.markdown() == "[C]x");
+
+        flats.restoreMarkdown ("[Db]x");
+        flats.restoreMarkdown ("[C]x");
+        CHECK (flats.prefersFlats());
+    }
 }
 
-TEST_CASE ("Chord commands and counts survive the source view")
+TEST_CASE ("Chord commands reach the source behind the hidden syntax")
 {
     NotepadDocument document;
     document.setMarkdown ("# Title\n\n[Am]one two");
-    const auto renderedWords = document.wordCount();
-    const auto renderedCharacters = document.characterCount();
+    // The counts describe the lyric, never the syntax the projection hides.
+    CHECK (document.wordCount() == 3);
+    CHECK (document.characterCount() == std::string ("Title\n\none two").size());
 
-    document.setSourceMode (true);
-    CHECK (document.hasChords());
-    CHECK (document.wordCount() == renderedWords);
-    CHECK (document.characterCount() == renderedCharacters);
-
-    SECTION ("transpose still rewrites the source")
+    SECTION ("transpose rewrites the source")
     {
         document.transposeChords (2, document.prefersFlats());
         CHECK (document.markdown() == "# Title\n\n[Bm]one two");
     }
 
-    SECTION ("a chord can be inserted at a source offset")
+    SECTION ("a chord can be appended past the last lyric character")
     {
-        REQUIRE (document.setChordAt (document.markdown().size(), "G"));
+        REQUIRE (document.setChordAt (document.documentText().size(), "G"));
         CHECK (document.markdown() == "# Title\n\n[Am]one two[G]");
-    }
-
-    SECTION ("a caret inside a token edits that chord instead of nesting one")
-    {
-        // The token runs [9, 13); the caret sits on its 'm'.
-        REQUIRE (document.markdown().compare (9, 4, "[Am]") == 0);
-        CHECK (document.chordAt (11) == "Am");
-
-        REQUIRE (document.setChordAt (11, "C"));
-        CHECK (document.markdown() == "# Title\n\n[C]one two");
-
-        REQUIRE (document.setChordAt (10, ""));
-        CHECK (document.markdown() == "# Title\n\none two");
-        CHECK_FALSE (document.hasChords());
     }
 }
 
@@ -364,6 +391,26 @@ TEST_CASE ("Key detection only claims a key the evidence supports")
         // its neighbours establish.
         CHECK (chords::detectKey ({ "Am", "Gb5" }).empty());
         CHECK (chords::detectKey ({ "Am", "F", "C", "E5" }) == "Am");
+    }
+
+    SECTION ("a suspension behind a figure is still a suspension")
+    {
+        // "7sus4" and friends put the figure first; the third is replaced all
+        // the same, so they may not vote as major triads.
+        CHECK (chords::detectKey ({ "A7sus4", "D9sus2", "E13sus4" }).empty());
+        CHECK (chords::detectKey ({ "C", "F", "G7sus4" }).empty());
+    }
+
+    SECTION ("a tie the opening triad cannot break stays blank")
+    {
+        // Every key that fits C-Bb-F-G is a tie, and C major is not among them
+        // - the opening triad claims a tonic the evidence rules out, so no key
+        // is named rather than one of the ties being picked arbitrarily.
+        CHECK (chords::detectKey ({ "C", "Bb", "F", "G" }).empty());
+
+        // The same shape with an opening triad that is one of the ties resolves
+        // to it.
+        CHECK (chords::detectKey ({ "Bb", "C", "F", "G" }) == "Bb");
     }
 
     SECTION ("two chords are not evidence")

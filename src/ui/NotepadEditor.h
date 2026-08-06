@@ -6,15 +6,15 @@
 #include <DearImGui.hpp>
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace duskstudio
 {
-// The notepad's editor, driving both views: the document projection and the
-// Markdown source, which differ only in what NotepadDocument projects. It owns
-// wrapping, caret, selection, input and painting; every text mutation goes
-// through the projection so the Markdown source stays authoritative.
+// The notepad's editor: wrapping, caret, selection, input and painting over the
+// document projection. Every text mutation goes through that projection, so the
+// Markdown source stays authoritative.
 class NotepadEditor final
 {
 public:
@@ -38,29 +38,29 @@ public:
 
     void setFonts (const Fonts& value);
 
-    // Adopts the document as it stands now - used on open, mode switch and
-    // history restore, and whenever an edit was refused by the model.
+    // Adopts the document as it stands now - used on open and history restore,
+    // and whenever an edit was refused by the model. Any open chord slot is
+    // discarded: its anchor belongs to the projection being replaced.
     void reset (NotepadDocument::Selection value);
     void setSelection (NotepadDocument::Selection value);
     NotepadDocument::Selection selection() const noexcept;
     void requestFocus() noexcept { focusRequested = true; }
-
-    // Distance from the top of the viewport to the caret's row. Captured
-    // before a mode switch and handed back after it, so the line under the
-    // reader's eye stays where it was even though the two projections wrap at
-    // different offsets.
-    float caretViewportOffset() const noexcept;
-    void keepCaretAtViewportOffset (float offset) noexcept;
 
     void draw (float bodySize);
 
     void applyInlineStyle (NotepadDocument::InlineStyle style);
     void applyBlockStyle (NotepadDocument::BlockStyle style);
 
-    // Opens the chord slot over the word at the caret, seeded with the chord
-    // already anchored there. Enter commits, Esc cancels, an empty name
-    // removes the chord.
-    void beginChordEntry();
+    // Opens the chord slot, seeded with the chord already anchored there.
+    // Without an anchor the slot lands on the word at the caret, so a chord
+    // sits over the first letter of the syllable it names. Enter commits, Esc
+    // cancels, an empty name removes the chord.
+    void beginChordEntry (std::optional<std::size_t> anchor = {});
+    // Settles an open slot the way Enter would, discarding a draft that
+    // resolves to no chord. Every entry point that mutates the document calls
+    // this first: chordAnchor points into the projection the slot was opened
+    // against, and an edit under it would land the chord somewhere else.
+    void closeChordEntry();
     void insertSectionMarker (const std::string& label);
     void removeSectionMarker();
     bool chordEntryActive() const noexcept { return chordEditing; }
@@ -116,11 +116,13 @@ private:
     // closed, so the same frame's remaining keys reach the text editor.
     bool handleChordEntry();
     void commitChordEntry();
+    void clearChordSlot();
     void repeatPreviousChord();
     std::size_t chordAnchorAtCaret() const;
     void refreshChordCandidates();
     std::vector<const std::string*> matchingChordCandidates() const;
     const std::string* selectedChordCandidate() const;
+    notepad::LabelWidthFn chordLabelWidth (float chordSize) const;
     void render (ImVec2 frameMin, ImVec2 frameMax, float bodySize, bool active) const;
 
     std::size_t hitTest (ImVec2 position, ImVec2 frameMin, float bodySize) const;
@@ -143,8 +145,6 @@ private:
     bool chordEditing = false;
     float desiredX = -1.0f;
     float scrollY = 0.0f;
-    float pendingCaretViewport = 0.0f;
-    bool caretViewportPending = false;
     float layoutWidth = -1.0f;
     float layoutBodySize = -1.0f;
     double blinkStart = 0.0;
