@@ -305,9 +305,16 @@ private:
     void toggleNotepad();
     void dismissNotepad (bool saveChanges);
     bool saveNotepadNow();
+    // Close the notepad when something else needs the window: an embedded
+    // modal (which would otherwise centre inside the native child), a stage
+    // switch, or the quit prompt. No-op when the notepad isn't open.
+    // saveChanges=false leaves the sidecar for a decision still pending.
+    void yieldNotepadWindow (bool saveChanges = true);
+    void reclaimFocusFromNotepad();
    #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
     std::unique_ptr<NativeNotepadWindow> notepadWindow;
     std::unique_ptr<class DimOverlay> notepadDim;
+    PluginEditorHider notepadEditorHider;
    #endif
     juce::String notepadText;
     bool notepadDirty = false;
@@ -316,6 +323,7 @@ private:
     // detach idempotent and signals publishPluginStateForSave that the
     // atomic-park sleeps can be skipped.
     bool engineDetached = false;
+    bool tearingDown = false;
 
     // One-shot latch so the session-vs-device sample-rate warning fires once
     // per mismatch, not on every autosave tick. Reset on load and when the

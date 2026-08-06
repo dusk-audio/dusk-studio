@@ -509,7 +509,7 @@ Only one stage is visible at a time, but the same engine drives all four. Switch
 
 Press **Cmd/Ctrl+1 / 2 / 3 / 4** to jump straight to RECORDING / MIXING / MASTERING / AUX. The channel banks have the plain number keys **1 / 2 / 3 / 4**, so a modified digit changes stage and a plain digit changes bank. Hovering any tab or bank button shows its shortcut, and **?** opens a full keyboard-shortcut list (also under **Settings → Keyboard Shortcuts**).
 
-Switching into or out of MASTERING force-stops the transport. The mix engine and the mastering engine cannot run at the same time.
+Switching into or out of MASTERING force-stops the transport. The mix engine and the mastering engine cannot run at the same time. Changing stage also closes the notepad, saving it — the two cannot share the window.
 
 ## The transport bar
 
@@ -595,7 +595,10 @@ undo or redo. The footer shows the current save state, the latest save time when
 available, the `notepad.md` filename, section count, unique chord count, and the
 detected key when enough chords identify one.
 
-Click **Done** or the dimmed area outside the notepad to close it. The header,
+Click **Done** or the dimmed area outside the notepad to close it. The notepad
+also closes itself whenever something else needs the window — an alert, a stage
+switch, or the quit prompt — saving as it goes, except on quit, where the notes
+wait for your Save / Don't Save answer like the rest of the session. The header,
 toolbar, and footer stay fixed; mouse-wheel scrolling moves only the note within
 its writing area. Notes are saved atomically to the compatible `notepad.md` file
 when the notepad closes and on every session save; they follow the session on

@@ -4,6 +4,7 @@
 #include "DimOverlay.h"
 #include "../foundation/MessageThread.h"
 #include <functional>
+#include <initializer_list>
 #include <memory>
 #include <vector>
 #include <algorithm>
@@ -59,6 +60,90 @@ struct ModalKeyClaimant
 // modal is up - native editor windows otherwise paint above the modal regardless
 // of JUCE z-order, burying dialogs. Every editor wrapper must carry this tag.
 inline constexpr const char* kPluginEditorTag = "dusk_pluginEditor";
+
+// Hides the plugin editors under a component tree for as long as a covering
+// surface needs the window to itself, then puts them back. Used by
+// EmbeddedModal and by the session notepad's native child - both sit above
+// JUCE's z-order but below the native editor windows, which paint over
+// anything regardless of toFront().
+//
+// Covering surfaces overlap (a combo over an alert over an editor), so each
+// holds one hide token per editor (dusk_modalHideCount) and an editor only
+// returns when the last of them restores - otherwise closing them out of
+// order would re-show an editor still buried under another surface.
+class PluginEditorHider final
+{
+public:
+    ~PluginEditorHider() { restore(); }
+
+    // skip: components belonging to the covering surface itself. A borrowed
+    // plugin-editor body carries the tag and must stay visible.
+    void hideUnder (juce::Component& root,
+                    std::initializer_list<juce::Component*> skip)
+    {
+        restore();   // defensive: idempotent
+        walk (root, skip);
+    }
+
+    void restore()
+    {
+        for (auto& safe : hidden_)
+        {
+            if (auto* c = safe.getComponent())
+            {
+                const int count = (int) c->getProperties()
+                                          .getWithDefault ("dusk_modalHideCount", 0);
+                if (count <= 1)
+                {
+                    c->getProperties().remove ("dusk_modalHideCount");
+                    c->setVisible (true);   // last covering surface gone -> editor returns
+                }
+                else
+                {
+                    c->getProperties().set ("dusk_modalHideCount", count - 1);
+                }
+            }
+        }
+        hidden_.clearQuick();
+    }
+
+private:
+    void walk (juce::Component& c, const std::initializer_list<juce::Component*>& skip)
+    {
+        for (auto* child : c.getChildren())
+        {
+            if (child == nullptr) continue;
+            if (std::find (skip.begin(), skip.end(), child) != skip.end())
+                continue;
+            const bool isPluginEditor =
+                (bool) child->getProperties()
+                            .getWithDefault (kPluginEditorTag, false);
+            if (isPluginEditor)
+            {
+                // Only manage editors that were on-screen when the first
+                // covering surface arrived (count == 0 && visible) or that an
+                // outer surface is already managing (count > 0). A genuinely
+                // app-hidden editor is left alone so we never wrongly re-show it.
+                const int count = (int) child->getProperties()
+                                            .getWithDefault ("dusk_modalHideCount", 0);
+                if (count > 0 || child->isVisible())
+                {
+                    child->getProperties().set ("dusk_modalHideCount", count + 1);
+                    if (count == 0)
+                        child->setVisible (false);
+                    hidden_.add (juce::Component::SafePointer<juce::Component> (child));
+                }
+                // Tagged editor: its whole subtree hides with it, so don't
+                // recurse - a nested tagged editor would collect a redundant
+                // hide token and unbalance the reference count.
+                continue;
+            }
+            walk (*child, skip);
+        }
+    }
+
+    juce::Array<juce::Component::SafePointer<juce::Component>> hidden_;
+};
 
 // Wraps the "DimOverlay + centred panel" pattern used by piano roll,
 // tuner, audio settings, mixdown, bounce, plugin editor.
@@ -118,6 +203,19 @@ public:
         return *stack;
     }
 
+    // Invoked at the top of every show() / showBorrowed(), before any modal
+    // component exists. MainComponent registers a hook that closes the session
+    // notepad: it is an embedded native child window, so a modal centred over
+    // it lands INSIDE the child - invisible, unclickable, holding X11 focus,
+    // and the forwarder below still feeds transport keys to the arrangement
+    // behind it. Cleared in ~MainComponent. Call sites copy it before
+    // invoking - a hook is allowed to clear its own slot while it runs.
+    static std::function<void()>& beforeModalShown()
+    {
+        static std::function<void()> hook;
+        return hook;
+    }
+
     EmbeddedModal()  = default;
     ~EmbeddedModal() override { close(); }
 
@@ -155,6 +253,7 @@ public:
                bool forwardShortcuts = true,
                std::function<void()> onDismissOutside = {})
     {
+        if (auto hook = beforeModalShown()) hook();
         close();
         ++modalGeneration();
         host = &parent;
@@ -196,11 +295,11 @@ public:
         }
 
         const auto bounds = parent.getLocalBounds();
-        const int w = juce::jmax (1, body_->getWidth());
-        const int h = juce::jmax (1, body_->getHeight());
+        const int w = std::max (1, body_->getWidth());
+        const int h = std::max (1, body_->getHeight());
         const auto bodyBounds = bounds.withSizeKeepingCentre (
-            juce::jmin (w, bounds.getWidth()  - 16),
-            juce::jmin (h, bounds.getHeight() - 16));
+            std::min (w, bounds.getWidth()  - 16),
+            std::min (h, bounds.getHeight() - 16));
 
         // Slightly larger than body so rounded corners frame the panel.
         // Added BEFORE body so body paints on top.
@@ -222,7 +321,8 @@ public:
         body_->addKeyListener (this);
 
         if (hidePluginEditors)
-            hidePluginEditorsUnder (parent);
+            editorHider_.hideUnder (parent, { dim_.get(), backdrop_.get(),
+                                              body_.get(), borrowedBody_ });
 
         activeModalStack().push_back (this);
     }
@@ -236,6 +336,7 @@ public:
                        juce::Component& body,
                        std::function<void()> onDismiss = {})
     {
+        if (auto hook = beforeModalShown()) hook();
         close();
         ++modalGeneration();
         host = &parent;
@@ -264,11 +365,11 @@ public:
         parent.addAndMakeVisible (dim_.get());
 
         const auto bounds = parent.getLocalBounds();
-        const int w = juce::jmax (1, body.getWidth());
-        const int h = juce::jmax (1, body.getHeight());
+        const int w = std::max (1, body.getWidth());
+        const int h = std::max (1, body.getHeight());
         const auto bodyBounds = bounds.withSizeKeepingCentre (
-            juce::jmin (w, bounds.getWidth()  - 16),
-            juce::jmin (h, bounds.getHeight() - 16));
+            std::min (w, bounds.getWidth()  - 16),
+            std::min (h, bounds.getHeight() - 16));
 
         backdrop_ = std::make_unique<Backdrop>();
         backdrop_->setBounds (bodyBounds.expanded (kBackdropMargin));
@@ -293,7 +394,8 @@ public:
         // popups (DuskContextMenu / DuskComboBox) that must NOT recentre.
         parent.addComponentListener (this);
 
-        hidePluginEditorsUnder (parent);
+        editorHider_.hideUnder (parent, { dim_.get(), backdrop_.get(),
+                                          body_.get(), borrowedBody_ });
 
         activeModalStack().push_back (this);
     }
@@ -333,7 +435,7 @@ public:
         // Restore any plugin editors we hid in show() before tearing
         // down the modal body. Done first so their setVisible(true)
         // doesn't fight with the message-loop teardown path below.
-        restoreHiddenPluginEditors();
+        editorHider_.restore();
 
         if (host == nullptr)
         {
@@ -455,7 +557,7 @@ public:
     {
         removeFromModalStack();
         stopListeningForOutsideClicks();
-        restoreHiddenPluginEditors();
+        editorHider_.restore();
 
         // A borrowed body outlives this modal (the strip owns the plugin editor),
         // so its listeners must come off even when the host SafePointer nulled -
@@ -515,8 +617,8 @@ public:
         if (body == nullptr || host == nullptr) return;
         const auto bounds = host->getLocalBounds();
         const auto bodyBounds = bounds.withSizeKeepingCentre (
-            juce::jmin (juce::jmax (1, body->getWidth()),  bounds.getWidth()  - 16),
-            juce::jmin (juce::jmax (1, body->getHeight()), bounds.getHeight() - 16));
+            std::min (std::max (1, body->getWidth()),  bounds.getWidth()  - 16),
+            std::min (std::max (1, body->getHeight()), bounds.getHeight() - 16));
         body->setTopLeftPosition (bodyBounds.getTopLeft());
         // Re-fit the backdrop to the body's REAL bounds (not the clamped
         // rect) - a body that outgrew its open-time size otherwise keeps
@@ -666,85 +768,10 @@ private:
     bool forwardShortcuts_ = true;
     bool listeningForOutsideClicks = false;
 
-    // Components hidden by hidePluginEditorsUnder() in show(); restored
-    // by restoreHiddenPluginEditors() in close(). Plugin editors (in
-    // particular OOP / XEmbed / GL-rendering hosts) can paint above
-    // JUCE's modal in the native window's z-order regardless of
-    // toFront() - toggling their visibility forces them out of view
-    // for the modal's lifetime.
-    juce::Array<juce::Component::SafePointer<juce::Component>> hiddenForModal_;
-
-    void hidePluginEditorsUnder (juce::Component& root)
-    {
-        restoreHiddenPluginEditors();   // defensive: idempotent show
-        walkHidePluginEditors (root);
-    }
-
-    void walkHidePluginEditors (juce::Component& c)
-    {
-        for (auto* child : c.getChildren())
-        {
-            if (child == nullptr) continue;
-            // Skip the modal's own backdrop / body / dim so we don't
-            // hide the modal itself.
-            if (child == dim_.get() || child == backdrop_.get()
-                || child == body_.get() || child == borrowedBody_)
-                continue;
-            const bool isPluginEditor =
-                (bool) child->getProperties()
-                            .getWithDefault (kPluginEditorTag, false);
-            if (isPluginEditor)
-            {
-                // Per-editor hide token (dusk_modalHideCount). Each stacked
-                // modal that covers the editor holds one; the editor stays
-                // hidden until the LAST of them restores. A plain
-                // setVisible(true) on close would re-show an editor still
-                // covered by another modal when modals close out of order.
-                //
-                // Only manage editors that were on-screen when the first
-                // covering modal opened (count == 0 && visible) or that an
-                // outer modal is already managing (count > 0). A genuinely
-                // app-hidden editor (count 0, invisible) is left alone so we
-                // never wrongly re-show it.
-                const int count = (int) child->getProperties()
-                                            .getWithDefault ("dusk_modalHideCount", 0);
-                if (count > 0 || child->isVisible())
-                {
-                    child->getProperties().set ("dusk_modalHideCount", count + 1);
-                    if (count == 0)
-                        child->setVisible (false);
-                    hiddenForModal_.add (juce::Component::SafePointer<juce::Component> (child));
-                }
-                // Tagged editor: its whole subtree hides with it, so don't
-                // recurse - a nested tagged editor would collect a redundant
-                // hide token and unbalance the reference count.
-                continue;
-            }
-            walkHidePluginEditors (*child);
-        }
-    }
-
-    void restoreHiddenPluginEditors()
-    {
-        for (auto& safe : hiddenForModal_)
-        {
-            if (auto* c = safe.getComponent())
-            {
-                const int count = (int) c->getProperties()
-                                          .getWithDefault ("dusk_modalHideCount", 0);
-                if (count <= 1)
-                {
-                    c->getProperties().remove ("dusk_modalHideCount");
-                    c->setVisible (true);   // last covering modal gone -> editor returns
-                }
-                else
-                {
-                    c->getProperties().set ("dusk_modalHideCount", count - 1);
-                }
-            }
-        }
-        hiddenForModal_.clearQuick();
-    }
+    // Plugin editors (OOP / XEmbed / GL-rendering hosts especially) paint
+    // above the modal in the native window's z-order regardless of toFront(),
+    // so they are hidden for the modal's lifetime.
+    PluginEditorHider editorHider_;
 };
 
 // Global KeyListener that forwards transport / navigation hotkeys (Space, R,
