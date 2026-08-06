@@ -267,7 +267,7 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
         closeWasPumped = false;
     }
 
-    bool isOpen() const noexcept { return window != nullptr; }
+    bool isOpen() const noexcept { return window != nullptr || closeRequested; }
 
     void setEmbeddedGeometry (EmbeddedGeometry geometry)
     {

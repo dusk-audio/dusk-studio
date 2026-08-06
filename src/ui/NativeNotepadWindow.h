@@ -38,7 +38,11 @@ public:
                const std::string& markdown,
                bool hasSessionFile, bool hasUnsavedChanges);
     void setEmbeddedGeometry (EmbeddedGeometry geometry);
+    // Teardown is deferred over two event-pump ticks; close() only asks for it.
     void close();
+    // True from a successful open() until the closed callback has run, so a
+    // toggle during that deferred teardown cannot restart the window
+    // underneath the pending close - and its save.
     bool isOpen() const noexcept;
     void markSaved();
     void markSaveFailed();

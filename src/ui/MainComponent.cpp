@@ -871,6 +871,12 @@ MainComponent::MainComponent()
         showDuskAlert (*this, "Audio device disconnected", msg);
     });
 
+    // The notepad and an embedded modal must never share the window (see
+    // beforeModalShown). The notepad saves whenever it closes, so the alerts
+    // that can fire over it - sample-rate mismatch, device lost - take it back
+    // rather than open where nobody can see or click them.
+    EmbeddedModal::beforeModalShown() = [this] { yieldNotepadWindow(); };
+
     // Startup: if the saved audio device was in use (held by PipeWire / JACK /
     // another DAW), the engine ctor already tried to fall back to a working one.
     // Tell the user what happened - switched to another device, or left with
@@ -991,7 +997,12 @@ MainComponent::MainComponent()
 
 MainComponent::~MainComponent()
 {
+    tearingDown = true;
     stopTimer();   // halt autosave before tearing down engine / session
+
+    // Drop the modal hook before anything else: its closure holds a raw this,
+    // and the teardown below can still raise an alert.
+    EmbeddedModal::beforeModalShown() = nullptr;
 
     // The notepad owns its own DGL application and embedded native child. Drop it
     // while the main peer and message loop are still alive, and suppress its
@@ -2040,6 +2051,10 @@ void MainComponent::switchToStage (AudioEngine::Stage s)
 {
     if (engine.getStage() == s) return;
 
+    // A stage swap under the notepad re-adds a fullscreen view above the dim
+    // and leaves the native child hovering over a screen the user can't reach.
+    yieldNotepadWindow();
+
     std::fprintf (stderr, "[MainComponent] switchToStage(%d) enter\n", (int) s);
     std::fflush (stderr);
     engine.setStage (s);
@@ -2784,6 +2799,13 @@ bool MainComponent::currentSessionDirty()
 
 void MainComponent::requestQuit()
 {
+    // Take the window back before the dirty check, and WITHOUT saving: the
+    // titlebar X reaches here past both the dim and the native child, and the
+    // sidecar write has to wait for the user's answer or Don't Save and Cancel
+    // would each commit the notepad behind their backs. notepadDirty survives
+    // into the check below, and the modal hook then finds nothing left to close.
+    yieldNotepadWindow (/*saveChanges*/ false);
+
     // Industry-standard dirty-only prompt. Compare the live serialized
     // session JSON against the snapshot we took at the last successful
     // save (or session load) - any single-knob / fader / region edit
@@ -5402,13 +5424,8 @@ void MainComponent::toggleNotepad()
             if (auto* self = safeThis.getComponent())
             {
                 self->notepadDim.reset();
-                if (auto* window = self->getTopLevelComponent())
-                    window->toFront (true);
-                // The native notepad held keyboard focus; pull it back so
-                // transport / edit shortcuts work without a stray click first
-                // (same reason as dismissStartupDialog).
-                if (self->isShowing())
-                    self->grabKeyboardFocus();
+                self->notepadEditorHider.restore();
+                self->reclaimFocusFromNotepad();
                 self->saveNotepadNow();
             }
         },
@@ -5444,6 +5461,10 @@ void MainComponent::toggleNotepad()
                 self->notepadWindow->close();
     };
     addAndMakeVisible (notepadDim.get());
+    // The dim only covers JUCE's z-order. A native plugin editor keeps painting
+    // over both it and the notepad's own child, so it hides for the notepad's
+    // lifetime exactly as it does under an embedded modal.
+    notepadEditorHider.hideUnder (*this, { notepadDim.get() });
 
     const bool opened = notepadWindow->open (
         reinterpret_cast<std::uintptr_t> (peer->getNativeHandle()),
@@ -5455,6 +5476,7 @@ void MainComponent::toggleNotepad()
     if (! opened)
     {
         notepadDim.reset();
+        notepadEditorHider.restore();
         setStatusText ("Unable to embed session notepad with the current display backend");
     }
 #endif
@@ -5463,6 +5485,7 @@ void MainComponent::toggleNotepad()
 void MainComponent::dismissNotepad (bool saveChanges)
 {
    #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+    const bool wasOpen = notepadDim != nullptr;
     if (notepadWindow != nullptr)
     {
         // close() commits an open chord slot, which reports the new text through
@@ -5472,10 +5495,44 @@ void MainComponent::dismissNotepad (bool saveChanges)
         notepadWindow.reset();
     }
     notepadDim.reset();
+    notepadEditorHider.restore();
+    // wasOpen: only a dismissal that actually tore down a live notepad needs
+    // the focus handed back; the deferred closed callback that normally does
+    // it never runs on this route.
+    if (wasOpen)
+        reclaimFocusFromNotepad();
    #endif
 
     if (saveChanges)
         (void) saveNotepadNow();
+}
+
+void MainComponent::reclaimFocusFromNotepad()
+{
+    // Quit paths that bypass requestQuit (SIGTERM, logout) reach this from the
+    // destructor cascade, where a WM round-trip would poke a half-destroyed
+    // top-level window.
+    if (tearingDown)
+        return;
+    // The native child held keyboard focus at the X11 level; pull it back so
+    // transport / edit shortcuts work without a stray click first (same reason
+    // as dismissStartupDialog).
+    if (auto* window = getTopLevelComponent())
+        window->toFront (true);
+    if (isShowing())
+        grabKeyboardFocus();
+}
+
+void MainComponent::yieldNotepadWindow (bool saveChanges)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+    // The dim exists for exactly as long as the notepad does, including the
+    // deferred native teardown between close() and its closed callback.
+    if (notepadDim != nullptr)
+        dismissNotepad (saveChanges);
+   #else
+    (void) saveChanges;
+   #endif
 }
 
 bool MainComponent::saveNotepadNow()
