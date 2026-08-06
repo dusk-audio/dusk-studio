@@ -87,8 +87,8 @@ src/ui/ConsoleView.cpp	4
 src/ui/ConsoleView.h	4
 src/ui/CursorOverlay.cpp	18
 src/ui/CursorOverlay.h	13
-src/ui/DimOverlay.cpp	3
-src/ui/DimOverlay.h	4
+src/ui/DimOverlay.cpp	4
+src/ui/DimOverlay.h	6
 src/ui/DpImportDialog.h	46
 src/ui/DuskAlerts.cpp	100
 src/ui/DuskAlerts.h	19
@@ -117,7 +117,7 @@ src/ui/ImportTargetPicker.cpp	97
 src/ui/ImportTargetPicker.h	11
 src/ui/Lv2PluginEditorComponent.cpp	3
 src/ui/Lv2PluginEditorComponent.h	4
-src/ui/MainComponent.cpp	472
+src/ui/MainComponent.cpp	474
 src/ui/MainComponent.h	57
 src/ui/MasterStripComponent.cpp	402
 src/ui/MasterStripComponent.h	59

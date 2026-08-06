@@ -420,11 +420,54 @@ float blockIndent (NotepadDocument::BlockStyle block) noexcept
     return block == NotepadDocument::BlockStyle::quote ? 18.0f : 0.0f;
 }
 
+float chordBandHeight (float bodySize) noexcept
+{
+    return std::max (12.0f, bodySize * 1.05f);
+}
+
+namespace
+{
+// A chord anchored exactly on a row's end belongs to that row only when the
+// row closes its line: at a soft wrap the anchor is the following row's first
+// character, and drawing it twice would double the chord.
+bool inRow (std::size_t offset, std::size_t start, std::size_t end, bool lastRowOfLine) noexcept
+{
+    return offset >= start && (offset < end || (lastRowOfLine && offset == end));
+}
+
+bool rowCarriesChord (const NotepadDocument& document, std::size_t start, std::size_t end,
+                      bool lastRowOfLine, std::size_t pendingChordAnchor) noexcept
+{
+    if (pendingChordAnchor != std::string::npos
+        && inRow (pendingChordAnchor, start, end, lastRowOfLine))
+        return true;
+    for (const auto& chord : document.chords())
+        if (inRow (chord.documentOffset, start, end, lastRowOfLine))
+            return true;
+    return false;
+}
+} // namespace
+
+ChromeBands layoutChrome (float windowHeight, float headerHeight, float ribbonHeight,
+                          float statusHeight) noexcept
+{
+    ChromeBands bands;
+    windowHeight = std::max (0.0f, windowHeight);
+    bands.header = std::min (headerHeight, windowHeight);
+    bands.ribbon = std::min (ribbonHeight, windowHeight - bands.header);
+    bands.status = std::min (statusHeight,
+                             windowHeight - bands.header - bands.ribbon);
+    bands.chart = windowHeight - bands.header - bands.ribbon - bands.status;
+    return bands;
+}
+
 Layout buildLayout (const NotepadDocument& document, float width, float bodySize,
-                    const MeasureFn& measure)
+                    const MeasureFn& measure, std::size_t pendingChordAnchor)
 {
     Layout layout;
     const auto& text = document.documentText();
+    const bool anyChords = document.hasChords() || pendingChordAnchor != std::string::npos;
+    const auto chordBand = chordBandHeight (bodySize);
     float y = 0.0f;
     std::size_t lineStart = 0;
 
@@ -445,9 +488,13 @@ Layout buildLayout (const NotepadDocument& document, float width, float bodySize
         auto rowStart = lineStart;
         if (rowStart == lineEnd)
         {
+            const auto band = anyChords
+                           && rowCarriesChord (document, rowStart, rowStart, true,
+                                               pendingChordAnchor)
+                            ? chordBand : 0.0f;
             layout.rows.push_back ({ rowStart, rowStart, lineStart, lineEnd, info.block,
-                                     info, y, rowHeight, indent, true, true });
-            y += rowHeight;
+                                     info, y, rowHeight + band, indent, true, true, band });
+            y += rowHeight + band;
         }
         while (rowStart < lineEnd)
         {
@@ -474,10 +521,15 @@ Layout buildLayout (const NotepadDocument& document, float width, float bodySize
             }
             if (rowEnd == rowStart)
                 rowEnd = std::min (nextOffset (text, rowStart), lineEnd);
+            const bool lastRow = rowEnd == lineEnd;
+            const auto band = anyChords
+                           && rowCarriesChord (document, rowStart, rowEnd, lastRow,
+                                               pendingChordAnchor)
+                            ? chordBand : 0.0f;
             layout.rows.push_back ({ rowStart, rowEnd, lineStart, lineEnd, info.block, info,
-                                     y, rowHeight, indent,
-                                     layout.rows.size() == firstRowIndex, rowEnd == lineEnd });
-            y += rowHeight;
+                                     y, rowHeight + band, indent,
+                                     layout.rows.size() == firstRowIndex, lastRow, band });
+            y += rowHeight + band;
             rowStart = rowEnd;
         }
 

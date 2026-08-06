@@ -287,3 +287,145 @@ TEST_CASE ("Notepad ordered-list numbers survive an absurd digit run",
     // nine 9s land, the tenth trips the guard.
     CHECK (info.orderedNumber == 999999999);
 }
+
+TEST_CASE ("Notepad counts characters the way the editor navigates them",
+           "[notepad][document]")
+{
+    NotepadDocument document;
+    // "café 😀" - three ASCII letters, an e-acute (2 bytes), a space and an
+    // emoji (4 bytes): six characters, ten bytes.
+    document.setMarkdown ("caf\xc3\xa9 \xf0\x9f\x98\x80");
+    REQUIRE (document.documentText().size() == 10);
+    CHECK (document.characterCount() == 6);
+    CHECK (document.wordCount() == 2);
+
+    SECTION ("hidden syntax is not counted in either mode")
+    {
+        document.setMarkdown ("**caf\xc3\xa9**");
+        CHECK (document.characterCount() == 4);
+        document.setSourceMode (true);
+        CHECK (document.characterCount() == 4);
+    }
+}
+
+TEST_CASE ("Notepad source mode projects the Markdown one to one",
+           "[notepad][document][source]")
+{
+    NotepadDocument document;
+    document.setMarkdown ("# Title\n\nline [Am]one\n");
+    REQUIRE (document.chords().size() == 1);
+
+    document.setSourceMode (true);
+    CHECK (document.isSourceMode());
+    CHECK (document.documentText() == document.markdown());
+    CHECK (document.chords().empty());
+
+    // Every line is body text in source mode, so a heading keeps its metrics
+    // across the toggle and the reader's line does not move.
+    CHECK (document.lineInfoAt (0).block == NotepadDocument::BlockStyle::body);
+    CHECK (document.styleAt (0).block == NotepadDocument::BlockStyle::body);
+    CHECK_FALSE (document.styleAt (0).bold);
+
+    SECTION ("offsets map through unchanged")
+    {
+        const NotepadDocument::Selection selection { 2, 7 };
+        CHECK (document.sourceSelection (selection).start == selection.start);
+        CHECK (document.sourceSelection (selection).end == selection.end);
+        CHECK (document.documentSelection (selection).start == selection.start);
+        CHECK (document.documentSelection (selection).end == selection.end);
+    }
+
+    SECTION ("chord commands still reach the source")
+    {
+        CHECK (document.hasChords());
+        document.transposeChords (2, document.prefersFlats());
+        CHECK (document.markdown() == "# Title\n\nline [Bm]one\n");
+    }
+
+    SECTION ("typed Markdown syntax round-trips unescaped")
+    {
+        auto edited = document.documentText();
+        edited.insert (edited.size(), "*star* [Am]bracket");
+        REQUIRE (document.replaceDocumentText (edited));
+        CHECK (document.markdown() == edited);
+        CHECK (document.documentText() == edited);
+    }
+
+    SECTION ("switching back restores the rendered projection")
+    {
+        document.setSourceMode (false);
+        CHECK (document.documentText() == "Title\n\nline one\n");
+        CHECK (document.chords().size() == 1);
+        CHECK (document.lineInfoAt (0).block == NotepadDocument::BlockStyle::heading1);
+    }
+}
+
+TEST_CASE ("Section markers project as their label", "[notepad][document][sections]")
+{
+    NotepadDocument document;
+    document.setMarkdown ("[Chorus]\nline one\n");
+
+    // The brackets are syntax, so the chart shows the label alone.
+    CHECK (document.documentText() == "Chorus\nline one\n");
+    CHECK (document.lineInfoAt (0).section);
+    CHECK_FALSE (document.lineInfoAt (7).section);
+    CHECK (document.markdown() == "[Chorus]\nline one\n");
+
+    SECTION ("deleting the projected label removes its hidden marker syntax")
+    {
+        auto edited = document.documentText();
+        edited.erase (0, std::string ("Chorus").size());
+        REQUIRE (document.replaceDocumentText (edited));
+        CHECK (document.markdown() == "\nline one\n");
+        CHECK (document.documentText() == "\nline one\n");
+        CHECK (document.sectionCount() == 0);
+    }
+
+    SECTION ("the explicit removal path removes the complete section line")
+    {
+        REQUIRE (document.removeSectionMarker (2));
+        CHECK (document.markdown() == "line one\n");
+        CHECK (document.documentText() == "line one\n");
+        CHECK (document.sectionCount() == 0);
+        CHECK_FALSE (document.removeSectionMarker (0));
+    }
+
+    SECTION ("a chord line is not a section")
+    {
+        document.setMarkdown ("[Am]\nline\n");
+        CHECK_FALSE (document.lineInfoAt (0).section);
+    }
+
+    SECTION ("a lyric line with chords at both ends is not a section")
+    {
+        document.setMarkdown ("[Am]fine morning [G]rain\nline\n");
+        CHECK_FALSE (document.lineInfoAt (0).section);
+        CHECK (document.documentText() == "fine morning rain\nline\n");
+        CHECK (document.chords().size() == 2);
+        CHECK (document.sectionCount() == 0);
+    }
+
+    SECTION ("a hidden block prefix does not hide the section semantics")
+    {
+        document.setMarkdown ("- [Chorus]\nline\n");
+        CHECK (document.documentText() == "Chorus\nline\n");
+        CHECK (document.lineInfoAt (0).block == NotepadDocument::BlockStyle::bullets);
+        CHECK (document.lineInfoAt (0).section);
+        CHECK (document.sectionCount() == 1);
+    }
+
+    SECTION ("inserted labels must produce recognizable sections")
+    {
+        document.setMarkdown ("line\n");
+        const auto unchanged = document.markdown();
+        for (const auto* const label : { "[Verse", "Verse]", "Am", "line\nbreak" })
+        {
+            CHECK_FALSE (document.insertSectionMarker (0, label));
+            CHECK (document.markdown() == unchanged);
+        }
+
+        REQUIRE (document.insertSectionMarker (0, "Verse"));
+        CHECK (document.lineInfoAt (0).section);
+        CHECK (document.sectionCount() == 1);
+    }
+}

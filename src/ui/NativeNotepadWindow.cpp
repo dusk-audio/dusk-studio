@@ -1,7 +1,9 @@
 #include "NativeNotepadWindow.h"
 #include "NotepadDocument.h"
 #include "NotepadEditor.h"
+#include "NotepadChords.h"
 #include "NotepadEditorCore.h"
+#include "NotepadTheme.h"
 #include "../foundation/MessageThread.h"
 
 #include <Application.hpp>
@@ -12,8 +14,8 @@
 #endif
 
 #include <algorithm>
-#include <array>
-#include <cstring>
+#include <cmath>
+#include <ctime>
 #include <filesystem>
 #include <optional>
 #include <utility>
@@ -22,8 +24,11 @@ namespace duskstudio
 {
 namespace
 {
-constexpr auto kLightDocumentPaperColour = 0xf7f6f3ff;
-constexpr auto kDarkDocumentPaperColour = 0x22242cff;
+// The measure both views share: wide enough for a long lyric line, narrow
+// enough that the eye does not lose the line it is reading.
+constexpr float kContentWidth = 760.0f;
+constexpr float kHeaderHeight = 62.0f;
+constexpr float kRibbonHeight = 62.0f;
 
 // DejaVu Sans covers these ranges in the embedded fallback. Platform fonts can
 // contribute additional glyphs, but the editor never intentionally truncates
@@ -56,137 +61,26 @@ ImFont* addPlatformFont (ImFontAtlas& atlas,
     return nullptr;
 }
 
+std::string clockLabel()
+{
+    const auto now = std::time (nullptr);
+    std::tm local {};
+   #if defined (_WIN32)
+    localtime_s (&local, &now);
+   #else
+    localtime_r (&now, &local);
+   #endif
+    char buffer[6] {};
+    std::strftime (buffer, sizeof (buffer), "%H:%M", &local);
+    return buffer;
+}
+
 ImVec4 colour (unsigned int hex)
 {
     return ImVec4 (((hex >> 24) & 0xff) / 255.0f,
                    ((hex >> 16) & 0xff) / 255.0f,
                    ((hex >> 8) & 0xff) / 255.0f,
                    (hex & 0xff) / 255.0f);
-}
-
-struct EditorBuffer
-{
-    std::string text;
-    int selectionStart = 0;
-    int selectionEnd = 0;
-    int pendingSelectionStart = -1;
-    int pendingSelectionEnd = -1;
-
-    void assign (const std::string& value)
-    {
-        text = value;
-        text.reserve (std::max<std::size_t> (4096, text.size() + 1024));
-        selectionStart = selectionEnd = std::min<int> (selectionEnd,
-                                                        static_cast<int> (text.size()));
-    }
-
-    static int callback (ImGuiInputTextCallbackData* data)
-    {
-        auto& self = *static_cast<EditorBuffer*> (data->UserData);
-        if (data->EventFlag == ImGuiInputTextFlags_CallbackResize)
-        {
-            self.text.resize (static_cast<std::size_t> (data->BufTextLen));
-            data->Buf = self.text.data();
-        }
-        else if (data->EventFlag == ImGuiInputTextFlags_CallbackAlways)
-        {
-            if (self.pendingSelectionStart >= 0)
-            {
-                data->SelectionStart = self.pendingSelectionStart;
-                data->SelectionEnd = self.pendingSelectionEnd;
-                data->CursorPos = self.pendingSelectionEnd;
-                self.pendingSelectionStart = self.pendingSelectionEnd = -1;
-            }
-            if (data->SelectionStart == data->SelectionEnd)
-                self.selectionStart = self.selectionEnd = data->CursorPos;
-            else
-            {
-                self.selectionStart = data->SelectionStart;
-                self.selectionEnd = data->SelectionEnd;
-            }
-        }
-        return 0;
-    }
-
-    NotepadDocument::Selection selection() const noexcept
-    {
-        const auto start = static_cast<std::size_t> (std::max (0, selectionStart));
-        const auto end = static_cast<std::size_t> (std::max (0, selectionEnd));
-        return { std::min (start, end), std::max (start, end) };
-    }
-
-    void restoreSelection (NotepadDocument::Selection selection)
-    {
-        const auto limit = text.size();
-        selectionStart = pendingSelectionStart
-            = static_cast<int> (std::min (selection.start, limit));
-        selectionEnd = pendingSelectionEnd
-            = static_cast<int> (std::min (selection.end, limit));
-    }
-};
-
-std::size_t sourceLineStart (const std::string& text, std::size_t offset)
-{
-    offset = std::min (offset, text.size());
-    const auto found = offset == 0 ? std::string::npos : text.rfind ('\n', offset - 1);
-    return found == std::string::npos ? 0 : found + 1;
-}
-
-std::size_t sourceLineEnd (const std::string& text, std::size_t offset)
-{
-    const auto found = text.find ('\n', std::min (offset, text.size()));
-    return found == std::string::npos ? text.size() : found;
-}
-
-std::size_t sourceBlockPrefixLength (const std::string& text,
-                                     std::size_t start,
-                                     std::size_t end)
-{
-    auto i = start;
-    while (i < end && text[i] == '#' && i - start < 6)
-        ++i;
-    if (i > start && i < end && text[i] == ' ')
-        return i + 1 - start;
-
-    i = start;
-    while (i < end && text[i] >= '0' && text[i] <= '9')
-        ++i;
-    if (i > start && i + 1 < end && text[i] == '.' && text[i + 1] == ' ')
-        return i + 2 - start;
-
-    if (text.compare (start, std::min<std::size_t> (6, end - start), "- [ ] ") == 0
-        || text.compare (start, std::min<std::size_t> (6, end - start), "- [x] ") == 0)
-        return 6;
-    if (end - start >= 2 && text[start + 1] == ' '
-        && (text[start] == '-' || text[start] == '*' || text[start] == '+' || text[start] == '>'))
-        return 2;
-    return 0;
-}
-
-NotepadDocument::BlockStyle sourceBlockStyle (const std::string& text,
-                                              NotepadDocument::Selection selection)
-{
-    const auto lineStart = sourceLineStart (text, selection.start);
-    const auto lineEnd = sourceLineEnd (text, selection.start);
-    const auto prefixLength = sourceBlockPrefixLength (text, lineStart, lineEnd);
-    if (prefixLength == 0)
-        return NotepadDocument::BlockStyle::body;
-
-    if (text[lineStart] == '#')
-    {
-        const auto count = prefixLength - 1;
-        if (count == 1) return NotepadDocument::BlockStyle::heading1;
-        if (count == 2) return NotepadDocument::BlockStyle::heading2;
-        return NotepadDocument::BlockStyle::heading3;
-    }
-    if (text[lineStart] == '>')
-        return NotepadDocument::BlockStyle::quote;
-    if (text.compare (lineStart, std::min<std::size_t> (6, lineEnd - lineStart), "- [ ] ") == 0
-        || text.compare (lineStart, std::min<std::size_t> (6, lineEnd - lineStart), "- [x] ") == 0)
-        return NotepadDocument::BlockStyle::tasks;
-    if (text[lineStart] >= '0' && text[lineStart] <= '9')
-        return NotepadDocument::BlockStyle::numbers;
-    return NotepadDocument::BlockStyle::bullets;
 }
 
 } // namespace
@@ -206,12 +100,20 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
     {
     public:
         EditorWidget (DGL::Window& window, Impl& ownerRef)
-            : DGL::ImGuiTopLevelWidget (window, 15.0f), owner (ownerRef) {}
+            : DGL::ImGuiTopLevelWidget (window, notepad::kTypeScale.lyric),
+              owner (ownerRef) {}
 
     protected:
         void onImGuiDisplay() override
         {
             owner.draw (static_cast<float> (getWidth()), static_cast<float> (getHeight()));
+        }
+
+        bool onKeyboard (const DGL::Widget::KeyboardEvent& event) override
+        {
+            if (owner.handleChordEntryNavigation (event))
+                return true;
+            return DGL::ImGuiTopLevelWidget::onKeyboard (event);
         }
 
     private:
@@ -228,7 +130,6 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
         };
         editor.onUndoRequested = [this] { restoreHistory (false); };
         editor.onRedoRequested = [this] { restoreHistory (true); };
-        editor.setDarkPage (darkDocumentPage);
     }
 
     void buildFontAtlas (float size)
@@ -306,17 +207,15 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
             return false;
 
         document.setMarkdown (markdown);
-        markdownMode = false;
-        buffer.assign (document.markdown());
-        buffer.restoreSelection ({ 0, 0 });
+        document.setSourceMode (false);
         editor.reset ({ 0, 0 });
         editor.requestFocus();
         closeRequested = false;
         closeWasPumped = false;
-        focusEditorNextFrame = false;
         hasSessionFile = sessionExists;
         documentDirty = unsavedChanges;
         saveFailed = false;
+        savedAtLabel.clear();
         savedMarkdown = unsavedChanges ? std::optional<std::string> {}
                                        : std::optional<std::string> { markdown };
         history.clear();
@@ -348,7 +247,8 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
         {
             DGL::Window::ScopedGraphicsContext context (*window);
             editorWidget = std::make_unique<EditorWidget> (*window, *this);
-            buildFontAtlas (static_cast<float> (15.0 * window->getScaleFactor()));
+            buildFontAtlas (static_cast<float> (notepad::kTypeScale.lyric
+                                                * window->getScaleFactor()));
         }
         window->focus();
         startTimer (16);
@@ -375,6 +275,7 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
 
     void markSaved()
     {
+        savedAtLabel = "at " + clockLabel();
         documentDirty = false;
         saveFailed = false;
         hasSessionFile = true;
@@ -388,19 +289,40 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
     }
 
 private:
+    bool handleChordEntryNavigation (const DGL::Widget::KeyboardEvent& event)
+    {
+        if (! editor.chordEntryActive())
+            return false;
+
+        if (event.key == DGL::kKeyUp || event.key == DGL::kKeyDown)
+        {
+            if (event.press)
+                editor.cycleChordCandidate (event.key == DGL::kKeyUp ? -1 : 1);
+            return true;
+        }
+        if (event.key == DGL::kKeyTab)
+        {
+            if (event.press)
+            {
+                if ((event.mod & DGL::kModifierShift) != 0)
+                    editor.cycleChordCandidate (-1);
+                else
+                    editor.acceptChordCandidate();
+            }
+            return true;
+        }
+        return false;
+    }
+
     notepad::Snapshot currentSnapshot() const
     {
-        return { document.markdown(),
-                 markdownMode ? buffer.selection() : editor.selection(),
-                 markdownMode };
+        return { document.markdown(), editor.selection(), false };
     }
 
     NotepadDocument::Selection selectionForCurrentMode (const notepad::Snapshot& state) const
     {
-        if (state.selectionIsSource == markdownMode)
-            return state.selection;
-        return markdownMode ? document.sourceSelection (state.selection)
-                            : document.documentSelection (state.selection);
+        return state.selectionIsSource ? document.documentSelection (state.selection)
+                                       : state.selection;
     }
 
     void restoreHistory (bool redo)
@@ -412,17 +334,8 @@ private:
 
         document.setMarkdown (restored.markdown);
         const auto selection = selectionForCurrentMode (restored);
-        if (markdownMode)
-        {
-            buffer.assign (document.markdown());
-            buffer.restoreSelection (selection);
-            focusEditorNextFrame = true;
-        }
-        else
-        {
-            editor.reset (selection);
-            editor.requestFocus();
-        }
+        editor.reset (selection);
+        editor.requestFocus();
         notifyTextChanged();
     }
 
@@ -476,120 +389,34 @@ private:
             onTextChanged (document.markdown(), documentDirty);
     }
 
-    void setMode (bool useMarkdown)
+    void applyInline (NotepadDocument::InlineStyle inlineStyle)
     {
-        if (markdownMode == useMarkdown)
-            return;
-        const auto oldSelection = markdownMode ? buffer.selection() : editor.selection();
-        markdownMode = useMarkdown;
-        history.breakRun();
-        if (markdownMode)
-        {
-            buffer.assign (document.markdown());
-            buffer.restoreSelection (document.sourceSelection (oldSelection));
-            focusEditorNextFrame = true;
-        }
-        else
-        {
-            editor.reset (document.documentSelection (oldSelection));
-            editor.requestFocus();
-        }
-    }
-
-    void applyInline (NotepadDocument::InlineStyle inlineStyle,
-                      const std::string& prefix, const std::string& suffix)
-    {
-        if (! markdownMode)
-        {
-            editor.applyInlineStyle (inlineStyle);
-            return;
-        }
-
-        const auto selection = buffer.selection();
-        auto before = currentSnapshot();
-        auto transformed = notepad::toggleMarkdownInline (
-            document.markdown(), selection, prefix, suffix);
-        document.setMarkdown (std::move (transformed.markdown));
-        buffer.assign (document.markdown());
-        buffer.restoreSelection (transformed.selection);
-        history.record (notepad::EditKind::structural, std::move (before),
-                        transformed.selection.end);
-        focusEditorNextFrame = true;
-        notifyTextChanged();
+        editor.applyInlineStyle (inlineStyle);
     }
 
     void applyBlock (NotepadDocument::BlockStyle style)
     {
-        if (! markdownMode)
-        {
-            editor.applyBlockStyle (style);
-            return;
-        }
-
-        const auto selection = buffer.selection();
-        if (selectedBlockStyle() == style)
-            style = NotepadDocument::BlockStyle::body;
-        auto before = currentSnapshot();
-        auto transformed = notepad::setMarkdownBlockStyle (
-            document.markdown(), selection, style);
-        document.setMarkdown (std::move (transformed.markdown));
-        buffer.assign (document.markdown());
-        buffer.restoreSelection (transformed.selection);
-        history.record (notepad::EditKind::structural, std::move (before),
-                        transformed.selection.end);
-        focusEditorNextFrame = true;
-        notifyTextChanged();
+        editor.applyBlockStyle (style);
     }
 
-    void insertLink (const std::string& url)
+    bool inlineStyleActive (NotepadDocument::InlineStyle style) const
     {
-        if (! markdownMode)
-        {
-            editor.insertLink (url);
-            return;
-        }
-
-        const auto selection = buffer.selection();
-        auto before = currentSnapshot();
-        auto source = document.markdown();
-        const auto label = selection.empty()
-                         ? std::string ("Link text")
-                         : source.substr (selection.start, selection.end - selection.start);
-        const auto replacement = "[" + label + "](" + url + ")";
-        source.replace (selection.start, selection.end - selection.start, replacement);
-        document.setMarkdown (std::move (source));
-        buffer.assign (document.markdown());
-        buffer.restoreSelection ({ selection.start + 1, selection.start + 1 + label.size() });
-        history.record (notepad::EditKind::structural, std::move (before),
-                        selection.start + 1 + label.size());
-        focusEditorNextFrame = true;
-        notifyTextChanged();
-    }
-
-    bool inlineStyleActive (NotepadDocument::InlineStyle style,
-                            const std::string& prefix,
-                            const std::string& suffix) const
-    {
-        return markdownMode
-             ? notepad::markdownInlineActive (document.markdown(), buffer.selection(),
-                                               prefix, suffix)
-             : editor.inlineStyleActive (style);
+        return editor.inlineStyleActive (style);
     }
 
     NotepadDocument::BlockStyle selectedBlockStyle() const
     {
-        return markdownMode
-             ? sourceBlockStyle (document.markdown(), buffer.selection())
-             : editor.blockStyle();
+        return editor.blockStyle();
     }
 
-    bool toolbarButton (const char* label, const char* tooltip, bool active,
+    bool toolbarButton (const char* label, const char* tooltip, bool active = false,
                         float width = 34.0f, ImFont* labelFont = nullptr)
     {
         if (active)
         {
-            ImGui::PushStyleColor (ImGuiCol_Button, colour (0x5a4880ff));
-            ImGui::PushStyleColor (ImGuiCol_ButtonHovered, colour (0x6b5796ff));
+            ImGui::PushStyleColor (ImGuiCol_Button, colour (notepad::kStagePalette.rule));
+            ImGui::PushStyleColor (ImGuiCol_ButtonHovered,
+                                   colour (notepad::kStagePalette.shell));
         }
         if (labelFont != nullptr)
             ImGui::PushFont (labelFont);
@@ -603,277 +430,147 @@ private:
         return clicked;
     }
 
-    bool linkToolbarButton()
-    {
-        const bool clicked = ImGui::Button ("##insert-link", ImVec2 (34.0f, 32.0f));
-        const auto min = ImGui::GetItemRectMin();
-        const auto max = ImGui::GetItemRectMax();
-        const auto centre = ImVec2 ((min.x + max.x) * 0.5f,
-                                    (min.y + max.y) * 0.5f);
-        const auto iconColour = ImGui::GetColorU32 (ImGuiCol_Text);
-        auto* const drawList = ImGui::GetWindowDrawList();
-
-        // Two overlapping outlined rings read as a chain link at toolbar size
-        // and avoid relying on an emoji glyph that is absent from the bundled
-        // cross-platform document font.
-        drawList->AddCircle (ImVec2 (centre.x - 4.0f, centre.y), 5.5f,
-                             iconColour, 16, 1.6f);
-        drawList->AddCircle (ImVec2 (centre.x + 4.0f, centre.y), 5.5f,
-                             iconColour, 16, 1.6f);
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip ("Insert link");
-        return clicked;
-    }
-
-    bool drawGlyphToggle (const char* id, bool rightSelected,
-                          const char* leftGlyph, const char* rightGlyph,
-                          const char* tooltip, float width)
-    {
-        const bool clicked = ImGui::InvisibleButton (id, ImVec2 (width, 30.0f));
-        const auto min = ImGui::GetItemRectMin();
-        const auto max = ImGui::GetItemRectMax();
-        const auto centre = ImVec2 ((min.x + max.x) * 0.5f,
-                                    (min.y + max.y) * 0.5f);
-        const bool hovered = ImGui::IsItemHovered();
-        auto* const drawList = ImGui::GetWindowDrawList();
-
-        const auto selectedColour = ImGui::GetColorU32 (colour (0xe7e8edff));
-        const auto mutedColour = ImGui::GetColorU32 (
-            colour (hovered ? 0xb5b6c0ff : 0x868892ff));
-        const auto trackColour = ImGui::GetColorU32 (
-            colour (hovered ? 0x6b5796ff : 0x5a4880ff));
-        const auto knobColour = ImGui::GetColorU32 (colour (0xf0eff4ff));
-
-        const auto drawCentredGlyph = [&] (const char* glyph, float x, bool selected)
-        {
-            const auto size = ImGui::CalcTextSize (glyph);
-            drawList->AddText (ImVec2 (x - size.x * 0.5f,
-                                       centre.y - size.y * 0.5f),
-                               selected ? selectedColour : mutedColour, glyph);
-        };
-
-        drawCentredGlyph (leftGlyph, min.x + 11.0f, ! rightSelected);
-        drawCentredGlyph (rightGlyph, max.x - 13.0f, rightSelected);
-
-        constexpr float halfTrackWidth = 20.0f;
-        constexpr float halfTrackHeight = 7.0f;
-        drawList->AddRectFilled (
-            ImVec2 (centre.x - halfTrackWidth, centre.y - halfTrackHeight),
-            ImVec2 (centre.x + halfTrackWidth, centre.y + halfTrackHeight),
-            trackColour, halfTrackHeight);
-        drawList->AddCircleFilled (
-            ImVec2 (centre.x + (rightSelected ? 12.0f : -12.0f), centre.y),
-            5.0f, knobColour);
-
-        if (hovered)
-            ImGui::SetTooltip ("%s", tooltip);
-        return clicked;
-    }
-
-    void drawRibbon()
+    void drawRibbon (float height)
     {
         ImGui::PushStyleVar (ImGuiStyleVar_ChildRounding, 0.0f);
         ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (22.0f, 13.0f));
-        ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (0x20212aff));
-        ImGui::BeginChild ("ribbon", ImVec2 (0.0f, 62.0f), false,
-                           ImGuiWindowFlags_NoScrollbar);
+        ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (notepad::kStagePalette.shell));
+        ImGui::BeginChild ("ribbon", ImVec2 (0.0f, height),
+                           ImGuiChildFlags_AlwaysUseWindowPadding,
+                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
-        if (toolbarButton ("↶", "Undo (Ctrl+Z)", false))
+        ImGui::BeginDisabled (! history.canUndo());
+        if (toolbarButton ("↶", "Undo the last edit (Ctrl+Z)", false))
             restoreHistory (false);
+        ImGui::EndDisabled();
         ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("↷", "Redo (Ctrl+Y)", false))
+        ImGui::BeginDisabled (! history.canRedo());
+        if (toolbarButton ("↷", "Redo the last edit (Ctrl+Y)", false))
             restoreHistory (true);
-        ImGui::SameLine (0.0f, 10.0f);
+        ImGui::EndDisabled();
 
-        static const std::array<const char*, 4> styleNames {
-            "Body text", "Heading 1", "Heading 2", "Heading 3"
-        };
-        const auto blockStyle = selectedBlockStyle();
-        const auto paragraphStyle = blockStyle >= NotepadDocument::BlockStyle::body
-                                 && blockStyle <= NotepadDocument::BlockStyle::heading3
-                                  ? static_cast<int> (blockStyle)
-                                  : 0;
-        ImGui::SetNextItemWidth (118.0f);
-        ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2 (8.0f, 8.5f));
-        if (ImGui::BeginCombo ("##paragraph-style", styleNames[static_cast<std::size_t> (paragraphStyle)]))
+        // The ribbon stays centred on a songwriter's working loop: structure,
+        // chords and just enough lyric styling to distinguish the title and
+        // add emphasis. General-purpose Markdown authoring belongs in the
+        // compatible notepad.md file rather than competing with those actions.
+        ImGui::SameLine (0.0f, 16.0f);
+        if (toolbarButton ("Chord", "Add or edit a chord (Ctrl+K); repeat the previous chord (Ctrl+Shift+K)",
+                           editor.chordEntryActive(), 58.0f))
         {
-            for (int i = 0; i < static_cast<int> (styleNames.size()); ++i)
-            {
-                if (ImGui::Selectable (styleNames[static_cast<std::size_t> (i)], paragraphStyle == i))
-                {
-                    applyBlock (static_cast<NotepadDocument::BlockStyle> (i));
-                }
-            }
-            ImGui::EndCombo();
+            editor.beginChordEntry();
+            editor.requestFocus();
         }
-        ImGui::PopStyleVar();
-        ImGui::SameLine (0.0f, 10.0f);
-        const bool bold = inlineStyleActive (NotepadDocument::InlineStyle::bold, "**", "**");
-        const bool italic = inlineStyleActive (NotepadDocument::InlineStyle::italic, "*", "*");
-        const bool code = inlineStyleActive (NotepadDocument::InlineStyle::code, "`", "`");
-        if (toolbarButton ("B", "Bold (Ctrl+B)", bold, 34.0f, boldFont))
-            applyInline (NotepadDocument::InlineStyle::bold, "**", "**");
         ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("I", "Italic (Ctrl+I)", italic))
-            applyInline (NotepadDocument::InlineStyle::italic, "*", "*");
+        if (toolbarButton ("Section", "Add or remove a song section", false, 64.0f))
+            ImGui::OpenPopup ("section-menu");
+
+        const bool canTranspose = document.hasChords();
+        ImGui::BeginDisabled (! canTranspose);
         ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("</>", "Inline code", code, 42.0f))
-            applyInline (NotepadDocument::InlineStyle::code, "`", "`");
+        if (toolbarButton ("−1", "Transpose every chord down one semitone", false, 38.0f))
+            editor.transposeChords (-1);
+        ImGui::SameLine (0.0f, 5.0f);
+        if (toolbarButton ("+1", "Transpose every chord up one semitone", false, 38.0f))
+            editor.transposeChords (1);
+        ImGui::EndDisabled();
+
+        const auto blockStyle = selectedBlockStyle();
+        ImGui::SameLine (0.0f, 16.0f);
+        if (toolbarButton ("Lyrics", "Use lyric or note text",
+                           blockStyle == NotepadDocument::BlockStyle::body, 54.0f))
+            applyBlock (NotepadDocument::BlockStyle::body);
+        ImGui::SameLine (0.0f, 5.0f);
+        if (toolbarButton ("Title", "Make this line the song title",
+                           blockStyle == NotepadDocument::BlockStyle::heading1,
+                           48.0f, boldFont))
+            applyBlock (NotepadDocument::BlockStyle::heading1);
 
         ImGui::SameLine (0.0f, 16.0f);
-        if (toolbarButton ("❝", "Quote selected paragraphs",
-                           blockStyle == NotepadDocument::BlockStyle::quote))
-            applyBlock (NotepadDocument::BlockStyle::quote);
+        if (toolbarButton ("B", "Bold the selection (Ctrl+B)",
+                           inlineStyleActive (NotepadDocument::InlineStyle::bold),
+                           34.0f, boldFont))
+            applyInline (NotepadDocument::InlineStyle::bold);
         ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("•≡", "Bulleted list",
-                           blockStyle == NotepadDocument::BlockStyle::bullets, 42.0f))
-            applyBlock (NotepadDocument::BlockStyle::bullets);
-        ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("1≡", "Numbered list",
-                           blockStyle == NotepadDocument::BlockStyle::numbers, 42.0f))
-            applyBlock (NotepadDocument::BlockStyle::numbers);
-        ImGui::SameLine (0.0f, 5.0f);
-        if (toolbarButton ("☑", "Checklist",
-                           blockStyle == NotepadDocument::BlockStyle::tasks))
-            applyBlock (NotepadDocument::BlockStyle::tasks);
-        ImGui::SameLine (0.0f, 5.0f);
-        if (linkToolbarButton())
-            ImGui::OpenPopup ("Insert link");
+        if (toolbarButton ("I", "Italicise the selection (Ctrl+I)",
+                           inlineStyleActive (NotepadDocument::InlineStyle::italic)))
+            applyInline (NotepadDocument::InlineStyle::italic);
 
-        if (ImGui::BeginPopupModal ("Insert link", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
-        {
-            ImGui::TextUnformatted ("Link destination");
-            ImGui::SetNextItemWidth (360.0f);
-            if (ImGui::IsWindowAppearing())
-                ImGui::SetKeyboardFocusHere();
-            ImGui::InputTextWithHint ("##link-url", "https://", linkUrl.data(), linkUrl.size());
-            if (ImGui::Button ("Insert", ImVec2 (90.0f, 30.0f)))
-            {
-                const auto url = linkUrl[0] == '\0' ? std::string ("https://")
-                                                   : notepad::encodeMarkdownLinkTarget (
-                                                         linkUrl.data());
-                insertLink (url);
-                linkUrl.fill ('\0');
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::SameLine();
-            if (ImGui::Button ("Cancel", ImVec2 (90.0f, 30.0f)))
-                ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
-        }
+        const auto spelling = document.spellingMode();
+        ImGui::SameLine (0.0f, 16.0f);
+        if (toolbarButton ("Auto##spell-auto", "Match the song's existing sharps or flats",
+                           spelling == NotepadDocument::Spelling::followDocument, 46.0f))
+            document.setSpelling (NotepadDocument::Spelling::followDocument);
+        ImGui::SameLine (0.0f, 4.0f);
+        if (toolbarButton ("♯##spell-sharps", "Spell chords with sharps",
+                           spelling == NotepadDocument::Spelling::sharps))
+            document.setSpelling (NotepadDocument::Spelling::sharps);
+        ImGui::SameLine (0.0f, 4.0f);
+        if (toolbarButton ("♭##spell-flats", "Spell chords with flats",
+                           spelling == NotepadDocument::Spelling::flats))
+            document.setSpelling (NotepadDocument::Spelling::flats);
+
+        drawSectionMenu();
 
         ImGui::EndChild();
         ImGui::PopStyleColor();
         ImGui::PopStyleVar (2);
+    }
+
+    void drawSectionMenu()
+    {
+        if (! ImGui::BeginPopup ("section-menu"))
+            return;
+
+        if (document.lineInfoAt (editor.selection().start).section)
+        {
+            if (ImGui::Selectable ("Remove current section"))
+                editor.removeSectionMarker();
+            ImGui::Separator();
+        }
+
+        // Markers are plain "[Label]" lines, so a hand-typed section is the
+        // same thing this writes.
+        for (const auto* const label : { "Intro", "Verse", "Pre-chorus", "Chorus",
+                                         "Bridge", "Solo", "Outro" })
+            if (ImGui::Selectable (label))
+                editor.insertSectionMarker (label);
+        ImGui::EndPopup();
     }
 
     void drawEditor (float height)
     {
-        ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (0x111218ff));
+        ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (notepad::kStagePalette.shell));
         ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (22.0f, 18.0f));
-        ImGui::BeginChild ("workspace", ImVec2 (0.0f, height), false,
-                           ImGuiWindowFlags_NoScrollbar);
+        ImGui::BeginChild ("workspace", ImVec2 (0.0f, height),
+                           ImGuiChildFlags_AlwaysUseWindowPadding,
+                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
+        // No page card: the stage is the paper, with a readable measure centred
+        // inside the surrounding workspace.
         const auto available = ImGui::GetContentRegionAvail();
-        const float editorWidth = markdownMode ? available.x : std::min (760.0f, available.x);
+        const float editorWidth = std::min (kContentWidth, std::max (0.0f, available.x));
         ImGui::SetCursorPosX (ImGui::GetCursorPosX() + (available.x - editorWidth) * 0.5f);
 
-        ImGui::PushStyleVar (ImGuiStyleVar_ChildRounding, 3.0f);
-        ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding,
-                             markdownMode ? ImVec2 (20.0f, 18.0f) : ImVec2 (58.0f, 46.0f));
-        ImGui::PushStyleColor (ImGuiCol_ChildBg,
-                              markdownMode ? colour (0x181922ff)
-                                           : colour (darkDocumentPage
-                                                        ? kDarkDocumentPaperColour
-                                                        : kLightDocumentPaperColour));
-        ImGui::BeginChild (markdownMode ? "markdown-source" : "document-page",
-                           ImVec2 (editorWidth, available.y), true);
+        if (editorWidth > 0.0f && available.y > 0.0f)
+        {
+            ImGui::PushStyleVar (ImGuiStyleVar_ChildRounding, 0.0f);
+            ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (34.0f, 26.0f));
+            ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (notepad::kStagePalette.stage));
+            // A borderless child drops WindowPadding unless asked, which left the
+            // lyric running edge to edge with no gutter.
+            ImGui::BeginChild ("chart", ImVec2 (editorWidth, available.y),
+                               ImGuiChildFlags_AlwaysUseWindowPadding,
+                               ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
-        if (markdownMode)
-            drawMarkdownSource();
-        else
             editor.draw (ImGui::GetFontSize());
 
-        ImGui::EndChild();
-        ImGui::PopStyleColor();
-        ImGui::PopStyleVar (2);
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+            ImGui::PopStyleVar (2);
+        }
         ImGui::EndChild();
         ImGui::PopStyleVar();
         ImGui::PopStyleColor();
-    }
-
-    void drawMarkdownSource()
-    {
-        ImGui::PushStyleColor (ImGuiCol_FrameBg, colour (0x181922ff));
-        ImGui::PushStyleColor (ImGuiCol_Text, colour (0xd7d9e0ff));
-        ImGui::PushStyleColor (ImGuiCol_TextSelectedBg, colour (0x70599aaa));
-        ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2 (0.0f, 0.0f));
-
-        if (focusEditorNextFrame)
-        {
-            ImGui::SetKeyboardFocusHere();
-            focusEditorNextFrame = false;
-        }
-
-        const auto flags = ImGuiInputTextFlags_AllowTabInput
-                         | ImGuiInputTextFlags_CallbackResize
-                         | ImGuiInputTextFlags_CallbackAlways
-                         | ImGuiInputTextFlags_NoUndoRedo;
-        const auto selectionBefore = buffer.selection();
-        const bool changed = ImGui::InputTextMultiline (
-            "##notepad-editor", buffer.text.data(), buffer.text.capacity() + 1,
-            ImGui::GetContentRegionAvail(), flags, EditorBuffer::callback, &buffer);
-        const bool editorActive = ImGui::IsItemActive();
-        if (auto* const state = ImGui::GetInputTextState (ImGui::GetItemID()))
-        {
-            // CallbackAlways can observe the selection before the current
-            // character edit is committed. The live input state is the
-            // authority after InputTextMultiline returns.
-            if (state->HasSelection())
-            {
-                buffer.selectionStart = state->GetSelectionStart();
-                buffer.selectionEnd = state->GetSelectionEnd();
-            }
-            else
-            {
-                buffer.selectionStart = buffer.selectionEnd = state->GetCursorPos();
-            }
-        }
-
-        if (changed)
-        {
-            auto before = currentSnapshot();
-            before.selection = selectionBefore;
-            buffer.text.resize (std::strlen (buffer.text.c_str()));
-            // Deletions must not join a typing run, or a backspace burst would
-            // undo the text it was correcting along with itself.
-            const auto kind = buffer.text.size() < before.markdown.size()
-                            ? notepad::EditKind::deleting
-                            : notepad::EditKind::typing;
-            document.setMarkdown (buffer.text);
-            history.record (kind, std::move (before), buffer.selection().end);
-            notifyTextChanged();
-        }
-        else if (selectionBefore.start != buffer.selection().start
-                 || selectionBefore.end != buffer.selection().end)
-        {
-            history.breakRun();
-        }
-
-        const auto& io = ImGui::GetIO();
-        const bool shortcut = ! notepad::acceptsTextInput (
-            io.KeyCtrl, io.KeyAlt, io.KeySuper);
-        if (editorActive && shortcut && ImGui::IsKeyPressed (ImGuiKey_Z, false))
-            restoreHistory (io.KeyShift);
-        else if (editorActive && shortcut && ImGui::IsKeyPressed (ImGuiKey_Y, false))
-            restoreHistory (true);
-        else if (editorActive && shortcut && ImGui::IsKeyPressed (ImGuiKey_B, false))
-            applyInline (NotepadDocument::InlineStyle::bold, "**", "**");
-        else if (editorActive && shortcut && ImGui::IsKeyPressed (ImGuiKey_I, false))
-            applyInline (NotepadDocument::InlineStyle::italic, "*", "*");
-
-        ImGui::PopStyleVar();
-        ImGui::PopStyleColor (3);
     }
 
     void draw (float width, float height)
@@ -887,76 +584,109 @@ private:
         style.ItemSpacing = ImVec2 (8.0f, 6.0f);
         style.Colors[ImGuiCol_Button] = colour (0x2b2c35ff);
         style.Colors[ImGuiCol_ButtonHovered] = colour (0x393b47ff);
-        style.Colors[ImGuiCol_ButtonActive] = colour (0x4b3f66ff);
+        style.Colors[ImGuiCol_ButtonActive] = colour (0x4a4c5aff);
         style.Colors[ImGuiCol_FrameBg] = colour (0x292a33ff);
         style.Colors[ImGuiCol_FrameBgHovered] = colour (0x32343eff);
         style.Colors[ImGuiCol_FrameBgActive] = colour (0x373944ff);
-        style.Colors[ImGuiCol_Header] = colour (0x4b3f66ff);
-        style.Colors[ImGuiCol_HeaderHovered] = colour (0x5a4880ff);
-        style.Colors[ImGuiCol_PopupBg] = colour (0x20212aff);
-        style.Colors[ImGuiCol_Border] = colour (0x3a3b46ff);
-        style.Colors[ImGuiCol_Text] = colour (0xe6e5eaff);
-        style.Colors[ImGuiCol_TextDisabled] = colour (0x8f909aff);
+        style.Colors[ImGuiCol_Header] = colour (0x393b47ff);
+        style.Colors[ImGuiCol_HeaderHovered] = colour (0x4a4c5aff);
+        style.Colors[ImGuiCol_PopupBg] = colour (notepad::kStagePalette.shell);
+        style.Colors[ImGuiCol_Border] = colour (notepad::kStagePalette.rule);
+        style.Colors[ImGuiCol_Text] = colour (notepad::kStagePalette.lyric);
+        style.Colors[ImGuiCol_TextDisabled] = colour (notepad::kStagePalette.muted);
 
         ImGui::SetNextWindowPos (ImVec2 (0.0f, 0.0f));
         ImGui::SetNextWindowSize (ImVec2 (width, height));
         ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (0.0f, 0.0f));
-        ImGui::PushStyleColor (ImGuiCol_WindowBg, colour (0x181920ff));
+        ImGui::PushStyleColor (ImGuiCol_WindowBg, colour (notepad::kStagePalette.shell));
         ImGui::Begin ("Session Notepad", nullptr,
                       ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove
-                      | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar);
+                      | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar
+                      | ImGuiWindowFlags_NoScrollWithMouse);
 
         ImGui::SetCursorPos (ImVec2 (22.0f, 14.0f));
         ImGui::TextUnformatted ("SESSION NOTEPAD");
         ImGui::SetCursorPos (ImVec2 (22.0f, 34.0f));
-        ImGui::PushStyleColor (ImGuiCol_Text, colour (0x92939dff));
+        ImGui::PushStyleColor (ImGuiCol_Text, colour (notepad::kStagePalette.muted));
         ImGui::TextUnformatted ("Lyrics and session notes");
         ImGui::PopStyleColor();
 
-        ImGui::SetCursorPos (ImVec2 (width - 210.0f, 16.0f));
-        if (drawGlyphToggle ("##page-theme", darkDocumentPage, "☀", "☾",
-                             "Light page / Dark page", 82.0f))
+        ImGui::SetCursorPos (ImVec2 (width - 90.0f, 16.0f));
+        if (ImGui::Button ("Done", ImVec2 (68.0f, 30.0f)))
+            close();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip ("Close the notepad; changes stay with this session");
+
+        // The status bar is a line of text plus its own padding: sizing it by a
+        // constant left it a few pixels short of a full line once the child
+        // asked for that padding, and it clipped its own glyphs.
+        const auto statusPadding = 6.0f;
+        const auto statusHeight = ImGui::GetTextLineHeight() + statusPadding * 2.0f;
+        const auto bands = notepad::layoutChrome (height, kHeaderHeight, kRibbonHeight,
+                                                  statusHeight);
+
+        const auto ribbonTop = bands.header;
+        const auto chartTop = ribbonTop + bands.ribbon;
+        const auto statusTop = chartTop + bands.chart;
+        if (bands.ribbon > 0.0f)
         {
-            darkDocumentPage = ! darkDocumentPage;
-            editor.setDarkPage (darkDocumentPage);
+            ImGui::SetCursorPos (ImVec2 (0.0f, ribbonTop));
+            drawRibbon (bands.ribbon);
         }
-        ImGui::SameLine (0.0f, 5.0f);
-        if (drawGlyphToggle ("##editor-mode", markdownMode, "▤", "M↓",
-                             "Document / Markdown", 100.0f))
-            setMode (! markdownMode);
+        if (bands.chart > 0.0f)
+        {
+            ImGui::SetCursorPos (ImVec2 (0.0f, chartTop));
+            drawEditor (bands.chart);
+        }
 
-        ImGui::SetCursorPosY (62.0f);
-        drawRibbon();
+        if (bands.status > 0.0f)
+        {
+            ImGui::SetCursorPos (ImVec2 (0.0f, statusTop));
+            ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (notepad::kStagePalette.shell));
+            ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (18.0f, statusPadding));
+            ImGui::BeginChild ("status", ImVec2 (0.0f, bands.status),
+                               ImGuiChildFlags_AlwaysUseWindowPadding,
+                               ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+            ImGui::PushStyleColor (ImGuiCol_Text,
+                                  saveFailed ? colour (0xe48a8aff) : colour (notepad::kStagePalette.muted));
+            const char* saveState = saveFailed
+                                  ? "Save failed, the notes are still unsaved"
+                                  : documentDirty && hasSessionFile
+                                      ? "Unsaved changes, saved when this closes"
+                                  : documentDirty
+                                      ? "Unsaved changes, save the session to keep them"
+                                  : hasSessionFile ? "Saved with the session"
+                                                   : "Untitled session, saves on first save";
+            ImGui::TextUnformatted (saveState);
+            if (! savedAtLabel.empty() && ! documentDirty && ! saveFailed)
+            {
+                ImGui::SameLine (0.0f, 6.0f);
+                ImGui::TextUnformatted (savedAtLabel.c_str());
+            }
+            ImGui::SameLine (0.0f, 8.0f);
+            ImGui::TextUnformatted ("notepad.md");
+            ImGui::PopStyleColor();
 
-        const float statusHeight = 28.0f;
-        // Tiling WMs can ignore the minimum-size hint; never hand a negative
-        // extent to the editor child.
-        drawEditor (std::max (0.0f, height - 62.0f - 62.0f - statusHeight));
-
-        ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (0x181920ff));
-        ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (18.0f, 6.0f));
-        ImGui::BeginChild ("status", ImVec2 (0.0f, statusHeight), false,
-                           ImGuiWindowFlags_NoScrollbar);
-        ImGui::PushStyleColor (ImGuiCol_Text,
-                              saveFailed ? colour (0xe48a8aff) : colour (0x8f909aff));
-        const char* saveState = saveFailed ? "Save failed - changes are still unsaved"
-                              : documentDirty && hasSessionFile
-                                  ? "Unsaved changes - saved when closed"
-                              : documentDirty
-                                  ? "Unsaved changes - save the session to keep them"
-                              : hasSessionFile ? "Saved with session  |  notepad.md"
-                                               : "Untitled session - saves on first session save";
-        ImGui::TextUnformatted (saveState);
-        const auto summary = std::to_string (document.wordCount()) + " words  |  "
-                           + std::to_string (document.documentText().size()) + " characters  |  "
-                           + (markdownMode ? "Markdown" : "Document");
-        const auto summaryWidth = ImGui::CalcTextSize (summary.c_str()).x;
-        ImGui::SameLine (std::max (300.0f, width - summaryWidth - 20.0f));
-        ImGui::TextUnformatted (summary.c_str());
-        ImGui::PopStyleColor();
-        ImGui::EndChild();
-        ImGui::PopStyleVar();
-        ImGui::PopStyleColor();
+            // What a songwriter wants from a glance: how the song is built, what it
+            // is built from, and what it is in.
+            const auto chordNames = document.uniqueChordNames();
+            const auto key = notepad::chords::detectKey (chordNames);
+            const auto sections = document.sectionCount();
+            std::string summary = std::to_string (sections)
+                                + (sections == 1 ? " section" : " sections") + "  |  ";
+            summary += std::to_string (chordNames.size())
+                     + (chordNames.size() == 1 ? " chord" : " chords");
+            if (! key.empty())
+                summary += "  |  key of " + key;
+            ImGui::PushStyleColor (ImGuiCol_Text, colour (notepad::kStagePalette.muted));
+            const auto summaryWidth = ImGui::CalcTextSize (summary.c_str()).x;
+            ImGui::SameLine (std::max (300.0f, width - summaryWidth - 20.0f));
+            ImGui::TextUnformatted (summary.c_str());
+            ImGui::PopStyleColor();
+            ImGui::EndChild();
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor();
+        }
 
         ImGui::End();
         ImGui::PopStyleColor();
@@ -969,7 +699,6 @@ private:
     NotepadDocument document;
     notepad::UndoStack history;
     NotepadEditor editor { document, history };
-    EditorBuffer buffer;
     TextChangedCallback onTextChanged;
     ClosedCallback onClosed;
     LinkOpenedCallback onLinkOpened;
@@ -978,13 +707,10 @@ private:
     ImFont* italicFont = nullptr;
     ImFont* boldItalicFont = nullptr;
     ImFont* monoFont = nullptr;
-    std::array<char, 384> linkUrl {};
     std::optional<std::string> savedMarkdown;
-    bool markdownMode = false;
-    bool darkDocumentPage = true;
+    std::string savedAtLabel;
     bool closeRequested = false;
     bool closeWasPumped = false;
-    bool focusEditorNextFrame = false;
     bool hasSessionFile = false;
     bool documentDirty = false;
     bool saveFailed = false;

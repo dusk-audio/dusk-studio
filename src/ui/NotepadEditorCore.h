@@ -62,6 +62,25 @@ bool isList (NotepadDocument::BlockStyle block) noexcept;
 float blockFontSize (NotepadDocument::BlockStyle block, float bodySize) noexcept;
 float blockRowHeight (NotepadDocument::BlockStyle block, float bodySize) noexcept;
 float blockIndent (NotepadDocument::BlockStyle block) noexcept;
+// Height of the chord band drawn above a row that carries chords.
+float chordBandHeight (float bodySize) noexcept;
+
+// Vertical bands of the panel. The chrome keeps its stated heights and the
+// chart absorbs whatever is left, so a band can never be handed a fraction of
+// a line and clip its own text mid-glyph. When even the chrome cannot fit, the
+// bands shrink from the bottom rather than overflowing the window.
+struct ChromeBands
+{
+    float header = 0.0f;
+    float ribbon = 0.0f;
+    float chart = 0.0f;
+    float status = 0.0f;
+
+    float total() const noexcept { return header + ribbon + chart + status; }
+};
+
+ChromeBands layoutChrome (float windowHeight, float headerHeight, float ribbonHeight,
+                          float statusHeight) noexcept;
 
 // Width of documentText()[begin, end) drawn at fontSize inside a block of the
 // given style. The renderer supplies the font metrics; the layout math stays
@@ -82,6 +101,9 @@ struct Row
     float indent = 0.0f;
     bool firstRowOfLine = false;
     bool lastRowOfLine = false;
+    // Band reserved above the text for the row's chords, part of height. Zero
+    // on rows without chords, so a lyric sheet only pays for the lines it uses.
+    float chordTop = 0.0f;
 };
 
 struct Layout
@@ -96,8 +118,12 @@ struct Layout
     std::size_t rowAtY (float y) const noexcept;
 };
 
+// pendingChordAnchor reserves the chord band on the row that is about to
+// receive a chord, so the open slot pushes the lyric down exactly like a
+// committed chord does. npos when no slot is open.
 Layout buildLayout (const NotepadDocument& document, float width, float bodySize,
-                    const MeasureFn& measure);
+                    const MeasureFn& measure,
+                    std::size_t pendingChordAnchor = std::string::npos);
 float offsetX (const NotepadDocument& document, const Row& row, std::size_t offset,
                float bodySize, const MeasureFn& measure);
 std::size_t offsetAtX (const NotepadDocument& document, const Row& row, float localX,

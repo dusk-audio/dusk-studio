@@ -93,6 +93,21 @@ NativeNotepadWindow::EmbeddedGeometry notepadGeometryFor (const juce::Component&
         scaleFactor
     };
 }
+
+// notepadGeometryFor's logical twin: where the embedded child lands in
+// target's coordinates, for the dim overlay's click-outside test. One pixel of
+// slack absorbs the rounding between the two.
+auto notepadChildArea (const juce::Component& target, const juce::Component& topLevel)
+{
+    const auto width  = std::min (topLevel.getWidth() - 32,
+                                  (int) NativeNotepadWindow::kPreferredWidth);
+    const auto height = std::min (topLevel.getHeight() - 32,
+                                  (int) NativeNotepadWindow::kPreferredHeight);
+    return target.getLocalArea (&topLevel,
+                                topLevel.getLocalBounds()
+                                    .withSizeKeepingCentre (width, height))
+        .expanded (1);
+}
 #endif
 
 // Shared helpers for the file-import flow (both menu-driven and
@@ -1894,8 +1909,14 @@ void MainComponent::resized()
 
    #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
     if (notepadWindow != nullptr && notepadWindow->isOpen())
+    {
         if (auto* const topLevel = getTopLevelComponent())
+        {
             notepadWindow->setEmbeddedGeometry (notepadGeometryFor (*topLevel));
+            if (notepadDim != nullptr)
+                notepadDim->setNativeChildArea (notepadChildArea (*this, *topLevel));
+        }
+    }
    #endif
 }
 
@@ -5327,6 +5348,7 @@ void MainComponent::toggleNotepad()
     // sequence above.
     notepadDim = std::make_unique<DimOverlay> (0.80f);
     notepadDim->setBounds (getLocalBounds());
+    notepadDim->setNativeChildArea (notepadChildArea (*this, *topLevel));
     notepadDim->onClick = [safeThis]
     {
         if (auto* self = safeThis.getComponent())

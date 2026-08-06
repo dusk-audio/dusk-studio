@@ -17,12 +17,20 @@ void DimOverlay::paint (juce::Graphics& g)
     g.fillAll (juce::Colours::black.withAlpha (fillAlpha));
 }
 
-void DimOverlay::mouseDown (const juce::MouseEvent&)
+void DimOverlay::mouseDown (const juce::MouseEvent& e)
 {
+    if (nativeChildArea.contains (e.getPosition()))
+        return;
+
     // Local copy BEFORE invoking - the handler may destroy this overlay
     // (and with it the member std::function) mid-call. Same idiom as
     // EmbeddedModal's dim onClick.
     if (auto cb = onClick) cb();
+}
+
+void DimOverlay::setNativeChildArea (juce::Rectangle<int> area)
+{
+    nativeChildArea = area;
 }
 
 void DimOverlay::parentSizeChanged()

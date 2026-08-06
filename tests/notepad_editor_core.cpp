@@ -237,6 +237,49 @@ TEST_CASE ("Notepad editor layout wraps body text at the content width",
         CHECK (layout.rows[i].start == layout.rows[i - 1].end);
 }
 
+TEST_CASE ("Notepad editor layout reserves a band only on rows with chords",
+           "[notepad][editor][layout][chords]")
+{
+    NotepadDocument document;
+    document.setMarkdown ("[Am]alpha\nbeta");
+
+    const auto layout = notepad::buildLayout (document, 400.0f, 10.0f,
+                                              fixedAdvance (2.0f, 10.0f));
+
+    REQUIRE (layout.rows.size() == 2);
+    CHECK (layout.rows[0].chordTop == notepad::chordBandHeight (10.0f));
+    CHECK (layout.rows[1].chordTop == 0.0f);
+    CHECK (layout.rows[0].height == layout.rows[1].height + layout.rows[0].chordTop);
+    // The band is part of the row, so the following row starts below it.
+    CHECK (layout.rows[1].y == layout.rows[0].y + layout.rows[0].height);
+
+    SECTION ("an open chord slot reserves the same band before it is committed")
+    {
+        NotepadDocument plain;
+        plain.setMarkdown ("alpha\nbeta");
+
+        const auto pending = notepad::buildLayout (plain, 400.0f, 10.0f,
+                                                   fixedAdvance (2.0f, 10.0f), 0);
+        REQUIRE (pending.rows.size() == 2);
+        CHECK (pending.rows[0].chordTop == notepad::chordBandHeight (10.0f));
+        CHECK (pending.rows[1].chordTop == 0.0f);
+    }
+
+    SECTION ("a chord on a soft-wrapped row bands only that row")
+    {
+        NotepadDocument wrapped;
+        wrapped.setMarkdown ("aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii [C]jjjj");
+
+        // 10 units per byte against 400 units of content: the line wraps before
+        // the chord, which must band the second row only.
+        const auto rows = notepad::buildLayout (wrapped, 400.0f, 10.0f,
+                                                fixedAdvance (10.0f, 10.0f)).rows;
+        REQUIRE (rows.size() == 2);
+        CHECK (rows[0].chordTop == 0.0f);
+        CHECK (rows[1].chordTop > 0.0f);
+    }
+}
+
 TEST_CASE ("Notepad editor layout gives headings their own metrics",
            "[notepad][editor][layout]")
 {
@@ -449,4 +492,33 @@ TEST_CASE ("Notepad editor undo history is bounded", "[notepad][editor][undo]")
     notepad::Snapshot restored;
     REQUIRE (history.undo ({ "current", { 0, 0 }, false }, restored));
     CHECK (restored.markdown.size() == notepad::UndoStack::kMaxEntries + 19);
+}
+
+TEST_CASE ("Notepad chrome bands fit inside the window", "[notepad][editor][layout]")
+{
+    const auto bands = notepad::layoutChrome (700.0f, 62.0f, 62.0f, 28.0f);
+    CHECK (bands.header == 62.0f);
+    CHECK (bands.ribbon == 62.0f);
+    CHECK (bands.status == 28.0f);
+    CHECK (bands.chart == 548.0f);
+    CHECK_THAT (bands.total(), Catch::Matchers::WithinAbs (700.0f, 1e-4));
+
+    SECTION ("the chart absorbs the shortfall before any chrome is cut")
+    {
+        const auto tight = notepad::layoutChrome (160.0f, 62.0f, 62.0f, 28.0f);
+        CHECK (tight.status == 28.0f);
+        CHECK (tight.chart == 8.0f);
+        CHECK_THAT (tight.total(), Catch::Matchers::WithinAbs (160.0f, 1e-4));
+    }
+
+    SECTION ("a window too small for the chrome never overflows it")
+    {
+        for (const auto height : { 0.0f, 30.0f, 100.0f, 151.9f })
+        {
+            const auto bands = notepad::layoutChrome (height, 62.0f, 62.0f, 28.0f);
+            CHECK (bands.chart >= 0.0f);
+            CHECK (bands.status >= 0.0f);
+            CHECK (bands.total() <= height + 1e-4f);
+        }
+    }
 }

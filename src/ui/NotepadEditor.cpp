@@ -1,9 +1,13 @@
 #include "NotepadEditor.h"
+#include "NotepadChords.h"
+#include "NotepadTheme.h"
 
 #include <DearImGui/imgui_internal.h>
 
 #include <algorithm>
+#include <array>
 #include <cfloat>
+#include <cctype>
 #include <cmath>
 
 namespace duskstudio
@@ -12,7 +16,9 @@ namespace
 {
 constexpr float kScrollbarWidth = 10.0f;
 constexpr float kWheelStep = 42.0f;
-constexpr char kLinkPlaceholder[] = "Link text";
+// The chord grammar refuses a token longer than this, so the draft cannot grow
+// past what a commit would accept.
+constexpr std::size_t kMaxChordDraftBytes = 16;
 
 ImU32 colourOf (unsigned int hex)
 {
@@ -25,6 +31,18 @@ ImU32 colourOf (unsigned int hex)
 float scrollThumbHeight (float viewport, float content)
 {
     return std::max (28.0f, viewport * viewport / std::max (1.0f, content));
+}
+
+bool hasPrefixIgnoringCase (const std::string& text, const std::string& prefix) noexcept
+{
+    if (prefix.size() > text.size())
+        return false;
+    return std::equal (prefix.begin(), prefix.end(), text.begin(),
+                       [] (char a, char b)
+                       {
+                           return std::tolower (static_cast<unsigned char> (a))
+                                == std::tolower (static_cast<unsigned char> (b));
+                       });
 }
 } // namespace
 
@@ -116,7 +134,8 @@ void NotepadEditor::ensureLayout (float width, float bodySize)
         && std::abs (bodySize - layoutBodySize) < 0.01f)
         return;
 
-    layout = notepad::buildLayout (document, width, bodySize, measure);
+    layout = notepad::buildLayout (document, width, bodySize, measure,
+                                   chordEditing ? chordAnchor : std::string::npos);
     layoutWidth = width;
     layoutBodySize = bodySize;
     layoutDirty = false;
@@ -214,6 +233,19 @@ void NotepadEditor::selectAll()
     sticky = {};
     scrollToCaret = true;
     history.breakRun();
+}
+
+float NotepadEditor::caretViewportOffset() const noexcept
+{
+    if (layout.rows.empty())
+        return 0.0f;
+    return layout.rows[layout.rowForOffset (caret, caretAtRowEnd)].y - scrollY;
+}
+
+void NotepadEditor::keepCaretAtViewportOffset (float offset) noexcept
+{
+    pendingCaretViewport = offset;
+    caretViewportPending = true;
 }
 
 void NotepadEditor::keepCaretVisible (float viewportHeight, float bodySize)
@@ -420,32 +452,6 @@ void NotepadEditor::applyBlockStyle (NotepadDocument::BlockStyle style)
     documentMutated();
 }
 
-void NotepadEditor::insertLink (const std::string& url)
-{
-    auto target = selection();
-    auto before = snapshot();
-
-    if (target.empty())
-    {
-        auto text = document.documentText();
-        text.insert (target.start, kLinkPlaceholder);
-        if (! document.replaceDocumentText (text))
-        {
-            reset (target);
-            return;
-        }
-        target.end = target.start + sizeof (kLinkPlaceholder) - 1;
-    }
-
-    document.wrapDocumentSelection (
-        target, "[", "](" + notepad::encodeMarkdownLinkTarget (url) + ")");
-    history.record (notepad::EditKind::structural, std::move (before), target.end);
-    setSelection (target);
-    sticky = {};
-    focusRequested = true;
-    documentMutated();
-}
-
 bool NotepadEditor::inlineStyleActive (NotepadDocument::InlineStyle style) const
 {
     if (sticky.active && selection().empty())
@@ -527,6 +533,30 @@ void NotepadEditor::handleMouse (ImVec2 frameMin, ImVec2 frameMax, bool hovered,
             return;
         }
 
+        // A click in the chord band edits the chord it landed on instead of
+        // moving the caret into the lyric underneath.
+        const auto rowTop = frameMin.y + row.y - scrollY;
+        if (clicks == 1 && row.chordTop > 0.0f && io.MousePos.y < rowTop + row.chordTop)
+        {
+            const auto over = notepad::offsetAtX (document, row,
+                                                  io.MousePos.x - frameMin.x - row.indent,
+                                                  bodySize, measure);
+            for (const auto& chord : document.chords())
+            {
+                if (chord.documentOffset < row.start
+                    || chord.documentOffset > row.end
+                    || (chord.documentOffset == row.end && ! row.lastRowOfLine))
+                    continue;
+                const auto reach = chord.documentOffset + chord.name.size();
+                if (over >= chord.documentOffset && over <= reach)
+                {
+                    moveCaret (chord.documentOffset, false);
+                    beginChordEntry();
+                    return;
+                }
+            }
+        }
+
         const auto offset = hitTest (io.MousePos, frameMin, bodySize);
         if (clicks == 1 && (io.KeyCtrl || io.KeySuper) && offset < text.size())
         {
@@ -579,6 +609,9 @@ void NotepadEditor::handleMouse (ImVec2 frameMin, ImVec2 frameMax, bool hovered,
 
 void NotepadEditor::handleKeyboard (float viewportHeight, float bodySize)
 {
+    if (handleChordEntry())
+        return;
+
     auto& io = ImGui::GetIO();
     const auto& text = document.documentText();
     const bool acceptsText = notepad::acceptsTextInput (io.KeyCtrl, io.KeyAlt, io.KeySuper);
@@ -607,6 +640,16 @@ void NotepadEditor::handleKeyboard (float viewportHeight, float bodySize)
     if (command && ImGui::IsKeyPressed (ImGuiKey_A, false))
     {
         selectAll();
+        return;
+    }
+    if (command && shift && ImGui::IsKeyPressed (ImGuiKey_K, false))
+    {
+        repeatPreviousChord();
+        return;
+    }
+    if (command && ImGui::IsKeyPressed (ImGuiKey_K, false))
+    {
+        beginChordEntry();
         return;
     }
     if (command && ImGui::IsKeyPressed (ImGuiKey_B, false))
@@ -726,19 +769,258 @@ void NotepadEditor::handleKeyboard (float viewportHeight, float bodySize)
     }
 }
 
+void NotepadEditor::beginChordEntry()
+{
+    // Chords land on syllables, so the slot anchors on the word under the
+    // caret rather than the caret itself: click anywhere in "morning" and the
+    // chord sits over its first letter.
+    chordAnchor = chordAnchorAtCaret();
+    chordDraft = document.chordAt (chordAnchor);
+    refreshChordCandidates();
+    chordCandidateIndex = 0;
+    chordSuggestionAccepted = false;
+    chordEditing = true;
+    layoutDirty = true;
+    resetBlink();
+}
+
+std::size_t NotepadEditor::chordAnchorAtCaret() const
+{
+    const auto& text = document.documentText();
+    const auto word = notepad::wordAt (text, caret);
+    return word.start < word.end ? word.start : caret;
+}
+
+void NotepadEditor::refreshChordCandidates()
+{
+    auto candidates = document.uniqueChordNames();
+    constexpr std::array<const char*, 12> sharpRoots {
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
+    };
+    constexpr std::array<const char*, 12> flatRoots {
+        "C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"
+    };
+    const auto& roots = document.prefersFlats() ? flatRoots : sharpRoots;
+    for (const auto* const root : roots)
+    {
+        candidates.emplace_back (root);
+        candidates.emplace_back (std::string (root) + "m");
+        candidates.emplace_back (std::string (root) + "dim");
+    }
+    const auto key = notepad::chords::detectKey (document.uniqueChordNames());
+    chordCandidates = notepad::chords::rankCandidates (std::move (candidates), key);
+}
+
+std::vector<const std::string*> NotepadEditor::matchingChordCandidates() const
+{
+    std::vector<const std::string*> matches;
+    if (chordDraft.empty())
+        return matches;
+
+    for (const auto& candidate : chordCandidates)
+        if (hasPrefixIgnoringCase (candidate, chordDraft))
+            matches.push_back (&candidate);
+    return matches;
+}
+
+const std::string* NotepadEditor::selectedChordCandidate() const
+{
+    const auto matches = matchingChordCandidates();
+    return matches.empty() ? nullptr : matches[chordCandidateIndex % matches.size()];
+}
+
+bool NotepadEditor::cycleChordCandidate (int direction)
+{
+    const auto matches = matchingChordCandidates();
+    if (! chordEditing || matches.empty() || direction == 0)
+        return false;
+
+    const auto count = matches.size();
+    if (direction < 0)
+        chordCandidateIndex = (chordCandidateIndex + count - 1) % count;
+    else
+        chordCandidateIndex = (chordCandidateIndex + 1) % count;
+    chordSuggestionAccepted = false;
+    return true;
+}
+
+bool NotepadEditor::acceptChordCandidate()
+{
+    const auto* const candidate = selectedChordCandidate();
+    if (! chordEditing || candidate == nullptr)
+        return false;
+
+    chordDraft = *candidate;
+    chordCandidateIndex = 0;
+    chordSuggestionAccepted = true;
+    return true;
+}
+
+void NotepadEditor::insertSectionMarker (const std::string& label)
+{
+    auto before = snapshot();
+    if (! document.insertSectionMarker (selection().start, label))
+        return;
+
+    const auto caretShift = label.size() + (document.isSourceMode() ? 3u : 1u);
+    caret = anchor = std::min (caret + caretShift, document.documentText().size());
+    history.breakRun();
+    history.record (notepad::EditKind::structural, std::move (before), caret);
+    focusRequested = true;
+    documentMutated();
+}
+
+void NotepadEditor::removeSectionMarker()
+{
+    const auto target = selection().start;
+    const auto lineStart = notepad::lineStartOffset (document.documentText(), target);
+    auto before = snapshot();
+    if (! document.removeSectionMarker (target))
+        return;
+
+    caret = anchor = std::min (lineStart, document.documentText().size());
+    history.breakRun();
+    history.record (notepad::EditKind::structural, std::move (before), caret);
+    focusRequested = true;
+    documentMutated();
+}
+
+void NotepadEditor::commitChordEntry()
+{
+    const auto before = snapshot();
+    const bool documentChanged = document.setChordAt (chordAnchor, chordDraft);
+    if (! documentChanged && ! chordDraft.empty())
+        return;
+
+    if (documentChanged)
+    {
+        history.breakRun();
+        history.record (notepad::EditKind::structural, before, caret);
+        documentMutated();
+    }
+    chordEditing = false;
+    chordDraft.clear();
+    chordCandidates.clear();
+    chordCandidateIndex = 0;
+    chordSuggestionAccepted = false;
+    layoutDirty = true;
+}
+
+void NotepadEditor::repeatPreviousChord()
+{
+    const auto target = chordAnchorAtCaret();
+    const auto before = snapshot();
+    if (! document.repeatPreviousChordAt (target))
+        return;
+
+    history.breakRun();
+    history.record (notepad::EditKind::structural, before, caret);
+    documentMutated();
+}
+
+bool NotepadEditor::handleChordEntry()
+{
+    if (! chordEditing)
+        return false;
+
+    auto& io = ImGui::GetIO();
+    if (ImGui::IsKeyPressed (ImGuiKey_Escape))
+    {
+        chordEditing = false;
+        chordDraft.clear();
+        chordCandidates.clear();
+        chordCandidateIndex = 0;
+        chordSuggestionAccepted = false;
+        layoutDirty = true;
+        io.InputQueueCharacters.resize (0);
+        return true;
+    }
+    const auto matches = matchingChordCandidates();
+    if (! matches.empty()
+        && (ImGui::IsKeyPressed (ImGuiKey_UpArrow)
+            || ImGui::IsKeyPressed (ImGuiKey_DownArrow)))
+    {
+        cycleChordCandidate (ImGui::IsKeyPressed (ImGuiKey_UpArrow) ? -1 : 1);
+        io.InputQueueCharacters.resize (0);
+        resetBlink();
+        return true;
+    }
+    if (! matches.empty() && ImGui::IsKeyPressed (ImGuiKey_Tab))
+    {
+        acceptChordCandidate();
+        io.InputQueueCharacters.resize (0);
+        resetBlink();
+        return true;
+    }
+    if (ImGui::IsKeyPressed (ImGuiKey_Enter) || ImGui::IsKeyPressed (ImGuiKey_KeypadEnter))
+    {
+        if (! chordDraft.empty() && ! matches.empty()
+            && ! notepad::chords::isChord (chordDraft))
+            chordDraft = *matches[chordCandidateIndex % matches.size()];
+        commitChordEntry();
+        io.InputQueueCharacters.resize (0);
+        return true;
+    }
+    bool draftChanged = false;
+    if (ImGui::IsKeyPressed (ImGuiKey_Backspace) && ! chordDraft.empty())
+    {
+        chordDraft.resize (notepad::previousOffset (chordDraft, chordDraft.size()));
+        draftChanged = true;
+    }
+
+    for (int i = 0; i < io.InputQueueCharacters.Size; ++i)
+    {
+        const auto character = static_cast<unsigned int> (io.InputQueueCharacters[i]);
+        if (character < 0x20u || character == 0x7fu)
+            continue;
+        std::string candidate;
+        notepad::appendUtf8 (candidate, character);
+        if (chordDraft.size() + candidate.size() <= kMaxChordDraftBytes)
+        {
+            chordDraft += candidate;
+            draftChanged = true;
+        }
+    }
+    if (draftChanged)
+    {
+        chordCandidateIndex = 0;
+        chordSuggestionAccepted = false;
+    }
+    io.InputQueueCharacters.resize (0);
+    resetBlink();
+    return true;
+}
+
+void NotepadEditor::transposeChords (int semitones)
+{
+    if (! document.hasChords() || semitones == 0)
+        return;
+
+    const auto before = snapshot();
+    document.transposeChords (semitones, document.prefersFlats());
+    history.breakRun();
+    history.record (notepad::EditKind::structural, before, caret);
+    documentMutated();
+}
+
 void NotepadEditor::render (ImVec2 frameMin, ImVec2 frameMax, float bodySize, bool active) const
 {
     auto* const drawList = ImGui::GetWindowDrawList();
     const auto& text = document.documentText();
     const auto target = selection();
 
-    const auto textColour = colourOf (darkPage ? 0xe7e8edff : 0x24242aff);
-    const auto mutedColour = colourOf (darkPage ? 0xa9abb5ff : 0x67656dff);
-    const auto linkColour = colourOf (darkPage ? 0x8eb4ffff : 0x315fbdff);
-    const auto codeColour = colourOf (darkPage ? 0xd5a4f0ff : 0x5e367cff);
-    const auto selectionColour = colourOf (darkPage ? 0x516aa6cc : 0xb9c8f0cc);
-    const auto codeBackground = colourOf (darkPage ? 0x34313fff : 0xebe6f1ff);
-    const auto accentColour = colourOf (darkPage ? 0xb28bd4ff : 0x8061a4ff);
+    const auto& theme = notepad::kStagePalette;
+    const auto textColour = colourOf (theme.lyric);
+    const auto mutedColour = colourOf (theme.muted);
+    // Links and code spans are demoted furniture: they read through weight and
+    // underline rather than a colour of their own, so the panel keeps exactly
+    // one accent and it belongs to the chord lane.
+    const auto linkColour = colourOf (theme.lyric);
+    const auto codeColour = colourOf (theme.lyric);
+    const auto selectionColour = colourOf (notepad::withAlpha (theme.muted, 0x66));
+    const auto codeBackground = colourOf (notepad::withAlpha (theme.rule, 0xcc));
+    const auto accentColour = colourOf (theme.muted);
+    const auto chordColour = colourOf (theme.chord);
 
     const bool caretVisible = active
         && std::fmod (ImGui::GetTime() - blinkStart, 1.06) < 0.56;
@@ -753,7 +1035,15 @@ void NotepadEditor::render (ImVec2 frameMin, ImVec2 frameMax, float bodySize, bo
             continue;
 
         const auto fontSize = notepad::blockFontSize (row.block, bodySize);
-        const float textY = rowY + std::max (0.0f, (row.height - fontSize) * 0.38f);
+        // The chord band is part of the row: everything below it - text,
+        // selection, markers, caret - hangs off textTop, not the row origin.
+        const float textTop = rowY + row.chordTop;
+        const float textHeight = row.height - row.chordTop;
+        // Inset from the row top by a share of the glyph size, not of the row:
+        // centring inside the row makes a heading's baseline depend on its row
+        // height, so the title jumped when the source view drew the same line
+        // at body metrics.
+        const float textY = textTop + fontSize * 0.17f;
         const float originX = frameMin.x + row.indent;
 
         const auto selectedStart = std::max (target.start, row.start);
@@ -769,7 +1059,7 @@ void NotepadEditor::render (ImVec2 frameMin, ImVec2 frameMax, float bodySize, bo
             const auto x2 = originX + notepad::offsetX (document, row, selectedEnd,
                                                         bodySize, measure)
                           + (newlineSelected ? 6.0f : 0.0f);
-            drawList->AddRectFilled (ImVec2 (x1, rowY + 1.0f),
+            drawList->AddRectFilled (ImVec2 (x1, textTop + 1.0f),
                                      ImVec2 (std::max (x1 + 2.0f, x2), rowY + row.height - 1.0f),
                                      selectionColour, 2.0f);
         }
@@ -777,9 +1067,9 @@ void NotepadEditor::render (ImVec2 frameMin, ImVec2 frameMax, float bodySize, bo
         if (row.firstRowOfLine)
         {
             const float markerRight = originX - 9.0f;
-            const float markerY = rowY + row.height * 0.53f;
+            const float markerY = textTop + textHeight * 0.53f;
             if (row.block == NotepadDocument::BlockStyle::quote)
-                drawList->AddRectFilled (ImVec2 (frameMin.x + 3.0f, rowY + 1.0f),
+                drawList->AddRectFilled (ImVec2 (frameMin.x + 3.0f, textTop + 1.0f),
                                          ImVec2 (frameMin.x + 6.0f, rowY + row.height - 1.0f),
                                          accentColour, 1.0f);
             else if (row.block == NotepadDocument::BlockStyle::bullets)
@@ -822,12 +1112,14 @@ void NotepadEditor::render (ImVec2 frameMin, ImVec2 frameMax, float bodySize, bo
             auto* const font = fontForStyle (style, row.block);
             const auto runWidth = measureRange (runStart, runEnd, fontSize, row.block);
             if (style.code)
-                drawList->AddRectFilled (ImVec2 (x - 2.0f, rowY + 2.0f),
+                drawList->AddRectFilled (ImVec2 (x - 2.0f, textTop + 2.0f),
                                          ImVec2 (x + runWidth + 2.0f, rowY + row.height - 2.0f),
                                          codeBackground, 2.0f);
             if (font != nullptr)
                 drawList->AddText (font, fontSize, ImVec2 (x, textY),
-                                   style.link ? linkColour : style.code ? codeColour : textColour,
+                                   row.lineInfo.section ? mutedColour
+                                   : style.link ? linkColour
+                                   : style.code ? codeColour : textColour,
                                    text.data() + runStart, text.data() + runEnd);
             if (style.link)
                 drawList->AddLine (ImVec2 (x, textY + fontSize + 1.0f),
@@ -837,10 +1129,98 @@ void NotepadEditor::render (ImVec2 frameMin, ImVec2 frameMax, float bodySize, bo
             runStart = runEnd;
         }
 
+        const bool slotOnThisRow = chordEditing && chordAnchor >= row.start
+                                && (chordAnchor < row.end
+                                    || (chordAnchor == row.end && row.lastRowOfLine));
+        if ((row.chordTop > 0.0f || slotOnThisRow) && fonts.bold != nullptr)
+        {
+            const auto chordSize = std::max (10.0f, bodySize
+                * (notepad::kTypeScale.chord / notepad::kTypeScale.lyric));
+            const float bandTop = rowY + std::max (row.chordTop,
+                                                   notepad::chordBandHeight (bodySize))
+                                - chordSize - 1.0f;
+            if (slotOnThisRow)
+            {
+                const auto slotX = originX
+                    + notepad::offsetX (document, row, std::min (chordAnchor, row.end),
+                                        bodySize, measure);
+                const auto* const suggestion = chordDraft.empty()
+                                             ? nullptr : selectedChordCandidate();
+                const auto preview = suggestion != nullptr ? *suggestion : chordDraft;
+                const auto display = "[" + preview + "]";
+                const auto width = std::max (26.0f,
+                                             fonts.bold->CalcTextSizeA (chordSize, FLT_MAX, 0.0f,
+                                                                        display.c_str()).x + 8.0f);
+                drawList->AddRectFilled (ImVec2 (slotX - 3.0f, bandTop - 2.0f),
+                                         ImVec2 (slotX + width, bandTop + chordSize + 2.0f),
+                                         codeBackground, 3.0f);
+                drawList->AddRect (ImVec2 (slotX - 3.0f, bandTop - 2.0f),
+                                   ImVec2 (slotX + width, bandTop + chordSize + 2.0f),
+                                   chordColour, 3.0f, 0, 1.2f);
+                const auto typed = "[" + chordDraft;
+                drawList->AddText (fonts.bold, chordSize, ImVec2 (slotX, bandTop),
+                                   chordColour, typed.c_str());
+                auto completionX = slotX
+                    + fonts.bold->CalcTextSizeA (chordSize, FLT_MAX, 0.0f, typed.c_str()).x;
+                if (preview.size() > chordDraft.size())
+                {
+                    const auto completion = preview.substr (chordDraft.size());
+                    drawList->AddText (fonts.bold, chordSize, ImVec2 (completionX, bandTop),
+                                       mutedColour, completion.c_str());
+                    completionX += fonts.bold->CalcTextSizeA (chordSize, FLT_MAX, 0.0f,
+                                                               completion.c_str()).x;
+                }
+                drawList->AddText (fonts.bold, chordSize, ImVec2 (completionX, bandTop),
+                                   chordColour, "]");
+                if (suggestion != nullptr)
+                {
+                    const auto matches = matchingChordCandidates();
+                    const auto position = chordCandidateIndex % matches.size() + 1;
+                    auto hint = chordSuggestionAccepted
+                              ? std::string ("Enter to place")
+                              : std::to_string (position) + "/"
+                                  + std::to_string (matches.size());
+                    if (! chordSuggestionAccepted)
+                    {
+                        if (matches.size() > 1)
+                            hint += "  Up/Down choose";
+                        hint += "  Tab use";
+                    }
+                    drawList->AddText (fonts.bold, std::max (9.0f, chordSize - 4.0f),
+                                       ImVec2 (slotX + width + 5.0f, bandTop + 2.0f),
+                                       mutedColour, hint.c_str());
+                }
+                if (caretVisible)
+                {
+                    const auto caretX = slotX
+                        + fonts.bold->CalcTextSizeA (chordSize, FLT_MAX, 0.0f,
+                                                     typed.c_str()).x + 1.0f;
+                    drawList->AddLine (ImVec2 (caretX, bandTop),
+                                       ImVec2 (caretX, bandTop + chordSize), chordColour, 1.2f);
+                }
+            }
+            for (const auto& chord : document.chords())
+            {
+                if (chordEditing && chord.documentOffset == chordAnchor)
+                    continue;
+                if (chord.documentOffset < row.start
+                    || (chord.documentOffset > row.end
+                        || (chord.documentOffset == row.end && ! row.lastRowOfLine)))
+                    continue;
+
+                const auto anchorX = originX
+                    + notepad::offsetX (document, row,
+                                        std::min (chord.documentOffset, row.end),
+                                        bodySize, measure);
+                drawList->AddText (fonts.bold, chordSize, ImVec2 (anchorX, bandTop),
+                                   chordColour, chord.name.c_str());
+            }
+        }
+
         if (caretVisible && rowIndex == caretRow)
         {
             const auto caretX = originX + notepad::offsetX (document, row, caret, bodySize, measure);
-            drawList->AddLine (ImVec2 (caretX, rowY + 2.0f),
+            drawList->AddLine (ImVec2 (caretX, textTop + 2.0f),
                                ImVec2 (caretX, rowY + row.height - 2.0f), textColour, 1.4f);
         }
     }
@@ -896,7 +1276,11 @@ void NotepadEditor::draw (float bodySize)
     // The page is the only text surface in the window, so it takes the caret
     // back once a toolbar button has finished with the active id - otherwise
     // every format button would cost the user a click to resume typing.
-    const bool reclaim = keepFocus && g.ActiveId == 0 && ! clicked;
+    // Reclaiming focus refocuses the host window, which dismisses any popup
+    // over it: a toolbar menu would open and shut on the same frame.
+    const bool popupOpen = ImGui::IsPopupOpen (nullptr, ImGuiPopupFlags_AnyPopupId
+                                                        | ImGuiPopupFlags_AnyPopupLevel);
+    const bool reclaim = keepFocus && g.ActiveId == 0 && ! clicked && ! popupOpen;
 
     if (focusRequested || reclaim || (hovered && clicked))
     {
@@ -928,6 +1312,12 @@ void NotepadEditor::draw (float bodySize)
         };
         for (const auto key : ownedKeys)
             ImGui::SetKeyOwner (key, id);
+        // The page holds the active id so typing survives a toolbar click, but
+        // ItemHoverable refuses to hover any other item while a foreign id is
+        // active. Without this the ribbon needed one click to drop the page's
+        // id and a second to actually press the button, and tooltips never
+        // appeared at all.
+        g.ActiveIdAllowOverlap = true;
         g.ActiveIdUsingNavDirMask |= (1u << ImGuiDir_Left) | (1u << ImGuiDir_Right)
                                    | (1u << ImGuiDir_Up) | (1u << ImGuiDir_Down);
         g.WantTextInputNextFrame = 1;
@@ -941,6 +1331,14 @@ void NotepadEditor::draw (float bodySize)
         handleKeyboard (size.y, bodySize);
     ensureLayout (size.x, bodySize);
 
+    if (caretViewportPending)
+    {
+        if (! layout.rows.empty())
+            scrollY = layout.rows[layout.rowForOffset (caret, caretAtRowEnd)].y
+                    - pendingCaretViewport;
+        caretViewportPending = false;
+        scrollToCaret = false;
+    }
     if (scrollToCaret)
     {
         keepCaretVisible (size.y, bodySize);
