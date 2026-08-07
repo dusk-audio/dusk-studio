@@ -6,7 +6,7 @@
 #include "McuReceiver.h"
 #include "McuController.h"
 #include "FaderBindingMap.h"
-#include "CompMakeupMap.h"
+#include "CompModeMap.h"
 #include "../session/RegionEditActions.h"
 #include "DeviceFallbackMessage.h"
 #include "../foundation/MessageThread.h"
@@ -124,15 +124,9 @@ static float currentFracForTarget (Session& session, const MidiBinding& b) noexc
         {
             if (b.targetIndex < 0 || b.targetIndex >= Session::kNumTracks) return -1.0f;
             const auto& s = session.track (b.targetIndex).strip;
-            const int mode = std::clamp (s.compMode.load (std::memory_order_relaxed), 0, 2);
-            if (b.target == MidiBindingTarget::TrackCompMakeup)
-                return comp::makeupBindingFrac (s);
-            switch (mode)
-            {
-                case 0:  return inv (s.compOptoPeakRed.load (std::memory_order_relaxed),   0.0f, 100.0f);
-                case 1:  return inv (s.compFetInput   .load (std::memory_order_relaxed), -20.0f,  40.0f);
-                default: return inv (s.compVcaThreshDb.load (std::memory_order_relaxed), -38.0f,  12.0f);
-            }
+            return b.target == MidiBindingTarget::TrackCompMakeup
+                       ? comp::makeupBindingFrac (s)
+                       : comp::thresholdBindingFrac (s);
         }
         case MidiBindingTarget::BusFader:
             if (b.targetIndex < 0 || b.targetIndex >= Session::kNumBuses) return -1.0f;
@@ -3756,34 +3750,19 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                         {
                             // Mode-aware: the strip exposes Opto / FET / VCA
                             // each with its own "threshold-ish" and "makeup-
-                            // ish" knob, on different ranges. Pick the atom
-                            // matching the CURRENT mode and remap CC 0..127
-                            // onto that range. A single binding therefore
-                            // tracks whatever mode the user has selected.
+                            // ish" knob, on different ranges. The comp map
+                            // remaps CC 0..127 onto the CURRENT mode's
+                            // domain, so a single binding tracks whatever
+                            // mode the user has selected.
                             if (b.targetIndex < 0 || b.targetIndex >= Session::kNumTracks)
                                 break;
                             auto& strip = session.track (b.targetIndex).strip;
-                            const int mode = std::clamp (
-                                strip.compMode.load (std::memory_order_relaxed), 0, 2);
-                            const bool isMakeup = (b.target == MidiBindingTarget::TrackCompMakeup);
-                            auto remap = [frac] (float lo, float hi)
-                            {
-                                return lo + frac * (hi - lo);
-                            };
-                            if (isMakeup)
-                            {
+                            if (b.target == MidiBindingTarget::TrackCompMakeup)
                                 comp::applyTrackCompMakeupDb (
                                     strip, comp::makeupBindingFracToDb (strip, frac));
-                            }
-                            else // threshold
-                            {
-                                switch (mode)
-                                {
-                                    case 0: strip.compOptoPeakRed.store (remap (0.0f, 100.0f), std::memory_order_relaxed); break;
-                                    case 1: strip.compFetInput.store    (remap (-20.0f, 40.0f), std::memory_order_relaxed); break;
-                                    case 2: strip.compVcaThreshDb.store (remap (-38.0f, 12.0f), std::memory_order_relaxed); break;
-                                }
-                            }
+                            else
+                                comp::applyTrackCompThresholdDb (
+                                    strip, comp::thresholdBindingFracToDb (strip, frac));
                             break;
                         }
                         case MidiBindingTarget::BusFader:

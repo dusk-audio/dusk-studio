@@ -1,6 +1,6 @@
 #include "ChannelCompEditor.h"
 #include "DuskStudioLookAndFeel.h"
-#include "../engine/CompMakeupMap.h"
+#include "../engine/CompModeMap.h"
 
 #include <algorithm>
 
@@ -40,35 +40,37 @@ void styleLabel (juce::Label& l, const juce::String& text)
     l.setFont (juce::Font (juce::FontOptions (11.0f, juce::Font::bold)));
 }
 
-// Per-mode attack / release knob ranges and log-skew midpoints. The hardware
-// reference units have very different timing characters: an 1176 spends most
-// of its useful attack travel in the 20 µs..1 ms region (impossible to dial
-// in on a linear slider), whereas a VCA-style mix-bus comp lives in the
-// 1..30 ms range. Without per-mode skew the bottom 80 % of the FET attack
-// knob is dead travel.
-void applyTimingRanges (juce::Slider& attack, juce::Slider& release, int mode)
+// Per-mode ratio knob range. FET's sweeps 1..20 to pick a rung on its ratio
+// switch; VCA's drives the donor param straight and has to reach 120:1, or
+// the surface and a binding can park the strip somewhere the knob clamps
+// away on the next touch.
+void applyRatioRange (juce::Slider& ratio, comp::Domain domain, int mode)
 {
-    switch (mode)
-    {
-        case 1:  // FET - 1176-shaped: 0.02..80 ms attack, 50..1100 ms release
-            attack .setRange (0.02, 80.0,   0.01);
-            attack .setSkewFactorFromMidPoint (0.8);    // midpoint = 0.8 ms (1176 sweet spot)
-            release.setRange (50.0, 1100.0, 1.0);
-            release.setSkewFactorFromMidPoint (200.0);
-            break;
+    if (mode == 0) return;   // OPTO hides the knob and has no ratio param
 
-        case 2:  // VCA - dbx/SSL-shaped: 0.1..50 ms attack, 10..5000 ms release
-            attack .setRange (0.1,  50.0,   0.01);
-            attack .setSkewFactorFromMidPoint (3.0);
-            release.setRange (10.0, 5000.0, 1.0);
-            release.setSkewFactorFromMidPoint (200.0);
-            break;
+    ratio.setRange (domain.lo, domain.hi, 0.01);
+    ratio.setSkewFactorFromMidPoint (mode == 1 ? 4.0 : 8.0);
+}
 
-        default:
-            // OPTO hides these knobs entirely; ranges left at the values
-            // styleKnob applied at construction.
-            break;
-    }
+// Per-mode attack / release knob ranges and log-skew midpoints. The ranges
+// are the comp map's; only the skew is a UI choice. The hardware reference
+// units have very different timing characters: an 1176 spends most of its
+// useful attack travel in the 20 µs..1 ms region (impossible to dial in on
+// a linear slider), whereas a VCA-style mix-bus comp lives in the 1..30 ms
+// range. Without per-mode skew the bottom 80 % of the FET attack knob is
+// dead travel.
+void applyTimingRanges (juce::Slider& attack, juce::Slider& release,
+                        comp::Domain attackDomain, comp::Domain releaseDomain,
+                        int mode)
+{
+    // OPTO hides these knobs entirely and has no timing params, so its
+    // empty domain never reaches a slider - ranges stay as constructed.
+    if (mode == 0) return;
+
+    attack .setRange (attackDomain.lo,  attackDomain.hi,  0.01);
+    attack .setSkewFactorFromMidPoint (mode == 1 ? 0.8 : 3.0);  // 0.8 ms = 1176 sweet spot
+    release.setRange (releaseDomain.lo, releaseDomain.hi, 1.0);
+    release.setSkewFactorFromMidPoint (200.0);
 }
 } // namespace
 
@@ -143,17 +145,18 @@ ChannelCompEditor::ChannelCompEditor (Track& t) : track (t)
     };
     addAndMakeVisible (vcaDetectorBtn);
 
+    // Construction ranges are the union across modes; refreshLabelsForMode
+    // narrows every one of them to the active mode's domain below.
     const auto gold = juce::Colour (fourKColors::kCompGold);
-    styleKnob (threshKnob,  gold, ChannelStripParams::kCompThreshMin,  ChannelStripParams::kCompThreshMax,  -12.0,  -24.0, " dB", 1);
-    // threshKnob stays hidden in the new layout - threshold (and the
-    // OPTO peak-reduction / FET input equivalents) are set via the
-    // triangle handle on the GR meter strip. The knob is kept as a
-    // backing value-source for syncKnobsFromMode / writeThresholdToMode
-    // but never added to the visible component tree.
-    styleKnob (ratioKnob,   gold, ChannelStripParams::kCompRatioMin,   ChannelStripParams::kCompRatioMax,    4.0,    4.0, ":1",  1);
-    styleKnob (attackKnob,  gold, ChannelStripParams::kCompAttackMin,  ChannelStripParams::kCompAttackMax,  10.0,   10.0, " ms", 1);
-    styleKnob (releaseKnob, gold, ChannelStripParams::kCompReleaseMin, ChannelStripParams::kCompReleaseMax,100.0,  200.0, " ms", 0);
-    styleKnob (makeupKnob,  gold, ChannelStripParams::kCompMakeupMin,  ChannelStripParams::kCompMakeupMax,   0.0,    0.0, " dB", 1);
+    styleKnob (threshKnob,  gold, comp::kOptoThreshMinDb, comp::kVcaThreshMaxDb, -12.0,  -24.0, " dB", 1);
+    // threshKnob stays hidden in the new layout - threshold is set via the
+    // triangle handle on the GR meter strip. The knob is kept as a backing
+    // value-source for syncKnobsFromMode / writeThresholdToMode but never
+    // added to the visible component tree.
+    styleKnob (ratioKnob,   gold, comp::kFetRatioKnobMin, comp::kVcaRatioMax,      4.0,    4.0, ":1",  1);
+    styleKnob (attackKnob,  gold, comp::kFetAttackMinMs,  comp::kFetAttackMaxMs,   10.0,   10.0, " ms", 1);
+    styleKnob (releaseKnob, gold, comp::kVcaReleaseMinMs, comp::kVcaReleaseMaxMs, 100.0,  200.0, " ms", 0);
+    styleKnob (makeupKnob,  gold, -comp::kOptoMakeupMaxDb, comp::kOptoMakeupMaxDb,  0.0,    0.0, " dB", 1);
 
     threshKnob.onValueChange  = [this] { writeThresholdToMode(); };
     ratioKnob.onValueChange   = [this] { writeRatioToMode(); };
@@ -239,12 +242,6 @@ void ChannelCompEditor::refreshLabelsForMode()
     releaseLabel.setText (release, juce::dontSendNotification);
     makeupLabel .setText (makeup,  juce::dontSendNotification);
 
-    // Per-mode threshold knob range. FET / Opto top out at 0 dB; VCA's
-    // compVcaThreshDb runs -38..+12 (where +12 is the "no compression"
-    // sentinel), so VCA needs the knob to reach +12 or the stored value gets
-    // clamped to 0 on display / double-click reset and the sentinel is lost.
-    threshKnob.setRange (-60.0, (m == 2) ? 12.0 : 0.0, 0.1);
-
     // OPTO hides the fixed knobs (ratio / attack / release) entirely -
     // showing them greyed out with "(fixed)" labels added visual noise.
     // FET / VCA expose the full 2×2 grid.
@@ -256,20 +253,34 @@ void ChannelCompEditor::refreshLabelsForMode()
     attackKnob .setEnabled (! optoMode);
     releaseKnob.setEnabled (! optoMode);
 
-    // Per-mode timing ranges + log skew. Must run before any setValue() that
-    // pushes a stored atom into the slider - the slider will clamp the
-    // incoming value against whichever range is currently active.
-    applyTimingRanges (attackKnob, releaseKnob, m);
+    // Every knob retunes to the active mode's domain - a fixed range would
+    // leave one end unreachable and snap the value on first touch. This
+    // must run before any setValue() that pushes a stored atom into a
+    // slider, because the slider clamps against whichever range is active.
+    // Slider::setRange also notifies when it clamps the current value,
+    // which would write that clamped value into the mode being switched
+    // TO - park the callbacks across the change and let syncKnobsFromMode
+    // restore the displays.
+    threshKnob .onValueChange = nullptr;
+    ratioKnob  .onValueChange = nullptr;
+    attackKnob .onValueChange = nullptr;
+    releaseKnob.onValueChange = nullptr;
+    makeupKnob .onValueChange = nullptr;
 
-    // Opto's dial spans +/-40 dB, FET / VCA +/-20, so a fixed knob range
-    // would leave one end unreachable and snap the gain on first touch.
-    // Slider::setRange notifies when it clamps the current value, which
-    // would write that clamped value back into the strip - park the
-    // callback across the change and let syncKnobsFromMode restore it.
+    const auto threshDomain = comp::thresholdDomainFor (track.strip);
+    threshKnob.setRange (threshDomain.lo, threshDomain.hi, 0.1);
+    applyRatioRange (ratioKnob, comp::ratioKnobDomainFor (track.strip), m);
+    applyTimingRanges (attackKnob, releaseKnob,
+                       comp::attackDomainFor (track.strip),
+                       comp::releaseDomainFor (track.strip), m);
     const auto makeupDomain = comp::makeupDomainFor (track.strip);
-    makeupKnob.onValueChange = nullptr;
-    makeupKnob.setRange (makeupDomain.minDb, makeupDomain.maxDb, 0.01);
-    makeupKnob.onValueChange = [this] { writeMakeupToMode(); };
+    makeupKnob.setRange (makeupDomain.lo, makeupDomain.hi, 0.01);
+
+    threshKnob .onValueChange = [this] { writeThresholdToMode(); };
+    ratioKnob  .onValueChange = [this] { writeRatioToMode(); };
+    attackKnob .onValueChange = [this] { writeAttackToMode(); };
+    releaseKnob.onValueChange = [this] { writeReleaseToMode(); };
+    makeupKnob .onValueChange = [this] { writeMakeupToMode(); };
 
     // OverEasy + detector-mode toggles: VCA only.
     const bool vcaMode = (m == 2);
@@ -300,20 +311,12 @@ void ChannelCompEditor::refreshLabelsForMode()
 //
 // The unified knobs (THRESHOLD/RATIO/ATTACK/RELEASE/MAKEUP) are visual
 // controls that route to whichever per-mode params actually drive the
-// embedded UniversalCompressor for the currently-selected mode. Without
-// this mapping the knobs only updated the legacy `compThresholdDb` /
-// `compRatio` / etc atomics, which the engine doesn't read - so adjusting
-// them did nothing audible. The engine reads `compVcaThreshDb`,
-// `compOptoPeakRed`, `compFetInput`/`compFetOutput`, etc.
-//
-// Threshold knob range is the unified -60..0 dB. Per mode:
-//   VCA:  threshDb -> compVcaThreshDb  (clamped to that param's -38..12)
-//   Opto: threshDb -> compOptoPeakRed  (lower threshold = more reduction;
-//                                       linear remap of -60..0 to 100..0 %)
-//   FET:  threshDb -> compFetThresholdDb (clamped to that param's -60..0)
-//
-// Similar logic for the other four knobs - Opto's release/attack/ratio are
-// fixed by the optical model so those knobs are no-ops in Opto mode.
+// embedded UniversalCompressor for the currently-selected mode. Threshold,
+// attack, release and makeup go through the comp map so the MCU encoders
+// and the MIDI bindings land on the same params over the same ranges;
+// ratio keeps its own routing because the knob's continuous sweep has to
+// pick a rung on FET's five-position switch. Opto's ratio, attack and
+// release are fixed by the optical model, so those knobs no-op there.
 
 void ChannelCompEditor::writeThresholdToMode()
 {
@@ -324,34 +327,7 @@ void ChannelCompEditor::writeThresholdToMode()
     track.strip.compEnabled.store (true, std::memory_order_relaxed);
     onButton.setToggleState (true, juce::dontSendNotification);
 
-    const float threshDb = (float) threshKnob.getValue();
-    const int mode = jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
-    switch (mode)
-    {
-        case 0: // Opto: -60 dB -> 100% peak reduction, 0 dB -> 0%
-        {
-            const float peakRed = jlimit (0.0f, 100.0f, -threshDb * (100.0f / 60.0f));
-            track.strip.compOptoPeakRed.store (peakRed, std::memory_order_relaxed);
-            break;
-        }
-        case 1: // FET
-        {
-            // Adjustable threshold (donor's fet_threshold param). Original
-            // 1176 hardware had no threshold control - the input knob
-            // drove signal into a fixed -10 dBFS detector. Dusk exposes a
-            // real threshold so the FET's UX matches Opto / VCA; the
-            // characteristic saturation / transformer colouration is still
-            // baked into the donor's FET stage.
-            track.strip.compFetThresholdDb.store (jlimit (-60.0f, 0.0f, threshDb),
-                                                    std::memory_order_relaxed);
-            break;
-        }
-        case 2: // VCA: direct
-        default:
-            track.strip.compVcaThreshDb.store (jlimit (-38.0f, 12.0f, threshDb),
-                                                std::memory_order_relaxed);
-            break;
-    }
+    comp::applyTrackCompThresholdDb (track.strip, (float) threshKnob.getValue());
 }
 
 void ChannelCompEditor::writeRatioToMode()
@@ -373,7 +349,7 @@ void ChannelCompEditor::writeRatioToMode()
         }
         case 2:
         default:
-            track.strip.compVcaRatio.store (jlimit (1.0f, 120.0f, r),
+            track.strip.compVcaRatio.store (jlimit (comp::kVcaRatioMin, comp::kVcaRatioMax, r),
                                              std::memory_order_relaxed);
             break;
     }
@@ -381,40 +357,12 @@ void ChannelCompEditor::writeRatioToMode()
 
 void ChannelCompEditor::writeAttackToMode()
 {
-    const float a = (float) attackKnob.getValue();
-    const int mode = jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
-    switch (mode)
-    {
-        case 0: break;  // Opto attack is the optical lag - fixed
-        case 1:
-            track.strip.compFetAttack.store (jlimit (0.02f, 80.0f, a),
-                                              std::memory_order_relaxed);
-            break;
-        case 2:
-        default:
-            track.strip.compVcaAttack.store (jlimit (0.1f, 50.0f, a),
-                                              std::memory_order_relaxed);
-            break;
-    }
+    comp::applyTrackCompAttackMs (track.strip, (float) attackKnob.getValue());
 }
 
 void ChannelCompEditor::writeReleaseToMode()
 {
-    const float r = (float) releaseKnob.getValue();
-    const int mode = jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
-    switch (mode)
-    {
-        case 0: break;  // Opto release is the optical decay - fixed
-        case 1:
-            track.strip.compFetRelease.store (jlimit (50.0f, 1100.0f, r),
-                                               std::memory_order_relaxed);
-            break;
-        case 2:
-        default:
-            track.strip.compVcaRelease.store (jlimit (10.0f, 5000.0f, r),
-                                               std::memory_order_relaxed);
-            break;
-    }
+    comp::applyTrackCompReleaseMs (track.strip, (float) releaseKnob.getValue());
 }
 
 void ChannelCompEditor::writeMakeupToMode()
@@ -428,39 +376,29 @@ void ChannelCompEditor::syncKnobsFromMode()
 {
     const int mode = jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
     makeupKnob.setValue (comp::trackCompMakeupDb (track.strip), juce::dontSendNotification);
-    switch (mode)
+    threshKnob.setValue (comp::trackCompThresholdDb (track.strip), juce::dontSendNotification);
+
+    // Opto's ratio / attack / release knobs are hidden and have no param
+    // behind them, so they keep whatever they were displaying.
+    if (! comp::compModeHasTimingControls (track.strip)) return;
+
+    attackKnob .setValue (comp::trackCompAttackMs  (track.strip), juce::dontSendNotification);
+    releaseKnob.setValue (comp::trackCompReleaseMs (track.strip), juce::dontSendNotification);
+
+    if (mode == 1)
     {
-        case 0: // Opto
-        {
-            const float peakRed = track.strip.compOptoPeakRed.load (std::memory_order_relaxed);
-            threshKnob.setValue (-peakRed * (60.0f / 100.0f), juce::dontSendNotification);
-            // ratio/attack/release: leave at displayed values; they don't apply
-            break;
-        }
-        case 1: // FET
-        {
-            // THRESHOLD knob now mirrors compFetThresholdDb directly
-            // (-60..0 dB). Output / attack / release / ratio unchanged.
-            threshKnob.setValue (track.strip.compFetThresholdDb.load (std::memory_order_relaxed),
-                                    juce::dontSendNotification);
-            // Map the discrete FET ratio index back to the unified ratio knob's
-            // continuous scale. Mirrors the inverse of writeRatioToMode():
-            //   0=4:1, 1=8:1, 2=12:1, 3=20:1, 4=All (clamped to display max).
-            static const float kFetRatioDisplay[] = { 4.0f, 8.0f, 12.0f, 20.0f, 20.0f };
-            const int ratioIdx = jlimit (0, 4,
-                track.strip.compFetRatio.load (std::memory_order_relaxed));
-            ratioKnob.setValue   (kFetRatioDisplay[ratioIdx], juce::dontSendNotification);
-            attackKnob.setValue  (track.strip.compFetAttack.load  (std::memory_order_relaxed), juce::dontSendNotification);
-            releaseKnob.setValue (track.strip.compFetRelease.load (std::memory_order_relaxed), juce::dontSendNotification);
-            break;
-        }
-        case 2: // VCA
-        default:
-            threshKnob.setValue  (track.strip.compVcaThreshDb.load (std::memory_order_relaxed), juce::dontSendNotification);
-            ratioKnob.setValue   (track.strip.compVcaRatio.load    (std::memory_order_relaxed), juce::dontSendNotification);
-            attackKnob.setValue  (track.strip.compVcaAttack.load   (std::memory_order_relaxed), juce::dontSendNotification);
-            releaseKnob.setValue (track.strip.compVcaRelease.load  (std::memory_order_relaxed), juce::dontSendNotification);
-            break;
+        // Map the discrete FET ratio index back to the unified ratio knob's
+        // continuous scale. Mirrors the inverse of writeRatioToMode():
+        //   0=4:1, 1=8:1, 2=12:1, 3=20:1, 4=All (clamped to display max).
+        static const float kFetRatioDisplay[] = { 4.0f, 8.0f, 12.0f, 20.0f, 20.0f };
+        const int ratioIdx = jlimit (0, comp::kFetRatioMaxIndex,
+            track.strip.compFetRatio.load (std::memory_order_relaxed));
+        ratioKnob.setValue (kFetRatioDisplay[ratioIdx], juce::dontSendNotification);
+    }
+    else
+    {
+        ratioKnob.setValue (track.strip.compVcaRatio.load (std::memory_order_relaxed),
+                            juce::dontSendNotification);
     }
 }
 
@@ -560,28 +498,8 @@ void ChannelCompEditor::paint (juce::Graphics& g)
     //    the popup look the same.
     if (! inputMeterArea.isEmpty() && ! threshHandleArea.isEmpty())
     {
-        const int mode = jlimit (0, 2,
-            track.strip.compMode.load (std::memory_order_relaxed));
-        float thresh = 0.0f;
-        switch (mode)
-        {
-            case 0:
-            {
-                const float peakRed = track.strip.compOptoPeakRed.load (std::memory_order_relaxed);
-                thresh = -peakRed * (60.0f / 100.0f);
-                break;
-            }
-            case 1:
-            {
-                thresh = track.strip.compFetThresholdDb.load (std::memory_order_relaxed);
-                break;
-            }
-            case 2:
-            default:
-                thresh = track.strip.compVcaThreshDb.load (std::memory_order_relaxed);
-                break;
-        }
-        const float clamped = jlimit (-60.0f, 0.0f, thresh);
+        const float clamped = jlimit (-60.0f, 0.0f,
+                                      comp::trackCompThresholdDb (track.strip));
         const float frac = (clamped - (-60.0f)) / 60.0f;
         const auto inBar = inputMeterArea.toFloat();
         const float y = inBar.getBottom() - 2.0f - frac * (inBar.getHeight() - 4.0f);
@@ -616,39 +534,14 @@ void ChannelCompEditor::paint (juce::Graphics& g)
 
 // Threshold drag (mirrors CompMeterStrip's mouse handling). The triangle
 //    in threshHandleArea / clicks on the IN bar set threshold for the
-//    currently-active comp mode, using the same per-mode mapping the engine
-//    reads (see writeThresholdToMode for routing).
+//    currently-active comp mode through the comp map, so the drag and the
+//    THRESHOLD knob write the same param over the same range.
 namespace
 {
 float dbForYInBar (int y, juce::Rectangle<int> bar)
 {
     const float relY = (float) (bar.getBottom() - 2 - y) / (float) (bar.getHeight() - 4);
     return jlimit (-60.0f, 0.0f, -60.0f + jlimit (0.0f, 1.0f, relY) * 60.0f);
-}
-
-void writeThresholdForMode (Track& t, float threshDb)
-{
-    const int mode = jlimit (0, 2, t.strip.compMode.load (std::memory_order_relaxed));
-    switch (mode)
-    {
-        case 0:
-        {
-            const float peakRed = jlimit (0.0f, 100.0f, -threshDb * (100.0f / 60.0f));
-            t.strip.compOptoPeakRed.store (peakRed, std::memory_order_relaxed);
-            break;
-        }
-        case 1:
-        {
-            t.strip.compFetThresholdDb.store (jlimit (-60.0f, 0.0f, threshDb),
-                                                std::memory_order_relaxed);
-            break;
-        }
-        case 2:
-        default:
-            t.strip.compVcaThreshDb.store (jlimit (-38.0f, 12.0f, threshDb),
-                                            std::memory_order_relaxed);
-            break;
-    }
 }
 }
 
@@ -660,7 +553,7 @@ void ChannelCompEditor::mouseDown (const juce::MouseEvent& e)
     draggingThreshold = hitArea.contains (e.getPosition());
     if (draggingThreshold)
     {
-        writeThresholdForMode (track, dbForYInBar (e.y, inputMeterArea));
+        comp::applyTrackCompThresholdDb (track.strip, dbForYInBar (e.y, inputMeterArea));
         // Auto-enable the comp on threshold touch (both surfaces - meter-
         // strip drag, popup-editor drag, popup-editor knob - now share the
         // same "engineer touched threshold => comp ON" rule).
@@ -677,7 +570,7 @@ void ChannelCompEditor::mouseDown (const juce::MouseEvent& e)
 void ChannelCompEditor::mouseDrag (const juce::MouseEvent& e)
 {
     if (! draggingThreshold) return;
-    writeThresholdForMode (track, dbForYInBar (e.y, inputMeterArea));
+    comp::applyTrackCompThresholdDb (track.strip, dbForYInBar (e.y, inputMeterArea));
     track.strip.compEnabled.store (true, std::memory_order_relaxed);
     onButton.setToggleState (true, juce::dontSendNotification);
     syncKnobsFromMode();

@@ -106,6 +106,30 @@ application framework and became Dusk Studio's own.
   the same one a MIDI binding drives. The optical mode's makeup was also
   labelled at half its real value everywhere it appeared, so a reading of
   +12 dB was delivering +24 dB; the numbers now match the gain.
+- **Compressor threshold, ratio, attack and release on the control surface.**
+  The threshold encoder wrote a parameter no processing read, and the other
+  three always wrote the VCA mode's, so in optical and FET modes four of the
+  five compressor encoders were silent. Each now drives the active mode's own
+  parameter over that mode's real range. Pushing one resets it - threshold to
+  no compression, ratio, attack and release to the mode's own default rather
+  than VCA's. Attack, release and the VCA ratio also step by a percentage per
+  detent instead of a fixed amount, so the fast end of the FET's range is
+  reachable and the VCA's long releases and high ratios no longer take
+  hundreds of turns. The optical mode has no ratio and no attack or release -
+  its curve and timings are the model - so those three encoders leave it
+  alone, matching the editor, which hides those knobs. A MIDI binding to the
+  compressor threshold follows
+  the same mapping: the controller now sweeps threshold in dB in every mode,
+  where before it ran backwards in optical mode and moved the FET's input
+  drive instead of its threshold. A binding that had been driving that input
+  drive leaves it wherever it last wrote it - the value is saved with the
+  session and is now reachable only from the strip's FET INPUT knob.
+- **Compressor ratio knob in VCA mode.** The knob stopped at 20:1 while the
+  parameter and the manual both go to 120:1, so a strip set higher from the
+  control surface read back as 20:1 and the next touch of the knob wrote that
+  back. The knob now covers the mode's full range.
+- **Cloning a track.** The clone carried every compressor value except the
+  FET threshold, which the destination kept from whatever was there before.
 - **Joining regions.** A join could land on the wrong slot, cut the merged
   region short, or drop the last region's fade-out; the merge now sizes from
   the latest end across the selection and carries that region's fade. Editing

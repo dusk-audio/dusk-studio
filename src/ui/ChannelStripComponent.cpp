@@ -9,7 +9,7 @@
 #include "EmbeddedModal.h"
 #include "HardwareInsertEditor.h"
 #include "PluginPickerHelpers.h"
-#include "../engine/CompMakeupMap.h"
+#include "../engine/CompModeMap.h"
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
   #include "ClapPluginEditorComponent.h"   // Linux-only native CLAP editor
 #endif

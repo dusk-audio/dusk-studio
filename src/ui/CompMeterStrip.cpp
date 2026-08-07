@@ -1,5 +1,6 @@
 #include "CompMeterStrip.h"
 #include "DuskStudioLookAndFeel.h"
+#include "../engine/CompModeMap.h"
 
 #include <algorithm>
 
@@ -18,101 +19,20 @@ CompMeterStrip::CompMeterStrip (Source s) : src (std::move (s))
     startTimerHz (30);
 }
 
-// Translate a "threshold dB" drag value into the per-mode parameter the
-// engine actually reads. Mirrors the mapping ChannelCompEditor uses, so the
-// THR triangle on the strip and the THRESHOLD rotary in the comp editor
-// dialog produce the same audible effect.
-//
-//   VCA  -> compVcaThreshDb directly (clamped to its -38..12 range)
-//   Opto -> compOptoPeakRed  (knob 0 dB = 0 % reduction, -60 dB = 100 %)
-//   FET  -> compFetThresholdDb (donor's adjustable fet_threshold). Output
-//           knob is independent, drive is independent - touching threshold
-//           sets the real detection threshold, not a drive amount.
-//           Matches ChannelCompEditor::writeThresholdToMode.
-void CompMeterStrip::writeThresholdForMode (Track& t, float threshDb)
-{
-    const int mode = jlimit (0, 2, t.strip.compMode.load (std::memory_order_relaxed));
-    switch (mode)
-    {
-        case 0:
-        {
-            const float peakRed = jlimit (0.0f, 100.0f, -threshDb * (100.0f / 60.0f));
-            t.strip.compOptoPeakRed.store (peakRed, std::memory_order_relaxed);
-            break;
-        }
-        case 1:
-        {
-            t.strip.compFetThresholdDb.store (jlimit (-60.0f, 0.0f, threshDb),
-                                                std::memory_order_relaxed);
-            break;
-        }
-        case 2:
-        default:
-            t.strip.compVcaThreshDb.store (jlimit (-38.0f, 12.0f, threshDb),
-                                            std::memory_order_relaxed);
-            break;
-    }
-}
-
-float CompMeterStrip::readThresholdForMode (const Track& t)
-{
-    const int mode = jlimit (0, 2, t.strip.compMode.load (std::memory_order_relaxed));
-    switch (mode)
-    {
-        case 0:
-        {
-            const float peakRed = t.strip.compOptoPeakRed.load (std::memory_order_relaxed);
-            return -peakRed * (60.0f / 100.0f);
-        }
-        case 1:
-            return t.strip.compFetThresholdDb.load (std::memory_order_relaxed);
-        case 2:
-        default:
-            return t.strip.compVcaThreshDb.load (std::memory_order_relaxed);
-    }
-}
-
-// True "no compression" reset for the active mode. Distinct from
-// writeThresholdForMode(track, 0.0f) because the drag mapping treats 0 dB
-// threshold differently per mode:
-//   Opto  - 0 dB drag -> 0 % peak reduction -> genuinely no compression
-//   FET   - 0 dB drag -> 0 dB drive into FET -> genuinely no compression
-//   VCA   - 0 dB drag -> 0 dB threshold, which still compresses every
-//           signal above 0 dBFS. To get neutral on VCA we set threshold
-//           to its +12 dB ceiling (the range is -38..12 in Session.h).
-void CompMeterStrip::resetThresholdForMode (Track& t)
-{
-    const int mode = jlimit (0, 2, t.strip.compMode.load (std::memory_order_relaxed));
-    switch (mode)
-    {
-        case 0:
-            t.strip.compOptoPeakRed.store (0.0f, std::memory_order_relaxed);
-            break;
-        case 1:
-            // FET: reset only compFetThresholdDb - the parameter the THRESHOLD
-            // handle actually drives (writeThresholdForMode/readThresholdForMode
-            // both map FET to compFetThresholdDb). The input-drive and output
-            // (makeup) knobs are independent controls the user set elsewhere;
-            // a double-click on the threshold handle must not stomp them.
-            // Matches Opto/VCA, which reset only their threshold-equivalent.
-            t.strip.compFetThresholdDb.store (0.0f, std::memory_order_relaxed);
-            break;
-        case 2:
-        default:
-            t.strip.compVcaThreshDb.store (12.0f, std::memory_order_relaxed);
-            break;
-    }
-}
-
 // Track-bound convenience: builds the per-mode Source from a Track& so
-// the channel-strip call sites don't change.
+// the channel-strip call sites don't change. The threshold hooks go
+// through the comp map, so the THR triangle, the comp editor's THRESHOLD
+// rotary, the MCU encoder and a bound CC all write the same param over the
+// same range. Double-click resets to the top of the mode's domain, which
+// is genuine "no compression" - 0 dB would leave VCA compressing anything
+// above 0 dBFS.
 CompMeterStrip::CompMeterStrip (Track& t)
     : CompMeterStrip (Source {
           /*getInputDb*/   [&t] { return t.meterInputDb.load (std::memory_order_relaxed); },
           /*getGrDb*/      [&t] { return t.meterGrDb   .load (std::memory_order_relaxed); },
-          /*getThresholdDb*/ [&t] { return readThresholdForMode (t); },
-          /*setThresholdDb*/ [&t] (float db) { writeThresholdForMode (t, db); },
-          /*resetThreshold*/ [&t] { resetThresholdForMode (t); },
+          /*getThresholdDb*/ [&t] { return comp::trackCompThresholdDb (t.strip); },
+          /*setThresholdDb*/ [&t] (float db) { comp::applyTrackCompThresholdDb (t.strip, db); },
+          /*resetThreshold*/ [&t] { comp::resetTrackCompThreshold (t.strip); },
           /*isEngaged*/      [&t] { return t.strip.compEnabled.load (std::memory_order_relaxed); },
           /*autoEnable*/     [&t] { t.strip.compEnabled.store (true, std::memory_order_relaxed); },
       })
