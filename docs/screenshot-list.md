@@ -1,8 +1,9 @@
 # Dusk Studio — Manual Screenshot List
 
-The 32 unique PNGs referenced by `MANUAL.md` (33 refs — `np-09-tape-strip.png`
-is used twice). Capture target: `docs/images/<name>.png`. Filenames must match
-the markers embedded in `MANUAL.md` exactly.
+The 31 unique PNGs referenced by `MANUAL.md` (32 refs — `np-09-tape-strip.png`
+is used twice), plus `np-12-notepad.png`, whose embed is pulled until it is
+reshot. Capture target: `docs/images/<name>.png`. Filenames must match the
+markers embedded in `MANUAL.md` exactly.
 
 Most of these are produced automatically by the capture harness — run:
 
@@ -48,28 +49,28 @@ notes below.
 | `np-06-master-strip.png`            | L235   | ✅   | Master strip top-to-bottom.                                 |
 | `np-07-aux-view.png`                | L250   | ✅   | One aux lane shown full-width.                              |
 | `np-08-mastering-view.png`          | L263   | ✅   | Mastering chain.                                            |
-| `np-09-tape-strip.png`              | L278, L1149 | ✅ | Tape strip with regions, a marker, and a loop bracket. (Reused at both lines.) |
+| `np-09-tape-strip.png`              | L278, L1147 | ✅ | Tape strip with regions, a marker, and a loop bracket. (Reused at both lines.) |
 | `np-10-region-editor.png`           | L293   | ✅   | Audio region editor modal.                                  |
 | `np-11-piano-roll.png`              | L305   | ✅   | Piano roll modal.                                           |
-| `np-12-notepad.png`                 | L554   | ❌   | Notepad chart: title, section markers, chords over syllables. |
+| `np-12-notepad.png`                 | pulled | ❌   | Notepad chart: title, section markers, chords over syllables. |
 
 ## Chapter figures
 
 | Filename                        | Manual | Auto | What to capture                                            |
 | ------------------------------- | ------ | ---- | --------------------------------------------------------- |
-| `rec-01-arm-multiple.png`       | L1044  | ✅   | Eight tracks armed simultaneously, RECORDING stage.       |
-| `ed-04-region-editor-modal.png` | L1266  | ✅   | Region editor modal over a region with fade-in/out.       |
-| `ed-05-piano-roll-full.png`     | L1318  | ✅   | Piano roll with notes, a CC ramp, scale highlight.        |
-| `fx-01-eq.png`                  | L709   | ✅   | Channel EQ editor — HPF/LPF + 4 bands, curve shaped.      |
-| `fx-02-comp.png`                | L731   | ✅   | Channel compressor editor (VCA mode).                     |
-| `fx-03-tape.png`                | L886   | ✅   | Master tape-machine editor (native panel).                |
-| `mm-01-automation-modes.png`    | L1406  | ✅   | A fader's automation-mode label (READ / WRITE / TOUCH).   |
-| `mm-02-mastering-chain.png`     | L967   | ✅   | Mastering chain with EQ, comp, and limiter engaged.       |
-| `pl-01-plugin-picker.png`       | L1480  | ✅   | Plugin picker panel populated.                            |
-| `pl-04-hw-insert.png`           | L1599  | ✅   | Hardware insert editor with I/O pickers and Ping button.  |
-| `sync-01-mcu-bindings.png`      | L1714  | ✅   | MIDI Bindings panel populated with a few learned bindings.|
-| `bnc-01-bounce-dialog.png`      | L1841  | ✅   | Bounce dialog (file picker + progress). (No format options — see note.) |
-| `ts-02-plugin-offline.png`      | L2097  | ✅   | A plugin slot in the `⚠ (offline)` state (the harness stages a synthetic one). |
+| `rec-01-arm-multiple.png`       | L1042  | ✅   | Eight tracks armed simultaneously, RECORDING stage.       |
+| `ed-04-region-editor-modal.png` | L1264  | ✅   | Region editor modal over a region with fade-in/out.       |
+| `ed-05-piano-roll-full.png`     | L1316  | ✅   | Piano roll with notes, a CC ramp, scale highlight.        |
+| `fx-01-eq.png`                  | L707   | ✅   | Channel EQ editor — HPF/LPF + 4 bands, curve-shaped.      |
+| `fx-02-comp.png`                | L729   | ✅   | Channel compressor editor (VCA mode).                     |
+| `fx-03-tape.png`                | L884   | ✅   | Master tape-machine editor (native panel).                |
+| `mm-01-automation-modes.png`    | L1404  | ✅   | A fader's automation-mode label (READ / WRITE / TOUCH).   |
+| `mm-02-mastering-chain.png`     | L965   | ✅   | Mastering chain with EQ, comp, and limiter engaged.       |
+| `pl-01-plugin-picker.png`       | L1478  | ✅   | Plugin picker panel populated.                            |
+| `pl-04-hw-insert.png`           | L1597  | ✅   | Hardware insert editor with I/O pickers and Ping button.  |
+| `sync-01-mcu-bindings.png`      | L1712  | ✅   | MIDI Bindings panel populated with a few learned bindings.|
+| `bnc-01-bounce-dialog.png`      | L1839  | ✅   | Bounce dialog (file picker + progress). (No format options — see note.) |
+| `ts-02-plugin-offline.png`      | L2095  | ✅   | A plugin slot in the `⚠ (offline)` state (the harness stages a synthetic one). |
 
 ## Compact-mode strips (captured, not yet referenced by `MANUAL.md`)
 
@@ -142,7 +143,10 @@ exist.)
 
 The checked-in `np-12-notepad.png` still shows the pre-0.13 prototype notepad —
 raw Markdown textarea, old toolbar, a Close button — none of which exists any
-more. It is stale until someone reshoots it per the recipe above.
+more. Rather than ship a figure that contradicts the prose beside it, the embed
+is pulled from `MANUAL.md` for 0.13: the PNG and this recipe stay put, and the
+figure goes back under `## The notepad` as a one-line
+`![Session notepad.](docs/images/np-12-notepad.png)` once it is reshot.
 
 ---
 

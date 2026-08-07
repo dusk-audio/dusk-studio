@@ -482,7 +482,7 @@ The window is structured as a stack of horizontal bands.
 ├───────────────────────────────────────────────────────┤
 │  RECORDING   MIXING   MASTERING   AUX                 │  Stage selector
 ├───────────────────────────────────────────────────────┤
-│  1-8   9-16   17-24                                   │  Bank selector
+│  1-6   7-12   13-18   19-24                           │  Bank selector
 ├───────────────────────────────────────────────────────┤
 │ ◀◀  ▶  ▶▶  ●  ⟳  ◉   CLK ♩=120 4/4 00:01:23         │  Transport bar
 ├───────────────────────────────────────────────────────┤
@@ -494,7 +494,7 @@ The window is structured as a stack of horizontal bands.
 └───────────────────────────────────────────────────────┘
 ```
 
-The bank selector appears only when the window is too narrow for all 24 strips, and it pages the console by whatever does fit — as few as six strips on the narrowest window, never more than four pages. A control surface's bank is a separate, fixed axis: eight strips at a time, tracks 1–8, 9–16, or 17–24. The two stay in step. Picking a page moves the surface to the bank holding that page's first track, and **Bank Left** / **Bank Right** on the surface moves the page to the one holding that bank's first track. When every strip fits on screen there is no page to pick, so the surface — and the bank-relative MIDI bindings that follow it — stays where you left it.
+The bank selector appears only when the window is too narrow for all 24 strips, and it pages the console by whatever does fit — as few as six strips on the narrowest window, never more than four pages. Each button names its range: in the compact transport layout drawn above (window under 1850 pixels) the label is the bare range, `1-6`; at full size it reads `BANK 1  (1-6)`. The range widens with the window. A control surface's bank is a separate, fixed axis: eight strips at a time, tracks 1–8, 9–16, or 17–24. The two stay in step. Picking a page moves the surface to the bank holding that page's first track, and **Bank Left** / **Bank Right** on the surface moves the page to the one holding that bank's first track. When every strip fits on screen there is no page to pick, so the surface — and the bank-relative MIDI bindings that follow it — stays where you left it.
 
 Modal dialogs (audio settings, plugin picker, region editor, piano roll, import target picker) appear centered with a dimmed backdrop behind them. Press **Esc** or click outside the modal to dismiss.
 
@@ -550,8 +550,6 @@ The ⌨ button (or **K**) opens an on-screen MIDI keyboard. It belongs to the tr
 While it is open, every letter and digit in its layout belongs to the keyboard rather than to the shortcuts — **P** and **R** play their notes instead of toggling punch and record, at any octave (shift the octave high enough that a key runs past the top of the MIDI range and it simply does nothing). Keys outside the layout still work as usual, so **Space**, **.**, **L**, **[** / **]** keep driving the transport, and **K** or **Esc** closes the keyboard.
 
 ## The notepad
-
-![Session notepad.](docs/images/np-12-notepad.png)
 
 A document editor for lyrics and session notes, opened from the transport bar.
 There is one view, the **chart**, and you type straight onto it: formatting is
@@ -2012,9 +2010,9 @@ fires as you type.
 | **Ctrl+←** / **Ctrl+→**              | Move by word                                         |
 | **Ctrl+Backspace** / **Ctrl+Delete** | Delete the word before / after the caret             |
 | **Home** / **End**                   | Start / end of the wrapped row                       |
-| **Cmd+Home** / **Cmd+End**           | Start / end of the note                              |
+| **Cmd+Home** / **Cmd+End**           | Start / end of the chart                             |
 | **Page Up** / **Page Down**          | Move a page up / down                                |
-| **Tab**                              | Insert a tab — the page owns the key, so it never moves focus |
+| **Tab**                              | Insert a tab — the chart owns the key, so it never moves focus |
 
 The two word rows are the exception to the chapter's Cmd/Ctrl convention: word
 motion and word delete are **Ctrl** or **Option** on every platform, macOS

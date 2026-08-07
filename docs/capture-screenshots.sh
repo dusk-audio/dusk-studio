@@ -56,10 +56,10 @@ rm -rf "${OUT}/_demo"
 
 # The harness quits the app itself and Linux teardown still returns nonzero, so
 # the exit status says nothing. Its own "done" line is the only signal that
-# every figure was written; without it the run died part-way and docs/images
-# still holds the PNGs from last time.
+# every figure was written; without it the run died part-way, leaving the
+# figures it never reached at whatever an earlier run wrote.
 if ! grep -q '\[Dusk Studio/capture\] done' "${LOG}"; then
-  echo "error: the capture harness did not finish - the PNGs in ${OUT} are stale." >&2
+  echo "error: the capture harness did not finish — some PNGs in ${OUT} may be left over from an earlier run." >&2
   exit 1
 fi
 
