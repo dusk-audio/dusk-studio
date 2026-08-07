@@ -5,6 +5,7 @@
 #include <array>
 #include <functional>
 #include <memory>
+#include "BankMapping.h"
 #include "BusComponent.h"
 #include "ChannelStripComponent.h"
 #include "MasterStripComponent.h"
@@ -88,9 +89,9 @@ public:
                                                       int componentWidth) noexcept;
 
     // Screen page index (0..numBanks()-1), NOT a hardware bank. The matching
-    // hardware bank is derived and published in setBank - see BankMapping.h.
+    // hardware bank is derived by ConsoleBankState - see BankMapping.h.
     void setBank (int bankIndex);
-    int  getBank() const noexcept { return currentBank; }
+    int  getBank() const noexcept { return bankState.screenBank; }
 
     // Component accessors for the screenshot-capture harness. Return the
     // realised strip components so the capture pass can snapshot one strip
@@ -132,15 +133,7 @@ private:
     std::array<std::unique_ptr<BusComponent>,       Session::kNumBuses> busStrips;
     std::unique_ptr<MasterStripComponent> masterStrip;
 
-    int currentBank = 0;
-    // Last value of session.mcu.bank this view knows about, whether the surface
-    // moved it or setBank did. Suppresses the echo of our own store.
-    int lastKnownMcuBank = 0;
-    // Whether activeBank was last set from the screen page or from the surface.
-    // Only a screen-derived value depends on the stride, so only that one gets
-    // re-derived on a resize; the surface's own position is width-independent
-    // and must survive one.
-    bool activeBankFollowsScreen = false;
+    ConsoleBankState bankState;
     bool showingAllTracks = false;
 
     // -1 = none. Drives the focus ring + (via stripFocusCb) the A/S/X target.
@@ -150,10 +143,12 @@ private:
 
     void updateBankVisibility();
     void applyBankChange();
+    void applyBankTransition (const BankTransition& transition);
 
     // Polls session.mcu.bank so the MCU surface's Bank Left/Right buttons
     // (handled on the audio thread) drive the visible page + bank-relative
     // bindings, keeping the surface and the on-screen view on the same 8.
+    // Also the only place a move queued by a resize reaches the surface.
     void timerCallback() override;
 };
 } // namespace duskstudio

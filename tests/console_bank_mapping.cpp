@@ -166,17 +166,294 @@ TEST_CASE ("Bank mapping: the widest page count the console builds stays in rang
     REQUIRE (hardwareBankForScreenBank (kMostPages - 1, kNarrowestStride) == 2);
 }
 
-TEST_CASE ("Bank mapping: a resize republishes the clamped page hardware bank",
+// The remaining cases drive ConsoleBankState the way the console does: a page
+// press or poll tick hands back a BankTransition the caller stores into the
+// session atoms, while a resize stores nothing. Console holds the two atoms so
+// a sequence can assert what actually reached the surface.
+namespace
+{
+struct Console
+{
+    ConsoleBankState state;
+    int activeBankAtom = 0;
+    int mcuBankAtom    = 0;   // also written by the surface, on the audio thread
+    int pages          = 3;
+    int stride         = SessionLayout::kBankSize;
+    // Runs a press between the tick's read of mcuBankAtom and its exchange,
+    // which is the window the exchange exists to close.
+    bool pressDuringExchange = false;
+
+    void apply (const BankTransition& t)
+    {
+        if (t.publishActiveBank)  activeBankAtom = t.hardwareBank;
+        if (t.publishSurfaceBank) mcuBankAtom    = t.hardwareBank;
+        if (t.pageMoved)          state.resize (pages, stride);   // console relayout
+    }
+
+    void pressPage (int page)     { apply (state.selectScreenBank (page, pages, stride)); }
+    void resizeTo (int p, int s)  { pages = p; stride = s; state.resize (pages, stride); }
+
+    void poll()
+    {
+        apply (state.pollTick (mcuBankAtom, pages, stride,
+                               [this] (int expected, int desired)
+                               {
+                                   if (pressDuringExchange) surfaceBankRight();
+                                   if (mcuBankAtom != expected) return false;
+                                   mcuBankAtom = desired;
+                                   return true;
+                               }));
+    }
+
+    // Bank Right on the surface, handled on the audio thread.
+    void surfaceBankRight()
+    {
+        if (mcuBankAtom < SessionLayout::kNumBanks - 1) ++mcuBankAtom;
+    }
+};
+} // namespace
+
+TEST_CASE ("Console bank state: a resize that only relocates the page queues the move",
            "[console][bank]")
 {
-    // Page 3 at stride 6 begins at track 18 (hardware bank 2). Widening to
-    // stride 12 leaves only two pages, so the screen clamps to page 1 and all
-    // screen-owned hardware-bank state must follow its first track (track 12).
-    REQUIRE (hardwareBankForScreenBank (3, 6) == 2);
-    const auto state = screenBankStateAfterResize (3, 2, 12);
+    // The page index still names a real position, so the screen keeps the bank
+    // and the surface follows the tracks that moved under the page: page 2
+    // begins at track 16 at stride 8, and at track 12 once the stride is 6.
+    Console c;
+    c.pages = 3;
+    c.stride = SessionLayout::kBankSize;
+    c.pressPage (2);
+    REQUIRE (c.mcuBankAtom == 2);
+    REQUIRE (c.state.followsScreen);
 
-    REQUIRE (state.currentBank == 1);
-    REQUIRE (state.lastKnownMcuBank == 1);
-    REQUIRE (state.activeBank == 1);
-    REQUIRE (state.mcuBank == 1);
+    c.resizeTo (4, 6);
+    REQUIRE (c.state.screenBank == 2);
+    // Queued, not stored: the poll tick owns the write.
+    REQUIRE (c.state.pendingMcuBank == 1);
+    REQUIRE (c.mcuBankAtom == 2);
+
+    c.poll();
+    REQUIRE (c.mcuBankAtom == 1);
+    REQUIRE (c.activeBankAtom == 1);
+    REQUIRE (c.state.lastKnownMcuBank == 1);
+    REQUIRE (c.state.pendingMcuBank == -1);
+}
+
+TEST_CASE ("Console bank state: a widen that destroys the page hands the bank to the surface",
+           "[console][bank]")
+{
+    // Page 3 at stride 6 begins at track 18 (hardware bank 2). One page cannot
+    // hold that index, so the record of what the user picked is gone and the
+    // published hardware bank is what survives. Clamping the index instead
+    // would drag the surface off bank 2 on the way back down.
+    REQUIRE (hardwareBankForScreenBank (3, 6) == 2);
+
+    Console c;
+    c.pages = 4;
+    c.stride = 6;
+    c.pressPage (3);
+    REQUIRE (c.mcuBankAtom == 2);
+    REQUIRE (c.state.followsScreen);
+
+    c.resizeTo (1, SessionLayout::kNumTracks);
+    REQUIRE_FALSE (c.state.followsScreen);
+    REQUIRE (c.state.screenBank == 0);
+    REQUIRE (c.state.pendingMcuBank == -1);
+    REQUIRE (c.mcuBankAtom == 2);
+
+    c.resizeTo (3, SessionLayout::kBankSize);
+    REQUIRE (c.state.screenBank == 2);
+    REQUIRE (c.state.pendingMcuBank == -1);
+    REQUIRE (c.mcuBankAtom == 2);
+
+    c.poll();
+    REQUIRE (c.state.screenBank == 2);
+    REQUIRE (c.mcuBankAtom == 2);
+}
+
+TEST_CASE ("Console bank state: a press landing inside the exchange keeps the surface",
+           "[console][bank]")
+{
+    // The queued move reads mcu.bank on the tick and writes it a few
+    // instructions later. A press in between must win the atom, and must not be
+    // latched away - the latch is what the next tick compares against.
+    Console c;
+    c.pages = 3;
+    c.stride = SessionLayout::kBankSize;
+    c.pressPage (1);                 // track 8 -> bank 1
+    REQUIRE (c.mcuBankAtom == 1);
+
+    c.resizeTo (4, 6);               // page 1 -> track 6 -> bank 0
+    REQUIRE (c.state.pendingMcuBank == 0);
+
+    c.pressDuringExchange = true;
+    c.poll();
+    REQUIRE (c.mcuBankAtom == 2);
+    REQUIRE (c.state.lastKnownMcuBank == 1);
+    // The move stays queued: were the surface to come back to bank 1 before the
+    // next tick, dropping it here would strand the page with nothing to repair it.
+    REQUIRE (c.state.pendingMcuBank == 0);
+    REQUIRE (c.state.followsScreen);
+
+    c.pressDuringExchange = false;
+    c.poll();
+    REQUIRE_FALSE (c.state.followsScreen);
+    REQUIRE (c.state.lastKnownMcuBank == 2);
+    REQUIRE (c.activeBankAtom == 2);
+    REQUIRE (c.mcuBankAtom == 2);
+    REQUIRE (c.state.screenBank == screenBankForHardwareBank (2, 6, 4));
+}
+
+TEST_CASE ("Console bank state: a widen-then-narrow re-derives the page from the surface bank",
+           "[console][bank]")
+{
+    // The surface owns the bank here, so its position is width-independent and
+    // the screen page is what has to move. Clamping alone leaves the screen on
+    // tracks 1-8 while the surface drives 17-24, and the poll tick cannot
+    // repair it: mcu.bank never changed, so there is nothing for it to notice.
+    Console c;
+    c.pages = 3;
+    c.stride = SessionLayout::kBankSize;
+    c.mcuBankAtom = 2;
+    c.poll();
+
+    REQUIRE_FALSE (c.state.followsScreen);
+    REQUIRE (c.state.screenBank == 2);
+    REQUIRE (c.activeBankAtom == 2);
+
+    c.resizeTo (1, SessionLayout::kNumTracks);   // widen: every track on one page
+    REQUIRE (c.state.screenBank == 0);
+
+    c.resizeTo (3, SessionLayout::kBankSize);    // narrow back
+    REQUIRE (c.state.screenBank == 2);
+    REQUIRE (c.state.pendingMcuBank == -1);
+    REQUIRE (c.mcuBankAtom == 2);
+
+    // A poll tick after the resize must stay a no-op - nothing moved.
+    c.poll();
+    REQUIRE (c.state.screenBank == 2);
+    REQUIRE (c.mcuBankAtom == 2);
+}
+
+TEST_CASE ("Console bank state: a narrower stride re-derives the page for the same surface bank",
+           "[console][bank]")
+{
+    Console c;
+    c.pages = 3;
+    c.stride = SessionLayout::kBankSize;
+    c.mcuBankAtom = 1;
+    c.poll();
+    REQUIRE (c.state.screenBank == 1);
+
+    // Bank 1 starts at track 8, which at stride 6 sits on page 1 (tracks 6-11).
+    c.resizeTo (4, 6);
+    REQUIRE (c.state.screenBank == screenBankForHardwareBank (1, 6, 4));
+    REQUIRE (c.mcuBankAtom == 1);
+}
+
+TEST_CASE ("Console bank state: a resize inside the poll window cannot swallow a bank press",
+           "[console][bank]")
+{
+    // The surface writes mcu.bank on the audio thread and the console only
+    // notices on its 50 ms tick. A drag-resize firing in that window must not
+    // store over the press, nor latch it away by advancing lastKnownMcuBank.
+    Console c;
+    c.pages = 2;
+    c.stride = 12;
+    c.pressPage (1);                 // page 1 at stride 12 -> track 12 -> bank 1
+    REQUIRE (c.mcuBankAtom == 1);
+    REQUIRE (c.state.lastKnownMcuBank == 1);
+
+    c.surfaceBankRight();            // audio thread: bank 1 -> 2
+    c.resizeTo (4, 6);               // page 1 at stride 6 -> track 6 -> bank 0
+
+    REQUIRE (c.mcuBankAtom == 2);              // the press survives the resize
+    REQUIRE (c.state.lastKnownMcuBank == 1);   // still unseen, so the tick will see it
+    REQUIRE (c.state.pendingMcuBank == 0);     // the resize only queued its move
+
+    c.poll();
+    REQUIRE (c.mcuBankAtom == 2);              // surface outranks the queued move
+    REQUIRE (c.activeBankAtom == 2);
+    REQUIRE (c.state.lastKnownMcuBank == 2);
+    REQUIRE (c.state.pendingMcuBank == -1);
+    REQUIRE_FALSE (c.state.followsScreen);
+    REQUIRE (c.state.screenBank == screenBankForHardwareBank (2, 6, 4));
+}
+
+TEST_CASE ("Console bank state: a page press latches its own store", "[console][bank]")
+{
+    // Page 1 at stride 12 resolves to hardware bank 1, which maps back to page
+    // 0. Unlatched, the next tick would read our own store as a surface move
+    // and drag the view off the page the user just picked.
+    Console c;
+    c.pages = 2;
+    c.stride = 12;
+    c.pressPage (1);
+
+    REQUIRE (c.state.screenBank == 1);
+    REQUIRE (c.state.lastKnownMcuBank == 1);
+    REQUIRE (screenBankForHardwareBank (1, 12, 2) == 0);
+
+    c.poll();
+    REQUIRE (c.state.screenBank == 1);
+}
+
+TEST_CASE ("Console bank state: a page press retires a move an earlier resize queued",
+           "[console][bank]")
+{
+    Console c;
+    c.pages = 3;
+    c.stride = SessionLayout::kBankSize;
+    c.pressPage (2);                 // track 16 -> bank 2
+    c.resizeTo (4, 6);               // page 2 -> track 12 -> bank 1
+    REQUIRE (c.state.pendingMcuBank == 1);
+
+    c.pressPage (0);                 // user picks page 0 before the tick
+    REQUIRE (c.mcuBankAtom == 0);
+    REQUIRE (c.state.pendingMcuBank == -1);
+
+    c.poll();
+    REQUIRE (c.mcuBankAtom == 0);
+}
+
+TEST_CASE ("Console bank state: a resize back onto the current bank queues nothing",
+           "[console][bank]")
+{
+    Console c;
+    c.pages = 3;
+    c.stride = SessionLayout::kBankSize;
+    c.pressPage (1);                 // track 8 -> bank 1
+    REQUIRE (c.mcuBankAtom == 1);
+
+    c.resizeTo (2, 12);              // page 1 -> track 12 -> still bank 1
+    REQUIRE (c.state.pendingMcuBank == -1);
+
+    c.poll();
+    REQUIRE (c.mcuBankAtom == 1);
+    REQUIRE (c.activeBankAtom == 1);
+}
+
+TEST_CASE ("Console bank state: one page carries no bank opinion", "[console][bank]")
+{
+    // Every track on screen: the screen has no page to impose, so the surface
+    // keeps wherever its own Bank Left/Right left it.
+    Console c;
+    c.pages = 1;
+    c.stride = SessionLayout::kNumTracks;
+    c.mcuBankAtom = 2;
+    c.poll();
+    REQUIRE (c.activeBankAtom == 2);
+    REQUIRE (c.state.screenBank == 0);
+
+    c.state.screenBank = 1;          // stale page left by a narrower width
+    c.pressPage (0);
+    REQUIRE (c.state.screenBank == 0);
+    REQUIRE (c.mcuBankAtom == 2);
+    REQUIRE_FALSE (c.state.followsScreen);
+
+    c.resizeTo (1, SessionLayout::kNumTracks);
+    REQUIRE (c.state.pendingMcuBank == -1);
+
+    c.poll();
+    REQUIRE (c.mcuBankAtom == 2);
 }

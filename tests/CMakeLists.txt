@@ -91,6 +91,7 @@ add_executable(dusk-studio-tests
     mcu_receiver_decode.cpp
     mcu_controller_emit.cpp
     mcu_fader_taper.cpp
+    comp_makeup_fanout.cpp
     foundation_message_thread.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/McuReceiver.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/McuController.cpp
@@ -216,6 +217,7 @@ if(DUSK_PLUGINS_PATH)
 endif()
 
 target_compile_definitions(dusk-studio-tests PRIVATE
+    DUSKSTUDIO_VERSION_STRING="${PROJECT_VERSION}"
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_STANDALONE_APPLICATION=1
