@@ -34,3 +34,11 @@ REQUIREMENTS
 A normal desktop Linux (X11 or Wayland). Audio runs over PipeWire/JACK
 (preferred) or ALSA. On a minimal system, install the usual desktop libraries
 (X11, freetype, fontconfig, alsa) if the binary reports a missing library.
+
+
+LICENSE
+-------
+Dusk Studio is GPL-3.0-or-later. The full text is in LICENSE beside this file;
+LICENSES.txt inventories every third-party component compiled into the binary
+and the license each one ships under. Both files travel with any copy you pass
+on.

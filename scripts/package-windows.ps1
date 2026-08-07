@@ -46,7 +46,16 @@ try {
             throw "install layout missing required executable: $InstalledExe"
         }
     }
-    Write-Host "Validated install layout: app + plugin scan host"
+
+    # GPL section 4: the MSI must lay the license texts down on disk. The EULA
+    # page cpack builds from CPACK_RESOURCE_FILE_LICENSE leaves no file behind.
+    foreach ($RequiredDoc in @("LICENSE", "LICENSES.txt")) {
+        $InstalledDoc = Join-Path $InstallCheckDir $RequiredDoc
+        if (-not (Test-Path -PathType Leaf $InstalledDoc)) {
+            throw "install layout missing required license text: $InstalledDoc"
+        }
+    }
+    Write-Host "Validated install layout: app + plugin scan host + license texts"
 } finally {
     Remove-Item -Recurse -Force $InstallCheckDir -ErrorAction SilentlyContinue
 }
