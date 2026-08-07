@@ -96,6 +96,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkg-config \
             libasound2-dev libjack-jackd2-dev libmp3lame-dev libsndfile1-dev \
+            libpipewire-0.3-dev \
             liblilv-dev libsuil-dev lv2-dev \
             ladspa-sdk \
             libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev \
@@ -222,6 +223,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DDUSKSTUDIO_SKIP_FORK_CHECK=ON \
             -DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON \
+            -DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
             -DDPF_PATH="${RUNNER_TEMP}/DPF" \
@@ -238,6 +240,7 @@ jobs:
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DDUSKSTUDIO_SKIP_FORK_CHECK=ON \
             -DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON \
+            -DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
             -DDPF_PATH="${RUNNER_TEMP}/DPF" \

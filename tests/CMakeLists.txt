@@ -455,8 +455,8 @@ if(DUSK_PLUGINS_PATH)
     target_compile_definitions(dusk-studio-tests PRIVATE
         DUSKSTUDIO_HAS_DUSK_DSP=1
         # Projucer-style macros the donor sources reference unguarded.
-        # Mirror the main app's defaults (CMakeLists.txt:710) — the values
-        # are not load-bearing for tests; they just need to exist.
+        # Mirror the main app's defaults — the values are not load-bearing
+        # for tests; they just need to exist.
         JucePlugin_VersionString="${PROJECT_VERSION}"
         JucePlugin_Name="DuskStudio_Comp_Tests"
         JucePlugin_Manufacturer="Marc Korte"

@@ -8,6 +8,13 @@
 #include <spa/node/io.h>
 #include <spa/utils/dict.h>
 
+// spa 0.3.48 (Ubuntu 22.04, the oldest supported build floor) predates this
+// flag, but the bit position is fixed in the spa ABI and a server that old
+// never sets it - the xrun counter below just stays dormant there.
+#ifndef SPA_IO_CLOCK_FLAG_XRUN_RECOVER
+ #define SPA_IO_CLOCK_FLAG_XRUN_RECOVER (1u << 1)
+#endif
+
 #include <algorithm>
 #include <mutex>
 #include <cstdint>

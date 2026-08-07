@@ -48,9 +48,9 @@ uses.
 ## Verified ground truth
 
 1. **The seam is JUCE-free but TEST-ONLY.** `src/engine/audiofile/*.cpp` is
-   compiled only into the test binary and libsndfile is linked only there
-   (tests/CMakeLists.txt:171-185). The app target neither compiles the seam
-   nor links sndfile. A0 fixes this first.
+   compiled only into the test binary and libsndfile is linked only there.
+   The app target neither compiles the seam nor links sndfile. A0 fixes this
+   first.
 2. **Seam API:** `FileReader::open(path)` → `FileInfo{sampleRate,
    numChannels, numFrames, bitsPerSample}`, deinterleaved
    `read(float* const*, numDestCh, startFrame, numFrames)` (NOT RT-safe —
@@ -93,9 +93,9 @@ uses.
    record flip = up to 24 disk threads. B3 decides this.
 10. **FileInfo gap:** no `isFloat` flag (StartupDialog.cpp:96 reads
     `usesFloatingPointData`). Add the field in A1.
-11. **CMake:** juce_audio_formats linked at CMakeLists.txt:1058 (app), :764
-    (plugin-host child), tests/CMakeLists.txt:260. All three STAY linked this
-    tower (transitive juce_audio_utils dependency + tests use JUCE for A/B).
+11. **CMake:** juce_audio_formats linked in the app, the plugin-host child
+    target and the test binary. All three STAY linked this tower (transitive
+    juce_audio_utils dependency + tests use JUCE for A/B).
 
 ## Design decisions (B1–B3)
 

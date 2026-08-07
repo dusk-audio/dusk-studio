@@ -166,6 +166,12 @@ application framework and became Dusk Studio's own.
   layout that no longer exists, omitted the submodules and the notepad's UI
   dependencies, and marked packages optional that configure requires; a
   source build now follows them as written.
+- **Linux builds.** No workflow installed the PipeWire development package,
+  so the probe missed on every runner and the published Linux artifact
+  carried the ALSA backend alone - the native PipeWire backend this release
+  headlines has never actually shipped in a binary. The Linux builds install
+  the package, and a configure that cannot find it now fails outright rather
+  than dropping the backend in silence.
 
 ## [0.12.6] - 2026-07-25
 
