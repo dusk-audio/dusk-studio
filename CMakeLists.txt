@@ -1459,7 +1459,10 @@ endif()
 # The hicolor size the .desktop Icon=DuskStudio key resolves. Committed rather
 # than derived at build time so cpack DEB/RPM cannot emit an iconless package;
 # regenerate from the master asset with
-# `magick assets/ds-icon.png -resize 256x256 -strip packaging/DuskStudio.png`.
+# `magick assets/ds-icon.png -resize 256x256 -strip packaging/DuskStudio.png`
+# (ImageMagick 6 spells the command `convert`).
+# Nothing verifies the two stay in sync, so regenerating after editing
+# assets/ds-icon.png is on whoever edits it.
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/DuskStudio.png"
         DESTINATION share/icons/hicolor/256x256/apps)
 
