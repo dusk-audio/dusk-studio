@@ -75,7 +75,11 @@ application framework and became Dusk Studio's own.
 - **License texts ship with the packages.** The tarball, the deb and rpm,
   the DMG and the MSI now carry `LICENSE` and `LICENSES.txt`, and the
   attribution list credits the notepad's UI stack (DPF, Dear ImGui, pugl and
-  the components they embed) along with the CLAP headers.
+  the components they embed) along with the CLAP headers. A completeness pass
+  then covered the framework's bundled text-shaping, image and codec
+  libraries, reproduced every license text that must accompany a binary - the
+  AGPLv3 included - recorded per-platform version inventories, corrected the
+  framework's license terms and libsndfile's real scope.
 
 ### Fixed
 
@@ -147,6 +151,21 @@ application framework and became Dusk Studio's own.
   left unscanned and the scan completed immediately with a
   sandbox-host-unavailable warning. The Windows packaging script now validates
   the staged install contains both executables before creating the MSI.
+- **Package contents.** The deb, rpm, DMG and MSI included the application
+  framework's entire source tree, its build tool and its CMake config -
+  roughly 65 MB and three thousand files nothing at runtime reads, claiming
+  paths a real framework package would own. The install set is now the
+  application payload alone.
+- **Manual.** The control-surface chapter still described the pre-0.13 bank
+  behaviour; it now explains the two axes - screen pages sized by window
+  width, the surface's fixed banks of eight - and how they stay in step. The
+  notepad chapter matches the shipping editor, the keyboard reference gains
+  the notepad shortcuts including the word-motion keys macOS actually uses,
+  and the PDF renders the sharp and flat signs instead of dropping them.
+- **Build docs.** The source-build instructions referenced a donor checkout
+  layout that no longer exists, omitted the submodules and the notepad's UI
+  dependencies, and marked packages optional that configure requires; a
+  source build now follows them as written.
 
 ## [0.12.6] - 2026-07-25
 
