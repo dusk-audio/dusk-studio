@@ -12,7 +12,7 @@ if(APPLE AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
 endif()
 
 # Version is sourced from the top-level VERSION file so packaging
-# scripts (AppImage, deb/rpm, MSI, DMG) and AppStream metadata see the
+# scripts (tarball, deb/rpm, MSI, DMG) and AppStream metadata see the
 # same value as the binary. scripts/bump-version.sh writes both
 # VERSION and the AppStream <release> entry; do NOT edit the project()
 # version literal here.
@@ -262,8 +262,9 @@ endif()
 
 # EXCLUDE_FROM_ALL keeps JUCE's own install rules out of our install set;
 # without it every cpack package carries juceaide, the whole module source
-# tree and JUCE's CMake package config. The default build is unaffected: the
-# modules are INTERFACE libraries and juceaide is an imported executable.
+# tree and JUCE's CMake package config. The build is unaffected: the modules
+# are INTERFACE libraries and juceaide is an imported executable, so nothing
+# in that directory was in the default build to lose.
 add_subdirectory(${DUSKSTUDIO_JUCE_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/JUCE EXCLUDE_FROM_ALL)
 
 # App icon. JUCE bakes the PNG into platform-specific resources at
@@ -1395,9 +1396,8 @@ endif()
 
 # Packaging via CPack. Generators are selected by scripts/package-*.{sh,ps1}
 # at cpack invocation time (-G DEB / -G RPM / -G WIX / -G DragNDrop);
-# this block just supplies the metadata each generator reads. The
-# AppImage path is NOT a CPack generator - linuxdeploy + appimagetool
-# stage AppDir from the same install() rules below.
+# this block just supplies the metadata each generator reads. The Linux
+# tarball is not CPack: scripts/package-tarball.sh stages artefacts directly.
 install(TARGETS DuskStudio
         RUNTIME DESTINATION bin
         BUNDLE  DESTINATION .)
