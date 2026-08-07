@@ -36,7 +36,12 @@ Dusk Studio registers with GNOME Software / KDE Discover and double-clicking
 
 Done outside CMake by `scripts/package-tarball.sh`, which stages the program
 directory, copies the integration assets, generates the icon, and packs
-everything with `tar`. Run from a clean Ubuntu 22.04 build:
+everything with `tar`. Run from a clean Ubuntu 22.04 build.
+
+Configure into a fresh `build-linux/`. `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` is a
+cached option: a directory first configured without the DPF checkouts keeps the
+notepad off after you clone them, and drops its STATUS line too, so a release
+built in a reused directory can ship without the notepad and without saying so.
 
 ```bash
 # 1. Build Dusk Studio as usual.
@@ -46,10 +51,6 @@ cmake --build build-linux -j
 # 2. Pack the tarball.
 scripts/package-tarball.sh
 ```
-
-Configure into a fresh `build-linux/`. `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` is a
-cached option: a directory first configured without the DPF checkouts keeps the
-notepad off after you clone them, and drops the warning line too.
 
 Output: `dusk-studio-<version>-Linux-<arch>.tar.xz` in the repo root, ready to
 upload to Patreon. Its structure:

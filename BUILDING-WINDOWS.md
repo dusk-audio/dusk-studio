@@ -10,7 +10,14 @@ This document is aimed at a developer with a Windows machine who has been handed
    - During install, check the **"Desktop development with C++"** workload.
    - This brings MSVC, the Windows 10/11 SDK, and CMake. No separate CMake install needed.
 2. **Git for Windows**: https://git-scm.com/download/win
-3. *(optional)* **Steinberg ASIO SDK**, only if you want ASIO driver support in the audio device picker. Download from https://www.steinberg.net/asiosdk, accept the EULA, unzip somewhere stable, then pass `-DJUCE_ASIO_SDK_PATH=C:/path/to/asiosdk` at CMake configure time. Skip this for a first build; WASAPI works fine.
+3. **vcpkg**, for libsndfile and LAME. libsndfile is not optional on any platform — all audio file I/O goes through it and configure hard-fails without it ([CMakeLists.txt:574-582](CMakeLists.txt#L574-L582)). LAME is what enables MP3 bounce. Install the same static triplet CI uses, then hand CMake the prefix:
+
+   ```cmd
+   vcpkg install libsndfile:x64-windows-static mp3lame:x64-windows-static
+   ```
+
+   and add `-DCMAKE_PREFIX_PATH=<vcpkg-root>/installed/x64-windows-static` to the configure line, forward slashes as with the DPF paths below. `%VCPKG_INSTALLATION_ROOT%` holds that root on the CI images; on a hand-installed vcpkg, substitute wherever you cloned it.
+4. **Steinberg ASIO SDK** — effectively required for the Visual Studio flow in this document, despite reading like an extra. A multi-config generator with Release among its configurations fails the configure without it ([CMakeLists.txt:668-675](CMakeLists.txt#L668-L675) and [:703-709](CMakeLists.txt#L703-L709)), which is exactly what `-G "Visual Studio 17 2022"` gives you: a shipping Windows binary must not silently come out WASAPI-only. Download from https://www.steinberg.net/asiosdk, accept the EULA, unzip somewhere stable, then pass `-DASIOSDK_PATH=C:/path/to/asiosdk` (its `common/` must contain `iasiodrv.h`). To skip the download on a first dev build, pass `-DDUSKSTUDIO_REQUIRE_ASIO=OFF` instead and accept WASAPI only.
 
 ## Repository layout
 
@@ -33,10 +40,12 @@ Open a terminal (PowerShell, cmd, or Git Bash). All of these repos are public, n
 
 ```cmd
 cd C:\dev
-git clone https://github.com/dusk-audio/dusk-studio.git
+git clone --recurse-submodules https://github.com/dusk-audio/dusk-studio.git
 git clone --branch 8.0.4 https://github.com/juce-framework/JUCE.git
 git clone https://github.com/dusk-audio/dusk-audio-plugins.git plugins
 ```
+
+`--recurse-submodules` matters: `external/sfizz` carries the SF2 / multisample instrument engine, and CMake gates it purely on the header being present ([CMakeLists.txt:1138](CMakeLists.txt#L1138)) — clone without it and the feature is gone with no diagnostic. If you already cloned flat, run `git submodule update --init --recursive`.
 
 The explicit `plugins` target on the third clone is mandatory: CMake auto-discovery looks for a sibling directory named `plugins\` and nothing else ([CMakeLists.txt:358-367](CMakeLists.txt#L358-L367)). The repo itself is named `dusk-audio-plugins` on GitHub, so without the explicit target you'd get a directory CMake can't find — and it warns rather than failing, leaving you with a recorder that has no EQ, compressor, or tape.
 
@@ -57,15 +66,15 @@ git -C DPF-Widgets checkout 730da6397904da66d99667c1cb30fc77fc3d794a
 
 Clone then check out the SHA, rather than cloning a branch: DPF's pin is the tip of `fix/wayland-review-findings`, which was never merged to that fork's `main`. (DPF-Widgets' pin happens to be its `main` tip today, but pin it the same way.) Neither branch may be deleted upstream — a plain clone would stop reaching the commit, and CI fetches the same SHAs. The submodule step is not optional either: DGL pulls its windowing layer from `dgl/src/pugl-upstream`. The pins live in [.github/actions/clone-dpf-stack/action.yml](.github/actions/clone-dpf-stack/action.yml), the single source of truth for every workflow.
 
-Missing either checkout, `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` defaults to **OFF** and configure prints one easily-missed line:
+Missing either checkout, `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` defaults to **OFF** and configure says so once, quietly:
 
 ```
 -- Native notepad: DPF / DPF-Widgets not found - disabled
 ```
 
-Everything else builds and runs, but opening the notepad reports *"Notepad unavailable: built without the native notepad UI"*. Passing `-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON` with a checkout missing makes it a configure error instead.
+The build otherwise completes as normal, but opening the notepad reports *"Notepad unavailable: built without the native notepad UI"*. Passing `-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON` with a checkout missing makes it a configure error instead.
 
-That OFF is sticky, because `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` is a **cached** CMake option. Configure `build\` before cloning DPF and cloning it afterwards changes nothing on the next configure — and the "not found" line stops printing too. Either configure into a fresh build directory or force the cache with `-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON`.
+That OFF is sticky, because `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` is a **cached** CMake option — the one dependency here a later reconfigure won't pick up on its own. Configure `build\` before cloning DPF and cloning it afterwards changes nothing on the next configure, and the "not found" line stops printing too. Either configure into a fresh build directory or add `-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON` to the configure command below.
 
 If you override the paths explicitly, give DPF **forward slashes** — `-DDPF_PATH=C:/dev/DPF`. DPF's own CMake re-parses the value, and backslashes come through as invalid escapes.
 
@@ -75,11 +84,13 @@ From the Dusk Studio directory:
 
 ```cmd
 cd C:\dev\dusk-studio
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 ^
+  -DCMAKE_PREFIX_PATH=%VCPKG_INSTALLATION_ROOT%/installed/x64-windows-static ^
+  -DASIOSDK_PATH=C:/dev/asiosdk
 cmake --build build --config Release -j
 ```
 
-The first configure pulls in JUCE's CMake helpers and may take a minute. Subsequent configures are fast.
+Swap `-DASIOSDK_PATH=...` for `-DDUSKSTUDIO_REQUIRE_ASIO=OFF` if you skipped the SDK download. The first configure pulls in JUCE's CMake helpers and may take a minute. Subsequent configures are fast.
 
 The built binary lands at:
 

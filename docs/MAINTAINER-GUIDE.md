@@ -293,13 +293,17 @@ ctest --test-dir build-tests --output-on-failure
 
 ### Dependency discovery (the thing most likely to bite you)
 
-CMake auto-detects four external repos at configure time. **Read the configure output** — it prints which paths it picked.
+CMake auto-detects four external repos at configure time, on top of three git submodules. **Read the configure output** — it prints which paths it picked.
+
+- **Submodules** (`external/clap`, `external/sfizz`, `external/vst3sdk`): clone with `--recurse-submodules`, or run `git submodule update --init --recursive`. They fail in three different ways, which is worth knowing before you debug the wrong one. Missing `external/clap` is fatal — the native CLAP host defaults ON on Linux and macOS, and the configure stops with a "CLAP headers missing" error. Missing `external/vst3sdk` is loud but survivable: a STATUS line, native VST3 disabled, unless you explicitly asked for `-DDUSKSTUDIO_NATIVE_VST3=ON`, which turns it fatal. Missing `external/sfizz` says **nothing at all** — the block is wrapped in a bare `EXISTS` test, so SF2 / multisample support simply isn't in the binary.
 
 - **JUCE:** `-DJUCE_PATH=…` wins; else on Linux it prefers `../JUCE-wayland` (a plugdata-team fork with ~5 local commits Dusk Studio depends on — XEmbed, X11-on-Wayland fix, peer-creation latch), falling back to `../JUCE`; on macOS it uses `../JUCE` (upstream). The upstream-vs-fork API difference (`addDefaultFormatsToManager`) is hidden behind [src/engine/JuceCompat.h](../src/engine/JuceCompat.h) — call `duskstudio::juce_compat::addDefaultFormats(fm)` and never sprinkle `#ifdef __linux__` at call sites.
 - **Dusk plugins:** `-DDUSK_PLUGINS_PATH=…` wins; else `../plugins`, and that is the whole list — one checkout, resting on `main` (the stable donor API). Build while it sits on a feature branch and you build against that branch. Missing entirely, configure only *warns*: you get a recorder with no EQ, comp, or tape rather than a failed build, so read the configure output.
-- **DPF + DPF-Widgets** (the native notepad UI): `-DDPF_PATH=…` / `-DDPF_WIDGETS_PATH=…` win; else `../DPF` and `../DPF-Widgets`, else the `external/` fallbacks, which are placeholders for the eventual release pinning and are not populated today. The two checks are ANDed, so missing *either* one silently defaults `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` to OFF (one STATUS line: `Native notepad: DPF / DPF-Widgets not found - disabled`) and the notepad reports *"Notepad unavailable: built without the native notepad UI"* at runtime. Forcing `-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON` without them is a configure error rather than a silent downgrade. Clone the Dusk-owned forks at the revisions CI pins — [.github/actions/clone-dpf-stack/action.yml](../.github/actions/clone-dpf-stack/action.yml) is the single source of truth for those pins:
+- **DPF + DPF-Widgets** (the native notepad UI): `-DDPF_PATH=…` / `-DDPF_WIDGETS_PATH=…` win; else `../DPF` and `../DPF-Widgets`, else the `external/` fallbacks, which are placeholders for the eventual release pinning and are not populated today. The two checks are ANDed, so missing *either* one quietly defaults `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` to OFF, announced by one easy-to-miss STATUS line (`Native notepad: DPF / DPF-Widgets not found - disabled`); at runtime the notepad then reports *"Notepad unavailable: built without the native notepad UI"*. Forcing `-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON` without them is a configure error rather than a silent downgrade. Clone the Dusk-owned forks at the revisions CI pins — [.github/actions/clone-dpf-stack/action.yml](../.github/actions/clone-dpf-stack/action.yml) is the single source of truth for those pins:
 
 ```bash
+cd /path/to/dusk-studio
+
 git clone https://github.com/dusk-audio/DPF.git ../DPF
 git -C ../DPF checkout f9fbc62af6fa7ce638a6f1e1482896c385a4955e
 git -C ../DPF submodule update --init     # dgl/src/pugl-upstream
