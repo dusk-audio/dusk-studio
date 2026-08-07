@@ -260,7 +260,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     unset(_duskstudio_juce_wayland_dir)
 endif()
 
-add_subdirectory(${DUSKSTUDIO_JUCE_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
+# EXCLUDE_FROM_ALL keeps JUCE's own install rules out of our install set;
+# without it every cpack package carries juceaide, the whole module source
+# tree and JUCE's CMake package config. The default build is unaffected: the
+# modules are INTERFACE libraries and juceaide is an imported executable.
+add_subdirectory(${DUSKSTUDIO_JUCE_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/JUCE EXCLUDE_FROM_ALL)
 
 # App icon. JUCE bakes the PNG into platform-specific resources at
 # build time (.ico on Windows, .icns on macOS, embedded data block on
