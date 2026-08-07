@@ -130,7 +130,7 @@ application framework and became Dusk Studio's own.
 - **Windows plug-in scanning.** The MSI now includes
   `dusk-studio-plugin-host.exe` beside the main application. The helper was
   built but omitted from CMake's install set, so every third-party plug-in was
-  deliberately left unscanned and the scan completed immediately with a
+  left unscanned and the scan completed immediately with a
   sandbox-host-unavailable warning. The Windows packaging script now validates
   the staged install contains both executables before creating the MSI.
 
