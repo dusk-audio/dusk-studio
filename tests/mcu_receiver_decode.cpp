@@ -4,6 +4,7 @@
 #include "engine/McuProtocol.h"
 #include "engine/McuReceiver.h"
 #include "session/Session.h"
+#include "session/SessionSerializer.h"
 #include "support/DuskMidiTestBridge.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -190,6 +191,141 @@ TEST_CASE ("McuReceiver: V-pot push (PAN mode) resets pan to 0", "[mcu][receiver
     r.process (makeNoteOn (mcu::btn::VPotPushBase + 3, 0x7F), 0);
     REQUIRE_THAT (s.track (3).strip.pan.load (std::memory_order_relaxed),
                   WithinAbs (0.0f, 1e-4f));
+}
+
+TEST_CASE ("McuReceiver: V-pot rotate (COMP mode) makeup moves the audible param",
+           "[mcu][receiver]")
+{
+    Session s;
+    McuReceiver r (s);
+    s.mcu.assignMode.store (6, std::memory_order_relaxed);       // COMP
+    s.mcu.selectedChannel.store (2, std::memory_order_relaxed);
+    auto& strip = s.track (2).strip;
+
+    // Encoder 5 (index 4) is MAKEUP, 0.3 dB per tick. The value the DSP
+    // reads is the active mode's output param, and a tick is worth the
+    // same real dB in every mode.
+    strip.compMode.store (2, std::memory_order_relaxed);         // VCA
+    r.process (makeCc (mcu::cc::VPotRotateBase + 4, 0x05), 0);   // +5 ticks
+    REQUIRE_THAT (strip.compVcaOutput.load (std::memory_order_relaxed),
+                  WithinAbs (1.5f, 1e-4f));
+
+    // Opto's makeup is the donor's 0..100 dial at 0.8 dB per unit, so the
+    // same +1.5 dB from unity is 51.875, not a raw +1.5 on the dial.
+    strip.compMode.store (0, std::memory_order_relaxed);
+    r.process (makeCc (mcu::cc::VPotRotateBase + 4, 0x05), 0);
+    REQUIRE_THAT (strip.compOptoGain.load (std::memory_order_relaxed),
+                  WithinAbs (51.875f, 1e-3f));
+
+    // Left turn: bit 6 set = negative. 2 ticks = -0.6 dB, so +0.9 dB total.
+    r.process (makeCc (mcu::cc::VPotRotateBase + 4, 0x40 | 0x02), 0);
+    REQUIRE_THAT (strip.compOptoGain.load (std::memory_order_relaxed),
+                  WithinAbs (51.125f, 1e-3f));
+}
+
+// A strip parked at the bottom of its makeup range - a CC binding driven to
+// zero, or a session that stored the floor - must step by one tick from
+// there. Clamping the base into some other range first would fling the
+// strip several dB on the very first tick.
+TEST_CASE ("McuReceiver: makeup nudge steps from the mode's floor",
+           "[mcu][receiver]")
+{
+    Session s;
+    McuReceiver r (s);
+    s.mcu.assignMode.store (6, std::memory_order_relaxed);
+    auto& strip = s.track (0).strip;
+    strip.compMode.store (1, std::memory_order_relaxed);          // FET
+    strip.compFetOutput.store (-20.0f, std::memory_order_relaxed);
+
+    r.process (makeCc (mcu::cc::VPotRotateBase + 4, 0x01), 0);
+    REQUIRE_THAT (strip.compFetOutput.load (std::memory_order_relaxed),
+                  WithinAbs (-19.7f, 1e-4f));
+
+    // Down from the floor holds at the floor rather than drifting below it.
+    r.process (makeCc (mcu::cc::VPotRotateBase + 4, 0x40 | 0x0A), 0);
+    REQUIRE_THAT (strip.compFetOutput.load (std::memory_order_relaxed),
+                  WithinAbs (-20.0f, 1e-4f));
+}
+
+TEST_CASE ("McuReceiver: V-pot push (COMP mode) returns makeup to unity",
+           "[mcu][receiver]")
+{
+    Session s;
+    McuReceiver r (s);
+    s.mcu.assignMode.store (6, std::memory_order_relaxed);
+    s.mcu.selectedChannel.store (1, std::memory_order_relaxed);
+    auto& strip = s.track (1).strip;
+    strip.compMode.store (1, std::memory_order_relaxed);         // FET
+    strip.compFetOutput.store (7.5f, std::memory_order_relaxed);
+
+    r.process (makeNoteOn (mcu::btn::VPotPushBase + 4, 0x7F), 0);
+    REQUIRE_THAT (strip.compFetOutput.load (std::memory_order_relaxed),
+                  WithinAbs (0.0f, 1e-4f));
+
+    strip.compMode.store (0, std::memory_order_relaxed);         // Opto
+    strip.compOptoGain.store (80.0f, std::memory_order_relaxed);
+    r.process (makeNoteOn (mcu::btn::VPotPushBase + 4, 0x7F), 0);
+    REQUIRE_THAT (strip.compOptoGain.load (std::memory_order_relaxed),
+                  WithinAbs (50.0f, 1e-4f));  // unity, not silence
+}
+
+// The makeup encoder is relative, so the value it nudges from has to still
+// be there after a reload: one tick on a freshly-loaded session continues
+// from the saved makeup instead of restarting near unity.
+TEST_CASE ("McuReceiver: makeup nudge base survives a session reload",
+           "[mcu][receiver]")
+{
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                        .getChildFile ("dusk-studio-mcu-makeup-"
+                                          + juce::String (juce::Random::getSystemRandom().nextInt()));
+    dir.createDirectory();
+    const auto target = dir.getChildFile ("session.json");
+
+    Session a;
+    McuReceiver ra (a);
+    a.mcu.assignMode.store (6, std::memory_order_relaxed);
+
+    SECTION ("VCA")
+    {
+        a.track (0).strip.compMode.store (2, std::memory_order_relaxed);
+        ra.process (makeCc (mcu::cc::VPotRotateBase + 4, 0x14), 0);   // +20 ticks = +6 dB
+        REQUIRE_THAT (a.track (0).strip.compVcaOutput.load (std::memory_order_relaxed),
+                      WithinAbs (6.0f, 1e-4f));
+        REQUIRE (SessionSerializer::save (a, target));
+
+        Session b;
+        REQUIRE (SessionSerializer::load (b, target));
+        REQUIRE (b.mcu.assignMode.load (std::memory_order_relaxed) == 6);
+        REQUIRE_THAT (b.track (0).strip.compVcaOutput.load (std::memory_order_relaxed),
+                      WithinAbs (6.0f, 1e-4f));
+
+        McuReceiver rb (b);
+        rb.process (makeCc (mcu::cc::VPotRotateBase + 4, 0x01), 0);
+        REQUIRE_THAT (b.track (0).strip.compVcaOutput.load (std::memory_order_relaxed),
+                      WithinAbs (6.3f, 1e-4f));
+    }
+
+    SECTION ("Opto")
+    {
+        // +6 dB on the dial is 57.5; one more tick is +6.3 dB = 57.875.
+        a.track (0).strip.compMode.store (0, std::memory_order_relaxed);
+        ra.process (makeCc (mcu::cc::VPotRotateBase + 4, 0x14), 0);
+        REQUIRE_THAT (a.track (0).strip.compOptoGain.load (std::memory_order_relaxed),
+                      WithinAbs (57.5f, 1e-3f));
+        REQUIRE (SessionSerializer::save (a, target));
+
+        Session b;
+        REQUIRE (SessionSerializer::load (b, target));
+        REQUIRE_THAT (b.track (0).strip.compOptoGain.load (std::memory_order_relaxed),
+                      WithinAbs (57.5f, 1e-3f));
+
+        McuReceiver rb (b);
+        rb.process (makeCc (mcu::cc::VPotRotateBase + 4, 0x01), 0);
+        REQUIRE_THAT (b.track (0).strip.compOptoGain.load (std::memory_order_relaxed),
+                      WithinAbs (57.875f, 1e-3f));
+    }
+
+    dir.deleteRecursively();
 }
 
 TEST_CASE ("McuReceiver: PLAY / STOP / RECORD buttons enqueue pendingTransportAction",

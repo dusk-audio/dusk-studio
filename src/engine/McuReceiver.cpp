@@ -1,6 +1,7 @@
 #include "McuReceiver.h"
 #include "McuProtocol.h"
 #include "McuFaderTaper.h"
+#include "CompMakeupMap.h"
 #include "../session/Session.h"
 
 #include <algorithm>
@@ -71,7 +72,7 @@ void McuReceiver::resetVpotTarget (int stripIndex) noexcept
                 case 1: strip.compVcaRatio   .store (4.0f, std::memory_order_relaxed); break;
                 case 2: strip.compVcaAttack  .store (1.0f, std::memory_order_relaxed); break;
                 case 3: strip.compVcaRelease .store (100.0f, std::memory_order_relaxed); break;
-                case 4: strip.compMakeupDb   .store (0.0f, std::memory_order_relaxed); break;
+                case 4: comp::applyTrackCompMakeupDb (strip, 0.0f); break;
                 default: break;
             }
         }
@@ -163,10 +164,8 @@ void McuReceiver::applyVpotDelta (int stripIndex, int delta) noexcept
                                                                     ChannelStripParams::kCompReleaseMax,
                                                                     strip.compVcaRelease.load() + d * 10.0f),
                                                       std::memory_order_relaxed); break;
-                case 4: strip.compMakeupDb.store (jlimit (ChannelStripParams::kCompMakeupMin,
-                                                                  ChannelStripParams::kCompMakeupMax,
-                                                                  strip.compMakeupDb.load() + d * 0.3f),
-                                                    std::memory_order_relaxed); break;
+                case 4: comp::applyTrackCompMakeupDb (
+                            strip, comp::trackCompMakeupDb (strip) + d * 0.3f); break;
                 default: break;
             }
         }

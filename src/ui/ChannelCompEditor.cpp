@@ -1,5 +1,6 @@
 #include "ChannelCompEditor.h"
 #include "DuskStudioLookAndFeel.h"
+#include "../engine/CompMakeupMap.h"
 
 #include <algorithm>
 
@@ -260,6 +261,16 @@ void ChannelCompEditor::refreshLabelsForMode()
     // incoming value against whichever range is currently active.
     applyTimingRanges (attackKnob, releaseKnob, m);
 
+    // Opto's dial spans +/-40 dB, FET / VCA +/-20, so a fixed knob range
+    // would leave one end unreachable and snap the gain on first touch.
+    // Slider::setRange notifies when it clamps the current value, which
+    // would write that clamped value back into the strip - park the
+    // callback across the change and let syncKnobsFromMode restore it.
+    const auto makeupDomain = comp::makeupDomainFor (track.strip);
+    makeupKnob.onValueChange = nullptr;
+    makeupKnob.setRange (makeupDomain.minDb, makeupDomain.maxDb, 0.01);
+    makeupKnob.onValueChange = [this] { writeMakeupToMode(); };
+
     // OverEasy + detector-mode toggles: VCA only.
     const bool vcaMode = (m == 2);
     vcaOverEasyBtn.setVisible (vcaMode);
@@ -299,9 +310,7 @@ void ChannelCompEditor::refreshLabelsForMode()
 //   VCA:  threshDb -> compVcaThreshDb  (clamped to that param's -38..12)
 //   Opto: threshDb -> compOptoPeakRed  (lower threshold = more reduction;
 //                                       linear remap of -60..0 to 100..0 %)
-//   FET:  threshDb -> chain compFetInput up and compFetOutput down by the
-//                     same amount so net level holds while compression
-//                     increases (the user's stated intent).
+//   FET:  threshDb -> compFetThresholdDb (clamped to that param's -60..0)
 //
 // Similar logic for the other four knobs - Opto's release/attack/ratio are
 // fixed by the optical model so those knobs are no-ops in Opto mode.
@@ -410,34 +419,7 @@ void ChannelCompEditor::writeReleaseToMode()
 
 void ChannelCompEditor::writeMakeupToMode()
 {
-    const float dB = (float) makeupKnob.getValue();
-    // Always store the user's intent in the unified `compMakeupDb` field.
-    // FET reads this back when the threshold knob changes so the two
-    // controls compose without overwriting each other (otherwise lowering
-    // threshold would wipe whatever makeup the user had dialled in).
-    track.strip.compMakeupDb.store (dB, std::memory_order_relaxed);
-
-    const int mode = jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
-    switch (mode)
-    {
-        case 0: // Opto: 0..100 % gain, 50 % = unity
-        {
-            const float pct = jlimit (0.0f, 100.0f, 50.0f + dB * 2.5f);
-            track.strip.compOptoGain.store (pct, std::memory_order_relaxed);
-            break;
-        }
-        case 1: // FET: independent OUTPUT knob, no chain coupling.
-        {
-            track.strip.compFetOutput.store (jlimit (-20.0f, 20.0f, dB),
-                                              std::memory_order_relaxed);
-            break;
-        }
-        case 2:
-        default:
-            track.strip.compVcaOutput.store (jlimit (-20.0f, 20.0f, dB),
-                                              std::memory_order_relaxed);
-            break;
-    }
+    comp::applyTrackCompMakeupDb (track.strip, (float) makeupKnob.getValue());
 }
 
 // Read back per-mode params and update the knob displays (called when the
@@ -445,14 +427,13 @@ void ChannelCompEditor::writeMakeupToMode()
 void ChannelCompEditor::syncKnobsFromMode()
 {
     const int mode = jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
+    makeupKnob.setValue (comp::trackCompMakeupDb (track.strip), juce::dontSendNotification);
     switch (mode)
     {
         case 0: // Opto
         {
             const float peakRed = track.strip.compOptoPeakRed.load (std::memory_order_relaxed);
             threshKnob.setValue (-peakRed * (60.0f / 100.0f), juce::dontSendNotification);
-            const float gain = track.strip.compOptoGain.load (std::memory_order_relaxed);
-            makeupKnob.setValue ((gain - 50.0f) / 2.5f, juce::dontSendNotification);
             // ratio/attack/release: leave at displayed values; they don't apply
             break;
         }
@@ -471,7 +452,6 @@ void ChannelCompEditor::syncKnobsFromMode()
             ratioKnob.setValue   (kFetRatioDisplay[ratioIdx], juce::dontSendNotification);
             attackKnob.setValue  (track.strip.compFetAttack.load  (std::memory_order_relaxed), juce::dontSendNotification);
             releaseKnob.setValue (track.strip.compFetRelease.load (std::memory_order_relaxed), juce::dontSendNotification);
-            makeupKnob.setValue  (track.strip.compFetOutput.load  (std::memory_order_relaxed), juce::dontSendNotification);
             break;
         }
         case 2: // VCA
@@ -480,7 +460,6 @@ void ChannelCompEditor::syncKnobsFromMode()
             ratioKnob.setValue   (track.strip.compVcaRatio.load    (std::memory_order_relaxed), juce::dontSendNotification);
             attackKnob.setValue  (track.strip.compVcaAttack.load   (std::memory_order_relaxed), juce::dontSendNotification);
             releaseKnob.setValue (track.strip.compVcaRelease.load  (std::memory_order_relaxed), juce::dontSendNotification);
-            makeupKnob.setValue  (track.strip.compVcaOutput.load   (std::memory_order_relaxed), juce::dontSendNotification);
             break;
     }
 }
