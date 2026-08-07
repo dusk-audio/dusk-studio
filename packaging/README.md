@@ -32,7 +32,8 @@ Dusk Studio registers with GNOME Software / KDE Discover and double-clicking
 - The committed 256×256 icon at `packaging/DuskStudio.png` — the size the
   desktop entry's `Icon=DuskStudio` key resolves. Edit the master
   `assets/ds-icon.png` and you must regenerate it by hand with
-  `magick assets/ds-icon.png -resize 256x256 -strip packaging/DuskStudio.png`;
+  `magick assets/ds-icon.png -resize 256x256 -strip packaging/DuskStudio.png`
+  (ImageMagick 6 spells the command `convert`);
   nothing checks that the two stay in sync.
 
 ## Building the tarball
