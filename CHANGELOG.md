@@ -72,6 +72,10 @@ application framework and became Dusk Studio's own.
   math utilities are now Dusk Studio's own code rather than the application
   framework's. Behaviour is unchanged by design; this is the groundwork for
   the interface rewrite.
+- **License texts ship with the packages.** The tarball, the deb and rpm,
+  the DMG and the MSI now carry `LICENSE` and `LICENSES.txt`, and the
+  attribution list credits the notepad's UI stack (DPF, Dear ImGui, pugl and
+  the components they embed) along with the CLAP headers.
 
 ### Fixed
 
@@ -89,7 +93,15 @@ application framework and became Dusk Studio's own.
   reopened. They round-trip now, and fall back to the model default when the
   keys are absent.
 - **Console bank switching.** Changing bank left MIDI bank bindings and the
-  Mackie surface pointing at the previous eight strips.
+  Mackie surface pointing at the previous eight strips. Resizing the window no
+  longer strands the visible page away from the bank the surface is driving,
+  and a bank press made during a window drag is no longer swallowed.
+- **Compressor makeup on the control surface.** The makeup encoder wrote a
+  parameter no processing read, so turning it did nothing and pushing it to
+  reset did nothing either. It now drives the active compressor mode's gain,
+  the same one a MIDI binding drives. The optical mode's makeup was also
+  labelled at half its real value everywhere it appeared, so a reading of
+  +12 dB was delivering +24 dB; the numbers now match the gain.
 - **Joining regions.** A join could land on the wrong slot, cut the merged
   region short, or drop the last region's fade-out; the merge now sizes from
   the latest end across the selection and carries that region's fade. Editing
@@ -107,7 +119,9 @@ application framework and became Dusk Studio's own.
   belongs to. A plugin slot also re-publishes reliably after a reload.
 - **MIDI and soundfonts.** Hung notes no longer lose their tail, CC values no
   longer diverge from what was sent, and several SF2-to-SFZ translation faults
-  are corrected.
+  are corrected. A dense burst that filled the input ring but overflowed a
+  smaller downstream buffer used to be dropped whole, note-offs included; every
+  buffer along the path now matches the ring.
 - **Interface.** Modals opened over the notepad are visible and no longer leak
   keystrokes to the transport; the on-screen keyboard's note keys no longer
   double as transport shortcuts; modal teardown, plugin editor embedding and
