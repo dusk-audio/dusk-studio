@@ -21,6 +21,13 @@ Dusk Studio registers with GNOME Software / KDE Discover and double-clicking
 
 - A Release build in `build-linux/` with both the `DuskStudio` and
   `dusk-studio-plugin-host` artefacts present.
+- The DPF stack discoverable at configure time — sibling `../DPF` and
+  `../DPF-Widgets` checkouts, or `-DDPF_PATH=` / `-DDPF_WIDGETS_PATH=`. Miss
+  either and the native notepad is compiled out of the binary you are about to
+  ship, announced by nothing louder than a
+  `Native notepad: DPF / DPF-Widgets not found - disabled` line in the
+  configure log. Clone instructions and the pinned revisions are in
+  `BUILDING-LINUX.md` under "The native notepad".
 - ImageMagick (`magick` or `convert`) on `$PATH` — used to scale the brand
   icon to the 256×256 PNG the desktop entry references.
 - The brand icon at `assets/ds-icon.png`.
@@ -29,7 +36,12 @@ Dusk Studio registers with GNOME Software / KDE Discover and double-clicking
 
 Done outside CMake by `scripts/package-tarball.sh`, which stages the program
 directory, copies the integration assets, generates the icon, and packs
-everything with `tar`. Run from a clean Ubuntu 22.04 build:
+everything with `tar`. Run from a clean Ubuntu 22.04 build.
+
+Configure into a fresh `build-linux/`. `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` is a
+cached option: a directory first configured without the DPF checkouts keeps the
+notepad off after you clone them, and drops its STATUS line too, so a release
+built in a reused directory can ship without the notepad and without saying so.
 
 ```bash
 # 1. Build Dusk Studio as usual.

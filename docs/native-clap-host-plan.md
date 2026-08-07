@@ -52,7 +52,7 @@ JUCE off-screen-embed guesswork (which failed 3×).
 ## DuskVerb as CLAP
 
 Build the Dusk plugins (convolution-reverb = **DuskVerb**, etc.) as **CLAP** targets in
-`plugins-main` (clap entry or clap-wrapper). You own these, so the whole aux path —
+`../plugins` (clap entry or clap-wrapper). You own these, so the whole aux path —
 load, process, editor — can be native CLAP end-to-end. 3rd-party VST3/LV2 stay on JUCE
 until native VST3/LV2 land.
 
