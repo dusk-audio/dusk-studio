@@ -6,6 +6,15 @@ external component bundled or vendored into the build, the license it
 ships under, and the path where it lives. Update whenever a new
 dependency is added so the legal surface stays auditable.
 
+The full-texts section at the foot of this file reproduces the licenses that
+require a copy of the license text itself to travel with a binary: Apache-2.0,
+and the BSD / IJG / PNG / zlib / Old MIT terms of the codecs and font libraries
+JUCE bundles. That is not yet every text a complete offline notices file would
+carry — the MIT and ISC components listed above ask for their permission notice
+in copies too, and those are named and attributed here rather than reproduced.
+Every entry cites the upstream license file by path, so the missing texts can
+be read at their source until they are folded in.
+
 PROJECT LICENSE
 ---------------
 Dusk Studio source code: GPL-3.0-or-later (./LICENSE)
@@ -15,11 +24,94 @@ VENDORED DEPENDENCIES (compiled into the Dusk Studio binary)
 ------------------------------------------------------
 
 JUCE (audio framework)
-  Version  : 8.x  (Linux pin: dusk-audio/JUCE-wayland tag dusk-wayland-v2;
-                   macOS/Win: upstream juce-framework/JUCE)
-  License  : Dual-licensed — GPL-3.0 (used here) OR JUCE Commercial
+  Version  : 8.0.12 on Linux (dusk-audio/JUCE-wayland tag dusk-wayland-v2, rev
+             4d85afa175a45e0b5da11f9211de3ba88705588e — the JUCE_TAG / JUCE_REV
+             pin in .github/workflows/linux-build.yml); 8.0.4 from upstream
+             juce-framework/JUCE on the macOS and Windows runners
+  License  : Dual-licensed — AGPLv3 (used here) OR JUCE Commercial
+             (JUCE-wayland/LICENSE.md)
   Path     : ../JUCE-wayland (Linux), ../JUCE (macOS/Windows)
   Upstream : https://juce.com/
+  Notes    : GPLv3 section 13 grants permission to combine a GPLv3 covered work
+             with an AGPLv3 work and convey the result, which is what Dusk
+             Studio's GPL-3.0-or-later code plus JUCE's AGPLv3 arm is. AGPLv3
+             section 13's own requirement — offer source to users who interact
+             with the program remotely over a network — then attaches to the
+             combination, and is inert here: Dusk Studio is a desktop
+             application with no remote-interaction surface.
+             The libraries below ship vendored inside the JUCE modules Dusk
+             Studio links and ARE compiled into the binary. None of the JUCE
+             flags that would exclude them (JUCE_USE_FLAC, JUCE_USE_OGGVORBIS,
+             JUCE_INCLUDE_PNGLIB_CODE, JUCE_INCLUDE_JPEGLIB_CODE,
+             JUCE_INCLUDE_ZLIB_CODE) is set anywhere in the build, so every one
+             stays at its default of enabled. Versions are those vendored in
+             the 8.0.12 Linux pin; upstream 8.0.4 can carry different ones.
+             Licenses marked "reproduced below" require their text to ship
+             with a binary; those texts are at the foot of this file.
+               - SheenBidi     2.9.0, Apache-2.0
+                               modules/juce_graphics/unicode/sheenbidi/LICENSE
+                               (Copyright (C) 2014-2025 Muhammad Tayyab Akram —
+                               widest range across the vendored sources);
+                               reproduced below, because Apache-2.0 section 4
+                               requires a copy of the license to accompany
+                               every distribution. Upstream ships no NOTICE
+                               file, so section 4(d) adds nothing beyond that.
+               - HarfBuzz      10.1.0, Old MIT
+                               modules/juce_graphics/fonts/harfbuzz/COPYING;
+                               reproduced below with its full copyright-holder
+                               list. That COPYING is the only one in the
+                               vendored subset — no subdirectory overrides it.
+               - libjpeg       9f (14-Jan-2024), Independent JPEG Group license
+                               modules/juce_graphics/image_formats/jpglib/README,
+                               LEGAL ISSUES section (copyright (C) 1991-2024
+                               Thomas G. Lane, Guido Vollbeding); reproduced
+                               below. Condition 2 of that license governs
+                               binary-only distribution and this sentence
+                               discharges it: this software is based in part on
+                               the work of the Independent JPEG Group.
+               - libpng        1.6.37, PNG Reference Library License version 2
+                               modules/juce_graphics/image_formats/pnglib/LICENSE;
+                               reproduced below. JUCE's own LICENSE.md labels
+                               this one "zlib", which is wrong — v2 is a
+                               distinct license.
+               - zlib          1.3.1, zlib license
+                               modules/juce_core/zip/zlib/LICENSE (Jean-loup
+                               Gailly and Mark Adler); reproduced below.
+               - libFLAC       1.4.3, BSD-3-Clause
+                               modules/juce_audio_formats/codecs/flac/
+                               "Flac Licence.txt" (Josh Coalson 2000-2009,
+                               Xiph.Org Foundation 2011-2023); reproduced
+                               below — the binary-form clause requires it.
+               - Ogg / Vorbis  libvorbis 1.3.7, BSD-3-Clause
+                               modules/juce_audio_formats/codecs/oggvorbis/
+                               "Ogg Vorbis Licence.txt" (Xiph.org Foundation
+                               2002-2020); reproduced below, same clause.
+             Two plugin-host SDKs come in the same way, and unlike the native
+             hosts further down they are NOT Linux-only: CMakeLists.txt sets
+             JUCE_PLUGINHOST_VST3=1 and JUCE_PLUGINHOST_LV2=1 with no platform
+             guard, so JUCE's own copies compile into the macOS and Windows
+             binaries too.
+               - VST3 SDK      VST 3.8.0, MIT
+                               modules/juce_audio_processors_headless/
+                               format_types/VST3_SDK/LICENSE.txt (Copyright (c)
+                               2025 Steinberg Media Technologies GmbH). This is
+                               the MIT-licensed interface subset Steinberg
+                               publishes for it, a different thing from the
+                               full SDK in external/vst3sdk below, which is
+                               dual GPLv3 / Steinberg proprietary.
+               - LV2 SDK       ISC, all five components
+                               modules/juce_audio_processors_headless/
+                               format_types/LV2_SDK/<name>/COPYING —
+                               lv2 (Steve Harris, David Robillard 2006-2012,
+                               based on LADSPA by Richard W.E. Furse, Paul
+                               Barton-Davis, Stefan Westerfeld 2000-2002),
+                               lilv 0.24.12, serd 0.30.10, sord 0.16.9 and
+                               sratom (David Robillard). zix rides along inside
+                               lilv and sord under the same ISC terms (David
+                               Robillard 2016-2020, notice at the head of each
+                               src/zix file). Versions are the ones JUCE records
+                               in format_types/LV2_SDK/juce_lv2_config.h; lv2
+                               and sratom carry no version macro there.
 
 Dusk Audio plugins (donor DSP cores)
   License  : GPL-3.0-or-later (matches Dusk Studio)
@@ -41,7 +133,20 @@ sfizz (SFZ / SoundFont sampler engine — powers the multisample instrument)
              compiled in. The sub-components below ship vendored inside sfizz
              and ARE compiled into the Dusk Studio binary; each keeps its own
              permissive license (full text at external/sfizz/**/LICENSE):
-               - abseil-cpp    Apache-2.0   external/sfizz/external/abseil-cpp/
+               - abseil-cpp    LTS 20230125.3 (ABSL_LTS_RELEASE_VERSION and
+                               ABSL_LTS_RELEASE_PATCH_LEVEL in
+                               absl/base/config.h), submodule rev
+                               c2435f8342c2d0ed8101cb43adfd605fdc52dca2,
+                               Apache-2.0
+                               external/sfizz/external/abseil-cpp/LICENSE.
+                               Vendored unconditionally by
+                               sfizz_add_vendor_abseil() in
+                               external/sfizz/cmake/SfizzDeps.cmake, so it is
+                               the second Apache-2.0 component in the binary
+                               after SheenBidi and carries the same section 4
+                               obligation. Covered by the Apache License 2.0
+                               reproduced at the foot of this file; abseil ships
+                               no NOTICE file either.
                - st_audiofile  BSD-2-Clause  external/sfizz/external/st_audiofile/
                - atomic_queue  MIT          external/sfizz/external/atomic_queue/
                - kiss_fft      BSD-3-Clause  external/sfizz/src/external/kiss_fft/
@@ -51,6 +156,31 @@ sfizz (SFZ / SoundFont sampler engine — powers the multisample instrument)
                - cpuid         BSD-3-Clause external/sfizz/src/external/cpuid/  (Steinwurf ApS)
                - hiir          WTFPL        external/sfizz/src/external/hiir/   (Laurent de Soras)
                - simde         MIT / CC0    external/sfizz/external/simde/
+               - cephes        BSD-3-Clause external/sfizz/external/cephes/LICENSE.txt
+                               (Julien Cornebise 2013). Only chbevl.c and i0.c
+                               are vendored. Moshier's original cephes carries
+                               no license of its own; his emailed permission to
+                               redistribute it under BSD is quoted in that
+                               LICENSE.txt.
+             These four arrive one level deeper still, vendored inside
+             st_audiofile. Its CMake links them only when it is not using
+             libsndfile instead (the if(NOT ST_AUDIO_FILE_USE_SNDFILE) branch
+             in external/sfizz/external/st_audiofile/CMakeLists.txt), and Dusk
+             Studio forces SFIZZ_USE_SNDFILE OFF, so the branch that links them
+             is the one every build takes:
+               - dr_libs       public domain / MIT-0 dual, caller's choice
+                               external/sfizz/external/st_audiofile/thirdparty/
+                               dr_libs/LICENSE (David Reid 2020) — dr_wav
+                               0.13.8, dr_flac 0.12.39, dr_mp3 0.6.34
+               - WavPack       5.6.6, BSD-3-Clause
+                               .../thirdparty/wavpack/license.txt
+                               (David Bryant 1998-2022, Conifer Software)
+               - libaiff       MIT
+                               .../thirdparty/libaiff/LICENSE
+                               (Marco Trillo 2005-2008)
+               - stb_vorbis    1.22, MIT / public domain dual, caller's choice
+                               .../thirdparty/stb_vorbis/LICENSE
+                               (Sean Barrett 2017)
 
 nlohmann/json (JSON parser — session + preset serialisation)
   Version  : 3.11.3
@@ -171,19 +301,41 @@ Catch2 (test framework — TEST BUILDS ONLY, not bundled in Dusk Studio)
   Path     : build-tests/_deps/catch2-src/ (FetchContent at configure time)
   Upstream : https://github.com/catchorg/Catch2/
 
-libsndfile (JUCE-free audio file I/O — TEST BUILDS ONLY for now)
+
+SYSTEM DEPENDENCIES (not vendored — resolved at configure time)
+---------------------------------------------------------------
+
+libsndfile (all audio file I/O — required on every platform)
   License  : LGPL-2.1-or-later
-  Path     : not vendored — system shared library found at configure time
-             (libsndfile-dev / libsndfile-devel / brew install libsndfile).
-             The dusk::audio FileReader/Writer unit + its tests compile only
-             when it is present; skipped otherwise. Linked dynamically.
-  Notes    : Will become an app dependency once the JUCE audio-format readers
-             are migrated; currently test-only.
-  Upstream : https://github.com/libsndfile/libsndfile
-
-
-PLATFORM-SPECIFIC OPTIONAL DEPENDENCIES
----------------------------------------
+  Path     : not vendored — found at configure time (libsndfile-dev /
+             libsndfile-devel / brew install libsndfile). A missing libsndfile
+             is a configure FATAL_ERROR, and both the app and the test binary
+             link the dusk_sndfile interface target.
+  Notes    : On Linux and macOS this is a dynamic link against the system
+             libsndfile (libsndfile.so.1), which is LGPL-2.1 section 6(b) —
+             the shared-library mechanism — and needs nothing further.
+             Windows takes a different route. The workflows run
+             `vcpkg install mp3lame:x64-windows-static
+             libsndfile:x64-windows-static`, which produces static libraries
+             and pulls libsndfile's codec chain — FLAC, Ogg, Opus, mpg123 —
+             into the executable alongside it, so no DLL ships and 6(b) is not
+             available. Section 6(a) is, and is already satisfied: Dusk Studio
+             is GPL-3.0-or-later with its complete corresponding source
+             published, and that source includes the exact vcpkg command above,
+             so anyone can rebuild the whole executable and relink it against a
+             modified libsndfile or mpg123. Nothing beyond the published source
+             is owed. Note that vcpkg runs there in classic mode with no
+             manifest, so the codec versions in a given Windows build are the
+             ones that runner's vcpkg baseline supplied rather than a version
+             pinned in this repo.
+             libsndfile is LGPL-2.1-or-later and mpg123 LGPL-2.1-only. FLAC and
+             Ogg are BSD-3-Clause (texts at the foot of this file, from JUCE's
+             vendored copies of the same projects); Opus is BSD-3-Clause
+             (Xiph.Org, Skype, Octasic, Jean-Marc Valin, Timothy B. Terriberry,
+             CSIRO, Gregory Maxwell, Mark Borgerding, Erik de Castro Lopo,
+             Mozilla, Amazon).
+  Upstream : https://github.com/libsndfile/libsndfile ,
+             https://www.mpg123.de/ , https://opus-codec.org/
 
 lilv / suil / lv2 (native LV2 host — Linux builds only)
   License  : ISC (lilv, suil), ISC (lv2 headers)
@@ -192,6 +344,10 @@ lilv / suil / lv2 (native LV2 host — Linux builds only)
              only when all three are present (DUSKSTUDIO_NATIVE_LV2).
   Notes    : Linked against the distro shared objects, never statically. ISC is
              GPL-compatible; no additional obligations beyond the license text.
+             This entry is only about the SYSTEM lilv/suil/lv2 the native host
+             uses. JUCE bundles its own static copies of lv2, lilv, serd, sord
+             and sratom, and those compile into every platform's binary — see
+             the LV2 SDK line under JUCE above.
   Upstream : https://gitlab.com/lv2 (lilv, suil), https://lv2plug.in (lv2)
 
 LAME / libmp3lame (MP3 bounce export — optional)
@@ -199,26 +355,73 @@ LAME / libmp3lame (MP3 bounce export — optional)
   Path     : not vendored — system shared library found at configure time via
              find_library(mp3lame); linked only when present
              (DUSKSTUDIO_HAS_LAME). Builds without it fall back to WAV-only.
-  Notes    : Linked against the system SHARED library (e.g. libmp3lame.so),
-             never statically — find_library resolves the distro / Homebrew
-             shared object at configure time (verified: release Linux build
-             links /usr/lib64/libmp3lame.so). The LGPL-2.1 §6 relink obligation
-             is met by that dynamic-link boundary. Present in a binary only if
-             the build was configured with libmp3lame available.
+  Notes    : On Linux and macOS, linked against the system SHARED library —
+             find_library resolves the distro / Homebrew shared object at
+             configure time (verified: release Linux build links
+             /usr/lib64/libmp3lame.so), so LGPL-2.1 section 6(b) applies.
+             Windows is the exception: the same vcpkg x64-windows-static
+             command described under libsndfile installs mp3lame statically,
+             so a Windows build links it into the executable and discharges
+             section 6 by the same 6(a) route — published complete
+             corresponding source that anyone can rebuild and relink.
+             Present in a binary only if the build was configured with
+             libmp3lame available.
   Upstream : https://lame.sourceforge.io/
 
 System shared libraries (Linux builds — linked dynamically, never bundled)
-  License  : PipeWire MIT; ALSA / libasound LGPL-2.1-or-later; libX11 MIT;
-             libGL supplied by the system OpenGL driver (Mesa: MIT)
+  License  : PipeWire MIT; ALSA / libasound LGPL-2.1-or-later; libX11 and the
+             X extension libraries it comes with (Xcursor, Xext, Xrandr) MIT;
+             libGL supplied by the system OpenGL driver (Mesa: MIT);
+             libdbus-1 dual-licensed AFL-2.1 OR GPL-2.0-or-later;
+             libfreetype FreeType License (FTL);
+             libfontconfig MIT-style permission grant (Keith Packard, Red Hat
+             and others — /usr/share/licenses/fontconfig/COPYING on a
+             typical install)
   Path     : not vendored — pkg-config libpipewire-0.3, find_package(OpenGL),
              and a plain link by name for asound / X11. PipeWire is the primary
              audio backend, ALSA the fallback backend and the MIDI transport,
              X11 the plugin-editor embedding host, and GL the renderer the
-             native notepad UI draws through.
+             native notepad UI draws through. Three more arrive indirectly:
+             DPF's dgl-system-libs adds libdbus-1 when pkg-config finds it, and
+             JUCE's juce_graphics module declares freetype2 and fontconfig as
+             Linux packages, so both land on the link line without either name
+             appearing in this repo's CMakeLists.txt.
   Notes    : Dusk Studio redistributes none of these — they come from the
-             user's distribution. Listed so the link surface is complete.
+             user's distribution, and the whole set is dynamically linked.
+             Listed so the non-toolchain link surface is complete; the
+             toolchain runtimes are the entry below.
+             FreeType's license asks any binary distribution carrying its code
+             to state that the software is based in part on the work of the
+             FreeType Team. Dusk Studio links the FreeType the user's
+             distribution supplies rather than shipping one, so the clause does
+             not bite, but the acknowledgement is made here anyway.
+             D-Bus is taken under its GPL-2.0-or-later arm, which upgrades to
+             GPLv3 and so combines with Dusk Studio's own license. The AFL-2.1
+             arm is the alternative D-Bus offers, but the FSF reads AFL-2.1 as
+             GPL-incompatible, so it is not the one relied on here.
   Upstream : https://pipewire.org/ , https://www.alsa-project.org/ ,
-             https://www.x.org/ , https://mesa3d.org/
+             https://www.x.org/ , https://mesa3d.org/ ,
+             https://www.freedesktop.org/wiki/Software/dbus/ ,
+             https://freetype.org/ ,
+             https://www.freedesktop.org/wiki/Software/fontconfig/
+
+Toolchain runtimes (the compiler's own libraries — linked dynamically)
+  License  : libstdc++, libgcc_s and libatomic are GPL-3.0-or-later WITH
+             GCC-exception-3.1 (the GCC Runtime Library Exception); glibc
+             (libc, libm) is LGPL-2.1-or-later, with parts GPL-2.0-or-later and
+             LGPL-2.1-or-later WITH GCC-exception-2.0
+  Path     : not vendored — supplied by the compiler and C library the build
+             machine uses. On the release Linux binary these are the remaining
+             DT_NEEDED entries: libstdc++.so.6, libgcc_s.so.1, libatomic.so.1,
+             libc.so.6, libm.so.6.
+  Notes    : The GCC Runtime Library Exception is what lets a program link
+             these without the runtime's own GPL reaching the program, and the
+             glibc exception plays the same role for the C library. Dusk Studio
+             would satisfy both anyway, being GPLv3, and ships none of them.
+             Version and license strings above are as the build machine's
+             distribution records them (GCC 15.3.0, glibc 2.40 here); another
+             distribution will differ in version but not in license.
+  Upstream : https://gcc.gnu.org/ , https://www.gnu.org/software/libc/
 
 
 Steinberg ASIO SDK (Windows only, optional)
@@ -247,3 +450,543 @@ Redistribute the binary: Allowed under GPL-3.0 terms. Include LICENSE,
                           (plus a Debian-policy `copyright` copy), the top
                           level of the Linux tarball, and beside the app in
                           the macOS DMG and the Windows MSI.
+                          That same source-code availability is what
+                          discharges the LGPL section 6 obligation on the
+                          statically linked libsndfile and mpg123 in a
+                          Windows build — no separate object-code drop is
+                          owed. Carrying this file also discharges the
+                          third-party notices the GPL itself does not cover,
+                          such as the IJG acknowledgement and the BSD
+                          copyright notices reproduced below.
+
+
+FULL LICENSE TEXTS
+------------------
+
+Each license below has a clause that makes its text, or its copyright notice
+and warranty disclaimer, part of any binary distribution. Naming the license is
+not enough for those, so they are set out here: each block is a verbatim copy
+of the file at the path above it, or of the relevant section where the block
+header says so. Paths starting `modules/` are inside the JUCE tree Dusk Studio
+builds against on Linux — dusk-audio/JUCE-wayland tag dusk-wayland-v2, rev
+4d85afa175a45e0b5da11f9211de3ba88705588e, JUCE 8.0.12. The macOS and Windows
+runners build against upstream JUCE 8.0.4, whose vendored copies may carry
+different versions of the same libraries under the same licenses.
+
+
+--------------------------------------------------------------------------------
+Apache License 2.0 — covers both Apache-2.0 components in the binary:
+  SheenBidi 2.9.0, Copyright (C) 2014-2025 Muhammad Tayyab Akram
+  abseil-cpp LTS 20230125.3, Copyright The Abseil Authors (Google Inc.
+  per external/sfizz/external/abseil-cpp/AUTHORS)
+Text below is modules/juce_graphics/unicode/sheenbidi/LICENSE verbatim,
+including the blank line it opens with. abseil ships the same license at
+external/sfizz/external/abseil-cpp/LICENSE; the only differences there are that
+it spells the two apache.org URLs https rather than http and that it ends with
+a trailing blank line instead of opening with one. Neither project ships a
+NOTICE file, so Apache-2.0 section 4(d) adds nothing to the section 4(a) copy
+provided here.
+--------------------------------------------------------------------------------
+
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright [yyyy] [name of copyright owner]
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+
+--------------------------------------------------------------------------------
+HarfBuzz 10.1.0 — Old MIT
+modules/juce_graphics/fonts/harfbuzz/COPYING
+--------------------------------------------------------------------------------
+
+HarfBuzz is licensed under the so-called "Old MIT" license.  Details follow.
+For parts of HarfBuzz that are licensed under different licenses see individual
+files names COPYING in subdirectories where applicable.
+
+Copyright © 2010-2022  Google, Inc.
+Copyright © 2015-2020  Ebrahim Byagowi
+Copyright © 2019,2020  Facebook, Inc.
+Copyright © 2012,2015  Mozilla Foundation
+Copyright © 2011  Codethink Limited
+Copyright © 2008,2010  Nokia Corporation and/or its subsidiary(-ies)
+Copyright © 2009  Keith Stribley
+Copyright © 2011  Martin Hosken and SIL International
+Copyright © 2007  Chris Wilson
+Copyright © 2005,2006,2020,2021,2022,2023  Behdad Esfahbod
+Copyright © 2004,2007,2008,2009,2010,2013,2021,2022,2023  Red Hat, Inc.
+Copyright © 1998-2005  David Turner and Werner Lemberg
+Copyright © 2016  Igalia S.L.
+Copyright © 2022  Matthias Clasen
+Copyright © 2018,2021  Khaled Hosny
+Copyright © 2018,2019,2020  Adobe, Inc
+Copyright © 2013-2015  Alexei Podtelezhnikov
+
+For full copyright notices consult the individual files in the package.
+
+
+Permission is hereby granted, without written agreement and without
+license or royalty fees, to use, copy, modify, and distribute this
+software and its documentation for any purpose, provided that the
+above copyright notice and the following two paragraphs appear in
+all copies of this software.
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE TO ANY PARTY FOR
+DIRECT, INDIRECT, SPECIAL, INCIDENTAL, OR CONSEQUENTIAL DAMAGES
+ARISING OUT OF THE USE OF THIS SOFTWARE AND ITS DOCUMENTATION, EVEN
+IF THE COPYRIGHT HOLDER HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH
+DAMAGE.
+
+THE COPYRIGHT HOLDER SPECIFICALLY DISCLAIMS ANY WARRANTIES, INCLUDING,
+BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS FOR A PARTICULAR PURPOSE.  THE SOFTWARE PROVIDED HEREUNDER IS
+ON AN "AS IS" BASIS, AND THE COPYRIGHT HOLDER HAS NO OBLIGATION TO
+PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
+
+--------------------------------------------------------------------------------
+libjpeg 9f — Independent JPEG Group license
+modules/juce_graphics/image_formats/jpglib/README, the whole LEGAL ISSUES
+section (lines 100-154; the rest of that README is build and usage notes)
+--------------------------------------------------------------------------------
+
+LEGAL ISSUES
+============
+
+In plain English:
+
+1. We don't promise that this software works.  (But if you find any bugs,
+   please let us know!)
+2. You can use this software for whatever you want.  You don't have to pay us.
+3. You may not pretend that you wrote this software.  If you use it in a
+   program, you must acknowledge somewhere in your documentation that
+   you've used the IJG code.
+
+In legalese:
+
+The authors make NO WARRANTY or representation, either express or implied,
+with respect to this software, its quality, accuracy, merchantability, or
+fitness for a particular purpose.  This software is provided "AS IS", and you,
+its user, assume the entire risk as to its quality and accuracy.
+
+This software is copyright (C) 1991-2024, Thomas G. Lane, Guido Vollbeding.
+All Rights Reserved except as specified below.
+
+Permission is hereby granted to use, copy, modify, and distribute this
+software (or portions thereof) for any purpose, without fee, subject to these
+conditions:
+(1) If any part of the source code for this software is distributed, then this
+README file must be included, with this copyright and no-warranty notice
+unaltered; and any additions, deletions, or changes to the original files
+must be clearly indicated in accompanying documentation.
+(2) If only executable code is distributed, then the accompanying
+documentation must state that "this software is based in part on the work of
+the Independent JPEG Group".
+(3) Permission for use of this software is granted only if the user accepts
+full responsibility for any undesirable consequences; the authors accept
+NO LIABILITY for damages of any kind.
+
+These conditions apply to any software derived from or based on the IJG code,
+not just to the unmodified library.  If you use our work, you ought to
+acknowledge us.
+
+Permission is NOT granted for the use of any IJG author's name or company name
+in advertising or publicity relating to this software or products derived from
+it.  This software may be referred to only as "the Independent JPEG Group's
+software".
+
+We specifically permit and encourage the use of this software as the basis of
+commercial products, provided that all warranty or liability claims are
+assumed by the product vendor.
+
+
+The Unix configuration script "configure" was produced with GNU Autoconf.
+It is copyright by the Free Software Foundation but is freely distributable.
+The same holds for its supporting scripts (config.guess, config.sub,
+ltmain.sh).  Another support script, install-sh, is copyright by X Consortium
+but is also freely distributable.
+
+--------------------------------------------------------------------------------
+libpng 1.6.37 — PNG Reference Library License version 2
+modules/juce_graphics/image_formats/pnglib/LICENSE
+(the version-1 history that follows in that file governs libpng 0.5
+through 1.6.35 and is not reproduced)
+--------------------------------------------------------------------------------
+
+COPYRIGHT NOTICE, DISCLAIMER, and LICENSE
+=========================================
+
+PNG Reference Library License version 2
+---------------------------------------
+
+ * Copyright (c) 1995-2019 The PNG Reference Library Authors.
+ * Copyright (c) 2018-2019 Cosmin Truta.
+ * Copyright (c) 2000-2002, 2004, 2006-2018 Glenn Randers-Pehrson.
+ * Copyright (c) 1996-1997 Andreas Dilger.
+ * Copyright (c) 1995-1996 Guy Eric Schalnat, Group 42, Inc.
+
+The software is supplied "as is", without warranty of any kind,
+express or implied, including, without limitation, the warranties
+of merchantability, fitness for a particular purpose, title, and
+non-infringement.  In no event shall the Copyright owners, or
+anyone distributing the software, be liable for any damages or
+other liability, whether in contract, tort or otherwise, arising
+from, out of, or in connection with the software, or the use or
+other dealings in the software, even if advised of the possibility
+of such damage.
+
+Permission is hereby granted to use, copy, modify, and distribute
+this software, or portions hereof, for any purpose, without fee,
+subject to the following restrictions:
+
+ 1. The origin of this software must not be misrepresented; you
+    must not claim that you wrote the original software.  If you
+    use this software in a product, an acknowledgment in the product
+    documentation would be appreciated, but is not required.
+
+ 2. Altered source versions must be plainly marked as such, and must
+    not be misrepresented as being the original software.
+
+ 3. This Copyright notice may not be removed or altered from any
+    source or altered source distribution.
+
+--------------------------------------------------------------------------------
+zlib 1.3.1 — zlib license
+modules/juce_core/zip/zlib/LICENSE
+--------------------------------------------------------------------------------
+
+The following notice was included with the original zlib distribution.
+It applies to all files within this directory.
+
+Minor modifications to some source files have been made, as described in the
+accompanying JUCE_CHANGES.txt.
+
+================================================================================
+
+Copyright notice:
+
+ (C) 1995-2022 Jean-loup Gailly and Mark Adler
+
+  This software is provided 'as-is', without any express or implied
+  warranty.  In no event will the authors be held liable for any damages
+  arising from the use of this software.
+
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
+
+  1. The origin of this software must not be misrepresented; you must not
+     claim that you wrote the original software. If you use this software
+     in a product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.
+
+  Jean-loup Gailly        Mark Adler
+  jloup@gzip.org          madler@alumni.caltech.edu
+
+--------------------------------------------------------------------------------
+libFLAC 1.4.3 — BSD-3-Clause
+modules/juce_audio_formats/codecs/flac/Flac Licence.txt
+--------------------------------------------------------------------------------
+
+=====================================================================
+
+I've incorporated FLAC directly into the JUCE codebase because it makes
+things much easier than having to make all your builds link correctly to
+the appropriate libraries on every different platform.
+
+I've made minimal changes to the FLAC code - just tweaked a few include paths
+to make it build smoothly, added some headers to allow you to turn off FLAC
+compilation, and commented-out a couple of unused bits of code.
+
+=====================================================================
+
+
+The following license is the BSD-style license that comes with the
+Flac distribution, and which applies just to the files I've
+included in this directory. For more info, and to get the rest of the
+distribution, visit the Flac homepage: https://xiph.org/flac/
+
+=====================================================================
+
+libFLAC - Free Lossless Audio Codec library
+Copyright (C) 2000-2009  Josh Coalson
+Copyright (C) 2011-2023  Xiph.Org Foundation
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+- Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+- Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+- Neither the name of the Xiph.Org Foundation nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+--------------------------------------------------------------------------------
+Ogg / Vorbis (libvorbis 1.3.7) — BSD-3-Clause
+modules/juce_audio_formats/codecs/oggvorbis/Ogg Vorbis Licence.txt
+--------------------------------------------------------------------------------
+
+=====================================================================
+
+Ogg-Vorbis is incorporated directly into the JUCE codebase because it makes
+things much easier than having to make all your builds link correctly to
+the appropriate libraries on every different platform.
+
+There are minimal changes to the Ogg-Vorbis code - a few include paths have
+been changed to make it build smoothly, and some headers have been added to
+allow you to exclude it from the build. Any significant code modifications
+are marked clearly by "JUCE CHANGE STARTS HERE" and "JUCE CHANGE ENDS HERE"
+comments.
+
+=====================================================================
+
+The following license is the BSD-style license that comes with the Ogg-Vorbis
+distribution, and which applies just to the header files included in this
+directory. For more info, and to get the rest of the distribution, visit the
+Ogg-Vorbis homepage: https://xiph.org/vorbis
+
+=====================================================================
+
+Copyright (c) 2002-2020 Xiph.org Foundation
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+- Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+- Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+- Neither the name of the Xiph.org Foundation nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION
+OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
