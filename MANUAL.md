@@ -24,7 +24,7 @@ This manual covers Dusk Studio (Beta). It is written for musicians and engineers
 
 Dusk Studio includes:
 
-- 24 tracks of audio or MIDI recording, organised as three banks of 8.
+- 24 tracks of audio or MIDI recording, paged on screen to fit the window and addressed by a control surface in three banks of 8.
 - A fixed channel signal chain: phase, insert, HPF, LPF, 4-band EQ, compressor (Opto/FET/VCA), aux sends, pan, fader.
 - Four aux return lanes, each with one plugin or hardware insert slot.
 - Four mix buses, each with a 3-band EQ and console-style bus compressor.
@@ -145,7 +145,7 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 | --- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | Menu bar          | `File` and `Settings` menus only. No tabs, no hidden submenus.                                                                    |
 | 2   | Stage selector    | Four buttons: **RECORDING**, **MIXING**, **MASTERING**, **AUX** (Cmd/Ctrl+1 to 4). Picks which view fills the console area.            |
-| 3   | Bank selector     | The visible channel bank (e.g. `1-6`, `7-12`, ...), switched with the plain number keys 1 to 4. Only visible when the window is too narrow to show all channel strips at once. |
+| 3   | Bank selector     | The visible page of channel strips (e.g. `1-6`, `7-12`, ...), switched with the plain number keys 1 to 4. Only visible when the window is too narrow to show all 24 at once. |
 | 4   | Transport bar     | Play, record, loop, punch, BPM, time signature, clock, tuner. See the next figure for the inventory.                              |
 | 5   | Tape strip toggle | `▾ TIMELINE` / `▴ TAPE`. Collapses or expands the timeline view below the bar.                                                     |
 | 6   | Console view      | Holds 24 channel strips, 4 buses, and the master strip. Replaced by the aux lane or mastering chain when those stages are active. |
@@ -164,7 +164,7 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 | 6   | Loop             | Toggles loop playback between the loop brackets.                                 |
 | 7   | Punch            | Toggles automatic punch in / punch out using the punch brackets.                 |
 | 8   | Virtual keyboard | Opens the on-screen MIDI keyboard overlay.                                       |
-| 9   | Notepad          | Opens the session notepad for lyrics and notes (markdown, saved with the session). |
+| 9   | Notepad          | Opens the session notepad — lyrics, chords, and session notes, saved with the session. |
 | 10  | Metronome        | Click on / off. Right-click for the click settings.                              |
 | 11  | C/I              | Count-in toggle. One bar of click before record starts.                          |
 | 12  | BPM              | Tempo at the playhead. Double-click to set it directly (in a session with tempo changes, edits the change governing the playhead); or set the tempo from the timeline ruler. **TAP** sets the starting tempo. |
@@ -413,7 +413,7 @@ On first launch Dusk Studio opens a blank session named `Untitled`. The window i
 - A bank selector (only visible when the window is too narrow to show all 24 channel strips at once).
 - The transport bar.
 - The tape strip (the timeline view), collapsed by default.
-- The console view, showing 24 channel strips (in three banks of 8), 4 buses, and the master strip.
+- The console view, showing the 24 channel strips (paged when the window is too narrow for all of them), 4 buses, and the master strip.
 
 Press **RECORDING** to focus the channel strips on input routing and arm controls. Press **MIXING** to focus them on send levels and inserts. Press **MASTERING** to load a finished mix and run it through the mastering chain. Press **AUX** to see the four aux lanes, their inserts, and their send sources.
 
@@ -482,7 +482,7 @@ The window is structured as a stack of horizontal bands.
 ├───────────────────────────────────────────────────────┤
 │  RECORDING   MIXING   MASTERING   AUX                 │  Stage selector
 ├───────────────────────────────────────────────────────┤
-│  1-8   9-16                                           │  Bank selector
+│  1-6   7-12   13-18   19-24                           │  Bank selector
 ├───────────────────────────────────────────────────────┤
 │ ◀◀  ▶  ▶▶  ●  ⟳  ◉   CLK ♩=120 4/4 00:01:23         │  Transport bar
 ├───────────────────────────────────────────────────────┤
@@ -493,6 +493,8 @@ The window is structured as a stack of horizontal bands.
 │                                                       │
 └───────────────────────────────────────────────────────┘
 ```
+
+The bank selector appears only when the window is too narrow for all 24 strips, and it pages the console by whatever does fit — as few as six strips on the narrowest window, never more than four pages. Each button names its range: in the compact transport layout drawn above (window under 1850 pixels) the label is the bare range, `1-6`; at full size it reads `BANK 1  (1-6)`. The range widens with the window. A control surface's bank is a separate, fixed axis: eight strips at a time, tracks 1–8, 9–16, or 17–24. The two stay in step. Picking a page moves the surface to the bank holding that page's first track, and **Bank Left** / **Bank Right** on the surface moves the page to the one holding that bank's first track. When every strip fits on screen there is no page to pick, so the surface — and the bank-relative MIDI bindings that follow it — stays where you left it.
 
 Modal dialogs (audio settings, plugin picker, region editor, piano roll, import target picker) appear centered with a dimmed backdrop behind them. Press **Esc** or click outside the modal to dismiss.
 
@@ -507,7 +509,7 @@ Only one stage is visible at a time, but the same engine drives all four. Switch
 - **MASTERING** swaps the console view for the mastering chain, including a file picker for loading a finished mix.
 - **AUX** swaps the console view for the four aux return lanes, with a full-width view of each lane's plugin chain.
 
-Press **Cmd/Ctrl+1 / 2 / 3 / 4** to jump straight to RECORDING / MIXING / MASTERING / AUX. The channel banks have the plain number keys **1 / 2 / 3 / 4**, so a modified digit changes stage and a plain digit changes bank. Hovering any tab or bank button shows its shortcut, and **?** opens a full keyboard-shortcut list (also under **Settings → Keyboard Shortcuts**).
+Press **Cmd/Ctrl+1 / 2 / 3 / 4** to jump straight to RECORDING / MIXING / MASTERING / AUX. The bank selector has the plain number keys **1 / 2 / 3 / 4**, so a modified digit changes stage and a plain digit changes the visible page of strips. Hovering any tab or bank button shows its shortcut, and **?** opens a full keyboard-shortcut list (also under **Settings → Keyboard Shortcuts**).
 
 Switching into or out of MASTERING force-stops the transport. The mix engine and the mastering engine cannot run at the same time. Changing stage also closes the notepad, saving it — the two cannot share the window.
 
@@ -522,7 +524,7 @@ From left to right:
 - **Record** (●). Toggles record. Requires at least one track armed.
 - **Loop** (⟳). Toggles loop playback.
 - **Punch** (◉). Toggles punch recording. Right-click to enable/disable pre-roll and post-roll and set their seconds.
-- **Virtual keyboard** (⌨). Opens an on-screen MIDI keyboard.
+- **Virtual keyboard** (⌨). Opens an on-screen MIDI keyboard — see below.
 - **Notepad**. Opens the session notepad — see below.
 - **Metronome** (♩). Toggles the click. Right-click for click settings.
 - **C/I**. Toggles count-in (one bar of click before record starts).
@@ -541,19 +543,24 @@ When the timeline is expanded, a toolbar row sits directly above the tape strip:
 
 In compact mode (window narrower than 1850 pixels), `TIMELINE` becomes `▾` and the time-format toggle hides; right-click the clock display to flip format instead.
 
+## The virtual keyboard
+
+The ⌨ button (or **K**) opens an on-screen MIDI keyboard. It belongs to the transport bar, not to any one view: it opens in any stage, with or without the piano roll. It appears as a MIDI source called **Virtual Keyboard (Dusk Studio)** in each track's MIDI input picker, and loading an instrument onto a track with no input bound selects it automatically so the instrument is playable straight away.
+
+While it is open, every letter and digit in its layout belongs to the keyboard rather than to the shortcuts — **P** and **R** play their notes instead of toggling punch and record, at any octave (shift the octave high enough that a key runs past the top of the MIDI range and it simply does nothing). Keys outside the layout still work as usual, so **Space**, **.**, **L**, **[** / **]** keep driving the transport, and **K** or **Esc** closes the keyboard.
+
 ## The notepad
 
-![Session notepad.](docs/images/np-12-notepad.png)
-
 A document editor for lyrics and session notes, opened from the transport bar.
-It is a wrapped, page-style editor: formatting is
+There is one view, the **chart**, and you type straight onto it: formatting is
 shown in place, headings use document typography, links are underlined, and
 bullets, numbering, quotes, and clickable task boxes render as real document
 elements. Use the toolbar or Ctrl+B / Ctrl+I to set the typing style at the
 caret or format a selection; Ctrl+Z undoes and Ctrl+Y or Ctrl+Shift+Z redoes
-both text and formatting. On macOS, Cmd works wherever Ctrl is listed,
-including link activation. Numbered and bulleted lists continue when you press
-Enter, and a second Enter on an empty list item returns to body text.
+both text and formatting. On macOS, Cmd works wherever Ctrl is listed for a
+command, link activation included; word motion and word delete are the
+exception and stay on Ctrl or Option. Numbered and bulleted lists continue when
+you press Enter, and a second Enter on an empty list item returns to body text.
 Ctrl-click an `http`, `https`, or `mailto` link to open it. Selection and
 navigation follow the usual conventions: double-click selects a word,
 triple-click a line, Ctrl+arrow jumps by word, Home, End, and Page Up/Down move
@@ -578,22 +585,29 @@ ChordPro brackets in `notepad.md` (`[Am]like this`), so the file opens in any
 chord-sheet app; bracketed text that is not a chord name, such as `[Chorus]`,
 stays literal.
 
-**Sections.** The section button writes a marker such as `[Chorus]` on its own
-line above the caret. Markers are plain text, so typing one by hand is the same
-thing: any bracketed word that is not a chord name stays literal. Rename a
-marker by editing its label in the chart. The label has to stay a label, so an
-edit that would put a bracket inside it, or turn it into a chord name, is
-refused and the marker is left as it was. To remove one, put the caret on the
-marker line, click the **Section** button, and choose **Remove current
-section**, or select and delete the label directly. The chart shows only the
-section label; the compatible `notepad.md` file keeps its brackets visible.
+**Sections.** The **Section** button opens a short list — Intro, Verse,
+Pre-chorus, Chorus, Bridge, Solo, Outro — and the label you pick is written as a
+marker such as `[Chorus]` on its own line above the caret. The list is a
+shortcut, not a vocabulary: markers are plain text, so typing one by hand is the
+same thing, and any bracketed word that is not a chord name stays literal.
+Rename a marker by editing its label in the chart. The label has to stay a
+label, so an edit that would put a bracket inside it, or turn it into a chord
+name, is refused and the marker is left as it was. To remove one, put the caret
+on the marker line, click **Section**, and choose **Remove current section** —
+it only appears when the caret is on a marker — or select and delete the label
+directly. The chart shows only the section label; the compatible `notepad.md`
+file keeps its brackets visible.
 
 The songwriter-focused toolbar keeps chord and section insertion,
 transposition, lyric and title styles, bold, italic, undo and redo, and the
-chord-spelling preference visible. Undo and redo dim when there is nothing to
-undo or redo. The footer shows the current save state, the latest save time when
-available, the `notepad.md` filename, section count, unique chord count, and the
-detected key when enough chords identify one.
+chord-spelling preference visible. Spelling is three buttons — **Auto**, **♯**,
+**♭**. Auto follows the accidentals already written in the song; the other two
+force sharps or flats. Whichever is lit is what transposition and the chord
+completions spell with. Undo and redo dim when there is nothing to undo or redo,
+and the transpose buttons dim until the notepad holds a chord. The footer shows
+the current save state, the latest save time when available, the `notepad.md`
+filename, section count, unique chord count, and the detected key when enough
+chords identify one.
 
 Click **Done** or the dimmed area outside the notepad to close it. The notepad
 also closes itself whenever something else needs the window — an alert, a stage
@@ -1375,9 +1389,9 @@ The note-creation grid is set from the toolbar dropdown; there is no keyboard sh
 
 ## Step record
 
-Open the virtual keyboard from the transport bar (the keyboard icon, or **K**). Each note you press in the keyboard is entered at the current edit cursor. When all keys are released, the cursor advances by one snap step. This is the fastest way to enter a chord progression without playing in real time.
+With the piano roll open, each note you press on the virtual keyboard is entered at the current edit cursor. When all keys are released, the cursor advances by one snap step. This is the fastest way to enter a chord progression without playing in real time.
 
-While the keyboard is open, every letter and digit in its layout belongs to the keyboard, not to the shortcuts — **P** and **R** play their notes instead of toggling punch and record, at any octave (shift the octave high enough that a key runs past the top of the MIDI range and it simply does nothing). Keys outside the layout still work as usual, so **Space**, **.**, **L**, **[** / **]** keep driving the transport, and **K** or **Esc** closes the keyboard.
+The keyboard is a transport-bar tool rather than part of the piano roll: it opens from the ⌨ button (or **K**) in any stage, and it takes over the letter and digit keys in its layout for as long as it is open. See *The virtual keyboard* for the details.
 
 ## Navigation
 
@@ -1672,6 +1686,7 @@ Once connected:
 - **Motorised faders** mirror Dusk Studio's channel and master faders.
 - The **eight strip faders** drive the active bank (tracks 1–8, 9–16, or 17–24).
 - **Bank Left** / **Bank Right** step the bank by 8.
+- The surface's bank and the console's visible page of strips are separate axes, kept in step: a bank step moves the page to the one holding that bank's first track, and picking a page moves the surface the other way. With all 24 strips on screen there is no page to pick, and the surface keeps whichever bank you left it on.
 - **Channel Left** / **Channel Right** step the selected channel by 1.
 - **Mute / Solo / Arm / Select** buttons mirror and drive the on-screen buttons. LEDs reflect state.
 - **V-pot** rotaries drive pan, sends, EQ band gain, or compressor depending on the **assign mode**. Press **Pan**, **Send** (repeated presses cycle sends 1–4), **EQ**, or the **Track** button (mapped to the compressor in Dusk Studio) to switch. The surface's **Plugin** and **Inst** assign buttons are not mapped.
@@ -1738,7 +1753,7 @@ Right-click the binding in the MIDI Bindings panel to change its mode.
 - **Per-aux**: Fader, Mute.
 - **Master**: Fader, EQ low boost, EQ high boost, compressor threshold, compressor makeup, compressor ratio.
 - **Per-track aux send**: send level for each of the four aux destinations.
-- **Bank-relative variants**: every "Per-track ..." target above has a `(banked)` counterpart that drives the active bank's 8 strips by position rather than absolute track number. One 8-fader controller can therefore drive whichever 8 of the 24 tracks are in the visible bank.
+- **Bank-relative variants**: every "Per-track ..." target above has a `(banked)` counterpart addressed by position 1–8 within the active bank rather than by absolute track number, so one 8-fader controller reaches all 24 tracks. The active bank is the surface's fixed bank of 8 — tracks 1–8, 9–16, or 17–24 — not the console's visible page, which is as wide as the window allows. **Bank Left** / **Bank Right** moves it, and so does picking a page in the bank selector, which jumps the surface to the bank holding that page's first track. With all 24 strips on screen there is no page to pick and the bindings follow the surface alone.
 
 ## The MIDI Bindings panel
 
@@ -1930,7 +1945,7 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | Shortcut             | Action                                  |
 | -------------------- | --------------------------------------- |
 | **Cmd+1 … Cmd+4**    | Recording / Mixing / Mastering / Aux    |
-| **1 … 4**            | Select channel bank 1 to 4              |
+| **1 … 4**            | Select strip page 1 to 4 (bank selector) |
 
 ## Timeline
 
@@ -1976,6 +1991,42 @@ The piano roll modal captures its own keypresses first (see `PianoRollComponent:
 | **Cmd+]** / **Cmd+[**             | Next / previous MIDI region                                  |
 | **Esc**                           | Close modal                                                  |
 
+## Notepad
+
+The notepad takes every keypress while it is open, so no transport shortcut
+fires as you type.
+
+| Shortcut                             | Action                                               |
+| ------------------------------------ | ---------------------------------------------------- |
+| **Cmd+B**                            | Bold the selection, or the typing style at the caret |
+| **Cmd+I**                            | Italicise the selection, or the typing style         |
+| **Cmd+K**                            | Open a chord slot above the word at the caret        |
+| **Cmd+Shift+K**                      | Repeat the preceding chord at the caret              |
+| **Cmd+Z**                            | Undo                                                 |
+| **Cmd+Y** / **Cmd+Shift+Z**          | Redo                                                 |
+| **Cmd+A**                            | Select all                                           |
+| **Cmd+C** / **Cmd+X** / **Cmd+V**    | Copy / cut / paste                                   |
+| **Cmd+click**                        | Open an `http`, `https`, or `mailto` link            |
+| **Ctrl+←** / **Ctrl+→**              | Move by word                                         |
+| **Ctrl+Backspace** / **Ctrl+Delete** | Delete the word before / after the caret             |
+| **Home** / **End**                   | Start / end of the wrapped row                       |
+| **Cmd+Home** / **Cmd+End**           | Start / end of the chart                             |
+| **Page Up** / **Page Down**          | Move a page up / down                                |
+| **Tab**                              | Insert a tab — the chart owns the key, so it never moves focus |
+
+The two word rows are the exception to the chapter's Cmd/Ctrl convention: word
+motion and word delete are **Ctrl** or **Option** on every platform, macOS
+included. Cmd moves and deletes one character there.
+
+An open chord slot takes the keys instead:
+
+| Shortcut      | Action                                          |
+| ------------- | ----------------------------------------------- |
+| **Enter**     | Commit the chord, or the highlighted completion |
+| **Esc**       | Cancel the slot                                 |
+| **↑** / **↓** | Move through the completions                    |
+| **Tab**       | Accept the highlighted completion               |
+
 ## Window
 
 | Shortcut       | Action                          |
@@ -1988,7 +2039,7 @@ The piano roll modal captures its own keypresses first (see `PianoRollComponent:
 
 - Shortcuts that would conflict with a focused text field always defer to the text field. You can edit a track label or type into the BPM spinner without accidentally arming a track or starting playback.
 - **M** drops a marker at the playhead, not mute; per-track mute is **X** to avoid the clash with the marker action.
-- Plain **B** is unused; **Cmd+B** triggers Bounce (Logic convention).
+- Plain **B** taps tempo; **Cmd+B** triggers Bounce (Logic convention).
 
 \newpage
 
@@ -2128,7 +2179,7 @@ Dusk Studio targets functional accessibility for screen reader users. The 24-cha
 
 ## What's still rough
 
-- In the **Recording** and **Mixing** stages, **Left / Right arrows** move a gold focus ring across the 24 channel strips, automatically flipping the visible bank as you cross a boundary. The focused strip is the target for the **A / S / X** (arm / solo / mute) shortcuts, so you can walk the mixer and toggle states without the mouse. (Clicking a strip moves the ring too.)
+- In the **Recording** and **Mixing** stages, **Left / Right arrows** move a gold focus ring across the 24 channel strips, automatically flipping the visible page as you cross a boundary. The focused strip is the target for the **A / S / X** (arm / solo / mute) shortcuts, so you can walk the mixer and toggle states without the mouse. (Clicking a strip moves the ring too.)
 - Region drag-and-drop on the timeline relies on mouse gestures. Region edit actions (split, trim, fade, gain) are all available via the keyboard reference; the drag-to-move case is the gap.
 - Plugin editors are out of Dusk Studio's accessibility control surface. JUCE forwards screen-reader requests to each plugin; vendor accessibility varies.
 
@@ -2448,7 +2499,7 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 
 **Aux lane.** A return path that receives sends from any number of channels, processes them through one plugin or hardware insert, and feeds the result into the master. Four aux lanes total.
 
-**Bank.** A group of 8 channels mapped to a Mackie Control surface's eight strips. Three banks cover the full 24 channels.
+**Bank.** A group of 8 channels — tracks 1–8, 9–16, or 17–24 — addressed by a Mackie Control surface's eight strips and by bank-relative MIDI bindings. Three banks cover the full 24 channels. Distinct from a console page, though the two move together.
 
 **Bounce.** Offline rendering of the project to a stereo audio file.
 
@@ -2469,6 +2520,8 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 **OOP plugin sandbox.** Out-of-process plugin hosting. Each loaded plugin runs in a child process so a crash does not take the DAW with it.
 
 **Opto compressor.** A compressor whose gain reduction is performed by a photo-resistor, in the classic optical tradition.
+
+**Page (console).** The set of channel strips on screen at once, chosen by the bank selector. As narrow as six strips, never more than four pages; a window wide enough for all 24 has a single page and no selector. Independent of the fixed bank of 8.
 
 **Program EQ.** A passive program-EQ topology with separately controllable boost and cut at the same frequency.
 

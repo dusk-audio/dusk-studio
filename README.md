@@ -106,7 +106,7 @@ src/
 tests/         # 622 Catch2 unit tests (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME, macOS bundle — for tarball + DMG builds
 DuskStudio.md  # authoritative product spec
-MANUAL.md      # end-user manual (Pandoc-buildable to PDF via packaging/build-pdf.sh)
+MANUAL.md      # end-user manual (Pandoc-buildable to PDF via docs/build-pdf.sh)
 ```
 
 ## Builds & contributing

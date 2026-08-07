@@ -45,10 +45,12 @@ trap 'rm -rf "${PROCESSED_DIR}"' EXIT
 perl -CSD -pe 's/[ \t]*\x{2014}[ \t]*/ - /g' "${SRC}" > "${PROCESSED}"
 
 # The body font (Latin Modern, pandoc's xelatex default) lacks the handful of
-# symbol glyphs the manual uses - musical note, geometric triangles/discs,
-# transport arrows, >=, keyboard, refresh. Map each to a DejaVu Sans fallback
-# (ships via fonts-dejavu and covers all of them) so they render instead of
-# dropping out. Only these codepoints fall back; the rest stays Latin Modern.
+# symbol glyphs the manual uses - musical note, sharp, flat, geometric
+# triangles/discs, transport arrows, >=, keyboard, refresh. Map each to a
+# DejaVu Sans fallback (ships via fonts-dejavu and covers all of them) so they
+# render instead of dropping out. A codepoint missing from this list renders as
+# nothing at all, silently apart from a xelatex "Missing character" warning.
+# Only these codepoints fall back; the rest stays Latin Modern.
 HEADER="${PROCESSED_DIR}/glyph-fallback.tex"
 cat > "${HEADER}" <<'TEX'
 \usepackage{newunicodechar}
@@ -63,6 +65,8 @@ cat > "${HEADER}" <<'TEX'
 \newunicodechar{◉}{{\glyphfallback ◉}}
 \newunicodechar{●}{{\glyphfallback ●}}
 \newunicodechar{♩}{{\glyphfallback ♩}}
+\newunicodechar{♭}{{\glyphfallback ♭}}
+\newunicodechar{♯}{{\glyphfallback ♯}}
 \newunicodechar{⟳}{{\glyphfallback ⟳}}
 \newunicodechar{⚠}{{\glyphfallback ⚠}}
 
