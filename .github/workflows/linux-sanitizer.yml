@@ -13,6 +13,14 @@ on:
     branches: [main, 'release/**']
   workflow_dispatch:
 
+# PR runs group by repository PR number, so a newer push supersedes only that
+# PR (fork branches sharing a name can't collide on it). Push and dispatch
+# runs get a run-id group of one: any shared key lets Actions drop a pending
+# run regardless of cancel-in-progress, costing a landed commit its verdict.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   tsan-tests:
     name: Catch2 tests (TSan, Ubuntu 22.04)
