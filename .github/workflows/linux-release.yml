@@ -104,7 +104,7 @@ jobs:
             libxinerama-dev libxrandr-dev libxrender-dev libxss-dev \
             libwebkit2gtk-4.0-dev libgl1-mesa-dev libglu1-mesa-dev \
             libwayland-dev libxkbcommon-dev libdecor-0-dev \
-            imagemagick xz-utils
+            xz-utils
 
       - name: Clone JUCE (Dusk-owned Wayland mirror, pinned)
         # Linux ships against the Wayland fork, NOT upstream: it carries the
@@ -253,7 +253,7 @@ jobs:
         # at the repo root (arch from uname -m, so the arm runner produces the
         # aarch64 tarball): a portable program directory (run ./DuskStudio/DuskStudio
         # in place) plus install.sh for optional menu / PATH / session-file-type
-        # integration. Needs ImageMagick (icon downscale).
+        # integration.
         run: BUILD_DIR=build-linux scripts/package-tarball.sh
 
       - name: Checksums

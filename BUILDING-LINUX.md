@@ -213,7 +213,7 @@ Routes new plugin loads through the `dusk-studio-plugin-host` child process so a
 
 ## Packaging the Linux tarball
 
-See [packaging/README.md](packaging/README.md). Run `scripts/package-tarball.sh` after a Release build in `build-linux/`; it emits `dusk-studio-<version>-Linux-<arch>.tar.xz` (a portable program dir + `install.sh`). Requires ImageMagick and `assets/ds-icon.png`.
+See [packaging/README.md](packaging/README.md). Run `scripts/package-tarball.sh` after a Release build in `build-linux/`; it emits `dusk-studio-<version>-Linux-<arch>.tar.xz` (a portable program dir + `install.sh`).
 
 ## Known caveats on Linux
 

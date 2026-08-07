@@ -15,6 +15,7 @@ Dusk Studio registers with GNOME Software / KDE Discover and double-clicking
 | `audio.dusk.studio.desktop` | Desktop Entry (XDG) — launcher icon, MIME association, WM class match. Ships a relative `Exec=DuskStudio`; `install.sh` rewrites it to the installed absolute path. Filename matches `<id>` in the AppStream XML per spec (component-id + `.desktop`). |
 | `DuskStudio.appdata.xml` | AppStream component — app-store metadata, summary, description |
 | `DuskStudio.mime.xml` | MIME info — registers `application/x-dusk-studio-session` for `session.json` |
+| `DuskStudio.png` | 256×256 hicolor icon the `Icon=DuskStudio` key resolves. Committed rather than derived at package time so a packager needs no image tooling and every build ships the same bytes. |
 | `README-linux.txt` | End-user run/install notes bundled at the tarball top level |
 
 ## Prerequisites
@@ -28,15 +29,17 @@ Dusk Studio registers with GNOME Software / KDE Discover and double-clicking
   `Native notepad: DPF / DPF-Widgets not found - disabled` line in the
   configure log. Clone instructions and the pinned revisions are in
   `BUILDING-LINUX.md` under "The native notepad".
-- ImageMagick (`magick` or `convert`) on `$PATH` — used to scale the brand
-  icon to the 256×256 PNG the desktop entry references.
-- The brand icon at `assets/ds-icon.png`.
+- The committed 256×256 icon at `packaging/DuskStudio.png` — the size the
+  desktop entry's `Icon=DuskStudio` key resolves. Edit the master
+  `assets/ds-icon.png` and you must regenerate it by hand with
+  `magick assets/ds-icon.png -resize 256x256 -strip packaging/DuskStudio.png`;
+  nothing checks that the two stay in sync.
 
 ## Building the tarball
 
 Done outside CMake by `scripts/package-tarball.sh`, which stages the program
-directory, copies the integration assets, generates the icon, and packs
-everything with `tar`. Run from a clean Ubuntu 22.04 build.
+directory, copies the integration assets, and packs everything with `tar`. Run
+from a clean Ubuntu 22.04 build.
 
 Configure into a fresh `build-linux/`. `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` is a
 cached option: a directory first configured without the DPF checkouts keeps the

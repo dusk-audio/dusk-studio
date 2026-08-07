@@ -5,13 +5,15 @@
 # Reaper ships. Replaces the AppImage.
 #
 # Prerequisites: BUILD_DIR (default build-linux) already configured + built
-# Release, with DuskStudio + dusk-studio-plugin-host artefacts present, and
-# assets/ds-icon.png committed. ImageMagick (magick/convert) for the 256x256
-# icon.
+# Release, with DuskStudio + dusk-studio-plugin-host artefacts present.
 #
 # Output: dusk-studio-<version>-Linux-<arch>.tar.xz in the repo root.
 
 set -euo pipefail
+
+# Directory modes come from mkdir -p, which -m cannot set on the intermediate
+# components, so the staged tree would otherwise inherit the packager's umask.
+umask 022
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_DIR"
@@ -28,7 +30,7 @@ BUILD_DIR="${BUILD_DIR:-build-linux}"
 ARTEFACTS="$BUILD_DIR/DuskStudio_artefacts/Release"
 BINARY="$ARTEFACTS/DuskStudio"
 HOST="$ARTEFACTS/dusk-studio-plugin-host"
-ICON_SRC="assets/ds-icon.png"
+ICON_SRC="packaging/DuskStudio.png"
 
 # Map uname -m to the asset arch label the rest of the release flow uses.
 case "$(uname -m)" in
@@ -40,15 +42,10 @@ esac
 for f in "$BINARY" "$HOST"; do
     [[ -x "$f" ]] || { echo "error: $f missing - build $BUILD_DIR (Release) first" >&2; exit 1; }
 done
-[[ -f "$ICON_SRC" ]] || { echo "error: $ICON_SRC missing (brand icon)" >&2; exit 1; }
+[[ -f "$ICON_SRC" ]] || { echo "error: $ICON_SRC missing (256x256 hicolor icon)" >&2; exit 1; }
 for f in LICENSE LICENSES.txt; do
     [[ -f "$f" ]] || { echo "error: $f missing - GPL section 4 requires it in the tarball" >&2; exit 1; }
 done
-
-ICON_TOOL=""
-command -v magick  >/dev/null 2>&1 && ICON_TOOL="magick"
-[[ -z "$ICON_TOOL" ]] && command -v convert >/dev/null 2>&1 && ICON_TOOL="convert"
-[[ -n "$ICON_TOOL" ]] || { echo "error: ImageMagick (magick/convert) not on PATH" >&2; exit 1; }
 
 TOPDIR="dusk-studio-${VERSION}-Linux-${ARCH}"
 STAGE="$(mktemp -d)"
@@ -67,11 +64,10 @@ install -m 0755 "$HOST"   "$APPDIR/dusk-studio-plugin-host"
 # Integration assets (installed by install.sh; ignored for a portable run). The
 # .desktop ships a relative Exec=DuskStudio; install.sh rewrites it to the
 # installed absolute path.
-cp packaging/audio.dusk.studio.desktop "$APPDIR/share/applications/"
-cp packaging/DuskStudio.appdata.xml    "$APPDIR/share/metainfo/"
-cp packaging/DuskStudio.mime.xml       "$APPDIR/share/mime/packages/"
-"$ICON_TOOL" "$ICON_SRC" -resize 256x256 \
-    "$APPDIR/share/icons/hicolor/256x256/apps/DuskStudio.png"
+install -m 0644 packaging/audio.dusk.studio.desktop "$APPDIR/share/applications/"
+install -m 0644 packaging/DuskStudio.appdata.xml    "$APPDIR/share/metainfo/"
+install -m 0644 packaging/DuskStudio.mime.xml       "$APPDIR/share/mime/packages/"
+install -m 0644 "$ICON_SRC"                         "$APPDIR/share/icons/hicolor/256x256/apps/"
 
 # Installer, readme, and the license texts live at the tarball top level, beside
 # the program dir. LICENSE + LICENSES.txt are not optional: GPL section 4 makes
