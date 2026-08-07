@@ -7,15 +7,132 @@ canonical source.
 
 ## [0.13.0] - Unreleased
 
+The first release cut from the main line since 0.12 branched. Linux gets a
+native PipeWire backend and MIDI hot-plug; macOS gets Dusk Studio's own plugin
+hosts for all four formats, Audio Units included. Stems render in a single
+pass, a new realtime bounce prints hardware inserts wet instead of dry, and
+every session now carries a notepad with a chord chart. Underneath, the audio
+device layer, MIDI, audio file I/O and the FFT stopped going through the
+application framework and became Dusk Studio's own.
+
+### Added
+
+- **Session notepad.** Every session carries a notepad for lyrics and notes,
+  opened from the transport bar. It is a page-style document editor - headings,
+  bold / italic, bullets, numbering, quotes, task boxes and clickable links,
+  with its own undo - and it writes chords over the words they land on: put the
+  caret in a syllable, press Ctrl+K, and type. Completions rank diatonic chords
+  first once the key is detectable, chord labels stay glued to their syllable
+  as the lyric is edited around them, and the transpose buttons shift the whole
+  sheet while keeping your own accidental spelling. Sections are markers such
+  as `[Chorus]` on their own line. Notes save atomically beside the session as
+  a plain `notepad.md` using ChordPro brackets, so the file opens in any
+  chord-sheet app and follows the session through Save As. Typing in the
+  notepad never triggers a transport shortcut.
+- **Native PipeWire audio backend (Linux).** Dusk Studio now speaks
+  libpipewire directly instead of borrowing a JACK compatibility layer.
+  PipeWire sinks, sources and duplex nodes list as devices of their own,
+  buffer size is requested as a PipeWire quantum, and capture and playback
+  share one graph cycle so they stay sample-aligned. The native ALSA backend
+  remains as the fallback, including when the saved device is busy at launch.
+- **Native Audio Unit hosting (macOS).** AU effects and instruments load
+  through Dusk Studio's own host - discovery, rendering, session state and
+  Cocoa editor views. Native CLAP, LV2 and VST3 hosting arrives on macOS in
+  the same release, editors embedded in-window.
+- **MIDI hot-plug (Linux).** Connecting or disconnecting a MIDI interface is
+  picked up automatically; the input list refreshes with no manual rescan. A
+  refresh that lands mid-take is held until the transport stops, so a take
+  never loses its input part-way through.
+- **Realtime bounce.** Mixdown and stems can play the session through the
+  audio device and capture the result, so hardware inserts print wet. Offered
+  whenever the session uses a hardware insert; it needs a stopped transport
+  and always writes 24-bit WAV at the device rate. Offline renders are
+  unchanged and keep their dry-insert warning.
+- **Hardware inserts on frozen tracks.** A frozen track is an audio source, so
+  its strip now runs a hardware insert like any other - latency-compensated
+  from the measured loop, and the latency ping works with the transport
+  stopped. Mono hardware inserts gain their own I/O format (single send,
+  single return) instead of being modelled as a half-empty pair.
+- **New folder button in the file browser.** Available on every save and
+  directory-pick flow; creating a folder navigates into it.
+
+### Changed
+
+- **Stems render in a single pass.** Exporting stems used to re-render the
+  whole session once per track with solo isolation, so N stems cost N renders
+  and each one heard the master strip reacting to a single track. One render
+  now captures every stem at its own tap: tracks post-fader and post-pan with
+  no master processing, plus bus-group and aux stems taken at the engine's sum
+  points. The whole set shares one latency trim, so the stems stay
+  sample-aligned and tracks + buses + aux reconstruct the pre-master mix. A
+  stems export defaults into a `stems/` subfolder instead of burying the
+  session root, and warns when solo is active.
+- **Engine internals.** Audio devices, MIDI in and out, audio file reading and
+  writing, timers and message-thread dispatch, the FFT, and the string and
+  math utilities are now Dusk Studio's own code rather than the application
+  framework's. Behaviour is unchanged by design; this is the groundwork for
+  the interface rewrite.
+
 ### Fixed
 
+- **Session load.** A truncated, hand-edited or older `session.json` could
+  keep the previous session's values for anything it left out - an insert
+  slot's plugin, its name and colour, the whole mastering and transport
+  sections. Every absent key now falls back to the model default. Values that
+  are present but corrupt are checked finite and clamped to the range their
+  control enforces, across track and bus fader and pan, HPF and LPF frequency,
+  the whole compressor block, the EQ bands, the hardware-insert gains and the
+  mastering and master floats. A corrupt aux send now resolves to OFF instead
+  of unity, so a damaged file no longer opens feedback-loud.
+- **MIDI sync settings.** Chase, emit and frame rate were written by the Audio
+  Settings panel but never saved, so they reset every time the session was
+  reopened. They round-trip now, and fall back to the model default when the
+  keys are absent.
+- **Console bank switching.** Changing bank left MIDI bank bindings and the
+  Mackie surface pointing at the previous eight strips.
+- **Joining regions.** A join could land on the wrong slot, cut the merged
+  region short, or drop the last region's fade-out; the merge now sizes from
+  the latest end across the selection and carries that region's fade. Editing
+  or deleting a MIDI region while the transport rolls is also safe now.
+- **Loop seam.** The declick ramp silenced the run-up to the loop point
+  instead of fading down into it, so every cycle had an audible gap before
+  the wrap.
+- **Real-time safety.** The tuner's pitch scan, the hardware-insert latency
+  ping and the loudness meter's gating scan could each overrun the audio
+  callback's budget on a small buffer; all three are now bounded. Empty and
+  oversized blocks from the device are guarded, and a channel strip coming out
+  of mute no longer replays up to a third of a second of pre-mute audio.
+- **Plugin editors.** Replacing a plugin with its editor open could read freed
+  memory (CLAP, LV2 and VST3); the editor is now dropped with the instance it
+  belongs to. A plugin slot also re-publishes reliably after a reload.
+- **MIDI and soundfonts.** Hung notes no longer lose their tail, CC values no
+  longer diverge from what was sent, and several SF2-to-SFZ translation faults
+  are corrected.
+- **Interface.** Modals opened over the notepad are visible and no longer leak
+  keystrokes to the transport; the on-screen keyboard's note keys no longer
+  double as transport shortcuts; modal teardown, plugin editor embedding and
+  timer shutdown gaps are closed.
+- **Opening a session while one is running.** The hand-off to the already-open
+  instance could discard unsaved work or let two instances write the same
+  session folder.
+- **MIDI input shutdown.** Closed a window where a MIDI input could dispatch
+  into a callback that had already gone away.
+- **Monitoring click in offline renders.** An enabled play-along metronome
+  printed into the render; it is a monitoring aid and never prints now.
+- **Mastering view playback.** The waveform no longer shimmers as the playhead
+  advances, and clicking a button in the view no longer swallows the Space
+  play / stop toggle.
+- **Audio device changes.** Switching backend no longer raises "Audio device
+  disconnected" while you are still choosing an interface. On ALSA, a
+  `plughw:` device is no longer mistaken for the raw card of the same number
+  and clock-linked to it, and changing the period count now actually reopens
+  the device instead of waiting for the next manual switch.
 - **Windows plug-in scanning.** The MSI now includes
   `dusk-studio-plugin-host.exe` beside the main application. The helper was
   built but omitted from CMake's install set, so every third-party plug-in was
-  deliberately left unscanned and the scan completed immediately with a
+  left unscanned and the scan completed immediately with a
   sandbox-host-unavailable warning. The Windows packaging script now validates
   the staged install contains both executables before creating the MSI.
-  (Ported from the 0.12.7 fix on `release/0.12`.)
 
 ## [0.12.6] - 2026-07-25
 
