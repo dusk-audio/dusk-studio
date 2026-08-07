@@ -11,8 +11,9 @@ docs/capture-screenshots.sh         # builds (if needed), drives the app, writes
 ```
 
 The harness drives the real app via `DUSKSTUDIO_CAPTURE_DIR` (see
-`src/ui/ScreenshotCapture.*`). The **Auto** column marks what it produces; the
-rest are manual (transient states, popup menus, OS dialogs) with notes below.
+`src/ui/ScreenshotCapture.*`). The **Auto** column marks what it produces. Only
+the notepad is manual — it is a native window the harness cannot reach — with
+notes below.
 
 **Capture conventions (manual shots)**
 
@@ -27,50 +28,48 @@ rest are manual (transient states, popup menus, OS dialogs) with notes below.
 
 | Filename                   | Manual | Auto | What to capture                                                     |
 | -------------------------- | ------ | ---- | ------------------------------------------------------------------ |
-| `qg-01-startup.png`        | L62    | ✅   | First-launch window, Startup dialog visible, audio device unset.   |
-| `qg-02-audio-settings.png` | L70    | ✅   | `Settings → Audio` panel, a real interface selected.               |
-| `qg-03-arm-track.png`      | L82    | ✅   | Channel strip 1 armed (ARM lit), input picked, IN on. RECORDING.   |
-| `qg-04-record-rolling.png` | L90    | ✅   | Mid-record: meters lit, a region drawing into the tape strip.      |
-| `qg-05-overdub.png`        | L98    | ✅   | Track 1 has a region; track 2 mid-record.                          |
-| `qg-06-mixing-stage.png`   | L114   | ✅   | MIXING stage on strip 1 — send knobs replace the input block.      |
-| `qg-07-bounce-dialog.png`  | L124   | ✅   | Bounce **file picker** at the session folder, then progress bar. (No format options — see note.) |
+| `qg-01-startup.png`        | L66    | ✅   | First-launch window, Startup dialog visible, audio device unset.   |
+| `qg-02-audio-settings.png` | L74    | ✅   | `Settings → Audio` panel, a real interface selected.               |
+| `qg-03-arm-track.png`      | L86    | ✅   | Channel strip 1 armed (ARM lit), input picked, IN on. RECORDING.   |
+| `qg-04-record-rolling.png` | L94    | ✅   | Mid-record: meters lit, a region drawing into the tape strip.      |
+| `qg-05-overdub.png`        | L102   | ✅   | Track 1 has a region; track 2 mid-record.                          |
+| `qg-06-mixing-stage.png`   | L118   | ✅   | MIXING stage on strip 1 — send knobs replace the input block.      |
+| `qg-07-bounce-dialog.png`  | L128   | ✅   | Bounce **file picker** at the session folder, then progress bar. (No format options — see note.) |
 
 ## Names and Functions of Parts (annotated — add callouts after capture)
 
 | Filename                            | Manual | Auto | What to capture                                              |
 | ----------------------------------- | ------ | ---- | ----------------------------------------------------------- |
-| `np-01-main-window.png`             | L138   | ✅   | Full window, six horizontal bands.                          |
-| `np-02-transport-bar.png`           | L151   | ✅   | Transport bar, full width.                                  |
-| `np-03-channel-strip-mixing.png`    | L178   | ✅   | One full channel strip, MIXING stage (sends visible).       |
-| `np-04-channel-strip-recording.png` | L205   | ✅   | Same strip, RECORDING stage (input block + ARM/IN/PRINT).   |
-| `np-05-bus-strip.png`               | L216   | ✅   | One bus strip top-to-bottom.                                |
-| `np-06-master-strip.png`            | L231   | ✅   | Master strip top-to-bottom.                                 |
-| `np-07-aux-view.png`                | L246   | ✅   | One aux lane shown full-width.                              |
-| `np-08-mastering-view.png`          | L259   | ✅   | Mastering chain.                                            |
-| `np-09-tape-strip.png`              | L274, L1000 | ✅ | Tape strip with regions, a marker, and a loop bracket. (Reused at both lines.) |
-| `np-10-region-editor.png`           | L288   | ✅   | Audio region editor modal.                                  |
-| `np-11-piano-roll.png`              | L300   | ✅   | Piano roll modal.                                           |
-| `np-12-notepad.png`                 | L544   | ❌   | Native Document view with styled sample lyrics and lists.   |
+| `np-01-main-window.png`             | L142   | ✅   | Full window, six horizontal bands.                          |
+| `np-02-transport-bar.png`           | L155   | ✅   | Transport bar, full width.                                  |
+| `np-03-channel-strip-mixing.png`    | L182   | ✅   | One full channel strip, MIXING stage (sends visible).       |
+| `np-04-channel-strip-recording.png` | L209   | ✅   | Same strip, RECORDING stage (input block + ARM/IN/PRINT).   |
+| `np-05-bus-strip.png`               | L220   | ✅   | One bus strip top-to-bottom.                                |
+| `np-06-master-strip.png`            | L235   | ✅   | Master strip top-to-bottom.                                 |
+| `np-07-aux-view.png`                | L250   | ✅   | One aux lane shown full-width.                              |
+| `np-08-mastering-view.png`          | L263   | ✅   | Mastering chain.                                            |
+| `np-09-tape-strip.png`              | L278, L1149 | ✅ | Tape strip with regions, a marker, and a loop bracket. (Reused at both lines.) |
+| `np-10-region-editor.png`           | L293   | ✅   | Audio region editor modal.                                  |
+| `np-11-piano-roll.png`              | L305   | ✅   | Piano roll modal.                                           |
+| `np-12-notepad.png`                 | L554   | ❌   | Notepad chart: title, section markers, chords over syllables. |
 
 ## Chapter figures
 
 | Filename                        | Manual | Auto | What to capture                                            |
 | ------------------------------- | ------ | ---- | --------------------------------------------------------- |
-| `rec-01-arm-multiple.png`       | L903   | ✅   | Eight tracks armed simultaneously, RECORDING stage.       |
-| `ed-04-region-editor-modal.png` | L1102  | ✅   | Region editor modal over a region with fade-in/out.       |
-| `ed-05-piano-roll-full.png`     | L1152  | ✅   | Piano roll with notes, a CC ramp, scale highlight.        |
-| `fx-01-eq.png`                  | EQ §   | ✅   | Channel EQ editor — HPF/LPF + 4 bands, curve shaped.      |
-| `fx-02-comp.png`                | Comp § | ✅   | Channel compressor editor (VCA mode).                     |
-| `fx-03-tape.png`                | Tape § | ✅   | Master tape-machine editor (native panel).                |
-| `mm-01-automation-modes.png`    | L1238  | ✅   | A fader's automation-mode label (READ / WRITE / TOUCH).   |
-| `mm-02-mastering-chain.png`     | L835   | ✅   | Mastering chain with EQ, comp, and limiter engaged.       |
-| `pl-01-plugin-picker.png`       | L1296  | ✅   | Plugin picker panel populated.                            |
-| `pl-04-hw-insert.png`           | L1392  | ✅   | Hardware insert editor with I/O pickers and Ping button.  |
-| `sync-01-mcu-bindings.png`      | L1492  | ✅   | MIDI Bindings panel populated with a few learned bindings.|
-| `sync-02-mtc-rates.png`         | L1430  | ⚠️   | MTC frame-rate dropdown **open** showing all four rates.  |
-| `ses-02-session-folder.png`     | L1556  | ❌   | OS file browser showing the session folder contents.      |
-| `bnc-01-bounce-dialog.png`      | L1617  | ✅   | Bounce dialog (file picker + progress). (No format options — see note.) |
-| `ts-02-plugin-offline.png`      | L1815  | ⚠️   | A plugin slot showing the `⚠ (offline)` state.            |
+| `rec-01-arm-multiple.png`       | L1044  | ✅   | Eight tracks armed simultaneously, RECORDING stage.       |
+| `ed-04-region-editor-modal.png` | L1266  | ✅   | Region editor modal over a region with fade-in/out.       |
+| `ed-05-piano-roll-full.png`     | L1318  | ✅   | Piano roll with notes, a CC ramp, scale highlight.        |
+| `fx-01-eq.png`                  | L709   | ✅   | Channel EQ editor — HPF/LPF + 4 bands, curve shaped.      |
+| `fx-02-comp.png`                | L731   | ✅   | Channel compressor editor (VCA mode).                     |
+| `fx-03-tape.png`                | L886   | ✅   | Master tape-machine editor (native panel).                |
+| `mm-01-automation-modes.png`    | L1406  | ✅   | A fader's automation-mode label (READ / WRITE / TOUCH).   |
+| `mm-02-mastering-chain.png`     | L967   | ✅   | Mastering chain with EQ, comp, and limiter engaged.       |
+| `pl-01-plugin-picker.png`       | L1480  | ✅   | Plugin picker panel populated.                            |
+| `pl-04-hw-insert.png`           | L1599  | ✅   | Hardware insert editor with I/O pickers and Ping button.  |
+| `sync-01-mcu-bindings.png`      | L1714  | ✅   | MIDI Bindings panel populated with a few learned bindings.|
+| `bnc-01-bounce-dialog.png`      | L1841  | ✅   | Bounce dialog (file picker + progress). (No format options — see note.) |
+| `ts-02-plugin-offline.png`      | L2097  | ✅   | A plugin slot in the `⚠ (offline)` state (the harness stages a synthetic one). |
 
 ## Compact-mode strips (captured, not yet referenced by `MANUAL.md`)
 
@@ -101,37 +100,37 @@ The harness renders the track I/O config popup in all three modes. No
 ## Manual-only shots (notes)
 
 - **`np-12-notepad.png`**: the notepad is a separate DPF/DGL native window, so
-  JUCE's `createComponentSnapshot` cannot capture it. Open the notepad, use the
-  Markdown tab to paste the sample below, switch back to Document, and capture
-  the native window.
+  JUCE's `createComponentSnapshot` cannot capture it — and DGL will not open
+  under Xvfb, so this one has to be shot on a live desktop session rather than
+  through `capture-screenshots.sh`.
+
+  There is a single view, the chart; the ChordPro source is the session's
+  `notepad.md` sidecar and there is no source tab in the window. The quickest
+  way to stage the sample is to write it into `<session>/notepad.md` with the
+  session closed, reopen the session, then open the notepad from the transport
+  bar. Building it in the chart works too — **Section** for the markers,
+  **Ctrl+K** for the chords.
 
   ```markdown
-  # Little Angel — verse 1
+  # Little Angel
 
-  Sang this one **too fast** at the *first* session; keep the pocket lazy and
-  let the last word of every line trail off before the downbeat, otherwise the
-  chorus lands early and the whole take rushes.
+  [Verse]
+  [Am]Sang this one too [F]fast at the [C]first session,
+  [Am]keep the pocket [F]lazy and the [G]last word [C]late.
+
+  [Chorus]
+  [F]Little angel, [C]don't come [G]down for me [Am]yet.
 
   Reference: [rough mix](https://example.com/little-angel-rough)
 
-  - warm up the tape echo before take 1
-  - double the hook an octave down
-
-  1. tune down a half step
-  2. print the vocal dry
-
-  - [x] comp the verse
-  - [ ] re-cut the bridge harmony
+  Warm the tape echo up before take 1, and double the hook an octave
+  **down** on the *second* chorus.
   ```
-- **`sync-02-mtc-rates.png`** (⚠️): the frame-rate list is a native popup menu;
-  `createComponentSnapshot` can't grab it. Open `Settings → MIDI sync`, click the
-  MTC rate dropdown, capture the window with `gnome-screenshot -w` while the menu
-  is open.
-- **`ses-02-session-folder.png`** (❌): this is the OS file manager, not a Dusk
-  Studio window. Open the session folder in Files/Nautilus and screenshot it.
-- **`ts-02-plugin-offline.png`** (⚠️): needs a session referencing a plugin that
-  isn't installed on this box. Either load such a session and grab the strip, or
-  let the harness stage a synthetic offline slot (best-effort).
+
+  Capture with the caret in a lyric line. The shot should show the chord labels
+  floating over their syllables, `[Verse]` and `[Chorus]` rendered as section
+  labels rather than brackets, the Markdown link left intact beside them, and a
+  footer reading two sections, four chords, and the detected key.
 
 ## Stale-caption fix log
 
@@ -141,12 +140,16 @@ at the device rate, fixed 5 s tail). The capture for `qg-07` / `bnc-01` is the
 versions of this list said "sample rate 48k, bit depth 24" — that UI does not
 exist.)
 
+The checked-in `np-12-notepad.png` still shows the pre-0.13 prototype notepad —
+raw Markdown textarea, old toolbar, a Close button — none of which exists any
+more. It is stale until someone reshoots it per the recipe above.
+
 ---
 
 ## Production checklist
 
 - [ ] `docs/capture-screenshots.sh` produces every ✅ row into `docs/images/`.
-- [ ] Manual rows (⚠️ / ❌) captured by hand.
+- [ ] `np-12-notepad.png` captured by hand on a live desktop session.
 - [ ] Annotated `np-*` shots have callouts overlaid (number + leader line).
 - [ ] PNGs shrunk (`oxipng -o4` or `pngquant`).
 - [ ] `MANUAL.pdf` rebuilds clean via `docs/build-pdf.sh` with all images present.

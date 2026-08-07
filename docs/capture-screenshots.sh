@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Drive Dusk Studio's built-in capture harness to (re)generate manual figures.
 #
-# Produces the ✅ rows in docs/screenshot-list.md into docs/images/. The
-# remaining rows (MTC dropdown, OS file browser, offline-plugin slot) are
+# Produces the ✅ rows in docs/screenshot-list.md into docs/images/. The one
+# remaining row, the notepad, is a native window this cannot reach and is
 # captured by hand — see that file.
 #
 # Runs the app on an ISOLATED Xvfb display (X11 backend), NOT your live
@@ -32,13 +32,15 @@ if [[ ! -x "${BIN}" ]]; then
 fi
 
 mkdir -p "${OUT}"
+LOG=""
 
 # ── Start an isolated virtual display ───────────────────────────────────
 echo "Starting Xvfb on ${DISPLAY_NUM} (${SCREEN}) ..." >&2
 Xvfb "${DISPLAY_NUM}" -screen 0 "${SCREEN}" -nolisten tcp >/dev/null 2>&1 &
 XVFB_PID=$!
-cleanup() { kill "${XVFB_PID}" >/dev/null 2>&1 || true; }
+cleanup() { kill "${XVFB_PID}" >/dev/null 2>&1 || true; rm -f "${LOG}"; }
 trap cleanup EXIT
+LOG="$(mktemp)"
 sleep 1   # let the server come up
 
 echo "Capturing into ${OUT} ..." >&2
@@ -48,8 +50,18 @@ env -u WAYLAND_DISPLAY \
     DISPLAY="${DISPLAY_NUM}" \
     DUSKSTUDIO_SKIP_STARTUP_DIALOG=1 \
     DUSKSTUDIO_CAPTURE_DIR="${OUT}" \
-    timeout 180 "${BIN}" || true   # harness quits itself; ignore teardown status
+    timeout 180 "${BIN}" 2>&1 | tee "${LOG}" >&2 || true
 
 rm -rf "${OUT}/_demo"
+
+# The harness quits the app itself and Linux teardown still returns nonzero, so
+# the exit status says nothing. Its own "done" line is the only signal that
+# every figure was written; without it the run died part-way and docs/images
+# still holds the PNGs from last time.
+if ! grep -q '\[Dusk Studio/capture\] done' "${LOG}"; then
+  echo "error: the capture harness did not finish - the PNGs in ${OUT} are stale." >&2
+  exit 1
+fi
+
 echo "Done. PNGs in ${OUT}:" >&2
 ls -1 "${OUT}"/*.png 2>/dev/null | sed "s#${OUT}/#  #" >&2 || echo "  (none — check stderr above)" >&2

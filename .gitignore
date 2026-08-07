@@ -23,7 +23,7 @@ sessions/
 *.flac
 !resources/**/*.wav
 
-# Generated user manual (build via packaging/build-pdf.sh)
+# Generated user manual (build via docs/build-pdf.sh)
 MANUAL.pdf
 
 # Linux release artifacts (built by scripts/package-tarball.sh)
