@@ -52,7 +52,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
         pkg_check_modules(SUIL IMPORTED_TARGET GLOBAL suil-0)
         pkg_check_modules(LV2  IMPORTED_TARGET GLOBAL lv2)
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-            pkg_check_modules(PIPEWIRE IMPORTED_TARGET GLOBAL libpipewire-0.3)
+            # 0.3.48 is what Ubuntu 22.04 ships and the oldest spa the backend
+            # is known to compile against (src/engine/pipewire/ defines the one
+            # newer flag it wants when the header lacks it).
+            pkg_check_modules(PIPEWIRE IMPORTED_TARGET GLOBAL libpipewire-0.3>=0.3.48)
         endif()
     endif()
     option(DUSKSTUDIO_REQUIRE_NATIVE_LV2
@@ -90,6 +93,23 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
     endif()
 else()
     set(DUSKSTUDIO_NATIVE_LV2 OFF)
+endif()
+
+# Native PipeWire backend (src/engine/pipewire/, sources added further down).
+# PipeWire is the primary Linux audio path, so CI and release builds pass
+# -DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON: a runner without libpipewire-0.3-dev then
+# fails the configure instead of quietly producing an ALSA-only binary.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    option(DUSKSTUDIO_REQUIRE_PIPEWIRE
+           "Fail the configure when the native PipeWire backend deps are missing" OFF)
+    if(PIPEWIRE_FOUND)
+        message(STATUS "Native PipeWire backend: libpipewire-0.3 ${PIPEWIRE_VERSION} found - enabled")
+    elseif(DUSKSTUDIO_REQUIRE_PIPEWIRE)
+        message(FATAL_ERROR
+            "Native PipeWire backend required but libpipewire-0.3 >= 0.3.48 was not found - install libpipewire-0.3-dev")
+    else()
+        message(STATUS "Native PipeWire backend: libpipewire-0.3 >= 0.3.48 not found - disabled, ALSA only")
+    endif()
 endif()
 
 # Native VST3 host — Steinberg SDK hosting subset from the Dusk-owned mirror
@@ -1453,11 +1473,11 @@ set(CPACK_RESOURCE_FILE_LICENSE     "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "Dusk Studio")
 
 # Debian: runtime deps gathered automatically via dpkg-shlibdeps when
-# the package is built on an Ubuntu/Debian host. JUCE statically links
-# audio/MIDI; the audible runtime needs are PipeWire (libjack-replacement)
-# and ALSA fallback. GTK is pulled in by juce_gui_basics.
+# the package is built on an Ubuntu/Debian host. Both audio backends are
+# linked in, so the PipeWire client library is needed even on an ALSA-only
+# machine. GTK is pulled in by juce_gui_basics.
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS  ON)
-set(CPACK_DEBIAN_PACKAGE_DEPENDS    "libc6, libstdc++6, libasound2, libgtk-3-0, libxcb1, libxcb-cursor0")
+set(CPACK_DEBIAN_PACKAGE_DEPENDS    "libc6, libstdc++6, libasound2, libpipewire-0.3-0, libgtk-3-0, libxcb1, libxcb-cursor0")
 set(CPACK_DEBIAN_PACKAGE_SECTION    "sound")
 set(CPACK_DEBIAN_PACKAGE_PRIORITY   "optional")
 
