@@ -14,20 +14,22 @@ This document is aimed at a developer with a Windows machine who has been handed
 
 ## Repository layout
 
-Dusk Studio expects two sibling repositories to be present alongside its own checkout:
+Dusk Studio expects four sibling repositories to be present alongside its own checkout:
 
 ```
 C:\dev\
 ├── dusk-studio\       (this repo)
-├── JUCE\            (JUCE 8.0.x, the framework)
-└── plugins\         (Dusk Audio plugins, donor DSP)
+├── JUCE\              (JUCE 8.0.x, the framework)
+├── plugins\           (Dusk Audio plugins, donor DSP)
+├── DPF\               (DISTRHO Plugin Framework — native notepad UI)
+└── DPF-Widgets\       (Dear ImGui layer for DPF)
 ```
 
-CMake auto-discovers these. If you put them elsewhere, pass `-DJUCE_PATH=...` and `-DDUSK_PLUGINS_PATH=...` at configure time.
+CMake auto-discovers these. If you put them elsewhere, pass `-DJUCE_PATH=...`, `-DDUSK_PLUGINS_PATH=...`, `-DDPF_PATH=...`, and `-DDPF_WIDGETS_PATH=...` at configure time.
 
 ### Clone everything
 
-Open a terminal (PowerShell, cmd, or Git Bash). Both Dusk Studio repos are public, no auth needed.
+Open a terminal (PowerShell, cmd, or Git Bash). All of these repos are public, no auth needed.
 
 ```cmd
 cd C:\dev
@@ -36,9 +38,36 @@ git clone --branch 8.0.4 https://github.com/juce-framework/JUCE.git
 git clone https://github.com/dusk-audio/dusk-audio-plugins.git plugins
 ```
 
-The explicit `plugins` target on the third clone is mandatory: CMake auto-discovery looks for a sibling directory named `plugins\` or `plugins-main\` ([CMakeLists.txt:160-168](CMakeLists.txt#L160-L168)). The repo itself is named `dusk-audio-plugins` on GitHub, so without the explicit target you'd get a directory CMake can't find.
+The explicit `plugins` target on the third clone is mandatory: CMake auto-discovery looks for a sibling directory named `plugins\` and nothing else ([CMakeLists.txt:358-367](CMakeLists.txt#L358-L367)). The repo itself is named `dusk-audio-plugins` on GitHub, so without the explicit target you'd get a directory CMake can't find — and it warns rather than failing, leaving you with a recorder that has no EQ, compressor, or tape.
 
-The Dusk Studio repo's own directory name (`dusk-studio\`) doesn't matter to the build, but feel free to `git clone <url> Dusk Studio` if you prefer.
+The Dusk Studio repo's own directory name (`dusk-studio\`) doesn't matter to the build, so rename it if you prefer.
+
+### The native notepad (DPF + Dear ImGui)
+
+The session notepad is a native window built on DPF/DGL plus the Dear ImGui layer from DPF-Widgets, rather than a JUCE component. Both come from Dusk-owned forks pinned to the revisions CI builds:
+
+```cmd
+cd C:\dev
+git clone https://github.com/dusk-audio/DPF.git
+git -C DPF checkout f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+git -C DPF submodule update --init
+git clone https://github.com/dusk-audio/DPF-Widgets.git
+git -C DPF-Widgets checkout 730da6397904da66d99667c1cb30fc77fc3d794a
+```
+
+Clone then check out the SHA, rather than cloning a branch: DPF's pin is the tip of `fix/wayland-review-findings`, which was never merged to that fork's `main`. (DPF-Widgets' pin happens to be its `main` tip today, but pin it the same way.) Neither branch may be deleted upstream — a plain clone would stop reaching the commit, and CI fetches the same SHAs. The submodule step is not optional either: DGL pulls its windowing layer from `dgl/src/pugl-upstream`. The pins live in [.github/actions/clone-dpf-stack/action.yml](.github/actions/clone-dpf-stack/action.yml), the single source of truth for every workflow.
+
+Missing either checkout, `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` defaults to **OFF** and configure prints one easily-missed line:
+
+```
+-- Native notepad: DPF / DPF-Widgets not found - disabled
+```
+
+Everything else builds and runs, but opening the notepad reports *"Notepad unavailable: built without the native notepad UI"*. Passing `-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON` with a checkout missing makes it a configure error instead.
+
+That OFF is sticky, because `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` is a **cached** CMake option. Configure `build\` before cloning DPF and cloning it afterwards changes nothing on the next configure — and the "not found" line stops printing too. Either configure into a fresh build directory or force the cache with `-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON`.
+
+If you override the paths explicitly, give DPF **forward slashes** — `-DDPF_PATH=C:/dev/DPF`. DPF's own CMake re-parses the value, and backslashes come through as invalid escapes.
 
 ## Configure + build
 
@@ -71,10 +100,10 @@ Debug binary appears under `build\DuskStudio_artefacts\Debug\`.
 ### Opening in Visual Studio
 
 ```cmd
-start build\Dusk Studio.sln
+start build\DuskStudio.sln
 ```
 
-In VS, right-click the **Dusk Studio** project → **Set as Startup Project** → F5 to debug.
+In VS, right-click the **DuskStudio** project → **Set as Startup Project** → F5 to debug.
 
 ## Overriding paths (if not using the sibling layout)
 
@@ -82,6 +111,8 @@ In VS, right-click the **Dusk Studio** project → **Set as Startup Project** �
 cmake -S . -B build ^
   -DJUCE_PATH=C:/some/other/JUCE ^
   -DDUSK_PLUGINS_PATH=C:/some/other/plugins ^
+  -DDPF_PATH=C:/some/other/DPF ^
+  -DDPF_WIDGETS_PATH=C:/some/other/DPF-Widgets ^
   -G "Visual Studio 17 2022" -A x64
 ```
 
@@ -110,9 +141,9 @@ Useful for confirming the audio engine wires up correctly without needing to dri
 
 ## Known caveats on Windows
 
-- **PlatformWindowing_Windows.cpp is a stub.** Most things work; the file exists as the place to land Windows-specific window-management fixes if/when XEmbed-equivalent bugs surface. The Linux-only `JUCE_XEmbedComponent` source isn't compiled on Windows ([CMakeLists.txt:57](CMakeLists.txt#L57)).
+- **PlatformWindowing_Windows.cpp is a stub.** Most things work; the file exists as the place to land Windows-specific window-management fixes if/when XEmbed-equivalent bugs surface. CMake picks the per-platform implementation at [CMakeLists.txt:615-621](CMakeLists.txt#L615-L621).
 - **No ASIO without the SDK.** WASAPI is the default; ASIO requires the SDK download above. Most users will be fine on WASAPI.
-- **The ALSA backend is not compiled.** [CMakeLists.txt:263](CMakeLists.txt#L263) gates Dusk Studio's custom ALSA `AudioIODeviceType` behind `UNIX AND NOT APPLE`. Windows falls through to JUCE's stock WASAPI/ASIO types.
+- **The ALSA backend is not compiled.** [CMakeLists.txt:728](CMakeLists.txt#L728) gates Dusk Studio's custom ALSA `AudioIODeviceType` behind `UNIX AND NOT APPLE`. Windows falls through to JUCE's stock WASAPI/ASIO types.
 - **Compiler warnings.** Project is primarily developed on Clang/GCC. MSVC may emit warnings; none are fatal. `/WX` (warnings-as-errors) is not enabled.
 - **MinGW/MSYS2 not tested.** Stick to MSVC via Visual Studio 2022.
 
