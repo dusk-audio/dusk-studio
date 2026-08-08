@@ -491,3 +491,20 @@ catch_discover_tests(dusk-studio-tests
     EXTRA_ARGS --allow-running-no-tests)
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "~[alsa]")
+
+# Exercise the real release-version insertion script against an isolated fixture,
+# and keep the four private-release publishers on the race-safe create/recheck/
+# upload contract. The release script is Unix-only.
+if(UNIX)
+    find_program(DUSKSTUDIO_BASH_EXECUTABLE bash)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(DUSKSTUDIO_BASH_EXECUTABLE AND Python3_Interpreter_FOUND)
+        add_test(NAME release-mechanics-contract
+            COMMAND "${DUSKSTUDIO_BASH_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/release_mechanics.sh"
+                    "${CMAKE_SOURCE_DIR}"
+                    "${Python3_EXECUTABLE}")
+    else()
+        message(WARNING "release-mechanics contract test skipped: bash or python3 not found")
+    endif()
+endif()

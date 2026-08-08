@@ -50,7 +50,7 @@
         <p>Input monitoring now feeds aux sends during playback.</p>
       </description>
     </release>
-    <release version="0.12.2" date="2026-07-12">
+    <release version="0.12.2" date="2026-07-13">
       <description>
         <p>Beta patch: fixes a mixdown/stems/freeze crash with CLAP (and VST3/LV2) plugin inserts.</p>
       </description>
@@ -83,7 +83,7 @@
         (arm64) Linux tarball.</p>
       </description>
     </release>
-    <release version="0.11.0" date="2026-06-12">
+    <release version="0.11.0" date="2026-06-22">
       <description>
         <p>Beta release. Optional out-of-process plugin sandbox with
         crash-isolated plugin scanning on all three OSes,
