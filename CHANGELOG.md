@@ -124,10 +124,13 @@ application framework and became Dusk Studio's own.
   drive instead of its threshold. A binding that had been driving that input
   drive leaves it wherever it last wrote it - the value is saved with the
   session and is now reachable only from the strip's FET INPUT knob.
-- **Compressor ratio knob in VCA mode.** The knob stopped at 20:1 while the
-  parameter and the manual both go to 120:1, so a strip set higher from the
-  control surface read back as 20:1 and the next touch of the knob wrote that
-  back. The knob now covers the mode's full range.
+- **Compressor controls that could not reach their range in VCA mode.** The
+  ratio knob stopped at 20:1 while the parameter and the manual both go to
+  120:1, so a strip set higher from the control surface read back as 20:1 and
+  the next touch of the knob wrote that back. The threshold handle on the
+  editor's gain-reduction meter ran −60 to 0 dB in every mode, so it could
+  not reach VCA's +12 dB and the bottom third of its travel was dead against
+  that mode's −38 dB floor. Both now follow the active mode.
 - **Cloning a track.** The clone carried every compressor value except the
   FET threshold, which the destination kept from whatever was there before.
 - **Joining regions.** A join could land on the wrong slot, cut the merged

@@ -111,6 +111,28 @@ inline float valueToFrac (Domain d, float value) noexcept
                        : 0.0f;
 }
 
+// Opto's two dials against the dB axis the controls speak in. Declared here
+// so the fan-out below and the UI both go through the same expression.
+inline float makeupDbToOptoGainPct (float db) noexcept
+{
+    return std::clamp (kOptoGainUnityPct + db * kOptoGainPctPerDb, 0.0f, 100.0f);
+}
+
+inline float optoGainPctToMakeupDb (float pct) noexcept
+{
+    return (std::clamp (pct, 0.0f, 100.0f) - kOptoGainUnityPct) / kOptoGainPctPerDb;
+}
+
+inline float thresholdDbToOptoPeakRedPct (float db) noexcept
+{
+    return std::clamp (-db * kOptoPeakRedPctPerDb, 0.0f, 100.0f);
+}
+
+inline float optoPeakRedPctToThresholdDb (float pct) noexcept
+{
+    return -std::clamp (pct, 0.0f, 100.0f) / kOptoPeakRedPctPerDb;
+}
+
 // Mode-taking cores. The public wrappers below are the only callers that
 // touch the compMode atom; everything here works from the mode they read.
 namespace detail
@@ -166,9 +188,8 @@ inline float makeupDb (const ChannelStripParams& strip, int mode) noexcept
     switch (mode)
     {
         case 0:
-            return (std::clamp (strip.compOptoGain.load (std::memory_order_relaxed),
-                                0.0f, 100.0f)
-                        - kOptoGainUnityPct) / kOptoGainPctPerDb;
+            return optoGainPctToMakeupDb (
+                strip.compOptoGain.load (std::memory_order_relaxed));
         case 1:
             return std::clamp (strip.compFetOutput.load (std::memory_order_relaxed),
                                -kOutMakeupMaxDb, kOutMakeupMaxDb);
@@ -184,9 +205,8 @@ inline void storeMakeupDb (ChannelStripParams& strip, int mode, float db) noexce
     switch (mode)
     {
         case 0:
-            strip.compOptoGain.store (
-                std::clamp (kOptoGainUnityPct + db * kOptoGainPctPerDb, 0.0f, 100.0f),
-                std::memory_order_relaxed);
+            strip.compOptoGain.store (makeupDbToOptoGainPct (db),
+                                      std::memory_order_relaxed);
             break;
         case 1:  strip.compFetOutput.store (outDb, std::memory_order_relaxed); break;
         default: strip.compVcaOutput.store (outDb, std::memory_order_relaxed); break;
@@ -199,8 +219,8 @@ inline float thresholdDb (const ChannelStripParams& strip, int mode) noexcept
     switch (mode)
     {
         case 0:
-            return std::clamp (-std::clamp (strip.compOptoPeakRed.load (std::memory_order_relaxed),
-                                            0.0f, 100.0f) / kOptoPeakRedPctPerDb,
+            return std::clamp (optoPeakRedPctToThresholdDb (
+                                   strip.compOptoPeakRed.load (std::memory_order_relaxed)),
                                domain.lo, domain.hi);
         case 1:
             return std::clamp (strip.compFetThresholdDb.load (std::memory_order_relaxed),
@@ -218,7 +238,7 @@ inline void storeThresholdDb (ChannelStripParams& strip, int mode, float db) noe
     switch (mode)
     {
         case 0:
-            strip.compOptoPeakRed.store (std::clamp (-v * kOptoPeakRedPctPerDb, 0.0f, 100.0f),
+            strip.compOptoPeakRed.store (thresholdDbToOptoPeakRedPct (v),
                                          std::memory_order_relaxed);
             break;
         case 1:  strip.compFetThresholdDb.store (v, std::memory_order_relaxed); break;
@@ -233,16 +253,6 @@ inline void storeThresholdDb (ChannelStripParams& strip, int mode, float db) noe
 inline Domain makeupDomainFor (const ChannelStripParams& strip) noexcept
 {
     return detail::makeupDomain (compModeOf (strip));
-}
-
-inline float makeupDbToOptoGainPct (float db) noexcept
-{
-    return std::clamp (kOptoGainUnityPct + db * kOptoGainPctPerDb, 0.0f, 100.0f);
-}
-
-inline float optoGainPctToMakeupDb (float pct) noexcept
-{
-    return (std::clamp (pct, 0.0f, 100.0f) - kOptoGainUnityPct) / kOptoGainPctPerDb;
 }
 
 inline void applyTrackCompMakeupDb (ChannelStripParams& strip, float db) noexcept
@@ -272,16 +282,6 @@ inline float makeupBindingFrac (const ChannelStripParams& strip) noexcept
 inline Domain thresholdDomainFor (const ChannelStripParams& strip) noexcept
 {
     return detail::thresholdDomain (compModeOf (strip));
-}
-
-inline float thresholdDbToOptoPeakRedPct (float db) noexcept
-{
-    return std::clamp (-db * kOptoPeakRedPctPerDb, 0.0f, 100.0f);
-}
-
-inline float optoPeakRedPctToThresholdDb (float pct) noexcept
-{
-    return -std::clamp (pct, 0.0f, 100.0f) / kOptoPeakRedPctPerDb;
 }
 
 inline void applyTrackCompThresholdDb (ChannelStripParams& strip, float db) noexcept

@@ -158,11 +158,7 @@ ChannelCompEditor::ChannelCompEditor (Track& t) : track (t)
     styleKnob (releaseKnob, gold, comp::kVcaReleaseMinMs, comp::kVcaReleaseMaxMs, 100.0,  200.0, " ms", 0);
     styleKnob (makeupKnob,  gold, -comp::kOptoMakeupMaxDb, comp::kOptoMakeupMaxDb,  0.0,    0.0, " dB", 1);
 
-    threshKnob.onValueChange  = [this] { writeThresholdToMode(); };
-    ratioKnob.onValueChange   = [this] { writeRatioToMode(); };
-    attackKnob.onValueChange  = [this] { writeAttackToMode(); };
-    releaseKnob.onValueChange = [this] { writeReleaseToMode(); };
-    makeupKnob.onValueChange  = [this] { writeMakeupToMode(); };
+    attachKnobCallbacks();
 
     // threshKnob deliberately NOT addAndMakeVisible - value is read +
     // written via the triangle handle, not a knob.
@@ -261,11 +257,7 @@ void ChannelCompEditor::refreshLabelsForMode()
     // which would write that clamped value into the mode being switched
     // TO - park the callbacks across the change and let syncKnobsFromMode
     // restore the displays.
-    threshKnob .onValueChange = nullptr;
-    ratioKnob  .onValueChange = nullptr;
-    attackKnob .onValueChange = nullptr;
-    releaseKnob.onValueChange = nullptr;
-    makeupKnob .onValueChange = nullptr;
+    detachKnobCallbacks();
 
     const auto threshDomain = comp::thresholdDomainFor (track.strip);
     threshKnob.setRange (threshDomain.lo, threshDomain.hi, 0.1);
@@ -276,11 +268,7 @@ void ChannelCompEditor::refreshLabelsForMode()
     const auto makeupDomain = comp::makeupDomainFor (track.strip);
     makeupKnob.setRange (makeupDomain.lo, makeupDomain.hi, 0.01);
 
-    threshKnob .onValueChange = [this] { writeThresholdToMode(); };
-    ratioKnob  .onValueChange = [this] { writeRatioToMode(); };
-    attackKnob .onValueChange = [this] { writeAttackToMode(); };
-    releaseKnob.onValueChange = [this] { writeReleaseToMode(); };
-    makeupKnob .onValueChange = [this] { writeMakeupToMode(); };
+    attachKnobCallbacks();
 
     // OverEasy + detector-mode toggles: VCA only.
     const bool vcaMode = (m == 2);
@@ -317,6 +305,24 @@ void ChannelCompEditor::refreshLabelsForMode()
 // ratio keeps its own routing because the knob's continuous sweep has to
 // pick a rung on FET's five-position switch. Opto's ratio, attack and
 // release are fixed by the optical model, so those knobs no-op there.
+
+void ChannelCompEditor::attachKnobCallbacks()
+{
+    threshKnob .onValueChange = [this] { writeThresholdToMode(); };
+    ratioKnob  .onValueChange = [this] { writeRatioToMode(); };
+    attackKnob .onValueChange = [this] { writeAttackToMode(); };
+    releaseKnob.onValueChange = [this] { writeReleaseToMode(); };
+    makeupKnob .onValueChange = [this] { writeMakeupToMode(); };
+}
+
+void ChannelCompEditor::detachKnobCallbacks()
+{
+    threshKnob .onValueChange = nullptr;
+    ratioKnob  .onValueChange = nullptr;
+    attackKnob .onValueChange = nullptr;
+    releaseKnob.onValueChange = nullptr;
+    makeupKnob .onValueChange = nullptr;
+}
 
 void ChannelCompEditor::writeThresholdToMode()
 {
@@ -498,9 +504,8 @@ void ChannelCompEditor::paint (juce::Graphics& g)
     //    the popup look the same.
     if (! inputMeterArea.isEmpty() && ! threshHandleArea.isEmpty())
     {
-        const float clamped = jlimit (-60.0f, 0.0f,
-                                      comp::trackCompThresholdDb (track.strip));
-        const float frac = (clamped - (-60.0f)) / 60.0f;
+        const float frac = comp::valueToFrac (comp::thresholdDomainFor (track.strip),
+                                              comp::trackCompThresholdDb (track.strip));
         const auto inBar = inputMeterArea.toFloat();
         const float y = inBar.getBottom() - 2.0f - frac * (inBar.getHeight() - 4.0f);
 
@@ -538,10 +543,10 @@ void ChannelCompEditor::paint (juce::Graphics& g)
 //    THRESHOLD knob write the same param over the same range.
 namespace
 {
-float dbForYInBar (int y, juce::Rectangle<int> bar)
+float dbForYInBar (int y, juce::Rectangle<int> bar, comp::Domain domain)
 {
     const float relY = (float) (bar.getBottom() - 2 - y) / (float) (bar.getHeight() - 4);
-    return jlimit (-60.0f, 0.0f, -60.0f + jlimit (0.0f, 1.0f, relY) * 60.0f);
+    return comp::fracToValue (domain, jlimit (0.0f, 1.0f, relY));
 }
 }
 
@@ -553,7 +558,9 @@ void ChannelCompEditor::mouseDown (const juce::MouseEvent& e)
     draggingThreshold = hitArea.contains (e.getPosition());
     if (draggingThreshold)
     {
-        comp::applyTrackCompThresholdDb (track.strip, dbForYInBar (e.y, inputMeterArea));
+        comp::applyTrackCompThresholdDb (
+        track.strip,
+        dbForYInBar (e.y, inputMeterArea, comp::thresholdDomainFor (track.strip)));
         // Auto-enable the comp on threshold touch (both surfaces - meter-
         // strip drag, popup-editor drag, popup-editor knob - now share the
         // same "engineer touched threshold => comp ON" rule).
@@ -570,7 +577,9 @@ void ChannelCompEditor::mouseDown (const juce::MouseEvent& e)
 void ChannelCompEditor::mouseDrag (const juce::MouseEvent& e)
 {
     if (! draggingThreshold) return;
-    comp::applyTrackCompThresholdDb (track.strip, dbForYInBar (e.y, inputMeterArea));
+    comp::applyTrackCompThresholdDb (
+        track.strip,
+        dbForYInBar (e.y, inputMeterArea, comp::thresholdDomainFor (track.strip)));
     track.strip.compEnabled.store (true, std::memory_order_relaxed);
     onButton.setToggleState (true, juce::dontSendNotification);
     syncKnobsFromMode();
