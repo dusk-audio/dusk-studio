@@ -258,6 +258,7 @@ AuPluginEditorComponent::AuPluginEditorComponent()
 AuPluginEditorComponent::~AuPluginEditorComponent()
 {
     stopTimer();
+    if (ownerIsStale()) editor.abandonPlugin();
     editor.close();
 }
 
@@ -294,6 +295,8 @@ juce::Rectangle<int> AuPluginEditorComponent::editorBoundsInPeer() const
 
 void AuPluginEditorComponent::tryEmbed()
 {
+    if (ownerIsStale()) { abandonInstance(); return; }
+
     // `embedding` breaks re-entry: addSubview can let the plugin's view run
     // AppKit work that ticks this component's timer, and AuEditor only marks
     // itself embedded at the END - a nested call would build a second container.
@@ -321,6 +324,7 @@ void AuPluginEditorComponent::tryEmbed()
 
 void AuPluginEditorComponent::pushBounds()
 {
+    if (ownerIsStale()) return;   // setFrame reaches the plugin's own view
     if (! embedded || getParentComponent() == nullptr || getPeer() == nullptr) return;
     const auto area = editorBoundsInPeer();
     editor.setBounds (area.getX(), area.getY(),
@@ -336,6 +340,10 @@ void AuPluginEditorComponent::parentHierarchyChanged()
 
 void AuPluginEditorComponent::visibilityChanged()
 {
+    // Unhiding the container makes AppKit draw the plugin's Cocoa subview
+    // synchronously, unlike the VST3/X11 case where reveal touches only a
+    // host-owned foreign window.
+    if (ownerIsStale()) { abandonInstance(); return; }
     if (! loaded) return;
     if (isShowing())
     {
@@ -345,8 +353,20 @@ void AuPluginEditorComponent::visibilityChanged()
         editor.hide();
 }
 
+void AuPluginEditorComponent::abandonInstance()
+{
+    stopTimer();
+    editor.abandonPlugin();
+    editor.close();   // plugin handles are gone; this releases only what we own
+    ownerSlot = nullptr;
+    abandoned = true;
+    loaded = embedded = embedding = false;
+}
+
 void AuPluginEditorComponent::timerCallback()
 {
+    if (ownerIsStale()) { abandonInstance(); return; }
+
     if (embedded)
     {
         if (isShowing()) editor.reveal(); else editor.hide();

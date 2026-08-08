@@ -8,6 +8,7 @@
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_AU
 #include "../engine/au/AuEditor.h"
+#include "../engine/au/NativeAuSlot.h"
 #endif
 #include "../foundation/MessageThread.h"
 #include "NativeEditorOwner.h"
@@ -97,6 +98,17 @@ public:
     bool attach (au::AuInstance& instance, juce::String& errorOut);
     bool isLoaded() const noexcept { return loaded; }
 
+    // Same owner contract as Vst3PluginEditorComponent above.
+    void bindOwner (au::NativeAuSlot& slot) noexcept
+    { owner.stamp (slot); ownerSlot = &slot; }
+
+    bool ownerIsStale() const noexcept
+    { return ownerSlot != nullptr && owner.isStale (*ownerSlot); }
+
+    bool wasAbandoned() const noexcept { return abandoned; }
+
+    void abandonInstance();
+
     void resized() override;
     void moved() override;
     void parentHierarchyChanged() override;
@@ -109,7 +121,10 @@ private:
     std::uintptr_t peerNativeHandle() const;
     juce::Rectangle<int> editorBoundsInPeer() const;
 
-    au::AuEditor editor;
+    au::AuEditor       editor;
+    NativeEditorOwner  owner;
+    au::NativeAuSlot*  ownerSlot = nullptr;
+    bool abandoned = false;
     bool loaded = false;
     bool embedded = false;
     bool embedding = false;   // guards re-entry while embed() is adding subviews
