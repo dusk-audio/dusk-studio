@@ -570,7 +570,6 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
     comp["enabled"]      = t.strip.compEnabled.load();
     comp["mode_picked"]  = t.strip.compModePicked.load();
     comp["mode"]         = t.strip.compMode.load();
-    comp["threshold_db"] = t.strip.compThresholdDb.load();  // legacy meter-strip drag
     // Per-mode parameters - UniversalCompressor's native shape.
     comp["opto_peak_red"] = t.strip.compOptoPeakRed.load();
     comp["opto_gain"]     = t.strip.compOptoGain.load();
@@ -1224,7 +1223,6 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
         loadB ("enabled",     t.strip.compEnabled);
         loadB ("mode_picked", t.strip.compModePicked);
         loadI ("mode", t.strip.compMode, 0, 0, 2);
-        loadF ("threshold_db", t.strip.compThresholdDb, 0.0f, -60.0f, 0.0f);
         loadF ("opto_peak_red", t.strip.compOptoPeakRed, 0.0f, 0.0f, 100.0f);
         loadF ("opto_gain", t.strip.compOptoGain, 50.0f, 0.0f, 100.0f);
         loadB ("opto_limit",    t.strip.compOptoLimit);

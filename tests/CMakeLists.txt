@@ -91,7 +91,7 @@ add_executable(dusk-studio-tests
     mcu_receiver_decode.cpp
     mcu_controller_emit.cpp
     mcu_fader_taper.cpp
-    comp_makeup_fanout.cpp
+    comp_mode_fanout.cpp
     foundation_message_thread.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/McuReceiver.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/McuController.cpp

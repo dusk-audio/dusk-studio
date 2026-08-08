@@ -42,6 +42,13 @@ private:
     void writeMakeupToMode();
     void syncKnobsFromMode();
 
+    // Single source of truth for the knob -> writeXxxToMode wiring.
+    // refreshLabelsForMode detaches across its re-range block because
+    // Slider::setRange notifies when it clamps, which would write the
+    // clamped value into the mode being switched to.
+    void attachKnobCallbacks();
+    void detachKnobCallbacks();
+
     Track& track;
 
     juce::Label titleLabel;

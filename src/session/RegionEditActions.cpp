@@ -423,10 +423,10 @@ struct CloneTrackAction::Impl
 
     bool  compEnabled = false;
     int   compMode = 2;
-    float compThresholdDb = 0.0f;
     float compOptoPeakRed = 30.0f, compOptoGain = 50.0f;
     bool  compOptoLimit = false;
     float compFetInput = 0.0f, compFetOutput = 0.0f, compFetAttack = 0.2f, compFetRelease = 400.0f;
+    float compFetThresholdDb = -10.0f;
     int   compFetRatio = 0;
     float compVcaThreshDb = 0.0f, compVcaRatio = 4.0f, compVcaAttack = 1.0f, compVcaRelease = 100.0f, compVcaOutput = 0.0f;
     bool  compVcaOverEasy = false;
@@ -578,11 +578,11 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
 
     s.compEnabled    = t.strip.compEnabled.load    (std::memory_order_relaxed);
     s.compMode       = t.strip.compMode.load       (std::memory_order_relaxed);
-    s.compThresholdDb = t.strip.compThresholdDb.load (std::memory_order_relaxed);
     s.compOptoPeakRed = t.strip.compOptoPeakRed.load (std::memory_order_relaxed);
     s.compOptoGain    = t.strip.compOptoGain.load    (std::memory_order_relaxed);
     s.compOptoLimit   = t.strip.compOptoLimit.load   (std::memory_order_relaxed);
     s.compFetInput    = t.strip.compFetInput.load    (std::memory_order_relaxed);
+    s.compFetThresholdDb = t.strip.compFetThresholdDb.load (std::memory_order_relaxed);
     s.compFetOutput   = t.strip.compFetOutput.load   (std::memory_order_relaxed);
     s.compFetAttack   = t.strip.compFetAttack.load   (std::memory_order_relaxed);
     s.compFetRelease  = t.strip.compFetRelease.load  (std::memory_order_relaxed);
@@ -764,11 +764,11 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
 
     t.strip.compEnabled.store    (s.compEnabled,    std::memory_order_relaxed);
     t.strip.compMode.store       (s.compMode,       std::memory_order_relaxed);
-    t.strip.compThresholdDb.store (s.compThresholdDb, std::memory_order_relaxed);
     t.strip.compOptoPeakRed.store (s.compOptoPeakRed, std::memory_order_relaxed);
     t.strip.compOptoGain.store    (s.compOptoGain,    std::memory_order_relaxed);
     t.strip.compOptoLimit.store   (s.compOptoLimit,   std::memory_order_relaxed);
     t.strip.compFetInput.store    (s.compFetInput,    std::memory_order_relaxed);
+    t.strip.compFetThresholdDb.store (s.compFetThresholdDb, std::memory_order_relaxed);
     t.strip.compFetOutput.store   (s.compFetOutput,   std::memory_order_relaxed);
     t.strip.compFetAttack.store   (s.compFetAttack,   std::memory_order_relaxed);
     t.strip.compFetRelease.store  (s.compFetRelease,  std::memory_order_relaxed);

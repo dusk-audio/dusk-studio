@@ -90,15 +90,6 @@ public:
     // vertical extent.
     juce::Rectangle<float> getGrBarArea() const noexcept { return grBarArea; }
 
-    // Per-mode threshold helpers - exposed so parent components can drive
-    // threshold drag from a different widget (e.g. the channel strip's
-    // main level meter when the compMeter widget runs in slim pure-GR
-    // mode). Mirrors the mode-specific mapping used internally by the
-    // widget's own triangle drag.
-    static void  writeThresholdForMode (Track& t, float threshDb);
-    static float readThresholdForMode  (const Track& t);
-    static void  resetThresholdForMode (Track& t);
-
     static constexpr float kFloorDb   = -60.0f;
     static constexpr float kCeilingDb =   0.0f;
     static constexpr float kGrFloorDb = -24.0f;

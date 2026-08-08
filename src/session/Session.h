@@ -262,11 +262,6 @@ struct ChannelStripParams
     // false = Adaptive (donor's 35->5 ms RMS TC); true = Classic (fixed 10 ms).
     std::atomic<bool>  compVcaDetectorClassic { false };
 
-    // Legacy unified threshold - driven by the comp-meter drag handle,
-    // mirrors the current mode's primary knob so drag stays usable.
-    // Audio thread does NOT read directly; see ChannelStrip::updateCompParameters.
-    std::atomic<float> compThresholdDb { 0.0f };
-
     // Engine writes liveFaderDb at the top of every block: Off mode
     // mirrors faderDb; Read mode carries lane value. ChannelStrip
     // reads liveFaderDb, not faderDb, so Off/Read hand-off lives in
@@ -312,12 +307,6 @@ struct ChannelStripParams
     static constexpr float kHfFreqMin  = 1000.0f, kHfFreqMax = 20000.0f;
     static constexpr float kBandGainMin = -15.0f, kBandGainMax = 15.0f;
     static constexpr float kBandQMin = 0.4f, kBandQMax = 4.0f;
-
-    static constexpr float kCompThreshMin =  -60.0f, kCompThreshMax =   0.0f;
-    static constexpr float kCompRatioMin  =    1.0f, kCompRatioMax  =  20.0f;
-    static constexpr float kCompAttackMin =    0.1f, kCompAttackMax = 200.0f;
-    static constexpr float kCompReleaseMin=   10.0f, kCompReleaseMax= 2000.0f;
-    static constexpr float kCompMakeupMin =  -12.0f, kCompMakeupMax =  24.0f;
 };
 
 // Take-history slot - timeline position is NOT stored so rotating
