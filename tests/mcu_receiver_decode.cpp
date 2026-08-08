@@ -328,6 +328,200 @@ TEST_CASE ("McuReceiver: makeup nudge base survives a session reload",
     dir.deleteRecursively();
 }
 
+// Encoder 1 (index 0) is THRESHOLD, 0.5 dB per tick. The audible value is
+// the active mode's threshold-shaped param, and every mode has to move -
+// the encoder used to nudge a unified atom the DSP never read, so the whole
+// control was silent in all three.
+TEST_CASE ("McuReceiver: V-pot rotate (COMP mode) threshold moves the audible param",
+           "[mcu][receiver]")
+{
+    Session s;
+    McuReceiver r (s);
+    s.mcu.assignMode.store (6, std::memory_order_relaxed);       // COMP
+    s.mcu.selectedChannel.store (3, std::memory_order_relaxed);
+    auto& strip = s.track (3).strip;
+
+    // VCA sits at its +12 dB no-compression ceiling, so it can only go down.
+    strip.compMode.store (2, std::memory_order_relaxed);
+    r.process (makeCc (mcu::cc::VPotRotateBase + 0, 0x40 | 0x08), 0);  // -8 ticks
+    REQUIRE_THAT (strip.compVcaThreshDb.load (std::memory_order_relaxed),
+                  WithinAbs (8.0f, 1e-4f));
+
+    // FET's threshold is the donor's own param, not its input drive.
+    strip.compMode.store (1, std::memory_order_relaxed);
+    r.process (makeCc (mcu::cc::VPotRotateBase + 0, 0x40 | 0x04), 0);  // -4 ticks
+    REQUIRE_THAT (strip.compFetThresholdDb.load (std::memory_order_relaxed),
+                  WithinAbs (-12.0f, 1e-4f));
+    REQUIRE_THAT (strip.compFetInput.load (std::memory_order_relaxed),
+                  WithinAbs (0.0f, 1e-4f));
+
+    // Opto's dial runs the other way: 6 ticks down = -3 dB = 5 % reduction.
+    strip.compMode.store (0, std::memory_order_relaxed);
+    r.process (makeCc (mcu::cc::VPotRotateBase + 0, 0x40 | 0x06), 0);
+    REQUIRE_THAT (strip.compOptoPeakRed.load (std::memory_order_relaxed),
+                  WithinAbs (5.0f, 1e-3f));
+}
+
+// Encoders 2 / 3 / 4 wrote the VCA ratio / attack / release atoms whatever
+// the mode, so all three were silent in Opto and FET. Opto has no parameter
+// behind any of them and must stay untouched.
+TEST_CASE ("McuReceiver: V-pot rotate (COMP mode) ratio / attack / release follow the mode",
+           "[mcu][receiver]")
+{
+    Session s;
+    McuReceiver r (s);
+    s.mcu.assignMode.store (6, std::memory_order_relaxed);
+    auto& strip = s.track (0).strip;
+
+    SECTION ("FET drives the FET params")
+    {
+        strip.compMode.store (1, std::memory_order_relaxed);
+        r.process (makeCc (mcu::cc::VPotRotateBase + 1, 0x02), 0);   // ratio: one rung
+        REQUIRE (strip.compFetRatio.load (std::memory_order_relaxed) == 1);
+        // Timings scale 6 % per detent: 4 ticks on the 0.2 ms default.
+        r.process (makeCc (mcu::cc::VPotRotateBase + 2, 0x04), 0);
+        REQUIRE_THAT (strip.compFetAttack.load (std::memory_order_relaxed),
+                      WithinAbs (0.2524954f, 1e-5f));
+        r.process (makeCc (mcu::cc::VPotRotateBase + 3, 0x0A), 0);   // 10 ticks on 400 ms
+        REQUIRE_THAT (strip.compFetRelease.load (std::memory_order_relaxed),
+                      WithinAbs (716.3391f, 1e-2f));
+
+        REQUIRE_THAT (strip.compVcaRatio.load (std::memory_order_relaxed),
+                      WithinAbs (4.0f, 1e-4f));
+        REQUIRE_THAT (strip.compVcaAttack.load (std::memory_order_relaxed),
+                      WithinAbs (1.0f, 1e-4f));
+    }
+
+    SECTION ("VCA drives the VCA params")
+    {
+        strip.compMode.store (2, std::memory_order_relaxed);
+        r.process (makeCc (mcu::cc::VPotRotateBase + 1, 0x0A), 0);   // 10 ticks on 4:1
+        REQUIRE_THAT (strip.compVcaRatio.load (std::memory_order_relaxed),
+                      WithinAbs (7.1633908f, 1e-4f));
+        r.process (makeCc (mcu::cc::VPotRotateBase + 3, 0x14), 0);   // 20 ticks on 100 ms
+        REQUIRE_THAT (strip.compVcaRelease.load (std::memory_order_relaxed),
+                      WithinAbs (320.7135f, 1e-2f));
+        REQUIRE (strip.compFetRatio.load (std::memory_order_relaxed) == 0);
+    }
+
+    SECTION ("Opto leaves every one of them alone")
+    {
+        strip.compMode.store (0, std::memory_order_relaxed);
+        r.process (makeCc (mcu::cc::VPotRotateBase + 1, 0x0A), 0);
+        r.process (makeCc (mcu::cc::VPotRotateBase + 2, 0x0A), 0);
+        r.process (makeCc (mcu::cc::VPotRotateBase + 3, 0x0A), 0);
+        REQUIRE_THAT (strip.compVcaRatio.load (std::memory_order_relaxed),
+                      WithinAbs (4.0f, 1e-4f));
+        REQUIRE_THAT (strip.compVcaAttack.load (std::memory_order_relaxed),
+                      WithinAbs (1.0f, 1e-4f));
+        REQUIRE_THAT (strip.compVcaRelease.load (std::memory_order_relaxed),
+                      WithinAbs (100.0f, 1e-4f));
+        REQUIRE (strip.compFetRatio.load (std::memory_order_relaxed) == 0);
+        REQUIRE_THAT (strip.compFetAttack.load (std::memory_order_relaxed),
+                      WithinAbs (0.2f, 1e-4f));
+    }
+}
+
+// A percentage step has to keep moving at the ends of the range: the FET's
+// attack floor is 0.02 ms, where half a millisecond per detent was the whole
+// useful 1176 region in two clicks and any fixed step from the floor would
+// either overshoot it or, going the other way, stick.
+TEST_CASE ("McuReceiver: attack / release stepping still moves at the domain edges",
+           "[mcu][receiver]")
+{
+    Session s;
+    McuReceiver r (s);
+    s.mcu.assignMode.store (6, std::memory_order_relaxed);
+    auto& strip = s.track (0).strip;
+    strip.compMode.store (1, std::memory_order_relaxed);          // FET
+
+    strip.compFetAttack.store (0.02f, std::memory_order_relaxed);
+    r.process (makeCc (mcu::cc::VPotRotateBase + 2, 0x01), 0);
+    REQUIRE_THAT (strip.compFetAttack.load (std::memory_order_relaxed),
+                  WithinAbs (0.0212f, 1e-6f));
+
+    // Down from the floor holds at the floor rather than drifting below it.
+    r.process (makeCc (mcu::cc::VPotRotateBase + 2, 0x40 | 0x05), 0);
+    REQUIRE_THAT (strip.compFetAttack.load (std::memory_order_relaxed),
+                  WithinAbs (0.02f, 1e-6f));
+
+    // And a spin past the ceiling saturates there instead of overshooting.
+    r.process (makeCc (mcu::cc::VPotRotateBase + 3, 0x3F), 0);
+    REQUIRE_THAT (strip.compFetRelease.load (std::memory_order_relaxed),
+                  WithinAbs (1100.0f, 1e-3f));
+}
+
+TEST_CASE ("McuReceiver: V-pot push (COMP mode) resets to the mode's own default",
+           "[mcu][receiver]")
+{
+    Session s;
+    McuReceiver r (s);
+    s.mcu.assignMode.store (6, std::memory_order_relaxed);
+    auto& strip = s.track (0).strip;
+
+    // Threshold parks at no compression, which is +12 dB on VCA and 0 dB
+    // (0 % reduction) on the other two.
+    strip.compMode.store (2, std::memory_order_relaxed);
+    strip.compVcaThreshDb.store (-20.0f, std::memory_order_relaxed);
+    strip.compVcaAttack.store (30.0f, std::memory_order_relaxed);
+    r.process (makeNoteOn (mcu::btn::VPotPushBase + 0, 0x7F), 0);
+    r.process (makeNoteOn (mcu::btn::VPotPushBase + 2, 0x7F), 0);
+    REQUIRE_THAT (strip.compVcaThreshDb.load (std::memory_order_relaxed),
+                  WithinAbs (12.0f, 1e-4f));
+    REQUIRE_THAT (strip.compVcaAttack.load (std::memory_order_relaxed),
+                  WithinAbs (1.0f, 1e-4f));
+
+    strip.compMode.store (1, std::memory_order_relaxed);
+    strip.compFetThresholdDb.store (-45.0f, std::memory_order_relaxed);
+    strip.compFetRelease.store (900.0f, std::memory_order_relaxed);
+    r.process (makeNoteOn (mcu::btn::VPotPushBase + 0, 0x7F), 0);
+    r.process (makeNoteOn (mcu::btn::VPotPushBase + 3, 0x7F), 0);
+    REQUIRE_THAT (strip.compFetThresholdDb.load (std::memory_order_relaxed),
+                  WithinAbs (0.0f, 1e-4f));
+    REQUIRE_THAT (strip.compFetRelease.load (std::memory_order_relaxed),
+                  WithinAbs (400.0f, 1e-4f));
+
+    strip.compMode.store (0, std::memory_order_relaxed);
+    strip.compOptoPeakRed.store (65.0f, std::memory_order_relaxed);
+    r.process (makeNoteOn (mcu::btn::VPotPushBase + 0, 0x7F), 0);
+    REQUIRE_THAT (strip.compOptoPeakRed.load (std::memory_order_relaxed),
+                  WithinAbs (0.0f, 1e-4f));
+}
+
+// The threshold encoder is relative, so its base has to survive a reload -
+// and it now comes from the mode's own param rather than a saved dial that
+// nothing plays.
+TEST_CASE ("McuReceiver: threshold nudge base survives a session reload",
+           "[mcu][receiver]")
+{
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                        .getChildFile ("dusk-studio-mcu-thresh-"
+                                          + juce::String (juce::Random::getSystemRandom().nextInt()));
+    dir.createDirectory();
+    const auto target = dir.getChildFile ("session.json");
+
+    Session a;
+    McuReceiver ra (a);
+    a.mcu.assignMode.store (6, std::memory_order_relaxed);
+    a.track (0).strip.compMode.store (1, std::memory_order_relaxed);   // FET
+    ra.process (makeCc (mcu::cc::VPotRotateBase + 0, 0x40 | 0x14), 0); // -20 ticks = -10 dB
+    REQUIRE_THAT (a.track (0).strip.compFetThresholdDb.load (std::memory_order_relaxed),
+                  WithinAbs (-20.0f, 1e-4f));
+    REQUIRE (SessionSerializer::save (a, target));
+
+    Session b;
+    REQUIRE (SessionSerializer::load (b, target));
+    REQUIRE_THAT (b.track (0).strip.compFetThresholdDb.load (std::memory_order_relaxed),
+                  WithinAbs (-20.0f, 1e-4f));
+
+    McuReceiver rb (b);
+    rb.process (makeCc (mcu::cc::VPotRotateBase + 0, 0x02), 0);
+    REQUIRE_THAT (b.track (0).strip.compFetThresholdDb.load (std::memory_order_relaxed),
+                  WithinAbs (-19.0f, 1e-4f));
+
+    dir.deleteRecursively();
+}
+
 TEST_CASE ("McuReceiver: PLAY / STOP / RECORD buttons enqueue pendingTransportAction",
            "[mcu][receiver]")
 {

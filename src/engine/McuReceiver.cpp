@@ -1,10 +1,11 @@
 #include "McuReceiver.h"
 #include "McuProtocol.h"
 #include "McuFaderTaper.h"
-#include "CompMakeupMap.h"
+#include "CompModeMap.h"
 #include "../session/Session.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace duskstudio
 {
@@ -23,6 +24,20 @@ namespace mcu_local
 // without overshoot. Per-target overrides could refine this later.
 constexpr float kVpotPanStep      = 0.02f;     // 100 ticks -> full sweep
 constexpr float kVpotSendStepDb   = 0.5f;      // per tick
+
+// COMP encoder steps. Each is a step in the user-facing unit, which the
+// comp map turns into whatever the active mode reads.
+constexpr float kVpotCompThreshStepDb = 0.5f;
+constexpr float kVpotCompMakeupStepDb = 0.3f;
+
+// Timing and ratio are logarithmic controls - FET's attack alone spans
+// 4000:1, so a fixed millisecond step spends the whole 1176 region in two
+// detents and leaves VCA's release a 500-detent crawl. These scale by a
+// fixed factor per detent instead, matching the log skew the editor's
+// knobs already use: a full sweep is 142 detents on FET attack, 107 on VCA
+// attack, 53 on FET release, 107 on VCA release and 82 on VCA ratio. FET's
+// ratio is a switch, so it takes rungs and ignores the factor.
+constexpr float kVpotCompScaleFactor = 1.06f;
 } // namespace mcu_local
 
 void McuReceiver::reset() noexcept
@@ -65,13 +80,13 @@ void McuReceiver::resetVpotTarget (int stripIndex) noexcept
         else
         {
             // COMP encoders 1=thresh, 2=ratio, 3=attack, 4=release,
-            // 5=makeup. 6/7/8 unused. Push -> sensible defaults.
+            // 5=makeup. 6/7/8 unused. Push -> the active mode's default.
             switch (stripIndex)
             {
-                case 0: strip.compThresholdDb.store (0.0f, std::memory_order_relaxed); break;
-                case 1: strip.compVcaRatio   .store (4.0f, std::memory_order_relaxed); break;
-                case 2: strip.compVcaAttack  .store (1.0f, std::memory_order_relaxed); break;
-                case 3: strip.compVcaRelease .store (100.0f, std::memory_order_relaxed); break;
+                case 0: comp::resetTrackCompThreshold (strip); break;
+                case 1: comp::resetTrackCompRatio (strip); break;
+                case 2: comp::resetTrackCompAttack (strip); break;
+                case 3: comp::resetTrackCompRelease (strip); break;
                 case 4: comp::applyTrackCompMakeupDb (strip, 0.0f); break;
                 default: break;
             }
@@ -148,24 +163,20 @@ void McuReceiver::applyVpotDelta (int stripIndex, int delta) noexcept
         {
             switch (stripIndex)
             {
-                case 0: strip.compThresholdDb.store (jlimit (ChannelStripParams::kCompThreshMin,
-                                                                    ChannelStripParams::kCompThreshMax,
-                                                                    strip.compThresholdDb.load() + d * 0.5f),
-                                                       std::memory_order_relaxed); break;
-                case 1: strip.compVcaRatio.store (jlimit (ChannelStripParams::kCompRatioMin,
-                                                                  ChannelStripParams::kCompRatioMax,
-                                                                  strip.compVcaRatio.load() + d * 0.2f),
-                                                    std::memory_order_relaxed); break;
-                case 2: strip.compVcaAttack.store (jlimit (ChannelStripParams::kCompAttackMin,
-                                                                   ChannelStripParams::kCompAttackMax,
-                                                                   strip.compVcaAttack.load() + d * 0.5f),
-                                                     std::memory_order_relaxed); break;
-                case 3: strip.compVcaRelease.store (jlimit (ChannelStripParams::kCompReleaseMin,
-                                                                    ChannelStripParams::kCompReleaseMax,
-                                                                    strip.compVcaRelease.load() + d * 10.0f),
-                                                      std::memory_order_relaxed); break;
+                case 0: comp::applyTrackCompThresholdDb (
+                            strip, comp::trackCompThresholdDb (strip)
+                                       + d * mcu_local::kVpotCompThreshStepDb); break;
+                case 1: comp::nudgeTrackCompRatio (
+                            strip, delta, mcu_local::kVpotCompScaleFactor); break;
+                case 2: comp::applyTrackCompAttackMs (
+                            strip, comp::trackCompAttackMs (strip)
+                                       * std::pow (mcu_local::kVpotCompScaleFactor, d)); break;
+                case 3: comp::applyTrackCompReleaseMs (
+                            strip, comp::trackCompReleaseMs (strip)
+                                       * std::pow (mcu_local::kVpotCompScaleFactor, d)); break;
                 case 4: comp::applyTrackCompMakeupDb (
-                            strip, comp::trackCompMakeupDb (strip) + d * 0.3f); break;
+                            strip, comp::trackCompMakeupDb (strip)
+                                       + d * mcu_local::kVpotCompMakeupStepDb); break;
                 default: break;
             }
         }
