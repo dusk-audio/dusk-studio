@@ -2388,6 +2388,7 @@ void ChannelStripComponent::openPluginEditor()
                 auEditor.reset();
                 return;
             }
+            auEditor->bindOwner (engine.getChannelStrip (trackIndex).getNativeAuSlot());
         }
         pluginEditorModal.showBorrowed (*parent, *auEditor, onClose);
         return;
@@ -2653,7 +2654,11 @@ void ChannelStripComponent::dropPluginEditor (NativeEditorTeardown teardown)
     }
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_AU
-    auEditor.reset();
+    if (auEditor != nullptr)
+    {
+        if (teardown == NativeEditorTeardown::AbandonInstance) auEditor->abandonInstance();
+        auEditor.reset();
+    }
 #endif
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     multisampleEditor.reset();   // pure Dusk UI - plain teardown
@@ -3054,6 +3059,9 @@ void ChannelStripComponent::syncNativeEditorOwners()
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     syncNativeEditorOwner (vst3Editor, dismiss);
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    syncNativeEditorOwner (auEditor, dismiss);
 #endif
 }
 

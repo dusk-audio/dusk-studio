@@ -1337,6 +1337,9 @@ void AuxLaneComponent::syncNativeEditorOwnersForSlot (int slotIdx)
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     syncNativeEditorOwner (ui.vst3Editor, detach);
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    syncNativeEditorOwner (ui.auEditor, detach);
+#endif
 }
 
 void AuxLaneComponent::dropAllNativeEditors (NativeEditorTeardown teardown)
@@ -1376,7 +1379,12 @@ void AuxLaneComponent::dropAllNativeEditors (NativeEditorTeardown teardown)
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_AU
     for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
+    {
+        if (auto& ed = slots[(size_t) i].auEditor;
+            ed != nullptr && teardown == NativeEditorTeardown::AbandonInstance)
+            ed->abandonInstance();
         detachAuEditorForSlot (i);
+    }
 #endif
 }
 
@@ -1628,6 +1636,7 @@ void AuxLaneComponent::rebuildSlots()
                     if (ed->attach (*auInst, err))
                     {
                         ui.auEditor = std::move (ed);
+                        ui.auEditor->bindOwner (strip.getNativeAuSlot (i));
                         addAndMakeVisible (*ui.auEditor);
                         layoutEditorForSlot (i);
                     }

@@ -25,6 +25,7 @@ public:
     void setBounds (int x, int y, int width, int height);
     void reveal();
     void hide();
+    void abandonPlugin() noexcept;
     void close();
     void pump();
 
