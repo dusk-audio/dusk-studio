@@ -93,15 +93,16 @@ fi
 
 TODAY="$(date -u +%Y-%m-%d)"
 
-echo "$NEW_VERSION" > VERSION
-
 # Prepend a <release> block to the <releases> list in the AppStream
 # metadata. Insertion point: the line immediately AFTER the opening
-# <releases> tag. The xml comment "<!-- scripts/bump-version.sh prepends
-# new <release> entries here. -->" pins the position deterministically.
+# <releases> tag, pinned by the anchor comment below. Match the whole
+# comment, not the bare phrase - release notes that quote the phrase would
+# otherwise become anchors too and nest the next entry inside an old
+# <description>.
 APPDATA="packaging/DuskStudio.appdata.xml"
+ANCHOR='<!-- scripts/bump-version.sh prepends new <release> entries here. -->'
 if [[ -f "$APPDATA" ]]; then
-    if grep -q "scripts/bump-version.sh prepends new" "$APPDATA"; then
+    if grep -qF "$ANCHOR" "$APPDATA"; then
         # Compose the new <release> block in a temp file (real newlines)
         # and have awk splice it in after the anchor comment. awk's
         # -v assignment rejects literal newlines on BSD awk (macOS), so
@@ -109,17 +110,35 @@ if [[ -f "$APPDATA" ]]; then
         # not from a string variable.
         RELEASE_FILE=$(mktemp -t duskstudio-release.XXXXXX)
         trap 'rm -f "$RELEASE_FILE" "$APPDATA.tmp"' EXIT
+        XML_NOTES=$(printf '%s' "$NOTES" \
+            | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')
         printf '    <release version="%s" date="%s">\n      <description>\n        <p>%s</p>\n      </description>\n    </release>\n' \
-            "$NEW_VERSION" "$TODAY" "$NOTES" > "$RELEASE_FILE"
+            "$NEW_VERSION" "$TODAY" "$XML_NOTES" > "$RELEASE_FILE"
 
-        awk -v release_file="$RELEASE_FILE" '
+        awk -v release_file="$RELEASE_FILE" -v anchor="$ANCHOR" '
             { print }
-            /scripts\/bump-version.sh prepends new/ {
+            !spliced && index($0, anchor) {
                 while ((getline line < release_file) > 0) print line
                 close (release_file)
+                spliced = 1
             }
         ' "$APPDATA" > "$APPDATA.tmp" \
             || { echo "error: awk failed to update $APPDATA" >&2; exit 1; }
+
+        # XML-illegal control characters (vertical tab, form feed, ESC) pass
+        # straight through the entity escaping above, so validate the result
+        # before it lands in the tree.
+        if command -v xmllint >/dev/null 2>&1; then
+            if ! xmllint --noout "$APPDATA.tmp"; then
+                echo "error: the updated $APPDATA is not well-formed XML;" >&2
+                echo "       $APPDATA left unchanged. Check the release notes" >&2
+                echo "       for characters XML rejects." >&2
+                exit 1
+            fi
+        else
+            echo "warning: xmllint not found - skipping XML validation of $APPDATA" >&2
+        fi
+
         mv "$APPDATA.tmp" "$APPDATA"
         rm -f "$RELEASE_FILE"
         trap - EXIT
@@ -137,6 +156,9 @@ if [[ -f "$APPDATA" ]]; then
     fi
 fi
 
+# Written last so an aborted appdata update leaves the tree untouched.
+echo "$NEW_VERSION" > VERSION
+
 echo
 echo "Bumped VERSION  -> $NEW_VERSION"
 echo "Today's date     -> $TODAY"
@@ -144,9 +166,10 @@ echo "Updated files:"
 git status --short VERSION "$APPDATA" 2>/dev/null || true
 echo
 echo "Next steps:"
-echo "  1) Refresh patrons:   scripts/update-patrons.py   (commit in the plugins repo)"
-echo "  2) Review the diff:   git diff VERSION $APPDATA"
-echo "  3) Rebuild + smoke:   cmake --build build -j && DUSKSTUDIO_RUN_SELFTEST=1 build/.../DuskStudio"
-echo "  4) Commit:            git commit -am \"Release v$NEW_VERSION\""
-echo "  5) Tag:               git tag -a v$NEW_VERSION -m \"Dusk Studio $NEW_VERSION\""
-echo "  6) Package:           scripts/package-{tarball,macos}.sh, scripts/package-windows.ps1"
+echo "  1) Date the changelog: CHANGELOG.md \"## [$NEW_VERSION] - Unreleased\" -> \"- $TODAY\""
+echo "  2) Refresh patrons:   scripts/update-patrons.py   (commit in the plugins repo)"
+echo "  3) Review the diff:   git diff VERSION $APPDATA CHANGELOG.md"
+echo "  4) Rebuild + smoke:   cmake --build build -j && DUSKSTUDIO_RUN_SELFTEST=1 build/.../DuskStudio"
+echo "  5) Commit:            git commit -am \"Release v$NEW_VERSION\""
+echo "  6) Tag:               git tag -a v$NEW_VERSION -m \"Dusk Studio $NEW_VERSION\""
+echo "  7) Package:           scripts/package-{tarball,macos}.sh, scripts/package-windows.ps1"

@@ -305,16 +305,19 @@ jobs:
             exit 1
           fi
 
-          # Create the release on first push of this tag, else just add
-          # the assets (idempotent re-run). --clobber overwrites a same-
-          # named asset from a previous attempt.
           if ! gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null 2>&1; then
-            gh release create "$TAG" \
+            if ! create_err=$(gh release create "$TAG" \
               --repo "$RELEASES_REPO" \
               --title "Dusk Studio $TAG" \
-              --notes "$NOTES" \
-              "${ASSETS[@]}"
-          else
-            gh release upload "$TAG" --repo "$RELEASES_REPO" --clobber "${ASSETS[@]}"
+              --notes "$NOTES" 2>&1); then
+              if gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null 2>&1; then
+                echo "release create raced with another release job; the release now exists, uploading."
+              else
+                echo "::error::gh release create failed for ${TAG} and no release exists:" >&2
+                echo "${create_err}" >&2
+                exit 1
+              fi
+            fi
           fi
+          gh release upload "$TAG" --repo "$RELEASES_REPO" --clobber "${ASSETS[@]}"
           echo "Published ${#ASSETS[@]} asset(s) to ${RELEASES_REPO} @ ${TAG}"

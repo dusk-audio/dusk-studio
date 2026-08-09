@@ -270,7 +270,7 @@ playback.
   its sends (headphone reverb/delay while tracking) sound in every transport
   state. The audio twin of the 0.12.1 live-play-along fix.
 
-## [0.12.2] - 2026-07-12
+## [0.12.2] - 2026-07-13
 
 Beta patch on the 0.12 line: fixes a crash when bouncing, rendering stems,
 or freezing a track through a CLAP (or VST3/LV2) plugin insert.
