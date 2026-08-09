@@ -603,7 +603,8 @@ else()
         message(FATAL_ERROR
             "libsndfile development files are required (all audio file I/O goes "
             "through it). Linux: libsndfile1-dev. macOS: brew install libsndfile. "
-            "Windows: vcpkg install libsndfile:x64-windows-static.")
+            "Windows: vcpkg install --triplet x64-windows-static from the repo "
+            "root (vcpkg.json declares it).")
     endif()
     target_include_directories(dusk_sndfile SYSTEM INTERFACE "${SNDFILE_INCLUDE_DIR}")
     target_link_libraries(dusk_sndfile INTERFACE "${SNDFILE_LIBRARY}")

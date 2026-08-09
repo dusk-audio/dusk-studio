@@ -365,31 +365,44 @@ libsndfile (all audio file I/O — required on every platform)
              library — libsndfile.so.1 on Linux, libsndfile.1.dylib on macOS —
              which is LGPL-2.1 section 6(b), the shared-library mechanism, and
              needs nothing further.
-             Windows takes a different route. The workflows run
-             `vcpkg install mp3lame:x64-windows-static
-             libsndfile:x64-windows-static`, which produces static libraries
-             and pulls libsndfile's codec chain — FLAC, Ogg, Opus, mpg123 —
-             into the executable alongside it, so no DLL ships and 6(b) is not
-             available. That leaves section 6(a), the relink route, and the
-             honest position is that Dusk Studio meets most of it but not all:
-             the application is GPL-3.0-or-later with its complete
-             corresponding source published, and that source carries the exact
-             vcpkg command above, so the build is reproducible in shape. What
-             is missing is a version pin. vcpkg runs there in classic mode with
-             no manifest, so the libsndfile and mpg123 versions baked into any
-             given Windows artifact are whatever that runner's vcpkg baseline
-             supplied on the day, recorded only in the workflow log rather than
-             in this repository. Anyone wanting to relink can obtain those
-             sources from vcpkg upstream, but pinning them here — a vcpkg
-             manifest, or shipping relink materials alongside the artifact —
-             is outstanding work, not something this file should claim is
-             already done.
-             libsndfile is LGPL-2.1-or-later and mpg123 LGPL-2.1-only. FLAC and
-             Ogg are BSD-3-Clause (texts at the foot of this file, from JUCE's
-             vendored copies of the same projects); Opus is BSD-3-Clause
-             (Xiph.Org, Skype, Octasic, Jean-Marc Valin, Timothy B. Terriberry,
-             CSIRO, Gregory Maxwell, Mark Borgerding, Erik de Castro Lopo,
-             Mozilla, Amazon).
+             Windows takes a different route. The workflows run vcpkg in
+             manifest mode from the root of this repository
+             (`vcpkg install --triplet x64-windows-static`), which produces
+             static libraries and pulls libsndfile's codec chain (FLAC, Ogg,
+             Vorbis, Opus, mpg123) into the executable alongside it, so no DLL
+             ships and 6(b) is not available. That leaves section 6(a), the
+             relink route. The identification half of it is met: the
+             application is GPL-3.0-or-later with its complete corresponding
+             source published, and that source now pins the dependencies
+             rather than merely describing them. vcpkg.json at the repository
+             root declares the packages and features, and its
+             builtin-baseline field names a microsoft/vcpkg commit, which is
+             the version pin: for a given Dusk Studio revision, that manifest
+             plus that baseline resolve every port in the chain, direct and
+             transitive, to one recorded version. A Windows artifact is
+             therefore traceable to the commit that built it, and from that
+             commit's baseline to the exact libsndfile, mpg123, FLAC, Ogg,
+             Vorbis and Opus sources. vcpkg hosts none of that source itself:
+             the baseline records each port's upstream source URL and its
+             SHA512, so the versions are identified exactly and verifiably,
+             while retrieval depends on those upstream hosts.
+             What is outstanding is delivery, not identification. Releases
+             carry no object files, no static libraries and no scripted
+             relink recipe next to the MSI, so exercising 6(a) means
+             rebuilding from the pinned sources rather than relinking against
+             supplied objects. Whether to ship those materials, or to move
+             the Windows build to DLLs and section 6(b) instead, is an open
+             maintainer decision; this file does not claim 6(a) is fully
+             discharged today.
+             libsndfile is LGPL-2.1-or-later and mpg123 LGPL-2.1-only. FLAC,
+             Ogg and Vorbis are BSD-3-Clause (texts at the foot of this file,
+             taken from JUCE's vendored copies of the same projects for the
+             terms, not the versions: the Windows static link builds these
+             from the vcpkg ports at the pinned baseline, libflac 1.5.0
+             there rather than the 1.4.3 JUCE vendors, under the same
+             BSD-3-Clause). Opus is BSD-3-Clause (Xiph.Org, Skype, Octasic,
+             Jean-Marc Valin, Timothy B. Terriberry, CSIRO, Gregory Maxwell,
+             Mark Borgerding, Erik de Castro Lopo, Mozilla, Amazon).
   Upstream : https://github.com/libsndfile/libsndfile ,
              https://www.mpg123.de/ , https://opus-codec.org/
 
@@ -407,19 +420,23 @@ lilv / suil / lv2 (native LV2 host — Linux builds only)
   Upstream : https://gitlab.com/lv2 (lilv, suil), https://lv2plug.in (lv2)
 
 LAME / libmp3lame (MP3 bounce export — optional)
-  License  : LGPL-2.1-or-later
+  License  : LGPL-2.0-or-later
   Path     : not vendored — system shared library found at configure time via
              find_library(mp3lame); linked only when present
              (DUSKSTUDIO_HAS_LAME). Builds without it fall back to WAV-only.
   Notes    : On Linux and macOS, linked against the system SHARED library —
              find_library resolves the distro / Homebrew shared object at
              configure time (verified: release Linux build links
-             /usr/lib64/libmp3lame.so), so LGPL-2.1 section 6(b) applies.
-             Windows is the exception: the same vcpkg x64-windows-static
-             command described under libsndfile installs mp3lame statically,
-             so a Windows build links it into the executable and falls under
-             the same section 6(a) route, with the same unpinned-version gap
-             noted there.
+             /usr/lib64/libmp3lame.so), so LGPL-2.1 section 6(b) applies:
+             the shared-library mechanism is a 2.1 addition, relied on here
+             under LAME's or-later grant.
+             Windows is the exception: mp3lame is one of the two packages in
+             the root vcpkg.json, installed statically by the same
+             x64-windows-static manifest run described under libsndfile, so a
+             Windows build links it into the executable and falls under the
+             same section 6(a) route. Its version is pinned by the same
+             manifest baseline, and the same delivery gap (no relink
+             materials shipped with the MSI) applies.
              Present in a binary only if the build was configured with
              libmp3lame available.
   Upstream : https://lame.sourceforge.io/

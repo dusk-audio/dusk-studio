@@ -10,14 +10,14 @@ This document is aimed at a developer with a Windows machine who has been handed
    - During install, check the **"Desktop development with C++"** workload.
    - This brings MSVC, the Windows 10/11 SDK, and CMake. No separate CMake install needed.
 2. **Git for Windows**: https://git-scm.com/download/win
-3. **vcpkg**, for libsndfile and LAME. libsndfile is not optional on any platform — all audio file I/O goes through it and configure hard-fails without it ([CMakeLists.txt:594-607](CMakeLists.txt#L594-L607)). LAME is what enables MP3 bounce. Install the same static triplet CI uses, then hand CMake the prefix:
+3. **vcpkg**, for libsndfile and LAME. libsndfile is not optional on any platform — all audio file I/O goes through it and configure hard-fails without it ([CMakeLists.txt:594-612](CMakeLists.txt#L594-L612)). LAME is what enables MP3 bounce. Both are declared in [vcpkg.json](vcpkg.json) at the repo root, with a `builtin-baseline` that pins the exact codec versions, so run vcpkg in manifest mode from the checkout root and it installs what CI installs:
 
    ```cmd
-   vcpkg install libsndfile:x64-windows-static mp3lame:x64-windows-static
+   vcpkg install --triplet x64-windows-static
    ```
 
-   and add `-DCMAKE_PREFIX_PATH=<vcpkg-root>/installed/x64-windows-static` to the configure line, forward slashes as with the DPF paths below. `%VCPKG_INSTALLATION_ROOT%` holds that root on the CI images; on a hand-installed vcpkg, substitute wherever you cloned it.
-4. **Steinberg ASIO SDK** — effectively required for the Visual Studio flow in this document, despite reading like an extra. A multi-config generator with Release among its configurations fails the configure without it ([CMakeLists.txt:693-700](CMakeLists.txt#L693-L700) and [:727-734](CMakeLists.txt#L727-L734)), which is exactly what `-G "Visual Studio 17 2022"` gives you: a shipping Windows binary must not silently come out WASAPI-only. Download from https://www.steinberg.net/asiosdk, accept the EULA, unzip somewhere stable, then pass `-DASIOSDK_PATH=C:/path/to/asiosdk` (its `common/` must contain `iasiodrv.h`). To skip the download on a first dev build, pass `-DDUSKSTUDIO_REQUIRE_ASIO=OFF` instead and accept WASAPI only.
+   Manifest mode rejects per-package arguments: `vcpkg install libsndfile:x64-windows-static` errors out while `vcpkg.json` is present. Your vcpkg clone must also already contain the baseline commit, because vcpkg resolves it locally and will not fetch it; clones updated on or after 2026-08-01 have it, so `git pull` in the vcpkg clone first if yours is older. The packages land in `vcpkg_installed\x64-windows-static` under the checkout, so add `-DCMAKE_PREFIX_PATH=<repo-root>/vcpkg_installed/x64-windows-static` to the configure line, forward slashes as with the DPF paths below.
+4. **Steinberg ASIO SDK** — effectively required for the Visual Studio flow in this document, despite reading like an extra. A multi-config generator with Release among its configurations fails the configure without it ([CMakeLists.txt:694-701](CMakeLists.txt#L694-L701) and [:728-735](CMakeLists.txt#L728-L735)), which is exactly what `-G "Visual Studio 17 2022"` gives you: a shipping Windows binary must not silently come out WASAPI-only. Download from https://www.steinberg.net/asiosdk, accept the EULA, unzip somewhere stable, then pass `-DASIOSDK_PATH=C:/path/to/asiosdk` (its `common/` must contain `iasiodrv.h`). To skip the download on a first dev build, pass `-DDUSKSTUDIO_REQUIRE_ASIO=OFF` instead and accept WASAPI only.
 
 ## Repository layout
 
@@ -45,9 +45,9 @@ git clone --branch 8.0.4 https://github.com/juce-framework/JUCE.git
 git clone https://github.com/dusk-audio/dusk-audio-plugins.git plugins
 ```
 
-`--recurse-submodules` matters: `external/sfizz` carries the SF2 / multisample instrument engine, and CMake gates it purely on the header being present ([CMakeLists.txt:1163](CMakeLists.txt#L1163)) — clone without it and the feature is gone with no diagnostic. If you already cloned flat, run `git submodule update --init --recursive`.
+`--recurse-submodules` matters: `external/sfizz` carries the SF2 / multisample instrument engine, and CMake gates it purely on the header being present ([CMakeLists.txt:1164](CMakeLists.txt#L1164)) — clone without it and the feature is gone with no diagnostic. If you already cloned flat, run `git submodule update --init --recursive`.
 
-The explicit `plugins` target on the third clone is mandatory: CMake auto-discovery looks for a sibling directory named `plugins\` and nothing else ([CMakeLists.txt:358-367](CMakeLists.txt#L358-L367)). The repo itself is named `dusk-audio-plugins` on GitHub, so without the explicit target you'd get a directory CMake can't find — and it warns rather than failing, leaving you with a recorder that has no EQ, compressor, or tape.
+The explicit `plugins` target on the third clone is mandatory: CMake auto-discovery looks for a sibling directory named `plugins\` and nothing else ([CMakeLists.txt:383-393](CMakeLists.txt#L383-L393)). The repo itself is named `dusk-audio-plugins` on GitHub, so without the explicit target you'd get a directory CMake can't find — and it warns rather than failing, leaving you with a recorder that has no EQ, compressor, or tape.
 
 The Dusk Studio repo's own directory name (`dusk-studio\`) doesn't matter to the build, so rename it if you prefer.
 
@@ -152,9 +152,9 @@ Useful for confirming the audio engine wires up correctly without needing to dri
 
 ## Known caveats on Windows
 
-- **PlatformWindowing_Windows.cpp is a stub.** Most things work; the file exists as the place to land Windows-specific window-management fixes if/when XEmbed-equivalent bugs surface. CMake picks the per-platform implementation at [CMakeLists.txt:640-646](CMakeLists.txt#L640-L646).
+- **PlatformWindowing_Windows.cpp is a stub.** Most things work; the file exists as the place to land Windows-specific window-management fixes if/when XEmbed-equivalent bugs surface. CMake picks the per-platform implementation at [CMakeLists.txt:641-647](CMakeLists.txt#L641-L647).
 - **No ASIO without the SDK.** WASAPI is the default; ASIO requires the SDK download above. Most users will be fine on WASAPI.
-- **The ALSA backend is not compiled.** [CMakeLists.txt:753](CMakeLists.txt#L753) gates Dusk Studio's custom ALSA `AudioIODeviceType` behind `UNIX AND NOT APPLE`. Windows falls through to JUCE's stock WASAPI/ASIO types.
+- **The ALSA backend is not compiled.** [CMakeLists.txt:754](CMakeLists.txt#L754) gates Dusk Studio's custom ALSA `AudioIODeviceType` behind `UNIX AND NOT APPLE`. Windows falls through to JUCE's stock WASAPI/ASIO types.
 - **Compiler warnings.** Project is primarily developed on Clang/GCC. MSVC may emit warnings; none are fatal. `/WX` (warnings-as-errors) is not enabled.
 - **MinGW/MSYS2 not tested.** Stick to MSVC via Visual Studio 2022.
 
