@@ -106,10 +106,14 @@ jobs:
         # x64-windows-static = static libs + /MT static CRT, matching the whole
         # tree's CMAKE_MSVC_RUNTIME_LIBRARY (sfizz forces /MT). The -md triplet
         # (/MD) would LNK2038 against the /MT objects. CMake finds them via
-        # CMAKE_PREFIX_PATH.
+        # CMAKE_PREFIX_PATH. Manifest mode: versions come from vcpkg.json's
+        # builtin-baseline and install under <manifest-root>/vcpkg_installed,
+        # not the image's vcpkg tree. That baseline tracks the runner image's
+        # own vcpkg clone commit: vcpkg cannot fetch a baseline it does not
+        # already have, so never bump it past what the current image ships.
         run: |
-          vcpkg install mp3lame:x64-windows-static libsndfile:x64-windows-static
-          echo "VCPKG_PREFIX=${VCPKG_INSTALLATION_ROOT//\\//}/installed/x64-windows-static" >> "$GITHUB_ENV"
+          vcpkg install --triplet x64-windows-static
+          echo "VCPKG_PREFIX=${GITHUB_WORKSPACE//\\//}/vcpkg_installed/x64-windows-static" >> "$GITHUB_ENV"
 
       - name: Configure tests (CMake / Visual Studio 17 2022 / x64)
         shell: bash
