@@ -320,7 +320,8 @@ namespace
 // the slot writes to device output ch 0 reappears on device input ch 0
 // exactly `loopDelay` samples later. Returns the measured pingResult.
 int runPingLoopback (double sampleRate, int loopDelay, int maxBlocks = 2000,
-                     int blockSize = kBlock, int* blocksUsed = nullptr)
+                     int blockSize = kBlock, int* blocksUsed = nullptr,
+                     float returnGain = 1.0f)
 {
     duskstudio::HardwareInsertParams params;
     setRouting (params, 0, 1, 0, 1, 0, 0);
@@ -343,8 +344,8 @@ int runPingLoopback (double sampleRate, int loopDelay, int maxBlocks = 2000,
     {
         for (int i = 0; i < blockSize; ++i)
         {
-            dev.inStore[0][(size_t) i] = loopL.front(); loopL.pop_front();
-            dev.inStore[1][(size_t) i] = loopR.front(); loopR.pop_front();
+            dev.inStore[0][(size_t) i] = returnGain * loopL.front(); loopL.pop_front();
+            dev.inStore[1][(size_t) i] = returnGain * loopR.front(); loopR.pop_front();
         }
         std::fill (L.begin(), L.end(), 0.0f);
         std::fill (R.begin(), R.end(), 0.0f);
@@ -365,6 +366,22 @@ int runPingLoopback (double sampleRate, int loopDelay, int maxBlocks = 2000,
     REQUIRE_FALSE (params.pingPending.load (std::memory_order_acquire));
     return params.pingResult.load (std::memory_order_relaxed);
 }
+
+int expectedPingBlocks (double sampleRate, int blockSize)
+{
+    const int chirpLength = std::max (64, std::min (
+        duskstudio::HardwareInsertSlot::kChirpMaxSamples,
+        (int) std::lround (0.100 * sampleRate)));
+    const int candidateCount = duskstudio::HardwareInsertSlot::kMaxDelaySamples + 1;
+    const int captureBlocks =
+        (chirpLength + candidateCount + blockSize - 1) / blockSize;
+    const double candidatesPerBlock =
+        duskstudio::HardwareInsertSlot::kCorrelationMacsPerSecond
+        * ((double) blockSize / sampleRate) / (double) chirpLength;
+    const int correlationBlocks =
+        (int) std::ceil ((double) candidateCount / candidatesPerBlock);
+    return captureBlocks + correlationBlocks;
+}
 } // namespace
 
 TEST_CASE ("HardwareInsertSlot: ping measures loopback round-trip exactly",
@@ -372,7 +389,9 @@ TEST_CASE ("HardwareInsertSlot: ping measures loopback round-trip exactly",
 {
     SECTION ("short round-trip, well under the chirp length")
     {
-        REQUIRE (runPingLoopback (48000.0, 700) == 700);
+        int blocksUsed = 0;
+        REQUIRE (runPingLoopback (48000.0, 700, 2000, kBlock, &blocksUsed) == 700);
+        REQUIRE (blocksUsed == expectedPingBlocks (48000.0, kBlock));
     }
     SECTION ("round-trip of a couple of device buffers")
     {
@@ -393,29 +412,51 @@ TEST_CASE ("HardwareInsertSlot: ping measures loopback round-trip exactly",
     {
         int blocksUsed = 0;
         REQUIRE (runPingLoopback (96000.0, 1500, 3000, 64, &blocksUsed) == 1500);
-        REQUIRE (blocksUsed > 1800);
-        REQUIRE (blocksUsed < 2300);
+        REQUIRE (blocksUsed == expectedPingBlocks (96000.0, 64));
     }
 
     SECTION ("fractional candidate credit does not overspend on tiny blocks")
     {
         constexpr double sampleRate = 96000.0;
         constexpr int blockSize = 4;
-        constexpr int chirpLength = duskstudio::HardwareInsertSlot::kChirpMaxSamples;
-        constexpr int candidateCount = duskstudio::HardwareInsertSlot::kMaxDelaySamples + 1;
-        constexpr double candidatesPerBlock =
-            duskstudio::HardwareInsertSlot::kCorrelationMacsPerSecond
-            * ((double) blockSize / sampleRate) / (double) chirpLength;
-        constexpr int captureBlocks =
-            (chirpLength + candidateCount + blockSize - 1) / blockSize;
-        const int minimumBlocks = captureBlocks
-                                + (int) std::ceil ((double) candidateCount
-                                                   / candidatesPerBlock);
-
         int blocksUsed = 0;
         REQUIRE (runPingLoopback (sampleRate, 1500, 40000, blockSize, &blocksUsed) == 1500);
-        REQUIRE (blocksUsed >= minimumBlocks);
+        REQUIRE (blocksUsed == expectedPingBlocks (sampleRate, blockSize));
     }
+
+    SECTION ("inclusive maximum latency remains measurable")
+    {
+        REQUIRE (runPingLoopback (48000.0,
+                                  duskstudio::HardwareInsertSlot::kMaxDelaySamples)
+                 == duskstudio::HardwareInsertSlot::kMaxDelaySamples);
+    }
+
+    SECTION ("negative-polarity return uses the absolute correlation peak")
+    {
+        REQUIRE (runPingLoopback (48000.0, 700, 2000, kBlock, nullptr, -1.0f) == 700);
+    }
+
+    SECTION ("return below five percent of the chirp peak is rejected")
+    {
+        REQUIRE (runPingLoopback (48000.0, 700, 2000, kBlock, nullptr, 0.04f) == -1);
+    }
+}
+
+TEST_CASE ("HardwareInsertSlot: ping correlation budget matches callback contract",
+            "[HardwareInsertSlot][ping]")
+{
+    REQUIRE (duskstudio::HardwareInsertSlot::kCorrelationMacsPerSecond == 1.15e8);
+
+    constexpr double sampleRate = 96000.0;
+    constexpr int blockSize = 64;
+    constexpr int chirpLength = duskstudio::HardwareInsertSlot::kChirpMaxSamples;
+    const double macsPerBlock =
+        duskstudio::HardwareInsertSlot::kCorrelationMacsPerSecond
+        * (double) blockSize / sampleRate;
+    const double candidatesPerBlock = macsPerBlock / (double) chirpLength;
+
+    REQUIRE_THAT (macsPerBlock, WithinAbs (76666.66666666667, 1.0e-9));
+    REQUIRE_THAT (candidatesPerBlock, WithinAbs (7.986111111111111, 1.0e-12));
 }
 
 TEST_CASE ("HardwareInsertSlot: ping with silent return reports -1",
