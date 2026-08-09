@@ -145,6 +145,19 @@ void ClapEditor::hide()
     mapped = false;
 }
 
+void ClapEditor::quiesce() noexcept
+{
+    hide();
+}
+
+void ClapEditor::abandonPluginAndContainer() noexcept
+{
+    // The plugin's window is a foreign X11 child of ours: destroying the host
+    // window and display in close() delivers no in-process call to plugin code,
+    // so there is nothing extra to give up here.
+    abandonPlugin();
+}
+
 void ClapEditor::close()
 {
     // Leak path: the plugin GUI stays created - u-he's gui->destroy hangs. It is

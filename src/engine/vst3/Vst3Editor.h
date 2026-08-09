@@ -45,13 +45,24 @@ public:
     void setContentScale (float scale);
     void reveal();
     void hide();
+
+    // Hide the host container while the instance/module are still valid. Cocoa
+    // abandonment must quiesce before disposal because setHidden: notifies the
+    // embedded plugin view.
+    void quiesce() noexcept;
     void close();
 
-    // The instance was destroyed out from under this editor. Drops the view
-    // without releasing it and without the removed()/setFrame() teardown - the
-    // module those calls live in was unloaded with the instance. close() then
-    // only releases the host container.
+    // The instance is going away but is STILL ALIVE. Drops the view without
+    // releasing it and without the removed()/setFrame() teardown - the module
+    // those calls live in goes with the instance. close() then only releases the
+    // host container, whose detach still reaches a valid plugin.
     void abandonPlugin() noexcept;
+
+    // Same, for an ALREADY-destroyed instance: only clear retained references on
+    // Cocoa. No late setHidden:, detach or release may message the embedded view.
+    // X11 has no in-process child-view hazard, so it still closes its host window
+    // and display after dropping the plugin handles.
+    void abandonPluginAndContainer() noexcept;
 
     // Linux geometry diagnostics. macOS uses logical component bounds directly,
     // so these return false there.

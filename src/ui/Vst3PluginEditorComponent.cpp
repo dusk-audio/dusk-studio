@@ -28,9 +28,11 @@ Vst3PluginEditorComponent::Vst3PluginEditorComponent()
 Vst3PluginEditorComponent::~Vst3PluginEditorComponent()
 {
     stopTimer();
-    // Every reset path lands here, and releasing the view calls into the module
-    // that was unloaded with the instance.
-    if (ownerIsStale()) editor.abandonPlugin();
+    // Every reset path lands here, and both releasing the view and detaching the
+    // container it is attached to call into the module that was unloaded with
+    // the instance.
+    if (ownerIsStale()) editor.abandonPluginAndContainer();
+    else                editor.quiesce();
     editor.close();
 }
 
@@ -168,8 +170,12 @@ void Vst3PluginEditorComponent::visibilityChanged()
 void Vst3PluginEditorComponent::abandonInstance()
 {
     stopTimer();
-    editor.abandonPlugin();
-    editor.close();   // plugin handles are gone; this releases only what we own
+    // A stale owner means the instance is ALREADY disposed, so releasing the
+    // container is plugin contact too: the view is still attached to it, and the
+    // window-detach hooks are where plugin views tear their listeners down.
+    // Giving it up instead makes the close a no-op on Cocoa; on X11 close()
+    // still destroys the host window and display.
+    abandonNativeEditorInstance (editor, ownerIsStale());
     ownerSlot = nullptr;
     abandoned = true;
     loaded = embedded = embedding = false;
@@ -258,7 +264,8 @@ AuPluginEditorComponent::AuPluginEditorComponent()
 AuPluginEditorComponent::~AuPluginEditorComponent()
 {
     stopTimer();
-    if (ownerIsStale()) editor.abandonPlugin();
+    if (ownerIsStale()) editor.abandonPluginAndContainer();
+    else                editor.quiesce();
     editor.close();
 }
 
@@ -356,8 +363,10 @@ void AuPluginEditorComponent::visibilityChanged()
 void AuPluginEditorComponent::abandonInstance()
 {
     stopTimer();
-    editor.abandonPlugin();
-    editor.close();   // plugin handles are gone; this releases only what we own
+    // Same split as the VST3 component: a stale owner means the unit is already
+    // disposed, so the container detach would run the plugin view's listener
+    // teardown against it, leaving close() nothing to do afterwards.
+    abandonNativeEditorInstance (editor, ownerIsStale());
     ownerSlot = nullptr;
     abandoned = true;
     loaded = embedded = embedding = false;

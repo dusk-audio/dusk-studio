@@ -25,7 +25,24 @@ public:
     void setBounds (int x, int y, int width, int height);
     void reveal();
     void hide();
+
+    // Hide the host container while the unit is still valid. AbandonInstance
+    // callers must do this before the slot disposes the Audio Unit, because
+    // setHidden: notifies the embedded Cocoa view.
+    void quiesce() noexcept;
+
+    // The unit is going away but is STILL ALIVE: drop the plugin's view without
+    // releasing it, because its -dealloc runs listener teardown against the
+    // unit. close() still releases the container, which only messages the
+    // detached subtree while that unit is valid.
     void abandonPlugin() noexcept;
+
+    // Same, for an ALREADY-disposed unit: only clear retained references. The
+    // plugin's view is still a subview, so no Cocoa message - including a late
+    // setHidden: - is safe here. close() afterwards is a genuine no-op; the
+    // container and plugin hierarchy remain leaked for the process lifetime.
+    void abandonPluginAndContainer() noexcept;
+
     void close();
     void pump();
 

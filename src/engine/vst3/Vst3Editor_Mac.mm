@@ -172,12 +172,35 @@ void Vst3Editor::hide()
     impl->visible = false;
 }
 
+void Vst3Editor::quiesce() noexcept
+{
+    // setHidden: propagates viewDidHide through the plugin subtree, so this is
+    // deliberately a live-instance phase rather than stale-owner cleanup.
+    @try
+    {
+        if (impl->container != nil && impl->visible)
+            [impl->container setHidden:YES];
+    }
+    @catch (NSException*)
+    {
+    }
+    impl->visible = false;
+}
+
 void Vst3Editor::abandonPlugin() noexcept
 {
     (void) impl->view.take();
     impl->instance = nullptr;
     impl->host     = nullptr;
     impl->embedded = false;
+}
+
+void Vst3Editor::abandonPluginAndContainer() noexcept
+{
+    abandonPlugin();
+    // The instance is already disposed: do not hide, detach or release this view.
+    impl->container = nil;
+    impl->visible   = false;
 }
 
 void Vst3Editor::close()

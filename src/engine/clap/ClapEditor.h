@@ -36,6 +36,11 @@ public:
     void setBounds (int x, int y, int w, int h);
     void reveal();
     void hide();
+
+    // Hide the host container while the plugin/module are still valid. Cocoa
+    // abandonment must quiesce before disposal because setHidden: notifies the
+    // embedded plugin view.
+    void quiesce() noexcept;
     void close();
 
     // Linux geometry diagnostics. macOS uses logical component bounds directly,
@@ -49,9 +54,9 @@ public:
     // quit. close() then skips gui->hide/gui->destroy; the process is exiting anyway.
     void setLeakOnClose (bool b) noexcept { leakOnClose = b; }
 
-    // The plugin was destroyed out from under this editor. Drop every plugin-side
-    // handle WITHOUT calling through it - the vtables went with the bundle - so
-    // close() only releases the container this host owns.
+    // The plugin is going away but is STILL ALIVE. Drop every plugin-side handle
+    // WITHOUT calling through it - the vtables go with the bundle - so close()
+    // only releases the container this host owns, while that plugin is valid.
     void abandonPlugin() noexcept
     {
         plugin  = nullptr;
@@ -59,6 +64,12 @@ public:
         hostPtr = nullptr;
         created = embedded = false;
     }
+
+    // Same, for an ALREADY-destroyed plugin: only clear retained references on
+    // Cocoa. No late setHidden:, detach or release may message the embedded view.
+    // X11 has no in-process child-view hazard, so it still closes its host window
+    // and display after dropping the plugin handles.
+    void abandonPluginAndContainer() noexcept;
 
     // Message thread, ~60 Hz: apply queued GUI callbacks, pump the plugin's
     // fds/timers, and drain any platform editor events.
