@@ -1,10 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "ui/BankMapping.h"
+#include "ui/ConsoleLayout.h"
 
 using namespace duskstudio;
 
-// Screen pages are bankStride()-wide (channelsThatFit(), clamped to [6, 24]);
+// Screen pages are bankStride()-wide (channelsThatFit(), clamped to [3, 24]);
 // hardware banks are always kBankSize-wide and there are always kNumBanks of
 // them. Each case below names the page's first track, which is what decides
 // the hardware bank it resolves to.
@@ -147,12 +148,8 @@ TEST_CASE ("Bank mapping: indices past the end of a range clamp into it", "[cons
 TEST_CASE ("Bank mapping: the widest page count the console builds stays in range",
            "[console][bank]")
 {
-    // channelsThatFitForWidth floors the stride at ceil(kNumTracks / 4), so the
-    // console can build a 4th page. Stored raw, that page index names a bank
-    // that does not exist: past kNumBanks for the surface, and past kNumTracks
-    // once the audio thread multiplies it by kBankSize.
-    constexpr int kNarrowestStride = 6;
-    constexpr int kMostPages       = 4;
+    constexpr int kNarrowestStride = consolelayout::kMinStride;
+    constexpr int kMostPages       = consolelayout::kMaxScreenPages;
 
     for (int page = 0; page < kMostPages; ++page)
     {
@@ -164,6 +161,141 @@ TEST_CASE ("Bank mapping: the widest page count the console builds stays in rang
     }
 
     REQUIRE (hardwareBankForScreenBank (kMostPages - 1, kNarrowestStride) == 2);
+}
+
+TEST_CASE ("Console layout: default width preserves the channel minimum",
+           "[console][layout]")
+{
+    // A 1440 px MainComponent gives the console the local width minus its
+    // 8 px outer inset on both sides.
+    constexpr int kDefaultConsoleWidth = 1440 - 16;
+    REQUIRE (consolelayout::channelsThatFitForWidth (kDefaultConsoleWidth) == 3);
+    REQUIRE (consolelayout::screenPageCountForWidth (kDefaultConsoleWidth) == 8);
+}
+
+TEST_CASE ("Console layout: full-floor page width preserves every documented minimum",
+           "[console][layout]")
+{
+    constexpr int width = consolelayout::fullFloorPageContentWidth();
+    REQUIRE (consolelayout::channelsThatFitForWidth (width) == consolelayout::kMinStride);
+    REQUIRE (width == consolelayout::kMinStride * consolelayout::kMinChannelWidth
+                   + (consolelayout::kMinStride - 1) * consolelayout::kStripGap
+                   + consolelayout::rightColumnWidth()
+                   + consolelayout::kOuterPadding);
+
+    const auto geometry = consolelayout::makeStripGeometry (
+        width, consolelayout::kMinStride, consolelayout::kMinStride);
+    REQUIRE (geometry.channelWidth >= consolelayout::kMinChannelWidth);
+    REQUIRE (geometry.busWidth >= consolelayout::kMinBusWidth);
+    REQUIRE (geometry.masterWidth >= consolelayout::kMinMasterWidth);
+    REQUIRE (geometry.channelsClearBus());
+    REQUIRE (geometry.lastChannelRight + consolelayout::kSectionGap
+             == geometry.busColumnLeft);
+}
+
+TEST_CASE ("Console layout: forced sub-minimum bounds never overlap Bus 1",
+           "[console][layout]")
+{
+    constexpr int forcedWidth = consolelayout::fullFloorPageContentWidth() - 64;
+    const auto geometry = consolelayout::makeStripGeometry (
+        forcedWidth, consolelayout::kMinStride, consolelayout::kMinStride);
+
+    REQUIRE (geometry.channelWidth < consolelayout::kMinChannelWidth);
+    REQUIRE (geometry.channelsClearBus());
+    REQUIRE (geometry.lastChannelRight + geometry.sectionGap
+             <= geometry.busColumnLeft);
+}
+
+TEST_CASE ("Console layout: eight narrow pages cover every channel exactly",
+           "[console][layout]")
+{
+    constexpr int width = consolelayout::fullFloorPageContentWidth();
+    const std::pair<int, int> expected[] = {
+        { 1, 3 }, { 4, 6 }, { 7, 9 }, { 10, 12 },
+        { 13, 15 }, { 16, 18 }, { 19, 21 }, { 22, 24 }
+    };
+
+    REQUIRE (consolelayout::screenPageCountForWidth (width) == 8);
+    for (int page = 0; page < 8; ++page)
+        REQUIRE (consolelayout::channelRangeForPage (page, width) == expected[page]);
+}
+
+TEST_CASE ("Console layout: responsive window floor keeps three strips clear of Bus 1",
+           "[console][layout]")
+{
+    constexpr int mainWidth = consolelayout::responsiveMinimumMainComponentWidth();
+    constexpr int consoleWidth = consolelayout::responsiveMinimumContentWidth();
+    static_assert (mainWidth == consoleWidth + consolelayout::kMainPadding * 2);
+    static_assert (mainWidth == 1162);
+
+    const auto geometry = consolelayout::makeStripGeometry (
+        consoleWidth, consolelayout::kMinStride, consolelayout::kMinStride);
+    REQUIRE (consolelayout::screenPageCountForWidth (consoleWidth) == 8);
+    REQUIRE (geometry.channelsClearBus());
+    REQUIRE (geometry.lastChannelRight + geometry.sectionGap
+             <= geometry.busColumnLeft);
+
+    const int bandWidth = consolelayout::compactPageButtonBandWidthForMainWidth (mainWidth);
+    const auto buttons = consolelayout::fitPageButtons (bandWidth, 8, 70, 6);
+    REQUIRE (bandWidth == consolelayout::minimumPageButtonBandWidth());
+    REQUIRE (buttons.width == consolelayout::kMinPageButtonWidth);
+    REQUIRE (buttons.gap == consolelayout::kMinPageButtonGap);
+    REQUIRE (buttons.fits (bandWidth));
+}
+
+TEST_CASE ("Console layout: 1366 display startup stays screen-fit and usable",
+           "[console][layout]")
+{
+    constexpr int displayWidth = 1366;
+    constexpr int mainTargetWidth = displayWidth - 24;
+    constexpr int consoleTargetWidth = mainTargetWidth - consolelayout::kMainPadding * 2;
+    static_assert (mainTargetWidth == 1342);
+    static_assert (consoleTargetWidth == 1326);
+
+    REQUIRE (consolelayout::responsiveMinimumMainComponentWidth() <= mainTargetWidth);
+    REQUIRE (consolelayout::screenPageCountForWidth (consoleTargetWidth) == 8);
+
+    const auto geometry = consolelayout::makeStripGeometry (
+        consoleTargetWidth, consolelayout::kMinStride, consolelayout::kMinStride);
+    REQUIRE (geometry.channelsClearBus());
+    REQUIRE (geometry.lastChannelRight + geometry.sectionGap
+             <= geometry.busColumnLeft);
+
+    const int bandWidth = consolelayout::compactPageButtonBandWidthForMainWidth (mainTargetWidth);
+    const auto buttons = consolelayout::fitPageButtons (bandWidth, 8, 70, 6);
+    REQUIRE (bandWidth == 450);
+    REQUIRE (buttons.width >= consolelayout::kMinPageButtonWidth);
+    REQUIRE (buttons.fits (bandWidth));
+}
+
+TEST_CASE ("Bank mapping: every three-strip page resolves to its exact hardware bank",
+           "[console][bank]")
+{
+    constexpr int expected[] = { 0, 0, 0, 1, 1, 1, 2, 2 };
+    for (int page = 0; page < 8; ++page)
+        REQUIRE (hardwareBankForScreenBank (page, 3) == expected[page]);
+}
+
+TEST_CASE ("Bank mapping: focused tracks cross three-strip page boundaries",
+           "[console][bank]")
+{
+    REQUIRE (screenBankForTrack (0, 3, 8) == 0);
+    REQUIRE (screenBankForTrack (2, 3, 8) == 0);
+    REQUIRE (screenBankForTrack (3, 3, 8) == 1);
+    REQUIRE (screenBankForTrack (20, 3, 8) == 6);
+    REQUIRE (screenBankForTrack (21, 3, 8) == 7);
+    REQUIRE (screenBankForTrack (23, 3, 8) == 7);
+}
+
+TEST_CASE ("Bank mapping: plain digits select exactly pages one through eight",
+           "[console][bank]")
+{
+    for (int digit = '1'; digit <= '8'; ++digit)
+        REQUIRE (screenPageForDigitKey (digit, 8) == digit - '1');
+
+    REQUIRE (screenPageForDigitKey ('0', 8) == -1);
+    REQUIRE (screenPageForDigitKey ('9', 8) == -1);
+    REQUIRE (screenPageForDigitKey ('8', 7) == -1);
 }
 
 // The remaining cases drive ConsoleBankState the way the console does: a page
@@ -237,6 +369,47 @@ TEST_CASE ("Console bank state: a resize that only relocates the page queues the
     REQUIRE (c.activeBankAtom == 1);
     REQUIRE (c.state.lastKnownMcuBank == 1);
     REQUIRE (c.state.pendingMcuBank == -1);
+}
+
+TEST_CASE ("Console bank state: page eight normalises before a five-strip layout",
+           "[console][bank]")
+{
+    Console c;
+    c.pages = 8;
+    c.stride = 3;
+    c.pressPage (7);
+    REQUIRE (c.state.screenBank == 7);
+    REQUIRE (c.mcuBankAtom == 2);
+
+    // The selected page no longer exists. The fixed hardware bank survives,
+    // and its first track is immediately mapped into the new page geometry.
+    c.resizeTo (5, 5);
+    REQUIRE (c.state.screenBank == 3);
+    REQUIRE_FALSE (c.state.followsScreen);
+    REQUIRE (c.state.pendingMcuBank == -1);
+}
+
+TEST_CASE ("Console bank state: surface Bank Left and Right map at stride three",
+           "[console][bank]")
+{
+    Console c;
+    c.pages = 8;
+    c.stride = 3;
+
+    c.surfaceBankRight();
+    c.poll();
+    REQUIRE (c.activeBankAtom == 1);
+    REQUIRE (c.state.screenBank == 2);
+
+    c.surfaceBankRight();
+    c.poll();
+    REQUIRE (c.activeBankAtom == 2);
+    REQUIRE (c.state.screenBank == 5);
+
+    --c.mcuBankAtom;
+    c.poll();
+    REQUIRE (c.activeBankAtom == 1);
+    REQUIRE (c.state.screenBank == 2);
 }
 
 TEST_CASE ("Console bank state: a widen that destroys the page hands the bank to the surface",

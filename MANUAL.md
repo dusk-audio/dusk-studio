@@ -145,7 +145,7 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 | --- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | Menu bar          | `File` and `Settings` menus only. No tabs, no hidden submenus.                                                                    |
 | 2   | Stage selector    | Four buttons: **RECORDING**, **MIXING**, **MASTERING**, **AUX** (Cmd/Ctrl+1 to 4). Picks which view fills the console area.            |
-| 3   | Bank selector     | The visible page of channel strips (e.g. `1-6`, `7-12`, ...), switched with the plain number keys 1 to 4. Only visible when the window is too narrow to show all 24 at once. |
+| 3   | Bank selector     | The visible page of channel strips (e.g. `1-3`, `4-6`, ...), switched with the plain number keys 1 to 8. Only visible when the window is too narrow to show all 24 at once. |
 | 4   | Transport bar     | Play, record, loop, punch, BPM, time signature, clock, tuner. See the next figure for the inventory.                              |
 | 5   | Tape strip toggle | `▾ TIMELINE` / `▴ TAPE`. Collapses or expands the timeline view below the bar.                                                     |
 | 6   | Console view      | Holds 24 channel strips, 4 buses, and the master strip. Replaced by the aux lane or mastering chain when those stages are active. |
@@ -482,7 +482,7 @@ The window is structured as a stack of horizontal bands.
 ├───────────────────────────────────────────────────────┤
 │  RECORDING   MIXING   MASTERING   AUX                 │  Stage selector
 ├───────────────────────────────────────────────────────┤
-│  1-6   7-12   13-18   19-24                           │  Bank selector
+│  1-3  4-6  7-9  10-12  13-15  16-18  19-21  22-24   │  Bank selector
 ├───────────────────────────────────────────────────────┤
 │ ◀◀  ▶  ▶▶  ●  ⟳  ◉   CLK ♩=120 4/4 00:01:23         │  Transport bar
 ├───────────────────────────────────────────────────────┤
@@ -494,7 +494,7 @@ The window is structured as a stack of horizontal bands.
 └───────────────────────────────────────────────────────┘
 ```
 
-The bank selector appears only when the window is too narrow for all 24 strips, and it pages the console by whatever does fit — as few as six strips on the narrowest window, never more than four pages. Each button names its range: in the compact transport layout drawn above (window under 1850 pixels) the label is the bare range, `1-6`; at full size it reads `BANK 1  (1-6)`. The range widens with the window. A control surface's bank is a separate, fixed axis: eight strips at a time, tracks 1–8, 9–16, or 17–24. The two stay in step. Picking a page moves the surface to the bank holding that page's first track, and **Bank Left** / **Bank Right** on the surface moves the page to the one holding that bank's first track. When every strip fits on screen there is no page to pick, so the surface — and the bank-relative MIDI bindings that follow it — stays where you left it.
+The bank selector appears only when the window is too narrow for all 24 strips, and it pages the console by whatever does fit — as few as three strips on the narrowest window, never more than eight pages. Each button names its range when space permits: in the compact transport layout the label is the bare range, `1-3`; at full size it reads `BANK 1  (1-3)`. At the tightest button width only the page number is shown; its tooltip still gives the channel range. The range widens with the window. A control surface's bank is a separate, fixed axis: eight strips at a time, tracks 1–8, 9–16, or 17–24. The two stay in step. Picking a page moves the surface to the bank holding that page's first track, and **Bank Left** / **Bank Right** on the surface moves the page to the one holding that bank's first track. When every strip fits on screen there is no page to pick, so the surface — and the bank-relative MIDI bindings that follow it — stays where you left it.
 
 Modal dialogs (audio settings, plugin picker, region editor, piano roll, import target picker) appear centered with a dimmed backdrop behind them. Press **Esc** or click outside the modal to dismiss.
 
@@ -509,7 +509,7 @@ Only one stage is visible at a time, but the same engine drives all four. Switch
 - **MASTERING** swaps the console view for the mastering chain, including a file picker for loading a finished mix.
 - **AUX** swaps the console view for the four aux return lanes, with a full-width view of each lane's plugin chain.
 
-Press **Cmd/Ctrl+1 / 2 / 3 / 4** to jump straight to RECORDING / MIXING / MASTERING / AUX. The bank selector has the plain number keys **1 / 2 / 3 / 4**, so a modified digit changes stage and a plain digit changes the visible page of strips. Hovering any tab or bank button shows its shortcut, and **?** opens a full keyboard-shortcut list (also under **Settings → Keyboard Shortcuts**).
+Press **Cmd/Ctrl+1 / 2 / 3 / 4** to jump straight to RECORDING / MIXING / MASTERING / AUX. The bank selector has the plain number keys **1 through 8**, so a modified digit changes stage and a plain digit changes the visible page of strips. Hovering any tab or bank button shows its shortcut, and **?** opens a full keyboard-shortcut list (also under **Settings → Keyboard Shortcuts**).
 
 Switching into or out of MASTERING force-stops the transport. The mix engine and the mastering engine cannot run at the same time. Changing stage also closes the notepad, saving it — the two cannot share the window.
 
@@ -1946,7 +1946,7 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | Shortcut             | Action                                  |
 | -------------------- | --------------------------------------- |
 | **Cmd+1 … Cmd+4**    | Recording / Mixing / Mastering / Aux    |
-| **1 … 4**            | Select strip page 1 to 4 (bank selector) |
+| **1 … 8**            | Select strip page 1 to 8 (bank selector) |
 
 ## Timeline
 
@@ -2522,7 +2522,7 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 
 **Opto compressor.** A compressor whose gain reduction is performed by a photo-resistor, in the classic optical tradition.
 
-**Page (console).** The set of channel strips on screen at once, chosen by the bank selector. As narrow as six strips, never more than four pages; a window wide enough for all 24 has a single page and no selector. Independent of the fixed bank of 8.
+**Page (console).** The set of channel strips on screen at once, chosen by the bank selector. As narrow as three strips, never more than eight pages; a window wide enough for all 24 has a single page and no selector. Independent of the fixed bank of 8.
 
 **Program EQ.** A passive program-EQ topology with separately controllable boost and cut at the same frequency.
 

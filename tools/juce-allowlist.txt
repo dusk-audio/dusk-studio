@@ -71,7 +71,7 @@ src/ui/BounceDialog.cpp	45
 src/ui/BounceDialog.h	12
 src/ui/BusComponent.cpp	329
 src/ui/BusComponent.h	47
-src/ui/ChannelCompEditor.cpp	133
+src/ui/ChannelCompEditor.cpp	128
 src/ui/ChannelCompEditor.h	20
 src/ui/ChannelEqEditor.cpp	93
 src/ui/ChannelEqEditor.h	13
@@ -117,7 +117,7 @@ src/ui/ImportTargetPicker.cpp	97
 src/ui/ImportTargetPicker.h	11
 src/ui/Lv2PluginEditorComponent.cpp	3
 src/ui/Lv2PluginEditorComponent.h	4
-src/ui/MainComponent.cpp	467
+src/ui/MainComponent.cpp	458
 src/ui/MainComponent.h	57
 src/ui/MasterStripComponent.cpp	402
 src/ui/MasterStripComponent.h	59

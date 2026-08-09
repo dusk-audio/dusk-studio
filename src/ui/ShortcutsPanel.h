@@ -31,8 +31,9 @@ public:
             { "Stages", {
                 { mod ('1'), "Recording" }, { mod ('2'), "Mixing" },
                 { mod ('3'), "Mastering" }, { mod ('4'), "Aux" } } },
-            { "Channel banks", {
-                { "1", "Bank 1" }, { "2", "Bank 2" }, { "3", "Bank 3" }, { "4", "Bank 4" } } },
+            { "Channel pages", {
+                { "1", "Page 1" }, { "2", "Page 2" }, { "3", "Page 3" }, { "4", "Page 4" },
+                { "5", "Page 5" }, { "6", "Page 6" }, { "7", "Page 7" }, { "8", "Page 8" } } },
             { "Transport", {
                 { "Space", "Play / Stop" }, { "R", "Record" },
                 { "Home", "Playhead to start" }, { ".", "Stop + rewind to start" },

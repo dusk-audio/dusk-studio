@@ -1142,7 +1142,7 @@ class Session
 {
 public:
     static constexpr int kNumTracks   = SessionLayout::kNumTracks;
-    static constexpr int kNumBuses    = 4;
+    static constexpr int kNumBuses    = SessionLayout::kNumBuses;
     static constexpr int kNumAuxLanes = 4;
     static constexpr int kBankSize    = SessionLayout::kBankSize;
     static constexpr int kNumBanks    = SessionLayout::kNumBanks;

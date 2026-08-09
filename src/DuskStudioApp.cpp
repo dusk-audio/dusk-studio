@@ -101,7 +101,7 @@ public:
         setResizable (true, false);
         // Min height keeps the console usable; the tape strip is collapsible
         // so we don't need to budget for it in the floor.
-        setResizeLimits (ConsoleView::minimumContentWidth() + 24, 750, 32768, 32768);
+        refreshResizeLimits();
 
         // Restore prior session's window geometry. JUCE's
         // restoreWindowStateFromString rebuilds bounds + fullscreen state
@@ -148,6 +148,7 @@ public:
         // Stops a dying OOP plugin editor window from core-dumping the host.
         duskstudio::platform::installNonFatalXErrorHandler();
        #endif
+        refreshResizeLimits();
 
         // Brand icon on the live peer. macOS / Windows already pick this
         // up from the bundled .icns / PE .ico, but JUCE 8 does NOT auto-
@@ -175,9 +176,48 @@ public:
             auto* self = safeThis.getComponent();
             if (self == nullptr) return;
             self->setVisible (true);
+            self->refreshResizeLimits();
             if (auto* peer = self->getPeer())
                 duskstudio::platform::bringWindowToFront (*peer);
+            dusk::Timer::callAfterDelay (250, [safeThis]
+            {
+                if (auto* window = safeThis.getComponent())
+                    window->refreshResizeLimits();
+            });
         });
+    }
+
+    void refreshResizeLimits()
+    {
+        int frameWidth = 0;
+        int frameHeight = 0;
+        if (auto* peer = getPeer())
+        {
+            if (const auto frame = peer->getFrameSizeIfPresent())
+            {
+                frameWidth = frame->getLeftAndRight();
+                frameHeight = frame->getTopAndBottom();
+            }
+        }
+
+        int contentInsetWidth = 0;
+        int contentInsetHeight = 0;
+        if (auto* content = getContentComponent())
+        {
+            contentInsetWidth = std::max (0, getWidth() - content->getWidth());
+            contentInsetHeight = std::max (0, getHeight() - content->getHeight());
+        }
+
+        const int minimumWidth = consolelayout::responsiveMinimumMainComponentWidth()
+                               + contentInsetWidth + frameWidth;
+        const int minimumHeight = 750 + contentInsetHeight + frameHeight;
+        if (minimumWidth == configuredMinimumWidth
+            && minimumHeight == configuredMinimumHeight)
+            return;
+
+        configuredMinimumWidth = minimumWidth;
+        configuredMinimumHeight = minimumHeight;
+        setResizeLimits (minimumWidth, minimumHeight, 32768, 32768);
     }
 
     void closeButtonPressed() override
@@ -195,6 +235,10 @@ public:
         // to immediate quit so the X still works.
         JUCEApplication::getInstance()->systemRequestedQuit();
     }
+
+private:
+    int configuredMinimumWidth = 0;
+    int configuredMinimumHeight = 0;
 };
 
 DuskStudioApp::DuskStudioApp() = default;
