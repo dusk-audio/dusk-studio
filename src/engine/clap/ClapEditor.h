@@ -49,9 +49,9 @@ public:
     // quit. close() then skips gui->hide/gui->destroy; the process is exiting anyway.
     void setLeakOnClose (bool b) noexcept { leakOnClose = b; }
 
-    // The plugin was destroyed out from under this editor. Drop every plugin-side
-    // handle WITHOUT calling through it - the vtables went with the bundle - so
-    // close() only releases the container this host owns.
+    // The plugin is going away but is STILL ALIVE. Drop every plugin-side handle
+    // WITHOUT calling through it - the vtables go with the bundle - so close()
+    // only releases the container this host owns, while that plugin is valid.
     void abandonPlugin() noexcept
     {
         plugin  = nullptr;
@@ -59,6 +59,22 @@ public:
         hostPtr = nullptr;
         created = embedded = false;
     }
+
+    // Same, for an ALREADY-destroyed plugin: nothing may reach plugin code
+    // again. On Cocoa that costs the container as well - close() releases it
+    // with the plugin's view still inside and nothing else retaining that view,
+    // so the release can run its -dealloc against a disposed instance in an
+    // unloaded module. It is hidden and then given up unreleased instead: that
+    // trades one bounded viewDidHide for the unbounded drawRect/displayLayer a
+    // parented dead view takes on every window redraw, and the mapped guard
+    // means the usual reap (lane already hidden) sends no message at all. What
+    // it does not fix is the leaked view's own timers and listeners. Each stale
+    // reap strands one container plus the plugin's entire view hierarchy for the
+    // life of the process, so repeated undo/redo or session loads with an editor
+    // open accumulate them. X11 has no such hazard (the plugin's window is a
+    // foreign child): there this is exactly abandonPlugin(), and close() still
+    // destroys the host window and display.
+    void abandonPluginAndContainer() noexcept;
 
     // Message thread, ~60 Hz: apply queued GUI callbacks, pump the plugin's
     // fds/timers, and drain any platform editor events.

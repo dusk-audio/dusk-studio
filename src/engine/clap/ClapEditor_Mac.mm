@@ -115,6 +115,18 @@ void ClapEditor::hide()
     mapped = false;
 }
 
+void ClapEditor::abandonPluginAndContainer() noexcept
+{
+    abandonPlugin();
+    // Hide rather than detach: the plugin's view is still a subview and must not
+    // leave the window.
+    @try { if (mapped) [containerView (containerHandle) setHidden:YES]; }
+    @catch (NSException*) {}
+    platformContext = nullptr;
+    containerHandle = 0;
+    mapped          = false;
+}
+
 void ClapEditor::close()
 {
     // Leak path: the plugin GUI stays created (it hangs in gui->destroy) and keeps

@@ -180,6 +180,17 @@ void Vst3Editor::abandonPlugin() noexcept
     impl->embedded = false;
 }
 
+void Vst3Editor::abandonPluginAndContainer() noexcept
+{
+    abandonPlugin();
+    // Hide rather than detach: attached() made the plugin's view a subview and
+    // it must not leave the window.
+    @try { if (impl->visible) [impl->container setHidden:YES]; }
+    @catch (NSException*) {}
+    impl->container = nil;
+    impl->visible   = false;
+}
+
 void Vst3Editor::close()
 {
     if (impl->view)

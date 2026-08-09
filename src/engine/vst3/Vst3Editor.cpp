@@ -219,6 +219,14 @@ void Vst3Editor::abandonPlugin() noexcept
     impl->embedded = false;
 }
 
+void Vst3Editor::abandonPluginAndContainer() noexcept
+{
+    // The plugin's window is a foreign X11 child of ours: destroying the host
+    // window in close() delivers no in-process call to plugin code, so there is
+    // nothing extra to give up here.
+    abandonPlugin();
+}
+
 void Vst3Editor::close()
 {
     if (impl->view)

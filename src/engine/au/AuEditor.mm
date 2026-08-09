@@ -197,14 +197,20 @@ void AuEditor::pump()
 
 void AuEditor::abandonPlugin() noexcept
 {
-    // The Audio Unit behind this view may already be disposed. Leaking the
-    // retain taken in open() guarantees the view's -dealloc - where AU views
-    // run their listener teardown against the unit - never executes; close()
-    // still detaches and releases the container this host owns, which does
-    // message the detached subtree, but only through plain NSView hierarchy
-    // notifications.
+    // nil rather than release: the leaked retain from open() is what stops -dealloc.
     impl->pluginView = nil;
     impl->embedded = false;
+}
+
+void AuEditor::abandonPluginAndContainer() noexcept
+{
+    abandonPlugin();
+    // Hide rather than detach: the plugin's view is still a subview and must not
+    // leave the window.
+    @try { if (impl->visible) [impl->container setHidden:YES]; }
+    @catch (NSException*) {}
+    impl->container = nil;
+    impl->visible   = false;
 }
 
 void AuEditor::close()

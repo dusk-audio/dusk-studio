@@ -46,7 +46,12 @@ enum class NativeEditorTeardown
     // The caller destroys the instance immediately afterwards (session restore).
     // Drop our plugin-side handles rather than run the plugin's teardown - a
     // foreign-toolkit GUI can hang there, and the plugin releases it along with
-    // itself - but still close the container + display this host owns.
+    // itself - but still close the container + display this host owns. On
+    // Cocoa that close messages the plugin's subview, so it is only safe while
+    // the instance lives; a stale owner takes abandonPluginAndContainer() and
+    // gives the container up unclosed there. X11 closes on both paths (the
+    // host window is foreign to the plugin), and the LV2 editor still runs
+    // the plain abandon on Cocoa (its suil teardown needs its own treatment).
     AbandonInstance,
     // The process is exiting: leak the GUI (it hangs in its own destructor)
     // together with the container + display it is still drawing into.
@@ -57,9 +62,9 @@ enum class NativeEditorTeardown
 // has already abandoned itself on one of its own guards - abandoning unbinds the
 // slot, so staleness alone stops reporting and the component would sit there as
 // a dead rectangle. Order is load-bearing: the editor abandons its plugin-side
-// handles first, then `detach` does the owner's own bookkeeping - dismissing a
-// modal that borrows the component, removing it as a child - while it is still
-// alive.
+// handles first - on Cocoa a stale owner gives up the host container too - then
+// `detach` does the owner's own bookkeeping - dismissing a modal that borrows
+// the component, removing it as a child - while it is still alive.
 template <typename EditorComponent, typename Detach>
 void syncNativeEditorOwner (std::unique_ptr<EditorComponent>& editor, Detach&& detach)
 {

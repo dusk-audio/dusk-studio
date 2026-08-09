@@ -19,9 +19,10 @@ ClapPluginEditorComponent::ClapPluginEditorComponent()
 ClapPluginEditorComponent::~ClapPluginEditorComponent()
 {
     stopTimer();
-    // Every reset path lands here, and gui->destroy would call into the bundle
-    // that was unloaded with the instance.
-    if (ownerIsStale()) editor.abandonPlugin();
+    // Every reset path lands here, and both gui->destroy and releasing the
+    // container the plugin's view still sits in call into the bundle that was
+    // unloaded with the instance.
+    if (ownerIsStale()) editor.abandonPluginAndContainer();
     editor.close();
     if (ownsInstance) instance.deactivate();   // attach() mode: the slot owns it
 }
@@ -197,8 +198,14 @@ void ClapPluginEditorComponent::leakForShutdown()
 void ClapPluginEditorComponent::abandonInstance()
 {
     stopTimer();
-    editor.abandonPlugin();
-    editor.close();   // plugin handles are gone; this releases only what we own
+    // A stale owner means the plugin is ALREADY destroyed, so the container is
+    // plugin contact too: close() releases it with the plugin's view still
+    // inside, and nothing else retains that view. Giving it up instead makes the
+    // close a no-op on Cocoa; on X11 close() still destroys the host window and
+    // display.
+    if (ownerIsStale()) editor.abandonPluginAndContainer();
+    else                editor.abandonPlugin();
+    editor.close();
     ownerSlot = nullptr;
     abandoned = true;
     loaded = embedded = embedding = false;
