@@ -83,7 +83,7 @@
         (arm64) Linux tarball.</p>
       </description>
     </release>
-    <release version="0.11.0" date="2026-06-22">
+    <release version="0.11.0" date="2026-06-24">
       <description>
         <p>Beta release. Optional out-of-process plugin sandbox with
         crash-isolated plugin scanning on all three OSes,

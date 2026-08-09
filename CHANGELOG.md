@@ -146,8 +146,9 @@ application framework and became Dusk Studio's own.
   oversized blocks from the device are guarded, and a channel strip coming out
   of mute no longer replays up to a third of a second of pre-mute audio.
 - **Plugin editors.** Replacing a plugin with its editor open could read freed
-  memory (CLAP, LV2 and VST3); the editor is now dropped with the instance it
-  belongs to. A plugin slot also re-publishes reliably after a reload.
+  memory (CLAP, LV2, VST3, and the macOS AU editor); the editor is now dropped
+  with the instance it belongs to. A plugin slot also re-publishes reliably
+  after a reload.
 - **MIDI and soundfonts.** Hung notes no longer lose their tail, CC values no
   longer diverge from what was sent, and several SF2-to-SFZ translation faults
   are corrected. A dense burst that filled the input ring but overflowed a
@@ -513,7 +514,7 @@ editor grid, shortcut cleanup, and a batch of fixes.
 - **Linux app icon.** The desktop entry's StartupWMClass now matches the window
   class, so the dock / taskbar shows the Dusk Studio icon instead of a generic one.
 
-## [0.11.0] - 2026-06-22
+## [0.11.0] - 2026-06-24
 
 Built to a production-grade bar; shipped as a Beta. 1.0.0 is reserved for
 the public stable declaration.
