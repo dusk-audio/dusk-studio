@@ -7,6 +7,15 @@ FetchContent_Declare(
     GIT_SHALLOW    TRUE)
 FetchContent_MakeAvailable(Catch2)
 
+FetchContent_GetProperties(Catch2)
+if(catch2_POPULATED AND IS_DIRECTORY "${catch2_SOURCE_DIR}")
+    get_property(testSubdirectories DIRECTORY PROPERTY SUBDIRECTORIES)
+    list(FIND testSubdirectories "${catch2_SOURCE_DIR}" catch2DirectoryIndex)
+    if(NOT catch2DirectoryIndex EQUAL -1)
+        set_property(DIRECTORY "${catch2_SOURCE_DIR}" PROPERTY EXCLUDE_FROM_ALL TRUE)
+    endif()
+endif()
+
 add_executable(dusk-studio-tests
     # Shared native-host foundation (PortLayout / PortBuffers / INativeInstance)
     # is header-only + platform-neutral, so it links in the base target.
