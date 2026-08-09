@@ -208,7 +208,6 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
-          NOTES="Unsigned macOS build. Right-click the app -> Open to bypass Gatekeeper on first launch."
 
           shopt -s nullglob
           ASSETS=( *.dmg SHA256SUMS.macos )
@@ -217,11 +216,14 @@ jobs:
             exit 1
           fi
 
+          # Body comes from the tagged tree, not from this workflow: all four
+          # release jobs pass the same file, so the create-race winner cannot
+          # decide what the notes say.
           if ! gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null 2>&1; then
             if ! create_err=$(gh release create "$TAG" \
               --repo "$RELEASES_REPO" \
               --title "Dusk Studio $TAG" \
-              --notes "$NOTES" 2>&1); then
+              --notes-file packaging/RELEASE-NOTES.md 2>&1); then
               if gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null 2>&1; then
                 echo "release create raced with another release job; the release now exists, uploading."
               else

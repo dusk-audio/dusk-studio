@@ -12,8 +12,8 @@ name: Windows build
 #   - push of a v* tag  → publishes the MSI onto the SAME private release
 #                          the mac DMG lands on (shared tag, distinct asset
 #                          names), so one tag yields a cross-platform set.
-#   - workflow_dispatch  → publishes a build-numbered pre-release for
-#                          hand-offs to testers.
+#   - workflow_dispatch  → builds and packages the MSI for validation only;
+#                          nothing is published.
 #
 # The MSI is UNSIGNED by design (no Authenticode cert) — users see a
 # SmartScreen prompt and choose "More info -> Run anyway" on first launch.
@@ -270,9 +270,9 @@ jobs:
           }
 
       - name: Publish MSI to the PRIVATE releases repo
-        # Only publish on a real release tag. Manual/branch dispatches are
-        # for build validation — publishing a build.N pre-release on each
-        # would pollute the private releases repo (and use the stale VERSION).
+        # Only publish on a real release tag. Manual/branch dispatches are for
+        # build validation - publishing on each would pollute the private
+        # releases repo (and use the stale VERSION).
         if: ${{ github.ref_type == 'tag' }}
         shell: bash
         # MSI + SHA256SUMS.windows live at the repo root after
@@ -288,15 +288,7 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
         run: |
           set -euo pipefail
-          # Tag: the pushed v* tag, else a VERSION-derived build tag for a
-          # manual dispatch (run number keeps dispatch builds unique).
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            TAG="${GITHUB_REF_NAME}"
-            NOTES="Automated Windows build."
-          else
-            TAG="v$(tr -d '[:space:]' < VERSION)+build.${GITHUB_RUN_NUMBER}"
-            NOTES="Unsigned Windows build. SmartScreen may warn — choose More info -> Run anyway. Statically linked, no vc_redist needed."
-          fi
+          TAG="${GITHUB_REF_NAME}"
 
           shopt -s nullglob
           ASSETS=( *.msi SHA256SUMS.windows )
@@ -305,11 +297,14 @@ jobs:
             exit 1
           fi
 
+          # Body comes from the tagged tree, not from this workflow: all four
+          # release jobs pass the same file, so the create-race winner cannot
+          # decide what the notes say.
           if ! gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null 2>&1; then
             if ! create_err=$(gh release create "$TAG" \
               --repo "$RELEASES_REPO" \
               --title "Dusk Studio $TAG" \
-              --notes "$NOTES" 2>&1); then
+              --notes-file packaging/RELEASE-NOTES.md 2>&1); then
               if gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null 2>&1; then
                 echo "release create raced with another release job; the release now exists, uploading."
               else
