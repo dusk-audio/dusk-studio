@@ -15,7 +15,7 @@ ClapHost::ClapHost()
     host.host_data     = this;
     host.name          = "Dusk Studio";
     host.vendor        = "Dusk Audio";
-    host.url           = "https://dusk-audio.com";
+    host.url           = "https://duskaudio.com";
     host.version       = DUSKSTUDIO_VERSION_STRING;
     host.get_extension = &ClapHost::getExtension;
     host.request_restart  = [] (const clap_host_t*) {};
