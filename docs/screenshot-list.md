@@ -31,7 +31,7 @@ notes below.
 | -------------------------- | ------ | ---- | ------------------------------------------------------------------ |
 | `qg-01-startup.png`        | L66    | ✅   | First-launch window, Startup dialog visible, audio device unset.   |
 | `qg-02-audio-settings.png` | L74    | ✅   | `Settings → Audio` panel, a real interface selected.               |
-| `qg-03-arm-track.png`      | L86    | ✅   | Channel strip 1 armed (ARM lit), input picked, IN on. RECORDING.   |
+| `qg-03-arm-track.png`      | L86    | ✅   | RECORDING: ARM on, input selected, IN off, live meter visible.    |
 | `qg-04-record-rolling.png` | L94    | ✅   | Mid-record: meters lit, a region drawing into the tape strip.      |
 | `qg-05-overdub.png`        | L102   | ✅   | Track 1 has a region; track 2 mid-record.                          |
 | `qg-06-mixing-stage.png`   | L118   | ✅   | MIXING stage on strip 1 — send knobs replace the input block.      |

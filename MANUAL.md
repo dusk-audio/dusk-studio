@@ -79,11 +79,11 @@ If your interface has more than two inputs, the channel pickers on each track's 
 
 ## Arm a track and check levels
 
-Switch to **RECORDING** stage. Click the **ARM** button on track 1. The button lights red and the **Input** picker becomes active. Leave the input on `−2: follow track index` if your guitar is plugged into interface input 1, or pick a specific input if it is somewhere else.
+Switch to **RECORDING** stage. Click the **ARM** button on track 1. The button lights red and the **Input** picker becomes active. Leave the input on `−2: follow track index` if your guitar is plugged into interface input 1, or pick a specific input if it is somewhere else. Play the source and watch the input meter on the strip; ARM shows the live pre-fader level even when monitoring is off.
 
-Click **IN** to enable input monitoring. Play the source and watch the input meter on the strip. Use the gain knob on your interface (not the channel fader) to push peaks to roughly −12 dBFS. The strip's clip indicator at the top of the input meter lights red and holds for one second any time you cross 0 dBFS — back off.
+Click **IN** only when you also want to hear that live input through Dusk Studio. If your interface is already direct-monitoring the source, leave IN off to avoid hearing the direct and software-monitor paths together. Use the gain knob on your interface (not the channel fader) to push peaks to roughly −12 dBFS. The strip's clip indicator at the top of the input meter lights red and holds for one second any time you cross 0 dBFS — back off.
 
-![Channel strip 1 armed, input picked, monitor on.](docs/images/qg-03-arm-track.png)
+![Channel strip 1 armed with an input selected, IN off, and the live input meter visible.](docs/images/qg-03-arm-track.png)
 
 If you want to track _through_ the channel's EQ and compressor, also engage **PRINT**. The recorded file will contain the post-effects signal. With PRINT off (the default) you can tweak EQ and compression after the take without re-recording. PRINT shows on an **empty audio track**; once the track holds a take — and on every MIDI track — the button becomes **FREEZE** instead (render the track to audio and bypass its DSP to save CPU — see [ARM, IN, PRINT/FREEZE](#arm-in-printfreeze-recording-stage)).
 
@@ -669,7 +669,7 @@ This block is visible in the RECORDING stage, alongside a small **I/O** button t
 
 ## ARM, IN, PRINT/FREEZE (RECORDING stage)
 
-- **ARM**: light red when on. Marks the track for recording on the next Record press.
+- **ARM**: light red when on. Marks the track for recording on the next Record press and shows its live pre-fader input level in the Recording stage; it does not make that input audible.
 - **IN**: input monitor. When on, you hear the live input through the channel strip. Useful for tracking with effects.
 - **PRINT** (empty audio track): when on, the channel's EQ, compressor, and insert are committed to the recorded file as you record. When off (the default), they are kept live, so you can tweak them after the take.
 - **FREEZE** (MIDI tracks, and audio tracks once recorded): the same button reads **FREEZE**. Click it to render the track to an audio file and bypass the DSP that produced it, to reclaim CPU — the frozen track plays back from the rendered audio with the fader, pan, and aux sends still live so you can keep mixing. The button turns to a snowflake while frozen; click it again to unfreeze (the rendered file is discarded). Frozen state is saved with the session, and a frozen track is locked — unfreeze first to edit, re-record, or change its mode.
@@ -805,7 +805,7 @@ Each channel can be routed to any combination of the four mix buses. Right-click
 
 ## Meters
 
-- **Level meter** (left of the fader): peak level in dBFS, with a brief peak-hold and a numeric readout below it. Two columns for stereo tracks. It follows what you're monitoring — **pre-fader input** while the track is input-monitoring (IN engaged), so you set record levels correctly, and **post-fader output** (the track's contribution to the mix) on playback. Bus and master meters are always post-fader output.
+- **Level meter** (left of the fader): peak level in dBFS, with a brief peak-hold and a numeric readout below it. Two columns for stereo tracks. In the Recording stage it shows **pre-fader input** when an audio track is armed or IN is engaged, so you can set record levels without enabling software monitoring. Otherwise it shows **post-fader output** (the track's contribution to the mix); Mixing remains post-fader unless IN is explicitly on. Bus and master meters are always post-fader output.
 - **GR meter** (right of the fader): real-time compressor gain reduction.
 
 A short red bar at the top of the input meter indicates a clip on that track. The bar holds for one second before clearing.

@@ -828,9 +828,9 @@ struct Track
     std::atomic<float> meterInputDb  { -100.0f };
     // Stereo R-input peak. -100 for mono/midi.
     std::atomic<float> meterInputRDb { -100.0f };
-    // Post-fader / post-pan output peak (stereo). The strip meter shows this
-    // during playback; it switches to meterInput* above when the track is
-    // monitoring its input (IN engaged), matching console / DP-24 metering.
+    // Post-fader / post-pan output peak (stereo). Recording-stage audio strips
+    // switch to meterInput* while armed or input-monitoring; Mixing stays on
+    // output unless IN explicitly retains its input-meter override.
     std::atomic<float> meterOutLDb   { -100.0f };
     std::atomic<float> meterOutRDb   { -100.0f };
 
