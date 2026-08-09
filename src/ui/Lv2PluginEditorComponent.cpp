@@ -21,9 +21,10 @@ Lv2PluginEditorComponent::Lv2PluginEditorComponent()
 Lv2PluginEditorComponent::~Lv2PluginEditorComponent()
 {
     stopTimer();
-    // Every reset path lands here, and the suil callbacks still hold the
-    // instance that went.
-    if (ownerIsStale()) editor.abandonPlugin();
+    // Every reset path lands here, and both suil teardown and releasing the
+    // container its plugin view still sits in can call into an unloaded module.
+    if (ownerIsStale()) editor.abandonPluginAndContainer();
+    else                editor.quiesce();
     editor.close();
 }
 
@@ -179,8 +180,10 @@ void Lv2PluginEditorComponent::leakForShutdown()
 void Lv2PluginEditorComponent::abandonInstance()
 {
     stopTimer();
-    editor.abandonPlugin();
-    editor.close();   // plugin handles are gone; this releases only what we own
+    // A stale owner means the instance is ALREADY disposed. On Cocoa the suil
+    // callbacks and attached view hierarchy must therefore be leaked untouched;
+    // on X11 close() can still release the host window and display.
+    abandonNativeEditorInstance (editor, ownerIsStale());
     ownerSlot = nullptr;
     abandoned = true;
     attachedInstance = nullptr;

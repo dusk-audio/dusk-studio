@@ -62,6 +62,7 @@ struct Lv2Editor::Impl
     static int uiResize (LV2UI_Feature_Handle handle, int w, int h)
     {
         auto* self = static_cast<Impl*> (handle);
+        if (self->instance == nullptr) return 1;
         if (w <= 0 || h <= 0) return 1;
 
         self->prefW = w;
@@ -85,12 +86,19 @@ struct Lv2Editor::Impl
 Lv2Editor::Lv2Editor() : impl (std::make_unique<Impl>()) { impl->owner = this; }
 Lv2Editor::~Lv2Editor() { close(); }
 
-void Lv2Editor::setLeakOnClose (bool b) noexcept { impl->leakOnClose = b; }
-void Lv2Editor::abandonPlugin() noexcept { impl->instance = nullptr; }
-int  Lv2Editor::preferredWidth()  const noexcept { return impl->prefW; }
-int  Lv2Editor::preferredHeight() const noexcept { return impl->prefH; }
-bool Lv2Editor::isOpen()     const noexcept { return impl->discovered; }
-bool Lv2Editor::isEmbedded() const noexcept { return impl->embedded; }
+void Lv2Editor::setLeakOnClose (bool b) noexcept
+{
+    if (impl != nullptr) impl->leakOnClose = b;
+}
+
+void Lv2Editor::abandonPlugin() noexcept
+{
+    if (impl != nullptr) impl->instance = nullptr;
+}
+int  Lv2Editor::preferredWidth()  const noexcept { return impl != nullptr ? impl->prefW : 0; }
+int  Lv2Editor::preferredHeight() const noexcept { return impl != nullptr ? impl->prefH : 0; }
+bool Lv2Editor::isOpen()     const noexcept { return impl != nullptr && impl->discovered; }
+bool Lv2Editor::isEmbedded() const noexcept { return impl != nullptr && impl->embedded; }
 
 bool Lv2Editor::open (Lv2Instance& inst, std::string& errorOut)
 {
@@ -270,8 +278,37 @@ void Lv2Editor::hide()
     impl->visible = false;
 }
 
+void Lv2Editor::quiesce() noexcept
+{
+    if (impl == nullptr) return;
+    // setHidden: propagates viewDidHide through the plugin subtree, so this is
+    // deliberately a live-instance phase rather than stale-owner cleanup.
+    @try
+    {
+        if (impl->container != nil && impl->visible)
+            [impl->container setHidden:YES];
+    }
+    @catch (NSException*)
+    {
+    }
+    impl->visible = false;
+}
+
+void Lv2Editor::abandonPluginAndContainer() noexcept
+{
+    if (impl == nullptr) return;
+    // suil retains Impl as both its controller and resize feature handle. The
+    // instance is already disposed, so no suil call or Cocoa hierarchy message
+    // is safe: strand the complete callback state for the life of the process
+    // and leave close() a true no-op in the allocation-free terminal state.
+    impl->owner    = nullptr;
+    impl->instance = nullptr;
+    (void) impl.release();
+}
+
 void Lv2Editor::close()
 {
+    if (impl == nullptr) return;
     if (impl->leakOnClose && impl->suilInstance != nullptr)
     {
         // Shutdown path: the suil instance is deliberately leaked because a
