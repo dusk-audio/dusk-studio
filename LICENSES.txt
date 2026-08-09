@@ -6,18 +6,11 @@ external component bundled or vendored into the build, the license it
 ships under, and the path where it lives. Update whenever a new
 dependency is added so the legal surface stays auditable.
 
-The full-texts section at the foot of this file carries the licenses that bind
-a binary distribution: the AGPLv3 covering JUCE, Apache-2.0 covering SheenBidi
-and abseil-cpp, the BSD-3-Clause terms of libFLAC and Ogg/Vorbis (whose
-binary-form clause says to reproduce them in the documentation), the IJG terms
-behind the libjpeg acknowledgement, and HarfBuzz's Old MIT notice. The libpng
-and zlib texts are there for completeness rather than obligation — both bind
-source distribution only, and both make the binary acknowledgement explicitly
-optional. Not every text a complete offline notices file would carry is here
-yet: the remaining MIT and ISC components ask for their permission notice in
-copies too, and those are named and attributed rather than reproduced. Every
-entry cites its upstream license file by path, so the missing texts can be read
-at their source until they are folded in.
+The full-texts section at the foot of this file carries the notices for every
+vendored component compiled into a binary distribution. Each block preserves the
+copyright and permission wording from the exact pinned upstream source named
+in its header. The libpng, zlib, NanoVG and fontstash texts are included for
+completeness even though their binary acknowledgements are optional.
 
 PROJECT LICENSE
 ---------------
@@ -174,7 +167,8 @@ Dusk Audio plugins (donor DSP cores)
     - shared/AnalogEmulation (TubeEmulation, TransformerEmulation, etc.)
 
 sfizz (SFZ / SoundFont sampler engine — powers the multisample instrument)
-  Version  : 1.2.3
+  Version  : 1.2.3, submodule rev
+             31b23c260b43815c36af48afc504261726146a3a
   License  : BSD-2-Clause (external/sfizz/LICENSE)
   Path     : external/sfizz/ (git submodule, built as a static library)
   Upstream : https://github.com/sfztools/sfizz
@@ -182,7 +176,7 @@ sfizz (SFZ / SoundFont sampler engine — powers the multisample instrument)
              tests / devtools are all disabled, so their dependencies are not
              compiled in. The sub-components below ship vendored inside sfizz
              and ARE compiled into the Dusk Studio binary; each keeps its own
-             permissive license (full text at external/sfizz/**/LICENSE):
+             permissive license, reproduced in the full-texts section below:
                - abseil-cpp    LTS 20230125.3 (ABSL_LTS_RELEASE_VERSION and
                                ABSL_LTS_RELEASE_PATCH_LEVEL in
                                absl/base/config.h), submodule rev
@@ -197,15 +191,38 @@ sfizz (SFZ / SoundFont sampler engine — powers the multisample instrument)
                                obligation. Covered by the Apache License 2.0
                                reproduced at the foot of this file; abseil ships
                                no NOTICE file either.
-               - st_audiofile  BSD-2-Clause  external/sfizz/external/st_audiofile/
-               - atomic_queue  MIT          external/sfizz/external/atomic_queue/
-               - kiss_fft      BSD-3-Clause  external/sfizz/src/external/kiss_fft/
-               - pugixml       MIT          external/sfizz/src/external/pugixml/
-               - spline        BSD-3-Clause  external/sfizz/src/external/spline/
-               - tunings       MIT          external/sfizz/src/external/tunings/
-               - cpuid         BSD-3-Clause external/sfizz/src/external/cpuid/  (Steinwurf ApS)
-               - hiir          WTFPL        external/sfizz/src/external/hiir/   (Laurent de Soras)
-               - simde         MIT / CC0    external/sfizz/external/simde/
+               - st_audiofile  BSD-2-Clause  external/sfizz/external/st_audiofile/LICENSE.md
+               - atomic_queue  MIT          external/sfizz/external/atomic_queue/LICENSE
+               - ghc-filesystem  MIT        external/sfizz/external/filesystem/LICENSE,
+                               submodule rev
+                               8a2edd6d92ed820521d42c94d179462bf06b5ed3
+               - jsl           BSL-1.0      external/sfizz/external/jsl/LICENSE.md
+               - ThreadPool    zlib         external/sfizz/external/threadpool/
+                               ThreadPool.h. The header is derived from
+                               progschj/ThreadPool rev
+                               9a42ec1329f259a5f4881a291db1dcb8f2ad9040
+                               (Jakob Progsch, Václav Zeman, 2012). sfizz's
+                               copy adds an SPDX marker, normalises whitespace,
+                               and makes the stop flag volatile. It is on the
+                               production path: external/sfizz/src/sfizz/
+                               FilePool.cpp:34,52,67 includes and constructs
+                               it; external/sfizz/cmake/SfizzDeps.cmake:
+                               251-254 exposes the include directory; and
+                               external/sfizz/src/CMakeLists.txt:296-298 links
+                               sfizz::threadpool into sfizz_internal.
+               - kiss_fft      BSD-3-Clause  external/sfizz/src/external/kiss_fft/COPYING
+               - pugixml       MIT          external/sfizz/src/external/pugixml/LICENSE.md
+               - spline        BSD-3-Clause / Beer-Ware
+                               external/sfizz/src/external/spline/LICENSE and
+                               spline/spline.cpp
+               - tunings       MIT          external/sfizz/src/external/tunings/LICENSE.md
+               - cpuid         BSD-3-Clause external/sfizz/src/external/cpuid/LICENSE.rst
+                               and platform/LICENSE.rst (Steinwurf ApS)
+               - hiir          WTFPL        external/sfizz/src/external/hiir/license.txt
+                               (Laurent de Soras)
+               - simde         MIT / CC0    external/sfizz/external/simde/COPYING,
+                               submodule rev
+                               2bf459d4ed6d7ed6b9f31bd9e07c91bace5009e0
                - cephes        BSD-3-Clause external/sfizz/external/cephes/LICENSE.txt
                                (Julien Cornebise 2013). Only chbevl.c and i0.c
                                are vendored. Moshier's original cephes carries
@@ -220,20 +237,25 @@ sfizz (SFZ / SoundFont sampler engine — powers the multisample instrument)
              is the one every build takes:
                - dr_libs       public domain / MIT-0 dual, caller's choice
                                external/sfizz/external/st_audiofile/thirdparty/
-                               dr_libs/LICENSE (David Reid 2020) — dr_wav
+                               dr_libs/LICENSE, submodule rev
+                               4b3d07849537ce0b71b22180c0b1335eacc6e9be
+                               (David Reid 2020) — dr_wav
                                0.13.8, dr_flac 0.12.39, dr_mp3 0.6.34
                - WavPack       5.6.6, BSD-3-Clause
-                               .../thirdparty/wavpack/license.txt
+                               .../thirdparty/wavpack/license.txt, submodule rev
+                               07ffb331d23c16e2d2979370441f63ea722760bc
                                (David Bryant 1998-2022, Conifer Software)
                - libaiff       MIT
-                               .../thirdparty/libaiff/LICENSE
+                               .../thirdparty/libaiff/LICENSE, submodule rev
+                               78864a4a2e769e426be8cfd78ae7f5f72e236c33
                                (Marco Trillo 2005-2008)
                - stb_vorbis    1.22, MIT / public domain dual, caller's choice
                                .../thirdparty/stb_vorbis/LICENSE
                                (Sean Barrett 2017)
 
 nlohmann/json (JSON parser — session + preset serialisation)
-  Version  : 3.11.3
+  Version  : 3.11.3, upstream tag rev
+             9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03
   License  : MIT
   Path     : external/json/nlohmann/json.hpp (vendored single header)
   Upstream : https://github.com/nlohmann/json
@@ -268,10 +290,21 @@ DPF / DGL (DISTRHO Plugin Framework graphics layer — backs the native notepad 
                                Gareus 2013 under the same ISC terms;
                                submodule dusk-audio/pugl rev
                                5e2621d714ddf1cb0f86e852f8ba5dffe04aa3a3)
+                               On Linux without X11, dpf__add_dgl_opengl3
+                               selects DPF's vendored Wayland path instead.
+                               Its 12 Wayland-specific source/header files
+                               carry three additional ISC notice variants
+                               (David Robillard and DPF contributors) and four
+                               MIT protocol notice variants; all seven are
+                               reproduced below. The OpenGL3 target compiles
+                               wayland_gl.c, not the unused wayland_cairo.c.
                - NanoVG        zlib  dgl/src/nanovg/LICENSE.txt
                                (Mikko Mononen 2013)
                - fontstash     zlib  dgl/src/nanovg/fontstash.h
-                               (Mikko Mononen 2009-2013)
+                               (Mikko Mononen 2009-2013), plus its embedded
+                               UTF-8 decoder under the MIT license (Bjoern
+                               Hoehrmann 2008-2010 in the compiled source;
+                               linked upstream license reproduced below)
                - stb_truetype  MIT / public domain dual, caller's choice
                                (Sean Barrett 2017); the two alternatives are
                                spelled out at the foot of
@@ -322,6 +355,11 @@ Dear ImGui (immediate-mode GUI — notepad editor, toolbar, chord charts)
                                IMGUI_DISABLE_DEFAULT_FONT stays commented out
                                in opengl/DearImGui/imconfig.h, so the
                                compressed ProggyClean bytes ship regardless.
+                               The 9,583-byte compressed stream expands to
+                               41,208 bytes with Adler-32 0x48f962f7 and
+                               SHA-256 527d2a443ce051f93f7e77b855609722b8cb220a9f104b4aa037be5c90b71324,
+                               matching bluescan/proggyfonts rev
+                               139ec08a38096161291792313ef5803fc4f0e37b.
 
 Steinberg VST3 SDK (native VST3 host — Linux builds only)
   Version  : 3.8.0 (upstream tag v3.8.0_build_66)
@@ -338,7 +376,8 @@ Steinberg VST3 SDK (native VST3 host — Linux builds only)
              for the whole binary.
 
 CLAP headers (native CLAP plugin host)
-  Version  : 1.2.9
+  Version  : 1.2.9, submodule rev
+             cd94482ba5941ae410809b6fbaed3bc851044270
   License  : MIT — Copyright (c) 2021 Alexandre BIQUE (external/clap/LICENSE)
   Path     : external/clap/include/ (git submodule of free-audio/clap). Headers
              only: the API declarations compile into the host, no CLAP source
@@ -539,12 +578,13 @@ FULL LICENSE TEXTS
 
 Most of the licenses below have a clause that makes their text, or their
 copyright notice and warranty disclaimer, part of any binary distribution;
-naming them is not enough. The libpng and zlib blocks are the exceptions,
-included for completeness — their terms bind source distribution and make the
-binary acknowledgement optional, as the intro at the top of this file says.
-Each block is a verbatim copy of the file at the path above it, or of the
-relevant section where the block header says so. Paths starting `modules/` are
-inside the JUCE tree Dusk Studio builds against on Linux — the
+naming them is not enough. The zlib-family blocks are included for completeness
+even where their binary acknowledgement is optional. Each block preserves the
+source text named in its header, apart from CRLF-to-LF conversion and removal
+of trailing whitespace required by repository hygiene; where a header says
+"notice", only that complete notice is reproduced. Paths starting `modules/`
+are inside the JUCE tree
+Dusk Studio builds against on Linux — the
 dusk-audio/JUCE-wayland tag dusk-wayland-v2, rev
 4d85afa175a45e0b5da11f9211de3ba88705588e, JUCE 8.0.12. The per-platform version
 inventory for those is in the JUCE entry above; upstream 8.0.4 on macOS and
@@ -1739,3 +1779,1785 @@ DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+--------------------------------------------------------------------------------
+JUCE-bundled VST3 SDK 3.8.0 — MIT
+modules/juce_audio_processors_headless/format_types/VST3_SDK/LICENSE.txt
+dusk-audio/JUCE-wayland rev 4d85afa175a45e0b5da11f9211de3ba88705588e
+(Linux build only; JUCE 8.0.4 on macOS and Windows carries the older dual
+license described in the inventory)
+--------------------------------------------------------------------------------
+
+//-----------------------------------------------------------------------------
+MIT License
+
+Copyright (c) 2025, Steinberg Media Technologies GmbH
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+//---------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+JUCE-bundled LV2 SDK — ISC notices
+modules/juce_audio_processors_headless/format_types/LV2_SDK/<name>/COPYING
+dusk-audio/JUCE-wayland rev 4d85afa175a45e0b5da11f9211de3ba88705588e
+The five COPYING files are byte-identical in upstream JUCE 8.0.4 rev
+51d11a2be6d5c97ccf12b4e5e827006e19f0555a. The identical lilv, serd and sord
+files are reproduced once.
+--------------------------------------------------------------------------------
+
+lv2/COPYING
+
+Copyright 2006-2012 Steve Harris, David Robillard.
+
+Based on LADSPA, Copyright 2000-2002 Richard W.E. Furse,
+Paul Barton-Davis, Stefan Westerfeld.
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THIS SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+lilv/COPYING, serd/COPYING and sord/COPYING
+
+Copyright 2011-2021 David Robillard <d@drobilla.net>
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THIS SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+sratom/COPYING
+
+Copyright 2012-2021 David Robillard <d@drobilla.net>
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THIS SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+The build does not stop at those repository COPYING files:
+juce_LV2SupportLibs.cpp compiles the C support sources directly, while
+juce_LV2Common.h includes the public SDK headers. A recursive include audit of
+that exact graph finds 83 bundled C/header files: two JUCE configuration
+headers without an independent notice and 81 files carrying the 24 distinct
+complete ISC notices below. The result, including every path group and byte of
+notice text, is identical in the Linux pin above and upstream JUCE 8.0.4 rev
+51d11a2be6d5c97ccf12b4e5e827006e19f0555a.
+
+lv2/lv2/core/lv2.h:
+Copyright 2007-2012 Steve Harris, David Robillard.
+Based on LADSPA, Copyright 2000-2002 Richard W.E. Furse,
+Paul Barton-Davis, Stefan Westerfeld.
+
+lv2/lv2/buf-size/buf-size.h; lv2/lv2/resize-port/resize-port.h:
+Copyright 2007-2016 David Robillard <d@drobilla.net>
+
+lilv/lilv/lilv.h; lilv/src/{instance,lilv_internal,node,plugin,
+pluginclass,port,query,scalepoint,state,ui,util,world}.{c,h} as applicable:
+Copyright 2007-2019 David Robillard <d@drobilla.net>
+
+lilv/src/filesystem.h:
+Copyright 2007-2020 David Robillard <d@drobilla.net>
+
+lilv/src/filesystem.c:
+Copyright 2007-2021 David Robillard <d@drobilla.net>
+
+lv2/lv2/dynmanifest/dynmanifest.h:
+Copyright 2008-2011 Stefano D'Angelo <zanga.mail@gmail.com>
+
+lv2/lv2/atom/util.h:
+Copyright 2008-2015 David Robillard <d@drobilla.net>
+
+lv2/lv2/atom/{atom,forge}.h; lv2/lv2/data-access/data-access.h;
+lv2/lv2/instance-access/instance-access.h:
+Copyright 2008-2016 David Robillard <d@drobilla.net>
+
+lv2/lv2/event/event.h:
+Copyright 2008-2016 David Robillard <d@drobilla.net>
+Copyright 2006-2007 Lars Luthman <lars.luthman@gmail.com>
+
+lv2/lv2/urid/urid.h:
+Copyright 2008-2016 David Robillard <d@drobilla.net>
+Copyright 2011 Gabriel M. Beddingfield <gabrbedd@gmail.com>
+
+lilv/src/collections.c:
+Copyright 2008-2019 David Robillard <d@drobilla.net>
+
+lv2/lv2/ui/ui.h:
+Copyright 2009-2016 David Robillard <d@drobilla.net>
+Copyright 2006-2011 Lars Luthman <lars.luthman@gmail.com>
+
+lv2/lv2/state/state.h:
+Copyright 2010-2016 David Robillard <d@drobilla.net>
+Copyright 2010 Leonard Ritter <paniq@paniq.org>
+
+sord/src/sord_internal.h; sord/src/syntax.c:
+Copyright 2011-2015 David Robillard <d@drobilla.net>
+
+lv2/lv2/time/time.h; sord/sord/sord.h; sord/src/sord.c:
+Copyright 2011-2016 David Robillard <d@drobilla.net>
+
+lilv/src/zix/{tree.c,tree.h}; serd/serd/serd.h; the compiled serd/src
+support headers and sources; sord/src/zix/{btree.c,btree.h,hash.c,hash.h}:
+Copyright 2011-2020 David Robillard <d@drobilla.net>
+
+lv2/lv2/{log/log,midi/midi,options/options,parameters/parameters,patch/patch,
+port-groups/port-groups,presets/presets,units/units,worker/worker}.h:
+Copyright 2012-2016 David Robillard <d@drobilla.net>
+
+lilv/src/lib.c:
+Copyright 2012-2019 David Robillard <d@drobilla.net>
+
+sord/src/zix/{digest.c,digest.h}:
+Copyright 2012-2020 David Robillard <d@drobilla.net>
+
+sratom/sratom/sratom.h; sratom/src/sratom.c:
+Copyright 2012-2021 David Robillard <d@drobilla.net>
+
+lilv/src/zix/common.h; sord/src/zix/common.h:
+Copyright 2016-2020 David Robillard <d@drobilla.net>
+
+lv2/lv2/core/attributes.h:
+Copyright 2018 David Robillard <d@drobilla.net>
+
+serd/src/attributes.h:
+Copyright 2019-2020 David Robillard <d@drobilla.net>
+
+serd/src/serd_config.h; sord/src/sord_config.h:
+Copyright 2021 David Robillard <d@drobilla.net>
+
+Every one of those 24 copyright variants is followed by this same complete
+permission and disclaimer:
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THIS SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+--------------------------------------------------------------------------------
+sfizz 1.2.3 — BSD-2-Clause
+external/sfizz/LICENSE, submodule rev
+31b23c260b43815c36af48afc504261726146a3a
+--------------------------------------------------------------------------------
+
+BSD 2-Clause License
+
+Copyright (c) 2021-2023, sfizz contributors (detailed in AUTHORS.md)
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+The production sfizz sources carry this distinct BSD-2-Clause notice. It is
+present throughout external/sfizz/src/sfizz/, including FilePool.cpp, which is
+the translation unit that instantiates the vendored ThreadPool:
+
+Copyright (c) 2019-2020, Paul Ferrand, Andrea Zanellato
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+--------------------------------------------------------------------------------
+st_audiofile — BSD-2-Clause
+external/sfizz/external/st_audiofile/LICENSE.md at sfizz submodule rev
+31b23c260b43815c36af48afc504261726146a3a
+--------------------------------------------------------------------------------
+
+BSD 2-Clause License
+
+Copyright (c) 2020, Jean-Pierre Cimalando
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+--------------------------------------------------------------------------------
+atomic_queue — MIT
+external/sfizz/external/atomic_queue/LICENSE at sfizz submodule rev
+31b23c260b43815c36af48afc504261726146a3a
+--------------------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2019 Maxim Egorushkin
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------------------
+ghc-filesystem — MIT
+external/sfizz/external/filesystem/LICENSE, nested submodule rev
+8a2edd6d92ed820521d42c94d179462bf06b5ed3
+--------------------------------------------------------------------------------
+
+Copyright (c) 2018, Steffen Schümann <s.schuemann@pobox.com>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------------------
+jsl — Boost Software License 1.0
+external/sfizz/external/jsl/LICENSE.md at sfizz submodule rev
+31b23c260b43815c36af48afc504261726146a3a
+--------------------------------------------------------------------------------
+
+# Boost Software License - Version 1.0 - August 17th, 2003
+
+Permission is hereby granted, free of charge, to any person or organization
+obtaining a copy of the software and accompanying documentation covered by
+this license (the "Software") to use, reproduce, display, distribute,
+execute, and transmit the Software, and to prepare derivative works of the
+Software, and to permit third-parties to whom the Software is furnished to
+do so, all subject to the following:
+
+The copyright notices in the Software and this entire statement, including
+the above license grant, this restriction and the following disclaimer,
+must be included in all copies of the Software, in whole or in part, and
+all derivative works of the Software, unless such copies or derivative
+works are solely in the form of machine-executable object code generated by
+a source language processor.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, TITLE AND NON-INFRINGEMENT. IN NO EVENT
+SHALL THE COPYRIGHT HOLDERS OR ANYONE DISTRIBUTING THE SOFTWARE BE LIABLE
+FOR ANY DAMAGES OR OTHER LIABILITY, WHETHER IN CONTRACT, TORT OR OTHERWISE,
+ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+The compiled headers under external/sfizz/external/jsl/include carry this
+additional source attribution before the Boost Software License above:
+
+Copyright Jean Pierre Cimalando 2018-2020.
+Distributed under the Boost Software License, Version 1.0.
+(See accompanying file LICENSE or copy at
+http://www.boost.org/LICENSE_1_0.txt)
+
+--------------------------------------------------------------------------------
+ThreadPool — zlib license
+COPYING at progschj/ThreadPool rev
+9a42ec1329f259a5f4881a291db1dcb8f2ad9040. sfizz vendors
+external/sfizz/external/threadpool/ThreadPool.h with the same implementation
+plus an SPDX zlib marker, whitespace normalisation, and a volatile qualifier on
+the stop flag.
+--------------------------------------------------------------------------------
+
+Copyright (c) 2012 Jakob Progsch, Václav Zeman
+
+This software is provided 'as-is', without any express or implied
+warranty. In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+   1. The origin of this software must not be misrepresented; you must not
+   claim that you wrote the original software. If you use this software
+   in a product, an acknowledgment in the product documentation would be
+   appreciated but is not required.
+
+   2. Altered source versions must be plainly marked as such, and must not be
+   misrepresented as being the original software.
+
+   3. This notice may not be removed or altered from any source
+   distribution.
+
+--------------------------------------------------------------------------------
+kiss_fft — BSD-3-Clause
+external/sfizz/src/external/kiss_fft/COPYING at sfizz submodule rev
+31b23c260b43815c36af48afc504261726146a3a
+--------------------------------------------------------------------------------
+
+Copyright (c) 2003-2010 Mark Borgerding
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+
+    * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+    * Neither the author nor the names of any contributors may be used to endorse or promote products derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+--------------------------------------------------------------------------------
+pugixml — MIT
+external/sfizz/src/external/pugixml/LICENSE.md at sfizz submodule rev
+31b23c260b43815c36af48afc504261726146a3a
+--------------------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2006-2022 Arseny Kapoulkine
+
+Permission is hereby granted, free of charge, to any person
+obtaining a copy of this software and associated documentation
+files (the "Software"), to deal in the Software without
+restriction, including without limitation the rights to use,
+copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+The compiled pugixml.cpp and included pugixml.hpp/pugiconfig.hpp also preserve
+this upstream ancestry notice; the complete MIT permission and disclaimer are
+the ones immediately above:
+
+Copyright (C) 2006-2022, by Arseny Kapoulkine
+(arseny.kapoulkine@gmail.com)
+This work is based on the pugxml parser, which is:
+Copyright (C) 2003, by Kristen Wegner (kristen@tima.net)
+
+--------------------------------------------------------------------------------
+spline — BSD-3-Clause repository license / Beer-Ware source notice
+external/sfizz/src/external/spline/LICENSE at sfizz submodule rev
+31b23c260b43815c36af48afc504261726146a3a
+--------------------------------------------------------------------------------
+
+BSD 3-Clause License
+
+Copyright (c) 2018, Roland Rabien
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+* Neither the name of the copyright holder nor the names of its
+  contributors may be used to endorse or promote products derived from
+  this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+The included spline.h carries this additional source attribution alongside
+the repository-level BSD-3-Clause terms above:
+
+Copyright 2018 by Roland Rabien, Devin Lane
+For more information visit www.rabiensoftware.com
+
+The compiled external/sfizz/src/external/spline/spline/spline.cpp carries the
+same attribution and this distinct complete Beer-Ware permission notice at
+sfizz rev 31b23c260b43815c36af48afc504261726146a3a:
+
+"THE BEER-WARE LICENSE" (Revision 42): Devin Lane wrote this file. As long as you retain
+this notice you can do whatever you want with this stuff. If we meet some day, and you
+think this stuff is worth it, you can buy me a beer in return.
+
+--------------------------------------------------------------------------------
+tunings — MIT
+external/sfizz/src/external/tunings/LICENSE.md at sfizz submodule rev
+31b23c260b43815c36af48afc504261726146a3a
+--------------------------------------------------------------------------------
+
+Copyright 2019-2020, Paul Walker
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+--------------------------------------------------------------------------------
+cpuid — BSD-3-Clause
+external/sfizz/src/external/cpuid/LICENSE.rst at sfizz submodule rev
+31b23c260b43815c36af48afc504261726146a3a
+--------------------------------------------------------------------------------
+
+cpuid license
+-------------
+cpuid is provided under the "BSD (3-clause) License"::
+
+  Copyright (c) 2014, Steinwurf ApS
+  All rights reserved.
+
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions are met:
+
+      * Redistributions of source code must retain the above copyright
+        notice, this list of conditions and the following disclaimer.
+
+      * Redistributions in binary form must reproduce the above copyright
+        notice, this list of conditions and the following disclaimer in the
+        documentation and/or other materials provided with the distribution.
+
+      * Neither the name of Steinwurf ApS nor the names of its contributors
+        may be used to endorse or promote products derived from this software
+        without specific prior written permission.
+
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+  ARE DISCLAIMED. IN NO EVENT SHALL Steinwurf ApS BE LIABLE FOR ANY
+  DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+  (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+  ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+--------------------------------------------------------------------------------
+cpuid platform — BSD-3-Clause
+external/sfizz/src/external/cpuid/platform/LICENSE.rst at sfizz submodule rev
+31b23c260b43815c36af48afc504261726146a3a
+--------------------------------------------------------------------------------
+
+platform license
+----------------
+platform is provided under the "BSD (3-clause) License"::
+
+  Copyright (c) 2014, Steinwurf ApS
+  All rights reserved.
+
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions are met:
+
+      * Redistributions of source code must retain the above copyright
+        notice, this list of conditions and the following disclaimer.
+
+      * Redistributions in binary form must reproduce the above copyright
+        notice, this list of conditions and the following disclaimer in the
+        documentation and/or other materials provided with the distribution.
+
+      * Neither the name of Steinwurf ApS nor the names of its contributors
+        may be used to endorse or promote products derived from this software
+        without specific prior written permission.
+
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+  ARE DISCLAIMED. IN NO EVENT SHALL Steinwurf ApS BE LIABLE FOR ANY
+  DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+  (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+  ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+--------------------------------------------------------------------------------
+hiir — WTFPL version 2
+external/sfizz/src/external/hiir/license.txt at sfizz submodule rev
+31b23c260b43815c36af48afc504261726146a3a
+--------------------------------------------------------------------------------
+
+        DO WHAT THE FUCK YOU WANT TO PUBLIC LICENSE
+                    Version 2, December 2004
+
+ Copyright (C) 2004 Sam Hocevar <sam@hocevar.net>
+
+ Everyone is permitted to copy and distribute verbatim or modified
+ copies of this license document, and changing it is allowed as long
+ as the name is changed.
+
+            DO WHAT THE FUCK YOU WANT TO PUBLIC LICENSE
+   TERMS AND CONDITIONS FOR COPYING, DISTRIBUTION AND MODIFICATION
+
+  0. You just DO WHAT THE FUCK YOU WANT TO.
+
+--------------------------------------------------------------------------------
+SIMDe — MIT
+external/sfizz/external/simde/COPYING, nested submodule rev
+2bf459d4ed6d7ed6b9f31bd9e07c91bace5009e0
+--------------------------------------------------------------------------------
+
+Copyright (c) 2017 Evan Nemerson <evan@nemerson.com>
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+--------------------------------------------------------------------------------
+SIMDe CC0-only headers — CC0-1.0 notices
+Notices in external/sfizz/external/simde/simde/ at nested submodule rev
+2bf459d4ed6d7ed6b9f31bd9e07c91bace5009e0
+--------------------------------------------------------------------------------
+
+The CC0-only headers in the same pinned SIMDe submodule carry these notices:
+
+simde-arch.h (also simde-align.h, debug-trap.h and check.h):
+
+Created by Evan Nemerson <evan@nemerson.com>
+
+To the extent possible under law, the authors have waived all
+copyright and related or neighboring rights to this code.  For
+details, see the Creative Commons Zero 1.0 Universal license at
+<https://creativecommons.org/publicdomain/zero/1.0/>
+
+SPDX-License-Identifier: CC0-1.0
+
+simde-detect-clang.h and hedley.h:
+
+Created by Evan Nemerson <evan@nemerson.com>
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to
+the public domain worldwide. This software is distributed without
+any warranty.
+
+For details, see <http://creativecommons.org/publicdomain/zero/1.0/>.
+SPDX-License-Identifier: CC0-1.0
+
+--------------------------------------------------------------------------------
+cephes — redistribution permission and BSD-3-Clause wrapper
+external/sfizz/external/cephes/LICENSE.txt at sfizz submodule rev
+31b23c260b43815c36af48afc504261726146a3a
+--------------------------------------------------------------------------------
+
+==== NOTE ====
+The actual cephes library, shipped with and wrapped by this package, is available on The Netlib at http://www.netlib.org/cephes/ . It does not have any license specified. However, its original authors, Stephen Moshier, has kindly granted permission for inclusion in a BSD-licensed package. See email snippet below for reference.
+
+Return-Path: <steve@moshier.net>
+X-Original-To: julien@cornebise.com
+Delivered-To: julien@cornebise.com
+Received: from atl4mhob11.myregisteredsite.com (atl4mhob11.myregisteredsite.com [209.17.115.49])
+    by cornebise.com (Postfix) with ESMTP id D47B139FC0
+    for <julien@cornebise.com>; Fri, 25 Oct 2013 16:32:40 +0200 (CEST)
+Received: from mailpod1.hostingplatform.com ([10.30.71.116])
+    by atl4mhob11.myregisteredsite.com (8.14.4/8.14.4) with ESMTP id r9PEWcwQ003543
+    for <julien@cornebise.com>; Fri, 25 Oct 2013 10:32:38 -0400
+Received: (qmail 11948 invoked by uid 0); 25 Oct 2013 12:36:20 -0000
+X-TCPREMOTEIP: 76.24.25.74
+X-Authenticated-UID: steve@moshier.net
+Received: from unknown (HELO d510.local) (steve@moshier.net@76.24.25.74)
+  by 0 with ESMTPA; 25 Oct 2013 12:36:20 -0000
+Date: Fri, 25 Oct 2013 08:36:19 -0400 (EDT)
+From: Stephen Moshier <steve@moshier.net>
+X-X-Sender: steve@d510
+To: Julien Cornebise <julien@cornebise.com>
+Subject: Re: Cephes: permission to wrap+distribute for Lua
+In-Reply-To: <52653AD3.1010004@cornebise.com>
+Message-ID: <alpine.DEB.2.02.1310250827040.17646@d510>
+References: <52653AD3.1010004@cornebise.com>
+User-Agent: Alpine 2.02 (DEB 1266 2009-07-14)
+MIME-Version: 1.0
+Content-Type: TEXT/PLAIN; charset=US-ASCII; format=flowed
+
+
+Julien, thank you for writing.
+BSD license is fine, modification is OK.
+There are more build scripts available in the web site distributions than
+there are on the Netlib.  I think there is an update to Planck's radiation
+function that I haven't sent to Netlib yet.  But Netlib is a more stable
+site, so it is better to cite that as a reference.
+
+
+On Mon, 21 Oct 2013, Julien Cornebise wrote:
+
+> -----BEGIN PGP SIGNED MESSAGE-----
+> Hash: SHA1
+>
+> Dear Mr Moshier
+>
+> I am a researcher in mathematics and machine learning in London, and
+> am writing about your awesome Cephes library, whom I found at the
+> heart of Scipy.
+>
+> It is so useful that, with your permission, I would like to wrap it
+> for Lua and Torch (a machine learning overlay to Lua, specialized in
+> neural nets, see http://www.torch.ch). I would like to distribute it
+> as a package for Torch, including your source code along the wrapping
+> code.
+> This wouldbe a public package, distributed under BSD License. I have
+> put a first draft on github:
+> https://github.com/jucor/torch-cephes
+>
+> Hence my three questions, please:
+>
+> 1/ How would you like to be acknowledged, beyond the comments that are
+> already in your code? Do you have any standard header/disclaimer that
+> I could add to the documentation?
+>
+> 2/ At the moment, your code is left untouched. However, if I ever need
+> to modify bits of the code, what are the conditions/restrictions?
+> Nothing huge -- I definitely do not want to mess with it: I was
+> planning to use the natural completion of some functions on the
+> completed real line (e.g. CDF returing 1 when called with "infinity",
+> or quantiles returning -Infinity when called with 0), either natively
+> if supported, or by setting a specific flag  via mtherr().
+>
+> 3/ I am currently using the source from Netlib. Do you recommend using
+> the source from your website instead ?
+>
+> Thank you very much for your attention,
+> and, more importantly, for the time and effort your poured into Cephes.
+>
+> Best regards,
+>
+> Julien Cornebise, Ph.D.
+> London, UK
+> http://www.cornebise.com/julien
+> -----BEGIN PGP SIGNATURE-----
+> Version: GnuPG v1.4.14 (Darwin)
+> Comment: GPGTools - http://gpgtools.org
+> Comment: Using GnuPG with Thunderbird - http://www.enigmail.net/
+>
+> iEYEARECAAYFAlJlOtEACgkQKYR3gC0rw/gIpQCfZKu6+iDh9ghhm6QfsLXnldKN
+> BuIAn2zZHu1c/IrRAevhjM7N7xGg0LHO
+> =WeP5
+> -----END PGP SIGNATURE-----
+
+
+==== LICENSE ====
+Copyright (c) 2013, Julien Cornebise
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright
+      notice, this list of conditions and the following disclaimer in the
+      documentation and/or other materials provided with the distribution.
+    * Neither the name of the organization nor the
+      names of its contributors may be used to endorse or promote products
+      derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL <COPYRIGHT HOLDER> BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+--------------------------------------------------------------------------------
+dr_libs — public domain / MIT-0 dual license
+external/sfizz/external/st_audiofile/thirdparty/dr_libs/LICENSE,
+nested submodule rev 4b3d07849537ce0b71b22180c0b1335eacc6e9be
+--------------------------------------------------------------------------------
+
+This software is available as a choice of the following licenses. Choose
+whichever you prefer.
+
+===============================================================================
+ALTERNATIVE 1 - Public Domain (www.unlicense.org)
+===============================================================================
+This is free and unencumbered software released into the public domain.
+
+Anyone is free to copy, modify, publish, use, compile, sell, or distribute this
+software, either in source code form or as a compiled binary, for any purpose,
+commercial or non-commercial, and by any means.
+
+In jurisdictions that recognize copyright laws, the author or authors of this
+software dedicate any and all copyright interest in the software to the public
+domain. We make this dedication for the benefit of the public at large and to
+the detriment of our heirs and successors. We intend this dedication to be an
+overt act of relinquishment in perpetuity of all present and future rights to
+this software under copyright law.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+For more information, please refer to <http://unlicense.org/>
+
+===============================================================================
+ALTERNATIVE 2 - MIT No Attribution
+===============================================================================
+Copyright 2020 David Reid
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------------------
+WavPack 5.6.6 — BSD-3-Clause
+external/sfizz/external/st_audiofile/thirdparty/wavpack/license.txt,
+nested submodule rev 07ffb331d23c16e2d2979370441f63ea722760bc
+--------------------------------------------------------------------------------
+
+                  Copyright (c) 1998 - 2022 David Bryant
+                          All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+    * Redistributions of source code must retain the above copyright notice,
+      this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright notice,
+      this list of conditions and the following disclaimer in the
+      documentation and/or other materials provided with the distribution.
+    * Neither the name of Conifer Software nor the names of its contributors
+      may be used to endorse or promote products derived from this software
+      without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+--------------------------------------------------------------------------------
+libaiff — MIT
+external/sfizz/external/st_audiofile/thirdparty/libaiff/LICENSE,
+nested submodule rev 78864a4a2e769e426be8cfd78ae7f5f72e236c33
+--------------------------------------------------------------------------------
+
+/*-
+ * Copyright (c) 2005, 2006, 2007, 2008 Marco Trillo
+ *
+ * Permission is hereby granted, free of charge, to any
+ * person obtaining a copy of this software and associated
+ * documentation files (the "Software"), to deal in the
+ * Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish,
+ * distribute, sublicense, and/or sell copies of the
+ * Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice
+ * shall be included in all copies or substantial portions of
+ * the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
+ * KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+ * WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+ * PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS
+ * OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+ * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+ * OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+ * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+--------------------------------------------------------------------------------
+stb_vorbis 1.22 — MIT / public domain dual license
+external/sfizz/external/st_audiofile/thirdparty/stb_vorbis/LICENSE at sfizz
+submodule rev 31b23c260b43815c36af48afc504261726146a3a
+--------------------------------------------------------------------------------
+
+This software is available under 2 licenses -- choose whichever you prefer.
+------------------------------------------------------------------------------
+ALTERNATIVE A - MIT License
+Copyright (c) 2017 Sean Barrett
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+------------------------------------------------------------------------------
+ALTERNATIVE B - Public Domain (www.unlicense.org)
+This is free and unencumbered software released into the public domain.
+Anyone is free to copy, modify, publish, use, compile, sell, or distribute this
+software, either in source code form or as a compiled binary, for any purpose,
+commercial or non-commercial, and by any means.
+In jurisdictions that recognize copyright laws, the author or authors of this
+software dedicate any and all copyright interest in the software to the public
+domain. We make this dedication for the benefit of the public at large and to
+the detriment of our heirs and successors. We intend this dedication to be an
+overt act of relinquishment in perpetuity of all present and future rights to
+this software under copyright law.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+--------------------------------------------------------------------------------
+nlohmann/json 3.11.3 — MIT
+LICENSE.MIT at upstream tag rev 9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03
+The vendored external/json/nlohmann/json.hpp is byte-identical to that
+revision's single_include/nlohmann/json.hpp. The single header incorporates
+five distinct SPDX-MIT copyright variants, all of which are retained here:
+
+SPDX-FileCopyrightText: 2013-2023 Niels Lohmann <https://nlohmann.me>
+
+SPDX-FileCopyrightText: 2013-2023 Niels Lohmann <https://nlohmann.me>
+SPDX-FileCopyrightText: 2016-2021 Evan Nemerson <evan@nemerson.com>
+
+SPDX-FileCopyrightText: 2013-2023 Niels Lohmann <https://nlohmann.me>
+SPDX-FileCopyrightText: 2018 The Abseil Authors
+
+SPDX-FileCopyrightText: 2008-2009 Björn Hoehrmann <bjoern@hoehrmann.de>
+SPDX-FileCopyrightText: 2013-2023 Niels Lohmann <https://nlohmann.me>
+
+SPDX-FileCopyrightText: 2009 Florian Loitsch <https://florian.loitsch.com/>
+SPDX-FileCopyrightText: 2013-2023 Niels Lohmann <https://nlohmann.me>
+
+Each variant says `SPDX-License-Identifier: MIT`; the complete shared MIT
+permission and disclaimer follow.
+--------------------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2013-2022 Niels Lohmann
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------------------
+pffft / FFTPACK — BSD-3-Clause-style license
+Notice at the head of external/pffft/pffft.h, vendored in Dusk Studio rev
+0c73f23620fcd2ab7499bcccf263f5b8a41fcbef
+--------------------------------------------------------------------------------
+
+Copyright (c) 2013  Julien Pommier ( pommier@modartt.com )
+
+Based on original fortran 77 code from FFTPACKv4 from NETLIB,
+authored by Dr Paul Swarztrauber of NCAR, in 1985.
+
+As confirmed by the NCAR fftpack software curators, the following
+FFTPACKv5 license applies to FFTPACKv4 sources. My changes are
+released under the same terms.
+
+FFTPACK license:
+
+http://www.cisl.ucar.edu/css/software/fftpack5/ftpk.html
+
+Copyright (c) 2004 the University Corporation for Atmospheric
+Research ("UCAR"). All rights reserved. Developed by NCAR's
+Computational and Information Systems Laboratory, UCAR,
+www.cisl.ucar.edu.
+
+Redistribution and use of the Software in source and binary forms,
+with or without modification, is permitted provided that the
+following conditions are met:
+
+- Neither the names of NCAR's Computational and Information Systems
+  Laboratory, the University Corporation for Atmospheric Research,
+  nor the names of its sponsors or contributors may be used to
+  endorse or promote products derived from this Software without
+  specific prior written permission.
+
+- Redistributions of source code must retain the above copyright
+  notices, this list of conditions, and the disclaimer below.
+
+- Redistributions in binary form must reproduce the above copyright
+  notice, this list of conditions, and the disclaimer below in the
+  documentation and/or other materials provided with the
+  distribution.
+
+THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING, BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE CONTRIBUTORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE
+SOFTWARE.
+
+--------------------------------------------------------------------------------
+DPF / DGL — ISC
+LICENSE at dusk-audio/DPF rev f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+--------------------------------------------------------------------------------
+
+Copyright (C) 2012-2025 Filipe Coelho <falktx@falktx.com>
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+
+--------------------------------------------------------------------------------
+pugl — ISC
+dgl/src/pugl-upstream/COPYING at dusk-audio/DPF rev
+f9fbc62af6fa7ce638a6f1e1482896c385a4955e, pugl submodule rev
+5e2621d714ddf1cb0f86e852f8ba5dffe04aa3a3
+--------------------------------------------------------------------------------
+
+Copyright 2011-2022 David Robillard <d@drobilla.net>
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THIS SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+DPF's dgl/src/pugl.cpp compiles common.c and internal.c, then the OpenGL and
+stub source for the selected Linux, macOS, or Windows backend. Recursing their
+headers at pugl rev 5e2621d714ddf1cb0f86e852f8ba5dffe04aa3a3
+produces the distinct source notices below. Every block ends with
+`SPDX-License-Identifier: ISC` and therefore uses the complete ISC permission
+and disclaimer immediately above.
+
+common.c, internal.c, internal.h, pugl.h, gl.h:
+Copyright 2012-2023 David Robillard <d@drobilla.net>
+
+platform.h:
+Copyright 2012-2025 David Robillard <d@drobilla.net>
+
+attributes.h, stub.h, types.h, win.h, win_gl.c, x11.h, x11_gl.c:
+Copyright 2012-2022 David Robillard <d@drobilla.net>
+
+macros.h:
+Copyright 2016-2023 David Robillard <d@drobilla.net>
+
+include/pugl/stub.h:
+Copyright 2019-2023 David Robillard <d@drobilla.net>
+
+x11.c:
+Copyright 2012-2023 David Robillard <d@drobilla.net>
+Copyright 2013 Robin Gareus <robin@gareus.org>
+Copyright 2011-2012 Ben Loftis, Harrison Consoles
+
+x11_stub.c and win_stub.c:
+Copyright 2012-2021 David Robillard <d@drobilla.net>
+
+mac.h:
+Copyright 2012-2020 David Robillard <d@drobilla.net>
+Copyright 2017 Hanspeter Portner <dev@open-music-kontrollers.ch>
+
+mac.m:
+Copyright 2012-2023 David Robillard <d@drobilla.net>
+Copyright 2017 Hanspeter Portner <dev@open-music-kontrollers.ch>
+
+mac_stub.m and mac_gl.m:
+Copyright 2019-2022 David Robillard <d@drobilla.net>
+
+win.c:
+Copyright 2012-2023 David Robillard <d@drobilla.net>
+
+--------------------------------------------------------------------------------
+DPF no-X11 Wayland OpenGL3 backend — ISC and MIT notices
+dgl/src/pugl.cpp HAVE_WAYLAND branch at dusk-audio/DPF rev
+f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+--------------------------------------------------------------------------------
+
+dpf__add_dgl_opengl3 defines DGL_OPENGL, so a supported Linux build without
+X11 compiles wayland.c, wayland.h, wayland_stub.c and wayland_gl.c, but not
+wayland_cairo.c. pugl.cpp also directly includes all four generated protocol C
+files and their four client headers. These 12 Wayland-specific files carry
+exactly seven distinct notices: the three ISC source notices and four MIT
+protocol notices below. Each protocol C/header pair has byte-identical notice
+text after removal of its generated comment-container markers; both explicit
+paths are recorded with every block.
+
+dgl/src/pugl-extra/wayland.c and dgl/src/pugl-extra/wayland.h:
+
+Copyright 2012-2023 David Robillard <d@drobilla.net>
+Copyright 2025 DISTRHO Plugin Framework contributors
+SPDX-License-Identifier: ISC
+
+dgl/src/pugl-extra/wayland_stub.c:
+
+Copyright 2012-2021 David Robillard <d@drobilla.net>
+Copyright 2025 DISTRHO Plugin Framework contributors
+SPDX-License-Identifier: ISC
+
+dgl/src/pugl-extra/wayland_gl.c:
+
+Copyright 2012-2022 David Robillard <d@drobilla.net>
+Copyright 2025 DISTRHO Plugin Framework contributors
+SPDX-License-Identifier: ISC
+
+The complete ISC permission and disclaimer for each of those three SPDX
+notices is reproduced in the pugl block immediately above.
+
+dgl/src/pugl-extra/wayland-protocols/xdg-shell-protocol.c and
+dgl/src/pugl-extra/wayland-protocols/xdg-shell-client-protocol.h:
+
+Copyright © 2008-2013 Kristian Høgsberg
+Copyright © 2013      Rafael Antognolli
+Copyright © 2013      Jasper St. Pierre
+Copyright © 2010-2013 Intel Corporation
+Copyright © 2015-2017 Samsung Electronics Co., Ltd
+Copyright © 2015-2017 Red Hat Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice (including the next
+paragraph) shall be included in all copies or substantial portions of the
+Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+dgl/src/pugl-extra/wayland-protocols/xdg-decoration-unstable-v1-protocol.c and
+dgl/src/pugl-extra/wayland-protocols/xdg-decoration-unstable-v1-client-protocol.h:
+
+Copyright © 2018 Simon Ser
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice (including the next
+paragraph) shall be included in all copies or substantial portions of the
+Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+dgl/src/pugl-extra/wayland-protocols/viewporter-protocol.c and
+dgl/src/pugl-extra/wayland-protocols/viewporter-client-protocol.h:
+
+Copyright © 2013-2016 Collabora, Ltd.
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice (including the next
+paragraph) shall be included in all copies or substantial portions of the
+Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+dgl/src/pugl-extra/wayland-protocols/fractional-scale-v1-protocol.c and
+dgl/src/pugl-extra/wayland-protocols/fractional-scale-v1-client-protocol.h:
+
+Copyright © 2022 Kenny Levinsen
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice (including the next
+paragraph) shall be included in all copies or substantial portions of the
+Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+--------------------------------------------------------------------------------
+NanoVG — zlib license
+dgl/src/nanovg/LICENSE.txt at dusk-audio/DPF rev
+f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+--------------------------------------------------------------------------------
+
+Copyright (c) 2013 Mikko Mononen memon@inside.org
+
+This software is provided 'as-is', without any express or implied
+warranty.  In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not
+claim that you wrote the original software. If you use this software
+in a product, an acknowledgment in the product documentation would be
+appreciated but is not required.
+2. Altered source versions must be plainly marked as such, and must not be
+misrepresented as being the original software.
+3. This notice may not be removed or altered from any source distribution.
+
+--------------------------------------------------------------------------------
+fontstash — zlib license
+Notice at the head of dgl/src/nanovg/fontstash.h at dusk-audio/DPF rev
+f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+--------------------------------------------------------------------------------
+
+Copyright (c) 2009-2013 Mikko Mononen memon@inside.org
+
+This software is provided 'as-is', without any express or implied
+warranty.  In no event will the authors be held liable for any damages
+arising from the use of this software.
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+1. The origin of this software must not be misrepresented; you must not
+   claim that you wrote the original software. If you use this software
+   in a product, an acknowledgment in the product documentation would be
+   appreciated but is not required.
+2. Altered source versions must be plainly marked as such, and must not be
+   misrepresented as being the original software.
+3. This notice may not be removed or altered from any source distribution.
+
+--------------------------------------------------------------------------------
+fontstash embedded UTF-8 decoder — MIT
+Notice at dgl/src/nanovg/fontstash.h:509-510 at dusk-audio/DPF rev
+f9fbc62af6fa7ce638a6f1e1482896c385a4955e. NanoVG.cpp compiles nanovg.c,
+which includes fontstash.h. The compiled 2010 decoder variation carries these
+exact source lines:
+
+Copyright (c) 2008-2010 Bjoern Hoehrmann <bjoern@hoehrmann.de>
+See http://bjoern.hoehrmann.de/utf-8/decoder/dfa/ for details.
+
+The linked source supplies the following complete MIT permission notice. Its
+license paragraph retains the original 2008-2009 range separately from the
+2010 variation's source attribution above:
+
+Copyright (c) 2008-2009 Bjoern Hoehrmann <bjoern@hoehrmann.de>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------------------
+stb_truetype — MIT / public domain dual license
+Notice at the foot of dgl/src/nanovg/stb_truetype.h at dusk-audio/DPF rev
+f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+--------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+This software is available under 2 licenses -- choose whichever you prefer.
+------------------------------------------------------------------------------
+ALTERNATIVE A - MIT License
+Copyright (c) 2017 Sean Barrett
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+------------------------------------------------------------------------------
+ALTERNATIVE B - Public Domain (www.unlicense.org)
+This is free and unencumbered software released into the public domain.
+Anyone is free to copy, modify, publish, use, compile, sell, or distribute this
+software, either in source code form or as a compiled binary, for any purpose,
+commercial or non-commercial, and by any means.
+In jurisdictions that recognize copyright laws, the author or authors of this
+software dedicate any and all copyright interest in the software to the public
+domain. We make this dedication for the benefit of the public at large and to
+the detriment of our heirs and successors. We intend this dedication to be an
+overt act of relinquishment in perpetuity of all present and future rights to
+this software under copyright law.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+stb_image — public-domain dedication and fallback permission
+License notice in dgl/src/nanovg/stb_image.h at dusk-audio/DPF rev
+f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+--------------------------------------------------------------------------------
+
+This software is in the public domain. Where that dedication is not
+recognized, you are granted a perpetual, irrevocable license to copy,
+distribute, and modify this file as you see fit.
+
+--------------------------------------------------------------------------------
+DejaVu Sans — Bitstream Vera Fonts License and Arev Fonts License
+dgl/src/resources/LICENSE-DejaVuSans.ttf.txt at dusk-audio/DPF rev
+f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+--------------------------------------------------------------------------------
+
+Fonts are (c) Bitstream (see below). DejaVu changes are in public domain.
+Glyphs imported from Arev fonts are (c) Tavmjong Bah (see below)
+
+Bitstream Vera Fonts Copyright
+------------------------------
+
+Copyright (c) 2003 by Bitstream, Inc. All Rights Reserved. Bitstream Vera is
+a trademark of Bitstream, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of the fonts accompanying this license ("Fonts") and associated
+documentation files (the "Font Software"), to reproduce and distribute the
+Font Software, including without limitation the rights to use, copy, merge,
+publish, distribute, and/or sell copies of the Font Software, and to permit
+persons to whom the Font Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright and trademark notices and this permission notice shall
+be included in all copies of one or more of the Font Software typefaces.
+
+The Font Software may be modified, altered, or added to, and in particular
+the designs of glyphs or characters in the Fonts may be modified and
+additional glyphs or characters may be added to the Fonts, only if the fonts
+are renamed to names not containing either the words "Bitstream" or the word
+"Vera".
+
+This License becomes null and void to the extent applicable to Fonts or Font
+Software that has been modified and is distributed under the "Bitstream
+Vera" names.
+
+The Font Software may be sold as part of a larger software package but no
+copy of one or more of the Font Software typefaces may be sold by itself.
+
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF COPYRIGHT, PATENT,
+TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL BITSTREAM OR THE GNOME
+FOUNDATION BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, INCLUDING
+ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL DAMAGES,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF
+THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM OTHER DEALINGS IN THE
+FONT SOFTWARE.
+
+Except as contained in this notice, the names of Gnome, the Gnome
+Foundation, and Bitstream Inc., shall not be used in advertising or
+otherwise to promote the sale, use or other dealings in this Font Software
+without prior written authorization from the Gnome Foundation or Bitstream
+Inc., respectively. For further information, contact: fonts at gnome dot
+org.
+
+Arev Fonts Copyright
+------------------------------
+
+Copyright (c) 2006 by Tavmjong Bah. All Rights Reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the fonts accompanying this license ("Fonts") and
+associated documentation files (the "Font Software"), to reproduce
+and distribute the modifications to the Bitstream Vera Font Software,
+including without limitation the rights to use, copy, merge, publish,
+distribute, and/or sell copies of the Font Software, and to permit
+persons to whom the Font Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright and trademark notices and this permission notice
+shall be included in all copies of one or more of the Font Software
+typefaces.
+
+The Font Software may be modified, altered, or added to, and in
+particular the designs of glyphs or characters in the Fonts may be
+modified and additional glyphs or characters may be added to the
+Fonts, only if the fonts are renamed to names not containing either
+the words "Tavmjong Bah" or the word "Arev".
+
+This License becomes null and void to the extent applicable to Fonts
+or Font Software that has been modified and is distributed under the
+"Tavmjong Bah Arev" names.
+
+The Font Software may be sold as part of a larger software package but
+no copy of one or more of the Font Software typefaces may be sold by
+itself.
+
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL
+TAVMJONG BAH BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
+OTHER DEALINGS IN THE FONT SOFTWARE.
+
+Except as contained in this notice, the name of Tavmjong Bah shall not
+be used in advertising or otherwise to promote the sale, use or other
+dealings in this Font Software without prior written authorization
+from Tavmjong Bah. For further information, contact: tavmjong @ free
+. fr.
+
+--------------------------------------------------------------------------------
+Khronos GL headers — MIT notices
+dgl/src/khronos/GL/glext.h and dgl/src/khronos/KHR/khrplatform.h at
+dusk-audio/DPF rev f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+--------------------------------------------------------------------------------
+
+glext.h carries this exact notice:
+
+Copyright 2013-2026 The Khronos Group Inc.
+SPDX-License-Identifier: MIT
+
+khrplatform.h carries the full permission notice:
+
+Copyright (c) 2008-2018 The Khronos Group Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and/or associated documentation files (the
+"Materials"), to deal in the Materials without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Materials, and to
+permit persons to whom the Materials are furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be included
+in all copies or substantial portions of the Materials.
+
+THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+MATERIALS OR THE USE OR OTHER DEALINGS IN THE MATERIALS.
+
+--------------------------------------------------------------------------------
+DPF-Widgets — ISC
+LICENSE at dusk-audio/DPF-Widgets rev
+730da6397904da66d99667c1cb30fc77fc3d794a
+--------------------------------------------------------------------------------
+
+DISTRHO Plugin Framework (DPF)
+Copyright (C) 2012-2021 Filipe Coelho <falktx@falktx.com>
+
+Permission to use, copy, modify, and/or distribute this software for any purpose with
+or without fee is hereby granted, provided that the above copyright notice and this
+permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD
+TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN
+NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL
+DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER
+IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+opengl/DearImGui.cpp carries this distinct complete source notice:
+
+Dear ImGui for DPF
+Copyright (C) 2021 Jean Pierre Cimalando <jp-dev@inbox.ru>
+Copyright (C) 2021-2025 Filipe Coelho <falktx@falktx.com>
+
+Permission to use, copy, modify, and/or distribute this software for any purpose with
+or without fee is hereby granted, provided that the above copyright notice and this
+permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD
+TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN
+NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL
+DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER
+IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+The included opengl/DearImGui.hpp carries the same complete notice with the
+earlier Filipe Coelho range:
+
+Dear ImGui for DPF
+Copyright (C) 2021 Jean Pierre Cimalando <jp-dev@inbox.ru>
+Copyright (C) 2021-2024 Filipe Coelho <falktx@falktx.com>
+
+Permission to use, copy, modify, and/or distribute this software for any purpose with
+or without fee is hereby granted, provided that the above copyright notice and this
+permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD
+TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN
+NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL
+DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER
+IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+--------------------------------------------------------------------------------
+Dear ImGui 1.91.9b — MIT
+opengl/DearImGui/LICENSE.txt at dusk-audio/DPF-Widgets rev
+730da6397904da66d99667c1cb30fc77fc3d794a
+--------------------------------------------------------------------------------
+
+The MIT License (MIT)
+
+Copyright (c) 2014-2025 Omar Cornut
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------------------
+imgui-knobs — MIT
+opengl/DearImGuiKnobs/LICENSE at dusk-audio/DPF-Widgets rev
+730da6397904da66d99667c1cb30fc77fc3d794a
+--------------------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2022 Simon Altschuler
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------------------
+imgui_toggle — ISC-style permission grant
+opengl/DearImGuiToggle/LICENSE at dusk-audio/DPF-Widgets rev
+730da6397904da66d99667c1cb30fc77fc3d794a
+--------------------------------------------------------------------------------
+
+Copyright © 2022 nitz — chris marc dailey https://cmd.wtf
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+--------------------------------------------------------------------------------
+ProggyClean.ttf — MIT
+LICENSE at bluescan/proggyfonts rev
+139ec08a38096161291792313ef5803fc4f0e37b. Dear ImGui's 9,583-byte compressed
+stream expands to 41,208 bytes. Its Adler-32 is 0x48f962f7 and its SHA-256 is
+527d2a443ce051f93f7e77b855609722b8cb220a9f104b4aa037be5c90b71324; all three
+values match that revision's ProggyClean.ttf byte for byte at
+dusk-audio/DPF-Widgets rev 730da6397904da66d99667c1cb30fc77fc3d794a.
+--------------------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2004, 2005 Tristan Grimmer
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------------------
+CLAP 1.2.9 — MIT
+external/clap/LICENSE, submodule rev
+cd94482ba5941ae410809b6fbaed3bc851044270
+--------------------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2021 Alexandre BIQUE
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+external/clap/include/clap/clap.h, which is compiled into the native host,
+carries this distinct complete MIT notice:
+
+Copyright (c) 2014...2022 Alexandre BIQUE <bique.alexandre@gmail.com>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
