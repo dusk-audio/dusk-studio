@@ -2299,6 +2299,67 @@ bool ChannelStripComponent::isPluginEditorOpen() const noexcept
     return pluginEditorModal.isOpen();
 }
 
+void ChannelStripComponent::parentHierarchyChanged()
+{
+    // A fullscreen transition can briefly remove the top-level peer before the
+    // replacement arrives. Keep cached editors alive across that null interval,
+    // and rebuild only when there is a genuinely different realised peer.
+    const auto& modalStack = EmbeddedModal::activeModalStack();
+    auto* peer = getPeer();
+    const auto transition = observeNativeEditorPeer (
+        lastSeenPeerId,
+        peer != nullptr ? peer->getUniqueID() : 0,
+        static_cast<const void*> (pluginEditorModal.getBody()),
+        ! modalStack.empty() && modalStack.back() == &pluginEditorModal,
+        {
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+            static_cast<const void*> (clapEditor.get()),
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+            static_cast<const void*> (lv2Editor.get()),
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+            static_cast<const void*> (vst3Editor.get()),
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+            static_cast<const void*> (auEditor.get()),
+#endif
+        });
+
+    if (! transition.rebuildNativeEditors)
+        return;
+
+    // Only reopen when the modal is actually borrowing one of the native editor
+    // bodies. JUCE, OOP and multisample editors do not use these wrappers and
+    // must remain undisturbed by this native-peer repair path.
+    // EmbeddedModal borrows its body, so detach it before destroying a wrapper.
+    // Hidden cached wrappers also need rebuilding: their native child remains
+    // tied to the old peer even though the modal is currently closed.
+    if (transition.reopenNativeEditorNow || transition.deferNativeEditorReopen)
+        pluginEditorModal.close();
+
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    clapEditor.reset();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    lv2Editor.reset();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    vst3Editor.reset();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    auEditor.reset();
+#endif
+
+    if (transition.deferNativeEditorReopen)
+        nativeEditorReopenPending = true;
+    else if (transition.reopenNativeEditorNow)
+    {
+        nativeEditorReopenPending = false;
+        openPluginEditor();
+    }
+}
+
 void ChannelStripComponent::openPluginEditor()
 {
     if (isPluginEditorOpen()) return;
@@ -2596,6 +2657,10 @@ void ChannelStripComponent::openPluginEditor()
 
 void ChannelStripComponent::closePluginEditor()
 {
+    // Cancels a peer-recreation reopen deferred behind another modal. The peer
+    // callback closes EmbeddedModal directly so its internal repair survives.
+    nativeEditorReopenPending = false;
+
    #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
     // Mac OOP floating-window path (no embed available): the editor
     // window lives in the child process; the parent has no modal body
@@ -3818,6 +3883,15 @@ void ChannelStripComponent::timerCallback()
     // Plugin-slot button reflects the slot's current load state. Cheap -
     // just an atomic-pointer read + string compare against the cached name.
     refreshPluginSlotButton();
+
+    // A native editor that was covered during peer recreation must stay behind
+    // that cover. Reopen only after every modal has gone, and consume the request
+    // before attempting so a failed attach cannot retry forever.
+    if (nativeEditorReopenPending && EmbeddedModal::activeModalStack().empty())
+    {
+        nativeEditorReopenPending = false;
+        openPluginEditor();
+    }
 
     // PRINT<->FREEZE flips on an audio track the moment a recording lands (or its
     // last region is deleted). Idempotent + cheap (setButtonText/Colour are

@@ -40,6 +40,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent& e) override;
+    void parentHierarchyChanged() override;
 
     // Wired to TapeStrip selection so A/S/X target the just-touched strip
     // even when no region was clicked.
@@ -340,6 +341,14 @@ private:
     EmbeddedModal pluginEditorModal;
     std::unique_ptr<juce::AudioProcessorEditor> pluginEditor;
     juce::AudioProcessor* pluginEditorOwner = nullptr;
+
+    // Unique ID of the top-level peer the cached native editor wrappers were
+    // embedded into. Fullscreen can replace that peer without replacing this
+    // component tree; the ID cannot be hidden by allocator address reuse.
+    std::uint32_t lastSeenPeerId = 0;
+    // A peer rebuild that happened under a covering modal reopens only after the
+    // app-wide modal stack empties, so the editor cannot surface above the cover.
+    bool nativeEditorReopenPending = false;
 
     // Native CLAP insert editor (shares the strip's NativeClapSlot instance). Kept
     // alive across modal opens - showBorrowed hides on close rather than destroying
