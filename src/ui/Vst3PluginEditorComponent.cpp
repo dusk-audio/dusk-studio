@@ -32,6 +32,7 @@ Vst3PluginEditorComponent::~Vst3PluginEditorComponent()
     // container it is attached to call into the module that was unloaded with
     // the instance.
     if (ownerIsStale()) editor.abandonPluginAndContainer();
+    else                editor.quiesce();
     editor.close();
 }
 
@@ -174,9 +175,7 @@ void Vst3PluginEditorComponent::abandonInstance()
     // window-detach hooks are where plugin views tear their listeners down.
     // Giving it up instead makes the close a no-op on Cocoa; on X11 close()
     // still destroys the host window and display.
-    if (ownerIsStale()) editor.abandonPluginAndContainer();
-    else                editor.abandonPlugin();
-    editor.close();
+    abandonNativeEditorInstance (editor, ownerIsStale());
     ownerSlot = nullptr;
     abandoned = true;
     loaded = embedded = embedding = false;
@@ -266,6 +265,7 @@ AuPluginEditorComponent::~AuPluginEditorComponent()
 {
     stopTimer();
     if (ownerIsStale()) editor.abandonPluginAndContainer();
+    else                editor.quiesce();
     editor.close();
 }
 
@@ -366,9 +366,7 @@ void AuPluginEditorComponent::abandonInstance()
     // Same split as the VST3 component: a stale owner means the unit is already
     // disposed, so the container detach would run the plugin view's listener
     // teardown against it, leaving close() nothing to do afterwards.
-    if (ownerIsStale()) editor.abandonPluginAndContainer();
-    else                editor.abandonPlugin();
-    editor.close();
+    abandonNativeEditorInstance (editor, ownerIsStale());
     ownerSlot = nullptr;
     abandoned = true;
     loaded = embedded = embedding = false;

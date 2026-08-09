@@ -115,13 +115,25 @@ void ClapEditor::hide()
     mapped = false;
 }
 
+void ClapEditor::quiesce() noexcept
+{
+    // setHidden: propagates viewDidHide through the plugin subtree, so this is
+    // deliberately a live-plugin phase rather than stale-owner cleanup.
+    @try
+    {
+        if (auto* container = containerView (containerHandle); container != nil && mapped)
+            [container setHidden:YES];
+    }
+    @catch (NSException*)
+    {
+    }
+    mapped = false;
+}
+
 void ClapEditor::abandonPluginAndContainer() noexcept
 {
     abandonPlugin();
-    // Hide rather than detach: the plugin's view is still a subview and must not
-    // leave the window.
-    @try { if (mapped) [containerView (containerHandle) setHidden:YES]; }
-    @catch (NSException*) {}
+    // The plugin is already disposed: do not hide, detach or release this view.
     platformContext = nullptr;
     containerHandle = 0;
     mapped          = false;

@@ -4,6 +4,7 @@
 #include "../src/ui/NativeEditorOwner.h"
 
 #include <memory>
+#include <vector>
 
 using duskstudio::NativeEditorOwner;
 
@@ -36,6 +37,25 @@ struct FakeEditor
     int& abandonCount;
     bool stale     = false;
     bool abandoned = false;
+};
+
+enum class TeardownCall
+{
+    Quiesce,
+    AbandonPlugin,
+    AbandonPluginAndContainer,
+    Close,
+};
+
+struct FakePlatformEditor
+{
+    void quiesce() { calls.push_back (TeardownCall::Quiesce); }
+    void abandonPlugin() { calls.push_back (TeardownCall::AbandonPlugin); }
+    void abandonPluginAndContainer()
+    { calls.push_back (TeardownCall::AbandonPluginAndContainer); }
+    void close() { calls.push_back (TeardownCall::Close); }
+
+    std::vector<TeardownCall> calls;
 };
 
 // Minimal traits for a real NativeInsertSlot instantiation - enough to reach
@@ -124,6 +144,32 @@ TEST_CASE ("NativeInsertSlot bumps its generation on every identity change")
     slot.leakForShutdown();
     REQUIRE (slot.generation() != afterReload);
     REQUIRE (owner.isStale (slot));
+}
+
+TEST_CASE ("AbandonInstance quiesces only while the plugin is live")
+{
+    FakePlatformEditor editor;
+
+    SECTION ("live owner hides before dropping plugin handles")
+    {
+        duskstudio::abandonNativeEditorInstance (editor, false);
+        const std::vector<TeardownCall> expected {
+            TeardownCall::Quiesce,
+            TeardownCall::AbandonPlugin,
+            TeardownCall::Close,
+        };
+        REQUIRE (editor.calls == expected);
+    }
+
+    SECTION ("stale owner sends no container message")
+    {
+        duskstudio::abandonNativeEditorInstance (editor, true);
+        const std::vector<TeardownCall> expected {
+            TeardownCall::AbandonPluginAndContainer,
+            TeardownCall::Close,
+        };
+        REQUIRE (editor.calls == expected);
+    }
 }
 
 TEST_CASE ("syncNativeEditorOwner drops a stale editor and keeps a live one")

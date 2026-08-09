@@ -26,24 +26,21 @@ public:
     void reveal();
     void hide();
 
+    // Hide the host container while the unit is still valid. AbandonInstance
+    // callers must do this before the slot disposes the Audio Unit, because
+    // setHidden: notifies the embedded Cocoa view.
+    void quiesce() noexcept;
+
     // The unit is going away but is STILL ALIVE: drop the plugin's view without
     // releasing it, because its -dealloc runs listener teardown against the
     // unit. close() still releases the container, which only messages the
     // detached subtree while that unit is valid.
     void abandonPlugin() noexcept;
 
-    // Same, for an ALREADY-disposed unit: nothing may reach plugin code again,
-    // which costs the container as well - the plugin's view is still a subview,
-    // so detaching or releasing it runs AUListenerDispose /
-    // AudioUnitRemovePropertyListener from the window-detach hooks against the
-    // disposed unit. It is hidden and then given up unreleased instead: that
-    // trades one bounded viewDidHide for the unbounded drawRect/displayLayer a
-    // parented dead view takes on every window redraw, and the visible guard
-    // means the usual reap (lane already hidden) sends no message at all. What
-    // it does not fix is the leaked view's own timers and listeners. close()
-    // afterwards is a genuine no-op, and each stale reap strands one container
-    // plus the plugin's entire view hierarchy for the life of the process, so
-    // repeated undo/redo or session loads with an editor open accumulate them.
+    // Same, for an ALREADY-disposed unit: only clear retained references. The
+    // plugin's view is still a subview, so no Cocoa message - including a late
+    // setHidden: - is safe here. close() afterwards is a genuine no-op; the
+    // container and plugin hierarchy remain leaked for the process lifetime.
     void abandonPluginAndContainer() noexcept;
 
     void close();

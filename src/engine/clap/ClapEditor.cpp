@@ -145,6 +145,11 @@ void ClapEditor::hide()
     mapped = false;
 }
 
+void ClapEditor::quiesce() noexcept
+{
+    hide();
+}
+
 void ClapEditor::abandonPluginAndContainer() noexcept
 {
     // The plugin's window is a foreign X11 child of ours: destroying the host

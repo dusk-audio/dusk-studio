@@ -211,6 +211,11 @@ void Vst3Editor::hide()
     impl->mapped = false;
 }
 
+void Vst3Editor::quiesce() noexcept
+{
+    hide();
+}
+
 void Vst3Editor::abandonPlugin() noexcept
 {
     (void) impl->view.take();

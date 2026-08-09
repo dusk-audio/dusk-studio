@@ -23,6 +23,7 @@ ClapPluginEditorComponent::~ClapPluginEditorComponent()
     // container the plugin's view still sits in call into the bundle that was
     // unloaded with the instance.
     if (ownerIsStale()) editor.abandonPluginAndContainer();
+    else                editor.quiesce();
     editor.close();
     if (ownsInstance) instance.deactivate();   // attach() mode: the slot owns it
 }
@@ -203,9 +204,7 @@ void ClapPluginEditorComponent::abandonInstance()
     // inside, and nothing else retains that view. Giving it up instead makes the
     // close a no-op on Cocoa; on X11 close() still destroys the host window and
     // display.
-    if (ownerIsStale()) editor.abandonPluginAndContainer();
-    else                editor.abandonPlugin();
-    editor.close();
+    abandonNativeEditorInstance (editor, ownerIsStale());
     ownerSlot = nullptr;
     abandoned = true;
     loaded = embedded = embedding = false;

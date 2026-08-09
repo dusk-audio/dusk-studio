@@ -183,6 +183,21 @@ void AuEditor::hide()
     impl->visible = false;
 }
 
+void AuEditor::quiesce() noexcept
+{
+    // setHidden: propagates viewDidHide through the plugin subtree, so this is
+    // deliberately a live-instance phase rather than stale-owner cleanup.
+    @try
+    {
+        if (impl->container != nil && impl->visible)
+            [impl->container setHidden:YES];
+    }
+    @catch (NSException*)
+    {
+    }
+    impl->visible = false;
+}
+
 void AuEditor::pump()
 {
     if (impl->pluginView == nil) return;
@@ -205,10 +220,7 @@ void AuEditor::abandonPlugin() noexcept
 void AuEditor::abandonPluginAndContainer() noexcept
 {
     abandonPlugin();
-    // Hide rather than detach: the plugin's view is still a subview and must not
-    // leave the window.
-    @try { if (impl->visible) [impl->container setHidden:YES]; }
-    @catch (NSException*) {}
+    // The unit is already disposed: do not hide, detach or release this view.
     impl->container = nil;
     impl->visible   = false;
 }

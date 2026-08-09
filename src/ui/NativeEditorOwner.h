@@ -44,27 +44,42 @@ enum class NativeEditorTeardown
     // plugin's own gui->destroy, so a later re-open creates a fresh GUI.
     Destroy,
     // The caller destroys the instance immediately afterwards (session restore).
-    // Drop our plugin-side handles rather than run the plugin's teardown - a
-    // foreign-toolkit GUI can hang there, and the plugin releases it along with
-    // itself - but still close the container + display this host owns. On
-    // Cocoa that close messages the plugin's subview, so it is only safe while
-    // the instance lives; a stale owner takes abandonPluginAndContainer() and
-    // gives the container up unclosed there. X11 closes on both paths (the
-    // host window is foreign to the plugin), and the LV2 editor still runs
-    // the plain abandon on Cocoa (its suil teardown needs its own treatment).
+    // This MUST run while the instance is still live: first quiesce the native
+    // container, because hiding a Cocoa container notifies the plugin view, then
+    // drop plugin-side handles and close host-owned resources. A stale-owner reap
+    // is only a fail-safe; it may abandon retained Cocoa references but must not
+    // hide, detach or release them after the plugin/module has gone.
     AbandonInstance,
     // The process is exiting: leak the GUI (it hangs in its own destructor)
     // together with the container + display it is still drawing into.
     LeakForExit,
 };
 
+// Enforce the AbandonInstance ordering above. The normal path is called before
+// slot disposal and may safely hide the native container; stale cleanup must
+// never use that as a late opportunity to touch the embedded Cocoa hierarchy.
+template <typename PlatformEditor>
+void abandonNativeEditorInstance (PlatformEditor& editor, bool ownerIsStale)
+{
+    if (ownerIsStale)
+    {
+        editor.abandonPluginAndContainer();
+    }
+    else
+    {
+        editor.quiesce();
+        editor.abandonPlugin();
+    }
+    editor.close();
+}
+
 // Drop `editor` once its instance is no longer the slot's live one, or once it
 // has already abandoned itself on one of its own guards - abandoning unbinds the
 // slot, so staleness alone stops reporting and the component would sit there as
 // a dead rectangle. Order is load-bearing: the editor abandons its plugin-side
-// handles first - on Cocoa a stale owner gives up the host container too - then
-// `detach` does the owner's own bookkeeping - dismissing a modal that borrows
-// the component, removing it as a child - while it is still alive.
+// handles first - on Cocoa a stale owner gives up the host container without
+// messaging it - then `detach` does the owner's own bookkeeping, dismissing a
+// modal that borrows the component and removing it as a child while it is alive.
 template <typename EditorComponent, typename Detach>
 void syncNativeEditorOwner (std::unique_ptr<EditorComponent>& editor, Detach&& detach)
 {

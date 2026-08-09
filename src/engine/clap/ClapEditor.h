@@ -36,6 +36,11 @@ public:
     void setBounds (int x, int y, int w, int h);
     void reveal();
     void hide();
+
+    // Hide the host container while the plugin/module are still valid. Cocoa
+    // abandonment must quiesce before disposal because setHidden: notifies the
+    // embedded plugin view.
+    void quiesce() noexcept;
     void close();
 
     // Linux geometry diagnostics. macOS uses logical component bounds directly,
@@ -60,20 +65,10 @@ public:
         created = embedded = false;
     }
 
-    // Same, for an ALREADY-destroyed plugin: nothing may reach plugin code
-    // again. On Cocoa that costs the container as well - close() releases it
-    // with the plugin's view still inside and nothing else retaining that view,
-    // so the release can run its -dealloc against a disposed instance in an
-    // unloaded module. It is hidden and then given up unreleased instead: that
-    // trades one bounded viewDidHide for the unbounded drawRect/displayLayer a
-    // parented dead view takes on every window redraw, and the mapped guard
-    // means the usual reap (lane already hidden) sends no message at all. What
-    // it does not fix is the leaked view's own timers and listeners. Each stale
-    // reap strands one container plus the plugin's entire view hierarchy for the
-    // life of the process, so repeated undo/redo or session loads with an editor
-    // open accumulate them. X11 has no such hazard (the plugin's window is a
-    // foreign child): there this is exactly abandonPlugin(), and close() still
-    // destroys the host window and display.
+    // Same, for an ALREADY-destroyed plugin: only clear retained references on
+    // Cocoa. No late setHidden:, detach or release may message the embedded view.
+    // X11 has no in-process child-view hazard, so it still closes its host window
+    // and display after dropping the plugin handles.
     void abandonPluginAndContainer() noexcept;
 
     // Message thread, ~60 Hz: apply queued GUI callbacks, pump the plugin's
