@@ -54,14 +54,46 @@ inline std::optional<PluginDescriptor> descriptorFromObject (
     return std::nullopt;
 }
 
-// Bump whenever the JSON shape gains a NEW required field or changes
-// the meaning of an existing one. Adding optional fields that default
-// sensibly when absent does NOT require a bump - the load path
-// gracefully ignores unknown keys.
+// Bump whenever an older build could misread or silently discard meaningful
+// data from a newer session. Optional fields that are safe to lose do not
+// require a bump; persistent take provenance is not safe to lose on re-save.
 // Loader rejects sessions with version > kFormatVersion (newer Dusk Studio
 // can read older files via migrateSession; older Dusk Studio refusing
 // newer files is safer than silently dropping fields).
-constexpr int kFormatVersion = 4;
+constexpr int kFormatVersion = 5;
+
+inline bool hasTakeProvenance (const TakeProvenance& provenance) noexcept
+{
+    return provenance.capturedAtMs > 0
+        || provenance.loopPassOrdinal > 0
+        || provenance.partialPass;
+}
+
+inline void addTakeProvenance (JObj& parent, const TakeProvenance& provenance)
+{
+    if (! hasTakeProvenance (provenance)) return;
+
+    JObj value;
+    if (provenance.capturedAtMs > 0)
+        value["captured_at_ms"] = provenance.capturedAtMs;
+    if (provenance.loopPassOrdinal > 0)
+        value["loop_pass"] = provenance.loopPassOrdinal;
+    if (provenance.partialPass)
+        value["partial"] = true;
+    parent["take_provenance"] = std::move (value);
+}
+
+inline TakeProvenance parseTakeProvenance (const nlohmann::json& parent) noexcept
+{
+    const auto& value = json::child (parent, "take_provenance");
+    TakeProvenance provenance;
+    provenance.capturedAtMs = std::max (
+        (std::int64_t) 0, json::getInt64 (value, "captured_at_ms", 0));
+    provenance.loopPassOrdinal = std::max (
+        0, json::getInt (value, "loop_pass", 0));
+    provenance.partialPass = json::getBool (value, "partial", false);
+    return provenance;
+}
 
 // Store a float from JSON only when it's finite, so a corrupt or hand-edited
 // session.json can't push NaN / inf into a DSP parameter - the in-memory
@@ -262,6 +294,15 @@ bool migrateSession (nlohmann::json& root, int from)
                 // structured saves instead of silently dropping plugin slots.
                 if (root.is_object())
                     root["version"] = 4;
+                ++v;
+                break;
+
+            case 4:
+                // v4 -> v5: audio and MIDI takes may now carry optional
+                // capture provenance. Absent data is the all-default value,
+                // so legacy payloads only need the version stamp advanced.
+                if (root.is_object())
+                    root["version"] = 5;
                 ++v;
                 break;
 
@@ -647,6 +688,7 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
             rObj["label"] = toStd (r.label);
         if (r.muted)  rObj["muted"]  = true;
         if (r.locked) rObj["locked"] = true;
+        addTakeProvenance (rObj, r.provenance);
 
         // Take history. Empty array on the common case (no overdubs); only
         // serialised when at least one prior take has been captured to keep
@@ -660,6 +702,7 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
                 tObj["file"]          = toStd (portablePath (take.file, sessionDir));
                 tObj["source_offset"] = (std::int64_t) take.sourceOffset;
                 tObj["length"]        = (std::int64_t) take.lengthInSamples;
+                addTakeProvenance (tObj, take.provenance);
                 prior.push_back (std::move (tObj));
             }
             rObj["previous_takes"] = std::move (prior);
@@ -720,6 +763,7 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
                 rObj["label"] = toStd (r.label);
             if (r.muted)  rObj["muted"]  = true;
             if (r.locked) rObj["locked"] = true;
+            addTakeProvenance (rObj, r.provenance);
 
             // BPM-change semantics (DuskStudio.md §5b). Default is locked,
             // so emit only when the user has explicitly unlocked. recorded_at_bpm
@@ -738,6 +782,7 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
                 {
                     JObj tObj;
                     tObj["length_ticks"] = (std::int64_t) take.lengthInTicks;
+                    addTakeProvenance (tObj, take.provenance);
                     JObj tnotes = JObj::array();
                     for (const auto& n : take.notes)
                     {
@@ -1347,6 +1392,7 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
             r.label           = json::getString (rv, "label");
             r.muted           = json::getBool (rv, "muted", false);
             r.locked          = json::getBool (rv, "locked", false);
+            r.provenance      = parseTakeProvenance (rv);
 
             {
                 const auto& prior = json::array (rv, "previous_takes");
@@ -1358,6 +1404,7 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
                                                                  sessionDir, missingFiles);
                     take.sourceOffset    = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (tv, "source_offset", 0));
                     take.lengthInSamples = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (tv, "length", 0));
+                    take.provenance      = parseTakeProvenance (tv);
                     r.previousTakes.push_back (std::move (take));
                 }
             }
@@ -1422,6 +1469,7 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
             r.label           = json::getString (rv, "label");
             r.muted           = json::getBool (rv, "muted", false);
             r.locked          = json::getBool (rv, "locked", false);
+            r.provenance      = parseTakeProvenance (rv);
 
             // tempo_lock defaults true (spec §5b: locked is the default).
             // recorded_at_bpm defaults to the session's tempo at load time,
@@ -1445,6 +1493,7 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
                     if (! tv.is_object()) continue;
                     MidiTakeRef take;
                     take.lengthInTicks = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (tv, "length_ticks", 0));
+                    take.provenance = parseTakeProvenance (tv);
                     parseNotes (json::array (tv, "notes"), take.notes);
                     parseCcs   (json::array (tv, "ccs"),   take.ccs);
                     r.previousTakes.push_back (std::move (take));

@@ -8,6 +8,7 @@
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <type_traits>
 #include <vector>
 #include "AtomicSnapshot.h"
 #include "MidiBindings.h"
@@ -309,6 +310,16 @@ struct ChannelStripParams
     static constexpr float kBandQMin = 0.4f, kBandQMax = 4.0f;
 };
 
+struct TakeProvenance
+{
+    std::int64_t capturedAtMs = 0;
+    int loopPassOrdinal = 0;
+    bool partialPass = false;
+};
+
+static_assert (std::is_trivially_copyable<TakeProvenance>::value,
+               "TakeProvenance must remain trivially copyable");
+
 // Take-history slot - timeline position is NOT stored so rotating
 // preserves the region's timelineStart (same spot in the song).
 struct TakeRef
@@ -316,6 +327,7 @@ struct TakeRef
     juce::File file;
     std::int64_t sourceOffset    = 0;
     std::int64_t lengthInSamples = 0;
+    TakeProvenance provenance;
 };
 
 // 480 PPQN matches every modern DAW + .mid convention; high enough
@@ -622,6 +634,7 @@ struct MidiTakeRef
     std::int64_t           lengthInTicks = 0;
     std::vector<MidiNote> notes;
     std::vector<MidiCc>   ccs;
+    TakeProvenance provenance;
 };
 
 struct MidiRegion
@@ -632,6 +645,7 @@ struct MidiRegion
 
     std::vector<MidiNote> notes;
     std::vector<MidiCc>   ccs;
+    TakeProvenance provenance;
 
     // Front = next to surface on cycle. Same semantics as AudioRegion.
     std::vector<MidiTakeRef> previousTakes;
@@ -651,6 +665,28 @@ struct MidiRegion
     // Conversion anchor for tempo-locked retime.
     double recordedAtBPM = 120.0;
 };
+
+inline MidiTakeRef makeMidiTakeRef (const MidiRegion& region)
+{
+    return { region.lengthInTicks, region.notes, region.ccs, region.provenance };
+}
+
+inline void applyMidiTakeRef (MidiRegion& region, const MidiTakeRef& take)
+{
+    region.lengthInTicks = take.lengthInTicks;
+    region.notes = take.notes;
+    region.ccs = take.ccs;
+    region.provenance = take.provenance;
+}
+
+inline void swapMidiTakePayload (MidiRegion& region, MidiTakeRef& take)
+{
+    using std::swap;
+    swap (region.lengthInTicks, take.lengthInTicks);
+    swap (region.notes, take.notes);
+    swap (region.ccs, take.ccs);
+    swap (region.provenance, take.provenance);
+}
 
 // All shapes: shape(0)=0, shape(1)=1. EqualPower is constant-power for
 // crossfades. RaisedCosine has zero slope at both endpoints - the right
@@ -715,6 +751,8 @@ struct AudioRegion
     // processing so strip EQ/comp sees the user's chosen level.
     float gainDb = 0.0f;
 
+    TakeProvenance provenance;
+
     // Default-constructed (transparent) = "use track colour".
     juce::Colour customColour;
     juce::String label;
@@ -731,6 +769,29 @@ struct AudioRegion
     // Front = next to surface on cycle.
     std::vector<TakeRef> previousTakes;
 };
+
+inline TakeRef makeAudioTakeRef (const AudioRegion& region)
+{
+    return { region.file, region.sourceOffset, region.lengthInSamples,
+             region.provenance };
+}
+
+inline void applyAudioTakeRef (AudioRegion& region, const TakeRef& take)
+{
+    region.file = take.file;
+    region.sourceOffset = take.sourceOffset;
+    region.lengthInSamples = take.lengthInSamples;
+    region.provenance = take.provenance;
+}
+
+inline void swapAudioTakePayload (AudioRegion& region, TakeRef& take)
+{
+    using std::swap;
+    swap (region.file, take.file);
+    swap (region.sourceOffset, take.sourceOffset);
+    swap (region.lengthInSamples, take.lengthInSamples);
+    swap (region.provenance, take.provenance);
+}
 
 struct Track
 {
