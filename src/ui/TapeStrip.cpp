@@ -1229,13 +1229,10 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
         {
             AudioRegion before = cur;
             AudioRegion after  = cur;
-            const TakeRef current { after.file, after.sourceOffset, after.lengthInSamples };
-            const TakeRef next = after.previousTakes.front();
+            TakeRef next = std::move (after.previousTakes.front());
             after.previousTakes.erase (after.previousTakes.begin());
-            after.previousTakes.push_back (current);
-            after.file            = next.file;
-            after.sourceOffset    = next.sourceOffset;
-            after.lengthInSamples = next.lengthInSamples;
+            swapAudioTakePayload (after, next);
+            after.previousTakes.push_back (std::move (next));
 
             selectedTrack  = hit.track;
             selectedRegion = hit.regionIdx;
@@ -2716,16 +2713,8 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
 
                     AudioRegion before = cur;
                     AudioRegion after  = cur;
-                    TakeRef oldLive;
-                    oldLive.file            = after.file;
-                    oldLive.sourceOffset    = after.sourceOffset;
-                    oldLive.lengthInSamples = after.lengthInSamples;
-
-                    const TakeRef chosen = after.previousTakes[(size_t) takeIdx];
-                    after.file            = chosen.file;
-                    after.sourceOffset    = chosen.sourceOffset;
-                    after.lengthInSamples = chosen.lengthInSamples;
-                    after.previousTakes[(size_t) takeIdx] = oldLive;
+                    swapAudioTakePayload (
+                        after, after.previousTakes[(size_t) takeIdx]);
 
                     auto& um = safeThis->engine.getUndoManager();
                     um.beginNewTransaction (
@@ -2937,15 +2926,8 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
 
                     MidiRegion before = cur;
                     MidiRegion after  = cur;
-                    MidiTakeRef oldLive;
-                    oldLive.lengthInTicks = after.lengthInTicks;
-                    oldLive.notes         = std::move (after.notes);
-                    oldLive.ccs           = std::move (after.ccs);
-
-                    after.lengthInTicks = after.previousTakes[(size_t) takeIdx].lengthInTicks;
-                    after.notes         = std::move (after.previousTakes[(size_t) takeIdx].notes);
-                    after.ccs           = std::move (after.previousTakes[(size_t) takeIdx].ccs);
-                    after.previousTakes[(size_t) takeIdx] = std::move (oldLive);
+                    swapMidiTakePayload (
+                        after, after.previousTakes[(size_t) takeIdx]);
 
                     // Recompute lengthInSamples from the new lengthInTicks
                     // at the session's current tempo. PlaybackEngine will
@@ -4388,13 +4370,10 @@ bool TapeStrip::cycleSelectedTakeForward()
 
             AudioRegion before = cur;
             AudioRegion after  = cur;
-            TakeRef oldLive { after.file, after.sourceOffset, after.lengthInSamples };
-            const TakeRef chosen = after.previousTakes.front();
+            TakeRef chosen = std::move (after.previousTakes.front());
             after.previousTakes.erase (after.previousTakes.begin());
-            after.file            = chosen.file;
-            after.sourceOffset    = chosen.sourceOffset;
-            after.lengthInSamples = chosen.lengthInSamples;
-            after.previousTakes.push_back (oldLive);
+            swapAudioTakePayload (after, chosen);
+            after.previousTakes.push_back (std::move (chosen));
 
             if (! didAny) um.beginNewTransaction ("Cycle take");
             um.perform (new RegionEditAction (session, engine,
@@ -4415,14 +4394,10 @@ bool TapeStrip::cycleSelectedTakeForward()
             {
                 MidiRegion before = cur;
                 MidiRegion after  = cur;
-                MidiTakeRef oldLive { after.lengthInTicks,
-                                       std::move (after.notes),
-                                       std::move (after.ccs) };
-                after.lengthInTicks = after.previousTakes.front().lengthInTicks;
-                after.notes         = std::move (after.previousTakes.front().notes);
-                after.ccs           = std::move (after.previousTakes.front().ccs);
+                MidiTakeRef chosen = std::move (after.previousTakes.front());
                 after.previousTakes.erase (after.previousTakes.begin());
-                after.previousTakes.push_back (std::move (oldLive));
+                swapMidiTakePayload (after, chosen);
+                after.previousTakes.push_back (std::move (chosen));
 
                 const double sr = engine.getCurrentSampleRate();
                 const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
@@ -4465,13 +4440,11 @@ bool TapeStrip::cycleSelectedTakeBackward()
 
             AudioRegion before = cur;
             AudioRegion after  = cur;
-            TakeRef oldLive { after.file, after.sourceOffset, after.lengthInSamples };
-            const TakeRef chosen = after.previousTakes.back();
+            TakeRef chosen = std::move (after.previousTakes.back());
             after.previousTakes.pop_back();
-            after.file            = chosen.file;
-            after.sourceOffset    = chosen.sourceOffset;
-            after.lengthInSamples = chosen.lengthInSamples;
-            after.previousTakes.insert (after.previousTakes.begin(), oldLive);
+            swapAudioTakePayload (after, chosen);
+            after.previousTakes.insert (
+                after.previousTakes.begin(), std::move (chosen));
 
             if (! didAny) um.beginNewTransaction ("Cycle take");
             um.perform (new RegionEditAction (session, engine,
@@ -4492,15 +4465,11 @@ bool TapeStrip::cycleSelectedTakeBackward()
             {
                 MidiRegion before = cur;
                 MidiRegion after  = cur;
-                MidiTakeRef oldLive { after.lengthInTicks,
-                                       std::move (after.notes),
-                                       std::move (after.ccs) };
-                after.lengthInTicks = after.previousTakes.back().lengthInTicks;
-                after.notes         = std::move (after.previousTakes.back().notes);
-                after.ccs           = std::move (after.previousTakes.back().ccs);
+                MidiTakeRef chosen = std::move (after.previousTakes.back());
                 after.previousTakes.pop_back();
+                swapMidiTakePayload (after, chosen);
                 after.previousTakes.insert (after.previousTakes.begin(),
-                                              std::move (oldLive));
+                                              std::move (chosen));
 
                 const double sr = engine.getCurrentSampleRate();
                 const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
