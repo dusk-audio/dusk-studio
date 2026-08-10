@@ -71,6 +71,7 @@ struct Lv2Editor::Impl
     static int uiResize (LV2UI_Feature_Handle handle, int w, int h)
     {
         auto* self = static_cast<Impl*> (handle);
+        if (self->instance == nullptr) return 1;
         if (w <= 0 || h <= 0) return 1;
         self->prefW = w; self->prefH = h;
         if (self->display != nullptr && self->hostWindow != 0)
@@ -292,6 +293,19 @@ void Lv2Editor::hide()
     XUnmapWindow ((Display*) impl->display, (Window) impl->hostWindow);
     XFlush ((Display*) impl->display);
     impl->mapped = false;
+}
+
+void Lv2Editor::quiesce() noexcept
+{
+    hide();
+}
+
+void Lv2Editor::abandonPluginAndContainer() noexcept
+{
+    // The plugin's window is a foreign X11 child of ours: destroying the host
+    // window and display in close() delivers no in-process Cocoa-style detach,
+    // so there is nothing extra to give up here.
+    abandonPlugin();
 }
 
 void Lv2Editor::close()

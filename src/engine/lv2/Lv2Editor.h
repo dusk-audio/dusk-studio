@@ -42,6 +42,11 @@ public:
     void setBounds (int x, int y, int w, int h);
     void reveal();   // Show the native child container (idempotent).
     void hide();     // Hide the native child container (idempotent).
+
+    // Hide the host container while the instance/module are still valid. Cocoa
+    // abandonment must quiesce before disposal because setHidden: notifies the
+    // embedded plugin view.
+    void quiesce() noexcept;
     void close();
 
     // X11 geometry diagnostics: the host window's REAL geometry (position
@@ -57,10 +62,16 @@ public:
     // can hang on the way out (same rationale as the CLAP editor leak path).
     void setLeakOnClose (bool b) noexcept;
 
-    // The DSP instance was destroyed out from under this editor. Drops the
-    // reference the suil callbacks dereference, so close() can still free the UI
-    // without writing ports into a freed plugin.
+    // The instance is going away but is STILL ALIVE. Drop the reference the suil
+    // callbacks dereference, then close() may run normal UI teardown while the
+    // plugin/module are still valid.
     void abandonPlugin() noexcept;
+
+    // Same, for an ALREADY-destroyed instance. On Cocoa, leak the whole Impl
+    // because suil retains it as its controller and resize handle; close() must
+    // not call suil or message/detach/release the embedded view hierarchy. X11
+    // has no in-process child-view hazard, so it still closes its host resources.
+    void abandonPluginAndContainer() noexcept;
 
     // Message thread, ~60 Hz: drive ui:idleInterface and platform event work.
     void pump();
