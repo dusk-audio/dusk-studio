@@ -987,6 +987,7 @@ bool CloneTrackAction::perform()
     if (srcIdx < 0 || srcIdx >= Session::kNumTracks) return false;
     if (dstIdx < 0 || dstIdx >= Session::kNumTracks) return false;
     if (srcIdx == dstIdx) return false;
+    if (engine.getTransport().isRecording()) return false;
     // The clone snapshot doesn't carry the frozen flag / frozenRegion, so
     // cloning to or from a frozen track would desync. Refuse - unfreeze first.
     if (session.track (srcIdx).frozen.load (std::memory_order_relaxed)
@@ -1014,6 +1015,7 @@ bool CloneTrackAction::undo()
 {
     if (beforeState == nullptr) return false;
     if (dstIdx < 0 || dstIdx >= Session::kNumTracks) return false;
+    if (engine.getTransport().isRecording()) return false;
     // The Impl snapshot doesn't carry frozen state, so restoring beforeState onto a
     // now-frozen destination would desync its baked WAV. Refuse - mirrors perform()'s
     // frozen guard. Unfreeze first to undo.

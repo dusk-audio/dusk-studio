@@ -1,5 +1,6 @@
 #include "AudioEngine.h"
 #include "BounceEngine.h"
+#include "GeneratedMidiBudget.h"
 #include "LoopTimeline.h"
 #include "PdcMath.h"
 #include "RtPriority.h"
@@ -25,6 +26,8 @@
 
 namespace duskstudio
 {
+constexpr std::int64_t kMinLoopRecordSamples = 128;
+
 // Log-span of the HPF sweep band, precomputed once. The MIDI-CC HPF map runs
 // on the audio thread per controller event; without this it would recompute
 // std::log(max/min) on every CC message.
@@ -1467,7 +1470,6 @@ void AudioEngine::record()
             loopPlan.captureStartSample = loopStart;
             loopPlan.captureEndSample = loopEnd;
 
-            constexpr std::int64_t kMinLoopRecordSamples = 128;
             if (loopEnd - loopStart < kMinLoopRecordSamples)
             {
                 std::fprintf (stderr,
@@ -1475,8 +1477,12 @@ void AudioEngine::record()
                               "%lld samples; recording blocked.\n",
                               (long long) kMinLoopRecordSamples);
                 if (onRecordBlocked_)
-                    onRecordBlocked_ ("Loop recording could not start.\n\nThe loop must "
-                                      "be at least 128 samples long.");
+                {
+                    const auto message = std::string (
+                        "Loop recording could not start.\n\nThe loop must be at least ")
+                        + std::to_string (kMinLoopRecordSamples) + " samples long.";
+                    onRecordBlocked_ (message.c_str());
+                }
                 return;
             }
 
@@ -4618,25 +4624,28 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         constexpr int kHangingResetBytes = kHangingResetMessageCount
                                          * kGeneratedEventBytes;
         static_assert (kGeneratedMidiBudget
-                       >= (8192 / 128 + 1) * kHangingResetBytes);
-        int generatedMidiBytesRemaining = kGeneratedMidiBudget;
-        int reservedStructuralResetBytes = midiTrack && perTrackFlush
-                                         ? kHangingResetBytes : 0;
+                       >= (8192 / kMinLoopRecordSamples + 1)
+                            * kHangingResetBytes);
+        GeneratedMidiBudget generatedMidiBudget (kGeneratedMidiBudget);
+        if (midiTrack && perTrackFlush)
+        {
+            const bool reserved = generatedMidiBudget.reserveStructural (
+                kHangingResetBytes);
+            jassert (reserved);
+            (void) reserved;
+        }
         int midiScheduleScansRemaining = kMidiScheduleScanBudget;
         auto addGeneratedMidi = [&] (const auto& message, int sampleOffset) noexcept
         {
-            if (generatedMidiBytesRemaining - reservedStructuralResetBytes
-                    < kGeneratedEventBytes)
+            if (! generatedMidiBudget.spendDiscretionary (kGeneratedEventBytes))
                 return false;
             perTrackMidiScratch[(size_t) t].addEvent (message, sampleOffset);
-            generatedMidiBytesRemaining -= kGeneratedEventBytes;
             return true;
         };
         auto addGeneratedController = [&] (int channel, int controller,
                                            int value, int sampleOffset) noexcept
         {
-            if (generatedMidiBytesRemaining - reservedStructuralResetBytes
-                    < kGeneratedEventBytes)
+            if (! generatedMidiBudget.spendDiscretionary (kGeneratedEventBytes))
                 return false;
             const std::array<std::uint8_t, 3> bytes {
                 (std::uint8_t) (0xB0 | (channel - 1)),
@@ -4645,7 +4654,6 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             };
             perTrackMidiScratch[(size_t) t].addEvent (
                 bytes.data(), (int) bytes.size(), sampleOffset);
-            generatedMidiBytesRemaining -= kGeneratedEventBytes;
             return true;
         };
         auto emitHangingMidiReset = [&] (int sampleOffset) noexcept
@@ -4653,11 +4661,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             // A reset is structural: either all 32 three-byte messages fit or
             // none are emitted. Discretionary scheduling reserves this exact
             // capacity before it can consume the shared generated-event budget.
-            if (generatedMidiBytesRemaining < kHangingResetBytes)
+            if (! generatedMidiBudget.consumeStructural (kHangingResetBytes))
                 return false;
-
-            if (reservedStructuralResetBytes >= kHangingResetBytes)
-                reservedStructuralResetBytes -= kHangingResetBytes;
             for (int ch = 1; ch <= 16; ++ch)
             {
                 perTrackMidiScratch[(size_t) t].addEvent (
@@ -4665,7 +4670,6 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 perTrackMidiScratch[(size_t) t].addEvent (
                     juce::MidiMessage::controllerEvent (ch, 123, 0), sampleOffset);
             }
-            generatedMidiBytesRemaining -= kHangingResetBytes;
             return true;
         };
         if (midiTrack && perTrackFlush)
@@ -4776,15 +4780,15 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             // construction time so this pointer is non-null.
             const auto& midiRegionsForBlock = *session.track (t).midiRegions.read();
 
-            // Loop recording already rejects ranges shorter than 128 samples.
+            // Loop recording already rejects ranges shorter than the shared
+            // recording minimum.
             // Plain playback still permits them, so keep its pre-existing
             // bounded linear MIDI window instead of enumerating more seam
             // resets than the fixed generated-event budget can represent.
-            constexpr std::int64_t kMinMidiLoopScheduleSamples = 128;
             const bool midiLoopActive = loopReadEnd > loopReadStart
                 && static_cast<std::uint64_t> (loopReadEnd)
                      - static_cast<std::uint64_t> (loopReadStart)
-                   >= static_cast<std::uint64_t> (kMinMidiLoopScheduleSamples);
+                   >= static_cast<std::uint64_t> (kMinLoopRecordSamples);
             std::array<int, 16 * 128> chasedControllerValue;
             std::array<std::int64_t, 16 * 128> chasedControllerAt;
             std::array<bool, 16 * 128> chasedControllerSeen;
@@ -4805,8 +4809,10 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                         if (span.wrappedBefore)
                             ++futureSeamResetCount;
                     });
-                reservedStructuralResetBytes += futureSeamResetCount
-                                              * kHangingResetBytes;
+                const bool reserved = generatedMidiBudget.reserveStructural (
+                    futureSeamResetCount * kHangingResetBytes);
+                jassert (reserved);
+                (void) reserved;
             }
 
             auto takeScheduleScan = [&] () noexcept
@@ -4828,7 +4834,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                         && ! emitHangingMidiReset (span.bufferOffset))
                         return;
 
-                    if (generatedMidiBytesRemaining - reservedStructuralResetBytes
+                    if (generatedMidiBudget.discretionaryBytesAvailable()
                             < kGeneratedEventBytes
                         || midiScheduleScansRemaining <= 0)
                         return;

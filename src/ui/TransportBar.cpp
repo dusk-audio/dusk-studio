@@ -795,7 +795,8 @@ void TransportBar::timerCallback()
     // playhead has crossed punchOut + postRoll samples, auto-stop. Done
     // here on the message thread so engine.stop()'s teardown is safe.
     // postRoll == 0 disables the auto-stop (matches the previous behaviour
-    // where punch never auto-stopped); punch-disabled also disables it.
+    // where punch never auto-stopped); punch-disabled and loop recording also
+    // disable it.
     {
         auto& transport = engine.getTransport();
         if (transport.isRecording() && transport.isPunchEnabled()

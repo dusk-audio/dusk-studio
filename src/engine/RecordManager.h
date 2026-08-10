@@ -217,6 +217,8 @@ private:
     std::array<std::atomic<int>, Session::kNumTracks> writeMidiBlockCalls {};
 
     std::atomic<bool> active { false };
+    static_assert (Session::kNumTracks <= 32,
+                   "RecordManager capture masks require at most 32 tracks");
     std::atomic<std::uint32_t> activeCaptureTrackMask { 0 };
     std::atomic<std::uint32_t> activeMidiCaptureTrackMask { 0 };
     std::atomic<std::uint32_t> activeStereoCaptureTrackMask { 0 };
