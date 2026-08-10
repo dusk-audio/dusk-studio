@@ -129,6 +129,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/DpImporter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/DpAligner.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/RecordManager.cpp
+    record_loop_take_stacking.cpp
     record_midi_overdub_diff.cpp
     record_offset_placement.cpp
     playback_loop_read.cpp

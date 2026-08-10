@@ -21,12 +21,50 @@ public:
     explicit RecordManager (Session& s);
     ~RecordManager();
 
+    // Immutable message-thread snapshot supplied when a loop-record gesture
+    // starts. capture is the already punch-intersected portion of the loop;
+    // an enabled plan must satisfy loopStart <= captureStart < captureEnd <= loopEnd.
+    struct LoopCapturePlan
+    {
+        bool enabled = false;
+        std::int64_t loopStartSample = 0;
+        std::int64_t loopEndSample = 0;
+        std::int64_t captureStartSample = 0;
+        std::int64_t captureEndSample = 0;
+    };
+
+    // Fixed-size coordinate handed to all armed-track writes for one split
+    // device callback span. transportStart passed to the coordinate method is
+    // the timeline position at callbackBaseOffset; inputOffset returned here is
+    // absolute in the original callback. Audio advances its channel pointers by
+    // inputOffset, while MIDI keeps passing the unsliced original buffer.
+    struct LoopCaptureSpan
+    {
+        int passOrdinal = 0;              // 1-based; 0 is legacy/non-loop
+        std::int64_t timelineStart = 0;   // absolute captured position
+        int callbackBaseOffset = 0;
+        int inputOffset = 0;              // absolute in original callback
+        int numSamples = 0;
+        bool startsPass = false;
+        bool endsPass = false;
+    };
+
     // Message thread. False if no tracks armed. latencyOffsetSamples is
     // subtracted from committed AUDIO region starts (see stopRecording) to
     // compensate for input round-trip delay; the write gate and MIDI
     // placement are unaffected.
     bool startRecording (double sampleRate, std::int64_t startSample,
                           int latencyOffsetSamples = 0);
+    bool startRecording (double sampleRate, std::int64_t startSample,
+                          int latencyOffsetSamples,
+                          const LoopCapturePlan& loopCapturePlan);
+
+    LoopCaptureSpan coordinateLoopCaptureSpan (int passOrdinal,
+                                                std::int64_t transportStartSample,
+                                                int callbackBaseOffset,
+                                                int remainingSamples) const noexcept;
+    void beginLoopCaptureSpan (const LoopCaptureSpan& span) noexcept;
+    const LoopCapturePlan& getLoopCapturePlan() const noexcept { return loopPlan; }
 
     // Message thread. Closes writers, finalizes WAV, appends regions.
     void stopRecording (std::int64_t endSample);
@@ -88,6 +126,16 @@ public:
 private:
     Session& session;
 
+    static constexpr int kRetainedLoopPasses = 9; // current + eight prior
+    struct PassDescriptor
+    {
+        int passOrdinal = 0;
+        std::int64_t timelineStart = 0;
+        std::int64_t sourceOffset = 0;
+        std::int64_t lengthInSamples = 0;
+        bool endsPass = false;
+    };
+
     struct PerTrackWriter
     {
         std::unique_ptr<dusk::audio::ThreadedFileWriter> writer;
@@ -95,6 +143,8 @@ private:
         std::int64_t framesWritten = 0;
         int numChannels = 1;
         std::atomic<std::uint64_t> writeFailures { 0 };
+        std::array<PassDescriptor, kRetainedLoopPasses> loopPasses {};
+        int loopPassCount = 0;
     };
 
     std::array<std::unique_ptr<PerTrackWriter>, Session::kNumTracks> writers;
@@ -114,6 +164,7 @@ private:
             std::uint8_t status = 0;
             std::uint8_t data1 = 0;
             std::uint8_t data2 = 0;
+            int passOrdinal = 0;
         };
         static constexpr int kCapacity = 65536;
         std::vector<RawEvent>  events;
@@ -157,6 +208,13 @@ private:
 
     std::int64_t recordStartSample = 0;
     double      recordSampleRate  = 0.0;
+
+    LoopCapturePlan loopPlan;
+    LoopCaptureSpan currentLoopSpan;
+    std::array<PassDescriptor, kRetainedLoopPasses> loopPasses {};
+    int loopPassCount = 0;
+    int highestLoopPassOrdinal = 0;
+    std::int64_t gestureCapturedAtMs = 0;
 
     // Subtracted from committed audio region starts; may be negative. The
     // derived region.timelineStart (not the offset) is clamped >= 0 in
