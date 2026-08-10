@@ -55,7 +55,17 @@ try {
             throw "install layout missing required license text: $InstalledDoc"
         }
     }
-    Write-Host "Validated install layout: app + plugin scan host + license texts"
+
+    $ForbiddenDirs = @(
+        (Join-Path $InstallCheckDir "include"),
+        (Join-Path (Join-Path $InstallCheckDir "lib") "cmake")
+    )
+    foreach ($ForbiddenDir in $ForbiddenDirs) {
+        if (Test-Path -PathType Container $ForbiddenDir) {
+            throw "install layout contains forbidden directory: $ForbiddenDir"
+        }
+    }
+    Write-Host "Validated install layout: app + plugin scan host + license texts; no development files"
 } finally {
     Remove-Item -Recurse -Force $InstallCheckDir -ErrorAction SilentlyContinue
 }
