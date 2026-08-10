@@ -123,6 +123,7 @@ private:
     std::string testParallelMatchesSerial(); // worker-pool mix == serial mix within float-reassoc tol
     std::string testMidiPlayAlongMonitor();   // armed+IN MIDI track sounds live notes in Stopped AND Playing
     std::string testAudioPlayAlongSends();    // IN audio track feeds its aux send in Stopped AND Playing
+    std::string testLoopRecordTakeStacking(); // one callback crosses loop seam into a second audio+MIDI take
     std::string testBackendsOpenCleanly();
     std::string probeUMC1820AlsaFormat();   // explicitly open UMC1820 ALSA & report format
 

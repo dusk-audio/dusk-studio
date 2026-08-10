@@ -4850,14 +4850,26 @@ void ChannelStripComponent::onTrackModeChanged()
     const int id = modeSelector.getSelectedId();
     const int mode = jlimit (0, 2, id - 1);  // 0..2 = Track::Mode
 
+    const int currentMode = track.mode.load (std::memory_order_relaxed);
+    auto restoreModeSelector = [&]
+    {
+        modeSelector.setSelectedId (currentMode + 1, juce::dontSendNotification);
+    };
+    if (engine.getTransport().isRecording() && mode != currentMode)
+    {
+        restoreModeSelector();
+        showDuskAlert (*this, "Recording in progress",
+                        "Stop recording before changing this track's mode.");
+        return;
+    }
+
     // A frozen track is locked to its current mode - its baked WAV + bypassed
     // DSP assume it. Block ANY change (restoring the selector to the track's
     // real mode) until the user unfreezes. Audio tracks freeze too now, so this
     // must restore Mono/Stereo, not hardcode MIDI.
-    const int currentMode = track.mode.load (std::memory_order_relaxed);
     if (track.frozen.load (std::memory_order_relaxed) && mode != currentMode)
     {
-        modeSelector.setSelectedId (currentMode + 1, juce::dontSendNotification);
+        restoreModeSelector();
         showDuskAlert (*this, "Track is frozen",
                         "Unfreeze this track before changing its mode.");
         return;

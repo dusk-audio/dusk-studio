@@ -798,7 +798,8 @@ void TransportBar::timerCallback()
     // where punch never auto-stopped); punch-disabled also disables it.
     {
         auto& transport = engine.getTransport();
-        if (transport.isRecording() && transport.isPunchEnabled())
+        if (transport.isRecording() && transport.isPunchEnabled()
+            && ! engine.isLoopRecordingActive())
         {
             const auto pIn  = transport.getPunchIn();
             const auto pOut = transport.getPunchOut();

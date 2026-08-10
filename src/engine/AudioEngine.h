@@ -136,6 +136,8 @@ public:
     Transport&        getTransport()      noexcept { return transport; }
     const Transport&  getTransport() const noexcept { return transport; }
     RecordManager&    getRecordManager()   noexcept { return recordManager; }
+    bool              isLoopRecordingActive() const noexcept
+        { return recordManager.isLoopCaptureActive(); }
     PlaybackEngine&   getPlaybackEngine()  noexcept { return playbackEngine; }
     PluginManager&    getPluginManager()   noexcept { return pluginManager; }
     MasteringPlayer&  getMasteringPlayer() noexcept { return masteringPlayer; }
@@ -436,6 +438,7 @@ public:
     // Test-only. Next callback merges `events` into perInputMidi[inputIdx]
     // AFTER collector drain. Cleared after one block.
     void stageTestMidiInjection (int inputIdx, juce::MidiBuffer events);
+    void stageTestMidiInjection (int inputIdx, dusk::MidiBuffer events);
 
     // Bookends around SessionSerializer save/load. publish copies each
     // PluginSlot's description + state into the Track fields; consume
@@ -778,18 +781,22 @@ private:
     // reserveBytes'd off the RT path in rebuildMidiBanks so the drain and the
     // test-inject merge never allocate on the audio thread.
     std::vector<dusk::MidiBuffer> perInputMidi;
-    // Per-track routing buffer feeding the strip's instrument + the recorder -
-    // both take juce::MidiBuffer, so this stays juce-typed.
+    // Per-track routing buffer feeding the strip's instrument.
     std::array<juce::MidiBuffer, Session::kNumTracks> perTrackMidiScratch;
+    // Timestamp-sorted raw live input accepted by pullInput for the armed MIDI
+    // recorder. Separate from routing so generated flush/chase events can never
+    // become performance data; one buffer is enough because tracks are captured
+    // serially within the callback.
+    decltype (perTrackMidiScratch)::value_type liveRecordMidiScratch;
     // juce->dusk bridge for a MIDI track's external output: perTrackMidiScratch
     // (juce) is copied into this before midiOut.queueRt (dusk). Pre-reserved.
     dusk::MidiBuffer midiOutTrackScratch;
 
     // SPSC handoff. Producer must not touch testInjectMidi while
     // testInjectReady==true. Single relaxed load + branch per block in
-    // production. Staged as juce (the test builds a juce buffer); merged into
-    // the dusk perInputMidi slot on the audio thread.
-    juce::MidiBuffer  testInjectMidi;
+    // production. Staged in the native MIDI buffer and merged into the matching
+    // perInputMidi slot on the audio thread.
+    dusk::MidiBuffer  testInjectMidi;
     std::atomic<int>  testInjectInputIdx { -1 };
     std::atomic<bool> testInjectReady    { false };
 
@@ -954,6 +961,11 @@ private:
     // INT64_MIN = no record active.
     std::atomic<std::int64_t> activeRecordStart { std::numeric_limits<std::int64_t>::min() };
 
+    // 1-based pass containing the next callback's first sample. Reset from the
+    // message thread before entering Recording; advanced only by the audio
+    // thread when the snapshotted loop gesture crosses its end boundary.
+    std::atomic<int> activeLoopRecordPassOrdinal { 0 };
+
     // Manual recording latency offset in samples (message-thread only).
     int recordingLatencyOffsetSamples_ = 0;
 
@@ -978,5 +990,6 @@ private:
     //     Off is past the jump never fire - synth stuck.
     bool         wasRolling          = false;
     std::int64_t  lastBlockEndSample  = 0;
+    bool         lastBlockWasLoopRecording = false;
 };
 } // namespace duskstudio

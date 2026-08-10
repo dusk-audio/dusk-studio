@@ -1,5 +1,7 @@
 #include "AudioPipelineSelfTest.h"
+#include "../foundation/Fs.h"
 #include "../foundation/Text.h"
+#include "audiofile/FileReader.h"
 #if defined(__linux__)
  #include "alsa/AlsaAudioIODevice.h"
 #endif
@@ -8,7 +10,9 @@
  #include "pipewire/PipeWireAudioIODevice.h"
 #endif
 #include <array>
+#include <chrono>
 #include <cmath>
+#include <filesystem>
 
 namespace duskstudio
 {
@@ -29,6 +33,13 @@ float ampToDb (float a, float ref = 1.0f)
 }
 
 std::string fmtPassFail (bool pass) { return pass ? "[PASS]" : "[FAIL]"; }
+
+void addMidi3 (dusk::MidiBuffer& buffer, std::uint8_t status,
+               std::uint8_t data1, std::uint8_t data2, int samplePosition)
+{
+    const std::array<std::uint8_t, 3> bytes { status, data1, data2 };
+    buffer.addEvent (bytes.data(), (int) bytes.size(), samplePosition);
+}
 } // namespace
 
 AudioPipelineSelfTest::AudioPipelineSelfTest (AudioEngine& e,
@@ -1234,8 +1245,8 @@ std::string AudioPipelineSelfTest::testMidiPlayAlongMonitor()
         if (t0.midiActivity.load (std::memory_order_relaxed))
             flushInert = false;
 
-        juce::MidiBuffer m;
-        m.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+        dusk::MidiBuffer m;
+        addMidi3 (m, 0x90, 60, 100, 0);
         engine.stageTestMidiInjection (vkbIdx, std::move (m));
         t0.midiActivity.store (false, std::memory_order_relaxed);
         runBlock();
@@ -1423,8 +1434,252 @@ std::string AudioPipelineSelfTest::testAudioPlayAlongSends()
         pass ? "" : "<-- monitored send dropped (must feed aux while rolling)");
 }
 
+std::string AudioPipelineSelfTest::testLoopRecordTakeStacking()
+{
+    constexpr double sr = 48000.0;
+    constexpr int blockSize = 180;
+    constexpr int numInputs = 2;
+    constexpr int numOutputs = 2;
+
+    const int vkbIdx = engine.getVirtualKeyboardInputIndex();
+    if (vkbIdx < 0)
+        return "[FAIL] Loop-record take stacking: no virtual-keyboard input available";
+
+    prepareCleanState();
+    engine.prepareForSelfTest (sr, blockSize);
+
+    auto& audioTrack = session.track (0);
+    auto& midiTrack  = session.track (1);
+    const auto savedDir = session.getSessionDirectory();
+    const auto savedAudioRegions = audioTrack.regions;
+    const auto savedMidiRegions = midiTrack.midiRegions.current();
+    const int savedMidiInput = midiTrack.midiInputIndex.load (std::memory_order_relaxed);
+    const int savedMidiChannel = midiTrack.midiChannel.load (std::memory_order_relaxed);
+    const bool savedCountIn = session.countInEnabled.load (std::memory_order_relaxed);
+    const float savedBpm = session.tempoBpm.load (std::memory_order_relaxed);
+    const int savedBeatsPerBar = session.beatsPerBar.load (std::memory_order_relaxed);
+    auto& transport = engine.getTransport();
+    const auto savedTransportState = transport.getState();
+    const auto savedPlayhead = transport.getPlayhead();
+    const bool savedLoopEnabled = transport.isLoopEnabled();
+    const auto savedLoopStart = transport.getLoopStart();
+    const auto savedLoopEnd = transport.getLoopEnd();
+    const bool savedPunchEnabled = transport.isPunchEnabled();
+    const auto savedPunchIn = transport.getPunchIn();
+    const auto savedPunchOut = transport.getPunchOut();
+    const auto savedLastRecordPoint = session.lastRecordPointSamples.load (
+        std::memory_order_relaxed);
+
+    const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto testDirPath = dusk::fs::tempDir()
+                           / ("dusk-loop-record-selftest-" + std::to_string (nonce));
+    std::error_code fsError;
+    const bool madeDir = std::filesystem::create_directory (testDirPath, fsError);
+    const decltype (savedDir) testDir (testDirPath.string());
+
+    bool alignedStart = false;
+    bool wrappedPlayhead = false;
+    bool audioMetadata = false;
+    bool audioPayload = false;
+    bool midiMetadata = false;
+    bool midiPayload = false;
+    bool noSyntheticCcs = false;
+    bool recorderInactive = false;
+    std::int64_t wavFrames = 0;
+
+    if (madeDir)
+    {
+        session.setSessionDirectory (testDir);
+        audioTrack.regions.clear();
+        midiTrack.midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
+
+        audioTrack.mode.store ((int) Track::Mode::Mono, std::memory_order_relaxed);
+        audioTrack.inputSource.store (-2, std::memory_order_relaxed); // follow track -> input 0
+        audioTrack.inputMonitor.store (false, std::memory_order_relaxed);
+        audioTrack.recordArmed.store (true, std::memory_order_relaxed);
+        audioTrack.strip.mute.store (true, std::memory_order_relaxed);
+
+        midiTrack.mode.store ((int) Track::Mode::Midi, std::memory_order_relaxed);
+        midiTrack.midiInputIndex.store (vkbIdx, std::memory_order_relaxed);
+        midiTrack.midiChannel.store (0, std::memory_order_relaxed);
+        midiTrack.inputMonitor.store (false, std::memory_order_relaxed);
+        midiTrack.recordArmed.store (true, std::memory_order_relaxed);
+        midiTrack.strip.mute.store (true, std::memory_order_relaxed);
+        session.recomputeRtCounters();
+
+        // Record is pressed inside the loop. The gesture aligns to the
+        // effective loop/punch start, then the one-bar count-in rolls back by
+        // exactly 48 samples.
+        session.countInEnabled.store (true, std::memory_order_relaxed);
+        session.tempoBpm.store (60000.0f, std::memory_order_relaxed);
+        session.beatsPerBar.store (1, std::memory_order_relaxed);
+        transport.setLoopRange (1000, 1128);
+        transport.setLoopEnabled (true);
+        transport.setPunchRange (1002, 1127);
+        transport.setPunchEnabled (true);
+        transport.setPlayhead (1040);
+
+        std::array<std::array<float, blockSize>, numInputs> firstInputs {};
+        std::array<std::array<float, blockSize>, numInputs> secondInputs {};
+        for (int s = 0; s < blockSize; ++s)
+        {
+            firstInputs[0][(size_t) s] = (float) (s + 1) * 0.001f;
+            secondInputs[0][(size_t) s] = (float) (s + 201) * 0.001f;
+        }
+        std::array<const float*, numInputs> inputPtrs {
+            firstInputs[0].data(), firstInputs[1].data()
+        };
+        std::array<std::array<float, blockSize>, numOutputs> outputs {};
+        std::array<float*, numOutputs> outputPtrs {
+            outputs[0].data(), outputs[1].data()
+        };
+
+        dusk::MidiBuffer originalCallback;
+        addMidi3 (originalCallback, 0x90, 40, 100, 0);
+        addMidi3 (originalCallback, 0x80, 40,   0, 1);
+        addMidi3 (originalCallback, 0x90, 60, 100, 48);
+        addMidi3 (originalCallback, 0x80, 60,   0, 52);
+        addMidi3 (originalCallback, 0x90, 67, 100, 173);
+        addMidi3 (originalCallback, 0x80, 67,   0, 174);
+        addMidi3 (originalCallback, 0x90, 64, 100, 176);
+        addMidi3 (originalCallback, 0x80, 64,   0, 179);
+
+        engine.record();
+        alignedStart = session.lastRecordPointSamples.load (
+                           std::memory_order_relaxed) == 1002
+                    && transport.getPlayhead() == 954;
+        engine.stageTestMidiInjection (vkbIdx, std::move (originalCallback));
+        duskstudio::device::CallbackContext ctx {};
+        engine.audioDeviceIOCallback (inputPtrs.data(), numInputs,
+                                      outputPtrs.data(), numOutputs,
+                                      blockSize, ctx);
+        const bool firstWrap = transport.getPlayhead() == 1006;
+
+        inputPtrs = { secondInputs[0].data(), secondInputs[1].data() };
+        engine.audioDeviceIOCallback (inputPtrs.data(), numInputs,
+                                      outputPtrs.data(), numOutputs,
+                                      blockSize, ctx);
+        wrappedPlayhead = firstWrap && transport.getPlayhead() == 1058;
+
+        // Avoid adding the probe to the user's undo history.
+        transport.setState (Transport::State::Stopped);
+        engine.getRecordManager().stopRecording (transport.getPlayhead());
+        recorderInactive = ! engine.getRecordManager().isActive();
+        engine.getPlaybackEngine().stopPlayback();
+
+        if (audioTrack.regions.size() == 1)
+        {
+            const auto& current = audioTrack.regions.front();
+            audioMetadata = current.timelineStart == 1002
+                         && current.sourceOffset == 250
+                         && current.lengthInSamples == 56
+                         && current.provenance.loopPassOrdinal == 3
+                         && current.provenance.partialPass
+                         && current.previousTakes.size() == 2
+                         && current.previousTakes[0].sourceOffset == 125
+                         && current.previousTakes[0].lengthInSamples == 125
+                         && current.previousTakes[0].provenance.loopPassOrdinal == 2
+                         && ! current.previousTakes[0].provenance.partialPass
+                         && current.previousTakes[1].sourceOffset == 0
+                         && current.previousTakes[1].lengthInSamples == 125
+                         && current.previousTakes[1].provenance.loopPassOrdinal == 1
+                         && ! current.previousTakes[1].provenance.partialPass;
+
+            auto reader = dusk::audio::FileReader::open (
+                std::filesystem::u8path (current.file.getFullPathName().toStdString()));
+            if (reader != nullptr)
+            {
+                wavFrames = reader->info().numFrames;
+                std::array<float, 306> samples {};
+                float* channels[1] = { samples.data() };
+                if (reader->read (channels, 1, 0, (std::int64_t) samples.size())
+                    == (std::int64_t) samples.size())
+                {
+                    std::vector<float> expected;
+                    expected.reserve (samples.size());
+                    expected.insert (expected.end(), firstInputs[0].begin() + 48,
+                                     firstInputs[0].begin() + 173);
+                    expected.insert (expected.end(), firstInputs[0].begin() + 176,
+                                     firstInputs[0].end());
+                    expected.insert (expected.end(), secondInputs[0].begin(),
+                                     secondInputs[0].begin() + 121);
+                    expected.insert (expected.end(), secondInputs[0].begin() + 124,
+                                     secondInputs[0].end());
+                    audioPayload = wavFrames == (std::int64_t) expected.size()
+                                && expected.size() == samples.size();
+                    for (size_t i = 0; i < expected.size() && audioPayload; ++i)
+                        audioPayload = std::abs (samples[i] - expected[i]) < 1.0e-4f;
+                }
+            }
+        }
+
+        const auto& midiRegions = midiTrack.midiRegions.current();
+        if (midiRegions.size() == 1)
+        {
+            const auto& current = midiRegions.front();
+            midiMetadata = current.timelineStart == 1002
+                        && current.lengthInSamples == 125
+                        && current.provenance.loopPassOrdinal == 2
+                        && ! current.provenance.partialPass
+                        && current.previousTakes.size() == 1
+                        && current.previousTakes[0].provenance.loopPassOrdinal == 1
+                        && ! current.previousTakes[0].provenance.partialPass;
+            midiPayload = current.notes.size() == 1
+                       && current.notes[0].noteNumber == 64
+                       && current.previousTakes[0].notes.size() == 1
+                       && current.previousTakes[0].notes[0].noteNumber == 60;
+            noSyntheticCcs = current.ccs.empty()
+                          && current.previousTakes[0].ccs.empty();
+        }
+    }
+
+    // Restore the state not covered by runAll's SavedState before the backend
+    // probes reattach the real device. The outer restore handles the per-track
+    // mode/arm/monitor/mute atoms changed above.
+    transport.setState (savedTransportState);
+    transport.setPlayhead (savedPlayhead);
+    transport.setLoopRange (savedLoopStart, savedLoopEnd);
+    transport.setLoopEnabled (savedLoopEnabled);
+    transport.setPunchRange (savedPunchIn, savedPunchOut);
+    transport.setPunchEnabled (savedPunchEnabled);
+    session.countInEnabled.store (savedCountIn, std::memory_order_relaxed);
+    session.tempoBpm.store (savedBpm, std::memory_order_relaxed);
+    session.beatsPerBar.store (savedBeatsPerBar, std::memory_order_relaxed);
+    session.lastRecordPointSamples.store (savedLastRecordPoint,
+                                          std::memory_order_relaxed);
+    midiTrack.midiInputIndex.store (savedMidiInput, std::memory_order_relaxed);
+    midiTrack.midiChannel.store (savedMidiChannel, std::memory_order_relaxed);
+    audioTrack.regions = savedAudioRegions;
+    midiTrack.midiRegions.publish (
+        std::make_unique<std::vector<MidiRegion>> (savedMidiRegions));
+    session.setSessionDirectory (savedDir);
+    engine.getPlaybackEngine().preparePlayback();
+    std::filesystem::remove_all (testDirPath, fsError);
+
+    const bool pass = madeDir && alignedStart && wrappedPlayhead && audioMetadata
+                   && audioPayload && midiMetadata && midiPayload
+                   && noSyntheticCcs && recorderInactive;
+    return dusk::text::format (
+        "%s Loop-record take stacking (aligned start, two callbacks, punch + seam)\n"
+        "      start=%s  playhead=%s  audio-meta=%s  wav=%lldf/%s  "
+        "midi-meta=%s  midi=%s  raw-only=%s  inactive=%s %s",
+        fmtPassFail (pass).c_str(),
+        alignedStart ? "1002" : "WRONG",
+        wrappedPlayhead ? "1058" : "WRONG",
+        audioMetadata ? "ok" : "FAIL",
+        (long long) wavFrames, audioPayload ? "ok" : "FAIL",
+        midiMetadata ? "ok" : "FAIL",
+        midiPayload ? "60->64" : "FAIL",
+        noSyntheticCcs ? "yes" : "NO",
+        recorderInactive ? "yes" : "NO",
+        pass ? "" : "<-- loop capture orchestration regressed");
+}
+
 std::string AudioPipelineSelfTest::runAll()
 {
+    if (! engine.getTransport().isStopped() || engine.getRecordManager().isActive())
+        return "[FAIL] Audio pipeline self-test refused: stop recording and transport first";
+
     std::vector<std::string> report;
     report.push_back ("=== Dusk Studio Audio Pipeline Self-Test ===");
     report.push_back ("Time: " + juce::Time::getCurrentTime().toString (true, true).toStdString());
@@ -1461,6 +1716,7 @@ std::string AudioPipelineSelfTest::runAll()
     report.push_back (testParallelMatchesSerial());
     report.push_back (testMidiPlayAlongMonitor());
     report.push_back (testAudioPlayAlongSends());
+    report.push_back (testLoopRecordTakeStacking());
     report.push_back ("");
 
    #if defined(__linux__)

@@ -109,6 +109,19 @@ TEST_CASE ("LoopTimeline emits every wrap when one host block spans many loops",
     requireSpan (spans[3], 10, 7, 3, true);
 }
 
+TEST_CASE ("LoopTimeline exposes every reset reservation at the supported block limit",
+           "[loop][timeline][midi-reset]")
+{
+    constexpr int blockSize = 8192;
+    constexpr int loopLength = 128;
+    const auto spans = collectSpans (loopLength, blockSize,
+                                     true, 0, loopLength);
+
+    REQUIRE (spans.size() == blockSize / loopLength);
+    for (const auto& span : spans)
+        REQUIRE (span.wrappedBefore);
+}
+
 TEST_CASE ("LoopTimeline handles negative timeline positions without signed overflow",
            "[loop][timeline]")
 {
