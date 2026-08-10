@@ -229,12 +229,14 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
     loopPlan = loopCapturePlan;
     currentLoopSpan = {};
     loopPassCount = 0;
-    highestLoopPassOrdinal = 0;
     gestureCapturedAtMs = std::chrono::duration_cast<std::chrono::milliseconds> (
         std::chrono::system_clock::now().time_since_epoch()).count();
 
     lastSetupFailures.clear();
     lastRecordErrors.clear();
+    activeCaptureTrackMask.store (0, std::memory_order_relaxed);
+    activeMidiCaptureTrackMask.store (0, std::memory_order_relaxed);
+    activeStereoCaptureTrackMask.store (0, std::memory_order_relaxed);
 
     // Reset the per-track audio-thread counters before the audio
     // callback can start writing - the counter readout at stopRecording
@@ -247,7 +249,9 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
     // Tracks whether any track actually got a writer / MIDI capture. If every
     // armed track is skipped (e.g. all frozen), starting would arm a no-op
     // recording that captures nothing - fail instead so the caller can surface it.
-    bool anyArmedSetup = false;
+    std::uint32_t captureTrackMask = 0;
+    std::uint32_t midiCaptureTrackMask = 0;
+    std::uint32_t stereoCaptureTrackMask = 0;
 
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
@@ -262,17 +266,19 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
         if (session.track (t).frozen.load (std::memory_order_relaxed))
             continue;
 
+        const int trackMode = session.track (t).mode.load (std::memory_order_relaxed);
+
         // MIDI tracks: spin up the MIDI capture FIFO and skip the WAV
         // writer entirely. The audio thread will push events into the
         // FIFO via writeMidiBlock; stopRecording drains it into a
         // MidiRegion and pushes onto track.midiRegions.
-        if (session.track (t).mode.load (std::memory_order_relaxed)
-            == (int) Track::Mode::Midi)
+        if (trackMode == (int) Track::Mode::Midi)
         {
             auto cap = std::make_unique<PerTrackMidi>();
             cap->fifo.reset();
             midiCaptures[(size_t) t] = std::move (cap);
-            anyArmedSetup = true;
+            captureTrackMask |= std::uint32_t { 1 } << t;
+            midiCaptureTrackMask |= std::uint32_t { 1 } << t;
             std::fprintf (stderr,
                           "[Dusk Studio/RecordManager] startRecording: track %d set up MIDI capture "
                           "(midiInputIndex=%d, midiChannel=%d).\n",
@@ -301,8 +307,7 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
         // Stereo. The writer's channel count is captured here so writeInput-
         // Block builds a matching channel-pointer array on the audio thread.
         const int trackChannels =
-            session.track (t).mode.load (std::memory_order_relaxed)
-                == (int) Track::Mode::Stereo ? 2 : 1;
+            trackMode == (int) Track::Mode::Stereo ? 2 : 1;
 
         dusk::audio::WriteSpec spec;
         spec.sampleRate    = sampleRate;
@@ -361,6 +366,9 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
                 }
             for (auto& cap : midiCaptures)
                 cap.reset();
+            activeCaptureTrackMask.store (0, std::memory_order_relaxed);
+            activeMidiCaptureTrackMask.store (0, std::memory_order_relaxed);
+            activeStereoCaptureTrackMask.store (0, std::memory_order_relaxed);
             return false;
         }
 
@@ -375,16 +383,21 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample,
             continue;
         }
         writers[(size_t) t] = std::move (perTrack);
-        anyArmedSetup = true;
+        captureTrackMask |= std::uint32_t { 1 } << t;
+        if (trackMode == (int) Track::Mode::Stereo)
+            stereoCaptureTrackMask |= std::uint32_t { 1 } << t;
     }
 
-    if (! anyArmedSetup)
+    if (captureTrackMask == 0)
     {
         std::fprintf (stderr, "[Dusk Studio/RecordManager] startRecording: every armed track "
                               "was skipped (frozen, or setup failed); nothing to record.\n");
         return false;
     }
 
+    activeCaptureTrackMask.store (captureTrackMask, std::memory_order_relaxed);
+    activeMidiCaptureTrackMask.store (midiCaptureTrackMask, std::memory_order_relaxed);
+    activeStereoCaptureTrackMask.store (stereoCaptureTrackMask, std::memory_order_relaxed);
     active.store (true, std::memory_order_release);
     return true;
 }
@@ -437,7 +450,6 @@ void RecordManager::beginLoopCaptureSpan (const LoopCaptureSpan& span) noexcept
     currentLoopSpan = span;
     if (span.passOrdinal < 1 || span.numSamples <= 0)
         return;
-    highestLoopPassOrdinal = std::max (highestLoopPassOrdinal, span.passOrdinal);
 
     PassDescriptor* descriptor = nullptr;
     if (loopPassCount > 0
@@ -467,6 +479,9 @@ void RecordManager::stopRecording (std::int64_t endSample)
         return;
 
     active.store (false, std::memory_order_release);
+    activeCaptureTrackMask.store (0, std::memory_order_release);
+    activeMidiCaptureTrackMask.store (0, std::memory_order_release);
+    activeStereoCaptureTrackMask.store (0, std::memory_order_release);
 
     // Drain in-flight audio-thread calls before reading per-writer
     // counters or destroying writers / midiCaptures. Both writeInputBlock
@@ -611,21 +626,41 @@ void RecordManager::stopRecording (std::int64_t endSample)
                                      - loopPlan.captureStartSample;
             size_t drainedIndex = 0;
 
-            for (int passOrdinal = 1;
-                 passOrdinal <= highestLoopPassOrdinal; ++passOrdinal)
+            auto seedState = [&] (const PerTrackMidi::RawEvent& ev) noexcept
             {
-                PassDescriptor pass;
-                pass.passOrdinal = passOrdinal;
-                pass.timelineStart = loopPlan.captureStartSample;
-                pass.lengthInSamples = captureLength;
-                pass.endsPass = true;
-                for (int i = 0; i < loopPassCount; ++i)
-                    if (loopPasses[(size_t) i].passOrdinal == passOrdinal)
-                    {
-                        pass = loopPasses[(size_t) i];
-                        break;
-                    }
+                const int channel = (ev.status & 0x0F) + 1;
+                const int statusType = ev.status & 0xF0;
+                const int noteKey = (channel - 1) * 128 + ev.data1;
+                if (statusType == 0x90 && ev.data2 > 0)
+                {
+                    auto& note = activeNotes[(size_t) noteKey];
+                    note.active = true;
+                    note.velocity = ev.data2;
+                    note.startSample = ev.samplePos;
+                }
+                else if (statusType == 0x80
+                         || (statusType == 0x90 && ev.data2 == 0))
+                {
+                    activeNotes[(size_t) noteKey].active = false;
+                }
+                else if (statusType == 0xB0)
+                {
+                    controllerState[(size_t) ((channel - 1) * 128 + ev.data1)]
+                        = ev.data2;
+                }
+            };
+
+            for (int passIndex = 0; passIndex < loopPassCount; ++passIndex)
+            {
+                const auto& pass = loopPasses[(size_t) passIndex];
                 if (pass.lengthInSamples <= 0) continue;
+
+                // Consume discarded older passes once to recover held-note and
+                // controller state at the first retained boundary. The outer
+                // loop is capped at current + eight prior takes.
+                while (drainedIndex < drained.size()
+                       && drained[drainedIndex].passOrdinal < pass.passOrdinal)
+                    seedState (drained[drainedIndex++]);
 
                 MidiRegion passRegion;
                 passRegion.timelineStart = loopPlan.captureStartSample;
@@ -638,7 +673,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
                     ! pass.endsPass || pass.lengthInSamples < captureLength
                 };
 
-                if (passOrdinal > 1)
+                if (passIndex > 0 || pass.passOrdinal > 1)
                 {
                     for (int key = 0; key < (int) activeNotes.size(); ++key)
                         if (activeNotes[(size_t) key].active)
@@ -647,7 +682,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
                     for (int key = 0; key < (int) controllerState.size(); ++key)
                     {
                         const int value = controllerState[(size_t) key];
-                        if (value <= 0) continue;
+                        if (value < 0) continue;
                         MidiCc chased;
                         chased.channel = key / 128 + 1;
                         chased.controller = key % 128;
@@ -657,9 +692,6 @@ void RecordManager::stopRecording (std::int64_t endSample)
                     }
                 }
 
-                while (drainedIndex < drained.size()
-                       && drained[drainedIndex].passOrdinal < pass.passOrdinal)
-                    ++drainedIndex;
                 while (drainedIndex < drained.size()
                        && drained[drainedIndex].passOrdinal == pass.passOrdinal)
                 {
@@ -729,7 +761,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
                     passRegion.notes.push_back (committed);
                 }
 
-                if (passOrdinal < highestLoopPassOrdinal)
+                if (passIndex + 1 < loopPassCount)
                 {
                     for (int key = 0; key < (int) controllerState.size(); ++key)
                     {
@@ -1222,9 +1254,11 @@ void RecordManager::stopRecording (std::int64_t endSample)
     }
 }
 
-void RecordManager::writeMidiBlock (int trackIndex,
-                                     const juce::MidiBuffer& events,
-                                     std::int64_t blockStartFromRecord) noexcept
+template <typename MidiEvents>
+void RecordManager::writeMidiBlockImpl (int trackIndex,
+                                        const MidiEvents& events,
+                                        std::int64_t blockStartFromRecord,
+                                        const LoopCaptureSpan* explicitLoopSpan) noexcept
 {
     AudioInFlightScope guard (audioInFlight);
     if (! active.load (std::memory_order_acquire)) return;
@@ -1233,6 +1267,8 @@ void RecordManager::writeMidiBlock (int trackIndex,
     auto& cap = midiCaptures[(size_t) trackIndex];
     if (cap == nullptr) return;
     writeMidiBlockCalls[(size_t) trackIndex].fetch_add (1, std::memory_order_relaxed);
+    const auto& selectedLoopSpan = explicitLoopSpan != nullptr
+                                 ? *explicitLoopSpan : currentLoopSpan;
 
     for (const auto meta : events)
     {
@@ -1258,14 +1294,14 @@ void RecordManager::writeMidiBlock (int trackIndex,
         // the first event position in the captured slice; normalize retained
         // events back to pass-relative coordinates before the FIFO write.
         if (loopPlan.enabled
-            && (currentLoopSpan.passOrdinal < 1
-                || meta.samplePosition < currentLoopSpan.inputOffset
+            && (selectedLoopSpan.passOrdinal < 1
+                || meta.samplePosition < selectedLoopSpan.inputOffset
                 || meta.samplePosition
-                     >= currentLoopSpan.inputOffset + currentLoopSpan.numSamples))
+                     >= selectedLoopSpan.inputOffset + selectedLoopSpan.numSamples))
             continue;
         const auto samplePos = loopPlan.enabled
-            ? (currentLoopSpan.timelineStart - loopPlan.captureStartSample
-               + meta.samplePosition - currentLoopSpan.inputOffset)
+            ? (selectedLoopSpan.timelineStart - loopPlan.captureStartSample
+               + meta.samplePosition - selectedLoopSpan.inputOffset)
             : (blockStartFromRecord + meta.samplePosition);
         if (samplePos < 0) continue;
 
@@ -1306,15 +1342,32 @@ void RecordManager::writeMidiBlock (int trackIndex,
         slot.status = status;
         slot.data1  = sz >= 2 ? (std::uint8_t) raw[1] : 0;
         slot.data2  = sz >= 3 ? (std::uint8_t) raw[2] : 0;
-        slot.passOrdinal = loopPlan.enabled ? currentLoopSpan.passOrdinal : 0;
+        slot.passOrdinal = loopPlan.enabled ? selectedLoopSpan.passOrdinal : 0;
         cap->fifo.finishedWrite (needed);
     }
+}
+
+void RecordManager::writeMidiBlock (int trackIndex,
+                                    const juce::MidiBuffer& events,
+                                    std::int64_t blockStartFromRecord,
+                                    const LoopCaptureSpan* explicitLoopSpan) noexcept
+{
+    writeMidiBlockImpl (trackIndex, events, blockStartFromRecord, explicitLoopSpan);
+}
+
+void RecordManager::writeMidiBlock (int trackIndex,
+                                    const dusk::MidiBuffer& events,
+                                    std::int64_t blockStartFromRecord,
+                                    const LoopCaptureSpan* explicitLoopSpan) noexcept
+{
+    writeMidiBlockImpl (trackIndex, events, blockStartFromRecord, explicitLoopSpan);
 }
 
 void RecordManager::writeInputBlock (int trackIndex,
                                      const float* L,
                                      const float* R,
-                                     int numSamples) noexcept
+                                     int numSamples,
+                                     const LoopCaptureSpan* explicitLoopSpan) noexcept
 {
     AudioInFlightScope guard (audioInFlight);
     if (! active.load (std::memory_order_acquire)) return;
@@ -1322,6 +1375,8 @@ void RecordManager::writeInputBlock (int trackIndex,
     if (trackIndex < 0 || trackIndex >= Session::kNumTracks) return;
     auto& slot = writers[(size_t) trackIndex];
     if (slot == nullptr || slot->writer == nullptr || L == nullptr) return;
+    const auto& selectedLoopSpan = explicitLoopSpan != nullptr
+                                 ? *explicitLoopSpan : currentLoopSpan;
 
     // Build the channel-pointer array to match the writer's channel count.
     // push() reads numChannels pointers from the array, so each slot it
@@ -1333,10 +1388,10 @@ void RecordManager::writeInputBlock (int trackIndex,
     //     the second channel is never a missing pointer.
     jassert (L != nullptr);
     if (loopPlan.enabled
-        && (currentLoopSpan.passOrdinal < 1 || currentLoopSpan.numSamples <= 0))
+        && (selectedLoopSpan.passOrdinal < 1 || selectedLoopSpan.numSamples <= 0))
         return;
     const int samplesToWrite = loopPlan.enabled
-        ? std::min (numSamples, currentLoopSpan.numSamples) : numSamples;
+        ? std::min (numSamples, selectedLoopSpan.numSamples) : numSamples;
     if (samplesToWrite <= 0) return;
 
     const float* channels[2] = { L, (R != nullptr) ? R : L };
@@ -1348,7 +1403,7 @@ void RecordManager::writeInputBlock (int trackIndex,
     {
         if (slot->loopPassCount > 0
             && slot->loopPasses[(size_t) (slot->loopPassCount - 1)].passOrdinal
-                   == currentLoopSpan.passOrdinal)
+                   == selectedLoopSpan.passOrdinal)
         {
             descriptor = &slot->loopPasses[(size_t) (slot->loopPassCount - 1)];
         }
@@ -1362,7 +1417,7 @@ void RecordManager::writeInputBlock (int trackIndex,
             }
             descriptor = &slot->loopPasses[(size_t) slot->loopPassCount++];
             *descriptor = {};
-            descriptor->passOrdinal = currentLoopSpan.passOrdinal;
+            descriptor->passOrdinal = selectedLoopSpan.passOrdinal;
             descriptor->timelineStart = loopPlan.captureStartSample;
             descriptor->sourceOffset = sourceOffset;
         }
@@ -1374,7 +1429,7 @@ void RecordManager::writeInputBlock (int trackIndex,
         if (descriptor != nullptr)
         {
             descriptor->lengthInSamples += samplesToWrite;
-            descriptor->endsPass = descriptor->endsPass || currentLoopSpan.endsPass;
+            descriptor->endsPass = descriptor->endsPass || selectedLoopSpan.endsPass;
         }
     }
     else

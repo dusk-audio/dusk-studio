@@ -418,6 +418,66 @@ TEST_CASE ("Loop MIDI history keeps loop passes before compatible existing takes
     REQUIRE (region.previousTakes[7].provenance.capturedAtMs == 60);
 }
 
+TEST_CASE ("Loop capture freezes the successfully armed track set for the gesture",
+           "[recording][recordmanager][loop-takes][arming]")
+{
+    const auto temp = makeSessionDir ("dusk-loop-armed-snapshot-");
+    Session session;
+    armTrack (session, temp.dir, Track::Mode::Mono);
+    session.track (1).mode.store ((int) Track::Mode::Midi, std::memory_order_relaxed);
+    session.setTrackArmed (1, true);
+    session.track (2).mode.store ((int) Track::Mode::Stereo, std::memory_order_relaxed);
+    session.setTrackArmed (2, true);
+
+    RecordManager manager (session);
+    const auto plan = loopPlan();
+    REQUIRE (manager.startRecording (48000.0, 100, 0, plan));
+    REQUIRE (manager.getActiveCaptureTrackMask() == 0x7u);
+    REQUIRE (manager.getActiveMidiCaptureTrackMask() == 0x2u);
+    REQUIRE (manager.getActiveStereoCaptureTrackMask() == 0x4u);
+
+    session.setTrackArmed (0, false);
+    session.setTrackArmed (1, false);
+    session.setTrackArmed (2, false);
+    session.setTrackArmed (3, true);
+    session.track (0).mode.store ((int) Track::Mode::Midi, std::memory_order_relaxed);
+    session.track (1).mode.store ((int) Track::Mode::Stereo, std::memory_order_relaxed);
+    session.track (2).mode.store ((int) Track::Mode::Mono, std::memory_order_relaxed);
+    REQUIRE (manager.getActiveCaptureTrackMask() == 0x7u);
+    REQUIRE (manager.getActiveMidiCaptureTrackMask() == 0x2u);
+    REQUIRE (manager.getActiveStereoCaptureTrackMask() == 0x4u);
+
+    manager.stopRecording (100);
+    REQUIRE (manager.getActiveCaptureTrackMask() == 0u);
+    REQUIRE (manager.getActiveMidiCaptureTrackMask() == 0u);
+    REQUIRE (manager.getActiveStereoCaptureTrackMask() == 0u);
+}
+
+TEST_CASE ("Loop MIDI finalization is bounded to the retained high-ordinal passes",
+           "[recording][recordmanager][loop-takes][midi][history]")
+{
+    const auto temp = makeSessionDir ("dusk-loop-midi-high-ordinal-");
+    Session session;
+    armTrack (session, temp.dir, Track::Mode::Midi);
+    RecordManager manager (session);
+    const auto plan = loopPlan();
+    REQUIRE (manager.startRecording (960.0, 100, 0, plan));
+
+    constexpr int firstOrdinal = 99992;
+    constexpr int lastOrdinal = 100000;
+    for (int ordinal = firstOrdinal; ordinal <= lastOrdinal; ++ordinal)
+        writeMidiPass (manager, ordinal, 100,
+                       oneNote (60 + ordinal - firstOrdinal), 8);
+    manager.stopRecording (108);
+
+    const auto region = session.track (0).midiRegions.current().at (0);
+    REQUIRE (region.provenance.loopPassOrdinal == lastOrdinal);
+    REQUIRE (region.previousTakes.size() == 8);
+    for (int i = 0; i < 8; ++i)
+        REQUIRE (region.previousTakes[(size_t) i].provenance.loopPassOrdinal
+                 == lastOrdinal - 1 - i);
+}
+
 TEST_CASE ("Loop MIDI closes and retriggers a note crossing the seam",
            "[recording][recordmanager][loop-takes][midi]")
 {

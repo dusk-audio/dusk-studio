@@ -8,8 +8,8 @@ src/dsp/MasterBus.cpp	3
 src/dsp/MasterBus.h	7
 src/dsp/MasteringChain.h	5
 src/engine/AudioEngine.cpp	140
-src/engine/AudioEngine.h	20
-src/engine/AudioPipelineSelfTest.cpp	26
+src/engine/AudioEngine.h	18
+src/engine/AudioPipelineSelfTest.cpp	23
 src/engine/BounceEngine.cpp	47
 src/engine/BounceEngine.h	18
 src/engine/DpAligner.cpp	5

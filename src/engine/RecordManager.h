@@ -5,6 +5,7 @@
 #include <array>
 #include <atomic>
 #include <memory>
+#include "../foundation/MidiBuffer.h"
 #include "../session/Session.h"
 #include "audiofile/ThreadedFileWriter.h"
 #include "audiofile/WriterDrainPool.h"
@@ -65,6 +66,18 @@ public:
                                                 int remainingSamples) const noexcept;
     void beginLoopCaptureSpan (const LoopCaptureSpan& span) noexcept;
     const LoopCapturePlan& getLoopCapturePlan() const noexcept { return loopPlan; }
+    std::uint32_t getActiveCaptureTrackMask() const noexcept
+    {
+        return activeCaptureTrackMask.load (std::memory_order_acquire);
+    }
+    std::uint32_t getActiveMidiCaptureTrackMask() const noexcept
+    {
+        return activeMidiCaptureTrackMask.load (std::memory_order_acquire);
+    }
+    std::uint32_t getActiveStereoCaptureTrackMask() const noexcept
+    {
+        return activeStereoCaptureTrackMask.load (std::memory_order_acquire);
+    }
 
     // Message thread. Closes writers, finalizes WAV, appends regions.
     void stopRecording (std::int64_t endSample);
@@ -73,16 +86,29 @@ public:
     void writeInputBlock (int trackIndex,
                             const float* L,
                             const float* R,
-                            int numSamples) noexcept;
+                            int numSamples,
+                            const LoopCaptureSpan* explicitLoopSpan = nullptr) noexcept;
 
     // Audio thread. blockStartFromRecord can be negative during count-in
     // pre-roll; events with negative sample positions are dropped at
     // drain time. Lock-free push into a pre-sized ring.
     void writeMidiBlock (int trackIndex,
                           const juce::MidiBuffer& events,
-                          std::int64_t blockStartFromRecord) noexcept;
+                          std::int64_t blockStartFromRecord,
+                          const LoopCaptureSpan* explicitLoopSpan = nullptr) noexcept;
+    void writeMidiBlock (int trackIndex,
+                          const dusk::MidiBuffer& events,
+                          std::int64_t blockStartFromRecord,
+                          const LoopCaptureSpan* explicitLoopSpan = nullptr) noexcept;
 
-    bool isActive() const noexcept { return active.load (std::memory_order_relaxed); }
+    bool isActive() const noexcept { return active.load (std::memory_order_acquire); }
+    bool isLoopCaptureActive() const noexcept
+    {
+        // startRecording writes loopPlan before its release-store to active.
+        // The short-circuit keeps the non-atomic immutable plan behind the
+        // acquire load on the message-thread status path.
+        return active.load (std::memory_order_acquire) && loopPlan.enabled;
+    }
 
     // Populated when createOutputStream returns null (disk full /
     // permission denied / parent dir missing) or the writer can't be
@@ -124,6 +150,12 @@ public:
     void clearLastCommitDiff() noexcept { lastCommitDiff.clear(); }
 
 private:
+    template <typename MidiEvents>
+    void writeMidiBlockImpl (int trackIndex,
+                             const MidiEvents& events,
+                             std::int64_t blockStartFromRecord,
+                             const LoopCaptureSpan* explicitLoopSpan) noexcept;
+
     Session& session;
 
     static constexpr int kRetainedLoopPasses = 9; // current + eight prior
@@ -185,6 +217,11 @@ private:
     std::array<std::atomic<int>, Session::kNumTracks> writeMidiBlockCalls {};
 
     std::atomic<bool> active { false };
+    static_assert (Session::kNumTracks <= 32,
+                   "RecordManager capture masks require at most 32 tracks");
+    std::atomic<std::uint32_t> activeCaptureTrackMask { 0 };
+    std::atomic<std::uint32_t> activeMidiCaptureTrackMask { 0 };
+    std::atomic<std::uint32_t> activeStereoCaptureTrackMask { 0 };
 
     // Audio thread bumps BEFORE inspecting active / writer / midiCapture
     // and decrements on exit. stopRecording clears active then spins
@@ -216,7 +253,6 @@ private:
     LoopCaptureSpan currentLoopSpan;
     std::array<PassDescriptor, kRetainedLoopPasses> loopPasses {};
     int loopPassCount = 0;
-    int highestLoopPassOrdinal = 0;
     std::int64_t gestureCapturedAtMs = 0;
 
     // Subtracted from committed audio region starts; may be negative. The

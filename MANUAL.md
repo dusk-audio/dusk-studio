@@ -1102,7 +1102,11 @@ To repeat a section while you experiment:
 2. Click the **Loop** button on the transport bar.
 3. Press Play (for loop playback) or Record (for loop recording).
 
-In loop play, the transport wraps at the loop boundary indefinitely. In loop record, playback wraps but recording stays linear — you get a single take that extends from the loop start to wherever you press Stop. There is no take-stacking loop recording.
+In loop play, the transport wraps at the loop boundary indefinitely. Loop recording also wraps and creates a new take on each pass. The current pass plus up to **8 previous passes** stay attached to one range-aligned region, so you can cycle performances after stopping. A loop must be at least 128 samples long to record.
+
+With Punch enabled, each pass records only the overlap between the loop and punch ranges. Pressing Record anywhere inside the loop aligns the gesture to that effective capture start before count-in or pre-roll begins, so every pass covers the same timeline range. Punch post-roll auto-stop is suspended during loop recording; press Stop when you are finished.
+
+Silent audio passes remain available as takes. Empty MIDI passes are omitted because they contain no note or controller performance to recall.
 
 ## Where files are saved
 

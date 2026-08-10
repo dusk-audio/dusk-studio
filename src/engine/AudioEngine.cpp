@@ -1,5 +1,7 @@
 #include "AudioEngine.h"
 #include "BounceEngine.h"
+#include "GeneratedMidiBudget.h"
+#include "LoopTimeline.h"
 #include "PdcMath.h"
 #include "RtPriority.h"
 #include "../dsp/OutputPairRouting.h"
@@ -24,6 +26,8 @@
 
 namespace duskstudio
 {
+constexpr std::int64_t kMinLoopRecordSamples = 128;
+
 // Log-span of the HPF sweep band, precomputed once. The MIDI-CC HPF map runs
 // on the audio thread per controller event; without this it would recompute
 // std::log(max/min) on every CC message.
@@ -1313,41 +1317,48 @@ void AudioEngine::play()
 
 void AudioEngine::stop()
 {
-    if (transport.isStopped())
+    if (transport.isStopped() && ! recordManager.isActive())
     {
         performPendingDspRestartIfIdle();
         return;
     }
 
-    const bool wasRecording = transport.isRecording();
-    transport.setState (Transport::State::Stopped);
-
-    if (wasRecording)
+    suspendProcessing();
     {
-        recordManager.stopRecording (transport.getPlayhead());
-        activeRecordStart.store (std::numeric_limits<std::int64_t>::min(),
-                                  std::memory_order_relaxed);
-
-        // RecordManager already mutated state; action captures the
-        // before/after snapshot. First perform() is a no-op (state
-        // already applied); redo-after-undo re-applies after-state.
-        const auto& diff = recordManager.getLastCommitDiff();
-        if (! diff.empty())
+        struct ResumeGuard
         {
-            std::vector<RecordCommitAction::TrackDiff> wrapped;
-            wrapped.reserve (diff.size());
-            for (const auto& d : diff)
-                wrapped.push_back ({ d.trackIndex,
-                                      d.audioBefore, d.audioAfter,
-                                      d.midiBefore,  d.midiAfter });
-            undoManager.beginNewTransaction ("Record");
-            undoManager.perform (new RecordCommitAction (
-                session, *this, std::move (wrapped)));
-            recordManager.clearLastCommitDiff();
-        }
-    }
+            AudioEngine& engine;
+            ~ResumeGuard() { engine.resumeProcessing(); }
+        } resumeGuard { *this };
 
-    playbackEngine.stopPlayback();
+        const bool wasRecording = transport.isRecording() || recordManager.isActive();
+        transport.setState (Transport::State::Stopped);
+
+        if (wasRecording)
+        {
+            recordManager.stopRecording (transport.getPlayhead());
+            activeRecordStart.store (std::numeric_limits<std::int64_t>::min(),
+                                      std::memory_order_relaxed);
+            activeLoopRecordPassOrdinal.store (0, std::memory_order_relaxed);
+            lastBlockWasLoopRecording = false;
+
+            const auto& diff = recordManager.getLastCommitDiff();
+            if (! diff.empty())
+            {
+                std::vector<RecordCommitAction::TrackDiff> wrapped;
+                wrapped.reserve (diff.size());
+                for (const auto& d : diff)
+                    wrapped.push_back ({ d.trackIndex,
+                                          d.audioBefore, d.audioAfter,
+                                          d.midiBefore,  d.midiAfter });
+                undoManager.beginNewTransaction ("Record");
+                undoManager.perform (new RecordCommitAction (
+                    session, *this, std::move (wrapped)));
+                recordManager.clearLastCommitDiff();
+            }
+        }
+
+        playbackEngine.stopPlayback();
 
     // Honour the user's Settings choice for Stop behaviour.
     // 0 = PauseInPlace (leave playhead where it landed)
@@ -1356,16 +1367,17 @@ void AudioEngine::stop()
     //     back to pause-in-place when nothing was clicked yet).
     // Callers that want unconditional stop+rewind (the '.' hotkey, Home
     // key) still call setPlayhead(0) explicitly after stop().
-    const int behavior = session.stopBehavior.load (std::memory_order_relaxed);
-    if (behavior == 1)
-    {
-        transport.setPlayhead (0);
-    }
-    else if (behavior == 2)
-    {
-        const auto last = session.lastClickedTimelineSample.load (std::memory_order_relaxed);
-        if (last >= 0)
-            transport.setPlayhead (last);
+        const int behavior = session.stopBehavior.load (std::memory_order_relaxed);
+        if (behavior == 1)
+        {
+            transport.setPlayhead (0);
+        }
+        else if (behavior == 2)
+        {
+            const auto last = session.lastClickedTimelineSample.load (std::memory_order_relaxed);
+            if (last >= 0)
+                transport.setPlayhead (last);
+        }
     }
 
     performPendingDspRestartIfIdle();
@@ -1442,19 +1454,82 @@ void AudioEngine::record()
         return;
     }
 
-    // With punch on, the WAV's first audible sample is at punchIn so
-    // the region's timelineStart must be punchIn. Audio thread skips
-    // writes until playhead reaches punchIn so WAV time-zero lines up.
-    // Inside / past the window = fall back to playhead (no truncation).
+    RecordManager::LoopCapturePlan loopPlan;
+    if (transport.isLoopEnabled())
+    {
+        const auto loopStart = transport.getLoopStart();
+        const auto loopEnd   = transport.getLoopEnd();
+        if (loopEnd > loopStart)
+        {
+            // Match Play: engaging a loop means the gesture begins inside it.
+            // These bounds are snapshotted for the whole gesture; UI changes
+            // while rolling affect the next record press, not an in-flight take.
+            loopPlan.enabled = true;
+            loopPlan.loopStartSample = loopStart;
+            loopPlan.loopEndSample = loopEnd;
+            loopPlan.captureStartSample = loopStart;
+            loopPlan.captureEndSample = loopEnd;
+
+            if (loopEnd - loopStart < kMinLoopRecordSamples)
+            {
+                std::fprintf (stderr,
+                              "[Dusk Studio/AudioEngine] record(): loop is shorter than "
+                              "%lld samples; recording blocked.\n",
+                              (long long) kMinLoopRecordSamples);
+                if (onRecordBlocked_)
+                {
+                    const auto message = std::string (
+                        "Loop recording could not start.\n\nThe loop must be at least ")
+                        + std::to_string (kMinLoopRecordSamples) + " samples long.";
+                    onRecordBlocked_ (message.c_str());
+                }
+                return;
+            }
+
+            if (transport.isPunchEnabled())
+            {
+                const auto punchIn  = transport.getPunchIn();
+                const auto punchOut = transport.getPunchOut();
+                loopPlan.captureStartSample = std::max (loopStart, punchIn);
+                loopPlan.captureEndSample   = std::min (loopEnd, punchOut);
+                if (punchOut <= punchIn
+                    || loopPlan.captureEndSample <= loopPlan.captureStartSample)
+                {
+                    std::fprintf (stderr,
+                                  "[Dusk Studio/AudioEngine] record(): loop and punch "
+                                  "ranges do not overlap; recording blocked.\n");
+                    if (onRecordBlocked_)
+                        onRecordBlocked_ ("Loop recording could not start.\n\nThe punch "
+                                          "range must overlap the active loop.");
+                    return;
+                }
+            }
+        }
+    }
+
+    // The logical take starts at the effective loop/punch boundary. Snapping
+    // every loop gesture there keeps every pass and take reference range-aligned.
     std::int64_t startSample = transport.getPlayhead();
-    if (transport.isPunchEnabled()
+    if (loopPlan.enabled)
+        startSample = loopPlan.captureStartSample;
+    else if (transport.isPunchEnabled()
         && transport.getPunchOut() > transport.getPunchIn()
         && startSample < transport.getPunchIn())
     {
         startSample = transport.getPunchIn();
     }
 
-    if (! recordManager.startRecording (sr, startSample, recordingLatencyOffsetSamples_))
+    suspendProcessing();
+    struct ResumeGuard
+    {
+        AudioEngine& engine;
+        ~ResumeGuard() { engine.resumeProcessing(); }
+    } resumeGuard { *this };
+
+    lastBlockWasLoopRecording = false;
+
+    if (! recordManager.startRecording (sr, startSample,
+                                         recordingLatencyOffsetSamples_, loopPlan))
     {
         std::fprintf (stderr, "[Dusk Studio/AudioEngine] record(): startRecording failed; "
                               "no armed track could be set up (e.g. all frozen, or the take "
@@ -1466,7 +1541,12 @@ void AudioEngine::record()
         return;
     }
 
+    if (loopPlan.enabled)
+        transport.setPlayhead (startSample);
+
     activeRecordStart.store (startSample, std::memory_order_relaxed);
+    activeLoopRecordPassOrdinal.store (loopPlan.enabled ? 1 : 0,
+                                        std::memory_order_release);
 
     // STOP+FFWD jumps the user back to their last take start. Persisted.
     session.lastRecordPointSamples.store (startSample, std::memory_order_relaxed);
@@ -2463,6 +2543,14 @@ void AudioEngine::audioDeviceAboutToStart (device::IODevice* device)
 
 void AudioEngine::stageTestMidiInjection (int inputIdx, juce::MidiBuffer events)
 {
+    dusk::MidiBuffer nativeEvents;
+    for (const auto meta : events)
+        nativeEvents.addEvent (meta.data, meta.numBytes, meta.samplePosition);
+    stageTestMidiInjection (inputIdx, std::move (nativeEvents));
+}
+
+void AudioEngine::stageTestMidiInjection (int inputIdx, dusk::MidiBuffer events)
+{
     // SPSC: wait for any previously staged buffer to be consumed before we
     // touch testInjectMidi. The synchronous self-test caller drives the
     // audio callback after every stage, so this normally observes false on
@@ -2486,7 +2574,7 @@ void AudioEngine::stageTestMidiInjection (int inputIdx, juce::MidiBuffer events)
         return;
     }
 
-    testInjectMidi.swapWith (events);
+    testInjectMidi = std::move (events);
     testInjectInputIdx.store (inputIdx, std::memory_order_relaxed);
     testInjectReady.store (true, std::memory_order_release);
 }
@@ -2627,11 +2715,11 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     for (auto& v : auxLaneR)  v.assign ((size_t) bs, 0.0f);
     for (auto& v : playbackScratch)  v.assign ((size_t) bs, 0.0f);
     for (auto& v : playbackScratchR) v.assign ((size_t) bs, 0.0f);
-    // Growth hint only, but it has to track the dusk ceiling: this buffer is
-    // refilled from perInputMidi every block, and a juce event costs 6 bytes of
-    // header against dusk's 8, so a hint at the shared size means one drained
-    // block never reallocs here on the audio thread.
-    for (auto& m : perTrackMidiScratch) m.ensureSize (dusk::kMidiBlockBytes);
+    // Live input, scheduled events, and loop-seam reset/chase messages share
+    // this routing buffer. Four input-block ceilings cover two live sources
+    // plus the worst 8192-frame/128-sample seam-reset burst off the RT path.
+    for (auto& m : perTrackMidiScratch) m.ensureSize (4 * dusk::kMidiBlockBytes);
+    liveRecordMidiScratch.ensureSize (2 * dusk::kMidiBlockBytes);
     midiClockOutScratch.reserveBytes (dusk::kMidiBlockBytes);
     midiOutTrackScratch.reserveBytes (dusk::kMidiBlockBytes);
     silentInputScratch.assign ((size_t) bs, 0.0f);
@@ -4133,19 +4221,84 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     const auto state = transport.getState();
     const bool isPlaying   = (state == Transport::State::Playing);
     const bool isRecording = (state == Transport::State::Recording);
-    const std::int64_t blockStartSamples = transport.getPlayhead();
+    std::int64_t blockStartSamples = transport.getPlayhead();
 
     // Offline renders must be deterministic - live input never prints. An offline
     // bounce/stem/freeze drives this callback from a worker thread while the MIDI
     // input path stays open, so this latch gates every live-MIDI pull below.
     const bool offlineRender = offlineRenderActive.load (std::memory_order_acquire);
 
-    // Loop-aware disk reads: mirrors the wrap gate at the bottom of the
-    // callback (plain playback only - recording keeps the playhead linear).
-    const bool loopReadActive = isPlaying && ! isRecording && transport.isLoopEnabled()
+    // Loop recording uses the immutable plan published before Record entered
+    // the rolling state. Live Loop/Punch edits apply to the next gesture, so a
+    // current take cannot change shape halfway through a callback or pass.
+    const bool recordManagerActive = isRecording && recordManager.isActive();
+    const auto loopRecordPlan = recordManagerActive
+                              ? recordManager.getLoopCapturePlan()
+                              : RecordManager::LoopCapturePlan {};
+    const bool loopRecordingActive = recordManagerActive && loopRecordPlan.enabled;
+    const auto captureTrackMask = recordManagerActive
+        ? recordManager.getActiveCaptureTrackMask() : std::uint32_t { 0 };
+    const auto midiCaptureTrackMask = recordManagerActive
+        ? recordManager.getActiveMidiCaptureTrackMask() : std::uint32_t { 0 };
+    const auto stereoCaptureTrackMask = recordManagerActive
+        ? recordManager.getActiveStereoCaptureTrackMask() : std::uint32_t { 0 };
+    if (loopRecordingActive && lastBlockWasLoopRecording
+        && blockStartSamples != lastBlockEndSample)
+    {
+        // Loop-record seeks are deferred until the gesture ends. Restoring the
+        // expected wrapped endpoint keeps pass coordinates and writer offsets
+        // contiguous even if a ruler click lands between callbacks.
+        blockStartSamples = lastBlockEndSample;
+        transport.setPlayhead (blockStartSamples);
+    }
+    const int loopRecordPassAtBlockStart = loopRecordingActive
+        ? std::max (1, activeLoopRecordPassOrdinal.load (std::memory_order_acquire)) : 0;
+
+    // Unarmed/frozen accompaniment must hear the same seam as the recorder.
+    // Plain playback still follows the live transport bounds.
+    const bool playbackLoopActive = isPlaying && transport.isLoopEnabled()
                                  && transport.getLoopEnd() > transport.getLoopStart();
-    const std::int64_t loopReadStart = loopReadActive ? transport.getLoopStart() : -1;
-    const std::int64_t loopReadEnd   = loopReadActive ? transport.getLoopEnd()   : -1;
+    const std::int64_t loopReadStart = loopRecordingActive
+        ? loopRecordPlan.loopStartSample
+        : (playbackLoopActive ? transport.getLoopStart() : -1);
+    const std::int64_t loopReadEnd = loopRecordingActive
+        ? loopRecordPlan.loopEndSample
+        : (playbackLoopActive ? transport.getLoopEnd() : -1);
+
+    // Re-enumerated at each capture site instead of storing a variable-size
+    // span list. The helper invokes callbacks directly, so the audio thread
+    // performs no allocation or synchronization at a seam.
+    auto forEachRecordCaptureSpan = [&] (auto&& callback) noexcept
+    {
+        if (! loopRecordingActive)
+            return;
+
+        int passOrdinal = loopRecordPassAtBlockStart;
+        forEachLoopTimelineSpan (
+            blockStartSamples, numSamples, true,
+            loopRecordPlan.loopStartSample, loopRecordPlan.loopEndSample,
+            [&] (const LoopTimelineSpan& timelineSpan) noexcept
+            {
+                if (timelineSpan.wrappedBefore)
+                    ++passOrdinal;
+
+                auto timelineStart = timelineSpan.timelineStart;
+                int callbackOffset = timelineSpan.bufferOffset;
+                int remaining = timelineSpan.length;
+                const auto captureSpan = recordManager.coordinateLoopCaptureSpan (
+                    passOrdinal, timelineStart, callbackOffset, remaining);
+                if (captureSpan.passOrdinal > 0 && captureSpan.numSamples > 0)
+                    callback (captureSpan);
+            });
+    };
+
+    // Gesture-global pass descriptors are registered exactly once. MIDI and
+    // audio re-enumerate the same immutable coordinates below but use explicit
+    // spans, so neither path mutates or double-counts this shared descriptor.
+    forEachRecordCaptureSpan ([&] (const RecordManager::LoopCaptureSpan& span) noexcept
+    {
+        recordManager.beginLoopCaptureSpan (span);
+    });
 
     // Hanging-note protection. Detect two events that warrant a per-MIDI-
     // track "All Notes Off" flush this block:
@@ -4159,8 +4312,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                               && lastBlockEndSample != 0
                               && blockStartSamples != lastBlockEndSample;
     const bool flushHangingMidi = transportJustStopped || playheadJumped;
-    wasRolling         = isRolling;
-    lastBlockEndSample = blockStartSamples + numSamples;
+    wasRolling = isRolling;
 
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
@@ -4244,10 +4396,17 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // mute and solo state.
         const bool muted   = trackParams.liveMute.load (std::memory_order_relaxed);
         const bool soloed  = trackParams.liveSolo.load (std::memory_order_relaxed);
-        const bool armed   = session.track (t).recordArmed.load (std::memory_order_relaxed);
+        const bool liveArmed = session.track (t).recordArmed.load (std::memory_order_relaxed);
+        const auto trackBit = std::uint32_t { 1 } << t;
+        const bool capturedTrack = (captureTrackMask & trackBit) != 0;
+        const bool armed = isRecording
+            ? capturedTrack
+            : liveArmed;
         const bool monitorEnabled = session.track (t).inputMonitor.load (std::memory_order_relaxed);
-        const bool midiTrack = session.track (t).mode.load (std::memory_order_relaxed)
-                                   == (int) Track::Mode::Midi;
+        const int liveTrackMode = session.track (t).mode.load (std::memory_order_relaxed);
+        const bool midiTrack = isRecording && capturedTrack
+            ? (midiCaptureTrackMask & trackBit) != 0
+            : liveTrackMode == (int) Track::Mode::Midi;
         // Frozen: this track plays a pre-rendered WAV through the strip with the
         // instrument/insert + EQ/comp bypassed (baked in). Works for MIDI and
         // audio tracks alike. Acquire pairs with the release store in
@@ -4329,8 +4488,9 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         //     for monitoring.
         //   - Stopped & un-armed & IN off: monoIn null -> strip is silent.
         const float* monoIn = nullptr;
-        const bool stereoTrackInput = session.track (t).mode.load (std::memory_order_relaxed)
-                                          == (int) Track::Mode::Stereo;
+        const bool stereoTrackInput = isRecording && capturedTrack
+            ? (stereoCaptureTrackMask & trackBit) != 0
+            : liveTrackMode == (int) Track::Mode::Stereo;
 
         if (willReadFromDisk)
         {
@@ -4456,16 +4616,64 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         const bool perTrackFlush = flushHangingMidi || midiInputSwapped;
 
         perTrackMidiScratch[(size_t) t].clear();
+        liveRecordMidiScratch.clear();
+        constexpr int kGeneratedEventBytes = 6 + 3;
+        constexpr int kGeneratedMidiBudget = 2 * (int) dusk::kMidiBlockBytes;
+        constexpr int kMidiScheduleScanBudget = 32768;
+        constexpr int kHangingResetMessageCount = 16 * 2;
+        constexpr int kHangingResetBytes = kHangingResetMessageCount
+                                         * kGeneratedEventBytes;
+        static_assert (kGeneratedMidiBudget
+                       >= (8192 / kMinLoopRecordSamples + 1)
+                            * kHangingResetBytes);
+        GeneratedMidiBudget generatedMidiBudget (kGeneratedMidiBudget);
         if (midiTrack && perTrackFlush)
         {
+            const bool reserved = generatedMidiBudget.reserveStructural (
+                kHangingResetBytes);
+            jassert (reserved);
+            (void) reserved;
+        }
+        int midiScheduleScansRemaining = kMidiScheduleScanBudget;
+        auto addGeneratedMidi = [&] (const auto& message, int sampleOffset) noexcept
+        {
+            if (! generatedMidiBudget.spendDiscretionary (kGeneratedEventBytes))
+                return false;
+            perTrackMidiScratch[(size_t) t].addEvent (message, sampleOffset);
+            return true;
+        };
+        auto addGeneratedController = [&] (int channel, int controller,
+                                           int value, int sampleOffset) noexcept
+        {
+            if (! generatedMidiBudget.spendDiscretionary (kGeneratedEventBytes))
+                return false;
+            const std::array<std::uint8_t, 3> bytes {
+                (std::uint8_t) (0xB0 | (channel - 1)),
+                (std::uint8_t) controller,
+                (std::uint8_t) value
+            };
+            perTrackMidiScratch[(size_t) t].addEvent (
+                bytes.data(), (int) bytes.size(), sampleOffset);
+            return true;
+        };
+        auto emitHangingMidiReset = [&] (int sampleOffset) noexcept
+        {
+            // A reset is structural: either all 32 three-byte messages fit or
+            // none are emitted. Discretionary scheduling reserves this exact
+            // capacity before it can consume the shared generated-event budget.
+            if (! generatedMidiBudget.consumeStructural (kHangingResetBytes))
+                return false;
             for (int ch = 1; ch <= 16; ++ch)
             {
                 perTrackMidiScratch[(size_t) t].addEvent (
-                    juce::MidiMessage::controllerEvent (ch, 64,  0), 0);
+                    juce::MidiMessage::controllerEvent (ch, 64, 0), sampleOffset);
                 perTrackMidiScratch[(size_t) t].addEvent (
-                    juce::MidiMessage::controllerEvent (ch, 123, 0), 0);
+                    juce::MidiMessage::controllerEvent (ch, 123, 0), sampleOffset);
             }
-        }
+            return true;
+        };
+        if (midiTrack && perTrackFlush)
+            emitHangingMidiReset (0);
 
         // Build this block's per-track MIDI buffer. Two source paths,
         // mutually exclusive (matches the audio source decision above):
@@ -4505,6 +4713,10 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 perTrackMidiScratch[(size_t) t].addEvent (v.getRawData(),
                                                           v.getRawDataSize(),
                                                           meta.samplePosition);
+                if (isRecording && armed && midiTrack)
+                    liveRecordMidiScratch.addEvent (v.getRawData(),
+                                                    v.getRawDataSize(),
+                                                    meta.samplePosition);
             }
         };
         auto pullLiveMidi = [&] ()
@@ -4526,9 +4738,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             // user expects an armed instrument track to play from the
             // virtual keyboard. Skip when the explicit input already IS
             // the VK so events aren't doubled.
-            const bool trackArmed = session.track (t).recordArmed.load (std::memory_order_relaxed);
             const int vkbIdx = midiIn.getVirtualKeyboardIndex();
-            if (trackArmed && vkbIdx != currentMidiIdx)
+            if (armed && vkbIdx != currentMidiIdx)
                 pullInput (vkbIdx, chFilter);
         };
 
@@ -4560,7 +4771,6 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 ? (std::int64_t) strips[(size_t) t].getPluginSlot().getLatencySamples()
                 : 0;
             const auto schedStart = blockStartSamples + pluginLatency;
-            const auto blockEnd   = schedStart + numSamples;
 
             // Acquire-load the track's MIDI region snapshot once for the
             // block. Mutated on the message thread by RecordManager (when
@@ -4570,94 +4780,229 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             // construction time so this pointer is non-null.
             const auto& midiRegionsForBlock = *session.track (t).midiRegions.read();
 
-            // Chase pass: when the playhead jumps INTO the middle of a
-            // sustained note (transport start after seek, loop wrap, etc.)
-            // the synth would otherwise sit silent until the Note Off fires
-            // since the Note On is in the past. Emit Note On at sample 1
-            // (one sample after the All Notes Off the flush block already
-            // emitted at sample 0, so the synth doesn't immediately silence
-            // the chase) for every note whose on-time is before blockStart
-            // and off-time is after blockStart.
-            if (flushHangingMidi)
+            // Loop recording already rejects ranges shorter than the shared
+            // recording minimum.
+            // Plain playback still permits them, so keep its pre-existing
+            // bounded linear MIDI window instead of enumerating more seam
+            // resets than the fixed generated-event budget can represent.
+            const bool midiLoopActive = loopReadEnd > loopReadStart
+                && static_cast<std::uint64_t> (loopReadEnd)
+                     - static_cast<std::uint64_t> (loopReadStart)
+                   >= static_cast<std::uint64_t> (kMinLoopRecordSamples);
+            std::array<int, 16 * 128> chasedControllerValue;
+            std::array<std::int64_t, 16 * 128> chasedControllerAt;
+            std::array<bool, 16 * 128> chasedControllerSeen;
+            std::array<bool, 16 * 128> controllerExplicitAtStart;
+            std::array<int, 16 * 128> chasedControllerKeys;
+            int chasedControllerKeyCount = 0;
+
+            // Reserve every reset before discretionary notes/controllers can
+            // consume their bytes. At the supported 8192-frame maximum and
+            // 128-sample minimum loop this is at most 64 complete resets.
+            if (midiTrack)
             {
-                for (const auto& region : midiRegionsForBlock)
+                int futureSeamResetCount = 0;
+                forEachLoopTimelineSpan (
+                    schedStart, numSamples, midiLoopActive, loopReadStart, loopReadEnd,
+                    [&] (const LoopTimelineSpan& span) noexcept
+                    {
+                        if (span.wrappedBefore)
+                            ++futureSeamResetCount;
+                    });
+                const bool reserved = generatedMidiBudget.reserveStructural (
+                    futureSeamResetCount * kHangingResetBytes);
+                jassert (reserved);
+                (void) reserved;
+            }
+
+            auto takeScheduleScan = [&] () noexcept
+            {
+                if (midiScheduleScansRemaining <= 0)
+                    return false;
+                --midiScheduleScansRemaining;
+                return true;
+            };
+            forEachLoopTimelineSpan (
+                schedStart, numSamples, midiLoopActive, loopReadStart, loopReadEnd,
+                [&] (const LoopTimelineSpan& span) noexcept
                 {
-                    if (region.muted) continue;
-                    const auto regStart = region.timelineStart;
-                    const auto regStartTick = useMap ? tm->samplesToTicks (regStart, sr) : (std::int64_t) 0;
-                    auto absOf = [&] (std::int64_t relTick)
+                    // Structural resets are emitted before every overload
+                    // bailout. Their capacity was reserved exactly above, so
+                    // an exhausted musical-event or scan budget cannot suppress
+                    // this or any later seam reset.
+                    if (midiTrack && span.wrappedBefore
+                        && ! emitHangingMidiReset (span.bufferOffset))
+                        return;
+
+                    if (generatedMidiBudget.discretionaryBytesAvailable()
+                            < kGeneratedEventBytes
+                        || midiScheduleScansRemaining <= 0)
+                        return;
+
+                    const bool chase = midiTrack && (span.wrappedBefore
+                                    || (span.bufferOffset == 0 && flushHangingMidi));
+                    const int chaseOffset = span.bufferOffset;
+                    const auto spanEnd = span.timelineStart + span.length;
+                    if (chase)
                     {
-                        return useMap ? tm->ticksToSamples (regStartTick + relTick, sr)
-                                      : regStart + ticksToSamples (relTick, sr, bpm);
-                    };
-                    for (const auto& n : region.notes)
+                        chasedControllerValue.fill (0);
+                        chasedControllerAt.fill (
+                            std::numeric_limits<std::int64_t>::min());
+                        chasedControllerSeen.fill (false);
+                        controllerExplicitAtStart.fill (false);
+                        chasedControllerKeyCount = 0;
+                    }
+
+                    // Controllers are a distinct first pass. This makes equal-
+                    // sample insertion order reset -> explicit/chased state ->
+                    // every note-on, independent of region storage order.
+                    bool controllerPassComplete = true;
+                    for (const auto& region : midiRegionsForBlock)
                     {
-                        const auto onAbs  = absOf (n.startTick);
-                        const auto offAbs = absOf (n.startTick + n.lengthInTicks);
-                        if (onAbs < blockStartSamples && offAbs > blockStartSamples)
+                        if (! takeScheduleScan())
                         {
-                            perTrackMidiScratch[(size_t) t].addEvent (
-                                juce::MidiMessage::noteOn (n.channel, n.noteNumber,
-                                                            (std::uint8_t) n.velocity),
-                                1);
+                            controllerPassComplete = false;
+                            break;
+                        }
+                        if (region.muted) continue;
+                        const auto regStart = region.timelineStart;
+                        const auto regStartTick = useMap
+                            ? tm->samplesToTicks (regStart, sr) : std::int64_t { 0 };
+                        auto absOf = [&] (std::int64_t relTick)
+                        {
+                            return useMap
+                                ? tm->ticksToSamples (regStartTick + relTick, sr)
+                                : regStart + ticksToSamples (relTick, sr, bpm);
+                        };
+                        const auto regEnd = useMap ? absOf (region.lengthInTicks)
+                                                   : regStart + region.lengthInSamples;
+                        const bool overlapsSpan = regEnd > span.timelineStart
+                                               && regStart < spanEnd;
+                        if (! overlapsSpan && ! chase)
+                            continue;
+
+                        for (const auto& c : region.ccs)
+                        {
+                            if (! takeScheduleScan())
+                            {
+                                controllerPassComplete = false;
+                                break;
+                            }
+                            const auto at = absOf (c.atTick);
+                            const bool validController = c.channel >= 1 && c.channel <= 16
+                                                      && c.controller >= 0
+                                                      && c.controller < 128;
+                            const int controllerKey = validController
+                                ? (c.channel - 1) * 128 + c.controller : -1;
+                            if (chase && controllerKey >= 0)
+                            {
+                                if (at < span.timelineStart
+                                    && (! chasedControllerSeen[(size_t) controllerKey]
+                                        || at >= chasedControllerAt[(size_t) controllerKey]))
+                                {
+                                    if (! chasedControllerSeen[(size_t) controllerKey])
+                                    {
+                                        chasedControllerKeys[(size_t) chasedControllerKeyCount++]
+                                            = controllerKey;
+                                    }
+                                    chasedControllerSeen[(size_t) controllerKey] = true;
+                                    chasedControllerAt[(size_t) controllerKey] = at;
+                                    chasedControllerValue[(size_t) controllerKey] = c.value;
+                                }
+                                if (at == span.timelineStart)
+                                    controllerExplicitAtStart[(size_t) controllerKey] = true;
+                            }
+                            if (at >= span.timelineStart && at < spanEnd)
+                            {
+                                if (! addGeneratedMidi (
+                                    juce::MidiMessage::controllerEvent (
+                                        c.channel, c.controller, c.value),
+                                    span.bufferOffset + (int) (at - span.timelineStart)))
+                                {
+                                    controllerPassComplete = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if (! controllerPassComplete)
+                            break;
+                    }
+
+                    if (! controllerPassComplete)
+                        return;
+
+                    if (chase)
+                    {
+                        for (int i = 0; i < chasedControllerKeyCount; ++i)
+                        {
+                            const int key = chasedControllerKeys[(size_t) i];
+                            if (controllerExplicitAtStart[(size_t) key])
+                                continue;
+                            if (! addGeneratedController (
+                                    key / 128 + 1, key % 128,
+                                    chasedControllerValue[(size_t) key], chaseOffset))
+                                return;
                         }
                     }
-                }
-            }
 
-            for (const auto& region : midiRegionsForBlock)
-            {
-                if (region.muted) continue;
-                const auto regStart = region.timelineStart;
-                const auto regStartTick = useMap ? tm->samplesToTicks (regStart, sr) : (std::int64_t) 0;
-                auto absOf = [&] (std::int64_t relTick)
-                {
-                    return useMap ? tm->ticksToSamples (regStartTick + relTick, sr)
-                                  : regStart + ticksToSamples (relTick, sr, bpm);
-                };
-                // Musical region end (lengthInTicks is the source of truth) so a
-                // region that got longer in samples under a tempo slowdown isn't
-                // skipped by the overlap test.
-                const auto regEnd = useMap ? absOf (region.lengthInTicks)
-                                           : regStart + region.lengthInSamples;
-                // Skip regions that don't overlap the SHIFTED block at all.
-                // schedStart/blockEnd already include the plugin-latency
-                // offset for MIDI tracks; on audio tracks pluginLatency=0
-                // so this collapses to the original [blockStart, blockEnd)
-                // window.
-                if (regEnd <= schedStart || regStart >= blockEnd) continue;
+                    // Notes are deliberately scanned only after all controller
+                    // state has been inserted. Retrigger every sustained note
+                    // occurrence: overlapping regions may legitimately hold the
+                    // same channel/note and must not be key-deduplicated.
+                    for (const auto& region : midiRegionsForBlock)
+                    {
+                        if (! takeScheduleScan())
+                            return;
+                        if (region.muted) continue;
+                        const auto regStart = region.timelineStart;
+                        const auto regStartTick = useMap
+                            ? tm->samplesToTicks (regStart, sr) : std::int64_t { 0 };
+                        auto absOf = [&] (std::int64_t relTick)
+                        {
+                            return useMap
+                                ? tm->ticksToSamples (regStartTick + relTick, sr)
+                                : regStart + ticksToSamples (relTick, sr, bpm);
+                        };
+                        const auto regEnd = useMap ? absOf (region.lengthInTicks)
+                                                   : regStart + region.lengthInSamples;
+                        if (regEnd <= span.timelineStart || regStart >= spanEnd)
+                            continue;
 
-                for (const auto& n : region.notes)
-                {
-                    const auto onAbs  = absOf (n.startTick);
-                    const auto offAbs = absOf (n.startTick + n.lengthInTicks);
-                    if (onAbs >= schedStart && onAbs < blockEnd)
-                    {
-                        perTrackMidiScratch[(size_t) t].addEvent (
-                            juce::MidiMessage::noteOn (n.channel, n.noteNumber,
-                                                        (std::uint8_t) n.velocity),
-                            (int) (onAbs - schedStart));
+                        for (const auto& n : region.notes)
+                        {
+                            if (! takeScheduleScan())
+                                return;
+                            const auto onAbs  = absOf (n.startTick);
+                            const auto offAbs = absOf (n.startTick + n.lengthInTicks);
+                            if (chase && onAbs < span.timelineStart
+                                      && offAbs > span.timelineStart)
+                            {
+                                if (! addGeneratedMidi (
+                                        juce::MidiMessage::noteOn (
+                                            n.channel, n.noteNumber,
+                                            (std::uint8_t) n.velocity),
+                                        chaseOffset))
+                                    return;
+                            }
+                            if (onAbs >= span.timelineStart && onAbs < spanEnd)
+                            {
+                                if (! addGeneratedMidi (
+                                        juce::MidiMessage::noteOn (
+                                            n.channel, n.noteNumber,
+                                            (std::uint8_t) n.velocity),
+                                        span.bufferOffset + (int) (onAbs - span.timelineStart)))
+                                    return;
+                            }
+                            if (offAbs >= span.timelineStart && offAbs < spanEnd)
+                            {
+                                if (! addGeneratedMidi (
+                                        juce::MidiMessage::noteOff (n.channel, n.noteNumber),
+                                        span.bufferOffset + (int) (offAbs - span.timelineStart)))
+                                    return;
+                            }
+                        }
                     }
-                    if (offAbs >= schedStart && offAbs < blockEnd)
-                    {
-                        perTrackMidiScratch[(size_t) t].addEvent (
-                            juce::MidiMessage::noteOff (n.channel, n.noteNumber),
-                            (int) (offAbs - schedStart));
-                    }
-                }
-                for (const auto& c : region.ccs)
-                {
-                    const auto sAbs = absOf (c.atTick);
-                    if (sAbs >= schedStart && sAbs < blockEnd)
-                    {
-                        perTrackMidiScratch[(size_t) t].addEvent (
-                            juce::MidiMessage::controllerEvent (c.channel,
-                                                                  c.controller,
-                                                                  c.value),
-                            (int) (sAbs - schedStart));
-                    }
-                }
-            }
+                });
 
             // Play-along overlay. Live-MIDI delivery is a PER-BRANCH obligation:
             // every transport-source branch that builds perTrackMidiScratch must
@@ -4699,11 +5044,27 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // MIDI buffer in place, so by the time processAndAccumulate
         // returns, perTrackMidiScratch is typically empty. Writing here
         // captures the events the user actually played.
-        if (isRecording && armed && midiTrack && ! perTrackMidiScratch[(size_t) t].isEmpty())
+        if (isRecording && armed && midiTrack && ! liveRecordMidiScratch.isEmpty())
         {
-            const auto recStart = activeRecordStart.load (std::memory_order_relaxed);
-            const auto blockOffsetFromRecord = blockStartSamples - recStart;
-            recordManager.writeMidiBlock (t, perTrackMidiScratch[(size_t) t], blockOffsetFromRecord);
+            if (loopRecordingActive)
+            {
+                // Pass the SAME unsliced callback buffer to every span. The
+                // explicit absolute inputOffset filters events into exactly one
+                // pass before the instrument is allowed to consume the buffer.
+                forEachRecordCaptureSpan (
+                    [&] (const RecordManager::LoopCaptureSpan& span) noexcept
+                    {
+                        recordManager.writeMidiBlock (
+                            t, liveRecordMidiScratch, 0, &span);
+                    });
+            }
+            else
+            {
+                const auto recStart = activeRecordStart.load (std::memory_order_relaxed);
+                const auto blockOffsetFromRecord = blockStartSamples - recStart;
+                recordManager.writeMidiBlock (
+                    t, liveRecordMidiScratch, blockOffsetFromRecord);
+            }
         }
 
         // External MIDI output. When this MIDI track has a hardware port
@@ -4891,41 +5252,53 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 }
             }
 
-            // Unified write-gate - honours BOTH:
-            //   - activeRecordStart  (count-in pre-roll: skip writes until
-            //     the playhead reaches the take's intended start)
-            //   - punch-in / punch-out  (only commit samples in the window
-            //     when punch is on)
-            // Both reduce to a single [from, to) intersection with the
-            // current block.
-            const auto recStart  = activeRecordStart.load (std::memory_order_relaxed);
-            std::int64_t effIn    = recStart;  // floor; never write before this
-            std::int64_t effOut   = std::numeric_limits<std::int64_t>::max();
-            if (transport.isPunchEnabled())
+            if (loopRecordingActive)
             {
-                const auto pIn  = transport.getPunchIn();
-                const auto pOut = transport.getPunchOut();
-                if (pOut > pIn)
-                {
-                    effIn  = std::max (effIn, pIn);
-                    effOut = pOut;
-                }
-                else
-                {
-                    effIn = effOut;  // empty/inverted punch window -> no capture
-                }
+                forEachRecordCaptureSpan (
+                    [&] (const RecordManager::LoopCaptureSpan& span) noexcept
+                    {
+                        const float* writeL = recL + span.inputOffset;
+                        const float* writeR = recR != nullptr
+                            ? recR + span.inputOffset : nullptr;
+                        recordManager.writeInputBlock (
+                            t, writeL, writeR, span.numSamples, &span);
+                    });
             }
-
-            const auto blockEnd = blockStartSamples + numSamples;
-            const auto sliceStart = std::max (blockStartSamples, effIn);
-            const auto sliceEnd   = std::min (blockEnd,        effOut);
-            if (sliceEnd > sliceStart)
+            else
             {
-                const int writeOffset = (int) (sliceStart - blockStartSamples);
-                const int writeLength = (int) (sliceEnd - sliceStart);
-                const float* writeL = recL + writeOffset;
-                const float* writeR = (recR != nullptr) ? recR + writeOffset : nullptr;
-                recordManager.writeInputBlock (t, writeL, writeR, writeLength);
+                // Unified linear write-gate - honours BOTH:
+                //   - activeRecordStart (count-in/pre-roll)
+                //   - punch-in / punch-out
+                // Loop capture uses the immutable per-pass spans above.
+                const auto recStart = activeRecordStart.load (std::memory_order_relaxed);
+                std::int64_t effIn  = recStart;
+                std::int64_t effOut = std::numeric_limits<std::int64_t>::max();
+                if (transport.isPunchEnabled())
+                {
+                    const auto pIn  = transport.getPunchIn();
+                    const auto pOut = transport.getPunchOut();
+                    if (pOut > pIn)
+                    {
+                        effIn  = std::max (effIn, pIn);
+                        effOut = pOut;
+                    }
+                    else
+                    {
+                        effIn = effOut;
+                    }
+                }
+
+                const auto blockEnd = blockStartSamples + numSamples;
+                const auto sliceStart = std::max (blockStartSamples, effIn);
+                const auto sliceEnd   = std::min (blockEnd, effOut);
+                if (sliceEnd > sliceStart)
+                {
+                    const int writeOffset = (int) (sliceStart - blockStartSamples);
+                    const int writeLength = (int) (sliceEnd - sliceStart);
+                    const float* writeL = recL + writeOffset;
+                    const float* writeR = recR != nullptr ? recR + writeOffset : nullptr;
+                    recordManager.writeInputBlock (t, writeL, writeR, writeLength);
+                }
             }
         }
 
@@ -5329,7 +5702,9 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     metronome.setPolyphonic (polyphonic);
     {
         const auto recStart   = activeRecordStart.load (std::memory_order_relaxed);
-        const bool inCountIn  = isRecording && blockStartSamples < recStart;
+        const bool inCountIn = isRecording && blockStartSamples < recStart
+                            && (! loopRecordingActive
+                                || loopRecordPassAtBlockStart == 1);
 
         // Decide whether the click is eligible this block.
         //   - Recording (post-count-in): gated by clickWhileRecording AND
@@ -5366,16 +5741,31 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
 
     if (isPlaying || isRecording)
     {
-        transport.advancePlayhead (numSamples);
+        // A ruler/marker seek can race a live callback. Loop-record gestures
+        // deliberately defer seeks until Stop, so advance from the immutable
+        // block coordinate instead of adding onto a concurrently replaced
+        // playhead. Plain playback keeps its normal seekable fetch-add path.
+        if (loopRecordingActive)
+            transport.setPlayhead (blockStartSamples + numSamples);
+        else
+            transport.advancePlayhead (numSamples);
 
-        // Loop wrap-around. Only honoured during plain playback - during
-        // Recording we keep the playhead linear so the captured WAV maps
-        // cleanly onto the timeline (loop-take-stacking is a future
-        // feature). Wrap is whole-block accurate: we do not split the
-        // current block, so the playhead may briefly read up to one block
-        // past loopEnd before snapping back. That overshoot is silent
-        // because PlaybackEngine returns silence outside region bounds.
-        if (isPlaying && ! isRecording && transport.isLoopEnabled())
+        if (loopRecordingActive)
+        {
+            const auto curr = transport.getPlayhead();
+            const auto loopStart = loopRecordPlan.loopStartSample;
+            const auto loopEnd   = loopRecordPlan.loopEndSample;
+            if (curr >= loopEnd)
+            {
+                const auto loopLength = loopEnd - loopStart;
+                const auto distancePastEnd = curr - loopEnd;
+                const auto crossings = 1 + distancePastEnd / loopLength;
+                transport.setPlayhead (loopStart + distancePastEnd % loopLength);
+                activeLoopRecordPassOrdinal.fetch_add ((int) crossings,
+                                                        std::memory_order_relaxed);
+            }
+        }
+        else if (isPlaying && transport.isLoopEnabled())
         {
             const auto lStart = transport.getLoopStart();
             const auto lEnd   = transport.getLoopEnd();
@@ -5391,6 +5781,10 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             }
         }
     }
+
+    lastBlockWasLoopRecording = loopRecordingActive;
+    lastBlockEndSample = isRolling ? transport.getPlayhead()
+                                   : blockStartSamples + numSamples;
 
     // Detect xrun: callback work shouldn't exceed the buffer's wall-clock
     // budget. If it does, we'd glitch on the next callback. Track the count
