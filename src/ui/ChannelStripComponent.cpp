@@ -9,6 +9,7 @@
 #include "EmbeddedModal.h"
 #include "HardwareInsertEditor.h"
 #include "PluginPickerHelpers.h"
+#include "TrackMeterSource.h"
 #include "../engine/CompModeMap.h"
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
   #include "ClapPluginEditorComponent.h"   // Linux-only native CLAP editor
@@ -2111,6 +2112,11 @@ void ChannelStripComponent::refreshInsertButtonForCapture()
     repaint();
 }
 
+void ChannelStripComponent::refreshMetersForCapture()
+{
+    timerCallback();
+}
+
 bool ChannelStripComponent::insertSlotOccupied() const
 {
     auto& st = engine.getChannelStrip (trackIndex);
@@ -4091,24 +4097,32 @@ void ChannelStripComponent::timerCallback()
         else peakHold = std::max (-100.0f, peakHold - 1.5f);
     };
 
-    const bool stereoMode = (track.mode.load (std::memory_order_relaxed)
-                              == (int) Track::Mode::Stereo);
+    const int trackMode = track.mode.load (std::memory_order_relaxed);
+    const bool stereoMode = trackMode == (int) Track::Mode::Stereo;
 
-    // Meter follows the monitored source: pre-fader INPUT while the track is
-    // input-monitoring (IN engaged, so record levels read correctly), post-
-    // fader OUTPUT otherwise (the track's contribution to the mix). Mono shows
-    // the hotter output channel so a hard pan doesn't read as silence.
-    const bool  inputMon = track.inputMonitor.load (std::memory_order_relaxed);
+    // IN keeps its existing input-meter override in every stage. ARM adds the
+    // same pre-fader view only where it is meaningful: an unfrozen audio track
+    // in Recording. A retained ARM stays post-fader in Mixing, and MIDI ARM
+    // never selects the audio-device meter. Mono output shows the hotter
+    // channel so a hard pan doesn't read as silence.
+    const bool inputMon = track.inputMonitor.load (std::memory_order_relaxed);
+    const bool recordArmed = track.recordArmed.load (std::memory_order_relaxed);
+    const bool frozen = track.frozen.load (std::memory_order_relaxed);
+    const bool audioTrack = trackMode != (int) Track::Mode::Midi;
+    const bool showInput = selectTrackMeterSource ({ inputMon, recordArmed,
+                                                     ! mixingMode, audioTrack,
+                                                     frozen })
+                           == TrackMeterSource::Input;
     const float outL     = track.meterOutLDb.load (std::memory_order_relaxed);
     const float outR     = track.meterOutRDb.load (std::memory_order_relaxed);
-    const float lDb = inputMon ? track.meterInputDb.load (std::memory_order_relaxed)
-                               : (stereoMode ? outL : std::max (outL, outR));
+    const float lDb = showInput ? track.meterInputDb.load (std::memory_order_relaxed)
+                                : (stereoMode ? outL : std::max (outL, outR));
     smoothMeter (lDb, displayedInputDb, inputPeakHoldDb, inputPeakHoldFrames);
 
     if (stereoMode)
     {
-        const float rDb = inputMon ? track.meterInputRDb.load (std::memory_order_relaxed)
-                                   : outR;
+        const float rDb = showInput ? track.meterInputRDb.load (std::memory_order_relaxed)
+                                    : outR;
         smoothMeter (rDb, displayedInputRDb, inputPeakHoldRDb, inputPeakHoldRFrames);
     }
     else

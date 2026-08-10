@@ -223,7 +223,15 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
     if (consoleView != nullptr)
     {
         snapshotComponent (consoleView->getStripComponent (0), outDir, "np-04-channel-strip-recording.png");
-        snapshotComponent (consoleView->getStripComponent (0), outDir, "qg-03-arm-track.png");
+
+        auto& tr = session.track (0);
+        tr.meterInputDb.store (-7.0f, std::memory_order_relaxed);
+        tr.meterOutLDb .store (-100.0f, std::memory_order_relaxed);
+        tr.meterOutRDb .store (-100.0f, std::memory_order_relaxed);
+        tr.inputMonitor.store (false, std::memory_order_relaxed);
+        auto* strip = consoleView->getStripComponent (0);
+        strip->refreshMetersForCapture();
+        snapshotComponent (strip, outDir, "qg-03-arm-track.png");
     }
 
     // Lit input meters -> "record rolling" / "overdub".
