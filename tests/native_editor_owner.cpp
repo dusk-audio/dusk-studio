@@ -216,3 +216,84 @@ TEST_CASE ("syncNativeEditorOwner reaps an editor that abandoned itself")
     REQUIRE (editor == nullptr);
     REQUIRE (detached == 1);
 }
+
+TEST_CASE ("Native editor peer transitions preserve realised peer identity")
+{
+    constexpr std::uint32_t peerAId = 41;
+    constexpr std::uint32_t peerBId = 42;
+    std::uint32_t lastPeerId = 0;
+
+    const auto initial = duskstudio::observeNativeEditorPeer (
+        lastPeerId, peerAId, nullptr, false, {});
+    REQUIRE (initial.rebuildNativeEditors);
+    REQUIRE_FALSE (initial.reopenNativeEditorNow);
+    REQUIRE_FALSE (initial.deferNativeEditorReopen);
+    REQUIRE (lastPeerId == peerAId);
+
+    const auto transientNull = duskstudio::observeNativeEditorPeer (
+        lastPeerId, 0, nullptr, false, {});
+    REQUIRE_FALSE (transientNull.rebuildNativeEditors);
+    REQUIRE (lastPeerId == peerAId);
+
+    const auto samePeer = duskstudio::observeNativeEditorPeer (
+        lastPeerId, peerAId, nullptr, false, {});
+    REQUIRE_FALSE (samePeer.rebuildNativeEditors);
+    REQUIRE (lastPeerId == peerAId);
+
+    // Distinct unique IDs still detect replacement if the allocator reuses the
+    // old ComponentPeer address for the new top-level window.
+    const auto replacement = duskstudio::observeNativeEditorPeer (
+        lastPeerId, peerBId, nullptr, false, {});
+    REQUIRE (replacement.rebuildNativeEditors);
+    REQUIRE_FALSE (replacement.reopenNativeEditorNow);
+    REQUIRE_FALSE (replacement.deferNativeEditorReopen);
+    REQUIRE (lastPeerId == peerBId);
+}
+
+TEST_CASE ("Native editor peer transitions reopen only a borrowed native body")
+{
+    constexpr std::uint32_t oldPeerId = 41;
+    constexpr std::uint32_t newPeerId = 42;
+    int nativeEditor = 0;
+    int unrelatedEditor = 0;
+
+    SECTION ("a topmost native editor reopens immediately")
+    {
+        std::uint32_t lastPeerId = oldPeerId;
+        const auto transition = duskstudio::observeNativeEditorPeer (
+            lastPeerId, newPeerId, &nativeEditor, true, { &nativeEditor });
+        REQUIRE (transition.rebuildNativeEditors);
+        REQUIRE (transition.reopenNativeEditorNow);
+        REQUIRE_FALSE (transition.deferNativeEditorReopen);
+    }
+
+    SECTION ("a covered native editor defers reopening")
+    {
+        std::uint32_t lastPeerId = oldPeerId;
+        const auto transition = duskstudio::observeNativeEditorPeer (
+            lastPeerId, newPeerId, &nativeEditor, false, { &nativeEditor });
+        REQUIRE (transition.rebuildNativeEditors);
+        REQUIRE_FALSE (transition.reopenNativeEditorNow);
+        REQUIRE (transition.deferNativeEditorReopen);
+    }
+
+    SECTION ("a hidden cached editor is rebuilt without reopening")
+    {
+        std::uint32_t lastPeerId = oldPeerId;
+        const auto transition = duskstudio::observeNativeEditorPeer (
+            lastPeerId, newPeerId, nullptr, false, { &nativeEditor });
+        REQUIRE (transition.rebuildNativeEditors);
+        REQUIRE_FALSE (transition.reopenNativeEditorNow);
+        REQUIRE_FALSE (transition.deferNativeEditorReopen);
+    }
+
+    SECTION ("an unrelated modal body is not reopened")
+    {
+        std::uint32_t lastPeerId = oldPeerId;
+        const auto transition = duskstudio::observeNativeEditorPeer (
+            lastPeerId, newPeerId, &unrelatedEditor, false, { &nativeEditor });
+        REQUIRE (transition.rebuildNativeEditors);
+        REQUIRE_FALSE (transition.reopenNativeEditorNow);
+        REQUIRE_FALSE (transition.deferNativeEditorReopen);
+    }
+}

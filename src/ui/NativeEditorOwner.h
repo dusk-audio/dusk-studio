@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
 
 namespace duskstudio
@@ -54,6 +55,37 @@ enum class NativeEditorTeardown
     // together with the container + display it is still drawing into.
     LeakForExit,
 };
+
+// Decision shared by channel-strip peer recreation and its unit tests. A null
+// peer is the transient gap while a top-level window is being recreated, so it
+// must not replace the last realised identity. A new realised peer always
+// invalidates cached native wrappers; only a modal borrowing one of those
+// wrappers should be reopened after teardown.
+struct NativeEditorPeerTransition
+{
+    bool rebuildNativeEditors = false;
+    bool reopenNativeEditorNow = false;
+    bool deferNativeEditorReopen = false;
+};
+
+inline NativeEditorPeerTransition observeNativeEditorPeer (
+    std::uint32_t& lastPeerId,
+    std::uint32_t currentPeerId,
+    const void* modalBody,
+    bool nativeEditorModalIsTopmost,
+    std::initializer_list<const void*> nativeEditorBodies) noexcept
+{
+    if (currentPeerId == 0 || currentPeerId == lastPeerId)
+        return {};
+
+    lastPeerId = currentPeerId;
+    for (auto* nativeBody : nativeEditorBodies)
+        if (nativeBody != nullptr && modalBody == nativeBody)
+            return { true, nativeEditorModalIsTopmost,
+                     ! nativeEditorModalIsTopmost };
+
+    return { true, false, false };
+}
 
 // Enforce the AbandonInstance ordering above. The normal path is called before
 // slot disposal and may safely hide the native container; stale cleanup must
