@@ -95,6 +95,7 @@ add_executable(dusk-studio-tests
     session_apply_tempo_change.cpp
     session_fader_group.cpp
     transport_state_machine.cpp
+    loop_timeline.cpp
     session_mcu_roundtrip.cpp
     console_bank_mapping.cpp
     track_meter_source.cpp
