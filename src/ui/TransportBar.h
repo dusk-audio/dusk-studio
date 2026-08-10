@@ -64,14 +64,18 @@ public:
     // left by ~376 px in expanded mode and ~280 px in compact mode.
     int getTunerLeftX() const noexcept { return tuneButton.getX(); }
 
+    // Left edge of the complete right-side utility cluster. The notepad sits
+    // immediately before the tuner, so overlays must stop here rather than at
+    // the tuner itself.
+    int getUtilityClusterLeftX() const noexcept { return notepadButton.getX(); }
+
     // MainComponent clamps the centered stage-tab overlay against this
     // so RECORDING/MIXING/MASTERING/AUX never slide left over the clock.
     int getClockRightX() const noexcept { return clockLabel.getRight(); }
 
-    // Below this width SNAP->S, TIMELINE->chevron, clock shrinks,
-    // MainComponent's bank overlay shrinks to match. Calibrated to
-    // fire just above the OS-enforced resize floor (~1790 px) - the
-    // previous 1600 never triggered.
+    // Below this width SNAP->S, TIMELINE->chevron, the clock shrinks, and
+    // MainComponent's bank overlay uses its compact layout so the transport
+    // and centered overlay keep clear of each other as the window narrows.
     static constexpr int kCompactTransportWidth = 1850;
 
     // After engine.stop() drains, RecordManager populates

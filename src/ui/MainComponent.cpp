@@ -46,6 +46,7 @@
 #include "../engine/DpAligner.h"
 #include "../engine/audiofile/FileReader.h"
 #include "../engine/audiofile/FileWriter.h"
+#include "../foundation/Text.h"
 #include <algorithm>
 
 namespace duskstudio
@@ -703,7 +704,7 @@ MainComponent::MainComponent()
     refreshSnapUi();
 
     // Bank-button row is rebuilt by syncBankButtons() each layout pass
-    // (visible only when the window can't fit all 16 strips at min
+    // (visible only when the window can't fit all 24 strips at min
     // width). Sits on a row directly below the stage selector so the
     // channel strips inside ConsoleView get the full body height.
 
@@ -804,7 +805,7 @@ MainComponent::MainComponent()
         h = std::min (kPreferredH, userArea.getHeight() - 24);
     }
 
-    const int minContentW = ConsoleView::minimumContentWidth() + 16;  // + outer padding
+    const int minContentW = consolelayout::responsiveMinimumMainComponentWidth();
     const int minContentH = 480 + kTopBarH;
     w = std::max (w, minContentW);
     h = std::max (h, minContentH);
@@ -1097,14 +1098,14 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
-    // Bank switching: plain 1/2/3/4 select the visible channel bank. Maps to
+    // Bank switching: plain 1 through 8 select the visible channel page. Maps to
     // ConsoleView::setBank which also publishes the active bank to the audio
     // thread so bank-relative MIDI bindings retarget. Out-of-range digits (more
     // banks than the window currently shows) fall through unhandled.
     if (noMods && consoleView != nullptr)
     {
-        const int bankIndex = (code >= '1' && code <= '4') ? (code - '1') : -1;
-        if (bankIndex >= 0 && bankIndex < consoleView->numBanks())
+        const int bankIndex = screenPageForDigitKey (code, consoleView->numBanks());
+        if (bankIndex >= 0)
         {
             consoleView->setBank (bankIndex);
             return true;
@@ -1580,11 +1581,9 @@ void MainComponent::syncBankButtons (int desiredCount)
         {
             if (consoleView != nullptr) consoleView->setBank (idx);
         };
-        // Banks 1-4 are reachable via the plain number keys 1/2/3/4 (see keyPressed).
-        juce::String hint;
-        if (idx < 4)
-            hint = "  (press " + juce::String (idx + 1) + ")";
-        btn->setTooltip ("Channel bank " + juce::String (idx + 1) + hint);
+        // Every possible screen page is reachable through the plain digits 1-8.
+        btn->setTooltip (dusk::text::format ("Channel page %d (press %d)",
+                                             idx + 1, idx + 1));
         addAndMakeVisible (btn.get());
         bankButtons.push_back (std::move (btn));
     }
@@ -1709,7 +1708,7 @@ void MainComponent::resized()
 
     // Banking decision: ConsoleView reports how many channel strips fit
     // alongside the always-anchored bus + master column at min width.
-    // When all 16 fit we render NO bank buttons (numBanks == 1). When
+    // When all 24 fit we render NO bank buttons (numBanks == 1). When
     // they don't fit, we render one button per bank with the actual
     // 1-based range as the label ("1-13", "14-16", etc.) - bank size
     // tracks the window width, not a fixed stride of 8.
@@ -1720,6 +1719,8 @@ void MainComponent::resized()
     // render labels one frame stale (showed "1-6" with only 3 strips
     // visible).
     const int consoleTargetWidth = area.getWidth();
+    if (consoleView != nullptr && ! inFullscreenView)
+        consoleView->synchroniseBankStateForWidth (consoleTargetWidth);
     const int numBanks = (consoleView != nullptr && ! inFullscreenView)
                             ? ConsoleView::numBanksForWidth (consoleTargetWidth) : 1;
     const bool needsBanking = numBanks > 1;
@@ -1729,8 +1730,8 @@ void MainComponent::resized()
     // (now centered) transport cluster at the OS minimum window width.
     const int stageW = transportCompact ? 92 : 110;
     const int stageBlockW = stageW * 4;
-    const int  kBankBtnW   = transportCompact ? 70 : 100;
-    constexpr int kBankBtnGap = 6;
+    const int preferredBankBtnW = transportCompact ? 70 : 100;
+    constexpr int preferredBankBtnGap = 6;
     constexpr int kBankBtnH  = 26;
 
     // Stage selector lives in the TOP menu row, centered between the File /
@@ -1784,14 +1785,26 @@ void MainComponent::resized()
 
     syncBankButtons (needsBanking ? numBanks : 0);
     const int bankY = rowBounds.getY() + (rowBounds.getHeight() - kBankBtnH) / 2;
-    const int bankClusterW = needsBanking
-                           ? (numBanks * kBankBtnW + (numBanks - 1) * kBankBtnGap) : 0;
-
     const int clockRight = rowBounds.getX()
                          + (transportBar != nullptr ? transportBar->getClockRightX() : 0);
-    const int tunerLeft  = rowBounds.getX()
-                         + (transportBar != nullptr ? transportBar->getTunerLeftX()
+    const int utilityLeft = rowBounds.getX()
+                         + (transportBar != nullptr ? transportBar->getUtilityClusterLeftX()
                                                       : rowBounds.getWidth());
+    const int bankBandLeft  = clockRight + 12;
+    const int bankBandRight = utilityLeft - 12;
+    const int bankBandW = std::max (0, bankBandRight - bankBandLeft);
+
+    // Up to eight three-strip pages can exist at the minimum window width.
+    // Fit their buttons inside the actual clock-to-tuner band: reduce the gap
+    // first, then the button width. Labels below follow the resulting width.
+    const auto pageButtons = needsBanking
+                           ? consolelayout::fitPageButtons (bankBandW, numBanks,
+                                                            preferredBankBtnW,
+                                                            preferredBankBtnGap)
+                           : consolelayout::PageButtonMetrics {};
+    const int bankBtnGap = pageButtons.gap;
+    const int bankBtnW = pageButtons.width;
+    const int bankClusterW = pageButtons.clusterWidth;
 
     // The toolbar joins the group only with the tape strip open AND when the
     // combined group still fits between the clock and the BPM / tuner cluster.
@@ -1802,7 +1815,7 @@ void MainComponent::resized()
     {
         const int combinedW = bankClusterW + (needsBanking ? kBankToolbarGap : 0) + kHdrClusterW;
         const int gX = std::max (clockRight + 12, stageCentreX - combinedW / 2);
-        if (gX + combinedW <= tunerLeft - 12)
+        if (gX + combinedW <= utilityLeft - 12)
         {
             toolbarVisible = true;
             groupW = combinedW;
@@ -1810,7 +1823,9 @@ void MainComponent::resized()
     }
 
     // Centre the group under the stage selector, clamped past the clock.
-    const int groupX = std::max (clockRight + 12, stageCentreX - groupW / 2);
+    const int groupX = std::clamp (stageCentreX - groupW / 2,
+                                   bankBandLeft,
+                                   std::max (bankBandLeft, bankBandRight - groupW));
 
     if (needsBanking && consoleView != nullptr)
     {
@@ -1820,14 +1835,20 @@ void MainComponent::resized()
         {
             auto* btn = bankButtons[(size_t) i].get();
             const auto range = ConsoleView::rangeForBankAtWidth (i, consoleTargetWidth);
-            btn->setButtonText (transportCompact
-                                  ? (juce::String (range.first) + "-" + juce::String (range.second))
-                                  : (juce::String ("BANK ") + juce::String (i + 1) + "  ("
-                                       + juce::String (range.first) + "-"
-                                       + juce::String (range.second) + ")"));
-            btn->setBounds (bankX, bankY, kBankBtnW, kBankBtnH);
+            std::string label;
+            if (bankBtnW >= 90 && ! transportCompact)
+                label = dusk::text::format ("BANK %d  (%d-%d)", i + 1, range.first, range.second);
+            else if (bankBtnW >= 44)
+                label = dusk::text::format ("%d-%d", range.first, range.second);
+            else
+                label = dusk::text::format ("%d", i + 1);
+            btn->setButtonText (label);
+            btn->setTooltip (dusk::text::format (
+                "Channel page %d: channels %d-%d (press %d)",
+                i + 1, range.first, range.second, i + 1));
+            btn->setBounds (bankX, bankY, bankBtnW, kBankBtnH);
             btn->setToggleState (i == activeBank, juce::dontSendNotification);
-            bankX += kBankBtnW + kBankBtnGap;
+            bankX += bankBtnW + bankBtnGap;
         }
     }
 

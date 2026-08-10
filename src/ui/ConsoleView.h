@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include "BankMapping.h"
+#include "ConsoleLayout.h"
 #include "BusComponent.h"
 #include "ChannelStripComponent.h"
 #include "MasterStripComponent.h"
@@ -36,19 +37,19 @@ public:
     int  getFocusedStrip() const noexcept { return focusedStrip; }
 
     // Min: VCA comp's "513 ms" / "0.2 ms" textboxes don't clip.
-    static constexpr int kMinChannelWidth = 154;
+    static constexpr int kMinChannelWidth = consolelayout::kMinChannelWidth;
     // Min: single-row 4-knob COMP labels ("4.0:1", "AUTO", "10.0") fit.
-    static constexpr int kMinBusWidth     = 172;
+    static constexpr int kMinBusWidth     = consolelayout::kMinBusWidth;
     // Min: with the Pultec HF split across two 2-cell rows, the widest EQ row
     // is the LF 3-cell row; "HF− ATTEN FREQ" now gets a half-strip cell so the
     // floor drops well below the old 4-cell-row constraint.
-    static constexpr int kMinMasterWidth  = 210;
+    static constexpr int kMinMasterWidth  = consolelayout::kMinMasterWidth;
 
     // Ref widths add ~25 px so "VCA 513 ms" / "HF BOOST FREQ" labels
     // never clip in the comfortable-default layout.
-    static constexpr int kRefChannelWidth = 188;
-    static constexpr int kRefBusWidth     = 192;
-    static constexpr int kRefMasterWidth  = 260;
+    static constexpr int kRefChannelWidth = consolelayout::kRefChannelWidth;
+    static constexpr int kRefBusWidth     = consolelayout::kRefBusWidth;
+    static constexpr int kRefMasterWidth  = consolelayout::kRefMasterWidth;
 
     // Auto-compact triggers (TIMELINE mode independent of user toggle):
     //   Height: the recording-stage module stack leaves about 185 px of
@@ -58,13 +59,11 @@ public:
     static constexpr int kAutoCompactStripHeight = 820;
     static constexpr int kAutoCompactChannelWidth = 110;
 
-    static constexpr int kStripGap     = 4;
-    static constexpr int kSectionGap   = 12;
-
-    static int minimumContentWidth();
+    static constexpr int kStripGap     = consolelayout::kStripGap;
+    static constexpr int kSectionGap   = consolelayout::kSectionGap;
 
     // Above this width we drop banking and show all 24 strips.
-    int fixedWidthFor16Tracks() const;
+    int allTracksContentWidth() const;
 
     // Strips that fit at kMinChannelWidth given current width. Buses +
     // master always reserved. Capped at kNumTracks.
@@ -81,6 +80,10 @@ public:
     int  bankStride()  const noexcept;
 
     static int numBanksForWidth (int componentWidth) noexcept;
+
+    // MainComponent calls this before laying out page buttons and timeline
+    // rows, so both observe the page normalised for the incoming width.
+    void synchroniseBankStateForWidth (int componentWidth) noexcept;
 
     // Inclusive 1-based range (e.g. {1, 13} for first bank when
     // stride==13). Used by the dynamic bank-button row.

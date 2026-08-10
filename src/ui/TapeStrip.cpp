@@ -789,7 +789,7 @@ void TapeStrip::resized()
 void TapeStrip::timerCallback()
 {
     // Detect track color / name changes and repaint the whole strip if
-    // anything changed. Cheap - there are 16 tracks and we just compare
+    // anything changed. Cheap - there are 24 tracks and we just compare
     // a String + a Colour each tick.
     bool stateChanged = false;
     bool namesChanged = false;

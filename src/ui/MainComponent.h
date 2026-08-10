@@ -230,7 +230,7 @@ private:
     juce::TextButton auxStageBtn       { "AUX" };
     juce::TextButton masteringStageBtn { "MASTERING" };
 
-    // Rebuilt by syncBankButtons to match ConsoleView::numBanks() (1..16).
+    // Rebuilt by syncBankButtons to match ConsoleView::numBanks() (1..8).
     // All hidden when console shows every track at once (numBanks==1).
     // Lives here (not in ConsoleView) so the row sits below the stage
     // selector and freed vertical space inside the console goes to

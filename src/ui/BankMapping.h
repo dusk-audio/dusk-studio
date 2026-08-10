@@ -6,7 +6,7 @@
 
 namespace duskstudio
 {
-// The console pages its 24 strips in width-derived screen pages (stride 6..24),
+// The console pages its 24 strips in width-derived screen pages (stride 3..24),
 // while bank-relative MIDI bindings and the MCU surface address a fixed
 // kNumBanks x kBankSize hardware bank. The two indices only coincide when the
 // stride happens to be kBankSize, so they must be translated, never shared:
@@ -30,6 +30,20 @@ inline int screenBankForHardwareBank (int hardwareBank,
     const int firstTrack = std::clamp (hardwareBank, 0, SessionLayout::kNumBanks - 1)
                          * SessionLayout::kBankSize;
     return std::clamp (firstTrack / screenStride, 0, screenBankCount - 1);
+}
+
+inline int screenBankForTrack (int track, int screenStride, int screenBankCount) noexcept
+{
+    if (screenStride <= 0 || screenBankCount <= 1) return 0;
+    track = std::clamp (track, 0, SessionLayout::kNumTracks - 1);
+    return std::clamp (track / screenStride, 0, screenBankCount - 1);
+}
+
+inline int screenPageForDigitKey (int keyCode, int screenPageCount) noexcept
+{
+    if (keyCode < '1' || keyCode > '8') return -1;
+    const int page = keyCode - '1';
+    return page < screenPageCount ? page : -1;
 }
 
 // What the console must publish to the session atoms after a transition.
@@ -72,7 +86,7 @@ struct ConsoleBankState
         BankTransition t;
         t.pageMoved = true;
 
-        // A page is stride-wide (6..24); the surface and the bank-relative
+        // A page is stride-wide (3..24); the surface and the bank-relative
         // bindings are kBankSize-wide, so the page index is never a valid bank
         // - publish the hardware bank holding the page's first track instead.
         // With every track on screen there is only one page and it carries no

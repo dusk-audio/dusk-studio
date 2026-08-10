@@ -41,38 +41,14 @@ ConsoleView::ConsoleView (Session& session, AudioEngine& engine) : sessionRef (s
     updateBankVisibility();
 }
 
-int ConsoleView::minimumContentWidth()
+int ConsoleView::allTracksContentWidth() const
 {
-    // Floor: at least ONE channel strip + buses + master + their gaps.
-    // Narrower than this and the layout has no useful state to land in;
-    // MainWindow's resize limit takes the larger of this and the OS
-    // minimum, so the user can't drag the window below it.
-    const int gaps = kSectionGap
-                   + (Session::kNumBuses - 1) * kStripGap
-                   + kSectionGap;
-    return /*one channel*/ kMinChannelWidth
-         + Session::kNumBuses * kMinBusWidth
-         + kMinMasterWidth
-         + gaps
-         + 12;  // outer padding
-}
-
-int ConsoleView::fixedWidthFor16Tracks() const
-{
-    // Width at which all 16 strips fit at the MINIMUM strip width with
+    // Width at which all 24 strips fit at the MINIMUM strip width with
     // buses + master at their MIN widths. Above this we drop banking
     // entirely and show every track at once. Using min (not ref) makes
-    // "show all 16" trigger as aggressively as the layout allows
+    // "show all" trigger as aggressively as the layout allows
     // without violating the no-shrink-below-kMin rule.
-    const int gaps = (Session::kNumTracks - 1) * kStripGap
-                   + kSectionGap
-                   + (Session::kNumBuses - 1) * kStripGap
-                   + kSectionGap;
-    return Session::kNumTracks * kMinChannelWidth
-         + Session::kNumBuses * kMinBusWidth
-         + kMinMasterWidth
-         + gaps
-         + 12;
+    return consolelayout::allTracksContentWidth();
 }
 
 int ConsoleView::channelsThatFitForWidth (int componentWidth) noexcept
@@ -81,26 +57,7 @@ int ConsoleView::channelsThatFitForWidth (int componentWidth) noexcept
     // right) and their inter-strip + section gaps. Divide by the
     // per-channel slot (strip + gap) to get the count.
     //
-    // Lower bound is ceil(kNumTracks / kMaxBanks) so the resulting bank
-    // count never exceeds kMaxBanks. Without this, a snap-narrow window
-    // could produce 6-16 bank buttons (16 tracks / 3-1 per bank),
-    // overflowing the bank-row UI. Going wider than the strip's natural
-    // min on a very narrow window is the lesser evil.
-    constexpr int kMaxBanks = 4;
-    constexpr int kMinStride = (Session::kNumTracks + kMaxBanks - 1) / kMaxBanks;
-    const int outerPad  = 12;
-    const int rightCol  = Session::kNumBuses * kMinBusWidth
-                        + (Session::kNumBuses - 1) * kStripGap
-                        + kSectionGap     // gap between channels and buses
-                        + kSectionGap     // gap between buses and master
-                        + kMinMasterWidth;
-    const int avail     = std::max (0, componentWidth - outerPad - rightCol);
-    // Per-strip slot = strip width + inter-channel gap. We add one gap
-    // back so the LAST strip doesn't reserve a trailing gap.
-    const int perSlot   = kMinChannelWidth + kStripGap;
-    if (perSlot <= 0 || avail <= 0) return kMinStride;
-    const int fit = (avail + kStripGap) / perSlot;
-    return std::clamp (fit, kMinStride, Session::kNumTracks);
+    return consolelayout::channelsThatFitForWidth (componentWidth);
 }
 
 int ConsoleView::channelsThatFit() const
@@ -110,14 +67,18 @@ int ConsoleView::channelsThatFit() const
 
 int ConsoleView::numBanksForWidth (int componentWidth) noexcept
 {
-    const int fit = channelsThatFitForWidth (componentWidth);
-    if (fit >= Session::kNumTracks) return 1;
-    return (Session::kNumTracks + fit - 1) / fit;
+    return consolelayout::screenPageCountForWidth (componentWidth);
 }
 
 int ConsoleView::numBanks() const noexcept
 {
     return numBanksForWidth (getWidth());
+}
+
+void ConsoleView::synchroniseBankStateForWidth (int componentWidth) noexcept
+{
+    bankState.resize (numBanksForWidth (componentWidth),
+                      channelsThatFitForWidth (componentWidth));
 }
 
 int ConsoleView::bankStride() const noexcept
@@ -128,10 +89,7 @@ int ConsoleView::bankStride() const noexcept
 std::pair<int, int> ConsoleView::rangeForBankAtWidth (int bankIndex,
                                                         int componentWidth) noexcept
 {
-    const int stride = channelsThatFitForWidth (componentWidth);
-    const int first  = bankIndex * stride;
-    const int last   = std::min (Session::kNumTracks - 1, first + stride - 1);
-    return { first + 1, last + 1 };
+    return consolelayout::channelRangeForPage (bankIndex, componentWidth);
 }
 
 std::pair<int, int> ConsoleView::rangeForBank (int bankIndex) const noexcept
@@ -203,18 +161,17 @@ void ConsoleView::resized()
 {
     auto area = getLocalBounds().reduced (6);
 
-    // "Show all 16" trigger: window wide enough to seat every channel
+    // "Show all" trigger: window wide enough to seat every channel
     // strip at kMinChannelWidth alongside the always-anchored bus +
     // master column. Below this we fall back to dynamic banking - bank
     // stride = channelsThatFit().
-    showingAllTracks = (area.getWidth() >= fixedWidthFor16Tracks() - 12);
+    showingAllTracks = (getWidth() >= allTracksContentWidth());
 
     const int stride = bankStride();
-    const int pages  = numBanks();
     // Re-derives the page against the new width and queues any surface move it
     // implies for the poll tick. Publishes nothing itself - a drag-resize
     // storing mcu.bank here would swallow a Bank Left/Right press.
-    bankState.resize (pages, stride);
+    synchroniseBankStateForWidth (getWidth());
     updateBankVisibility();
 
     int visibleChannels;
@@ -230,9 +187,10 @@ void ConsoleView::resized()
         visibleChannels = std::min (stride, Session::kNumTracks - firstIdx);
     }
 
-    // Channels stay at *reference* width unless even that won't fit - in which
-    // case we scale down, but only as far as the per-strip minimum. We do not
-    // scale up: extra horizontal space stays as whitespace on the right.
+    // Channels stay at *reference* width unless even that won't fit. The shared
+    // geometry then compacts them as needed, including below the documented
+    // per-strip floor at legal responsive widths. We do not scale up: extra
+    // horizontal space stays as whitespace on the right.
     //
     // Scale based on the FULL-BANK width (stride * kRefChannelWidth) rather
     // than visibleChannels - so a sparse last bank uses the SAME channel
@@ -240,86 +198,11 @@ void ConsoleView::resized()
     // be wider than bank 1 with 14 strips on the same window: bank 2's
     // refTotal would fit and skip the scale-down branch.
     const int widthRefChannels = showingAllTracks ? Session::kNumTracks : stride;
-    const int gaps = (widthRefChannels - 1) * kStripGap
-                   + kSectionGap
-                   + (Session::kNumBuses - 1) * kStripGap
-                   + kSectionGap;
-    const int availForStrips = std::max (0, area.getWidth() - gaps);
-    const int refTotal = widthRefChannels * kRefChannelWidth
-                       + Session::kNumBuses * kRefBusWidth
-                       + kRefMasterWidth;
-
-    int channelW = kRefChannelWidth;
-    int busW     = kRefBusWidth;
-    int masterW  = kRefMasterWidth;
-
-    if (availForStrips < refTotal)
-    {
-        // Window is narrower than the reference - shrink proportionally.
-        const float scale = (float) availForStrips / (float) refTotal;
-        channelW = std::max (kMinChannelWidth, (int) std::round (kRefChannelWidth * scale));
-        busW     = std::max (kMinBusWidth,     (int) std::round (kRefBusWidth     * scale));
-        masterW  = std::max (kMinMasterWidth,  (int) std::round (kRefMasterWidth  * scale));
-
-        // Secondary fit-to-budget pass: if the kMin floors pushed total
-        // above availForStrips, shrink CHANNELS first (they have the most
-        // budget and channel-strip widgets tolerate cramping better than
-        // the master's 5-knob comp row). Only spill into bus + master
-        // shrinks once channels can't compress any further. Master is
-        // protected the longest because its 5 × 40 px comp knob row will
-        // clip the rightmost knob the instant the strip goes below 210.
-        // Secondary fit pass uses widthRefChannels (the bank-stride
-        // budget) - same reason as the primary scale: width stays
-        // stable across banks regardless of how many strips are
-        // visible RIGHT NOW.
-        const auto totalOf = [&]
-        {
-            return widthRefChannels * channelW
-                 + Session::kNumBuses * busW
-                 + masterW;
-        };
-        if (totalOf() > availForStrips)
-        {
-            int overflow = totalOf() - availForStrips;
-            // Step 1: shrink channels (floor 1 px).
-            if (overflow > 0 && widthRefChannels > 0)
-            {
-                const int channelGiveable = std::max (0, channelW - 1);
-                // Ceiling division so the per-channel shrink covers the
-                // remainder without the extra +1 that overshoots when
-                // overflow divides evenly.
-                const int eachReducible   = std::min (
-                    (overflow + widthRefChannels - 1) / widthRefChannels,
-                    channelGiveable);
-                channelW -= eachReducible;
-                overflow = totalOf() - availForStrips;
-            }
-            // Step 2: shrink buses if channels couldn't absorb everything.
-            if (overflow > 0 && Session::kNumBuses > 0)
-            {
-                const int busGiveable   = std::max (0, busW - 1);
-                const int eachReducible = std::min (
-                    (overflow + Session::kNumBuses - 1) / Session::kNumBuses,
-                    busGiveable);
-                busW -= eachReducible;
-                overflow = totalOf() - availForStrips;
-            }
-            // Step 3: as a last resort, shrink master (the comp row will
-            // start clipping past here).
-            if (overflow > 0)
-                masterW = std::max (1, masterW - overflow);
-        }
-        // After all three steps, channelW / busW / masterW are clamped
-        // to a minimum of 1 via std::max, so totalOf() can still
-        // exceed availForStrips in pathologically narrow windows
-        // (visibleChannels + Session::kNumBuses + 1 px per strip is
-        // the hard floor). That case is treated as a window-sizing
-        // bug; minimumContentWidth() returns the threshold below
-        // which the OS-enforced resize floor should never let the
-        // user drag the window, so we don't add a runtime guard here.
-        // If you see this trigger at runtime, raise the resize-limit
-        // floor in MainWindow rather than papering over it in layout.
-    }
+    const auto geometry = consolelayout::makeStripGeometry (
+        getWidth(), widthRefChannels, visibleChannels);
+    const int channelW = geometry.channelWidth;
+    const int busW     = geometry.busWidth;
+    const int masterW  = geometry.masterWidth;
 
     const int y = area.getY();
     const int h = area.getHeight();
@@ -329,12 +212,7 @@ void ConsoleView::resized()
     // room sits as a flex gap between the channel column and the bus
     // column. Sparse last banks therefore show the strips left-aligned
     // (visible space to the right) rather than stretching widths.
-    const int busColW = Session::kNumBuses * busW
-                      + (Session::kNumBuses - 1) * kStripGap;
-    const int rightColW = busColW + kSectionGap + masterW;
-    const int rightColX = area.getRight() - rightColW;
-
-    int x = area.getX();
+    int x = geometry.contentLeft;
     for (int i = 0; i < visibleChannels; ++i)
     {
         const int trackIdx = showingAllTracks
@@ -342,16 +220,16 @@ void ConsoleView::resized()
                               : (bankState.screenBank * stride + i);
         if (trackIdx >= Session::kNumTracks) break;
         strips[(size_t) trackIdx]->setBounds (x, y, channelW, h);
-        x += channelW + (i + 1 < visibleChannels ? kStripGap : 0);
+        x += channelW + (i + 1 < visibleChannels ? geometry.stripGap : 0);
     }
 
-    x = rightColX;
+    x = geometry.busColumnLeft;
     for (int i = 0; i < Session::kNumBuses; ++i)
     {
         busStrips[(size_t) i]->setBounds (x, y, busW, h);
-        x += busW + (i + 1 < Session::kNumBuses ? kStripGap : 0);
+        x += busW + (i + 1 < Session::kNumBuses ? geometry.stripGap : 0);
     }
-    x += kSectionGap;
+    x += geometry.sectionGap;
     masterStrip->setBounds (x, y, masterW, h);
 
     // Auto-engage TIMELINE when the strip's vertical space is too short for
@@ -426,7 +304,7 @@ void ConsoleView::focusStrip (int track)
     if (! showingAllTracks)
     {
         const int stride = bankStride();
-        if (stride > 0) setBank (track / stride);
+        if (stride > 0) setBank (screenBankForTrack (track, stride, numBanks()));
     }
     repaint();
     if (stripFocusCb) stripFocusCb (track);
