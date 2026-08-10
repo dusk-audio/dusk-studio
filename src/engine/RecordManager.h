@@ -134,6 +134,7 @@ private:
         std::int64_t sourceOffset = 0;
         std::int64_t lengthInSamples = 0;
         bool endsPass = false;
+        bool writeFailed = false;
     };
 
     struct PerTrackWriter
@@ -166,7 +167,9 @@ private:
             std::uint8_t data2 = 0;
             int passOrdinal = 0;
         };
-        static constexpr int kCapacity = 65536;
+        // AbstractFifo keeps one sentinel slot, so 65,537 registered slots
+        // provide a bounded usable capacity of 65,536 events.
+        static constexpr int kCapacity = 65536 + 1;
         std::vector<RawEvent>  events;
         juce::AbstractFifo     fifo { kCapacity };
         std::atomic<std::uint64_t> overflowCount { 0 };

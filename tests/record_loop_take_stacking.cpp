@@ -162,6 +162,33 @@ TEST_CASE ("Loop audio commits a final partial pass and no exact-boundary empty 
     }
 }
 
+TEST_CASE ("Loop audio excludes a pass after a failed writer push without compressing it",
+           "[recording][recordmanager][loop-takes][failure]")
+{
+    const auto temp = makeSessionDir ("dusk-loop-audio-failed-pass-");
+    Session session;
+    armTrack (session, temp.dir, Track::Mode::Mono);
+    RecordManager manager (session);
+    const auto plan = loopPlan (0, 65538);
+
+    REQUIRE (manager.startRecording (1.0, 0, 0, plan));
+    writeAudioPass (manager, 1, 0, 65537);
+    writeAudioPass (manager, 1, 65537, 1);
+    writeAudioPass (manager, 2, 0, 4);
+    manager.stopRecording (4);
+
+    const auto& region = loopAudioRegion (session);
+    REQUIRE (region.provenance.loopPassOrdinal == 2);
+    REQUIRE (region.sourceOffset == 1);
+    REQUIRE (region.lengthInSamples == 4);
+    REQUIRE (region.previousTakes.empty());
+
+    const auto& errors = manager.getLastRecordErrors();
+    REQUIRE (errors.size() == 1);
+    REQUIRE (errors[0].kind == RecordManager::RecordErrorKind::WavWrite);
+    REQUIRE (errors[0].count == 1);
+}
+
 TEST_CASE ("Loop audio history is newest-first capped and then retains compatible old takes",
            "[recording][recordmanager][loop-takes][history]")
 {
@@ -445,13 +472,75 @@ TEST_CASE ("Loop MIDI resets and chases sustain across a seam",
     REQUIRE (priorCcs[0].controller == 64);
     REQUIRE (priorCcs[0].value == 127);
     REQUIRE (priorCcs[1].value == 0);
-    REQUIRE (priorCcs[1].atTick == 8);
+    REQUIRE (priorCcs[1].atTick == 7);
+    REQUIRE (priorCcs[1].atTick < region.previousTakes[0].lengthInTicks);
     REQUIRE (region.ccs.size() == 2);
     REQUIRE (region.ccs[0].controller == 64);
     REQUIRE (region.ccs[0].value == 127);
     REQUIRE (region.ccs[0].atTick == 0);
     REQUIRE (region.ccs[1].value == 0);
     REQUIRE (region.ccs[1].atTick == 3);
+}
+
+TEST_CASE ("Loop MIDI rejects malformed channel message sizes and data bytes",
+           "[recording][recordmanager][loop-takes][midi][malformed]")
+{
+    const auto temp = makeSessionDir ("dusk-loop-midi-malformed-");
+    Session session;
+    armTrack (session, temp.dir, Track::Mode::Midi);
+    RecordManager manager (session);
+    const auto plan = loopPlan();
+    REQUIRE (manager.startRecording (960.0, 100, 0, plan));
+
+    const std::uint8_t invalidNoteData[] = { 0x90, 62, 0x80 };
+    const std::uint8_t invalidCcData[] = { 0xB0, 0xFF, 127 };
+    const std::uint8_t truncatedNote[] = { 0x90, 64 };
+    juce::MidiBuffer events;
+    events.addEvent (invalidNoteData, 3, 1);
+    events.addEvent (invalidCcData, 3, 2);
+    events.addEvent (juce::MidiMessage::noteOn (
+                         1, 64, (juce::uint8) 100), 4);
+    events.addEvent (truncatedNote, 2, 5);
+    events.addEvent (juce::MidiMessage::noteOff (1, 64), 6);
+    writeMidiPass (manager, 1, 100, std::move (events), 8);
+    manager.stopRecording (108);
+
+    const auto region = session.track (0).midiRegions.current().at (0);
+    REQUIRE (region.notes.size() == 1);
+    REQUIRE (region.notes[0].noteNumber == 64);
+    REQUIRE (region.notes[0].lengthInTicks == 2);
+    REQUIRE (region.ccs.empty());
+}
+
+TEST_CASE ("Loop MIDI overflow retains the newest pass and latches the loss",
+           "[recording][recordmanager][loop-takes][midi][overflow]")
+{
+    constexpr int capacity = 65536;
+    const auto temp = makeSessionDir ("dusk-loop-midi-newest-overflow-");
+    Session session;
+    armTrack (session, temp.dir, Track::Mode::Midi);
+    RecordManager manager (session);
+    const auto plan = loopPlan (0, capacity);
+    REQUIRE (manager.startRecording (960.0, 0, 0, plan));
+
+    juce::MidiBuffer oldPass;
+    for (int sample = 0; sample < capacity; ++sample)
+        oldPass.addEvent (juce::MidiMessage::controllerEvent (1, 1, 1), sample);
+    writeMidiPass (manager, 1, 0, std::move (oldPass), capacity);
+    writeMidiPass (manager, 2, 0, oneNote (72, 0, 2), 4);
+    manager.stopRecording (4);
+
+    const auto region = session.track (0).midiRegions.current().at (0);
+    REQUIRE (region.provenance.loopPassOrdinal == 2);
+    REQUIRE (region.notes.size() == 1);
+    REQUIRE (region.notes[0].noteNumber == 72);
+    REQUIRE (region.previousTakes.size() == 1);
+    REQUIRE (region.previousTakes[0].provenance.loopPassOrdinal == 1);
+
+    const auto& errors = manager.getLastRecordErrors();
+    REQUIRE (errors.size() == 1);
+    REQUIRE (errors[0].kind == RecordManager::RecordErrorKind::MidiOverflow);
+    REQUIRE (errors[0].count == 2);
 }
 
 TEST_CASE ("Loop MIDI ignores a truly empty pass and keeps a final partial pass",

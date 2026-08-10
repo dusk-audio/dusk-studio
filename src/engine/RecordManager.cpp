@@ -738,7 +738,8 @@ void RecordManager::stopRecording (std::int64_t endSample)
                         reset.channel = key / 128 + 1;
                         reset.controller = key % 128;
                         reset.value = 0;
-                        reset.atTick = passRegion.lengthInTicks;
+                        reset.atTick = std::max<std::int64_t> (
+                            0, passRegion.lengthInTicks - 1);
                         passRegion.ccs.push_back (reset);
                     }
                 }
@@ -968,7 +969,8 @@ void RecordManager::stopRecording (std::int64_t endSample)
             for (int i = 0; i < slot->loopPassCount; ++i)
             {
                 const auto& pass = slot->loopPasses[(size_t) i];
-                if (pass.lengthInSamples <= 0 || trim >= pass.lengthInSamples)
+                if (pass.writeFailed || pass.lengthInSamples <= 0
+                    || trim >= pass.lengthInSamples)
                     continue;
                 AudioRegion passRegion;
                 passRegion.file = slot->file;
@@ -1245,6 +1247,12 @@ void RecordManager::writeMidiBlock (int trackIndex,
         // dropped - they're not part of the per-track musical content.
         const auto status = (std::uint8_t) raw[0];
         if (status < 0x80 || status >= 0xF0) continue;
+        const auto statusType = status & 0xF0;
+        const int expectedSize = (statusType == 0xC0 || statusType == 0xD0)
+                               ? 2 : 3;
+        if (sz != expectedSize || raw[1] >= 0x80
+            || (expectedSize == 3 && raw[2] >= 0x80))
+            continue;
 
         // Loop spans accept the original callback buffer. inputOffset names
         // the first event position in the captured slice; normalize retained
@@ -1265,7 +1273,18 @@ void RecordManager::writeMidiBlock (int trackIndex,
         if (cap->fifo.getFreeSpace() < needed)
         {
             cap->overflowCount.fetch_add (1, std::memory_order_relaxed);
-            continue;  // FIFO full -> drop this event, try next
+            // stopRecording cannot consume until active is cleared and this
+            // AudioInFlightScope exits, so the producer may safely retire the
+            // oldest slot here. Keep the bounded capture biased toward the
+            // newest events and loop passes.
+            int r1 = 0, rsz1 = 0, r2 = 0, rsz2 = 0;
+            cap->fifo.prepareToRead (needed, r1, rsz1, r2, rsz2);
+            if (rsz1 + rsz2 < needed)
+            {
+                cap->fifo.finishedRead (0);
+                continue;
+            }
+            cap->fifo.finishedRead (needed);
         }
         int s1 = 0, sz1 = 0, s2 = 0, sz2 = 0;
         cap->fifo.prepareToWrite (needed, s1, sz1, s2, sz2);
@@ -1324,37 +1343,45 @@ void RecordManager::writeInputBlock (int trackIndex,
     jassert (channels[0] != nullptr
              && (slot->numChannels < 2 || channels[1] != nullptr));
     const auto sourceOffset = slot->framesWritten;
+    PassDescriptor* descriptor = nullptr;
+    if (loopPlan.enabled)
+    {
+        if (slot->loopPassCount > 0
+            && slot->loopPasses[(size_t) (slot->loopPassCount - 1)].passOrdinal
+                   == currentLoopSpan.passOrdinal)
+        {
+            descriptor = &slot->loopPasses[(size_t) (slot->loopPassCount - 1)];
+        }
+        else
+        {
+            if (slot->loopPassCount == kRetainedLoopPasses)
+            {
+                std::move (slot->loopPasses.begin() + 1, slot->loopPasses.end(),
+                           slot->loopPasses.begin());
+                --slot->loopPassCount;
+            }
+            descriptor = &slot->loopPasses[(size_t) slot->loopPassCount++];
+            *descriptor = {};
+            descriptor->passOrdinal = currentLoopSpan.passOrdinal;
+            descriptor->timelineStart = loopPlan.captureStartSample;
+            descriptor->sourceOffset = sourceOffset;
+        }
+    }
+
     if (slot->writer->push (channels, slot->numChannels, samplesToWrite))
     {
         slot->framesWritten += samplesToWrite;
-        if (loopPlan.enabled)
+        if (descriptor != nullptr)
         {
-            PassDescriptor* descriptor = nullptr;
-            if (slot->loopPassCount > 0
-                && slot->loopPasses[(size_t) (slot->loopPassCount - 1)].passOrdinal
-                       == currentLoopSpan.passOrdinal)
-            {
-                descriptor = &slot->loopPasses[(size_t) (slot->loopPassCount - 1)];
-            }
-            else
-            {
-                if (slot->loopPassCount == kRetainedLoopPasses)
-                {
-                    std::move (slot->loopPasses.begin() + 1, slot->loopPasses.end(),
-                               slot->loopPasses.begin());
-                    --slot->loopPassCount;
-                }
-                descriptor = &slot->loopPasses[(size_t) slot->loopPassCount++];
-                *descriptor = {};
-                descriptor->passOrdinal = currentLoopSpan.passOrdinal;
-                descriptor->timelineStart = loopPlan.captureStartSample;
-                descriptor->sourceOffset = sourceOffset;
-            }
             descriptor->lengthInSamples += samplesToWrite;
             descriptor->endsPass = descriptor->endsPass || currentLoopSpan.endsPass;
         }
     }
     else
+    {
         slot->writeFailures.fetch_add (1, std::memory_order_relaxed);
+        if (descriptor != nullptr)
+            descriptor->writeFailed = true;
+    }
 }
 } // namespace duskstudio
