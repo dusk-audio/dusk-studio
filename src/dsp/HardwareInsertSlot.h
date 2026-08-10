@@ -70,9 +70,10 @@ public:
     // chirpLength + kMaxDelaySamples, so the correlator's lag search
     // covers the full latency-slider range at any sample rate.
     static constexpr int kChirpMaxSamples   = 9600;
-    // Correlation budget in multiply-accumulates per second of audio. Credit
-    // follows callback duration, and each candidate lag consumes chirpLength MACs.
-    static constexpr double kCorrelationMacsPerSecond = 1.5e8;
+    // Match the original 48 kHz / 512-sample callback cost while keeping work
+    // proportional at higher rates and smaller blocks. Each lag consumes
+    // chirpLength MACs and fractional candidate credit carries between blocks.
+    static constexpr double kCorrelationMacsPerSecond = 1.15e8;
 
 private:
     const HardwareInsertParams* paramsRef = nullptr;
