@@ -619,6 +619,66 @@ target_sources(DuskStudio PRIVATE
     src/engine/audiofile/WriterDrainPool.cpp)
 target_link_libraries(DuskStudio PRIVATE dusk_sndfile)
 
+# Signed SFZ catalogs use detached Ed25519 signatures. Windows consumes the
+# static vcpkg manifest prefix, Linux uses the distro library, and macOS links
+# a deployment-target-matched static archive so the app has no extra dylib.
+add_library(dusk_sodium INTERFACE)
+set(DUSKSTUDIO_SODIUM_ROOT "" CACHE PATH
+    "Optional libsodium installation prefix for Dusk Studio")
+if(APPLE)
+    find_path(DUSKSTUDIO_SODIUM_INCLUDE_DIR sodium.h
+        HINTS "${DUSKSTUDIO_SODIUM_ROOT}"
+        PATH_SUFFIXES include)
+    find_file(DUSKSTUDIO_SODIUM_STATIC_LIBRARY NAMES libsodium.a
+        HINTS "${DUSKSTUDIO_SODIUM_ROOT}"
+        PATH_SUFFIXES lib lib64)
+    if(NOT (DUSKSTUDIO_SODIUM_INCLUDE_DIR AND DUSKSTUDIO_SODIUM_STATIC_LIBRARY))
+        message(FATAL_ERROR
+            "Static libsodium is required for signed SFZ catalogs on macOS. "
+            "Build it for the app's deployment target and set "
+            "DUSKSTUDIO_SODIUM_ROOT to its installation prefix.")
+    endif()
+    target_include_directories(dusk_sodium SYSTEM INTERFACE
+        "${DUSKSTUDIO_SODIUM_INCLUDE_DIR}")
+    target_link_libraries(dusk_sodium INTERFACE
+        "${DUSKSTUDIO_SODIUM_STATIC_LIBRARY}")
+    message(STATUS "libsodium: ${DUSKSTUDIO_SODIUM_STATIC_LIBRARY} (static)")
+else()
+    # vcpkg's config file expects variables supplied by its toolchain. The
+    # Windows workflows intentionally pass only the installed static prefix,
+    # so they use the direct lookup below rather than creating an imported
+    # target with no location.
+    if(DEFINED VCPKG_TARGET_TRIPLET AND DEFINED _VCPKG_INSTALLED_DIR)
+        find_package(unofficial-sodium CONFIG QUIET)
+    endif()
+    if(TARGET unofficial-sodium::sodium)
+        target_link_libraries(dusk_sodium INTERFACE unofficial-sodium::sodium)
+        message(STATUS "libsodium: config package")
+    else()
+        find_path(DUSKSTUDIO_SODIUM_INCLUDE_DIR sodium.h
+            HINTS "${DUSKSTUDIO_SODIUM_ROOT}"
+            PATH_SUFFIXES include)
+        find_library(DUSKSTUDIO_SODIUM_LIBRARY NAMES sodium libsodium
+            HINTS "${DUSKSTUDIO_SODIUM_ROOT}"
+            PATH_SUFFIXES lib lib64)
+        if(NOT (DUSKSTUDIO_SODIUM_INCLUDE_DIR AND DUSKSTUDIO_SODIUM_LIBRARY))
+            message(FATAL_ERROR
+                "libsodium development files are required for signed SFZ catalogs. "
+                "Ubuntu/Debian: install libsodium-dev. Windows: install the vcpkg manifest. "
+                "For a custom prefix, set DUSKSTUDIO_SODIUM_ROOT.")
+        endif()
+        target_include_directories(dusk_sodium SYSTEM INTERFACE
+            "${DUSKSTUDIO_SODIUM_INCLUDE_DIR}")
+        target_link_libraries(dusk_sodium INTERFACE "${DUSKSTUDIO_SODIUM_LIBRARY}")
+        message(STATUS "libsodium: ${DUSKSTUDIO_SODIUM_LIBRARY}")
+    endif()
+endif()
+
+target_sources(DuskStudio PRIVATE
+    src/engine/sfz/SfzCatalog.cpp
+    src/engine/sfz/SfzCatalogEnvelope.cpp)
+target_link_libraries(DuskStudio PRIVATE dusk_sodium)
+
 # DeviceManager backing: Linux uses the native orchestrator (owns the device
 # types, drives open/start/stop/close and the callback fan-out itself); macOS /
 # Windows keep the JUCE-wrapped implementation. Same public dusk API either way.

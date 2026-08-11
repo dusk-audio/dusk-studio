@@ -22,6 +22,9 @@ add_executable(dusk-studio-tests
     hosting_port_layout.cpp
     hosting_insert_adapter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/hosting/InsertAdapter.cpp
+    sfz_catalog.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzCatalog.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzCatalogEnvelope.cpp
     # Native CLAP tests + sources are added conditionally below.
     plugin_descriptor.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PluginDescriptor.cpp
@@ -217,6 +220,7 @@ target_sources(dusk-studio-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/ThreadedFileWriter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/WriterDrainPool.cpp)
 target_link_libraries(dusk-studio-tests PRIVATE dusk_sndfile)
+target_link_libraries(dusk-studio-tests PRIVATE dusk_sodium)
 
 # Console-saturation calibration test + the donor DSP headers it needs
 # (BritishEQProcessor.h + its header-only ConsoleSaturation/ADAA/SafeFloat deps).
