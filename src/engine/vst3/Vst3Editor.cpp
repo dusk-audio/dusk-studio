@@ -136,6 +136,11 @@ bool Vst3Editor::embed (std::uintptr_t parentHandle, int x, int y, int w, int h,
                               kPlatformTypeX11EmbedWindowID) != kResultOk)
     { errorOut = "IPlugView::attached failed"; close(); return false; }
 
+    // Some VSTGUI editors attach an unmapped child, so mapping only the host
+    // container leaves their editor permanently black.
+    XMapSubwindows (dpy, (Window) impl->hostWindow);
+    XSync (dpy, False);
+
     // attached() may have re-decided the size (resizeView fires synchronously
     // through the frame) - re-query so the owner adopts the real one.
     ViewRect size {};
