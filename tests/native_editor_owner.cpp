@@ -250,7 +250,7 @@ TEST_CASE ("Native editor peer transitions preserve realised peer identity")
     REQUIRE (lastPeerId == peerBId);
 }
 
-TEST_CASE ("Native editor peer transitions reopen only a borrowed native body")
+TEST_CASE ("Native editor peer transitions reopen only a borrowed peer-bound body")
 {
     constexpr std::uint32_t oldPeerId = 41;
     constexpr std::uint32_t newPeerId = 42;
@@ -295,5 +295,89 @@ TEST_CASE ("Native editor peer transitions reopen only a borrowed native body")
         REQUIRE (transition.rebuildNativeEditors);
         REQUIRE_FALSE (transition.reopenNativeEditorNow);
         REQUIRE_FALSE (transition.deferNativeEditorReopen);
+    }
+}
+
+TEST_CASE ("Only Linux custom standard VST3 editors are peer-bound")
+{
+    for (const bool isLinux : { false, true })
+        for (const bool isStandardVst3 : { false, true })
+            for (const bool isCustomEditor : { false, true })
+                CHECK (duskstudio::isPeerBoundStandardVst3Editor (
+                           isLinux, isStandardVst3, isCustomEditor)
+                       == (isLinux && isStandardVst3 && isCustomEditor));
+}
+
+TEST_CASE ("Peer-bound editor reborrow preserves disposition and rejects stale callbacks")
+{
+    constexpr std::uint64_t currentBorrowGeneration = 42;
+    for (const bool isPeerBoundEditor : { false, true })
+        for (const bool editorIsVisible : { false, true })
+            for (const bool editorHostChanged : { false, true })
+                for (const bool editorWasTopmost : { false, true })
+                    for (const bool editorIsCurrentlyTopmost : { false, true })
+                    {
+                        const auto disposition = duskstudio::decidePeerBoundEditorReborrow (
+                            isPeerBoundEditor, editorIsVisible, editorHostChanged,
+                            editorWasTopmost, editorIsCurrentlyTopmost,
+                            currentBorrowGeneration, currentBorrowGeneration);
+                        const bool shouldReborrow = isPeerBoundEditor
+                            && editorIsVisible && editorHostChanged;
+                        const bool reopenNow = shouldReborrow && editorWasTopmost
+                            && editorIsCurrentlyTopmost;
+                        CHECK (disposition.reopenNow == reopenNow);
+                        CHECK (disposition.deferReopen
+                               == (shouldReborrow && ! reopenNow));
+                    }
+
+    const auto stale = duskstudio::decidePeerBoundEditorReborrow (
+        true, true, true, true, true,
+        currentBorrowGeneration - 1, currentBorrowGeneration);
+    CHECK_FALSE (stale.reopenNow);
+    CHECK_FALSE (stale.deferReopen);
+
+    const auto newlyCovered = duskstudio::decidePeerBoundEditorReborrow (
+        true, true, true, true, false,
+        currentBorrowGeneration, currentBorrowGeneration);
+    CHECK_FALSE (newlyCovered.reopenNow);
+    CHECK (newlyCovered.deferReopen);
+
+    const auto originallyCovered = duskstudio::decidePeerBoundEditorReborrow (
+        true, true, true, false, true,
+        currentBorrowGeneration, currentBorrowGeneration);
+    CHECK_FALSE (originallyCovered.reopenNow);
+    CHECK (originallyCovered.deferReopen);
+}
+
+TEST_CASE ("Stacked standard and native editors preserve the prior top editor")
+{
+    int nativeEditor = 0;
+
+    SECTION ("top native editor reopens before covered standard editor")
+    {
+        const auto standardDisposition = duskstudio::decidePeerBoundEditorReborrow (
+            true, true, true, false, false, 42, 42);
+        std::uint32_t lastPeerId = 41;
+        const auto nativeTransition = duskstudio::observeNativeEditorPeer (
+            lastPeerId, 42, &nativeEditor, true, { &nativeEditor });
+
+        REQUIRE (standardDisposition.deferReopen);
+        REQUIRE_FALSE (standardDisposition.reopenNow);
+        REQUIRE (nativeTransition.reopenNativeEditorNow);
+        REQUIRE_FALSE (nativeTransition.deferNativeEditorReopen);
+    }
+
+    SECTION ("top standard editor reopens before covered native editor")
+    {
+        std::uint32_t lastPeerId = 41;
+        const auto nativeTransition = duskstudio::observeNativeEditorPeer (
+            lastPeerId, 42, &nativeEditor, false, { &nativeEditor });
+        const auto standardDisposition = duskstudio::decidePeerBoundEditorReborrow (
+            true, true, true, true, true, 42, 42);
+
+        REQUIRE (nativeTransition.deferNativeEditorReopen);
+        REQUIRE_FALSE (nativeTransition.reopenNativeEditorNow);
+        REQUIRE (standardDisposition.reopenNow);
+        REQUIRE_FALSE (standardDisposition.deferReopen);
     }
 }

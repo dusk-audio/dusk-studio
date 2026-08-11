@@ -42,6 +42,9 @@ namespace duskstudio
 
 namespace
 {
+constexpr const char* kPeerBoundStandardVst3EditorTag =
+    "dusk_peerBoundStandardVst3Editor";
+
 // clamp with jlimit's argument order (lo, hi, value).
 template <typename T>
 inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
@@ -2311,12 +2314,14 @@ void ChannelStripComponent::parentHierarchyChanged()
     // replacement arrives. Keep cached editors alive across that null interval,
     // and rebuild only when there is a genuinely different realised peer.
     const auto& modalStack = EmbeddedModal::activeModalStack();
+    const bool pluginEditorModalIsTopmost = ! modalStack.empty()
+        && modalStack.back() == &pluginEditorModal;
     auto* peer = getPeer();
     const auto transition = observeNativeEditorPeer (
         lastSeenPeerId,
         peer != nullptr ? peer->getUniqueID() : 0,
         static_cast<const void*> (pluginEditorModal.getBody()),
-        ! modalStack.empty() && modalStack.back() == &pluginEditorModal,
+        pluginEditorModalIsTopmost,
         {
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
             static_cast<const void*> (clapEditor.get()),
@@ -2331,17 +2336,29 @@ void ChannelStripComponent::parentHierarchyChanged()
             static_cast<const void*> (auEditor.get()),
 #endif
         });
+    const bool isPeerBoundStandardVst3 = pluginEditor != nullptr
+        && (bool) pluginEditor->getProperties().getWithDefault (
+            kPeerBoundStandardVst3EditorTag, false);
+    const auto standardVst3Reborrow = decidePeerBoundEditorReborrow (
+        isPeerBoundStandardVst3,
+        pluginEditorModal.getBody() == pluginEditor.get(),
+        transition.rebuildNativeEditors,
+        pluginEditorModalIsTopmost,
+        pluginEditorModalIsTopmost,
+        pluginEditorModal.showGeneration(),
+        pluginEditorModal.showGeneration());
 
     if (! transition.rebuildNativeEditors)
         return;
 
-    // Only reopen when the modal is actually borrowing one of the native editor
-    // bodies. JUCE, OOP and multisample editors do not use these wrappers and
-    // must remain undisturbed by this native-peer repair path.
+    // Only reopen when the modal is actually borrowing one of the peer-bound
+    // editor bodies. OOP and multisample editors do not use these wrappers and
+    // must remain undisturbed by this peer-repair path.
     // EmbeddedModal borrows its body, so detach it before destroying a wrapper.
     // Hidden cached wrappers also need rebuilding: their native child remains
     // tied to the old peer even though the modal is currently closed.
-    if (transition.reopenNativeEditorNow || transition.deferNativeEditorReopen)
+    if (transition.reopenNativeEditorNow || transition.deferNativeEditorReopen
+        || standardVst3Reborrow.reopenNow || standardVst3Reborrow.deferReopen)
         pluginEditorModal.close();
 
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
@@ -2357,9 +2374,9 @@ void ChannelStripComponent::parentHierarchyChanged()
     auEditor.reset();
 #endif
 
-    if (transition.deferNativeEditorReopen)
+    if (standardVst3Reborrow.deferReopen || transition.deferNativeEditorReopen)
         nativeEditorReopenPending = true;
-    else if (transition.reopenNativeEditorNow)
+    else if (standardVst3Reborrow.reopenNow || transition.reopenNativeEditorNow)
     {
         nativeEditorReopenPending = false;
         openPluginEditor();
@@ -2647,10 +2664,20 @@ void ChannelStripComponent::openPluginEditor()
             fresh.reset (instance->createEditorIfNeeded());
             duskstudio::platform::clearPreferX11ForNativeWindow();
         }
+        const bool isCustomEditor = fresh != nullptr;
         if (fresh == nullptr)
             fresh = std::make_unique<juce::GenericAudioProcessorEditor> (*instance);
         pluginEditor      = std::move (fresh);
         pluginEditorOwner = instance;
+#if JUCE_LINUX
+        constexpr bool isLinux = true;
+#else
+        constexpr bool isLinux = false;
+#endif
+        pluginEditor->getProperties().set (
+            kPeerBoundStandardVst3EditorTag,
+            isPeerBoundStandardVst3Editor (
+                isLinux, pluginSlot.isLoadedStandardVst3(), isCustomEditor));
     }
 
     // Tag so EmbeddedModal hides the editor when a settings / quit /
@@ -2658,7 +2685,41 @@ void ChannelStripComponent::openPluginEditor()
     // foreign-window embeds can paint above the modal otherwise.
     pluginEditor->getProperties().set (kPluginEditorTag, true);
 
-    pluginEditorModal.showBorrowed (*parent, *pluginEditor, onClose);
+    auto* expectedEditor = pluginEditor.get();
+    auto onEditorHostResized = [safe, expectedEditor] (
+        unsigned long long borrowGeneration, bool editorWasTopmost)
+    {
+        dusk::callAsync ([safe, expectedEditor, borrowGeneration, editorWasTopmost]
+        {
+            auto* self = safe.getComponent();
+            if (self == nullptr || self->pluginEditor.get() != expectedEditor)
+                return;
+
+            const bool isPeerBoundStandardVst3 = (bool) expectedEditor
+                ->getProperties().getWithDefault (
+                    kPeerBoundStandardVst3EditorTag, false);
+            const auto& modalStack = EmbeddedModal::activeModalStack();
+            const bool editorIsCurrentlyTopmost = ! modalStack.empty()
+                && modalStack.back() == &self->pluginEditorModal;
+            const auto disposition = decidePeerBoundEditorReborrow (
+                    isPeerBoundStandardVst3,
+                    self->pluginEditorModal.getBody() == expectedEditor,
+                    true,
+                    editorWasTopmost,
+                    editorIsCurrentlyTopmost,
+                    borrowGeneration,
+                    self->pluginEditorModal.showGeneration());
+            if (! disposition.reopenNow && ! disposition.deferReopen)
+                return;
+
+            self->pluginEditorModal.close();
+            self->nativeEditorReopenPending = disposition.deferReopen;
+            if (disposition.reopenNow)
+                self->openPluginEditor();
+        });
+    };
+    pluginEditorModal.showBorrowed (*parent, *pluginEditor, onClose,
+                                    std::move (onEditorHostResized));
 }
 
 void ChannelStripComponent::closePluginEditor()

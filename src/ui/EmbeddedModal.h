@@ -255,7 +255,7 @@ public:
     {
         if (auto hook = beforeModalShown()) hook();
         close();
-        ++modalGeneration();
+        showGeneration_ = ++modalGeneration();
         host = &parent;
         body_ = std::move (body);
         userOnDismiss = std::move (onDismiss);
@@ -334,11 +334,12 @@ public:
     // it as a child is significantly more stable.
     void showBorrowed (juce::Component& parent,
                        juce::Component& body,
-                       std::function<void()> onDismiss = {})
+                       std::function<void()> onDismiss = {},
+                       std::function<void (unsigned long long, bool)> onHostResized = {})
     {
         if (auto hook = beforeModalShown()) hook();
         close();
-        ++modalGeneration();
+        showGeneration_ = ++modalGeneration();
         host = &parent;
         borrowedBody_ = &body;
         // Borrowed modals are plugin editors: always forward transport shortcuts
@@ -351,6 +352,7 @@ public:
         dim_ = std::make_unique<DimOverlay> (kEditorDimAlpha);
         dim_->setBounds (parent.getLocalBounds());
         userOnDismiss = std::move (onDismiss);
+        borrowedHostResized = std::move (onHostResized);
         dim_->onClick = [this]
         {
             // See owning show()'s onClick - topmost-only guard + local copy
@@ -376,6 +378,11 @@ public:
         parent.addAndMakeVisible (backdrop_.get());
 
         body.setBounds (bodyBounds);
+        // Install before attachment: native/custom editors can synchronously
+        // announce their real size while addAndMakeVisible creates the peer.
+        // Missing that first resize leaves the new extent anchored at the old
+        // centred top-left until the editor is closed and shown again.
+        body.addComponentListener (this);
         parent.addAndMakeVisible (&body);
         dim_     ->toFront (false);
         backdrop_->toFront (false);
@@ -387,7 +394,6 @@ public:
         // window embeds (after this show) and can rescale live from
         // their own UI - track it, or the body grows down-right from
         // the stale centre and the backdrop stays at the old size.
-        body.addComponentListener (this);
         // Track the host too: resizing the main window with an editor
         // open otherwise leaves the modal at the old centre, clipped at
         // the new edges. Borrowed-only - owned bodies include anchored
@@ -454,6 +460,7 @@ public:
             dim_.reset();
             userOnDismiss = {};
             userOnDismissOutside = {};
+            borrowedHostResized = {};
             return;
         }
 
@@ -543,6 +550,7 @@ public:
         host = nullptr;
         userOnDismiss = {};
         userOnDismissOutside = {};
+        borrowedHostResized = {};
     }
 
     // Shutdown-only teardown. close() defers body destruction to the
@@ -584,9 +592,11 @@ public:
         host = nullptr;
         userOnDismiss = {};
         userOnDismissOutside = {};
+        borrowedHostResized = {};
     }
 
     bool isOpen() const noexcept { return body_ != nullptr || borrowedBody_ != nullptr; }
+    unsigned long long showGeneration() const noexcept { return showGeneration_; }
 
     juce::Component* getBody() const noexcept
     {
@@ -731,6 +741,10 @@ private:
             recenterBody();
             if (dim_ != nullptr && host != nullptr)
                 dim_->setBounds (host->getLocalBounds());
+            if (&c == host.getComponent())
+                if (auto callback = borrowedHostResized)
+                    callback (showGeneration_, ! activeModalStack().empty()
+                                                   && activeModalStack().back() == this);
         }
     }
 
@@ -764,6 +778,8 @@ private:
     juce::Component* borrowedBody_ = nullptr;
     std::function<void()> userOnDismiss;
     std::function<void()> userOnDismissOutside;
+    std::function<void (unsigned long long, bool)> borrowedHostResized;
+    unsigned long long showGeneration_ = 0;
     bool escapeDismisses = true;
     bool forwardShortcuts_ = true;
     bool listeningForOutsideClicks = false;
