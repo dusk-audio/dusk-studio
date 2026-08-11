@@ -2,6 +2,9 @@
 
 This temporary build adds support logging only when
 `DUSKSTUDIO_WINDOWS_DIAGNOSTICS` is enabled. Normal launches are unchanged.
+It omits the native session notepad because that unrelated DPF-Widgets surface
+does not currently compile under MSVC; ASIO, SFZ loading, plugin hosting, and
+hosted plugin editors are included for the hardware matrix below.
 
 ## Launch
 

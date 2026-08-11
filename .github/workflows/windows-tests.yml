@@ -189,7 +189,19 @@ jobs:
       - name: Build Win11 diagnostics app
         if: ${{ !cancelled() && env.DIAGNOSTICS == 'true' }}
         shell: bash
-        run: cmake --build build-tests --config Release --target DuskStudio -j
+        run: |
+          # Keep this temporary hardware aid focused on the issue-116 paths.
+          # The pinned DPF-Widgets OpenGL3 backend currently fails to compile
+          # under MSVC, while the ASIO, SFZ, plugin-host and plugin-editor paths
+          # under test do not depend on the native session notepad.
+          cmake -S . -B build-diagnostics \
+            -G "Visual Studio 17 2022" -A x64 \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
+            -DASIOSDK_PATH="${ASIOSDK_PATH}" \
+            -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}" \
+            -DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=OFF
+          cmake --build build-diagnostics --config Release --target DuskStudio -j
 
       - name: Stage Win11 diagnostics bundle
         if: ${{ !cancelled() && env.DIAGNOSTICS == 'true' }}
@@ -197,7 +209,7 @@ jobs:
         run: |
           $stage = Join-Path $env:RUNNER_TEMP "DuskStudio-Windows-diagnostics"
           New-Item -ItemType Directory -Path $stage -Force | Out-Null
-          cmake --install build-tests --config Release --prefix $stage
+          cmake --install build-diagnostics --config Release --prefix $stage
           if ($LASTEXITCODE -ne 0) { throw "cmake --install failed with exit $LASTEXITCODE" }
 
           foreach ($required in @("bin\DuskStudio.exe", "bin\dusk-studio-plugin-host.exe", "LICENSE", "LICENSES.txt")) {
