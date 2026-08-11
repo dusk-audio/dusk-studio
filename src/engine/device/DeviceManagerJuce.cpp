@@ -6,6 +6,7 @@
 // (native-MIDI-tower JuceMidiBackend precedent); allowlisted for that reason.
 #include "DeviceManager.h"
 #include "IODeviceCallback.h"
+#include "../../util/CrashHandler.h"
 
 #include <juce_audio_devices/juce_audio_devices.h>
 
@@ -16,6 +17,116 @@ namespace duskstudio::device
 {
 namespace
 {
+template <typename Text>
+std::string utf8 (const Text& text)
+{
+    return std::string (text.toRawUTF8());
+}
+
+// std::to_string pads a double to six decimals, and every number logged here is
+// a rate or a count, so "44100.000000" is pure noise in a support artifact.
+template <typename T>
+std::string number (T value)
+{
+    auto text = std::to_string (value);
+    if (text.find ('.') == std::string::npos) return text;
+    const auto lastKept = text.find_last_not_of ('0');
+    text.erase (text[lastKept] == '.' ? lastKept : lastKept + 1);
+    return text;
+}
+
+template <typename Values>
+std::string numberList (const Values& values)
+{
+    std::string out;
+    for (const auto value : values)
+    {
+        if (! out.empty()) out += ",";
+        out += number (value);
+    }
+    return out;
+}
+
+// One snapshot is one writeDiagnostics call. The FileLogger behind it reopens
+// and closes the log file per message, so a per-channel call on a 32-in/32-out
+// interface stalls the message thread long enough to move the device
+// transitions this build exists to observe.
+template <typename DeviceType>
+void logDeviceTypeSnapshot (DeviceType* type, const char* context)
+{
+    if (! crash_handler::diagnosticsEnabled() || type == nullptr) return;
+
+    const auto inputs = type->getDeviceNames (true);
+    const auto outputs = type->getDeviceNames (false);
+    const int defaultInput = type->getDefaultDeviceIndex (true);
+    const int defaultOutput = type->getDefaultDeviceIndex (false);
+
+    std::string out = std::string (context) + ": backend=\"" + utf8 (type->getTypeName())
+        + "\" inputs=" + std::to_string (inputs.size())
+        + " outputs=" + std::to_string (outputs.size())
+        + " default-input=" + std::to_string (defaultInput)
+        + " default-output=" + std::to_string (defaultOutput);
+
+    for (int i = 0; i < inputs.size(); ++i)
+        out += "\n    input[" + std::to_string (i) + "]=\"" + utf8 (inputs[i]) + "\""
+             + (i == defaultInput ? " default=yes" : " default=no");
+    for (int i = 0; i < outputs.size(); ++i)
+        out += "\n    output[" + std::to_string (i) + "]=\"" + utf8 (outputs[i]) + "\""
+             + (i == defaultOutput ? " default=yes" : " default=no");
+
+    crash_handler::writeDiagnostics (out);
+}
+
+template <typename Manager>
+void logCurrentDeviceSnapshot (Manager& manager, const char* context)
+{
+    if (! crash_handler::diagnosticsEnabled()) return;
+
+    const auto setup = manager.getAudioDeviceSetup();
+    std::string out = std::string (context) + ": setup type=\""
+        + utf8 (manager.getCurrentAudioDeviceType())
+        + "\" input=\"" + utf8 (setup.inputDeviceName) + "\" output=\""
+        + utf8 (setup.outputDeviceName) + "\" rate=" + number (setup.sampleRate)
+        + " buffer=" + std::to_string (setup.bufferSize)
+        + " default-input-channels=" + (setup.useDefaultInputChannels ? "yes" : "no")
+        + " default-output-channels=" + (setup.useDefaultOutputChannels ? "yes" : "no");
+
+    auto* device = manager.getCurrentAudioDevice();
+    if (device == nullptr)
+    {
+        crash_handler::writeDiagnostics (out + "\n    current device=(none)");
+        return;
+    }
+
+    out += std::string ("\n    current device=\"") + utf8 (device->getName())
+        + "\" type=\"" + utf8 (device->getTypeName()) + "\" open="
+        + (device->isOpen() ? "yes" : "no") + " playing="
+        + (device->isPlaying() ? "yes" : "no") + " rate="
+        + number (device->getCurrentSampleRate()) + " buffer="
+        + std::to_string (device->getCurrentBufferSizeSamples()) + " bit-depth="
+        + std::to_string (device->getCurrentBitDepth()) + " input-latency="
+        + std::to_string (device->getInputLatencyInSamples()) + " output-latency="
+        + std::to_string (device->getOutputLatencyInSamples()) + " xruns="
+        + std::to_string (device->getXRunCount()) + " last-error=\""
+        + utf8 (device->getLastError()) + "\""
+        + "\n    available rates=[" + numberList (device->getAvailableSampleRates())
+        + "] buffers=[" + numberList (device->getAvailableBufferSizes()) + "]";
+
+    const auto inputChannels = device->getInputChannelNames();
+    const auto outputChannels = device->getOutputChannelNames();
+    // Both return a fresh mask by value, so hoist them out of the loops.
+    const auto activeInputs = device->getActiveInputChannels();
+    const auto activeOutputs = device->getActiveOutputChannels();
+    for (int i = 0; i < inputChannels.size(); ++i)
+        out += "\n    input-channel[" + std::to_string (i) + "]=\""
+             + utf8 (inputChannels[i]) + "\" active=" + (activeInputs[i] ? "yes" : "no");
+    for (int i = 0; i < outputChannels.size(); ++i)
+        out += "\n    output-channel[" + std::to_string (i) + "]=\""
+             + utf8 (outputChannels[i]) + "\" active=" + (activeOutputs[i] ? "yes" : "no");
+
+    crash_handler::writeDiagnostics (out);
+}
+
 juce::BigInteger toBig (const ChannelSet& cs)
 {
     juce::BigInteger b;
@@ -182,6 +293,7 @@ struct DeviceManager::Impl : private juce::ChangeListener
         if (mgr.getCurrentAudioDevice() != nullptr)
             deviceChangePending.store (false, std::memory_order_release);
 
+        logCurrentDeviceSnapshot (mgr, "device-change");
         fireListeners();
     }
 
@@ -237,8 +349,11 @@ struct DeviceManager::Impl : private juce::ChangeListener
         // WASAPI exclusive -> WASAPI shared -> DirectSound. The default pick lands
         // on the first registered type that enumerates devices.
        #if JUCE_ASIO
+        crash_handler::writeDiagnostics ("backend registration: ASIO compiled=yes");
         if (auto* asio = juce::AudioIODeviceType::createAudioIODeviceType_ASIO())
             mgr.addAudioDeviceType (std::unique_ptr<juce::AudioIODeviceType> (asio));
+       #else
+        crash_handler::writeDiagnostics ("backend registration: ASIO compiled=no");
        #endif
         if (auto* wasapiExclusive = juce::AudioIODeviceType::createAudioIODeviceType_WASAPI (
                 juce::WASAPIDeviceMode::exclusive))
@@ -250,8 +365,16 @@ struct DeviceManager::Impl : private juce::ChangeListener
             mgr.addAudioDeviceType (std::unique_ptr<juce::AudioIODeviceType> (directSound));
        #endif
 
-        for (auto* t : mgr.getAvailableDeviceTypes())
-            if (t != nullptr) t->scanForDevices();
+        const auto& types = mgr.getAvailableDeviceTypes();
+        if (crash_handler::diagnosticsEnabled())
+            crash_handler::writeDiagnostics ("backend registration: available types="
+                                              + std::to_string (types.size()));
+        for (auto* t : types)
+            if (t != nullptr)
+            {
+                t->scanForDevices();
+                logDeviceTypeSnapshot (t, "initial-scan");
+            }
     }
 };
 
@@ -270,7 +393,11 @@ std::vector<IODeviceType*> DeviceManager::getAvailableDeviceTypes()
 void DeviceManager::scanAllDeviceTypes()
 {
     for (auto* t : impl->mgr.getAvailableDeviceTypes())
-        if (t != nullptr) t->scanForDevices();
+        if (t != nullptr)
+        {
+            t->scanForDevices();
+            logDeviceTypeSnapshot (t, "rescan");
+        }
 }
 
 std::string DeviceManager::initialise (int numInputChannels, int numOutputChannels,
@@ -282,8 +409,20 @@ std::string DeviceManager::initialise (int numInputChannels, int numOutputChanne
     if (! savedState.empty())
         state = juce::parseXML (juce::String (savedState));
 
-    return impl->mgr.initialise (numInputChannels, numOutputChannels,
-                                 state.get(), selectDefaultOnFailure).toStdString();
+    if (crash_handler::diagnosticsEnabled())
+        crash_handler::writeDiagnostics (
+            "initialise: requested-inputs=" + std::to_string (numInputChannels)
+            + " requested-outputs=" + std::to_string (numOutputChannels)
+            + " saved-state-bytes=" + std::to_string (savedState.size())
+            + " saved-state-parse=" + (savedState.empty() ? "not-present"
+                                          : (state != nullptr ? "ok" : "failed"))
+            + " select-default-on-failure=" + (selectDefaultOnFailure ? "yes" : "no"));
+    const auto result = impl->mgr.initialise (numInputChannels, numOutputChannels,
+                                              state.get(), selectDefaultOnFailure);
+    if (crash_handler::diagnosticsEnabled())
+        crash_handler::writeDiagnostics ("initialise: result=\"" + utf8 (result) + "\"");
+    logCurrentDeviceSnapshot (impl->mgr, "initialise");
+    return result.toStdString();
 }
 
 std::string DeviceManager::getStateBlob() const
@@ -333,7 +472,14 @@ void DeviceManager::setCurrentDeviceType (const std::string& typeName, bool trea
     if (willChange)
         impl->deviceChangePending.store (true, std::memory_order_release);
 
+    if (crash_handler::diagnosticsEnabled())
+        crash_handler::writeDiagnostics (
+            "set-device-type: requested=\"" + typeName + "\" current=\""
+            + utf8 (impl->mgr.getCurrentAudioDeviceType()) + "\" will-change="
+            + (willChange ? "yes" : "no") + " treat-as-chosen="
+            + (treatAsChosen ? "yes" : "no"));
     impl->mgr.setCurrentAudioDeviceType (wanted, treatAsChosen);
+    logCurrentDeviceSnapshot (impl->mgr, "set-device-type");
 }
 
 bool DeviceManager::isDeviceChangePending() const noexcept
@@ -373,7 +519,17 @@ std::string DeviceManager::setSetup (const DeviceSetup& d, bool treatAsChosen)
     if (s != impl->mgr.getAudioDeviceSetup() || impl->mgr.getCurrentAudioDevice() == nullptr)
         impl->deviceChangePending.store (true, std::memory_order_release);
 
-    return impl->mgr.setAudioDeviceSetup (s, treatAsChosen).toStdString();
+    if (crash_handler::diagnosticsEnabled())
+        crash_handler::writeDiagnostics (
+            "set-setup: input=\"" + d.inputDeviceName + "\" output=\""
+            + d.outputDeviceName + "\" rate=" + number (d.sampleRate)
+            + " buffer=" + std::to_string (d.bufferSize) + " treat-as-chosen="
+            + (treatAsChosen ? "yes" : "no"));
+    const auto result = impl->mgr.setAudioDeviceSetup (s, treatAsChosen);
+    if (crash_handler::diagnosticsEnabled())
+        crash_handler::writeDiagnostics ("set-setup: result=\"" + utf8 (result) + "\"");
+    logCurrentDeviceSnapshot (impl->mgr, "set-setup");
+    return result.toStdString();
 }
 
 void DeviceManager::addCallback (IODeviceCallback* callback)
@@ -402,7 +558,9 @@ void DeviceManager::closeDevice()
     // to arm when there is no device to close.
     if (impl->mgr.getCurrentAudioDevice() != nullptr)
         impl->deviceChangePending.store (true, std::memory_order_release);
+    crash_handler::writeDiagnostics ("close-device: requested");
     impl->mgr.closeAudioDevice();
+    logCurrentDeviceSnapshot (impl->mgr, "close-device");
 }
 
 void DeviceManager::addChangeListener (void* owner, std::function<void()> onChange)

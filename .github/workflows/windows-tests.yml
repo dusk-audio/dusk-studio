@@ -8,12 +8,23 @@ name: Windows tests
 # workflow would mean tests run once per ship, not per PR — which
 # defeats the regression-net purpose.
 
+# TEMPORARY (issue #116): the 116-windows-diagnostics push trigger, the
+# workflow_dispatch input, the job-level gate, and the three diagnostics steps
+# at the end of the job exist only to hand a maintainer a Win11 debug build.
+# Every push to that branch republishes to the private releases repo. Strip all
+# of it before merging to main - grep the file for "116" to find each site.
 on:
   push:
-    branches: [main, 'release/**']
+    branches: [main, 'release/**', '116-windows-diagnostics']
   pull_request:
     branches: [main, 'release/**']
   workflow_dispatch:
+    inputs:
+      windows_diagnostics:
+        description: Build the temporary Win11 diagnostics bundle for issue 116
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -36,6 +47,12 @@ jobs:
     # Pinned to windows-2022: windows-latest migrated to windows-2025, whose
     # image no longer resolves the "Visual Studio 17 2022" CMake generator.
     runs-on: windows-2022
+
+    env:
+      # Single source of truth for the three diagnostics steps below. Repeating
+      # the expression per step is how one of them ends up edited and the rest
+      # left behind. Evaluates to the string "true"/"false".
+      DIAGNOSTICS: ${{ (github.event_name == 'workflow_dispatch' && inputs.windows_diagnostics) || (github.event_name == 'push' && github.ref_name == '116-windows-diagnostics') }}
 
     steps:
       - name: Checkout Dusk Studio
@@ -81,8 +98,8 @@ jobs:
         # Test binary itself doesn't use ASIO, but the top-level CMake
         # configure pass evaluates the main DuskStudio target which
         # references ASIOSDK_PATH on Windows. Same fetch as
-        # windows-build.yml so the configure step succeeds; we never
-        # build the DuskStudio target in this workflow.
+        # windows-build.yml so the configure step succeeds. Normal runs build
+        # only tests; the issue-116 diagnostics path also builds DuskStudio.
         shell: bash
         run: |
           curl -sSL -o "${RUNNER_TEMP}/asiosdk.zip" https://download.steinberg.net/sdk_downloads/asiosdk_2.3.3_2019-06-14.zip
@@ -164,3 +181,68 @@ jobs:
         shell: bash
         run: |
           ctest --test-dir build-tests --output-on-failure -C Release -E "FileImporter"
+
+      # The bundle exists to debug a failure the suite does not reproduce, so a
+      # red ctest (the Windows suite has known filesystem-timing flake) must not
+      # be what stops the maintainer getting a build. !cancelled() keeps these
+      # running after a failed step while still honouring a cancelled run.
+      - name: Build Win11 diagnostics app
+        if: ${{ !cancelled() && env.DIAGNOSTICS == 'true' }}
+        shell: bash
+        run: cmake --build build-tests --config Release --target DuskStudio -j
+
+      - name: Stage Win11 diagnostics bundle
+        if: ${{ !cancelled() && env.DIAGNOSTICS == 'true' }}
+        shell: pwsh
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP "DuskStudio-Windows-diagnostics"
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          cmake --install build-tests --config Release --prefix $stage
+          if ($LASTEXITCODE -ne 0) { throw "cmake --install failed with exit $LASTEXITCODE" }
+
+          foreach ($required in @("bin\DuskStudio.exe", "bin\dusk-studio-plugin-host.exe", "LICENSE", "LICENSES.txt")) {
+            $path = Join-Path $stage $required
+            if (-not (Test-Path -PathType Leaf $path)) { throw "diagnostics bundle missing $required" }
+          }
+
+          Copy-Item docs\windows-diagnostics-0.13.md (Join-Path $stage "WINDOWS-DIAGNOSTICS.md")
+          "source $env:GITHUB_SHA" | Out-File (Join-Path $stage "SOURCE.txt") -Encoding ascii
+          $manifest = Join-Path $env:RUNNER_TEMP "DuskStudio-Windows-diagnostics.SHA256SUMS"
+          Get-ChildItem $stage -Recurse -File | Sort-Object FullName | ForEach-Object {
+            $relative = [System.IO.Path]::GetRelativePath($stage, $_.FullName)
+            $hash = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant()
+            "$hash  $relative"
+          } | Out-File $manifest -Encoding ascii
+          Move-Item $manifest (Join-Path $stage "SHA256SUMS") -Force
+
+          Compress-Archive -Path (Join-Path $stage "*") -DestinationPath (Join-Path $env:RUNNER_TEMP "DuskStudio-Windows-diagnostics.zip") -Force
+
+      - name: Publish Win11 diagnostics bundle privately
+        if: ${{ !cancelled() && env.DIAGNOSTICS == 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+          RELEASES_REPO: dusk-audio/dusk-studio-releases
+        run: |
+          set -euo pipefail
+          TAG="diagnostics-116"
+          ASSET="${RUNNER_TEMP}/DuskStudio-Windows-diagnostics.zip"
+
+          if [[ ! -f "$ASSET" ]]; then
+            echo "::error::diagnostics bundle was not staged" >&2
+            exit 1
+          fi
+
+          if ! gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --repo "$RELEASES_REPO" \
+              --title "Issue 116 Windows diagnostics" \
+              --notes "Temporary maintainer-only Win11 diagnostics bundle. Source SHA: ${GITHUB_SHA}." \
+              --prerelease
+          fi
+
+          gh release edit "$TAG" \
+            --repo "$RELEASES_REPO" \
+            --notes "Temporary maintainer-only Win11 diagnostics bundle. Source SHA: ${GITHUB_SHA}."
+          gh release upload "$TAG" --repo "$RELEASES_REPO" --clobber "$ASSET"
+          echo "Published DuskStudio-Windows-diagnostics.zip privately at ${RELEASES_REPO}@${TAG}"

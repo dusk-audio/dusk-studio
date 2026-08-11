@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
+#include <cstdlib>
 #include <csignal>
+#include <cstring>
 #include <memory>
 
 namespace duskstudio::crash_handler
@@ -13,7 +16,9 @@ std::atomic<bool>             installed { false };
 std::string                   cachedAppVersion;
 juce::File                    cachedCrashDir;
 juce::File                    cachedLogFile;
-std::unique_ptr<juce::FileLogger> ownedLogger;
+using FileLogger = juce::FileLogger;
+std::unique_ptr<FileLogger> ownedLogger;
+std::atomic<FileLogger*> diagnosticsLogger { nullptr };
 
 juce::File baseDir()
 {
@@ -117,10 +122,11 @@ void install (const std::string& appVersion)
     // Replace any pre-existing logger (none in normal flow, but tests
     // may have installed one). FileLogger appends; daily rotation comes
     // from the date in the filename - next-day startup picks a new file.
-    ownedLogger = std::make_unique<juce::FileLogger> (
+    ownedLogger = std::make_unique<FileLogger> (
         cachedLogFile,
         "Dusk Studio " + juce::String (appVersion) + " - "
             + juce::Time::getCurrentTime().toString (true, true));
+    diagnosticsLogger.store (ownedLogger.get(), std::memory_order_release);
     juce::Logger::setCurrentLogger (ownedLogger.get());
 
     cachedCrashDir = baseDir().getChildFile ("crashes");
@@ -133,6 +139,7 @@ void uninstall()
 {
     bool expected = true;
     if (! installed.compare_exchange_strong (expected, false)) return;
+    diagnosticsLogger.store (nullptr, std::memory_order_release);
     juce::Logger::setCurrentLogger (nullptr);
     // Intentionally leak the FileLogger. juce::Logger::setCurrentLogger
     // is not thread-safe - a background thread that loaded the old
@@ -140,6 +147,27 @@ void uninstall()
     // writeToLog and would dereference a destroyed object after .reset().
     // Process is exiting; the OS reclaims the memory either way.
     (void) ownedLogger.release();
+}
+
+bool diagnosticsEnabled()
+{
+    static const bool enabled = []
+    {
+        const char* value = std::getenv ("DUSKSTUDIO_WINDOWS_DIAGNOSTICS");
+        return value != nullptr && value[0] != '\0' && std::strcmp (value, "0") != 0;
+    }();
+    return enabled;
+}
+
+void writeDiagnostics (const std::string& message)
+{
+    if (! diagnosticsEnabled()) return;
+
+    const std::string line = "[Dusk Studio/Windows diagnostics] " + message;
+    std::fprintf (stderr, "%s\n", line.c_str());
+    std::fflush (stderr);
+    if (auto* logger = diagnosticsLogger.load (std::memory_order_acquire))
+        logger->logMessage (line.c_str());
 }
 
 juce::File getLogDir()     { return baseDir().getChildFile ("log"); }

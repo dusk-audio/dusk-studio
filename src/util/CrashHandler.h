@@ -24,6 +24,11 @@ void install (const std::string& appVersion);
 // (process is exiting). Idempotent.
 void uninstall();
 
+// Extra support logging is deliberately opt-in so normal sessions keep the
+// existing log volume. Set DUSKSTUDIO_WINDOWS_DIAGNOSTICS=1 before launch.
+bool diagnosticsEnabled();
+void writeDiagnostics (const std::string& message);
+
 juce::File getLogDir();
 juce::File getCrashDir();
 juce::File getCurrentLogFile();

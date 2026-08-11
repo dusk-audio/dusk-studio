@@ -3,14 +3,37 @@
 #include "Sf2PresetSort.h"
 #include "../../foundation/MessageThread.h"
 #include "../../foundation/ScopedNoDenormals.h"
+#include "../../util/CrashHandler.h"
 
 #include <juce_data_structures/juce_data_structures.h>
 #include <sfizz.h>
 
 #include <algorithm>
 
+#if JUCE_WINDOWS
+ #include <windows.h>
+#endif
+
 namespace duskstudio
 {
+namespace
+{
+std::string hexBytes (const std::string& bytes)
+{
+    static constexpr char digits[] = "0123456789abcdef";
+    std::string out;
+    out.reserve (bytes.size() * 3);
+    for (const char character : bytes)
+    {
+        const auto byte = static_cast<unsigned char> (character);
+        if (! out.empty()) out += ' ';
+        out += digits[byte >> 4];
+        out += digits[byte & 0x0f];
+    }
+    return out;
+}
+}
+
 struct DuskMultisampleProcessor::Impl
 {
     sfizz_synth_t* synth { nullptr };
@@ -443,28 +466,114 @@ void DuskMultisampleProcessor::setPolyphony (int newPolyphony)
 bool DuskMultisampleProcessor::loadSfzFile (const juce::File& sfz,
                                               juce::String& errorMessage)
 {
+    const auto fullPath = sfz.getFullPathName();
+    const auto path = fullPath.toStdString();
+    const bool diagnostics = crash_handler::diagnosticsEnabled();
+    if (diagnostics)
+    {
+        const auto parent = sfz.getParentDirectory();
+        const bool uncPath = path.size() >= 2
+                          && (path[0] == '\\' || path[0] == '/')
+                          && (path[1] == '\\' || path[1] == '/');
+        // A mapped network drive reads as a plain "Z:\..." path. JUCE's
+        // isOnRemovableDrive() deliberately includes DRIVE_REMOTE, so query the
+        // Windows volume type directly to keep that matrix row distinguishable.
+        const char* pathKind = uncPath ? "UNC" : "unavailable";
+       #if JUCE_WINDOWS
+        if (! uncPath)
+        {
+            wchar_t volumePath[MAX_PATH] = {};
+            if (GetVolumePathNameW (fullPath.toWideCharPointer(), volumePath, MAX_PATH))
+            {
+                switch (GetDriveTypeW (volumePath))
+                {
+                    case DRIVE_CDROM:     pathKind = "cdrom"; break;
+                    case DRIVE_FIXED:     pathKind = "local"; break;
+                    case DRIVE_RAMDISK:   pathKind = "ramdisk"; break;
+                    case DRIVE_REMOVABLE: pathKind = "removable"; break;
+                    case DRIVE_REMOTE:    pathKind = "network"; break;
+                    default:              break;
+                }
+            }
+        }
+       #else
+        if (! uncPath)
+            pathKind = sfz.isOnCDRomDrive()     ? "cdrom"
+                     : sfz.isOnRemovableDrive() ? "removable"
+                     : sfz.isOnHardDisk()       ? "local"
+                                                 : "unavailable";
+       #endif
+        crash_handler::writeDiagnostics (
+            "SFZ load begin: path=\"" + path + "\" utf8-bytes=[" + hexBytes (path)
+            + "] path-kind=" + pathKind
+            + " file-exists=" + (sfz.existsAsFile() ? "yes" : "no")
+            + " parent=\"" + parent.getFullPathName().toStdString()
+            + "\" parent-exists=" + (parent.isDirectory() ? "yes" : "no")
+            + " size=" + std::to_string (sfz.getSize()));
+    }
+
     if (impl == nullptr || impl->synth == nullptr)
     {
         errorMessage = "Internal: sfizz synth not initialised";
+        if (diagnostics)
+            crash_handler::writeDiagnostics ("SFZ load failed before sfizz call: "
+                                              + errorMessage.toStdString());
         return false;
     }
     if (! sfz.existsAsFile())
     {
-        errorMessage = "File does not exist: " + sfz.getFullPathName();
+        errorMessage = "File does not exist: " + fullPath;
+        if (diagnostics)
+            crash_handler::writeDiagnostics ("SFZ load failed before sfizz call: "
+                                              + errorMessage.toStdString());
         return false;
     }
-    const auto path = sfz.getFullPathName().toStdString();
     bool ok = false;
+    int regionCount = 0;
+    int groupCount = 0;
+    int masterCount = 0;
+    std::size_t preloadedSamples = 0;
     {
         const juce::SpinLock::ScopedLockType lock (sfizzLock);
         ok = sfizz_load_file (impl->synth, path.c_str());
+        if (ok && diagnostics)
+        {
+            regionCount = sfizz_get_num_regions (impl->synth);
+            groupCount = sfizz_get_num_groups (impl->synth);
+            masterCount = sfizz_get_num_masters (impl->synth);
+            preloadedSamples = sfizz_get_num_preloaded_samples (impl->synth);
+        }
     }
     if (! ok)
     {
         errorMessage = "sfizz_load_file failed for " + sfz.getFileName();
         lastLoadError = errorMessage;
+        if (diagnostics)
+        {
+            // sfizz reports a bare bool, so probe the JUCE path ourselves. A
+            // failed probe points to the path or its permissions; a successful
+            // one leaves sfizz's narrow-path conversion and parsing as the two
+            // remaining causes.
+            std::string readable = "no";
+            if (auto probe = sfz.createInputStream())
+            {
+                char head[64] = {};
+                readable = "yes bytes-read="
+                         + std::to_string (probe->read (head, (int) sizeof head));
+            }
+            crash_handler::writeDiagnostics ("SFZ load failed: path=\"" + path
+                                              + "\" juce-readable=" + readable
+                                              + " error=\""
+                                              + errorMessage.toStdString() + "\"");
+        }
         return false;
     }
+    if (diagnostics)
+        crash_handler::writeDiagnostics (
+            "SFZ load succeeded: path=\"" + path + "\" regions="
+            + std::to_string (regionCount) + " groups=" + std::to_string (groupCount)
+            + " masters=" + std::to_string (masterCount) + " preloaded-samples="
+            + std::to_string (preloadedSamples));
     // Drop any SF2-extracted temp samples - this slot is now a plain
     // SFZ load and the previous SF2's WAVs are no longer referenced.
     if (impl->sf2TempDir != juce::File())
