@@ -1,6 +1,5 @@
 #include "SfzCatalogEnvelope.h"
-
-#include "../../foundation/Json.h"
+#include "SfzCatalogJson.h"
 
 #include <sodium.h>
 
@@ -65,7 +64,8 @@ struct EnvelopeParser
             const auto known = std::any_of (allowed.begin(), allowed.end(),
                 [&item] (std::string_view key) { return item.key() == key; });
             if (! known)
-                return fail (path + "." + item.key(), "unknown field");
+                return fail (path + "." + detail::sanitizeJsonKeyForDiagnostic (item.key()),
+                             "unknown field");
         }
         return true;
     }
@@ -143,48 +143,6 @@ struct EnvelopeParser
         return true;
     }
 };
-
-bool parseEnvelopeJson (std::string_view source, Json& root, std::string& error)
-{
-    std::vector<std::unordered_set<std::string>> objectKeys;
-    bool duplicateKeyFound = false;
-    std::string duplicateKey;
-    const auto callback = [&objectKeys, &duplicateKeyFound, &duplicateKey] (
-        int, Json::parse_event_t event, Json& parsed)
-    {
-        if (event == Json::parse_event_t::object_start)
-        {
-            objectKeys.emplace_back();
-        }
-        else if (event == Json::parse_event_t::key && ! objectKeys.empty())
-        {
-            const auto& key = parsed.get_ref<const std::string&>();
-            if (! objectKeys.back().insert (key).second && ! duplicateKeyFound)
-            {
-                duplicateKeyFound = true;
-                duplicateKey = key;
-            }
-        }
-        else if (event == Json::parse_event_t::object_end && ! objectKeys.empty())
-        {
-            objectKeys.pop_back();
-        }
-        return true;
-    };
-
-    root = Json::parse (source.begin(), source.end(), callback, false);
-    if (root.is_discarded())
-    {
-        error = "envelope: malformed JSON";
-        return false;
-    }
-    if (duplicateKeyFound)
-    {
-        error = "envelope: duplicate object key '" + duplicateKey + "'";
-        return false;
-    }
-    return true;
-}
 
 bool decodeCanonicalBase64 (const std::string& encoded, std::size_t maximum,
                             const char* field, std::vector<unsigned char>& decoded,
@@ -279,16 +237,16 @@ CatalogEnvelopeResult verifyCatalogEnvelope (
         if (sodium_init() < 0)
             return { std::nullopt, {}, "envelope: cryptographic initialization failed" };
 
-        Json root;
         std::string error;
-        if (! parseEnvelopeJson (envelope, root, error))
-            return { std::nullopt, {}, std::move (error) };
+        auto parsedJson = detail::parseJsonRejectingDuplicateKeys (envelope, "envelope");
+        if (! parsedJson)
+            return { std::nullopt, {}, std::move (parsedJson.error) };
 
         EnvelopeParser parser;
         std::string keyId;
         std::string payloadBase64;
         std::string signatureBase64;
-        if (! parser.parse (root, keyId, payloadBase64, signatureBase64))
+        if (! parser.parse (*parsedJson.root, keyId, payloadBase64, signatureBase64))
             return { std::nullopt, {}, std::move (parser.error) };
 
         const auto* key = validateAndFindKey (trustedKeys, keyId, error);

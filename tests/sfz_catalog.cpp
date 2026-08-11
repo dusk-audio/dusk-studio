@@ -215,6 +215,17 @@ TEST_CASE ("SFZ catalog rejects unknown schema v1 fields", "[sfz][catalog]")
         catalog["packs"][0]["instruments"][0]["future_instrument_field"] = true;
         checkRejected (catalog, "instruments[0].future_instrument_field");
     }
+    SECTION ("diagnostic keys are bounded and sanitized")
+    {
+        auto catalog = validCatalog();
+        const auto key = std::string ("future\n") + std::string (80, 'x');
+        catalog[key] = true;
+
+        const auto result = parse (catalog);
+        CHECK_FALSE (result);
+        CHECK (result.error
+               == "root.future?" + std::string (57, 'x') + "...: unknown field");
+    }
 }
 
 TEST_CASE ("SFZ catalog rejects oversized payloads before JSON parsing",
@@ -249,6 +260,18 @@ TEST_CASE ("SFZ catalog rejects duplicate JSON object keys", "[sfz][catalog]")
         const auto result = parseCatalogPayload (source);
         CHECK_FALSE (result);
         CHECK (result.error == "root: duplicate object key 'spdx'");
+    }
+    SECTION ("diagnostic keys are bounded and sanitized")
+    {
+        auto source = validCatalog().dump();
+        const auto key = std::string ("duplicate\\n") + std::string (80, 'x');
+        source.insert (1, "\"" + key + "\":0,\"" + key + "\":1,");
+
+        const auto result = parseCatalogPayload (source);
+        CHECK_FALSE (result);
+        CHECK (result.error
+               == "root: duplicate object key 'duplicate?"
+                      + std::string (54, 'x') + "...'");
     }
 }
 
@@ -593,8 +616,11 @@ TEST_CASE ("SFZ catalog rejects unsafe or unsupported relative paths",
     SECTION ("segment ending in dot") { entrypoint = "pack./file.sfz"; }
     SECTION ("segment ending in space") { entrypoint = "pack /file.sfz"; }
     SECTION ("reserved basename with extension") { entrypoint = "pack/CON.sfz"; }
+    SECTION ("reserved basename with trailing space") { entrypoint = "pack/CON .sfz"; }
     SECTION ("case-insensitive COM device") { entrypoint = "pack/cOm9.sfz"; }
+    SECTION ("COM device with trailing space") { entrypoint = "pack/COM1 .sfz"; }
     SECTION ("case-insensitive LPT device") { entrypoint = "pack/LpT1.preset.sfz"; }
+    SECTION ("LPT device with trailing space") { entrypoint = "pack/LPT1 .sfz"; }
     SECTION ("COM device with superscript one")
     {
         entrypoint = std::string ("pack/COM") + "\xc2\xb9" + ".sfz";
@@ -837,6 +863,16 @@ TEST_CASE ("SFZ catalog envelope schema is closed and versioned",
         envelope.erase ("signature_base64");
         checkEnvelopeRejected (envelope, { signing.key }, "signature_base64");
     }
+    SECTION ("diagnostic keys are bounded and sanitized")
+    {
+        const auto key = std::string ("future\n") + std::string (80, 'x');
+        envelope[key] = true;
+
+        const auto result = verify (envelope, { signing.key });
+        CHECK_FALSE (result);
+        CHECK (result.error
+               == "envelope.future?" + std::string (57, 'x') + "...: unknown field");
+    }
 }
 
 TEST_CASE ("SFZ catalog envelope rejects duplicate keys and malformed JSON",
@@ -851,6 +887,14 @@ TEST_CASE ("SFZ catalog envelope rejects duplicate keys and malformed JSON",
         const auto result = verifyCatalogEnvelope (source, { signing.key });
         CHECK_FALSE (result);
         CHECK (result.error == "envelope: duplicate object key 'algorithm'");
+    }
+    SECTION ("duplicate diagnostic key is sanitized")
+    {
+        auto source = signedEnvelope (validCatalog().dump(), signing).dump();
+        source.insert (1, R"("duplicate\nkey":0,"duplicate\nkey":1,)");
+        const auto result = verifyCatalogEnvelope (source, { signing.key });
+        CHECK_FALSE (result);
+        CHECK (result.error == "envelope: duplicate object key 'duplicate?key'");
     }
     SECTION ("malformed JSON")
     {

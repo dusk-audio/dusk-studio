@@ -1,6 +1,5 @@
 #include "SfzCatalog.h"
-
-#include "../../foundation/Json.h"
+#include "SfzCatalogJson.h"
 
 #include <algorithm>
 #include <initializer_list>
@@ -71,7 +70,9 @@ bool equalsAsciiCaseInsensitive (std::string_view value, std::string_view expect
 bool isWindowsReservedBasename (std::string_view segment)
 {
     const auto dot = segment.find ('.');
-    const auto basename = segment.substr (0, dot);
+    auto basename = segment.substr (0, dot);
+    while (! basename.empty() && (basename.back() == ' ' || basename.back() == '.'))
+        basename.remove_suffix (1);
     if (equalsAsciiCaseInsensitive (basename, "CON")
         || equalsAsciiCaseInsensitive (basename, "PRN")
         || equalsAsciiCaseInsensitive (basename, "AUX")
@@ -112,7 +113,8 @@ struct Parser
             const auto known = std::any_of (allowed.begin(), allowed.end(),
                 [&item] (std::string_view key) { return item.key() == key; });
             if (! known)
-                return fail (path + "." + item.key(), "unknown field");
+                return fail (path + "." + detail::sanitizeJsonKeyForDiagnostic (item.key()),
+                             "unknown field");
         }
         return true;
     }
@@ -571,41 +573,13 @@ CatalogParseResult parseCatalogPayload (std::string_view source) noexcept
         if (source.size() > kMaxPayloadBytes)
             return { std::nullopt, "root: payload exceeds the 8 MiB limit" };
 
-        std::vector<std::unordered_set<std::string>> objectKeys;
-        bool duplicateKeyFound = false;
-        std::string duplicateKey;
-        const auto callback = [&objectKeys, &duplicateKeyFound, &duplicateKey] (
-            int, Json::parse_event_t event, Json& parsed)
-        {
-            if (event == Json::parse_event_t::object_start)
-            {
-                objectKeys.emplace_back();
-            }
-            else if (event == Json::parse_event_t::key && ! objectKeys.empty())
-            {
-                const auto& key = parsed.get_ref<const std::string&>();
-                if (! objectKeys.back().insert (key).second && ! duplicateKeyFound)
-                {
-                    duplicateKeyFound = true;
-                    duplicateKey = key;
-                }
-            }
-            else if (event == Json::parse_event_t::object_end && ! objectKeys.empty())
-            {
-                objectKeys.pop_back();
-            }
-            return true;
-        };
-
-        const auto root = Json::parse (source.begin(), source.end(), callback, false);
-        if (root.is_discarded())
-            return { std::nullopt, "root: malformed JSON" };
-        if (duplicateKeyFound)
-            return { std::nullopt, "root: duplicate object key '" + duplicateKey + "'" };
+        auto parsedJson = detail::parseJsonRejectingDuplicateKeys (source, "root");
+        if (! parsedJson)
+            return { std::nullopt, std::move (parsedJson.error) };
 
         Parser parser;
         CatalogPayload catalog;
-        if (! parser.parse (root, catalog))
+        if (! parser.parse (*parsedJson.root, catalog))
             return { std::nullopt, std::move (parser.error) };
         return { std::move (catalog), {} };
     }
