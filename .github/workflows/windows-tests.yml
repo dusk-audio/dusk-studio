@@ -9,10 +9,11 @@ name: Windows tests
 # defeats the regression-net purpose.
 
 # TEMPORARY (issue #116): the 116-windows-diagnostics push trigger, the
-# workflow_dispatch input, the job-level gate, and the three diagnostics steps
-# at the end of the job exist only to hand a maintainer a Win11 debug build.
-# Every push to that branch republishes to the private releases repo. Strip all
-# of it before merging to main - grep the file for "116" to find each site.
+# workflow_dispatch input, the job-level gate, and the diagnostics steps at the
+# end of the job exist only to hand a maintainer a Win11 debug build. Every push
+# to that branch republishes to the private releases repo. The branch never
+# merges to main - publishing that zip is the whole product. Delete the branch
+# and the diagnostics-116 release once #116 closes.
 on:
   push:
     branches: [main, 'release/**', '116-windows-diagnostics']
@@ -194,12 +195,19 @@ jobs:
           # The pinned DPF-Widgets OpenGL3 backend currently fails to compile
           # under MSVC, while the ASIO, SFZ, plugin-host and plugin-editor paths
           # under test do not depend on the native session notepad.
+          #
+          # MSVC's stock Release flags carry no debug info, which leaves the
+          # crash handler's backtrace as bare addresses. /Zi + /DEBUG keeps the
+          # same optimisation settings and emits the PDB that resolves them.
           cmake -S . -B build-diagnostics \
             -G "Visual Studio 17 2022" -A x64 \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
             -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}" \
+            -DCMAKE_C_FLAGS_RELEASE="/O2 /Ob2 /DNDEBUG /Zi" \
+            -DCMAKE_CXX_FLAGS_RELEASE="/O2 /Ob2 /DNDEBUG /Zi" \
+            -DCMAKE_EXE_LINKER_FLAGS_RELEASE="/DEBUG /INCREMENTAL:NO" \
             -DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=OFF
           cmake --build build-diagnostics --config Release --target DuskStudio -j
 
@@ -216,6 +224,14 @@ jobs:
             $path = Join-Path $stage $required
             if (-not (Test-Path -PathType Leaf $path)) { throw "diagnostics bundle missing $required" }
           }
+
+          # install() does not carry the PDB, and without it every crash report
+          # this build produces is a list of raw addresses. Largest match wins:
+          # the linker PDB, not a per-object compiler PDB of the same name.
+          $pdb = Get-ChildItem -Path build-diagnostics -Recurse -File -Filter DuskStudio.pdb |
+                 Sort-Object Length -Descending | Select-Object -First 1
+          if (-not $pdb) { throw "diagnostics bundle missing DuskStudio.pdb" }
+          Copy-Item $pdb.FullName (Join-Path $stage "bin\DuskStudio.pdb")
 
           Copy-Item docs\windows-diagnostics-0.13.md (Join-Path $stage "WINDOWS-DIAGNOSTICS.md")
           "source $env:GITHUB_SHA" | Out-File (Join-Path $stage "SOURCE.txt") -Encoding ascii

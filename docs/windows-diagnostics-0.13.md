@@ -1,10 +1,16 @@
-# Windows 0.13 diagnostics session
+# Windows 0.13 diagnostics session: issues #116 and #237
+
+One hardware session, two checklists - the issue #116 device and SFZ matrix,
+and the hosted-editor matrix owed since #237. Run both in the same session so
+a single log covers everything.
 
 This temporary build adds support logging only when
-`DUSKSTUDIO_WINDOWS_DIAGNOSTICS` is enabled. Normal launches are unchanged.
-It omits the native session notepad because that unrelated DPF-Widgets surface
-does not currently compile under MSVC; ASIO, SFZ loading, plugin hosting, and
-hosted plugin editors are included for the hardware matrix below.
+`DUSKSTUDIO_SUPPORT_DIAGNOSTICS` is enabled. Normal launches are unchanged.
+ASIO, SFZ loading, plugin hosting, and hosted plugin editors are all included.
+
+The session notepad is absent from this build by design: that unrelated
+DPF-Widgets surface does not currently compile under MSVC and nothing under
+test depends on it. Its absence is not a finding.
 
 ## Launch
 
@@ -19,7 +25,7 @@ Get-Content .\SHA256SUMS | ForEach-Object {
   $actual = (Get-FileHash -Algorithm SHA256 $relative).Hash.ToLowerInvariant()
   if ($actual -ne $hash) { throw "checksum mismatch: $relative" }
 }
-$env:DUSKSTUDIO_WINDOWS_DIAGNOSTICS = "1"
+$env:DUSKSTUDIO_SUPPORT_DIAGNOSTICS = "1"
 & ".\bin\DuskStudio.exe"
 ```
 
@@ -32,7 +38,7 @@ Relaunch Dusk Studio when a row calls for a device state before launch. Use
 quit Dusk Studio and disable the flag:
 
 ```powershell
-Remove-Item Env:DUSKSTUDIO_WINDOWS_DIAGNOSTICS
+Remove-Item Env:DUSKSTUDIO_SUPPORT_DIAGNOSTICS
 ```
 
 The resulting log is in `%APPDATA%\Dusk Studio\log`. Keep the unredacted

@@ -17,8 +17,7 @@ namespace duskstudio::device
 {
 namespace
 {
-template <typename Text>
-std::string utf8 (const Text& text)
+std::string utf8 (const juce::String& text)
 {
     return std::string (text.toRawUTF8());
 }
@@ -51,8 +50,7 @@ std::string numberList (const Values& values)
 // and closes the log file per message, so a per-channel call on a 32-in/32-out
 // interface stalls the message thread long enough to move the device
 // transitions this build exists to observe.
-template <typename DeviceType>
-void logDeviceTypeSnapshot (DeviceType* type, const char* context)
+void logDeviceTypeSnapshot (juce::AudioIODeviceType* type, const char* context)
 {
     if (! crash_handler::diagnosticsEnabled() || type == nullptr) return;
 
@@ -77,8 +75,7 @@ void logDeviceTypeSnapshot (DeviceType* type, const char* context)
     crash_handler::writeDiagnostics (out);
 }
 
-template <typename Manager>
-void logCurrentDeviceSnapshot (Manager& manager, const char* context)
+void logCurrentDeviceSnapshot (juce::AudioDeviceManager& manager, const char* context)
 {
     if (! crash_handler::diagnosticsEnabled()) return;
 
@@ -349,11 +346,13 @@ struct DeviceManager::Impl : private juce::ChangeListener
         // WASAPI exclusive -> WASAPI shared -> DirectSound. The default pick lands
         // on the first registered type that enumerates devices.
        #if JUCE_ASIO
-        crash_handler::writeDiagnostics ("backend registration: ASIO compiled=yes");
+        if (crash_handler::diagnosticsEnabled())
+            crash_handler::writeDiagnostics ("backend registration: ASIO compiled=yes");
         if (auto* asio = juce::AudioIODeviceType::createAudioIODeviceType_ASIO())
             mgr.addAudioDeviceType (std::unique_ptr<juce::AudioIODeviceType> (asio));
        #else
-        crash_handler::writeDiagnostics ("backend registration: ASIO compiled=no");
+        if (crash_handler::diagnosticsEnabled())
+            crash_handler::writeDiagnostics ("backend registration: ASIO compiled=no");
        #endif
         if (auto* wasapiExclusive = juce::AudioIODeviceType::createAudioIODeviceType_WASAPI (
                 juce::WASAPIDeviceMode::exclusive))
@@ -558,7 +557,8 @@ void DeviceManager::closeDevice()
     // to arm when there is no device to close.
     if (impl->mgr.getCurrentAudioDevice() != nullptr)
         impl->deviceChangePending.store (true, std::memory_order_release);
-    crash_handler::writeDiagnostics ("close-device: requested");
+    if (crash_handler::diagnosticsEnabled())
+        crash_handler::writeDiagnostics ("close-device: requested");
     impl->mgr.closeAudioDevice();
     logCurrentDeviceSnapshot (impl->mgr, "close-device");
 }

@@ -31,7 +31,7 @@ src/engine/PluginSlot.h	42
 src/engine/RecordManager.cpp	4
 src/engine/RecordManager.h	5
 src/engine/device/DeviceManager.h	3
-src/engine/device/DeviceManagerJuce.cpp	46
+src/engine/device/DeviceManagerJuce.cpp	49
 src/engine/hosting/NativePluginId.h	8
 src/engine/ipc/IpcSelfTest.cpp	5
 src/engine/ipc/PluginHostMain.cpp	52
@@ -175,5 +175,5 @@ src/ui/multisample/AriaGuiComponent.cpp	90
 src/ui/multisample/AriaGuiComponent.h	17
 src/ui/multisample/DuskMultisampleEditor.cpp	71
 src/ui/multisample/DuskMultisampleEditor.h	21
-src/util/CrashHandler.cpp	32
+src/util/CrashHandler.cpp	33
 src/util/CrashHandler.h	4

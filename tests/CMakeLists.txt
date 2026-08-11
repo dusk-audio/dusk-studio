@@ -124,6 +124,7 @@ add_executable(dusk-studio-tests
     sf2_to_sfz_convert.cpp
     sf2_preset_sort.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/multisample/DuskMultisampleProcessor.cpp
+    crash_handler_env_flag.cpp
     ${CMAKE_SOURCE_DIR}/src/util/CrashHandler.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/multisample/AriaBank.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/multisample/AriaGui.cpp

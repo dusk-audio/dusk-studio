@@ -478,22 +478,31 @@ bool DuskMultisampleProcessor::loadSfzFile (const juce::File& sfz,
         // A mapped network drive reads as a plain "Z:\..." path. JUCE's
         // isOnRemovableDrive() deliberately includes DRIVE_REMOTE, so query the
         // Windows volume type directly to keep that matrix row distinguishable.
-        const char* pathKind = uncPath ? "UNC" : "unavailable";
+        std::string pathKind = uncPath ? "UNC" : "unavailable";
        #if JUCE_WINDOWS
         if (! uncPath)
         {
             wchar_t volumePath[MAX_PATH] = {};
             if (GetVolumePathNameW (fullPath.toWideCharPointer(), volumePath, MAX_PATH))
             {
-                switch (GetDriveTypeW (volumePath))
+                const auto driveType = GetDriveTypeW (volumePath);
+                switch (driveType)
                 {
                     case DRIVE_CDROM:     pathKind = "cdrom"; break;
                     case DRIVE_FIXED:     pathKind = "local"; break;
                     case DRIVE_RAMDISK:   pathKind = "ramdisk"; break;
                     case DRIVE_REMOVABLE: pathKind = "removable"; break;
                     case DRIVE_REMOTE:    pathKind = "network"; break;
-                    default:              break;
+                    default: pathKind = "unknown(drive-type="
+                                      + std::to_string (driveType) + ")"; break;
                 }
+            }
+            else
+            {
+                // Paths over MAX_PATH and \\?\-prefixed paths are the suspect
+                // input class here, and each fails with its own error code.
+                pathKind = "unavailable(GetVolumePathNameW error="
+                         + std::to_string (GetLastError()) + ")";
             }
         }
        #else

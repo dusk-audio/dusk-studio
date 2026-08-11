@@ -1,5 +1,6 @@
 #include "PluginManager.h"
 #include "JuceCompat.h"
+#include "../util/CrashHandler.h"
 
 #include "ipc/PluginScanProtocol.h"
 #include "NativePluginCache.h"
@@ -23,6 +24,11 @@
 #endif
 
 #include <map>
+#include <string>
+
+#if JUCE_WINDOWS
+ #include <windows.h>
+#endif
 
 namespace duskstudio
 {
@@ -175,7 +181,13 @@ public:
                                const std::atomic<bool>* abortFlag, int* skipCounter)
         : hostExecutable (std::move (hostExe)), knownList (list), abort (abortFlag),
           sandboxSkips (skipCounter),
-          hostPresent (juce::File (hostExecutable).existsAsFile()) {}
+          hostPresent (juce::File (hostExecutable).existsAsFile())
+    {
+        if (crash_handler::diagnosticsEnabled())
+            crash_handler::writeDiagnostics ("scan sandbox: host=\""
+                                              + hostExecutable.toStdString()
+                                              + "\" exists=" + (hostPresent ? "yes" : "no"));
+    }
 
     bool findPluginTypesFor (juce::AudioPluginFormat& format,
                              juce::OwnedArray<juce::PluginDescription>& result,
@@ -207,6 +219,21 @@ public:
 
         if (! proc.start (args, juce::ChildProcess::wantStdOut))
         {
+           #if JUCE_WINDOWS
+            // Read before anything else can reset the thread's last-error value.
+            // The code is what separates an AV block (ERROR_ACCESS_DENIED,
+            // ERROR_VIRUS_INFECTED) from a host binary that cannot run at all.
+            const std::string startError = " GetLastError="
+                                         + std::to_string (GetLastError());
+           #else
+            const std::string startError = " (start returned false)";
+           #endif
+            if (crash_handler::diagnosticsEnabled())
+                crash_handler::writeDiagnostics (
+                    "scan sandbox: start failed host=\"" + hostExecutable.toStdString()
+                    + "\" args=[" + args.joinIntoString (" ").toStdString() + "]"
+                    + startError);
+
             // Host present but wouldn't spawn (AV block, transient OS limit).
             // Same rule as above: skip, don't scan in-process, don't blacklist.
             noteSandboxUnavailable (fileOrIdentifier);
@@ -302,6 +329,11 @@ private:
                       "[Dusk Studio/scan] sandbox unavailable - left unscanned: %s\n",
                       fileOrIdentifier.toRawUTF8());
         std::fflush (stderr);
+        // The app is a WIN32-subsystem binary on Windows: nothing reaches that
+        // stderr, so the collected log is the only copy a maintainer ever sees.
+        if (crash_handler::diagnosticsEnabled())
+            crash_handler::writeDiagnostics ("scan sandbox unavailable - left unscanned: "
+                                              + fileOrIdentifier.toStdString());
     }
 
     juce::String                 hostExecutable;

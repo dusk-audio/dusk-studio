@@ -2,10 +2,10 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <csignal>
-#include <cstring>
 #include <memory>
 
 namespace duskstudio::crash_handler
@@ -16,9 +16,8 @@ std::atomic<bool>             installed { false };
 std::string                   cachedAppVersion;
 juce::File                    cachedCrashDir;
 juce::File                    cachedLogFile;
-using FileLogger = juce::FileLogger;
-std::unique_ptr<FileLogger> ownedLogger;
-std::atomic<FileLogger*> diagnosticsLogger { nullptr };
+std::unique_ptr<juce::FileLogger> ownedLogger;
+std::atomic<juce::FileLogger*> diagnosticsLogger { nullptr };
 
 juce::File baseDir()
 {
@@ -122,7 +121,7 @@ void install (const std::string& appVersion)
     // Replace any pre-existing logger (none in normal flow, but tests
     // may have installed one). FileLogger appends; daily rotation comes
     // from the date in the filename - next-day startup picks a new file.
-    ownedLogger = std::make_unique<FileLogger> (
+    ownedLogger = std::make_unique<juce::FileLogger> (
         cachedLogFile,
         "Dusk Studio " + juce::String (appVersion) + " - "
             + juce::Time::getCurrentTime().toString (true, true));
@@ -149,13 +148,25 @@ void uninstall()
     (void) ownedLogger.release();
 }
 
+bool envFlagSet (const char* name)
+{
+    const char* value = std::getenv (name);
+    if (value == nullptr) return false;
+    if (std::strtol (value, nullptr, 10) != 0) return true;
+
+    auto equalsIgnoreCase = [value] (const char* lowercaseLiteral)
+    {
+        const char* v = value;
+        for (; *v != '\0' && *lowercaseLiteral != '\0'; ++v, ++lowercaseLiteral)
+            if (std::tolower ((unsigned char) *v) != *lowercaseLiteral) return false;
+        return *v == *lowercaseLiteral;
+    };
+    return equalsIgnoreCase ("true") || equalsIgnoreCase ("yes");
+}
+
 bool diagnosticsEnabled()
 {
-    static const bool enabled = []
-    {
-        const char* value = std::getenv ("DUSKSTUDIO_WINDOWS_DIAGNOSTICS");
-        return value != nullptr && value[0] != '\0' && std::strcmp (value, "0") != 0;
-    }();
+    static const bool enabled = envFlagSet ("DUSKSTUDIO_SUPPORT_DIAGNOSTICS");
     return enabled;
 }
 
@@ -163,7 +174,7 @@ void writeDiagnostics (const std::string& message)
 {
     if (! diagnosticsEnabled()) return;
 
-    const std::string line = "[Dusk Studio/Windows diagnostics] " + message;
+    const std::string line = "[Dusk Studio/diagnostics] " + message;
     std::fprintf (stderr, "%s\n", line.c_str());
     std::fflush (stderr);
     if (auto* logger = diagnosticsLogger.load (std::memory_order_acquire))

@@ -47,6 +47,7 @@
 #include "../engine/audiofile/FileReader.h"
 #include "../engine/audiofile/FileWriter.h"
 #include "../foundation/Text.h"
+#include "../util/CrashHandler.h"
 #include <algorithm>
 
 namespace duskstudio
@@ -1637,14 +1638,23 @@ void MainComponent::maybeStartStartupPluginScan()
             auto& m = s->engine.getPluginManager();
             const int total = m.getEffectDescriptions().size()
                             + m.getInstrumentDescriptions().size();
+            const int skipped = m.getLastScanSandboxSkips();
             std::fprintf (stderr,
                           "[Dusk Studio] Scan-on-startup: added %d new plugins (%d total).\n",
                           added, total);
-            if (const int skipped = m.getLastScanSandboxSkips(); skipped > 0)
+            if (skipped > 0)
                 std::fprintf (stderr,
                               "[Dusk Studio] Scan-on-startup: sandbox unavailable - %d plugin(s) left unscanned.\n",
                               skipped);
             std::fflush (stderr);
+            // Nothing reads that stderr on a WIN32-subsystem binary; the log is
+            // what a support report actually carries.
+            if (crash_handler::diagnosticsEnabled())
+                crash_handler::writeDiagnostics ("scan-on-startup: added="
+                                                  + std::to_string (added)
+                                                  + " total=" + std::to_string (total)
+                                                  + " sandbox-skipped="
+                                                  + std::to_string (skipped));
         });
 
         // Locked modal (no click-outside / Esc dismiss): it closes itself when
