@@ -445,6 +445,35 @@ libsndfile (all audio file I/O — required on every platform)
   Upstream : https://github.com/libsndfile/libsndfile ,
              https://www.mpg123.de/ , https://opus-codec.org/
 
+libsodium (signed SFZ catalog authentication — required on every platform)
+  License  : ISC
+  Path     : not vendored — resolved at configure time through vcpkg's
+             unofficial-sodium::sodium config target or a direct sodium.h /
+             libsodium library lookup. A missing implementation is a configure
+             FATAL_ERROR, and both the app and test binary link the common
+             dusk_sodium interface target.
+  Notes    : The app uses detached Ed25519 verification and canonical base64
+             helpers only; no private signing key is distributed. Linux CI,
+             sanitizer, release, and Raspberry Pi builds install
+             libsodium-dev and link the distro shared object. Debian package
+             runtime dependency discovery is handled by dpkg-shlibdeps. RPM
+             packages rely on rpmbuild's automatic ELF requirements under
+             CPack. The portable tarball does not copy system shared libraries,
+             so its host must provide libsodium like the other documented
+             desktop/runtime libraries.
+             On macOS and Windows the same fail-closed discovery contract
+             requires the platform build to supply compatible headers and a
+             library. The current upstream audit reference is release 1.0.22,
+             commit
+             77e1ce5d6dee871c49ef211222ba18ef0c486bda; its release source
+             archive SHA-256 is
+             adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349,
+             and its LICENSE SHA-256 is
+             508a76d186356c0dd807a670ef510964f8724557024796a2c426c6c0e19ab683.
+             Platform package managers may resolve a different compatible
+             version; their package metadata records those bytes.
+  Upstream : https://github.com/jedisct1/libsodium , https://libsodium.org/
+
 lilv / suil / lv2 (native LV2 host — Linux builds only)
   License  : ISC (lilv, suil), ISC (lv2 headers)
   Path     : not vendored — system shared libraries found at configure time via
@@ -3561,3 +3590,23 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+
+--------------------------------------------------------------------------------
+libsodium 1.0.22 — ISC
+LICENSE at upstream rev 77e1ce5d6dee871c49ef211222ba18ef0c486bda
+--------------------------------------------------------------------------------
+
+Copyright (c) 2013-2026
+Frank Denis <j at pureftpd dot org>
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
