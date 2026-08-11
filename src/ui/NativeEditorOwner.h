@@ -68,6 +68,36 @@ struct NativeEditorPeerTransition
     bool deferNativeEditorReopen = false;
 };
 
+inline bool isPeerBoundStandardVst3Editor (bool isLinux,
+                                           bool isStandardVst3,
+                                           bool isCustomEditor) noexcept
+{
+    return isLinux && isStandardVst3 && isCustomEditor;
+}
+
+struct PeerBoundEditorReborrowDisposition
+{
+    bool reopenNow = false;
+    bool deferReopen = false;
+};
+
+inline PeerBoundEditorReborrowDisposition decidePeerBoundEditorReborrow (
+    bool isPeerBoundEditor,
+    bool editorIsVisible,
+    bool editorHostChanged,
+    bool editorWasTopmost,
+    bool editorIsCurrentlyTopmost,
+    std::uint64_t queuedBorrowGeneration,
+    std::uint64_t currentBorrowGeneration) noexcept
+{
+    if (! isPeerBoundEditor || ! editorIsVisible || ! editorHostChanged
+        || queuedBorrowGeneration != currentBorrowGeneration)
+        return {};
+
+    const bool reopenNow = editorWasTopmost && editorIsCurrentlyTopmost;
+    return { reopenNow, ! reopenNow };
+}
+
 inline NativeEditorPeerTransition observeNativeEditorPeer (
     std::uint32_t& lastPeerId,
     std::uint32_t currentPeerId,

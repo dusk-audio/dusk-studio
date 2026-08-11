@@ -85,6 +85,11 @@ public:
 
     bool isLoaded() const noexcept;
     juce::String getLoadedName() const;
+    bool isLoadedStandardVst3() const noexcept
+    {
+        return loadedDescriptor.has_value()
+            && loadedDescriptor->formatName == "VST3";
+    }
 
     void setBypassed (bool shouldBypass) noexcept { bypassed.store (shouldBypass, std::memory_order_relaxed); }
     bool isBypassed() const noexcept             { return bypassed.load (std::memory_order_relaxed); }
