@@ -15,7 +15,7 @@ sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
   build-essential cmake ninja-build pkg-config git \
   libasound2-dev libjack-jackd2-dev libpipewire-0.3-dev \
-  libsndfile1-dev libmp3lame-dev \
+  libsndfile1-dev libmp3lame-dev libsodium-dev libarchive-dev \
   liblilv-dev libsuil-dev lv2-dev \
   ladspa-sdk \
   libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev \
@@ -31,7 +31,7 @@ sudo apt-get install -y --no-install-recommends \
 sudo dnf install -y \
   gcc-c++ cmake ninja-build pkgconf-pkg-config git \
   alsa-lib-devel pipewire-jack-audio-connection-kit-devel pipewire-devel \
-  libsndfile-devel lame-devel \
+  libsndfile-devel lame-devel libsodium-devel libarchive-devel \
   lilv-devel suil-devel lv2-devel \
   ladspa-devel \
   libcurl-devel freetype-devel fontconfig-devel \
@@ -41,7 +41,7 @@ sudo dnf install -y \
   wayland-devel libxkbcommon-devel libdecor-devel
 ```
 
-libsndfile is not optional — all audio file I/O goes through it and configure fails without it. The PipeWire, LV2-host and MP3-bounce packages are probed at configure time and quietly drop their feature when absent; each miss costs you one easy-to-miss line in the configure log, so read it. On Fedora, take the `pipewire-jack-*` JACK headers rather than `jack-audio-connection-kit-devel`: the two conflict, and dnf will refuse the transaction on a PipeWire box.
+libsndfile is not optional — all audio file I/O goes through it and configure fails without it. Nor are libsodium, libcurl and libarchive: signed catalog verification, pack downloads and pack expansion go through them and configure fails closed when any is missing. The PipeWire, LV2-host and MP3-bounce packages are probed at configure time and quietly drop their feature when absent; each miss costs you one easy-to-miss line in the configure log, so read it. On Fedora, take the `pipewire-jack-*` JACK headers rather than `jack-audio-connection-kit-devel`: the two conflict, and dnf will refuse the transaction on a PipeWire box.
 
 ## Repository layout
 

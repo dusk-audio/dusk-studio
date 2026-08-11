@@ -101,8 +101,10 @@ jobs:
           fi
           echo "ASIOSDK_PATH=${RUNNER_TEMP}/asiosdk-extract" >> "$GITHUB_ENV"
 
-      - name: Install libmp3lame + libsndfile (vcpkg)
+      - name: Install manifest dependencies (vcpkg)
         shell: bash
+        # Installs everything vcpkg.json declares, curl and libarchive for the
+        # SFZ pack transfer layer included.
         # x64-windows-static = static libs + /MT static CRT, matching the whole
         # tree's CMAKE_MSVC_RUNTIME_LIBRARY (sfizz forces /MT). The -md triplet
         # (/MD) would LNK2038 against the /MT objects. CMake finds them via

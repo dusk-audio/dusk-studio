@@ -59,7 +59,9 @@ jobs:
 
       - name: Install build dependencies
         # lame: libmp3lame for MP3 bounce/export (CMake auto-detects it).
-        run: brew install ninja ccache lame libsndfile lilv suil lv2
+        # libarchive: SFZ pack expansion. Homebrew keeps it keg-only, so the
+        # configure steps below add its prefix to CMAKE_PREFIX_PATH by hand.
+        run: brew install ninja ccache lame libsndfile lilv suil lv2 libarchive
 
       - name: Build static libsodium (pinned)
         # Homebrew's bottle is built for the runner OS, newer than the app's
@@ -166,7 +168,7 @@ jobs:
           # Apple Silicon. No Developer ID, no Hardened Runtime, no notary.
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix);$(brew --prefix libarchive)" \
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
@@ -192,7 +194,7 @@ jobs:
           set -euo pipefail
           cmake -S . -B build-tests -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix);$(brew --prefix libarchive)" \
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \

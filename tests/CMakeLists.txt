@@ -23,8 +23,19 @@ add_executable(dusk-studio-tests
     hosting_insert_adapter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/hosting/InsertAdapter.cpp
     sfz_catalog.cpp
+    # The transfer layer is exercised through an injected transport, so the
+    # libcurl translation unit is deliberately absent from the test binary.
+    sfz_archive.cpp
+    sfz_install.cpp
+    sfz_install_worker.cpp
+    sfz_transfer.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzArchive.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzArchivePolicy.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzCatalog.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzCatalogEnvelope.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzDownload.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzInstall.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzInstallWorker.cpp
     # Native CLAP tests + sources are added conditionally below.
     plugin_descriptor.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PluginDescriptor.cpp
@@ -221,6 +232,7 @@ target_sources(dusk-studio-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/WriterDrainPool.cpp)
 target_link_libraries(dusk-studio-tests PRIVATE dusk_sndfile)
 target_link_libraries(dusk-studio-tests PRIVATE dusk_sodium)
+target_link_libraries(dusk-studio-tests PRIVATE dusk_archive)
 
 # Console-saturation calibration test + the donor DSP headers it needs
 # (BritishEQProcessor.h + its header-only ConsoleSaturation/ADAA/SafeFloat deps).

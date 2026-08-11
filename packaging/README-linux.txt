@@ -35,8 +35,10 @@ A normal desktop Linux (X11 or Wayland). Audio runs over PipeWire/JACK
 (preferred) or ALSA. The PipeWire client library is linked in, so
 libpipewire-0.3-0 must be present even if you only use ALSA. On a minimal
 system, install the usual desktop libraries (X11, freetype, fontconfig, alsa)
-if the binary reports a missing library. Signed SFZ catalog authentication also
-requires libsodium.so.23; on Ubuntu 22.04, install the libsodium23 package.
+if the binary reports a missing library. The SFZ library needs three more:
+libsodium.so.23 for signed catalogs, libcurl.so.4 for pack downloads and
+libarchive.so.13 for pack expansion; on Ubuntu 22.04 those are the libsodium23,
+libcurl4 and libarchive13 packages.
 
 
 LICENSE

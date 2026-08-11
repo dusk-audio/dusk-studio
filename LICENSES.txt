@@ -474,6 +474,61 @@ libsodium (signed SFZ catalog authentication — required on every platform)
              version; their package metadata records those bytes.
   Upstream : https://github.com/jedisct1/libsodium , https://libsodium.org/
 
+libcurl (SFZ library pack downloads — required on every platform)
+  License  : curl (MIT/X derivative)
+  Path     : not vendored — resolved at configure time by find_package(CURL),
+             config package first and the FindCURL module second; a missing
+             implementation is a configure FATAL_ERROR. Only the app links the
+             dusk_curl interface target. The tests drive the transfer layer
+             through an injected transport, so the test binary contains no
+             libcurl at all.
+  Notes    : Used for pack transfers only. The transport pins the allowed
+             protocols and the allowed redirect protocols to HTTPS, keeps peer
+             and host verification on, and registers no other protocol handler.
+             Linux CI, sanitizer, release and Raspberry Pi builds install
+             libcurl4-openssl-dev and link the distro shared object
+             (libcurl.so.4); macOS links the system library. Windows takes curl
+             from the root vcpkg.json manifest with default features off and
+             only "ssl" on, so the static build carries HTTP(S) and nothing
+             else. The license is a permission notice with an attribution
+             requirement, discharged by reproducing the notice at the foot of
+             this file, plus a no-endorsement clause; it is GPL-compatible and
+             carries no relink obligation. The upstream audit reference is
+             release 8.21.0, commit
+             68720b4837284335b2d63cb358f8f6ce65f5bc55; its COPYING SHA-256 is
+             82f2f4427d6545ee5aaac4f0b80428da6cc8ba41c2cf5da3a03680ec327b9681.
+             Platform package managers resolve other compatible versions under
+             the same notice.
+  Upstream : https://github.com/curl/curl , https://curl.se/
+
+libarchive (SFZ pack expansion — required on every platform)
+  License  : BSD-2-Clause, with a 3-clause UC Regents notice over two compress
+             filter sources, a public-domain date parser, and a CC0-1.0 /
+             OpenSSL / Apache-2.0 triple licence over the BLAKE2 sources
+  Path     : not vendored — resolved at configure time by find_package
+             (LibArchive), config package first and the FindLibArchive module
+             second; a missing implementation is a configure FATAL_ERROR. Both
+             the app and the test binary link the dusk_archive interface target.
+  Notes    : Only the ZIP reader is enabled, and the extractor creates every
+             file and directory itself rather than using the library's disk
+             writer, so no archive-supplied permissions, ownership or link
+             targets are ever applied. Linux CI, sanitizer, release and
+             Raspberry Pi builds install libarchive-dev and link the distro
+             shared object (libarchive.so.13); macOS uses the keg-only Homebrew
+             build, whose prefix the workflows add to CMAKE_PREFIX_PATH.
+             Windows takes libarchive from the root vcpkg.json manifest with
+             default features off, so the bzip2, lzma, lz4, zstd, xar and
+             crypto readers are not compiled in. BSD-2-Clause requires the
+             copyright notice and disclaimer in binary distributions, which is
+             what the text at the foot of this file provides; it is
+             GPL-compatible and carries no relink obligation. The upstream
+             audit reference is release 3.8.7, commit
+             ded82291ab41d5e355831b96b0e1ff49e24d8939; its COPYING SHA-256 is
+             30e556b3959e3985d66efefec5eaac51d4995053caa1d3cffe6eb916f146f229.
+             Platform package managers resolve other compatible versions under
+             the same terms.
+  Upstream : https://github.com/libarchive/libarchive , https://libarchive.org/
+
 lilv / suil / lv2 (native LV2 host — Linux builds only)
   License  : ISC (lilv, suil), ISC (lv2 headers)
   Path     : not vendored — system shared libraries found at configure time via
@@ -498,7 +553,7 @@ LAME / libmp3lame (MP3 bounce export — optional)
              /usr/lib64/libmp3lame.so), so LGPL-2.1 section 6(b) applies:
              the shared-library mechanism is a 2.1 addition, relied on here
              under LAME's or-later grant.
-             Windows is the exception: mp3lame is one of the two packages in
+             Windows is the exception: mp3lame is one of the packages in
              the root vcpkg.json, installed statically by the same
              x64-windows-static manifest run described under libsndfile, so a
              Windows build links it into the executable and falls under the
@@ -3610,3 +3665,102 @@ ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
 WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
 ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+--------------------------------------------------------------------------------
+curl 8.21.0 — curl (MIT/X derivative)
+COPYING at upstream rev 68720b4837284335b2d63cb358f8f6ce65f5bc55
+--------------------------------------------------------------------------------
+
+COPYRIGHT AND PERMISSION NOTICE
+
+Copyright (c) 1996 - 2026, Daniel Stenberg, <daniel@haxx.se>, and many
+contributors, see the THANKS file.
+
+All rights reserved.
+
+Permission to use, copy, modify, and distribute this software for any purpose
+with or without fee is hereby granted, provided that the above copyright
+notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF THIRD PARTY RIGHTS. IN
+NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
+OR OTHER DEALINGS IN THE SOFTWARE.
+
+Except as contained in this notice, the name of a copyright holder shall not
+be used in advertising or otherwise to promote the sale, use or other dealings
+in this Software without prior written authorization of the copyright holder.
+
+--------------------------------------------------------------------------------
+libarchive 3.8.7 — BSD-2-Clause
+COPYING at upstream rev ded82291ab41d5e355831b96b0e1ff49e24d8939
+--------------------------------------------------------------------------------
+
+The libarchive distribution as a whole is Copyright by Tim Kientzle
+and is subject to the copyright notice reproduced at the bottom of
+this file.
+
+Each individual file in this distribution should have a clear
+copyright/licensing statement at the beginning of the file.  If any do
+not, please let me know and I will rectify it.  The following is
+intended to summarize the copyright status of the individual files;
+the actual statements in the files are controlling.
+
+* Except as listed below, all C sources (including .c and .h files)
+  and documentation files are subject to the copyright notice reproduced
+  at the bottom of this file.
+
+* The following source files are also subject in whole or in part to
+  a 3-clause UC Regents copyright; please read the individual source
+  files for details:
+   libarchive/archive_read_support_filter_compress.c
+   libarchive/archive_write_add_filter_compress.c
+   libarchive/mtree.5
+
+* The following source files are in the public domain:
+   libarchive/archive_parse_date.c
+
+* The following source files are triple-licensed with the ability to choose
+  from CC0 1.0 Universal, OpenSSL or Apache 2.0 licenses:
+   libarchive/archive_blake2.h
+   libarchive/archive_blake2_impl.h
+   libarchive/archive_blake2s_ref.c
+   libarchive/archive_blake2sp_ref.c
+
+* The build files---including Makefiles, configure scripts,
+  and auxiliary scripts used as part of the compile process---have
+  widely varying licensing terms.  Please check individual files before
+  distributing them to see if those restrictions apply to you.
+
+I intend for all new source code to use the license below and hope over
+time to replace code with other licenses with new implementations that
+do use the license below.  The varying licensing of the build scripts
+seems to be an unavoidable mess.
+
+
+Copyright (c) 2003-2018 <author(s)>
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer
+   in this position and unchanged.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR(S) ``AS IS'' AND ANY EXPRESS OR
+IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+IN NO EVENT SHALL THE AUTHOR(S) BE LIABLE FOR ANY DIRECT, INDIRECT,
+INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.

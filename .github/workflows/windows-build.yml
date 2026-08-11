@@ -154,10 +154,11 @@ jobs:
           fi
           echo "ASIOSDK_PATH=${RUNNER_TEMP}/asiosdk-extract" >> "$GITHUB_ENV"
 
-      - name: Install libmp3lame + libsndfile (vcpkg)
+      - name: Install manifest dependencies (vcpkg)
         shell: bash
-        # mp3lame: MP3 bounce/export. libsndfile: the audio file I/O layer,
-        # required on every platform. x64-windows-static = static libs + /MT
+        # The whole vcpkg.json manifest: mp3lame (MP3 bounce/export), libsndfile
+        # (audio file I/O), libsodium (catalog signatures), curl and libarchive
+        # (SFZ pack download and expansion). x64-windows-static = static libs + /MT
         # static CRT, matching the whole tree's CMAKE_MSVC_RUNTIME_LIBRARY
         # (sfizz forces /MT). The -md triplet (/MD) would LNK2038 against the
         # /MT objects. They link into the binary, so no DLLs ship in the MSI.

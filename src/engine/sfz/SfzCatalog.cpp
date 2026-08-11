@@ -1,5 +1,6 @@
 #include "SfzCatalog.h"
 #include "SfzCatalogJson.h"
+#include "SfzPathRules.h"
 
 #include <algorithm>
 #include <initializer_list>
@@ -32,67 +33,11 @@ constexpr std::uint64_t kMaxCompressedBytes = 8ULL * 1024ULL * 1024ULL * 1024ULL
 constexpr std::uint64_t kMaxExpandedBytes = 32ULL * 1024ULL * 1024ULL * 1024ULL;
 constexpr std::uint32_t kMaxFilesPerPack = 100000;
 
-bool isAsciiAlpha (unsigned char c)
-{
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
-}
-
-bool isAsciiDigit (unsigned char c)
-{
-    return c >= '0' && c <= '9';
-}
-
-bool isAsciiAlphaNumeric (unsigned char c)
-{
-    return isAsciiAlpha (c) || isAsciiDigit (c);
-}
+using paths::isAsciiAlphaNumeric;
 
 bool isLowerHex (unsigned char c)
 {
-    return isAsciiDigit (c) || (c >= 'a' && c <= 'f');
-}
-
-bool equalsAsciiCaseInsensitive (std::string_view value, std::string_view expected)
-{
-    if (value.size() != expected.size())
-        return false;
-    for (std::size_t i = 0; i < value.size(); ++i)
-    {
-        auto c = static_cast<unsigned char> (value[i]);
-        if (c >= 'a' && c <= 'z')
-            c = static_cast<unsigned char> (c - 'a' + 'A');
-        if (c != static_cast<unsigned char> (expected[i]))
-            return false;
-    }
-    return true;
-}
-
-bool isWindowsReservedBasename (std::string_view segment)
-{
-    const auto dot = segment.find ('.');
-    auto basename = segment.substr (0, dot);
-    while (! basename.empty() && (basename.back() == ' ' || basename.back() == '.'))
-        basename.remove_suffix (1);
-    if (equalsAsciiCaseInsensitive (basename, "CON")
-        || equalsAsciiCaseInsensitive (basename, "PRN")
-        || equalsAsciiCaseInsensitive (basename, "AUX")
-        || equalsAsciiCaseInsensitive (basename, "NUL"))
-        return true;
-
-    if (basename.size() < 4)
-        return false;
-    if (! equalsAsciiCaseInsensitive (basename.substr (0, 3), "COM")
-        && ! equalsAsciiCaseInsensitive (basename.substr (0, 3), "LPT"))
-        return false;
-
-    const auto suffix = basename.substr (3);
-    if (suffix.size() == 1)
-        return suffix[0] >= '1' && suffix[0] <= '9';
-    return suffix.size() == 2
-        && static_cast<unsigned char> (suffix[0]) == 0xc2
-        && (static_cast<unsigned char> (suffix[1]) == 0xb9
-            || static_cast<unsigned char> (suffix[1]) == 0xb2
-            || static_cast<unsigned char> (suffix[1]) == 0xb3);
+    return paths::isAsciiDigit (c) || (c >= 'a' && c <= 'f');
 }
 
 struct Parser
@@ -294,40 +239,9 @@ struct Parser
 
     bool validateRelativePath (const std::string& value, const std::string& path)
     {
-        if (value.size() > kMaxPathLength)
-            return fail (path, "exceeds the path length limit");
-        if (value.front() == '/' || value.find ('\\') != std::string::npos)
-            return fail (path, "must be a forward-slash relative path");
-        if (value.find_first_of (":<>\"|?*") != std::string::npos)
-            return fail (path, "contains a Win32-invalid filename character");
-
-        std::size_t depth = 0;
-        std::size_t begin = 0;
-        while (begin <= value.size())
-        {
-            const auto end = value.find ('/', begin);
-            const auto length = (end == std::string::npos ? value.size() : end) - begin;
-            if (length == 0)
-                return fail (path, "must not contain empty path segments");
-
-            const auto segment = value.substr (begin, length);
-            if (segment == "." || segment == "..")
-                return fail (path, "must not contain dot path segments");
-            if (segment.back() == '.' || segment.back() == ' ')
-                return fail (path, "path segments must not end in a dot or space");
-            if (std::any_of (segment.begin(), segment.end(), [] (unsigned char c)
-                { return c == 0 || c < 0x20 || c == 0x7f; }))
-                return fail (path, "contains a control character");
-            if (isWindowsReservedBasename (segment))
-                return fail (path, "contains a reserved Windows device basename");
-
-            if (++depth > kMaxPathDepth)
-                return fail (path, "exceeds the path depth limit");
-            if (end == std::string::npos)
-                break;
-            begin = end + 1;
-        }
-        return true;
+        const auto* reason = paths::relativePathRejectionReason (value, kMaxPathLength,
+                                                                 kMaxPathDepth);
+        return reason == nullptr || fail (path, reason);
     }
 
     bool parseLicense (const Json& object, const std::string& path,

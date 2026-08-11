@@ -674,10 +674,57 @@ else()
     endif()
 endif()
 
+# Pack archives stream over HTTPS through libcurl and expand through
+# libarchive. Both are required on every platform: Windows takes them from the
+# static vcpkg manifest prefix, Linux from the distro, macOS from the SDK
+# (curl) and Homebrew (libarchive, keg-only, so its prefix is passed in).
+add_library(dusk_curl INTERFACE)
+find_package(CURL CONFIG QUIET)
+if(NOT TARGET CURL::libcurl)
+    find_package(CURL MODULE QUIET)
+endif()
+if(TARGET CURL::libcurl)
+    target_link_libraries(dusk_curl INTERFACE CURL::libcurl)
+    message(STATUS "libcurl: ${CURL_VERSION_STRING}")
+else()
+    message(FATAL_ERROR
+        "libcurl development files are required for SFZ library downloads. "
+        "Ubuntu/Debian: install libcurl4-openssl-dev. Fedora: libcurl-devel. "
+        "Windows: install the vcpkg manifest.")
+endif()
+
+add_library(dusk_archive INTERFACE)
+find_package(LibArchive CONFIG QUIET)
+if(NOT TARGET LibArchive::LibArchive)
+    find_package(LibArchive MODULE QUIET)
+endif()
+if(TARGET LibArchive::LibArchive)
+    target_link_libraries(dusk_archive INTERFACE LibArchive::LibArchive)
+    message(STATUS "libarchive: ${LibArchive_VERSION}")
+else()
+    message(FATAL_ERROR
+        "libarchive development files are required to install SFZ packs. "
+        "Ubuntu/Debian: install libarchive-dev. Fedora: libarchive-devel. "
+        "macOS: brew install libarchive, then add its prefix to CMAKE_PREFIX_PATH. "
+        "Windows: install the vcpkg manifest.")
+endif()
+if(MSVC)
+    # The Windows manifest triplet is x64-windows-static, and both libraries
+    # declare dllimport unless the consumer says it linked the static build.
+    target_compile_definitions(dusk_curl INTERFACE CURL_STATICLIB)
+    target_compile_definitions(dusk_archive INTERFACE LIBARCHIVE_STATIC)
+endif()
+
 target_sources(DuskStudio PRIVATE
+    src/engine/sfz/SfzArchive.cpp
+    src/engine/sfz/SfzArchivePolicy.cpp
     src/engine/sfz/SfzCatalog.cpp
-    src/engine/sfz/SfzCatalogEnvelope.cpp)
-target_link_libraries(DuskStudio PRIVATE dusk_sodium)
+    src/engine/sfz/SfzCatalogEnvelope.cpp
+    src/engine/sfz/SfzCurlTransport.cpp
+    src/engine/sfz/SfzDownload.cpp
+    src/engine/sfz/SfzInstall.cpp
+    src/engine/sfz/SfzInstallWorker.cpp)
+target_link_libraries(DuskStudio PRIVATE dusk_sodium dusk_curl dusk_archive)
 
 # DeviceManager backing: Linux uses the native orchestrator (owns the device
 # types, drives open/start/stop/close and the callback fan-out itself); macOS /
