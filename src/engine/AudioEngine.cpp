@@ -537,16 +537,17 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
                       err.c_str());
     }
 
-   #if defined(DUSKSTUDIO_HAS_ALSA)
-    // The saved setup can pin an ALSA hw: device that another app (PipeWire,
-    // JACK, another DAW) holds exclusively. JUCE's selectDefaultDeviceOnFailure
-    // only re-picks another device NAME on the same ALSA type - the same hw
-    // conflict - so it never falls through to the graph. Recover explicitly: the
-    // native PipeWire backend (reaches the interface through the graph even while
-    // the raw hw handle is held) -> the first ALSA device that opens -> give up
-    // and tell the user. This runs BEFORE addCallback / addChangeListener: the audio
-    // thread isn't attached and no change handler is wired yet, so the
-    // setup-switch broadcasts reach no one (no re-entrancy, no fallback loop).
+    // The saved setup can pin a device another app holds exclusively - an ALSA
+    // hw: handle taken by PipeWire/JACK/another DAW, an ASIO driver taken by
+    // whatever the user opened before us. The device manager's
+    // selectDefaultDeviceOnFailure only re-picks another device NAME on the same
+    // type, which is the same conflict, so recover across backends explicitly.
+    // Nothing else in the app works without an open device: the channel strips
+    // are prepared from the device callback, and every plugin and soundfont load
+    // is refused until they are. This runs BEFORE addCallback /
+    // addChangeListener: the audio thread isn't attached and no change handler is
+    // wired yet, so the setup-switch broadcasts reach no one (no re-entrancy, no
+    // fallback loop).
     {
         auto working = [this]
         {
@@ -573,7 +574,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
 
             // Clear the pinned (busy) device name + use default channels, else
             // setSetup can short-circuit to a non-started, sr-0 setup.
-            auto openDefaultOnType = [this] (const char* typeName, const std::string& devName)
+            auto openDefaultOnType = [this] (const std::string& typeName, const std::string& devName)
             {
                 deviceManager.setCurrentDeviceType (typeName, /*treatAsChosen*/ true);
                 auto s = deviceManager.getSetup();
@@ -596,6 +597,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
 
             // 2) Walk ALSA device names; the busy one fails, the next (Built-in
             //    / HDMI / other interface) opens.
+           #if defined(DUSKSTUDIO_HAS_ALSA)
             if (! working())
                 for (auto* t : deviceManager.getAvailableDeviceTypes())
                 {
@@ -608,6 +610,25 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
                     }
                     break;
                 }
+           #endif
+
+            // 3) Any remaining backend's default device. On Windows this is what
+            //    carries the session off a busy or powered-down ASIO driver onto
+            //    the shared Windows Audio path. The type we are already on is the
+            //    one that just failed - re-opening its default would re-enter the
+            //    same driver (and, for ASIO, its control panel).
+            if (! working())
+            {
+                auto* failedType = deviceManager.getCurrentDeviceType();
+                const std::string failedTypeName =
+                    failedType != nullptr ? failedType->getTypeName() : std::string();
+                for (auto* t : deviceManager.getAvailableDeviceTypes())
+                {
+                    if (t == nullptr || t->getTypeName() == failedTypeName) continue;
+                    openDefaultOnType (t->getTypeName(), {});
+                    if (working()) break;
+                }
+            }
         }
 
         // Resolve the outcome unconditionally: this also catches the case where
@@ -620,7 +641,6 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
         startupDeviceMessage_ = duskstudio::startupDeviceMessage (
             opened, savedName, opened ? dev->getName() : std::string());
     }
-   #endif
 
    #if ! defined(__linux__)
     // The JUCE MIDI fallback drives its input enable/callback lifecycle through

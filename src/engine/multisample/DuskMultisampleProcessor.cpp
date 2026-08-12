@@ -455,13 +455,25 @@ bool DuskMultisampleProcessor::loadSfzFile (const juce::File& sfz,
     }
     const auto path = sfz.getFullPathName().toStdString();
     bool ok = false;
+    int regions = 0;
     {
         const juce::SpinLock::ScopedLockType lock (sfizzLock);
         ok = sfizz_load_file (impl->synth, path.c_str());
+        if (ok) regions = sfizz_get_num_regions (impl->synth);
     }
     if (! ok)
     {
         errorMessage = "sfizz_load_file failed for " + sfz.getFileName();
+        lastLoadError = errorMessage;
+        return false;
+    }
+    // sfizz drops every region whose sample= it cannot resolve and still reports
+    // success, so a zero-region load is a silent instrument. Name the real
+    // problem instead of leaving the user with a loaded slot that makes no sound.
+    if (regions == 0)
+    {
+        errorMessage = "No playable regions in " + sfz.getFileName()
+                     + " - its sample files were not found next to it";
         lastLoadError = errorMessage;
         return false;
     }

@@ -40,6 +40,9 @@ TEST_CASE ("startupDeviceMessage: nothing opened -> silent-session warning", "[a
         REQUIRE (contains (m, "UMC1820"));
         REQUIRE (containsIgnoreCase (m, "no audio device"));
         REQUIRE (containsIgnoreCase (m, "recording is disabled"));
+        // The strips are prepared from the device callback, so an unopened
+        // device is also why a plugin or soundfont load is refused.
+        REQUIRE (containsIgnoreCase (m, "soundfonts cannot be loaded"));
     }
     SECTION ("no saved device still warns, no dangling name")
     {

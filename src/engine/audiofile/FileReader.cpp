@@ -32,7 +32,15 @@ bool isFloatingPointSubtype (int format) noexcept
 std::unique_ptr<FileReader> FileReader::open (const std::filesystem::path& path)
 {
     SF_INFO si {};
+    // Windows narrows a path through the process ANSI code page in both
+    // path::string() and libsndfile's own open, which loses any character the
+    // code page can't represent - a user profile or sample folder with an
+    // accent then fails to open. The wide entry point keeps the real name.
+   #ifdef _WIN32
+    SNDFILE* h = sf_wchar_open (path.wstring().c_str(), SFM_READ, &si);
+   #else
     SNDFILE* h = sf_open (path.string().c_str(), SFM_READ, &si);
+   #endif
     if (h == nullptr)
         return nullptr;
 

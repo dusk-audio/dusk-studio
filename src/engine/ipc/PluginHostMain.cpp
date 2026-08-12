@@ -62,6 +62,11 @@
 #include <juce_events/juce_events.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#if defined (_WIN32)
+ #include <windows.h>
+ #include <shellapi.h>
+#endif
+
 namespace
 {
 using namespace duskstudio::ipc;
@@ -1023,6 +1028,50 @@ int runScan (int argc, const char* const* argv) noexcept
     std::fflush (stdout);
     return 0;
 }
+
+#if defined (_WIN32)
+// Windows hands a narrow main() an argv converted from the UTF-16 command line
+// through the process ANSI code page, and every argument above is read back as
+// UTF-8. A plugin under a path the code page can't represent would therefore be
+// scanned under a mangled name, find nothing, and report an empty-but-valid
+// payload - the parent adds no plugins and shows no warning. Re-derive the
+// arguments from the real command line the parent built.
+class Utf8CommandLine
+{
+public:
+    Utf8CommandLine()
+    {
+        int count = 0;
+        wchar_t** wide = CommandLineToArgvW (GetCommandLineW(), &count);
+        if (wide == nullptr) return;
+        storage.reserve ((size_t) count);
+        for (int i = 0; i < count; ++i)
+            storage.push_back (toUtf8 (wide[i]));
+        LocalFree (wide);
+        // Only after the vector has stopped growing, or the pointers dangle.
+        pointers.reserve (storage.size());
+        for (const auto& arg : storage)
+            pointers.push_back (arg.c_str());
+    }
+
+    int argc() const noexcept                { return (int) pointers.size(); }
+    const char* const* argv() const noexcept { return pointers.data(); }
+
+private:
+    static std::string toUtf8 (const wchar_t* wide)
+    {
+        const int bytes = WideCharToMultiByte (CP_UTF8, 0, wide, -1,
+                                               nullptr, 0, nullptr, nullptr);
+        if (bytes <= 1) return {};
+        std::string out ((size_t) bytes - 1, '\0');   // -1: drop the terminator
+        WideCharToMultiByte (CP_UTF8, 0, wide, -1, out.data(), bytes, nullptr, nullptr);
+        return out;
+    }
+
+    std::vector<std::string> storage;
+    std::vector<const char*> pointers;
+};
+#endif
 } // namespace
 
 int main (int argc, char** argv)
@@ -1031,22 +1080,32 @@ int main (int argc, char** argv)
     signal (SIGPIPE, SIG_IGN);
    #endif
 
+    const char* const* args = argv;
+   #if defined (_WIN32)
+    const Utf8CommandLine utf8CommandLine;
+    if (utf8CommandLine.argc() > 0)
+    {
+        argc = utf8CommandLine.argc();
+        args = utf8CommandLine.argv();
+    }
+   #endif
+
     bool ipcStub = false;
     bool ipcHost = false;
     bool scan    = false;
     for (int i = 1; i < argc; ++i)
     {
-        if (std::strcmp (argv[i], "--ipc-stub") == 0) ipcStub = true;
-        if (std::strcmp (argv[i], "--ipc-host") == 0) ipcHost = true;
-        if (std::strcmp (argv[i], "--scan")     == 0) scan    = true;
+        if (std::strcmp (args[i], "--ipc-stub") == 0) ipcStub = true;
+        if (std::strcmp (args[i], "--ipc-host") == 0) ipcHost = true;
+        if (std::strcmp (args[i], "--scan")     == 0) scan    = true;
 #if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
-        if (std::strcmp (argv[i], "--scan-native") == 0) return runScanNative (argc, argv);
+        if (std::strcmp (args[i], "--scan-native") == 0) return runScanNative (argc, args);
 #endif
     }
 
-    if (scan)    return runScan (argc, argv);
-    if (ipcStub) return runIpcStub (argc, argv);
-    if (ipcHost) return runIpcHost (argc, argv);
+    if (scan)    return runScan (argc, args);
+    if (ipcStub) return runIpcStub (argc, args);
+    if (ipcHost) return runIpcHost (argc, args);
 
     std::fprintf (stderr,
                   "dusk-studio-plugin-host: pass --ipc-stub, --ipc-host or --scan.\n");

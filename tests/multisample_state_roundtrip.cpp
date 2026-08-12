@@ -32,6 +32,28 @@ TEST_CASE ("DuskMultisampleProcessor loads an SFZ file path with spaces", "[mult
     REQUIRE (processor.getNumRegions() == 1);
 }
 
+TEST_CASE ("DuskMultisampleProcessor rejects an SFZ with no resolvable samples",
+           "[multisample][sfz]")
+{
+    const auto sfz = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                         .getNonexistentChildFile ("Dusk SFZ missing sample", ".sfz", false);
+    struct ScopedFileCleanup
+    {
+        juce::File file;
+        ~ScopedFileCleanup() { file.deleteFile(); }
+    } cleanup { sfz };
+
+    // sfizz parses this, reports success, and then drops the region because the
+    // sample is not on disk. Without the region check that reads as a soundfont
+    // that loaded fine and plays nothing.
+    REQUIRE (sfz.replaceWithText ("<region> key=60 sample=not-here.wav\n"));
+
+    duskstudio::DuskMultisampleProcessor processor;
+    juce::String error;
+    REQUIRE_FALSE (processor.loadSfzFile (sfz, error));
+    REQUIRE (error.contains ("No playable regions"));
+}
+
 namespace
 {
 // Hand-build a valid two-preset SF2 (both presets share one instrument zone +

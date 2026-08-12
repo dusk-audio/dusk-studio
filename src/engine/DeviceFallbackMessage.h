@@ -25,8 +25,9 @@ inline std::string startupDeviceMessage (bool opened,
 
         // Fell back to a different device that works.
         return "Your saved audio device \"" + savedName + "\" could not be opened - it "
-               "may be in use by another application (PipeWire, JACK, browser audio, "
-               "another DAW) or no longer available.\n\nAudio has switched to \"" + actualName
+               "may be in use by another application (another DAW, browser audio, or "
+               "anything holding an exclusive driver) or no longer available.\n\n"
+               "Audio has switched to \"" + actualName
              + "\" so you can keep working. To use your original device, free it in "
                "the other app, then reselect it in Audio Settings. Dusk Studio did not "
                "change your saved device - it will be tried again next launch.";
@@ -36,13 +37,15 @@ inline std::string startupDeviceMessage (bool opened,
     std::string msg = "No audio device could be opened.\n\n";
     if (! savedName.empty())
         msg += "Your saved device \"" + savedName + "\" appears to be in use by another "
-               "application (PipeWire, JACK, browser audio, or another DAW), and no other "
-               "backend opened.";
+               "application, and no other backend opened.";
     else
         msg += "No backend reported an available device.";
-    msg += "\n\nThe playhead and meters will not move and recording is disabled until a "
-           "device is available. Free the device in the other app, then open Audio "
-           "Settings and select one.";
+    // The load guards on every channel-strip insert refuse while the strips have
+    // no sample rate, so name that here - otherwise the only symptom is a plugin
+    // or soundfont that mysteriously won't load.
+    msg += "\n\nThe playhead and meters will not move, recording is disabled, and "
+           "plugins and soundfonts cannot be loaded until a device is open. Free the "
+           "device in the other app, then open Audio Settings and select one.";
     return msg;
 }
 } // namespace duskstudio

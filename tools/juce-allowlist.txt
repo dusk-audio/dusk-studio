@@ -140,7 +140,7 @@ src/ui/PlatformWindowing.h	14
 src/ui/PlatformWindowing_Linux.cpp	16
 src/ui/PlatformWindowing_Mac.mm	19
 src/ui/PlatformWindowing_Windows.cpp	7
-src/ui/PluginPickerHelpers.cpp	136
+src/ui/PluginPickerHelpers.cpp	135
 src/ui/PluginPickerHelpers.h	23
 src/ui/PluginPickerPanel.cpp	70
 src/ui/PluginPickerPanel.h	13

@@ -1,5 +1,26 @@
 #include "DuskStudioApp.h"
 
+#if defined (_WIN32)
+#include <clocale>
+
+namespace
+{
+// Dusk Studio hands vendored libraries UTF-8 paths, but MSVC decodes a narrow
+// path with the CRT code page - the ANSI one unless told otherwise. sfizz is
+// where that bites: its C entry points take const char* and convert through
+// std::filesystem, so a soundfont anywhere under a non-ASCII path (an accented
+// user name is enough) fails to load even though the file opens fine through
+// the wide Win32 API. LC_CTYPE only - LC_NUMERIC must stay in the C locale or
+// every decimal number the session writes would follow the user's regional
+// separator.
+struct UseUtf8ForNarrowPaths
+{
+    UseUtf8ForNarrowPaths() { std::setlocale (LC_CTYPE, ".UTF8"); }
+};
+const UseUtf8ForNarrowPaths useUtf8ForNarrowPaths;
+} // namespace
+#endif
+
 #if defined (__linux__)
 #include <cerrno>
 #include <cstdlib>
