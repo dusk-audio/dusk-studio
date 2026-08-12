@@ -1773,16 +1773,16 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
         }
 #endif
 #if DUSKSTUDIO_HAS_MULTISAMPLE
-        // The editor can swap or CLEAR the soundfont in place, so the live path
-        // off the instance - not the slot's original bundle path - decides
-        // whether this strip still hosts a multisample at all.
-        const auto liveSoundfont = strip.isNativeMultisampleLoaded()
+        // The editor can swap or CLEAR the soundfont in place, so the retained
+        // reference off the instance - not the slot's original bundle path - is
+        // what the session persists. It deliberately survives a failed load.
+        const auto persistedSoundfont = strip.isNativeMultisampleLoaded()
             ? juce::String::fromUTF8 (
                   strip.getNativeMultisampleSlot().getLoadedSoundfontPath().c_str())
             : juce::String();
-        if (liveSoundfont.isNotEmpty())
+        if (persistedSoundfont.isNotEmpty())
         {
-            track.nativeMultisamplePath = liveSoundfont;
+            track.nativeMultisamplePath = persistedSoundfont;
             std::vector<uint8_t> blob;
             if (strip.getNativeMultisampleSlot().saveState (blob) && ! blob.empty())
                 track.nativeMultisampleStateBase64 = juce::Base64::toBase64 (blob.data(), blob.size());

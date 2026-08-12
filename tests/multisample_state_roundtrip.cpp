@@ -54,33 +54,77 @@ TEST_CASE ("DuskMultisampleProcessor rejects an SFZ with no resolvable samples",
     REQUIRE (error.contains ("No playable regions"));
 }
 
-TEST_CASE ("DuskMultisampleProcessor reports no file after a failed load replaced one",
+TEST_CASE ("DuskMultisampleProcessor preserves its persisted path after a failed load",
            "[multisample][sfz]")
 {
     const auto tempDir = juce::File::getSpecialLocation (juce::File::tempDirectory);
     const auto good = tempDir.getNonexistentChildFile ("Dusk SFZ good", ".sfz", false);
-    const auto broken = tempDir.getNonexistentChildFile ("Dusk SFZ broken", ".sfz", false);
+    const auto missingSample = tempDir.getNonexistentChildFile ("Dusk SFZ missing", ".sfz", false);
+    const auto regionless = tempDir.getNonexistentChildFile ("Dusk SFZ regionless", ".sfz", false);
     struct ScopedFileCleanup
     {
-        juce::File a, b;
-        ~ScopedFileCleanup() { a.deleteFile(); b.deleteFile(); }
-    } cleanup { good, broken };
+        juce::File a, b, c;
+        ~ScopedFileCleanup() { a.deleteFile(); b.deleteFile(); c.deleteFile(); }
+    } cleanup { good, missingSample, regionless };
 
     REQUIRE (good.replaceWithText ("<region> key=60 sample=*sine\n"));
-    REQUIRE (broken.replaceWithText ("<region> key=60 sample=not-here.wav\n"));
+    REQUIRE (missingSample.replaceWithText ("<region> key=60 sample=not-here.wav\n"));
+    REQUIRE (regionless.replaceWithText (""));
 
     duskstudio::DuskMultisampleProcessor processor;
     juce::String error;
     REQUIRE (processor.loadSfzFile (good, error));
     REQUIRE (processor.hasLoadedFile());
+    REQUIRE (processor.getLoadedPathSnapshot() == good.getFullPathName().toStdString());
 
-    // sfizz has already dropped the good instrument by the time the region
-    // count is read, so the failure must not leave the old file's name behind -
-    // that would name a soundfont the synth no longer holds.
-    REQUIRE_FALSE (processor.loadSfzFile (broken, error));
-    REQUIRE_FALSE (processor.hasLoadedFile());
-    REQUIRE (processor.getLoadedFilePath().isEmpty());
-    REQUIRE (processor.getLastLoadError().contains ("No playable regions"));
+    SECTION ("sfizz rejects an existing regionless file")
+    {
+        REQUIRE_FALSE (processor.loadSfzFile (regionless, error));
+        REQUIRE (error.contains ("sfizz_load_file failed"));
+        REQUIRE (processor.getNumRegions() == 0);
+        REQUIRE (processor.hasLoadedFile());
+        REQUIRE (processor.getLoadedFilePath() == good.getFullPathName());
+        REQUIRE (processor.getLoadedPathSnapshot() == good.getFullPathName().toStdString());
+        REQUIRE (processor.getLastLoadError() == error);
+
+        processor.clearLoadedFile();
+        REQUIRE_FALSE (processor.hasLoadedFile());
+        REQUIRE (processor.getLoadedFilePath().isEmpty());
+        REQUIRE (processor.getLoadedPathSnapshot().empty());
+        REQUIRE (processor.getLastLoadError().isEmpty());
+    }
+
+    SECTION ("sfizz drops regions whose samples cannot be resolved")
+    {
+        REQUIRE_FALSE (processor.loadSfzFile (missingSample, error));
+        REQUIRE (error.contains ("No playable regions"));
+        REQUIRE (processor.getNumRegions() == 0);
+        REQUIRE (processor.hasLoadedFile());
+        REQUIRE (processor.getLoadedFilePath() == good.getFullPathName());
+        REQUIRE (processor.getLoadedPathSnapshot() == good.getFullPathName().toStdString());
+        REQUIRE (processor.getLastLoadError() == error);
+
+        processor.clearLoadedFile();
+        REQUIRE_FALSE (processor.hasLoadedFile());
+        REQUIRE (processor.getLoadedFilePath().isEmpty());
+        REQUIRE (processor.getLoadedPathSnapshot().empty());
+        REQUIRE (processor.getLastLoadError().isEmpty());
+    }
+
+    SECTION ("a missing retained file keeps its reload error visible")
+    {
+        REQUIRE (good.deleteFile());
+        REQUIRE_FALSE (processor.reloadCurrentFile (error));
+        REQUIRE (error.contains ("File does not exist"));
+        REQUIRE (processor.hasLoadedFile());
+        REQUIRE (processor.getLoadedFilePath() == good.getFullPathName());
+        REQUIRE (processor.getLoadedPathSnapshot() == good.getFullPathName().toStdString());
+        REQUIRE (processor.getLastLoadError() == error);
+
+        processor.clearLoadedFile();
+        REQUIRE_FALSE (processor.hasLoadedFile());
+        REQUIRE (processor.getLastLoadError().isEmpty());
+    }
 }
 
 namespace

@@ -13,11 +13,11 @@ class AriaGuiComponent;
 class DuskMultisampleProcessor;
 
 // Phase 1 editor for the native Multisample instrument. Minimal
-// surface: shows the loaded .sfz path, master volume / tune /
+// surface: shows the retained soundfont path, master volume / tune /
 // polyphony knobs that drive the processor's override atoms, and
 // a read-only region count. Reload + Clear + Browse buttons let
-// the user swap the loaded soundfont without going back to the
-// plugin picker. ADSR / filter / LFO controls + zone mapping
+// the user retry, replace, or clear that reference without going
+// back to the plugin picker. ADSR / filter / LFO controls + zone mapping
 // editor land in Phase 2 / Phase 3 per the plan.
 class DuskMultisampleEditor final : public juce::Component,
                                      private dusk::Timer
@@ -37,7 +37,7 @@ private:
     // Kick a background soundfont load (loadFileAsync / loadSf2PresetAsync):
     // shows "(loading ...)", disables the load controls, re-enables and
     // refreshes when the worker finishes. presetIndex >= 0 switches the
-    // loaded SF2's preset instead of loading `file`.
+    // retained SF2's preset instead of loading `file`.
     void startAsyncLoad (const juce::File& file, int presetIndex = -1);
     void setLoadControlsEnabled (bool enabled);
 
@@ -71,9 +71,9 @@ private:
     std::vector<juce::File>  ariaProgramFiles;   // parallel to selector items
 
 
-    // Skin = the per-soundfont custom UI (when the loaded .sfz ships
+    // Skin = the per-soundfont custom UI (when the active .sfz ships
     // an ARIA bank.xml + GUI XML). nullptr = fall back to the
-    // 3-knob default. Rebuilt whenever the loaded file path changes OR
+    // 3-knob default. Rebuilt whenever the retained file path changes OR
     // the same file's on-disk mtime changes (Reload after an external
     // edit re-loads the same path, so a path-only check would miss it).
     std::unique_ptr<AriaGuiComponent> ariaSkin;

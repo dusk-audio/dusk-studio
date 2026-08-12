@@ -55,8 +55,8 @@ public:
     // display metadata for the editor's program switcher.
     bool loadSf2File (const juce::File& sf2, juce::String& errorMessage);
 
-    // Switch the loaded SF2 to another preset (re-converts + reloads).
-    // No-op error when the current file isn't an SF2.
+    // Switch the retained SF2 reference to another preset (re-converts + reloads).
+    // No-op error when the retained reference isn't an SF2.
     bool loadSf2Preset (int presetIndex, juce::String& errorMessage);
 
     struct Sf2PresetInfo
@@ -82,17 +82,17 @@ public:
     }
     int getSf2PresetIndex() const noexcept { return sf2PresetIndex.load (std::memory_order_relaxed); }
 
-    // True if a soundfont has been loaded. Used by editor UI to show
-    // "(no file)" vs the loaded file name.
+    // True if a soundfont path is retained. Used by editor UI to show
+    // "(no file)" vs the file name and keep Reload available after failure.
     bool hasLoadedFile() const noexcept { return loadedFilePath.isNotEmpty(); }
     const juce::String& getLoadedFilePath() const noexcept { return loadedFilePath; }
 
-    // Number of regions sfizz parsed from the loaded .sfz. 0 when
-    // no file is loaded. Editor polls this on its refresh timer.
+    // Number of regions sfizz holds from the active .sfz. 0 when the runtime
+    // state is empty, including after a failed reload.
     int getNumRegions() const noexcept;
 
-    // Reload the currently-loaded .sfz from disk. No-op when no
-    // file is loaded. Returns true on success.
+    // Reload the retained soundfont path from disk. No-op when no path is
+    // retained. Returns true on success.
     bool reloadCurrentFile (juce::String& errorMessage);
 
     // Background variants: the load (SF2 sample extraction + sfizz parse can
@@ -116,15 +116,15 @@ public:
     // seconds - parking the audio thread across it is an audible stall.
     void cancelPendingLoads();
 
-    // Thread-safe copy of the loaded soundfont path, empty when none is loaded.
+    // Thread-safe copy of the persisted soundfont path, empty after Clear.
     // loadedFilePath itself is written by the loader thread, so JUCE's String
     // refcount must not be shared across the hand-off; this hands back an
     // independent std::string taken under a lock. Never reflects an in-flight
     // load - the shared value only advances once a load has succeeded.
     std::string getLoadedPathSnapshot() const;
 
-    // Drop the loaded soundfont. After this call the processor
-    // renders silence; subsequent loadSfzFile / loadState can replace it.
+    // Drop the runtime soundfont and its persisted reference. After this call
+    // the processor renders silence; subsequent loadSfzFile / loadState can replace it.
     void clearLoadedFile();
 
     // Polyphony change. Per sfizz.h, sfizz_set_num_voices is marked
@@ -194,6 +194,7 @@ private:
     // loadSf2File (index 0 + name caching) and loadSf2Preset (switch).
     bool applySf2Preset (const juce::File& sf2, int presetIndex,
                           juce::String& errorMessage);
+    void clearRuntimeState();
 
     hosting::PortLayout layout;
     std::atomic<bool>   active { false };
@@ -203,7 +204,7 @@ private:
     // sfizz_set_samples_per_block and read by the audio thread under the same
     // lock, so the guard can never see a size sfizz has not applied yet.
     std::atomic<int> currentBlockSize { 512 };
-    juce::String loadedFilePath;     // empty when no file loaded
+    juce::String loadedFilePath;     // retained across failed loads
 
     // Cross-thread copy of loadedFilePath (see getLoadedPathSnapshot). Written
     // wherever loadedFilePath is, read by the message thread. Never the audio
