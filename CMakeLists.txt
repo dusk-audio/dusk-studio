@@ -1509,9 +1509,8 @@ if(UNIX AND NOT APPLE)
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
                   "${CMAKE_CURRENT_SOURCE_DIR}/LICENSES.txt"
             DESTINATION share/doc/dusk-studio)
-    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
-            DESTINATION share/doc/dusk-studio
-            RENAME copyright)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/copyright"
+            DESTINATION share/doc/dusk-studio)
 else()
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
                   "${CMAKE_CURRENT_SOURCE_DIR}/LICENSES.txt"
