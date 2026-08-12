@@ -120,6 +120,8 @@ add_executable(dusk-studio-tests
     metronome_click.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/Metronome.cpp
     aria_gui_parse.cpp
+    aria_bank_selection.cpp
+    plugin_host_command_line.cpp
     sf2_reader_parse.cpp
     sf2_to_sfz_convert.cpp
     sf2_preset_sort.cpp
@@ -161,6 +163,12 @@ target_include_directories(dusk-studio-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/external/projucer-shim
     ${CMAKE_SOURCE_DIR}/external/clap/include)
 target_include_directories(dusk-studio-tests SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/external/json)
+
+if(WIN32)
+    # shell32: CommandLineToArgvW, exercised by plugin_host_command_line.cpp
+    # against the same header the plugin host uses.
+    target_link_libraries(dusk-studio-tests PRIVATE shell32)
+endif()
 
 # pffft backend for dusk::audio::Fft, plus its A/B parity suite. The pffft
 # object library (include dir + warning silencing) is defined in the root

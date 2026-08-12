@@ -1126,7 +1126,9 @@ if(_duskstudio_oop_enabled)
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
     if(WIN32)
-        target_link_libraries(dusk-studio-plugin-host PRIVATE synchronization)
+        # shell32: CommandLineToArgvW, which the child uses to read its own
+        # arguments as UTF-16 instead of trusting the ANSI-converted argv.
+        target_link_libraries(dusk-studio-plugin-host PRIVATE synchronization shell32)
     endif()
     target_include_directories(dusk-studio-plugin-host PRIVATE src)
     target_include_directories(dusk-studio-plugin-host SYSTEM PRIVATE external/json)

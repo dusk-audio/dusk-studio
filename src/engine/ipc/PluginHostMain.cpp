@@ -62,6 +62,8 @@
 #include <juce_events/juce_events.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "Utf8CommandLine.h"
+
 namespace
 {
 using namespace duskstudio::ipc;
@@ -1031,22 +1033,32 @@ int main (int argc, char** argv)
     signal (SIGPIPE, SIG_IGN);
    #endif
 
+    const char* const* args = argv;
+   #if defined (_WIN32)
+    const duskstudio::ipc::Utf8CommandLine utf8CommandLine;
+    if (utf8CommandLine.argc() > 0)
+    {
+        argc = utf8CommandLine.argc();
+        args = utf8CommandLine.argv();
+    }
+   #endif
+
     bool ipcStub = false;
     bool ipcHost = false;
     bool scan    = false;
     for (int i = 1; i < argc; ++i)
     {
-        if (std::strcmp (argv[i], "--ipc-stub") == 0) ipcStub = true;
-        if (std::strcmp (argv[i], "--ipc-host") == 0) ipcHost = true;
-        if (std::strcmp (argv[i], "--scan")     == 0) scan    = true;
+        if (std::strcmp (args[i], "--ipc-stub") == 0) ipcStub = true;
+        if (std::strcmp (args[i], "--ipc-host") == 0) ipcHost = true;
+        if (std::strcmp (args[i], "--scan")     == 0) scan    = true;
 #if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
-        if (std::strcmp (argv[i], "--scan-native") == 0) return runScanNative (argc, argv);
+        if (std::strcmp (args[i], "--scan-native") == 0) return runScanNative (argc, args);
 #endif
     }
 
-    if (scan)    return runScan (argc, argv);
-    if (ipcStub) return runIpcStub (argc, argv);
-    if (ipcHost) return runIpcHost (argc, argv);
+    if (scan)    return runScan (argc, args);
+    if (ipcStub) return runIpcStub (argc, args);
+    if (ipcHost) return runIpcHost (argc, args);
 
     std::fprintf (stderr,
                   "dusk-studio-plugin-host: pass --ipc-stub, --ipc-host or --scan.\n");

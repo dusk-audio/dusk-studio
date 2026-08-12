@@ -32,6 +32,57 @@ TEST_CASE ("DuskMultisampleProcessor loads an SFZ file path with spaces", "[mult
     REQUIRE (processor.getNumRegions() == 1);
 }
 
+TEST_CASE ("DuskMultisampleProcessor rejects an SFZ with no resolvable samples",
+           "[multisample][sfz]")
+{
+    const auto sfz = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                         .getNonexistentChildFile ("Dusk SFZ missing sample", ".sfz", false);
+    struct ScopedFileCleanup
+    {
+        juce::File file;
+        ~ScopedFileCleanup() { file.deleteFile(); }
+    } cleanup { sfz };
+
+    // sfizz parses this, reports success, and then drops the region because the
+    // sample is not on disk. Without the region check that reads as a soundfont
+    // that loaded fine and plays nothing.
+    REQUIRE (sfz.replaceWithText ("<region> key=60 sample=not-here.wav\n"));
+
+    duskstudio::DuskMultisampleProcessor processor;
+    juce::String error;
+    REQUIRE_FALSE (processor.loadSfzFile (sfz, error));
+    REQUIRE (error.contains ("No playable regions"));
+}
+
+TEST_CASE ("DuskMultisampleProcessor reports no file after a failed load replaced one",
+           "[multisample][sfz]")
+{
+    const auto tempDir = juce::File::getSpecialLocation (juce::File::tempDirectory);
+    const auto good = tempDir.getNonexistentChildFile ("Dusk SFZ good", ".sfz", false);
+    const auto broken = tempDir.getNonexistentChildFile ("Dusk SFZ broken", ".sfz", false);
+    struct ScopedFileCleanup
+    {
+        juce::File a, b;
+        ~ScopedFileCleanup() { a.deleteFile(); b.deleteFile(); }
+    } cleanup { good, broken };
+
+    REQUIRE (good.replaceWithText ("<region> key=60 sample=*sine\n"));
+    REQUIRE (broken.replaceWithText ("<region> key=60 sample=not-here.wav\n"));
+
+    duskstudio::DuskMultisampleProcessor processor;
+    juce::String error;
+    REQUIRE (processor.loadSfzFile (good, error));
+    REQUIRE (processor.hasLoadedFile());
+
+    // sfizz has already dropped the good instrument by the time the region
+    // count is read, so the failure must not leave the old file's name behind -
+    // that would name a soundfont the synth no longer holds.
+    REQUIRE_FALSE (processor.loadSfzFile (broken, error));
+    REQUIRE_FALSE (processor.hasLoadedFile());
+    REQUIRE (processor.getLoadedFilePath().isEmpty());
+    REQUIRE (processor.getLastLoadError().contains ("No playable regions"));
+}
+
 namespace
 {
 // Hand-build a valid two-preset SF2 (both presets share one instrument zone +

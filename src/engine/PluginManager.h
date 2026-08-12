@@ -28,6 +28,12 @@ public:
     int getLastScanSandboxSkips() const noexcept
     { return lastScanSandboxSkips.load (std::memory_order_relaxed); }
 
+    // Plugins quarantined by an earlier scan (a crash, a hang, or a payload the
+    // child couldn't produce). Every later scan skips them outright, so without
+    // this count a machine that quarantined its library just reports "0 added".
+    int getQuarantinedCount() const
+    { return knownPluginList.getBlacklistedFiles().size(); }
+
     juce::String getHostExecutablePath() const;
 
     std::vector<PluginDescriptor> getInstrumentDescriptions() const;

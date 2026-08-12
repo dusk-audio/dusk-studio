@@ -203,12 +203,25 @@ void runScanModal (PluginManager& manager, juce::Component* parent,
                 added, added == 1 ? "" : "s",
                 manager.getPluginCount());
 
+            // On a shipped build this warning means the install lost its child
+            // executable, so name the path that was looked for.
             if (const int skipped = manager.getLastScanSandboxSkips(); skipped > 0)
-                message << juce::String::formatted (
-                    "\n\nWarning: the plugin scanning sandbox was unavailable - "
-                    "%d plugin%s skipped (left unscanned). Rescan once the plugin "
-                    "host is present.",
-                    skipped, skipped == 1 ? "" : "s");
+                message << "\n\nWarning: the plugin scanning sandbox was unavailable - "
+                        << skipped << (skipped == 1 ? " plugin was" : " plugins were")
+                        << " left unscanned. Dusk Studio runs each scan in:\n"
+                        << manager.getHostExecutablePath()
+                        << "\n\nReinstall if that file is missing, then rescan.";
+
+            // A quarantine survives every later scan, so without this a machine
+            // that quarantined its library reports "0 added" forever with no
+            // other symptom to go on.
+            if (const int quarantined = manager.getQuarantinedCount(); quarantined > 0)
+                message << "\n\n" << quarantined
+                        << (quarantined == 1 ? " plugin is" : " plugins are")
+                        << " quarantined after crashing or hanging when last probed, and "
+                           "will be skipped by every scan. To probe them again, quit Dusk "
+                           "Studio and delete:\n"
+                        << manager.getCacheFile().getFullPathName();
 
             if (auto* h = safeHost.getComponent())
                 showDuskAlert (*h, "Plugin scan complete", std::move (message),

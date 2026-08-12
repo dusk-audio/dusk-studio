@@ -43,7 +43,13 @@ std::unique_ptr<FileWriter> FileWriter::create (const std::filesystem::path& pat
     if (sf_format_check (&si) == 0)
         return nullptr;
 
+    // Wide open on Windows for the same reason as FileReader::open: the narrow
+    // path loses every character outside the process ANSI code page.
+   #ifdef _WIN32
+    SNDFILE* h = sf_wchar_open (path.wstring().c_str(), SFM_WRITE, &si);
+   #else
     SNDFILE* h = sf_open (path.string().c_str(), SFM_WRITE, &si);
+   #endif
     if (h == nullptr)
         return nullptr;
 
