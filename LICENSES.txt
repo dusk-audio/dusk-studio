@@ -323,7 +323,7 @@ DPF / DGL (DISTRHO Plugin Framework graphics layer — backs the native notepad 
                                include path for MSVC builds only)
 
 DPF-Widgets (DGL / Dear ImGui bridge — the notepad's immediate-mode UI layer)
-  Version  : dusk-audio/DPF-Widgets rev 730da6397904da66d99667c1cb30fc77fc3d794a
+  Version  : dusk-audio/DPF-Widgets rev 668de17f06abdeb98d5a4b62594bd634f8d1ac2e
              (CI pin DPF_WIDGETS_REV in .github/actions/clone-dpf-stack/action.yml)
   License  : ISC — Copyright (C) 2012-2021 Filipe Coelho <falktx@falktx.com>
              (DPF-Widgets/LICENSE)
@@ -3998,7 +3998,7 @@ MATERIALS OR THE USE OR OTHER DEALINGS IN THE MATERIALS.
 --------------------------------------------------------------------------------
 DPF-Widgets — ISC
 LICENSE at dusk-audio/DPF-Widgets rev
-730da6397904da66d99667c1cb30fc77fc3d794a
+668de17f06abdeb98d5a4b62594bd634f8d1ac2e
 --------------------------------------------------------------------------------
 
 DISTRHO Plugin Framework (DPF)
@@ -4053,7 +4053,7 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 --------------------------------------------------------------------------------
 Dear ImGui 1.91.9b — MIT
 opengl/DearImGui/LICENSE.txt at dusk-audio/DPF-Widgets rev
-730da6397904da66d99667c1cb30fc77fc3d794a
+668de17f06abdeb98d5a4b62594bd634f8d1ac2e
 --------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -4081,7 +4081,7 @@ SOFTWARE.
 --------------------------------------------------------------------------------
 imgui-knobs — MIT
 opengl/DearImGuiKnobs/LICENSE at dusk-audio/DPF-Widgets rev
-730da6397904da66d99667c1cb30fc77fc3d794a
+668de17f06abdeb98d5a4b62594bd634f8d1ac2e
 --------------------------------------------------------------------------------
 
 MIT License
@@ -4109,7 +4109,7 @@ SOFTWARE.
 --------------------------------------------------------------------------------
 imgui_toggle — ISC-style permission grant
 opengl/DearImGuiToggle/LICENSE at dusk-audio/DPF-Widgets rev
-730da6397904da66d99667c1cb30fc77fc3d794a
+668de17f06abdeb98d5a4b62594bd634f8d1ac2e
 --------------------------------------------------------------------------------
 
 Copyright © 2022 nitz — chris marc dailey https://cmd.wtf
@@ -4132,7 +4132,7 @@ LICENSE at bluescan/proggyfonts rev
 stream expands to 41,208 bytes. Its Adler-32 is 0x48f962f7 and its SHA-256 is
 527d2a443ce051f93f7e77b855609722b8cb220a9f104b4aa037be5c90b71324; all three
 values match that revision's ProggyClean.ttf byte for byte at
-dusk-audio/DPF-Widgets rev 730da6397904da66d99667c1cb30fc77fc3d794a.
+dusk-audio/DPF-Widgets rev 668de17f06abdeb98d5a4b62594bd634f8d1ac2e.
 --------------------------------------------------------------------------------
 
 MIT License
