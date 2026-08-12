@@ -477,6 +477,22 @@ if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
         "${DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp")
     target_include_directories(dusk_notepad_ui PRIVATE
         "${DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR}/opengl")
+
+    if(MSVC)
+        # Windows' GL header and opengl32 stop at OpenGL 1.1, and DPF-Widgets hands Dear
+        # ImGui's OpenGL3 backend a "custom loader" (DGL's OpenGL.hpp) that carries GL 3.x
+        # prototypes on Linux and macOS only - so DearImGui.cpp does not compile here at
+        # all. Force-include a loader that resolves those entry points through
+        # wglGetProcAddress, the way DGL resolves its own. The header is named without a
+        # path so cl finds it on the include path; a /FI carrying an absolute path breaks
+        # on a source tree whose path contains spaces.
+        target_sources(dusk_notepad_ui PRIVATE src/ui/ImGuiGlLoaderWin32.cpp)
+        target_include_directories(dusk_notepad_ui PRIVATE src/ui)
+        set_source_files_properties(
+            "${DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp"
+            PROPERTIES COMPILE_OPTIONS "/FIImGuiGlLoaderWin32.h")
+    endif()
+
     target_link_libraries(dusk_notepad_ui PRIVATE
         dgl-opengl3
         dgl-opengl3-definitions

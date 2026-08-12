@@ -17,7 +17,7 @@ runs:
         DPF_REPO: https://github.com/dusk-audio/DPF.git
         DPF_REV: f9fbc62af6fa7ce638a6f1e1482896c385a4955e
         DPF_WIDGETS_REPO: https://github.com/dusk-audio/DPF-Widgets.git
-        DPF_WIDGETS_REV: 730da6397904da66d99667c1cb30fc77fc3d794a
+        DPF_WIDGETS_REV: 668de17f06abdeb98d5a4b62594bd634f8d1ac2e
       run: |
         set -euo pipefail
         git init -q "${RUNNER_TEMP}/DPF"
