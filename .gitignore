@@ -19,6 +19,9 @@ __pycache__/
 *.swo
 .DS_Store
 
+# Agent scratch/staging trees (extracted CI artifacts, worktrees, sysroots)
+.codex/
+
 # Local session test data
 sessions/
 *.wav

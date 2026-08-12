@@ -1,0 +1,19 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Dusk Studio
+Source: https://github.com/dusk-audio/dusk-studio
+
+Files: *
+Copyright: 2026 Dusk Audio
+License: GPL-3.0-or-later
+ This package is free software: you can redistribute it and/or modify it
+ under the terms of the GNU General Public License as published by the
+ Free Software Foundation, either version 3 of the License, or (at your
+ option) any later version.
+ .
+ The complete text of the GNU General Public License version 3 is
+ installed alongside this file as
+ /usr/share/doc/dusk-studio/LICENSE.
+Comment:
+ Third-party components linked into or shipped with this package, their
+ copyright holders, licenses and full license texts are inventoried in
+ /usr/share/doc/dusk-studio/LICENSES.txt.
