@@ -10,10 +10,14 @@ canonical source.
 The first release cut from the main line since 0.12 branched. Linux gets a
 native PipeWire backend and MIDI hot-plug; macOS gets Dusk Studio's own plugin
 hosts for all four formats, Audio Units included. Stems render in a single
-pass, a new realtime bounce prints hardware inserts wet instead of dry, and
-every session now carries a notepad with a chord chart. Underneath, the audio
-device layer, MIDI, audio file I/O and the FFT stopped going through the
-application framework and became Dusk Studio's own.
+pass, a new realtime bounce prints hardware inserts wet instead of dry, loop
+recording keeps every pass as its own take, and every session now carries a
+notepad with a chord chart. Underneath, the audio device layer, MIDI, audio
+file I/O and the FFT stopped going through the application framework and
+became Dusk Studio's own.
+
+The 0.12.7 fix wave was written on the 0.12 line but never released; those
+fixes are ported here and are listed below rather than under a 0.12.7 heading.
 
 ### Added
 
@@ -43,6 +47,14 @@ application framework and became Dusk Studio's own.
   picked up automatically; the input list refreshes with no manual rescan. A
   refresh that lands mid-take is held until the transport stops, so a take
   never loses its input part-way through.
+- **Loop recording stacks takes.** Recording over a loop no longer overwrites
+  the previous lap. Each pass lands as its own take, aligned to the loop
+  start, and the track keeps the current take plus the last eight passes to
+  cycle through from the take badge. Audio and MIDI both stack, punch inside
+  the loop included; held notes and controller state carry across the seam so
+  a pass never starts mid-phrase, and punch's post-roll no longer stops the
+  transport part-way through a loop. A silent audio pass is still selectable -
+  it may be the room tone you wanted - while an empty MIDI pass is dropped.
 - **Realtime bounce.** Mixdown and stems can play the session through the
   audio device and capture the result, so hardware inserts print wet. Offered
   whenever the session uses a hardware insert; it needs a stopped transport
@@ -72,6 +84,12 @@ application framework and became Dusk Studio's own.
   math utilities are now Dusk Studio's own code rather than the application
   framework's. Behaviour is unchanged by design; this is the groundwork for
   the interface rewrite.
+- **Groundwork for signed SFZ catalogs.** Dusk Studio can read a catalog of
+  downloadable SFZ instruments and verify its detached Ed25519 signature
+  against a built-in trusted key, rejecting anything malformed, oversized or
+  unsigned. Nothing in the interface offers a catalog yet; this release only
+  lays the trust layer. Source builds now need libsodium (`libsodium-dev` on
+  Debian and Ubuntu, the vcpkg manifest on Windows).
 - **License texts ship with the packages.** The tarball, the deb and rpm,
   the DMG and the MSI now carry `LICENSE` and `LICENSES.txt`, and the
   attribution list credits the notepad's UI stack (DPF, Dear ImGui, pugl and
@@ -79,7 +97,11 @@ application framework and became Dusk Studio's own.
   then covered the framework's bundled text-shaping, image and codec
   libraries, reproduced every license text that must accompany a binary - the
   AGPLv3 included - recorded per-platform version inventories, corrected the
-  framework's license terms and libsndfile's real scope.
+  framework's license terms and libsndfile's real scope. The Windows
+  statically-linked codec chain is now covered at its exact pinned versions -
+  the LGPL-2.1 text, FLAC, Ogg, Opus and mpg123 notices read from each
+  project's own license file - and the deb and rpm gained a Debian-policy
+  copyright record in place of a bare license copy.
 
 ### Fixed
 
@@ -148,7 +170,11 @@ application framework and became Dusk Studio's own.
 - **Plugin editors.** Replacing a plugin with its editor open could read freed
   memory (CLAP, LV2, VST3, and the macOS AU editor); the editor is now dropped
   with the instance it belongs to. A plugin slot also re-publishes reliably
-  after a reload.
+  after a reload. Going fullscreen, or anything else that rebuilds the main
+  window, used to leave a channel's native editor stranded; the editor is
+  rebuilt into the new window instead, reopening straight away unless a modal
+  is covering it. An embedded VST3 view no longer comes back blank or
+  off-centre after a resize, and its child windows map correctly on Linux.
 - **MIDI and soundfonts.** Hung notes no longer lose their tail, CC values no
   longer diverge from what was sent, and several SF2-to-SFZ translation faults
   are corrected. A dense burst that filled the input ring but overflowed a
@@ -158,6 +184,18 @@ application framework and became Dusk Studio's own.
   keystrokes to the transport; the on-screen keyboard's note keys no longer
   double as transport shortcuts; modal teardown, plugin editor embedding and
   timer shutdown gaps are closed.
+- **Narrow windows.** Shrinking the window used to squeeze the faders past
+  the point of being playable and let the strips run under the bus and master
+  columns. Console sizing is now driven from one place: a page holds as few as
+  three channels at the minimum width, the page buttons and their number-key
+  shortcuts follow, and the visible page stays in step with the control
+  surface's fixed banks of eight across a resize.
+- **Input metering while armed.** An armed audio track monitored through the
+  interface showed no level in the Recording stage unless IN was enabled, so
+  a hardware-monitored input looked dead while it was being played. Arming an
+  unfrozen audio track now meters its live pre-fader input; IN remains the
+  explicit override, and retained, MIDI and frozen tracks keep their own
+  meter source.
 - **Opening a session while one is running.** The hand-off to the already-open
   instance could discard unsaved work or let two instances write the same
   session folder.
@@ -178,7 +216,29 @@ application framework and became Dusk Studio's own.
   built but omitted from CMake's install set, so every third-party plug-in was
   left unscanned and the scan completed immediately with a
   sandbox-host-unavailable warning. The Windows packaging script now validates
-  the staged install contains both executables before creating the MSI.
+  the staged install contains both executables before creating the MSI. The
+  scanner also mangled plug-in paths containing non-ASCII characters - a
+  user name with an accent was enough - so those plug-ins scanned as empty;
+  the helper now reads its arguments as UTF-16 and converts them itself. And
+  when a scan quarantines files, the report now says how many and where the
+  cache lives instead of silently skipping them on every later scan.
+- **Windows with a busy ASIO driver.** If the saved audio device could not be
+  opened at launch - an ASIO driver held by another application, or powered
+  off - Windows was left with no device at all, and every plug-in and
+  soundfont load was refused with no explanation. Startup now falls back to
+  another backend's default device (without re-entering the driver that just
+  failed) and says what happened, including that loading is disabled while no
+  device is open.
+- **Soundfonts on Windows.** SFZ and SF2 files under paths with non-ASCII
+  characters failed to load; file reading and writing now hand the operating
+  system proper wide-character paths. An `.sfz` whose samples cannot be found
+  no longer "loads" as a silent instrument - the load fails, the slot is left
+  empty, and the editor names the missing samples.
+- **Notepad on Windows.** The notepad's renderer did not compile under MSVC,
+  which would have shipped a Windows build without the release's headline
+  feature; the GL functions it needs are now loaded at run time the same way
+  the rest of the UI stack does, and the Windows test workflow builds the
+  notepad on every push so it cannot regress unnoticed.
 - **Package contents.** The deb, rpm, DMG and MSI included the application
   framework's entire source tree, its build tool and its CMake config -
   roughly 65 MB and three thousand files nothing at runtime reads, claiming
