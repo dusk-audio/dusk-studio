@@ -421,6 +421,138 @@ General approach: reproduce in a test if at all possible (the suite runs in mill
 
 ---
 
+## Part 10 - Release
+
+### Release order
+
+The order is load-bearing. Replace `X.Y.Z` with the release version throughout.
+
+The reserved address in
+[`CPACK_PACKAGE_CONTACT`](../CMakeLists.txt#L1552) feeds only DEB/RPM package
+metadata. Those formats are not among the ten assets published by the current
+tag workflows, so the placeholder does not block this release. Marc must supply
+the real address before either format is published; do not invent one.
+
+1. Finish the `## [X.Y.Z] - Unreleased` section in
+   [CHANGELOG.md](../CHANGELOG.md), then run
+   [`scripts/bump-version.sh`](../scripts/bump-version.sh)
+   `X.Y.Z "<one-line notes>"`. On a healthy tree the script validates the
+   changelog heading, writes `VERSION`, prepends the AppStream release entry,
+   and updates the summary in
+   [packaging/RELEASE-NOTES.md](../packaging/RELEASE-NOTES.md). It can warn and
+   skip the latter two updates, so treat any warning as a failure. Require the
+   diff to contain all three expected metadata changes before proceeding.
+2. Replace `Unreleased` in that changelog heading with the release date.
+   Review and verify all release metadata.
+3. Rebuild the app and tests, run the full test suite and JUCE gate, then run
+   the integration self-test on a private Xvfb display. Never launch the
+   release binary on the live Wayland session.
+
+   ```bash
+   cmake --build build -j$(nproc)
+   cmake --build build-tests --target dusk-studio-tests -j$(nproc)
+   ctest --test-dir build-tests --output-on-failure
+   bash tools/juce-gate.sh
+   set -e
+   Xvfb :99 -screen 0 1920x1200x24 -nolisten tcp >/dev/null 2>&1 &
+   XVFB_PID=$!
+   trap 'kill "${XVFB_PID}" >/dev/null 2>&1 || true' EXIT
+   sleep 1
+   kill -0 "${XVFB_PID}"
+   env -u WAYLAND_DISPLAY DISPLAY=:99 DUSKSTUDIO_RUN_SELFTEST=1 \
+     timeout 90 ./build/DuskStudio_artefacts/Release/DuskStudio
+   kill "${XVFB_PID}"
+   wait "${XVFB_PID}" || true
+   trap - EXIT
+   ```
+
+   Stop if any command or self-test check fails.
+4. Commit the reviewed metadata and verified changelog. Record the exact
+   commit with `RELEASE_COMMIT=$(git rev-parse HEAD)` and confirm
+   `git show "${RELEASE_COMMIT:?run step 4 first}:VERSION"` prints `X.Y.Z`.
+5. Land that exact commit on `origin/main` before creating a tag, by direct
+   push or PR as repository rules require. Fetch the remote state and require
+   the recorded commit to be contained in it:
+
+   ```bash
+   git fetch origin main
+   git merge-base --is-ancestor "${RELEASE_COMMIT:?run step 4 first}" origin/main
+   test "$(git show "${RELEASE_COMMIT:?run step 4 first}:VERSION" | tr -d '[:space:]')" = "X.Y.Z"
+   ```
+
+   Do not continue if either guard fails. If the landing method rewrote the
+   commit, identify the exact landed commit, re-record `RELEASE_COMMIT`, and
+   repeat the metadata and containment checks.
+6. Tag the exact guarded commit and push only that tag:
+
+   ```bash
+   git tag -a "vX.Y.Z" -m "Dusk Studio X.Y.Z" "${RELEASE_COMMIT:?run step 4 first}"
+   git push origin "refs/tags/vX.Y.Z"
+   ```
+
+7. A `v*` tag starts all four workflows below. Each rejects a tag that does
+   not equal `v$(cat VERSION)`. Watch them by their exact display names:
+
+   - [`Linux release (tarball)`](../.github/workflows/linux-release.yml)
+   - [`macOS release (unsigned DMG)`](../.github/workflows/macos-release.yml)
+   - [`Windows build`](../.github/workflows/windows-build.yml)
+   - [`Manual PDF`](../.github/workflows/manual-pdf.yml)
+
+All four workflows publish to the private
+`dusk-audio/dusk-studio-releases` repository. Do not announce the release when
+the workflows merely turn green; complete the acceptance checks below first.
+
+### Tag assets and acceptance
+
+A complete `vX.Y.Z` release has exactly these ten assets:
+
+- `dusk-studio-X.Y.Z-Linux-x86_64.tar.xz`
+- `SHA256SUMS.linux-x86_64`
+- `dusk-studio-X.Y.Z-Linux-aarch64.tar.xz`
+- `SHA256SUMS.linux-aarch64`
+- `dusk-studio-X.Y.Z-macOS-arm64.dmg`
+- `SHA256SUMS.macos`
+- `dusk-studio-X.Y.Z-Windows-x64.msi`
+- `SHA256SUMS.windows`
+- `MANUAL.pdf`
+- `SHA256SUMS.manual`
+
+Before announcement, run
+[`scripts/verify-release-assets.sh`](../scripts/verify-release-assets.sh)
+`vX.Y.Z`. It fails if an expected asset class is missing or duplicated, an
+unexpected asset exists, or the release body is empty. Its macOS and Windows
+checks currently accept wildcard architecture suffixes, so it does not
+prove those two exact filenames or payload architectures. Download the assets
+into a clean directory and perform the manual checks that the script cannot
+cover:
+
+- Confirm the release body contains the version's summary, not only the static
+  Downloads section.
+- Confirm all ten filenames exactly match the list above. Inspect the
+  executable inside the DMG and MSI and confirm arm64 and x64 respectively;
+  do not infer architecture from the filename.
+- Run `sha256sum --check` separately for each of the five checksum files and
+  require every corresponding payload to pass.
+- Open `MANUAL.pdf`; confirm the figures render and the sharp and flat
+  accidentals display correctly.
+- Extract both Linux tarballs and smoke each binary only on its matching
+  architecture, under a private Xvfb display with `WAYLAND_DISPLAY` unset.
+  Never let a release binary touch the live Wayland session. DPF/DGL windows
+  that require GLX belong in the hardware pass.
+- Inspect the tarball, DMG, and MSI payloads. Each must be Dusk-only, with no
+  `JUCE-*` paths, and each must contain the complete
+  [LICENSES.txt](../LICENSES.txt), not merely a file by that name.
+- In every bundled `LICENSES.txt`, confirm the full-text section is present and
+  the JUCE-bundled entries cover HarfBuzz, SheenBidi, libjpeg, libpng, zlib,
+  FLAC, and Ogg/Vorbis. If a future SheenBidi source adds a NOTICE file, ship
+  that file alongside its license text.
+
+The release is accepted only when the asset/body check, checksum verification,
+PDF inspection, private-Xvfb smoke tests, payload inspection, and license checks
+all pass.
+
+---
+
 ## Quick reference card
 
 ```
