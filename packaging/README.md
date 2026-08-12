@@ -79,9 +79,24 @@ straight from the extracted tarball.
 
 ## Patreon delivery checklist
 
-1. Tag the release: `git tag vX.Y.Z && git push --tags`.
-2. Wait for the `Linux build` workflow to upload the build artefacts.
-3. Pull the artefacts, run `scripts/package-tarball.sh` to produce the `.tar.xz`.
-4. SHA256 the file: `sha256sum dusk-studio-*-Linux-*.tar.xz > SHA256`.
-5. Upload the tarball + SHA256 + `RELEASE_NOTES.md` to the Patreon post.
+1. Prepare the release metadata before tagging. Add the `CHANGELOG.md` section,
+   then run `scripts/bump-version.sh X.Y.Z "Release summary"` to update
+   `VERSION`, `packaging/DuskStudio.appdata.xml`, and
+   `packaging/RELEASE-NOTES.md`.
+2. Date the changelog, review the complete metadata diff, and commit it. Land
+   that commit on `origin/main` and confirm the remote branch contains it before
+   creating the tag.
+3. Tag that exact commit and push the tag:
+   `git tag -a vX.Y.Z -m "Dusk Studio X.Y.Z"` followed by
+   `git push origin vX.Y.Z`.
+4. Wait for the `Linux release (tarball)`, `macOS release (unsigned DMG)`,
+   `Windows build`, and `Manual PDF` workflows. They publish exactly
+   ten assets to the private `dusk-audio/dusk-studio-releases` release: two
+   Linux tarballs plus `SHA256SUMS.linux-x86_64` and
+   `SHA256SUMS.linux-aarch64`, one macOS DMG plus `SHA256SUMS.macos`, one
+   Windows MSI plus `SHA256SUMS.windows`, and `MANUAL.pdf` plus
+   `SHA256SUMS.manual`.
+5. Before announcing the release, run
+   `scripts/verify-release-assets.sh vX.Y.Z`. Do not announce unless it reports
+   all ten assets and a non-empty release body.
 6. Pinned support note: paste `DuskStudio --version` output into any DM.
