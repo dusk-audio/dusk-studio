@@ -42,9 +42,10 @@ printf '%s\n' \
     > "$FIXTURE/packaging/RELEASE-NOTES.md"
 
 NOTES='Gain & grit <hot> > cool ]]> "quoted" café — release'
+BUMP_OUTPUT="$SCRATCH/bump-output.txt"
 (
     cd "$FIXTURE"
-    bash scripts/bump-version.sh 9.9.9 "$NOTES" >/dev/null
+    bash scripts/bump-version.sh 9.9.9 "$NOTES" > "$BUMP_OUTPUT"
 )
 
 if command -v xmllint >/dev/null 2>&1; then
@@ -96,7 +97,7 @@ if [[ "$(cat "$FIXTURE/VERSION")" != "9.9.9" ]]; then
 fi
 
 "$PYTHON" - "$FIXTURE/packaging/DuskStudio.appdata.xml" "$NOTES" "$SOURCE_ROOT" \
-    "$FIXTURE/packaging/RELEASE-NOTES.md" <<'PY'
+    "$FIXTURE/packaging/RELEASE-NOTES.md" "$BUMP_OUTPUT" <<'PY'
 from pathlib import Path
 import re
 import sys
@@ -109,6 +110,7 @@ appdata_path = Path(sys.argv[1])
 expected_notes = sys.argv[2]
 source_root = Path(sys.argv[3])
 bumped_notes_path = Path(sys.argv[4])
+bump_output_path = Path(sys.argv[5])
 
 SUMMARY_START = "<!-- summary-start -->"
 SUMMARY_END = "<!-- summary-end -->"
@@ -131,12 +133,12 @@ paragraph = release.find("./description/p")
 assert paragraph is not None
 assert paragraph.text == expected_notes, (paragraph.text, expected_notes)
 
-workflows = (
-    "manual-pdf.yml",
-    "macos-release.yml",
-    "windows-build.yml",
-    "linux-release.yml",
-)
+workflows = {
+    "manual-pdf.yml": "Manual PDF",
+    "macos-release.yml": "macOS release (unsigned DMG)",
+    "windows-build.yml": "Windows build",
+    "linux-release.yml": "Linux release (tarball)",
+}
 create_marker = 'if ! create_err=$(gh release create "$TAG"'
 recheck_marker = 'if gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null 2>&1; then'
 upload_line = 'gh release upload "$TAG" --repo "$RELEASES_REPO" --clobber "${ASSETS[@]}"'
@@ -160,8 +162,51 @@ assert before == "", "nothing may precede the summary slot"
 assert "stale summary" not in bumped_text, "the old summary must be gone"
 assert "### Downloads" in after, "the Downloads section must survive the bump"
 
-for name in workflows:
+# The printed handoff is the maintainer's release-day checklist. Pin its
+# load-bearing order and CI-only packaging path.
+bump_output = bump_output_path.read_text(encoding="utf-8")
+checklist = (
+    "5) Commit metadata:",
+    "6) Land on main:",
+    "7) Tag landed commit:",
+    "8) Push tag:",
+    "9) Wait for CI assets:",
+    "10) Verify assets:",
+)
+for item in checklist:
+    assert item in bump_output, f"release checklist is missing: {item}"
+positions = [bump_output.index(item) for item in checklist]
+assert positions == sorted(positions), "release checklist steps are out of order"
+lines = {line.strip().split(")", 1)[0]: line for line in bump_output.splitlines()}
+assert 'RELEASE_COMMIT=$(git rev-parse HEAD)' in lines["5"]
+assert "land the recorded commit on origin/main" in lines["6"]
+assert "git fetch origin" in lines["6"]
+guarded_commit = '"${RELEASE_COMMIT:?run step 5 first}"'
+assert f"git merge-base --is-ancestor {guarded_commit} origin/main" in lines["6"]
+assert f'git tag -a v9.9.9 -m "Dusk Studio 9.9.9" {guarded_commit}' in lines["7"]
+assert "git push origin v9.9.9" in lines["8"]
+for display_name in workflows.values():
+    assert display_name in lines["9"]
+verifier_text = (source_root / "scripts" / "verify-release-assets.sh").read_text(
+    encoding="utf-8"
+)
+expected_assets = re.findall(r'^\s+"[^"\n]+\|[^"\n]+"$', verifier_text, re.MULTILINE)
+assert len(expected_assets) == 10, "release verifier must define ten assets"
+assert f"all {len(expected_assets)} assets" in lines["9"]
+assert "scripts/verify-release-assets.sh v9.9.9" in lines["10"]
+for local_packager in (
+    "package-tarball.sh",
+    "package-macos.sh",
+    "package-windows.ps1",
+):
+    assert local_packager not in bump_output
+
+for name, display_name in workflows.items():
     text = (source_root / ".github" / "workflows" / name).read_text(encoding="utf-8")
+    workflow_name = re.search(r"^name:\s*(.+)$", text, re.MULTILINE)
+    assert workflow_name and workflow_name.group(1).strip() == display_name, (
+        f"{name}: printed checklist name is stale"
+    )
     assert text.count(create_marker) == 1, f"{name}: missing race-checked create"
     create_at = text.index(create_marker)
     create_end = text.index("2>&1); then", create_at)
