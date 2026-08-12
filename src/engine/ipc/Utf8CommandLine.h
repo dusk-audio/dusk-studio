@@ -59,8 +59,9 @@ private:
         const int bytes = WideCharToMultiByte (CP_UTF8, 0, wide, -1,
                                                nullptr, 0, nullptr, nullptr);
         if (bytes <= 1) return {};
-        std::string out ((size_t) bytes - 1, '\0');   // -1: drop the terminator
+        std::string out ((size_t) bytes, '\0');
         WideCharToMultiByte (CP_UTF8, 0, wide, -1, out.data(), bytes, nullptr, nullptr);
+        out.pop_back();   // the API wrote its own terminator
         return out;
     }
 
