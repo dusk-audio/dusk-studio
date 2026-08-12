@@ -48,6 +48,8 @@ TEST_CASE ("startupDeviceMessage: nothing opened -> silent-session warning", "[a
     {
         const auto m = startupDeviceMessage (false, "", "");
         REQUIRE (containsIgnoreCase (m, "no audio device"));
+        REQUIRE (containsIgnoreCase (m, "recording is disabled"));
+        REQUIRE (containsIgnoreCase (m, "soundfonts cannot be loaded"));
         REQUIRE_FALSE (contains (m, "\"\""));   // no empty-quoted device name
     }
 }

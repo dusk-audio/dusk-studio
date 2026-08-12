@@ -62,12 +62,7 @@
 #include <juce_events/juce_events.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
-#if defined (_WIN32)
- #define WIN32_LEAN_AND_MEAN
- #define NOMINMAX
- #include <windows.h>
- #include <shellapi.h>
-#endif
+#include "Utf8CommandLine.h"
 
 namespace
 {
@@ -1030,50 +1025,6 @@ int runScan (int argc, const char* const* argv) noexcept
     std::fflush (stdout);
     return 0;
 }
-
-#if defined (_WIN32)
-// Windows hands a narrow main() an argv converted from the UTF-16 command line
-// through the process ANSI code page, and every argument above is read back as
-// UTF-8. A plugin under a path the code page can't represent would therefore be
-// scanned under a mangled name, find nothing, and report an empty-but-valid
-// payload - the parent adds no plugins and shows no warning. Re-derive the
-// arguments from the real command line the parent built.
-class Utf8CommandLine
-{
-public:
-    Utf8CommandLine()
-    {
-        int count = 0;
-        wchar_t** wide = CommandLineToArgvW (GetCommandLineW(), &count);
-        if (wide == nullptr) return;
-        storage.reserve ((size_t) count);
-        for (int i = 0; i < count; ++i)
-            storage.push_back (toUtf8 (wide[i]));
-        LocalFree (wide);
-        // Only after the vector has stopped growing, or the pointers dangle.
-        pointers.reserve (storage.size());
-        for (const auto& arg : storage)
-            pointers.push_back (arg.c_str());
-    }
-
-    int argc() const noexcept                { return (int) pointers.size(); }
-    const char* const* argv() const noexcept { return pointers.data(); }
-
-private:
-    static std::string toUtf8 (const wchar_t* wide)
-    {
-        const int bytes = WideCharToMultiByte (CP_UTF8, 0, wide, -1,
-                                               nullptr, 0, nullptr, nullptr);
-        if (bytes <= 1) return {};
-        std::string out ((size_t) bytes - 1, '\0');   // -1: drop the terminator
-        WideCharToMultiByte (CP_UTF8, 0, wide, -1, out.data(), bytes, nullptr, nullptr);
-        return out;
-    }
-
-    std::vector<std::string> storage;
-    std::vector<const char*> pointers;
-};
-#endif
 } // namespace
 
 int main (int argc, char** argv)
@@ -1084,7 +1035,7 @@ int main (int argc, char** argv)
 
     const char* const* args = argv;
    #if defined (_WIN32)
-    const Utf8CommandLine utf8CommandLine;
+    const duskstudio::ipc::Utf8CommandLine utf8CommandLine;
     if (utf8CommandLine.argc() > 0)
     {
         argc = utf8CommandLine.argc();

@@ -103,7 +103,7 @@ std::optional<AriaBank> AriaBank::tryLoadFromSfz(const juce::File& sfzFile)
     for (size_t i = 0; i < bank.programs.size(); ++i)
     {
         // File comparison, not string comparison: on Windows the manifest's
-        // casing and the path the user picked with need not match character for
+        // casing and the path the user picked need not match character for
         // character, and a miss here silently costs the bank's custom skin.
         if (bank.programs[i].sfzFile == sfzFile)
         {
