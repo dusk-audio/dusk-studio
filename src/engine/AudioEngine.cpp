@@ -572,10 +572,19 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
             // (merely busy) device. Hold persistence until an explicit pick.
             deviceFallbackHold_ = true;
 
+            std::vector<std::string> attemptedTypes;
+            auto attempted = [&attemptedTypes] (const std::string& typeName)
+            {
+                return std::find (attemptedTypes.begin(), attemptedTypes.end(), typeName)
+                         != attemptedTypes.end();
+            };
+
             // Clear the pinned (busy) device name + use default channels, else
             // setSetup can short-circuit to a non-started, sr-0 setup.
-            auto openDefaultOnType = [this] (const std::string& typeName, const std::string& devName)
+            auto openDefaultOnType = [this, &attemptedTypes, &attempted]
+                                     (const std::string& typeName, const std::string& devName)
             {
+                if (! attempted (typeName)) attemptedTypes.push_back (typeName);
                 deviceManager.setCurrentDeviceType (typeName, /*treatAsChosen*/ true);
                 auto s = deviceManager.getSetup();
                 s.inputDeviceName.clear();
@@ -612,19 +621,19 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
                 }
            #endif
 
-            // 3) Any remaining backend's default device. On Windows this is what
-            //    carries the session off a busy or powered-down ASIO driver onto
-            //    the shared Windows Audio path. The type we are already on is the
-            //    one that just failed - re-opening its default would re-enter the
-            //    same driver (and, for ASIO, its control panel).
+            // 3) Any backend not tried above. On Windows this is what carries the
+            //    session off a busy or powered-down ASIO driver onto the shared
+            //    Windows Audio path. A backend that already failed is skipped: a
+            //    second open only repeats the failure, and on an exclusive driver
+            //    it re-enters that driver (and, for ASIO, its control panel).
             if (! working())
             {
-                auto* failedType = deviceManager.getCurrentDeviceType();
-                const std::string failedTypeName =
-                    failedType != nullptr ? failedType->getTypeName() : std::string();
+                if (auto* failedType = deviceManager.getCurrentDeviceType())
+                    if (! attempted (failedType->getTypeName()))
+                        attemptedTypes.push_back (failedType->getTypeName());
                 for (auto* t : deviceManager.getAvailableDeviceTypes())
                 {
-                    if (t == nullptr || t->getTypeName() == failedTypeName) continue;
+                    if (t == nullptr || attempted (t->getTypeName())) continue;
                     openDefaultOnType (t->getTypeName(), {});
                     if (working()) break;
                 }
