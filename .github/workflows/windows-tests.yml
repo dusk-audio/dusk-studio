@@ -144,6 +144,14 @@ jobs:
         shell: bash
         run: cmake --build build-tests --config Release --target dusk-studio-tests -j
 
+      - name: Build the native notepad UI
+        # The Catch2 target does not reach the DPF/DGL + Dear ImGui notepad, so
+        # nothing on a push ever compiled it on MSVC - the ImGui OpenGL3 backend
+        # failing to build here only surfaced in windows-build.yml, which runs on
+        # a release tag. Compiling the one target keeps that off tag day.
+        shell: bash
+        run: cmake --build build-tests --config Release --target dusk_notepad_ui -j
+
       - name: Run tests
         # Full Catch2 suite on MSVC, minus the FileImporter cases. Those write
         # a temp WAV and immediately re-open it; on the GitHub windows-latest
