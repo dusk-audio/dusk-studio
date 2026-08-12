@@ -4,7 +4,6 @@
 
 [![Linux build](https://github.com/dusk-audio/dusk-studio/actions/workflows/linux-build.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio/actions/workflows/linux-build.yml)
 [![macOS build](https://github.com/dusk-audio/dusk-studio/actions/workflows/macos-build.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio/actions/workflows/macos-build.yml)
-[![Windows build](https://github.com/dusk-audio/dusk-studio/actions/workflows/windows-build.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio/actions/workflows/windows-build.yml)
 [![Windows tests](https://github.com/dusk-audio/dusk-studio/actions/workflows/windows-tests.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio/actions/workflows/windows-tests.yml)
 [![Linux sanitizer (TSan)](https://github.com/dusk-audio/dusk-studio/actions/workflows/linux-sanitizer.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio/actions/workflows/linux-sanitizer.yml)
 
@@ -12,7 +11,11 @@ A deliberately constrained, portastudio-style DAW for Linux, macOS, and Windows.
 
 > *"Fixed signal chain, finite track count, one page per stage. You commit, you move on."*
 
-JUCE 8 / C++17. On Linux, a native PipeWire backend (primary) when the PipeWire development libraries are present at configure time, with a native ALSA backend as the fallback and for builds without them, plus USB hot-unplug recovery; macOS CoreAudio + Windows WASAPI / ASIO via JUCE. Authoritative spec: [DuskStudio.md](DuskStudio.md). User manual: [MANUAL.md](MANUAL.md).
+JUCE 8 / C++17. Dusk Studio's native audio-device layer talks directly to
+PipeWire (primary when available) or ALSA on Linux, with USB hot-unplug
+recovery, and uses framework adapters for CoreAudio on macOS and WASAPI / ASIO
+on Windows. Authoritative spec: [DuskStudio.md](DuskStudio.md). User manual:
+[MANUAL.md](MANUAL.md).
 
 ## Get Dusk Studio
 
@@ -35,16 +38,19 @@ GPL source on this repo — build from source and the binary costs you nothing b
 | Out-of-process plugin sandbox — audio, opt-in (Linux + macOS + Windows; scanning always sandboxed) | Working |
 | Out-of-process plugin sandbox — editor embed (Linux XEmbed, Windows SetParent, macOS in-process shell) | Working |
 | Mastering view (waveform + 5-band EQ + multiband comp + brick-wall limiter + BS.1770) | Working |
-| Bounce / mixdown export (master or stems) | Working |
+| Offline bounce / mixdown export (master) | Working |
+| Single-pass stem export (tracks + buses + aux returns) | Working |
+| Realtime bounce (hardware inserts print wet) | Working |
 | Aux sends + reverb / delay returns | Working |
 | External hardware inserts (per channel + per aux, with auto-latency ping) | Working |
 | MIDI tracks + instrument plugins + piano roll editor | Working |
 | Audio region editor (non-destructive trim / fade / gain) + 8-take history | Working |
-| Take cycling + comping (cycle previousTakes — Option A) | Working |
+| Take cycling + comping | Working |
 | Loop-record take stacking (each pass kept as its own take) | Working |
 | Cross-track plugin delay compensation (PDC) | Working |
 | Console automation (Write / Read / Touch on channels + aux + master) | Working |
 | MIDI Clock sync + MTC slave + master | Working |
+| MIDI hot-plug detection (Linux) | Working |
 | MIDI bindings + MIDI Learn (transport / strip / sends / EQ / comp / plugin params) | Working |
 | Mackie Control surface (tested against Tascam DP-24SD) | Working |
 | Multi-file audio + MIDI import with target-track picker | Working |
@@ -54,7 +60,9 @@ GPL source on this repo — build from source and the binary costs you nothing b
 | macOS DMG (unsigned, ad-hoc) | Working (CI publishes to private releases repo on tag) |
 | Deeper a11y (full screen-reader labels + keyboard-only mixer nav) | Floor only |
 
-The C++ suite declares 743 Catch2 test cases across 150 test source files. Linux (amd64 + arm64) + macOS + Windows builds run on every push; Windows tests run on every push + PR; Linux ThreadSanitizer runs on every PR + push.
+The C++ suite declares 742 Catch2 test cases across 150 test source files. Linux
+(amd64 + arm64) and macOS builds run on every push; Windows tests run on every
+push + PR; Linux ThreadSanitizer runs on every PR + push.
 
 ## Bug reports
 
@@ -104,7 +112,7 @@ src/
   session/     # Session model + JSON serialisation
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
   util/        # CrashHandler (FileLogger + signal-handler reports)
-tests/         # 743 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
+tests/         # 742 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME, macOS bundle — for tarball + DMG builds
 DuskStudio.md  # authoritative product spec
 MANUAL.md      # end-user manual (Pandoc-buildable to PDF via docs/build-pdf.sh)
@@ -114,17 +122,26 @@ MANUAL.md      # end-user manual (Pandoc-buildable to PDF via docs/build-pdf.sh)
 
 Precompiled (unsigned) binaries delivered via Patreon — Linux tarball + Windows MSI + macOS DMG, all published to the private releases repo on each tag. Self-build is fully supported and equivalent at the source level — no support tier for self-builders.
 
+Source builds require libsndfile and libsodium; MP3 bounce additionally uses
+LAME. The Linux and Windows guides list the exact package or manifest setup.
+
 | Platform | Doc |
 |----------|-----|
 | Linux | [BUILDING-LINUX.md](BUILDING-LINUX.md) |
 | Windows | [BUILDING-WINDOWS.md](BUILDING-WINDOWS.md) |
-| macOS | Mirror of Linux flow; upstream JUCE 8.0.4, sibling `plugins`, and the same pinned DPF stack. Smoke-built per push on `macos-14` (Apple Silicon Sonoma) — see [.github/workflows/macos-build.yml](.github/workflows/macos-build.yml). |
+| macOS | Mirror of Linux flow; upstream JUCE 8.0.4, sibling `plugins`, the same pinned DPF stack, and static libsodium supplied through `DUSKSTUDIO_SODIUM_ROOT`. Built and tested per push on `macos-14` (Apple Silicon Sonoma) - see [.github/workflows/macos-build.yml](.github/workflows/macos-build.yml). |
 | Linux tarball packaging | [packaging/README.md](packaging/README.md) |
 | End-user manual / troubleshooting | [MANUAL.md](MANUAL.md) |
 
 After a build, sanity check with `DuskStudio --version` — prints app + JUCE + platform string and exits 0. Useful as a paste-target for Patreon support DMs.
 
-CI runs on every push to `main` against Linux (Ubuntu 22.04 GCC), macOS (14 Apple Silicon, Ninja + ccache), and Windows (Server 2022 MSVC). Windows tests (`windows-tests.yml`) exercise the Catch2 suite on every push + PR. Linux ThreadSanitizer (`linux-sanitizer.yml`) runs the Catch2 suite under TSan on every PR + push. Tagged releases (`v*`) trigger the Windows MSI, macOS DMG, and Linux tarball workflows — each builds an unsigned binary and publishes it to the private releases repo (one shared release per tag, distinct asset names).
+CI builds and tests on every push to `main` on Linux (Ubuntu 22.04 GCC) and
+macOS (14 Apple Silicon, Ninja + ccache). Windows tests (`windows-tests.yml`)
+exercise the Catch2 suite on every push + PR using Server 2022 MSVC. Linux
+ThreadSanitizer (`linux-sanitizer.yml`) runs the Catch2 suite under TSan on
+every PR + push. Tagged releases (`v*`) trigger the Windows MSI, macOS DMG,
+Linux tarball and manual PDF workflows; they publish the unsigned binaries and
+rendered manual to one shared release in the private releases repo.
 
 ## License
 
