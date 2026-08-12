@@ -1594,6 +1594,8 @@ When a `.sf2` holds more than one preset (most GM/GS/XG SoundFonts do), a **pres
 
 The loaded file path and the chosen preset are saved with the session.
 
+If a soundfont can't be loaded — a corrupt file, or an `.sfz` whose `sample=` files aren't sitting next to it — the slot is left empty and the editor shows the reason, rather than holding an instrument that makes no sound.
+
 \newpage
 
 # Hardware inserts

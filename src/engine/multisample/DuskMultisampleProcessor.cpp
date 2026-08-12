@@ -461,9 +461,16 @@ bool DuskMultisampleProcessor::loadSfzFile (const juce::File& sfz,
         ok = sfizz_load_file (impl->synth, path.c_str());
         if (ok) regions = sfizz_get_num_regions (impl->synth);
     }
+    // sfizz clears the loaded instrument before it parses, so from here on the
+    // previous soundfont is gone whatever we report. Both failures below drop
+    // the rest of the load state with it - keeping the old file's name, its SF2
+    // program list and its extracted samples would describe an instrument the
+    // synth no longer holds. clearLoadedFile() resets lastLoadError, so the
+    // reason is stored after it.
     if (! ok)
     {
         errorMessage = "sfizz_load_file failed for " + sfz.getFileName();
+        clearLoadedFile();
         lastLoadError = errorMessage;
         return false;
     }
@@ -474,6 +481,7 @@ bool DuskMultisampleProcessor::loadSfzFile (const juce::File& sfz,
     {
         errorMessage = "No playable regions in " + sfz.getFileName()
                      + " - its sample files were not found next to it";
+        clearLoadedFile();
         lastLoadError = errorMessage;
         return false;
     }
@@ -698,9 +706,9 @@ bool DuskMultisampleProcessor::loadState (const std::vector<uint8_t>& in)
 
     // Restore the SF2 preset selection (no-op for SFZ). Must run after
     // the file load above so the SF2 metadata + sfizz state exist.
-    // Skipped when that load failed: sf2Presets + loadedFilePath then still
-    // point at the previously loaded SF2, so restoring the saved index would
-    // switch the OLD file to a stale preset and clobber lastLoadError.
+    // Skipped when that load failed: sf2Presets + loadedFilePath then describe
+    // whatever survived the failure, not the file the saved index belongs to,
+    // so restoring that index would clobber lastLoadError for nothing.
     // idx == 0 is deliberately skipped: loadSf2File already loaded
     // preset 0, so re-loading it would be redundant work. Only a
     // non-default saved preset needs an explicit switch.

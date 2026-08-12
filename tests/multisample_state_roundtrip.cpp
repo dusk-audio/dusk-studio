@@ -54,6 +54,35 @@ TEST_CASE ("DuskMultisampleProcessor rejects an SFZ with no resolvable samples",
     REQUIRE (error.contains ("No playable regions"));
 }
 
+TEST_CASE ("DuskMultisampleProcessor reports no file after a failed load replaced one",
+           "[multisample][sfz]")
+{
+    const auto tempDir = juce::File::getSpecialLocation (juce::File::tempDirectory);
+    const auto good = tempDir.getNonexistentChildFile ("Dusk SFZ good", ".sfz", false);
+    const auto broken = tempDir.getNonexistentChildFile ("Dusk SFZ broken", ".sfz", false);
+    struct ScopedFileCleanup
+    {
+        juce::File a, b;
+        ~ScopedFileCleanup() { a.deleteFile(); b.deleteFile(); }
+    } cleanup { good, broken };
+
+    REQUIRE (good.replaceWithText ("<region> key=60 sample=*sine\n"));
+    REQUIRE (broken.replaceWithText ("<region> key=60 sample=not-here.wav\n"));
+
+    duskstudio::DuskMultisampleProcessor processor;
+    juce::String error;
+    REQUIRE (processor.loadSfzFile (good, error));
+    REQUIRE (processor.hasLoadedFile());
+
+    // sfizz has already dropped the good instrument by the time the region
+    // count is read, so the failure must not leave the old file's name behind -
+    // that would name a soundfont the synth no longer holds.
+    REQUIRE_FALSE (processor.loadSfzFile (broken, error));
+    REQUIRE_FALSE (processor.hasLoadedFile());
+    REQUIRE (processor.getLoadedFilePath().isEmpty());
+    REQUIRE (processor.getLastLoadError().contains ("No playable regions"));
+}
+
 namespace
 {
 // Hand-build a valid two-preset SF2 (both presets share one instrument zone +
