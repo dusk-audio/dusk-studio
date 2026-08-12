@@ -97,7 +97,11 @@ fixes are ported here and are listed below rather than under a 0.12.7 heading.
   then covered the framework's bundled text-shaping, image and codec
   libraries, reproduced every license text that must accompany a binary - the
   AGPLv3 included - recorded per-platform version inventories, corrected the
-  framework's license terms and libsndfile's real scope.
+  framework's license terms and libsndfile's real scope. The Windows
+  statically-linked codec chain is now covered at its exact pinned versions -
+  the LGPL-2.1 text, FLAC, Ogg, Opus and mpg123 notices read from each
+  project's own license file - and the deb and rpm gained a Debian-policy
+  copyright record in place of a bare license copy.
 
 ### Fixed
 
@@ -212,7 +216,29 @@ fixes are ported here and are listed below rather than under a 0.12.7 heading.
   built but omitted from CMake's install set, so every third-party plug-in was
   left unscanned and the scan completed immediately with a
   sandbox-host-unavailable warning. The Windows packaging script now validates
-  the staged install contains both executables before creating the MSI.
+  the staged install contains both executables before creating the MSI. The
+  scanner also mangled plug-in paths containing non-ASCII characters - a
+  user name with an accent was enough - so those plug-ins scanned as empty;
+  the helper now reads its arguments as UTF-16 and converts them itself. And
+  when a scan quarantines files, the report now says how many and where the
+  cache lives instead of silently skipping them on every later scan.
+- **Windows with a busy ASIO driver.** If the saved audio device could not be
+  opened at launch - an ASIO driver held by another application, or powered
+  off - Windows was left with no device at all, and every plug-in and
+  soundfont load was refused with no explanation. Startup now falls back to
+  another backend's default device (without re-entering the driver that just
+  failed) and says what happened, including that loading is disabled while no
+  device is open.
+- **Soundfonts on Windows.** SFZ and SF2 files under paths with non-ASCII
+  characters failed to load; file reading and writing now hand the operating
+  system proper wide-character paths. An `.sfz` whose samples cannot be found
+  no longer "loads" as a silent instrument - the load fails, the slot is left
+  empty, and the editor names the missing samples.
+- **Notepad on Windows.** The notepad's renderer did not compile under MSVC,
+  which would have shipped a Windows build without the release's headline
+  feature; the GL functions it needs are now loaded at run time the same way
+  the rest of the UI stack does, and the Windows test workflow builds the
+  notepad on every push so it cannot regress unnoticed.
 - **Package contents.** The deb, rpm, DMG and MSI included the application
   framework's entire source tree, its build tool and its CMake config -
   roughly 65 MB and three thousand files nothing at runtime reads, claiming
