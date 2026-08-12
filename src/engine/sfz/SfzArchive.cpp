@@ -1,11 +1,24 @@
 #include "SfzArchive.h"
+#include "SfzFsync.h"
 
 #include <archive.h>
 #include <archive_entry.h>
 
+#include <algorithm>
+#include <cerrno>
 #include <cstddef>
-#include <fstream>
+#include <cstdint>
 #include <memory>
+#include <string>
+
+#if defined(_WIN32)
+ #include <io.h>
+ #include <fcntl.h>
+ #include <sys/stat.h>
+#else
+ #include <fcntl.h>
+ #include <unistd.h>
+#endif
 
 namespace duskstudio::sfz
 {
@@ -63,6 +76,102 @@ std::string readerError (archive* reader, const char* fallback)
 {
     const auto* detail = archive_error_string (reader);
     return detail != nullptr ? std::string (detail) : std::string (fallback);
+}
+
+// A v1 pack is deflate or stored. archive_read_support_format_zip decodes every
+// method the running libarchive was built with - bzip2, lzma, zstd, ppmd - so a
+// distro build and the feature-stripped Windows build would install different
+// packs from the same archive. The per-entry method is not exposed as a filter
+// (the stream filter is always "none"); the descriptive format name is the only
+// signal, and it reads "ZIP 2.0 (deflation)" / "ZIP 2.0 (uncompressed)" for the
+// two that are allowed.
+bool isSupportedZipCompression (archive* reader) noexcept
+{
+    const auto* name = archive_format_name (reader);
+    if (name == nullptr)
+        return false;
+    const std::string format (name);
+    return format.find ("(deflation)") != std::string::npos
+        || format.find ("(uncompressed)") != std::string::npos;
+}
+
+enum class OpenOutcome
+{
+    opened,
+    collision,
+    link,
+    failed
+};
+
+// Creates a fresh output file, refusing to reuse an existing name (O_EXCL) or to
+// write through a symlink (O_NOFOLLOW). An exists()+ofstream check has a window
+// between the test and the open, and ofstream happily follows a planted link to
+// a target outside the tree; this closes both.
+int openExclusiveFile (const stdfs::path& path, OpenOutcome& outcome) noexcept
+{
+    errno = 0;
+#if defined(_WIN32)
+    // Windows has no O_NOFOLLOW; _O_CREAT|_O_EXCL is CREATE_NEW, which still
+    // refuses an existing name. Reparse-point following is a Windows-only gap
+    // tracked for a later hardening pass.
+    int fd = -1;
+    _wsopen_s (&fd, path.wstring().c_str(),
+               _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY | _O_NOINHERIT,
+               _SH_DENYNO, _S_IREAD | _S_IWRITE);
+    if (fd >= 0)
+    {
+        outcome = OpenOutcome::opened;
+        return fd;
+    }
+    outcome = errno == EEXIST ? OpenOutcome::collision : OpenOutcome::failed;
+    return -1;
+#else
+    const int fd = ::open (path.c_str(),
+                           O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0644);
+    if (fd >= 0)
+    {
+        outcome = OpenOutcome::opened;
+        return fd;
+    }
+    if (errno == EEXIST)
+        outcome = OpenOutcome::collision;
+    else if (errno == ELOOP)
+        outcome = OpenOutcome::link;
+    else
+        outcome = OpenOutcome::failed;
+    return -1;
+#endif
+}
+
+bool writeAllToFd (int fd, const char* data, std::size_t bytes) noexcept
+{
+    while (bytes > 0)
+    {
+#if defined(_WIN32)
+        const auto request = static_cast<unsigned> (std::min<std::size_t> (bytes, 1u << 30));
+        const int written = _write (fd, data, request);
+#else
+        const auto written = ::write (fd, data, bytes);
+#endif
+        if (written < 0)
+        {
+            if (errno == EINTR)
+                continue;
+            return false;
+        }
+        data += written;
+        bytes -= static_cast<std::size_t> (written);
+    }
+    return true;
+}
+
+bool closeFd (int fd) noexcept
+{
+#if defined(_WIN32)
+    return _close (fd) == 0;
+#else
+    return ::close (fd) == 0;
+#endif
 }
 } // namespace
 
@@ -130,6 +239,21 @@ ExtractionResult extractZipArchive (const ExtractionRequest& request,
                 return result;
             }
 
+            // Route an encrypted entry to rejected (which deletes the archive)
+            // rather than letting the later read fail as readFailed.
+            if (archive_entry_is_encrypted (entry) != 0)
+            {
+                result.status = ExtractionStatus::rejected;
+                result.error = "contains an encrypted entry";
+                return result;
+            }
+            if (! isSupportedZipCompression (reader.get()))
+            {
+                result.status = ExtractionStatus::rejected;
+                result.error = "contains an entry compressed with an unsupported method";
+                return result;
+            }
+
             const auto* pathname = archive_entry_pathname (entry);
             ArchiveEntry described;
             described.pathname = pathname != nullptr ? pathname : std::string();
@@ -179,20 +303,29 @@ ExtractionResult extractZipArchive (const ExtractionRequest& request,
             // The destination started empty and every path below it is created
             // here, so an existing target means two entries collided in a way
             // the policy could not see - a case fold this filesystem performs
-            // and the ASCII one does not, for instance. Never let the second
-            // entry overwrite the first.
-            if (stdfs::exists (target, ec))
+            // and the ASCII one does not, for instance. O_EXCL refuses to let the
+            // second entry overwrite the first, and O_NOFOLLOW refuses to write
+            // through a link a prior entry planted, both without a check-then-open
+            // window.
+            OpenOutcome outcome = OpenOutcome::failed;
+            const int fd = openExclusiveFile (target, outcome);
+            if (fd < 0)
             {
-                result.status = ExtractionStatus::rejected;
-                result.error = "contains a duplicate or case-colliding entry name";
-                return result;
-            }
-
-            std::ofstream out (target, std::ios::binary | std::ios::trunc);
-            if (! out)
-            {
-                result.status = ExtractionStatus::storageFailed;
-                result.error = "a pack file could not be created";
+                if (outcome == OpenOutcome::collision)
+                {
+                    result.status = ExtractionStatus::rejected;
+                    result.error = "contains a duplicate or case-colliding entry name";
+                }
+                else if (outcome == OpenOutcome::link)
+                {
+                    result.status = ExtractionStatus::rejected;
+                    result.error = "contains an entry that resolves through a link";
+                }
+                else
+                {
+                    result.status = ExtractionStatus::storageFailed;
+                    result.error = "a pack file could not be created";
+                }
                 return result;
             }
 
@@ -208,6 +341,7 @@ ExtractionResult extractZipArchive (const ExtractionRequest& request,
                     break;
                 if (read != ARCHIVE_OK)
                 {
+                    closeFd (fd);
                     result.error = readerError (reader.get(),
                                                 "the archive could not be read");
                     return result;
@@ -217,21 +351,22 @@ ExtractionResult extractZipArchive (const ExtractionRequest& request,
                 // what it claims.
                 if (offset != written)
                 {
+                    closeFd (fd);
                     result.status = ExtractionStatus::rejected;
                     result.error = "contains an entry with a sparse data layout";
                     return result;
                 }
                 if (! policy.addFileBytes (blockSize))
                 {
+                    closeFd (fd);
                     result.status = ExtractionStatus::rejected;
                     result.error = policy.error();
                     return result;
                 }
 
-                out.write (static_cast<const char*> (block),
-                           static_cast<std::streamsize> (blockSize));
-                if (! out)
+                if (! writeAllToFd (fd, static_cast<const char*> (block), blockSize))
                 {
+                    closeFd (fd);
                     result.status = ExtractionStatus::storageFailed;
                     result.error = "a pack file could not be written";
                     return result;
@@ -242,15 +377,18 @@ ExtractionResult extractZipArchive (const ExtractionRequest& request,
                     callbacks.onProgress (policy.expandedBytes());
                 if (cancelled())
                 {
+                    closeFd (fd);
                     result.status = ExtractionStatus::cancelled;
                     return result;
                 }
             }
 
-            out.flush();
-            const auto flushed = static_cast<bool> (out);
-            out.close();
-            if (! flushed)
+            // Each file is fsynced before the whole tree is renamed into the
+            // library, or a crash mid-publish leaves a verified-looking pack of
+            // zeros that nothing re-checks.
+            const bool synced = fsyncFileDescriptor (fd);
+            const bool closed = closeFd (fd);
+            if (! synced || ! closed)
             {
                 result.status = ExtractionStatus::storageFailed;
                 result.error = "a pack file could not be written";

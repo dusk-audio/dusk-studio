@@ -63,6 +63,8 @@ DownloadResult downloadArchive (Transport& transport,
                                 const DownloadCallbacks& callbacks) noexcept;
 
 // Streaming SHA-256 of a file, lowercase hex. Empty when the file cannot be
-// read.
-std::string hashFileSha256 (const std::filesystem::path& file) noexcept;
+// read, and empty when isCancelled (polled per block) asks it to stop, so an
+// app quit does not block a join on hashing a multi-gigabyte archive.
+std::string hashFileSha256 (const std::filesystem::path& file,
+                            const std::function<bool()>& isCancelled = {}) noexcept;
 } // namespace duskstudio::sfz

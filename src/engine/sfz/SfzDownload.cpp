@@ -1,10 +1,12 @@
 #include "SfzDownload.h"
+#include "SfzFsync.h"
 
 #include <sodium.h>
 
 #include <algorithm>
 #include <array>
 #include <fstream>
+#include <functional>
 #include <vector>
 
 namespace duskstudio::sfz
@@ -44,7 +46,8 @@ bool truncateToEmpty (const stdfs::path& file)
 }
 } // namespace
 
-std::string hashFileSha256 (const std::filesystem::path& file) noexcept
+std::string hashFileSha256 (const std::filesystem::path& file,
+                            const std::function<bool()>& isCancelled) noexcept
 {
     try
     {
@@ -62,6 +65,8 @@ std::string hashFileSha256 (const std::filesystem::path& file) noexcept
         std::vector<char> block (kHashBlockBytes);
         while (in)
         {
+            if (isCancelled && isCancelled())
+                return {};
             in.read (block.data(), static_cast<std::streamsize> (block.size()));
             const auto read = static_cast<std::size_t> (in.gcount());
             if (read == 0)
@@ -240,7 +245,9 @@ DownloadResult downloadArchive (Transport& transport,
                 continue;
             }
 
-            const auto digest = hashFileSha256 (request.partFile);
+            const auto digest = hashFileSha256 (request.partFile, callbacks.isCancelled);
+            if (cancelled())
+                return { DownloadStatus::cancelled, result.downloadedBytes, {} };
             if (digest.empty())
                 return { DownloadStatus::storageFailed, result.downloadedBytes,
                          "the downloaded archive could not be read back" };
@@ -251,11 +258,18 @@ DownloadResult downloadArchive (Transport& transport,
                          "the downloaded archive does not match the catalog digest" };
             }
 
+            // The verified bytes must reach durable storage before they take the
+            // archive's final name, or a crash leaves a named archive of zeros
+            // that nothing ever re-verifies.
+            if (! syncFileContents (request.partFile))
+                return { DownloadStatus::storageFailed, result.downloadedBytes,
+                         "the verified archive could not be flushed to disk" };
             stdfs::remove (request.destination, ec);
             stdfs::rename (request.partFile, request.destination, ec);
             if (ec)
                 return { DownloadStatus::storageFailed, result.downloadedBytes,
                          "the verified archive could not be published" };
+            syncParentDirectory (request.destination);
 
             result.status = DownloadStatus::completed;
             return result;

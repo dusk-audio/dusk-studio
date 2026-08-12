@@ -65,7 +65,9 @@ public:
 
     // Called on the worker thread once a job reaches a new state, with the
     // final record when it finishes. Marshal onto the message thread before
-    // touching anything the UI owns. Set before the first enqueue.
+    // touching anything the UI owns. Set before the first enqueue. The listener
+    // must not destroy this worker: the destructor joins the worker thread, so
+    // tearing it down from inside a listener self-joins and deadlocks.
     void setListener (std::function<void (const InstallJobProgress&)> listener);
 
     std::uint64_t enqueue (CatalogPack pack);

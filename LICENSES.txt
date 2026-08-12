@@ -509,16 +509,21 @@ libarchive (SFZ pack expansion — required on every platform)
              (LibArchive), config package first and the FindLibArchive module
              second; a missing implementation is a configure FATAL_ERROR. Both
              the app and the test binary link the dusk_archive interface target.
-  Notes    : Only the ZIP reader is enabled, and the extractor creates every
-             file and directory itself rather than using the library's disk
-             writer, so no archive-supplied permissions, ownership or link
-             targets are ever applied. Linux CI, sanitizer, release and
-             Raspberry Pi builds install libarchive-dev and link the distro
-             shared object (libarchive.so.13); macOS uses the keg-only Homebrew
-             build, whose prefix the workflows add to CMAKE_PREFIX_PATH.
-             Windows takes libarchive from the root vcpkg.json manifest with
-             default features off, so the bzip2, lzma, lz4, zstd, xar and
-             crypto readers are not compiled in. BSD-2-Clause requires the
+  Notes    : Only the ZIP reader format is enabled, and the extractor accepts
+             only deflate-compressed and stored (uncompressed) entries - it reads
+             the per-entry method and rejects the whole archive on anything else
+             (bzip2, lzma, zstd, ppmd, ...), so the set of decoders a given
+             libarchive build happens to include never changes which packs
+             install. The extractor also creates every file and directory itself
+             rather than using the library's disk writer, so no archive-supplied
+             permissions, ownership or link targets are ever applied. Linux CI,
+             sanitizer, release and Raspberry Pi builds install libarchive-dev
+             and link the distro shared object (libarchive.so.13); macOS uses the
+             keg-only Homebrew build, whose prefix the workflows add to
+             CMAKE_PREFIX_PATH. Windows takes libarchive from the root vcpkg.json
+             manifest with default features off, so the bzip2, lzma, lz4, zstd,
+             xar and crypto readers are not even compiled in there, while zlib
+             (deflate) stays a core dependency. BSD-2-Clause requires the
              copyright notice and disclaimer in binary distributions, which is
              what the text at the foot of this file provides; it is
              GPL-compatible and carries no relink obligation. The upstream

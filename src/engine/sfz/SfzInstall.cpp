@@ -1,13 +1,16 @@
 #include "SfzInstall.h"
 #include "SfzArchive.h"
 #include "SfzDownload.h"
+#include "SfzFsync.h"
 #include "SfzPathRules.h"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <fstream>
+#include <iterator>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace duskstudio::sfz
@@ -45,6 +48,34 @@ struct StagingGuard
     stdfs::path path;
 };
 
+// Removes the downloaded archive and its part file on any terminal outcome
+// except a download-phase cancellation, which sets keep so the partial transfer
+// survives for the resume. A failed or completed install must not leave the
+// bytes behind for the next run to trip over.
+struct DownloadReaper
+{
+    DownloadReaper (stdfs::path partToGuard, stdfs::path archiveToGuard)
+        : partFile (std::move (partToGuard)), archiveFile (std::move (archiveToGuard))
+    {
+    }
+
+    ~DownloadReaper()
+    {
+        if (keep)
+            return;
+        std::error_code ec;
+        stdfs::remove (partFile, ec);
+        stdfs::remove (archiveFile, ec);
+    }
+
+    DownloadReaper (const DownloadReaper&) = delete;
+    DownloadReaper& operator= (const DownloadReaper&) = delete;
+
+    stdfs::path partFile;
+    stdfs::path archiveFile;
+    bool keep { false };
+};
+
 std::string trimAscii (std::string value)
 {
     const auto isSpace = [] (char c)
@@ -60,21 +91,39 @@ std::string trimAscii (std::string value)
     return value.substr (begin, end - begin);
 }
 
+// A real SFZ parser separates tokens on any whitespace, so the byte before an
+// opcode is a boundary unless it could itself be part of an opcode name. An
+// allowlist of name bytes is the safe test: treat everything else - CR, form
+// feed, vertical tab, NUL, punctuation - as a boundary, so none of them can
+// smuggle "sample=" past the scan the way a space-or-tab-or-'>' denylist did.
+bool isOpcodeNameByte (unsigned char c) noexcept
+{
+    return paths::isAsciiAlphaNumeric (c) || c == '_';
+}
+
 bool startsWithAtBoundary (const std::string& line, std::size_t position,
                            const char* token, std::size_t tokenLength)
 {
     if (position + tokenLength > line.size())
         return false;
-    if (position > 0)
-    {
-        const auto before = line[position - 1];
-        if (before != ' ' && before != '\t' && before != '>')
-            return false;
-    }
+    if (position > 0
+        && isOpcodeNameByte (static_cast<unsigned char> (line[position - 1])))
+        return false;
     for (std::size_t i = 0; i < tokenLength; ++i)
         if (paths::toLowerAscii (line[position + i]) != token[i])
             return false;
     return true;
+}
+
+// An include may only pull in another instrument file, matching the rule the
+// catalog entrypoints obey. Anything else - a .txt full of opcodes, a sample -
+// is refused so a non-.sfz include can never carry an unscanned reference.
+bool hasSfzExtension (const std::string& reference)
+{
+    if (reference.size() < 4)
+        return false;
+    return paths::toLowerAscii (
+        std::string_view (reference).substr (reference.size() - 4)) == ".sfz";
 }
 
 // SFZ opcode values run to the end of the line unless another opcode or a
@@ -154,10 +203,13 @@ std::string scanSfzLine (const std::string& rawLine)
                                    : line.find ('"', open + 1);
             if (open == std::string::npos || close == std::string::npos)
                 return "an include directive without a quoted path";
-            auto problem = describeUnsafeReference (
-                trimAscii (line.substr (open + 1, close - open - 1)));
+            const auto target = trimAscii (line.substr (open + 1, close - open - 1));
+            auto problem = describeUnsafeReference (target);
             if (! problem.empty())
                 return problem;
+            if (! hasSfzExtension (target))
+                return "the reference '" + target
+                     + "' includes a file that is not an .sfz";
             i = close;
             continue;
         }
@@ -190,14 +242,30 @@ std::string findUnsafeSfzReference (const std::filesystem::path& sfzFile) noexce
         if (! in)
             return "the instrument file could not be read";
 
-        std::string line;
-        while (std::getline (in, line))
+        std::string contents ((std::istreambuf_iterator<char> (in)),
+                              std::istreambuf_iterator<char>());
+        if (in.bad())
+            return "the instrument file could not be read";
+
+        // Split on CR as well as LF: a bare CR is a line break to a real SFZ
+        // parser, so a CR-only file must not scan as one giant line whose first
+        // "//" comments out every reference after it. Normalising CR to LF folds
+        // CRLF into a blank line, which scans to nothing.
+        std::replace (contents.begin(), contents.end(), '\r', '\n');
+
+        std::size_t begin = 0;
+        while (begin <= contents.size())
         {
-            auto problem = scanSfzLine (line);
+            const auto end = contents.find ('\n', begin);
+            const auto length = (end == std::string::npos ? contents.size() : end) - begin;
+            auto problem = scanSfzLine (contents.substr (begin, length));
             if (! problem.empty())
                 return problem;
+            if (end == std::string::npos)
+                break;
+            begin = end + 1;
         }
-        return in.bad() ? "the instrument file could not be read" : std::string();
+        return {};
     }
     catch (...)
     {
@@ -234,8 +302,10 @@ InstallResult installPack (Transport& transport,
             return value.find ('/') == std::string::npos
                 && paths::relativePathRejectionReason (value) == nullptr;
         };
+        // archiveSha256 also becomes a filename below, so it has to survive the
+        // same check; the download layer re-validates it as a hex digest.
         if (! isSafeSegment (pack.id) || ! isSafeSegment (pack.releaseId)
-            || ! isSafeSegment (pack.expectedRoot))
+            || ! isSafeSegment (pack.expectedRoot) || ! isSafeSegment (pack.archiveSha256))
             return fail (InstallStatus::packRejected,
                          "the pack identity cannot be used as a folder name");
         if (paths::relativePathRejectionReason (pack.license.file) != nullptr)
@@ -282,7 +352,10 @@ InstallResult installPack (Transport& transport,
             return fail (InstallStatus::storageFailed,
                          "the staging directory could not be created");
 
-        const auto archiveName = pack.id + "-" + pack.releaseId + ".zip";
+        // Named by the archive digest, not by id-releaseId: two distinct packs
+        // must never collide on one part file, and the same bytes are the same
+        // download whatever advertises them.
+        const auto archiveName = pack.archiveSha256 + ".zip";
         DownloadRequest download;
         download.url = pack.downloadUrl;
         download.partFile = layout.downloadsDirectory() / (archiveName + ".part");
@@ -292,8 +365,14 @@ InstallResult installPack (Transport& transport,
         download.maximumAttempts = limits.maximumDownloadAttempts;
         download.limits = limits.transfer;
 
+        DownloadReaper downloadReaper (download.partFile, download.destination);
+
         DownloadCallbacks downloadCallbacks;
-        downloadCallbacks.isCancelled = callbacks.isCancelled;
+        // Only the download honours the activity gate; every other phase runs to
+        // completion once started.
+        downloadCallbacks.isCancelled = callbacks.isDownloadCancelled
+                                            ? callbacks.isDownloadCancelled
+                                            : callbacks.isCancelled;
         downloadCallbacks.onProgress = [&report] (std::uint64_t received, std::uint64_t total)
         {
             report (InstallPhase::downloading, received, total);
@@ -301,7 +380,12 @@ InstallResult installPack (Transport& transport,
 
         const auto downloaded = downloadArchive (transport, download, downloadCallbacks);
         if (downloaded.status == DownloadStatus::cancelled)
+        {
+            // Keep the partial transfer so the resume costs only the bytes still
+            // missing when the gate reopens.
+            downloadReaper.keep = true;
             return fail (InstallStatus::cancelled, {});
+        }
         if (! downloaded)
             return fail (downloaded.status == DownloadStatus::storageFailed
                              ? InstallStatus::storageFailed
@@ -331,14 +415,10 @@ InstallResult installPack (Transport& transport,
         if (expanded.status == ExtractionStatus::cancelled)
             return fail (InstallStatus::cancelled, {});
         if (! expanded)
-        {
-            if (expanded.status == ExtractionStatus::rejected)
-                stdfs::remove (download.destination, ec);
             return fail (expanded.status == ExtractionStatus::storageFailed
                              ? InstallStatus::storageFailed
                              : InstallStatus::archiveRejected,
                          expanded.error);
-        }
 
         report (InstallPhase::validating, 0, 1);
         const auto packRoot = expansion / pack.expectedRoot;
@@ -350,7 +430,7 @@ InstallResult installPack (Transport& transport,
         if (! stdfs::is_regular_file (licenseFile, ec))
             return fail (InstallStatus::validationFailed,
                          "the pack does not carry the license file the catalog declares");
-        if (hashFileSha256 (licenseFile) != pack.license.fileSha256)
+        if (hashFileSha256 (licenseFile, callbacks.isCancelled) != pack.license.fileSha256)
             return fail (InstallStatus::validationFailed,
                          "the license file does not match the catalog digest");
 
@@ -395,8 +475,10 @@ InstallResult installPack (Transport& transport,
         if (ec)
             return fail (InstallStatus::storageFailed,
                          "the pack could not be published into the library");
+        // The extractor fsynced every file; this makes the rename that named the
+        // tree durable too, so a crash cannot leave a half-visible pack.
+        syncParentDirectory (destination);
 
-        stdfs::remove (download.destination, ec);
         result.status = InstallStatus::installed;
         result.installedPath = destination;
         return result;

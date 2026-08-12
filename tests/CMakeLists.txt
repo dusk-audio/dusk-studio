@@ -26,6 +26,7 @@ add_executable(dusk-studio-tests
     # The transfer layer is exercised through an injected transport, so the
     # libcurl translation unit is deliberately absent from the test binary.
     sfz_archive.cpp
+    sfz_http_headers.cpp
     sfz_install.cpp
     sfz_install_worker.cpp
     sfz_transfer.cpp

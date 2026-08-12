@@ -224,6 +224,9 @@ TEST_CASE ("SFZ instrument references stay inside the pack", "[sfz][install]")
         CHECK (scan ("// sample=../../etc/passwd\n").empty());
         CHECK (scan ("#define $KIT Samples\n<region> sample=$KIT/kick.wav\n").empty());
         CHECK (scan ("#define $LOKEY 36\n").empty());
+        // A bare CR is a line break, so a comment ends at it and does not blank
+        // out the following logical line.
+        CHECK (scan ("<region> sample=Samples/kick.wav\r// sample=../../etc/passwd\n").empty());
     }
 
     SECTION ("escaping references are refused")
@@ -239,5 +242,63 @@ TEST_CASE ("SFZ instrument references stay inside the pack", "[sfz][install]")
         // traversal past the reference check.
         CHECK_FALSE (scan ("#define $KIT ../..\n<region> sample=$KIT/etc/passwd\n").empty());
         CHECK_FALSE (scan ("#define $KIT /etc\n").empty());
+    }
+
+    SECTION ("any whitespace or control byte before the opcode is a boundary")
+    {
+        // A real parser splits tokens on any whitespace, so CR / form feed /
+        // vertical tab / NUL before "sample=" cannot hide the reference the way
+        // a space-or-tab-or-'>' denylist let them.
+        CHECK_FALSE (scan ("<region> key=60\rsample=../../../../etc/passwd\n").empty());
+        CHECK_FALSE (scan ("<region> key=60\fsample=../../etc/passwd\n").empty());
+        CHECK_FALSE (scan ("<region> key=60\vsample=../../etc/passwd\n").empty());
+        CHECK_FALSE (scan (std::string ("<region> key=60") + '\0'
+                           + "sample=../../etc/passwd\n").empty());
+        // A CR-only file must be scanned line by line, so a reference after the
+        // first CR is not lost behind an earlier "//" comment.
+        CHECK_FALSE (scan ("// a comment\r<region> sample=../../etc/passwd\n").empty());
+    }
+
+    SECTION ("an include may only name an .sfz")
+    {
+        CHECK_FALSE (scan ("#include \"opcodes.txt\"\n").empty());
+        CHECK_FALSE (scan ("#include \"samples/kick.wav\"\n").empty());
+    }
+}
+
+TEST_CASE ("SFZ install refuses includes that escape the scan", "[sfz][install]")
+{
+    SECTION ("an include of a non-.sfz file is rejected")
+    {
+        PackFixture fixture;
+        fixture.entries[2] = sfzfixture::file ("pack/Kit.sfz", "#include \"opcodes.txt\"\n");
+        fixture.entries.push_back (
+            sfzfixture::file ("pack/opcodes.txt", "<region> sample=../../../etc/passwd\n"));
+        CHECK (fixture.install().status == InstallStatus::validationFailed);
+        CHECK (fixture.stagingIsClean());
+        CHECK_FALSE (std::filesystem::exists (fixture.layout.packsDirectory() / "pack"));
+    }
+
+    SECTION ("an included .sfz that reaches outside the pack is scanned and rejected")
+    {
+        PackFixture fixture;
+        fixture.entries[2] = sfzfixture::file ("pack/Kit.sfz", "#include \"parts.sfz\"\n");
+        fixture.entries.push_back (
+            sfzfixture::file ("pack/parts.sfz", "<region> sample=../../../etc/passwd\n"));
+        CHECK (fixture.install().status == InstallStatus::validationFailed);
+        CHECK (fixture.stagingIsClean());
+        CHECK_FALSE (std::filesystem::exists (fixture.layout.packsDirectory() / "pack"));
+    }
+
+    SECTION ("a nested include chain with traversal is rejected")
+    {
+        PackFixture fixture;
+        fixture.entries[2] = sfzfixture::file ("pack/Kit.sfz", "#include \"a.sfz\"\n");
+        fixture.entries.push_back (sfzfixture::file ("pack/a.sfz", "#include \"b.sfz\"\n"));
+        fixture.entries.push_back (
+            sfzfixture::file ("pack/b.sfz", "<region> sample=../../../etc/passwd\n"));
+        CHECK (fixture.install().status == InstallStatus::validationFailed);
+        CHECK (fixture.stagingIsClean());
+        CHECK_FALSE (std::filesystem::exists (fixture.layout.packsDirectory() / "pack"));
     }
 }

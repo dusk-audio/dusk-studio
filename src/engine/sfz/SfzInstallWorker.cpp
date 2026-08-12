@@ -1,6 +1,8 @@
 #include "SfzInstallWorker.h"
 
 #include <chrono>
+#include <filesystem>
+#include <system_error>
 #include <utility>
 
 #if defined(_WIN32)
@@ -46,6 +48,13 @@ InstallWorker::InstallWorker (Transport& transportToUse, StoreLayout layoutToUse
       limits (limitsToUse),
       gate (gateToUse)
 {
+    // Clear scratch a previous run left behind when it was killed mid-install;
+    // staging only ever holds an in-flight expansion, never anything worth
+    // keeping. Downloads are content-addressed and reap themselves per outcome,
+    // so they are left alone here to keep a partial transfer resumable.
+    std::error_code ec;
+    std::filesystem::remove_all (layout.stagingDirectory(), ec);
+
     worker = std::thread ([this] { run(); });
 }
 
@@ -58,6 +67,10 @@ InstallWorker::~InstallWorker()
         quit.store (true, std::memory_order_relaxed);
         for (const auto& job : pending)
             job->cancelled->store (true, std::memory_order_relaxed);
+        // Drop the listener under the lock, before the wake: publish() copies it
+        // under the same lock, so a worker mid-job gets an empty observer and
+        // cannot call back into an object whose destructor is already running.
+        listener = nullptr;
     }
     wake.notify_all();
     if (worker.joinable())
@@ -160,6 +173,23 @@ void InstallWorker::run()
         publish (job, InstallJobState::finished);
     };
 
+    // Publishes the paused state and blocks until the gate might have reopened or
+    // the worker is shutting down. Returns true when it should stop. Both the
+    // not-yet-started and the interrupted-download cases wait here rather than
+    // re-entering installPack, so a still-closed gate cannot spin the loop.
+    const auto pauseUntilActivity = [this, &publish] (const std::shared_ptr<Job>& job)
+    {
+        publish (job, InstallJobState::paused);
+        std::unique_lock<std::mutex> held (lock);
+        wake.wait_for (held, std::chrono::milliseconds (kGatePollMilliseconds),
+                       [this]
+                       {
+                           return quit.load (std::memory_order_relaxed) || activityChanged;
+                       });
+        activityChanged = false;
+        return quit.load (std::memory_order_relaxed);
+    };
+
     for (;;)
     {
         std::shared_ptr<Job> job;
@@ -182,16 +212,7 @@ void InstallWorker::run()
 
         if (gateIsClosed())
         {
-            publish (job, InstallJobState::paused);
-
-            std::unique_lock<std::mutex> held (lock);
-            wake.wait_for (held, std::chrono::milliseconds (kGatePollMilliseconds),
-                           [this]
-                           {
-                               return quit.load (std::memory_order_relaxed) || activityChanged;
-                           });
-            activityChanged = false;
-            if (quit.load (std::memory_order_relaxed))
+            if (pauseUntilActivity (job))
                 return;
             continue;
         }
@@ -199,7 +220,15 @@ void InstallWorker::run()
         publish (job, InstallJobState::running);
 
         InstallCallbacks callbacks;
+        // Real cancellation interrupts every phase; the gate only reaches the
+        // download, so a busy studio pauses a transfer but never restarts an
+        // expansion already in flight.
         callbacks.isCancelled = [this, job]
+        {
+            return quit.load (std::memory_order_relaxed)
+                || job->cancelled->load (std::memory_order_relaxed);
+        };
+        callbacks.isDownloadCancelled = [this, job]
         {
             return quit.load (std::memory_order_relaxed)
                 || job->cancelled->load (std::memory_order_relaxed)
@@ -220,8 +249,12 @@ void InstallWorker::run()
             && ! job->cancelled->load (std::memory_order_relaxed)
             && ! quit.load (std::memory_order_relaxed))
         {
-            // The gate closed mid-install. The job keeps its place in the queue
-            // and its partial download, so resuming costs only what is left.
+            // The gate interrupted the download - the only phase it can reach.
+            // The job keeps its place and its partial transfer, and waits on the
+            // paused path instead of looping straight back into installPack's
+            // prologue, which with the gate still closed would spin.
+            if (pauseUntilActivity (job))
+                return;
             continue;
         }
 

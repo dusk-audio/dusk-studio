@@ -72,7 +72,13 @@ struct InstallCallbacks
 {
     std::function<void (InstallPhase phase, std::uint64_t completed,
                         std::uint64_t total)> onProgress;
+    // Real cancellation - the user cancelled, or the app is quitting. Interrupts
+    // every phase.
     std::function<bool()> isCancelled;
+    // Polled only during the download. Reflects isCancelled and, on top of it,
+    // the activity gate, so a busy studio pauses a download without ever
+    // restarting an in-progress expansion. Falls back to isCancelled when unset.
+    std::function<bool()> isDownloadCancelled;
 };
 
 // Downloads, verifies, expands, validates and publishes one catalog pack. The

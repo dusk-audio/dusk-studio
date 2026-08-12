@@ -12,6 +12,8 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -172,12 +174,27 @@ struct TempDirectory
     TempDirectory()
     {
         static std::atomic<unsigned> counter { 0 };
-        path = stdfs::temp_directory_path()
-             / ("dusk-sfz-test-" + std::to_string (counter.fetch_add (1)) + "-"
-                + std::to_string (
-                    static_cast<unsigned long long> (
-                        std::chrono::steady_clock::now().time_since_epoch().count())));
-        stdfs::create_directories (path);
+        std::random_device entropy;
+        for (int attempt = 0; attempt < 128; ++attempt)
+        {
+            auto candidate = stdfs::temp_directory_path()
+                / ("dusk-sfz-test-" + std::to_string (counter.fetch_add (1)) + "-"
+                   + std::to_string (entropy()) + "-"
+                   + std::to_string (
+                       static_cast<unsigned long long> (
+                           std::chrono::steady_clock::now().time_since_epoch().count())));
+            std::error_code ec;
+            // create_directory returns false with no error when the name is
+            // already taken, so a true return is proof this process created the
+            // directory - no name-then-create window a parallel ctest process
+            // could race through.
+            if (stdfs::create_directory (candidate, ec) && ! ec)
+            {
+                path = std::move (candidate);
+                return;
+            }
+        }
+        throw std::runtime_error ("could not create a unique temp directory");
     }
 
     ~TempDirectory()

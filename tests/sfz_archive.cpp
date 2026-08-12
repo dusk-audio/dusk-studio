@@ -2,6 +2,7 @@
 
 #include "engine/sfz/SfzArchive.h"
 #include "engine/sfz/SfzArchivePolicy.h"
+#include "sfz_codec_fixtures.h"
 #include "sfz_pack_fixture.h"
 
 #include <string>
@@ -348,6 +349,54 @@ TEST_CASE ("SFZ extraction stops when cancelled", "[sfz][archive]")
 
     CHECK (extractZipArchive (request, callbacks).status == ExtractionStatus::cancelled);
     CHECK_FALSE (std::filesystem::exists (destination / "pack/two.wav"));
+}
+
+TEST_CASE ("SFZ extraction accepts only deflate and stored entries", "[sfz][archive]")
+{
+    // libarchive decodes whatever methods its build enabled, so the platforms
+    // would otherwise install different packs. These four archives carry the
+    // same "pack/kick.wav" entry, differing only in compression method.
+    const auto extractStatus = [] (const std::string& zip)
+    {
+        sfzfixture::TempDirectory temp;
+        const auto archive = temp.path / "pack.zip";
+        sfzfixture::writeBinaryFile (archive, zip);
+        const auto destination = temp.path / "expand";
+        std::filesystem::create_directories (destination);
+
+        ExtractionRequest request;
+        request.archiveFile = archive;
+        request.destinationDirectory = destination;
+        request.limits = defaultLimits();
+        return extractZipArchive (request, {}).status;
+    };
+
+    SECTION ("stored entries extract")
+    {
+        CHECK (extractStatus (sfzcodecfixture::kStoredPackZip) == ExtractionStatus::completed);
+    }
+
+    SECTION ("deflate entries extract")
+    {
+        CHECK (extractStatus (sfzcodecfixture::kDeflatePackZip) == ExtractionStatus::completed);
+    }
+
+    SECTION ("bzip2 entries are rejected")
+    {
+        CHECK (extractStatus (sfzcodecfixture::kBzip2PackZip) == ExtractionStatus::rejected);
+    }
+
+    SECTION ("lzma entries are rejected")
+    {
+        CHECK (extractStatus (sfzcodecfixture::kLzmaPackZip) == ExtractionStatus::rejected);
+    }
+
+    SECTION ("an encrypted entry is rejected before any decode is attempted")
+    {
+        // Stored, so it would pass the codec check; the encryption flag is what
+        // routes it to rejected rather than a late readFailed.
+        CHECK (extractStatus (sfzcodecfixture::kEncryptedPackZip) == ExtractionStatus::rejected);
+    }
 }
 
 TEST_CASE ("SFZ extraction requires an empty destination", "[sfz][archive]")
