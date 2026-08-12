@@ -2,6 +2,7 @@
 #include "EmbeddedModal.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace duskstudio
 {
@@ -16,14 +17,20 @@ EmbeddedModal& confirmModal()  { static EmbeddedModal m; return m; }
 EmbeddedModal& decisionModal() { static EmbeddedModal m; return m; }
 EmbeddedModal& textModal()     { static EmbeddedModal m; return m; }
 
+const juce::Colour kPanelBg   { 0xff1a1a22 };
+const juce::Colour kTitleText { 0xffffffff };
+const juce::Colour kBodyText  { 0xffd0d0d4 };
+
+juce::Font bodyFont() { return juce::Font (juce::FontOptions (12.5f)); }
+
 void styleAction (juce::TextButton& b, bool destructive = false)
 {
     b.setColour (juce::TextButton::buttonColourId,
                    destructive ? juce::Colour (0xff7a3030)
                                 : juce::Colour (0xff262630));
     b.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff5a4880));
-    b.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xffd0d0d4));
-    b.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
+    b.setColour (juce::TextButton::textColourOffId,  kBodyText);
+    b.setColour (juce::TextButton::textColourOnId,   kTitleText);
 }
 
 void paintTitleAndBody (juce::Graphics& g,
@@ -32,17 +39,17 @@ void paintTitleAndBody (juce::Graphics& g,
                           const juce::String& message,
                           int buttonStripH)
 {
-    g.fillAll (juce::Colour (0xff1a1a22));
+    g.fillAll (kPanelBg);
     auto r = bounds.reduced (20);
 
-    g.setColour (juce::Colours::white);
+    g.setColour (kTitleText);
     g.setFont (juce::Font (juce::FontOptions (15.0f, juce::Font::bold)));
     g.drawText (title, r.removeFromTop (24),
                  juce::Justification::topLeft, false);
     r.removeFromTop (10);
 
-    g.setColour (juce::Colour (0xffd0d0d4));
-    g.setFont (juce::Font (juce::FontOptions (12.5f)));
+    g.setColour (kBodyText);
+    g.setFont (bodyFont());
     auto body = r.withTrimmedBottom (buttonStripH + 8);
     g.drawFittedText (message.isEmpty() ? juce::String ("(no message)") : message,
                         body, juce::Justification::topLeft, 6);
@@ -64,7 +71,7 @@ public:
         okBtn.onClick = [this] { if (onOK) onOK(); };
         addAndMakeVisible (okBtn);
         setWantsKeyboardFocus (true);
-        setSize (460, 220);
+        setSize (kWidth, heightForMessage());
     }
     std::function<void()> onOK;
 
@@ -89,6 +96,28 @@ public:
     }
 
 private:
+    static constexpr int kWidth = 460;
+
+    // drawFittedText stops honouring its line limit as soon as the message
+    // carries a newline: it word-wraps at full size and runs past the body,
+    // through the button strip, to wherever the component clip cuts it. The
+    // plugin-scan report names two filesystem paths and overruns a fixed panel
+    // by several lines, so size the panel to the message instead.
+    int heightForMessage() const
+    {
+        juce::AttributedString body (messageStr);
+        body.setFont (bodyFont());
+        juce::TextLayout layout;
+        // Narrower than it is drawn, plus a line of slack - this pass and
+        // drawFittedText are separate text engines whose wrap points and line
+        // heights need not agree. Over-measuring only pads the panel.
+        layout.createLayout (body, (float) (kWidth - 48));
+        const int chrome = 20 + 24 + 10 + 8 + kButtonStripH + 20 + 16;
+        // Capped: EmbeddedModal clamps the panel to the host window, and a body
+        // taller than that would push the OK button off screen.
+        return std::clamp ((int) std::ceil (layout.getHeight()) + chrome, 220, 620);
+    }
+
     juce::String titleStr, messageStr;
     juce::TextButton okBtn { "OK" };
 };
@@ -237,17 +266,17 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        g.fillAll (juce::Colour (0xff1a1a22));
+        g.fillAll (kPanelBg);
         auto r = getLocalBounds().reduced (20);
 
-        g.setColour (juce::Colours::white);
+        g.setColour (kTitleText);
         g.setFont (juce::Font (juce::FontOptions (15.0f, juce::Font::bold)));
         g.drawText (titleStr, r.removeFromTop (24),
                      juce::Justification::topLeft, false);
         r.removeFromTop (10);
 
-        g.setColour (juce::Colour (0xffd0d0d4));
-        g.setFont (juce::Font (juce::FontOptions (12.5f)));
+        g.setColour (kBodyText);
+        g.setFont (bodyFont());
         g.drawText (promptStr, r.removeFromTop (18),
                      juce::Justification::topLeft, false);
     }

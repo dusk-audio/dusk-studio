@@ -90,7 +90,7 @@ src/ui/CursorOverlay.h	13
 src/ui/DimOverlay.cpp	4
 src/ui/DimOverlay.h	6
 src/ui/DpImportDialog.h	46
-src/ui/DuskAlerts.cpp	100
+src/ui/DuskAlerts.cpp	96
 src/ui/DuskAlerts.h	19
 src/ui/DuskAudioDeviceSelector.cpp	20
 src/ui/DuskAudioDeviceSelector.h	8
