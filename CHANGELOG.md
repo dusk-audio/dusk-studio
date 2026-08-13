@@ -84,12 +84,11 @@ fixes are ported here and are listed below rather than under a 0.12.7 heading.
   math utilities are now Dusk Studio's own code rather than the application
   framework's. Behaviour is unchanged by design; this is the groundwork for
   the interface rewrite.
-- **Groundwork for signed SFZ catalogs.** Dusk Studio can read a catalog of
-  downloadable SFZ instruments and verify its detached Ed25519 signature
-  against a built-in trusted key, rejecting anything malformed, oversized or
-  unsigned. Nothing in the interface offers a catalog yet; this release only
-  lays the trust layer. Source builds now need libsodium (`libsodium-dev` on
-  Debian and Ubuntu, the vcpkg manifest on Windows).
+- **Groundwork for signed SFZ catalogs.** Catalog parsing and detached Ed25519
+  signature verification now exist and are covered by tests. Verification uses
+  trusted keys supplied by its caller; the application does not consume the
+  catalog layer yet, and no key is built in. Source builds now need libsodium
+  (`libsodium-dev` on Debian and Ubuntu, the vcpkg manifest on Windows).
 - **License texts ship with the packages.** The tarball, the deb and rpm,
   the DMG and the MSI now carry `LICENSE` and `LICENSES.txt`, and the
   attribution list credits the notepad's UI stack (DPF, Dear ImGui, pugl and
@@ -173,8 +172,8 @@ fixes are ported here and are listed below rather than under a 0.12.7 heading.
   after a reload. Going fullscreen, or anything else that rebuilds the main
   window, used to leave a channel's native editor stranded; the editor is
   rebuilt into the new window instead, reopening straight away unless a modal
-  is covering it. An embedded VST3 view no longer comes back blank or
-  off-centre after a resize, and its child windows map correctly on Linux.
+  is covering it. On Linux, an embedded VST3 view no longer comes back blank or
+  off-centre after a resize, and its child windows map correctly.
 - **MIDI and soundfonts.** Hung notes no longer lose their tail, CC values no
   longer diverge from what was sent, and several SF2-to-SFZ translation faults
   are corrected. A dense burst that filled the input ring but overflowed a

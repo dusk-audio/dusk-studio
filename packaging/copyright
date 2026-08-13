@@ -11,8 +11,9 @@ License: GPL-3.0-or-later
  option) any later version.
  .
  The complete text of the GNU General Public License version 3 is
- installed alongside this file as
- /usr/share/doc/dusk-studio/LICENSE.
+ installed alongside this file as /usr/share/doc/dusk-studio/LICENSE.
+ Debian systems also provide the standard copy at
+ /usr/share/common-licenses/GPL-3.
 Comment:
  Third-party components linked into or shipped with this package, their
  copyright holders, licenses and full license texts are inventoried in
