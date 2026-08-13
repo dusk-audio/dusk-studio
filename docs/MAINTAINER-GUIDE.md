@@ -310,7 +310,7 @@ git -C ../DPF checkout f9fbc62af6fa7ce638a6f1e1482896c385a4955e
 git -C ../DPF submodule update --init     # dgl/src/pugl-upstream
 
 git clone https://github.com/dusk-audio/DPF-Widgets.git ../DPF-Widgets
-git -C ../DPF-Widgets checkout 730da6397904da66d99667c1cb30fc77fc3d794a
+git -C ../DPF-Widgets checkout 668de17f06abdeb98d5a4b62594bd634f8d1ac2e
 ```
 
 Clone then check out the SHA rather than cloning a branch: DPF's pin is the tip of `fix/wayland-review-findings`, never merged to that fork's `main` (DPF-Widgets' pin is its `main` tip today, but treat it the same). Neither branch may be deleted upstream, or both these commands and CI's fetch-by-SHA stop resolving.

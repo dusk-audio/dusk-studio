@@ -61,7 +61,7 @@ git clone https://github.com/dusk-audio/DPF.git
 git -C DPF checkout f9fbc62af6fa7ce638a6f1e1482896c385a4955e
 git -C DPF submodule update --init
 git clone https://github.com/dusk-audio/DPF-Widgets.git
-git -C DPF-Widgets checkout 730da6397904da66d99667c1cb30fc77fc3d794a
+git -C DPF-Widgets checkout 668de17f06abdeb98d5a4b62594bd634f8d1ac2e
 ```
 
 Clone then check out the SHA, rather than cloning a branch: DPF's pin is the tip of `fix/wayland-review-findings`, which was never merged to that fork's `main`. (DPF-Widgets' pin happens to be its `main` tip today, but pin it the same way.) Neither branch may be deleted upstream — a plain clone would stop reaching the commit, and CI fetches the same SHAs. The submodule step is not optional either: DGL pulls its windowing layer from `dgl/src/pugl-upstream`. The pins live in [.github/actions/clone-dpf-stack/action.yml](.github/actions/clone-dpf-stack/action.yml), the single source of truth for every workflow.
