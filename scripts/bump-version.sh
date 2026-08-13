@@ -11,9 +11,8 @@
 #          scripts/bump-version.sh 1.0.0 "Release notes line one"
 #
 # Refuses to overwrite if the requested version is already in VERSION.
-# Does NOT git-commit, tag, or push - run those by hand once the
-# diff looks right. Codesigning / notarization is handled per-OS by
-# scripts/package-*.{sh,ps1}.
+# Does NOT git-commit, tag, or push. Tag-triggered CI workflows build, package,
+# and publish the release after the reviewed metadata commit lands on main.
 
 set -euo pipefail
 
@@ -42,11 +41,12 @@ fi
 
 # A release must have its CHANGELOG section written before we stamp the
 # version, so the published notes never lag the tag.
+EXPECTED_CHANGELOG_HEADING="## [$NEW_VERSION] - Unreleased"
 if [[ ! -f CHANGELOG.md ]]; then
-    echo "error: CHANGELOG.md is missing - create it with a '## [$NEW_VERSION]' section first" >&2
+    echo "error: CHANGELOG.md is missing - add '$EXPECTED_CHANGELOG_HEADING' first" >&2
     exit 1
-elif ! grep -qF "## [$NEW_VERSION]" CHANGELOG.md; then
-    echo "error: CHANGELOG.md has no '## [$NEW_VERSION]' section - add it first" >&2
+elif ! grep -qFx "$EXPECTED_CHANGELOG_HEADING" CHANGELOG.md; then
+    echo "error: CHANGELOG.md has no exact '$EXPECTED_CHANGELOG_HEADING' heading" >&2
     exit 1
 fi
 
@@ -104,9 +104,48 @@ NOTES_START='<!-- summary-start -->'
 NOTES_END='<!-- summary-end -->'
 APPDATA="packaging/DuskStudio.appdata.xml"
 ANCHOR='<!-- scripts/bump-version.sh prepends new <release> entries here. -->'
-NOTES_READY=0
-APPDATA_READY=0
-trap 'rm -f ${SUMMARY_FILE:+"$SUMMARY_FILE"} ${RELEASE_FILE:+"$RELEASE_FILE"} "$NOTES_FILE.tmp" "$APPDATA.tmp"' EXIT
+VERSION_FILE="VERSION"
+VERSION_TMP="${VERSION_FILE}.tmp"
+NOTES_BACKUP=""
+APPDATA_BACKUP=""
+VERSION_BACKUP=""
+
+cleanup_temps() {
+    rm -f ${SUMMARY_FILE:+"$SUMMARY_FILE"} ${RELEASE_FILE:+"$RELEASE_FILE"} \
+        "$NOTES_FILE.tmp" "$APPDATA.tmp" "$VERSION_TMP" \
+        ${NOTES_BACKUP:+"$NOTES_BACKUP"} \
+        ${APPDATA_BACKUP:+"$APPDATA_BACKUP"} \
+        ${VERSION_BACKUP:+"$VERSION_BACKUP"}
+}
+
+restore_metadata() {
+    local rollback_failed=0
+    cp -p "$NOTES_BACKUP" "$NOTES_FILE" || rollback_failed=1
+    cp -p "$APPDATA_BACKUP" "$APPDATA" || rollback_failed=1
+    cp -p "$VERSION_BACKUP" "$VERSION_FILE" || rollback_failed=1
+    if [[ "$rollback_failed" == 1 ]]; then
+        echo "fatal: release metadata rollback was incomplete" >&2
+        echo "       recovery copies: $NOTES_BACKUP $APPDATA_BACKUP $VERSION_BACKUP" >&2
+        trap - EXIT
+        return 1
+    fi
+}
+
+handle_apply_signal() {
+    local signal="$1"
+    local exit_code=1
+    trap - HUP INT TERM
+    echo "error: release metadata application interrupted by $signal; restoring originals" >&2
+    restore_metadata || true
+    case "$signal" in
+        HUP)  exit_code=129 ;;
+        INT)  exit_code=130 ;;
+        TERM) exit_code=143 ;;
+    esac
+    exit "$exit_code"
+}
+
+trap cleanup_temps EXIT
 
 # Stage the summary slot of the canonical release body. Every tag-triggered
 # workflow publishes this file verbatim, so the summary is script-managed:
@@ -155,83 +194,142 @@ if [[ -f "$NOTES_FILE" ]]; then
             echo "       notes; $NOTES_FILE left unchanged." >&2
             exit 1
         fi
-        NOTES_READY=1
     else
-        echo "warning: $NOTES_FILE has no usable summary slot (needs one" >&2
-        echo "         $NOTES_START line before one $NOTES_END line);" >&2
-        echo "         skipping the summary splice" >&2
+        echo "error: $NOTES_FILE has no usable summary slot (needs one" >&2
+        echo "       $NOTES_START line before one $NOTES_END line)." >&2
+        exit 1
     fi
 else
-    echo "warning: $NOTES_FILE not found; skipping the summary splice" >&2
+    echo "error: $NOTES_FILE not found" >&2
+    exit 1
 fi
 
 # Stage the AppStream <release> entry. Insertion point: the line immediately
-# AFTER the opening <releases> tag, pinned by the anchor comment. Match the
-# whole comment, not the bare phrase - release notes that quote the phrase
-# would otherwise become anchors too and nest the next entry inside an old
-# <description>.
+# AFTER the opening <releases> tag, pinned by its direct-child anchor comment.
+# Match the complete comment line only at element depth zero inside <releases>;
+# a release description that quotes the anchor must not become an insertion
+# point.
 if [[ -f "$APPDATA" ]]; then
-    if grep -qF "$ANCHOR" "$APPDATA"; then
-        # Compose the new <release> block in a temp file (real newlines)
-        # and have awk splice it in after the anchor comment. awk's
-        # -v assignment rejects literal newlines on BSD awk (macOS), so
-        # the multi-line block has to come from a file via getline,
-        # not from a string variable.
-        RELEASE_FILE=$(mktemp -t duskstudio-release.XXXXXX)
-        XML_NOTES=$(printf '%s' "$NOTES" \
-            | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')
-        printf '    <release version="%s" date="%s">\n      <description>\n        <p>%s</p>\n      </description>\n    </release>\n' \
-            "$NEW_VERSION" "$TODAY" "$XML_NOTES" > "$RELEASE_FILE"
+    # Compose the new <release> block in a temp file (real newlines) and have
+    # awk splice it after the one valid anchor. awk reads the multi-line block
+    # from a file because BSD awk rejects literal newlines in -v assignments.
+    RELEASE_FILE=$(mktemp -t duskstudio-release.XXXXXX)
+    XML_NOTES=$(printf '%s' "$NOTES" \
+        | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')
+    printf '    <release version="%s" date="%s">\n      <description>\n        <p>%s</p>\n      </description>\n    </release>\n' \
+        "$NEW_VERSION" "$TODAY" "$XML_NOTES" > "$RELEASE_FILE"
 
-        awk -v release_file="$RELEASE_FILE" -v anchor="$ANCHOR" '
-            { print }
-            !spliced && index($0, anchor) {
-                while ((getline line < release_file) > 0) print line
-                close (release_file)
-                spliced = 1
+    AWK_STATUS=0
+    awk -v release_file="$RELEASE_FILE" -v anchor="$ANCHOR" '
+        function updateDepth(text, token) {
+            while (match(text, /<[^>]+>/)) {
+                token = substr(text, RSTART, RLENGTH)
+                text = substr(text, RSTART + RLENGTH)
+                if (token ~ /^<\//) depth--
+                else if (token !~ /^<[!?]/ && token !~ /\/>$/) depth++
             }
-        ' "$APPDATA" > "$APPDATA.tmp" \
-            || { echo "error: awk failed to update $APPDATA" >&2; exit 1; }
+        }
+        {
+            trimmed = $0
+            sub(/^[ \t]+/, "", trimmed)
+            sub(/[ \t]+$/, "", trimmed)
 
-        # XML-illegal control characters (vertical tab, form feed, ESC) pass
-        # straight through the entity escaping above, so validate the result
-        # before it lands in the tree.
-        if command -v xmllint >/dev/null 2>&1; then
-            if ! xmllint --noout "$APPDATA.tmp"; then
-                echo "error: the updated $APPDATA is not well-formed XML;" >&2
-                echo "       $APPDATA left unchanged. Check the release notes" >&2
-                echo "       for characters XML rejects." >&2
-                exit 1
-            fi
-        else
-            echo "warning: xmllint not found - skipping XML validation of $APPDATA" >&2
-        fi
+            if (!inReleases && trimmed ~ /^<releases([ \t][^>]*)?>$/) {
+                inReleases = 1
+                depth = 0
+                print
+                next
+            }
+            if (inReleases && depth == 0 && trimmed == "</releases>") {
+                inReleases = 0
+                print
+                next
+            }
 
-        # Sanity check on the staged file: the new version string MUST be
-        # present after the insert. Cheap, catches the case where awk exited
-        # 0 but the anchor comment was missing/different.
-        if ! grep -q "version=\"$NEW_VERSION\"" "$APPDATA.tmp"; then
-            echo "error: $APPDATA was not updated with version $NEW_VERSION " \
-                 "(the anchor comment may have moved)." >&2
+            print
+            if (inReleases && depth == 0 && trimmed == anchor) {
+                anchors++
+                if (anchors == 1) {
+                    while ((getline line < release_file) > 0) print line
+                    close (release_file)
+                }
+            }
+            if (inReleases) updateDepth(trimmed)
+        }
+        END { if (anchors != 1 || inReleases) exit 42 }
+    ' "$APPDATA" > "$APPDATA.tmp" || AWK_STATUS=$?
+    if [[ "$AWK_STATUS" == 42 ]]; then
+        echo "error: $APPDATA must contain exactly one direct release anchor" >&2
+        exit 1
+    elif [[ "$AWK_STATUS" != 0 ]]; then
+        echo "error: awk failed to update $APPDATA" >&2
+        exit 1
+    fi
+
+    # XML-illegal control characters (vertical tab, form feed, ESC) pass
+    # straight through the entity escaping above, so validate the result
+    # before it lands in the tree.
+    if command -v xmllint >/dev/null 2>&1; then
+        if ! xmllint --noout "$APPDATA.tmp"; then
+            echo "error: the updated $APPDATA is not well-formed XML;" >&2
+            echo "       $APPDATA left unchanged. Check the release notes" >&2
+            echo "       for characters XML rejects." >&2
             exit 1
         fi
-        APPDATA_READY=1
     else
-        echo "warning: $APPDATA missing the anchor comment; skipping <release> insert" >&2
+        echo "warning: xmllint not found - skipping XML validation of $APPDATA" >&2
     fi
+
+    # Sanity check on the staged file: the new version string MUST be present.
+    if ! grep -q "version=\"$NEW_VERSION\"" "$APPDATA.tmp"; then
+        echo "error: $APPDATA was not updated with version $NEW_VERSION" >&2
+        exit 1
+    fi
+else
+    echo "error: $APPDATA not found" >&2
+    exit 1
 fi
 
-# Everything above validated its staged copy; land the results together and
-# write VERSION last, so any abort leaves the tree untouched.
-if [[ "$NOTES_READY" == 1 ]]; then
-    mv "$NOTES_FILE.tmp" "$NOTES_FILE"
+# Everything above validated its staged copy or exited. Stage VERSION before
+# replacing any original, then keep rollback copies until all three moves
+# succeed. A failed application restores every metadata file to its exact
+# pre-application contents and mode.
+if ! cp -p "$VERSION_FILE" "$VERSION_TMP" \
+    || ! printf '%s\n' "$NEW_VERSION" > "$VERSION_TMP"; then
+    echo "error: could not stage $VERSION_TMP" >&2
+    exit 1
 fi
-if [[ "$APPDATA_READY" == 1 ]]; then
-    mv "$APPDATA.tmp" "$APPDATA"
+
+NOTES_BACKUP=$(mktemp "${NOTES_FILE}.rollback.XXXXXX")
+APPDATA_BACKUP=$(mktemp "${APPDATA}.rollback.XXXXXX")
+VERSION_BACKUP=$(mktemp "${VERSION_FILE}.rollback.XXXXXX")
+cp -p "$NOTES_FILE" "$NOTES_BACKUP"
+cp -p "$APPDATA" "$APPDATA_BACKUP"
+cp -p "$VERSION_FILE" "$VERSION_BACKUP"
+
+trap 'handle_apply_signal HUP' HUP
+trap 'handle_apply_signal INT' INT
+trap 'handle_apply_signal TERM' TERM
+APPLY_FAILED=0
+if ! mv "$NOTES_FILE.tmp" "$NOTES_FILE"; then
+    APPLY_FAILED=1
+elif ! mv "$APPDATA.tmp" "$APPDATA"; then
+    APPLY_FAILED=1
+elif ! mv "$VERSION_TMP" "$VERSION_FILE"; then
+    APPLY_FAILED=1
 fi
+
+if [[ "$APPLY_FAILED" == 1 ]]; then
+    trap - HUP INT TERM
+    echo "error: release metadata application failed; restoring originals" >&2
+    restore_metadata || true
+    exit 1
+fi
+
+trap - HUP INT TERM
+rm -f "$NOTES_BACKUP" "$APPDATA_BACKUP" "$VERSION_BACKUP" \
+    ${SUMMARY_FILE:+"$SUMMARY_FILE"} ${RELEASE_FILE:+"$RELEASE_FILE"} || true
 trap - EXIT
-rm -f ${SUMMARY_FILE:+"$SUMMARY_FILE"} ${RELEASE_FILE:+"$RELEASE_FILE"}
-echo "$NEW_VERSION" > VERSION
 
 echo
 echo "Bumped VERSION  -> $NEW_VERSION"
@@ -240,13 +338,15 @@ echo "Updated files:"
 git status --short VERSION "$APPDATA" "$NOTES_FILE" 2>/dev/null || true
 echo
 echo "Next steps:"
-echo "  1) Date the changelog: CHANGELOG.md \"## [$NEW_VERSION] - Unreleased\" -> \"- $TODAY\""
+echo "  1) Date the changelog: CHANGELOG.md \"## [$NEW_VERSION] - Unreleased\" -> \"## [$NEW_VERSION] - $TODAY\""
 echo "  2) Refresh patrons:   scripts/update-patrons.py   (commit in the plugins repo)"
 echo "  3) Review the diff:   git diff VERSION $APPDATA $NOTES_FILE CHANGELOG.md"
-echo "  4) Rebuild + smoke:   cmake --build build -j && DUSKSTUDIO_RUN_SELFTEST=1 build/.../DuskStudio"
+echo "  4) Rebuild + smoke:   cmake --build build -j && scripts/run-selftest-xvfb.sh"
 echo "  5) Commit metadata:   git commit -am \"Release v$NEW_VERSION\" && RELEASE_COMMIT=\$(git rev-parse HEAD)"
-echo "  6) Land on main:      land the recorded commit on origin/main; git fetch origin && git merge-base --is-ancestor \"\${RELEASE_COMMIT:?run step 5 first}\" origin/main"
-echo "  7) Tag landed commit: git tag -a v$NEW_VERSION -m \"Dusk Studio $NEW_VERSION\" \"\${RELEASE_COMMIT:?run step 5 first}\""
-echo "  8) Push tag:          git push origin v$NEW_VERSION"
+echo "  6) Fetch main:        git fetch origin main || { echo \"STOP: git fetch origin main failed\" >&2; false; }"
+echo "     Prove landing:     git merge-base --is-ancestor \"\${RELEASE_COMMIT:?record RELEASE_COMMIT after committing metadata}\" origin/main && echo \"landed on origin/main\" || { echo \"STOP: release commit is not on origin/main\" >&2; false; }"
+echo "     PR squash:         re-record RELEASE_COMMIT as the landed commit, then rerun step 6 (see MAINTAINER-GUIDE Part 10)"
+echo "  7) Tag landed commit: git tag -a v$NEW_VERSION -m \"Dusk Studio $NEW_VERSION\" \"\${RELEASE_COMMIT:?record RELEASE_COMMIT after committing metadata}\""
+echo "  8) Push tag:          git push origin \"refs/tags/v$NEW_VERSION\""
 echo "  9) Wait for CI assets: Linux release (tarball), macOS release (unsigned DMG), Windows build, Manual PDF (all 10 assets)"
 echo " 10) Verify assets:     scripts/verify-release-assets.sh v$NEW_VERSION"

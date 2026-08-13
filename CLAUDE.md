@@ -214,7 +214,7 @@ Operating within a constrained context window. Adhere to these regardless of any
 3. **Senior dev override.** Ignore the "simplest approach first / don't refactor beyond the ask" defaults when the architecture is genuinely flawed, state is duplicated, or patterns diverge. Ask: "What would a senior dev reject in code review?" Fix the structural issues, not just the surface symptom. (This is in tension with "no abstractions on spec" — the difference is: existing duplication that's already a problem is fair game; speculative future flexibility is not.)
 4. **Forced verification.** Don't claim a task is complete until you have run:
    - `cmake --build build -j$(nproc)` — must succeed with zero new warnings
-   - For audio-path changes: launch the binary with `DUSKSTUDIO_RUN_SELFTEST=1` if practical, or at minimum confirm the binary launches without immediate crash
+   - For audio-path changes: run `scripts/run-selftest-xvfb.sh` if practical, or at minimum confirm the binary launches without immediate crash
    If verification isn't possible in the current environment, say so explicitly. "Builds locally" ≠ "works."
 
 ### Context management

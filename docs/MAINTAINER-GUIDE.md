@@ -56,10 +56,11 @@ cmake --build build-tests --target dusk-studio-tests -j$(nproc)
 ctest --test-dir build-tests --output-on-failure
 ```
 
-And the integration self-test (spins up the full audio engine and DSP, no GUI):
+And the integration self-test, isolated from the live Wayland session on a
+private Xvfb display:
 
 ```bash
-DUSKSTUDIO_RUN_SELFTEST=1 ./build/DuskStudio_artefacts/Release/DuskStudio
+scripts/run-selftest-xvfb.sh
 ```
 
 Read three small test files end to end — they are the cheapest way to see how a subsystem is *meant* to be called: [tests/session_round_trip.cpp](../tests/session_round_trip.cpp), [tests/transport_state_machine.cpp](../tests/transport_state_machine.cpp), [tests/smoke_brickwall_limiter.cpp](../tests/smoke_brickwall_limiter.cpp).
@@ -421,12 +422,154 @@ General approach: reproduce in a test if at all possible (the suite runs in mill
 
 ---
 
+## Part 10 - Release
+
+### Release order
+
+The order is load-bearing. Replace `X.Y.Z` with the release version throughout.
+Set `RELEASE_VERSION=X.Y.Z` in the shell used for the guarded commands.
+
+The reserved address in
+[`CPACK_PACKAGE_CONTACT`](../CMakeLists.txt) feeds only DEB/RPM package
+metadata. Those formats are not among the ten assets published by the current
+tag workflows, so the placeholder does not block releases made by those
+workflows. Supply the real address before either format is published.
+
+1. Finish the `## [X.Y.Z] - Unreleased` section in
+   [CHANGELOG.md](../CHANGELOG.md), then run
+   [`scripts/bump-version.sh`](../scripts/bump-version.sh)
+   `"$RELEASE_VERSION" "<one-line notes>"`. The script requires the exact
+   unreleased changelog heading, writes `VERSION`, prepends the AppStream
+   release entry, and updates the summary in
+   [packaging/RELEASE-NOTES.md](../packaging/RELEASE-NOTES.md). It aborts if
+   either metadata file or insertion marker is unavailable. Require the diff
+   to contain all three expected metadata changes before proceeding.
+2. Replace `Unreleased` in that changelog heading with the release date.
+   Review and verify all release metadata.
+3. Rebuild the app and tests, run the full test suite and JUCE gate, then run
+   the integration self-test on a private Xvfb display. Never launch the
+   release binary on the live Wayland session.
+
+   ```bash
+   (
+     set -e
+     cmake --build build -j$(nproc)
+     cmake --build build-tests --target dusk-studio-tests -j$(nproc)
+     ctest --test-dir build-tests --output-on-failure
+     bash tools/juce-gate.sh
+     scripts/run-selftest-xvfb.sh
+   )
+   ```
+
+   Stop if any command or self-test check fails. A known-slow cold plugin scan
+   can use `DUSKSTUDIO_SELFTEST_TIMEOUT=180s`; do not remove the timeout.
+4. Commit the reviewed metadata and verified changelog. Record the exact
+   commit with `RELEASE_COMMIT=$(git rev-parse HEAD)`. The guarded checks in
+   the next step confirm that commit contains `RELEASE_VERSION`.
+5. Land that exact commit on `origin/main` before creating a tag, by direct
+   push or PR as repository rules require. Fetch the remote state and require
+   the recorded commit to be contained in it:
+
+   ```bash
+   (
+     set -e
+     git fetch origin main
+     git merge-base --is-ancestor \
+       "${RELEASE_COMMIT:?record RELEASE_COMMIT after committing metadata}" origin/main \
+       && echo "landed on origin/main" \
+       || { echo "STOP: release commit is not on origin/main" >&2; false; }
+     test "$(git show \
+       "${RELEASE_COMMIT:?record RELEASE_COMMIT after committing metadata}:VERSION" \
+       | tr -d '[:space:]')" = \
+       "${RELEASE_VERSION:?set RELEASE_VERSION first}"
+     git show \
+       "${RELEASE_COMMIT:?record RELEASE_COMMIT after committing metadata}:CHANGELOG.md" \
+       | grep -E '^## \[[0-9]+\.[0-9]+\.[0-9]+\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$' \
+       | grep -F "## [${RELEASE_VERSION:?set RELEASE_VERSION first}] - "
+   )
+   ```
+
+   Do not continue if any guard fails. If the landing method rewrote the
+   commit, identify the exact landed commit, re-record `RELEASE_COMMIT`, and
+   repeat the metadata and containment checks.
+6. Tag the exact guarded commit and push only that tag:
+
+   ```bash
+   git tag -a "v${RELEASE_VERSION:?set RELEASE_VERSION first}" \
+     -m "Dusk Studio ${RELEASE_VERSION}" \
+     "${RELEASE_COMMIT:?record RELEASE_COMMIT after committing metadata}"
+   git push origin "refs/tags/v${RELEASE_VERSION:?set RELEASE_VERSION first}"
+   ```
+
+7. A `v*` tag starts all four workflows below. Each rejects a tag that does
+   not equal `v$(cat VERSION)`. Watch them by their exact display names:
+
+   - [`Linux release (tarball)`](../.github/workflows/linux-release.yml)
+   - [`macOS release (unsigned DMG)`](../.github/workflows/macos-release.yml)
+   - [`Windows build`](../.github/workflows/windows-build.yml)
+   - [`Manual PDF`](../.github/workflows/manual-pdf.yml)
+
+All four workflows publish to the private
+`dusk-audio/dusk-studio-releases` repository. Do not announce the release when
+the workflows merely turn green; complete the acceptance checks below first.
+
+### Tag assets and acceptance
+
+A complete `vX.Y.Z` release has exactly these ten assets:
+
+- `dusk-studio-X.Y.Z-Linux-x86_64.tar.xz`
+- `SHA256SUMS.linux-x86_64`
+- `dusk-studio-X.Y.Z-Linux-aarch64.tar.xz`
+- `SHA256SUMS.linux-aarch64`
+- `dusk-studio-X.Y.Z-macOS-arm64.dmg`
+- `SHA256SUMS.macos`
+- `dusk-studio-X.Y.Z-Windows-x64.msi`
+- `SHA256SUMS.windows`
+- `MANUAL.pdf`
+- `SHA256SUMS.manual`
+
+Before announcement, run
+[`scripts/verify-release-assets.sh`](../scripts/verify-release-assets.sh)
+`vX.Y.Z`. It fails if an expected asset class is missing or duplicated, an
+unexpected asset exists, or the release body is empty. Its macOS and Windows
+checks currently accept wildcard architecture suffixes, so it does not
+prove those two exact filenames or payload architectures. Download the assets
+into a clean directory and perform the manual checks that the script cannot
+cover:
+
+- Confirm the release body contains the version's summary, not only the static
+  Downloads section.
+- Confirm all ten filenames exactly match the list above. Inspect the
+  executable inside the DMG and MSI and confirm arm64 and x64 respectively;
+  do not infer architecture from the filename.
+- Run `sha256sum --check` separately for each of the five checksum files and
+  require every corresponding payload to pass.
+- Open `MANUAL.pdf`; confirm the figures render and the sharp and flat
+  accidentals display correctly.
+- Extract both Linux tarballs and smoke each binary only on its matching
+  architecture, under a private Xvfb display with `WAYLAND_DISPLAY` unset.
+  Never let a release binary touch the live Wayland session. DPF/DGL windows
+  that require GLX belong in the hardware pass.
+- Inspect the tarball, DMG, and MSI payloads. Each must be Dusk-only, with no
+  `JUCE-*` paths, and each must contain the complete
+  [LICENSES.txt](../LICENSES.txt), not merely a file by that name.
+- In every bundled `LICENSES.txt`, confirm the full-text section is present and
+  the JUCE-bundled entries cover HarfBuzz, SheenBidi, libjpeg, libpng, zlib,
+  FLAC, and Ogg/Vorbis. If a future SheenBidi source adds a NOTICE file, ship
+  that file alongside its license text.
+
+The release is accepted only when the asset/body check, checksum verification,
+PDF inspection, private-Xvfb smoke tests, payload inspection, and license checks
+all pass.
+
+---
+
 ## Quick reference card
 
-```
+```bash
 BUILD APP        cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j$(nproc)
 RUN              ./build/DuskStudio_artefacts/Release/DuskStudio
-SELF-TEST        DUSKSTUDIO_RUN_SELFTEST=1 ./build/.../DuskStudio
+SELF-TEST        scripts/run-selftest-xvfb.sh
 BUILD TESTS      cmake -S . -B build-tests -DDUSKSTUDIO_BUILD_TESTS=ON && cmake --build build-tests --target dusk-studio-tests -j$(nproc)
 RUN TESTS        ctest --test-dir build-tests --output-on-failure
 ASAN / TSAN      -DDUSKSTUDIO_ENABLE_ASAN=ON  /  -DDUSKSTUDIO_ENABLE_TSAN=ON
