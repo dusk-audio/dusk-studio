@@ -185,7 +185,8 @@ CI runs this nightly via [.github/workflows/linux-sanitizer.yml](.github/workflo
 Drives the synthetic DSP pipeline without opening the GUI:
 
 ```bash
-DUSKSTUDIO_RUN_SELFTEST=1 ./build-linux/DuskStudio_artefacts/Release/DuskStudio
+scripts/run-selftest-xvfb.sh \
+  ./build-linux/DuskStudio_artefacts/Release/DuskStudio
 ```
 
 Useful for confirming the audio engine wires up correctly without needing to drive the UI.

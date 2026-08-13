@@ -8,7 +8,7 @@
 #   scripts/dev.sh            # app + tests + ctest (default)
 #   scripts/dev.sh app        # configure + build app only
 #   scripts/dev.sh tests      # configure + build tests + ctest
-#   scripts/dev.sh selftest   # build app, then DUSKSTUDIO_RUN_SELFTEST=1
+#   scripts/dev.sh selftest   # build app, then self-test under private Xvfb
 #
 # Pass extra cmake args via CMAKE_ARGS env (e.g. -DJUCE_PATH=...).
 
@@ -56,7 +56,7 @@ case "${TARGET}" in
   tests)    build_tests ;;
   selftest)
     build_app
-    DUSKSTUDIO_RUN_SELFTEST=1 ./build/DuskStudio_artefacts/Release/DuskStudio
+    scripts/run-selftest-xvfb.sh
     ;;
   all)
     build_app

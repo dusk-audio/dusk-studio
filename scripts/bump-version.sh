@@ -11,9 +11,8 @@
 #          scripts/bump-version.sh 1.0.0 "Release notes line one"
 #
 # Refuses to overwrite if the requested version is already in VERSION.
-# Does NOT git-commit, tag, or push - run those by hand once the
-# diff looks right. Codesigning / notarization is handled per-OS by
-# scripts/package-*.{sh,ps1}.
+# Does NOT git-commit, tag, or push. Tag-triggered CI workflows build, package,
+# and publish the release after the reviewed metadata commit lands on main.
 
 set -euo pipefail
 
@@ -42,11 +41,12 @@ fi
 
 # A release must have its CHANGELOG section written before we stamp the
 # version, so the published notes never lag the tag.
+EXPECTED_CHANGELOG_HEADING="## [$NEW_VERSION] - Unreleased"
 if [[ ! -f CHANGELOG.md ]]; then
-    echo "error: CHANGELOG.md is missing - create it with a '## [$NEW_VERSION]' section first" >&2
+    echo "error: CHANGELOG.md is missing - add '$EXPECTED_CHANGELOG_HEADING' first" >&2
     exit 1
-elif ! grep -qF "## [$NEW_VERSION]" CHANGELOG.md; then
-    echo "error: CHANGELOG.md has no '## [$NEW_VERSION]' section - add it first" >&2
+elif ! grep -qFx "$EXPECTED_CHANGELOG_HEADING" CHANGELOG.md; then
+    echo "error: CHANGELOG.md has no exact '$EXPECTED_CHANGELOG_HEADING' heading" >&2
     exit 1
 fi
 
@@ -104,8 +104,6 @@ NOTES_START='<!-- summary-start -->'
 NOTES_END='<!-- summary-end -->'
 APPDATA="packaging/DuskStudio.appdata.xml"
 ANCHOR='<!-- scripts/bump-version.sh prepends new <release> entries here. -->'
-NOTES_READY=0
-APPDATA_READY=0
 trap 'rm -f ${SUMMARY_FILE:+"$SUMMARY_FILE"} ${RELEASE_FILE:+"$RELEASE_FILE"} "$NOTES_FILE.tmp" "$APPDATA.tmp"' EXIT
 
 # Stage the summary slot of the canonical release body. Every tag-triggered
@@ -155,14 +153,14 @@ if [[ -f "$NOTES_FILE" ]]; then
             echo "       notes; $NOTES_FILE left unchanged." >&2
             exit 1
         fi
-        NOTES_READY=1
     else
-        echo "warning: $NOTES_FILE has no usable summary slot (needs one" >&2
-        echo "         $NOTES_START line before one $NOTES_END line);" >&2
-        echo "         skipping the summary splice" >&2
+        echo "error: $NOTES_FILE has no usable summary slot (needs one" >&2
+        echo "       $NOTES_START line before one $NOTES_END line)." >&2
+        exit 1
     fi
 else
-    echo "warning: $NOTES_FILE not found; skipping the summary splice" >&2
+    echo "error: $NOTES_FILE not found" >&2
+    exit 1
 fi
 
 # Stage the AppStream <release> entry. Insertion point: the line immediately
@@ -215,20 +213,19 @@ if [[ -f "$APPDATA" ]]; then
                  "(the anchor comment may have moved)." >&2
             exit 1
         fi
-        APPDATA_READY=1
     else
-        echo "warning: $APPDATA missing the anchor comment; skipping <release> insert" >&2
+        echo "error: $APPDATA is missing the release anchor comment" >&2
+        exit 1
     fi
+else
+    echo "error: $APPDATA not found" >&2
+    exit 1
 fi
 
-# Everything above validated its staged copy; land the results together and
-# write VERSION last, so any abort leaves the tree untouched.
-if [[ "$NOTES_READY" == 1 ]]; then
-    mv "$NOTES_FILE.tmp" "$NOTES_FILE"
-fi
-if [[ "$APPDATA_READY" == 1 ]]; then
-    mv "$APPDATA.tmp" "$APPDATA"
-fi
+# Everything above validated its staged copy or exited. Land the results
+# together and write VERSION last, so any abort leaves the tree untouched.
+mv "$NOTES_FILE.tmp" "$NOTES_FILE"
+mv "$APPDATA.tmp" "$APPDATA"
 trap - EXIT
 rm -f ${SUMMARY_FILE:+"$SUMMARY_FILE"} ${RELEASE_FILE:+"$RELEASE_FILE"}
 echo "$NEW_VERSION" > VERSION
@@ -243,10 +240,12 @@ echo "Next steps:"
 echo "  1) Date the changelog: CHANGELOG.md \"## [$NEW_VERSION] - Unreleased\" -> \"- $TODAY\""
 echo "  2) Refresh patrons:   scripts/update-patrons.py   (commit in the plugins repo)"
 echo "  3) Review the diff:   git diff VERSION $APPDATA $NOTES_FILE CHANGELOG.md"
-echo "  4) Rebuild + smoke:   cmake --build build -j && DUSKSTUDIO_RUN_SELFTEST=1 build/.../DuskStudio"
+echo "  4) Rebuild + smoke:   cmake --build build -j && scripts/run-selftest-xvfb.sh"
 echo "  5) Commit metadata:   git commit -am \"Release v$NEW_VERSION\" && RELEASE_COMMIT=\$(git rev-parse HEAD)"
-echo "  6) Land on main:      land the recorded commit on origin/main; git fetch origin && git merge-base --is-ancestor \"\${RELEASE_COMMIT:?run step 5 first}\" origin/main"
-echo "  7) Tag landed commit: git tag -a v$NEW_VERSION -m \"Dusk Studio $NEW_VERSION\" \"\${RELEASE_COMMIT:?run step 5 first}\""
-echo "  8) Push tag:          git push origin v$NEW_VERSION"
+echo "  6) Fetch main:        git fetch origin main || { echo \"STOP: git fetch origin main failed\" >&2; false; }"
+echo "     Prove landing:     git merge-base --is-ancestor \"\${RELEASE_COMMIT:?record RELEASE_COMMIT after committing metadata}\" origin/main && echo \"landed on origin/main\" || { echo \"STOP: release commit is not on origin/main\" >&2; false; }"
+echo "     PR squash:         re-record RELEASE_COMMIT as the landed commit, then rerun step 6 (see MAINTAINER-GUIDE Part 10)"
+echo "  7) Tag landed commit: git tag -a v$NEW_VERSION -m \"Dusk Studio $NEW_VERSION\" \"\${RELEASE_COMMIT:?record RELEASE_COMMIT after committing metadata}\""
+echo "  8) Push tag:          git push origin \"refs/tags/v$NEW_VERSION\""
 echo "  9) Wait for CI assets: Linux release (tarball), macOS release (unsigned DMG), Windows build, Manual PDF (all 10 assets)"
 echo " 10) Verify assets:     scripts/verify-release-assets.sh v$NEW_VERSION"

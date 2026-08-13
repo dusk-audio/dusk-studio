@@ -9,8 +9,52 @@ fi
 
 SOURCE_ROOT="$1"
 PYTHON="$2"
+bash -n "$SOURCE_ROOT/scripts/run-selftest-xvfb.sh"
 SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/duskstudio-release-mechanics.XXXXXX")
 trap 'rm -rf "$SCRATCH"' EXIT
+
+# The canonical helper must remain usable by dev.sh on macOS, where neither
+# Xvfb nor GNU timeout ships. Simulate Darwin and require the direct path to
+# carry the self-test flag to the selected binary.
+DARWIN_BIN="$SCRATCH/darwin-bin"
+mkdir -p "$DARWIN_BIN"
+printf '%s\n' '#!/usr/bin/env bash' 'printf Darwin' > "$DARWIN_BIN/uname"
+# Expand the fixture variable when the generated stub runs, not while writing it.
+# shellcheck disable=SC2016
+printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    '[[ "${DUSKSTUDIO_RUN_SELFTEST:-}" == 1 ]]' \
+    > "$DARWIN_BIN/selftest"
+chmod +x "$DARWIN_BIN/uname" "$DARWIN_BIN/selftest"
+PATH="$DARWIN_BIN:$PATH" \
+    "$SOURCE_ROOT/scripts/run-selftest-xvfb.sh" "$DARWIN_BIN/selftest"
+
+# A changelog mention is not a release heading. Refuse it before any metadata
+# can be touched, and make the diagnostic identify the exact required form.
+FIXTURE_BAD_HEADING="$SCRATCH/repo-bad-heading"
+mkdir -p "$FIXTURE_BAD_HEADING/scripts"
+cp "$SOURCE_ROOT/scripts/bump-version.sh" \
+    "$FIXTURE_BAD_HEADING/scripts/bump-version.sh"
+printf '0.0.0\n' > "$FIXTURE_BAD_HEADING/VERSION"
+printf 'Notes mention ## [9.9.9] but this is not a heading.\n' \
+    > "$FIXTURE_BAD_HEADING/CHANGELOG.md"
+BAD_HEADING_ERROR="$SCRATCH/bad-heading-error.txt"
+if (cd "$FIXTURE_BAD_HEADING" \
+    && bash scripts/bump-version.sh 9.9.9 test \
+        >/dev/null 2>"$BAD_HEADING_ERROR"); then
+    echo "FAIL: a changelog mention must not satisfy the release heading gate" >&2
+    exit 1
+fi
+if ! grep -qF "no exact '## [9.9.9] - Unreleased' heading" \
+    "$BAD_HEADING_ERROR"; then
+    echo "FAIL: malformed changelog heading reported the wrong failure" >&2
+    cat "$BAD_HEADING_ERROR" >&2
+    exit 1
+fi
+if [[ "$(cat "$FIXTURE_BAD_HEADING/VERSION")" != "0.0.0" ]]; then
+    echo "FAIL: a bad changelog heading must leave VERSION untouched" >&2
+    exit 1
+fi
 
 FIXTURE="$SCRATCH/repo"
 mkdir -p "$FIXTURE/scripts" "$FIXTURE/packaging"
@@ -96,6 +140,40 @@ if [[ "$(cat "$FIXTURE/VERSION")" != "9.9.9" ]]; then
     exit 1
 fi
 
+# Missing release metadata must abort atomically instead of returning success
+# after writing only VERSION.
+FIXTURE_MISSING="$SCRATCH/repo-missing-appdata"
+mkdir -p "$FIXTURE_MISSING/scripts" "$FIXTURE_MISSING/packaging"
+cp "$SOURCE_ROOT/scripts/bump-version.sh" "$FIXTURE_MISSING/scripts/bump-version.sh"
+printf '0.0.0\n' > "$FIXTURE_MISSING/VERSION"
+printf '## [9.9.9] - Unreleased\n' > "$FIXTURE_MISSING/CHANGELOG.md"
+printf '%s\n' \
+    '<!-- summary-start -->' \
+    'old summary' \
+    '<!-- summary-end -->' \
+    > "$FIXTURE_MISSING/packaging/RELEASE-NOTES.md"
+MISSING_APPDATA_ERROR="$SCRATCH/missing-appdata-error.txt"
+if (cd "$FIXTURE_MISSING" \
+    && bash scripts/bump-version.sh 9.9.9 test \
+        >/dev/null 2>"$MISSING_APPDATA_ERROR"); then
+    echo "FAIL: missing AppStream metadata must abort the bump" >&2
+    exit 1
+fi
+if ! grep -qF 'error: packaging/DuskStudio.appdata.xml not found' \
+    "$MISSING_APPDATA_ERROR"; then
+    echo "FAIL: missing AppStream metadata reported the wrong failure" >&2
+    cat "$MISSING_APPDATA_ERROR" >&2
+    exit 1
+fi
+if [[ "$(cat "$FIXTURE_MISSING/VERSION")" != "0.0.0" ]]; then
+    echo "FAIL: a missing AppStream file must leave VERSION untouched" >&2
+    exit 1
+fi
+if ! grep -q 'old summary' "$FIXTURE_MISSING/packaging/RELEASE-NOTES.md"; then
+    echo "FAIL: an aborted bump must leave release notes untouched" >&2
+    exit 1
+fi
+
 "$PYTHON" - "$FIXTURE/packaging/DuskStudio.appdata.xml" "$NOTES" "$SOURCE_ROOT" \
     "$FIXTURE/packaging/RELEASE-NOTES.md" "$BUMP_OUTPUT" <<'PY'
 from pathlib import Path
@@ -144,6 +222,46 @@ recheck_marker = 'if gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null 2
 upload_line = 'gh release upload "$TAG" --repo "$RELEASES_REPO" --clobber "${ASSETS[@]}"'
 notes_marker = "--notes-file packaging/RELEASE-NOTES.md"
 
+# The release-day self-test must be isolated from the maintainer's live
+# Wayland session and must fail closed if its private X server cannot start.
+selftest_helper = (source_root / "scripts" / "run-selftest-xvfb.sh").read_text(
+    encoding="utf-8"
+)
+for required in (
+    "set -euo pipefail",
+    '"$(uname -s)" == "Darwin"',
+    "exec env DUSKSTUDIO_RUN_SELFTEST=1",
+    "-displayfd",
+    "-nolisten tcp",
+    "trap cleanup EXIT",
+    "trap 'exit 130' INT",
+    "trap 'exit 143' TERM",
+    "env -u WAYLAND_DISPLAY",
+    'DISPLAY="$DISPLAY_NUM"',
+    'DUSKSTUDIO_SELFTEST_TIMEOUT:-90s',
+    'DUSKSTUDIO_SELFTEST_KILL_AFTER:-10s',
+    'DUSKSTUDIO_XVFB_START_ATTEMPTS:-100',
+    'timeout --kill-after="$SELFTEST_KILL_AFTER" "$SELFTEST_TIMEOUT"',
+):
+    assert required in selftest_helper, f"self-test helper lost safety guard: {required}"
+assert "xvfb-run" not in selftest_helper, (
+    "self-test helper must work on the maintainer host, which has Xvfb but no xvfb-run"
+)
+safe_selftest_callers = {
+    "maintainer guide": source_root / "docs" / "MAINTAINER-GUIDE.md",
+    "Linux build guide": source_root / "BUILDING-LINUX.md",
+    "developer helper": source_root / "scripts" / "dev.sh",
+    "agent instructions": source_root / "CLAUDE.md",
+}
+for label, path in safe_selftest_callers.items():
+    caller = path.read_text(encoding="utf-8")
+    assert "scripts/run-selftest-xvfb.sh" in caller, (
+        f"{label} must route self-tests through the private-Xvfb helper"
+    )
+    assert "DUSKSTUDIO_RUN_SELFTEST=1 ./build" not in caller, (
+        f"{label} must not launch a self-test on the live display"
+    )
+
 # All four workflows race to create the same release, so the body must come
 # from one file in the tagged tree rather than from whichever job wins.
 notes_path = source_root / "packaging" / "RELEASE-NOTES.md"
@@ -166,8 +284,9 @@ assert "### Downloads" in after, "the Downloads section must survive the bump"
 # load-bearing order and CI-only packaging path.
 bump_output = bump_output_path.read_text(encoding="utf-8")
 checklist = (
+    "4) Rebuild + smoke:",
     "5) Commit metadata:",
-    "6) Land on main:",
+    "6) Fetch main:",
     "7) Tag landed commit:",
     "8) Push tag:",
     "9) Wait for CI assets:",
@@ -179,20 +298,34 @@ positions = [bump_output.index(item) for item in checklist]
 assert positions == sorted(positions), "release checklist steps are out of order"
 lines = {line.strip().split(")", 1)[0]: line for line in bump_output.splitlines()}
 assert 'RELEASE_COMMIT=$(git rev-parse HEAD)' in lines["5"]
-assert "land the recorded commit on origin/main" in lines["6"]
-assert "git fetch origin" in lines["6"]
-guarded_commit = '"${RELEASE_COMMIT:?run step 5 first}"'
-assert f"git merge-base --is-ancestor {guarded_commit} origin/main" in lines["6"]
+assert "scripts/run-selftest-xvfb.sh" in lines["4"]
+assert "DUSKSTUDIO_RUN_SELFTEST" not in bump_output
+assert "git fetch origin main" in lines["6"]
+assert 'echo "STOP: git fetch origin main failed" >&2; false' in lines["6"]
+guarded_commit = '"${RELEASE_COMMIT:?record RELEASE_COMMIT after committing metadata}"'
+landing_line = next(
+    line for line in bump_output.splitlines() if "Prove landing:" in line
+)
+assert f"git merge-base --is-ancestor {guarded_commit} origin/main" in landing_line
+assert '&& echo "landed on origin/main"' in landing_line
+assert 'echo "STOP: release commit is not on origin/main" >&2; false' in landing_line
+assert "PR squash:" in bump_output
+assert "re-record RELEASE_COMMIT as the landed commit" in bump_output
 assert f'git tag -a v9.9.9 -m "Dusk Studio 9.9.9" {guarded_commit}' in lines["7"]
-assert "git push origin v9.9.9" in lines["8"]
+assert 'git push origin "refs/tags/v9.9.9"' in lines["8"]
 for display_name in workflows.values():
     assert display_name in lines["9"]
 verifier_text = (source_root / "scripts" / "verify-release-assets.sh").read_text(
     encoding="utf-8"
 )
 expected_assets = re.findall(r'^\s+"[^"\n]+\|[^"\n]+"$', verifier_text, re.MULTILINE)
-assert len(expected_assets) == 10, "release verifier must define ten assets"
-assert f"all {len(expected_assets)} assets" in lines["9"]
+expected_asset_count = 10
+assert len(expected_assets) == expected_asset_count, (
+    "release verifier asset count changed; update the release contract explicitly"
+)
+assert f"all {expected_asset_count} assets" in lines["9"], (
+    "bump-version.sh prints a stale release asset count"
+)
 assert "scripts/verify-release-assets.sh v9.9.9" in lines["10"]
 for local_packager in (
     "package-tarball.sh",

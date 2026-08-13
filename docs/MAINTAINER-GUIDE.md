@@ -56,10 +56,11 @@ cmake --build build-tests --target dusk-studio-tests -j$(nproc)
 ctest --test-dir build-tests --output-on-failure
 ```
 
-And the integration self-test (spins up the full audio engine and DSP, no GUI):
+And the integration self-test, isolated from the live Wayland session on a
+private Xvfb display:
 
 ```bash
-DUSKSTUDIO_RUN_SELFTEST=1 ./build/DuskStudio_artefacts/Release/DuskStudio
+scripts/run-selftest-xvfb.sh
 ```
 
 Read three small test files end to end — they are the cheapest way to see how a subsystem is *meant* to be called: [tests/session_round_trip.cpp](../tests/session_round_trip.cpp), [tests/transport_state_machine.cpp](../tests/transport_state_machine.cpp), [tests/smoke_brickwall_limiter.cpp](../tests/smoke_brickwall_limiter.cpp).
@@ -426,22 +427,23 @@ General approach: reproduce in a test if at all possible (the suite runs in mill
 ### Release order
 
 The order is load-bearing. Replace `X.Y.Z` with the release version throughout.
+Set `RELEASE_VERSION=X.Y.Z` in the shell used for the guarded commands.
 
 The reserved address in
-[`CPACK_PACKAGE_CONTACT`](../CMakeLists.txt#L1552) feeds only DEB/RPM package
+[`CPACK_PACKAGE_CONTACT`](../CMakeLists.txt) feeds only DEB/RPM package
 metadata. Those formats are not among the ten assets published by the current
-tag workflows, so the placeholder does not block this release. Marc must supply
-the real address before either format is published; do not invent one.
+tag workflows, so the placeholder does not block releases made by those
+workflows. Supply the real address before either format is published.
 
 1. Finish the `## [X.Y.Z] - Unreleased` section in
    [CHANGELOG.md](../CHANGELOG.md), then run
    [`scripts/bump-version.sh`](../scripts/bump-version.sh)
-   `X.Y.Z "<one-line notes>"`. On a healthy tree the script validates the
-   changelog heading, writes `VERSION`, prepends the AppStream release entry,
-   and updates the summary in
-   [packaging/RELEASE-NOTES.md](../packaging/RELEASE-NOTES.md). It can warn and
-   skip the latter two updates, so treat any warning as a failure. Require the
-   diff to contain all three expected metadata changes before proceeding.
+   `"$RELEASE_VERSION" "<one-line notes>"`. The script requires the exact
+   unreleased changelog heading, writes `VERSION`, prepends the AppStream
+   release entry, and updates the summary in
+   [packaging/RELEASE-NOTES.md](../packaging/RELEASE-NOTES.md). It aborts if
+   either metadata file or insertion marker is unavailable. Require the diff
+   to contain all three expected metadata changes before proceeding.
 2. Replace `Unreleased` in that changelog heading with the release date.
    Review and verify all release metadata.
 3. Rebuild the app and tests, run the full test suite and JUCE gate, then run
@@ -449,45 +451,54 @@ the real address before either format is published; do not invent one.
    release binary on the live Wayland session.
 
    ```bash
-   cmake --build build -j$(nproc)
-   cmake --build build-tests --target dusk-studio-tests -j$(nproc)
-   ctest --test-dir build-tests --output-on-failure
-   bash tools/juce-gate.sh
-   set -e
-   Xvfb :99 -screen 0 1920x1200x24 -nolisten tcp >/dev/null 2>&1 &
-   XVFB_PID=$!
-   trap 'kill "${XVFB_PID}" >/dev/null 2>&1 || true' EXIT
-   sleep 1
-   kill -0 "${XVFB_PID}"
-   env -u WAYLAND_DISPLAY DISPLAY=:99 DUSKSTUDIO_RUN_SELFTEST=1 \
-     timeout 90 ./build/DuskStudio_artefacts/Release/DuskStudio
-   kill "${XVFB_PID}"
-   wait "${XVFB_PID}" || true
-   trap - EXIT
+   (
+     set -e
+     cmake --build build -j$(nproc)
+     cmake --build build-tests --target dusk-studio-tests -j$(nproc)
+     ctest --test-dir build-tests --output-on-failure
+     bash tools/juce-gate.sh
+     scripts/run-selftest-xvfb.sh
+   )
    ```
 
-   Stop if any command or self-test check fails.
+   Stop if any command or self-test check fails. A known-slow cold plugin scan
+   can use `DUSKSTUDIO_SELFTEST_TIMEOUT=180s`; do not remove the timeout.
 4. Commit the reviewed metadata and verified changelog. Record the exact
-   commit with `RELEASE_COMMIT=$(git rev-parse HEAD)` and confirm
-   `git show "${RELEASE_COMMIT:?run step 4 first}:VERSION"` prints `X.Y.Z`.
+   commit with `RELEASE_COMMIT=$(git rev-parse HEAD)`. The guarded checks in
+   the next step confirm that commit contains `RELEASE_VERSION`.
 5. Land that exact commit on `origin/main` before creating a tag, by direct
    push or PR as repository rules require. Fetch the remote state and require
    the recorded commit to be contained in it:
 
    ```bash
-   git fetch origin main
-   git merge-base --is-ancestor "${RELEASE_COMMIT:?run step 4 first}" origin/main
-   test "$(git show "${RELEASE_COMMIT:?run step 4 first}:VERSION" | tr -d '[:space:]')" = "X.Y.Z"
+   (
+     set -e
+     git fetch origin main
+     git merge-base --is-ancestor \
+       "${RELEASE_COMMIT:?record RELEASE_COMMIT after committing metadata}" origin/main \
+       && echo "landed on origin/main" \
+       || { echo "STOP: release commit is not on origin/main" >&2; false; }
+     test "$(git show \
+       "${RELEASE_COMMIT:?record RELEASE_COMMIT after committing metadata}:VERSION" \
+       | tr -d '[:space:]')" = \
+       "${RELEASE_VERSION:?set RELEASE_VERSION first}"
+     git show \
+       "${RELEASE_COMMIT:?record RELEASE_COMMIT after committing metadata}:CHANGELOG.md" \
+       | grep -E '^## \[[0-9]+\.[0-9]+\.[0-9]+\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$' \
+       | grep -F "## [${RELEASE_VERSION:?set RELEASE_VERSION first}] - "
+   )
    ```
 
-   Do not continue if either guard fails. If the landing method rewrote the
+   Do not continue if any guard fails. If the landing method rewrote the
    commit, identify the exact landed commit, re-record `RELEASE_COMMIT`, and
    repeat the metadata and containment checks.
 6. Tag the exact guarded commit and push only that tag:
 
    ```bash
-   git tag -a "vX.Y.Z" -m "Dusk Studio X.Y.Z" "${RELEASE_COMMIT:?run step 4 first}"
-   git push origin "refs/tags/vX.Y.Z"
+   git tag -a "v${RELEASE_VERSION:?set RELEASE_VERSION first}" \
+     -m "Dusk Studio ${RELEASE_VERSION}" \
+     "${RELEASE_COMMIT:?record RELEASE_COMMIT after committing metadata}"
+   git push origin "refs/tags/v${RELEASE_VERSION:?set RELEASE_VERSION first}"
    ```
 
 7. A `v*` tag starts all four workflows below. Each rejects a tag that does
@@ -558,7 +569,7 @@ all pass.
 ```
 BUILD APP        cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j$(nproc)
 RUN              ./build/DuskStudio_artefacts/Release/DuskStudio
-SELF-TEST        DUSKSTUDIO_RUN_SELFTEST=1 ./build/.../DuskStudio
+SELF-TEST        scripts/run-selftest-xvfb.sh
 BUILD TESTS      cmake -S . -B build-tests -DDUSKSTUDIO_BUILD_TESTS=ON && cmake --build build-tests --target dusk-studio-tests -j$(nproc)
 RUN TESTS        ctest --test-dir build-tests --output-on-failure
 ASAN / TSAN      -DDUSKSTUDIO_ENABLE_ASAN=ON  /  -DDUSKSTUDIO_ENABLE_TSAN=ON
