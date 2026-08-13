@@ -566,7 +566,7 @@ all pass.
 
 ## Quick reference card
 
-```
+```bash
 BUILD APP        cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j$(nproc)
 RUN              ./build/DuskStudio_artefacts/Release/DuskStudio
 SELF-TEST        scripts/run-selftest-xvfb.sh

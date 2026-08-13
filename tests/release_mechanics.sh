@@ -75,6 +75,8 @@ printf '%s\n' \
     '  </releases>' \
     '</component>' \
     > "$FIXTURE/packaging/DuskStudio.appdata.xml"
+# Keep the fixture's Markdown backticks literal.
+# shellcheck disable=SC2016
 printf '%s\n' \
     '<!-- summary-start -->' \
     'stale summary that must not survive the bump' \
@@ -84,6 +86,188 @@ printf '%s\n' \
     '' \
     '- **Linux** (`.tar.xz`): unsigned.' \
     > "$FIXTURE/packaging/RELEASE-NOTES.md"
+
+# An anchor quoted inside a nested release description is a decoy, not the
+# direct child insertion point. A file containing only that decoy must abort
+# before any metadata lands.
+FIXTURE_NESTED="$SCRATCH/repo-nested-anchor"
+mkdir -p "$FIXTURE_NESTED/scripts" "$FIXTURE_NESTED/packaging"
+cp "$SOURCE_ROOT/scripts/bump-version.sh" "$FIXTURE_NESTED/scripts/bump-version.sh"
+printf '0.0.0\n' > "$FIXTURE_NESTED/VERSION"
+printf '## [9.9.9] - Unreleased\n' > "$FIXTURE_NESTED/CHANGELOG.md"
+printf '%s\n' \
+    '<?xml version="1.0" encoding="UTF-8"?>' \
+    '<component>' \
+    '  <releases>' \
+    '    <release version="0.0.0" date="2026-01-01">' \
+    '      <description>' \
+    '        <!-- scripts/bump-version.sh prepends new <release> entries here. -->' \
+    '      </description>' \
+    '    </release>' \
+    '  </releases>' \
+    '</component>' \
+    > "$FIXTURE_NESTED/packaging/DuskStudio.appdata.xml"
+printf '%s\n' \
+    '<!-- summary-start -->' \
+    'nested-anchor summary' \
+    '<!-- summary-end -->' \
+    > "$FIXTURE_NESTED/packaging/RELEASE-NOTES.md"
+NESTED_ERROR="$SCRATCH/nested-anchor-error.txt"
+if (cd "$FIXTURE_NESTED" \
+    && bash scripts/bump-version.sh 9.9.9 test \
+        >/dev/null 2>"$NESTED_ERROR"); then
+    echo "FAIL: a nested AppStream anchor must not accept the release" >&2
+    exit 1
+fi
+if ! grep -qF 'must contain exactly one direct release anchor' "$NESTED_ERROR"; then
+    echo "FAIL: nested AppStream anchor reported the wrong failure" >&2
+    cat "$NESTED_ERROR" >&2
+    exit 1
+fi
+if [[ "$(cat "$FIXTURE_NESTED/VERSION")" != "0.0.0" ]] \
+    || ! grep -qF 'nested-anchor summary' \
+        "$FIXTURE_NESTED/packaging/RELEASE-NOTES.md" \
+    || grep -q 'version="9.9.9"' \
+        "$FIXTURE_NESTED/packaging/DuskStudio.appdata.xml"; then
+    echo "FAIL: rejected nested anchor must leave all metadata untouched" >&2
+    exit 1
+fi
+
+# Fail the third application move, after notes and AppStream have landed, and
+# require the rollback to restore all three original files byte-for-byte.
+FIXTURE_ROLLBACK="$SCRATCH/repo-rollback"
+cp -R "$FIXTURE" "$FIXTURE_ROLLBACK"
+chmod 640 "$FIXTURE_ROLLBACK/VERSION"
+chmod 600 "$FIXTURE_ROLLBACK/packaging/RELEASE-NOTES.md"
+chmod 620 "$FIXTURE_ROLLBACK/packaging/DuskStudio.appdata.xml"
+ROLLBACK_EXPECTED="$SCRATCH/rollback-expected"
+mkdir -p "$ROLLBACK_EXPECTED"
+cp "$FIXTURE_ROLLBACK/VERSION" "$ROLLBACK_EXPECTED/VERSION"
+cp "$FIXTURE_ROLLBACK/packaging/RELEASE-NOTES.md" \
+    "$ROLLBACK_EXPECTED/RELEASE-NOTES.md"
+cp "$FIXTURE_ROLLBACK/packaging/DuskStudio.appdata.xml" \
+    "$ROLLBACK_EXPECTED/DuskStudio.appdata.xml"
+MV_SHIM="$SCRATCH/mv-shim"
+mkdir -p "$MV_SHIM"
+# Expand these variables when the generated mv shim runs.
+# shellcheck disable=SC2016
+printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'count=0' \
+    '[[ -f "$DUSK_MV_COUNT" ]] && read -r count < "$DUSK_MV_COUNT"' \
+    'count=$((count + 1))' \
+    'printf "%s\n" "$count" > "$DUSK_MV_COUNT"' \
+    'if [[ "$count" == "$DUSK_MV_FAIL_AT" ]]; then exit 73; fi' \
+    'if [[ "$count" == "${DUSK_MV_SIGNAL_AT:-}" ]]; then' \
+    '    "$DUSK_REAL_MV" "$@"' \
+    '    kill -TERM "$PPID"' \
+    '    exit 0' \
+    'fi' \
+    'exec "$DUSK_REAL_MV" "$@"' \
+    > "$MV_SHIM/mv"
+chmod +x "$MV_SHIM/mv"
+ROLLBACK_ERROR="$SCRATCH/rollback-error.txt"
+REAL_MV="$(command -v mv)"
+if (cd "$FIXTURE_ROLLBACK" \
+    && PATH="$MV_SHIM:$PATH" \
+       DUSK_REAL_MV="$REAL_MV" \
+       DUSK_MV_COUNT="$SCRATCH/mv-count" \
+       DUSK_MV_FAIL_AT=3 \
+       bash scripts/bump-version.sh 9.9.9 rollback \
+        >/dev/null 2>"$ROLLBACK_ERROR"); then
+    echo "FAIL: injected VERSION application failure must abort" >&2
+    exit 1
+fi
+if ! grep -qF 'release metadata application failed; restoring originals' \
+    "$ROLLBACK_ERROR"; then
+    echo "FAIL: injected application failure did not enter rollback" >&2
+    cat "$ROLLBACK_ERROR" >&2
+    exit 1
+fi
+if [[ "$(cat "$SCRATCH/mv-count")" != 3 ]]; then
+    echo "FAIL: rollback fixture did not fail on the third metadata move" >&2
+    exit 1
+fi
+cmp "$ROLLBACK_EXPECTED/VERSION" "$FIXTURE_ROLLBACK/VERSION"
+cmp "$ROLLBACK_EXPECTED/RELEASE-NOTES.md" \
+    "$FIXTURE_ROLLBACK/packaging/RELEASE-NOTES.md"
+cmp "$ROLLBACK_EXPECTED/DuskStudio.appdata.xml" \
+    "$FIXTURE_ROLLBACK/packaging/DuskStudio.appdata.xml"
+"$PYTHON" - "$FIXTURE_ROLLBACK" <<'PY'
+import os
+import stat
+import sys
+
+root = sys.argv[1]
+expected = {
+    "VERSION": 0o640,
+    "packaging/RELEASE-NOTES.md": 0o600,
+    "packaging/DuskStudio.appdata.xml": 0o620,
+}
+for relative, mode in expected.items():
+    actual = stat.S_IMODE(os.stat(os.path.join(root, relative)).st_mode)
+    if actual != mode:
+        raise SystemExit(f"FAIL: rollback changed {relative} mode to {actual:o}")
+PY
+if find "$FIXTURE_ROLLBACK" -type f \
+    \( -name '*.tmp' -o -name '*.rollback.*' \) -print -quit | grep -q .; then
+    echo "FAIL: successful rollback left transaction files behind" >&2
+    exit 1
+fi
+
+# An interrupt after a metadata move must use the same rollback path instead
+# of letting the EXIT cleanup discard the recovery copies.
+FIXTURE_SIGNAL="$SCRATCH/repo-signal"
+cp -R "$FIXTURE" "$FIXTURE_SIGNAL"
+SIGNAL_ERROR="$SCRATCH/signal-error.txt"
+if (cd "$FIXTURE_SIGNAL" \
+    && PATH="$MV_SHIM:$PATH" \
+       DUSK_REAL_MV="$REAL_MV" \
+       DUSK_MV_COUNT="$SCRATCH/mv-count-signal" \
+       DUSK_MV_FAIL_AT=0 \
+       DUSK_MV_SIGNAL_AT=2 \
+       bash scripts/bump-version.sh 9.9.9 interrupted \
+        >/dev/null 2>"$SIGNAL_ERROR"); then
+    echo "FAIL: an interrupt during metadata application must abort" >&2
+    exit 1
+fi
+if ! grep -qF 'application interrupted by TERM; restoring originals' \
+    "$SIGNAL_ERROR"; then
+    echo "FAIL: interrupted application did not enter rollback" >&2
+    cat "$SIGNAL_ERROR" >&2
+    exit 1
+fi
+if [[ "$(cat "$SCRATCH/mv-count-signal")" != 2 ]]; then
+    echo "FAIL: signal fixture did not interrupt after the second move" >&2
+    exit 1
+fi
+cmp "$FIXTURE/VERSION" "$FIXTURE_SIGNAL/VERSION"
+cmp "$FIXTURE/packaging/RELEASE-NOTES.md" \
+    "$FIXTURE_SIGNAL/packaging/RELEASE-NOTES.md"
+cmp "$FIXTURE/packaging/DuskStudio.appdata.xml" \
+    "$FIXTURE_SIGNAL/packaging/DuskStudio.appdata.xml"
+if find "$FIXTURE_SIGNAL" -type f \
+    \( -name '*.tmp' -o -name '*.rollback.*' \) -print -quit | grep -q .; then
+    echo "FAIL: interrupted rollback left transaction files behind" >&2
+    exit 1
+fi
+
+# VERSION is staged before either metadata move. If that staging write fails,
+# all originals must remain untouched and no rollback should be necessary.
+FIXTURE_VERSION_STAGE="$SCRATCH/repo-version-stage"
+cp -R "$FIXTURE" "$FIXTURE_VERSION_STAGE"
+mkdir "$FIXTURE_VERSION_STAGE/VERSION.tmp"
+if (cd "$FIXTURE_VERSION_STAGE" \
+    && bash scripts/bump-version.sh 9.9.9 stage-failure \
+        >/dev/null 2>&1); then
+    echo "FAIL: an unwritable VERSION.tmp must abort" >&2
+    exit 1
+fi
+cmp "$FIXTURE/VERSION" "$FIXTURE_VERSION_STAGE/VERSION"
+cmp "$FIXTURE/packaging/RELEASE-NOTES.md" \
+    "$FIXTURE_VERSION_STAGE/packaging/RELEASE-NOTES.md"
+cmp "$FIXTURE/packaging/DuskStudio.appdata.xml" \
+    "$FIXTURE_VERSION_STAGE/packaging/DuskStudio.appdata.xml"
 
 NOTES='Gain & grit <hot> > cool ]]> "quoted" café — release'
 BUMP_OUTPUT="$SCRATCH/bump-output.txt"
@@ -206,6 +390,8 @@ releases = root.findall("./releases/release")
 assert len(releases) == 2, "expected the new entry plus the fixture's existing one"
 release = releases[0]
 assert release.get("version") == "9.9.9", "new entry must prepend, not append"
+release_date = release.get("date")
+assert release_date and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", release_date)
 assert releases[1].get("version") == "0.0.0"
 paragraph = release.find("./description/p")
 assert paragraph is not None
@@ -297,6 +483,10 @@ for item in checklist:
 positions = [bump_output.index(item) for item in checklist]
 assert positions == sorted(positions), "release checklist steps are out of order"
 lines = {line.strip().split(")", 1)[0]: line for line in bump_output.splitlines()}
+assert (
+    f'CHANGELOG.md "## [9.9.9] - Unreleased" -> '
+    f'"## [9.9.9] - {release_date}"'
+) in lines["1"]
 assert 'RELEASE_COMMIT=$(git rev-parse HEAD)' in lines["5"]
 assert "scripts/run-selftest-xvfb.sh" in lines["4"]
 assert "DUSKSTUDIO_RUN_SELFTEST" not in bump_output
