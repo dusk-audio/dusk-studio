@@ -151,13 +151,16 @@ void DuskMultisampleEditor::timerCallback()
 
     const auto err  = processor.getLastLoadError();
     const auto path = processor.getLoadedFilePath();
+    const auto fileName = juce::File (path).getFileName();
     juce::String display;
     if (err.isNotEmpty())
-        display = "(" + err + ")";
+        display = processor.hasLoadedRuntime() && fileName.isNotEmpty()
+                    ? fileName + " (" + err + ")"
+                    : "(" + err + ")";
     else if (path.isEmpty())
         display = "(no file)";
     else
-        display = juce::File (path).getFileName();
+        display = fileName;
     if (filePathLabel.getText() != display)
         filePathLabel.setText (display, juce::dontSendNotification);
 
@@ -175,10 +178,13 @@ void DuskMultisampleEditor::timerCallback()
     // same path, which a path-only check would miss.
     const auto modTime = path.isNotEmpty() ? juce::File (path).getLastModificationTime()
                                             : juce::Time();
-    if (path != currentSkinPath || modTime != currentSkinModTime)
+    const bool runtimeLoaded = processor.hasLoadedRuntime();
+    if (path != currentSkinPath || modTime != currentSkinModTime
+        || runtimeLoaded != currentSkinRuntimeLoaded)
     {
-        currentSkinPath    = path;
-        currentSkinModTime = modTime;
+        currentSkinPath          = path;
+        currentSkinModTime       = modTime;
+        currentSkinRuntimeLoaded = runtimeLoaded;
         rebuildSkin();
     }
 }
@@ -269,7 +275,7 @@ void DuskMultisampleEditor::rebuildSkin()
             sf2PresetSelector.addItem (number + " [" + juce::String (preset.bank) + "] " + name,
                                         preset.sourceIndex + 1);
         }
-        sf2PresetSelector.setSelectedId (juce::jmax (1, processor.getSf2PresetIndex() + 1),
+        sf2PresetSelector.setSelectedId (processor.getSf2PresetIndex() + 1,
                                           juce::dontSendNotification);
     }
     sf2PresetLabel   .setVisible (showSf2Presets);
@@ -379,26 +385,21 @@ void DuskMultisampleEditor::startAsyncLoad (const juce::File& file, int presetIn
                             juce::dontSendNotification);
 
     juce::Component::SafePointer<DuskMultisampleEditor> safe (this);
-    auto onDone = [safe, presetIndex] (bool ok, juce::String err)
+    auto onDone = [safe, presetIndex] (bool, juce::String)
     {
         // The processor outlives a closed editor (worker joins in ITS
         // destructor) - only the UI refresh needs the guard.
         if (auto* self = safe.getComponent())
         {
             self->setLoadControlsEnabled (true);
-            if (! ok)
+            if (presetIndex >= 0
+                && self->processor.getSf2PresetIndex() != presetIndex)
             {
-                self->filePathLabel.setText ("(" + err + ")", juce::dontSendNotification);
-                // A failed preset switch leaves the selector on the choice that
-                // didn't load; snap it back to the preset still playing so the
-                // UI doesn't misreport the active program.
-                if (presetIndex >= 0)
-                    self->sf2PresetSelector.setSelectedId (
-                        juce::jmax (1, self->processor.getSf2PresetIndex() + 1),
-                        juce::dontSendNotification);
+                self->sf2PresetSelector.setSelectedId (
+                    self->processor.getSf2PresetIndex() + 1,
+                    juce::dontSendNotification);
             }
-            else
-                self->timerCallback();
+            self->timerCallback();
         }
     };
 

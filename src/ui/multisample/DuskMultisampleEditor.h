@@ -75,10 +75,13 @@ private:
     // an ARIA bank.xml + GUI XML). nullptr = fall back to the
     // 3-knob default. Rebuilt whenever the retained file path changes OR
     // the same file's on-disk mtime changes (Reload after an external
-    // edit re-loads the same path, so a path-only check would miss it).
+    // edit re-loads the same path, so a path-only check would miss it). Runtime
+    // transitions also rebuild so a failed initial load cannot leave a stale
+    // SF2 preset selector.
     std::unique_ptr<AriaGuiComponent> ariaSkin;
     juce::String                      currentSkinPath;
     juce::Time                        currentSkinModTime;
+    bool                              currentSkinRuntimeLoaded { false };
 
     void rebuildSkin();
 };
