@@ -165,11 +165,11 @@ void DuskMultisampleEditor::timerCallback()
     if (zoneCountLabel.getText() != zones)
         zoneCountLabel.setText (zones, juce::dontSendNotification);
 
-    const bool fileLoaded = processor.hasLoadedFile();
-    reloadButton.setEnabled (fileLoaded);
-    clearButton .setEnabled (fileLoaded);
+    const bool pathRetained = processor.hasLoadedFile();
+    reloadButton.setEnabled (pathRetained);
+    clearButton .setEnabled (pathRetained);
 
-    // Skin lives or dies with the loaded file path. Rebuild on a path
+    // Skin follows the retained file path. Rebuild on a path
     // change (load, clear, different file, state restore) OR on a same-
     // path mtime change - Reload after an external edit re-loads the
     // same path, which a path-only check would miss.

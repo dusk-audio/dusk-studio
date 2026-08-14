@@ -93,7 +93,7 @@ juce::File DuskMultisampleProcessor::getControlImagePath() const
     if (rel.isEmpty()) return {};
     if (juce::File::isAbsolutePath (rel))
         return juce::File (rel);
-    // Relative to the loaded .sfz's directory.
+    // Relative to the active .sfz's directory.
     return juce::File (juce::String (path)).getParentDirectory().getChildFile (rel);
 }
 
@@ -219,27 +219,28 @@ bool DuskMultisampleProcessor::reloadCurrentFile (juce::String& errorMessage)
              : loadSfzFile (f, errorMessage);
 }
 
-void DuskMultisampleProcessor::clearLoadedFile()
+void DuskMultisampleProcessor::clearRuntimeState()
 {
-    if (impl == nullptr) return;
-    if (impl->synth != nullptr)
+    if (impl != nullptr && impl->synth != nullptr)
     {
         const juce::SpinLock::ScopedLockType lock (sfizzLock);
-        // sfizz_load_string with empty body unloads the current file.
         sfizz_load_string (impl->synth, "", "");
     }
-    if (impl->sf2TempDir != juce::File())
+    if (impl != nullptr && impl->sf2TempDir != juce::File())
     {
         impl->sf2TempDir.deleteRecursively();
         impl->sf2TempDir = juce::File();
     }
-    // Drop SF2 preset state too so the editor's program switcher doesn't
-    // show stale presets from the just-unloaded SoundFont.
     {
         const juce::ScopedLock sl (sf2PresetsLock);
         sf2Presets.clear();
     }
     sf2PresetIndex.store (-1, std::memory_order_relaxed);
+}
+
+void DuskMultisampleProcessor::clearLoadedFile()
+{
+    clearRuntimeState();
     loadedFilePath.clear();
     publishLoadedPath ({});
     lastLoadError.clear();
@@ -256,6 +257,7 @@ bool DuskMultisampleProcessor::loadSf2File (const juce::File& sf2,
     if (! sf2.existsAsFile())
     {
         errorMessage = "File does not exist: " + sf2.getFullPathName();
+        lastLoadError = errorMessage;
         return false;
     }
 
@@ -451,6 +453,7 @@ bool DuskMultisampleProcessor::loadSfzFile (const juce::File& sfz,
     if (! sfz.existsAsFile())
     {
         errorMessage = "File does not exist: " + sfz.getFullPathName();
+        lastLoadError = errorMessage;
         return false;
     }
     const auto path = sfz.getFullPathName().toStdString();
@@ -461,16 +464,10 @@ bool DuskMultisampleProcessor::loadSfzFile (const juce::File& sfz,
         ok = sfizz_load_file (impl->synth, path.c_str());
         if (ok) regions = sfizz_get_num_regions (impl->synth);
     }
-    // sfizz clears the loaded instrument before it parses, so from here on the
-    // previous soundfont is gone whatever we report. Both failures below drop
-    // the rest of the load state with it - keeping the old file's name, its SF2
-    // program list and its extracted samples would describe an instrument the
-    // synth no longer holds. clearLoadedFile() resets lastLoadError, so the
-    // reason is stored after it.
     if (! ok)
     {
         errorMessage = "sfizz_load_file failed for " + sfz.getFileName();
-        clearLoadedFile();
+        clearRuntimeState();
         lastLoadError = errorMessage;
         return false;
     }
@@ -481,7 +478,7 @@ bool DuskMultisampleProcessor::loadSfzFile (const juce::File& sfz,
     {
         errorMessage = "No playable regions in " + sfz.getFileName()
                      + " - its sample files were not found next to it";
-        clearLoadedFile();
+        clearRuntimeState();
         lastLoadError = errorMessage;
         return false;
     }
@@ -683,9 +680,8 @@ bool DuskMultisampleProcessor::loadState (const std::vector<uint8_t>& in)
                                         : loadSfzFile (file, err);
         if (! ok)
         {
-            // Non-fatal: processor stays in no-file state so the user
-            // can pick a replacement via the editor. lastLoadError
-            // surfaces the reason - editor polls + displays it.
+            // Non-fatal: keep any retained reference so the user can retry or
+            // pick a replacement. lastLoadError surfaces the reason.
             lastLoadError = err.isNotEmpty()
                               ? err
                               : ("File not found: " + path);
@@ -706,9 +702,8 @@ bool DuskMultisampleProcessor::loadState (const std::vector<uint8_t>& in)
 
     // Restore the SF2 preset selection (no-op for SFZ). Must run after
     // the file load above so the SF2 metadata + sfizz state exist.
-    // Skipped when that load failed: sf2Presets + loadedFilePath then describe
-    // whatever survived the failure, not the file the saved index belongs to,
-    // so restoring that index would clobber lastLoadError for nothing.
+    // Skipped when that load failed: the runtime and preset list are empty while
+    // loadedFilePath retains the retry reference, so the saved index is not active.
     // idx == 0 is deliberately skipped: loadSf2File already loaded
     // preset 0, so re-loading it would be redundant work. Only a
     // non-default saved preset needs an explicit switch.

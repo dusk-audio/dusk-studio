@@ -30,10 +30,10 @@ struct MultisampleSlotTraits
 class NativeMultisampleSlot final : public hosting::NativeInsertSlot<MultisampleSlotTraits>
 {
 public:
-    // The soundfont playing RIGHT NOW, empty when none is. The editor swaps
-    // files in place (Browse / Reload / SF2 preset switch / Clear) without going
-    // through load(), so the slot's own bundle path goes stale - never fall back
-    // to it, or a save would resurrect a soundfont the user cleared.
+    // The retained soundfont reference used by session persistence and Reload.
+    // It can name the last successful file while the runtime is silent after a
+    // failed load. The editor swaps files in place without going through load(),
+    // so the slot's bundle path goes stale and must never be used as a fallback.
     std::string getLoadedSoundfontPath() const
     {
         return instance != nullptr ? instance->getLoadedPathSnapshot() : std::string();
