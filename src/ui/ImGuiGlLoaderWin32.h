@@ -14,6 +14,7 @@
 #if defined(_WIN32)
 
 #include "OpenGL-include.hpp"
+#include "WglProcAddressSentinel.h"
 
 #include <utility>
 
@@ -28,12 +29,16 @@ struct GlProc
 {
     const char* const name;
     Fn fn = nullptr;
+    bool resolutionAttempted = false;
 
     template <typename... Args>
     auto operator()(Args... args) -> decltype(std::declval<Fn>()(args...))
     {
-        if (fn == nullptr)
+        if (! resolutionAttempted)
+        {
+            resolutionAttempted = true;
             fn = reinterpret_cast<Fn>(procAddress(name));
+        }
 
         // An unresolved entry point costs the drawing; calling through the null pointer
         // would cost the app.

@@ -10,11 +10,24 @@
 
 #include "ImGuiGlLoaderWin32.h"
 
+#include <cstdio>
+
 namespace duskstudio::glloader {
 
 ProcPtr procAddress(const char* const name)
 {
-    return reinterpret_cast<ProcPtr>(::wglGetProcAddress(name));
+    const auto address = ::wglGetProcAddress(name);
+    if (isInvalidWglProcAddressValue (reinterpret_cast<std::intptr_t> (address)))
+    {
+        char message[192] {};
+        std::snprintf (message, sizeof message,
+                       "[Dusk Studio/notepad] OpenGL entry point unavailable: %s\n",
+                       name);
+        std::fputs (message, stderr);
+        ::OutputDebugStringA (message);
+        return nullptr;
+    }
+    return reinterpret_cast<ProcPtr> (address);
 }
 
 }
