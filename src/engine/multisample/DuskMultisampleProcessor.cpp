@@ -304,10 +304,13 @@ bool DuskMultisampleProcessor::loadSf2File (const juce::File& sf2,
     const bool requestedPresetInRange = initialPresetIndex >= 0
                                           && initialPresetIndex < presetCount;
     int presetToLoad = requestedPresetInRange ? initialPresetIndex : 0;
-    bool usedPresetFallback = initialPresetIndex >= 0 && ! requestedPresetInRange;
+    bool usedPresetFallback = initialPresetIndex > 0 && ! requestedPresetInRange;
     if (! applySf2Preset (sf2, presetToLoad, errorMessage, false))
     {
-        if (presetToLoad == 0)
+        // Conversion failures leave the current instrument intact. Do not
+        // replace a working preset with preset 0 unless the failed attempt
+        // actually cleared the runtime and recovery is required.
+        if (presetToLoad == 0 || hasLoadedRuntime())
             return false;
         presetToLoad = 0;
         usedPresetFallback = true;
@@ -342,7 +345,9 @@ bool DuskMultisampleProcessor::loadSf2Preset (int presetIndex,
     const auto file = juce::File (loadedFilePath);
     if (applySf2Preset (file, presetIndex, errorMessage))
         return true;
-    if (presetIndex == 0)
+    // A conversion failure occurs before sfizz is touched, so retain the
+    // working preset. Retry preset 0 only after a destructive load failure.
+    if (presetIndex == 0 || hasLoadedRuntime())
         return false;
 
     const auto requestedPresetError = errorMessage;
@@ -453,6 +458,7 @@ bool DuskMultisampleProcessor::applySf2Preset (const juce::File& sf2,
     // rendering during it.
     bool loaded = false;
     int regions = 0;
+    const bool preservePresetMetadata = publishState;
     {
         const juce::SpinLock::ScopedLockType lock (sfizzLock);
         loaded = sfizz_load_string (impl->synth, pathStr.c_str(), body.c_str());
@@ -463,7 +469,7 @@ bool DuskMultisampleProcessor::applySf2Preset (const juce::File& sf2,
     {
         errorMessage = "sfizz rejected the converted SF2 preset";
         newDir.deleteRecursively();
-        clearRuntimeState (publishState);
+        clearRuntimeState (preservePresetMetadata);
         lastLoadError = errorMessage;
         return false;
     }
@@ -472,9 +478,10 @@ bool DuskMultisampleProcessor::applySf2Preset (const juce::File& sf2,
         errorMessage = "Converted SF2 preset contains no playable regions";
         newDir.deleteRecursively();
         // sfizz accepted the SFZ text but discarded every region, so its old
-        // instrument is already gone. Clear the matching active metadata and
-        // temp samples while retaining the persisted path/preset for retry.
-        clearRuntimeState (publishState);
+        // instrument is already gone. Clear its runtime and temp samples while
+        // leaving the persisted retry snapshot untouched; direct preset
+        // switches also preserve the cached preset list.
+        clearRuntimeState (preservePresetMetadata);
         lastLoadError = errorMessage;
         return false;
     }
@@ -541,6 +548,9 @@ bool DuskMultisampleProcessor::loadSfzFile (const juce::File& sfz,
         ok = sfizz_load_file (impl->synth, path.c_str());
         if (ok) regions = sfizz_get_num_regions (impl->synth);
     }
+    // Once an SFZ attempt reaches sfizz, stale SF2 choices no longer describe
+    // its runtime. Both destructive failure paths discard that cached list,
+    // while the retained path and preset index remain available for Retry.
     if (! ok)
     {
         errorMessage = "sfizz_load_file failed for " + sfz.getFileName();

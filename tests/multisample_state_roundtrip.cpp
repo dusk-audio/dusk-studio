@@ -220,6 +220,18 @@ std::filesystem::path createUniqueTempSoundfontDirectory()
     }
     return {};
 }
+
+struct ScopedPathCleanup
+{
+    std::filesystem::path path;
+    ~ScopedPathCleanup()
+    {
+        std::error_code ignored;
+        std::filesystem::remove_all (path, ignored);
+    }
+};
+
+constexpr auto kPresetFallbackText = "using preset 0";
 } // namespace
 
 // DuskMultisampleProcessor persists its file path + override params
@@ -415,15 +427,7 @@ TEST_CASE ("DuskMultisampleProcessor: failed SFZ browse preserves the retained S
     REQUIRE_FALSE (tempDirectory.empty());
     const auto sf2Path = tempDirectory / "source.sf2";
     const auto brokenSfzPath = tempDirectory / "broken.sfz";
-    struct ScopedPathCleanup
-    {
-        std::filesystem::path path;
-        ~ScopedPathCleanup()
-        {
-            std::error_code ignored;
-            std::filesystem::remove_all (path, ignored);
-        }
-    } cleanup { tempDirectory };
+    ScopedPathCleanup cleanup { tempDirectory };
 
     const auto sf2Bytes = testSf2();
     {
@@ -528,15 +532,7 @@ TEST_CASE ("DuskMultisampleProcessor: an unplayable saved SF2 preset falls back 
     const auto tempDirectory = createUniqueTempSoundfontDirectory();
     REQUIRE_FALSE (tempDirectory.empty());
     const auto sf2Path = tempDirectory / "fallback.sf2";
-    struct ScopedPathCleanup
-    {
-        std::filesystem::path path;
-        ~ScopedPathCleanup()
-        {
-            std::error_code ignored;
-            std::filesystem::remove_all (path, ignored);
-        }
-    } cleanup { tempDirectory };
+    ScopedPathCleanup cleanup { tempDirectory };
 
     const auto writeSoundfont = [&sf2Path] (const std::vector<std::uint8_t>& bytes)
     {
@@ -561,50 +557,78 @@ TEST_CASE ("DuskMultisampleProcessor: an unplayable saved SF2 preset falls back 
     std::vector<std::uint8_t> savedState;
     REQUIRE (source.saveState (savedState));
 
-    REQUIRE (writeSoundfont (testSf2 (false)));
+    SECTION ("unplayable saved preset")
+    {
+        REQUIRE (writeSoundfont (testSf2 (false)));
+        duskstudio::DuskMultisampleProcessor restored;
+        REQUIRE (restored.loadState (savedState));
+        REQUIRE (restored.getSf2PresetIndex() == 0);
+        REQUIRE (restored.getNumRegions() > 0);
+        REQUIRE (restored.getLastLoadError().contains (kPresetFallbackText));
+    }
 
-    duskstudio::DuskMultisampleProcessor restored;
-    REQUIRE (restored.loadState (savedState));
-    REQUIRE (restored.getSf2PresetIndex() == 0);
-    REQUIRE (restored.getNumRegions() > 0);
-    REQUIRE (restored.getLastLoadError().contains ("using preset 0"));
+    SECTION ("explicit preset selection")
+    {
+        REQUIRE (writeSoundfont (testSf2 (false)));
+        duskstudio::DuskMultisampleProcessor restored;
+        REQUIRE (restored.loadState (savedState));
 
-    error.clear();
-    REQUIRE (restored.loadSf2Preset (1, error));
-    REQUIRE (restored.getSf2PresetIndex() == 0);
-    REQUIRE (restored.getSf2Presets().size() == 2);
-    REQUIRE (restored.getNumRegions() > 0);
-    REQUIRE (restored.getLastLoadError().contains ("using preset 0"));
+        error.clear();
+        REQUIRE_FALSE (restored.loadSf2Preset (1, error));
+        REQUIRE (restored.getSf2PresetIndex() == 0);
+        REQUIRE (restored.getSf2Presets().size() == 2);
+        REQUIRE (restored.getNumRegions() > 0);
+        REQUIRE (restored.getLastLoadError() == error);
+        REQUIRE_FALSE (error.contains (kPresetFallbackText));
+    }
 
-    // The same-path restore takes a separate code path and must also recover.
-    REQUIRE (restored.loadState (savedState));
-    REQUIRE (restored.getSf2PresetIndex() == 0);
-    REQUIRE (restored.getNumRegions() > 0);
-    REQUIRE (restored.getLastLoadError().contains ("using preset 0"));
+    SECTION ("same-path restore")
+    {
+        REQUIRE (writeSoundfont (testSf2 (false)));
+        duskstudio::DuskMultisampleProcessor restored;
+        REQUIRE (restored.loadState (savedState));
 
-    // The failed selection must not become authoritative in the next save.
-    std::vector<std::uint8_t> fallbackState;
-    REQUIRE (restored.saveState (fallbackState));
-    REQUIRE (writeSoundfont (playableBytes));
+        REQUIRE (restored.loadState (savedState));
+        REQUIRE (restored.getSf2PresetIndex() == 0);
+        REQUIRE (restored.getNumRegions() > 0);
+        REQUIRE_FALSE (restored.getLastLoadError().contains (kPresetFallbackText));
+    }
 
-    duskstudio::DuskMultisampleProcessor reopened;
-    REQUIRE (reopened.loadState (fallbackState));
-    REQUIRE (reopened.getSf2PresetIndex() == 0);
-    REQUIRE (reopened.getLastLoadError().isEmpty());
+    SECTION ("recovered preset persistence")
+    {
+        REQUIRE (writeSoundfont (testSf2 (false)));
+        duskstudio::DuskMultisampleProcessor restored;
+        REQUIRE (restored.loadState (savedState));
 
-    REQUIRE (writeSoundfont (testSf2 (true, false)));
-    duskstudio::DuskMultisampleProcessor outOfRange;
-    REQUIRE (outOfRange.loadState (savedState));
-    REQUIRE (outOfRange.getSf2PresetIndex() == 0);
-    REQUIRE (outOfRange.getNumRegions() > 0);
-    REQUIRE (outOfRange.getLastLoadError().contains ("using preset 0"));
+        // The failed selection must not become authoritative in the next save.
+        error.clear();
+        REQUIRE_FALSE (restored.loadSf2Preset (1, error));
+        std::vector<std::uint8_t> fallbackState;
+        REQUIRE (restored.saveState (fallbackState));
+        REQUIRE (writeSoundfont (playableBytes));
 
-    duskstudio::DuskMultisampleProcessor samePathOutOfRange;
-    REQUIRE (samePathOutOfRange.create (bundle, {}, createError));
-    REQUIRE (samePathOutOfRange.loadState (savedState));
-    REQUIRE (samePathOutOfRange.getSf2PresetIndex() == 0);
-    REQUIRE (samePathOutOfRange.getNumRegions() > 0);
-    REQUIRE (samePathOutOfRange.getLastLoadError().contains ("using preset 0"));
+        duskstudio::DuskMultisampleProcessor reopened;
+        REQUIRE (reopened.loadState (fallbackState));
+        REQUIRE (reopened.getSf2PresetIndex() == 0);
+        REQUIRE (reopened.getLastLoadError().isEmpty());
+    }
+
+    SECTION ("out-of-range saved preset")
+    {
+        REQUIRE (writeSoundfont (testSf2 (true, false)));
+        duskstudio::DuskMultisampleProcessor outOfRange;
+        REQUIRE (outOfRange.loadState (savedState));
+        REQUIRE (outOfRange.getSf2PresetIndex() == 0);
+        REQUIRE (outOfRange.getNumRegions() > 0);
+        REQUIRE (outOfRange.getLastLoadError().contains (kPresetFallbackText));
+
+        duskstudio::DuskMultisampleProcessor samePathOutOfRange;
+        REQUIRE (samePathOutOfRange.create (bundle, {}, createError));
+        REQUIRE (samePathOutOfRange.loadState (savedState));
+        REQUIRE (samePathOutOfRange.getSf2PresetIndex() == 0);
+        REQUIRE (samePathOutOfRange.getNumRegions() > 0);
+        REQUIRE (samePathOutOfRange.getLastLoadError().contains (kPresetFallbackText));
+    }
 }
 
 TEST_CASE ("NativeMultisampleSlot prime keeps a missing-state diagnostic and loads its bundle",
@@ -614,15 +638,7 @@ TEST_CASE ("NativeMultisampleSlot prime keeps a missing-state diagnostic and loa
     REQUIRE_FALSE (tempDirectory.empty());
     const auto statePath = tempDirectory / "missing-after-save.sfz";
     const auto bundlePath = tempDirectory / "fallback.sfz";
-    struct ScopedPathCleanup
-    {
-        std::filesystem::path path;
-        ~ScopedPathCleanup()
-        {
-            std::error_code ignored;
-            std::filesystem::remove_all (path, ignored);
-        }
-    } cleanup { tempDirectory };
+    ScopedPathCleanup cleanup { tempDirectory };
 
     for (const auto& path : { statePath, bundlePath })
     {

@@ -100,7 +100,7 @@ public:
             // The state loader already applied non-file settings. When its file
             // was unavailable, keep that diagnostic while loading the bundle
             // instead of parsing the failed state file a second time.
-            if (! inst->create (*b, {}, err, hasState && ! stateRuntimeLoaded))
+            if (! inst->create (*b, {}, err, hasState))
             { errorOut = "create: " + err; return primed; }
         }
         if (! inst->activate (sampleRate, maxBlock, err))

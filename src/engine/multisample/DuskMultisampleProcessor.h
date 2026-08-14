@@ -93,8 +93,8 @@ public:
     }
     const juce::String& getLoadedFilePath() const noexcept { return loadedFilePath; }
 
-    // Number of regions sfizz holds from the active .sfz. 0 when the runtime
-    // state is empty, including after a failed reload.
+    // Number of regions sfizz currently holds. A failure before sfizz is
+    // touched retains the previous count; destructive failures return 0.
     int getNumRegions() const noexcept;
 
     // Reload the retained soundfont path from disk. No-op when no path is
