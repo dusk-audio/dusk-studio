@@ -151,13 +151,16 @@ void DuskMultisampleEditor::timerCallback()
 
     const auto err  = processor.getLastLoadError();
     const auto path = processor.getLoadedFilePath();
+    const auto fileName = juce::File (path).getFileName();
     juce::String display;
     if (err.isNotEmpty())
-        display = "(" + err + ")";
+        display = processor.hasLoadedRuntime() && fileName.isNotEmpty()
+                    ? fileName + " (" + err + ")"
+                    : "(" + err + ")";
     else if (path.isEmpty())
         display = "(no file)";
     else
-        display = juce::File (path).getFileName();
+        display = fileName;
     if (filePathLabel.getText() != display)
         filePathLabel.setText (display, juce::dontSendNotification);
 

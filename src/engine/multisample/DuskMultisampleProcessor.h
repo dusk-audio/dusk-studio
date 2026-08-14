@@ -12,6 +12,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace duskstudio
@@ -32,7 +33,7 @@ public:
     // NativeInsertSlot construction hook: load the bundle's soundfont. The
     // multisample rung has exactly one plugin per bundle, so pluginId is unused.
     bool create (const MultisampleBundle& bundle, const std::string& pluginId,
-                 std::string& errorOut);
+                 std::string& errorOut, bool preserveExistingError = false);
 
     // hosting::INativeInstance.
     const hosting::PortLayout& portLayout() const noexcept override { return layout; }
@@ -49,11 +50,12 @@ public:
     // true + clears errorMessage on success.
     bool loadSfzFile (const juce::File& sfz, juce::String& errorMessage);
 
-    // Load an .sf2 (SoundFont 2) file. Converts the first preset to SFZ
+    // Load an .sf2 (SoundFont 2) file. Converts the requested preset to SFZ
     // + extracted WAVs (Sf2Reader + Sf2ToSfz) and plays it through the
     // vendored sfizz engine - no fluidsynth dependency. Caches preset
     // display metadata for the editor's program switcher.
-    bool loadSf2File (const juce::File& sf2, juce::String& errorMessage);
+    bool loadSf2File (const juce::File& sf2, juce::String& errorMessage,
+                      int initialPresetIndex = 0);
 
     // Switch the retained SF2 reference to another preset (re-converts + reloads).
     // No-op error when the retained reference isn't an SF2.
@@ -85,6 +87,10 @@ public:
     // True if a soundfont path is retained. Used by editor UI to show
     // "(no file)" vs the file name and keep Reload available after failure.
     bool hasLoadedFile() const noexcept { return loadedFilePath.isNotEmpty(); }
+    bool hasLoadedRuntime() const noexcept
+    {
+        return runtimeLoaded.load (std::memory_order_acquire);
+    }
     const juce::String& getLoadedFilePath() const noexcept { return loadedFilePath; }
 
     // Number of regions sfizz holds from the active .sfz. 0 when the runtime
@@ -190,11 +196,12 @@ public:
     std::vector<std::pair<int, juce::String>> getControlCcLabels() const;
 
 private:
-    // Convert + load one preset of an SF2 through sfizz. Shared by
-    // loadSf2File (index 0 + name caching) and loadSf2Preset (switch).
+    // Convert + load one preset of an SF2 through sfizz. Initial file loads
+    // defer state publication until their new preset metadata is committed;
+    // direct preset switches publish immediately.
     bool applySf2Preset (const juce::File& sf2, int presetIndex,
-                          juce::String& errorMessage);
-    void clearRuntimeState();
+                          juce::String& errorMessage, bool publishState = true);
+    void clearRuntimeState (bool preservePresetMetadata = false);
 
     hosting::PortLayout layout;
     std::atomic<bool>   active { false };
@@ -204,14 +211,18 @@ private:
     // sfizz_set_samples_per_block and read by the audio thread under the same
     // lock, so the guard can never see a size sfizz has not applied yet.
     std::atomic<int> currentBlockSize { 512 };
+    // Distinguishes a retained retry path from an instrument sfizz still holds.
+    std::atomic<bool> runtimeLoaded { false };
     juce::String loadedFilePath;     // retained across failed loads
 
-    // Cross-thread copy of loadedFilePath (see getLoadedPathSnapshot). Written
-    // wherever loadedFilePath is, read by the message thread. Never the audio
-    // thread, so a plain mutex is fine.
+    // Cross-thread persisted path + SF2 preset snapshot. State saves read the
+    // pair atomically so a loader cannot publish a new path with an old preset.
+    // Never touched by the audio thread, so a plain mutex is fine.
     mutable std::mutex loadedPathLock;
     std::string        loadedPathShared;
-    void publishLoadedPath (const juce::String& path);
+    int                persistedSf2PresetIndex { -1 };
+    void publishLoadedState (const juce::String& path, int presetIndex);
+    std::pair<std::string, int> getPersistedStateSnapshot() const;
     juce::String lastLoadError;      // most recent loadState / load failure
     Overrides overrides;
 
@@ -222,7 +233,7 @@ private:
     juce::CriticalSection      sf2PresetsLock;
     // Written by the loader thread, read by the editor timer - atomic so the
     // int itself can't tear (the presets vector has its own lock).
-    std::atomic<int>           sf2PresetIndex { 0 };
+    std::atomic<int>           sf2PresetIndex { -1 };
 
     // CC control plumbing. ccCache holds the last value the UI set per
     // CC (-1 = unset) for read-back + state save. ccDirty flags which of

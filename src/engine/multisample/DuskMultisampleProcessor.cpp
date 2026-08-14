@@ -11,6 +11,12 @@
 
 namespace duskstudio
 {
+namespace
+{
+constexpr auto kSf2PresetFallbackMessage =
+    "SF2 preset could not be loaded; using preset 0";
+}
+
 struct DuskMultisampleProcessor::Impl
 {
     sfizz_synth_t* synth { nullptr };
@@ -124,16 +130,23 @@ DuskMultisampleProcessor::~DuskMultisampleProcessor()
         impl->sf2TempDir.deleteRecursively();
 }
 
-void DuskMultisampleProcessor::publishLoadedPath (const juce::String& path)
+void DuskMultisampleProcessor::publishLoadedState (const juce::String& path,
+                                                    int presetIndex)
 {
     const std::lock_guard<std::mutex> lock (loadedPathLock);
     loadedPathShared = path.toStdString();
+    persistedSf2PresetIndex = presetIndex;
+}
+
+std::pair<std::string, int> DuskMultisampleProcessor::getPersistedStateSnapshot() const
+{
+    const std::lock_guard<std::mutex> lock (loadedPathLock);
+    return { loadedPathShared, persistedSf2PresetIndex };
 }
 
 std::string DuskMultisampleProcessor::getLoadedPathSnapshot() const
 {
-    const std::lock_guard<std::mutex> lock (loadedPathLock);
-    return loadedPathShared;
+    return getPersistedStateSnapshot().first;
 }
 
 void DuskMultisampleProcessor::cancelPendingLoads()
@@ -148,14 +161,18 @@ void DuskMultisampleProcessor::cancelPendingLoads()
 
 bool DuskMultisampleProcessor::create (const MultisampleBundle& bundle,
                                         const std::string&,
-                                        std::string& errorOut)
+                                        std::string& errorOut,
+                                        bool preserveExistingError)
 {
+    const auto retainedError = lastLoadError;
     const juce::File file (juce::String::fromUTF8 (bundle.getFile().u8string().c_str()));
     juce::String err;
     const bool ok = file.getFileExtension().toLowerCase() == ".sf2"
                         ? loadSf2File (file, err)
                         : loadSfzFile (file, err);
     if (! ok) errorOut = err.toStdString();
+    else if (preserveExistingError && retainedError.isNotEmpty())
+        lastLoadError = retainedError;
     return ok;
 }
 
@@ -214,12 +231,14 @@ bool DuskMultisampleProcessor::reloadCurrentFile (juce::String& errorMessage)
         return false;
     }
     const juce::File f (loadedFilePath);
-    return f.getFileExtension().toLowerCase() == ".sf2"
-             ? loadSf2File (f, errorMessage)
-             : loadSfzFile (f, errorMessage);
+    if (f.getFileExtension().toLowerCase() != ".sf2")
+        return loadSfzFile (f, errorMessage);
+
+    const int presetToRestore = getPersistedStateSnapshot().second;
+    return loadSf2File (f, errorMessage, presetToRestore);
 }
 
-void DuskMultisampleProcessor::clearRuntimeState()
+void DuskMultisampleProcessor::clearRuntimeState (bool preservePresetMetadata)
 {
     if (impl != nullptr && impl->synth != nullptr)
     {
@@ -231,23 +250,26 @@ void DuskMultisampleProcessor::clearRuntimeState()
         impl->sf2TempDir.deleteRecursively();
         impl->sf2TempDir = juce::File();
     }
+    if (! preservePresetMetadata)
     {
         const juce::ScopedLock sl (sf2PresetsLock);
         sf2Presets.clear();
     }
     sf2PresetIndex.store (-1, std::memory_order_relaxed);
+    runtimeLoaded.store (false, std::memory_order_release);
 }
 
 void DuskMultisampleProcessor::clearLoadedFile()
 {
     clearRuntimeState();
     loadedFilePath.clear();
-    publishLoadedPath ({});
+    publishLoadedState ({}, -1);
     lastLoadError.clear();
 }
 
 bool DuskMultisampleProcessor::loadSf2File (const juce::File& sf2,
-                                              juce::String& errorMessage)
+                                              juce::String& errorMessage,
+                                              int initialPresetIndex)
 {
     if (impl == nullptr || impl->synth == nullptr)
     {
@@ -264,8 +286,8 @@ bool DuskMultisampleProcessor::loadSf2File (const juce::File& sf2,
     // Cache display metadata without disturbing source indices. SF2 does not
     // require PHDR records to be ordered, while the source index is persisted
     // in sessions and passed to the converter. Build it in temporary storage
-    // and commit only after the preset-0 load below succeeds, so a failed load
-    // leaves the previously loaded SF2's metadata intact.
+    // so the requested load is published and clamped against the new file's
+    // metadata rather than the previously loaded SF2's list.
     std::vector<Sf2PresetInfo> candidates;
     if (auto parsed = readSf2 (std::filesystem::u8path (sf2.getFullPathName().toStdString())); parsed.ok)
     {
@@ -278,13 +300,33 @@ bool DuskMultisampleProcessor::loadSf2File (const juce::File& sf2,
         sortSf2PresetsForDisplay (candidates);
     }
 
-    if (! applySf2Preset (sf2, 0, errorMessage))
-        return false;
+    const int presetCount = (int) candidates.size();
+    const bool requestedPresetInRange = initialPresetIndex >= 0
+                                          && initialPresetIndex < presetCount;
+    int presetToLoad = requestedPresetInRange ? initialPresetIndex : 0;
+    bool usedPresetFallback = initialPresetIndex >= 0 && ! requestedPresetInRange;
+    if (! applySf2Preset (sf2, presetToLoad, errorMessage, false))
+    {
+        if (presetToLoad == 0)
+            return false;
+        presetToLoad = 0;
+        usedPresetFallback = true;
+        errorMessage.clear();
+        if (! applySf2Preset (sf2, presetToLoad, errorMessage, false))
+            return false;
+    }
 
     {
         const juce::ScopedLock sl (sf2PresetsLock);
         sf2Presets = std::move (candidates);
     }
+    // applySf2Preset cannot clamp against the new metadata before it is
+    // committed, so publish the already-clamped source index afterwards.
+    sf2PresetIndex.store (presetToLoad, std::memory_order_relaxed);
+    loadedFilePath = sf2.getFullPathName();
+    publishLoadedState (loadedFilePath, presetToLoad);
+    if (usedPresetFallback)
+        lastLoadError = kSf2PresetFallbackMessage;
     return true;
 }
 
@@ -297,7 +339,22 @@ bool DuskMultisampleProcessor::loadSf2Preset (int presetIndex,
         errorMessage = "No SF2 loaded";
         return false;
     }
-    return applySf2Preset (juce::File (loadedFilePath), presetIndex, errorMessage);
+    const auto file = juce::File (loadedFilePath);
+    if (applySf2Preset (file, presetIndex, errorMessage))
+        return true;
+    if (presetIndex == 0)
+        return false;
+
+    const auto requestedPresetError = errorMessage;
+    errorMessage.clear();
+    if (applySf2Preset (file, 0, errorMessage))
+    {
+        lastLoadError = kSf2PresetFallbackMessage;
+        return true;
+    }
+    if (errorMessage.isEmpty())
+        errorMessage = requestedPresetError;
+    return false;
 }
 
 void DuskMultisampleProcessor::loadFileAsync (
@@ -367,7 +424,8 @@ void DuskMultisampleProcessor::loadSf2PresetAsync (
 
 bool DuskMultisampleProcessor::applySf2Preset (const juce::File& sf2,
                                                  int presetIndex,
-                                                 juce::String& errorMessage)
+                                                 juce::String& errorMessage,
+                                                 bool publishState)
 {
     // Native SF2 -> SFZ: convert one preset into an SFZ body plus a dir
     // of extracted WAVs, then load it through sfizz. No fluidsynth.
@@ -393,35 +451,54 @@ bool DuskMultisampleProcessor::applySf2Preset (const juce::File& sf2,
     // Only the sfizz call itself is serialised against processBlock - the
     // expensive conversion above runs unlocked so the audio thread keeps
     // rendering during it.
-    const juce::SpinLock::ScopedLockType lock (sfizzLock);
-    if (! sfizz_load_string (impl->synth, pathStr.c_str(), body.c_str()))
+    bool loaded = false;
+    int regions = 0;
+    {
+        const juce::SpinLock::ScopedLockType lock (sfizzLock);
+        loaded = sfizz_load_string (impl->synth, pathStr.c_str(), body.c_str());
+        if (loaded)
+            regions = sfizz_get_num_regions (impl->synth);
+    }
+    if (! loaded)
     {
         errorMessage = "sfizz rejected the converted SF2 preset";
-        lastLoadError = errorMessage;
         newDir.deleteRecursively();
+        clearRuntimeState (publishState);
+        lastLoadError = errorMessage;
         return false;
     }
+    if (regions == 0)
+    {
+        errorMessage = "Converted SF2 preset contains no playable regions";
+        newDir.deleteRecursively();
+        // sfizz accepted the SFZ text but discarded every region, so its old
+        // instrument is already gone. Clear the matching active metadata and
+        // temp samples while retaining the persisted path/preset for retry.
+        clearRuntimeState (publishState);
+        lastLoadError = errorMessage;
+        return false;
+    }
+    runtimeLoaded.store (true, std::memory_order_release);
 
     // New sample set is live - drop the previous load's temp dir.
     if (impl->sf2TempDir != juce::File() && impl->sf2TempDir != newDir)
         impl->sf2TempDir.deleteRecursively();
     impl->sf2TempDir = newDir;
 
-    int presetCount;
+    if (publishState)
     {
-        const juce::ScopedLock sl (sf2PresetsLock);
-        presetCount = (int) sf2Presets.size();
+        int presetCount;
+        {
+            const juce::ScopedLock sl (sf2PresetsLock);
+            presetCount = (int) sf2Presets.size();
+        }
+        const int appliedPresetIndex = presetCount > 0
+                                         ? std::clamp (presetIndex, 0, presetCount - 1)
+                                         : std::max (0, presetIndex);
+        sf2PresetIndex.store (appliedPresetIndex, std::memory_order_relaxed);
+        loadedFilePath = sf2.getFullPathName();
+        publishLoadedState (loadedFilePath, appliedPresetIndex);
     }
-    // Clamp only against real metadata: sf2Presets is stale during
-    // loadSf2File's preset-0 load (previous file's list, committed after)
-    // and empty when the metadata parse failed - forcing the index into
-    // those ranges would misreport the preset the converter actually loaded.
-    sf2PresetIndex.store (presetCount > 0
-                            ? juce::jlimit (0, presetCount - 1, presetIndex)
-                            : juce::jmax (0, presetIndex),
-                          std::memory_order_relaxed);
-    loadedFilePath = sf2.getFullPathName();
-    publishLoadedPath (loadedFilePath);
     lastLoadError.clear();
     return true;
 }
@@ -496,8 +573,9 @@ bool DuskMultisampleProcessor::loadSfzFile (const juce::File& sfz,
         sf2Presets.clear();
     }
     sf2PresetIndex.store (-1, std::memory_order_relaxed);
+    runtimeLoaded.store (true, std::memory_order_release);
     loadedFilePath = sfz.getFullPathName();
-    publishLoadedPath (loadedFilePath);
+    publishLoadedState (loadedFilePath, -1);
     lastLoadError.clear();
     return true;
 }
@@ -619,8 +697,9 @@ void DuskMultisampleProcessor::processBlock (const hosting::PortBuffers& io) noe
 
 bool DuskMultisampleProcessor::saveState (std::vector<uint8_t>& out) const
 {
+    const auto persistedState = getPersistedStateSnapshot();
     juce::ValueTree state ("DuskMultisample");
-    state.setProperty ("file", juce::String::fromUTF8 (getLoadedPathSnapshot().c_str()),
+    state.setProperty ("file", juce::String::fromUTF8 (persistedState.first.c_str()),
                         nullptr);
     state.setProperty ("masterVolDb",
                         overrides.masterVolDb.load (std::memory_order_relaxed),
@@ -631,7 +710,7 @@ bool DuskMultisampleProcessor::saveState (std::vector<uint8_t>& out) const
     state.setProperty ("polyphony",
                         overrides.polyphony.load (std::memory_order_relaxed),
                         nullptr);
-    state.setProperty ("sf2Preset", sf2PresetIndex.load (std::memory_order_relaxed), nullptr);
+    state.setProperty ("sf2Preset", persistedState.second, nullptr);
 
     // Persist any CC the UI has set (custom-UI knob/fader positions).
     // Only non-default (>= 0) entries are written so the blob stays
@@ -666,18 +745,23 @@ bool DuskMultisampleProcessor::loadState (const std::vector<uint8_t>& in)
     if (! state.isValid()) return false;
 
     const auto path = state.getProperty ("file").toString();
-    // Skip the re-load when create() already loaded this exact file from the
-    // slot's bundle path (the common session-restore path). Loading a
+    // Skip the re-load when a caller already loaded this exact file. Loading a
     // soundfont is the single most expensive thing this plugin does (~1.5s of
     // sample decode); doing it twice per restored instance is pure waste.
     bool fileLoadOk = true;
-    if (path.isNotEmpty() && path != loadedFilePath)
+    bool presetRestoredByFileLoad = false;
+    if (path.isNotEmpty()
+        && (path != loadedFilePath || ! runtimeLoaded.load (std::memory_order_acquire)))
     {
         const auto file = juce::File (path);
         const auto ext = file.getFileExtension().toLowerCase();
+        const int requestedPreset = state.hasProperty ("sf2Preset")
+                                      ? (int) state.getProperty ("sf2Preset")
+                                      : 0;
         juce::String err;
-        const bool ok = (ext == ".sf2") ? loadSf2File (file, err)
+        const bool ok = (ext == ".sf2") ? loadSf2File (file, err, requestedPreset)
                                         : loadSfzFile (file, err);
+        presetRestoredByFileLoad = ok && ext == ".sf2";
         if (! ok)
         {
             // Non-fatal: keep any retained reference so the user can retry or
@@ -700,14 +784,12 @@ bool DuskMultisampleProcessor::loadState (const std::vector<uint8_t>& in)
     if (state.hasProperty ("polyphony"))
         setPolyphony (std::clamp ((int) state.getProperty ("polyphony"), 1, 256));
 
-    // Restore the SF2 preset selection (no-op for SFZ). Must run after
-    // the file load above so the SF2 metadata + sfizz state exist.
-    // Skipped when that load failed: the runtime and preset list are empty while
-    // loadedFilePath retains the retry reference, so the saved index is not active.
-    // idx == 0 is deliberately skipped: loadSf2File already loaded
-    // preset 0, so re-loading it would be redundant work. Only a
-    // non-default saved preset needs an explicit switch.
-    if (fileLoadOk && state.hasProperty ("sf2Preset"))
+    // Restore the SF2 preset selection (no-op for SFZ). A new SF2 path loaded
+    // the requested preset directly above; this handles callers that already
+    // loaded the same file at a different preset.
+    // Skipped when a load failed. When the saved and active indices match,
+    // avoid a redundant conversion.
+    if (fileLoadOk && ! presetRestoredByFileLoad && state.hasProperty ("sf2Preset"))
     {
         const int idx = (int) state.getProperty ("sf2Preset");
         int presetCount;
@@ -715,10 +797,30 @@ bool DuskMultisampleProcessor::loadState (const std::vector<uint8_t>& in)
             const juce::ScopedLock sl (sf2PresetsLock);
             presetCount = (int) sf2Presets.size();
         }
-        if (idx > 0 && idx < presetCount)
+        const int activePreset = sf2PresetIndex.load (std::memory_order_relaxed);
+        const bool savedPresetOutOfRange = presetCount > 0
+                                             && idx >= presetCount;
+        const int presetToRestore = presetCount > 0
+                                      ? (idx >= 0 && idx < presetCount ? idx : 0)
+                                      : -1;
+        if (presetToRestore >= 0 && presetToRestore != activePreset)
         {
             juce::String err;
-            loadSf2Preset (idx, err);
+            if (loadSf2Preset (presetToRestore, err))
+            {
+                if (savedPresetOutOfRange)
+                    lastLoadError = kSf2PresetFallbackMessage;
+            }
+            else
+            {
+                lastLoadError = err.isNotEmpty()
+                                  ? err
+                                  : "Failed to restore the saved SF2 preset";
+            }
+        }
+        else if (savedPresetOutOfRange)
+        {
+            lastLoadError = kSf2PresetFallbackMessage;
         }
     }
 
@@ -733,6 +835,8 @@ bool DuskMultisampleProcessor::loadState (const std::vector<uint8_t>& in)
             setHDCC ((int) e.getProperty ("n"), (float) e.getProperty ("v"));
         }
     }
+    // A syntactically valid state restores best-effort: missing files and
+    // unusable presets remain soft failures surfaced through lastLoadError.
     return true;
 }
 } // namespace duskstudio

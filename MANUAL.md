@@ -1592,9 +1592,9 @@ Click a track's **Insert** slot and choose **Soundfont (.sfz / .sf2 / .bank.xml)
 
 When a `.sf2` holds more than one preset (most GM/GS/XG SoundFonts do), a **preset picker** appears. Click it to open a filterable browser: start typing to filter presets by name or number, or read across the columns. Presets are grouped program-first — an instrument and its bank variations list together, drum kits last — each shown as `program [bank] name`.
 
-The loaded file path and the chosen preset are saved with the session.
+The loaded file path and the chosen preset are saved with the session. If that preset can no longer be loaded, Dusk Studio reports the problem and falls back to preset 0 so the slot remains playable.
 
-If a soundfont can't be loaded — a corrupt file, or an `.sfz` whose `sample=` files can't be found or read — the editor shows the reason. A failed first load leaves the slot empty; a failed Reload or Browse keeps the last successful file reference so Reload and Clear remain available and the next session save does not discard it.
+If a soundfont can't be loaded — a corrupt file, or an `.sfz` whose `sample=` files can't be found or read — the editor shows the reason. A failed first load leaves the slot empty; a failed Reload or Browse keeps the last successful file reference and remembers its SF2 preset for Reload or session restore, while Reload and Clear remain available.
 
 \newpage
 

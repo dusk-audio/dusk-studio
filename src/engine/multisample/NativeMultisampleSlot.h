@@ -46,6 +46,19 @@ public:
         if (instance != nullptr) instance->cancelPendingLoads();
     }
 
+    // State's retained soundfont reference is authoritative. Keep the generic
+    // slot path in step when an in-editor file swap made it differ from the
+    // bundle that originally constructed the slot.
+    bool loadState (const std::vector<uint8_t>& in)
+    {
+        if (instance == nullptr || ! instance->loadState (in))
+            return false;
+        const auto retainedPath = instance->getLoadedPathSnapshot();
+        if (! retainedPath.empty())
+            loadedPath = retainedPath;
+        return true;
+    }
+
     // Two-phase load, for callers with a live engine. Parsing a soundfont takes
     // seconds on a GM bank, so it must not happen inside the engine's process
     // gate: prime() builds + activates + parses + restores state with the audio
@@ -78,16 +91,24 @@ public:
         }
 
         auto inst = std::make_unique<DuskMultisampleProcessor>();
-        if (! inst->create (*b, {}, err)) { errorOut = "create: " + err;   return primed; }
+        const bool hasState = state != nullptr && ! state->empty();
+        if (hasState)
+            inst->loadState (*state);
+        const bool stateRuntimeLoaded = inst->hasLoadedRuntime();
+        if (! stateRuntimeLoaded)
+        {
+            // The state loader already applied non-file settings. When its file
+            // was unavailable, keep that diagnostic while loading the bundle
+            // instead of parsing the failed state file a second time.
+            if (! inst->create (*b, {}, err, hasState && ! stateRuntimeLoaded))
+            { errorOut = "create: " + err; return primed; }
+        }
         if (! inst->activate (sampleRate, maxBlock, err))
         { errorOut = "activate: " + err; return primed; }
-        // State carries the SF2 preset index, which can trigger a second parse -
-        // also expensive, so it belongs on this side of the gate.
-        if (state != nullptr && ! state->empty()) inst->loadState (*state);
 
         primed.bundle   = std::move (b);
         primed.instance = std::move (inst);
-        primed.path     = path.u8string();
+        primed.path     = primed.instance->getLoadedPathSnapshot();
         return primed;
     }
 

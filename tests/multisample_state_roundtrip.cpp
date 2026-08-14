@@ -1,12 +1,16 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
-#include "engine/multisample/DuskMultisampleProcessor.h"
+#include "engine/multisample/NativeMultisampleSlot.h"
 
 #include <juce_data_structures/juce_data_structures.h>
 
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <random>
+#include <string>
 #include <vector>
 
 using Catch::Matchers::WithinAbs;
@@ -152,15 +156,24 @@ void sf2Chunk (Sf2Buf& out, const char* cid, const std::vector<std::uint8_t>& bo
     if (body.size() & 1) out.u8 (0);
 }
 
-std::vector<std::uint8_t> twoPresetSf2()
+std::vector<std::uint8_t> testSf2 (bool secondPresetPlayable = true,
+                                   bool includeSecondPreset = true)
 {
     Sf2Buf phdr;
     phdr.name ("pre0"); phdr.u16 (0); phdr.u16 (0); phdr.u16 (0); phdr.u32 (0); phdr.u32 (0); phdr.u32 (0);
-    phdr.name ("pre1"); phdr.u16 (1); phdr.u16 (0); phdr.u16 (1); phdr.u32 (0); phdr.u32 (0); phdr.u32 (0);
-    phdr.name ("EOP");  phdr.u16 (0); phdr.u16 (0); phdr.u16 (2); phdr.u32 (0); phdr.u32 (0); phdr.u32 (0);
+    if (includeSecondPreset)
+        { phdr.name ("pre1"); phdr.u16 (1); phdr.u16 (0); phdr.u16 (1); phdr.u32 (0); phdr.u32 (0); phdr.u32 (0); }
+    phdr.name ("EOP"); phdr.u16 (0); phdr.u16 (0); phdr.u16 (includeSecondPreset ? 2 : 1); phdr.u32 (0); phdr.u32 (0); phdr.u32 (0);
 
-    Sf2Buf pbag; pbag.u16 (0); pbag.u16 (0); pbag.u16 (1); pbag.u16 (0); pbag.u16 (2); pbag.u16 (0);
-    Sf2Buf pgen; pgen.u16 (41); pgen.u16 (0); pgen.u16 (41); pgen.u16 (0); pgen.u16 (0); pgen.u16 (0);
+    Sf2Buf pbag;
+    pbag.u16 (0); pbag.u16 (0);
+    if (includeSecondPreset) { pbag.u16 (1); pbag.u16 (0); }
+    pbag.u16 (includeSecondPreset ? 2 : 1); pbag.u16 (0);
+    Sf2Buf pgen;
+    pgen.u16 (41); pgen.u16 (0);
+    if (includeSecondPreset)
+        { pgen.u16 (41); pgen.u16 (secondPresetPlayable ? 0 : 1); }
+    pgen.u16 (0);  pgen.u16 (0);
 
     Sf2Buf inst;
     inst.name ("inst0"); inst.u16 (0);
@@ -191,6 +204,21 @@ std::vector<std::uint8_t> twoPresetSf2()
 
     Sf2Buf file; file.id ("RIFF"); file.u32 ((std::uint32_t) content.b.size()); file.raw (content.b);
     return file.b;
+}
+
+std::filesystem::path createUniqueTempSoundfontDirectory()
+{
+    std::random_device random;
+    for (int attempt = 0; attempt < 16; ++attempt)
+    {
+        const auto nonce = (std::uint64_t (random()) << 32) ^ std::uint64_t (random());
+        const auto candidate = std::filesystem::temp_directory_path()
+                             / ("dusk-multisample-" + std::to_string (nonce));
+        std::error_code error;
+        if (std::filesystem::create_directory (candidate, error))
+            return candidate;
+    }
+    return {};
 }
 } // namespace
 
@@ -346,7 +374,7 @@ TEST_CASE ("DuskMultisampleProcessor: failed loadState leaves the old SF2's pres
     duskstudio::DuskMultisampleProcessor proc;
 
     const auto aFile = juce::File::createTempFile (".sf2");
-    const auto bytes = twoPresetSf2();
+    const auto bytes = testSf2();
     aFile.replaceWithData (bytes.data(), bytes.size());
 
     juce::String loadErr;
@@ -378,4 +406,266 @@ TEST_CASE ("DuskMultisampleProcessor: failed loadState leaves the old SF2's pres
     REQUIRE (proc.getLoadedPathSnapshot() == aPath.toStdString());
 
     aFile.deleteFile();
+}
+
+TEST_CASE ("DuskMultisampleProcessor: failed SFZ browse preserves the retained SF2 preset",
+           "[multisample]")
+{
+    const auto tempDirectory = createUniqueTempSoundfontDirectory();
+    REQUIRE_FALSE (tempDirectory.empty());
+    const auto sf2Path = tempDirectory / "source.sf2";
+    const auto brokenSfzPath = tempDirectory / "broken.sfz";
+    struct ScopedPathCleanup
+    {
+        std::filesystem::path path;
+        ~ScopedPathCleanup()
+        {
+            std::error_code ignored;
+            std::filesystem::remove_all (path, ignored);
+        }
+    } cleanup { tempDirectory };
+
+    const auto sf2Bytes = testSf2();
+    {
+        std::ofstream out (sf2Path, std::ios::binary);
+        out.write (reinterpret_cast<const char*> (sf2Bytes.data()),
+                   static_cast<std::streamsize> (sf2Bytes.size()));
+        out.flush();
+        REQUIRE (out.good());
+    }
+
+    duskstudio::MultisampleBundle sf2Bundle;
+    std::string createError;
+    REQUIRE (sf2Bundle.load (sf2Path.string(), createError));
+
+    duskstudio::DuskMultisampleProcessor source;
+    REQUIRE (source.create (sf2Bundle, {}, createError));
+    auto error = source.getLastLoadError();
+    REQUIRE (source.loadSf2Preset (1, error));
+    REQUIRE (source.getSf2PresetIndex() == 1);
+
+    {
+        std::ofstream out (brokenSfzPath, std::ios::binary);
+        out << "<region> key=60 sample=not-here.wav\n";
+        out.flush();
+        REQUIRE (out.good());
+    }
+    duskstudio::MultisampleBundle brokenSfzBundle;
+    REQUIRE (brokenSfzBundle.load (brokenSfzPath.string(), createError));
+    REQUIRE_FALSE (source.create (brokenSfzBundle, {}, createError));
+    REQUIRE (source.getNumRegions() == 0);
+    REQUIRE (source.getSf2Presets().empty());
+    REQUIRE (source.getSf2PresetIndex() == -1);
+    REQUIRE (source.getLoadedPathSnapshot() == sf2Path.string());
+
+    SECTION ("state restore")
+    {
+        std::vector<std::uint8_t> savedState;
+        REQUIRE (source.saveState (savedState));
+
+        duskstudio::DuskMultisampleProcessor restored;
+        REQUIRE (restored.loadState (savedState));
+        REQUIRE (restored.getLoadedPathSnapshot() == sf2Path.string());
+        REQUIRE (restored.getSf2PresetIndex() == 1);
+        REQUIRE (restored.getLastLoadError().isEmpty());
+    }
+
+    SECTION ("same-processor state restore")
+    {
+        std::vector<std::uint8_t> savedState;
+        REQUIRE (source.saveState (savedState));
+
+        REQUIRE (source.loadState (savedState));
+        REQUIRE (source.getLoadedPathSnapshot() == sf2Path.string());
+        REQUIRE (source.getSf2PresetIndex() == 1);
+        REQUIRE (source.getLastLoadError().isEmpty());
+    }
+
+    SECTION ("native slot prime restores the retained preset directly")
+    {
+        std::vector<std::uint8_t> savedState;
+        REQUIRE (source.saveState (savedState));
+        std::string primeError;
+        auto primed = duskstudio::NativeMultisampleSlot::prime (
+            sf2Path, 48000.0, 512, primeError, &savedState);
+
+        INFO ("Prime error: " << primeError);
+        REQUIRE (primed);
+        REQUIRE (primed.instance->hasLoadedRuntime());
+        REQUIRE (primed.instance->getLoadedPathSnapshot() == sf2Path.string());
+        REQUIRE (primed.instance->getSf2PresetIndex() == 1);
+        REQUIRE (primed.instance->getLastLoadError().isEmpty());
+    }
+
+    SECTION ("same-path state restore selects preset zero")
+    {
+        REQUIRE (source.reloadCurrentFile (error));
+        REQUIRE (source.getSf2PresetIndex() == 1);
+
+        duskstudio::DuskMultisampleProcessor presetZero;
+        REQUIRE (presetZero.create (sf2Bundle, {}, createError));
+        std::vector<std::uint8_t> savedState;
+        REQUIRE (presetZero.saveState (savedState));
+
+        REQUIRE (source.loadState (savedState));
+        REQUIRE (source.getLoadedPathSnapshot() == sf2Path.string());
+        REQUIRE (source.getSf2PresetIndex() == 0);
+        REQUIRE (source.getLastLoadError().isEmpty());
+    }
+
+    SECTION ("editor reload")
+    {
+        REQUIRE (source.reloadCurrentFile (error));
+        REQUIRE (source.getLoadedPathSnapshot() == sf2Path.string());
+        REQUIRE (source.getSf2PresetIndex() == 1);
+        REQUIRE (source.getLastLoadError().isEmpty());
+    }
+}
+
+TEST_CASE ("DuskMultisampleProcessor: an unplayable saved SF2 preset falls back to preset zero",
+           "[multisample]")
+{
+    const auto tempDirectory = createUniqueTempSoundfontDirectory();
+    REQUIRE_FALSE (tempDirectory.empty());
+    const auto sf2Path = tempDirectory / "fallback.sf2";
+    struct ScopedPathCleanup
+    {
+        std::filesystem::path path;
+        ~ScopedPathCleanup()
+        {
+            std::error_code ignored;
+            std::filesystem::remove_all (path, ignored);
+        }
+    } cleanup { tempDirectory };
+
+    const auto writeSoundfont = [&sf2Path] (const std::vector<std::uint8_t>& bytes)
+    {
+        std::ofstream out (sf2Path, std::ios::binary | std::ios::trunc);
+        out.write (reinterpret_cast<const char*> (bytes.data()),
+                   static_cast<std::streamsize> (bytes.size()));
+        out.flush();
+        return out.good();
+    };
+
+    const auto playableBytes = testSf2();
+    REQUIRE (writeSoundfont (playableBytes));
+
+    duskstudio::MultisampleBundle bundle;
+    std::string createError;
+    REQUIRE (bundle.load (sf2Path.string(), createError));
+
+    duskstudio::DuskMultisampleProcessor source;
+    REQUIRE (source.create (bundle, {}, createError));
+    auto error = source.getLastLoadError();
+    REQUIRE (source.loadSf2Preset (1, error));
+    std::vector<std::uint8_t> savedState;
+    REQUIRE (source.saveState (savedState));
+
+    REQUIRE (writeSoundfont (testSf2 (false)));
+
+    duskstudio::DuskMultisampleProcessor restored;
+    REQUIRE (restored.loadState (savedState));
+    REQUIRE (restored.getSf2PresetIndex() == 0);
+    REQUIRE (restored.getNumRegions() > 0);
+    REQUIRE (restored.getLastLoadError().contains ("using preset 0"));
+
+    error.clear();
+    REQUIRE (restored.loadSf2Preset (1, error));
+    REQUIRE (restored.getSf2PresetIndex() == 0);
+    REQUIRE (restored.getSf2Presets().size() == 2);
+    REQUIRE (restored.getNumRegions() > 0);
+    REQUIRE (restored.getLastLoadError().contains ("using preset 0"));
+
+    // The same-path restore takes a separate code path and must also recover.
+    REQUIRE (restored.loadState (savedState));
+    REQUIRE (restored.getSf2PresetIndex() == 0);
+    REQUIRE (restored.getNumRegions() > 0);
+    REQUIRE (restored.getLastLoadError().contains ("using preset 0"));
+
+    // The failed selection must not become authoritative in the next save.
+    std::vector<std::uint8_t> fallbackState;
+    REQUIRE (restored.saveState (fallbackState));
+    REQUIRE (writeSoundfont (playableBytes));
+
+    duskstudio::DuskMultisampleProcessor reopened;
+    REQUIRE (reopened.loadState (fallbackState));
+    REQUIRE (reopened.getSf2PresetIndex() == 0);
+    REQUIRE (reopened.getLastLoadError().isEmpty());
+
+    REQUIRE (writeSoundfont (testSf2 (true, false)));
+    duskstudio::DuskMultisampleProcessor outOfRange;
+    REQUIRE (outOfRange.loadState (savedState));
+    REQUIRE (outOfRange.getSf2PresetIndex() == 0);
+    REQUIRE (outOfRange.getNumRegions() > 0);
+    REQUIRE (outOfRange.getLastLoadError().contains ("using preset 0"));
+
+    duskstudio::DuskMultisampleProcessor samePathOutOfRange;
+    REQUIRE (samePathOutOfRange.create (bundle, {}, createError));
+    REQUIRE (samePathOutOfRange.loadState (savedState));
+    REQUIRE (samePathOutOfRange.getSf2PresetIndex() == 0);
+    REQUIRE (samePathOutOfRange.getNumRegions() > 0);
+    REQUIRE (samePathOutOfRange.getLastLoadError().contains ("using preset 0"));
+}
+
+TEST_CASE ("NativeMultisampleSlot prime keeps a missing-state diagnostic and loads its bundle",
+           "[multisample]")
+{
+    const auto tempDirectory = createUniqueTempSoundfontDirectory();
+    REQUIRE_FALSE (tempDirectory.empty());
+    const auto statePath = tempDirectory / "missing-after-save.sfz";
+    const auto bundlePath = tempDirectory / "fallback.sfz";
+    struct ScopedPathCleanup
+    {
+        std::filesystem::path path;
+        ~ScopedPathCleanup()
+        {
+            std::error_code ignored;
+            std::filesystem::remove_all (path, ignored);
+        }
+    } cleanup { tempDirectory };
+
+    for (const auto& path : { statePath, bundlePath })
+    {
+        std::ofstream out (path, std::ios::binary);
+        out << "<region> key=60 sample=*sine\n";
+        out.flush();
+        REQUIRE (out.good());
+    }
+
+    duskstudio::MultisampleBundle stateBundle;
+    std::string error;
+    REQUIRE (stateBundle.load (statePath.string(), error));
+    duskstudio::DuskMultisampleProcessor source;
+    REQUIRE (source.create (stateBundle, {}, error));
+    std::vector<std::uint8_t> state;
+    REQUIRE (source.saveState (state));
+
+    // The retained state path is authoritative when it names another valid
+    // file, and prime must publish the same path sfizz actually loaded.
+    auto mismatched = duskstudio::NativeMultisampleSlot::prime (
+        bundlePath, 48000.0, 512, error, &state);
+    INFO ("Prime error: " << error);
+    REQUIRE (mismatched);
+    REQUIRE (mismatched.instance->hasLoadedRuntime());
+    REQUIRE (mismatched.path == statePath.string());
+    REQUIRE (mismatched.instance->getLoadedPathSnapshot() == statePath.string());
+    REQUIRE (mismatched.instance->getNumRegions() == 1);
+    REQUIRE (mismatched.instance->getLastLoadError().isEmpty());
+
+    duskstudio::NativeMultisampleSlot deferred;
+    REQUIRE (deferred.load (bundlePath, 48000.0, 512, error));
+    REQUIRE (deferred.loadState (state));
+    REQUIRE (deferred.getPath() == statePath.string());
+    REQUIRE (deferred.getLoadedSoundfontPath() == statePath.string());
+
+    REQUIRE (std::filesystem::remove (statePath));
+
+    auto primed = duskstudio::NativeMultisampleSlot::prime (
+        bundlePath, 48000.0, 512, error, &state);
+    INFO ("Prime error: " << error);
+    REQUIRE (primed);
+    REQUIRE (primed.instance->hasLoadedRuntime());
+    REQUIRE (primed.instance->getLoadedPathSnapshot() == bundlePath.string());
+    REQUIRE (primed.instance->getNumRegions() == 1);
+    REQUIRE (primed.instance->getLastLoadError().contains ("File does not exist"));
 }
