@@ -31,7 +31,7 @@ src/engine/PluginSlot.h	42
 src/engine/RecordManager.cpp	4
 src/engine/RecordManager.h	5
 src/engine/device/DeviceManager.h	3
-src/engine/device/DeviceManagerJuce.cpp	46
+src/engine/device/DeviceManagerJuce.cpp	44
 src/engine/hosting/NativePluginId.h	8
 src/engine/ipc/IpcSelfTest.cpp	5
 src/engine/ipc/PluginHostMain.cpp	52

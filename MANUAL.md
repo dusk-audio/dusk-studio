@@ -2168,11 +2168,11 @@ If the disconnect happened during a take, the WAV that was being written is comm
 If the interface saved in your settings is held by another application when Dusk Studio launches — PipeWire or the JACK/PipeWire server, an ASIO driver another DAW already opened, a screen recorder, or browser audio holding the device in exclusive mode — Dusk Studio can't open it. Rather than load a silent, dead session, it recovers and tells you what happened:
 
 - On Linux it tries the PipeWire backend, then each ALSA device in turn. PipeWire can still reach an interface that another PipeWire client is using, since they share the graph; but if something holds the raw ALSA device exclusively (a JACK server, or an app talking to the hardware directly), PipeWire is locked out too and the fallback moves on.
-- On any platform, the last resort is the default device of every other backend that is present — on Windows that's what carries you off a busy or powered-down ASIO driver onto shared Windows Audio.
-- If that lands on a **different** working device, you keep working and see *"Your saved audio device … could not be opened … audio has switched to …"*. Your saved device is **not** changed — it's tried again on the next launch once you free it.
+- On any platform, the last resort is the default device of every other backend that is present — on Windows that's what carries you off a busy or powered-down ASIO driver onto shared Windows Audio. Shared and exclusive Windows backends can expose the same endpoint name; Dusk Studio still detects the backend change.
+- If that lands on a **different** working device or backend, you keep working and see *"Your saved audio setup for … could not be opened … Audio has switched to …"*. Your saved setup is **not** changed — it's tried again on the next launch once you free it.
 - If nothing opens, you get a clear warning. With no device open the playhead and meters won't move, recording is disabled, and plugin and soundfont loading is refused — the channel strips take their sample rate and block size from the running device, so there is nothing to prepare an insert against until one opens.
 
-Either way, free the device in the other app (or run `pactl suspend-sink <sink-name> 1` to release a PipeWire/PulseAudio hold), then pick it again in **Settings → Audio**. Your saved device returns automatically next launch once it's free.
+Either way, free the device in the other app (or run `pactl suspend-sink <sink-name> 1` to release a PipeWire/PulseAudio hold), then pick it again in **Settings → Audio**. Your saved setup returns automatically next launch once it's free.
 
 # Accessibility
 

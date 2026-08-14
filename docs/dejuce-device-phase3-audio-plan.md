@@ -150,7 +150,7 @@ AudioEngine/UI) never changes.
     failure with selectDefaultOnFailure, open the type's default device with
     default masks WITHOUT clobbering `lastExplicitSettings` (saved intent
     must survive a busy device — `DeviceFallbackMessage` and
-    `outputDeviceNameFromState` depend on it).
+    `deviceIdentityFromState` depend on it).
   - `setCurrentDeviceType`: arm `deviceChangePending` only for a
     will-actually-move request (same two-step check as today,
     DeviceManager.cpp:327-345), close the device, switch type, broadcast,
@@ -200,11 +200,12 @@ New clean unit `src/engine/device/DeviceStateBlob.{h,cpp}`:
   legacy blob, so conversion happens without a re-pick and selection can
   never be silently dropped). Unparseable blob ⇒ behave exactly like empty
   (fresh default), same as JUCE today.
-- `outputDeviceNameFromState` handles both formats.
-- mac/win keep the JUCE XML blob untouched in DeviceManagerJuce.cpp (state
-  file is per-machine; no cross-OS migration exists).
+- `deviceIdentityFromState` handles the backend and endpoint in both formats.
+- mac/win keep the persisted JUCE XML blob untouched in DeviceManagerJuce.cpp
+  (state file is per-machine; no cross-OS migration exists), while the common
+  JUCE-free identity reader parses it through `DeviceStateBlob`.
 
-### D4 — Non-Linux structure: two TUs, zero `#if` sprawl
+### D4 — Platform-specific implementations, zero `#if` sprawl
 
 - `DeviceManager.h`: API unchanged. The `juceManager()` hatch + gated `juce`
   forward-decl stay; header remains allowlisted (ground truth 5).
@@ -216,6 +217,8 @@ New clean unit `src/engine/device/DeviceStateBlob.{h,cpp}`:
   NOT-Linux in CMake. Byte-minimal diff = lowest risk for a path we cannot
   execute locally; macOS CI build + Windows CI tests are the compile proof
   (native-MIDI-tower precedent, PR #98).
+- `src/engine/device/DeviceStateBlob.cpp`: common JUCE-free saved-identity
+  reader, compiled on every platform.
 
 ### D5 — ALSA thread swap: JUCE Thread → std::thread (semantics to preserve)
 
@@ -287,8 +290,8 @@ PR-A merges (squash-merge hygiene: retire the PR-A branch).
   ⇒ useDefault; legacy XML A/B vs the JUCE parser + BigInteger base-2 parse
   on: full attribute set, missing chans attrs, entity-laden device names
   (incl. UTF-8), MSB-first mask strings ("110" ≠ "011"), malformed input ⇒
-  empty-equivalent; `outputDeviceNameFromState` on both formats incl.
-  output-empty-falls-to-input.
+  empty-equivalent. `deviceIdentityFromState` covers both formats, including
+  output-empty-falls-to-input, through the DeviceManager tests.
 - Not wired into the app yet — zero runtime risk.
 
 ### P2 — native DeviceManager on Linux (RT-RISKY: dispatch ownership moves)

@@ -1,4 +1,5 @@
 #include "DeviceStateBlob.h"
+#include "DeviceManager.h"
 
 #include "../../foundation/Json.h"
 
@@ -251,11 +252,14 @@ std::optional<DeviceStateBlob> DeviceStateBlob::parse (const std::string& blob)
     return std::nullopt;
 }
 
-std::string DeviceStateBlob::outputDeviceName (const std::string& blob)
+DeviceIdentity DeviceManager::deviceIdentityFromState (
+    const std::string& savedState) const
 {
-    const auto b = parse (blob);
-    if (! b) return {};
-    return ! b->setup.outputDeviceName.empty() ? b->setup.outputDeviceName
-                                               : b->setup.inputDeviceName;
+    const auto saved = DeviceStateBlob::parse (savedState);
+    if (! saved) return {};
+    const auto outputName = ! saved->setup.outputDeviceName.empty()
+                              ? saved->setup.outputDeviceName
+                              : saved->setup.inputDeviceName;
+    return { saved->deviceType, outputName };
 }
 } // namespace duskstudio::device

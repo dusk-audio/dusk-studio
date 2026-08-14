@@ -339,11 +339,72 @@ TEST_CASE ("DeviceManager initialise: busy saved device falls back but keeps sav
     REQUIRE (dm.getCurrentDevice()->getName() == "hw0");
 
     // The saved intent survives the fallback: getStateBlob still names busyDev,
-    // and outputDeviceNameFromState reports the user's INTENDED device.
+    // and deviceIdentityFromState reports the user's intended backend + device.
     const auto out = DeviceStateBlob::parse (dm.getStateBlob());
     REQUIRE (out.has_value());
     REQUIRE (out->setup.outputDeviceName == "busyDev");
-    REQUIRE (dm.outputDeviceNameFromState (saved.toJson()) == "busyDev");
+    const auto identity = dm.deviceIdentityFromState (saved.toJson());
+    REQUIRE (identity.backendName == "ALSA");
+    REQUIRE (identity.outputName == "busyDev");
+}
+
+TEST_CASE ("DeviceManager reads backend identity from saved device state", "[audio][device]")
+{
+    DeviceManager dm;
+
+    SECTION ("unparseable state has no identity")
+    {
+        const auto empty = dm.deviceIdentityFromState ("");
+        REQUIRE (empty.backendName.empty());
+        REQUIRE (empty.outputName.empty());
+
+        const auto corrupt = dm.deviceIdentityFromState ("garbage");
+        REQUIRE (corrupt.backendName.empty());
+        REQUIRE (corrupt.outputName.empty());
+    }
+
+    SECTION ("JSON output wins over input")
+    {
+        DeviceStateBlob saved;
+        saved.deviceType = "ALSA";
+        saved.setup.outputDeviceName = "Main Output";
+        saved.setup.inputDeviceName = "Main Input";
+
+        const auto identity = dm.deviceIdentityFromState (saved.toJson());
+        REQUIRE (identity.backendName == "ALSA");
+        REQUIRE (identity.outputName == "Main Output");
+    }
+
+    SECTION ("JSON empty output falls back to input")
+    {
+        DeviceStateBlob saved;
+        saved.deviceType = "ALSA";
+        saved.setup.inputDeviceName = "Input Only";
+
+        const auto identity = dm.deviceIdentityFromState (saved.toJson());
+        REQUIRE (identity.backendName == "ALSA");
+        REQUIRE (identity.outputName == "Input Only");
+    }
+
+    SECTION ("legacy output wins")
+    {
+        const auto identity = dm.deviceIdentityFromState (
+            "<DEVICESETUP deviceType=\"Windows Audio\" "
+            "audioOutputDeviceName=\"Speakers\" audioInputDeviceName=\"Microphone\"/>");
+
+        REQUIRE (identity.backendName == "Windows Audio");
+        REQUIRE (identity.outputName == "Speakers");
+    }
+
+    SECTION ("legacy empty output falls back to input")
+    {
+        const auto identity = dm.deviceIdentityFromState (
+            "<DEVICESETUP deviceType=\"Windows Audio (Exclusive Mode)\" "
+            "audioInputDeviceName=\"Speakers\"/>");
+
+        REQUIRE (identity.backendName == "Windows Audio (Exclusive Mode)");
+        REQUIRE (identity.outputName == "Speakers");
+    }
 }
 
 TEST_CASE ("DeviceManager setSetup: changed reopens stop->close->create->open->start", "[audio][device]")
