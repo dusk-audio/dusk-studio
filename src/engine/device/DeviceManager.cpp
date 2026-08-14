@@ -444,7 +444,7 @@ std::string DeviceManager::initialise (int numInputChannels, int numOutputChanne
 
     // Fallback: open the type's default device WITHOUT clobbering
     // lastExplicitSettings, so the saved intent survives a busy device (the
-    // engine's DeviceFallbackMessage + outputDeviceNameFromState depend on it).
+    // engine's DeviceFallbackMessage + deviceIdentityFromState depend on it).
     return impl->openDeviceFromSetup (impl->defaultSetupFor (type), /*treatAsChosen*/ false);
 }
 
@@ -452,11 +452,6 @@ std::string DeviceManager::getStateBlob() const
 {
     if (! impl->lastExplicitSettings) return {};
     return impl->lastExplicitSettings->toJson();
-}
-
-std::string DeviceManager::outputDeviceNameFromState (const std::string& savedState) const
-{
-    return DeviceStateBlob::outputDeviceName (savedState);
 }
 
 IODevice* DeviceManager::getCurrentDevice() { return impl->currentDevice.get(); }

@@ -232,38 +232,3 @@ TEST_CASE ("DeviceStateBlob malformed input => empty-equivalent", "[audio][devic
     // A non-object JSON value is not a valid blob.
     REQUIRE_FALSE (DeviceStateBlob::parse ("[1,2,3]").has_value());
 }
-
-TEST_CASE ("DeviceStateBlob outputDeviceName on both formats", "[audio][device]")
-{
-    SECTION ("JSON: output name wins")
-    {
-        DeviceStateBlob in;
-        in.setup.outputDeviceName = "MainOut";
-        in.setup.inputDeviceName  = "MainIn";
-        REQUIRE (DeviceStateBlob::outputDeviceName (in.toJson()) == "MainOut");
-    }
-
-    SECTION ("JSON: empty output falls back to input")
-    {
-        DeviceStateBlob in;
-        in.setup.inputDeviceName = "OnlyIn";
-        REQUIRE (DeviceStateBlob::outputDeviceName (in.toJson()) == "OnlyIn");
-    }
-
-    SECTION ("legacy XML: output name wins")
-    {
-        const auto blob = makeLegacyXml ("ALSA", "MainOut", "MainIn", 48000.0, 256, nullptr, nullptr);
-        REQUIRE (DeviceStateBlob::outputDeviceName (blob) == "MainOut");
-    }
-
-    SECTION ("legacy XML: empty output falls back to input")
-    {
-        const auto blob = makeLegacyXml ("ALSA", "", "OnlyIn", 48000.0, 256, nullptr, nullptr);
-        REQUIRE (DeviceStateBlob::outputDeviceName (blob) == "OnlyIn");
-    }
-
-    SECTION ("unparseable => empty")
-    {
-        REQUIRE (DeviceStateBlob::outputDeviceName ("garbage").empty());
-    }
-}

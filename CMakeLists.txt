@@ -698,12 +698,10 @@ target_link_libraries(DuskStudio PRIVATE dusk_sodium)
 # DeviceManager backing: Linux uses the native orchestrator (owns the device
 # types, drives open/start/stop/close and the callback fan-out itself); macOS /
 # Windows keep the JUCE-wrapped implementation. Same public dusk API either way.
+target_sources(DuskStudio PRIVATE
+    src/engine/device/DeviceStateBlob.cpp)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    # The native manager reads/writes the state blob directly (dusk JSON + legacy
-    # XML migration); off Linux the JUCE-wrapped manager keeps its own XML path.
-    target_sources(DuskStudio PRIVATE
-        src/engine/device/DeviceManager.cpp
-        src/engine/device/DeviceStateBlob.cpp)
+    target_sources(DuskStudio PRIVATE src/engine/device/DeviceManager.cpp)
 else()
     target_sources(DuskStudio PRIVATE src/engine/device/DeviceManagerJuce.cpp)
 endif()

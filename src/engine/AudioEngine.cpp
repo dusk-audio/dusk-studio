@@ -559,10 +559,10 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
                 && d->getActiveOutputChannels().count() > 0;
         };
 
-        // The user's INTENDED output device (from the saved blob), not whatever
-        // initialise() landed on - so a saved device that failed to open is still
-        // named in the startup message even after a silent fallback.
-        const std::string savedName = deviceManager.outputDeviceNameFromState (savedDeviceState);
+        // The user's INTENDED backend + output device (from the saved blob), not
+        // whatever initialise() landed on. Windows shared and exclusive modes
+        // can expose the same endpoint name, so both fields identify a fallback.
+        const auto savedDevice = deviceManager.deviceIdentityFromState (savedDeviceState);
 
         if (! working())
         {
@@ -647,8 +647,15 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
         // the saved device opened, so the normal path stays silent.
         auto* dev = deviceManager.getCurrentDevice();
         const bool opened = working();
+        device::DeviceIdentity liveDevice;
+        if (opened)
+        {
+            liveDevice.outputName = dev->getName();
+            if (auto* liveType = deviceManager.getCurrentDeviceType())
+                liveDevice.backendName = liveType->getTypeName();
+        }
         startupDeviceMessage_ = duskstudio::startupDeviceMessage (
-            opened, savedName, opened ? dev->getName() : std::string());
+            opened, savedDevice, liveDevice);
     }
 
    #if ! defined(__linux__)

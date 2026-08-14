@@ -28,10 +28,5 @@ struct DeviceStateBlob
     // Parse either supported form. nullopt on an empty or unparseable blob - the
     // caller then behaves as a fresh machine, matching JUCE's parse-fail contract.
     static std::optional<DeviceStateBlob> parse (const std::string& blob);
-
-    // The output device name a blob records, falling back to the input device
-    // name, or empty. Reads the user's intended device from either form without
-    // opening anything.
-    static std::string outputDeviceName (const std::string& blob);
 };
 } // namespace duskstudio::device
