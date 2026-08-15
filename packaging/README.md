@@ -98,5 +98,5 @@ straight from the extracted tarball.
    `SHA256SUMS.manual`.
 5. Before announcing the release, run
    `scripts/verify-release-assets.sh vX.Y.Z`. Do not announce unless it reports
-   all ten assets and a non-empty release body.
+   all ten assets and a populated release-summary slot.
 6. Pinned support note: paste `DuskStudio --version` output into any DM.

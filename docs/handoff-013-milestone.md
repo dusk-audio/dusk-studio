@@ -6,23 +6,23 @@ Paste everything below as the opening prompt of the session that will do the wor
 
 You are the orchestrator for Dusk Studio (`/home/marc/projects/DuskStudio`). Read
 `CLAUDE.md` first; its audio-thread, de-JUCE, and verification requirements are
-absolute. Finish only the still-open 0.13.0 milestone issues: #178, #266, #271,
-#272, and #274. Verify their current GitHub state and each finding against the
-current source before acting. Do not reopen or reimplement closed issues.
+absolute. Of the 0.13.0 milestone, finish only issues #178, #266, #271, #272,
+and #274. Verify their current GitHub state and each finding against the current
+source before acting. Do not reopen or reimplement closed issues.
 
-The release metadata is already prepared on `release/0.13.0-metadata`; commit
-`b4daede` contains the 0.13.0 bump. Until Marc merges that branch,
-`origin/main:VERSION` remains 0.12.2. Continue from the release branch instead
-of recreating the bump on `main`.
+The 0.13.0 metadata landed on `origin/main` as `e4ac7d6` through #284, and
+`origin/main:VERSION` is 0.13.0. Do not continue on the merged
+`release/0.13.0-metadata` branch. Start any still-valid #178 change from an
+up-to-date `origin/main`, and retire the merged branch only under #271 after
+Marc authorizes cleanup.
 
 The working tree also contains unrelated, user-owned edits in
 `BUILDING-LINUX.md`, `CLAUDE.md`, `docs/capture-screenshots.sh`, and
 `docs/lv2-dsp-integration-handoff.md`. Do not stage, rewrite, or discard them.
 
-Keep the metadata branch limited to #178 and this handoff. Create separate
-issue branches from an up-to-date `origin/main` for #266, #272, and any code
-resulting from #274; each gets its own review and PR. #271 is Marc-gated
-repository maintenance, not a code branch.
+For issues #178, #266, and #272, and for any code resulting from #274, create
+a separate branch from an up-to-date `origin/main`. Each gets its own review and
+PR. Issue #271 is Marc-gated repository maintenance, not a code branch.
 
 ## Working model
 
@@ -196,8 +196,8 @@ desktop-session failure.
 
 The ALSA sequence-subscription test can be flaky under parallel load. CTest's
 `-R` option takes a test-name regular expression, not an ordinal such as test
-#7. List the registered tests, identify the exact name, and rerun that name with
-failure output enabled:
+number 7. List the registered tests, identify the exact name, and rerun that
+name with failure output enabled:
 
 ```bash
 ctest --test-dir build-tests-w -N | grep -E 'ALSA seq.*subscription'
@@ -212,18 +212,35 @@ and #267-#270. Those parts are complete. In particular, #266's documentation
 half had to land before tagging and is independently complete. Its remaining
 CMake half is separately closable and may land after the v0.13.0 tag.
 
-- #178, release mechanics: verify the metadata branch and current repository
-  against the issue's still-valid acceptance criteria and prepare it for Marc
-  to land on `origin/main`. Leave merging and tagging to Marc. Do not redo
-  release chores already completed. The untagged 0.12.7 wave is folded into
-  the 0.13.0 notes; do not create a 0.12.7 tag unless Marc reverses that
-  decision. Ask Marc for the real package-contact address that must replace
-  `support@duskaudio.example`; never invent one. Do not run
-  `scripts/update-patrons.py` locally: the tag workflow refreshes patrons in its
-  isolated donor checkout and refuses to ship stale data. The local patrons step
-  printed at `scripts/bump-version.sh:342` at this handoff revision is superseded
-  and must be corrected under #178 before tagging. Follow the tracked release
-  procedures in `packaging/README.md` and `docs/MAINTAINER-GUIDE.md`.
+- #178, release mechanics: verify the metadata on `origin/main` and the current
+  repository against the issue's still-valid acceptance criteria. Leave tagging
+  to Marc and do not redo release chores already completed. The untagged 0.12.7
+  wave is folded into the 0.13.0 notes; do not create a 0.12.7 tag unless Marc
+  reverses that decision. Ask Marc for the real package-contact address that
+  must replace `support@duskaudio.example`; never invent one. The binary release
+  workflows refresh patrons in isolated donor checkouts when all four Patreon
+  secrets are available, but warn and ship the committed supporters list when
+  any secret is missing. With all four secrets configured, a refresh failure
+  fails the release build. Before tagging, configure local Patreon credentials
+  and run the freshness check from the root checkout, where sibling discovery
+  can reach the normal working donor checkout rather than the detached `$DONOR`
+  verification checkout:
+
+  ```bash
+  (cd /home/marc/projects/DuskStudio && \
+    env -u DUSK_PLUGINS_PATH scripts/update-patrons.py --dry-run)
+  ```
+
+  Reconcile any out-of-sync sibling headers and rerun the check. Compare the
+  reported tiers with the header in the pinned donor checkout at
+  `/home/marc/projects/dusk-plugins-013/plugins/shared/PatreonBackers.h`. If they differ,
+  require all four repository secrets before tagging so the workflows inject
+  the live list. If the secrets are unavailable, stop and ask Marc whether to
+  update the donor list and pin; never advance `DONOR_REV` without that separate
+  decision. The local patrons step printed by `scripts/bump-version.sh` must be
+  updated under issue #178 to describe that
+  freshness check. Follow the tracked release procedures in
+  `packaging/README.md` and `docs/MAINTAINER-GUIDE.md`.
 - #266, CMake half: add a dependency-aware opt-out for the unconditional
   libsodium dependency, keeping missing libsodium fatal when catalog support is
   explicitly requested. Gate the SFZ catalog sources and tests, verify deb/rpm
@@ -240,10 +257,12 @@ CMake half is separately closable and may land after the v0.13.0 tag.
   library cache entry; any match is a failure.
 - #271, repository maintenance: each push, discard, branch deletion, and
   worktree removal needs Marc's explicit authorization.
-- #272, release workflows: add token preflights where missing and make release
-  body verification detect an unfilled summary slot. Marc must decide before
-  tagging: merge #272 first so it protects v0.13.0, or explicitly defer it to
-  v0.14. Landing it after the v0.13.0 tag cannot protect that tag.
+- #272, release workflows: token preflights and a release-summary-slot check
+  were implemented under this issue. Confirm those changes are present on
+  `origin/main` before acting; do not reimplement an already-landed change. The
+  issue does not gate v0.13.0. Token preflights protect only tags created after
+  they land; the verifier can still protect the announcement if its summary-slot
+  check lands before the post-build check.
 - #274, product decision: ask Marc whether to rename `vca_overeasy`. If yes,
   scope the change to the session serializer's write and read sites
   (`SessionSerializer.cpp:629` and `:1285` at this handoff revision): write the

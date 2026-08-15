@@ -16,6 +16,24 @@
 
 set -euo pipefail
 
+strip_html_comments() {
+    local remaining=$1
+    local visible=''
+    local comment_start='<!--'
+    local comment_end='-->'
+    while [[ "$remaining" == *"$comment_start"* ]]; do
+        visible+=${remaining%%"$comment_start"*}
+        remaining=${remaining#*"$comment_start"}
+        if [[ "$remaining" != *"$comment_end"* ]]; then
+            remaining=''
+            break
+        fi
+        remaining=${remaining#*"$comment_end"}
+    done
+    visible+=$remaining
+    printf '%s' "$visible"
+}
+
 if [[ $# -lt 1 ]]; then
     echo "usage: $0 <semver> [release notes ...]" >&2
     exit 2
@@ -23,7 +41,24 @@ fi
 
 NEW_VERSION="$1"
 shift
-NOTES="${*:-Patch release.}"
+if [[ $# -eq 0 ]]; then
+    NOTES='Patch release.'
+else
+    NOTES="$*"
+fi
+
+VISIBLE_NOTES=$(strip_html_comments "$NOTES")
+while [[ "$VISIBLE_NOTES" == [[:space:]]* ]]; do
+    VISIBLE_NOTES=${VISIBLE_NOTES#?}
+done
+while [[ "$VISIBLE_NOTES" == *[[:space:]] ]]; do
+    VISIBLE_NOTES=${VISIBLE_NOTES%?}
+done
+if [[ -z "${VISIBLE_NOTES//[[:space:]]/}" ]]; then
+    echo "error: release notes must contain visible text" >&2
+    exit 2
+fi
+NOTES="$VISIBLE_NOTES"
 
 if [[ ! "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     echo "error: '$NEW_VERSION' is not a semver triple (MAJOR.MINOR.PATCH)" >&2

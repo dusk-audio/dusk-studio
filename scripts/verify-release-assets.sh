@@ -8,14 +8,45 @@
 # Four workflows publish to the same tag (linux-release once per arch,
 # macos-release, windows-build, manual-pdf). A platform that fails leaves a
 # release that looks finished but is short its assets, so the set is the check:
-# ten assets, no more, no fewer, plus a non-empty body. Exits nonzero if
-# anything is missing, duplicated or unexpected.
+# ten assets, no more, no fewer, plus a populated release-summary slot. Exits
+# nonzero if anything is missing, duplicated or unexpected.
 
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 REPO="${RELEASES_REPO:-dusk-audio/dusk-studio-releases}"
+SUMMARY_START='<!-- summary-start -->'
+SUMMARY_END='<!-- summary-end -->'
+
+count_occurrences() {
+    local remaining=$1
+    local needle=$2
+    local count=0
+    while [[ "$remaining" == *"$needle"* ]]; do
+        remaining=${remaining#*"$needle"}
+        ((count += 1))
+    done
+    printf '%s' "$count"
+}
+
+strip_html_comments() {
+    local remaining=$1
+    local visible=''
+    local comment_start='<!--'
+    local comment_end='-->'
+    while [[ "$remaining" == *"$comment_start"* ]]; do
+        visible+=${remaining%%"$comment_start"*}
+        remaining=${remaining#*"$comment_start"}
+        if [[ "$remaining" != *"$comment_end"* ]]; then
+            remaining=''
+            break
+        fi
+        remaining=${remaining#*"$comment_end"}
+    done
+    visible+=$remaining
+    printf '%s' "$visible"
+}
 
 TAG="${1:-}"
 if [[ -z "$TAG" ]]; then
@@ -48,22 +79,33 @@ EXPECTED=(
     "Manual sums|SHA256SUMS.manual"
 )
 
-# One API call, one record per line as "kind<TAB>value": the body is multi-line
-# and would otherwise be indistinguishable from the asset names.
-if ! RECORDS=$(gh release view "$TAG" --repo "$REPO" --json assets,body \
-        --jq '"body\t\(.body | utf8bytelength)", (.assets[] | "asset\t\(.name)")' 2>&1); then
+GH_ERROR=$(mktemp "${TMPDIR:-/tmp}/duskstudio-release-verify.XXXXXX")
+cleanup() {
+    rm -f "$GH_ERROR"
+}
+trap cleanup EXIT
+
+# Fetch asset names separately because summary validation needs the complete
+# body text while asset matching needs one name per line.
+if ! RECORDS=$(gh release view "$TAG" --repo "$REPO" --json assets \
+        --jq '.assets[].name' 2>"$GH_ERROR"); then
     echo "error: cannot read release ${TAG} from ${REPO}:" >&2
-    echo "$RECORDS" >&2
+    cat "$GH_ERROR" >&2
     exit 2
 fi
 
+: > "$GH_ERROR"
+if ! BODY=$(gh release view "$TAG" --repo "$REPO" --json body --jq '.body // ""' \
+        2>"$GH_ERROR"); then
+    echo "error: cannot read release body for ${TAG} from ${REPO}:" >&2
+    cat "$GH_ERROR" >&2
+    exit 2
+fi
+BODY_BYTES=$(printf '%s' "$BODY" | wc -c | tr -d '[:space:]')
+
 NAMES=()
-BODY_BYTES=0
-while IFS=$'\t' read -r kind value; do
-    case "$kind" in
-        asset) NAMES+=("$value") ;;
-        body)  BODY_BYTES="$value" ;;
-    esac
+while IFS= read -r name; do
+    [[ -n "$name" ]] && NAMES+=("$name")
 done <<< "$RECORDS"
 
 MATCHED=()
@@ -108,11 +150,31 @@ for ((i = 0; i < ${#NAMES[@]}; i++)); do
     fi
 done
 
-if [[ "$BODY_BYTES" -gt 0 ]]; then
-    printf '%-8s %-24s %s\n' "ok" "release body" "${BODY_BYTES} bytes"
-else
-    printf '%-8s %-24s %s\n' "EMPTY" "release body" "no notes - the create step lost packaging/RELEASE-NOTES.md"
+if [[ "$BODY_BYTES" -eq 0 ]]; then
+    printf '%-8s %-24s %s\n' "EMPTY" "release body" \
+        "no notes - the create step lost packaging/RELEASE-NOTES.md"
     status=1
+else
+    START_COUNT=$(count_occurrences "$BODY" "$SUMMARY_START")
+    END_COUNT=$(count_occurrences "$BODY" "$SUMMARY_END")
+    SUMMARY=${BODY#*"$SUMMARY_START"}
+    if (( START_COUNT != 1 || END_COUNT != 1 )) \
+        || [[ "$SUMMARY" != *"$SUMMARY_END"* ]]; then
+        printf '%-8s %-24s %s\n' "INVALID" "release body" \
+            "summary markers are missing, duplicated, or out of order"
+        status=1
+    else
+        SUMMARY=${SUMMARY%%"$SUMMARY_END"*}
+        SUMMARY_CONTENT=$(strip_html_comments "$SUMMARY" | tr -d '[:space:]')
+        if [[ -z "$SUMMARY_CONTENT" ]]; then
+            printf '%-8s %-24s %s\n' "PLACEHOLDER" "release body" \
+                "summary slot is empty"
+            status=1
+        else
+            printf '%-8s %-24s %s\n' "ok" "release body" \
+                "${BODY_BYTES} bytes, summary populated"
+        fi
+    fi
 fi
 
 echo

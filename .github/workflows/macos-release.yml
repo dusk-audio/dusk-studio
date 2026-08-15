@@ -49,6 +49,26 @@ jobs:
           # persisted GITHUB_TOKEN — don't leave it in git config.
           persist-credentials: false
 
+      - name: Preflight - releases-repo token is valid (tag builds only)
+        # Fail fast before the full build if RELEASES_REPO_TOKEN is dead.
+        # The non-mutating generate-notes endpoint rejects read-only tokens.
+        if: ${{ github.ref_type == 'tag' }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          preflight_error=$(mktemp -t duskstudio-preflight.XXXXXX)
+          trap 'rm -f "$preflight_error"' EXIT
+          probe_tag="duskstudio-token-preflight-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          # This endpoint creates no release, but requires contents:write.
+          if ! gh api --method POST \
+              "repos/${RELEASES_REPO}/releases/generate-notes" \
+              -f "tag_name=${probe_tag}" >/dev/null 2>"$preflight_error"; then
+            echo "::error::write-capability preflight for ${RELEASES_REPO} failed. Check the API details below and verify RELEASES_REPO_TOKEN has repository access and contents:write; rotate the secret if needed, then re-run." >&2
+            cat "$preflight_error" >&2
+            exit 1
+          fi
+
       - name: Verify tag matches VERSION
         # Assets are named from the VERSION file, not the tag — a mismatch
         # would publish wrongly-labelled artifacts silently.
@@ -126,9 +146,10 @@ jobs:
         # Pins + rationale live in .github/actions/clone-dpf-stack.
         uses: ./.github/actions/clone-dpf-stack
 
-      - name: Refresh Patreon supporters (best-effort)
+      - name: Refresh Patreon supporters
         # See linux-release.yml for the rationale. Bakes the live list into the
-        # DMG; best-effort, ships the committed list with no secrets / on failure.
+        # DMG. Missing secrets ship the committed list; a configured refresh
+        # failure blocks the build.
         shell: bash
         env:
           PATREON_ACCESS_TOKEN: ${{ secrets.PATREON_ACCESS_TOKEN }}
