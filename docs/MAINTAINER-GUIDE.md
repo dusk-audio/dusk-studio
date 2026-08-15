@@ -445,7 +445,50 @@ workflows. Supply the real address before either format is published.
    either metadata file or insertion marker is unavailable. Require the diff
    to contain all three expected metadata changes before proceeding.
 2. Replace `Unreleased` in that changelog heading with the release date.
-   Review and verify all release metadata.
+   Review and verify all release metadata. Then run the Patreon freshness check
+   from the primary checkout, not a `.codex/worktrees/*` issue worktree:
+
+   ```bash
+   (
+     set -e
+     python3 - <<'PY'
+   import json
+   from pathlib import Path
+   config_path = Path.home() / ".config" / "dusk-audio" / "patreon.json"
+   overrides = json.loads(config_path.read_text(encoding="utf-8")).get("name_overrides", {})
+   if overrides:
+       raise SystemExit(
+           "STOP: local Patreon name_overrides are not available to release workflows"
+       )
+   PY
+     DONOR_REV=$(sed -nE \
+       's/^[[:space:]]*DONOR_REV:[[:space:]]*([0-9a-f]{40})[[:space:]]*$/\1/p' \
+       .github/workflows/linux-release.yml)
+     [[ "$DONOR_REV" =~ ^[0-9a-f]{40}$ ]] \
+       || { echo "STOP: release workflow has no valid DONOR_REV" >&2; exit 1; }
+     git -C ../plugins cat-file -e "$DONOR_REV^{commit}" 2>/dev/null \
+       || git -C ../plugins fetch origin "$DONOR_REV"
+     git -C ../plugins show "$DONOR_REV:plugins/shared/PatreonBackers.h"
+     env -u DUSK_PLUGINS_PATH scripts/update-patrons.py --dry-run
+   )
+   ```
+
+   If the script stops because sibling headers are out of sync, reconcile those
+   local copies and rerun it; that error is separate from Patreon freshness.
+   The block also stops when the local config contains `name_overrides`, because
+   the release workflows do not receive those mappings and would inject
+   different display names. Clear the mappings only if the unmodified Patreon
+   names are intended; otherwise stop and add reviewed workflow propagation.
+   The command reads `DONOR_REV` from the Linux release workflow; all donor
+   workflow pins must match. Compare the reported `champions`, `patrons`,
+   `supporters`, and `hugs` tiers with the
+   header printed from that exact revision. The dry run does not rewrite
+   supporter headers, but it can refresh the local Patreon access and refresh
+   tokens. If it prints `Patreon tokens refreshed and saved.`, update the
+   `PATREON_ACCESS_TOKEN` and `PATREON_REFRESH_TOKEN` Actions secrets before
+   tagging. If the live tiers differ from the committed header, require all four
+   Patreon Actions secrets so the binary workflows inject the live list. Without
+   those secrets, stop: the workflows warn and ship the committed list.
 3. Rebuild the app and tests, run the full test suite and JUCE gate, then run
    the integration self-test on a private Xvfb display. Never launch the
    release binary on the live Wayland session.
