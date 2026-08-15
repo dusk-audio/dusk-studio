@@ -5,7 +5,7 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [0.13.0] - Unreleased
+## [0.13.0] - 2026-08-14
 
 The first release cut from the main line since 0.12 branched. Linux gets a
 native PipeWire backend and MIDI hot-plug; macOS gets Dusk Studio's own plugin
@@ -230,9 +230,13 @@ fixes are ported here and are listed below rather than under a 0.12.7 heading.
   device is open.
 - **Soundfonts on Windows.** SFZ and SF2 files under paths with non-ASCII
   characters failed to load; file reading and writing now hand the operating
-  system proper wide-character paths. An `.sfz` whose samples cannot be found
-  no longer "loads" as a silent instrument - the load fails, the slot is left
-  empty, and the editor names the missing samples.
+  system proper wide-character paths.
+- **Soundfont failure recovery.** An `.sfz` whose samples cannot be found no
+  longer "loads" as a silent instrument. A failed first load leaves the slot
+  empty and names the missing samples; a failed Reload or Browse keeps the last
+  successful file reference and SF2 preset. If a saved SF2 preset is no longer
+  playable, Dusk Studio reports the fallback and loads preset 0 so the slot
+  remains playable.
 - **Notepad on Windows.** The notepad's renderer did not compile under MSVC,
   which would have shipped a Windows build without the release's headline
   feature; the GL functions it needs are now loaded at run time the same way
