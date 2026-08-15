@@ -66,10 +66,15 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
         run: |
           set -euo pipefail
-          # .permissions.push reflects contents:write for the token; a read-only
-          # token can fetch repo metadata and would pass a bare existence probe.
-          if [[ "$(gh api "repos/${RELEASES_REPO}" --jq '.permissions.push // false' 2>/dev/null)" != "true" ]]; then
-            echo "::error::RELEASES_REPO_TOKEN cannot WRITE to ${RELEASES_REPO} (expired, revoked, or missing contents:write). Rotate the RELEASES_REPO_TOKEN secret with contents:write on that repo, then re-run this workflow." >&2
+          preflight_error=$(mktemp -t duskstudio-preflight.XXXXXX)
+          trap 'rm -f "$preflight_error"' EXIT
+          probe_tag="duskstudio-token-preflight-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          # This endpoint creates no release, but requires contents:write.
+          if ! gh api --method POST \
+              "repos/${RELEASES_REPO}/releases/generate-notes" \
+              -f "tag_name=${probe_tag}" >/dev/null 2>"$preflight_error"; then
+            echo "::error::write-capability preflight for ${RELEASES_REPO} failed. Check the API details below and verify RELEASES_REPO_TOKEN has repository access and contents:write; rotate the secret if needed, then re-run." >&2
+            cat "$preflight_error" >&2
             exit 1
           fi
 
@@ -182,12 +187,12 @@ jobs:
         # Pins + rationale live in .github/actions/clone-dpf-stack.
         uses: ./.github/actions/clone-dpf-stack
 
-      - name: Refresh Patreon supporters (best-effort)
+      - name: Refresh Patreon supporters
         # Bakes the live supporters list into the release binary via
         # PatreonBackers.h (rewritten in the freshly-cloned plugins checkout
-        # before configure). Best-effort: with no secrets, or on any API
-        # failure, the build ships the committed list. The refresh token must be
-        # reusable (Patreon creator tokens are); rotate the secret if invalidated.
+        # before configure). Missing secrets ship the committed list; with all
+        # secrets configured, a refresh failure blocks the build. The refresh
+        # token must be reusable; rotate the secret if invalidated.
         shell: bash
         env:
           PATREON_ACCESS_TOKEN: ${{ secrets.PATREON_ACCESS_TOKEN }}

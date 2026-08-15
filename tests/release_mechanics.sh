@@ -87,6 +87,47 @@ printf '%s\n' \
     '- **Linux** (`.tar.xz`): unsigned.' \
     > "$FIXTURE/packaging/RELEASE-NOTES.md"
 
+WHITESPACE_ERROR="$SCRATCH/whitespace-notes-error.txt"
+if (cd "$FIXTURE" \
+    && bash scripts/bump-version.sh 9.9.9 '' \
+        >/dev/null 2>"$WHITESPACE_ERROR"); then
+    echo "FAIL: an explicitly empty release summary must be rejected" >&2
+    exit 1
+fi
+if ! grep -qF 'release notes must contain visible text' \
+    "$WHITESPACE_ERROR"; then
+    echo "FAIL: an empty release summary reported the wrong failure" >&2
+    cat "$WHITESPACE_ERROR" >&2
+    exit 1
+fi
+if (cd "$FIXTURE" \
+    && bash scripts/bump-version.sh 9.9.9 '   ' \
+        >/dev/null 2>"$WHITESPACE_ERROR"); then
+    echo "FAIL: whitespace-only release notes must be rejected" >&2
+    exit 1
+fi
+if ! grep -qF 'release notes must contain visible text' \
+    "$WHITESPACE_ERROR"; then
+    echo "FAIL: whitespace-only release notes reported the wrong failure" >&2
+    cat "$WHITESPACE_ERROR" >&2
+    exit 1
+fi
+if [[ "$(cat "$FIXTURE/VERSION")" != "0.0.0" ]]; then
+    echo "FAIL: whitespace-only release notes must leave VERSION untouched" >&2
+    exit 1
+fi
+if (cd "$FIXTURE" \
+    && bash scripts/bump-version.sh 9.9.9 '<!-- TODO: write summary -->' \
+        >/dev/null 2>"$WHITESPACE_ERROR"); then
+    echo "FAIL: comment-only release notes must be rejected before publishing" >&2
+    exit 1
+fi
+if ! grep -qF 'release notes must contain visible text' "$WHITESPACE_ERROR"; then
+    echo "FAIL: comment-only release notes reported the wrong failure" >&2
+    cat "$WHITESPACE_ERROR" >&2
+    exit 1
+fi
+
 # An anchor quoted inside a nested release description is a decoy, not the
 # direct child insertion point. A file containing only that decoy must abort
 # before any metadata lands.
@@ -215,6 +256,257 @@ if find "$FIXTURE_ROLLBACK" -type f \
     exit 1
 fi
 
+# The release body always has a static Downloads section, so byte length alone
+# cannot prove that bump-version.sh populated the summary slot. Exercise the
+# verifier with a fake gh response while keeping the complete asset set valid.
+VERIFIER_BIN="$SCRATCH/verifier-bin"
+mkdir -p "$VERIFIER_BIN"
+cat > "$VERIFIER_BIN/gh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -n "${FAKE_GH_STDERR:-}" ]]; then
+    printf '%s\n' "$FAKE_GH_STDERR" >&2
+fi
+if [[ -n "${FAKE_GH_FAIL_JSON:-}" \
+    && " $* " == *" --json ${FAKE_GH_FAIL_JSON} "* ]]; then
+    printf 'fake gh %s failure\n' "$FAKE_GH_FAIL_JSON" >&2
+    exit 73
+fi
+case " $* " in
+    *" --json body "*)
+        printf '%s\n' "${FAKE_RELEASE_BODY-}"
+        ;;
+    *" --json assets "*)
+        if [[ ${FAKE_RELEASE_ASSETS+x} == x ]]; then
+            printf '%s\n' "$FAKE_RELEASE_ASSETS"
+        else
+            printf '%s\n' \
+                'dusk-studio-9.9.9-Linux-x86_64.tar.xz' \
+                'SHA256SUMS.linux-x86_64' \
+                'dusk-studio-9.9.9-Linux-aarch64.tar.xz' \
+                'SHA256SUMS.linux-aarch64' \
+                'dusk-studio-9.9.9-macOS-arm64.dmg' \
+                'SHA256SUMS.macos' \
+                'dusk-studio-9.9.9-Windows-x64.msi' \
+                'SHA256SUMS.windows' \
+                'MANUAL.pdf' \
+                'SHA256SUMS.manual'
+        fi
+        ;;
+    *)
+        echo "unexpected fake gh invocation: $*" >&2
+        exit 2
+        ;;
+esac
+SH
+chmod +x "$VERIFIER_BIN/gh"
+
+PLACEHOLDER_BODY=$(printf '%s\n' \
+    '<!-- summary-start -->' \
+    '<!-- summary-end -->' \
+    '' \
+    '### Downloads')
+COMMENT_ONLY_BODY=$(printf '%s\n' \
+    '<!-- summary-start -->' \
+    '<!-- TODO: write the release summary -->' \
+    '<!-- summary-end -->' \
+    '' \
+    '### Downloads')
+INVALID_BODY='### Downloads'
+INVALID_ORDER_BODY=$(printf '%s\n' \
+    '<!-- summary-end -->' \
+    '<!-- summary-start -->' \
+    'Release summary for 9.9.9.' \
+    '' \
+    '### Downloads')
+DUPLICATE_START_BODY=$(printf '%s\n' \
+    '<!-- summary-start -->' \
+    'Release summary for 9.9.9.' \
+    '<!-- summary-start -->' \
+    '<!-- summary-end -->' \
+    '' \
+    '### Downloads')
+LEADING_END_BODY=$(printf '%s\n' \
+    '<!-- summary-end -->' \
+    '<!-- summary-start -->' \
+    'Release summary for 9.9.9.' \
+    '<!-- summary-end -->' \
+    '' \
+    '### Downloads')
+TRUNCATED_BODY=$(printf '%s\n' \
+    '<!-- summary-start -->' \
+    'Release summary for 9.9.9.' \
+    '' \
+    '### Downloads')
+POPULATED_BODY=$(printf '%s\n' \
+    '<!-- summary-start -->' \
+    'Release summary for 9.9.9.' \
+    '<!-- summary-end -->' \
+    '' \
+    '### Downloads')
+MISSING_ASSETS=$(printf '%s\n' \
+    'dusk-studio-9.9.9-Linux-x86_64.tar.xz' \
+    'SHA256SUMS.linux-x86_64' \
+    'dusk-studio-9.9.9-Linux-aarch64.tar.xz' \
+    'SHA256SUMS.linux-aarch64' \
+    'dusk-studio-9.9.9-macOS-arm64.dmg' \
+    'SHA256SUMS.macos' \
+    'dusk-studio-9.9.9-Windows-x64.msi' \
+    'SHA256SUMS.windows' \
+    'MANUAL.pdf')
+VERIFIER_OUTPUT="$SCRATCH/verifier-output.txt"
+VERIFIER_ERROR="$SCRATCH/verifier-error.txt"
+if PATH="$VERIFIER_BIN:$PATH" FAKE_GH_FAIL_JSON=assets \
+    bash "$SOURCE_ROOT/scripts/verify-release-assets.sh" v9.9.9 \
+    >"$VERIFIER_OUTPUT" 2>&1; then
+    echo "FAIL: an asset API failure must abort verification" >&2
+    exit 1
+fi
+if ! grep -qF 'cannot read release v9.9.9' "$VERIFIER_OUTPUT" \
+    || ! grep -qF 'fake gh assets failure' "$VERIFIER_OUTPUT"; then
+    echo "FAIL: asset API failure diagnostics were lost" >&2
+    cat "$VERIFIER_OUTPUT" >&2
+    exit 1
+fi
+if PATH="$VERIFIER_BIN:$PATH" FAKE_GH_FAIL_JSON=body \
+    bash "$SOURCE_ROOT/scripts/verify-release-assets.sh" v9.9.9 \
+    >"$VERIFIER_OUTPUT" 2>&1; then
+    echo "FAIL: a body API failure must abort verification" >&2
+    exit 1
+fi
+if ! grep -qF 'cannot read release body for v9.9.9' "$VERIFIER_OUTPUT" \
+    || ! grep -qF 'fake gh body failure' "$VERIFIER_OUTPUT"; then
+    echo "FAIL: body API failure diagnostics were lost" >&2
+    cat "$VERIFIER_OUTPUT" >&2
+    exit 1
+fi
+if PATH="$VERIFIER_BIN:$PATH" FAKE_RELEASE_ASSETS='' \
+    FAKE_RELEASE_BODY="$POPULATED_BODY" \
+    bash "$SOURCE_ROOT/scripts/verify-release-assets.sh" v9.9.9 \
+    >"$VERIFIER_OUTPUT" 2>&1; then
+    echo "FAIL: a release with no assets must fail verification" >&2
+    exit 1
+fi
+if ! grep -qE '^MISSING[[:space:]]+' "$VERIFIER_OUTPUT"; then
+    echo "FAIL: an empty asset list reported the wrong failure" >&2
+    cat "$VERIFIER_OUTPUT" >&2
+    exit 1
+fi
+if PATH="$VERIFIER_BIN:$PATH" FAKE_RELEASE_ASSETS="$MISSING_ASSETS" \
+    FAKE_RELEASE_BODY="$POPULATED_BODY" \
+    bash "$SOURCE_ROOT/scripts/verify-release-assets.sh" v9.9.9 \
+    >"$VERIFIER_OUTPUT" 2>&1; then
+    echo "FAIL: a release missing one asset must fail verification" >&2
+    exit 1
+fi
+if ! grep -qE '^MISSING[[:space:]].*SHA256SUMS\.manual$' "$VERIFIER_OUTPUT"; then
+    echo "FAIL: a missing release asset reported the wrong failure" >&2
+    cat "$VERIFIER_OUTPUT" >&2
+    exit 1
+fi
+if PATH="$VERIFIER_BIN:$PATH" FAKE_RELEASE_BODY='' \
+    bash "$SOURCE_ROOT/scripts/verify-release-assets.sh" v9.9.9 \
+    >"$VERIFIER_OUTPUT" 2>&1; then
+    echo "FAIL: an empty release body must fail verification" >&2
+    exit 1
+fi
+if ! grep -qE '^EMPTY[[:space:]]+release body' "$VERIFIER_OUTPUT"; then
+    echo "FAIL: empty release body reported the wrong failure" >&2
+    cat "$VERIFIER_OUTPUT" >&2
+    exit 1
+fi
+if PATH="$VERIFIER_BIN:$PATH" FAKE_RELEASE_BODY="$PLACEHOLDER_BODY" \
+    bash "$SOURCE_ROOT/scripts/verify-release-assets.sh" v9.9.9 \
+    >"$VERIFIER_OUTPUT" 2>&1; then
+    echo "FAIL: an empty release-summary slot must fail verification" >&2
+    exit 1
+fi
+if ! grep -qE '^PLACEHOLDER[[:space:]]+release body' "$VERIFIER_OUTPUT"; then
+    echo "FAIL: empty release-summary slot reported the wrong failure" >&2
+    cat "$VERIFIER_OUTPUT" >&2
+    exit 1
+fi
+if PATH="$VERIFIER_BIN:$PATH" FAKE_RELEASE_BODY="$COMMENT_ONLY_BODY" \
+    bash "$SOURCE_ROOT/scripts/verify-release-assets.sh" v9.9.9 \
+    >"$VERIFIER_OUTPUT" 2>&1; then
+    echo "FAIL: a comment-only release-summary slot must fail verification" >&2
+    exit 1
+fi
+if ! grep -qE '^PLACEHOLDER[[:space:]]+release body' "$VERIFIER_OUTPUT"; then
+    echo "FAIL: comment-only release summary reported the wrong failure" >&2
+    cat "$VERIFIER_OUTPUT" >&2
+    exit 1
+fi
+if PATH="$VERIFIER_BIN:$PATH" FAKE_RELEASE_BODY="$INVALID_BODY" \
+    bash "$SOURCE_ROOT/scripts/verify-release-assets.sh" v9.9.9 \
+    >"$VERIFIER_OUTPUT" 2>&1; then
+    echo "FAIL: missing release-summary markers must fail verification" >&2
+    exit 1
+fi
+if ! grep -qE '^INVALID[[:space:]]+release body' "$VERIFIER_OUTPUT"; then
+    echo "FAIL: missing release-summary markers reported the wrong failure" >&2
+    cat "$VERIFIER_OUTPUT" >&2
+    exit 1
+fi
+if PATH="$VERIFIER_BIN:$PATH" FAKE_RELEASE_BODY="$INVALID_ORDER_BODY" \
+    bash "$SOURCE_ROOT/scripts/verify-release-assets.sh" v9.9.9 \
+    >"$VERIFIER_OUTPUT" 2>&1; then
+    echo "FAIL: out-of-order release-summary markers must fail verification" >&2
+    exit 1
+fi
+if ! grep -qE '^INVALID[[:space:]]+release body' "$VERIFIER_OUTPUT"; then
+    echo "FAIL: out-of-order release-summary markers reported the wrong failure" >&2
+    cat "$VERIFIER_OUTPUT" >&2
+    exit 1
+fi
+if PATH="$VERIFIER_BIN:$PATH" FAKE_RELEASE_BODY="$DUPLICATE_START_BODY" \
+    bash "$SOURCE_ROOT/scripts/verify-release-assets.sh" v9.9.9 \
+    >"$VERIFIER_OUTPUT" 2>&1; then
+    echo "FAIL: duplicate release-summary start markers must fail verification" >&2
+    exit 1
+fi
+if ! grep -qE '^INVALID[[:space:]]+release body' "$VERIFIER_OUTPUT"; then
+    echo "FAIL: duplicate release-summary start markers reported the wrong failure" >&2
+    cat "$VERIFIER_OUTPUT" >&2
+    exit 1
+fi
+if PATH="$VERIFIER_BIN:$PATH" FAKE_RELEASE_BODY="$LEADING_END_BODY" \
+    bash "$SOURCE_ROOT/scripts/verify-release-assets.sh" v9.9.9 \
+    >"$VERIFIER_OUTPUT" 2>&1; then
+    echo "FAIL: duplicate release-summary end markers must fail verification" >&2
+    exit 1
+fi
+if ! grep -qE '^INVALID[[:space:]]+release body' "$VERIFIER_OUTPUT"; then
+    echo "FAIL: duplicate release-summary end markers reported the wrong failure" >&2
+    cat "$VERIFIER_OUTPUT" >&2
+    exit 1
+fi
+if PATH="$VERIFIER_BIN:$PATH" FAKE_RELEASE_BODY="$TRUNCATED_BODY" \
+    bash "$SOURCE_ROOT/scripts/verify-release-assets.sh" v9.9.9 \
+    >"$VERIFIER_OUTPUT" 2>&1; then
+    echo "FAIL: a release-summary slot without an end marker must fail verification" >&2
+    exit 1
+fi
+if ! grep -qE '^INVALID[[:space:]]+release body' "$VERIFIER_OUTPUT"; then
+    echo "FAIL: truncated release-summary slot reported the wrong failure" >&2
+    cat "$VERIFIER_OUTPUT" >&2
+    exit 1
+fi
+PATH="$VERIFIER_BIN:$PATH" FAKE_RELEASE_BODY="$POPULATED_BODY" \
+    FAKE_GH_STDERR='benign gh diagnostic' \
+    bash "$SOURCE_ROOT/scripts/verify-release-assets.sh" v9.9.9 \
+    >"$VERIFIER_OUTPUT" 2>"$VERIFIER_ERROR"
+if ! grep -qF "summary populated" "$VERIFIER_OUTPUT"; then
+    echo "FAIL: populated release summary was not accepted" >&2
+    cat "$VERIFIER_OUTPUT" >&2
+    exit 1
+fi
+if grep -qF 'EXTRA' "$VERIFIER_OUTPUT"; then
+    echo "FAIL: gh stderr must not be parsed as a release asset" >&2
+    cat "$VERIFIER_OUTPUT" >&2
+    exit 1
+fi
+
 # An interrupt after a metadata move must use the same rollback path instead
 # of letting the EXIT cleanup discard the recovery copies.
 FIXTURE_SIGNAL="$SCRATCH/repo-signal"
@@ -270,10 +562,11 @@ cmp "$FIXTURE/packaging/DuskStudio.appdata.xml" \
     "$FIXTURE_VERSION_STAGE/packaging/DuskStudio.appdata.xml"
 
 NOTES='Gain & grit <hot> > cool ]]> "quoted" café — release'
+RAW_NOTES="$NOTES <!-- internal release-note comment -->"
 BUMP_OUTPUT="$SCRATCH/bump-output.txt"
 (
     cd "$FIXTURE"
-    bash scripts/bump-version.sh 9.9.9 "$NOTES" > "$BUMP_OUTPUT"
+    bash scripts/bump-version.sh 9.9.9 "$RAW_NOTES" > "$BUMP_OUTPUT"
 )
 
 if command -v xmllint >/dev/null 2>&1; then
@@ -407,6 +700,7 @@ create_marker = 'if ! create_err=$(gh release create "$TAG"'
 recheck_marker = 'if gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null 2>&1; then'
 upload_line = 'gh release upload "$TAG" --repo "$RELEASES_REPO" --clobber "${ASSETS[@]}"'
 notes_marker = "--notes-file packaging/RELEASE-NOTES.md"
+preflight_marker = "- name: Preflight - releases-repo token is valid (tag builds only)"
 
 # The release-day self-test must be isolated from the maintainer's live
 # Wayland session and must fail closed if its private X server cannot start.
@@ -453,9 +747,19 @@ for label, path in safe_selftest_callers.items():
 notes_path = source_root / "packaging" / "RELEASE-NOTES.md"
 assert notes_path.is_file(), "packaging/RELEASE-NOTES.md must exist"
 notes_text = notes_path.read_text(encoding="utf-8")
-summary_slot(notes_text)  # markers present, else the bump silently skips it
-visible_notes = re.sub(r"<!--.*?-->", "", notes_text, flags=re.S).strip()
-assert visible_notes, "release notes must carry a body, not just comments"
+assert notes_text.count(SUMMARY_START) == 1, (
+    "tracked notes must contain exactly one summary start marker"
+)
+assert notes_text.count(SUMMARY_END) == 1, (
+    "tracked notes must contain exactly one summary end marker"
+)
+assert notes_text.index(SUMMARY_START) < notes_text.index(SUMMARY_END), (
+    "tracked notes summary markers must be in order"
+)
+_, tracked_slot, tracked_after = summary_slot(notes_text)
+visible_summary = re.sub(r"<!--.*?-->", "", tracked_slot, flags=re.S).strip()
+assert visible_summary, "release-summary slot must carry visible content"
+assert "### Downloads" in tracked_after, "tracked notes must keep the Downloads section"
 
 # The summary is script-managed: the bump replaces the whole slot with the
 # release notes verbatim and touches nothing outside it.
@@ -508,6 +812,9 @@ for display_name in workflows.values():
 verifier_text = (source_root / "scripts" / "verify-release-assets.sh").read_text(
     encoding="utf-8"
 )
+assert "--jq '.body // \"\"'" in verifier_text, (
+    "verifier must normalize a null release body to empty"
+)
 expected_assets = re.findall(r'^\s+"[^"\n]+\|[^"\n]+"$', verifier_text, re.MULTILINE)
 expected_asset_count = 10
 assert len(expected_assets) == expected_asset_count, (
@@ -530,6 +837,36 @@ for name, display_name in workflows.items():
     assert workflow_name and workflow_name.group(1).strip() == display_name, (
         f"{name}: printed checklist name is stale"
     )
+    assert text.count(preflight_marker) == 1, (
+        f"{name}: release token preflight must appear exactly once"
+    )
+    preflight_at = text.index(preflight_marker)
+    tag_check_at = text.index("- name: Verify tag matches VERSION")
+    assert preflight_at < tag_check_at, (
+        f"{name}: token preflight must run before release validation/build work"
+    )
+    preflight_block = text[preflight_at:tag_check_at]
+    for required in (
+        "set -euo pipefail",
+        "if: ${{ github.ref_type == 'tag' }}",
+        "GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}",
+        "preflight_error=$(mktemp -t duskstudio-preflight.XXXXXX)",
+        "trap 'rm -f \"$preflight_error\"' EXIT",
+        'probe_tag="duskstudio-token-preflight-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"',
+        "if ! gh api --method POST",
+        '"repos/${RELEASES_REPO}/releases/generate-notes"',
+        '-f "tag_name=${probe_tag}" >/dev/null 2>"$preflight_error"; then',
+        "write-capability preflight for ${RELEASES_REPO} failed",
+        'cat "$preflight_error" >&2',
+        "exit 1",
+    ):
+        assert required in preflight_block, (
+            f"{name}: token preflight lost required check: {required}"
+        )
+    if name == "windows-build.yml":
+        assert "shell: bash" in preflight_block, (
+            "windows-build.yml: token preflight must override the pwsh default"
+        )
     assert text.count(create_marker) == 1, f"{name}: missing race-checked create"
     create_at = text.index(create_marker)
     create_end = text.index("2>&1); then", create_at)

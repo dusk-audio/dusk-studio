@@ -531,14 +531,16 @@ A complete `vX.Y.Z` release has exactly these ten assets:
 Before announcement, run
 [`scripts/verify-release-assets.sh`](../scripts/verify-release-assets.sh)
 `vX.Y.Z`. It fails if an expected asset class is missing or duplicated, an
-unexpected asset exists, or the release body is empty. Its macOS and Windows
-checks currently accept wildcard architecture suffixes, so it does not
-prove those two exact filenames or payload architectures. Download the assets
-into a clean directory and perform the manual checks that the script cannot
-cover:
+unexpected asset exists, or the release body's summary slot is missing or
+empty. Its macOS and Windows checks currently accept wildcard architecture
+suffixes, so it does not prove those two exact filenames or payload
+architectures. Summary-slot validation applies to v0.13.0 and later; older
+release bodies predate the markers and are expected to fail that check.
+Download the assets into a clean directory and perform the
+manual checks that the script cannot cover:
 
-- Confirm the release body contains the version's summary, not only the static
-  Downloads section.
+- Confirm the populated release summary is correct for this version. The
+  verifier rejects an empty slot but cannot judge editorial accuracy.
 - Confirm all ten filenames exactly match the list above. Inspect the
   executable inside the DMG and MSI and confirm arm64 and x64 respectively;
   do not infer architecture from the filename.
