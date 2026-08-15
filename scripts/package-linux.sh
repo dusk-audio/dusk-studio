@@ -23,7 +23,7 @@ cd "$REPO_DIR"
 
 BUILD_DIR="${BUILD_DIR:-build-linux}"
 if [[ ! -d "$BUILD_DIR" ]]; then
-    echo "error: $BUILD_DIR missing - run: cmake -S . -B $BUILD_DIR -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build $BUILD_DIR -j" >&2
+    echo "error: $BUILD_DIR missing - run: cmake -S . -B \"$BUILD_DIR\" -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build \"$BUILD_DIR\" -j6" >&2
     exit 1
 fi
 

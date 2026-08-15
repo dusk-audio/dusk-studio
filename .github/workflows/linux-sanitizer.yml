@@ -151,7 +151,7 @@ jobs:
             -DDPF_WIDGETS_PATH="${RUNNER_TEMP}/DPF-Widgets"
 
       - name: Build tests (TSan)
-        run: cmake --build build-tsan --target dusk-studio-tests -j
+        run: cmake --build build-tsan --target dusk-studio-tests -j6
 
       - name: Run tests under TSan
         # Excluded tests are pre-existing donor-DSP regressions tracked

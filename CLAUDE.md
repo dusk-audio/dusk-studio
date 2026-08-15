@@ -53,9 +53,19 @@ Two things the gate still can't catch — you must:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j$(nproc)
+cmake --build build -j6
 ./build/DuskStudio_artefacts/Release/DuskStudio
 ```
+
+**On the 16 GB Linux dev box, use `-j6`, never bare `-j`.** Translation units
+in this project peak at 350–500 MB in `cc1plus`. An unbounded Unix Makefiles
+build launched about 35 concurrent compilers during the 2026-08-14 freeze and
+collapsed the machine's page cache. `scripts/dev.sh` and the screenshot helper
+accept `DUSK_JOBS=N` when a host can safely run more workers. Keep repository
+examples and automation explicitly bounded; do not replace the limit with bare
+`-j` or a host-wide CPU count. Current CI caps are six for Linux/Ninja, five
+for macOS/Ninja, three for the disabled macOS/Xcode jobs and the libsodium
+autotools build, and four for Windows/MSBuild.
 
 JUCE and the Dusk plugins repo are auto-discovered from sibling directories. Pass `-DJUCE_PATH=...` or `-DDUSK_PLUGINS_PATH=...` to override either.
 
@@ -148,7 +158,7 @@ Dusk Studio has Catch2 v3 unit tests in [tests/](tests/), gated behind `-DDUSKST
 
 ```bash
 cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON
-cmake --build build-tests --target dusk-studio-tests -j$(nproc)
+cmake --build build-tests --target dusk-studio-tests -j6
 ctest --test-dir build-tests --output-on-failure
 ```
 
@@ -181,7 +191,7 @@ Don't write tests for: UI components (no JUCE message-loop / Component test harn
 For DSP / engine / session changes, "task complete" now requires the test build + ctest pass in addition to the main build:
 
 ```bash
-cmake --build build-tests --target dusk-studio-tests -j$(nproc) && ctest --test-dir build-tests --output-on-failure
+cmake --build build-tests --target dusk-studio-tests -j6 && ctest --test-dir build-tests --output-on-failure
 ```
 
 If a change touches a unit that has tests, those tests must pass. If it touches a unit that *doesn't* have tests but easily could, add at least one.
@@ -213,7 +223,7 @@ Operating within a constrained context window. Adhere to these regardless of any
 ### Code quality
 3. **Senior dev override.** Ignore the "simplest approach first / don't refactor beyond the ask" defaults when the architecture is genuinely flawed, state is duplicated, or patterns diverge. Ask: "What would a senior dev reject in code review?" Fix the structural issues, not just the surface symptom. (This is in tension with "no abstractions on spec" — the difference is: existing duplication that's already a problem is fair game; speculative future flexibility is not.)
 4. **Forced verification.** Don't claim a task is complete until you have run:
-   - `cmake --build build -j$(nproc)` — must succeed with zero new warnings
+   - `cmake --build build -j6` — must succeed with zero new warnings
    - For audio-path changes: run `scripts/run-selftest-xvfb.sh` if practical, or at minimum confirm the binary launches without immediate crash
    If verification isn't possible in the current environment, say so explicitly. "Builds locally" ≠ "works."
 

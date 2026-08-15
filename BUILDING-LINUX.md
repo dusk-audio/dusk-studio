@@ -131,10 +131,16 @@ From the Dusk Studio directory:
 ```bash
 cd ~/projects/dusk-studio
 cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build-linux -j$(nproc)
+cmake --build build-linux -j6
 ```
 
 First configure pulls in JUCE's CMake helpers and may take a minute. Subsequent configures are fast.
+
+Six jobs is a conservative default for a 16 GB-class machine. Large C++
+translation units can use roughly 500 MB each, so scale the number to free
+memory rather than core count: drop to `-j2` on a 4 GB Raspberry Pi, or raise
+it on a 32 GB-class machine. The developer and screenshot helpers accept an
+explicit override, for example `DUSK_JOBS=12 scripts/dev.sh`.
 
 The built binary lands at:
 
@@ -152,7 +158,7 @@ Run it from the terminal:
 
 ```bash
 cmake -S . -B build-linux-debug -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-linux-debug -j$(nproc)
+cmake --build build-linux-debug -j6
 ```
 
 ### Overriding paths (if not using the sibling layout)
@@ -169,7 +175,7 @@ cmake -S . -B build-linux \
 
 ```bash
 cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON
-cmake --build build-tests --target dusk-studio-tests -j$(nproc)
+cmake --build build-tests --target dusk-studio-tests -j6
 ctest --test-dir build-tests --output-on-failure
 ```
 
@@ -180,7 +186,7 @@ Use a separate `build-tests/` directory so the two configurations don't fight ov
 ```bash
 cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DDUSKSTUDIO_BUILD_TESTS=ON -DDUSKSTUDIO_ENABLE_ASAN=ON
-cmake --build build-asan --target dusk-studio-tests -j$(nproc)
+cmake --build build-asan --target dusk-studio-tests -j6
 ASAN_OPTIONS="halt_on_error=1:abort_on_error=1:detect_leaks=0" \
   ctest --test-dir build-asan --output-on-failure
 ```
@@ -235,7 +241,7 @@ See [packaging/README.md](packaging/README.md). Run `scripts/package-tarball.sh`
 If the build fails, capture:
 
 1. Full CMake configure output (`cmake -S . -B build-linux ...`)
-2. Full build output (`cmake --build build-linux -j ...`)
+2. Full build output (`cmake --build build-linux -j6 ...`)
 3. `cmake --version`, `gcc --version` or `clang --version`, distro + kernel (`uname -a`, `cat /etc/os-release`)
 4. Output of `./build-linux/DuskStudio_artefacts/Release/DuskStudio --version` if you got that far
 

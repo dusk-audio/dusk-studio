@@ -235,7 +235,7 @@ jobs:
             -DDPF_WIDGETS_PATH="${RUNNER_TEMP}/DPF-Widgets"
 
       - name: Build (Release)
-        run: cmake --build build-linux -j
+        run: cmake --build build-linux -j6
 
       - name: Verify libsodium runtime linkage
         run: |
@@ -255,7 +255,7 @@ jobs:
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
             -DDPF_PATH="${RUNNER_TEMP}/DPF" \
             -DDPF_WIDGETS_PATH="${RUNNER_TEMP}/DPF-Widgets"
-          cmake --build build-tests --target dusk-studio-tests -j
+          cmake --build build-tests --target dusk-studio-tests -j6
           ctest --test-dir build-tests --output-on-failure
 
       - name: Package portable tarball
