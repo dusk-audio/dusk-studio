@@ -40,7 +40,7 @@ Before reading any code, build it. You cannot learn a codebase you can't compile
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j$(nproc)
+cmake --build build -j6
 ./build/DuskStudio_artefacts/Release/DuskStudio
 ```
 
@@ -52,7 +52,7 @@ JUCE, the Dusk plugins repo, and the DPF stack behind the native notepad are aut
 
 ```bash
 cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON
-cmake --build build-tests --target dusk-studio-tests -j$(nproc)
+cmake --build build-tests --target dusk-studio-tests -j6
 ctest --test-dir build-tests --output-on-failure
 ```
 
@@ -284,11 +284,11 @@ There is **one** oversampling control: the **Effect Oversampling** dropdown in A
 ```bash
 # app
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j$(nproc)
+cmake --build build -j6
 
 # tests
 cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON
-cmake --build build-tests --target dusk-studio-tests -j$(nproc)
+cmake --build build-tests --target dusk-studio-tests -j6
 ctest --test-dir build-tests --output-on-failure
 ```
 
@@ -453,8 +453,8 @@ workflows. Supply the real address before either format is published.
    ```bash
    (
      set -e
-     cmake --build build -j$(nproc)
-     cmake --build build-tests --target dusk-studio-tests -j$(nproc)
+     cmake --build build -j6
+     cmake --build build-tests --target dusk-studio-tests -j6
      ctest --test-dir build-tests --output-on-failure
      bash tools/juce-gate.sh
      scripts/run-selftest-xvfb.sh
@@ -569,10 +569,10 @@ all pass.
 ## Quick reference card
 
 ```bash
-BUILD APP        cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j$(nproc)
+BUILD APP        cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j6
 RUN              ./build/DuskStudio_artefacts/Release/DuskStudio
 SELF-TEST        scripts/run-selftest-xvfb.sh
-BUILD TESTS      cmake -S . -B build-tests -DDUSKSTUDIO_BUILD_TESTS=ON && cmake --build build-tests --target dusk-studio-tests -j$(nproc)
+BUILD TESTS      cmake -S . -B build-tests -DDUSKSTUDIO_BUILD_TESTS=ON && cmake --build build-tests --target dusk-studio-tests -j6
 RUN TESTS        ctest --test-dir build-tests --output-on-failure
 ASAN / TSAN      -DDUSKSTUDIO_ENABLE_ASAN=ON  /  -DDUSKSTUDIO_ENABLE_TSAN=ON
 OVERRIDE DEPS    -DJUCE_PATH=…  -DDUSK_PLUGINS_PATH=…

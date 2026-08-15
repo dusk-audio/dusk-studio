@@ -11,6 +11,7 @@
 # so no GPU / Wayland surface is needed.
 #
 # Requires: Xvfb  (openSUSE: sudo zypper install xorg-x11-server-Xvfb)
+# Set DUSK_JOBS to override the conservative six-worker build fallback.
 
 set -euo pipefail
 
@@ -19,6 +20,12 @@ BIN="${REPO_ROOT}/build/DuskStudio_artefacts/Release/DuskStudio"
 OUT="${REPO_ROOT}/docs/images"
 DISPLAY_NUM="${CAPTURE_DISPLAY:-:99}"
 SCREEN="1920x1200x24"
+JOBS="${DUSK_JOBS:-6}"
+
+if [[ ! "${JOBS}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "error: DUSK_JOBS must be a positive integer" >&2
+  exit 2
+fi
 
 if ! command -v Xvfb >/dev/null 2>&1; then
   echo "error: Xvfb not found. Install it: sudo zypper install xorg-x11-server-Xvfb" >&2
@@ -28,7 +35,7 @@ fi
 if [[ ! -x "${BIN}" ]]; then
   echo "Building Dusk Studio (binary not found)..." >&2
   cmake -S "${REPO_ROOT}" -B "${REPO_ROOT}/build" -DCMAKE_BUILD_TYPE=Release >/dev/null
-  cmake --build "${REPO_ROOT}/build" -j"$(nproc)"
+  cmake --build "${REPO_ROOT}/build" -j"${JOBS}"
 fi
 
 mkdir -p "${OUT}"

@@ -74,7 +74,7 @@ jobs:
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
 
       - name: Build tests
-        run: cmake --build build-asan --target dusk-studio-tests -j
+        run: cmake --build build-asan --target dusk-studio-tests -j6
 
       - name: Run tests under ASAN + UBSan
         # halt_on_error=1 makes the first sanitizer report fail the run

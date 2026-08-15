@@ -211,7 +211,7 @@ jobs:
 
       - name: Build (Release)
         shell: bash
-        run: cmake --build build --config Release -j
+        run: cmake --build build --config Release -j4
 
       - name: Build + run tests (release gate)
         # No MSI ships unless the suite passes on MSVC. FileImporter cases are
@@ -233,7 +233,7 @@ jobs:
             -DDPF_WIDGETS_PATH="${RT_UNIX}/DPF-Widgets" \
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
             -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}"
-          cmake --build build-tests --config Release --target dusk-studio-tests -j
+          cmake --build build-tests --config Release --target dusk-studio-tests -j4
           ctest --test-dir build-tests --output-on-failure -C Release -E "FileImporter"
 
       - name: Set up WiX Toolset v3 (CPack -G WIX needs candle/light)

@@ -87,7 +87,7 @@ cd C:\dev\dusk-studio
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64 ^
   -DCMAKE_PREFIX_PATH="%CD%/vcpkg_installed/x64-windows-static" ^
   -DASIOSDK_PATH=C:/dev/asiosdk
-cmake --build build --config Release -j
+cmake --build build --config Release -j6
 ```
 
 Swap `-DASIOSDK_PATH=...` for `-DDUSKSTUDIO_REQUIRE_ASIO=OFF` if you skipped the SDK download. The first configure pulls in JUCE's CMake helpers and may take a minute. Subsequent configures are fast.
@@ -103,7 +103,7 @@ Double-click to run, or launch from the terminal.
 ### Building Debug instead
 
 ```cmd
-cmake --build build --config Debug -j
+cmake --build build --config Debug -j6
 ```
 
 Debug binary appears under `build\DuskStudio_artefacts\Debug\`.
@@ -133,9 +133,12 @@ Dusk Studio has Catch2 unit tests behind a CMake flag:
 
 ```cmd
 cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON
-cmake --build build-tests --target dusk-studio-tests --config Release -j
+cmake --build build-tests --target dusk-studio-tests --config Release -j6
 ctest --test-dir build-tests --output-on-failure -C Release
 ```
+
+Six jobs is the conservative local-development default. The GitHub-hosted
+Windows workflows use four jobs to match their smaller runner allocation.
 
 Use a separate `build-tests\` directory so the two configurations don't fight over CMake cache state.
 

@@ -45,7 +45,7 @@ jobs:
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins"
 
       - name: Build (Release)
-        run: cmake --build build --config Release -j
+        run: cmake --build build --config Release -j3
 
       - name: Smoke launch (--version)
         # Verifies the binary actually links + starts. --version exits
@@ -89,7 +89,7 @@ jobs:
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins"
 
       - name: Build tests
-        run: cmake --build build-tests --target dusk-studio-tests --config Release -j
+        run: cmake --build build-tests --target dusk-studio-tests --config Release -j3
 
       - name: Run tests
         run: ctest --test-dir build-tests --output-on-failure -C Release

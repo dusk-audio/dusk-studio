@@ -52,8 +52,8 @@ Mirror `src/ui/ClapPluginEditorComponent` + `src/engine/clap/ClapEditor`, but em
 - Bundle URIs must end in `/`.
 
 ## Verification (mandatory before claiming done)
-- `cmake --build build -j$(nproc)` — zero new warnings.
-- `cmake --build build-tests --target dusk-studio-tests -j$(nproc) && ctest --test-dir build-tests --output-on-failure` — all pass. Add a slot/DSP test where feasible.
+- `cmake --build build -j6` — zero new warnings.
+- `cmake --build build-tests --target dusk-studio-tests -j6 && ctest --test-dir build-tests --output-on-failure` — all pass. Add a slot/DSP test where feasible.
 - **NEVER launch the binary on live Wayland** (it crashes) — run the self-test under Xvfb: `Xvfb :99 -screen 0 1920x1200x24 & env -u WAYLAND_DISPLAY DISPLAY=:99 DUSKSTUDIO_RUN_SELFTEST=1 timeout 90 ./build/DuskStudio_artefacts/Release/DuskStudio`.
 - Prove an LV2 loads + processes in a strip (a targeted test or the self-test with a real bundle).
 - Donor path: builds use `-DDUSK_PLUGINS_PATH=/home/marc/projects/plugins` (do NOT recreate `../plugins-main`).

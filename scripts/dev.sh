@@ -10,20 +10,20 @@
 #   scripts/dev.sh tests      # configure + build tests + ctest
 #   scripts/dev.sh selftest   # build app, then self-test under private Xvfb
 #
-# Pass extra cmake args via CMAKE_ARGS env (e.g. -DJUCE_PATH=...).
+# Pass extra cmake args via CMAKE_ARGS env (e.g. -DJUCE_PATH=...). Override the
+# conservative parallel-build limit with DUSK_JOBS only when the host has room.
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-# Parallel job count, portable across macOS / Linux.
-if command -v nproc >/dev/null 2>&1; then
-  JOBS="$(nproc)"
-elif command -v sysctl >/dev/null 2>&1; then
-  JOBS="$(sysctl -n hw.ncpu)"
-else
-  JOBS=4
+# Keep Makefiles and Ninja explicitly bounded: bare -j is unbounded with Make,
+# and host CPU counts ignore the 350-500 MB peak of large translation units.
+JOBS="${DUSK_JOBS:-6}"
+if [[ ! "$JOBS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "error: DUSK_JOBS must be a positive integer" >&2
+  exit 2
 fi
 
 EXTRA_ARGS="${CMAKE_ARGS:-}"

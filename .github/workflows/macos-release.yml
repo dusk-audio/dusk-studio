@@ -103,7 +103,8 @@ jobs:
           export MACOSX_DEPLOYMENT_TARGET=11.0
           ./configure \
             --prefix="${prefix}" --disable-shared --enable-static
-          make -j"$(sysctl -n hw.ncpu)" check
+          # Keep this small autotools build aligned with the three-core runner.
+          make -j3 check
           make install
 
       - name: Cache ccache objects
@@ -205,7 +206,9 @@ jobs:
             echo "::error::macOS release configure did not select static libsodium" >&2; exit 1; }
 
       - name: Build (Release)
-        run: cmake --build build -j
+        # Preserve Ninja's five-worker default on this three-core runner,
+        # but keep the limit explicit so generator changes cannot unbound it.
+        run: cmake --build build -j5
 
       - name: Build + run tests (release gate)
         # No DMG ships unless the full Catch2 suite passes.
@@ -229,7 +232,7 @@ jobs:
           done
           grep -Eq '^DUSKSTUDIO_SODIUM_STATIC_LIBRARY:FILEPATH=.*/libsodium\.a$' build-tests/CMakeCache.txt || {
             echo "::error::macOS release tests did not select static libsodium" >&2; exit 1; }
-          cmake --build build-tests --target dusk-studio-tests -j
+          cmake --build build-tests --target dusk-studio-tests -j5
           ctest --test-dir build-tests --output-on-failure
 
       - name: Package unsigned DMG
