@@ -789,8 +789,13 @@ assert (
     in linux_guide
 ), "BUILDING-LINUX.md must verify the workflow-pinned donor revision"
 windows_guide = (source_root / "BUILDING-WINDOWS.md").read_text(encoding="utf-8")
-assert f"print `{pinned_donor.group(1)}`" in windows_guide, (
-    "BUILDING-WINDOWS.md must identify the expected donor revision"
+windows_pin_check = (
+    'git -C plugins rev-parse HEAD | findstr /x /c:'
+    f'"{pinned_donor.group(1)}" >nul || '
+    '(echo ERROR: donor checkout did not reach the pinned revision & exit /b 1)'
+)
+assert windows_pin_check in windows_guide, (
+    "BUILDING-WINDOWS.md must fail when the donor revision does not match"
 )
 readme = (source_root / "README.md").read_text(encoding="utf-8")
 test_sources = sorted((source_root / "tests").glob("*.cpp"))
@@ -800,12 +805,33 @@ test_case_count = sum(
     for path in test_sources
 )
 test_source_count = len(test_sources)
-assert (
+suite_summaries = re.findall(
+    r"^The C\+\+ suite declares \d+ Catch2 test cases across "
+    r"\d+ test source files\.",
+    readme,
+    re.MULTILINE,
+)
+expected_suite_summary = (
     f"The C++ suite declares {test_case_count} Catch2 test cases across "
     f"{test_source_count} test source files."
-) in readme, "README test-suite totals must match the tracked C++ tests"
-assert f"tests/         # {test_case_count} Catch2 test cases declared in C++" in readme, (
-    "README source-tree summary must match the tracked Catch2 declarations"
+)
+assert suite_summaries == [expected_suite_summary], (
+    "README must contain exactly one current test-suite summary: "
+    f"expected {[expected_suite_summary]!r}, found {suite_summaries!r}"
+)
+tree_summaries = re.findall(
+    r"^tests/\s+# \d+ Catch2 test cases declared in C\+\+ "
+    r"\(session, recording, MIDI, IPC, DSP\)$",
+    readme,
+    re.MULTILINE,
+)
+expected_tree_summary = (
+    f"tests/         # {test_case_count} Catch2 test cases declared in C++ "
+    "(session, recording, MIDI, IPC, DSP)"
+)
+assert tree_summaries == [expected_tree_summary], (
+    "README must contain exactly one current source-tree test summary: "
+    f"expected {[expected_tree_summary]!r}, found {tree_summaries!r}"
 )
 release_section_match = re.search(
     r"^## Part 10\b(?P<body>.*)\Z",
