@@ -76,7 +76,7 @@ jobs:
             -DDUSKSTUDIO_SKIP_FORK_CHECK=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
-          cmake --build build-linux -j
+          cmake --build build-linux -j6
 
       - name: Run tests
         run: ctest --test-dir build-linux --output-on-failure
@@ -116,7 +116,7 @@ jobs:
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins"
-          cmake --build build-mac --config Release -j
+          cmake --build build-mac --config Release -j3
 
       - name: Run tests
         run: ctest --test-dir build-mac --output-on-failure -C Release
@@ -149,7 +149,7 @@ jobs:
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins"
-          cmake --build build-win --config Release -j
+          cmake --build build-win --config Release -j4
 
       - name: Run tests
         shell: bash

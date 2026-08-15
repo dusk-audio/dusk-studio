@@ -50,7 +50,7 @@ built in a reused directory can ship without the notepad and without saying so.
 ```bash
 # 1. Build Dusk Studio as usual.
 cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build-linux -j
+cmake --build build-linux -j6
 
 # 2. Pack the tarball.
 scripts/package-tarball.sh

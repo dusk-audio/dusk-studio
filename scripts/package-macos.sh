@@ -22,7 +22,7 @@ BUILD_DIR="${BUILD_DIR:-build}"
 APP_PATH="$BUILD_DIR/DuskStudio_artefacts/Release/DuskStudio.app"
 
 if [[ ! -d "$APP_PATH" ]]; then
-    echo "error: $APP_PATH missing - run: cmake -S . -B $BUILD_DIR -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_CODESIGN_IDENTITY=- && cmake --build $BUILD_DIR -j" >&2
+    echo "error: $APP_PATH missing - run: cmake -S . -B \"$BUILD_DIR\" -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_CODESIGN_IDENTITY=- && cmake --build \"$BUILD_DIR\" -j6" >&2
     exit 1
 fi
 

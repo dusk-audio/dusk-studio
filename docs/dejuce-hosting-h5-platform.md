@@ -278,11 +278,11 @@ Linux bar:
 ```bash
 CCACHE_DISABLE=1 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
   -DDUSK_PLUGINS_PATH=/home/marc/projects/plugins-multicomp-core
-CCACHE_DISABLE=1 cmake --build build -j"$(nproc)"
+CCACHE_DISABLE=1 cmake --build build -j6
 CCACHE_DISABLE=1 cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release \
   -DDUSKSTUDIO_BUILD_TESTS=ON \
   -DDUSK_PLUGINS_PATH=/home/marc/projects/plugins-multicomp-core
-CCACHE_DISABLE=1 cmake --build build-tests --target dusk-studio-tests -j"$(nproc)"
+CCACHE_DISABLE=1 cmake --build build-tests --target dusk-studio-tests -j6
 ctest --test-dir build-tests --output-on-failure
 tools/juce-gate.sh
 ```

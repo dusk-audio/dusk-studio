@@ -151,7 +151,8 @@ jobs:
             -DDPF_WIDGETS_PATH="${RUNNER_TEMP}/DPF-Widgets"
 
       - name: Build (Release)
-        run: cmake --build build-linux -j
+        # GitHub-hosted ARM runner, not a memory-constrained physical Pi.
+        run: cmake --build build-linux -j6
 
       - name: Smoke launch (xvfb, --version)
         run: |
@@ -180,7 +181,7 @@ jobs:
             -DDPF_WIDGETS_PATH="${RUNNER_TEMP}/DPF-Widgets"
 
       - name: Build tests
-        run: cmake --build build-tests --target dusk-studio-tests -j
+        run: cmake --build build-tests --target dusk-studio-tests -j6
 
       - name: Run tests
         run: ctest --test-dir build-tests --output-on-failure
