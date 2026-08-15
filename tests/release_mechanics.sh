@@ -775,6 +775,38 @@ assert set(donor_pins) == expected_donor_workflows, (
 assert all(pins == [pinned_donor.group(1)] for pins in donor_pins.values()), (
     f"DONOR_REV drift across workflows: {donor_pins}"
 )
+for guide_name in ("BUILDING-LINUX.md", "BUILDING-WINDOWS.md"):
+    guide = (source_root / guide_name).read_text(encoding="utf-8")
+    assert (
+        f"git -C plugins fetch --depth 1 origin {pinned_donor.group(1)}" in guide
+    ), f"{guide_name} must fetch the workflow-pinned donor revision"
+    assert "git -C plugins checkout --detach FETCH_HEAD" in guide, (
+        f"{guide_name} must check out the fetched donor revision"
+    )
+linux_guide = (source_root / "BUILDING-LINUX.md").read_text(encoding="utf-8")
+assert (
+    f'test "$(git -C plugins rev-parse HEAD)" = {pinned_donor.group(1)}'
+    in linux_guide
+), "BUILDING-LINUX.md must verify the workflow-pinned donor revision"
+windows_guide = (source_root / "BUILDING-WINDOWS.md").read_text(encoding="utf-8")
+assert f"print `{pinned_donor.group(1)}`" in windows_guide, (
+    "BUILDING-WINDOWS.md must identify the expected donor revision"
+)
+readme = (source_root / "README.md").read_text(encoding="utf-8")
+test_sources = sorted((source_root / "tests").glob("*.cpp"))
+test_case_pattern = re.compile(r"^\s*TEST_CASE\s*\(", re.MULTILINE)
+test_case_count = sum(
+    len(test_case_pattern.findall(path.read_text(encoding="utf-8")))
+    for path in test_sources
+)
+test_source_count = len(test_sources)
+assert (
+    f"The C++ suite declares {test_case_count} Catch2 test cases across "
+    f"{test_source_count} test source files."
+) in readme, "README test-suite totals must match the tracked C++ tests"
+assert f"tests/         # {test_case_count} Catch2 test cases declared in C++" in readme, (
+    "README source-tree summary must match the tracked Catch2 declarations"
+)
 release_section_match = re.search(
     r"^## Part 10\b(?P<body>.*)\Z",
     maintainer_guide,
