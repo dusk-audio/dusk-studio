@@ -741,6 +741,119 @@ for label, path in safe_selftest_callers.items():
     assert "DUSKSTUDIO_RUN_SELFTEST=1 ./build" not in caller, (
         f"{label} must not launch a self-test on the live display"
     )
+maintainer_guide = safe_selftest_callers["maintainer guide"].read_text(encoding="utf-8")
+release_workflow = (source_root / ".github" / "workflows" / "linux-release.yml").read_text(
+    encoding="utf-8"
+)
+pinned_donor = re.search(
+    r"^\s*DONOR_REV:\s*([0-9a-f]{40})$", release_workflow, re.MULTILINE
+)
+assert pinned_donor, "linux-release.yml must pin DONOR_REV"
+donor_pins = {}
+for workflow_path in (source_root / ".github" / "workflows").glob("*.yml"):
+    pins = re.findall(
+        r"^\s*DONOR_REV:\s*([0-9a-f]{40})$",
+        workflow_path.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    if pins:
+        donor_pins[workflow_path.name] = pins
+expected_donor_workflows = {
+    "linux-build.yml",
+    "linux-release.yml",
+    "linux-sanitizer.yml",
+    "macos-build.yml",
+    "macos-release.yml",
+    "raspberry-pi-build.yml",
+    "windows-build.yml",
+    "windows-tests.yml",
+}
+assert set(donor_pins) == expected_donor_workflows, (
+    "exactly the release and test workflows that consume donor source must "
+    f"pin DONOR_REV: {donor_pins.keys()}"
+)
+assert all(pins == [pinned_donor.group(1)] for pins in donor_pins.values()), (
+    f"DONOR_REV drift across workflows: {donor_pins}"
+)
+release_section_match = re.search(
+    r"^## Part 10\b(?P<body>.*)\Z",
+    maintainer_guide,
+    re.MULTILINE | re.DOTALL,
+)
+assert release_section_match, (
+    "release checklist must point to the documented Part 10 procedure"
+)
+release_section = release_section_match.group("body")
+assert "env -u DUSK_PLUGINS_PATH scripts/update-patrons.py --dry-run" in release_section, (
+    "Part 10 must retain the local Patreon freshness check"
+)
+assert ".github/workflows/linux-release.yml" in release_section, (
+    "Part 10 must read the donor pin from a release workflow"
+)
+assert 'cat-file -e "$DONOR_REV^{commit}"' in release_section, (
+    "Part 10 must avoid turning the maintainer donor into a shallow checkout"
+)
+assert 'git -C ../plugins show "$DONOR_REV:plugins/shared/PatreonBackers.h"' in release_section, (
+    "Part 10 must print the supporter header from the pinned donor revision"
+)
+assert "STOP: release workflow has no valid DONOR_REV" in release_section, (
+    "Part 10 must stop instead of reading the donor index when pin parsing fails"
+)
+patreon_command = "env -u DUSK_PLUGINS_PATH scripts/update-patrons.py --dry-run"
+patreon_at = release_section.index(patreon_command)
+patreon_block_start = release_section.rfind("```bash", 0, patreon_at)
+patreon_block_end = release_section.find("```", patreon_at)
+assert patreon_block_start >= 0 and patreon_block_end >= 0, (
+    "Part 10 Patreon freshness command must remain inside a bash code block"
+)
+patreon_block = release_section[patreon_block_start:patreon_block_end]
+assert "set -e" in patreon_block, (
+    "Part 10 must abort the Patreon block when donor pin validation fails"
+)
+override_stop = (
+    "STOP: local Patreon name_overrides are not available to release workflows"
+)
+assert override_stop in patreon_block, (
+    "Part 10 must stop when local display-name overrides would diverge from CI"
+)
+ordered_patreon_steps = [
+    "set -e",
+    override_stop,
+    "DONOR_REV=$(sed -nE",
+    '[[ "$DONOR_REV" =~ ^[0-9a-f]{40}$ ]]',
+    'cat-file -e "$DONOR_REV^{commit}"',
+    'git -C ../plugins show "$DONOR_REV:plugins/shared/PatreonBackers.h"',
+    patreon_command,
+]
+step_positions = [patreon_block.index(step) for step in ordered_patreon_steps]
+assert step_positions == sorted(step_positions), (
+    "Part 10 must validate local naming and the donor pin before comparing tiers"
+)
+packaging_guide = (source_root / "packaging" / "README.md").read_text(encoding="utf-8")
+assert "Maintainer Guide Part 10" in packaging_guide, (
+    "packaging checklist must link the Patreon freshness procedure"
+)
+assert "MAINTAINER-GUIDE.md#part-10---release" in packaging_guide, (
+    "packaging checklist must link directly to Part 10"
+)
+assert "env -u DUSK_PLUGINS_PATH scripts/update-patrons.py --dry-run" in packaging_guide, (
+    "packaging checklist must retain the Patreon freshness command"
+)
+assert "workflow-pinned donor" in packaging_guide, (
+    "packaging checklist must compare against the donor revision that ships"
+)
+assert "missing Patreon" in packaging_guide, (
+    "packaging checklist must stop a stale committed-list fallback"
+)
+handoff_guide = (source_root / "docs" / "handoff-013-milestone.md").read_text(
+    encoding="utf-8"
+)
+assert "env -u DUSK_PLUGINS_PATH scripts/update-patrons.py --dry-run" in handoff_guide, (
+    "0.13 handoff must retain the safe Patreon freshness command"
+)
+assert ".codex/worktrees/*" in handoff_guide, (
+    "0.13 handoff must keep the primary-checkout requirement"
+)
 
 # All four workflows race to create the same release, so the body must come
 # from one file in the tagged tree rather than from whichever job wins.
@@ -791,6 +904,11 @@ assert (
     f'CHANGELOG.md "## [9.9.9] - Unreleased" -> '
     f'"## [9.9.9] - {release_date}"'
 ) in lines["1"]
+assert "env -u DUSK_PLUGINS_PATH scripts/update-patrons.py --dry-run" in lines["2"], (
+    "release checklist must print the Patreon freshness command"
+)
+assert "MAINTAINER-GUIDE Part 10" in lines["2"]
+assert "commit in the plugins repo" not in bump_output
 assert 'RELEASE_COMMIT=$(git rev-parse HEAD)' in lines["5"]
 assert "scripts/run-selftest-xvfb.sh" in lines["4"]
 assert "DUSKSTUDIO_RUN_SELFTEST" not in bump_output

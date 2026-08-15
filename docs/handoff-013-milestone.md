@@ -6,9 +6,9 @@ Paste everything below as the opening prompt of the session that will do the wor
 
 You are the orchestrator for Dusk Studio (`/home/marc/projects/DuskStudio`). Read
 `CLAUDE.md` first; its audio-thread, de-JUCE, and verification requirements are
-absolute. Of the 0.13.0 milestone, finish only issues #178, #266, #271, #272,
-and #274. Verify their current GitHub state and each finding against the current
-source before acting. Do not reopen or reimplement closed issues.
+absolute. Of the 0.13.0 milestone, finish only issues #178 and #271. Issues
+#266, #272, and #274 are closed; do not reopen or reimplement them. Verify the
+current GitHub state and each finding against the current source before acting.
 
 The 0.13.0 metadata landed on `origin/main` as `e4ac7d6` through #284, and
 `origin/main:VERSION` is 0.13.0. Do not continue on the merged
@@ -16,13 +16,11 @@ The 0.13.0 metadata landed on `origin/main` as `e4ac7d6` through #284, and
 up-to-date `origin/main`, and retire the merged branch only under #271 after
 Marc authorizes cleanup.
 
-The working tree also contains unrelated, user-owned edits in
-`BUILDING-LINUX.md`, `CLAUDE.md`, `docs/capture-screenshots.sh`, and
-`docs/lv2-dsp-integration-handoff.md`. Do not stage, rewrite, or discard them.
+The former uncommitted bounded-build edits are preserved in #288. Do not
+duplicate or fold that separate reliability change into the #178 branch.
 
-For issues #178, #266, and #272, and for any code resulting from #274, create
-a separate branch from an up-to-date `origin/main`. Each gets its own review and
-PR. Issue #271 is Marc-gated repository maintenance, not a code branch.
+For issue #178, create a separate branch from an up-to-date `origin/main`.
+Issue #271 is Marc-gated repository maintenance, not a code branch.
 
 ## Working model
 
@@ -208,9 +206,8 @@ ctest --test-dir build-tests-w --output-on-failure \
 ## Release gate and remaining work
 
 The #262-#270 tag gate consisted of #262-#265, the documentation part of #266,
-and #267-#270. Those parts are complete. In particular, #266's documentation
-half had to land before tagging and is independently complete. Its remaining
-CMake half is separately closable and may land after the v0.13.0 tag.
+and #267-#270. Those parts are complete. Issue #266 is closed; its non-gating
+CMake enhancement moved to #286 in the 0.14.0 milestone.
 
 - #178, release mechanics: verify the metadata on `origin/main` and the current
   repository against the issue's still-valid acceptance criteria. Leave tagging
@@ -222,58 +219,31 @@ CMake half is separately closable and may land after the v0.13.0 tag.
   secrets are available, but warn and ship the committed supporters list when
   any secret is missing. With all four secrets configured, a refresh failure
   fails the release build. Before tagging, configure local Patreon credentials
-  and run the freshness check from the root checkout, where sibling discovery
-  can reach the normal working donor checkout rather than the detached `$DONOR`
-  verification checkout:
+  and run the freshness check from the root checkout, not a
+  `.codex/worktrees/*` issue worktree. The script resolves sibling donor paths
+  from its own location, so an issue-worktree copy finds no donor header:
 
   ```bash
   (cd /home/marc/projects/DuskStudio && \
     env -u DUSK_PLUGINS_PATH scripts/update-patrons.py --dry-run)
   ```
 
-  Reconcile any out-of-sync sibling headers and rerun the check. Compare the
-  reported tiers with the header in the pinned donor checkout at
-  `/home/marc/projects/dusk-plugins-013/plugins/shared/PatreonBackers.h`. If they differ,
-  require all four repository secrets before tagging so the workflows inject
-  the live list. If the secrets are unavailable, stop and ask Marc whether to
-  update the donor list and pin; never advance `DONOR_REV` without that separate
-  decision. The local patrons step printed by `scripts/bump-version.sh` must be
-  updated under issue #178 to describe that
-  freshness check. Follow the tracked release procedures in
+  Reconcile any out-of-sync sibling headers and rerun the check. Follow
+  Maintainer Guide Part 10 to print the header from the workflow-pinned donor
+  revision, then compare its active tiers separately with the dry-run output.
+  The dry run does not rewrite headers but may rotate local tokens; update the
+  matching Actions secrets if it does. If the tiers differ, require all four
+  repository secrets before tagging so the workflows inject the live list. If
+  the secrets are unavailable, stop and ask Marc whether to update the donor
+  list and pin; never advance `DONOR_REV` without that separate decision.
+  Follow the tracked release procedures in
   `packaging/README.md` and `docs/MAINTAINER-GUIDE.md`.
-- #266, CMake half: add a dependency-aware opt-out for the unconditional
-  libsodium dependency, keeping missing libsodium fatal when catalog support is
-  explicitly requested. Gate the SFZ catalog sources and tests, verify deb/rpm
-  dependency emission, and make `sodium_init()` ordering race-free. Before
-  closing it, build both option states: the enabled build must retain the
-  libsodium link and catalog tests; the disabled build must omit that link and
-  those tests. Configure and package separate ON and OFF build directories,
-  inspect each binary with `readelf`, list each test set with `ctest -N`, build
-  artifacts with `cpack -G DEB` and `cpack -G RPM`, then compare
-  `dpkg-deb -f <deb> Depends` and `rpm -qpR <rpm>` output. On non-Debian hosts,
-  distinguish a missing `dpkg-shlibdeps` database from a product failure. The
-  enabled build must satisfy either the dynamic or static linkage check above.
-  The disabled build must have neither a libsodium `NEEDED` entry nor a sodium
-  library cache entry; any match is a failure.
+- #286, optional SFZ catalog build: this is a 0.14.0 enhancement and does not
+  gate the 0.13.0 tag. Do not implement it during this release session.
 - #271, repository maintenance: each push, discard, branch deletion, and
   worktree removal needs Marc's explicit authorization.
-- #272, release workflows: token preflights and a release-summary-slot check
-  were implemented under this issue. Confirm those changes are present on
-  `origin/main` before acting; do not reimplement an already-landed change. The
-  issue does not gate v0.13.0. Token preflights protect only tags created after
-  they land; the verifier can still protect the announcement if its summary-slot
-  check lands before the post-build check.
-- #274, product decision: ask Marc whether to rename `vca_overeasy`. If yes,
-  scope the change to the session serializer's write and read sites
-  (`SessionSerializer.cpp:629` and `:1285` at this handoff revision): write the
-  new session JSON key, read both session keys, and reset to the model default
-  when neither key exists so a previous session's value cannot leak through.
-  Implement the reset at this call site or through an opt-in default argument;
-  do not change `loadB`'s behavior for its sibling keys. File their analogous
-  absent-key behavior as a follow-up rather than widening #274. Document the
-  migration and add tests for new, legacy, and absent keys. Do not rename the
-  donor multi-compressor's APVTS parameter ID or its tests; that identifier is
-  part of shipped preset compatibility and needs a separate migration decision.
+- #274, persisted VCA key: closed with the decision not to rename
+  `vca_overeasy` for 0.13.0. Do not add a session migration during this release.
 
 Tag mechanics remain Marc's: assist, never absorb. The order is metadata bump,
 land on `origin/main`, tag, then verify all release assets before announcing.

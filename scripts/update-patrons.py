@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Regenerate the PatreonBackers.h tier arrays from the live Patreon campaign.
 
-Run before tagging a release:
+Before tagging, run the header read-only mode from the main Dusk Studio
+checkout (not an issue worktree):
 
-    scripts/update-patrons.py            # rewrite the header(s), show a summary
-    scripts/update-patrons.py --dry-run  # show what would change, write nothing
+    # Show live tiers; do not rewrite headers:
+    env -u DUSK_PLUGINS_PATH scripts/update-patrons.py --dry-run
+
+Run without --dry-run only when deliberately updating the committed donor
+headers, then review and commit the intended plugins repository changes.
 
 One-time setup:
   1. Register an API client at https://www.patreon.com/portal/registration/register-clients
@@ -21,19 +25,18 @@ One-time setup:
         }
 
 The script refreshes expired tokens automatically and rewrites that file with
-the rotated pair, so setup is genuinely one-time.
+the rotated pair, including during --dry-run. If this happens before a release,
+update the matching Actions secrets before tagging.
 
 Behaviour:
   - Active patrons are bucketed by their highest entitled tier amount:
     >= $10 champions, >= $5 patrons, >= $3 supporters, >= $1 hugs.
   - Anyone listed in the current header who is no longer an active patron is
     moved to pastSupporters (existing pastSupporters entries are preserved).
-  - Every sibling checkout that has plugins/shared/PatreonBackers.h is
-    rewritten (plugins-main / plugins / plugins-worktree / plugins-multi-synth),
-    keeping the worktrees in sync per the note in the header itself.
+  - Without --dry-run, each donor header discovered through DUSK_PLUGINS_PATH
+    or the known sibling checkout names is rewritten, keeping those copies in
+    sync per the note in the header itself.
   - Only the array bodies are touched; the rest of the header is left as-is.
-
-Committing the result is left to you — review the diff in the plugins repo.
 """
 
 import argparse
@@ -246,7 +249,8 @@ def replace_array(text, name, names):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--dry-run", action="store_true",
-                    help="print the resulting tier lists, write nothing")
+                    help=("print the resulting tier lists without rewriting "
+                          "headers (token refresh may update local config)"))
     args = ap.parse_args()
 
     if not CONFIG_PATH.is_file():

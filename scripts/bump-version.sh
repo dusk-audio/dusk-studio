@@ -374,7 +374,7 @@ git status --short VERSION "$APPDATA" "$NOTES_FILE" 2>/dev/null || true
 echo
 echo "Next steps:"
 echo "  1) Date the changelog: CHANGELOG.md \"## [$NEW_VERSION] - Unreleased\" -> \"## [$NEW_VERSION] - $TODAY\""
-echo "  2) Refresh patrons:   scripts/update-patrons.py   (commit in the plugins repo)"
+echo "  2) Check patrons:     env -u DUSK_PLUGINS_PATH scripts/update-patrons.py --dry-run   (may rotate tokens; see MAINTAINER-GUIDE Part 10)"
 echo "  3) Review the diff:   git diff VERSION $APPDATA $NOTES_FILE CHANGELOG.md"
 echo "  4) Rebuild + smoke:   cmake --build build -j && scripts/run-selftest-xvfb.sh"
 echo "  5) Commit metadata:   git commit -am \"Release v$NEW_VERSION\" && RELEASE_COMMIT=\$(git rev-parse HEAD)"
