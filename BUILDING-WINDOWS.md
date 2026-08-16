@@ -36,18 +36,26 @@ CMake auto-discovers these. If you put them elsewhere, pass `-DJUCE_PATH=...`, `
 
 ### Clone everything
 
-Open a terminal (PowerShell, cmd, or Git Bash). All of these repos are public, no auth needed.
+Open Command Prompt (`cmd.exe`). All of these repos are public, no auth needed.
 
 ```cmd
 cd C:\dev
 git clone --recurse-submodules https://github.com/dusk-audio/dusk-studio.git
 git clone --branch 8.0.4 https://github.com/juce-framework/JUCE.git
 git clone https://github.com/dusk-audio/dusk-audio-plugins.git plugins
+git -C plugins fetch --depth 1 origin 69f04318e3b7063e382c80ac1cde2388170e668b
+git -C plugins checkout --detach FETCH_HEAD
+git -C plugins rev-parse HEAD | findstr /x /c:"69f04318e3b7063e382c80ac1cde2388170e668b" >nul || (echo ERROR: donor checkout did not reach the pinned revision & exit /b 1)
 ```
 
 `--recurse-submodules` matters: `external/sfizz` carries the SF2 / multisample instrument engine, and CMake gates it purely on the header being present ([CMakeLists.txt:1164](CMakeLists.txt#L1164)) — clone without it and the feature is gone with no diagnostic. If you already cloned flat, run `git submodule update --init --recursive`.
 
 The explicit `plugins` target on the third clone is mandatory: CMake auto-discovery looks for a sibling directory named `plugins\` and nothing else ([CMakeLists.txt:383-393](CMakeLists.txt#L383-L393)). The repo itself is named `dusk-audio-plugins` on GitHub, so without the explicit target you'd get a directory CMake can't find — and it warns rather than failing, leaving you with a recorder that has no EQ, compressor, or tape.
+
+The fetch, detached checkout and exact revision check are also mandatory. Dusk
+Studio consumes a framework-free compressor core that is present at this
+workflow-pinned revision but is not on the donor repository's current `main`.
+When that pin moves, update every workflow and this guide together.
 
 The Dusk Studio repo's own directory name (`dusk-studio\`) doesn't matter to the build, so rename it if you prefer.
 

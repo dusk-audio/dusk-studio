@@ -80,6 +80,12 @@ cd ~/projects
 git clone --recurse-submodules https://github.com/dusk-audio/dusk-studio.git
 git clone --branch wayland-juce8 https://github.com/plugdata-team/JUCE.git JUCE-wayland
 git clone https://github.com/dusk-audio/dusk-audio-plugins.git plugins
+git -C plugins fetch --depth 1 origin 69f04318e3b7063e382c80ac1cde2388170e668b
+git -C plugins checkout --detach FETCH_HEAD
+test "$(git -C plugins rev-parse HEAD)" = 69f04318e3b7063e382c80ac1cde2388170e668b || {
+  echo "ERROR: donor checkout did not reach the pinned revision" >&2
+  false
+}
 ```
 
 `--recurse-submodules` is required, not tidiness. Dusk Studio carries three: `external/clap`, `external/sfizz`, and `external/vst3sdk`. A clone without them fails configure outright on the CLAP headers (the native CLAP host defaults ON here, [CMakeLists.txt:27-33](CMakeLists.txt#L27-L33), and [CMakeLists.txt:1076-1081](CMakeLists.txt#L1076-L1081) stops the build), and a missing `external/sfizz` costs you the SF2 / multisample instrument with no diagnostic at all ([CMakeLists.txt:1163](CMakeLists.txt#L1163) simply gates on the header being there). Already cloned without them:
@@ -89,6 +95,11 @@ git submodule update --init --recursive
 ```
 
 The explicit `plugins` target on the third clone is mandatory — the repo is named `dusk-audio-plugins` on GitHub, and `../plugins` is the only sibling directory CMake checks ([CMakeLists.txt:358-367](CMakeLists.txt#L358-L367)). Get it wrong and configure prints a warning rather than failing; the build then produces a recorder with no EQ, compressor, or tape.
+
+The fetch and detached checkout are also mandatory. Dusk Studio consumes a
+framework-free compressor core that is present at the revision pinned by all
+build and release workflows but is not on the donor repository's current
+`main`. When that pin moves, update every workflow and this guide together.
 
 If you also keep an upstream `JUCE/` sibling for cross-OS dev, CMake prefers `JUCE-wayland/` on Linux and falls back to `JUCE/` only if the fork isn't there.
 
