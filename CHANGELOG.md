@@ -5,7 +5,7 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [0.13.0] - 2026-08-14
+## [0.13.0] - 2026-08-16
 
 The first release cut from the main line since 0.12 branched. Linux gets a
 native PipeWire backend and MIDI hot-plug; macOS gets Dusk Studio's own plugin
