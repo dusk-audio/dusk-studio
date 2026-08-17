@@ -29,6 +29,8 @@ namespace
 constexpr float kContentWidth = 760.0f;
 constexpr float kHeaderHeight = 62.0f;
 constexpr float kRibbonHeight = 62.0f;
+constexpr float kToolbarButtonLabelPadding = 18.0f;
+constexpr float kToolbarButtonMinWidth = 34.0f;
 
 // DejaVu Sans covers these ranges in the embedded fallback. Platform fonts can
 // contribute additional glyphs, but the editor never intentionally truncates
@@ -83,6 +85,25 @@ ImVec4 colour (unsigned int hex)
                    (hex & 0xff) / 255.0f);
 }
 
+float toolbarButtonWidth (const char* label)
+{
+    return std::max (kToolbarButtonMinWidth,
+                     ImGui::CalcTextSize (label, nullptr, true).x
+                         + kToolbarButtonLabelPadding);
+}
+
+int resizeMarkdownBuffer (ImGuiInputTextCallbackData* data)
+{
+    if (data == nullptr || data->EventFlag != ImGuiInputTextFlags_CallbackResize
+        || data->UserData == nullptr)
+        return 0;
+
+    auto& buffer = *static_cast<std::string*> (data->UserData);
+    buffer.resize (static_cast<std::size_t> (std::max (0, data->BufTextLen)));
+    data->Buf = buffer.data();
+    return 0;
+}
+
 } // namespace
 
 struct NativeNotepadWindow::Impl final : private dusk::Timer
@@ -111,6 +132,11 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
 
         bool onKeyboard (const DGL::Widget::KeyboardEvent& event) override
         {
+            // ImGui's multiline input treats Escape as "revert to activation",
+            // which can discard a complete Markdown-source editing pass. In
+            // source view Escape closes through the normal deferred save path.
+            if (owner.handleMarkdownEscape (event))
+                return true;
             if (owner.handleChordEntryNavigation (event))
                 return true;
             return DGL::ImGuiTopLevelWidget::onKeyboard (event);
@@ -209,6 +235,9 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
         document.setMarkdown (markdown);
         editor.reset ({ 0, 0 });
         editor.requestFocus();
+        markdownView = false;
+        markdownEntrySnapshot.reset();
+        markdownFocusRequested = false;
         closeRequested = false;
         closeWasPumped = false;
         hasSessionFile = sessionExists;
@@ -293,6 +322,15 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
     }
 
 private:
+    bool handleMarkdownEscape (const DGL::Widget::KeyboardEvent& event)
+    {
+        if (! markdownView || event.key != DGL::kKeyEscape)
+            return false;
+        if (event.press)
+            close();
+        return true;
+    }
+
     bool handleChordEntryNavigation (const DGL::Widget::KeyboardEvent& event)
     {
         if (! editor.chordEntryActive())
@@ -406,15 +444,39 @@ private:
         return editor.blockStyle();
     }
 
+    void setMarkdownView (bool shouldShowMarkdown)
+    {
+        if (markdownView == shouldShowMarkdown)
+            return;
+
+        if (shouldShowMarkdown)
+        {
+            editor.closeChordEntry();
+            markdownBuffer = document.markdown();
+            markdownEntrySnapshot = currentSnapshot();
+            history.breakRun();
+            markdownView = true;
+            markdownFocusRequested = true;
+            return;
+        }
+
+        const auto documentEnd = document.documentText().size();
+        if (markdownEntrySnapshot.has_value()
+            && markdownEntrySnapshot->markdown != document.markdown())
+            history.record (notepad::EditKind::structural,
+                            std::move (*markdownEntrySnapshot), documentEnd);
+        markdownEntrySnapshot.reset();
+        markdownView = false;
+        editor.reset ({ documentEnd, documentEnd });
+        editor.requestFocus();
+    }
+
     bool toolbarButton (const char* label, const char* tooltip, bool active = false,
                         ImFont* labelFont = nullptr)
     {
         // The atlas is built at the display scale, so a fixed width clips its
         // own label the moment the font grows. Measure what is about to be
         // drawn instead - in the label's own font, and past the "##" id tail.
-        constexpr float kLabelPadding = 18.0f;
-        constexpr float kMinButtonWidth = 34.0f;
-
         if (active)
         {
             ImGui::PushStyleColor (ImGuiCol_Button, colour (notepad::kStagePalette.rule));
@@ -423,9 +485,7 @@ private:
         }
         if (labelFont != nullptr)
             ImGui::PushFont (labelFont);
-        const auto width = std::max (kMinButtonWidth,
-                                     ImGui::CalcTextSize (label, nullptr, true).x
-                                         + kLabelPadding);
+        const auto width = toolbarButtonWidth (label);
         const bool clicked = ImGui::Button (label, ImVec2 (width, 32.0f));
         if (labelFont != nullptr)
             ImGui::PopFont();
@@ -444,6 +504,18 @@ private:
         return clicked;
     }
 
+    void drawSourceToggle()
+    {
+        // The ribbon is the only chrome that survives into source view, so it
+        // carries the way back out as well as the way in. Escape closes the
+        // notepad rather than returning to the chart.
+        if (toolbarButton ("Source", markdownView
+                                       ? "Return to the chord chart"
+                                       : "Edit the notepad.md text directly",
+                           markdownView))
+            setMarkdownView (! markdownView);
+    }
+
     void drawRibbon (float height)
     {
         ImGui::PushStyleVar (ImGuiStyleVar_ChildRounding, 0.0f);
@@ -453,6 +525,22 @@ private:
                            ImGuiChildFlags_AlwaysUseWindowPadding,
                            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
+        // Source view replaces the chart with a plain text field, so the chart
+        // controls have nothing to act on while it is up.
+        if (! markdownView)
+        {
+            drawChartControls();
+            ImGui::SameLine (0.0f, 16.0f);
+        }
+        drawSourceToggle();
+
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar (2);
+    }
+
+    void drawChartControls()
+    {
         ImGui::BeginDisabled (! history.canUndo());
         if (toolbarButton ("↶", "Undo the last edit (Ctrl+Z)", false))
             restoreHistory (false);
@@ -522,10 +610,6 @@ private:
             document.setSpelling (NotepadDocument::Spelling::flats);
 
         drawSectionMenu();
-
-        ImGui::EndChild();
-        ImGui::PopStyleColor();
-        ImGui::PopStyleVar (2);
     }
 
     void drawSectionMenu()
@@ -585,6 +669,56 @@ private:
         ImGui::PopStyleColor();
     }
 
+    void drawMarkdownEditor (float height)
+    {
+        ImGui::PushStyleColor (ImGuiCol_ChildBg, colour (notepad::kStagePalette.shell));
+        ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (22.0f, 18.0f));
+        ImGui::BeginChild ("markdown-workspace", ImVec2 (0.0f, height),
+                           ImGuiChildFlags_AlwaysUseWindowPadding,
+                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+        const auto available = ImGui::GetContentRegionAvail();
+        const float editorWidth = std::min (kContentWidth, std::max (0.0f, available.x));
+        ImGui::SetCursorPosX (ImGui::GetCursorPosX() + (available.x - editorWidth) * 0.5f);
+
+        if (editorWidth > 0.0f && available.y > 0.0f)
+        {
+            ImGui::PushStyleColor (ImGuiCol_FrameBg, colour (notepad::kStagePalette.stage));
+            ImGui::PushStyleColor (ImGuiCol_FrameBgHovered,
+                                   colour (notepad::kStagePalette.stage));
+            ImGui::PushStyleColor (ImGuiCol_FrameBgActive,
+                                   colour (notepad::kStagePalette.stage));
+            ImGui::PushStyleVar (ImGuiStyleVar_FramePadding, ImVec2 (34.0f, 26.0f));
+            if (monoFont != nullptr)
+                ImGui::PushFont (monoFont);
+            if (markdownFocusRequested)
+            {
+                ImGui::SetKeyboardFocusHere();
+                markdownFocusRequested = false;
+            }
+
+            const auto flags = ImGuiInputTextFlags_AllowTabInput
+                             | ImGuiInputTextFlags_CallbackResize;
+            if (ImGui::InputTextMultiline ("##markdown-source", markdownBuffer.data(),
+                                           markdownBuffer.capacity() + 1,
+                                           ImVec2 (editorWidth, available.y), flags,
+                                           resizeMarkdownBuffer, &markdownBuffer))
+            {
+                document.restoreMarkdown (markdownBuffer);
+                notifyTextChanged();
+            }
+
+            if (monoFont != nullptr)
+                ImGui::PopFont();
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor (3);
+        }
+
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+    }
+
     void draw (float width, float height)
     {
         auto& style = ImGui::GetStyle();
@@ -623,12 +757,6 @@ private:
         ImGui::TextUnformatted ("Lyrics and session notes");
         ImGui::PopStyleColor();
 
-        ImGui::SetCursorPos (ImVec2 (width - 90.0f, 16.0f));
-        if (ImGui::Button ("Done", ImVec2 (68.0f, 30.0f)))
-            close();
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip ("Close the notepad; changes stay with this session");
-
         // The status bar is a line of text plus its own padding: sizing it by a
         // constant left it a few pixels short of a full line once the child
         // asked for that padding, and it clipped its own glyphs.
@@ -648,7 +776,10 @@ private:
         if (bands.chart > 0.0f)
         {
             ImGui::SetCursorPos (ImVec2 (0.0f, chartTop));
-            drawEditor (bands.chart);
+            if (markdownView)
+                drawMarkdownEditor (bands.chart);
+            else
+                drawEditor (bands.chart);
         }
 
         if (bands.status > 0.0f)
@@ -720,7 +851,11 @@ private:
     ImFont* boldItalicFont = nullptr;
     ImFont* monoFont = nullptr;
     std::optional<std::string> savedMarkdown;
+    std::optional<notepad::Snapshot> markdownEntrySnapshot;
+    std::string markdownBuffer;
     std::string savedAtLabel;
+    bool markdownView = false;
+    bool markdownFocusRequested = false;
     bool closeRequested = false;
     bool closeWasPumped = false;
     bool hasSessionFile = false;

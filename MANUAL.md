@@ -611,6 +611,13 @@ the current save state, the latest save time when available, the `notepad.md`
 filename, section count, unique chord count, and the detected key when enough
 chords identify one.
 
+**Source** at the end of the toolbar swaps the chart for the raw `notepad.md`
+text, so ChordPro brackets, section markers and Markdown can be typed or pasted
+directly. The toolbar's chart controls step aside while source view is up,
+leaving **Source** lit as the way back; clicking it again returns to the chart.
+Edits made in source view land in the notepad as a single undo step. **Esc**
+closes the notepad from source view rather than reverting the text.
+
 Click the dimmed area outside the notepad to close it. The notepad also closes
 itself whenever something else needs the window — an alert, a stage switch, or
 the quit prompt — saving as it goes, except on quit, where the notes wait for
