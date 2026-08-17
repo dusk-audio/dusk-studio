@@ -529,22 +529,21 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     // pan-control language is consistent across channels and buses.
     const auto panRed   = juce::Colour (0xffc04040);
 
-    // EQ section header - CompHeaderButton (LED + label pill) matches the
-    // COMP header below and the channel-strip EQ header. Left-click toggles
-    // enable; right-click opens the EQ section menu; double-click opens the
-    // editor. Fixed topology (no mode picker).
-    eqHeaderBtn = std::make_unique<CompHeaderButton> (
-        /*getEnabled*/ [this] { return bus.strip.eqEnabled.load (std::memory_order_relaxed); },
-        /*onToggle*/   [this]
+    // Split EQ header: status-light click toggles bypass, label click opens
+    // the editor, and a right-click anywhere opens the section menu.
+    eqHeaderBtn = std::make_unique<SplitModuleButton> ("EQ");
+    eqHeaderBtn->setAccentColour (eqGreen);
+    eqHeaderBtn->setCallbacks (
+        [this] { return ! bus.strip.eqEnabled.load (std::memory_order_relaxed); },
+        [this]
                         {
                             const bool now = ! bus.strip.eqEnabled.load (std::memory_order_relaxed);
                             bus.strip.eqEnabled.store (now, std::memory_order_release);
-                            if (eqHeaderBtn != nullptr) eqHeaderBtn->repaint();
+                            if (eqHeaderBtn != nullptr) eqHeaderBtn->refresh();
                         },
-        /*onPick*/       [this] { showEqSectionMenu(); },
-        /*onDoubleClick*/[this] { openEqEditorPopup(); });
-    eqHeaderBtn->setLabelText ("EQ");
-    eqHeaderBtn->setTooltip ("Left-click EQ on/off. Right-click for the EQ menu. Double-click to open the editor.");
+        [this] { openEqEditorPopup(); },
+        [this] { showEqSectionMenu(); });
+    eqHeaderBtn->setTooltip ("Click the status light to bypass/engage EQ; click EQ to open the editor; right-click for the EQ menu.");
     addAndMakeVisible (eqHeaderBtn.get());
 
     // Suffixes empty - same rationale as master: 38-px textbox can't fit
@@ -562,7 +561,7 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     auto armBusEq = [this]
     {
         bus.strip.eqEnabled.store (true, std::memory_order_release);
-        if (eqHeaderBtn != nullptr) eqHeaderBtn->repaint();
+        if (eqHeaderBtn != nullptr) eqHeaderBtn->refresh();
     };
     eqLfGain .onValueChange = [this, armBusEq] { bus.strip.eqLfGainDb .store ((float) eqLfGain .getValue(), std::memory_order_relaxed); armBusEq(); };
     eqMidGain.onValueChange = [this, armBusEq] { bus.strip.eqMidGainDb.store ((float) eqMidGain.getValue(), std::memory_order_relaxed); armBusEq(); };
@@ -574,26 +573,26 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     styleSmallLabel (eqHfLbl,  "H", eqGreen);
     addAndMakeVisible (eqLfLbl); addAndMakeVisible (eqMidLbl); addAndMakeVisible (eqHfLbl);
 
-    // Comp section. Shell now mirrors the channel-strip COMP visually:
-    //   - CompHeaderButton on top (single button, white text, green LED,
-    //     left-click toggles enable). No mode picker (bus comp is a
-    //     fixed SSL-style glue topology, not OPTO/FET/VCA).
+    // Comp section. The split header mirrors the channel-strip COMP and the
+    // processor remains a fixed SSL-style glue topology.
     //   - CompMeterStrip on the LEFT (handle + IN bar + dB scale + GR
     //     bar). Threshold drag writes bus.strip.compThreshDb (-60..0).
     //   - Knob grid on the RIGHT: RAT / ATK + REL / MAK across two rows.
     //     The standalone THR knob is gone - threshold is set via the
     //     triangle handle on the meter.
-    compHeaderBtn = std::make_unique<CompHeaderButton> (
-        /*getEnabled*/ [this] { return bus.strip.compEnabled.load (std::memory_order_relaxed); },
-        /*onToggle*/   [this]
+    compHeaderBtn = std::make_unique<SplitModuleButton> ("COMP");
+    compHeaderBtn->setAccentColour (compGold);
+    compHeaderBtn->setCallbacks (
+        [this] { return ! bus.strip.compEnabled.load (std::memory_order_relaxed); },
+        [this]
                         {
                             const bool now = ! bus.strip.compEnabled.load (std::memory_order_relaxed);
                             bus.strip.compEnabled.store (now, std::memory_order_release);
-                            if (compHeaderBtn != nullptr) compHeaderBtn->repaint();
+                            if (compHeaderBtn != nullptr) compHeaderBtn->refresh();
                         },
-        /*onPick*/       [this] { showCompSectionMenu(); },
-        /*onDoubleClick*/[this] { openCompEditorPopup(); });
-    compHeaderBtn->setTooltip ("Left-click comp on/off. Right-click for the COMP menu. Double-click to open the editor.");
+        [this] { openCompEditorPopup(); },
+        [this] { showCompSectionMenu(); });
+    compHeaderBtn->setTooltip ("Click the status light to bypass/engage compression; click COMP to open the editor; right-click for the COMP menu.");
     addAndMakeVisible (compHeaderBtn.get());
 
     CompMeterStrip::Source compSrc;
@@ -618,7 +617,7 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     compSrc.autoEnable     = [this]
                               {
                                   bus.strip.compEnabled.store (true, std::memory_order_release);
-                                  if (compHeaderBtn != nullptr) compHeaderBtn->repaint();
+                                  if (compHeaderBtn != nullptr) compHeaderBtn->refresh();
                               };
     // Fader-side GR LED (matches channel-strip grammar): slim widget that
     // shows only the GR bar + threshold-drag handle, glued next to the
@@ -807,45 +806,30 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     styleReadout (outputPeakLabel, juce::Colour (0xffd0d0d0));
     addAndMakeVisible (outputPeakLabel);
 
-    // Compact placeholder buttons (hidden until setCompactMode(true)).
-    // Same visual grammar as ChannelStripComponent's eq/comp compact
-    // pills so the bus + master strips read as the same compact form
-    // when the tape TIMELINE shrinks the strip.
-    auto styleCompactSectionBtn = [] (juce::TextButton& b, juce::Colour accent)
-    {
-        b.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff282830));
-        b.setColour (juce::TextButton::buttonOnColourId, accent.withMultipliedAlpha (0.85f));
-        b.setColour (juce::TextButton::textColourOffId,  accent.withMultipliedBrightness (0.8f));
-        b.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
-        b.setMouseClickGrabsKeyboardFocus (false);
-        b.setClickingTogglesState (false);
-    };
-    styleCompactSectionBtn (eqCompactButton,   juce::Colour (0xff5fc46f));
-    styleCompactSectionBtn (compCompactButton, juce::Colour (0xffe0c050));
-    // Identical grammar to the expanded EQ/COMP headers: left-click toggles the
-    // section on/off, right-click opens the section menu, double-click opens the
-    // editor. The illuminated background (driven by the 30 Hz refresh) reflects
-    // the enabled state.
-    eqCompactButton  .setTooltip ("Left-click EQ on/off. Right-click for the EQ menu. Double-click to open the editor.");
-    compCompactButton.setTooltip ("Left-click comp on/off. Right-click for the COMP menu. Double-click to open the editor.");
-    eqCompactButton  .onClick = [this]
-    {
-        const bool now = ! bus.strip.eqEnabled.load (std::memory_order_relaxed);
-        bus.strip.eqEnabled.store (now, std::memory_order_release);
-        // Mirror into the button's own toggle state so the pill text palette
-        // (textColourOnId vs Off) reflects the new state immediately, not 33 ms later.
-        eqCompactButton.setToggleState (now, juce::dontSendNotification);
-    };
-    eqCompactButton  .onRightClick  = [this] (const juce::MouseEvent&) { showEqSectionMenu(); };
-    eqCompactButton  .onDoubleClick = [this] { openEqEditorPopup(); };
-    compCompactButton.onClick = [this]
-    {
-        const bool now = ! bus.strip.compEnabled.load (std::memory_order_relaxed);
-        bus.strip.compEnabled.store (now, std::memory_order_release);
-        compCompactButton.setToggleState (now, juce::dontSendNotification);
-    };
-    compCompactButton.onRightClick  = [this] (const juce::MouseEvent&) { showCompSectionMenu(); };
-    compCompactButton.onDoubleClick = [this] { openCompEditorPopup(); };
+    // Compact split buttons use the same two primary hitboxes as the expanded
+    // headers, while retaining their section-specific accent colours.
+    eqCompactButton.setAccentColour (juce::Colour (0xff5fc46f));
+    compCompactButton.setAccentColour (juce::Colour (0xffe0c050));
+    eqCompactButton.setCallbacks (
+        [this] { return ! bus.strip.eqEnabled.load (std::memory_order_relaxed); },
+        [this]
+        {
+            const bool now = ! bus.strip.eqEnabled.load (std::memory_order_relaxed);
+            bus.strip.eqEnabled.store (now, std::memory_order_release);
+        },
+        [this] { openEqEditorPopup(); },
+        [this] { showEqSectionMenu(); });
+    compCompactButton.setCallbacks (
+        [this] { return ! bus.strip.compEnabled.load (std::memory_order_relaxed); },
+        [this]
+        {
+            const bool now = ! bus.strip.compEnabled.load (std::memory_order_relaxed);
+            bus.strip.compEnabled.store (now, std::memory_order_release);
+        },
+        [this] { openCompEditorPopup(); },
+        [this] { showCompSectionMenu(); });
+    eqCompactButton  .setTooltip ("Click the light to bypass/engage EQ; click EQ to open the editor; right-click for the EQ menu.");
+    compCompactButton.setTooltip ("Click the light to bypass/engage compression; click COMP to open the editor; right-click for the COMP menu.");
     addChildComponent (eqCompactButton);
     addChildComponent (compCompactButton);
 
@@ -1019,29 +1003,17 @@ void BusComponent::timerCallback()
     // refresh so all three strip types read the same way under TIMELINE.
     if (compactMode)
     {
-        const auto eqAccent   = juce::Colour (0xff5fc46f);
-        const auto compAccent = juce::Colour (0xffe0c050);
         const int eqOn   = bus.strip.eqEnabled  .load (std::memory_order_relaxed) ? 1 : 0;
         const int compOn = bus.strip.compEnabled.load (std::memory_order_relaxed) ? 1 : 0;
         if (eqOn != lastCompactEqOn)
         {
             lastCompactEqOn = eqOn;
-            // Track the atom (it can change via the popup editor) so the pill stays
-            // in sync regardless of how the section was toggled.
-            eqCompactButton.setToggleState (eqOn != 0, juce::dontSendNotification);
-            eqCompactButton.setColour (juce::TextButton::buttonColourId,
-                                         eqOn != 0 ? eqAccent.darker (0.55f)
-                                                    : juce::Colour (0xff282830));
-            eqCompactButton.repaint();
+            eqCompactButton.refresh();
         }
         if (compOn != lastCompactCompOn)
         {
             lastCompactCompOn = compOn;
-            compCompactButton.setToggleState (compOn != 0, juce::dontSendNotification);
-            compCompactButton.setColour (juce::TextButton::buttonColourId,
-                                           compOn != 0 ? compAccent.darker (0.55f)
-                                                        : juce::Colour (0xff282830));
-            compCompactButton.repaint();
+            compCompactButton.refresh();
         }
     }
 
@@ -1139,10 +1111,10 @@ void BusComponent::timerCallback()
         if (soloButton.getToggleState() != s)
             soloButton.setToggleState (s, juce::dontSendNotification);
     }
-    // EQ LED reads via CompHeaderButton's getEnabled lambda; nudge a
-    // repaint each tick so the LED reflects external atom changes (e.g.
-    // session reload, MIDI bindings) without a click.
-    if (eqHeaderBtn != nullptr) eqHeaderBtn->repaint();
+    // Refresh both split headers so external atom changes (session reload,
+    // editor actions, MIDI bindings) are reflected without a click.
+    if (eqHeaderBtn != nullptr) eqHeaderBtn->refresh();
+    if (compHeaderBtn != nullptr) compHeaderBtn->refresh();
 }
 
 void BusComponent::mouseDown (const juce::MouseEvent& e)
@@ -1641,8 +1613,8 @@ void BusComponent::resized()
 
     // Right-side stack - fader-side grammar matching the channel strip:
     //   [right pad] [GR LED (compMeter)] [gap] [level meter] [gap] [fader]
-    // Scale labels (+6 / +3 / 0 / ... / off) drawn by paint() to the LEFT
-    // of the fader track (same kSharedXOver math as ChannelStripComponent).
+    // Scale labels (+6 / +3 / 0 / ... / off) are drawn by paint() to the LEFT
+    // of the fader track.
     constexpr int kMeterW          = 14;   // 2 × ~6 px columns + 1 px gap (stereo LED)
     constexpr int kGrLedW          = 20;   // GR bar + threshold-drag handle
     constexpr int kMeterToGrGap    = 1;
@@ -1695,8 +1667,8 @@ void BusComponent::resized()
     constexpr int kFaderColW = 50;
     if (area.getWidth() > kFaderColW)
         area = area.removeFromRight (kFaderColW);
-    // Scale labels no longer use a dedicated carved column - they're drawn
-    // in paint() to the left of the fader track via kSharedXOver math.
+    // paint() positions the scale labels directly left of the fader track, so
+    // no column is carved out for them here.
     faderScaleArea = juce::Rectangle<int>();
     // grMeterArea was the old standalone GR bar; compMeter now owns the
     // GR display (placed beside the level meter below). Empty rect tells
@@ -1720,10 +1692,13 @@ void BusComponent::resized()
                             .withTrimmedBottom (kFaderValueH + 8);
     faderSlider.setBounds (sliderBounds);
 
+    // Share the bottom readout row with the output peak value, as channel
+    // strips do. Keeping the fader value here avoids the bus-group "0.0"
+    // floating one row above every other strip's readout.
     faderValueLabel.setBounds (sliderBounds.getX(),
-                                 sliderBounds.getBottom() + 6,
+                                 peakRow.getY(),
                                  sliderBounds.getWidth(),
-                                 kFaderValueH);
+                                 peakRow.getHeight());
 
     // Position the fader-side compMeter so its GR bar top (= compTop +
     // 10 px caption reserve) lines up with the level meter's "0" dB tick.
@@ -1814,7 +1789,7 @@ void BusComponent::resetEqSection()
     };
     reset (eqLfGain);  reset (eqMidGain);  reset (eqHfGain);
     bus.strip.eqEnabled.store (wasEnabled, std::memory_order_release);
-    if (eqHeaderBtn != nullptr) eqHeaderBtn->repaint();
+    if (eqHeaderBtn != nullptr) eqHeaderBtn->refresh();
 }
 
 void BusComponent::resetCompSection()
@@ -1828,6 +1803,6 @@ void BusComponent::resetCompSection()
     };
     reset (compRatio);  reset (compAttack);
     reset (compRelease); reset (compMakeup);
-    if (compHeaderBtn != nullptr) compHeaderBtn->repaint();
+    if (compHeaderBtn != nullptr) compHeaderBtn->refresh();
 }
 } // namespace duskstudio

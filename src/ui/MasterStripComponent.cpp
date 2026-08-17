@@ -677,21 +677,21 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     const auto pultecGold  = pultecBlack;   // legacy variable name; now black
     const auto compGold    = juce::Colour (0xff7da8c5);   // SSL G-bus comp powder blue (legacy var name)
 
-    // EQ header - shared CompHeaderButton pill (green LED + bold label).
-    // Left-click toggles; right-click opens the EQ section menu; double-
-    // click opens the editor (matches COMP / TAPE + channel + bus).
-    eqHeaderBtn = std::make_unique<CompHeaderButton> (
-        /*getEnabled*/ [this] { return params.eqEnabled.load (std::memory_order_relaxed); },
-        /*onToggle*/   [this]
+    // Split EQ header: the status hitbox toggles bypass and the label opens
+    // the editor. Right-clicking either side opens the section menu.
+    eqHeaderBtn = std::make_unique<SplitModuleButton> ("EQ");
+    eqHeaderBtn->setAccentColour (juce::Colour (0xff5fc46f));
+    eqHeaderBtn->setCallbacks (
+        [this] { return ! params.eqEnabled.load (std::memory_order_relaxed); },
+        [this]
                         {
                             const bool now = ! params.eqEnabled.load (std::memory_order_relaxed);
                             params.eqEnabled.store (now, std::memory_order_release);
-                            if (eqHeaderBtn != nullptr) eqHeaderBtn->repaint();
+                            if (eqHeaderBtn != nullptr) eqHeaderBtn->refresh();
                         },
-        /*onPick*/       [this] { showEqSectionMenu(); },
-        /*onDoubleClick*/[this] { openEqEditorPopup(); });
-    eqHeaderBtn->setLabelText ("EQ");
-    eqHeaderBtn->setTooltip ("Left-click EQ on/off. Right-click for the EQ menu. Double-click to open the editor.");
+        [this] { openEqEditorPopup(); },
+        [this] { showEqSectionMenu(); });
+    eqHeaderBtn->setTooltip ("Click the status light to bypass/engage EQ; click EQ to open the editor; right-click for the EQ menu.");
     addAndMakeVisible (eqHeaderBtn.get());
 
     // Suffixes intentionally empty - section labels already convey the
@@ -721,7 +721,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     {
         params.eqEnabled.store (true, std::memory_order_release);
         // Repaint the header so the LED reflects the auto-armed state.
-        if (eqHeaderBtn != nullptr) eqHeaderBtn->repaint();
+        if (eqHeaderBtn != nullptr) eqHeaderBtn->refresh();
     };
     eqLfBoost   .onValueChange = [this, armMasterEq] { params.eqLfBoost     .store ((float) eqLfBoost   .getValue(), std::memory_order_relaxed); armMasterEq(); };
     eqLfAtten   .onValueChange = [this, armMasterEq] { params.eqLfAtten     .store ((float) eqLfAtten   .getValue(), std::memory_order_relaxed); armMasterEq(); };
@@ -821,24 +821,25 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     addAndMakeVisible (eqHfBoostFreqLabel);
     addAndMakeVisible (eqHfAttenFreqLabel);
 
-    // Comp section. Same shell as bus + channel strips:
-    //   - CompHeaderButton (white text, green LED, left-click toggles
-    //     enable). No mode picker - fixed SSL-style glue topology.
+    // Comp section. The split header matches the bus + channel strips; the
+    // processor remains a fixed SSL-style glue topology.
     //   - CompMeterStrip on the LEFT (triangle-handle threshold, IN bar
     //     + dB scale + GR bar). Threshold drag writes compThreshDb.
     //   - Knob grid (RAT / MAK on top, ATK / REL on bottom) on the
     //     RIGHT. The standalone THR knob is gone.
-    compHeaderBtn = std::make_unique<CompHeaderButton> (
-        /*getEnabled*/ [this] { return params.compEnabled.load (std::memory_order_relaxed); },
-        /*onToggle*/   [this]
+    compHeaderBtn = std::make_unique<SplitModuleButton> ("COMP");
+    compHeaderBtn->setAccentColour (compGold);
+    compHeaderBtn->setCallbacks (
+        [this] { return ! params.compEnabled.load (std::memory_order_relaxed); },
+        [this]
                         {
                             const bool now = ! params.compEnabled.load (std::memory_order_relaxed);
                             params.compEnabled.store (now, std::memory_order_relaxed);
-                            if (compHeaderBtn != nullptr) compHeaderBtn->repaint();
+                            if (compHeaderBtn != nullptr) compHeaderBtn->refresh();
                         },
-        /*onPick*/       [this] { showCompSectionMenu(); },
-        /*onDoubleClick*/[this] { openCompEditorPopup(); });
-    compHeaderBtn->setTooltip ("Left-click comp on/off. Right-click for the COMP menu. Double-click to open the editor.");
+        [this] { openCompEditorPopup(); },
+        [this] { showCompSectionMenu(); });
+    compHeaderBtn->setTooltip ("Click the status light to bypass/engage compression; click COMP to open the editor; right-click for the COMP menu.");
     addAndMakeVisible (compHeaderBtn.get());
 
     CompMeterStrip::Source compSrc;
@@ -863,7 +864,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     compSrc.autoEnable     = [this]
                               {
                                   params.compEnabled.store (true, std::memory_order_relaxed);
-                                  if (compHeaderBtn != nullptr) compHeaderBtn->repaint();
+                                  if (compHeaderBtn != nullptr) compHeaderBtn->refresh();
                               };
     // Fader-side GR LED (matches channel + bus grammar). Slim GR-only widget
     // with the threshold-drag handle on the right side, glued next to the
@@ -912,41 +913,30 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     addAndMakeVisible (compRatio);    addAndMakeVisible (compAttack);
     addAndMakeVisible (compRelease);  addAndMakeVisible (compMakeup);
 
-    // Compact placeholder buttons (hidden until setCompactMode(true)).
-    auto styleCompactSectionBtn = [] (juce::TextButton& b, juce::Colour accent)
-    {
-        b.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff282830));
-        b.setColour (juce::TextButton::buttonOnColourId, accent.withMultipliedAlpha (0.85f));
-        b.setColour (juce::TextButton::textColourOffId,  accent.withMultipliedBrightness (0.8f));
-        b.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
-        b.setMouseClickGrabsKeyboardFocus (false);
-        b.setClickingTogglesState (false);
-    };
-    styleCompactSectionBtn (eqCompactButton,   juce::Colour (0xff5fc46f));
-    styleCompactSectionBtn (compCompactButton, juce::Colour (0xffe0c050));
-    eqCompactButton  .setTooltip ("Left-click EQ on/off. Right-click for the EQ menu. Double-click to open the editor.");
-    compCompactButton.setTooltip ("Left-click comp on/off. Right-click for the COMP menu. Double-click to open the editor.");
-    // Identical grammar to the expanded headers: left-click toggles, right-click
-    // opens the section menu, double-click opens the editor.
-    eqCompactButton.onClick = [this]
-    {
-        const bool now = ! params.eqEnabled.load (std::memory_order_relaxed);
-        params.eqEnabled.store (now, std::memory_order_release);
-        eqCompactButton.setToggleState (now, juce::dontSendNotification);
-    };
-    eqCompactButton.onRightClick  = [this] (const juce::MouseEvent&) { showEqSectionMenu(); };
-    eqCompactButton.onDoubleClick = [this] { openEqEditorPopup(); };
-    eqCompactButton.setToggleState (params.eqEnabled.load (std::memory_order_relaxed), juce::dontSendNotification);
-
-    compCompactButton.onClick = [this]
-    {
-        const bool now = ! params.compEnabled.load (std::memory_order_relaxed);
-        params.compEnabled.store (now, std::memory_order_relaxed);
-        compCompactButton.setToggleState (now, juce::dontSendNotification);
-    };
-    compCompactButton.onRightClick  = [this] (const juce::MouseEvent&) { showCompSectionMenu(); };
-    compCompactButton.onDoubleClick = [this] { openCompEditorPopup(); };
-    compCompactButton.setToggleState (params.compEnabled.load (std::memory_order_relaxed), juce::dontSendNotification);
+    // Compact buttons share the exact split hitboxes with the expanded
+    // headers and keep the established EQ/COMP accent colours.
+    eqCompactButton.setAccentColour (juce::Colour (0xff5fc46f));
+    compCompactButton.setAccentColour (juce::Colour (0xffe0c050));
+    eqCompactButton.setCallbacks (
+        [this] { return ! params.eqEnabled.load (std::memory_order_relaxed); },
+        [this]
+        {
+            const bool now = ! params.eqEnabled.load (std::memory_order_relaxed);
+            params.eqEnabled.store (now, std::memory_order_release);
+        },
+        [this] { openEqEditorPopup(); },
+        [this] { showEqSectionMenu(); });
+    compCompactButton.setCallbacks (
+        [this] { return ! params.compEnabled.load (std::memory_order_relaxed); },
+        [this]
+        {
+            const bool now = ! params.compEnabled.load (std::memory_order_relaxed);
+            params.compEnabled.store (now, std::memory_order_relaxed);
+        },
+        [this] { openCompEditorPopup(); },
+        [this] { showCompSectionMenu(); });
+    eqCompactButton  .setTooltip ("Click the light to bypass/engage EQ; click EQ to open the editor; right-click for the EQ menu.");
+    compCompactButton.setTooltip ("Click the light to bypass/engage compression; click COMP to open the editor; right-click for the COMP menu.");
     addChildComponent (eqCompactButton);
     addChildComponent (compCompactButton);
 
@@ -957,11 +947,9 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     addAndMakeVisible (compRatLabel); addAndMakeVisible (compAtkLabel);
     addAndMakeVisible (compRelLabel); addAndMakeVisible (compMakLabel);
 
-    // TAPE pill (compact / tape-strip mode only) - identical grammar to the
-    // EQ / COMP compact pills and the regular-mode tapeHeaderBtn: left-click
-    // toggles tapeEnabled, right-click opens the section menu, double-click
-    // opens the editor. Lit state still reflects the tapeEnabled atom (synced
-    // from timerCallback) so the engine's auto-arm-on-edit shows up.
+    // TAPE pill (compact / tape-strip mode only) retains its existing grammar:
+    // left-click toggles tapeEnabled, right-click opens the section menu, and
+    // double-click opens the editor. Lit state reflects the tapeEnabled atom.
     {
         const auto tapeAccent = juce::Colour (0xffd0a060);
         tapeButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff282830));
@@ -973,8 +961,9 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
         tapeButton.setToggleState (params.tapeEnabled.load (std::memory_order_relaxed),
                                     juce::dontSendNotification);
         tapeButton.setTooltip ("Left-click tape on/off. Right-click for the TAPE menu. Double-click to open the editor.");
-        // Identical grammar to the expanded headers + the EQ/COMP pills: left-click
-        // toggles, right-click opens the section menu, double-click opens the editor.
+        // Tape carries toggle, menu and editor on one target, so it keeps the
+        // double-click gesture. EQ and COMP split the status light and the
+        // label into separate hitboxes instead.
         tapeButton.onClick = [this]
         {
             const bool now = ! params.tapeEnabled.load (std::memory_order_relaxed);
@@ -986,9 +975,9 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
         addAndMakeVisible (tapeButton);
     }
 
-    // Regular-mode TAPE header - CompHeaderButton (LED + label). Left-click
-    // toggles enable (matches the EQ / COMP headers); right-click opens the
-    // TAPE section menu; double-click opens the editor (tape has no inline
+    // Regular-mode TAPE header keeps its legacy CompHeaderButton grammar.
+    // Left-click toggles enable, right-click opens the TAPE section menu,
+    // and double-click opens the editor (tape has no inline
     // controls, so the popup is its only editor). The LED reflects
     // tapeEnabled. setCompactMode swaps visibility between this header and
     // the compact tapeButton pill above.
@@ -1141,30 +1130,17 @@ void MasterStripComponent::timerCallback()
     // section is engaged so TIMELINE users still see at-a-glance state.
     if (compactMode)
     {
-        const auto eqAccent   = juce::Colour (0xff5fc46f);
-        const auto compAccent = juce::Colour (0xffe0c050);
         const int eqOn   = params.eqEnabled  .load (std::memory_order_relaxed) ? 1 : 0;
         const int compOn = params.compEnabled.load (std::memory_order_relaxed) ? 1 : 0;
         if (eqOn != lastCompactEqOn)
         {
             lastCompactEqOn = eqOn;
-            // Track the atom, not the last click: EQ enable can change via the popup
-            // editor / MIDI without touching this button. The toggle state drives the
-            // lit (buttonOnColourId) appearance.
-            eqCompactButton.setToggleState (eqOn != 0, juce::dontSendNotification);
-            eqCompactButton.setColour (juce::TextButton::buttonColourId,
-                                         eqOn != 0 ? eqAccent.darker (0.55f)
-                                                    : juce::Colour (0xff282830));
-            eqCompactButton.repaint();
+            eqCompactButton.refresh();
         }
         if (compOn != lastCompactCompOn)
         {
             lastCompactCompOn = compOn;
-            compCompactButton.setToggleState (compOn != 0, juce::dontSendNotification);
-            compCompactButton.setColour (juce::TextButton::buttonColourId,
-                                           compOn != 0 ? compAccent.darker (0.55f)
-                                                        : juce::Colour (0xff282830));
-            compCompactButton.repaint();
+            compCompactButton.refresh();
         }
     }
 
@@ -1254,9 +1230,10 @@ void MasterStripComponent::timerCallback()
     }
     {
         const bool eqOn = params.eqEnabled.load (std::memory_order_relaxed);
-        if (eqHeaderBtn != nullptr) eqHeaderBtn->repaint();   // LED reflects atom
+        if (eqHeaderBtn != nullptr) eqHeaderBtn->refresh();   // LED reflects atom
         (void) eqOn;
     }
+    if (compHeaderBtn != nullptr) compHeaderBtn->refresh();
     {
         // TAPE pill state - sync toggle from atom so MIDI bind / future
         // automation reflects the lit state.
@@ -1808,8 +1785,8 @@ void MasterStripComponent::resized()
 
     // TAPE row - compact mode uses the pill-style tapeButton (click
     // opens editor, atom drives lit state); regular mode swaps in
-    // tapeHeaderBtn (CompHeaderButton with green LED, matches the EQ
-    // / COMP header grammar). Visibility set in setCompactMode.
+    // tapeHeaderBtn (legacy CompHeaderButton with a green LED).
+    // Visibility is set in setCompactMode.
     // Compact size matches the master EQ + COMP pills above
     // (20h × reduced(4,0)) so the three-pill stack reads as one
     // visual unit; non-compact tapeHeaderBtn keeps its taller native
@@ -1839,8 +1816,8 @@ void MasterStripComponent::resized()
 
     // Centred [fader | level meter | GR LED] cluster - fader-side grammar
     // matching channel + bus strips, but centred in the (wider) master strip
-    // instead of right-pinned. Scale labels drawn by paint() to the LEFT of
-    // the slider's track via kSharedXOver math. No separate carved column.
+    // instead of right-pinned. Scale labels are drawn by paint() to the LEFT
+    // of the slider's track, with no separate carved column.
     constexpr int kMeterW          = 16;
     constexpr int kGrLedW          = 20;
     constexpr int kMeterToGrGap    = 1;
@@ -2061,7 +2038,7 @@ void MasterStripComponent::resetEqSection()
     reset (eqHfBoostFreqKnob);
     reset (eqHfAttenFreqKnob);
     params.eqEnabled.store (wasEnabled, std::memory_order_release);
-    if (eqHeaderBtn != nullptr) eqHeaderBtn->repaint();
+    if (eqHeaderBtn != nullptr) eqHeaderBtn->refresh();
 }
 
 void MasterStripComponent::resetCompSection()
@@ -2075,6 +2052,6 @@ void MasterStripComponent::resetCompSection()
     };
     reset (compRatio);  reset (compAttack);
     reset (compRelease); reset (compMakeup);
-    if (compHeaderBtn != nullptr) compHeaderBtn->repaint();
+    if (compHeaderBtn != nullptr) compHeaderBtn->refresh();
 }
 } // namespace duskstudio

@@ -571,7 +571,7 @@ MainComponent::MainComponent()
     if (! musicDir.exists()) musicDir = juce::File::getSpecialLocation (juce::File::userHomeDirectory);
     session.setSessionDirectory (musicDir.getChildFile ("Dusk Studio").getChildFile ("Untitled"));
 
-    // Top-of-window menu bar drives File / Settings actions. Replaces the
+    // Top-of-window menu bar drives File / View / Settings actions. Replaces the
     // old row of TextButtons (Audio settings... / Save / Save As... / etc).
     menuBar.setModel (this);
     addAndMakeVisible (menuBar);
@@ -1521,18 +1521,23 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         }
     }
 
-    // Window: F11 toggles fullscreen. Walks up to the parent
-    // ResizableWindow because that's the layer that owns the OS window
-    // state, not MainComponent itself.
+    // Window: F11 and View > Full Screen share the same path.
     if (key == juce::KeyPress::F11Key)
-    {
-        if (auto* window = findParentComponentOfClass<juce::ResizableWindow>())
-        {
-            window->setFullScreen (! window->isFullScreen());
-            return true;
-        }
-    }
+        return toggleFullScreen();
 
+    return false;
+}
+
+bool MainComponent::toggleFullScreen()
+{
+    // MainComponent owns the menu and shortcuts, while the parent
+    // ResizableWindow owns the native OS state. Keeping the transition here
+    // gives View and F11 identical peer-recreation behaviour.
+    if (auto* window = findParentComponentOfClass<juce::ResizableWindow>())
+    {
+        window->setFullScreen (! window->isFullScreen());
+        return true;
+    }
     return false;
 }
 
@@ -1666,12 +1671,13 @@ void MainComponent::resized()
     auto area = getLocalBounds().reduced (8);
 
     // Top menu row. Grown to host the centered stage selector (RECORDING /
-    // MIXING / MASTERING / AUX). File / Settings menu on the left, system meters
+    // MIXING / MASTERING / AUX). File / View / Settings menus on the left, system meters
     // on the right; the stage selector and the session status text are placed
     // below, once the stage-tab width is known.
     constexpr int kMenuRowH = 32;
     const auto menuRow = area.removeFromTop (kMenuRowH);
-    menuBar.setBounds (menuRow.withWidth (200));
+    const int kMenuBarW = menuBar.getRequiredWidth();
+    menuBar.setBounds (menuRow.withWidth (kMenuBarW));
     if (systemStatusBar != nullptr)
         systemStatusBar->setBounds (menuRow.withTrimmedLeft (menuRow.getWidth() - 300));
     area.removeFromTop (4);
@@ -1735,7 +1741,7 @@ void MainComponent::resized()
     constexpr int kBankBtnH  = 26;
 
     // Stage selector lives in the TOP menu row, centered between the File /
-    // Settings menu and the system meters. The session status text fills the
+    // View / Settings menus and the system meters. The session status text fills the
     // gap to its left. (stageW / stageBlockW were computed above with the
     // transport metrics so the tabs follow the same compact breakpoint.)
     // stageCentreX is reused below to centre the bank / toolbar group directly
@@ -1743,7 +1749,7 @@ void MainComponent::resized()
     int stageCentreX = rowBounds.getCentreX();
     {
         const int menuStageY   = menuRow.getY() + (menuRow.getHeight() - kStageBtnH) / 2;
-        const int menuLeftPad  = menuRow.getX() + 200 + 12;            // past File / Settings
+        const int menuLeftPad  = menuRow.getX() + kMenuBarW + 12;      // past File / View / Settings
         const int menuRightPad = menuRow.getRight()
                                    - (systemStatusBar != nullptr ? 300 + 12 : 0);
         int stageX = menuRow.getX() + (menuRow.getWidth() - stageBlockW) / 2;
@@ -1945,6 +1951,12 @@ void MainComponent::resized()
         }
     }
    #endif
+
+    // A live UI-scale preview changes this component's logical dimensions
+    // while the native window keeps the same physical rectangle. Refit the
+    // settings host using its inverse transform so the modal remains visually
+    // stable while only the DAW behind it changes scale.
+    audioSettingsModal.refitOwnedBodyToHost();
 }
 
 void MainComponent::refreshSnapUi()
@@ -1988,7 +2000,10 @@ void MainComponent::showSnapResolutionMenu()
 void MainComponent::setTimelineVisible (bool show)
 {
     tapeStripExpanded = show;
-    if (tapeStrip    != nullptr) tapeStrip->setVisible (show);
+    const auto stage = engine.getStage();
+    const bool inFullscreenView = stage == AudioEngine::Stage::Mastering
+                               || stage == AudioEngine::Stage::Aux;
+    if (tapeStrip    != nullptr) tapeStrip->setVisible (show && ! inFullscreenView);
     if (consoleView  != nullptr) consoleView->setStripsCompactMode (show);
     if (transportBar != nullptr) transportBar->setTapeToggleVisualState (show);
     resized();
@@ -2060,6 +2075,7 @@ void MainComponent::openAudioSettings()
             self->startTimer (appconfig::getAutosaveIntervalSeconds() * 1000);
         }
     });
+    audioSettingsModal.setOwnedBodyScaleInvariant (true);
 }
 
 void MainComponent::openShortcuts()
@@ -4540,6 +4556,8 @@ enum MenuItemId
     // value, indexed off this base). Stays well above the file-action IDs
     // so future additions don't collide.
     kMenuFileTemplateBase = 1200,
+    kMenuViewFullScreen = 3001,
+    kMenuViewTimeline   = 3002,
     kMenuSettingsAudio = 2001,
     kMenuSettingsAbout = 2002,
     kMenuSettingsShortcuts = 2003,
@@ -4549,7 +4567,7 @@ enum MenuItemId
 
 juce::StringArray MainComponent::getMenuBarNames()
 {
-    return { "File", "Settings" };
+    return { "File", "View", "Settings" };
 }
 
 juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
@@ -4645,7 +4663,19 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
         addAccel (kMenuFileQuit, "Quit", 'Q',
                   juce::ModifierKeys::commandModifier);
     }
-    else if (topLevelMenuIndex == 1)   // Settings
+    else if (topLevelMenuIndex == 1)   // View
+    {
+        const auto* peer = getPeer();
+        const bool isFullScreen = peer != nullptr && peer->isFullScreen();
+        menu.addItem (kMenuViewFullScreen, "Full Screen", true, isFullScreen);
+        menu.addSeparator();
+        const auto stage = engine.getStage();
+        const bool timelineAvailable = stage != AudioEngine::Stage::Mastering
+                                    && stage != AudioEngine::Stage::Aux;
+        menu.addItem (kMenuViewTimeline, "Show Timeline",
+                      timelineAvailable, tapeStripExpanded);
+    }
+    else if (topLevelMenuIndex == 2)   // Settings
     {
         menu.addItem (kMenuSettingsAudio, "Settings...");
         menu.addItem (kMenuSettingsShortcuts, "Keyboard Shortcuts  (?)");
@@ -4755,6 +4785,8 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
             if (auto* app = juce::JUCEApplicationBase::getInstance())
                 app->systemRequestedQuit();
             break;
+        case kMenuViewFullScreen: toggleFullScreen(); break;
+        case kMenuViewTimeline: setTimelineVisible (! tapeStripExpanded); break;
         case kMenuSettingsAudio: openAudioSettings();   break;
         case kMenuSettingsShortcuts: openShortcuts();   break;
        #if DUSKSTUDIO_HAS_PATREON_CREDITS

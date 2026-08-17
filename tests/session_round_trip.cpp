@@ -53,6 +53,7 @@ TEST_CASE ("SessionSerializer round-trip preserves transport + per-track state",
     t1.strip.hpfFreq.store (80.0f, std::memory_order_relaxed);
     t1.strip.lfGainDb.store (2.0f, std::memory_order_relaxed);
     t1.strip.insertBypassed.store (true, std::memory_order_relaxed);
+    t1.strip.auxSendsBypassed.store (true, std::memory_order_relaxed);
 
     auto& t2 = a.track (2);
     t2.name = "Vocal";
@@ -96,6 +97,8 @@ TEST_CASE ("SessionSerializer round-trip preserves transport + per-track state",
                   WithinAbs (2.0f, 1e-4f));
     REQUIRE (b.track (1).strip.insertBypassed.load (std::memory_order_relaxed));
     REQUIRE_FALSE (b.track (0).strip.insertBypassed.load (std::memory_order_relaxed));
+    REQUIRE (b.track (1).strip.auxSendsBypassed.load (std::memory_order_relaxed));
+    REQUIRE_FALSE (b.track (0).strip.auxSendsBypassed.load (std::memory_order_relaxed));
 
     REQUIRE (b.track (2).name == "Vocal");
     REQUIRE (b.track (2).mode.load (std::memory_order_relaxed) == (int) Track::Mode::Midi);

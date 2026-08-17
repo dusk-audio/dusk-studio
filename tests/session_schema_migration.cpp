@@ -80,12 +80,43 @@ TEST_CASE ("migrateSession advances a mock v1 root to the current schema",
     // version field must now match the current build's kFormatVersion.
     // We don't reach kFormatVersion symbolically from the test (it's
     // in an anonymous namespace inside the .cpp), so we check the
-    // Take provenance owns version 5; the original payload must survive every step.
+    // AUX-send bypass owns version 6; the original payload must survive every step.
     REQUIRE (root.is_object());
     REQUIRE (root.contains ("version"));
-    REQUIRE (root["version"].get<int>() == 5);
+    REQUIRE (root["version"].get<int>() == 6);
     REQUIRE (root.contains ("tempo"));
     REQUIRE (root["tempo"].get<double>() == 98.5);
+}
+
+TEST_CASE ("migrateSession stamps v5 AUX-send bypass data as v6",
+           "[session][serializer][migration][aux]")
+{
+    nlohmann::json root {
+        { "version", 5 },
+        { "tracks", nlohmann::json::array ({
+            { { "name", "Aux source" }, { "aux_sends_bypassed", true } }
+        }) }
+    };
+
+    auto migrated = root;
+    REQUIRE (duskstudio::migrateSession (migrated, 5));
+    REQUIRE (migrated["version"].get<int>() == 6);
+    REQUIRE (migrated["tracks"][0]["aux_sends_bypassed"].get<bool>());
+
+    const auto dir = makeTempMigrationDir();
+    const auto target = dir.getChildFile ("session.json");
+    writeRaw (target, root.dump());
+
+    duskstudio::Session session;
+    REQUIRE (duskstudio::SessionSerializer::load (session, target));
+    REQUIRE (session.track (0).strip.auxSendsBypassed.load (std::memory_order_relaxed));
+    REQUIRE (duskstudio::SessionSerializer::save (session, target));
+
+    const auto saved = nlohmann::json::parse (
+        target.loadFileAsString().toStdString(), nullptr, false);
+    REQUIRE (saved["version"].get<int>() == 6);
+    REQUIRE (saved["tracks"][0]["aux_sends_bypassed"].get<bool>());
+    dir.deleteRecursively();
 }
 
 TEST_CASE ("SessionSerializer loads a v1-tagged session file end-to-end",
@@ -111,12 +142,12 @@ TEST_CASE ("SessionSerializer loads a v1-tagged session file end-to-end",
     auto root = nlohmann::json::parse (target.loadFileAsString().toStdString(), nullptr, false);
     REQUIRE (root.is_object());
     REQUIRE (root.contains ("version"));
-    REQUIRE (root["version"].get<int>() == 5);
+    REQUIRE (root["version"].get<int>() == 6);
 
     dir.deleteRecursively();
 }
 
-TEST_CASE ("SessionSerializer migrates a v3 legacy plugin reference to a v5 save",
+TEST_CASE ("SessionSerializer migrates a v3 legacy plugin reference to a v6 save",
            "[session][serializer][migration][plugin-descriptor]")
 {
     using duskstudio::Session;
@@ -146,7 +177,7 @@ TEST_CASE ("SessionSerializer migrates a v3 legacy plugin reference to a v5 save
     const auto saved = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
     REQUIRE (saved.is_object());
-    CHECK (saved["version"].get<int>() == 5);
+    CHECK (saved["version"].get<int>() == 6);
     CHECK (saved["tracks"][0]["plugin_desc_xml"].get<std::string>() == legacyXml);
     CHECK (saved["tracks"][0]["plugin_state"].get<std::string>()
            == "bGVnYWN5LXN0YXRl");
@@ -193,7 +224,7 @@ TEST_CASE ("SessionSerializer round-trips active and historical take provenance"
     REQUIRE (SessionSerializer::save (*source, target));
     const auto saved = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
-    REQUIRE (saved["version"].get<int>() == 5);
+    REQUIRE (saved["version"].get<int>() == 6);
     const auto& savedAudio = saved["tracks"][0]["regions"][0];
     CHECK (savedAudio["take_provenance"]["captured_at_ms"].get<std::int64_t>() == 101);
     CHECK (savedAudio["take_provenance"]["loop_pass"].get<int>() == 2);
@@ -303,7 +334,7 @@ TEST_CASE ("SessionSerializer gives legacy v4 takes default provenance",
     REQUIRE (SessionSerializer::save (*clamped, target));
     const auto upgraded = nlohmann::json::parse (
         target.loadFileAsString().toStdString(), nullptr, false);
-    CHECK (upgraded["version"].get<int>() == 5);
+    CHECK (upgraded["version"].get<int>() == 6);
 
     dir.deleteRecursively();
 }

@@ -411,6 +411,7 @@ struct CloneTrackAction::Impl
     float faderDb = 0.0f, pan = 0.0f;
     bool  mute = false, solo = false, phaseInvert = false;
     std::array<bool, ChannelStripParams::kNumBuses> busAssign {};
+    bool auxSendsBypassed = false;
     std::array<float, ChannelStripParams::kNumAuxSends> auxSendDb {};
     std::array<bool,  ChannelStripParams::kNumAuxSends> auxSendPreFader {};
 
@@ -556,6 +557,7 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
     s.phaseInvert = t.strip.phaseInvert.load (std::memory_order_relaxed);
     for (int i = 0; i < ChannelStripParams::kNumBuses; ++i)
         s.busAssign[(size_t) i] = t.strip.busAssign[(size_t) i].load (std::memory_order_relaxed);
+    s.auxSendsBypassed = t.strip.auxSendsBypassed.load (std::memory_order_relaxed);
     for (int i = 0; i < ChannelStripParams::kNumAuxSends; ++i)
     {
         s.auxSendDb      [(size_t) i] = t.strip.auxSendDb[(size_t) i].load (std::memory_order_relaxed);
@@ -742,6 +744,7 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
     t.strip.phaseInvert.store (s.phaseInvert, std::memory_order_relaxed);
     for (int i = 0; i < ChannelStripParams::kNumBuses; ++i)
         t.strip.busAssign[(size_t) i].store (s.busAssign[(size_t) i], std::memory_order_relaxed);
+    t.strip.auxSendsBypassed.store (s.auxSendsBypassed, std::memory_order_relaxed);
     for (int i = 0; i < ChannelStripParams::kNumAuxSends; ++i)
     {
         t.strip.auxSendDb      [(size_t) i].store (s.auxSendDb[(size_t) i],      std::memory_order_relaxed);

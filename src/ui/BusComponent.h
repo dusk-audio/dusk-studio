@@ -6,9 +6,8 @@
 #include "../session/Session.h"
 #include "AnalogVuMeter.h"
 #include "CompMeterStrip.h"
-#include "CompHeaderButton.h"
+#include "SplitModuleButton.h"
 #include "EmbeddedModal.h"
-#include "SectionPillButton.h"
 
 namespace duskstudio
 {
@@ -57,21 +56,18 @@ private:
     juce::Label nameLabel;
 
     // 3-band EQ controls (LF / MID / HF gains, fixed musical frequencies).
-    // Header is a CompHeaderButton (LED + label pill) so the EQ section
-    // shares its visual grammar with the COMP header above and with the
-    // channel-strip EQ header - single look across the desk.
-    std::unique_ptr<CompHeaderButton> eqHeaderBtn;
+    // Split EQ header shared with the channel and master strips.
+    std::unique_ptr<SplitModuleButton> eqHeaderBtn;
     juce::Slider     eqLfGain  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Slider     eqMidGain { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Slider     eqHfGain  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Label      eqLfLbl, eqMidLbl, eqHfLbl;
 
     // Bus compressor controls. Shell mirrors the channel-strip COMP
-    // section visually: a single CompHeaderButton on top, a CompMeterStrip
+    // section visually: a split module button on top, a CompMeterStrip
     // on the left, and the parameter knob grid on the right. The DSP
-    // underneath is still a fixed SSL-style glue topology - no mode
-    // picker, so the header button only toggles enable.
-    std::unique_ptr<CompHeaderButton> compHeaderBtn;
+    // underneath is still a fixed SSL-style glue topology - no mode picker.
+    std::unique_ptr<SplitModuleButton> compHeaderBtn;
     std::unique_ptr<CompMeterStrip>   compMeter;
     juce::Slider     compRatio   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Slider     compAttack  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
@@ -122,12 +118,10 @@ private:
     // share one visual grammar.
     juce::Rectangle<int> eqArea;
     juce::Rectangle<int> compArea;
-    // Compact-mode section pills. Hidden when compactMode=false; visible (and the
-    // section knobs hidden) when true. Identical grammar to the expanded headers:
-    // left-click toggles enable, right-click opens the section menu, double-click
-    // opens the matching editor popup. Mirrors ChannelStripComponent's compact pills.
-    SectionPillButton eqCompactButton  { "EQ"   };
-    SectionPillButton compCompactButton { "COMP" };
+    // Compact split buttons. The left status hitbox toggles bypass, the right
+    // label opens the editor, and right-click anywhere opens the section menu.
+    SplitModuleButton eqCompactButton  { "EQ"   };
+    SplitModuleButton compCompactButton { "COMP" };
     // Compact-mode popups: clicking the placeholder button shows a
     // mini-editor mirroring the bus's EQ / COMP knobs so the user can
     // tweak without expanding the strip back to full mode.

@@ -61,7 +61,7 @@ src/ui/AnalogVuMeter.cpp	113
 src/ui/AnalogVuMeter.h	7
 src/ui/AudioRegionEditor.cpp	339
 src/ui/AudioRegionEditor.h	86
-src/ui/AudioSettingsPanel.cpp	96
+src/ui/AudioSettingsPanel.cpp	100
 src/ui/AudioSettingsPanel.h	39
 src/ui/AuxLaneComponent.cpp	168
 src/ui/AuxLaneComponent.h	28
@@ -102,12 +102,12 @@ src/ui/DuskFileBrowser.cpp	75
 src/ui/DuskFileBrowser.h	13
 src/ui/DuskLabelEditor.h	3
 src/ui/DuskMenuBar.h	29
-src/ui/DuskStudioLookAndFeel.h	119
+src/ui/DuskStudioLookAndFeel.h	124
 src/ui/EditCursors.cpp	58
 src/ui/EditCursors.h	7
 src/ui/EditModeToolbar.cpp	48
 src/ui/EditModeToolbar.h	10
-src/ui/EmbeddedModal.h	58
+src/ui/EmbeddedModal.h	62
 src/ui/FadeCurve.h	10
 src/ui/FreezeDialog.cpp	36
 src/ui/FreezeDialog.h	9
@@ -151,6 +151,7 @@ src/ui/SectionPillButton.h	7
 src/ui/SelfTestPanel.cpp	10
 src/ui/SelfTestPanel.h	7
 src/ui/ShortcutsPanel.h	37
+src/ui/SplitModuleButton.h	42
 src/ui/StartupDialog.cpp	104
 src/ui/StartupDialog.h	32
 src/ui/SteppedKnob.h	12

@@ -173,6 +173,66 @@ TEST_CASE ("Console layout: default width preserves the channel minimum",
     REQUIRE (consolelayout::screenPageCountForWidth (kDefaultConsoleWidth) == 8);
 }
 
+TEST_CASE ("Console layout: EightUp seats one hardware bank at the 1080p threshold",
+           "[console][layout]")
+{
+    constexpr int width = consolelayout::kEightUpThresholdWidth;
+    static_assert (width == 1902);
+    static_assert (consolelayout::kEightUpChannelWidth == 116);
+
+    const auto fit = consolelayout::channelFitForWidth (width);
+    REQUIRE (fit.channels == SessionLayout::kBankSize);
+    REQUIRE (fit.density == consolelayout::HorizontalDensity::EightUp);
+    REQUIRE (consolelayout::screenPageCountForWidth (width) == SessionLayout::kNumBanks);
+
+    const auto geometry = consolelayout::makeStripGeometry (
+        width, fit.channels, fit.channels, fit.density);
+    REQUIRE (geometry.channelWidth == consolelayout::kEightUpChannelWidth);
+    REQUIRE (geometry.busWidth == consolelayout::kMinBusWidth);
+    REQUIRE (geometry.masterWidth == consolelayout::kMinMasterWidth);
+    REQUIRE (geometry.stripGap == consolelayout::kStripGap);
+    REQUIRE (geometry.sectionGap == consolelayout::kSectionGap);
+    REQUIRE (geometry.channelsClearBus());
+    REQUIRE (geometry.lastChannelRight + geometry.sectionGap
+             == geometry.busColumnLeft);
+
+    // A maximized 1920 px MainComponent currently yields a 1904 px console.
+    // The two pixels above the exact floor stay as flex space before Bus 1.
+    constexpr int maximizedConsoleWidth = 1920 - 16;
+    const auto maximizedGeometry = consolelayout::makeStripGeometry (
+        maximizedConsoleWidth, fit.channels, fit.channels, fit.density);
+    REQUIRE (maximizedGeometry.channelWidth == consolelayout::kEightUpChannelWidth);
+    REQUIRE (maximizedGeometry.busWidth == consolelayout::kMinBusWidth);
+    REQUIRE (maximizedGeometry.masterWidth == consolelayout::kMinMasterWidth);
+    REQUIRE (maximizedGeometry.busColumnLeft
+             - maximizedGeometry.lastChannelRight
+             - maximizedGeometry.sectionGap == 2);
+
+    const std::pair<int, int> expected[] = { { 1, 8 }, { 9, 16 }, { 17, 24 } };
+    for (int page = 0; page < SessionLayout::kNumBanks; ++page)
+        REQUIRE (consolelayout::channelRangeForPage (page, width) == expected[page]);
+}
+
+TEST_CASE ("Console layout: EightUp is an isolated horizontal breakpoint",
+           "[console][layout]")
+{
+    const auto below = consolelayout::channelFitForWidth (
+        consolelayout::kEightUpThresholdWidth - 1);
+    REQUIRE (below.channels == 6);
+    REQUIRE (below.density == consolelayout::HorizontalDensity::Comfortable);
+
+    constexpr int comfortableEightWidth =
+        consolelayout::fullFloorContentWidthForStride (SessionLayout::kBankSize);
+    const auto comfortableEight = consolelayout::channelFitForWidth (comfortableEightWidth);
+    REQUIRE (comfortableEight.channels == SessionLayout::kBankSize);
+    REQUIRE (comfortableEight.density == consolelayout::HorizontalDensity::Comfortable);
+
+    constexpr int comfortableNineWidth =
+        consolelayout::fullFloorContentWidthForStride (SessionLayout::kBankSize + 1);
+    REQUIRE (consolelayout::channelsThatFitForWidth (comfortableNineWidth)
+             == SessionLayout::kBankSize + 1);
+}
+
 TEST_CASE ("Console layout: full-floor page width preserves every documented minimum",
            "[console][layout]")
 {
@@ -285,6 +345,17 @@ TEST_CASE ("Bank mapping: focused tracks cross three-strip page boundaries",
     REQUIRE (screenBankForTrack (20, 3, 8) == 6);
     REQUIRE (screenBankForTrack (21, 3, 8) == 7);
     REQUIRE (screenBankForTrack (23, 3, 8) == 7);
+}
+
+TEST_CASE ("Bank mapping: EightUp focus crosses hardware-bank boundaries",
+           "[console][bank]")
+{
+    constexpr int stride = SessionLayout::kBankSize;
+    constexpr int pages = SessionLayout::kNumBanks;
+    REQUIRE (screenBankForTrack (7,  stride, pages) == 0);
+    REQUIRE (screenBankForTrack (8,  stride, pages) == 1);
+    REQUIRE (screenBankForTrack (15, stride, pages) == 1);
+    REQUIRE (screenBankForTrack (16, stride, pages) == 2);
 }
 
 TEST_CASE ("Bank mapping: plain digits select exactly pages one through eight",

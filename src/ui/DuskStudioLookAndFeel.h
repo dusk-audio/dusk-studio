@@ -66,6 +66,19 @@ public:
     {
         return juce::Font (juce::FontOptions (16.0f));
     }
+
+    juce::Label* createSliderTextBox (juce::Slider& slider) override
+    {
+        auto* label = juce::LookAndFeel_V4::createSliderTextBox (slider);
+        if ((bool) slider.getProperties().getWithDefault (
+                "dusk_compactValueText", false))
+        {
+            label->setFont (juce::Font (juce::FontOptions (10.5f)));
+            label->setMinimumHorizontalScale (0.45f);
+        }
+        return label;
+    }
+
     juce::Font getPopupMenuFont() override
     {
         return juce::Font (juce::FontOptions (18.5f));
@@ -302,9 +315,11 @@ public:
         const auto range = slider.getNormalisableRange();
         const float padTopBot = 0.0f;   // bounds already inset
         const float trackH = bounds.getHeight() - padTopBot * 2.0f;
-        // Per-slider opt-in via "dusk_drawFaderScaleLabels" property -
-        // hardware-fader grammar: ticks extend further, dB drawn left of
-        // tick, "off" replaces "90" at the bottom.
+        // Per-slider opt-in via "dusk_drawFaderScaleLabels" property.
+        // The scale text is painted by the parent immediately to the left,
+        // so these hardware-style ticks extend right but stop short on the
+        // label side. Child sliders paint after their parent; symmetric long
+        // ticks would otherwise strike through the already-painted numbers.
         const bool drawScaleLabels = (bool) slider.getProperties()
             .getWithDefault ("dusk_drawFaderScaleLabels", false);
 
@@ -315,11 +330,13 @@ public:
             const float prop = (float) range.convertTo0to1 (t.db);
             const float tickY = bounds.getBottom() - padTopBot - prop * trackH;
             const bool isZero = (std::abs (t.db) < 0.01f);
-            const float xOver = drawScaleLabels ? (isZero ? 24.0f : 20.0f)
-                                                : (isZero ? 6.0f  : 3.0f);
+            const float leftOver = drawScaleLabels ? (isZero ? 4.0f : 3.0f)
+                                                   : (isZero ? 6.0f : 3.0f);
+            const float rightOver = drawScaleLabels ? (isZero ? 16.0f : 12.0f)
+                                                    : leftOver;
             g.setColour (isZero ? juce::Colour (0x90ffffff) : juce::Colour (0x40ffffff));
-            g.drawLine (trackRect.getX() - xOver, tickY,
-                         trackRect.getRight() + xOver, tickY,
+            g.drawLine (trackRect.getX() - leftOver, tickY,
+                         trackRect.getRight() + rightOver, tickY,
                          isZero ? 1.2f : 0.7f);
 
             // Labels not drawn here - strip is too narrow without

@@ -47,6 +47,11 @@ public:
 
     void resized() override { rebuildHits(); }
 
+    int getRequiredWidth() const noexcept
+    {
+        return hits.empty() ? 0 : hits.back().getRight();
+    }
+
     void mouseMove (const juce::MouseEvent& e) override
     {
         const int newHover = hitTest (e.getPosition());

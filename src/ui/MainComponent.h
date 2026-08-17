@@ -73,6 +73,7 @@ private:
     void openAudioSettings();
     void openBounceDialog();
     void openBounceStemsDialog();
+    bool toggleFullScreen();
     // Hardware inserts print dry offline; when the session has any, ask
     // whether to bounce in realtime instead. launch receives the choice.
     void askBounceRealtime (std::function<void (bool realtime)> launch);

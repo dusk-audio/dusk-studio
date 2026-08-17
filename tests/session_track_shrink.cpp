@@ -87,6 +87,7 @@ TEST_CASE ("loading a session with fewer tracks blanks the surplus mixer state",
     ghost.strip.pan.store (0.75f);
     ghost.strip.mute.store (true);
     ghost.strip.busAssign[2].store (true);
+    ghost.strip.auxSendsBypassed.store (true);
     ghost.strip.auxSendDb[1].store (-12.0f);
     ghost.strip.auxSendPreFader[1].store (true);
     ghost.strip.hpfFreq.store (120.0f);
@@ -107,6 +108,7 @@ TEST_CASE ("loading a session with fewer tracks blanks the surplus mixer state",
     REQUIRE_THAT (t.strip.pan.load(), WithinAbs (0.0f, 1e-6f));
     REQUIRE_FALSE (t.strip.mute.load());
     REQUIRE_FALSE (t.strip.busAssign[2].load());
+    REQUIRE_FALSE (t.strip.auxSendsBypassed.load());
     REQUIRE_THAT (t.strip.auxSendDb[1].load(),
                   WithinAbs (ChannelStripParams::kAuxSendOffDb, 1e-6f));
     REQUIRE_FALSE (t.strip.auxSendPreFader[1].load());

@@ -8,22 +8,37 @@
 
 namespace duskstudio::consolelayout
 {
-constexpr int kMinChannelWidth = 154;
-constexpr int kMinBusWidth     = 172;
-constexpr int kMinMasterWidth  = 210;
-constexpr int kRefChannelWidth = 188;
-constexpr int kRefBusWidth     = 192;
-constexpr int kRefMasterWidth  = 260;
-constexpr int kStripGap        = 4;
-constexpr int kSectionGap      = 12;
-constexpr int kComponentInset  = 6;
-constexpr int kOuterPadding    = kComponentInset * 2;
-constexpr int kMainPadding     = 8;
-constexpr int kMaxScreenPages  = 8;
+constexpr int kMinChannelWidth       = 154;
+constexpr int kMinBusWidth           = 172;
+constexpr int kMinMasterWidth        = 210;
+constexpr int kEightUpChannelWidth   = 116;
+constexpr int kEightUpThresholdWidth = 1902;
+constexpr int kEightUpChannelCount   = SessionLayout::kBankSize;
+constexpr int kRefChannelWidth       = 188;
+constexpr int kRefBusWidth           = 192;
+constexpr int kRefMasterWidth        = 260;
+constexpr int kStripGap              = 4;
+constexpr int kSectionGap            = 12;
+constexpr int kComponentInset        = 6;
+constexpr int kOuterPadding          = kComponentInset * 2;
+constexpr int kMainPadding           = 8;
+constexpr int kMaxScreenPages        = 8;
 constexpr int kMinStride = (SessionLayout::kNumTracks + kMaxScreenPages - 1)
                          / kMaxScreenPages;
 constexpr int kMinPageButtonWidth = 32;
 constexpr int kMinPageButtonGap   = 2;
+
+enum class HorizontalDensity
+{
+    Comfortable,
+    EightUp
+};
+
+struct ChannelFit
+{
+    int channels = kMinStride;
+    HorizontalDensity density = HorizontalDensity::Comfortable;
+};
 
 constexpr int rightColumnWidth() noexcept
 {
@@ -32,6 +47,12 @@ constexpr int rightColumnWidth() noexcept
          + kSectionGap * 2
          + kMinMasterWidth;
 }
+
+static_assert (kEightUpThresholdWidth
+               == kEightUpChannelCount * kEightUpChannelWidth
+                + (kEightUpChannelCount - 1) * kStripGap
+                + rightColumnWidth()
+                + kOuterPadding);
 
 constexpr int fullFloorContentWidthForStride (int stride) noexcept
 {
@@ -115,9 +136,25 @@ inline int channelsThatFitForWidth (int componentWidth) noexcept
 {
     const int available = std::max (0, componentWidth - kOuterPadding - rightColumnWidth());
     const int perSlot = kMinChannelWidth + kStripGap;
-    if (available <= 0) return kMinStride;
-    const int fit = (available + kStripGap) / perSlot;
-    return std::clamp (fit, kMinStride, SessionLayout::kNumTracks);
+    const int comfortableFit = available > 0
+                             ? (available + kStripGap) / perSlot
+                             : kMinStride;
+    if (componentWidth >= kEightUpThresholdWidth
+        && comfortableFit < kEightUpChannelCount)
+        return kEightUpChannelCount;
+    return std::clamp (comfortableFit, kMinStride, SessionLayout::kNumTracks);
+}
+
+inline ChannelFit channelFitForWidth (int componentWidth) noexcept
+{
+    const int channels = channelsThatFitForWidth (componentWidth);
+    // At 2206 px the comfortable eight-strip floor becomes available and
+    // supersedes EightUp; below that, 1902..2205 px uses the 116 px tier.
+    const bool eightUp = componentWidth >= kEightUpThresholdWidth
+                      && channels == kEightUpChannelCount
+                      && componentWidth < fullFloorContentWidthForStride (kEightUpChannelCount);
+    return { channels, eightUp ? HorizontalDensity::EightUp
+                               : HorizontalDensity::Comfortable };
 }
 
 inline int screenPageCountForWidth (int componentWidth) noexcept
@@ -154,7 +191,6 @@ struct StripGeometry
     int contentRight     = kComponentInset;
     int busColumnLeft    = kComponentInset;
     int lastChannelRight = kComponentInset;
-
     bool channelsClearBus() const noexcept
     {
         return lastChannelRight + sectionGap <= busColumnLeft;
@@ -163,7 +199,8 @@ struct StripGeometry
 
 inline StripGeometry makeStripGeometry (int componentWidth,
                                         int budgetedChannels,
-                                        int visibleChannels) noexcept
+                                        int visibleChannels,
+                                        HorizontalDensity density = HorizontalDensity::Comfortable) noexcept
 {
     StripGeometry g;
     g.componentWidth = std::max (0, componentWidth);
@@ -186,7 +223,9 @@ inline StripGeometry makeStripGeometry (int componentWidth,
                                        / static_cast<double> (refTotal))
                        : 0.0;
 
-    g.channelWidth = std::max (kMinChannelWidth,
+    const int channelFloor = density == HorizontalDensity::EightUp
+                           ? kEightUpChannelWidth : kMinChannelWidth;
+    g.channelWidth = std::max (channelFloor,
                                static_cast<int> (std::lround (kRefChannelWidth * scale)));
     g.busWidth = std::max (kMinBusWidth,
                            static_cast<int> (std::lround (kRefBusWidth * scale)));
@@ -211,7 +250,7 @@ inline StripGeometry makeStripGeometry (int componentWidth,
     };
 
     // Normal fit: retain all control-size floors.
-    reduceRepeated (g.channelWidth, g.budgetedChannels, kMinChannelWidth);
+    reduceRepeated (g.channelWidth, g.budgetedChannels, channelFloor);
     reduceRepeated (g.busWidth, SessionLayout::kNumBuses, kMinBusWidth);
     reduceRepeated (g.masterWidth, 1, kMinMasterWidth);
 
