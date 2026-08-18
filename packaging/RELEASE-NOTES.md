@@ -1,5 +1,5 @@
 <!-- summary-start -->
-Adds the session notepad, native PipeWire and macOS plugin hosting, MIDI hot-plug, loop take stacking, realtime hardware bounce, and a broad set of session, recording, audio-device, and plug-in fixes.
+Adds the session notepad, a UI scale control, native PipeWire and macOS plugin hosting, MIDI hot-plug, loop take stacking, realtime hardware bounce, and a broad set of session, recording, audio-device, and plug-in fixes.
 <!-- summary-end -->
 
 ### Downloads
