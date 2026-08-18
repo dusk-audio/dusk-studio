@@ -84,15 +84,15 @@ jobs:
         # fancyvrb, booktabs). fonts-dejavu supplies the "DejaVu Sans Mono"
         # monofont build-pdf.sh requests. perl is preinstalled on the runner
         # (build-pdf.sh uses it to strip em dashes).
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            pandoc \
-            texlive-xetex \
-            texlive-fonts-recommended \
-            texlive-latex-recommended \
-            texlive-latex-extra \
-            lmodern \
+        uses: ./.github/actions/apt-deps
+        with:
+          packages: >-
+            pandoc
+            texlive-xetex
+            texlive-fonts-recommended
+            texlive-latex-recommended
+            texlive-latex-extra
+            lmodern
             fonts-dejavu
 
       - name: Render MANUAL.pdf

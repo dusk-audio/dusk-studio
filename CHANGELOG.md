@@ -11,10 +11,10 @@ The first release cut from the main line since 0.12 branched. Linux gets a
 native PipeWire backend and MIDI hot-plug; macOS gets Dusk Studio's own plugin
 hosts for all four formats, Audio Units included. Stems render in a single
 pass, a new realtime bounce prints hardware inserts wet instead of dry, loop
-recording keeps every pass as its own take, and every session now carries a
-notepad with a chord chart. Underneath, the audio device layer, MIDI, audio
-file I/O and the FFT stopped going through the application framework and
-became Dusk Studio's own.
+recording keeps every pass as its own take, every session now carries a
+notepad with a chord chart, and the whole interface zooms from half to double
+size. Underneath, the audio device layer, MIDI, audio file I/O and the FFT
+stopped going through the application framework and became Dusk Studio's own.
 
 The 0.12.7 fix wave was written on the 0.12 line but never released; those
 fixes are ported here and are listed below rather than under a 0.12.7 heading.
@@ -31,8 +31,9 @@ fixes are ported here and are listed below rather than under a 0.12.7 heading.
   sheet while keeping your own accidental spelling. Sections are markers such
   as `[Chorus]` on their own line. Notes save atomically beside the session as
   a plain `notepad.md` using ChordPro brackets, so the file opens in any
-  chord-sheet app and follows the session through Save As. Typing in the
-  notepad never triggers a transport shortcut.
+  chord-sheet app and follows the session through Save As. A toolbar button
+  flips the page to its Markdown source and back without losing unsaved
+  edits. Typing in the notepad never triggers a transport shortcut.
 - **Native PipeWire audio backend (Linux).** Dusk Studio now speaks
   libpipewire directly instead of borrowing a JACK compatibility layer.
   PipeWire sinks, sources and duplex nodes list as devices of their own,
@@ -65,6 +66,12 @@ fixes are ported here and are listed below rather than under a 0.12.7 heading.
   from the measured loop, and the latency ping works with the transport
   stopped. Mono hardware inserts gain their own I/O format (single send,
   single return) instead of being modelled as a half-empty pair.
+- **UI scale control.** A slider in the audio settings panel zooms the whole
+  interface, 0.50x to 2.00x on top of the OS display scaling. The interface
+  rescales live as the slider moves, and the value is remembered per machine
+  rather than per session. A denser console layout fits a full bank of eight
+  strips plus the buses and master on a 1080p display.
+- **View menu.** Full Screen (F11) and a Show Timeline toggle.
 - **New folder button in the file browser.** Available on every save and
   directory-pick flow; creating a folder navigates into it.
 

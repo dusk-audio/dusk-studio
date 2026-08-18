@@ -32,7 +32,7 @@
     <!-- scripts/bump-version.sh prepends new <release> entries here. -->
     <release version="0.13.0" date="2026-08-16">
       <description>
-        <p>Adds the session notepad, native PipeWire and macOS plugin hosting, MIDI hot-plug, loop take stacking, realtime hardware bounce, and a broad set of session, recording, audio-device, and plug-in fixes.</p>
+        <p>Adds the session notepad, a UI scale control, native PipeWire and macOS plugin hosting, MIDI hot-plug, loop take stacking, realtime hardware bounce, and a broad set of session, recording, audio-device, and plug-in fixes.</p>
       </description>
     </release>
     <release version="0.12.6" date="2026-07-25">

@@ -1547,7 +1547,7 @@ set(CPACK_PACKAGE_VENDOR            "Dusk Audio")
 set(CPACK_PACKAGE_VERSION           "${DUSKSTUDIO_VERSION}")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Portastudio-style 24-channel DAW")
 set(CPACK_PACKAGE_HOMEPAGE_URL      "https://github.com/dusk-audio/dusk-studio")
-set(CPACK_PACKAGE_CONTACT           "Dusk Audio <support@duskaudio.example>")
+set(CPACK_PACKAGE_CONTACT           "Dusk Audio <marc@duskaudio.com>")
 set(CPACK_RESOURCE_FILE_LICENSE     "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "Dusk Studio")
 
