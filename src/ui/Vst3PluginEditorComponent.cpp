@@ -104,6 +104,10 @@ void Vst3PluginEditorComponent::tryEmbed()
 #if defined(__linux__)
     if (auto* peer = getPeer())
         editor.setContentScale ((float) peer->getPlatformScaleFactor());
+#elif defined(_WIN32)
+    // The child HWND is sized in physical pixels via embedscale, so the view
+    // must be told the same combined factor (platform DPI x app UI zoom).
+    editor.setContentScale ((float) embedscale::factor (*this));
 #endif
 
     const auto area = editorBoundsInPeer();

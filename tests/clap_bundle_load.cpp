@@ -8,13 +8,19 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
-#include <dlfcn.h>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
 #include <string>
-#include <unistd.h>
 #include <vector>
+
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#include <unistd.h>
+#endif
 
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
@@ -74,6 +80,19 @@ TEST_CASE ("ClapBundle fails gracefully on a missing bundle", "[clap][bundle]")
 
 TEST_CASE ("ClapBundle rejects a real shared object that is not a CLAP bundle", "[clap][bundle]")
 {
+#if defined(_WIN32)
+    // kernel32.dll loads fine but has no clap_entry, exercising the
+    // post-LoadLibrary rejection path.
+    wchar_t systemDir[MAX_PATH] {};
+    REQUIRE (::GetSystemDirectoryW (systemDir, MAX_PATH) > 0);
+    const auto library = std::filesystem::path (systemDir) / L"kernel32.dll";
+
+    duskstudio::clap::ClapBundle b;
+    std::string err;
+    REQUIRE_FALSE (b.load (library.u8string(), err));
+    REQUIRE_FALSE (b.isLoaded());
+    REQUIRE (err == "no clap_entry symbol");
+#else
     // A valid shared object that dlopens fine but has no clap_entry exercises the
     // post-dlopen rejection path. Resolve the host libc portably (its soname differs
     // across libc / OS) via dladdr instead of hardcoding libc.so.6.
@@ -89,6 +108,7 @@ TEST_CASE ("ClapBundle rejects a real shared object that is not a CLAP bundle", 
     REQUIRE_FALSE (b.isLoaded());
     REQUIRE_FALSE (err.empty());
     INFO ("rejection reason: " << err);
+#endif
 }
 
 #if defined(__APPLE__)

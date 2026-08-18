@@ -14,13 +14,27 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+
+#if defined(_WIN32)
+#include <process.h>
+#else
 #include <unistd.h>
+#endif
 
 using duskstudio::clap::ClapScanner;
 
 namespace
 {
 namespace stdfs = std::filesystem;
+
+long currentPid() noexcept
+{
+#if defined(_WIN32)
+    return (long) ::_getpid();
+#else
+    return (long) ::getpid();
+#endif
+}
 
 class TempDirectory
 {
@@ -31,7 +45,7 @@ public:
         // steady_clock reads can land on the same tick.
         const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
         value = stdfs::temp_directory_path()
-                / (std::string (prefix) + std::to_string (getpid()) + "_" + std::to_string (unique));
+                / (std::string (prefix) + std::to_string (currentPid()) + "_" + std::to_string (unique));
         std::error_code ec;
         if (! stdfs::create_directories (value, ec) || ec)
             throw std::runtime_error ("could not create test directory: " + ec.message());

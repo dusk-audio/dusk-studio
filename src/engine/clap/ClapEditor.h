@@ -10,8 +10,9 @@
 namespace duskstudio::clap
 {
 // Native embedded editor for a CLAP plugin. The platform translation unit owns
-// an X11 child window on Linux or an NSView child container on macOS. Drives the
-// plugin's fd/timer event pump through ClapHost on the message thread.
+// an X11 child window on Linux, an NSView child container on macOS, or a child
+// HWND on Windows. Drives the plugin's event pump through ClapHost on the
+// message thread.
 //
 // Platform headers do not leak through this boundary. Native parent handles are
 // opaque pointers, so the API also remains safe on pointer-width Windows handles.
