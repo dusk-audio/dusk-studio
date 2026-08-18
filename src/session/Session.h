@@ -202,6 +202,9 @@ struct ChannelStripParams
     static constexpr float kAuxSendMinDb = -60.0f;
     static constexpr float kAuxSendMaxDb =   6.0f;
     static constexpr float kAuxSendOffDb = -100.0f;
+    // Whole AUX-send bypass used by the split AUX button. Individual send
+    // levels remain untouched so re-engaging restores the prior mix.
+    std::atomic<bool> auxSendsBypassed { false };
     std::array<std::atomic<float>, kNumAuxSends> auxSendDb {
         std::atomic<float>{ kAuxSendOffDb }, std::atomic<float>{ kAuxSendOffDb },
         std::atomic<float>{ kAuxSendOffDb }, std::atomic<float>{ kAuxSendOffDb }

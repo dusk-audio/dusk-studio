@@ -60,7 +60,7 @@ inline std::optional<PluginDescriptor> descriptorFromObject (
 // Loader rejects sessions with version > kFormatVersion (newer Dusk Studio
 // can read older files via migrateSession; older Dusk Studio refusing
 // newer files is safer than silently dropping fields).
-constexpr int kFormatVersion = 5;
+constexpr int kFormatVersion = 6;
 
 inline bool hasTakeProvenance (const TakeProvenance& provenance) noexcept
 {
@@ -303,6 +303,16 @@ bool migrateSession (nlohmann::json& root, int from)
                 // so legacy payloads only need the version stamp advanced.
                 if (root.is_object())
                     root["version"] = 5;
+                ++v;
+                break;
+
+            case 5:
+                // v5 -> v6: tracks may now carry a whole AUX-send bypass.
+                // An absent field means engaged, so legacy payloads only need
+                // the version stamp advanced. The bump prevents v5 builds
+                // from silently dropping aux_sends_bypassed on re-save.
+                if (root.is_object())
+                    root["version"] = 6;
                 ++v;
                 break;
 
@@ -571,6 +581,7 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
 
     // Aux sends (continuous send level + pre/post-fader tap) - distinct
     // from busAssign which is the post-fader on/off routing toggle.
+    obj["aux_sends_bypassed"] = t.strip.auxSendsBypassed.load();
     JObj auxLevels = JObj::array(), auxPrePost = JObj::array();
     for (int i = 0; i < ChannelStripParams::kNumAuxSends; ++i)
     {
@@ -1163,6 +1174,9 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
                                                  std::memory_order_relaxed);
     }
 
+    t.strip.auxSendsBypassed.store (
+        json::getBool (v, "aux_sends_bypassed", false),
+        std::memory_order_relaxed);
     {
         const auto& auxLevels = json::array (v, "aux_send_db");
         for (auto& level : t.strip.auxSendDb)

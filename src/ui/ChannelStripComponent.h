@@ -6,11 +6,11 @@
 #include <functional>
 #include <memory>
 #include "CompMeterStrip.h"
-#include "CompHeaderButton.h"
+#include "SplitModuleButton.h"
+#include "ConsoleLayout.h"
 #include "EmbeddedModal.h"
 #include "DuskComboBox.h"
 #include "NativeEditorOwner.h"
-#include "SectionPillButton.h"
 #include "../session/Session.h"
 #include "../foundation/MessageThread.h"
 
@@ -68,6 +68,8 @@ public:
     // Swaps the input/IN/ARM/PRINT row at the top for 4 AUX send knobs.
     void setMixingMode (bool mixing);
     bool isMixingMode() const noexcept { return mixingMode; }
+
+    void setHorizontalDensity (consolelayout::HorizontalDensity density);
 
 private:
     void timerCallback() override;
@@ -128,9 +130,9 @@ private:
     // Section-wide EQ type belongs in the header beside the EQ enable control.
     juce::TextButton eqTypeChip { "E" };
 
-    // Same grammar as the COMP header. Left = toggle eqEnabled. Right
-    // = section menu. Double-click = open editor. Label stays "EQ".
-    std::unique_ptr<CompHeaderButton> eqHeaderBtn;
+    // Split header: left status light toggles bypass, right label opens the
+    // editor, and right-click anywhere opens the section menu.
+    std::unique_ptr<SplitModuleButton> eqHeaderBtn;
     struct BandRow
     {
         std::unique_ptr<juce::Slider> gain;
@@ -141,12 +143,10 @@ private:
     };
     std::array<BandRow, 4> eqRows;
 
-    // Holds the union of all three modes' params; shows only the
-    // current mode. Illumination relies on LookAndFeel reading
-    // getToggleState - we do NOT setClickingTogglesState(true) (that
-    // would flip on every click and detach visual from compEnabled).
-    // onClick opens the mode menu; compEnabled mutated separately.
-    std::unique_ptr<CompHeaderButton> compModeButton;
+    // Holds the union of all three modes' params; shows only the current mode.
+    // The label includes that mode and opens the editor; the status light
+    // controls compEnabled.
+    std::unique_ptr<SplitModuleButton> compModeButton;
 
     // Opto (LA-2A): peak-red + gain + LIMIT.
     juce::Slider     optoPeakRedKnob { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
@@ -303,8 +303,8 @@ private:
     // session-load mode change leaves every mode's knobs overlapping in
     // the comp section.
     int lastAppliedCompMode = -1;
-    // Unified section context menus (right-click on the EQ / COMP header or
-    // compact pill): character items + whole-section reset + open editor.
+    // Unified section context menus (right-click anywhere on the EQ / COMP / AUX
+    // split button): character items + whole-section reset + open editor.
     void showEqSectionMenu();
     void showCompSectionMenu();
     void showAuxSectionMenu();
@@ -423,9 +423,11 @@ public:
 private:
 
     bool compactMode = false;
-    SectionPillButton eqCompactButton   { "EQ" };
-    SectionPillButton compCompactButton { "COMP" };
-    SectionPillButton auxCompactButton  { "AUX" };
+    consolelayout::HorizontalDensity horizontalDensity =
+        consolelayout::HorizontalDensity::Comfortable;
+    SplitModuleButton eqCompactButton   { "EQ" };
+    SplitModuleButton compCompactButton { "COMP" };
+    SplitModuleButton auxCompactButton  { "AUX" };
     // EQ / COMP / AUX compact editors, each a centred EmbeddedModal (dim
     // backdrop, Esc / click-outside dismiss, transport-key forwarding, focus
     // restore all handled internally). Mutually exclusive - opening one closes

@@ -103,24 +103,22 @@ public:
         // so we don't need to budget for it in the floor.
         refreshResizeLimits();
 
-        // Restore prior session's window geometry. JUCE's
-        // restoreWindowStateFromString rebuilds bounds + fullscreen state
-        // from the same string getWindowStateAsString() produced. We then
-        // sanity-check the restored bounds against connected displays -
-        // if the saved monitor is gone, undo the restore and centre at
-        // MainComponent's default size.
+        // Restore the prior window position and size, but deliberately do not
+        // restore fullscreen. Fullscreen is a temporary viewing mode exposed
+        // through View > Full Screen (and F11); a normal launch should always
+        // return to the prior non-fullscreen bounds. On Linux JUCE maps this
+        // state to native maximisation, which is also intentionally session-
+        // only here so launch still defaults to the user's windowed size.
+        // JUCE prefixes a saved
+        // fullscreen state with "fs ", so removing only that token preserves
+        // the last non-fullscreen bounds encoded in the same state string.
         bool restored = false;
-        const auto savedState = WindowState::load();
+        auto savedState = WindowState::load();
+        if (savedState.startsWithIgnoreCase ("fs "))
+            savedState = savedState.substring (3).trimStart();
         if (savedState.isNotEmpty() && restoreWindowStateFromString (savedState))
         {
-            // Validate using the WINDOWED bounds (so a fullscreen-on-an-
-            // unplugged-monitor case still falls back gracefully).
-            const auto checkRect = isFullScreen()
-                ? juce::Rectangle<int> (0, 0,
-                                          std::max (getWidth(), 800),
-                                          std::max (getHeight(), 600))
-                : getBounds();
-            if (WindowState::rectIsUsable (checkRect))
+            if (WindowState::rectIsUsable (getBounds()))
                 restored = true;
         }
 
@@ -2335,7 +2333,12 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
     // OS-reported DPI scale, so 1.0 here means "let the OS decide" and
     // anything else is the user's manual zoom. Applied BEFORE creating
     // the main window so its initial layout uses the right metrics.
-    juce::Desktop::getInstance().setGlobalScaleFactor (appconfig::getUiScaleOverride());
+    // Capture output must be reproducible across developer machines and must
+    // exercise the documented 100% layout breakpoints, regardless of the
+    // per-machine UI zoom stored in app-config.properties.
+    const bool capturingScreenshots = std::getenv ("DUSKSTUDIO_CAPTURE_DIR") != nullptr;
+    juce::Desktop::getInstance().setGlobalScaleFactor (
+        capturingScreenshots ? 1.0f : appconfig::getUiScaleOverride());
 
     mainWindow = std::make_unique<MainWindow> (getApplicationName());
 
@@ -2364,7 +2367,8 @@ void DuskStudioApp::shutdown()
 
     // Persist window geometry before tearing down the window. Reading
     // getWindowStateAsString() AFTER mainWindow.reset() would crash; doing
-    // it here captures the user's last visible position/size/fullscreen.
+    // it here captures the last visible position/size and current fullscreen
+    // flag. MainWindow intentionally ignores that flag on the next launch.
     if (mainWindow != nullptr)
         WindowState::save (mainWindow->getWindowStateAsString());
 

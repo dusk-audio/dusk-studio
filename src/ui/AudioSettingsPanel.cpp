@@ -15,6 +15,54 @@
 
 namespace duskstudio
 {
+namespace
+{
+// JUCE refreshes its display model when the global scale changes, but the X11
+// peer's screen-size callback deliberately does not forward the new logical
+// bounds to its Component. Preserve the native window's physical rectangle,
+// convert it through the refreshed display model, and push that new logical
+// rectangle back into the peer so the whole component tree performs a real
+// resize/layout pass. This path is also valid on the other desktop backends.
+void applyGlobalUiScale (juce::Component& source, float scale)
+{
+    auto& desktop = juce::Desktop::getInstance();
+    if (std::abs (desktop.getGlobalScaleFactor() - scale) < 0.0001f)
+        return;
+
+    auto* topLevel = source.getTopLevelComponent();
+    auto* peer = topLevel != nullptr ? topLevel->getPeer() : nullptr;
+    if (peer == nullptr)
+    {
+        desktop.setGlobalScaleFactor (scale);
+        return;
+    }
+
+    juce::Component::SafePointer<juce::Component> safeTopLevel (topLevel);
+    const auto physicalBounds = desktop.getDisplays().logicalToPhysical (peer->getBounds());
+    const bool wasFullScreen = peer->isFullScreen();
+
+    desktop.setGlobalScaleFactor (scale);
+
+    if (auto* component = safeTopLevel.getComponent())
+    {
+        if (auto* refreshedPeer = component->getPeer())
+        {
+            const auto logicalBounds = desktop.getDisplays().physicalToLogical (physicalBounds);
+            const auto componentBoundsBefore = component->getBounds();
+            refreshedPeer->setBounds (logicalBounds, wasFullScreen);
+
+            // The physical-to-logical round trip can produce unchanged JUCE
+            // bounds even though the global scale changed. Force JUCE's base
+            // relayout callback in that case; LinuxComponentPeer's override
+            // otherwise only refreshes frame extents and leaves every child
+            // at the old scale.
+            if (component->getBounds() == componentBoundsBefore)
+                refreshedPeer->juce::ComponentPeer::handleScreenSizeChange();
+        }
+    }
+}
+} // namespace
+
 AudioSettingsPanel::AudioSettingsPanel (device::DeviceManager& dm,
                                           AudioEngine& e, Session& s)
     : deviceManager (dm), engine (e), session (s)
@@ -79,7 +127,7 @@ AudioSettingsPanel::AudioSettingsPanel (device::DeviceManager& dm,
     // 2, 4) so we read the value back without an extra mapping table.
     // CharPointer_UTF8 wrappers are required because the "×" multiplication
     // sign (U+00D7) is two-byte UTF-8; without the explicit ctor JUCE's
-    // juce::String defaults to Latin-1 and renders mojibake ("Ã-").
+    // JUCE String defaults to Latin-1 and renders mojibake ("Ã-").
     addAndMakeVisible (oversamplingLabel);
     oversamplingLabel.setJustificationType (juce::Justification::centredRight);
     oversamplingCombo.addItem (juce::CharPointer_UTF8 ("1× (native)"), 1);
@@ -300,7 +348,7 @@ AudioSettingsPanel::AudioSettingsPanel (device::DeviceManager& dm,
 
     uiScaleSlider.setSliderStyle (juce::Slider::LinearHorizontal);
     uiScaleSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 60, 20);
-    uiScaleSlider.setRange (appconfig::kUiScaleMin, appconfig::kUiScaleMax, 0.05);
+    uiScaleSlider.setRange (appconfig::kUiScaleMin, appconfig::kUiScaleMax, 0.01);
     uiScaleSlider.setValue (appconfig::getUiScaleOverride(), juce::dontSendNotification);
     uiScaleSlider.setNumDecimalPlacesToDisplay (2);
     uiScaleSlider.setTextValueSuffix ("x");
@@ -309,11 +357,11 @@ AudioSettingsPanel::AudioSettingsPanel (device::DeviceManager& dm,
         "display DPI. 1.00x = follow the OS. Range "
         "0.50x to 2.00x.");
 
-    // Defer the actual setGlobalScaleFactor call until the user RELEASES
-    // the slider (or commits a typed value). Applying mid-drag re-lays out
-    // the slider itself, which makes the drag handle chase the mouse -
-    // very jumpy. The slider's own textbox still updates live so the user
-    // sees the target value during drag; only the world reflows on release.
+    // Preview at most once per message-loop timer interval. Applying JUCE's
+    // global scale directly from this control's mouse callback re-lays out the
+    // slider and viewport while that input event is still on the stack, which
+    // can strand the drag. Persistence remains write-on-release so a sweep
+    // across the slider does not rewrite the config file for every pixel.
     uiScaleSlider.onDragStart = [this] { uiScaleDragging = true; };
     uiScaleSlider.onDragEnd   = [this]
     {
@@ -322,6 +370,7 @@ AudioSettingsPanel::AudioSettingsPanel (device::DeviceManager& dm,
     };
     uiScaleSlider.onValueChange = [this]
     {
+        queueUiScalePreview();
         if (! uiScaleDragging) applyUiScaleChange();
     };
     addAndMakeVisible (uiScaleSlider);
@@ -329,7 +378,7 @@ AudioSettingsPanel::AudioSettingsPanel (device::DeviceManager& dm,
     uiScaleHint.setJustificationType (juce::Justification::centredLeft);
     uiScaleHint.setColour (juce::Label::textColourId, juce::Colour (0xff909094));
     uiScaleHint.setFont (juce::Font (juce::FontOptions (10.0f)));
-    uiScaleHint.setText ("Saved per-machine; takes effect immediately.",
+    uiScaleHint.setText ("Previews live; saved per-machine when released.",
                           juce::dontSendNotification);
     addAndMakeVisible (uiScaleHint);
 
@@ -712,7 +761,23 @@ void AudioSettingsPanel::applyUiScaleChange()
 {
     const float scale = (float) uiScaleSlider.getValue();
     appconfig::setUiScaleOverride (scale);
-    juce::Desktop::getInstance().setGlobalScaleFactor (scale);
+}
+
+void AudioSettingsPanel::queueUiScalePreview()
+{
+    pendingUiScale = (float) uiScaleSlider.getValue();
+    uiScalePreviewPending = true;
+    if (! isTimerRunning())
+        startTimer (50); // 20 Hz: visually live without a resize storm.
+}
+
+void AudioSettingsPanel::timerCallback()
+{
+    stopTimer();
+    if (! uiScalePreviewPending) return;
+
+    uiScalePreviewPending = false;
+    applyGlobalUiScale (*this, pendingUiScale);
 }
 
 void AudioSettingsPanel::applyRecordOffsetChange()
@@ -858,6 +923,15 @@ void AudioSettingsPanel::applyMulticoreChange()
 
 AudioSettingsPanel::~AudioSettingsPanel()
 {
+    stopTimer();
+    // A release or keyboard edit can queue the final 20 Hz preview and then
+    // close the modal before the timer fires. Apply that last value now so
+    // the persisted scale and the running UI cannot diverge until restart.
+    if (uiScalePreviewPending)
+    {
+        uiScalePreviewPending = false;
+        applyGlobalUiScale (*this, pendingUiScale);
+    }
     engine.removeChangeCallback (this);
     deviceManager.removeChangeListener (this);
 }

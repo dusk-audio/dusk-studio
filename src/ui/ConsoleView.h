@@ -65,8 +65,9 @@ public:
     // Above this width we drop banking and show all 24 strips.
     int allTracksContentWidth() const;
 
-    // Strips that fit at kMinChannelWidth given current width. Buses +
-    // master always reserved. Capped at kNumTracks.
+    // Comfortable strips that fit at kMinChannelWidth, with the explicit
+    // EightUp override once its 116 px floor is available. Buses + master
+    // are always reserved. Capped at kNumTracks.
     int  channelsThatFit() const;
 
     // Lets the parent compute fit/numBanks for a width it's about to

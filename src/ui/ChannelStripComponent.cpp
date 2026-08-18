@@ -93,14 +93,22 @@ void styleCompactKnob (juce::Slider& k, juce::Colour fill)
     k.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xff404048));
 }
 
+enum class ValueLabelDensity
+{
+    regular,
+    compactAtEightUp
+};
+
 void enableValueLabel (juce::Slider& k, const juce::String& suffix, int decimals,
-                       int width = 56, int height = 14)
+                       ValueLabelDensity density = ValueLabelDensity::regular)
 {
     // readOnly=false so single-click on the value text opens an inline
     // editor and the user can type a precise value. Background + outline
     // stay transparent so the value reads as a plain number against the
     // strip's tinted section bands rather than a boxed-in textbox.
-    k.setTextBoxStyle (juce::Slider::TextBoxBelow, false, width, height);
+    if (density == ValueLabelDensity::compactAtEightUp)
+        k.getProperties().set ("dusk_compactAtEightUp", true);
+    k.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 56, 14);
     k.setTextValueSuffix (suffix);
     k.setNumDecimalPlacesToDisplay (decimals);
     k.setColour (juce::Slider::textBoxTextColourId,       juce::Colour (0xffd8d8d8));
@@ -138,18 +146,6 @@ inline juce::String formatBandGain (double db)
     return juce::String (db, 1);
 }
 } // namespace
-
-// Style helper for the EQ / COMP compact-mode placeholder buttons. They sit
-// in the slots the inline EQ + COMP sections occupy in normal mode and
-// open the corresponding editor as a popup when clicked. Hidden by default.
-static void styleCompactSectionButton (juce::TextButton& b, juce::Colour accent)
-{
-    b.setClickingTogglesState (false);
-    b.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff222226));
-    b.setColour (juce::TextButton::textColourOffId,  accent.brighter (0.3f));
-    b.setColour (juce::TextButton::textColourOnId,   accent.brighter (0.3f));
-    b.setVisible (false);
-}
 
 ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
                                                 PluginSlot& slot, AudioEngine& eng)
@@ -191,6 +187,19 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     };
     addAndMakeVisible (nameLabel);
 
+    // Every frequency value box that can emit "k" notation needs the matching
+    // parser. The stock numeric-prefix parser reads "8k" as 8 Hz. Filters also
+    // accept their displayed OFF text and map it to the appropriate sentinel.
+    const auto parseFrequencyText = [] (const auto& raw, double offValue)
+    {
+        auto text = raw.trim().toLowerCase();
+        if (text == "off") return offValue;
+        if (text.endsWith ("hz")) text = text.dropLastCharacters (2).trimEnd();
+        const bool isKhz = text.endsWithChar ('k');
+        if (isKhz) text = text.dropLastCharacters (1);
+        return text.getDoubleValue() * (isKhz ? 1000.0 : 1.0);
+    };
+
     // Top filter section: HPF + LPF, white-faced (SSL 9000 J grammar).
     const auto filterWhite = juce::Colour (sslEqColors::kFilterWhite);
     hpfLabel.setText ("HPF", juce::dontSendNotification);
@@ -211,6 +220,10 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     {
         if (v <= ChannelStripParams::kHpfOffHz + 0.5) return "OFF";
         return formatFrequency (v);
+    };
+    hpfKnob.valueFromTextFunction = [parseFrequencyText] (const auto& text)
+    {
+        return parseFrequencyText (text, ChannelStripParams::kHpfOffHz);
     };
     hpfKnob.setValue (track.strip.hpfFreq.load (std::memory_order_relaxed), juce::dontSendNotification);
     hpfKnob.onValueChange = [this] { onHpfKnobChanged(); };
@@ -235,6 +248,10 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     {
         if (v >= ChannelStripParams::kLpfOffHz - 0.5) return "OFF";
         return formatFrequency (v);
+    };
+    lpfKnob.valueFromTextFunction = [parseFrequencyText] (const auto& text)
+    {
+        return parseFrequencyText (text, ChannelStripParams::kLpfOffHz);
     };
     lpfKnob.setValue (track.strip.lpfFreq.load (std::memory_order_relaxed), juce::dontSendNotification);
     lpfKnob.onValueChange = [this] { onLpfKnobChanged(); };
@@ -274,39 +291,36 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     setupEqColumnLabel (eqQColumnLabel,    "Q");
 
     //  EQ region 
-    // Single EQ header button - unified section grammar. Left-click
-    // toggles eqEnabled; right-click opens the EQ section menu (type +
-    // reset + open editor); double-click opens the full EQ editor.
-    // Built-in green LED illuminates when engaged (auto-armed on first
-    // knob touch); text always white.
-    eqHeaderBtn = std::make_unique<CompHeaderButton> (
-        [this] { return track.strip.eqEnabled.load (std::memory_order_relaxed); },
+    // Split EQ header: the left status hitbox toggles bypass while the right
+    // label hitbox opens the editor. Right-click anywhere opens the EQ menu.
+    eqHeaderBtn = std::make_unique<SplitModuleButton> ("EQ");
+    eqHeaderBtn->setAccentColour (juce::Colour (fourKColors::kLfGreen));
+    eqHeaderBtn->setCallbacks (
+        [this] { return ! track.strip.eqEnabled.load (std::memory_order_relaxed); },
         [this]
         {
             const bool now = ! track.strip.eqEnabled.load (std::memory_order_relaxed);
             track.strip.eqEnabled.store (now, std::memory_order_release);
-            if (eqHeaderBtn != nullptr) eqHeaderBtn->repaint();
+            if (eqHeaderBtn != nullptr) eqHeaderBtn->refresh();
         },
-        [this] { showEqSectionMenu(); },
-        [this] { openEqEditorPopup(); });
-    eqHeaderBtn->setLabelText ("EQ");
-    eqHeaderBtn->setTooltip ("Left-click to enable / disable. Right-click for the EQ menu. Double-click to open the editor.");
-    eqHeaderBtn->setTitle ("EQ enable");
+        [this] { openEqEditorPopup(); },
+        [this] { showEqSectionMenu(); });
+    eqHeaderBtn->setTooltip ("Click the status light to bypass/engage EQ; click EQ to open the editor; right-click for the EQ menu.");
+    eqHeaderBtn->setAccessibilityTitle ("EQ enable");
     eqHeaderBtn->setHelpText ("Enables or disables the channel EQ section.");
     addAndMakeVisible (eqHeaderBtn.get());
 
     // COMP region
-    // Single COMP header button: left-click enables/disables, right-
-    // click opens the COMP section menu (mode + reset + open editor),
-    // double-click opens the full COMP editor. Shows "COMP" until the
-    // user picks a mode, then shows the mode name (OPTO/FET/VCA). Built-
-    // in green LED illuminates when the comp is engaged. Text white.
-    compModeButton = std::make_unique<CompHeaderButton> (
-        [this] { return track.strip.compEnabled.load (std::memory_order_relaxed); },
+    // COMP uses the same split grammar. The label continues to surface the
+    // selected OPTO/FET/VCA mode while remaining the editor hitbox.
+    compModeButton = std::make_unique<SplitModuleButton> ("COMP");
+    compModeButton->setAccentColour (juce::Colour (fourKColors::kCompGold));
+    compModeButton->setCallbacks (
+        [this] { return ! track.strip.compEnabled.load (std::memory_order_relaxed); },
         [this] { setCompEnabled (! track.strip.compEnabled.load (std::memory_order_relaxed)); },
-        [this] { showCompSectionMenu(); },
-        [this] { openCompEditorPopup(); });
-    compModeButton->setTooltip ("Left-click to enable / disable. Right-click for the COMP menu. Double-click to open the editor.");
+        [this] { openCompEditorPopup(); },
+        [this] { showCompSectionMenu(); });
+    compModeButton->setTooltip ("Click the status light to bypass/engage compression; click COMP to open the editor; right-click for the COMP menu.");
     addAndMakeVisible (compModeButton.get());
 
     refreshCompModeButtonState();
@@ -530,7 +544,10 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         row.gain->setRange (ChannelStripParams::kBandGainMin, ChannelStripParams::kBandGainMax, 0.1);
         row.gain->setDoubleClickReturnValue (true, 0.0);
         row.gain->setTooltip (juce::String (spec.rowName) + " Gain (dB)");
-        enableValueLabel (*row.gain, "", 1);
+        // Exact fractional values such as -12.5 are wider than an EightUp
+        // cell. Preserve the number and use shrink-to-fit typography only at
+        // that density instead of ellipsising or rounding.
+        enableValueLabel (*row.gain, "", 1, ValueLabelDensity::compactAtEightUp);
         row.gain->textFromValueFunction = [] (double v) { return formatBandGain (v); };
         row.gain->setValue (spec.gainPtr (track.strip)->load (std::memory_order_relaxed),
                             juce::dontSendNotification);
@@ -559,11 +576,15 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         row.freq->setSkewFactorFromMidPoint ((double) spec.freqDefault);
         row.freq->setDoubleClickReturnValue (true, spec.freqDefault);
         row.freq->setTooltip (juce::String (spec.rowName) + " Frequency (Hz)");
-        enableValueLabel (*row.freq, "", 0);
+        enableValueLabel (*row.freq, "", 0, ValueLabelDensity::compactAtEightUp);
         // textFromValueFunction must be set BEFORE setValue, otherwise the
         // initial text is rendered with the default formatter ("2000") and
         // doesn't get our "2.0k" notation until the user moves the knob.
         row.freq->textFromValueFunction = [] (double v) { return formatFrequency (v); };
+        row.freq->valueFromTextFunction = [parseFrequencyText] (const auto& text)
+        {
+            return parseFrequencyText (text, 0.0);
+        };
         row.freq->setValue (spec.freqPtr (track.strip)->load (std::memory_order_relaxed),
                             juce::dontSendNotification);
 
@@ -578,7 +599,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
             row.q->setSkewFactorFromMidPoint (1.0);  // Q midpoint at 1.0
             row.q->setDoubleClickReturnValue (true, 0.7);
             row.q->setTooltip (juce::String (spec.rowName) + " Q (bandwidth)");
-            enableValueLabel (*row.q, "", 1);
+            enableValueLabel (*row.q, "", 1, ValueLabelDensity::compactAtEightUp);
             row.q->setValue (spec.qPtr (track.strip)->load (std::memory_order_relaxed),
                               juce::dontSendNotification);
             {
@@ -792,6 +813,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
                                      juce::Colours::transparentBlack);
         faderValueLabel.setFont (juce::Font (juce::FontOptions (
             juce::Font::getDefaultMonospacedFontName(), 14.0f, juce::Font::bold)));
+        faderValueLabel.setMinimumHorizontalScale (0.75f);
         auto formatDb = [] (double db) -> juce::String
         {
             return (db <= -89.95) ? juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x9e"))   /* ∞ = -inf dB / fully off */
@@ -1402,32 +1424,36 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
 
     // Compact-mode placeholder buttons. Hidden by default; setCompactMode(true)
     // makes them visible and hides the full inline EQ + COMP + AUX controls.
-    styleCompactSectionButton (eqCompactButton,   juce::Colour (fourKColors::kLfGreen));
-    styleCompactSectionButton (compCompactButton, juce::Colour (fourKColors::kCompGold));
-    styleCompactSectionButton (auxCompactButton,  juce::Colour (0xff9080c0));   // SEND violet
-    eqCompactButton  .setButtonText ("EQ");
-    compCompactButton.setButtonText ("COMP");
-    auxCompactButton .setButtonText ("AUX");
-    // Identical grammar to the expanded EQ/COMP headers: left-click toggles the
-    // section on/off, right-click opens the section menu, double-click opens the
-    // editor. The illuminated background (driven by the 30 Hz refresh) reflects
-    // the enabled state. AUX has no enable, so its left-click opens the editor.
-    eqCompactButton  .setTooltip ("Left-click EQ on/off. Right-click for the EQ menu. Double-click to open the editor.");
-    compCompactButton.setTooltip ("Left-click comp on/off. Right-click for the COMP menu. Double-click to open the editor.");
-    auxCompactButton .setTooltip ("Click to open the AUX sends panel. Right-click for the AUX menu.");
-    eqCompactButton  .onClick = [this]
-    {
-        track.strip.eqEnabled.store (! track.strip.eqEnabled.load (std::memory_order_relaxed),
-                                      std::memory_order_release);
-    };
-    eqCompactButton  .onRightClick   = [this] (const juce::MouseEvent&) { showEqSectionMenu(); };
-    eqCompactButton  .onDoubleClick  = [this] { openEqEditorPopup(); };
-    compCompactButton.onClick        = [this] { setCompEnabled (! track.strip.compEnabled.load (std::memory_order_relaxed)); };
-    compCompactButton.onRightClick   = [this] (const juce::MouseEvent&) { showCompSectionMenu(); };
-    compCompactButton.onDoubleClick  = [this] { openCompEditorPopup(); };
-    auxCompactButton .onClick        = [this] { openAuxEditorPopup(); };
-    auxCompactButton .onRightClick   = [this] (const juce::MouseEvent&) { showAuxSectionMenu(); };
-    auxCompactButton .onDoubleClick  = [this] { openAuxEditorPopup(); };
+    eqCompactButton  .setAccentColour (juce::Colour (fourKColors::kLfGreen));
+    compCompactButton.setAccentColour (juce::Colour (fourKColors::kCompGold));
+    auxCompactButton .setAccentColour (juce::Colour (0xff9080c0));   // SEND violet
+    eqCompactButton.setCallbacks (
+        [this] { return ! track.strip.eqEnabled.load (std::memory_order_relaxed); },
+        [this]
+        {
+            track.strip.eqEnabled.store (! track.strip.eqEnabled.load (std::memory_order_relaxed),
+                                          std::memory_order_release);
+        },
+        [this] { openEqEditorPopup(); },
+        [this] { showEqSectionMenu(); });
+    compCompactButton.setCallbacks (
+        [this] { return ! track.strip.compEnabled.load (std::memory_order_relaxed); },
+        [this] { setCompEnabled (! track.strip.compEnabled.load (std::memory_order_relaxed)); },
+        [this] { openCompEditorPopup(); },
+        [this] { showCompSectionMenu(); });
+    auxCompactButton.setCallbacks (
+        [this] { return track.strip.auxSendsBypassed.load (std::memory_order_relaxed); },
+        [this]
+        {
+            auto& bypassed = track.strip.auxSendsBypassed;
+            bypassed.store (! bypassed.load (std::memory_order_relaxed),
+                            std::memory_order_release);
+        },
+        [this] { openAuxEditorPopup(); },
+        [this] { showAuxSectionMenu(); });
+    eqCompactButton  .setTooltip ("Click the light to bypass/engage EQ; click EQ to open the editor; right-click for the EQ menu.");
+    compCompactButton.setTooltip ("Click the light to bypass/engage compression; click COMP to open the editor; right-click for the COMP menu.");
+    auxCompactButton .setTooltip ("Click the light to bypass/engage AUX sends; click AUX to open the sends editor; right-click for the AUX menu.");
     addChildComponent (eqCompactButton);    // hidden until compact mode flips on
     addChildComponent (compCompactButton);
     addChildComponent (auxCompactButton);
@@ -1446,7 +1472,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     printButton .setTitle ("Track " + tn + " print effects on record");
     hpfKnob     .setTitle ("Track " + tn + " high-pass filter frequency");
     lpfKnob     .setTitle ("Track " + tn + " low-pass filter frequency");
-    if (eqHeaderBtn != nullptr) eqHeaderBtn->setTitle ("Track " + tn + " EQ enable / type");
+    if (eqHeaderBtn != nullptr) eqHeaderBtn->setAccessibilityTitle ("Track " + tn + " EQ enable / type");
     pluginSlotButton.setTitle ("Track " + tn + " insert slot");
     for (size_t i = 0; i < auxKnobs.size(); ++i)
         if (auxKnobs[i] != nullptr)
@@ -1669,6 +1695,31 @@ void ChannelStripComponent::setMixingMode (bool mixing)
         auxCompactButton.setVisible (false);
     }
 
+    resized();
+    repaint();
+}
+
+void ChannelStripComponent::setHorizontalDensity (consolelayout::HorizontalDensity density)
+{
+    if (horizontalDensity == density) return;
+    horizontalDensity = density;
+    const bool useCompactText = density == consolelayout::HorizontalDensity::EightUp;
+    const auto applyDensity = [useCompactText] (auto* slider)
+    {
+        if (slider == nullptr
+            || ! (bool) slider->getProperties().getWithDefault (
+                "dusk_compactAtEightUp", false))
+            return;
+
+        slider->getProperties().set ("dusk_compactValueText", useCompactText);
+        slider->lookAndFeelChanged();
+    };
+    for (auto& row : eqRows)
+    {
+        applyDensity (row.gain.get());
+        applyDensity (row.freq.get());
+        applyDensity (row.q.get());
+    }
     resized();
     repaint();
 }
@@ -4043,7 +4094,7 @@ void ChannelStripComponent::timerCallback()
         // Type cue now lives on the dedicated eqTypeChip mid-strip
         // (between HM and LM rows). Just repaint the header so its LED
         // tracks atom changes from external mutation paths.
-        eqHeaderBtn->repaint();
+        eqHeaderBtn->refresh();
     }
     if (insertBypassLed != nullptr)
         insertBypassLed->repaint();   // tracks bypass atom + slot load/unload
@@ -4084,34 +4135,13 @@ void ChannelStripComponent::timerCallback()
         syncKnob (vcaOutputKnob,   sp.compVcaOutput.load   (std::memory_order_relaxed));
     }
 
-    // TIMELINE-mode compact buttons get an on-air indicator so the user
-    // knows whether EQ / COMP is engaged without having to open the
-    // popup. Bullet character + brighter background when on.
+    // Keep split-button state visuals in sync with atom changes made by
+    // editors, automation, or MIDI rather than only by the last pointer click.
     if (compactMode)
     {
-        // Channel-strip EQ illuminates on eqEnabled alone - the same state the
-        // pill's left-click toggles and the expanded EQ header reflects. HPF is
-        // deliberately excluded: it has its own independent gate, and folding it
-        // in here left the pill stuck lit while HPF was engaged, so a click
-        // toggled eqEnabled with no visible change. Comp has a real on/off atom.
-        const auto& sp = track.strip;
-        const bool eqOn   = sp.eqEnabled.load (std::memory_order_relaxed);
-        const bool compOn = sp.compEnabled.load (std::memory_order_relaxed);
-
-        const auto eqAccent   = juce::Colour (fourKColors::kLfGreen);
-        const auto compAccent = juce::Colour (fourKColors::kCompGold);
-
-        // Text stays as the section name; the illuminated background
-        // (set below) is the on-state indicator. No leading bullet/dot.
-        if (eqCompactButton.getButtonText() != "EQ")
-            eqCompactButton.setButtonText ("EQ");
-        if (compCompactButton.getButtonText() != "COMP")
-            compCompactButton.setButtonText ("COMP");
-
-        eqCompactButton  .setColour (juce::TextButton::buttonColourId,
-                                       eqOn   ? eqAccent.darker (0.55f)   : juce::Colour (0xff222226));
-        compCompactButton.setColour (juce::TextButton::buttonColourId,
-                                       compOn ? compAccent.darker (0.55f) : juce::Colour (0xff222226));
+        eqCompactButton.refresh();
+        compCompactButton.refresh();
+        auxCompactButton.refresh();
     }
 
     // Detect bus-colour edits made via the aux strip's right-click menu and
@@ -5075,7 +5105,7 @@ void ChannelStripComponent::refreshCompModeButtonState()
     const char* names[] = { "OPTO", "FET", "VCA" };
     compModeButton->setLabelText (enabled ? juce::String ("COMP - ") + names[m]
                                           : juce::String ("COMP"));
-    compModeButton->repaint();   // refresh LED state too
+    compModeButton->refresh();   // refresh LED state too
 }
 
 void ChannelStripComponent::refreshCompKnobVisibility()
@@ -5134,7 +5164,7 @@ void ChannelStripComponent::showEqSectionMenu()
             {
                 case 1: case 2:
                     self->track.strip.eqBlackMode.store (chosen == 2, std::memory_order_relaxed);
-                    if (self->eqHeaderBtn != nullptr) self->eqHeaderBtn->repaint();
+                    if (self->eqHeaderBtn != nullptr) self->eqHeaderBtn->refresh();
                     break;
                 case 10: self->resetEqSection();    break;
                 case 11: self->openEqEditorPopup(); break;
@@ -5228,7 +5258,7 @@ void ChannelStripComponent::resetEqSection()
         if (row.q    != nullptr) reset (*row.q);
     }
     track.strip.eqEnabled.store (wasEnabled, std::memory_order_release);
-    if (eqHeaderBtn != nullptr) eqHeaderBtn->repaint();
+    if (eqHeaderBtn != nullptr) eqHeaderBtn->refresh();
 }
 
 void ChannelStripComponent::resetCompSection()
@@ -5521,19 +5551,14 @@ void ChannelStripComponent::paint (juce::Graphics& g)
         }
     }
 
-    // Track-3 fader scale labels - drawn here (not in the LookAndFeel)
-    // so they can extend into the strip area to the LEFT of the slider
-    // bounds. LookAndFeel only draws the ticks for this layout.
+    // Fader scale labels are drawn here (not in the LookAndFeel) so they can
+    // occupy the reserved gutter between the LEFT-side bus buttons and fader.
+    // LookAndFeel only draws the tick stubs for this layout.
     if (usesFaderThresholdLayout())
     {
         const auto& range = faderSlider.getNormalisableRange();
         const auto sliderB = faderSlider.getBounds().toFloat();
         const float trackCx = sliderB.getCentreX();
-        // trackW = jmin(4, sliderW*0.18) inside the LookAndFeel; mirror so
-        // labels sit just left of the tick stub.
-        const float trackW  = std::min (4.0f, sliderB.getWidth() * 0.18f);
-        const float trackLx = trackCx - trackW * 0.5f;
-
         for (const auto& t : kFaderTicks)
         {
             if (t.db < range.start - 0.01f || t.db > range.end + 0.01f) continue;
@@ -5550,8 +5575,6 @@ void ChannelStripComponent::paint (juce::Graphics& g)
             const juce::Font font (juce::FontOptions (isBottom ? 16.0f : 10.5f,
                                                       juce::Font::plain));
             g.setFont (font);
-            constexpr float kSharedXOver  = 24.0f;
-            const float labelRight = trackLx - kSharedXOver - 6.0f;
             const juce::String label = isBottom ? juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x9e"))   /* ∞ = -inf dB / fully off */
                                                 : juce::String (t.label);
             // Visible glyph spans (baseline - ascent) to (baseline + descent).
@@ -5562,11 +5585,39 @@ void ChannelStripComponent::paint (juce::Graphics& g)
             const float ascent  = font.getAscent();
             const float descent = font.getDescent();
             const float baselineY = y + (ascent - descent) * 0.5f - 2.0f;
-            const float textW = juce::GlyphArrangement::getStringWidth (font, label);
+            // Fit the text inside the actual button-to-cap gutter. Right
+            // alignment keeps every label pinned beside the fader, while
+            // horizontal fitting makes a wider host font shrink instead of
+            // painting underneath the bus buttons.
+            const float labelLeft = busButtons.front() != nullptr
+                ? (float) busButtons.front()->getRight() + 2.0f
+                : sliderB.getX() - 20.0f;
+            const float labelRight = trackCx - 14.0f;
+            const float availableWidth = labelRight - labelLeft;
+            if (availableWidth < 8.0f)
+                continue;
+
+            juce::GlyphArrangement glyphs;
+            glyphs.addLineOfText (font, label, 0.0f, 0.0f);
+            const float naturalWidth = glyphs.getBoundingBox (0, -1, true).getWidth();
+            const auto fittedFont = naturalWidth > availableWidth
+                ? font.withHorizontalScale (jlimit (0.65f, 1.0f,
+                                                     availableWidth / naturalWidth))
+                : font;
+            g.setFont (fittedFont);
+            g.saveState();
+            const auto rounded = [] (float v) { return (int) std::lround (v); };
+            const auto labelClip = faderSlider.getBounds()
+                .withX (rounded (labelLeft))
+                .withY (rounded (baselineY - fittedFont.getAscent()))
+                .withWidth (std::max (1, rounded (availableWidth)))
+                .withHeight (std::max (1, rounded (fittedFont.getHeight())));
+            g.reduceClipRegion (labelClip);
             g.drawSingleLineText (label,
-                                    juce::roundToInt (labelRight - textW),
-                                    juce::roundToInt (baselineY),
-                                    juce::Justification::left);
+                                    rounded (labelRight),
+                                    rounded (baselineY),
+                                    juce::Justification::right);
+            g.restoreState();
         }
     }
 
@@ -5721,7 +5772,8 @@ void ChannelStripComponent::resized()
     constexpr int kColumnHeaderH  = 10;
     constexpr int kEqBandRowH     = kKnobBlockH;
     constexpr int kEqBandGap      = 2;
-    constexpr int kRowLabelW      = 28;
+    const int kRowLabelW = horizontalDensity == consolelayout::HorizontalDensity::EightUp
+                         ? 24 : 28;
     constexpr int kEqBandCount    = 4;
 
     eqArea = area.removeFromTop (kEqHeaderH + kEqHpfRowH + kFilterBandGap
@@ -5806,11 +5858,11 @@ void ChannelStripComponent::resized()
     // gets the full block height with no extra padding.
     constexpr int kCompBodyExtraH = 0;
     constexpr int kCompBodyH = 2 * kCompKnobRowH + kCompKnobGap + kCompBodyExtraH;
-    // Track-3 collapses every comp mode to a single-row body: FET/VCA
-    // pack 4 knobs side-by-side; OPTO packs GAIN + LIMIT side-by-side.
-    // Half the vertical space of the default 2-row layout.
-    const bool track3OneRowComp = usesFaderThresholdLayout();
-    const int effectiveCompBodyH = track3OneRowComp ? kCompKnobRowH : kCompBodyH;
+    // EightUp restores two rows so each FET/VCA control keeps a readable cell
+    // at the narrow channel width. Comfortable strips retain the shorter row.
+    const bool oneRowComp = usesFaderThresholdLayout()
+                         && horizontalDensity != consolelayout::HorizontalDensity::EightUp;
+    const int effectiveCompBodyH = oneRowComp ? kCompKnobRowH : kCompBodyH;
     compArea = area.removeFromTop (16 + 2 + effectiveCompBodyH + 4);
     {
         auto s = compArea.reduced (3, 2);
@@ -5854,7 +5906,7 @@ void ChannelStripComponent::resized()
 
         if (currentMode == 0)  // OPTO: GAIN knob top, LIMIT toggle bottom
         {
-            if (usesFaderThresholdLayout())
+            if (oneRowComp)
             {
                 // Track-3 OPTO single-row: GAIN cell on the LEFT half,
                 // LIMIT toggle vertically centred in the RIGHT half.
@@ -5884,7 +5936,7 @@ void ChannelStripComponent::resized()
         }
         else if (currentMode == 1)  // FET
         {
-            if (track3OneRowComp)
+            if (oneRowComp)
             {
                 // RAT / ATK / REL / MAK - matches the bus comp's single-row
                 // order so every comp in the mixer reads identically.
@@ -5909,7 +5961,7 @@ void ChannelStripComponent::resized()
         }
         else  // VCA
         {
-            if (track3OneRowComp)
+            if (oneRowComp)
             {
                 // RAT / ATK / REL / MAK - matches the bus comp's single-row
                 // order so every comp in the mixer reads identically.
@@ -6011,11 +6063,8 @@ void ChannelStripComponent::resized()
     // a vertical column to the left of the fader (laid out below).
 
     // Pan section is laid out together with the fader (see below) so
-    // the knob can be horizontally centered over the FADER COLUMN
-    // (busColumn + faderArea, excluding the right-side peak column),
-    // not over the strip itself. Centering over the strip puts the
-    // knob offset to the right of the visible fader because the peak
-    // column eats 31-37 px from the right edge.
+    // the knob can be horizontally centered over the stable fader column,
+    // independently of the meter stack and right-side bus column.
 
     auto buttons = area.removeFromBottom (20);
     const int btnW = buttons.getWidth() / 3;
@@ -6057,11 +6106,10 @@ void ChannelStripComponent::resized()
         && faderArea.getHeight() > kMaxFaderHeight + kPeakLabelH + 2)
         faderArea = faderArea.removeFromBottom (kMaxFaderHeight + kPeakLabelH + 2);
 
-    // Vertical bus-assign column. Lives on the LEFT of the fader by default
-    // (Tascam Model 2400 grammar - buttons under the engineer's left hand).
-    // At narrow strip widths it migrates to the RIGHT side, past the meter
-    // cluster, so it can't visually overlap the fader cap when the strip
-    // is squeezed below its design min width.
+    // Vertical bus-assign column. Keep it on the LEFT at every supported
+    // strip width, with the level meter and GR control fixed on the RIGHT.
+    // Both compact (timeline) and full-height modes pass through this same
+    // geometry so controls never swap sides at a scale or height breakpoint.
     constexpr int kBusColumnW   = 18;
     constexpr int kBusColumnGap = 3;
     constexpr int kBusButtonH   = 20;   // fixed height; evenly spaced across the 0->∞ scale
@@ -6071,61 +6119,63 @@ void ChannelStripComponent::resized()
     juce::Rectangle<int> faderCompMeterCol;
     if (usesFaderThresholdLayout())
     {
-        // Track-3 layout (right -> left): GR LED hugs the right side of
-        // the main level meter (1 px gap - reads as one continuous pair),
-        // both glued IMMEDIATELY to the right of the fader. compMeter
-        // internally flips its handle to the RIGHT (see setHandleOnRight)
-        // so the triangle points LEFT at the GR bar instead of poking
-        // into the meter column. kFaderLeftShift consumes empty space
-        // on the LEFT of the fader column so cap + PAN knob centre under
-        // the LIMIT button (which is centred on the strip), not biased
-        // left toward the bus-assign column.
+        // Stable layout (left -> right): bus assignments, centred fader,
+        // level meter, GR LED. compMeter keeps its handle on the RIGHT
+        // (see setHandleOnRight), matching the bus and master strips.
+        // Symmetric side reservations keep the pan, fader cap, tick labels,
+        // and numeric readout on the strip centreline without changing sides
+        // at a scale-factor breakpoint.
         constexpr int kGrLedW          = 20;   // GR bar + handle
         constexpr int kMeterToGrGap    = 1;
         constexpr int kFaderToMeterGap = 1;
-        constexpr int kRightPad        = 14;
-        constexpr int kFaderLeftShift  = 29;
+        // Three pixels inside either edge keeps the button and GR frames clear
+        // of the strip border while leaving the 116 px EightUp stereo layout
+        // enough room to retain a centred fader and readable scale labels.
+        constexpr int kOuterPad        = 3;
         constexpr int kFaderColMinReserve = 22;
 
-        // Wide-layout fader-column width prediction: bus on the LEFT, full
-        // leftShift, full right-side cluster carved from the right.
-        const int wideRightStack = kRightPad + kGrLedW + kMeterToGrGap
-                                  + kMeterWidth + kFaderToMeterGap;
-        const int faderColWideW  = faderArea.getWidth() - kBusColumnW
-                                  - kBusColumnGap - wideRightStack
-                                  - kFaderLeftShift;
-        const bool narrowMode = (faderColWideW < kFaderColMinReserve);
-
+        const auto fullArea = faderArea;
+        const int leftStackW = kOuterPad + kBusColumnW + kBusColumnGap;
+        const int rightStackW = kFaderToMeterGap + kMeterWidth
+                              + kMeterToGrGap + kGrLedW + kOuterPad;
+        const int symmetricSideW = std::max (leftStackW, rightStackW);
+        const bool canCentreWithoutOverlap = fullArea.getWidth()
+                                            >= symmetricSideW * 2
+                                             + kFaderColMinReserve;
         scaleColumn = juce::Rectangle<int>();
         grScaleArea = juce::Rectangle<int>();
-        if (narrowMode)
+        if (canCentreWithoutOverlap)
         {
-            // Bus migrates to the FAR RIGHT past the meter cluster; no
-            // leftShift needed since the fader column starts at the strip
-            // edge. Cap drifts slightly left of strip centre but can no
-            // longer overlap the bus buttons - the right-side stack is the
-            // ONLY thing carved from the strip, fader gets all remaining
-            // width.
-            faderArea.removeFromRight (kRightPad);
-            busColumn = faderArea.removeFromRight (kBusColumnW);
-            faderArea.removeFromRight (kBusColumnGap);
-            faderCompMeterCol = faderArea.removeFromRight (kGrLedW);
-            faderArea.removeFromRight (kMeterToGrGap);
-            meterColumn = faderArea.removeFromRight (kMeterWidth);
-            faderArea.removeFromRight (kFaderToMeterGap);
+            const int centredFaderW = std::max (
+                kFaderColMinReserve,
+                std::min (40, fullArea.getWidth() - symmetricSideW * 2));
+            const int centredFaderX = fullArea.getCentreX() - centredFaderW / 2;
+
+            faderArea = { centredFaderX, fullArea.getY(),
+                          centredFaderW, fullArea.getHeight() };
+            meterColumn = {
+                faderArea.getRight() + kFaderToMeterGap,
+                fullArea.getY(), kMeterWidth, fullArea.getHeight() };
+            faderCompMeterCol = {
+                meterColumn.getRight() + kMeterToGrGap,
+                fullArea.getY(), kGrLedW, fullArea.getHeight() };
+            busColumn = {
+                fullArea.getX() + kOuterPad,
+                fullArea.getY(), kBusColumnW, fullArea.getHeight() };
         }
         else
         {
-            // Wide path: bus on the LEFT, full leftShift centres the cap on
-            // strip centre under the strip-centred GAIN / LIMIT controls.
+            // Scripted/native resizes can bypass the normal application-width
+            // floor. Degrade without changing the established order: buses,
+            // remaining fader space, level meter, GR.
+            faderArea.removeFromLeft (kOuterPad);
             busColumn = faderArea.removeFromLeft (kBusColumnW);
             faderArea.removeFromLeft (kBusColumnGap);
-            faderArea.removeFromRight (kRightPad);
+            faderArea.removeFromRight (kOuterPad);
             faderCompMeterCol = faderArea.removeFromRight (kGrLedW);
             faderArea.removeFromRight (kMeterToGrGap);
             meterColumn = faderArea.removeFromRight (kMeterWidth);
             faderArea.removeFromRight (kFaderToMeterGap);
-            faderArea.removeFromLeft (kFaderLeftShift);
         }
     }
     else
@@ -6173,10 +6223,8 @@ void ChannelStripComponent::resized()
     // strip, so a header next to the fader would be misleading.
     threshMeterLabel.setVisible (false);
 
-    // Pan section pinned to the TOP of the fader column. Knob is
-    // centered on the fader's x-centre (faderArea after busColumn +
-    // peakColumn carve-outs) - NOT the strip centre - so it visually
-    // sits over the slider thumb's track.
+    // Pan section pinned to the TOP of the fader column. Knob is centered on
+    // the same fixed centreline as the slider thumb's track.
     constexpr int kPanKnobSize = 26;
     constexpr int kPanValueH   = 12;
     constexpr int kPanBlockH   = kPanKnobSize + kPanValueH + 2;
@@ -6224,40 +6272,37 @@ void ChannelStripComponent::resized()
         if (compactMode)
             sliderBounds = sliderBounds.withTrimmedBottom (kCompactFaderBottomTrim);
 
-        // Full-height strips align the fader value with the input peak
-        // readout (for example "0.8" and "-inf") in one bottom row. Compact
-        // strips retain the value slot immediately below the shorter fader.
-        const int kFaderValueH = 18;
-        if (compactMode)
-            faderValueLabel.setBounds (sliderBounds.getX(),
-                                          sliderBounds.getBottom() + 6,
-                                          sliderBounds.getWidth(),
-                                          kFaderValueH);
-        else
-            faderValueLabel.setBounds (sliderBounds.getX(),
-                                          peakRow.getY(),
-                                          sliderBounds.getWidth(),
-                                          peakRow.getHeight());
+        // Keep the fader value and input-peak readout (for example "0.0" and
+        // "-inf") on one shared bottom row in both full-height and timeline
+        // modes. Compact mode still reserves extra space below its shortened
+        // slider so the cap-at-min cannot collide with this row.
+        faderValueLabel.setBounds (sliderBounds.getX(),
+                                      peakRow.getY(),
+                                      sliderBounds.getWidth(),
+                                      peakRow.getHeight());
     }
     faderSlider.setBounds (sliderBounds);
 
-    // Bus buttons (1-4): span the fader scale from the "0" tick (top of #1) to
-    // the "off" tick (bottom of #4), dividing the range into four equal slots.
+    // Bus buttons (1-4): occupy a slightly tightened, vertically centred stack
+    // within the fader's 0-to-off range. This keeps them easy to scan without
+    // spreading four small controls over the entire fader height.
     // faderYForDb gives the exact tick Y for both the normal and threshold fader
     // layouts; anchoring to the meter column would miss it on strips that reserve
     // peak-label space below the meter.
     {
-        // Fixed-height buttons, evenly spaced: #1's top lines up with the "0"
-        // tick and #4's bottom with the "∞" tick. Distribute the TOPs linearly
-        // across [zeroY, offY - kBusButtonH]; the inter-button gap falls out as
-        // (span - kNumBuses*H)/(kNumBuses-1).
         const int zeroY = (int) std::lround (duskstudio::faderYForDb (faderSlider, 0.0f));
         const int offY  = (int) std::lround (duskstudio::faderYForDb (faderSlider, -90.0f));
         const int span  = std::max (ChannelStripParams::kNumBuses * kBusButtonH, offY - zeroY);
+        constexpr double kBusSpacingFactor = 0.85;
+        constexpr int kMaxBusButtonStep = 48;
+        const int naturalStep = (span - kBusButtonH) / (ChannelStripParams::kNumBuses - 1);
+        const int step = jlimit (kBusButtonH, kMaxBusButtonStep,
+                                 (int) std::lround (naturalStep * kBusSpacingFactor));
+        const int stackH = kBusButtonH + step * (ChannelStripParams::kNumBuses - 1);
+        const int stackTop = zeroY + std::max (0, (span - stackH) / 2);
         for (int i = 0; i < ChannelStripParams::kNumBuses; ++i)
         {
-            const int top = zeroY + (int) std::lround (
-                (double) (span - kBusButtonH) * i / (ChannelStripParams::kNumBuses - 1));
+            const int top = stackTop + step * i;
             busButtons[(size_t) i]->setBounds (busColumn.getX(), top, kBusColumnW, kBusButtonH);
         }
     }

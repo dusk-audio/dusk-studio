@@ -4,15 +4,15 @@
 
 namespace duskstudio
 {
-// Window position / size / fullscreen-flag persistence. Stored at
+// Window position / size persistence. Stored at
 //   <userApplicationDataDirectory>/Dusk Studio/window-state.txt
 // - separate from session.json (session-portable) and recent.txt (per-user
 // session list) because window geometry is per-machine state.
 //
 // Internally we save the string returned by ResizableWindow's
-// getWindowStateAsString(), which encodes bounds + fullscreen flag in a
-// JUCE-native format that round-trips through restoreWindowStateFromString().
-// We don't roll our own XML - JUCE already gets this right.
+// getWindowStateAsString(), which encodes bounds and may include JUCE's
+// fullscreen prefix. MainWindow intentionally removes that prefix on restore
+// so every launch starts windowed while retaining the last windowed bounds.
 //
 // Validation: a restored rectangle is sanity-checked against connected
 // displays AFTER restore; if the window ends up entirely off-screen (the

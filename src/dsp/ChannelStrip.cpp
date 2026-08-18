@@ -345,10 +345,11 @@ void ChannelStrip::updateGainTargets() noexcept
     // manual or lane through it) - same pattern as liveFaderDb / livePan.
     // -100 dB sentinel (knob fully CCW) hard-mutes; the inner loop
     // short-circuits zero-gain sends.
+    const bool auxSendsBypassed = paramsRef->auxSendsBypassed.load (std::memory_order_relaxed);
     for (int i = 0; i < kNumAuxSends; ++i)
     {
         const float db = paramsRef->liveAuxSendDb[(size_t) i].load (std::memory_order_relaxed);
-        const float g  = (db <= ChannelStripParams::kAuxSendOffDb)
+        const float g  = (auxSendsBypassed || db <= ChannelStripParams::kAuxSendOffDb)
                             ? 0.0f
                             : dusk::audio::decibelsToGain (db);
         auxSendGain[(size_t) i].setTargetValue (g);

@@ -4,6 +4,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <memory>
 #include <vector>
+#include "../foundation/MessageThread.h"
 #include "EmbeddedModal.h"
 #include "DuskComboBox.h"
 #include "DuskAudioDeviceSelector.h"
@@ -18,7 +19,8 @@ class Session;
 // materially affects USB audio on Linux - fractional periods cause
 // jitter; certain kernel+device combos distort at specific counts).
 // Also hosts a "Run Self-Test" button (SelfTestPanel).
-class AudioSettingsPanel final : public juce::Component
+class AudioSettingsPanel final : public juce::Component,
+                                 private dusk::Timer
 {
 public:
     AudioSettingsPanel (device::DeviceManager& dm,
@@ -111,6 +113,8 @@ private:
     juce::Slider uiScaleSlider;
     juce::Label  uiScaleHint;
     bool         uiScaleDragging = false;
+    float        pendingUiScale = 1.0f;
+    bool         uiScalePreviewPending = false;
 
     // Manual recording latency offset (samples), per-machine (AppConfig).
     // Subtracted from committed audio takes so a round-trip-delayed input
@@ -151,6 +155,8 @@ private:
     void applyOversamplingChange();
     void applyMulticoreChange();
     void applyUiScaleChange();
+    void queueUiScalePreview();
+    void timerCallback() override;
     void applyRecordOffsetChange();
     void applyRescan();
     void openSelfTest();

@@ -143,9 +143,9 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 
 | #   | Name              | Description                                                                                                                       |
 | --- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Menu bar          | `File` and `Settings` menus only. No tabs, no hidden submenus.                                                                    |
+| 1   | Menu bar          | `File`, `View`, and `Settings` menus. View includes fullscreen and timeline visibility.                                           |
 | 2   | Stage selector    | Four buttons: **RECORDING**, **MIXING**, **MASTERING**, **AUX** (Cmd/Ctrl+1 to 4). Picks which view fills the console area.            |
-| 3   | Bank selector     | The visible page of channel strips (e.g. `1-3`, `4-6`, ...), switched with the plain number keys 1 to 8. Only visible when the window is too narrow to show all 24 at once. |
+| 3   | Bank selector     | The visible page of channel strips. A maximized 1920×1080 window at 100% scaling shows `1-8`, `9-16`, or `17-24`; narrower windows use smaller ranges such as `1-3`, `4-6`, .... Switch pages with the plain number keys 1 to 8. Only visible when the window is too narrow to show all 24 at once. |
 | 4   | Transport bar     | Play, record, loop, punch, BPM, time signature, clock, tuner. See the next figure for the inventory.                              |
 | 5   | Tape strip toggle | `▾ TIMELINE` / `▴ TAPE`. Collapses or expands the timeline view below the bar.                                                     |
 | 6   | Console view      | Holds 24 channel strips, 4 buses, and the master strip. Replaced by the aux lane or mastering chain when those stages are active. |
@@ -187,8 +187,8 @@ In compact mode (window narrower than 1850 px) labels shorten: `TIMELINE` become
 | 2   | Insert slot         | One plugin or one hardware insert. 20 ms equal-power crossfade between modes.                               |
 | 3   | HPF                 | High-pass filter, 20–300 Hz. LED green when on.                                                             |
 | 4   | LPF                 | Low-pass filter, 3 kHz–20 kHz.                                                                              |
-| 5   | 4-band EQ           | LF (shelf) / LM (peak) / HM (peak) / HF (shelf). Left-click header to enable, right-click for the EQ menu (E / G character, reset, open editor), double-click to open the editor. |
-| 6   | Compressor          | Opto / FET / VCA. Left-click header to enable, right-click for the COMP menu (mode, reset, open editor), double-click to open the editor. GR meter to the left. |
+| 5   | 4-band EQ           | LF (shelf) / LM (peak) / HM (peak) / HF (shelf). Click the header's left status light to bypass/engage, click the **EQ** label to open the editor, or right-click anywhere on it for the EQ menu (E / G character, reset, open editor). |
+| 6   | Compressor          | Opto / FET / VCA. Click the header's left status light to bypass/engage, click the **COMP** label to open the editor, or right-click anywhere on it for the COMP menu (mode, reset, open editor). GR meter to the left. |
 | 7   | Aux 1 send          | Post-fader by default; right-click to flip pre-fader.                                                       |
 | 8   | Aux 2 send          |                                                                                                             |
 | 9   | Aux 3 send          |                                                                                                             |
@@ -236,8 +236,8 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 
 | #   | Name                  | Description                                                                                      |
 | --- | --------------------- | ------------------------------------------------------------------------------------------------ |
-| 1   | Program EQ            | Tube-saturated low + high program EQ. Left-click header to enable, right-click for the EQ menu (reset, open editor), double-click to open the editor. |
-| 2   | Master bus compressor | Identical DSP to the bus comp, typically used slower. Left-click header to enable, right-click for the COMP menu (reset, open editor), double-click to open the editor. |
+| 1   | Program EQ            | Tube-saturated low + high program EQ. Click the left status light to bypass/engage, click **EQ** to open the editor, or right-click anywhere for the EQ menu (reset, open editor). |
+| 2   | Master bus compressor | Identical DSP to the bus comp, typically used slower. Click the left status light to bypass/engage, click **COMP** to open the editor, or right-click anywhere for the COMP menu (reset, open editor). |
 | 3   | Tape saturation       | Reel-to-reel model. Oversampling follows the global Effect Oversampling setting (Audio settings). Left-click header to toggle tape on/off, right-click for the TAPE menu (open editor), double-click to open the tape-machine editor. |
 | 4   | Master fader          | −∞ to +12 dB.                                                                                    |
 | 5   | Mono                  | Sums L+R to mono on both legs for phase / single-speaker checks.                                 |
@@ -408,7 +408,7 @@ Verification protects against a bit-flipped download or a man-in-the-middle atta
 
 On first launch Dusk Studio opens a blank session named `Untitled`. The window is divided, top to bottom, into:
 
-- A thin menu bar (File and Settings).
+- A thin menu bar (File, View, and Settings).
 - A row of large coloured buttons for the four stages: **RECORDING**, **MIXING**, **MASTERING**, **AUX** (keys **1–4**).
 - A bank selector (only visible when the window is too narrow to show all 24 channel strips at once).
 - The transport bar.
@@ -453,7 +453,7 @@ All seven are saved with the session, so a project that syncs to an external clo
 
 ### General
 
-- **UI scale**: a global zoom factor for the entire interface. Restart Dusk Studio after changing this for best results.
+- **UI scale**: a global zoom factor for the entire interface. The interface previews changes live while you adjust the slider; the final value is saved per-machine when you release it.
 - **Expand tape strip by default**: show the tape strip on every session open.
 - **Follow playhead by default**: start the timeline and the audio / MIDI editors with Chase engaged, so the view scrolls to keep the playhead in sight during playback. Per-machine; takes effect on next launch.
 - **Stop behavior**: where the playhead lands when playback stops — **Stay where it is** (pause), **Return to start**, or **Return to last clicked point**.
@@ -482,7 +482,7 @@ The window is structured as a stack of horizontal bands.
 ├───────────────────────────────────────────────────────┤
 │  RECORDING   MIXING   MASTERING   AUX                 │  Stage selector
 ├───────────────────────────────────────────────────────┤
-│  1-3  4-6  7-9  10-12  13-15  16-18  19-21  22-24   │  Bank selector
+│             1-8          9-16          17-24          │  Bank selector (1080p)
 ├───────────────────────────────────────────────────────┤
 │ ◀◀  ▶  ▶▶  ●  ⟳  ◉   CLK ♩=120 4/4 00:01:23         │  Transport bar
 ├───────────────────────────────────────────────────────┤
@@ -494,7 +494,9 @@ The window is structured as a stack of horizontal bands.
 └───────────────────────────────────────────────────────┘
 ```
 
-The bank selector appears only when the window is too narrow for all 24 strips, and it pages the console by whatever does fit — as few as three strips on the narrowest window, never more than eight pages. Each button names its range when space permits: in the compact transport layout the label is the bare range, `1-3`; at full size it reads `BANK 1  (1-3)`. At the tightest button width only the page number is shown; its tooltip still gives the channel range. The range widens with the window. A control surface's bank is a separate, fixed axis: eight strips at a time, tracks 1–8, 9–16, or 17–24. The two stay in step. Picking a page moves the surface to the bank holding that page's first track, and **Bank Left** / **Bank Right** on the surface moves the page to the one holding that bank's first track. When every strip fits on screen there is no page to pick, so the surface — and the bank-relative MIDI bindings that follow it — stays where you left it.
+The bank selector appears only when the window is too narrow for all 24 strips, and it pages the console by whatever does fit — as few as three strips on the narrowest window, never more than eight pages. At 1902 px of console width or more (the normal maximized 1920×1080 layout at 100% scaling), the console uses its EightUp density and the three pages are `1-8`, `9-16`, and `17-24`. Each button names its range when space permits: in compact layouts the label is the bare range, `1-3`; at full size it reads `BANK 1  (1-8)`. At the tightest button width only the page number is shown; its tooltip still gives the channel range. Wider windows eventually return to the comfortable strip spacing.
+
+A control surface's bank is a separate, fixed axis: eight strips at a time, tracks 1–8, 9–16, or 17–24. In EightUp the screen pages and hardware banks align exactly. At other window widths they remain separate axes but stay in step: picking a page moves the surface to the bank holding that page's first track, and **Bank Left** / **Bank Right** on the surface moves the page to the one holding that bank's first track. When every strip fits on screen there is no page to pick, so the surface — and the bank-relative MIDI bindings that follow it — stays where you left it.
 
 Modal dialogs (audio settings, plugin picker, region editor, piano roll, import target picker) appear centered with a dimmed backdrop behind them. Press **Esc** or click outside the modal to dismiss.
 
@@ -609,12 +611,19 @@ the current save state, the latest save time when available, the `notepad.md`
 filename, section count, unique chord count, and the detected key when enough
 chords identify one.
 
-Click **Done** or the dimmed area outside the notepad to close it. The notepad
-also closes itself whenever something else needs the window — an alert, a stage
-switch, or the quit prompt — saving as it goes, except on quit, where the notes
-wait for your Save / Don't Save answer like the rest of the session. The header,
-toolbar, and footer stay fixed; mouse-wheel scrolling moves only the note within
-its writing area. Notes are saved atomically to the compatible `notepad.md` file
+**Source** at the end of the toolbar swaps the chart for the raw `notepad.md`
+text, so ChordPro brackets, section markers and Markdown can be typed or pasted
+directly. The toolbar's chart controls step aside while source view is up,
+leaving **Source** lit as the way back; clicking it again returns to the chart.
+Edits made in source view land in the notepad as a single undo step. **Esc**
+closes the notepad from source view rather than reverting the text.
+
+Click the dimmed area outside the notepad to close it. The notepad also closes
+itself whenever something else needs the window — an alert, a stage switch, or
+the quit prompt — saving as it goes, except on quit, where the notes wait for
+your Save / Don't Save answer like the rest of the session. The header, toolbar,
+and footer stay fixed; mouse-wheel scrolling moves only the note within its
+writing area. Notes are saved atomically to the compatible `notepad.md` file
 when the notepad closes and on every session save; they follow the session on
 Save As. A failed
 sidecar write remains dirty and can be retried by
@@ -649,7 +658,7 @@ Mute, Solo, and the input-monitor (IN) toggle gate the entire accumulation — w
 
 This is the order the audio actually flows. On screen, controls are arranged for ergonomics — the fader is at the bottom, the EQ in the middle — but the underlying chain never changes.
 
-Every processing section (EQ, compressor, tape) follows one consistent grammar on its header — and on its compact pill when the strip collapses, and on the channel, bus, and master strips alike: **left-click toggles the section on or off, right-click opens the section menu (character / mode where it has one, reset where the section supports it, open editor), and double-click opens the full editor.**
+EQ, COMP, and compact AUX controls are split buttons. The left 20% contains the status light; click it to bypass or engage the section without opening anything. The right 80% contains the label; click it once to open the editor. Right-click anywhere on the unified button for the section menu. Engaged sections have a solid coloured light and bright label; bypassed sections have a dark, hollow light and dim label. The compact AUX bypass mutes all four sends without changing their individual levels, so engaging it restores the previous send mix.
 
 ## Track name and colour
 
@@ -706,7 +715,7 @@ Useful for taming hi-hat bleed, cymbal harshness on a mic that's picking up too 
 
 ![The channel EQ editor — HPF, LPF, and four parametric bands.](docs/images/fx-01-eq.png)
 
-A British console-style 4-band EQ. Left-click the **EQ** header to enable; the LED lights green. Right-click the header for the EQ menu — the saturation character, **Reset EQ**, and **Open editor…** — and double-click the header to open the editor directly. The saturation character:
+A British console-style 4-band EQ. Click the header's left status light to bypass or engage it; click the **EQ** label once to open the editor. Right-click anywhere on the header for the EQ menu — the saturation character, **Reset EQ**, and **Open editor…**. The saturation character:
 
 - **E** (brown, default): brown character — slightly more aggressive midrange.
 - **G** (black): black character — smoother high band.
@@ -730,7 +739,7 @@ EQ in Dusk Studio does **not cramp** near Nyquist; the British EQ does its own i
 
 The channel compressor has three mutually-exclusive modes. Settings are remembered per mode — switch from FET back to Opto and your Opto settings are exactly as you left them.
 
-Left-click the **COMP** header to enable. Right-click the header for the COMP menu — the mode (**Opto**, **FET**, **VCA**), **Reset comp**, and **Open editor…** — and double-click the header to open the editor directly.
+Click the header's left status light to bypass or engage the compressor; click the **COMP** label once to open the editor. Right-click anywhere on the header for the COMP menu — the mode (**Opto**, **FET**, **VCA**), **Reset comp**, and **Open editor…**.
 
 All three modes share one set of knobs — **THRESHOLD, RATIO, ATTACK, RELEASE, MAKEUP** — that route to the right underlying parameter for whichever mode is active. Set the **threshold** by dragging the triangle handle on the gain-reduction meter strip (this also engages the compressor); the remaining knobs sit in a 2×2 grid below the header. The **MAKEUP** knob is the shared makeup gain and is available in every mode; its range follows the active mode — −40 to +40 dB in Opto (the optical gain dial's full span), −20 to +20 dB in FET and VCA. Knob ranges retune per mode, as listed below.
 
@@ -771,7 +780,7 @@ The gain-reduction meter (the thin vertical bar to the left of the comp section)
 In the MIXING stage the input block is replaced by four send knobs, one per aux lane. Each knob is colour-matched to its destination aux.
 
 - **Range**: −60 to +6 dB, or **OFF** (−100 dB, the bottom of the knob's travel).
-- **Pre / post fader**: right-click the knob to toggle. Post-fader is the default. In compact mode, right-click the **AUX** pill for the same per-send pre/post toggles plus **Reset sends** and **Open AUX editor…**.
+- **Pre / post fader**: right-click the knob to toggle. Post-fader is the default. In compact mode, click the **AUX** button's left status light to bypass/restore all four sends without losing their levels, click the **AUX** label to open the editor, or right-click anywhere on it for the per-send pre/post toggles plus **Reset sends** and **Open AUX editor…**.
 
 Pre-fader sends are used for headphone cue mixes: the singer can hear their voice at the same level even when you pull their fader down. Post-fader sends are used for effects: when you pull the channel fader down, the reverb level falls with it.
 
@@ -902,7 +911,7 @@ The program EQ is tube-saturated; pushing the boosts harder adds harmonic conten
 
 ## Master bus compressor
 
-Identical in DSP to the bus-strip compressor but typically used with slower settings: a 10 ms attack, auto-release, 2:1 to 4:1 ratio, and 1–3 dB of gain reduction on peaks. Left-click the **COMP** header to enable; right-click for the COMP menu, double-click to open the editor.
+Identical in DSP to the bus-strip compressor but typically used with slower settings: a 10 ms attack, auto-release, 2:1 to 4:1 ratio, and 1–3 dB of gain reduction on peaks. Click the left status light to bypass/engage, click the **COMP** label to open the editor, or right-click anywhere for the COMP menu.
 
 ## Master fader
 
@@ -1692,7 +1701,7 @@ Once connected:
 - **Motorised faders** mirror Dusk Studio's channel and master faders.
 - The **eight strip faders** drive the active bank (tracks 1–8, 9–16, or 17–24).
 - **Bank Left** / **Bank Right** step the bank by 8.
-- The surface's bank and the console's visible page of strips are separate axes, kept in step: a bank step moves the page to the one holding that bank's first track, and picking a page moves the surface the other way. With all 24 strips on screen there is no page to pick, and the surface keeps whichever bank you left it on.
+- At EightUp density, the surface's three banks match the console pages exactly: 1–8, 9–16, and 17–24. At other widths they are separate axes kept in step: a bank step moves the page to the one holding that bank's first track, and picking a page moves the surface the other way. With all 24 strips on screen there is no page to pick, and the surface keeps whichever bank you left it on.
 - **Channel Left** / **Channel Right** step the selected channel by 1.
 - **Mute / Solo / Arm / Select** buttons mirror and drive the on-screen buttons. LEDs reflect state.
 - **V-pot** rotaries drive pan, sends, EQ band gain, or compressor depending on the **assign mode**. Press **Pan**, **Send** (repeated presses cycle sends 1–4), **EQ**, or the **Track** button (mapped to the compressor in Dusk Studio) to switch. The surface's **Plugin** and **Inst** assign buttons are not mapped.

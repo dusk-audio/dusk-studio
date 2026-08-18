@@ -167,7 +167,8 @@ void ConsoleView::resized()
     // stride = channelsThatFit().
     showingAllTracks = (getWidth() >= allTracksContentWidth());
 
-    const int stride = bankStride();
+    const auto channelFit = consolelayout::channelFitForWidth (getWidth());
+    const int stride = channelFit.channels;
     // Re-derives the page against the new width and queues any surface move it
     // implies for the poll tick. Publishes nothing itself - a drag-resize
     // storing mcu.bank here would swallow a Bank Left/Right press.
@@ -199,13 +200,17 @@ void ConsoleView::resized()
     // refTotal would fit and skip the scale-down branch.
     const int widthRefChannels = showingAllTracks ? Session::kNumTracks : stride;
     const auto geometry = consolelayout::makeStripGeometry (
-        getWidth(), widthRefChannels, visibleChannels);
+        getWidth(), widthRefChannels, visibleChannels, channelFit.density);
     const int channelW = geometry.channelWidth;
     const int busW     = geometry.busWidth;
     const int masterW  = geometry.masterWidth;
 
     const int y = area.getY();
     const int h = area.getHeight();
+
+    for (auto& strip : strips)
+        if (strip != nullptr)
+            strip->setHorizontalDensity (channelFit.density);
 
     // Buses + master ANCHORED to the right edge. Channel strips fill
     // from the left up to `visibleChannels`; any leftover horizontal

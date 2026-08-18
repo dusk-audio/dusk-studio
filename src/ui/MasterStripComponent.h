@@ -9,6 +9,7 @@
 #include "DuskComboBox.h"
 #include "EmbeddedModal.h"
 #include "SectionPillButton.h"
+#include "SplitModuleButton.h"
 #include "../foundation/MessageThread.h"
 
 namespace duskstudio
@@ -47,9 +48,9 @@ private:
 
     // Pultec-style Tube EQ. Inline matches the popup editor so on-strip
     // dialling and modal-open dialling see the same controls.
-    // Header pill = shared CompHeaderButton (green LED + bold label).
-    // Single Pultec topology - no right-click mode picker.
-    std::unique_ptr<CompHeaderButton> eqHeaderBtn;
+    // Split header shared with the channel and bus strips. Single Pultec
+    // topology - no right-click mode picker.
+    std::unique_ptr<SplitModuleButton> eqHeaderBtn;
     juce::Slider     eqLfBoost   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Slider     eqLfAtten   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Slider     eqHfBoost   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
@@ -69,10 +70,10 @@ private:
     juce::Label      eqLfFreqLabel;
     juce::Label      eqHfBoostFreqLabel, eqHfAttenFreqLabel;
 
-    // Same shell as channel + bus strips: CompHeaderButton top,
+    // Same shell as channel + bus strips: split module button on top,
     // CompMeterStrip (triangle-handle threshold) left, knob grid right.
     // Fixed SSL-style glue topology - no mode picker.
-    std::unique_ptr<CompHeaderButton> compHeaderBtn;
+    std::unique_ptr<SplitModuleButton> compHeaderBtn;
     std::unique_ptr<CompMeterStrip>   compMeter;
     juce::Slider     compRatio     { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Slider     compAttack    { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
@@ -86,9 +87,8 @@ private:
     // The lit state is driven by the tapeEnabled atom (synced from the 30 Hz
     // timer) so the panel's arm-on-touch is still reflected here.
     SectionPillButton tapeButton { "TAPE" };
-    // Expanded-mode header: shared CompHeaderButton (matches EQ/COMP
-    // grammar). Left toggles, right opens the section menu, double-click
-    // opens the tape panel.
+    // Expanded-mode TAPE header keeps the legacy grammar: left-click
+    // toggles, right-click opens the menu, and double-click opens the panel.
     std::unique_ptr<CompHeaderButton> tapeHeaderBtn;
     void openTapeMachineModal();
     std::unique_ptr<class DimOverlay> tapeMachineDim;
@@ -120,8 +120,8 @@ private:
     juce::Rectangle<int> eqArea;
     juce::Rectangle<int> compArea;
     juce::Rectangle<int> tapeArea;   // framed band behind the TAPE header (regular mode)
-    SectionPillButton eqCompactButton  { "EQ"   };
-    SectionPillButton compCompactButton { "COMP" };
+    SplitModuleButton eqCompactButton  { "EQ"   };
+    SplitModuleButton compCompactButton { "COMP" };
     EmbeddedModal eqEditorModal;
     EmbeddedModal compEditorModal;
     void openEqEditorPopup();
