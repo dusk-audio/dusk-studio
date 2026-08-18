@@ -131,7 +131,13 @@ jobs:
             -DDPF_PATH="${RT_UNIX}/DPF" \
             -DDPF_WIDGETS_PATH="${RT_UNIX}/DPF-Widgets" \
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
-            -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}"
+            -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}" \
+            -DDUSKSTUDIO_NATIVE_CLAP=ON \
+            -DDUSKSTUDIO_NATIVE_VST3=ON
+          for option in DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_VST3; do
+            grep -q "^${option}:BOOL=ON$" build-tests/CMakeCache.txt || {
+              echo "::error::${option} was not enabled in the test configure" >&2; exit 1; }
+          done
 
       - name: Build test binary
         # Build only the test target. The Catch2 binary depends on
