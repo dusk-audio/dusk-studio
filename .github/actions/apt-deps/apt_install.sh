@@ -79,13 +79,17 @@ if [ "$update_only" -eq 0 ] && [ ${#packages[@]} -eq 0 ]; then
     exit 2
 fi
 
-# Both list formats: 24.04 images ship deb822 .sources files and no
-# sources.list.
+# Every place a mirror host can hide. 24.04 images ship deb822 .sources files
+# and no sources.list. Current hosted images go further and put the host in a
+# mirrorlist, leaving the list files pointing at file:/etc/apt/apt-mirrors.txt;
+# miss that file and the mirror reads as unknown, so a switch rewrites nothing
+# and lands back on the sick host it was already using.
 mirror_files() {
     local f
     for f in /etc/apt/sources.list \
              /etc/apt/sources.list.d/*.list \
-             /etc/apt/sources.list.d/*.sources; do
+             /etc/apt/sources.list.d/*.sources \
+             /etc/apt/apt-mirrors.txt; do
         [ -f "$f" ] && printf '%s\n' "$f"
     done
 }
