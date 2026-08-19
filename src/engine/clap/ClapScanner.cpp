@@ -21,9 +21,24 @@ std::vector<stdfs::path> ClapScanner::defaultSearchPaths()
         dirs.push_back (d);
     };
 
-    // $CLAP_PATH overrides / extends the defaults (':'-separated, like $PATH).
-    if (const char* env = std::getenv ("CLAP_PATH"))
-        for (const auto& tok : dusk::text::split (env, ':'))
+    // $CLAP_PATH overrides / extends the defaults, separated like $PATH
+    // (':' on POSIX, ';' on Windows).
+#if defined(_WIN32)
+    constexpr char kListSep = ';';
+    // _wgetenv, not getenv: the value carries user-profile paths, which the
+    // ANSI environment mangles for non-ASCII user names. ';' is one byte in
+    // UTF-8, so splitting after the conversion is safe.
+    const std::string envStorage = [] {
+        const wchar_t* w = ::_wgetenv (L"CLAP_PATH");
+        return w != nullptr ? stdfs::path (w).u8string() : std::string();
+    }();
+    const char* env = envStorage.empty() ? nullptr : envStorage.c_str();
+#else
+    constexpr char kListSep = ':';
+    const char* env = std::getenv ("CLAP_PATH");
+#endif
+    if (env != nullptr)
+        for (const auto& tok : dusk::text::split (env, kListSep))
         {
             const auto trimmed = dusk::text::trim (tok);
             if (! trimmed.empty()) add (stdfs::u8path (trimmed));
@@ -32,6 +47,13 @@ std::vector<stdfs::path> ClapScanner::defaultSearchPaths()
 #if defined(__APPLE__)
     add (dusk::fs::userHomeDir() / "Library/Audio/Plug-Ins/CLAP");
     add ("/Library/Audio/Plug-Ins/CLAP");
+#elif defined(_WIN32)
+    // CLAP's documented Windows install dirs (clap/entry.h), user-scoped first
+    // to match every other platform's ordering.
+    if (const wchar_t* local = ::_wgetenv (L"LOCALAPPDATA"))
+        add (stdfs::path (local) / L"Programs" / L"Common" / L"CLAP");
+    if (const wchar_t* common = ::_wgetenv (L"COMMONPROGRAMFILES"))
+        add (stdfs::path (common) / L"CLAP");
 #else
     add (dusk::fs::userHomeDir() / ".clap");
     add ("/usr/lib/clap");

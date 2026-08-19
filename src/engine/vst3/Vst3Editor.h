@@ -10,8 +10,9 @@ namespace duskstudio::vst3
 class Vst3Instance;
 
 // Native editor embed for a VST3 plugin view. The platform translation unit
-// owns an X11 child window on Linux or an NSView child container on macOS.
-// open() discovers/creates the view; embed() attaches it to the native child.
+// owns an X11 child window on Linux, an NSView child container on macOS, or a
+// child HWND on Windows. open() discovers/creates the view; embed() attaches
+// it to the native child.
 //
 // The frame is wired at open() - BEFORE attached() - so the view can reach the
 // IPlugFrame while attaching. On Linux it can also query the IRunLoop. Resize
@@ -36,8 +37,8 @@ public:
     // Create a native child container under parentHandle at (x,y,w,h) and
     // attach the view into it. Visibility afterwards is platform-specific: the
     // X11 host window is mapped here (toolkit editors can refuse to realise
-    // into an unmapped parent), while the Cocoa container stays hidden until
-    // reveal(). reveal()/hide() are idempotent on both.
+    // into an unmapped parent), while the Cocoa and Win32 containers stay
+    // hidden until reveal(). reveal()/hide() are idempotent everywhere.
     bool embed (std::uintptr_t parentHandle, int x, int y, int w, int h,
                 std::string& errorOut);
 

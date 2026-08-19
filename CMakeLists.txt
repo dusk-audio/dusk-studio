@@ -24,10 +24,11 @@ if(APPLE)
     enable_language(OBJCXX)
 endif()
 
-# Native CLAP host (src/engine/clap/) is available on Linux and macOS. Default
-# ON there, OFF elsewhere; it can be forced off to test the feature-gated path.
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
-    option(DUSKSTUDIO_NATIVE_CLAP "Build the native CLAP plugin host (Linux/macOS)" ON)
+# Native CLAP host (src/engine/clap/) is available on Linux, macOS, and
+# Windows. Default ON there, OFF elsewhere; it can be forced off to test the
+# feature-gated path.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE OR WIN32)
+    option(DUSKSTUDIO_NATIVE_CLAP "Build the native CLAP plugin host (Linux/macOS/Windows)" ON)
 else()
     set(DUSKSTUDIO_NATIVE_CLAP OFF)
 endif()
@@ -115,15 +116,15 @@ endif()
 # Native VST3 host — Steinberg SDK hosting subset from the Dusk-owned mirror
 # (external/vst3sdk submodule, tag dusk-vst3sdk-v1; see DUSK-MIRROR.md there).
 # GPL-3.0 arm of the SDK's dual license — see LICENSES.txt.
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE OR WIN32)
     set(DUSKSTUDIO_VST3_SDK_PRESENT OFF)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/vst3sdk/pluginterfaces/base/funknown.cpp")
         set(DUSKSTUDIO_VST3_SDK_PRESENT ON)
     endif()
-    if(APPLE)
+    if(APPLE OR WIN32)
         # Same rule as the LV2 gate above: default follows the submodule, an
         # explicit request without it is fatal.
-        option(DUSKSTUDIO_NATIVE_VST3 "Build the native VST3 plugin host (Linux/macOS)"
+        option(DUSKSTUDIO_NATIVE_VST3 "Build the native VST3 plugin host (Linux/macOS/Windows)"
                ${DUSKSTUDIO_VST3_SDK_PRESENT})
         if(DUSKSTUDIO_NATIVE_VST3 AND NOT DUSKSTUDIO_VST3_SDK_PRESENT)
             message(FATAL_ERROR
@@ -134,7 +135,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
                            "(git submodule update --init external/vst3sdk)")
         endif()
     elseif(DUSKSTUDIO_VST3_SDK_PRESENT)
-        option(DUSKSTUDIO_NATIVE_VST3 "Build the native VST3 plugin host (Linux/macOS)" ON)
+        option(DUSKSTUDIO_NATIVE_VST3 "Build the native VST3 plugin host (Linux/macOS/Windows)" ON)
     else()
         set(DUSKSTUDIO_NATIVE_VST3 OFF)
         message(STATUS "Native VST3 host: external/vst3sdk submodule missing - disabled "
@@ -919,6 +920,8 @@ if(DUSKSTUDIO_NATIVE_CLAP)
         target_sources(DuskStudio PRIVATE src/engine/clap/ClapEditor_Mac.mm)
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_sources(DuskStudio PRIVATE src/engine/clap/ClapEditor.cpp)
+    elseif(WIN32)
+        target_sources(DuskStudio PRIVATE src/engine/clap/ClapEditor_Win.cpp)
     endif()
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_CLAP=1)
 endif()
@@ -991,6 +994,10 @@ if(DUSKSTUDIO_NATIVE_VST3)
         target_sources(dusk-vst3-hosting PRIVATE
             ${VST3SDK_DIR}/public.sdk/source/common/threadchecker_linux.cpp
             ${VST3SDK_DIR}/public.sdk/source/vst/hosting/module_linux.cpp)
+    elseif(WIN32)
+        target_sources(dusk-vst3-hosting PRIVATE
+            ${VST3SDK_DIR}/public.sdk/source/common/threadchecker_win32.cpp
+            ${VST3SDK_DIR}/public.sdk/source/vst/hosting/module_win32.cpp)
     endif()
     target_include_directories(dusk-vst3-hosting SYSTEM PUBLIC ${VST3SDK_DIR})
     target_compile_definitions(dusk-vst3-hosting PUBLIC
@@ -1010,6 +1017,8 @@ if(DUSKSTUDIO_NATIVE_VST3)
         target_sources(DuskStudio PRIVATE src/engine/vst3/Vst3Editor_Mac.mm)
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_sources(DuskStudio PRIVATE src/engine/vst3/Vst3Editor.cpp)
+    elseif(WIN32)
+        target_sources(DuskStudio PRIVATE src/engine/vst3/Vst3Editor_Win.cpp)
     endif()
     target_link_libraries(DuskStudio PRIVATE dusk-vst3-hosting)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_VST3=1)

@@ -1,8 +1,16 @@
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 #include "ClapBundle.h"
 
 #include <clap/clap.h>
 
+#if ! defined(_WIN32)
 #include <dlfcn.h>
+#endif
 
 #if defined(__APPLE__)
 #include <CoreFoundation/CoreFoundation.h>
@@ -13,6 +21,52 @@
 
 namespace duskstudio::clap
 {
+#if defined(_WIN32)
+namespace
+{
+// Identity and error text stay UTF-8; only the loader call itself goes UTF-16.
+std::wstring widenUtf8 (const std::string& utf8)
+{
+    if (utf8.empty()) return {};
+    const int n = ::MultiByteToWideChar (CP_UTF8, 0, utf8.data(),
+                                         (int) utf8.size(), nullptr, 0);
+    if (n <= 0) return {};
+    std::wstring wide ((size_t) n, L'\0');
+    ::MultiByteToWideChar (CP_UTF8, 0, utf8.data(), (int) utf8.size(),
+                           wide.data(), n);
+    return wide;
+}
+
+std::string lastErrorUtf8()
+{
+    const DWORD code = ::GetLastError();
+    wchar_t* buffer = nullptr;
+    const DWORD len = ::FormatMessageW (
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM
+            | FORMAT_MESSAGE_IGNORE_INSERTS,
+        nullptr, code, 0, reinterpret_cast<wchar_t*> (&buffer), 0, nullptr);
+    std::string text = "error " + std::to_string (code);
+    if (len > 0 && buffer != nullptr)
+    {
+        const int n = ::WideCharToMultiByte (CP_UTF8, 0, buffer, (int) len,
+                                             nullptr, 0, nullptr, nullptr);
+        if (n > 0)
+        {
+            std::string message ((size_t) n, '\0');
+            ::WideCharToMultiByte (CP_UTF8, 0, buffer, (int) len,
+                                   message.data(), n, nullptr, nullptr);
+            while (! message.empty()
+                   && (message.back() == '\n' || message.back() == '\r'
+                       || message.back() == '\0'))
+                message.pop_back();
+            if (! message.empty()) text += ": " + message;
+        }
+        ::LocalFree (buffer);
+    }
+    return text;
+}
+} // namespace
+#endif
 #if defined(__APPLE__)
 namespace
 {
@@ -85,6 +139,24 @@ bool ClapBundle::load (const std::string& path, std::string& errorOut)
     unload();
     bundlePath = path;
 
+#if defined(_WIN32)
+    // A Windows .clap is a renamed DLL. The scanner and session store absolute
+    // paths, which LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR requires; it lets the
+    // plugin's own directory resolve its dependent DLLs.
+    handle = ::LoadLibraryExW (widenUtf8 (path).c_str(), nullptr,
+                               LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR
+                                   | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+    if (handle == nullptr)
+    {
+        errorOut = "LoadLibrary failed: " + lastErrorUtf8();
+        bundlePath.clear();
+        return false;
+    }
+
+    // A .clap exports `const clap_plugin_entry_t clap_entry`.
+    entry = reinterpret_cast<const ::clap_plugin_entry*> (
+        ::GetProcAddress (static_cast<HMODULE> (handle), "clap_entry"));
+#else
 #if defined(__APPLE__)
     std::string executablePath;
     if (! resolveBundleExecutable (path, executablePath, errorOut))
@@ -110,6 +182,7 @@ bool ClapBundle::load (const std::string& path, std::string& errorOut)
 
     // A .clap exports `const clap_plugin_entry_t clap_entry`.
     entry = reinterpret_cast<const ::clap_plugin_entry*> (dlsym (handle, "clap_entry"));
+#endif
     if (entry == nullptr)              { errorOut = "no clap_entry symbol";        unload(); return false; }
     if (! clap_version_is_compatible (entry->clap_version))
                                        { errorOut = "incompatible CLAP version";   unload(); return false; }
@@ -155,7 +228,11 @@ void ClapBundle::unload()
     entry = nullptr;
     if (handle != nullptr)
     {
+#if defined(_WIN32)
+        ::FreeLibrary (static_cast<HMODULE> (handle));
+#else
         dlclose (handle);
+#endif
         handle = nullptr;
     }
     bundlePath.clear();

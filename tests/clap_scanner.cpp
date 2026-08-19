@@ -14,13 +14,27 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+
+#if defined(_WIN32)
+#include <process.h>
+#else
 #include <unistd.h>
+#endif
 
 using duskstudio::clap::ClapScanner;
 
 namespace
 {
 namespace stdfs = std::filesystem;
+
+long currentPid() noexcept
+{
+#if defined(_WIN32)
+    return (long) ::_getpid();
+#else
+    return (long) ::getpid();
+#endif
+}
 
 class TempDirectory
 {
@@ -31,7 +45,7 @@ public:
         // steady_clock reads can land on the same tick.
         const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
         value = stdfs::temp_directory_path()
-                / (std::string (prefix) + std::to_string (getpid()) + "_" + std::to_string (unique));
+                / (std::string (prefix) + std::to_string (currentPid()) + "_" + std::to_string (unique));
         std::error_code ec;
         if (! stdfs::create_directories (value, ec) || ec)
             throw std::runtime_error ("could not create test directory: " + ec.message());
@@ -49,6 +63,19 @@ private:
     stdfs::path value;
 };
 
+// setenv/unsetenv are POSIX; MSVC only ships _putenv_s, where an empty value
+// is the removal form. The scanner reads CLAP_PATH through _wgetenv on
+// Windows, and _putenv_s updates the same block _wgetenv sees.
+bool setEnvironment (const std::string& name, const char* value) noexcept
+{
+#if defined(_WIN32)
+    return ::_putenv_s (name.c_str(), value != nullptr ? value : "") == 0;
+#else
+    return value != nullptr ? ::setenv (name.c_str(), value, 1) == 0
+                            : ::unsetenv (name.c_str()) == 0;
+#endif
+}
+
 class ScopedEnvironment
 {
 public:
@@ -57,16 +84,13 @@ public:
     {
         if (const char* current = std::getenv (variable))
             previous = current;
-        if (setenv (name.c_str(), value.c_str(), 1) != 0)
+        if (! setEnvironment (name, value.c_str()))
             throw std::runtime_error ("could not set test environment variable");
     }
 
     ~ScopedEnvironment()
     {
-        if (previous.has_value())
-            setenv (name.c_str(), previous->c_str(), 1);
-        else
-            unsetenv (name.c_str());
+        setEnvironment (name, previous.has_value() ? previous->c_str() : nullptr);
     }
 
 private:
@@ -95,6 +119,8 @@ TEST_CASE ("ClapScanner keeps CLAP_PATH ahead of platform defaults", "[clap][sca
     const auto home = temp.path() / "home";
 #if defined(__APPLE__)
     const auto userDefault = home / "Library/Audio/Plug-Ins/CLAP";
+#elif defined(_WIN32)
+    const auto userDefault = home / "Programs" / "Common" / "CLAP";
 #else
     const auto userDefault = home / ".clap";
 #endif
@@ -105,7 +131,12 @@ TEST_CASE ("ClapScanner keeps CLAP_PATH ahead of platform defaults", "[clap][sca
     REQUIRE (stdfs::create_directories (userDefault, ec));
     REQUIRE_FALSE (ec);
 
+#if defined(_WIN32)
+    // The Windows user default hangs off LOCALAPPDATA, not the profile dir.
+    ScopedEnvironment scopedHome ("LOCALAPPDATA", home.u8string());
+#else
     ScopedEnvironment scopedHome ("HOME", home.u8string());
+#endif
     ScopedEnvironment scopedClapPath ("CLAP_PATH", overridePath.u8string());
     const auto paths = ClapScanner::defaultSearchPaths();
     REQUIRE (paths.size() >= 2);

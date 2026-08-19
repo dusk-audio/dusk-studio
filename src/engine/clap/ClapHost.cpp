@@ -5,7 +5,9 @@
 #include <cstdio>
 #include <cstring>
 
+#if ! defined(_WIN32)
 #include <poll.h>
+#endif
 
 namespace duskstudio::clap
 {
@@ -35,9 +37,11 @@ ClapHost::ClapHost()
     guiExt.request_hide         = &ClapHost::requestHide;
     guiExt.closed               = &ClapHost::guiClosed;
 
+#if ! defined(_WIN32)
     fdExt.register_fd   = &ClapHost::registerFd;
     fdExt.modify_fd     = &ClapHost::modifyFd;
     fdExt.unregister_fd = &ClapHost::unregisterFd;
+#endif
 
     timerExt.register_timer   = &ClapHost::registerTimer;
     timerExt.unregister_timer = &ClapHost::unregisterTimer;
@@ -49,7 +53,9 @@ const void* ClapHost::getExtension (const clap_host_t* h, const char* id) noexce
     if (std::strcmp (id, CLAP_EXT_LOG)               == 0) return &s.logExt;
     if (std::strcmp (id, CLAP_EXT_THREAD_CHECK)      == 0) return &s.threadCheckExt;
     if (std::strcmp (id, CLAP_EXT_GUI)               == 0) return &s.guiExt;
+#if ! defined(_WIN32)
     if (std::strcmp (id, CLAP_EXT_POSIX_FD_SUPPORT)  == 0) return &s.fdExt;
+#endif
     if (std::strcmp (id, CLAP_EXT_TIMER_SUPPORT)     == 0) return &s.timerExt;
     return nullptr;
 }
@@ -95,6 +101,7 @@ void ClapHost::guiClosed (const clap_host_t* h, bool wasDestroyed) noexcept
     if (auto* c = self (h).callbacks.load (std::memory_order_acquire)) c->onGuiClosed (wasDestroyed);
 }
 
+#if ! defined(_WIN32)
 // posix-fd
 bool ClapHost::registerFd (const clap_host_t* h, int fd, clap_posix_fd_flags_t flags) noexcept
 {
@@ -118,6 +125,7 @@ bool ClapHost::unregisterFd (const clap_host_t* h, int fd) noexcept
     v.erase (std::remove_if (v.begin(), v.end(), [fd] (const RegFd& r) { return r.fd == fd; }), v.end());
     return v.size() != n;
 }
+#endif
 
 // timer
 bool ClapHost::registerTimer (const clap_host_t* h, uint32_t periodMs, clap_id* idOut) noexcept
@@ -151,6 +159,7 @@ void ClapHost::pumpGui (double elapsedMs)
         && plugin->on_main_thread != nullptr)
         plugin->on_main_thread (plugin);
 
+#if ! defined(_WIN32)
     if (! fds.empty())
     {
         if (const auto* fdSup = static_cast<const clap_plugin_posix_fd_support_t*> (
@@ -188,6 +197,7 @@ void ClapHost::pumpGui (double elapsedMs)
                 }
         }
     }
+#endif
 
     if (! timers.empty())
     {

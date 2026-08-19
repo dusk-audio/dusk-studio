@@ -48,7 +48,7 @@ public:
     const std::string&              getPath()    const noexcept { return bundlePath; }
 
 private:
-    void* handle = nullptr;                          // dlopen handle
+    void* handle = nullptr;                          // dlopen handle / HMODULE
     const ::clap_plugin_entry*   entry   = nullptr;
     bool  initialised = false;                       // entry->init() succeeded
     const ::clap_plugin_factory* factory = nullptr;
