@@ -171,6 +171,7 @@ private:
             : owner (ownerIn), suppressRepeatedClicks (suppressRepeatedClicksIn)
         {
             setClickingTogglesState (isToggle);
+            setMouseClickGrabsKeyboardFocus (false);
             setMouseCursor (juce::MouseCursor::PointingHandCursor);
             onStateChange = [this] { owner.repaint(); };
         }
