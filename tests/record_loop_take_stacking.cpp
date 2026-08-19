@@ -14,6 +14,29 @@ using namespace duskstudio;
 
 namespace
 {
+void addNoteOn (dusk::MidiBuffer& events, int channel, int note,
+                std::uint8_t velocity, int sample)
+{
+    const std::uint8_t bytes[] {
+        (std::uint8_t) (0x90 | (channel - 1)), (std::uint8_t) note, velocity };
+    events.addEvent (bytes, 3, sample);
+}
+
+void addNoteOff (dusk::MidiBuffer& events, int channel, int note, int sample)
+{
+    const std::uint8_t bytes[] {
+        (std::uint8_t) (0x80 | (channel - 1)), (std::uint8_t) note, 0 };
+    events.addEvent (bytes, 3, sample);
+}
+
+void addController (dusk::MidiBuffer& events, int channel, int controller,
+                    std::uint8_t value, int sample)
+{
+    const std::uint8_t bytes[] {
+        (std::uint8_t) (0xB0 | (channel - 1)), (std::uint8_t) controller, value };
+    events.addEvent (bytes, 3, sample);
+}
+
 struct ScopedDir
 {
     juce::File dir;
@@ -66,7 +89,7 @@ void writeAudioPass (RecordManager& manager,
 void writeMidiPass (RecordManager& manager,
                     int ordinal,
                     std::int64_t timelineStart,
-                    juce::MidiBuffer events,
+                    dusk::MidiBuffer events,
                     int samples = 8)
 {
     const auto span = manager.coordinateLoopCaptureSpan (
@@ -88,11 +111,11 @@ const AudioRegion& loopAudioRegion (const Session& session)
     return *it;
 }
 
-juce::MidiBuffer oneNote (int note, int onSample = 1, int offSample = 6)
+dusk::MidiBuffer oneNote (int note, int onSample = 1, int offSample = 6)
 {
-    juce::MidiBuffer events;
-    events.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 100), onSample);
-    events.addEvent (juce::MidiMessage::noteOff (1, note), offSample);
+    dusk::MidiBuffer events;
+    addNoteOn (events, 1, note, 100, onSample);
+    addNoteOff (events, 1, note, offSample);
     return events;
 }
 } // namespace
@@ -488,11 +511,11 @@ TEST_CASE ("Loop MIDI closes and retriggers a note crossing the seam",
     const auto plan = loopPlan();
     REQUIRE (manager.startRecording (960.0, 100, 0, plan));
 
-    juce::MidiBuffer first;
-    first.addEvent (juce::MidiMessage::noteOn (1, 67, (juce::uint8) 91), 6);
+    dusk::MidiBuffer first;
+    addNoteOn (first, 1, 67, 91, 6);
     writeMidiPass (manager, 1, 100, first, 8);
-    juce::MidiBuffer second;
-    second.addEvent (juce::MidiMessage::noteOff (1, 67), 2);
+    dusk::MidiBuffer second;
+    addNoteOff (second, 1, 67, 2);
     writeMidiPass (manager, 2, 100, second, 8);
     manager.stopRecording (108);
 
@@ -517,11 +540,11 @@ TEST_CASE ("Loop MIDI resets and chases sustain across a seam",
     const auto plan = loopPlan();
     REQUIRE (manager.startRecording (960.0, 100, 0, plan));
 
-    juce::MidiBuffer first;
-    first.addEvent (juce::MidiMessage::controllerEvent (1, 64, 127), 2);
+    dusk::MidiBuffer first;
+    addController (first, 1, 64, 127, 2);
     writeMidiPass (manager, 1, 100, first, 8);
-    juce::MidiBuffer second;
-    second.addEvent (juce::MidiMessage::controllerEvent (1, 64, 0), 3);
+    dusk::MidiBuffer second;
+    addController (second, 1, 64, 0, 3);
     writeMidiPass (manager, 2, 100, second, 8);
     manager.stopRecording (108);
 
@@ -555,13 +578,12 @@ TEST_CASE ("Loop MIDI rejects malformed channel message sizes and data bytes",
     const std::uint8_t invalidNoteData[] = { 0x90, 62, 0x80 };
     const std::uint8_t invalidCcData[] = { 0xB0, 0xFF, 127 };
     const std::uint8_t truncatedNote[] = { 0x90, 64 };
-    juce::MidiBuffer events;
+    dusk::MidiBuffer events;
     events.addEvent (invalidNoteData, 3, 1);
     events.addEvent (invalidCcData, 3, 2);
-    events.addEvent (juce::MidiMessage::noteOn (
-                         1, 64, (juce::uint8) 100), 4);
+    addNoteOn (events, 1, 64, 100, 4);
     events.addEvent (truncatedNote, 2, 5);
-    events.addEvent (juce::MidiMessage::noteOff (1, 64), 6);
+    addNoteOff (events, 1, 64, 6);
     writeMidiPass (manager, 1, 100, std::move (events), 8);
     manager.stopRecording (108);
 
@@ -583,9 +605,9 @@ TEST_CASE ("Loop MIDI overflow retains the newest pass and latches the loss",
     const auto plan = loopPlan (0, capacity);
     REQUIRE (manager.startRecording (960.0, 0, 0, plan));
 
-    juce::MidiBuffer oldPass;
+    dusk::MidiBuffer oldPass;
     for (int sample = 0; sample < capacity; ++sample)
-        oldPass.addEvent (juce::MidiMessage::controllerEvent (1, 1, 1), sample);
+        addController (oldPass, 1, 1, 1, sample);
     writeMidiPass (manager, 1, 0, std::move (oldPass), capacity);
     writeMidiPass (manager, 2, 0, oneNote (72, 0, 2), 4);
     manager.stopRecording (4);
@@ -640,16 +662,13 @@ TEST_CASE ("Loop MIDI accepts original punch callback coordinates",
     REQUIRE (span.numSamples == 3);
     manager.beginLoopCaptureSpan (span);
 
-    juce::MidiBuffer originalCallback;
-    originalCallback.addEvent (juce::MidiMessage::noteOn (
-                                   1, 50, (juce::uint8) 100), 1);
-    originalCallback.addEvent (juce::MidiMessage::noteOff (1, 50), 3);
-    originalCallback.addEvent (juce::MidiMessage::noteOn (
-                                   1, 60, (juce::uint8) 100), 5);
-    originalCallback.addEvent (juce::MidiMessage::noteOff (1, 60), 7);
-    originalCallback.addEvent (juce::MidiMessage::noteOn (
-                                   1, 70, (juce::uint8) 100), 8);
-    originalCallback.addEvent (juce::MidiMessage::noteOff (1, 70), 10);
+    dusk::MidiBuffer originalCallback;
+    addNoteOn (originalCallback, 1, 50, 100, 1);
+    addNoteOff (originalCallback, 1, 50, 3);
+    addNoteOn (originalCallback, 1, 60, 100, 5);
+    addNoteOff (originalCallback, 1, 60, 7);
+    addNoteOn (originalCallback, 1, 70, 100, 8);
+    addNoteOff (originalCallback, 1, 70, 10);
     manager.writeMidiBlock (0, originalCallback, 0);
     manager.stopRecording (108);
 
@@ -677,13 +696,11 @@ TEST_CASE ("Loop MIDI splits one original callback across a seam without rereadi
     REQUIRE (span.numSamples == 6);
     manager.beginLoopCaptureSpan (span);
 
-    juce::MidiBuffer originalCallback;
-    originalCallback.addEvent (juce::MidiMessage::noteOn (
-                                   1, 60, (juce::uint8) 100), 0);
-    originalCallback.addEvent (juce::MidiMessage::noteOff (1, 60), 1);
-    originalCallback.addEvent (juce::MidiMessage::noteOn (
-                                   1, 64, (juce::uint8) 100), 4);
-    originalCallback.addEvent (juce::MidiMessage::noteOff (1, 64), 5);
+    dusk::MidiBuffer originalCallback;
+    addNoteOn (originalCallback, 1, 60, 100, 0);
+    addNoteOff (originalCallback, 1, 60, 1);
+    addNoteOn (originalCallback, 1, 64, 100, 4);
+    addNoteOff (originalCallback, 1, 64, 5);
 
     span = manager.coordinateLoopCaptureSpan (1, 106, 0, 6);
     REQUIRE (span.inputOffset == 0);

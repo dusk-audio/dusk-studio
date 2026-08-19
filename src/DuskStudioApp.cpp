@@ -530,6 +530,14 @@ static void runHeadlessToneTest()
 //
 // Usage:
 //   DUSKSTUDIO_INSTRUMENT_TEST=/home/marc/.vst3/u-he/Diva.vst3 ./Dusk Studio
+static void copyDuskMidiToJuce (const dusk::MidiBuffer& source,
+                                juce::MidiBuffer& destination)
+{
+    destination.clear();
+    for (const auto meta : source)
+        destination.addEvent (meta.data, meta.numBytes, meta.samplePosition);
+}
+
 static bool runHeadlessInstrumentTest (const juce::String& pluginPath)
 {
     constexpr double sampleRate = 48000.0;
@@ -553,7 +561,6 @@ static bool runHeadlessInstrumentTest (const juce::String& pluginPath)
     bool isSoundfont = false;
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     NativeMultisampleSlot msSlot;
-    dusk::MidiBuffer duskMidi;
     isSoundfont = MultisampleBundle::isSoundfontExtension (
         std::filesystem::u8path (pluginPath.toStdString()));
     if (isSoundfont)
@@ -580,6 +587,8 @@ static bool runHeadlessInstrumentTest (const juce::String& pluginPath)
     constexpr int kChordNotes[] = { 60, 64, 67 };
 
     std::vector<float> L ((size_t) blockSize), R ((size_t) blockSize);
+    juce::MidiBuffer hostMidi;
+    hostMidi.ensureSize (dusk::kMidiBlockBytes);
     float peak = 0.0f;
     double rms  = 0.0;
     long long counted = 0;
@@ -589,25 +598,31 @@ static bool runHeadlessInstrumentTest (const juce::String& pluginPath)
         std::fill (L.begin(), L.end(), 0.0f);
         std::fill (R.begin(), R.end(), 0.0f);
 
-        juce::MidiBuffer midi;
+        dusk::MidiBuffer midi;
         if (b == 0)
             for (int n : kChordNotes)
-                midi.addEvent (juce::MidiMessage::noteOn (1, n, (std::uint8_t) 100), 0);
+            {
+                const std::array<std::uint8_t, 3> bytes { 0x90, (std::uint8_t) n, 100 };
+                midi.addEvent (bytes.data(), (int) bytes.size(), 0);
+            }
         if (b == chordHoldBlocks)
             for (int n : kChordNotes)
-                midi.addEvent (juce::MidiMessage::noteOff (1, n), 0);
+            {
+                const std::array<std::uint8_t, 3> bytes { 0x80, (std::uint8_t) n, 0 };
+                midi.addEvent (bytes.data(), (int) bytes.size(), 0);
+            }
 
 #if DUSKSTUDIO_HAS_MULTISAMPLE
         if (isSoundfont)
         {
-            duskMidi.clear();
-            for (const auto meta : midi)
-                duskMidi.addEvent (meta.data, meta.numBytes, meta.samplePosition);
-            msSlot.processStereo (L.data(), R.data(), L.data(), R.data(), blockSize, &duskMidi);
+            msSlot.processStereo (L.data(), R.data(), L.data(), R.data(), blockSize, &midi);
         }
         else
 #endif
-        slot.processStereoBlock (L.data(), R.data(), blockSize, midi);
+        {
+            copyDuskMidiToJuce (midi, hostMidi);
+            slot.processStereoBlock (L.data(), R.data(), blockSize, hostMidi);
+        }
 
         for (int s = 0; s < blockSize; ++s)
         {
@@ -953,13 +968,19 @@ static bool runHeadlessPipelineTest (const juce::String& pluginPath)
         // Stage MIDI for this block: chord on at b==0, off at chordHoldBlocks.
         if (midiInputIdx >= 0)
         {
-            juce::MidiBuffer midi;
+            dusk::MidiBuffer midi;
             if (b == 0)
                 for (int n : kChordNotes)
-                    midi.addEvent (juce::MidiMessage::noteOn (1, n, (std::uint8_t) 100), 0);
+                {
+                    const std::array<std::uint8_t, 3> bytes { 0x90, (std::uint8_t) n, 100 };
+                    midi.addEvent (bytes.data(), (int) bytes.size(), 0);
+                }
             if (b == chordHoldBlocks)
                 for (int n : kChordNotes)
-                    midi.addEvent (juce::MidiMessage::noteOff (1, n), 0);
+                {
+                    const std::array<std::uint8_t, 3> bytes { 0x80, (std::uint8_t) n, 0 };
+                    midi.addEvent (bytes.data(), (int) bytes.size(), 0);
+                }
             if (! midi.isEmpty())
                 engine->stageTestMidiInjection (midiInputIdx, std::move (midi));
         }
@@ -1054,9 +1075,12 @@ static bool runHeadlessPipelineTest (const juce::String& pluginPath)
             {
                 if (b == 0 && midiInputIdx >= 0)
                 {
-                    juce::MidiBuffer midi;
+                    dusk::MidiBuffer midi;
                     for (int n : kChordNotes)
-                        midi.addEvent (juce::MidiMessage::noteOn (1, n, (std::uint8_t) 100), 0);
+                    {
+                        const std::array<std::uint8_t, 3> bytes { 0x90, (std::uint8_t) n, 100 };
+                        midi.addEvent (bytes.data(), (int) bytes.size(), 0);
+                    }
                     engine->stageTestMidiInjection (midiInputIdx, std::move (midi));
                 }
                 for (auto& o : outs) std::fill (o.begin(), o.end(), 0.0f);
@@ -1065,9 +1089,12 @@ static bool runHeadlessPipelineTest (const juce::String& pluginPath)
             }
             if (midiInputIdx >= 0)
             {
-                juce::MidiBuffer midi;
+                dusk::MidiBuffer midi;
                 for (int n : kChordNotes)
-                    midi.addEvent (juce::MidiMessage::noteOff (1, n), 0);
+                {
+                    const std::array<std::uint8_t, 3> bytes { 0x80, (std::uint8_t) n, 0 };
+                    midi.addEvent (bytes.data(), (int) bytes.size(), 0);
+                }
                 engine->stageTestMidiInjection (midiInputIdx, std::move (midi));
                 for (auto& o : outs) std::fill (o.begin(), o.end(), 0.0f);
                 engine->audioDeviceIOCallback (inP.data(), numInChannels,
