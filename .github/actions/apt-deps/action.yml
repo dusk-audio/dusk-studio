@@ -1,10 +1,13 @@
 name: Install apt packages
 description: >
-  apt-get update + install with the Azure apt mirror bypassed, bounded
-  fetch timeouts, and a retry loop. azure.archive.ubuntu.com serves the
-  hosted runners and a sick mirror node stalls a job for hours; talking
-  to archive.ubuntu.com directly and capping every fetch turns that into
-  a fast, retried failure instead.
+  Hardened apt-get update + install: timeout(1) around every apt
+  invocation (Acquire timeouts alone cannot stop a byte-dribbling mirror,
+  which is how a "retried" install still sat stuck for 70+ minutes),
+  three attempts, and an automatic mirror switch after the first failure.
+  x86 runners flip azure.archive.ubuntu.com <-> archive.ubuntu.com; arm64
+  runners are normalized onto mirrors.mit.edu with ports.ubuntu.com as
+  the fallback, with IPv4 forced. Logic lives in apt_install.sh next to
+  this file.
 inputs:
   packages:
     description: Space-separated apt package list
@@ -12,23 +15,15 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: apt-get with mirror bypass and retries
+    - name: apt-get with timeouts, retries, and mirror switching
       shell: bash
+      # The list reaches the shell through the environment, not through
+      # expression interpolation: a value spliced into the run body becomes
+      # shell syntax, so a metacharacter in it would execute. Word splitting
+      # on the unquoted expansion is what turns the list into arguments, and
+      # set -f keeps a package name from globbing against the workspace.
+      env:
+        PACKAGES: ${{ inputs.packages }}
       run: |
-        sudo find /etc/apt/ -type f \( -name "*.list" -o -name "*.sources" \) \
-          -exec sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' {} +
-        printf '%s\n' \
-          'Acquire::Retries "3";' \
-          'Acquire::http::Timeout "30";' \
-          'Acquire::https::Timeout "30";' \
-          | sudo tee /etc/apt/apt.conf.d/99dusk-ci >/dev/null
-        for i in 1 2 3; do
-          if sudo apt-get update && \
-             sudo apt-get install -y --no-install-recommends ${{ inputs.packages }}; then
-            exit 0
-          fi
-          echo "apt attempt $i failed; retrying in 20s"
-          sleep 20
-        done
-        echo "apt failed after 3 attempts"
-        exit 1
+        set -f
+        "${GITHUB_ACTION_PATH}/apt_install.sh" $PACKAGES
