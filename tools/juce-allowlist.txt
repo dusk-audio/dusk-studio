@@ -1,11 +1,11 @@
-src/DuskStudioApp.cpp	129
+src/DuskStudioApp.cpp	125
 src/DuskStudioApp.h	7
 src/dsp/AuxLaneStrip.cpp	17
 src/dsp/AuxLaneStrip.h	23
-src/dsp/ChannelStrip.cpp	34
+src/dsp/ChannelStrip.cpp	22
 src/dsp/ChannelStrip.h	32
 src/dsp/MasteringChain.h	5
-src/engine/AudioEngine.cpp	140
+src/engine/AudioEngine.cpp	96
 src/engine/AudioEngine.h	18
 src/engine/AudioPipelineSelfTest.cpp	23
 src/engine/BounceEngine.cpp	44

@@ -187,6 +187,7 @@ target_link_libraries(dusk-studio-tests PRIVATE dusk-pffft)
 target_sources(dusk-studio-tests PRIVATE
     foundation_text.cpp
     foundation_text_format.cpp
+    foundation_vector_ops.cpp
     foundation_fs.cpp
     foundation_special_locations.cpp
     foundation_json.cpp
