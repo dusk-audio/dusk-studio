@@ -4,13 +4,11 @@ src/dsp/AuxLaneStrip.cpp	17
 src/dsp/AuxLaneStrip.h	23
 src/dsp/ChannelStrip.cpp	34
 src/dsp/ChannelStrip.h	32
-src/dsp/MasterBus.cpp	3
-src/dsp/MasterBus.h	7
 src/dsp/MasteringChain.h	5
 src/engine/AudioEngine.cpp	140
 src/engine/AudioEngine.h	18
 src/engine/AudioPipelineSelfTest.cpp	23
-src/engine/BounceEngine.cpp	47
+src/engine/BounceEngine.cpp	44
 src/engine/BounceEngine.h	18
 src/engine/DpAligner.cpp	5
 src/engine/DpAligner.h	3
