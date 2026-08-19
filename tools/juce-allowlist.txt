@@ -25,9 +25,9 @@ src/engine/PlaybackEngine.h	4
 src/engine/PluginManager.cpp	112
 src/engine/PluginManager.h	29
 src/engine/PluginSlot.cpp	73
-src/engine/PluginSlot.h	42
+src/engine/PluginSlot.h	40
 src/engine/RecordManager.cpp	3
-src/engine/RecordManager.h	4
+src/engine/RecordManager.h	3
 src/engine/device/DeviceManager.h	3
 src/engine/device/DeviceManagerJuce.cpp	44
 src/engine/hosting/NativePluginId.h	8

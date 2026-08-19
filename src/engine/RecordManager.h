@@ -6,6 +6,7 @@
 #include <atomic>
 #include <memory>
 #include "../foundation/MidiBuffer.h"
+#include "../foundation/SpscIndexFifo.h"
 #include "../session/Session.h"
 #include "audiofile/ThreadedFileWriter.h"
 #include "audiofile/WriterDrainPool.h"
@@ -195,11 +196,11 @@ private:
             std::uint8_t data2 = 0;
             int passOrdinal = 0;
         };
-        // AbstractFifo keeps one sentinel slot, so 65,537 registered slots
+        // SpscIndexFifo keeps one sentinel slot, so 65,537 registered slots
         // provide a bounded usable capacity of 65,536 events.
         static constexpr int kCapacity = 65536 + 1;
         std::vector<RawEvent>  events;
-        juce::AbstractFifo     fifo { kCapacity };
+        dusk::SpscIndexFifo    fifo { kCapacity };
         std::atomic<std::uint64_t> overflowCount { 0 };
         PerTrackMidi() : events ((size_t) kCapacity) {}
     };

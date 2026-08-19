@@ -49,3 +49,4 @@ deadlock:juce::TimeSliceThread
 # and TSan's happens-before model doesn't recognise the algorithmic
 # guarantee. Suppress + rely on the IPC self-test for correctness.
 race:juce::AbstractFifo
+race:dusk::SpscIndexFifo
