@@ -5,6 +5,7 @@
 
 #include "PluginDescriptor.h"
 #include "../foundation/MessageThread.h"
+#include "../foundation/SpscIndexFifo.h"
 
 #if DUSKSTUDIO_HAS_OOP_PLUGINS
  #include "ipc/RemotePluginConnection.h"
@@ -411,8 +412,7 @@ private:
 
     // SPSC param-write queue. Producer = audio thread (setParamNormalised);
     // Consumer = message thread (timerCallback). Pre-sized at construction
-    // so no audio-thread allocation. Capacity must be a power of two for
-    // juce::AbstractFifo's bitwise wrap, AND comfortably above the burst
+    // so no audio-thread allocation. The capacity is comfortably above the burst
     // size a user can generate by dragging a knob inside a single 30 Hz
     // drain interval (33 ms × 100 Hz controller stream ≈ 3 events; 256
     // gives ~85× headroom for chord-strike-plus-drag scenarios).
@@ -429,7 +429,7 @@ private:
         std::uint32_t loadEpoch  = 0;
     };
     static constexpr int kParamFifoCapacity = 256;
-    juce::AbstractFifo                       paramFifo { kParamFifoCapacity };
+    dusk::SpscIndexFifo                      paramFifo { kParamFifoCapacity };
     std::array<ParamWrite, kParamFifoCapacity> paramQueue {};
 
     // Bumped on every load / unload / restore. Audio thread reads it

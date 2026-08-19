@@ -189,6 +189,7 @@ target_sources(dusk-studio-tests PRIVATE
     foundation_json.cpp
     foundation_audio_math.cpp
     foundation_int_delay_line.cpp
+    foundation_spsc_index_fifo.cpp
     foundation_midi_buffer.cpp
     midi_ring.cpp
     midi_collector.cpp
