@@ -16,6 +16,7 @@
 #include "../dsp/MasteringChain.h"
 #include "../dsp/Metronome.h"
 #include "../dsp/PitchDetector.h"
+#include "../foundation/IntDelayLine.h"
 #include "../foundation/MessageThread.h"
 #include "MidiSyncReceiver.h"
 #include "MidiTimeCodeReceiver.h"
@@ -645,9 +646,9 @@ private:
     // recomputePdc; the audio thread relatches ONLY while the transport is
     // stopped - the master path is rarely silent, and a mid-roll retarget
     // would click. Zero targets skip the delay processing entirely.
-    using MasterPdcDelay = juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None>;
-    MasterPdcDelay masterDryPdcL { ChannelStrip::kMaxPdcSamples };
-    MasterPdcDelay masterDryPdcR { ChannelStrip::kMaxPdcSamples };
+    using MasterPdcDelay = dusk::audio::IntDelayLine;
+    MasterPdcDelay masterDryPdcL;
+    MasterPdcDelay masterDryPdcR;
     std::array<MasterPdcDelay, Session::kNumAuxLanes> auxReturnPdcL;
     std::array<MasterPdcDelay, Session::kNumAuxLanes> auxReturnPdcR;
     std::atomic<int> masterDryPdcTarget { 0 };

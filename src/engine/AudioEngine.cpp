@@ -1022,16 +1022,16 @@ void AudioEngine::applyMasterPdcTargetsNow() noexcept
     masterDryPdcApplied = masterDryPdcTarget.load (std::memory_order_relaxed);
     masterDryPdcL.reset();
     masterDryPdcR.reset();
-    masterDryPdcL.setDelay ((float) masterDryPdcApplied);
-    masterDryPdcR.setDelay ((float) masterDryPdcApplied);
+    masterDryPdcL.setDelay (masterDryPdcApplied);
+    masterDryPdcR.setDelay (masterDryPdcApplied);
     for (int a = 0; a < Session::kNumAuxLanes; ++a)
     {
         const int t = auxReturnPdcTarget[(size_t) a].load (std::memory_order_relaxed);
         auxReturnPdcApplied[(size_t) a] = t;
         auxReturnPdcL[(size_t) a].reset();
         auxReturnPdcR[(size_t) a].reset();
-        auxReturnPdcL[(size_t) a].setDelay ((float) t);
-        auxReturnPdcR[(size_t) a].setDelay ((float) t);
+        auxReturnPdcL[(size_t) a].setDelay (t);
+        auxReturnPdcR[(size_t) a].setDelay (t);
     }
 }
 
@@ -2711,7 +2711,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
 
     // Read the global oversampling factor once per prepare and propagate it to
     // every strip/bus/master that wraps EQ+Comp in a Dusk Studio-side
-    // oversampler (each rebuilds its juce::dsp::Oversampling at this factor in
+    // oversampler (each rebuilds its JUCE dsp::Oversampling at this factor in
     // prepare). Aux lanes host plugin chains only (no Dusk EQ/Comp), so they
     // don't take the factor. The cost only materialises when a strip is
     // actually processing audio - silent / skipped strips dodge the chain.
@@ -2756,10 +2756,8 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     masteringPlayer.prepare (bs, sr);
 
     {
-        const juce::dsp::ProcessSpec monoSpec { sr, (std::uint32_t) bs, 1 };
-        auto prepPdc = [&monoSpec] (MasterPdcDelay& d)
+        auto prepPdc = [] (MasterPdcDelay& d)
         {
-            d.prepare (monoSpec);
             d.setMaximumDelayInSamples (ChannelStrip::kMaxPdcSamples);
             d.reset();
         };
@@ -2772,12 +2770,12 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
         }
         masterDryPdcApplied = 0;
         auxReturnPdcApplied.fill (0);
-        masterDryPdcL.setDelay (0.0f);
-        masterDryPdcR.setDelay (0.0f);
+        masterDryPdcL.setDelay (0);
+        masterDryPdcR.setDelay (0);
         for (int a = 0; a < Session::kNumAuxLanes; ++a)
         {
-            auxReturnPdcL[(size_t) a].setDelay (0.0f);
-            auxReturnPdcR[(size_t) a].setDelay (0.0f);
+            auxReturnPdcL[(size_t) a].setDelay (0);
+            auxReturnPdcR[(size_t) a].setDelay (0);
         }
     }
     metronome.prepare (sr);
@@ -5533,8 +5531,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 masterDryPdcApplied = dryTarget;
                 masterDryPdcL.reset();
                 masterDryPdcR.reset();
-                masterDryPdcL.setDelay ((float) dryTarget);
-                masterDryPdcR.setDelay ((float) dryTarget);
+                masterDryPdcL.setDelay (dryTarget);
+                masterDryPdcR.setDelay (dryTarget);
             }
             for (int a = 0; a < Session::kNumAuxLanes; ++a)
             {
@@ -5544,8 +5542,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     auxReturnPdcApplied[(size_t) a] = t;
                     auxReturnPdcL[(size_t) a].reset();
                     auxReturnPdcR[(size_t) a].reset();
-                    auxReturnPdcL[(size_t) a].setDelay ((float) t);
-                    auxReturnPdcR[(size_t) a].setDelay ((float) t);
+                    auxReturnPdcL[(size_t) a].setDelay (t);
+                    auxReturnPdcR[(size_t) a].setDelay (t);
                 }
             }
         }
@@ -5555,10 +5553,10 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             auto* mR = mixR.data();
             for (int i = 0; i < numSamples; ++i)
             {
-                masterDryPdcL.pushSample (0, mL[i]);
-                masterDryPdcR.pushSample (0, mR[i]);
-                mL[i] = masterDryPdcL.popSample (0);
-                mR[i] = masterDryPdcR.popSample (0);
+                masterDryPdcL.pushSample (mL[i]);
+                masterDryPdcR.pushSample (mR[i]);
+                mL[i] = masterDryPdcL.popSample();
+                mR[i] = masterDryPdcR.popSample();
             }
         }
     }
@@ -5692,10 +5690,10 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             auto& dR = auxReturnPdcR[(size_t) a];
             for (int i = 0; i < numSamples; ++i)
             {
-                dL.pushSample (0, wL[i]);
-                dR.pushSample (0, wR[i]);
-                wL[i] = dL.popSample (0);
-                wR[i] = dR.popSample (0);
+                dL.pushSample (wL[i]);
+                dR.pushSample (wR[i]);
+                wL[i] = dL.popSample();
+                wR[i] = dR.popSample();
             }
         }
         auto* capAuxL = stemAuxCapL[(size_t) a].load (std::memory_order_acquire);
