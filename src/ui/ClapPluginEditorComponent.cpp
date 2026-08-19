@@ -127,6 +127,13 @@ void ClapPluginEditorComponent::tryEmbed()
     auto* parent = peerNativeHandle();
     if (parent == nullptr) return;
 
+#if defined(_WIN32)
+    // The container HWND is sized in physical pixels via embedscale, so the GUI
+    // must be told the same combined factor (platform DPI x app UI zoom) before
+    // it parents itself and reports a size.
+    editor.setContentScale (embedscale::factor (*this));
+#endif
+
     const auto area = editorBoundsInPeer();
     std::string err;
     embedding = true;

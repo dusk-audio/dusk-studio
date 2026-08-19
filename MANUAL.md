@@ -1500,7 +1500,7 @@ Dusk Studio scans and hosts:
 - **AU** on macOS only, through Dusk Studio's native Audio Unit host — effects and instruments.
 - **Native multi-sampler** (`.sfz`, `.sf2`, and ARIA `.bank.xml` files via the built-in sfizz engine — SF2 is converted to SFZ on load, while a bank manifest opens its first program) on all platforms.
 
-There is no VST2 support. See *Native plugin hosting (Linux and macOS)* below for what the native hosts change.
+There is no VST2 support. See *Native plugin hosting (Linux, macOS, and Windows)* below for what the native hosts change.
 
 ## Scanning
 
@@ -1542,7 +1542,7 @@ Click the loaded plugin's slot to open its editor. The editor appears as a centr
 
 This holds on all platforms, including the macOS out-of-process sandbox. Rather than reparenting the sandbox child's native window into the main window (cross-process NSView embedding, which Dusk Studio deliberately does not use), macOS hosts the editor **in-process** against a lightweight "shell" instance of the plugin while the plugin's DSP keeps running in the sandbox child; knob moves are mirrored between the shell editor and the running child in both directions. If the plugin cannot be instantiated in-process for editing (its file has moved, or it refuses a second instance), the editor falls back to a floating window owned by the sandbox child — that fallback window is not dimmed by other modals and is closed from its own controls.
 
-## Native plugin hosting (Linux and macOS)
+## Native plugin hosting (Linux, macOS, and Windows)
 
 CLAP and VST3 plugins — effects and instruments — are hosted by Dusk Studio's own plugin hosts on Linux, macOS, and Windows; LV2 is on Linux and macOS. Audio Units use the native host on macOS too. The native hosts own the format lifecycle and editor embedding directly; on Linux this also sidesteps the standard layer's UI breakage on Wayland desktops.
 

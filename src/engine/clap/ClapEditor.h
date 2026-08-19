@@ -35,6 +35,22 @@ public:
     bool embed (void* parentHandle, int x, int y, int w, int h, std::string& errorOut);
 
     void setBounds (int x, int y, int w, int h);
+
+    // Tell the GUI the host's logical->physical factor. A HiDPI-aware plugin
+    // reports its size in physical pixels only once it knows the scale, so the
+    // cached preferred size is re-read when it takes. CLAP fixes the macOS
+    // scale at 1, so only the Win32 embed calls this.
+    void setContentScale (double scale) noexcept
+    {
+        if (! created || plugin == nullptr || gui == nullptr) return;
+        if (gui->set_scale == nullptr || scale <= 0.0) return;
+        if (! gui->set_scale (plugin, scale)) return;
+
+        uint32_t w = 0, h = 0;
+        if (gui->get_size != nullptr && gui->get_size (plugin, &w, &h) && w > 0 && h > 0)
+        { prefW = (int) w; prefH = (int) h; }
+    }
+
     void reveal();
     void hide();
 
