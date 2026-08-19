@@ -119,6 +119,8 @@ TEST_CASE ("ClapScanner keeps CLAP_PATH ahead of platform defaults", "[clap][sca
     const auto home = temp.path() / "home";
 #if defined(__APPLE__)
     const auto userDefault = home / "Library/Audio/Plug-Ins/CLAP";
+#elif defined(_WIN32)
+    const auto userDefault = home / "Programs" / "Common" / "CLAP";
 #else
     const auto userDefault = home / ".clap";
 #endif
@@ -129,7 +131,12 @@ TEST_CASE ("ClapScanner keeps CLAP_PATH ahead of platform defaults", "[clap][sca
     REQUIRE (stdfs::create_directories (userDefault, ec));
     REQUIRE_FALSE (ec);
 
+#if defined(_WIN32)
+    // The Windows user default hangs off LOCALAPPDATA, not the profile dir.
+    ScopedEnvironment scopedHome ("LOCALAPPDATA", home.u8string());
+#else
     ScopedEnvironment scopedHome ("HOME", home.u8string());
+#endif
     ScopedEnvironment scopedClapPath ("CLAP_PATH", overridePath.u8string());
     const auto paths = ClapScanner::defaultSearchPaths();
     REQUIRE (paths.size() >= 2);

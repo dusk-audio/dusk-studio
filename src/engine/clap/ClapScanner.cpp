@@ -48,11 +48,12 @@ std::vector<stdfs::path> ClapScanner::defaultSearchPaths()
     add (dusk::fs::userHomeDir() / "Library/Audio/Plug-Ins/CLAP");
     add ("/Library/Audio/Plug-Ins/CLAP");
 #elif defined(_WIN32)
-    // CLAP's documented Windows install dirs (clap/entry.h).
-    if (const wchar_t* common = ::_wgetenv (L"COMMONPROGRAMFILES"))
-        add (stdfs::path (common) / L"CLAP");
+    // CLAP's documented Windows install dirs (clap/entry.h), user-scoped first
+    // to match every other platform's ordering.
     if (const wchar_t* local = ::_wgetenv (L"LOCALAPPDATA"))
         add (stdfs::path (local) / L"Programs" / L"Common" / L"CLAP");
+    if (const wchar_t* common = ::_wgetenv (L"COMMONPROGRAMFILES"))
+        add (stdfs::path (common) / L"CLAP");
 #else
     add (dusk::fs::userHomeDir() / ".clap");
     add ("/usr/lib/clap");

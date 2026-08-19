@@ -105,6 +105,8 @@ TEST_CASE ("Vst3Scanner keeps VST3_PATH ahead of platform defaults", "[vst3][sca
     const auto home = temp.path() / "home";
 #if defined(__APPLE__)
     const auto userDefault = home / "Library/Audio/Plug-Ins/VST3";
+#elif defined(_WIN32)
+    const auto userDefault = home / "Programs" / "Common" / "VST3";
 #else
     const auto userDefault = home / ".vst3";
 #endif
@@ -116,7 +118,8 @@ TEST_CASE ("Vst3Scanner keeps VST3_PATH ahead of platform defaults", "[vst3][sca
     REQUIRE_FALSE (ec);
 
 #if defined(_WIN32)
-    ScopedEnvironment scopedHome ("USERPROFILE", home.u8string());
+    // The Windows user default hangs off LOCALAPPDATA, not the profile dir.
+    ScopedEnvironment scopedHome ("LOCALAPPDATA", home.u8string());
 #else
     ScopedEnvironment scopedHome ("HOME", home.u8string());
 #endif
