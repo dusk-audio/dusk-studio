@@ -33,6 +33,50 @@ constexpr std::int64_t kMinLoopRecordSamples = 128;
 
 using dusk::audio::findSignedMinMax;
 
+static void copyDuskMidiToJuce (const dusk::MidiBuffer& source,
+                                juce::MidiBuffer& destination) noexcept
+{
+    destination.clear();
+    for (const auto meta : source)
+        destination.addEvent (meta.data, meta.numBytes, meta.samplePosition);
+}
+
+static void copyDuskMidiSorted (const dusk::MidiBuffer& source,
+                                dusk::MidiBuffer& destination) noexcept
+{
+    destination.clear();
+    bool havePreviousPosition = false;
+    int previousPosition = 0;
+    for (;;)
+    {
+        bool found = false;
+        int nextPosition = 0;
+        for (const auto meta : source)
+        {
+            if ((! havePreviousPosition || meta.samplePosition > previousPosition)
+                && (! found || meta.samplePosition < nextPosition))
+            {
+                nextPosition = meta.samplePosition;
+                found = true;
+            }
+        }
+        if (! found) break;
+        for (const auto meta : source)
+        {
+            if (meta.samplePosition != nextPosition) continue;
+            if (destination.addEvent (meta.data, meta.numBytes, meta.samplePosition))
+                continue;
+            if (destination.fitsWhenEmpty (meta.numBytes))
+            {
+                destination.clear();
+                return;
+            }
+        }
+        previousPosition = nextPosition;
+        havePreviousPosition = true;
+    }
+}
+
 // Log-span of the HPF sweep band, precomputed once. The MIDI-CC HPF map runs
 // on the audio thread per controller event; without this it would recompute
 // std::log(max/min) on every CC message.
@@ -2582,14 +2626,6 @@ void AudioEngine::audioDeviceAboutToStart (device::IODevice* device)
                          device->getCurrentBufferSizeSamples());
 }
 
-void AudioEngine::stageTestMidiInjection (int inputIdx, juce::MidiBuffer events)
-{
-    dusk::MidiBuffer nativeEvents;
-    for (const auto meta : events)
-        nativeEvents.addEvent (meta.data, meta.numBytes, meta.samplePosition);
-    stageTestMidiInjection (inputIdx, std::move (nativeEvents));
-}
-
 void AudioEngine::stageTestMidiInjection (int inputIdx, dusk::MidiBuffer events)
 {
     // SPSC: wait for any previously staged buffer to be consumed before we
@@ -2759,8 +2795,9 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     // Live input, scheduled events, and loop-seam reset/chase messages share
     // this routing buffer. Four input-block ceilings cover two live sources
     // plus the worst 8192-frame/128-sample seam-reset burst off the RT path.
+    for (auto& m : perTrackMidi)        m.reserveBytes (4 * dusk::kMidiBlockBytes);
     for (auto& m : perTrackMidiScratch) m.ensureSize (4 * dusk::kMidiBlockBytes);
-    liveRecordMidiScratch.ensureSize (2 * dusk::kMidiBlockBytes);
+    liveRecordMidiScratch.reserveBytes (2 * dusk::kMidiBlockBytes);
     midiClockOutScratch.reserveBytes (dusk::kMidiBlockBytes);
     midiOutTrackScratch.reserveBytes (dusk::kMidiBlockBytes);
     silentInputScratch.assign ((size_t) bs, 0.0f);
@@ -3020,6 +3057,7 @@ void AudioEngine::accumulateStrip (int t, float* mL, float* mR,
                                    int numSamples) noexcept
 {
     const auto& job = trackJobs[(size_t) t];
+    copyDuskMidiToJuce (perTrackMidi[(size_t) t], perTrackMidiScratch[(size_t) t]);
     strips[(size_t) t].processAndAccumulate (job.monoIn, job.monoInR,
                                              perTrackMidiScratch[(size_t) t], job.isMidi,
                                              mL, mR, bL, bR, aL, aR,
@@ -3472,20 +3510,22 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         if (buf.isEmpty()) continue;
         for (const auto meta : buf)
         {
-            // Bridge the dusk event to juce for its message-parsing API (same
-            // per-event cost as the pre-flip juce buffer's getMessage()).
             const auto& v = meta.getMessage();
-            const juce::MidiMessage m (v.getRawData(), v.getRawDataSize());
-            if (m.isNoteOn() && m.getVelocity() > 0)
+            const auto* raw = v.getRawData();
+            const int size = v.getRawDataSize();
+            if (raw == nullptr || size < 3) continue;
+            const auto type = (std::uint8_t) (raw[0] & 0xF0);
+            const int n = (int) raw[1];
+            const bool noteOn = type == 0x90 && raw[2] > 0;
+            const bool noteOff = type == 0x80 || (type == 0x90 && raw[2] == 0);
+            if (noteOn)
             {
-                const int n = m.getNoteNumber();
                 if (n >= 0 && n < Session::kNumMidiNotes)
                     session.heldMidiNotes[(size_t) n].store (true,
                                                                 std::memory_order_relaxed);
             }
-            else if (m.isNoteOff() || (m.isNoteOn() && m.getVelocity() == 0))
+            else if (noteOff)
             {
-                const int n = m.getNoteNumber();
                 if (n >= 0 && n < Session::kNumMidiNotes)
                     session.heldMidiNotes[(size_t) n].store (false,
                                                                 std::memory_order_relaxed);
@@ -3517,15 +3557,38 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             for (const auto meta : buf)
             {
                 const auto& v = meta.getMessage();
-                const juce::MidiMessage m (v.getRawData(), v.getRawDataSize());
-                MidiBindingTrigger tg;
+                const auto* raw = v.getRawData();
+                const int size = v.getRawDataSize();
+                MidiBindingTrigger tg = MidiBindingTrigger::CC;
                 int dn = 0, val = 0;
-                if      (m.isController())                    { tg = MidiBindingTrigger::CC;         dn = m.getControllerNumber(); val = m.getControllerValue(); }
-                else if (m.isNoteOn() && m.getVelocity() > 0) { tg = MidiBindingTrigger::Note;       dn = m.getNoteNumber();       val = m.getVelocity(); }
-                else if (m.isPitchWheel())                    { tg = MidiBindingTrigger::PitchBend;  dn = 0;                       val = m.getPitchWheelValue(); }
-                else if (m.isMidiMachineControlMessage())     { tg = MidiBindingTrigger::MmcCommand; dn = (int) m.getMidiMachineControlCommand(); val = 127; }
+                if (raw == nullptr || size < 1) continue;
+                const auto type = (std::uint8_t) (raw[0] & 0xF0);
+                if (type == 0xB0 && size >= 3)
+                {
+                    tg = MidiBindingTrigger::CC;
+                    dn = raw[1];
+                    val = raw[2];
+                }
+                else if (type == 0x90 && size >= 3 && raw[2] > 0)
+                {
+                    tg = MidiBindingTrigger::Note;
+                    dn = raw[1];
+                    val = raw[2];
+                }
+                else if (type == 0xE0 && size >= 3)
+                {
+                    tg = MidiBindingTrigger::PitchBend;
+                    val = (int) raw[1] | ((int) raw[2] << 7);
+                }
+                else if (size >= 6 && raw[0] == 0xF0 && raw[1] == 0x7F
+                         && raw[3] == 0x06 && raw[5] == 0xF7)
+                {
+                    tg = MidiBindingTrigger::MmcCommand;
+                    dn = raw[4];
+                    val = 127;
+                }
                 else continue;
-                const int ch = m.getChannel();
+                const int ch = type != 0xF0 ? (int) (raw[0] & 0x0F) + 1 : 0;
 
                 // Learn capture - take the first matching event when a
                 // learn target is pending. Audio-thread CAS-store; the
@@ -4634,7 +4697,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // We hit all 16 channels because we don't track which channels
         // had active notes - cheap brute-force is fine, the synth ignores
         // the redundant channels in the same processBlock pass.
-        // Skipped on non-MIDI tracks; perTrackMidiScratch on those tracks
+        // Skipped on non-MIDI tracks; perTrackMidi on those tracks
         // stays an empty buffer for effect inserts.
         //
         // Three triggers warrant a flush, all OR'd together:
@@ -4648,8 +4711,9 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         lastMidiInputIndex[(size_t) t] = currentMidiIdx;
         const bool perTrackFlush = flushHangingMidi || midiInputSwapped;
 
-        perTrackMidiScratch[(size_t) t].clear();
+        perTrackMidi[(size_t) t].clear();
         liveRecordMidiScratch.clear();
+        bool midiBufferOverflow = false;
         constexpr int kGeneratedEventBytes = 6 + 3;
         constexpr int kGeneratedMidiBudget = 2 * (int) dusk::kMidiBlockBytes;
         constexpr int kMidiScheduleScanBudget = 32768;
@@ -4668,12 +4732,16 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             (void) reserved;
         }
         int midiScheduleScansRemaining = kMidiScheduleScanBudget;
-        auto addGeneratedMidi = [&] (const auto& message, int sampleOffset) noexcept
+        auto addGeneratedMidi = [&] (std::uint8_t status, std::uint8_t data1,
+                                     std::uint8_t data2, int sampleOffset) noexcept
         {
             if (! generatedMidiBudget.spendDiscretionary (kGeneratedEventBytes))
                 return false;
-            perTrackMidiScratch[(size_t) t].addEvent (message, sampleOffset);
-            return true;
+            const std::array<std::uint8_t, 3> bytes { status, data1, data2 };
+            const bool added = perTrackMidi[(size_t) t].addEvent (
+                bytes.data(), (int) bytes.size(), sampleOffset);
+            if (! added) midiBufferOverflow = true;
+            return added;
         };
         auto addGeneratedController = [&] (int channel, int controller,
                                            int value, int sampleOffset) noexcept
@@ -4685,9 +4753,10 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 (std::uint8_t) controller,
                 (std::uint8_t) value
             };
-            perTrackMidiScratch[(size_t) t].addEvent (
+            const bool added = perTrackMidi[(size_t) t].addEvent (
                 bytes.data(), (int) bytes.size(), sampleOffset);
-            return true;
+            if (! added) midiBufferOverflow = true;
+            return added;
         };
         auto emitHangingMidiReset = [&] (int sampleOffset) noexcept
         {
@@ -4698,15 +4767,20 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 return false;
             for (int ch = 1; ch <= 16; ++ch)
             {
-                perTrackMidiScratch[(size_t) t].addEvent (
-                    juce::MidiMessage::controllerEvent (ch, 64, 0), sampleOffset);
-                perTrackMidiScratch[(size_t) t].addEvent (
-                    juce::MidiMessage::controllerEvent (ch, 123, 0), sampleOffset);
+                const std::array<std::uint8_t, 3> sustainOff {
+                    (std::uint8_t) (0xB0 | (ch - 1)), 64, 0 };
+                const std::array<std::uint8_t, 3> allNotesOff {
+                    (std::uint8_t) (0xB0 | (ch - 1)), 123, 0 };
+                if (! perTrackMidi[(size_t) t].addEvent (
+                        sustainOff.data(), (int) sustainOff.size(), sampleOffset)
+                    || ! perTrackMidi[(size_t) t].addEvent (
+                        allNotesOff.data(), (int) allNotesOff.size(), sampleOffset))
+                    return false;
             }
             return true;
         };
-        if (midiTrack && perTrackFlush)
-            emitHangingMidiReset (0);
+        if (midiTrack && perTrackFlush && ! emitHangingMidiReset (0))
+            midiBufferOverflow = true;
 
         // Build this block's per-track MIDI buffer. Two source paths,
         // mutually exclusive (matches the audio source decision above):
@@ -4732,10 +4806,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             if (perInputMidi[(size_t) srcIdx].isEmpty()) return;
             for (const auto meta : perInputMidi[(size_t) srcIdx])
             {
-                // dusk (perInputMidi) -> juce (perTrackMidiScratch, feeds
-                // the instrument + recorder): raw-byte copy, no message
-                // object. Channel read mirrors the juce getChannel
-                // convention: 1..16 for channel messages, 0 for system.
+                // Copy raw bytes into the routing and recording buffers. The
+                // channel convention is 1..16 for channel messages, 0 for system.
                 const auto& v = meta.getMessage();
                 if (chFilter != 0)
                 {
@@ -4743,13 +4815,21 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     const int ch = (status & 0xF0) != 0xF0 ? (int) (status & 0x0F) + 1 : 0;
                     if (ch != chFilter) continue;
                 }
-                perTrackMidiScratch[(size_t) t].addEvent (v.getRawData(),
-                                                          v.getRawDataSize(),
-                                                          meta.samplePosition);
-                if (isRecording && armed && midiTrack)
-                    liveRecordMidiScratch.addEvent (v.getRawData(),
-                                                    v.getRawDataSize(),
-                                                    meta.samplePosition);
+                if (! perTrackMidi[(size_t) t].addEvent (v.getRawData(),
+                                                         v.getRawDataSize(),
+                                                         meta.samplePosition))
+                {
+                    midiBufferOverflow = true;
+                    return;
+                }
+                if (isRecording && armed && midiTrack
+                    && ! liveRecordMidiScratch.addEvent (v.getRawData(),
+                                                         v.getRawDataSize(),
+                                                         meta.samplePosition))
+                {
+                    midiBufferOverflow = true;
+                    return;
+                }
             }
         };
         auto pullLiveMidi = [&] ()
@@ -4865,7 +4945,10 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     // this or any later seam reset.
                     if (midiTrack && span.wrappedBefore
                         && ! emitHangingMidiReset (span.bufferOffset))
+                    {
+                        midiBufferOverflow = true;
                         return;
+                    }
 
                     if (generatedMidiBudget.discretionaryBytesAvailable()
                             < kGeneratedEventBytes
@@ -4948,8 +5031,9 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                             if (at >= span.timelineStart && at < spanEnd)
                             {
                                 if (! addGeneratedMidi (
-                                    juce::MidiMessage::controllerEvent (
-                                        c.channel, c.controller, c.value),
+                                    (std::uint8_t) (0xB0 | (c.channel - 1)),
+                                    (std::uint8_t) c.controller,
+                                    (std::uint8_t) c.value,
                                     span.bufferOffset + (int) (at - span.timelineStart)))
                                 {
                                     controllerPassComplete = false;
@@ -5011,25 +5095,25 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                       && offAbs > span.timelineStart)
                             {
                                 if (! addGeneratedMidi (
-                                        juce::MidiMessage::noteOn (
-                                            n.channel, n.noteNumber,
-                                            (std::uint8_t) n.velocity),
-                                        chaseOffset))
+                                        (std::uint8_t) (0x90 | (n.channel - 1)),
+                                        (std::uint8_t) n.noteNumber,
+                                        (std::uint8_t) n.velocity, chaseOffset))
                                     return;
                             }
                             if (onAbs >= span.timelineStart && onAbs < spanEnd)
                             {
                                 if (! addGeneratedMidi (
-                                        juce::MidiMessage::noteOn (
-                                            n.channel, n.noteNumber,
-                                            (std::uint8_t) n.velocity),
+                                        (std::uint8_t) (0x90 | (n.channel - 1)),
+                                        (std::uint8_t) n.noteNumber,
+                                        (std::uint8_t) n.velocity,
                                         span.bufferOffset + (int) (onAbs - span.timelineStart)))
                                     return;
                             }
                             if (offAbs >= span.timelineStart && offAbs < spanEnd)
                             {
                                 if (! addGeneratedMidi (
-                                        juce::MidiMessage::noteOff (n.channel, n.noteNumber),
+                                        (std::uint8_t) (0x80 | (n.channel - 1)),
+                                        (std::uint8_t) n.noteNumber, 0,
                                         span.bufferOffset + (int) (offAbs - span.timelineStart)))
                                     return;
                             }
@@ -5038,7 +5122,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 });
 
             // Play-along overlay. Live-MIDI delivery is a PER-BRANCH obligation:
-            // every transport-source branch that builds perTrackMidiScratch must
+            // every transport-source branch that builds perTrackMidi must
             // pull live input itself, or play-along goes silent in that state.
             // The same IN control is checked through two different audibility
             // gates depending on the branch:
@@ -5068,7 +5152,13 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             pullLiveMidi();
         }
 
-        if (midiTrack && ! perTrackMidiScratch[(size_t) t].isEmpty())
+        if (midiBufferOverflow)
+        {
+            perTrackMidi[(size_t) t].clear();
+            liveRecordMidiScratch.clear();
+        }
+
+        if (midiTrack && ! perTrackMidi[(size_t) t].isEmpty())
             session.track (t).midiActivity.store (true, std::memory_order_relaxed);
 
         // Recording capture has to happen BEFORE the strip's instrument
@@ -5106,18 +5196,18 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // loaded instrument plugin (if any) does. Handed to the pump thread
         // via the out-bank's lock-free RT queue, which validates the port
         // under its mutex. Empty buffer skipped to avoid pointless slot use.
-        if (midiTrack && ! perTrackMidiScratch[(size_t) t].isEmpty())
+        if (midiTrack && ! perTrackMidi[(size_t) t].isEmpty())
         {
             const int outIdx = session.track (t).midiOutputIndex.load (
                                   std::memory_order_relaxed);
             if (outIdx >= 0)
             {
-                // Bridge the juce per-track buffer into the dusk out-scratch
-                // (pre-reserved) for queueRt's dusk boundary. Whole-block or
+                // Sort into the pre-reserved output scratch for the dusk
+                // queue boundary. Whole-block or
                 // nothing, since a partial copy on cap overflow could split
                 // paired events (note on/off); empty means the block was
                 // dropped and there is nothing to send.
-                dusk::copyEventsWhole (perTrackMidiScratch[(size_t) t], midiOutTrackScratch);
+                copyDuskMidiSorted (perTrackMidi[(size_t) t], midiOutTrackScratch);
                 if (! midiOutTrackScratch.isEmpty())
                     midiOut.queueRt (outIdx, midiOutTrackScratch,
                                      currentSampleRate.load (std::memory_order_relaxed));

@@ -93,10 +93,6 @@ public:
     // pre-roll; events with negative sample positions are dropped at
     // drain time. Lock-free push into a pre-sized ring.
     void writeMidiBlock (int trackIndex,
-                          const juce::MidiBuffer& events,
-                          std::int64_t blockStartFromRecord,
-                          const LoopCaptureSpan* explicitLoopSpan = nullptr) noexcept;
-    void writeMidiBlock (int trackIndex,
                           const dusk::MidiBuffer& events,
                           std::int64_t blockStartFromRecord,
                           const LoopCaptureSpan* explicitLoopSpan = nullptr) noexcept;

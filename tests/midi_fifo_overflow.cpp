@@ -44,15 +44,16 @@ TEST_CASE ("RecordManager surfaces MIDI FIFO overflow at stopRecording",
     RecordManager rm (session);
     REQUIRE (rm.startRecording (kSampleRate, 0));
 
-    // One big MidiBuffer with kFifoCap + kOverflowBy events. Channel 1,
+    // One big dusk MIDI buffer with kFifoCap + kOverflowBy events. Channel 1,
     // note 60, varying velocity so the buffer doesn't dedupe. Sample
-    // positions are spaced 1 sample apart so JUCE keeps them.
-    juce::MidiBuffer big;
+    // positions are spaced 1 sample apart so every event is retained.
+    dusk::MidiBuffer big;
     const int totalEvents = kFifoCap + kOverflowBy;
     for (int i = 0; i < totalEvents; ++i)
     {
-        const juce::uint8 vel = juce::uint8 (1 + (i & 0x7E));
-        big.addEvent (juce::MidiMessage::noteOn (1, (juce::uint8) 60, vel), i);
+        const std::uint8_t vel = std::uint8_t (1 + (i & 0x7E));
+        const std::uint8_t bytes[] { 0x90, 60, vel };
+        big.addEvent (bytes, 3, i);
     }
 
     // CONTRACT BYPASS: writeMidiBlock is documented audio-thread-only
@@ -103,9 +104,12 @@ TEST_CASE ("RecordManager clean MIDI take leaves overflow list empty",
     RecordManager rm (session);
     REQUIRE (rm.startRecording (48000.0, 0));
 
-    juce::MidiBuffer small;
+    dusk::MidiBuffer small;
     for (int i = 0; i < 100; ++i)
-        small.addEvent (juce::MidiMessage::noteOn (1, (juce::uint8) 60, (juce::uint8) 100), i);
+    {
+        const std::uint8_t bytes[] { 0x90, 60, 100 };
+        small.addEvent (bytes, 3, i);
+    }
     rm.writeMidiBlock (0, small, 0);
 
     rm.stopRecording (100);

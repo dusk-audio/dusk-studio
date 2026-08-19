@@ -437,7 +437,6 @@ public:
 
     // Test-only. Next callback merges `events` into perInputMidi[inputIdx]
     // AFTER collector drain. Cleared after one block.
-    void stageTestMidiInjection (int inputIdx, juce::MidiBuffer events);
     void stageTestMidiInjection (int inputIdx, dusk::MidiBuffer events);
 
     // Bookends around SessionSerializer save/load. publish copies each
@@ -781,15 +780,16 @@ private:
     // reserveBytes'd off the RT path in rebuildMidiBanks so the drain and the
     // test-inject merge never allocate on the audio thread.
     std::vector<dusk::MidiBuffer> perInputMidi;
-    // Per-track routing buffer feeding the strip's instrument.
+    // Per-track routing buffer feeding native MIDI consumers and the recorder.
+    std::array<dusk::MidiBuffer, Session::kNumTracks> perTrackMidi;
+    // JUCE-only scratch passed through the existing instrument-hosting API.
     std::array<juce::MidiBuffer, Session::kNumTracks> perTrackMidiScratch;
     // Timestamp-sorted raw live input accepted by pullInput for the armed MIDI
     // recorder. Separate from routing so generated flush/chase events can never
     // become performance data; one buffer is enough because tracks are captured
     // serially within the callback.
-    decltype (perTrackMidiScratch)::value_type liveRecordMidiScratch;
-    // juce->dusk bridge for a MIDI track's external output: perTrackMidiScratch
-    // (juce) is copied into this before midiOut.queueRt (dusk). Pre-reserved.
+    dusk::MidiBuffer liveRecordMidiScratch;
+    // Dusk MIDI is copied into this before midiOut.queueRt. Pre-reserved.
     dusk::MidiBuffer midiOutTrackScratch;
 
     // SPSC handoff. Producer must not touch testInjectMidi while
