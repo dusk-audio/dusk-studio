@@ -1,3 +1,9 @@
+// Ahead of every include: whichever header reaches windows.h first must see
+// these, or its min/max macros eat std::max at the call sites below.
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+
 #include "Vst3Editor.h"
 #include "Vst3HostContext.h"
 #include "Vst3Instance.h"
@@ -5,9 +11,6 @@
 #include <pluginterfaces/gui/iplugview.h>
 #include <pluginterfaces/gui/iplugviewcontentscalesupport.h>
 #include <pluginterfaces/vst/ivsteditcontroller.h>
-
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
 
 #include <algorithm>
 
@@ -28,7 +31,9 @@ const wchar_t* containerClass()
         wc.style         = CS_DBLCLKS;
         wc.lpfnWndProc   = &DefWindowProcW;
         wc.hInstance     = ::GetModuleHandleW (nullptr);
-        wc.hCursor       = ::LoadCursorW (nullptr, IDC_ARROW);
+        // IDC_ARROW is an integer-resource pseudo-pointer, and without UNICODE
+        // defined it expands to the ANSI form; the W call needs it re-cast.
+        wc.hCursor       = ::LoadCursorW (nullptr, reinterpret_cast<LPCWSTR> (IDC_ARROW));
         wc.lpszClassName = L"DuskVst3EditorContainer";
         ::RegisterClassExW (&wc);
         return wc.lpszClassName;

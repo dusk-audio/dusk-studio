@@ -1,11 +1,14 @@
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 #include "ClapBundle.h"
 
 #include <clap/clap.h>
 
-#if defined(_WIN32)
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#else
+#if ! defined(_WIN32)
 #include <dlfcn.h>
 #endif
 
