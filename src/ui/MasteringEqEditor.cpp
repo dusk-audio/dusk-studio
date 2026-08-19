@@ -1,5 +1,6 @@
 #include "MasteringEqEditor.h"
 #include "CompHeaderButton.h"
+#include "../foundation/Decibels.h"
 #include <cmath>
 #include <algorithm>
 
@@ -257,7 +258,7 @@ bool MasteringEqEditor::updateSpectrum()
     for (int i = 0; i < kNumBins; ++i)
     {
         const float db = jlimit (kSpecFloorDb, kSpecTopDb,
-            juce::Decibels::gainToDecibels (fftWork[(size_t) i] * kRef, kSpecFloorDb));
+            dusk::audio::gainToDecibels (fftWork[(size_t) i] * kRef, kSpecFloorDb));
         float& s = specDb[(size_t) i];
         s = (db > s) ? db : s + (db - s) * 0.25f;   // instant attack, slow release
     }
