@@ -281,13 +281,24 @@ jobs:
         # only starts on Ubuntu.
         run: |
           set -euo pipefail
+          # Both guards below exist because every failure mode of this check is
+          # a silent pass: no readelf and no scanned files each leave the
+          # counter at zero, which reads as success.
+          command -v readelf >/dev/null || {
+            echo "::error::readelf is unavailable, so runtime linkage cannot be verified" >&2
+            exit 1; }
+          scanned=0
           linked=0
           while IFS= read -r -d '' bin; do
+            scanned=$((scanned + 1))
             if readelf -d "$bin" 2>/dev/null | grep -qE '\(NEEDED\).*libsodium'; then
               echo "::error::${bin} links libsodium at runtime; the tarball would not start off Ubuntu" >&2
               linked=1
             fi
           done < <(find build-linux/DuskStudio_artefacts -type f -executable -print0)
+          [ "$scanned" -gt 0 ] || {
+            echo "::error::no executables under build-linux/DuskStudio_artefacts to verify" >&2
+            exit 1; }
           [ "$linked" -eq 0 ]
 
       - name: Build + run tests (release gate)
