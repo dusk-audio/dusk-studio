@@ -17,4 +17,13 @@ runs:
   steps:
     - name: apt-get with timeouts, retries, and mirror switching
       shell: bash
-      run: '"${GITHUB_ACTION_PATH}/apt_install.sh" ${{ inputs.packages }}'
+      # The list reaches the shell through the environment, not through
+      # expression interpolation: a value spliced into the run body becomes
+      # shell syntax, so a metacharacter in it would execute. Word splitting
+      # on the unquoted expansion is what turns the list into arguments, and
+      # set -f keeps a package name from globbing against the workspace.
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        set -f
+        "${GITHUB_ACTION_PATH}/apt_install.sh" $PACKAGES

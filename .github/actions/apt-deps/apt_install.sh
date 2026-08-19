@@ -162,9 +162,13 @@ for i in $(seq 1 "$ATTEMPTS"); do
     if attempt; then
         # apt exiting 0 is not proof; verify the packages are present so a
         # miss fails here with a clear message, not three steps later.
+        # dpkg -s alone would not be proof either: it succeeds for a package
+        # left in config-files state, which has no headers or binaries. Only
+        # the installed status counts.
         missing=()
         for pkg in ${packages+"${packages[@]}"}; do
-            dpkg -s "$pkg" >/dev/null 2>&1 || missing+=("$pkg")
+            [ "$(dpkg-query -W -f='${db:Status-Status}' "$pkg" 2>/dev/null)" = installed ] \
+                || missing+=("$pkg")
         done
         if [ ${#missing[@]} -eq 0 ]; then
             exit 0
