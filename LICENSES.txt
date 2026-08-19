@@ -461,13 +461,14 @@ libsodium (signed SFZ catalog authentication — required on every platform)
              dusk_sodium interface target.
   Notes    : The app uses detached Ed25519 verification and canonical base64
              helpers only; no private signing key is distributed. Linux CI,
-             sanitizer, release, and Raspberry Pi builds install
-             libsodium-dev and link the distro shared object. Debian package
-             runtime dependency discovery is handled by dpkg-shlibdeps. RPM
-             packages rely on rpmbuild's automatic ELF requirements under
-             CPack. The portable tarball does not copy system shared libraries,
-             so its host must provide libsodium like the other documented
-             desktop/runtime libraries.
+             sanitizer, and Raspberry Pi builds install libsodium-dev and link
+             the distro shared object. The Linux release build instead links a
+             static archive built from the pinned source below, because a
+             binary carrying one distro's soname does not start on any other.
+             Debian package runtime dependency discovery is handled by
+             dpkg-shlibdeps. RPM packages rely on rpmbuild's automatic ELF
+             requirements under CPack. The portable tarball therefore carries
+             its libsodium in the executable and needs none from the host.
              On macOS and Windows the same fail-closed discovery contract
              requires the platform build to supply compatible headers and a
              library. The current upstream audit reference is release 1.0.22,

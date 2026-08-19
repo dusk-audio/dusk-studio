@@ -636,12 +636,16 @@ target_sources(DuskStudio PRIVATE
 target_link_libraries(DuskStudio PRIVATE dusk_sndfile)
 
 # Signed SFZ catalogs use detached Ed25519 signatures. Windows consumes the
-# static vcpkg manifest prefix, Linux uses the distro library, and macOS links
-# a deployment-target-matched static archive so the app has no extra dylib.
+# static vcpkg manifest prefix and macOS links a deployment-target-matched
+# static archive, so neither ships an extra library. A Linux build resolves the
+# distro library by default, which is what a distro package wants; the portable
+# tarball cannot, because a binary linked against one distro's soname does not
+# start on any other. The release workflow supplies DUSKSTUDIO_SODIUM_ROOT to
+# get the same static archive the other two platforms already use.
 add_library(dusk_sodium INTERFACE)
 set(DUSKSTUDIO_SODIUM_ROOT "" CACHE PATH
     "Optional libsodium installation prefix for Dusk Studio")
-if(APPLE)
+if(APPLE OR (UNIX AND DUSKSTUDIO_SODIUM_ROOT))
     find_path(DUSKSTUDIO_SODIUM_INCLUDE_DIR sodium.h
         HINTS "${DUSKSTUDIO_SODIUM_ROOT}"
         PATH_SUFFIXES include)
@@ -650,8 +654,8 @@ if(APPLE)
         PATH_SUFFIXES lib lib64)
     if(NOT (DUSKSTUDIO_SODIUM_INCLUDE_DIR AND DUSKSTUDIO_SODIUM_STATIC_LIBRARY))
         message(FATAL_ERROR
-            "Static libsodium is required for signed SFZ catalogs on macOS. "
-            "Build it for the app's deployment target and set "
+            "Static libsodium is required for signed SFZ catalogs here. "
+            "Build it for the target platform and set "
             "DUSKSTUDIO_SODIUM_ROOT to its installation prefix.")
     endif()
     target_include_directories(dusk_sodium SYSTEM INTERFACE
