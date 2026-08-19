@@ -39,6 +39,8 @@
  #include "foundation/Text.h"
 #endif
 #include "session/Session.h"
+#include "foundation/Decibels.h"
+#include "foundation/VectorOps.h"
 
 #include <algorithm>
 #include <atomic>
@@ -67,6 +69,8 @@
 
 namespace duskstudio
 {
+using dusk::audio::findSignedMinMax;
+
 class DuskStudioApp::MainWindow final : public juce::DocumentWindow
 {
 public:
@@ -986,8 +990,8 @@ static bool runHeadlessPipelineTest (const juce::String& pluginPath)
             const int n = engine->getStrip (0).getLastProcessedSamples();
             if (n > 0)
             {
-                const auto rng = juce::FloatVectorOperations::findMinAndMax (lp, n);
-                const float p = std::max (std::abs (rng.getStart()), std::abs (rng.getEnd()));
+                const auto rng = findSignedMinMax (lp, n);
+                const float p = std::max (std::abs (rng.min), std::abs (rng.max));
                 if (p > stripPeak) stripPeak = p;
             }
         }
@@ -996,8 +1000,8 @@ static bool runHeadlessPipelineTest (const juce::String& pluginPath)
             const int n = engine->getStrip (0).getLastProcessedSamples();
             if (n > 0)
             {
-                const auto rng = juce::FloatVectorOperations::findMinAndMax (rp, n);
-                const float p = std::max (std::abs (rng.getStart()), std::abs (rng.getEnd()));
+                const auto rng = findSignedMinMax (rp, n);
+                const float p = std::max (std::abs (rng.min), std::abs (rng.max));
                 if (p > stripPeak) stripPeak = p;
             }
         }
@@ -1007,11 +1011,11 @@ static bool runHeadlessPipelineTest (const juce::String& pluginPath)
     std::fprintf (stdout,
                   "Track 1 strip:  peak (linear, post-DSP) = %.6f  (~%.1f dBFS)\n",
                   stripPeak,
-                  stripPeak > 0.0f ? juce::Decibels::gainToDecibels (stripPeak) : -120.0f);
+                  stripPeak > 0.0f ? dusk::audio::gainToDecibels (stripPeak) : -120.0f);
     std::fprintf (stdout,
                   "Master output:  peak = %.6f  rms = %.6f  (~%.1f dBFS peak)\n",
                   masterPeak, masterRmsVal,
-                  masterPeak > 0.0f ? juce::Decibels::gainToDecibels (masterPeak) : -120.0f);
+                  masterPeak > 0.0f ? dusk::audio::gainToDecibels (masterPeak) : -120.0f);
 
     if (stripPeak > 1.0e-4f && masterPeak > 1.0e-4f)
         std::fprintf (stdout, "VERDICT: PASS - audio reaches both the strip and the master.\n");

@@ -1,5 +1,6 @@
 #include "ChannelStrip.h"
 #include "../foundation/Decibels.h"
+#include "../foundation/VectorOps.h"
 #include "../foundation/ScopedNoDenormals.h"
 #include <algorithm>
 #include <cmath>
@@ -11,6 +12,8 @@ namespace
 {
 constexpr float kHalfPi = 1.57079632679489661923f;
 } // namespace
+
+using dusk::audio::findSignedMinMax;
 
 // Always-on console drive for the channel EQ. The FourKEQDSP's
 // ConsoleSaturation is an ADAA polynomial waveshaper; this fixed amount sets
@@ -912,8 +915,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         const auto peakAbs = [] (const float* buf, int n) -> float
         {
             if (buf == nullptr || n <= 0) return 0.0f;
-            const auto rng = juce::FloatVectorOperations::findMinAndMax (buf, n);
-            return std::max (std::abs (rng.getStart()), std::abs (rng.getEnd()));
+            const auto rng = findSignedMinMax (buf, n);
+            return std::max (std::abs (rng.min), std::abs (rng.max));
         };
         const float peakL = peakAbs (inL, numSamples);
         const float peakR = (stereo && inR != nullptr) ? peakAbs (inR, numSamples) : 0.0f;
@@ -985,10 +988,9 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         std::memcpy (tempMono.data(), inL, sizeof (float) * (size_t) numSamples);
 
         // Phase invert (Ø) - flip polarity before EQ/comp/fader so the rest of
-        // the chain sees the corrected-polarity signal. SIMD'd negate via JUCE
-        // saves a per-sample scalar multiply when phase invert is engaged.
+        // the chain sees the corrected-polarity signal.
         if (paramsRef->phaseInvert.load (std::memory_order_relaxed))
-            juce::FloatVectorOperations::negate (tempMono.data(), tempMono.data(), numSamples);
+            dusk::audio::vecNegate (tempMono.data(), tempMono.data(), numSamples);
 
         // Per-channel insert (post-phase-invert, pre-EQ). insertMode picks
         // plugin or hardware; activeInsertGain ramps the post-insert signal
@@ -1091,8 +1093,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         // PDC: delay this track's post-insert signal so it lines up with the
         // session's deepest-latency track on every downstream route.
         {
-            const auto rng = juce::FloatVectorOperations::findMinAndMax (tempMono.data(), numSamples);
-            relatchPdcIfDrained (std::max (std::abs (rng.getStart()), std::abs (rng.getEnd())),
+            const auto rng = findSignedMinMax (tempMono.data(), numSamples);
+            relatchPdcIfDrained (std::max (std::abs (rng.min), std::abs (rng.max)),
                                   numSamples);
             // Skip PDC while freeze-capturing: the strip's delay-comp is an
             // inter-track alignment shift, not part of the track's audio. Baking
@@ -1194,7 +1196,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             // from a still-loaded baked native instrument, which would render
             // silence over the WAV. PDC and fader/pan/sends still run.
             if (inL != nullptr) std::memcpy (L, inL, sizeof (float) * (size_t) numSamples);
-            else                juce::FloatVectorOperations::clear (L, numSamples);
+            else                dusk::audio::vecClear (L, numSamples);
             if (inR != nullptr) std::memcpy (R, inR, sizeof (float) * (size_t) numSamples);
             else                std::memcpy (R, L,   sizeof (float) * (size_t) numSamples);
 
@@ -1223,8 +1225,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         }
         else if (isMidi)
         {
-            juce::FloatVectorOperations::clear (L, numSamples);
-            juce::FloatVectorOperations::clear (R, numSamples);
+            dusk::audio::vecClear (L, numSamples);
+            dusk::audio::vecClear (R, numSamples);
             // Instrument plugins read MIDI and write audio. Phase invert is
             // a no-op against generated content, so we don't apply it here.
             // The instrument plugin IS the audio source - the crossfade
@@ -1277,8 +1279,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
 
             if (paramsRef->phaseInvert.load (std::memory_order_relaxed))
             {
-                juce::FloatVectorOperations::negate (L, L, numSamples);
-                juce::FloatVectorOperations::negate (R, R, numSamples);
+                dusk::audio::vecNegate (L, L, numSamples);
+                dusk::audio::vecNegate (R, R, numSamples);
             }
 
             // Invariant guard: tempStereoBuffer + insertScratchL/R sized
@@ -1338,10 +1340,10 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         // its compensation is relative to its own already-scheduling-shifted
         // output, which the aggregator treats as zero latency).
         {
-            const auto rL = juce::FloatVectorOperations::findMinAndMax (L, numSamples);
-            const auto rR = juce::FloatVectorOperations::findMinAndMax (R, numSamples);
-            const float pk = std::max ({ std::abs (rL.getStart()), std::abs (rL.getEnd()),
-                                          std::abs (rR.getStart()), std::abs (rR.getEnd()) });
+            const auto rL = findSignedMinMax (L, numSamples);
+            const auto rR = findSignedMinMax (R, numSamples);
+            const float pk = std::max ({ std::abs (rL.min), std::abs (rL.max),
+                                          std::abs (rR.min), std::abs (rR.max) });
             relatchPdcIfDrained (pk, numSamples);
             // See the mono path: skip PDC while freeze-capturing so the baked WAV
             // is pre-PDC and frozen playback applies the alignment delay once.
@@ -1420,8 +1422,9 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     // nothing live (freezeCapL is nullptr unless a render set it).
     if (freezeCapL != nullptr && freezeCapR != nullptr && srcL != nullptr)
     {
-        juce::FloatVectorOperations::copy (freezeCapL, srcL, numSamples);
-        juce::FloatVectorOperations::copy (freezeCapR, srcR != nullptr ? srcR : srcL, numSamples);
+        dusk::audio::vecCopy (freezeCapL, srcL, numSamples);
+        const float* captureR = srcR != nullptr ? srcR : srcL;
+        dusk::audio::vecCopy (freezeCapR, captureR, numSamples);
     }
 
     if (! passByGate)

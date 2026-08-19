@@ -18,6 +18,9 @@
 #if ! defined(__linux__)
  #include "midi/JuceMidiBackend.h"
 #endif
+#include "../foundation/Decibels.h"
+#include "../foundation/VectorOps.h"
+#include "../foundation/ScopedNoDenormals.h"
 #include <algorithm>
 #include <array>
 #include <cstdlib>
@@ -27,6 +30,8 @@
 namespace duskstudio
 {
 constexpr std::int64_t kMinLoopRecordSamples = 128;
+
+using dusk::audio::findSignedMinMax;
 
 // Log-span of the HPF sweep band, precomputed once. The MIDI-CC HPF map runs
 // on the audio thread per controller event; without this it would recompute
@@ -3032,21 +3037,21 @@ void AudioEngine::processStripLane (int lane) noexcept
 
     // Each lane owns its accum set - clear it, build pointer views, accumulate
     // a contiguous strip subset. No lane writes another lane's buffers.
-    juce::FloatVectorOperations::clear (acc.mixL.data(), n);
-    juce::FloatVectorOperations::clear (acc.mixR.data(), n);
+    dusk::audio::vecClear (acc.mixL.data(), n);
+    dusk::audio::vecClear (acc.mixR.data(), n);
     std::array<float*, ChannelStrip::kNumBuses> bL {}, bR {};
     for (int a = 0; a < ChannelStrip::kNumBuses; ++a)
     {
-        juce::FloatVectorOperations::clear (acc.busL[(size_t) a].data(), n);
-        juce::FloatVectorOperations::clear (acc.busR[(size_t) a].data(), n);
+        dusk::audio::vecClear (acc.busL[(size_t) a].data(), n);
+        dusk::audio::vecClear (acc.busR[(size_t) a].data(), n);
         bL[(size_t) a] = acc.busL[(size_t) a].data();
         bR[(size_t) a] = acc.busR[(size_t) a].data();
     }
     std::array<float*, ChannelStripParams::kNumAuxSends> aL {}, aR {};
     for (int a = 0; a < ChannelStripParams::kNumAuxSends; ++a)
     {
-        juce::FloatVectorOperations::clear (acc.auxL[(size_t) a].data(), n);
-        juce::FloatVectorOperations::clear (acc.auxR[(size_t) a].data(), n);
+        dusk::audio::vecClear (acc.auxL[(size_t) a].data(), n);
+        dusk::audio::vecClear (acc.auxR[(size_t) a].data(), n);
         aL[(size_t) a] = acc.auxL[(size_t) a].data();
         aR[(size_t) a] = acc.auxR[(size_t) a].data();
     }
@@ -3067,17 +3072,17 @@ void AudioEngine::reduceLaneAccum (int numSamples) noexcept
     for (int lane = 0; lane < lanes; ++lane)
     {
         auto& acc = laneAccum[(size_t) lane];
-        juce::FloatVectorOperations::add (mixL.data(), acc.mixL.data(), numSamples);
-        juce::FloatVectorOperations::add (mixR.data(), acc.mixR.data(), numSamples);
+        dusk::audio::vecAdd (mixL.data(), acc.mixL.data(), numSamples);
+        dusk::audio::vecAdd (mixR.data(), acc.mixR.data(), numSamples);
         for (int a = 0; a < Session::kNumBuses; ++a)
         {
-            juce::FloatVectorOperations::add (busL[(size_t) a].data(), acc.busL[(size_t) a].data(), numSamples);
-            juce::FloatVectorOperations::add (busR[(size_t) a].data(), acc.busR[(size_t) a].data(), numSamples);
+            dusk::audio::vecAdd (busL[(size_t) a].data(), acc.busL[(size_t) a].data(), numSamples);
+            dusk::audio::vecAdd (busR[(size_t) a].data(), acc.busR[(size_t) a].data(), numSamples);
         }
         for (int a = 0; a < Session::kNumAuxLanes; ++a)
         {
-            juce::FloatVectorOperations::add (auxLaneL[(size_t) a].data(), acc.auxL[(size_t) a].data(), numSamples);
-            juce::FloatVectorOperations::add (auxLaneR[(size_t) a].data(), acc.auxR[(size_t) a].data(), numSamples);
+            dusk::audio::vecAdd (auxLaneL[(size_t) a].data(), acc.auxL[(size_t) a].data(), numSamples);
+            dusk::audio::vecAdd (auxLaneR[(size_t) a].data(), acc.auxR[(size_t) a].data(), numSamples);
         }
     }
 }
@@ -3089,7 +3094,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                          int numSamples,
                                          const device::CallbackContext&)
 {
-    juce::ScopedNoDenormals noDenormals;
+    dusk::audio::ScopedNoDenormals noDenormals;
 
     // Empty callbacks happen during device transitions (JUCE/JACK both
     // can send numSamples==0). Skip the entire pipeline - MIDI parsing,
@@ -3115,7 +3120,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         if (outputChannelData == nullptr) return;   // matches the guard below
         for (int ch = 0; ch < numOutputChannels; ++ch)
             if (auto* out = outputChannelData[ch])
-                juce::FloatVectorOperations::clear (out, numSamples);
+                dusk::audio::vecClear (out, numSamples);
     };
     if (processingSuspended.load (std::memory_order_seq_cst))
     {
@@ -4213,15 +4218,12 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         return;
     }
 
-    // SIMD-friendly clear via JUCE's FloatVectorOperations - it dispatches to
-    // the platform's vector zero-store on x86 (SSE) / aarch64 (NEON) where
-    // memset would still call into libc and miss the alignment-aware path.
-    juce::FloatVectorOperations::clear (mixL.data(), numSamples);
-    juce::FloatVectorOperations::clear (mixR.data(), numSamples);
-    for (auto& v : busL) juce::FloatVectorOperations::clear (v.data(), numSamples);
-    for (auto& v : busR) juce::FloatVectorOperations::clear (v.data(), numSamples);
-    for (auto& v : auxLaneL) juce::FloatVectorOperations::clear (v.data(), numSamples);
-    for (auto& v : auxLaneR) juce::FloatVectorOperations::clear (v.data(), numSamples);
+    dusk::audio::vecClear (mixL.data(), numSamples);
+    dusk::audio::vecClear (mixR.data(), numSamples);
+    for (auto& v : busL) dusk::audio::vecClear (v.data(), numSamples);
+    for (auto& v : busR) dusk::audio::vecClear (v.data(), numSamples);
+    for (auto& v : auxLaneL) dusk::audio::vecClear (v.data(), numSamples);
+    for (auto& v : auxLaneR) dusk::audio::vecClear (v.data(), numSamples);
 
     // Refresh PDC compensation before the strip loop reads it. Cheap atomic
     // sweep; auto-tracks any latency change without a separate trigger.
@@ -4548,16 +4550,14 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             if (monitorEnabled && ! midiTrack && ! isFrozen && ! offlineRender
                 && deviceInput != nullptr)
             {
-                juce::FloatVectorOperations::add (playbackScratch[(size_t) t].data(),
-                                                    deviceInput, numSamples);
+                dusk::audio::vecAdd (playbackScratch[(size_t) t].data(), deviceInput, numSamples);
                 if (stereoTrackInput)
                 {
                     const int rIdxMon = session.resolveInputRForTrack (t);
                     if (rIdxMon >= 0 && rIdxMon < numInputChannels
                         && inputChannelData[(size_t) rIdxMon] != nullptr)
-                        juce::FloatVectorOperations::add (playbackScratchR[(size_t) t].data(),
-                                                            inputChannelData[(size_t) rIdxMon],
-                                                            numSamples);
+                        dusk::audio::vecAdd (playbackScratchR[(size_t) t].data(),
+                                             inputChannelData[(size_t) rIdxMon], numSamples);
                 }
             }
 
@@ -4597,17 +4597,14 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         else if (monitorEnabled && deviceInput != nullptr)
             meterSrc = deviceInput;
 
-        // SIMD'd absolute-peak via findMinAndMax then |min| vs max - one
-        // vector pass over the buffer instead of a scalar abs-and-compare
-        // loop per sample. Same numeric result, much faster on long blocks.
         float inputPeak = 0.0f;
         if (meterSrc != nullptr && numSamples > 0)
         {
-            const auto rng = juce::FloatVectorOperations::findMinAndMax (meterSrc, numSamples);
-            inputPeak = std::max (std::abs (rng.getStart()), std::abs (rng.getEnd()));
+            const auto rng = findSignedMinMax (meterSrc, numSamples);
+            inputPeak = std::max (std::abs (rng.min), std::abs (rng.max));
         }
         const float inputDb = (inputPeak > 1e-5f)
-                              ? juce::Decibels::gainToDecibels (inputPeak, -100.0f)
+                              ? dusk::audio::gainToDecibels (inputPeak, -100.0f)
                               : -100.0f;
         session.track (t).meterInputDb.store (inputDb, std::memory_order_relaxed);
 
@@ -4622,10 +4619,10 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             const float* deviceInputR = inputChannelData[(size_t) rIdx];
             if (deviceInputR != nullptr && (armed || monitorEnabled) && numSamples > 0)
             {
-                const auto rng = juce::FloatVectorOperations::findMinAndMax (deviceInputR, numSamples);
-                const float peak = std::max (std::abs (rng.getStart()), std::abs (rng.getEnd()));
+                const auto rng = findSignedMinMax (deviceInputR, numSamples);
+                const float peak = std::max (std::abs (rng.min), std::abs (rng.max));
                 if (peak > 1e-5f)
-                    inputRDb = juce::Decibels::gainToDecibels (peak, -100.0f);
+                    inputRDb = dusk::audio::gainToDecibels (peak, -100.0f);
             }
         }
         session.track (t).meterInputRDb.store (inputRDb, std::memory_order_relaxed);
@@ -5237,20 +5234,18 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             const int n = strips[(size_t) t].getLastProcessedSamples();
             if (auto* lp = strips[(size_t) t].getLastProcessedMono(); lp != nullptr && n > 0)
             {
-                const auto rng = juce::FloatVectorOperations::findMinAndMax (lp, n);
-                const float pk = std::max (std::abs (rng.getStart()),
-                                            std::abs (rng.getEnd()));
+                const auto rng = findSignedMinMax (lp, n);
+                const float pk = std::max (std::abs (rng.min), std::abs (rng.max));
                 session.track (t).meterInputDb.store (
-                    pk > 1e-5f ? juce::Decibels::gainToDecibels (pk, -100.0f) : -100.0f,
+                    pk > 1e-5f ? dusk::audio::gainToDecibels (pk, -100.0f) : -100.0f,
                     std::memory_order_relaxed);
             }
             if (auto* rp = strips[(size_t) t].getLastProcessedR(); rp != nullptr && n > 0)
             {
-                const auto rng = juce::FloatVectorOperations::findMinAndMax (rp, n);
-                const float pk = std::max (std::abs (rng.getStart()),
-                                            std::abs (rng.getEnd()));
+                const auto rng = findSignedMinMax (rp, n);
+                const float pk = std::max (std::abs (rng.min), std::abs (rng.max));
                 session.track (t).meterInputRDb.store (
-                    pk > 1e-5f ? juce::Decibels::gainToDecibels (pk, -100.0f) : -100.0f,
+                    pk > 1e-5f ? dusk::audio::gainToDecibels (pk, -100.0f) : -100.0f,
                     std::memory_order_relaxed);
             }
         }
@@ -5399,13 +5394,11 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // but they pick up correctly from their last-known current value
         // when audio resumes, so no click on re-engage.
         {
-            const auto rngL = juce::FloatVectorOperations::findMinAndMax (
-                                  busL[(size_t) a].data(), numSamples);
-            const auto rngR = juce::FloatVectorOperations::findMinAndMax (
-                                  busR[(size_t) a].data(), numSamples);
+            const auto rngL = findSignedMinMax (busL[(size_t) a].data(), numSamples);
+            const auto rngR = findSignedMinMax (busR[(size_t) a].data(), numSamples);
             const float peak = std::max (
-                std::max (std::abs (rngL.getStart()), std::abs (rngL.getEnd())),
-                std::max (std::abs (rngR.getStart()), std::abs (rngR.getEnd())));
+                std::max (std::abs (rngL.min), std::abs (rngL.max)),
+                std::max (std::abs (rngR.min), std::abs (rngR.max)));
             if (peak <= 1e-6f)
             {
                 // Bus pass is being skipped (no audio routed). Reset the
@@ -5428,20 +5421,11 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         auto* capBusR = stemBusCapR[(size_t) a].load (std::memory_order_relaxed);
         if (capBusL != nullptr && capBusR != nullptr)
         {
-            juce::FloatVectorOperations::add (capBusL,
-                                                busL[(size_t) a].data(), numSamples);
-            juce::FloatVectorOperations::add (capBusR,
-                                                busR[(size_t) a].data(), numSamples);
+            dusk::audio::vecAdd (capBusL, busL[(size_t) a].data(), numSamples);
+            dusk::audio::vecAdd (capBusR, busR[(size_t) a].data(), numSamples);
         }
-        // SIMD'd mix accumulate - hot inner loop, runs once per active aux
-        // per callback. JUCE picks the right SSE/NEON path based on the
-        // platform; cheaper than scalar [i]+= even with -O3.
-        juce::FloatVectorOperations::add (mixL.data(),
-                                            busL[(size_t) a].data(),
-                                            numSamples);
-        juce::FloatVectorOperations::add (mixR.data(),
-                                            busR[(size_t) a].data(),
-                                            numSamples);
+        dusk::audio::vecAdd (mixL.data(), busL[(size_t) a].data(), numSamples);
+        dusk::audio::vecAdd (mixR.data(), busR[(size_t) a].data(), numSamples);
     }
 
     perfLap (PerfSections::kBuses);
@@ -5564,13 +5548,11 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
 
         const auto lanePeak = [this, numSamples] (int lane) -> float
         {
-            const auto rngL = juce::FloatVectorOperations::findMinAndMax (
-                                  auxLaneL[(size_t) lane].data(), numSamples);
-            const auto rngR = juce::FloatVectorOperations::findMinAndMax (
-                                  auxLaneR[(size_t) lane].data(), numSamples);
+            const auto rngL = findSignedMinMax (auxLaneL[(size_t) lane].data(), numSamples);
+            const auto rngR = findSignedMinMax (auxLaneR[(size_t) lane].data(), numSamples);
             return std::max (
-                std::max (std::abs (rngL.getStart()), std::abs (rngL.getEnd())),
-                std::max (std::abs (rngR.getStart()), std::abs (rngR.getEnd())));
+                std::max (std::abs (rngL.min), std::abs (rngL.max)),
+                std::max (std::abs (rngR.min), std::abs (rngR.max)));
         };
 
         if (! laneHasHardware)
@@ -5630,17 +5612,11 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         auto* capAuxR = stemAuxCapR[(size_t) a].load (std::memory_order_relaxed);
         if (capAuxL != nullptr && capAuxR != nullptr)
         {
-            juce::FloatVectorOperations::add (capAuxL,
-                                                auxLaneL[(size_t) a].data(), numSamples);
-            juce::FloatVectorOperations::add (capAuxR,
-                                                auxLaneR[(size_t) a].data(), numSamples);
+            dusk::audio::vecAdd (capAuxL, auxLaneL[(size_t) a].data(), numSamples);
+            dusk::audio::vecAdd (capAuxR, auxLaneR[(size_t) a].data(), numSamples);
         }
-        juce::FloatVectorOperations::add (mixL.data(),
-                                            auxLaneL[(size_t) a].data(),
-                                            numSamples);
-        juce::FloatVectorOperations::add (mixR.data(),
-                                            auxLaneR[(size_t) a].data(),
-                                            numSamples);
+        dusk::audio::vecAdd (mixL.data(), auxLaneL[(size_t) a].data(), numSamples);
+        dusk::audio::vecAdd (mixR.data(), auxLaneR[(size_t) a].data(), numSamples);
 
         // Tail clock: advances only while the wet output has decayed to
         // silence (input silence is implied - a loud input resets the
@@ -5700,8 +5676,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             }
             if (sink.wipeL != nullptr)
             {
-                juce::FloatVectorOperations::clear (sink.wipeL, numSamples);
-                juce::FloatVectorOperations::clear (sink.wipeR, numSamples);
+                dusk::audio::vecClear (sink.wipeL, numSamples);
+                dusk::audio::vecClear (sink.wipeR, numSamples);
             }
         }
     }
