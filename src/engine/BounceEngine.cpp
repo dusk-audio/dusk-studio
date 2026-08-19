@@ -1,5 +1,4 @@
 #include "BounceEngine.h"
-#include <juce_audio_basics/juce_audio_basics.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -715,8 +714,10 @@ bool BounceEngine::runStemsMode()
             for (auto& o : outputs) std::fill (o.begin(), o.end(), 0.0f);
             for (int i = 0; i < numStems; ++i)
             {
-                juce::FloatVectorOperations::clear (capL[(size_t) i].data(), remaining);
-                juce::FloatVectorOperations::clear (capR[(size_t) i].data(), remaining);
+                std::fill (capL[(size_t) i].begin(),
+                           capL[(size_t) i].begin() + remaining, 0.0f);
+                std::fill (capR[(size_t) i].begin(),
+                           capR[(size_t) i].begin() + remaining, 0.0f);
             }
 
             if (! processOfflineBlock (inputPtrs.data(), kNumIn,

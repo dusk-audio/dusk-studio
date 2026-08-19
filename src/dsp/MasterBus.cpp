@@ -34,7 +34,8 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
     // (Session::oversamplingFactor).
     tapeMaxBlock = std::max (1, blockSize);
     tape.prepare (sampleRate, tapeMaxBlock, currentOxFactor);
-    tapeDryBuffer.setSize (2, tapeMaxBlock, false, false, true);
+    tapeDryL.resize ((size_t) tapeMaxBlock);
+    tapeDryR.resize ((size_t) tapeMaxBlock);
 
     // 20 ms toggle crossfade. Primed to the live tape state on the first block
     // (prepare can't see paramsRef reliably) so loading a session with tape ON
@@ -48,14 +49,10 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
     tapeLatencySamples = std::max (0, tape.latencySamples());
     {
         const int maxDelay = std::max (1, tapeLatencySamples);
-        const juce::dsp::ProcessSpec drySpec {
-            sampleRate, (std::uint32_t) std::max (1, blockSize), 1 };
-        tapeDryDelayL.prepare (drySpec);
-        tapeDryDelayR.prepare (drySpec);
         tapeDryDelayL.setMaximumDelayInSamples (maxDelay);
         tapeDryDelayR.setMaximumDelayInSamples (maxDelay);
-        tapeDryDelayL.setDelay ((float) tapeLatencySamples);
-        tapeDryDelayR.setDelay ((float) tapeLatencySamples);
+        tapeDryDelayL.setDelay (tapeLatencySamples);
+        tapeDryDelayR.setDelay (tapeLatencySamples);
         tapeDryDelayL.reset();
         tapeDryDelayR.reset();
     }
@@ -320,29 +317,29 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
             {
                 for (int i = 0; i < n; ++i)
                 {
-                    tapeDryDelayL.pushSample (0, Lc[i]);
-                    tapeDryDelayR.pushSample (0, Rc[i]);
-                    tapeDryBuffer.setSample (0, i, tapeDryDelayL.popSample (0));
-                    tapeDryBuffer.setSample (1, i, tapeDryDelayR.popSample (0));
+                    tapeDryDelayL.pushSample (Lc[i]);
+                    tapeDryDelayR.pushSample (Rc[i]);
+                    tapeDryL[(size_t) i] = tapeDryDelayL.popSample();
+                    tapeDryR[(size_t) i] = tapeDryDelayR.popSample();
                 }
             }
             else if (blending)
             {
-                tapeDryBuffer.copyFrom (0, 0, Lc, n);
-                tapeDryBuffer.copyFrom (1, 0, Rc, n);
+                std::copy (Lc, Lc + n, tapeDryL.begin());
+                std::copy (Rc, Rc + n, tapeDryR.begin());
             }
 
             if (runTape)
                 tape.processInPlace (Lc, Rc, n);
 
-            const float* dryL = tapeDryBuffer.getReadPointer (0);
-            const float* dryR = tapeDryBuffer.getReadPointer (1);
+            const float* dryL = tapeDryL.data();
+            const float* dryR = tapeDryR.data();
             if (! runTape)
             {
                 // Fully off but latency-compensated -> emit the delayed dry so
                 // master latency stays constant (no timing jump on re-engage).
-                juce::FloatVectorOperations::copy (Lc, dryL, n);
-                juce::FloatVectorOperations::copy (Rc, dryR, n);
+                std::copy (dryL, dryL + n, Lc);
+                std::copy (dryR, dryR + n, Rc);
             }
             else if (blending)
             {
