@@ -4,6 +4,8 @@
 #include <array>
 #include <filesystem>
 #include <vector>
+#include "../foundation/Decibels.h"
+#include "../foundation/SmoothedValue.h"
 #include "../session/Session.h"
 #include "../engine/PluginSlot.h"
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
@@ -44,7 +46,7 @@ public:
         const float db = params.returnLevelDb.load (std::memory_order_relaxed);
         const float gain = (db <= ChannelStripParams::kFaderInfThreshDb)
                              ? 0.0f
-                             : juce::Decibels::decibelsToGain (db);
+                             : dusk::audio::decibelsToGain (db);
         returnGain.setCurrentAndTargetValue (gain);
     }
 
@@ -196,7 +198,7 @@ public:
 
 private:
     const AuxLaneParams* paramsRef = nullptr;
-    juce::SmoothedValue<float> returnGain { 1.0f };
+    dusk::audio::SmoothedValue<float> returnGain { 1.0f };
 
     std::array<PluginSlot, kMaxPlugins> slots;
     std::array<HardwareInsertSlot, kMaxPlugins> hardwareSlots;
@@ -239,7 +241,7 @@ private:
     // activeInsertMode[s] = currently running; insertMode[s] = UI target.
     // Mismatch triggers ramp-out / swap / ramp-in via activeInsertGain[s].
     std::array<int,                          kMaxPlugins> activeInsertMode {};
-    std::array<juce::SmoothedValue<float>,   kMaxPlugins> activeInsertGain;
+    std::array<dusk::audio::SmoothedValue<float>, kMaxPlugins> activeInsertGain;
 
     std::vector<float> insertScratchL;
     std::vector<float> insertScratchR;

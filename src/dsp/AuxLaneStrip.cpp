@@ -1,5 +1,7 @@
 #include "AuxLaneStrip.h"
 #include "OutputPairRouting.h"
+#include "../foundation/Decibels.h"
+#include "../foundation/ScopedNoDenormals.h"
 #include <algorithm>
 #include <cmath>
 
@@ -343,7 +345,7 @@ void AuxLaneStrip::updateGainTarget() noexcept
     // an inaudible-but-nonzero gain).
     const float gain = (db <= ChannelStripParams::kFaderInfThreshDb)
                          ? 0.0f
-                         : juce::Decibels::decibelsToGain (db);
+                         : dusk::audio::decibelsToGain (db);
     returnGain.setTargetValue (gain);
 }
 
@@ -353,7 +355,7 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
                                           float* const*       deviceOutputs,
                                           int   numDeviceOutputs) noexcept
 {
-    juce::ScopedNoDenormals noDenormals;
+    dusk::audio::ScopedNoDenormals noDenormals;
     if (numSamples == 0) return;
     if (paramsRef == nullptr) return;
 
@@ -488,7 +490,7 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
 
     const auto toDb = [] (float a)
     {
-        return a > 1.0e-5f ? juce::Decibels::gainToDecibels (a, -100.0f) : -100.0f;
+        return a > 1.0e-5f ? dusk::audio::gainToDecibels (a, -100.0f) : -100.0f;
     };
     paramsRef->meterPostL.store (toDb (postPeakL), std::memory_order_relaxed);
     paramsRef->meterPostR.store (toDb (postPeakR), std::memory_order_relaxed);

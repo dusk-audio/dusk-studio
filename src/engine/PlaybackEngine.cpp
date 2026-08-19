@@ -1,5 +1,6 @@
 #include "PlaybackEngine.h"
 #include "Transport.h"
+#include "../foundation/Decibels.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -73,7 +74,7 @@ void PlaybackEngine::refreshLiveRegionParams()
                 if (region.file != rs.sourceFile
                     || region.timelineStart   != rs.timelineStart
                     || region.lengthInSamples != rs.lengthInSamples) continue;
-                rs.gainLinear = juce::Decibels::decibelsToGain (
+                rs.gainLinear = dusk::audio::decibelsToGain (
                     std::clamp (region.gainDb, -60.0f, 24.0f), -60.0f);
                 rs.muted = region.muted;
                 break;
@@ -152,7 +153,7 @@ void PlaybackEngine::preparePlayback()
             // dB at extreme values to avoid wild values from a hand-
             // edited session.json producing audible clip on first
             // play. The Alt-drag clamps tighter ([-24, +12]) at the UI.
-            rs.gainLinear = juce::Decibels::decibelsToGain (
+            rs.gainLinear = dusk::audio::decibelsToGain (
                 std::clamp (region.gainDb, -60.0f, 24.0f), -60.0f);
             rs.muted = region.muted;
             // Enforce non-overlap: if fadeIn + fadeOut > length the multiplied

@@ -10,6 +10,7 @@
 #include "../engine/Transport.h"
 #include "../session/RegionEditActions.h"
 #include "../session/SnapHelpers.h"
+#include "../foundation/Decibels.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -3545,7 +3546,7 @@ void AudioRegionEditor::normalizeRegion()
     if (peak <= 1.0e-6f) return;   // silence; nothing to normalize
 
     const float targetPeak = 0.99f;   // -0.087 dBFS
-    const float deltaDb    = juce::Decibels::gainToDecibels (targetPeak / peak);
+    const float deltaDb    = dusk::audio::gainToDecibels (targetPeak / peak);
 
     const AudioRegion before = *r;
     AudioRegion after = before;
