@@ -11,19 +11,17 @@
 #   second attempt (run 32272023755 sat in apt-get for 70+ minutes with
 #   retries "enabled"). Hence timeout(1) around every apt invocation.
 #
-#   MIRROR PINNING. azure.archive.ubuntu.com and archive.ubuntu.com take
-#   turns being the sick one; the arm64 ports archive adds ports.ubuntu.com
-#   (under-resourced) vs mirrors.mit.edu. Pinning EITHER side is the bug, so
-#   after the first failed attempt this script switches to the other mirror
-#   in the machine's family and keeps going.
+#   WEDGED DPKG. A timed-out install can kill dpkg mid-transaction; every
+#   later attempt then dies on "dpkg was interrupted" no matter how healthy
+#   the network is. Hence a bounded `dpkg --configure -a` before each retry.
 #
-# Families:
-#   x86 runners:  azure.archive.ubuntu.com <-> archive.ubuntu.com
-#   arm64 runners (ports): mirrors.mit.edu <-> ports.ubuntu.com
-#     ports.ubuntu.com is regularly unreachable from GitHub's ARM runners on
-#     both stacks, so MIT is normalized to primary up front (preserving the
-#     old raspberry-pi-build behaviour) and IPv4 is forced, which that
-#     workflow had established as necessary.
+# Mirror policy (owner decision, 2026-08-19): stock Ubuntu repos ONLY
+# (archive.ubuntu.com, ports.ubuntu.com, security.ubuntu.com). Azure's
+# mirror is purged up front from every mirror file, including the hosted
+# runners' /etc/apt/apt-mirrors.txt mirrorlist, which plain sources rewrites
+# miss entirely. No third-party mirrors; Ubuntu 22.04 is supported until
+# 2027 and the stock archive is the reference. arm64 keeps IPv4 forced,
+# which raspberry-pi-build had established as necessary for ports.
 #
 # Usage:
 #   apt_install.sh pkg [pkg...]   update, then install those packages
@@ -56,9 +54,7 @@ case "$RETRY_SLEEP" in
         exit 2 ;;
 esac
 
-AZURE_MIRROR="http://azure.archive.ubuntu.com/ubuntu"
 STOCK_MIRROR="http://archive.ubuntu.com/ubuntu"
-MIT_PORTS="http://mirrors.mit.edu/ubuntu-ports"
 STOCK_PORTS="http://ports.ubuntu.com/ubuntu-ports"
 
 if [ "$(id -u)" -eq 0 ]; then
@@ -79,13 +75,16 @@ if [ "$update_only" -eq 0 ] && [ ${#packages[@]} -eq 0 ]; then
     exit 2
 fi
 
-# Both list formats: 24.04 images ship deb822 .sources files and no
-# sources.list.
+# All the places a mirror can hide: 24.04 images ship deb822 .sources files
+# and no sources.list, and hosted runners route apt through the MIRRORLIST
+# at /etc/apt/apt-mirrors.txt (sources say "mirror+file:..."), which a
+# sources-only rewrite silently misses.
 mirror_files() {
     local f
     for f in /etc/apt/sources.list \
              /etc/apt/sources.list.d/*.list \
-             /etc/apt/sources.list.d/*.sources; do
+             /etc/apt/sources.list.d/*.sources \
+             /etc/apt/apt-mirrors.txt; do
         [ -f "$f" ] && printf '%s\n' "$f"
     done
 }
@@ -106,49 +105,26 @@ rewrite_sources() {
 }
 
 mirror_family() {
-    if sources_match "ports\.ubuntu\.com" || sources_match "mirrors\.mit\.edu/ubuntu-ports"; then
+    if sources_match "ports\.ubuntu\.com"; then
         echo ports
     else
         echo archive
     fi
 }
 
+# Purge azure from every mirror file (including the runner mirrorlist) so
+# apt talks only to the stock Ubuntu archive; arm64 keeps IPv4 forced.
 if [ "$(mirror_family)" = "ports" ]; then
-    # arm64: normalize everything (azure.ports included) onto MIT up front and
-    # force IPv4, matching what raspberry-pi-build.yml had proven necessary.
-    rewrite_sources "http://azure.ports.ubuntu.com/ubuntu-ports" "$MIT_PORTS"
-    rewrite_sources "$STOCK_PORTS" "$MIT_PORTS"
+    rewrite_sources "http://azure.ports.ubuntu.com/ubuntu-ports" "$STOCK_PORTS"
     echo 'Acquire::ForceIPv4 "true";' | "${SUDO[@]}" tee /etc/apt/apt.conf.d/99force-ipv4 >/dev/null
+else
+    rewrite_sources "http://azure.archive.ubuntu.com/ubuntu" "$STOCK_MIRROR"
 fi
 
-current_mirror() {
-    if [ "$(mirror_family)" = "ports" ]; then
-        if sources_match "mirrors\.mit\.edu"; then echo mit; else echo stock; fi
-    else
-        if sources_match "azure\."; then echo azure; else echo stock; fi
-    fi
-}
-
-# Move to whichever mirror we are NOT on, within this machine's family.
-# Called once, after the first failure.
-switch_mirror() {
-    local to
-    if [ "$(mirror_family)" = "ports" ]; then
-        if [ "$(current_mirror)" = "mit" ]; then
-            to="$STOCK_PORTS"; rewrite_sources "$MIT_PORTS" "$to"
-        else
-            to="$MIT_PORTS"; rewrite_sources "$STOCK_PORTS" "$to"
-        fi
-    else
-        if [ "$(current_mirror)" = "azure" ]; then
-            to="$STOCK_MIRROR"; rewrite_sources "$AZURE_MIRROR" "$to"
-        else
-            to="$AZURE_MIRROR"; rewrite_sources "$STOCK_MIRROR" "$to"
-        fi
-        # security.ubuntu.com is a separate host that stalls independently.
-        rewrite_sources "http://security.ubuntu.com/ubuntu" "$to"
-    fi
-    echo "::notice::apt switching mirror to ${to}"
+# A timed-out install can kill dpkg mid-transaction; repair before retrying.
+repair_dpkg() {
+    "${SUDO[@]}" timeout 120 env DEBIAN_FRONTEND=noninteractive \
+        dpkg --configure -a || true
 }
 
 attempt() {
@@ -173,11 +149,11 @@ for i in $(seq 1 "$ATTEMPTS"); do
     fi
 
     if [ "$i" -eq "$ATTEMPTS" ]; then
-        echo "::error::apt failed after ${ATTEMPTS} attempts (mirror: $(current_mirror))"
+        echo "::error::apt failed after ${ATTEMPTS} attempts (stock Ubuntu mirror)"
         exit 1
     fi
 
     echo "::warning::apt attempt ${i} failed or timed out; retrying in ${RETRY_SLEEP}s"
-    [ "$i" -eq 1 ] && switch_mirror
+    repair_dpkg
     sleep "$RETRY_SLEEP"
 done

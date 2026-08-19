@@ -3,11 +3,12 @@ description: >
   Hardened apt-get update + install: timeout(1) around every apt
   invocation (Acquire timeouts alone cannot stop a byte-dribbling mirror,
   which is how a "retried" install still sat stuck for 70+ minutes),
-  three attempts, and an automatic mirror switch after the first failure.
-  x86 runners flip azure.archive.ubuntu.com <-> archive.ubuntu.com; arm64
-  runners are normalized onto mirrors.mit.edu with ports.ubuntu.com as
-  the fallback, with IPv4 forced. Logic lives in apt_install.sh next to
-  this file.
+  three attempts, and a bounded dpkg --configure -a before each retry so
+  a timed-out install cannot wedge the rest. Stock Ubuntu repos only by
+  policy: azure's mirror is purged up front from every mirror file,
+  including the hosted runners' /etc/apt/apt-mirrors.txt mirrorlist;
+  arm64 keeps IPv4 forced for ports.ubuntu.com. Logic lives in
+  apt_install.sh next to this file.
 inputs:
   packages:
     description: Space-separated apt package list
