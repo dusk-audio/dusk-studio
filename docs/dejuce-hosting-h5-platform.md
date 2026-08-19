@@ -1,10 +1,12 @@
 # Hosting tower H5 — native platform ports + AU (executable spec)
 
-Status: **H5a MERGED (PRs #120/#121/#122). H5b MERGED (PR #154). H5c IS IN
-PROGRESS ON `dejuce/hosting-h5c`: WINDOWS CLAP/VST3 CORE, CHILD-HWND EDITORS,
-CMAKE GATES, AND WINDOWS CI ENABLEMENT ARE COMMITTED LOCALLY; WINDOWS CI AND
-BENCH SIGN-OFF REMAIN OWED. MACOS BENCH SIGN-OFF (H5a) AND STOCK APPLE AU
-EFFECT + INSTRUMENT BENCH SIGN-OFF (H5b) REMAIN OWED.** H4 is merged as PR
+Status: **H5a MERGED (PRs #120/#121/#122). H5b MERGED (PR #154). H5c IS OPEN
+AS PR #317 ON `dejuce/hosting-h5c`: WINDOWS CLAP/VST3 CORE, CHILD-HWND
+EDITORS, CMAKE GATES, AND WINDOWS CI ENABLEMENT ARE PUSHED, ALL PR CHECKS ARE
+GREEN, AND A DISPATCHED `windows-build.yml` RUN COMPILED AND PACKAGED THE
+WINDOWS APP INCLUDING BOTH EDITOR UNITS. WINDOWS BENCH SIGN-OFF REMAINS OWED.
+MACOS BENCH SIGN-OFF (H5a) AND STOCK APPLE AU EFFECT + INSTRUMENT BENCH
+SIGN-OFF (H5b) REMAIN OWED.** H4 is merged as PR
 #119 at `3c5c901`. The H5
 scout verified the live source/CMake/CI surface from that baseline. Windows
 LV2 is deferred. H5 is three sequential PRs: H5a macOS CLAP/LV2/VST3, H5b
@@ -380,7 +382,7 @@ H5 is complete only when:
 
 ## Resume phrase
 
-"Hosting H5c, spec docs/dejuce-hosting-h5-platform.md — on
-dejuce/hosting-h5c, review the local commits, get Marc's word to push and
-open the PR, drive Windows CI green, and record the Windows CLAP/VST3
-bench sign-off (editor DPI, resize/reopen, state, latency, ASIO playback)."
+"Hosting H5c, spec docs/dejuce-hosting-h5-platform.md — PR #317 is open with
+green checks; record the Windows CLAP/VST3 bench sign-off (editor DPI,
+resize/reopen, state, latency, ASIO playback), then get Marc's word to merge
+and start H6."
