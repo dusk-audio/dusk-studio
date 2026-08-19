@@ -63,6 +63,19 @@ private:
     stdfs::path value;
 };
 
+// setenv/unsetenv are POSIX; MSVC only ships _putenv_s, where an empty value
+// is the removal form. The scanner reads CLAP_PATH through _wgetenv on
+// Windows, and _putenv_s updates the same block _wgetenv sees.
+bool setEnvironment (const std::string& name, const char* value) noexcept
+{
+#if defined(_WIN32)
+    return ::_putenv_s (name.c_str(), value != nullptr ? value : "") == 0;
+#else
+    return value != nullptr ? ::setenv (name.c_str(), value, 1) == 0
+                            : ::unsetenv (name.c_str()) == 0;
+#endif
+}
+
 class ScopedEnvironment
 {
 public:
@@ -71,16 +84,13 @@ public:
     {
         if (const char* current = std::getenv (variable))
             previous = current;
-        if (setenv (name.c_str(), value.c_str(), 1) != 0)
+        if (! setEnvironment (name, value.c_str()))
             throw std::runtime_error ("could not set test environment variable");
     }
 
     ~ScopedEnvironment()
     {
-        if (previous.has_value())
-            setenv (name.c_str(), previous->c_str(), 1);
-        else
-            unsetenv (name.c_str());
+        setEnvironment (name, previous.has_value() ? previous->c_str() : nullptr);
     }
 
 private:
