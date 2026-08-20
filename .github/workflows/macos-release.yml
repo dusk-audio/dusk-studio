@@ -272,7 +272,7 @@ jobs:
           codesign --verify --strict --deep --verbose=2 "$APP"
           otool -L "$APP/Contents/MacOS/DuskStudio" \
             | tail -n +2 | awk '{print $1}' \
-            | grep -vE '^/usr/lib/|^/System/|^@' && {
+            | grep -vE '^/usr/lib/|^/System/|^@executable_path/\.\./Frameworks/|^@loader_path/' && {
                 echo "::error::packaged app links a path outside the bundle" >&2
                 exit 1; } || true
           env -i HOME="$HOME" "$APP/Contents/MacOS/DuskStudio" --version

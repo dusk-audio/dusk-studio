@@ -28,6 +28,27 @@ if [[ -d "$APP/Contents/Frameworks" ]]; then
     done
 fi
 
+# A build configured for the out-of-process plugin sandbox puts
+# dusk-studio-plugin-host beside the main executable. Relocation rewrote its
+# load commands too, and signing the bundle seals a helper as a resource
+# rather than re-signing its own code, so it needs its own pass or it exits
+# killed the first time the host spawns it.
+MAIN_EXE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' \
+            "$APP/Contents/Info.plist" 2>/dev/null || basename "${APP%.app}")"
+# The helper needs the same entitlements as the app, not fewer: it is the
+# process that loads third-party plugin binaries, so without
+# disable-library-validation hardened runtime refuses them, and it cannot even
+# map the bundled dylibs beside it.
+while IFS= read -r helper; do
+    [[ "$(basename "$helper")" == "$MAIN_EXE" ]] && continue
+    if [[ -n "$ENTITLEMENTS" && -f "$ENTITLEMENTS" ]]; then
+        codesign --force --options runtime --entitlements "$ENTITLEMENTS" \
+                 --sign "$IDENTITY" "$helper"
+    else
+        codesign --force --options runtime --sign "$IDENTITY" "$helper"
+    fi
+done < <(find "$APP/Contents/MacOS" -type f -perm -u+x)
+
 # The entitlements carry allow-jit / allow-unsigned-executable-memory /
 # disable-library-validation. Re-signing without them strips them, and
 # hardened runtime then refuses every third-party plugin the host loads.
