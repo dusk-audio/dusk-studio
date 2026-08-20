@@ -264,9 +264,17 @@ jobs:
           MNT="$(mktemp -d)"
           # The DMG carries a license agreement, so hdiutil blocks for an
           # acceptance it will never get on a runner and reports "attach
-          # canceled".
+          # canceled". Feeding it yes leaves yes to die of SIGPIPE once
+          # hdiutil closes stdin, so read hdiutil's own status rather than
+          # the pipeline's, which pipefail would otherwise take from yes.
+          set +o pipefail
           yes | hdiutil attach -nobrowse -readonly -noverify -noautoopen \
                   -mountpoint "$MNT" "$DMG" >/dev/null
+          mount_rc=${PIPESTATUS[1]}
+          set -o pipefail
+          [[ $mount_rc -eq 0 ]] || {
+              echo "::error::could not mount $DMG for verification" >&2
+              exit 1; }
           trap 'hdiutil detach "$MNT" >/dev/null 2>&1 || true' EXIT
           APP="$MNT/DuskStudio.app"
           codesign --verify --strict --deep --verbose=2 "$APP"
