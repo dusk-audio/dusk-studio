@@ -17,18 +17,29 @@ namespace duskstudio
 {
 namespace
 {
-// JUCE refreshes its display model when the global scale changes, but the X11
-// peer's screen-size callback deliberately does not forward the new logical
-// bounds to its Component. Preserve the native window's physical rectangle,
-// convert it through the refreshed display model, and push that new logical
-// rectangle back into the peer so the whole component tree performs a real
-// resize/layout pass. This path is also valid on the other desktop backends.
+// JUCE refreshes its display model when the global scale changes, and the
+// Cocoa and Windows peers resize their component tree from it. The X11 peer's
+// screen-size callback deliberately does not, so there the new logical bounds
+// have to be carried back into the peer by hand.
+//
+// That round trip is confined to X11 because it is only correct where the
+// peer is inert. logicalToPhysical and physicalToLogical both fold in the
+// global scale factor, so converting out and back across a scale change
+// divides the window's logical size by the ratio between the two scales, and
+// neither takes a display argument, so on a multi-display desktop it converts
+// against the primary display rather than the one holding the window. Where
+// the peer already resizes itself, that shrinks the window toward nothing and
+// can throw it onto another screen.
 void applyGlobalUiScale (juce::Component& source, float scale)
 {
     auto& desktop = juce::Desktop::getInstance();
     if (std::abs (desktop.getGlobalScaleFactor() - scale) < 0.0001f)
         return;
 
+   #if ! JUCE_LINUX
+    (void) source;
+    desktop.setGlobalScaleFactor (scale);
+   #else
     auto* topLevel = source.getTopLevelComponent();
     auto* peer = topLevel != nullptr ? topLevel->getPeer() : nullptr;
     if (peer == nullptr)
@@ -60,6 +71,7 @@ void applyGlobalUiScale (juce::Component& source, float scale)
                 refreshedPeer->juce::ComponentPeer::handleScreenSizeChange();
         }
     }
+   #endif
 }
 } // namespace
 

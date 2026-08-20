@@ -262,7 +262,10 @@ jobs:
           dmgs=(*.dmg)
           DMG="${dmgs[0]}"
           MNT="$(mktemp -d)"
-          hdiutil attach -nobrowse -readonly -noverify -noautoopen \
+          # The DMG carries a license agreement, so hdiutil blocks for an
+          # acceptance it will never get on a runner and reports "attach
+          # canceled".
+          yes | hdiutil attach -nobrowse -readonly -noverify -noautoopen \
                   -mountpoint "$MNT" "$DMG" >/dev/null
           trap 'hdiutil detach "$MNT" >/dev/null 2>&1 || true' EXIT
           APP="$MNT/DuskStudio.app"
