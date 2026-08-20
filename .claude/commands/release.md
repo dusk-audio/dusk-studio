@@ -23,6 +23,10 @@ acceptance pass that decides whether it can be announced.
 
 ## Instructions
 
+Run these snippets with `bash`, not the macOS default `zsh`: several read
+`PIPESTATUS`, which zsh spells `pipestatus` and indexes from 1, so a mount or
+pipeline failure reads as success there.
+
 Execute every step in order. Stop at the first failure and report it; do not
 work around a failed guard. A step that edits a file must prove the edit landed,
 because a silent no-op here ships the previous version's binaries under a new tag.
@@ -69,11 +73,19 @@ scripts/bump-version.sh "$NEW_VERSION"
 ```
 
 It updates `VERSION`, the appdata XML, and the release notes, then prints its own
-numbered checklist. Verify each file actually changed before continuing:
+numbered checklist. Check each file on its own: a whole-tree `git diff` passes when
+any one of the three changed, which is how a partial bump reaches a tag.
 
 ```bash
-grep -qx "$NEW_VERSION" VERSION || { echo "STOP: VERSION not bumped"; exit 1; }
-git diff --quiet && { echo "STOP: bump-version.sh changed nothing"; exit 1; }
+set -euo pipefail
+grep -qx "$NEW_VERSION" VERSION \
+  || { echo "STOP: VERSION not bumped"; exit 1; }
+grep -q "<release version=\"$NEW_VERSION\"" packaging/DuskStudio.appdata.xml \
+  || { echo "STOP: appdata has no release entry for $NEW_VERSION"; exit 1; }
+# RELEASE-NOTES.md carries no version literal, so changed is all that can be
+# checked here; its content is read by eye in Step 2.
+git diff --quiet -- packaging/RELEASE-NOTES.md \
+  && { echo "STOP: release notes unchanged"; exit 1; }
 ```
 
 Date the changelog heading (`## [X.Y.Z] - Unreleased` -> `## [X.Y.Z] - YYYY-MM-DD`)
@@ -87,8 +99,10 @@ grep -q "^## \[$NEW_VERSION\] - [0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}$" CHANGELOG.md 
 ### Step 4: Build and test locally before tagging
 
 ```bash
+set -euo pipefail
 cmake --build build -j6
-cmake --build build-tests --target dusk-studio-tests -j6 && ctest --test-dir build-tests --output-on-failure
+cmake --build build-tests --target dusk-studio-tests -j6
+ctest --test-dir build-tests --output-on-failure
 ```
 
 On Linux also run `scripts/run-selftest-xvfb.sh`. On macOS run the self-test
@@ -97,6 +111,7 @@ directly: `DUSKSTUDIO_RUN_SELFTEST=1 <app>/Contents/MacOS/DuskStudio`.
 ### Step 5: Commit and prove it landed
 
 ```bash
+set -euo pipefail
 git commit -am "Release v$NEW_VERSION"
 RELEASE_COMMIT=$(git rev-parse HEAD)
 git push origin main
@@ -112,17 +127,31 @@ produces a tag nobody else can reach.
 ### Step 6: Tag and push
 
 ```bash
+set -euo pipefail
 git tag -a "v$NEW_VERSION" -m "Dusk Studio $NEW_VERSION" "$RELEASE_COMMIT"
 git push origin "refs/tags/v$NEW_VERSION"
 ```
 
 ### Step 7: Wait for the four workflows
 
+Query by commit, not by eye. The Linux release workflow runs once per architecture,
+so a name appearing at all is not evidence that both of its runs passed.
+
 ```bash
-gh run list --branch "v$NEW_VERSION" --limit 10
+set -euo pipefail
+RUNS=$(gh run list --commit "$RELEASE_COMMIT" --limit 50 \
+       --json name,status,conclusion,headSha)
+for wf in "Linux release (tarball)" "macOS release (unsigned DMG)" \
+          "Windows build" "Manual PDF"; do
+  echo "$RUNS" | jq -e --arg wf "$wf" --arg sha "$RELEASE_COMMIT" '
+    [.[] | select(.name == $wf and .headSha == $sha)] as $r
+    | ($r | length) > 0
+      and ($r | all(.status == "completed" and .conclusion == "success"))' >/dev/null \
+    || { echo "STOP: $wf did not fully succeed on $RELEASE_COMMIT"; exit 1; }
+done
 ```
 
-All four must succeed. **A green run does not mean the artifact works**; see Step 10.
+**A green run does not mean the artifact works**; see Step 10.
 
 ### Step 8: Consolidate the checksum files
 
@@ -148,32 +177,74 @@ install invalidated the signature after signing. The build and the test suite bo
 run against the build tree and the CI machine's library prefix, so they pass whether
 or not the packaged artifact is self-contained.
 
+All six are present, so every entry must verify. `--ignore-missing` belongs in the
+advice given to users, who download one payload; here it would pass a release with
+an asset missing.
+
 ```bash
-shasum -a 256 --ignore-missing -c SHA256SUMS   # every downloaded payload must pass
+set -euo pipefail
+shasum -a 256 -c SHA256SUMS
 ```
 
-Then, per platform:
+**macOS.** The DMG carries a license agreement, so `hdiutil` blocks and reports
+`attach canceled` without `yes |`; read `hdiutil`'s own status rather than the
+pipeline's, or `yes` dying of SIGPIPE fails the step under `pipefail`.
 
-- **macOS**: mount with `yes | hdiutil attach ...` (the DMG carries a license
-  agreement and otherwise reports `attach canceled`; read `hdiutil`'s own status,
-  not the pipeline's, or `yes` dying of SIGPIPE fails the check under `pipefail`).
-  Confirm `codesign --verify --strict --deep` passes, that
-  `otool -L <app>/Contents/MacOS/DuskStudio` shows no load command outside
-  `/usr/lib`, `/System`, `@executable_path/../Frameworks/` or `@loader_path/`, and
-  that `env -i HOME="$HOME" <app>/Contents/MacOS/DuskStudio --version` exits 0.
-  The DMG must contain the `.app`, `LICENSE` and `LICENSES.txt` and nothing else;
-  a `share/` tree is a Linux install rule leaking into the macOS package.
-- **Linux**: extract both tarballs and smoke each binary only on its matching
-  architecture, under a private Xvfb display with `WAYLAND_DISPLAY` unset. Check
-  `DT_NEEDED` against what the tarball README tells users to install; a dependency
-  the binary needs and the README does not name is a launch failure on a clean machine.
-- **Windows**: install the MSI and launch it. If no Windows machine is available,
-  say so explicitly in the report rather than recording it as passed.
+```bash
+set -euo pipefail
+MNT=$(mktemp -d)
+set +o pipefail
+yes | hdiutil attach -nobrowse -readonly -noverify -noautoopen -mountpoint "$MNT" "$DMG" >/dev/null
+mount_rc=${PIPESTATUS[1]}
+set -o pipefail
+[ "$mount_rc" -eq 0 ] || { echo "STOP: cannot mount $DMG"; exit 1; }
+APP="$MNT/DuskStudio.app"
 
-Also confirm, on every platform: payloads are Dusk-only with no `JUCE-*` paths, each
-bundled `LICENSES.txt` is the complete file, and `MANUAL.pdf` renders with its figures
-and accidentals intact. Open the manual's verification section and confirm the
-commands it gives users match the assets actually published.
+codesign --verify --strict --deep --verbose=2 "$APP"
+
+# Every Mach-O, not just the main executable: the bundle also carries the
+# relocated dylibs and, on a sandbox build, the plugin-host helper.
+while IFS= read -r macho; do
+  file -b "$macho" | grep -q 'Mach-O' || continue
+  if otool -L "$macho" | tail -n +2 | awk '{print $1}' \
+     | grep -vqE '^/usr/lib/|^/System/|^@executable_path/\.\./Frameworks/|^@loader_path/'; then
+    echo "STOP: $macho links outside the bundle"; exit 1
+  fi
+done < <(find "$APP" -type f)
+
+env -i HOME="$HOME" "$APP/Contents/MacOS/DuskStudio" --version
+```
+
+The DMG must contain the `.app`, `LICENSE` and `LICENSES.txt` and nothing else; a
+`share/` tree is a Linux install rule leaking into the macOS package.
+
+**Linux.** Extract both tarballs and smoke each binary only on its matching
+architecture, under a private Xvfb display with `WAYLAND_DISPLAY` unset. Every
+`DT_NEEDED` entry that is not a core system library must be named in the tarball
+README, or the binary dies at the loader on a clean machine:
+
+```bash
+readelf -d DuskStudio/DuskStudio | awk -F'[][]' '/NEEDED/ {print $2}'
+```
+
+**Windows.** Install the MSI and launch it, and open the session notepad: its
+embedded window is created the same way as the macOS one, which was blank until
+0.13.1. If no Windows machine is available, report it as untested rather than passed.
+
+**Every platform**, deterministically:
+
+```bash
+set -euo pipefail
+find "$PAYLOAD" -path '*JUCE-*' -print -quit | grep -q . \
+  && { echo "STOP: JUCE-* path in payload"; exit 1; }
+cmp -s "$PAYLOAD/LICENSES.txt" LICENSES.txt \
+  || { echo "STOP: bundled LICENSES.txt is not the repo's current file"; exit 1; }
+pdftotext MANUAL.pdf - | grep -qE 'SHA256SUMS\.(linux|macos|windows|manual)' \
+  && { echo "STOP: manual documents checksum files this release does not publish"; exit 1; }
+```
+
+`MANUAL.pdf` also needs a human: confirm the figures render and the sharp and flat
+accidentals display. Report that as checked or not checked; there is no command for it.
 
 ### Step 11: Report
 
