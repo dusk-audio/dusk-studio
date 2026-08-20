@@ -275,6 +275,15 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
         {
             DGL::Window::ScopedGraphicsContext context (*window);
             editorWidget = std::make_unique<EditorWidget> (*window, *this);
+            // DGL sizes a top-level widget from a resize event. Window creation
+            // and resize are one synchronous operation on macOS, so that event
+            // has already been delivered by the time this widget exists and it
+            // would keep a 0x0 size forever, laying the document out into
+            // nothing. Apply the window's size the way DGL's own resize path
+            // does; TopLevelWidget::setSize only forwards to the window, which
+            // is already this size and so emits no event.
+            static_cast<DGL::Widget*> (editorWidget.get())
+                ->setSize (window->getWidth(), window->getHeight());
             buildFontAtlas (static_cast<float> (notepad::kTypeScale.lyric
                                                 * window->getScaleFactor()));
         }
