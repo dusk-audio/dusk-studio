@@ -35,12 +35,15 @@ fi
 # killed the first time the host spawns it.
 MAIN_EXE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' \
             "$APP/Contents/Info.plist" 2>/dev/null || basename "${APP%.app}")"
+# One path, not a name: the find below is recursive, and a nested helper that
+# happens to share the main executable's basename still needs signing.
+MAIN_EXE_PATH="$APP/Contents/MacOS/$MAIN_EXE"
 # The helper needs the same entitlements as the app, not fewer: it is the
 # process that loads third-party plugin binaries, so without
 # disable-library-validation hardened runtime refuses them, and it cannot even
 # map the bundled dylibs beside it.
 while IFS= read -r helper; do
-    [[ "$(basename "$helper")" == "$MAIN_EXE" ]] && continue
+    [[ "$helper" == "$MAIN_EXE_PATH" ]] && continue
     if [[ -n "$ENTITLEMENTS" && -f "$ENTITLEMENTS" ]]; then
         codesign --force --options runtime --entitlements "$ENTITLEMENTS" \
                  --sign "$IDENTITY" "$helper"
@@ -64,4 +67,4 @@ codesign --verify --strict --deep --verbose=2 "$APP"
 # A bundle that verifies can still fail to launch, which is how the v0.13.0 DMG
 # shipped: run it with an empty DYLD environment so a stray Homebrew path on
 # the build machine cannot satisfy a dependency the bundle is missing.
-env -i HOME="$HOME" "$APP/Contents/MacOS/$(basename "${APP%.app}")" --version
+env -i HOME="$HOME" "$MAIN_EXE_PATH" --version
