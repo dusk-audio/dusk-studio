@@ -8,8 +8,13 @@
 # Four workflows publish to the same tag (linux-release once per arch,
 # macos-release, windows-build, manual-pdf). A platform that fails leaves a
 # release that looks finished but is short its assets, so the set is the check:
-# ten assets, no more, no fewer, plus a populated release-summary slot. Exits
+# six assets, no more, no fewer, plus a populated release-summary slot. Exits
 # nonzero if anything is missing, duplicated or unexpected.
+#
+# The six-asset shape is the target of issue #321. Until the four workflows are
+# merged into one job that fans in, each job still uploads its own
+# SHA256SUMS.<job> file: consolidate those five into a single SHA256SUMS before
+# running this, as v0.13.0 was.
 
 set -euo pipefail
 
@@ -65,18 +70,16 @@ fi
 
 # label|glob. The glob is matched against the asset name. Versioned names carry
 # the tag's version, so an asset built from a stale VERSION reads as MISSING
-# instead of passing; the SHA256SUMS.* names carry no version.
+# instead of passing; the checksum file carries no version. One SHA256SUMS
+# covers every payload: a per-job split would report a partial release as
+# complete, because each job would bring its own checksum file with it.
 EXPECTED=(
     "Linux tarball x86_64|dusk-studio-${VER}-Linux-x86_64.tar.xz"
-    "Linux sums x86_64|SHA256SUMS.linux-x86_64"
     "Linux tarball aarch64|dusk-studio-${VER}-Linux-aarch64.tar.xz"
-    "Linux sums aarch64|SHA256SUMS.linux-aarch64"
     "macOS DMG|dusk-studio-${VER}-macOS-*.dmg"
-    "macOS sums|SHA256SUMS.macos"
     "Windows MSI|dusk-studio-${VER}-Windows-*.msi"
-    "Windows sums|SHA256SUMS.windows"
     "User manual|MANUAL.pdf"
-    "Manual sums|SHA256SUMS.manual"
+    "Checksums|SHA256SUMS"
 )
 
 GH_ERROR=$(mktemp "${TMPDIR:-/tmp}/duskstudio-release-verify.XXXXXX")
