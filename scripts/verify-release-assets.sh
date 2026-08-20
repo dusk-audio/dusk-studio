@@ -76,8 +76,8 @@ fi
 EXPECTED=(
     "Linux tarball x86_64|dusk-studio-${VER}-Linux-x86_64.tar.xz"
     "Linux tarball aarch64|dusk-studio-${VER}-Linux-aarch64.tar.xz"
-    "macOS DMG|dusk-studio-${VER}-macOS-*.dmg"
-    "Windows MSI|dusk-studio-${VER}-Windows-*.msi"
+    "macOS DMG|dusk-studio-${VER}-macOS-arm64.dmg"
+    "Windows MSI|dusk-studio-${VER}-Windows-x64.msi"
     "User manual|MANUAL.pdf"
     "Checksums|SHA256SUMS"
 )

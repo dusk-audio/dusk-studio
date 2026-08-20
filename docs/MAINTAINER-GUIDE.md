@@ -579,10 +579,11 @@ Before announcement, run
 [`scripts/verify-release-assets.sh`](../scripts/verify-release-assets.sh)
 `vX.Y.Z`. It fails if an expected asset class is missing or duplicated, an
 unexpected asset exists, or the release body's summary slot is missing or
-empty. Its macOS and Windows checks currently accept wildcard architecture
-suffixes, so it does not prove those two exact filenames or payload
-architectures. Summary-slot validation applies to v0.13.0 and later; older
-release bodies predate the markers and are expected to fail that check.
+empty. It matches every asset name exactly, including the `macOS-arm64` and
+`Windows-x64` suffixes, but it reads names only and never opens a payload, so
+it cannot prove the architecture of what is inside one. Summary-slot
+validation applies to v0.13.0 and later; older release bodies predate the
+markers and are expected to fail that check.
 Download the assets into a clean directory and perform the
 manual checks that the script cannot cover:
 

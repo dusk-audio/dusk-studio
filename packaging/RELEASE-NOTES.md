@@ -19,4 +19,7 @@ Adds the session notepad, a UI scale control, native PipeWire and macOS plugin h
   -> Run anyway. Statically linked, no vc_redist needed.
 - **Manual** (`MANUAL.pdf`): the Dusk Studio user manual for this release.
 
-Check a download against the `SHA256SUMS` asset before installing.
+Check a download against the `SHA256SUMS` asset before installing. It covers
+every payload, so verify with `shasum -a 256 --ignore-missing -c SHA256SUMS`
+to check the ones you actually downloaded; without `--ignore-missing` the
+files you skipped are reported as failures.
