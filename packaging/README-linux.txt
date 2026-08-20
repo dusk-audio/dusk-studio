@@ -32,11 +32,34 @@ Remove it again:
 REQUIREMENTS
 ------------
 A normal desktop Linux (X11 or Wayland). Audio runs over PipeWire/JACK
-(preferred) or ALSA. The PipeWire client library is linked in, so
-libpipewire-0.3-0 must be present even if you only use ALSA. On a minimal
-system, install the usual desktop libraries (X11, freetype, fontconfig, alsa)
-if the binary reports a missing library. Signed SFZ catalog authentication
-needs nothing from the host; libsodium is compiled into the binary.
+(preferred) or ALSA.
+
+The binary links these libraries and will not start without them. The PipeWire
+client is linked in even if you only use ALSA, and libsuil and libmp3lame are
+not on a stock desktop install, so check them first if the binary exits with
+"error while loading shared libraries":
+
+    libpipewire-0.3.so.0   libpipewire-0.3-0
+    libsuil-0.so.0         libsuil-0-0
+    libmp3lame.so.0        libmp3lame0
+    libsndfile.so.1        libsndfile1
+    libasound.so.2         libasound2
+    libfreetype.so.6       libfreetype6
+    libfontconfig.so.1     libfontconfig1
+    libGL.so.1             libgl1
+    libX11.so.6            libx11-6
+    libXcursor.so.1        libxcursor1
+    libXext.so.6           libxext6
+    libXrandr.so.2         libxrandr2
+
+The right-hand column is the Debian/Ubuntu package name. On those:
+
+    sudo apt install libpipewire-0.3-0 libsuil-0-0 libmp3lame0 libsndfile1 \
+        libasound2 libfreetype6 libfontconfig1 libgl1 libx11-6 libxcursor1 \
+        libxext6 libxrandr2
+
+Signed SFZ catalog authentication needs nothing from the host; libsodium is
+compiled into the binary.
 
 
 LICENSE

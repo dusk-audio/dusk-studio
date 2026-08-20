@@ -320,7 +320,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 ## System requirements
 
 - **Linux**: PipeWire (recommended) or ALSA. Dusk Studio talks to the PipeWire graph directly through its own backend, so the client shows up as "Dusk Studio" and reports its node latency to the graph; ALSA reaches the raw hardware for exclusive low-latency use. An X11 display is required: on a Wayland desktop this means XWayland (present and enabled by default on GNOME and KDE; compositors like sway, niri and labwc can run without it — enable it there, or Dusk Studio will refuse to start with a message pointing here).
-- **macOS**: 14.4 (Sonoma) or later for the out-of-process plugin sandbox; older macOS still runs plugins in-process.
+- **macOS**: 11 (Big Sur) or later, Apple Silicon. The out-of-process plugin sandbox needs a build whose deployment target is 14.4 (Sonoma) or later; the released DMG targets macOS 11, so it hosts and scans plugins in-process whatever version of macOS you run it on.
 - **Windows**: Windows 10 or later, ASIO driver recommended.
 
 Any modern multi-core CPU (Intel, AMD, or Apple Silicon) is sufficient for a 24-track session at 48 kHz. With **Multicore DSP** set to Auto (the default — see *Settings → Advanced*), the channel-strip work is shared across the available cores, so lower-power multi-core machines handle larger sessions more comfortably. The compressor and EQ on every channel are oversampled when the global oversampling factor is raised; expect roughly 2-3× the mix-engine CPU at 4× oversampling (keep oversampling at 1× on low-power machines).
@@ -389,17 +389,17 @@ Windows SmartScreen treats every new MSI hash as untrusted on first download; re
 
 ### Verifying your download
 
-Every release ships a `SHA256SUMS` file per platform. Linux is split by architecture: `SHA256SUMS.linux-x86_64` (PC) and `SHA256SUMS.linux-aarch64` (64-bit Raspberry Pi), alongside `SHA256SUMS.macos` and `SHA256SUMS.windows`. To verify:
+Every release ships one `SHA256SUMS` file covering every asset - both Linux tarballs, the macOS DMG, the Windows MSI and `MANUAL.pdf`. Download it next to whichever file you grabbed. `--ignore-missing` checks the files you actually have instead of failing on the ones you skipped:
 
 ```bash
 # Linux + macOS
-shasum -a 256 -c SHA256SUMS.linux-x86_64    # or -aarch64 (Raspberry Pi), or SHA256SUMS.macos
+shasum -a 256 --ignore-missing -c SHA256SUMS
 ```
 
 ```pwsh
 # Windows PowerShell
-Get-FileHash -Algorithm SHA256 DuskStudio-*.msi
-# Compare against the published SHA256SUMS.windows.
+Get-FileHash -Algorithm SHA256 dusk-studio-*-Windows-x64.msi
+# Compare against that file's line in the published SHA256SUMS.
 ```
 
 Verification protects against a bit-flipped download or a man-in-the-middle attack on the release attachment. It does NOT verify authorship; that's what the (currently absent) code-signing certificate would do.
@@ -1566,9 +1566,9 @@ OOP is supported on:
 
 - **Linux**: always.
 - **Windows**: always.
-- **macOS**: requires macOS 14.4 or later. The plugin **editor** is hosted in-process via a shell instance and embeds as a centred modal like the other platforms — see *Opening the editor* above.
+- **macOS**: compiled in only when the build's deployment target is macOS 14.4 or later, which the released DMG is not; a source build configured with `-DCMAKE_OSX_DEPLOYMENT_TARGET=14.4` gets it. Where it is present, the plugin **editor** is hosted in-process via a shell instance and embeds as a centred modal like the other platforms — see *Opening the editor* above.
 
-Plugins run **in-process by default** — it gives the most responsive plugin editors and the lowest CPU cost. To run third-party binary plugins in the OOP sandbox instead, launch with `DUSKSTUDIO_USE_OOP_PLUGINS=1`; a plugin that crashes or hangs then takes down only the host child, not Dusk Studio. The switch reaches standard-host rows only. Native rows — **CLAP** and **VST3-Native** on every OS, **LV2-Native** on Linux and macOS, plus **AudioUnit** on macOS — always run in-process and ignore it, as *Native plugin hosting* above says. If the `dusk-studio-plugin-host` binary is missing the loader falls back to in-process automatically. Standard-host plugin **scanning** runs in the sandboxed child, so a plugin that crashes while being probed is blacklisted instead of crashing the app; native scanning follows the format-specific rules described under *Scanning*. (Dusk Studio's own bundled plugins always run in-process.)
+Plugins run **in-process by default** — it gives the most responsive plugin editors and the lowest CPU cost. To run third-party binary plugins in the OOP sandbox instead, launch with `DUSKSTUDIO_USE_OOP_PLUGINS=1`; a plugin that crashes or hangs then takes down only the host child, not Dusk Studio. The switch reaches standard-host rows only. Native rows — **CLAP** and **VST3-Native** on every OS, **LV2-Native** on Linux and macOS, plus **AudioUnit** on macOS — always run in-process and ignore it, as *Native plugin hosting* above says. If the `dusk-studio-plugin-host` binary is missing the loader falls back to in-process automatically. Standard-host plugin **scanning** runs in the sandboxed child, so a plugin that crashes while being probed is blacklisted instead of crashing the app; native scanning follows the format-specific rules described under *Scanning*. A build without the sandbox compiled in, which includes the released macOS DMG, scans in-process, so a plugin that crashes or hangs while being probed there can take the app with it. (Dusk Studio's own bundled plugins always run in-process.)
 
 When a plugin crashes in OOP mode:
 

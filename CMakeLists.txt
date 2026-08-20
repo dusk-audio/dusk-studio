@@ -1521,12 +1521,17 @@ if(TARGET dusk-studio-plugin-host AND NOT APPLE)
     install(TARGETS dusk-studio-plugin-host
             RUNTIME DESTINATION bin)
 endif()
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/audio.dusk.studio.desktop"
-        DESTINATION share/applications)
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/DuskStudio.appdata.xml"
-        DESTINATION share/metainfo)
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/DuskStudio.mime.xml"
-        DESTINATION share/mime/packages)
+# XDG desktop integration, which only the Linux packages have a consumer for:
+# unguarded, these land at the root of the DMG and inside the MSI. The Linux
+# tarball is not CPack and stages its own copies in scripts/package-tarball.sh.
+if(UNIX AND NOT APPLE)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/audio.dusk.studio.desktop"
+            DESTINATION share/applications)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/DuskStudio.appdata.xml"
+            DESTINATION share/metainfo)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/DuskStudio.mime.xml"
+            DESTINATION share/mime/packages)
+endif()
 # GPL section 4: the license text must accompany every binary distribution, so
 # it ships as a file inside the package - CPACK_RESOURCE_FILE_LICENSE only
 # feeds the installer's EULA page and leaves nothing on disk. Linux packages
@@ -1552,8 +1557,10 @@ endif()
 # (ImageMagick 6 spells the command `convert`).
 # Nothing verifies the two stay in sync, so regenerating after editing
 # assets/ds-icon.png is on whoever edits it.
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/DuskStudio.png"
-        DESTINATION share/icons/hicolor/256x256/apps)
+if(UNIX AND NOT APPLE)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/DuskStudio.png"
+            DESTINATION share/icons/hicolor/256x256/apps)
+endif()
 
 set(CPACK_PACKAGE_NAME              "dusk-studio")
 set(CPACK_PACKAGE_VENDOR            "Dusk Audio")

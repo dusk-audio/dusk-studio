@@ -431,7 +431,7 @@ Set `RELEASE_VERSION=X.Y.Z` in the shell used for the guarded commands.
 
 The reserved address in
 [`CPACK_PACKAGE_CONTACT`](../CMakeLists.txt) feeds only DEB/RPM package
-metadata. Those formats are not among the ten assets published by the current
+metadata. Those formats are not among the six assets published by the current
 tag workflows, so the placeholder does not block releases made by those
 workflows. Supply the real address before either format is published.
 
@@ -558,37 +558,45 @@ the workflows merely turn green; complete the acceptance checks below first.
 
 ### Tag assets and acceptance
 
-A complete `vX.Y.Z` release has exactly these ten assets:
+A complete `vX.Y.Z` release has exactly these six assets:
 
 - `dusk-studio-X.Y.Z-Linux-x86_64.tar.xz`
-- `SHA256SUMS.linux-x86_64`
 - `dusk-studio-X.Y.Z-Linux-aarch64.tar.xz`
-- `SHA256SUMS.linux-aarch64`
 - `dusk-studio-X.Y.Z-macOS-arm64.dmg`
-- `SHA256SUMS.macos`
 - `dusk-studio-X.Y.Z-Windows-x64.msi`
-- `SHA256SUMS.windows`
 - `MANUAL.pdf`
-- `SHA256SUMS.manual`
+- `SHA256SUMS`
+
+The four tag workflows cannot see each other's outputs, so each still uploads
+its own `SHA256SUMS.<job>` file: `SHA256SUMS.linux-x86_64`,
+`SHA256SUMS.linux-aarch64`, `SHA256SUMS.macos`, `SHA256SUMS.windows` and
+`SHA256SUMS.manual`. Replace those five with one sorted `SHA256SUMS` covering
+all five payloads, and delete them from the release, before the acceptance run
+below. Issue #321 removes this step by merging the workflows into a single
+publish job that fans in.
 
 Before announcement, run
 [`scripts/verify-release-assets.sh`](../scripts/verify-release-assets.sh)
 `vX.Y.Z`. It fails if an expected asset class is missing or duplicated, an
 unexpected asset exists, or the release body's summary slot is missing or
-empty. Its macOS and Windows checks currently accept wildcard architecture
-suffixes, so it does not prove those two exact filenames or payload
-architectures. Summary-slot validation applies to v0.13.0 and later; older
-release bodies predate the markers and are expected to fail that check.
+empty. It matches every asset name exactly, including the `macOS-arm64` and
+`Windows-x64` suffixes, but it reads names only and never opens a payload, so
+it cannot prove the architecture of what is inside one. Summary-slot
+validation applies to v0.13.0 and later; older release bodies predate the
+markers and are expected to fail that check.
 Download the assets into a clean directory and perform the
 manual checks that the script cannot cover:
 
 - Confirm the populated release summary is correct for this version. The
   verifier rejects an empty slot but cannot judge editorial accuracy.
-- Confirm all ten filenames exactly match the list above. Inspect the
+- Confirm all six filenames exactly match the list above. Inspect the
   executable inside the DMG and MSI and confirm arm64 and x64 respectively;
-  do not infer architecture from the filename.
-- Run `sha256sum --check` separately for each of the five checksum files and
-  require every corresponding payload to pass.
+  do not infer architecture from the filename. The DMG must carry the `.app`,
+  `LICENSE` and `LICENSES.txt` and nothing else; a `share/` tree of XDG desktop
+  files in it is a Linux install rule leaking into the macOS package.
+- Run `sha256sum --check SHA256SUMS` against the downloaded payloads and
+  require every one of the five to pass. A payload rebuilt after the checksums
+  were written passes the name check and fails here, which is the point.
 - Open `MANUAL.pdf`; confirm the figures render and the sharp and flat
   accidentals display correctly.
 - Extract both Linux tarballs and smoke each binary only on its matching
