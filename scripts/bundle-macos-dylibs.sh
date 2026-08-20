@@ -19,10 +19,23 @@ MACOS_DIR="$APP/Contents/MacOS"
 FRAMEWORKS="$APP/Contents/Frameworks"
 
 # A dependency is "system" if the OS ships it; everything else has to travel
-# inside the bundle. @-prefixed entries are already relocated.
+# inside the bundle.
 is_system() {
     case "$1" in
-        /usr/lib/*|/System/*|@*) return 0 ;;
+        /usr/lib/*|/System/*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Only the two forms this script writes are known to stay inside the bundle.
+# @rpath resolution depends on the LC_RPATH list of whichever binary is loading,
+# so it is not decidable from one Mach-O in isolation; refuse it rather than
+# guess, and refuse an @executable_path that climbs back out of Contents.
+is_relocated() {
+    case "$1" in
+        @executable_path/../Frameworks/*|@loader_path/*)
+            case "$1" in *..*/..*) return 1 ;; esac
+            return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -52,6 +65,11 @@ while [[ -s "$PENDING" ]]; do
     [[ -f "$current" ]] || continue
     while IFS= read -r dep; do
         is_system "$dep" && continue
+        if is_relocated "$dep"; then continue; fi
+        case "$dep" in
+            @*) echo "error: cannot resolve $dep in $(basename "$current"); \
+this script does not implement LC_RPATH search" >&2; exit 1 ;;
+        esac
         base="$(basename "$dep")"
         # A dylib's first otool -L line is its own ID, not a dependency.
         [[ "$base" == "$(basename "$current")" ]] && continue
@@ -78,6 +96,7 @@ for lib in "$FRAMEWORKS"/*.dylib; do
     install_name_tool -id "@loader_path/$base" "$lib" 2>/dev/null
     while IFS= read -r dep; do
         is_system "$dep" && continue
+        is_relocated "$dep" && continue
         depbase="$(basename "$dep")"
         [[ "$depbase" == "$base" ]] && continue
         install_name_tool -change "$dep" "@loader_path/$depbase" "$lib" 2>/dev/null
@@ -87,6 +106,7 @@ done
 while IFS= read -r bin; do
     while IFS= read -r dep; do
         is_system "$dep" && continue
+        is_relocated "$dep" && continue
         install_name_tool -change "$dep" \
             "@executable_path/../Frameworks/$(basename "$dep")" "$bin" 2>/dev/null
     done < <(deps_of "$bin")
@@ -98,6 +118,7 @@ leaked=0
 while IFS= read -r macho; do
     while IFS= read -r dep; do
         is_system "$dep" && continue
+        is_relocated "$dep" && continue
         echo "error: unrelocated dependency in $(basename "$macho"): $dep" >&2
         leaked=1
     done < <(deps_of "$macho")

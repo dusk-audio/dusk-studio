@@ -20,6 +20,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Inside-out: nested code first, then the bundle that seals it. --deep is
 # deprecated and does not reliably re-sign what install_name_tool touched.
 if [[ -d "$APP/Contents/Frameworks" ]]; then
+    # A Frameworks directory can exist without loose dylibs in it; without
+    # nullglob the unmatched pattern reaches codesign as a literal path.
+    shopt -s nullglob
     for lib in "$APP/Contents/Frameworks"/*.dylib; do
         codesign --force --options runtime --sign "$IDENTITY" "$lib"
     done
