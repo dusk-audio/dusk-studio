@@ -282,15 +282,11 @@ case " $* " in
         else
             printf '%s\n' \
                 'dusk-studio-9.9.9-Linux-x86_64.tar.xz' \
-                'SHA256SUMS.linux-x86_64' \
                 'dusk-studio-9.9.9-Linux-aarch64.tar.xz' \
-                'SHA256SUMS.linux-aarch64' \
                 'dusk-studio-9.9.9-macOS-arm64.dmg' \
-                'SHA256SUMS.macos' \
                 'dusk-studio-9.9.9-Windows-x64.msi' \
-                'SHA256SUMS.windows' \
                 'MANUAL.pdf' \
-                'SHA256SUMS.manual'
+                'SHA256SUMS'
         fi
         ;;
     *)
@@ -346,14 +342,10 @@ POPULATED_BODY=$(printf '%s\n' \
     '### Downloads')
 MISSING_ASSETS=$(printf '%s\n' \
     'dusk-studio-9.9.9-Linux-x86_64.tar.xz' \
-    'SHA256SUMS.linux-x86_64' \
     'dusk-studio-9.9.9-Linux-aarch64.tar.xz' \
-    'SHA256SUMS.linux-aarch64' \
     'dusk-studio-9.9.9-macOS-arm64.dmg' \
-    'SHA256SUMS.macos' \
     'dusk-studio-9.9.9-Windows-x64.msi' \
-    'SHA256SUMS.windows' \
-    'MANUAL.pdf')
+    'SHA256SUMS')
 VERIFIER_OUTPUT="$SCRATCH/verifier-output.txt"
 VERIFIER_ERROR="$SCRATCH/verifier-error.txt"
 if PATH="$VERIFIER_BIN:$PATH" FAKE_GH_FAIL_JSON=assets \
@@ -399,7 +391,7 @@ if PATH="$VERIFIER_BIN:$PATH" FAKE_RELEASE_ASSETS="$MISSING_ASSETS" \
     echo "FAIL: a release missing one asset must fail verification" >&2
     exit 1
 fi
-if ! grep -qE '^MISSING[[:space:]].*SHA256SUMS\.manual$' "$VERIFIER_OUTPUT"; then
+if ! grep -qE '^MISSING[[:space:]].*MANUAL\.pdf$' "$VERIFIER_OUTPUT"; then
     echo "FAIL: a missing release asset reported the wrong failure" >&2
     cat "$VERIFIER_OUTPUT" >&2
     exit 1
@@ -992,7 +984,7 @@ assert "--jq '.body // \"\"'" in verifier_text, (
     "verifier must normalize a null release body to empty"
 )
 expected_assets = re.findall(r'^\s+"[^"\n]+\|[^"\n]+"$', verifier_text, re.MULTILINE)
-expected_asset_count = 10
+expected_asset_count = 6
 assert len(expected_assets) == expected_asset_count, (
     "release verifier asset count changed; update the release contract explicitly"
 )

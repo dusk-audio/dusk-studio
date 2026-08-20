@@ -389,17 +389,17 @@ Windows SmartScreen treats every new MSI hash as untrusted on first download; re
 
 ### Verifying your download
 
-Every release ships a `SHA256SUMS` file per platform. Linux is split by architecture: `SHA256SUMS.linux-x86_64` (PC) and `SHA256SUMS.linux-aarch64` (64-bit Raspberry Pi), alongside `SHA256SUMS.macos` and `SHA256SUMS.windows`. To verify:
+Every release ships one `SHA256SUMS` file covering every asset - both Linux tarballs, the macOS DMG, the Windows MSI and `MANUAL.pdf`. Download it next to whichever file you grabbed. `--ignore-missing` checks the files you actually have instead of failing on the ones you skipped:
 
 ```bash
 # Linux + macOS
-shasum -a 256 -c SHA256SUMS.linux-x86_64    # or -aarch64 (Raspberry Pi), or SHA256SUMS.macos
+shasum -a 256 --ignore-missing -c SHA256SUMS
 ```
 
 ```pwsh
 # Windows PowerShell
-Get-FileHash -Algorithm SHA256 DuskStudio-*.msi
-# Compare against the published SHA256SUMS.windows.
+Get-FileHash -Algorithm SHA256 dusk-studio-*-Windows-x64.msi
+# Compare against that file's line in the published SHA256SUMS.
 ```
 
 Verification protects against a bit-flipped download or a man-in-the-middle attack on the release attachment. It does NOT verify authorship; that's what the (currently absent) code-signing certificate would do.

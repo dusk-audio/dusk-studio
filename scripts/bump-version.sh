@@ -383,5 +383,5 @@ echo "     Prove landing:     git merge-base --is-ancestor \"\${RELEASE_COMMIT:?
 echo "     PR squash:         re-record RELEASE_COMMIT as the landed commit, then rerun step 6 (see MAINTAINER-GUIDE Part 10)"
 echo "  7) Tag landed commit: git tag -a v$NEW_VERSION -m \"Dusk Studio $NEW_VERSION\" \"\${RELEASE_COMMIT:?record RELEASE_COMMIT after committing metadata}\""
 echo "  8) Push tag:          git push origin \"refs/tags/v$NEW_VERSION\""
-echo "  9) Wait for CI assets: Linux release (tarball), macOS release (unsigned DMG), Windows build, Manual PDF (all 10 assets)"
+echo "  9) Wait for CI assets: Linux release (tarball), macOS release (unsigned DMG), Windows build, Manual PDF (all 6 assets)"
 echo " 10) Verify assets:     scripts/verify-release-assets.sh v$NEW_VERSION"

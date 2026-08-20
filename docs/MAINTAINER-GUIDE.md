@@ -431,7 +431,7 @@ Set `RELEASE_VERSION=X.Y.Z` in the shell used for the guarded commands.
 
 The reserved address in
 [`CPACK_PACKAGE_CONTACT`](../CMakeLists.txt) feeds only DEB/RPM package
-metadata. Those formats are not among the ten assets published by the current
+metadata. Those formats are not among the six assets published by the current
 tag workflows, so the placeholder does not block releases made by those
 workflows. Supply the real address before either format is published.
 

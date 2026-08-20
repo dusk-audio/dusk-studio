@@ -96,13 +96,15 @@ straight from the extracted tarball.
    `git tag -a vX.Y.Z -m "Dusk Studio X.Y.Z"` followed by
    `git push origin vX.Y.Z`.
 5. Wait for the `Linux release (tarball)`, `macOS release (unsigned DMG)`,
-   `Windows build`, and `Manual PDF` workflows. They publish exactly
-   ten assets to the private `dusk-audio/dusk-studio-releases` release: two
-   Linux tarballs plus `SHA256SUMS.linux-x86_64` and
-   `SHA256SUMS.linux-aarch64`, one macOS DMG plus `SHA256SUMS.macos`, one
-   Windows MSI plus `SHA256SUMS.windows`, and `MANUAL.pdf` plus
-   `SHA256SUMS.manual`.
+   `Windows build`, and `Manual PDF` workflows. A complete release carries
+   exactly six assets on the private `dusk-audio/dusk-studio-releases` release:
+   two Linux tarballs, one macOS DMG, one Windows MSI, `MANUAL.pdf`, and one
+   `SHA256SUMS` covering all five payloads. The workflows cannot see each
+   other's outputs, so each still uploads its own `SHA256SUMS.<job>` file;
+   replace those five with the single sorted `SHA256SUMS` and delete them.
+   `docs/MAINTAINER-GUIDE.md` Part 10 has the commands; issue #321 removes the
+   step.
 6. Before announcing the release, run
    `scripts/verify-release-assets.sh vX.Y.Z`. Do not announce unless it reports
-   all ten assets and a populated release-summary slot.
+   all six assets and a populated release-summary slot.
 7. Pinned support note: paste `DuskStudio --version` output into any DM.
