@@ -1511,6 +1511,22 @@ endif()
 install(TARGETS DuskStudio
         RUNTIME DESTINATION bin
         BUNDLE  DESTINATION .)
+if(APPLE)
+    # Installing a bundle rewrites its Mach-O load commands, so the POST_BUILD
+    # signature above is invalid by the time CPack stages the .app, and the
+    # staged copy is still missing the Homebrew dylibs it links. Repair both on
+    # the installed tree, where nothing runs after us.
+    install(CODE "
+        execute_process(
+            COMMAND \"${CMAKE_CURRENT_SOURCE_DIR}/scripts/finalize-macos-bundle.sh\"
+                    \"\${CMAKE_INSTALL_PREFIX}/DuskStudio.app\"
+                    \"${DUSKSTUDIO_CODESIGN_IDENTITY}\"
+                    \"${CMAKE_CURRENT_BINARY_DIR}/DuskStudio_artefacts/JuceLibraryCode/DuskStudio.entitlements\"
+            RESULT_VARIABLE duskstudio_finalize_rc)
+        if(NOT duskstudio_finalize_rc EQUAL 0)
+            message(FATAL_ERROR \"finalize-macos-bundle.sh failed (\${duskstudio_finalize_rc})\")
+        endif()")
+endif()
 # On Linux/Windows the plugin host is a separate executable that the main app
 # resolves beside itself.  Building it as a dependency is not enough: CPack
 # only packages targets with install rules, so omitting this target left the

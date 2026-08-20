@@ -250,6 +250,30 @@ jobs:
           shasum -a 256 "${base}.dmg" | tee SHA256SUMS.macos
           echo "Unsigned DMG: ${base}.dmg"
 
+      - name: Verify the packaged app launches
+        # The build and the test suite both run against the Homebrew prefix,
+        # so they pass whether or not the .app carries its dependencies. Only
+        # launching the packaged bundle proves it: mount the DMG the user
+        # downloads, scrub the environment so no build-machine path can
+        # satisfy a missing dylib, and require a clean exit.
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          dmgs=(*.dmg)
+          DMG="${dmgs[0]}"
+          MNT="$(mktemp -d)"
+          hdiutil attach -nobrowse -readonly -noverify -noautoopen \
+                  -mountpoint "$MNT" "$DMG" >/dev/null
+          trap 'hdiutil detach "$MNT" >/dev/null 2>&1 || true' EXIT
+          APP="$MNT/DuskStudio.app"
+          codesign --verify --strict --deep --verbose=2 "$APP"
+          otool -L "$APP/Contents/MacOS/DuskStudio" \
+            | tail -n +2 | awk '{print $1}' \
+            | grep -vE '^/usr/lib/|^/System/|^@' && {
+                echo "::error::packaged app links a path outside the bundle" >&2
+                exit 1; } || true
+          env -i HOME="$HOME" "$APP/Contents/MacOS/DuskStudio" --version
+
       - name: Publish DMG to the PRIVATE releases repo
         # Only on a real v* tag. Manual dispatches are build validation —
         # publishing on each would pollute the releases repo.
