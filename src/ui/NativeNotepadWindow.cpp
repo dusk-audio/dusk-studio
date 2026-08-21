@@ -102,6 +102,10 @@ void notepadLog (const char* format, ...)
     va_end (args);
 
     std::fprintf (stderr, "[Dusk Studio/notepad] %s\n", message);
+    // setvbuf only binds if nothing has written to the stream yet, and static
+    // initialisation order across translation units is unspecified, so the
+    // unbuffered mode set in Main.cpp cannot be assumed here.
+    std::fflush (stderr);
    #if defined (_WIN32)
     char forDebugger[560] {};
     std::snprintf (forDebugger, sizeof forDebugger,
@@ -192,10 +196,9 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
     protected:
         void onImGuiDisplay() override
         {
-            static bool loggedFirstDraw = false;
-            if (! loggedFirstDraw)
+            if (! owner.loggedFirstDraw)
             {
-                loggedFirstDraw = true;
+                owner.loggedFirstDraw = true;
                 notepadLog ("stage: first onImGuiDisplay entered");
             }
             owner.draw (static_cast<float> (getWidth()), static_cast<float> (getHeight()));
@@ -311,6 +314,9 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
         markdownFocusRequested = false;
         closeRequested = false;
         closeWasPumped = false;
+        loggedFirstIdle = false;
+        loggedFirstIdleReturn = false;
+        loggedFirstDraw = false;
         hasSessionFile = sessionExists;
         documentDirty = unsavedChanges;
         saveFailed = false;
@@ -396,8 +402,7 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
             // the caller can act on, so the failure has to be converted here
             // into the false return the caller already handles.
             notepadLog ("cannot embed: %s", error.what());
-            editorWidget.reset();
-            window.reset();
+            destroyEmbeddedWindow();
             return false;
         }
         startTimer (16);
@@ -497,14 +502,13 @@ private:
 
     void timerCallback() override
     {
-        static bool loggedFirstIdle = false;
         if (! loggedFirstIdle)
         {
             loggedFirstIdle = true;
             notepadLog ("stage: first idle - entering event pump");
         }
         app.idle();
-        if (loggedFirstIdle && ! loggedFirstIdleReturn)
+        if (! loggedFirstIdleReturn)
         {
             loggedFirstIdleReturn = true;
             notepadLog ("stage: first idle returned");
@@ -968,7 +972,9 @@ private:
         ImGui::PopStyleVar();
     }
 
+    bool loggedFirstIdle = false;
     bool loggedFirstIdleReturn = false;
+    bool loggedFirstDraw = false;
     EmbeddedApplication app;
     std::unique_ptr<DGL::Window> window;
     std::unique_ptr<EditorWidget> editorWidget;
