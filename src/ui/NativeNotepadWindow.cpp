@@ -196,12 +196,13 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
     protected:
         void onImGuiDisplay() override
         {
-            if (! owner.loggedFirstDraw)
-            {
-                owner.loggedFirstDraw = true;
+            const bool firstDraw = ! owner.loggedFirstDraw;
+            owner.loggedFirstDraw = true;
+            if (firstDraw)
                 notepadLog ("stage: first onImGuiDisplay entered");
-            }
             owner.draw (static_cast<float> (getWidth()), static_cast<float> (getHeight()));
+            if (firstDraw)
+                notepadLog ("stage: first onImGuiDisplay returned");
         }
 
         bool onKeyboard (const DGL::Widget::KeyboardEvent& event) override
@@ -317,6 +318,7 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
         loggedFirstIdle = false;
         loggedFirstIdleReturn = false;
         loggedFirstDraw = false;
+        tracedFirstDraw = false;
         hasSessionFile = sessionExists;
         documentDirty = unsavedChanges;
         saveFailed = false;
@@ -857,6 +859,13 @@ private:
 
     void draw (float width, float height)
     {
+        const bool trace = ! tracedFirstDraw;
+        const auto mark = [trace] (const char* stage)
+        {
+            if (trace)
+                notepadLog ("stage: draw %s", stage);
+        };
+        mark ("entered");
         auto& style = ImGui::GetStyle();
         style.WindowBorderSize = 0.0f;
         style.FrameBorderSize = 0.0f;
@@ -877,6 +886,7 @@ private:
         style.Colors[ImGuiCol_Text] = colour (notepad::kStagePalette.lyric);
         style.Colors[ImGuiCol_TextDisabled] = colour (notepad::kStagePalette.muted);
 
+        mark ("style applied");
         ImGui::SetNextWindowPos (ImVec2 (0.0f, 0.0f));
         ImGui::SetNextWindowSize (ImVec2 (width, height));
         ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (0.0f, 0.0f));
@@ -886,8 +896,10 @@ private:
                       | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar
                       | ImGuiWindowFlags_NoScrollWithMouse);
 
+        mark ("window begun");
         ImGui::SetCursorPos (ImVec2 (22.0f, 14.0f));
         ImGui::TextUnformatted ("SESSION NOTEPAD");
+        mark ("header text drawn");
         ImGui::SetCursorPos (ImVec2 (22.0f, 34.0f));
         ImGui::PushStyleColor (ImGuiCol_Text, colour (notepad::kStagePalette.muted));
         ImGui::TextUnformatted ("Lyrics and session notes");
@@ -907,15 +919,19 @@ private:
         if (bands.ribbon > 0.0f)
         {
             ImGui::SetCursorPos (ImVec2 (0.0f, ribbonTop));
+            mark ("ribbon begin");
             drawRibbon (bands.ribbon);
+            mark ("ribbon done");
         }
         if (bands.chart > 0.0f)
         {
             ImGui::SetCursorPos (ImVec2 (0.0f, chartTop));
+            mark ("chart begin");
             if (markdownView)
                 drawMarkdownEditor (bands.chart);
             else
                 drawEditor (bands.chart);
+            mark ("chart done");
         }
 
         if (bands.status > 0.0f)
@@ -965,16 +981,20 @@ private:
             ImGui::EndChild();
             ImGui::PopStyleVar();
             ImGui::PopStyleColor();
+            mark ("status done");
         }
 
         ImGui::End();
+        mark ("window ended");
         ImGui::PopStyleColor();
         ImGui::PopStyleVar();
+        tracedFirstDraw = true;
     }
 
     bool loggedFirstIdle = false;
     bool loggedFirstIdleReturn = false;
     bool loggedFirstDraw = false;
+    bool tracedFirstDraw = false;
     EmbeddedApplication app;
     std::unique_ptr<DGL::Window> window;
     std::unique_ptr<EditorWidget> editorWidget;
