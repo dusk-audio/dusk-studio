@@ -38,8 +38,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
-  cancel-in-progress: true
+  # Dispatches share one fixed group so two dev publishes cannot interleave
+  # their delete-then-upload against the single ci-windows-dev release; they
+  # queue instead of cancelling, so neither loses its assets mid-replacement.
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && 'dev-publish' || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
   build:
@@ -65,10 +68,10 @@ jobs:
           # GITHUB_TOKEN — don't leave it in git config.
           persist-credentials: false
 
-      - name: Preflight - releases-repo token is valid (publishing builds only)
+      - name: Preflight - releases-repo token is valid (tag builds only)
         # Fail fast before the full build if RELEASES_REPO_TOKEN is dead.
         # The non-mutating generate-notes endpoint rejects read-only tokens.
-        if: ${{ github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
+        if: ${{ github.ref_type == 'tag' }}
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
@@ -392,49 +395,59 @@ jobs:
         # rolling prerelease so the releases repo gains a single extra entry no
         # matter how many dispatches run, and prerelease means it can never
         # become the repo's "Latest" over a real version tag.
+        #
+        # Nothing here reuses the tag path's ASSETS array or its upload line:
+        # tests/release_mechanics.sh requires each release workflow to carry
+        # exactly one canonical create and upload, and the notes for a dev
+        # build are written here rather than taken from RELEASE-NOTES.md.
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
         run: |
           set -euo pipefail
-          TAG="ci-windows-dev"
+          DEV_TAG="ci-windows-dev"
           SHA="${GITHUB_SHA::7}"
 
           shopt -s nullglob
-          ASSETS=( *.msi SHA256SUMS.windows )
-          if [[ ${#ASSETS[@]} -eq 0 ]]; then
+          DEV_ASSETS=( *.msi )
+          if [[ ${#DEV_ASSETS[@]} -eq 0 ]]; then
             echo "::error::no MSI produced - packaging step failed" >&2
             exit 1
           fi
+          DEV_ASSETS+=( SHA256SUMS.windows )
 
-          NOTES="Unsigned Windows dev build - NOT a release.
+          dev_notes=$(mktemp -t duskstudio-dev-notes.XXXXXX)
+          trap 'rm -f "$dev_notes"' EXIT
+          cat > "$dev_notes" <<EOF
+          Unsigned Windows dev build - NOT a release.
 
           Commit: ${GITHUB_SHA}
           Ref: ${GITHUB_REF_NAME}
           Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
 
-          Rebuilt and replaced by every dispatch of the Windows build workflow."
+          Rebuilt and replaced by every dispatch of the Windows build workflow.
+          EOF
 
-          if gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null 2>&1; then
-            gh release edit "$TAG" --repo "$RELEASES_REPO" \
-              --title "Windows dev build (${SHA})" --notes "$NOTES" --prerelease
+          if gh release view "$DEV_TAG" --repo "$RELEASES_REPO" >/dev/null 2>&1; then
+            gh release edit "$DEV_TAG" --repo "$RELEASES_REPO" \
+              --title "Windows dev build (${SHA})" --notes-file "$dev_notes" --prerelease
             # Drop the previous dev build: its assets are sha-stamped, so
             # --clobber alone would let them pile up under this tag forever.
-            gh release view "$TAG" --repo "$RELEASES_REPO" \
+            # A failed delete must stop the job rather than leave a mixed set.
+            gh release view "$DEV_TAG" --repo "$RELEASES_REPO" \
               --json assets -q '.assets[].name' \
             | while read -r old; do
                 if [[ -n "$old" ]]; then
-                  gh release delete-asset "$TAG" "$old" \
-                    --repo "$RELEASES_REPO" -y || true
+                  gh release delete-asset "$DEV_TAG" "$old" \
+                    --repo "$RELEASES_REPO" -y
                 fi
               done
-          elif ! gh release create "$TAG" --repo "$RELEASES_REPO" \
-                 --title "Windows dev build (${SHA})" --notes "$NOTES" \
-                 --prerelease; then
-            # A concurrent dispatch may have created it between the two calls.
-            gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null
+          else
+            gh release create "$DEV_TAG" --repo "$RELEASES_REPO" \
+              --title "Windows dev build (${SHA})" --notes-file "$dev_notes" \
+              --prerelease
           fi
 
-          gh release upload "$TAG" --repo "$RELEASES_REPO" --clobber "${ASSETS[@]}"
-          echo "Published ${#ASSETS[@]} asset(s) to ${RELEASES_REPO} @ ${TAG} (${SHA})"
+          gh release upload "$DEV_TAG" --repo "$RELEASES_REPO" --clobber "${DEV_ASSETS[@]}"
+          echo "Published ${#DEV_ASSETS[@]} asset(s) to ${RELEASES_REPO} @ ${DEV_TAG} (${SHA})"
