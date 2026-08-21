@@ -6,6 +6,16 @@
 #include "NotepadTheme.h"
 #include "../foundation/MessageThread.h"
 
+#if defined (_WIN32)
+# ifndef WIN32_LEAN_AND_MEAN
+#  define WIN32_LEAN_AND_MEAN
+# endif
+# ifndef NOMINMAX
+#  define NOMINMAX
+# endif
+# include <windows.h>
+#endif
+
 #include <Application.hpp>
 #include <OpenGL.hpp>
 #include <DearImGui.hpp>
@@ -16,6 +26,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -78,6 +89,41 @@ std::string clockLabel()
     char buffer[6] {};
     std::strftime (buffer, sizeof (buffer), "%H:%M", &local);
     return buffer;
+}
+
+// Diagnostics go to stderr and, on Windows, to the debugger channel as well: a
+// capture there survives a process that dies without flushing its stdio.
+void notepadLog (const char* format, ...)
+{
+    char message[512] {};
+    va_list args;
+    va_start (args, format);
+    std::vsnprintf (message, sizeof message, format, args);
+    va_end (args);
+
+    std::fprintf (stderr, "[Dusk Studio/notepad] %s\n", message);
+   #if defined (_WIN32)
+    char forDebugger[560] {};
+    std::snprintf (forDebugger, sizeof forDebugger,
+                   "[Dusk Studio/notepad] %s\n", message);
+    ::OutputDebugStringA (forDebugger);
+   #endif
+}
+
+const char* glString (unsigned int name)
+{
+    const auto* const value = reinterpret_cast<const char*> (glGetString (name));
+    return value != nullptr ? value : "(null)";
+}
+
+void logGraphicsIdentity()
+{
+    GLint maxTexture = 0;
+    glGetIntegerv (GL_MAX_TEXTURE_SIZE, &maxTexture);
+    notepadLog ("GL vendor=%s renderer=%s version=%s glsl=%s maxTexture=%d",
+                glString (GL_VENDOR), glString (GL_RENDERER),
+                glString (GL_VERSION), glString (GL_SHADING_LANGUAGE_VERSION),
+                (int) maxTexture);
 }
 
 // DGL's OpenGL3 backend calls entry points that a pre-3.0 context does not
@@ -146,6 +192,12 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
     protected:
         void onImGuiDisplay() override
         {
+            static bool loggedFirstDraw = false;
+            if (! loggedFirstDraw)
+            {
+                loggedFirstDraw = true;
+                notepadLog ("stage: first onImGuiDisplay entered");
+            }
             owner.draw (static_cast<float> (getWidth()), static_cast<float> (getHeight()));
         }
 
@@ -269,11 +321,15 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
 
         try
         {
+            notepadLog ("stage: creating window %dx%d at %d,%d scale=%.2f",
+                        geometry.width, geometry.height, geometry.x, geometry.y,
+                        (double) geometry.scaleFactor);
             window = std::make_unique<DGL::Window> (
                 app, nativeParent, geometry.width, geometry.height,
                 geometry.scaleFactor, false);
             // A display without a usable GL configuration leaves Pugl with an
             // unrealised view: no native handle, and a size hint that never took.
+            notepadLog ("stage: window constructed");
             if (window->getNativeWindowHandle() == 0
                 || window->getWidth() < 2 || window->getHeight() < 2)
             {
@@ -293,13 +349,18 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
                 window.reset();
                 return false;
             }
+            notepadLog ("stage: embedded offset applied");
             bool usableContext = false;
             {
                 DGL::Window::ScopedGraphicsContext context (*window);
+                notepadLog ("stage: graphics context current");
+                logGraphicsIdentity();
                 usableContext = contextProvidesOpenGL3();
                 if (usableContext)
                 {
+                    notepadLog ("stage: creating editor widget");
                     editorWidget = std::make_unique<EditorWidget> (*window, *this);
+                    notepadLog ("stage: editor widget constructed");
                     // DGL sizes a top-level widget from a resize event. Window creation
                     // and resize are one synchronous operation on macOS, so that event
                     // has already been delivered by the time this widget exists and it
@@ -309,18 +370,22 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
                     // is already this size and so emits no event.
                     static_cast<DGL::Widget*> (editorWidget.get())
                         ->setSize (window->getWidth(), window->getHeight());
+                    notepadLog ("stage: building font atlas");
                     buildFontAtlas (static_cast<float> (notepad::kTypeScale.lyric
                                                         * window->getScaleFactor()));
+                    notepadLog ("stage: font atlas built");
                 }
             }
             if (! usableContext)
             {
-                std::fprintf (stderr, "[Dusk Studio/notepad] display provides no "
-                                      "OpenGL 3 context; notepad unavailable\n");
+                notepadLog ("display provides no OpenGL 3 context; "
+                            "notepad unavailable");
                 window.reset();
                 return false;
             }
+            notepadLog ("stage: focusing window");
             window->focus();
+            notepadLog ("stage: open complete");
         }
         catch (const std::exception& error)
         {
@@ -330,8 +395,7 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
             // callback exception that kills the process instead of something
             // the caller can act on, so the failure has to be converted here
             // into the false return the caller already handles.
-            std::fprintf (stderr, "[Dusk Studio/notepad] cannot embed: %s\n",
-                          error.what());
+            notepadLog ("cannot embed: %s", error.what());
             editorWidget.reset();
             window.reset();
             return false;
@@ -433,7 +497,18 @@ private:
 
     void timerCallback() override
     {
+        static bool loggedFirstIdle = false;
+        if (! loggedFirstIdle)
+        {
+            loggedFirstIdle = true;
+            notepadLog ("stage: first idle - entering event pump");
+        }
         app.idle();
+        if (loggedFirstIdle && ! loggedFirstIdleReturn)
+        {
+            loggedFirstIdleReturn = true;
+            notepadLog ("stage: first idle returned");
+        }
         // Close requests come from the native host boundary. Wait until DPF
         // returns from the event pump before destroying its embedded widget
         // and native child.
@@ -893,6 +968,7 @@ private:
         ImGui::PopStyleVar();
     }
 
+    bool loggedFirstIdleReturn = false;
     EmbeddedApplication app;
     std::unique_ptr<DGL::Window> window;
     std::unique_ptr<EditorWidget> editorWidget;
