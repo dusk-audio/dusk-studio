@@ -98,6 +98,24 @@ jobs:
           [[ "v$(tr -d '[:space:]' < VERSION)" == "${GITHUB_REF_NAME}" ]] || {
             echo "Tag ${GITHUB_REF_NAME} != VERSION v$(tr -d '[:space:]' < VERSION)"; exit 1; }
 
+      - name: Preflight - dev publish token (dispatch only)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          dev_probe_error=$(mktemp -t duskstudio-dev-preflight.XXXXXX)
+          trap 'rm -f "$dev_probe_error"' EXIT
+          if ! gh api --method POST \
+              "repos/${RELEASES_REPO}/releases/generate-notes" \
+              -f "tag_name=duskstudio-dev-preflight-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+              >/dev/null 2>"$dev_probe_error"; then
+            echo "::error::RELEASES_REPO_TOKEN cannot write to ${RELEASES_REPO}; the dev publish would fail after the build." >&2
+            cat "$dev_probe_error" >&2
+            exit 1
+          fi
+
       - name: Clone JUCE 8.0.4
         shell: bash
         run: |
@@ -315,7 +333,7 @@ jobs:
           sha="${GITHUB_SHA::7}"
           for msi in *.msi; do
             case "$msi" in
-              *"-dev.${sha}-"*) continue ;;
+              *"-dev.${sha}.msi") continue ;;
             esac
             mv -- "$msi" "${msi%.msi}-dev.${sha}.msi"
           done
