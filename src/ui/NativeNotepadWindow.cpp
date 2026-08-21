@@ -529,9 +529,9 @@ private:
 
         if (closeRequested && closeWasPumped)
         {
-            // Give the platform event queue one tick to finish unmapping the
-            // child before focus and input are restored to the DAW.
-            app.idle();
+            // The destroy happened on the previous tick and returned, so the
+            // pump at the top of this one is the tick the platform needed to
+            // finish unmapping the child before focus returns to the DAW.
             closeRequested = false;
             closeWasPumped = false;
             stopTimer();
