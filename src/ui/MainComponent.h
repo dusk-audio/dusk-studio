@@ -69,6 +69,11 @@ public:
     // the second-instance handoff. No-op if the path resolves to nothing.
     void openSessionPath (const juce::File& path);
 
+    // Public for the same reason captureScreenshots is: the application shell
+    // drives it, and DUSKSTUDIO_OPEN_NOTEPAD opens the notepad on a test box
+    // where clicking the toolbar by coordinate is not dependable.
+    void toggleNotepad();
+
 private:
     void openAudioSettings();
     void openBounceDialog();
@@ -303,7 +308,6 @@ private:
     // editor callback; notepad.md is written on dismiss and on every session
     // save. The sidecar is invisible to serialize(), so its own dirty flag
     // participates explicitly in quit/load protection.
-    void toggleNotepad();
     void dismissNotepad (bool saveChanges);
     bool saveNotepadNow();
     // Close the notepad when something else needs the window: an embedded
