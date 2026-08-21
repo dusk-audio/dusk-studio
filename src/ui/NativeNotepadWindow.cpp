@@ -717,15 +717,22 @@ private:
         // controls have nothing to act on while it is up.
         if (! markdownView)
         {
+            // The toggle's width is taken out of the row before the chart
+            // controls are laid out, and they draw inside what is left. The way
+            // back out of source view is then reachable at any ribbon width: a
+            // row too long for the space loses its last controls rather than
+            // pushing the toggle off the edge.
+            const auto available = ImGui::GetContentRegionAvail();
+            const auto controlsWidth = std::max (0.0f, available.x
+                                                     - toolbarButtonWidth ("Source", toolbarLabelPadding)
+                                                     - toolbarGroupGap);
+            ImGui::BeginChild ("ribbon-controls", ImVec2 (controlsWidth, available.y),
+                               ImGuiChildFlags_None,
+                               ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse
+                               | ImGuiWindowFlags_NoBackground);
             drawChartControls();
-            // The view toggle sits against the right edge rather than trailing
-            // the chart controls, so the way out of source view keeps its place
-            // whatever the controls to its left measure.
-            const auto sourceLeft = ImGui::GetContentRegionMax().x
-                                  - toolbarButtonWidth ("Source", toolbarLabelPadding);
-            const auto afterControls = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x
-                                     + toolbarGroupGap;
-            ImGui::SameLine (std::max (afterControls, sourceLeft));
+            ImGui::EndChild();
+            ImGui::SameLine (0.0f, toolbarGroupGap);
         }
         drawSourceToggle();
 
