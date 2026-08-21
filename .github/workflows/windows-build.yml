@@ -12,8 +12,14 @@ name: Windows build
 #   - push of a v* tag  → publishes the MSI onto the SAME private release
 #                          the mac DMG lands on (shared tag, distinct asset
 #                          names), so one tag yields a cross-platform set.
-#   - workflow_dispatch  → builds and packages the MSI for validation only;
-#                          nothing is published.
+#   - workflow_dispatch  → builds and packages the MSI, and (unless the
+#                          `publish` input is unchecked) uploads it to the
+#                          SAME private repo under the rolling `ci-windows-dev`
+#                          prerelease, sha-stamped, so an untagged main commit
+#                          can be installed on a test box. Older dev assets on
+#                          that prerelease are deleted first, so it holds one
+#                          build; it is a prerelease, so it never becomes the
+#                          releases repo's "Latest".
 #
 # The MSI is UNSIGNED by design (no Authenticode cert) — users see a
 # SmartScreen prompt and choose "More info -> Run anyway" on first launch.
@@ -22,6 +28,11 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Upload the MSI to the private releases repo (ci-windows-dev prerelease)'
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -54,10 +65,10 @@ jobs:
           # GITHUB_TOKEN — don't leave it in git config.
           persist-credentials: false
 
-      - name: Preflight - releases-repo token is valid (tag builds only)
+      - name: Preflight - releases-repo token is valid (publishing builds only)
         # Fail fast before the full build if RELEASES_REPO_TOKEN is dead.
         # The non-mutating generate-notes endpoint rejects read-only tokens.
-        if: ${{ github.ref_type == 'tag' }}
+        if: ${{ github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
@@ -288,6 +299,25 @@ jobs:
           Get-ChildItem build\*.msi
           Get-ChildItem *.msi -ErrorAction SilentlyContinue
 
+      - name: Stamp dev MSI with the commit sha (dispatch only)
+        # A dev build carries the same VERSION as the last release, so an
+        # unstamped file is indistinguishable from that release's MSI once
+        # downloaded. Rename before hashing so SHA256SUMS.windows describes
+        # the file that actually gets uploaded.
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          sha="${GITHUB_SHA::7}"
+          for msi in *.msi; do
+            case "$msi" in
+              *"-dev.${sha}-"*) continue ;;
+            esac
+            mv -- "$msi" "${msi%.msi}-dev.${sha}.msi"
+          done
+          ls -1 -- *.msi
+
       - name: Compute SHA256 of MSI(s)
         shell: pwsh
         # No working-directory: package-windows.ps1 moves the finished MSI and
@@ -355,3 +385,56 @@ jobs:
           fi
           gh release upload "$TAG" --repo "$RELEASES_REPO" --clobber "${ASSETS[@]}"
           echo "Published ${#ASSETS[@]} asset(s) to ${RELEASES_REPO} @ ${TAG}"
+
+      - name: Publish dev MSI to the PRIVATE releases repo (dispatch only)
+        # Same invariant as the tag path: never actions/upload-artifact, because
+        # on a public repo those are world-downloadable. Dev builds land on one
+        # rolling prerelease so the releases repo gains a single extra entry no
+        # matter how many dispatches run, and prerelease means it can never
+        # become the repo's "Latest" over a real version tag.
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="ci-windows-dev"
+          SHA="${GITHUB_SHA::7}"
+
+          shopt -s nullglob
+          ASSETS=( *.msi SHA256SUMS.windows )
+          if [[ ${#ASSETS[@]} -eq 0 ]]; then
+            echo "::error::no MSI produced - packaging step failed" >&2
+            exit 1
+          fi
+
+          NOTES="Unsigned Windows dev build - NOT a release.
+
+          Commit: ${GITHUB_SHA}
+          Ref: ${GITHUB_REF_NAME}
+          Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          Rebuilt and replaced by every dispatch of the Windows build workflow."
+
+          if gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$RELEASES_REPO" \
+              --title "Windows dev build (${SHA})" --notes "$NOTES" --prerelease
+            # Drop the previous dev build: its assets are sha-stamped, so
+            # --clobber alone would let them pile up under this tag forever.
+            gh release view "$TAG" --repo "$RELEASES_REPO" \
+              --json assets -q '.assets[].name' \
+            | while read -r old; do
+                if [[ -n "$old" ]]; then
+                  gh release delete-asset "$TAG" "$old" \
+                    --repo "$RELEASES_REPO" -y || true
+                fi
+              done
+          elif ! gh release create "$TAG" --repo "$RELEASES_REPO" \
+                 --title "Windows dev build (${SHA})" --notes "$NOTES" \
+                 --prerelease; then
+            # A concurrent dispatch may have created it between the two calls.
+            gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null
+          fi
+
+          gh release upload "$TAG" --repo "$RELEASES_REPO" --clobber "${ASSETS[@]}"
+          echo "Published ${#ASSETS[@]} asset(s) to ${RELEASES_REPO} @ ${TAG} (${SHA})"
