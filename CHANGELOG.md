@@ -5,6 +5,55 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
+## [0.13.1] - 2026-08-21
+
+A packaging fix release. The 0.13.0 macOS disk image could not launch on any
+machine, and both the disk image and the Windows installer carried Linux
+desktop-integration files they had no use for. Windows also gains Dusk Studio's
+own CLAP and VST3 hosts, which until now were Linux and macOS only.
+
+### Added
+
+- **Native CLAP and VST3 hosting on Windows.** Both formats now load through
+  Dusk Studio's own hosts rather than the application framework's, matching
+  Linux and macOS. Plugin paths are handled as Unicode throughout, so an
+  installation under a non-ASCII user name loads; scanning searches the
+  standard per-user and machine-wide install directories; and plugin editors
+  embed as child windows that are told their scale, display DPI times the
+  interface zoom, before they are attached. LV2 remains Linux and macOS.
+
+### Fixed
+
+- **macOS: the 0.13.0 disk image could not launch.** The application linked
+  four Homebrew libraries by absolute path with none of them copied into the
+  bundle, so the loader looked in a location that exists only on the build
+  machine, and the install step rewrote the load commands after the signature
+  had been sealed, invalidating it. The bundle now carries the whole
+  fourteen-library closure with its install names rewritten to point inside
+  itself, every binary in it is checked for a load command pointing outside,
+  and the installed copy is what gets signed. Nothing in the audio path
+  changed; the shipped 0.13.0 binary passes the full self-test once repaired.
+- **Desktop-integration files shipped inside the macOS and Windows packages.**
+  The `.desktop`, appdata, mime and icon install rules ran on every platform,
+  so the disk image carried a `share/` tree beside the application and the
+  installer carried one under its install root. Only the Linux packages
+  consume those files, and the rules are now Linux-only.
+
+### Changed
+
+- **Release and build tooling.** The asset verifier now expects the six-asset
+  layout that releases actually carry, instead of the ten-name layout that
+  predates the consolidated checksum file, and the maintainer guide documents
+  the six filenames and the single `SHA256SUMS`. The Linux release notes name
+  libpipewire as a runtime dependency, which a machine without it needs in
+  order to make sense of the loader error. Cutting a release is now driven by
+  a `/release` command whose acceptance step requires the packaged artifact to
+  be launched on each platform, which is the check 0.13.0 lacked. Dependency
+  installation in CI is bounded by a timeout and switches package mirrors
+  after a failure, so a sick mirror costs minutes rather than a hung job.
+- **macOS sandbox documentation.** The manual described the plugin sandbox in
+  terms the macOS build does not deliver; it now says what actually happens.
+
 ## [0.13.0] - 2026-08-19
 
 The first release cut from the main line since 0.12 branched. Linux gets a

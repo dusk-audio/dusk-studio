@@ -1,5 +1,5 @@
 <!-- summary-start -->
-Adds the session notepad, a UI scale control, native PipeWire and macOS plugin hosting, MIDI hot-plug, loop take stacking, realtime hardware bounce, and a broad set of session, recording, audio-device, and plug-in fixes.
+Fixes the macOS disk image, which could not launch in 0.13.0, removes Linux desktop files from the macOS and Windows packages, and adds native CLAP and VST3 plugin hosting on Windows.
 <!-- summary-end -->
 
 ### Downloads
