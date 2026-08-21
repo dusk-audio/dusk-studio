@@ -509,7 +509,8 @@ private:
             loggedFirstIdle = true;
             notepadLog ("stage: first idle - entering event pump");
         }
-        app.idle();
+        if (! pumpEvents())
+            return;
         if (! loggedFirstIdleReturn)
         {
             loggedFirstIdleReturn = true;
@@ -536,6 +537,45 @@ private:
             if (onClosed)
                 onClosed();
         }
+    }
+
+    // A graphics driver that fails a call from inside the event pump throws out
+    // of it: Mesa's D3D12 backend raises a COM error as a C++ exception, and
+    // letting that reach the host's message loop takes the whole application
+    // down with the notepad. The notepad closes instead, and the session keeps
+    // whatever was typed because the text is mirrored to the DAW as it changes.
+    bool pumpEvents()
+    {
+        try
+        {
+            app.idle();
+            return true;
+        }
+        catch (const std::exception& error)
+        {
+            notepadLog ("graphics driver failed during the event pump: %s",
+                        error.what());
+        }
+        catch (...)
+        {
+            notepadLog ("graphics driver failed during the event pump");
+        }
+
+        stopTimer();
+        try
+        {
+            destroyEmbeddedWindow();
+        }
+        catch (...)
+        {
+            editorWidget.reset();
+            window.reset();
+        }
+        closeRequested = false;
+        closeWasPumped = false;
+        if (onClosed)
+            onClosed();
+        return false;
     }
 
     void destroyEmbeddedWindow()
