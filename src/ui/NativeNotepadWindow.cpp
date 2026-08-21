@@ -7,6 +7,7 @@
 #include "../foundation/MessageThread.h"
 
 #include <Application.hpp>
+#include <OpenGL.hpp>
 #include <DearImGui.hpp>
 #include <DearImGui/imgui_internal.h>
 #ifndef DGL_NO_SHARED_RESOURCES
@@ -15,6 +16,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <optional>
@@ -75,6 +78,22 @@ std::string clockLabel()
     char buffer[6] {};
     std::strftime (buffer, sizeof (buffer), "%H:%M", &local);
     return buffer;
+}
+
+// DGL's OpenGL3 backend calls entry points that a pre-3.0 context does not
+// export: it prints "glActiveTexture != nullptr" and then the notepad dies with
+// the host application. A Windows session on the generic GDI renderer - a plain
+// VM display adapter, or an RDP session - is exactly that context, so the
+// capability has to be checked before the editor is built on top of it.
+bool contextProvidesOpenGL3()
+{
+    const auto* const version = reinterpret_cast<const char*> (glGetString (GL_VERSION));
+    if (version == nullptr)
+        return false;
+    const auto* digit = version;
+    while (*digit != '\0' && (*digit < '0' || *digit > '9'))
+        ++digit;
+    return std::atoi (digit) >= 3;
 }
 
 ImVec4 colour (unsigned int hex)
@@ -248,46 +267,75 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
                                        : std::optional<std::string> { markdown };
         history.clear();
 
-        window = std::make_unique<DGL::Window> (
-            app, nativeParent, geometry.width, geometry.height,
-            geometry.scaleFactor, false);
-        // A display without a usable GL configuration leaves Pugl with an
-        // unrealised view: no native handle, and a size hint that never took.
-        if (window->getNativeWindowHandle() == 0
-            || window->getWidth() < 2 || window->getHeight() < 2)
+        try
         {
-            window.reset();
-            return false;
-        }
+            window = std::make_unique<DGL::Window> (
+                app, nativeParent, geometry.width, geometry.height,
+                geometry.scaleFactor, false);
+            // A display without a usable GL configuration leaves Pugl with an
+            // unrealised view: no native handle, and a size hint that never took.
+            if (window->getNativeWindowHandle() == 0
+                || window->getWidth() < 2 || window->getHeight() < 2)
+            {
+                window.reset();
+                return false;
+            }
 
-        // Dusk Studio owns both native windows, so it also owns the child's
-        // in-parent placement. The explicit DPF embed API leaves normal plugin
-        // windows under host control.
-        // Native Wayland cannot embed a surface owned by DPF's display
-        // connection into the legacy shell's surface. Refuse that backend
-        // instead of silently falling back to the separate top-level window
-        // that Pugl otherwise creates for an unsupported parent.
-        if (! window->setEmbeddedOffset (geometry.x, geometry.y))
+            // Dusk Studio owns both native windows, so it also owns the child's
+            // in-parent placement. The explicit DPF embed API leaves normal plugin
+            // windows under host control.
+            // Native Wayland cannot embed a surface owned by DPF's display
+            // connection into the legacy shell's surface. Refuse that backend
+            // instead of silently falling back to the separate top-level window
+            // that Pugl otherwise creates for an unsupported parent.
+            if (! window->setEmbeddedOffset (geometry.x, geometry.y))
+            {
+                window.reset();
+                return false;
+            }
+            bool usableContext = false;
+            {
+                DGL::Window::ScopedGraphicsContext context (*window);
+                usableContext = contextProvidesOpenGL3();
+                if (usableContext)
+                {
+                    editorWidget = std::make_unique<EditorWidget> (*window, *this);
+                    // DGL sizes a top-level widget from a resize event. Window creation
+                    // and resize are one synchronous operation on macOS, so that event
+                    // has already been delivered by the time this widget exists and it
+                    // would keep a 0x0 size forever, laying the document out into
+                    // nothing. Apply the window's size the way DGL's own resize path
+                    // does; TopLevelWidget::setSize only forwards to the window, which
+                    // is already this size and so emits no event.
+                    static_cast<DGL::Widget*> (editorWidget.get())
+                        ->setSize (window->getWidth(), window->getHeight());
+                    buildFontAtlas (static_cast<float> (notepad::kTypeScale.lyric
+                                                        * window->getScaleFactor()));
+                }
+            }
+            if (! usableContext)
+            {
+                std::fprintf (stderr, "[Dusk Studio/notepad] display provides no "
+                                      "OpenGL 3 context; notepad unavailable\n");
+                window.reset();
+                return false;
+            }
+            window->focus();
+        }
+        catch (const std::exception& error)
         {
+            // A display that cannot back the child with the context DGL asks
+            // for throws out of the constructor. open() runs inside a native
+            // window procedure, where an escaping C++ exception is a fatal
+            // callback exception that kills the process instead of something
+            // the caller can act on, so the failure has to be converted here
+            // into the false return the caller already handles.
+            std::fprintf (stderr, "[Dusk Studio/notepad] cannot embed: %s\n",
+                          error.what());
+            editorWidget.reset();
             window.reset();
             return false;
         }
-        {
-            DGL::Window::ScopedGraphicsContext context (*window);
-            editorWidget = std::make_unique<EditorWidget> (*window, *this);
-            // DGL sizes a top-level widget from a resize event. Window creation
-            // and resize are one synchronous operation on macOS, so that event
-            // has already been delivered by the time this widget exists and it
-            // would keep a 0x0 size forever, laying the document out into
-            // nothing. Apply the window's size the way DGL's own resize path
-            // does; TopLevelWidget::setSize only forwards to the window, which
-            // is already this size and so emits no event.
-            static_cast<DGL::Widget*> (editorWidget.get())
-                ->setSize (window->getWidth(), window->getHeight());
-            buildFontAtlas (static_cast<float> (notepad::kTypeScale.lyric
-                                                * window->getScaleFactor()));
-        }
-        window->focus();
         startTimer (16);
         return true;
     }
