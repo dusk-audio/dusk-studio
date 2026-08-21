@@ -45,6 +45,8 @@ constexpr float kHeaderHeight = 62.0f;
 constexpr float kRibbonHeight = 62.0f;
 constexpr float kToolbarButtonLabelPadding = 18.0f;
 constexpr float kToolbarButtonMinWidth = 34.0f;
+// Below this the ribbon cannot hold the full row at its roomy spacing.
+constexpr float kRibbonRoomyWidth = 780.0f;
 
 // DejaVu Sans covers these ranges in the embedded fallback. Platform fonts can
 // contribute additional glyphs, but the editor never intentionally truncates
@@ -154,11 +156,10 @@ ImVec4 colour (unsigned int hex)
                    (hex & 0xff) / 255.0f);
 }
 
-float toolbarButtonWidth (const char* label)
+float toolbarButtonWidth (const char* label, float labelPadding)
 {
     return std::max (kToolbarButtonMinWidth,
-                     ImGui::CalcTextSize (label, nullptr, true).x
-                         + kToolbarButtonLabelPadding);
+                     ImGui::CalcTextSize (label, nullptr, true).x + labelPadding);
 }
 
 int resizeMarkdownBuffer (ImGuiInputTextCallbackData* data)
@@ -663,7 +664,7 @@ private:
         }
         if (labelFont != nullptr)
             ImGui::PushFont (labelFont);
-        const auto width = toolbarButtonWidth (label);
+        const auto width = toolbarButtonWidth (label, toolbarLabelPadding);
         const bool clicked = ImGui::Button (label, ImVec2 (width, 32.0f));
         if (labelFont != nullptr)
             ImGui::PopFont();
@@ -703,12 +704,28 @@ private:
                            ImGuiChildFlags_AlwaysUseWindowPadding,
                            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
+        // The row is sized for the notepad at its preferred width. A narrower
+        // host window has to give something up, and the least useful thing to
+        // lose is the breathing room around the buttons.
+        const bool compact = ImGui::GetContentRegionAvail().x < kRibbonRoomyWidth;
+        toolbarLabelPadding = compact ? 10.0f : kToolbarButtonLabelPadding;
+        toolbarGap          = compact ? 3.0f : 5.0f;
+        toolbarTightGap     = compact ? 3.0f : 4.0f;
+        toolbarGroupGap     = compact ? 8.0f : 16.0f;
+
         // Source view replaces the chart with a plain text field, so the chart
         // controls have nothing to act on while it is up.
         if (! markdownView)
         {
             drawChartControls();
-            ImGui::SameLine (0.0f, 16.0f);
+            // The view toggle sits against the right edge rather than trailing
+            // the chart controls, so the way out of source view keeps its place
+            // whatever the controls to its left measure.
+            const auto sourceLeft = ImGui::GetContentRegionMax().x
+                                  - toolbarButtonWidth ("Source", toolbarLabelPadding);
+            const auto afterControls = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x
+                                     + toolbarGroupGap;
+            ImGui::SameLine (std::max (afterControls, sourceLeft));
         }
         drawSourceToggle();
 
@@ -723,7 +740,7 @@ private:
         if (toolbarButton ("↶", "Undo the last edit (Ctrl+Z)", false))
             restoreHistory (false);
         ImGui::EndDisabled();
-        ImGui::SameLine (0.0f, 5.0f);
+        ImGui::SameLine (0.0f, toolbarGap);
         ImGui::BeginDisabled (! history.canRedo());
         if (toolbarButton ("↷", "Redo the last edit (Ctrl+Y)", false))
             restoreHistory (true);
@@ -733,56 +750,56 @@ private:
         // chords and just enough lyric styling to distinguish the title and
         // add emphasis. General-purpose Markdown authoring belongs in the
         // compatible notepad.md file rather than competing with those actions.
-        ImGui::SameLine (0.0f, 16.0f);
+        ImGui::SameLine (0.0f, toolbarGroupGap);
         if (toolbarButton ("Chord", "Add or edit a chord (Ctrl+K); repeat the previous chord (Ctrl+Shift+K)",
                            editor.chordEntryActive()))
         {
             editor.beginChordEntry();
             editor.requestFocus();
         }
-        ImGui::SameLine (0.0f, 5.0f);
+        ImGui::SameLine (0.0f, toolbarGap);
         if (toolbarButton ("Section", "Add or remove a song section"))
             ImGui::OpenPopup ("section-menu");
 
         const bool canTranspose = document.hasChords();
         ImGui::BeginDisabled (! canTranspose);
-        ImGui::SameLine (0.0f, 5.0f);
+        ImGui::SameLine (0.0f, toolbarGap);
         if (toolbarButton ("−1", "Transpose every chord down one semitone"))
             editor.transposeChords (-1);
-        ImGui::SameLine (0.0f, 5.0f);
+        ImGui::SameLine (0.0f, toolbarGap);
         if (toolbarButton ("+1", "Transpose every chord up one semitone"))
             editor.transposeChords (1);
         ImGui::EndDisabled();
 
         const auto blockStyle = selectedBlockStyle();
-        ImGui::SameLine (0.0f, 16.0f);
+        ImGui::SameLine (0.0f, toolbarGroupGap);
         if (toolbarButton ("Lyrics", "Use lyric or note text",
                            blockStyle == NotepadDocument::BlockStyle::body))
             applyBlock (NotepadDocument::BlockStyle::body);
-        ImGui::SameLine (0.0f, 5.0f);
+        ImGui::SameLine (0.0f, toolbarGap);
         if (toolbarButton ("Title", "Make this line the song title",
                            blockStyle == NotepadDocument::BlockStyle::heading1, boldFont))
             applyBlock (NotepadDocument::BlockStyle::heading1);
 
-        ImGui::SameLine (0.0f, 16.0f);
+        ImGui::SameLine (0.0f, toolbarGroupGap);
         if (toolbarButton ("B", "Bold the selection (Ctrl+B)",
                            inlineStyleActive (NotepadDocument::InlineStyle::bold), boldFont))
             applyInline (NotepadDocument::InlineStyle::bold);
-        ImGui::SameLine (0.0f, 5.0f);
+        ImGui::SameLine (0.0f, toolbarGap);
         if (toolbarButton ("I", "Italicise the selection (Ctrl+I)",
                            inlineStyleActive (NotepadDocument::InlineStyle::italic)))
             applyInline (NotepadDocument::InlineStyle::italic);
 
         const auto spelling = document.spellingMode();
-        ImGui::SameLine (0.0f, 16.0f);
+        ImGui::SameLine (0.0f, toolbarGroupGap);
         if (toolbarButton ("Auto##spell-auto", "Match the song's existing sharps or flats",
                            spelling == NotepadDocument::Spelling::followDocument))
             document.setSpelling (NotepadDocument::Spelling::followDocument);
-        ImGui::SameLine (0.0f, 4.0f);
+        ImGui::SameLine (0.0f, toolbarTightGap);
         if (toolbarButton ("♯##spell-sharps", "Spell chords with sharps",
                            spelling == NotepadDocument::Spelling::sharps))
             document.setSpelling (NotepadDocument::Spelling::sharps);
-        ImGui::SameLine (0.0f, 4.0f);
+        ImGui::SameLine (0.0f, toolbarTightGap);
         if (toolbarButton ("♭##spell-flats", "Spell chords with flats",
                            spelling == NotepadDocument::Spelling::flats))
             document.setSpelling (NotepadDocument::Spelling::flats);
@@ -1031,6 +1048,10 @@ private:
         tracedFirstDraw = true;
     }
 
+    float toolbarLabelPadding = kToolbarButtonLabelPadding;
+    float toolbarGap = 5.0f;
+    float toolbarTightGap = 4.0f;
+    float toolbarGroupGap = 16.0f;
     bool loggedFirstIdle = false;
     bool loggedFirstIdleReturn = false;
     bool loggedFirstDraw = false;
