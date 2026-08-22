@@ -2357,6 +2357,21 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
                 main->openSessionPath (sessionPath);
         });
     }
+
+    // The notepad is reached from a toolbar button, which a remote test box
+    // can only hit by coordinate - and a misplaced click silently exercises a
+    // neighbouring control instead. The delay clears MainComponent's own
+    // startup, the session picker included.
+    if (envFlagSet ("DUSKSTUDIO_OPEN_NOTEPAD"))
+    {
+        juce::Component::SafePointer<MainWindow> safeWin (mainWindow.get());
+        dusk::Timer::callAfterDelay (4000, [safeWin]
+        {
+            if (safeWin == nullptr) return;
+            if (auto* main = dynamic_cast<MainComponent*> (safeWin->getContentComponent()))
+                main->toggleNotepad();
+        });
+    }
 }
 
 void DuskStudioApp::shutdown()

@@ -6,7 +6,18 @@
 #include "NotepadTheme.h"
 #include "../foundation/MessageThread.h"
 
+#if defined (_WIN32)
+# ifndef WIN32_LEAN_AND_MEAN
+#  define WIN32_LEAN_AND_MEAN
+# endif
+# ifndef NOMINMAX
+#  define NOMINMAX
+# endif
+# include <windows.h>
+#endif
+
 #include <Application.hpp>
+#include <OpenGL.hpp>
 #include <DearImGui.hpp>
 #include <DearImGui/imgui_internal.h>
 #ifndef DGL_NO_SHARED_RESOURCES
@@ -15,6 +26,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdarg>
+#include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <optional>
@@ -31,6 +45,8 @@ constexpr float kHeaderHeight = 62.0f;
 constexpr float kRibbonHeight = 62.0f;
 constexpr float kToolbarButtonLabelPadding = 18.0f;
 constexpr float kToolbarButtonMinWidth = 34.0f;
+// Below this the ribbon cannot hold the full row at its roomy spacing.
+constexpr float kRibbonRoomyWidth = 780.0f;
 
 // DejaVu Sans covers these ranges in the embedded fallback. Platform fonts can
 // contribute additional glyphs, but the editor never intentionally truncates
@@ -77,6 +93,61 @@ std::string clockLabel()
     return buffer;
 }
 
+// Diagnostics go to stderr and, on Windows, to the debugger channel as well: a
+// capture there survives a process that dies without flushing its stdio.
+void notepadLog (const char* format, ...)
+{
+    char message[512] {};
+    va_list args;
+    va_start (args, format);
+    std::vsnprintf (message, sizeof message, format, args);
+    va_end (args);
+
+    std::fprintf (stderr, "[Dusk Studio/notepad] %s\n", message);
+    // setvbuf only binds if nothing has written to the stream yet, and static
+    // initialisation order across translation units is unspecified, so the
+    // unbuffered mode set in Main.cpp cannot be assumed here.
+    std::fflush (stderr);
+   #if defined (_WIN32)
+    char forDebugger[560] {};
+    std::snprintf (forDebugger, sizeof forDebugger,
+                   "[Dusk Studio/notepad] %s\n", message);
+    ::OutputDebugStringA (forDebugger);
+   #endif
+}
+
+const char* glString (unsigned int name)
+{
+    const auto* const value = reinterpret_cast<const char*> (glGetString (name));
+    return value != nullptr ? value : "(null)";
+}
+
+void logGraphicsIdentity()
+{
+    GLint maxTexture = 0;
+    glGetIntegerv (GL_MAX_TEXTURE_SIZE, &maxTexture);
+    notepadLog ("GL vendor=%s renderer=%s version=%s glsl=%s maxTexture=%d",
+                glString (GL_VENDOR), glString (GL_RENDERER),
+                glString (GL_VERSION), glString (GL_SHADING_LANGUAGE_VERSION),
+                (int) maxTexture);
+}
+
+// DGL's OpenGL3 backend calls entry points that a pre-3.0 context does not
+// export: it prints "glActiveTexture != nullptr" and then the notepad dies with
+// the host application. A Windows session on the generic GDI renderer - a plain
+// VM display adapter, or an RDP session - is exactly that context, so the
+// capability has to be checked before the editor is built on top of it.
+bool contextProvidesOpenGL3()
+{
+    const auto* const version = reinterpret_cast<const char*> (glGetString (GL_VERSION));
+    if (version == nullptr)
+        return false;
+    const auto* digit = version;
+    while (*digit != '\0' && (*digit < '0' || *digit > '9'))
+        ++digit;
+    return std::atoi (digit) >= 3;
+}
+
 ImVec4 colour (unsigned int hex)
 {
     return ImVec4 (((hex >> 24) & 0xff) / 255.0f,
@@ -85,11 +156,10 @@ ImVec4 colour (unsigned int hex)
                    (hex & 0xff) / 255.0f);
 }
 
-float toolbarButtonWidth (const char* label)
+float toolbarButtonWidth (const char* label, float labelPadding)
 {
     return std::max (kToolbarButtonMinWidth,
-                     ImGui::CalcTextSize (label, nullptr, true).x
-                         + kToolbarButtonLabelPadding);
+                     ImGui::CalcTextSize (label, nullptr, true).x + labelPadding);
 }
 
 int resizeMarkdownBuffer (ImGuiInputTextCallbackData* data)
@@ -127,7 +197,13 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
     protected:
         void onImGuiDisplay() override
         {
+            const bool firstDraw = ! owner.loggedFirstDraw;
+            owner.loggedFirstDraw = true;
+            if (firstDraw)
+                notepadLog ("stage: first onImGuiDisplay entered");
             owner.draw (static_cast<float> (getWidth()), static_cast<float> (getHeight()));
+            if (firstDraw)
+                notepadLog ("stage: first onImGuiDisplay returned");
         }
 
         bool onKeyboard (const DGL::Widget::KeyboardEvent& event) override
@@ -240,6 +316,10 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
         markdownFocusRequested = false;
         closeRequested = false;
         closeWasPumped = false;
+        loggedFirstIdle = false;
+        loggedFirstIdleReturn = false;
+        loggedFirstDraw = false;
+        tracedFirstDraw = false;
         hasSessionFile = sessionExists;
         documentDirty = unsavedChanges;
         saveFailed = false;
@@ -248,46 +328,86 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
                                        : std::optional<std::string> { markdown };
         history.clear();
 
-        window = std::make_unique<DGL::Window> (
-            app, nativeParent, geometry.width, geometry.height,
-            geometry.scaleFactor, false);
-        // A display without a usable GL configuration leaves Pugl with an
-        // unrealised view: no native handle, and a size hint that never took.
-        if (window->getNativeWindowHandle() == 0
-            || window->getWidth() < 2 || window->getHeight() < 2)
+        try
         {
-            window.reset();
-            return false;
-        }
+            notepadLog ("stage: creating window %dx%d at %d,%d scale=%.2f",
+                        geometry.width, geometry.height, geometry.x, geometry.y,
+                        (double) geometry.scaleFactor);
+            window = std::make_unique<DGL::Window> (
+                app, nativeParent, geometry.width, geometry.height,
+                geometry.scaleFactor, false);
+            // A display without a usable GL configuration leaves Pugl with an
+            // unrealised view: no native handle, and a size hint that never took.
+            notepadLog ("stage: window constructed");
+            if (window->getNativeWindowHandle() == 0
+                || window->getWidth() < 2 || window->getHeight() < 2)
+            {
+                window.reset();
+                return false;
+            }
 
-        // Dusk Studio owns both native windows, so it also owns the child's
-        // in-parent placement. The explicit DPF embed API leaves normal plugin
-        // windows under host control.
-        // Native Wayland cannot embed a surface owned by DPF's display
-        // connection into the legacy shell's surface. Refuse that backend
-        // instead of silently falling back to the separate top-level window
-        // that Pugl otherwise creates for an unsupported parent.
-        if (! window->setEmbeddedOffset (geometry.x, geometry.y))
+            // Dusk Studio owns both native windows, so it also owns the child's
+            // in-parent placement. The explicit DPF embed API leaves normal plugin
+            // windows under host control.
+            // Native Wayland cannot embed a surface owned by DPF's display
+            // connection into the legacy shell's surface. Refuse that backend
+            // instead of silently falling back to the separate top-level window
+            // that Pugl otherwise creates for an unsupported parent.
+            if (! window->setEmbeddedOffset (geometry.x, geometry.y))
+            {
+                window.reset();
+                return false;
+            }
+            notepadLog ("stage: embedded offset applied");
+            bool usableContext = false;
+            {
+                DGL::Window::ScopedGraphicsContext context (*window);
+                notepadLog ("stage: graphics context current");
+                logGraphicsIdentity();
+                usableContext = contextProvidesOpenGL3();
+                if (usableContext)
+                {
+                    notepadLog ("stage: creating editor widget");
+                    editorWidget = std::make_unique<EditorWidget> (*window, *this);
+                    notepadLog ("stage: editor widget constructed");
+                    // DGL sizes a top-level widget from a resize event. Window creation
+                    // and resize are one synchronous operation on macOS, so that event
+                    // has already been delivered by the time this widget exists and it
+                    // would keep a 0x0 size forever, laying the document out into
+                    // nothing. Apply the window's size the way DGL's own resize path
+                    // does; TopLevelWidget::setSize only forwards to the window, which
+                    // is already this size and so emits no event.
+                    static_cast<DGL::Widget*> (editorWidget.get())
+                        ->setSize (window->getWidth(), window->getHeight());
+                    notepadLog ("stage: building font atlas");
+                    buildFontAtlas (static_cast<float> (notepad::kTypeScale.lyric
+                                                        * window->getScaleFactor()));
+                    notepadLog ("stage: font atlas built");
+                }
+            }
+            if (! usableContext)
+            {
+                notepadLog ("display provides no OpenGL 3 context; "
+                            "notepad unavailable");
+                window.reset();
+                return false;
+            }
+            notepadLog ("stage: focusing window");
+            window->focus();
+            notepadLog ("stage: open complete");
+        }
+        catch (const std::exception& error)
         {
-            window.reset();
+            // A display that cannot back the child with the context DGL asks
+            // for throws out of the constructor. open() runs inside a native
+            // window procedure, where an escaping C++ exception is a fatal
+            // callback exception that kills the process instead of something
+            // the caller can act on, so the failure has to be converted here
+            // into the false return the caller already handles.
+            notepadLog ("cannot embed: %s", error.what());
+            destroyEmbeddedWindowSafely();
             return false;
         }
-        {
-            DGL::Window::ScopedGraphicsContext context (*window);
-            editorWidget = std::make_unique<EditorWidget> (*window, *this);
-            // DGL sizes a top-level widget from a resize event. Window creation
-            // and resize are one synchronous operation on macOS, so that event
-            // has already been delivered by the time this widget exists and it
-            // would keep a 0x0 size forever, laying the document out into
-            // nothing. Apply the window's size the way DGL's own resize path
-            // does; TopLevelWidget::setSize only forwards to the window, which
-            // is already this size and so emits no event.
-            static_cast<DGL::Widget*> (editorWidget.get())
-                ->setSize (window->getWidth(), window->getHeight());
-            buildFontAtlas (static_cast<float> (notepad::kTypeScale.lyric
-                                                * window->getScaleFactor()));
-        }
-        window->focus();
         startTimer (16);
         return true;
     }
@@ -385,7 +505,18 @@ private:
 
     void timerCallback() override
     {
-        app.idle();
+        if (! loggedFirstIdle)
+        {
+            loggedFirstIdle = true;
+            notepadLog ("stage: first idle - entering event pump");
+        }
+        if (! pumpEvents())
+            return;
+        if (! loggedFirstIdleReturn)
+        {
+            loggedFirstIdleReturn = true;
+            notepadLog ("stage: first idle returned");
+        }
         // Close requests come from the native host boundary. Wait until DPF
         // returns from the event pump before destroying its embedded widget
         // and native child.
@@ -398,14 +529,64 @@ private:
 
         if (closeRequested && closeWasPumped)
         {
-            // Give the platform event queue one tick to finish unmapping the
-            // child before focus and input are restored to the DAW.
-            app.idle();
+            // The destroy happened on the previous tick and returned, so the
+            // pump at the top of this one is the tick the platform needed to
+            // finish unmapping the child before focus returns to the DAW.
             closeRequested = false;
             closeWasPumped = false;
             stopTimer();
             if (onClosed)
                 onClosed();
+        }
+    }
+
+    // A graphics driver that fails a call from inside the event pump throws out
+    // of it: Mesa's D3D12 backend raises a COM error as a C++ exception, and
+    // letting that reach the host's message loop takes the whole application
+    // down with the notepad. The notepad closes instead, and the session keeps
+    // whatever was typed because the text is mirrored to the DAW as it changes.
+    bool pumpEvents()
+    {
+        try
+        {
+            app.idle();
+            return true;
+        }
+        catch (const std::exception& error)
+        {
+            notepadLog ("graphics driver failed during the event pump: %s",
+                        error.what());
+        }
+        catch (...)
+        {
+            notepadLog ("graphics driver failed during the event pump");
+        }
+
+        stopTimer();
+        destroyEmbeddedWindowSafely();
+        closeRequested = false;
+        closeWasPumped = false;
+        if (onClosed)
+            onClosed();
+        return false;
+    }
+
+    // Both failure paths run because the driver already failed once, and the
+    // ordinary teardown makes the context current again to release the widget.
+    // A second failure there must not escape into the host's message loop, so
+    // the last resort drops the objects and the font state the atlas owned.
+    void destroyEmbeddedWindowSafely()
+    {
+        try
+        {
+            destroyEmbeddedWindow();
+        }
+        catch (...)
+        {
+            editorWidget.reset();
+            window.reset();
+            bodyFont = boldFont = italicFont = boldItalicFont = monoFont = nullptr;
+            editor.setFonts ({});
         }
     }
 
@@ -494,7 +675,7 @@ private:
         }
         if (labelFont != nullptr)
             ImGui::PushFont (labelFont);
-        const auto width = toolbarButtonWidth (label);
+        const auto width = toolbarButtonWidth (label, toolbarLabelPadding);
         const bool clicked = ImGui::Button (label, ImVec2 (width, 32.0f));
         if (labelFont != nullptr)
             ImGui::PopFont();
@@ -534,12 +715,41 @@ private:
                            ImGuiChildFlags_AlwaysUseWindowPadding,
                            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
+        // The row is sized for the notepad at its preferred width. A narrower
+        // host window has to give something up, and the least useful thing to
+        // lose is the breathing room around the buttons.
+        const bool compact = ImGui::GetContentRegionAvail().x < kRibbonRoomyWidth;
+        toolbarLabelPadding = compact ? 10.0f : kToolbarButtonLabelPadding;
+        toolbarGap          = compact ? 3.0f : 5.0f;
+        toolbarTightGap     = compact ? 3.0f : 4.0f;
+        toolbarGroupGap     = compact ? 8.0f : 16.0f;
+
         // Source view replaces the chart with a plain text field, so the chart
         // controls have nothing to act on while it is up.
         if (! markdownView)
         {
-            drawChartControls();
-            ImGui::SameLine (0.0f, 16.0f);
+            // The toggle's width is taken out of the row before the chart
+            // controls are laid out, and they draw inside what is left. The way
+            // back out of source view is then reachable at any ribbon width: a
+            // row too long for the space loses its last controls rather than
+            // pushing the toggle off the edge.
+            const auto available = ImGui::GetContentRegionAvail();
+            const auto controlsWidth = available.x
+                                     - toolbarButtonWidth ("Source", toolbarLabelPadding)
+                                     - toolbarGroupGap;
+            // A zero width means "the rest of the row" to BeginChild, which is
+            // the opposite of reserving space, so a ribbon with no room for the
+            // controls carries the toggle alone.
+            if (controlsWidth > 0.0f)
+            {
+                ImGui::BeginChild ("ribbon-controls", ImVec2 (controlsWidth, available.y),
+                                   ImGuiChildFlags_None,
+                                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse
+                                   | ImGuiWindowFlags_NoBackground);
+                drawChartControls();
+                ImGui::EndChild();
+                ImGui::SameLine (0.0f, toolbarGroupGap);
+            }
         }
         drawSourceToggle();
 
@@ -554,7 +764,7 @@ private:
         if (toolbarButton ("↶", "Undo the last edit (Ctrl+Z)", false))
             restoreHistory (false);
         ImGui::EndDisabled();
-        ImGui::SameLine (0.0f, 5.0f);
+        ImGui::SameLine (0.0f, toolbarGap);
         ImGui::BeginDisabled (! history.canRedo());
         if (toolbarButton ("↷", "Redo the last edit (Ctrl+Y)", false))
             restoreHistory (true);
@@ -564,56 +774,56 @@ private:
         // chords and just enough lyric styling to distinguish the title and
         // add emphasis. General-purpose Markdown authoring belongs in the
         // compatible notepad.md file rather than competing with those actions.
-        ImGui::SameLine (0.0f, 16.0f);
+        ImGui::SameLine (0.0f, toolbarGroupGap);
         if (toolbarButton ("Chord", "Add or edit a chord (Ctrl+K); repeat the previous chord (Ctrl+Shift+K)",
                            editor.chordEntryActive()))
         {
             editor.beginChordEntry();
             editor.requestFocus();
         }
-        ImGui::SameLine (0.0f, 5.0f);
+        ImGui::SameLine (0.0f, toolbarGap);
         if (toolbarButton ("Section", "Add or remove a song section"))
             ImGui::OpenPopup ("section-menu");
 
         const bool canTranspose = document.hasChords();
         ImGui::BeginDisabled (! canTranspose);
-        ImGui::SameLine (0.0f, 5.0f);
+        ImGui::SameLine (0.0f, toolbarGap);
         if (toolbarButton ("−1", "Transpose every chord down one semitone"))
             editor.transposeChords (-1);
-        ImGui::SameLine (0.0f, 5.0f);
+        ImGui::SameLine (0.0f, toolbarGap);
         if (toolbarButton ("+1", "Transpose every chord up one semitone"))
             editor.transposeChords (1);
         ImGui::EndDisabled();
 
         const auto blockStyle = selectedBlockStyle();
-        ImGui::SameLine (0.0f, 16.0f);
+        ImGui::SameLine (0.0f, toolbarGroupGap);
         if (toolbarButton ("Lyrics", "Use lyric or note text",
                            blockStyle == NotepadDocument::BlockStyle::body))
             applyBlock (NotepadDocument::BlockStyle::body);
-        ImGui::SameLine (0.0f, 5.0f);
+        ImGui::SameLine (0.0f, toolbarGap);
         if (toolbarButton ("Title", "Make this line the song title",
                            blockStyle == NotepadDocument::BlockStyle::heading1, boldFont))
             applyBlock (NotepadDocument::BlockStyle::heading1);
 
-        ImGui::SameLine (0.0f, 16.0f);
+        ImGui::SameLine (0.0f, toolbarGroupGap);
         if (toolbarButton ("B", "Bold the selection (Ctrl+B)",
                            inlineStyleActive (NotepadDocument::InlineStyle::bold), boldFont))
             applyInline (NotepadDocument::InlineStyle::bold);
-        ImGui::SameLine (0.0f, 5.0f);
+        ImGui::SameLine (0.0f, toolbarGap);
         if (toolbarButton ("I", "Italicise the selection (Ctrl+I)",
                            inlineStyleActive (NotepadDocument::InlineStyle::italic)))
             applyInline (NotepadDocument::InlineStyle::italic);
 
         const auto spelling = document.spellingMode();
-        ImGui::SameLine (0.0f, 16.0f);
+        ImGui::SameLine (0.0f, toolbarGroupGap);
         if (toolbarButton ("Auto##spell-auto", "Match the song's existing sharps or flats",
                            spelling == NotepadDocument::Spelling::followDocument))
             document.setSpelling (NotepadDocument::Spelling::followDocument);
-        ImGui::SameLine (0.0f, 4.0f);
+        ImGui::SameLine (0.0f, toolbarTightGap);
         if (toolbarButton ("♯##spell-sharps", "Spell chords with sharps",
                            spelling == NotepadDocument::Spelling::sharps))
             document.setSpelling (NotepadDocument::Spelling::sharps);
-        ImGui::SameLine (0.0f, 4.0f);
+        ImGui::SameLine (0.0f, toolbarTightGap);
         if (toolbarButton ("♭##spell-flats", "Spell chords with flats",
                            spelling == NotepadDocument::Spelling::flats))
             document.setSpelling (NotepadDocument::Spelling::flats);
@@ -730,6 +940,13 @@ private:
 
     void draw (float width, float height)
     {
+        const bool trace = ! tracedFirstDraw;
+        const auto mark = [trace] (const char* stage)
+        {
+            if (trace)
+                notepadLog ("stage: draw %s", stage);
+        };
+        mark ("entered");
         auto& style = ImGui::GetStyle();
         style.WindowBorderSize = 0.0f;
         style.FrameBorderSize = 0.0f;
@@ -750,6 +967,7 @@ private:
         style.Colors[ImGuiCol_Text] = colour (notepad::kStagePalette.lyric);
         style.Colors[ImGuiCol_TextDisabled] = colour (notepad::kStagePalette.muted);
 
+        mark ("style applied");
         ImGui::SetNextWindowPos (ImVec2 (0.0f, 0.0f));
         ImGui::SetNextWindowSize (ImVec2 (width, height));
         ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (0.0f, 0.0f));
@@ -759,8 +977,10 @@ private:
                       | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar
                       | ImGuiWindowFlags_NoScrollWithMouse);
 
+        mark ("window begun");
         ImGui::SetCursorPos (ImVec2 (22.0f, 14.0f));
         ImGui::TextUnformatted ("SESSION NOTEPAD");
+        mark ("header text drawn");
         ImGui::SetCursorPos (ImVec2 (22.0f, 34.0f));
         ImGui::PushStyleColor (ImGuiCol_Text, colour (notepad::kStagePalette.muted));
         ImGui::TextUnformatted ("Lyrics and session notes");
@@ -780,15 +1000,19 @@ private:
         if (bands.ribbon > 0.0f)
         {
             ImGui::SetCursorPos (ImVec2 (0.0f, ribbonTop));
+            mark ("ribbon begin");
             drawRibbon (bands.ribbon);
+            mark ("ribbon done");
         }
         if (bands.chart > 0.0f)
         {
             ImGui::SetCursorPos (ImVec2 (0.0f, chartTop));
+            mark ("chart begin");
             if (markdownView)
                 drawMarkdownEditor (bands.chart);
             else
                 drawEditor (bands.chart);
+            mark ("chart done");
         }
 
         if (bands.status > 0.0f)
@@ -838,13 +1062,24 @@ private:
             ImGui::EndChild();
             ImGui::PopStyleVar();
             ImGui::PopStyleColor();
+            mark ("status done");
         }
 
         ImGui::End();
+        mark ("window ended");
         ImGui::PopStyleColor();
         ImGui::PopStyleVar();
+        tracedFirstDraw = true;
     }
 
+    float toolbarLabelPadding = kToolbarButtonLabelPadding;
+    float toolbarGap = 5.0f;
+    float toolbarTightGap = 4.0f;
+    float toolbarGroupGap = 16.0f;
+    bool loggedFirstIdle = false;
+    bool loggedFirstIdleReturn = false;
+    bool loggedFirstDraw = false;
+    bool tracedFirstDraw = false;
     EmbeddedApplication app;
     std::unique_ptr<DGL::Window> window;
     std::unique_ptr<EditorWidget> editorWidget;

@@ -2,9 +2,21 @@
 
 #if defined (_WIN32)
 #include <clocale>
+#include <cstdio>
 
 namespace
 {
+// Windows leaves a redirected stderr fully buffered, so a process that dies
+// without unwinding takes its diagnostics with it - which is how the notepad's
+// failure on a Windows 11 test box first presented, as a silent exit with an
+// empty log. Unbuffered costs nothing here: Dusk Studio writes to stderr only
+// on events worth recording, never per block.
+struct UnbufferedDiagnostics
+{
+    UnbufferedDiagnostics() { std::setvbuf (stderr, nullptr, _IONBF, 0); }
+};
+const UnbufferedDiagnostics unbufferedDiagnostics;
+
 // Dusk Studio hands vendored libraries UTF-8 paths, but MSVC decodes a narrow
 // path with the CRT code page - the ANSI one unless told otherwise. sfizz is
 // where that bites: its C entry points take const char* and convert through
