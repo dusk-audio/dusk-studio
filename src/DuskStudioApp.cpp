@@ -220,6 +220,8 @@ public:
 
     void closeButtonPressed() override
     {
+        std::fprintf (stderr, "[Dusk Studio] main window closeButtonPressed\n");
+        std::fflush (stderr);
         // Delegate to MainComponent's requestQuit, which checks dirty
         // state (autosave-newer-than-saved) and shows the Dusk Studio-styled
         // Save / Don't Save / Cancel modal only when there are actual
@@ -2376,6 +2378,8 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
 
 void DuskStudioApp::shutdown()
 {
+    std::fprintf (stderr, "[Dusk Studio] shutdown() entered\n");
+    std::fflush (stderr);
     // Stop the single-instance listener first: a handoff arriving mid-teardown
     // would target a window that is about to go away.
     single_instance::release();
