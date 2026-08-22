@@ -405,7 +405,7 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
             // the caller can act on, so the failure has to be converted here
             // into the false return the caller already handles.
             notepadLog ("cannot embed: %s", error.what());
-            destroyEmbeddedWindow();
+            destroyEmbeddedWindowSafely();
             return false;
         }
         startTimer (16);
@@ -563,6 +563,20 @@ private:
         }
 
         stopTimer();
+        destroyEmbeddedWindowSafely();
+        closeRequested = false;
+        closeWasPumped = false;
+        if (onClosed)
+            onClosed();
+        return false;
+    }
+
+    // Both failure paths run because the driver already failed once, and the
+    // ordinary teardown makes the context current again to release the widget.
+    // A second failure there must not escape into the host's message loop, so
+    // the last resort drops the objects and the font state the atlas owned.
+    void destroyEmbeddedWindowSafely()
+    {
         try
         {
             destroyEmbeddedWindow();
@@ -571,12 +585,9 @@ private:
         {
             editorWidget.reset();
             window.reset();
+            bodyFont = boldFont = italicFont = boldItalicFont = monoFont = nullptr;
+            editor.setFonts ({});
         }
-        closeRequested = false;
-        closeWasPumped = false;
-        if (onClosed)
-            onClosed();
-        return false;
     }
 
     void destroyEmbeddedWindow()
@@ -723,16 +734,22 @@ private:
             // row too long for the space loses its last controls rather than
             // pushing the toggle off the edge.
             const auto available = ImGui::GetContentRegionAvail();
-            const auto controlsWidth = std::max (0.0f, available.x
-                                                     - toolbarButtonWidth ("Source", toolbarLabelPadding)
-                                                     - toolbarGroupGap);
-            ImGui::BeginChild ("ribbon-controls", ImVec2 (controlsWidth, available.y),
-                               ImGuiChildFlags_None,
-                               ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse
-                               | ImGuiWindowFlags_NoBackground);
-            drawChartControls();
-            ImGui::EndChild();
-            ImGui::SameLine (0.0f, toolbarGroupGap);
+            const auto controlsWidth = available.x
+                                     - toolbarButtonWidth ("Source", toolbarLabelPadding)
+                                     - toolbarGroupGap;
+            // A zero width means "the rest of the row" to BeginChild, which is
+            // the opposite of reserving space, so a ribbon with no room for the
+            // controls carries the toggle alone.
+            if (controlsWidth > 0.0f)
+            {
+                ImGui::BeginChild ("ribbon-controls", ImVec2 (controlsWidth, available.y),
+                                   ImGuiChildFlags_None,
+                                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse
+                                   | ImGuiWindowFlags_NoBackground);
+                drawChartControls();
+                ImGui::EndChild();
+                ImGui::SameLine (0.0f, toolbarGroupGap);
+            }
         }
         drawSourceToggle();
 
