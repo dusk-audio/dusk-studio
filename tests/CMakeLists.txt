@@ -151,6 +151,7 @@ add_executable(dusk-studio-tests
     notepad_editor_core.cpp
     notepad_chords.cpp
     notepad_theme.cpp
+    notepad_graphics_compatibility.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/NotepadDocument.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/NotepadEditorCore.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/NotepadChords.cpp
@@ -253,6 +254,20 @@ target_compile_definitions(dusk-studio-tests PRIVATE
 # Gate native CLAP tests + sources to match the app build. The bundle-load test
 # follows the same platform implementation selected by DUSKSTUDIO_NATIVE_CLAP.
 if(DUSKSTUDIO_NATIVE_CLAP)
+    if(APPLE)
+        # The directory-bundle resolver test needs a valid Mach-O image that
+        # dlopen can safely inspect. Copying the running test executable aborts
+        # inside dyld on current macOS instead of returning a load error.
+        add_library(dusk-studio-non-clap-fixture MODULE
+            fixtures/non_clap_module.cpp)
+        set_target_properties(dusk-studio-non-clap-fixture PROPERTIES
+            PREFIX ""
+            SUFFIX ".dylib")
+        target_compile_features(dusk-studio-non-clap-fixture PRIVATE cxx_std_17)
+        target_compile_definitions(dusk-studio-tests PRIVATE
+            DUSKSTUDIO_NON_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-non-clap-fixture>")
+        add_dependencies(dusk-studio-tests dusk-studio-non-clap-fixture)
+    endif()
     target_sources(dusk-studio-tests PRIVATE
         clap_bundle_load.cpp
         clap_instance_process.cpp

@@ -119,6 +119,8 @@ bool hasUsableDisplay()
     return false;
 }
 
+double nativeViewBackingScale (void*) { return 1.0; }
+
 void installNonFatalXErrorHandler()
 {
     // Install once. XSetErrorHandler returns the previously-installed handler

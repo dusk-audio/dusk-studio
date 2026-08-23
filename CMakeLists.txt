@@ -1630,6 +1630,9 @@ endif()
 # an ad-hoc codesign (unsigned by design - no notarization).
 set(CPACK_DMG_FORMAT                "UDZO")
 set(CPACK_DMG_VOLUME_NAME           "Dusk Studio ${DUSKSTUDIO_VERSION}")
+# CPack adds an /Applications symlink by default. Keep the image's root to the
+# three release artefacts promised by the packaging contract.
+set(CPACK_DMG_DISABLE_APPLICATIONS_SYMLINK ON)
 
 # Package filename platform suffix. CPack defaults to the kernel name
 # ("Darwin") on macOS and "win64" on Windows - override both to a user-facing,

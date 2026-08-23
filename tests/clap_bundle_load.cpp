@@ -1,18 +1,16 @@
-// CLAP loader failure paths run without a plugin fixture. Live bundle loading
-// remains covered by the environment-gated scanner test.
+// CLAP loader failure paths use only system libraries, except for the macOS
+// directory-bundle resolver check's harmless no-clap_entry test dylib.
 
 #include <catch2/catch_test_macros.hpp>
 
 #include "engine/clap/ClapBundle.h"
 
 #include <chrono>
-#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
 #include <string>
-#include <vector>
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -23,8 +21,6 @@
 #endif
 
 #if defined(__APPLE__)
-#include <mach-o/dyld.h>
-
 namespace
 {
 namespace stdfs = std::filesystem;
@@ -132,14 +128,8 @@ TEST_CASE ("ClapBundle resolves a directory bundle executable", "[clap][bundle]"
         "</dict></plist>\n"));
 
     const auto executable = executableDir / "TestClap";
-    std::vector<char> runningExecutable (1024);
-    auto pathSize = static_cast<std::uint32_t> (runningExecutable.size());
-    if (_NSGetExecutablePath (runningExecutable.data(), &pathSize) != 0)
-    {
-        runningExecutable.resize (pathSize);
-        REQUIRE (_NSGetExecutablePath (runningExecutable.data(), &pathSize) == 0);
-    }
-    std::filesystem::copy_file (std::filesystem::u8path (runningExecutable.data()), executable,
+    std::filesystem::copy_file (std::filesystem::u8path (DUSKSTUDIO_NON_CLAP_FIXTURE_PATH),
+                                executable,
                                 std::filesystem::copy_options::overwrite_existing, ec);
     REQUIRE_FALSE (ec);
 
@@ -147,13 +137,9 @@ TEST_CASE ("ClapBundle resolves a directory bundle executable", "[clap][bundle]"
     std::string err;
     REQUIRE_FALSE (b.load (temp.u8string(), err));
     INFO ("load error: " << err);
-    // Either dlopen took the executable and found no entry point, or it refused
-    // it - and then the reason must name the full inner executable path, which is
-    // what catches a resolver handing dlopen a bundle-relative name. Matching the
-    // tail rather than the absolute path: the temp dir reaches dlopen in its
-    // /private/var form.
-    REQUIRE ((err == "no clap_entry symbol"
-              || err.find ("Test.clap/Contents/MacOS/TestClap") != std::string::npos));
+    // A successful resolution reaches the valid inner dylib and fails only
+    // because the fixture deliberately exports no clap_entry symbol.
+    REQUIRE (err == "no clap_entry symbol");
     REQUIRE_FALSE (b.isLoaded());
     REQUIRE (b.getPath().empty());
 }

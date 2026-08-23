@@ -1,5 +1,5 @@
 <!-- summary-start -->
-Fixes the macOS disk image, which could not launch in 0.13.0, removes Linux desktop files from the macOS and Windows packages, and adds native CLAP and VST3 plugin hosting on Windows.
+Fixes the macOS disk image, which could not launch in 0.13.0, restores the notepad's full size on Retina Macs, protects Windows sessions from incompatible notepad graphics drivers, removes Linux desktop files from macOS and Windows packages, and adds native CLAP and VST3 plugin hosting on Windows.
 <!-- summary-end -->
 
 ### Downloads
@@ -16,7 +16,10 @@ Fixes the macOS disk image, which could not launch in 0.13.0, removes Linux desk
 - **macOS** (`.dmg`, Apple Silicon / arm64 only): unsigned. Right-click the app
   -> Open to bypass Gatekeeper on first launch.
 - **Windows** (`.msi`, x64): unsigned. SmartScreen may warn - choose More info
-  -> Run anyway. Statically linked, no vc_redist needed.
+  -> Run anyway. Statically linked, no vc_redist needed. The notepad works on
+  a conforming software OpenGL renderer and refuses the known-bad Microsoft
+  OpenGL Compatibility Pack, but it has not yet been verified on physical
+  Windows GPU hardware.
 - **Manual** (`MANUAL.pdf`): the Dusk Studio user manual for this release.
 
 Check a download against the `SHA256SUMS` asset before installing. It covers

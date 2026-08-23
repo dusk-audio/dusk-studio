@@ -30,9 +30,9 @@
   <content_rating type="oars-1.1"/>
   <releases>
     <!-- scripts/bump-version.sh prepends new <release> entries here. -->
-    <release version="0.13.1" date="2026-08-21">
+    <release version="0.13.1" date="2026-08-23">
       <description>
-        <p>Fixes the macOS disk image, which could not launch in 0.13.0, removes Linux desktop files from the macOS and Windows packages, and adds native CLAP and VST3 plugin hosting on Windows.</p>
+        <p>Fixes the macOS disk image, restores the notepad's full size on Retina Macs, protects Windows sessions from incompatible notepad graphics drivers, removes Linux desktop files from macOS and Windows packages, and adds native CLAP and VST3 plugin hosting on Windows.</p>
       </description>
     </release>
     <release version="0.13.0" date="2026-08-19">
