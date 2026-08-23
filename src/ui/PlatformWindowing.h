@@ -39,6 +39,14 @@ namespace duskstudio::platform
 // the process has a GUI session.
 bool hasUsableDisplay();
 
+// Backing scale of the native view behind a peer's native handle, for a child
+// window that renders itself. Cocoa peer coordinates are points and the
+// framework's platform scale is 1 there, while DPF/Pugl sizes the child in
+// backing pixels; AppKit is the only source for that factor. X11 and Win32
+// have no separate backing scale - the peer's own platform scale already
+// carries DPI - so they report 1 and the caller uses the peer scale instead.
+double nativeViewBackingScale (void* nativeViewHandle);
+
 // Bring the given window's native peer to the foreground and grant it
 // focus. Used after creating a fresh top-level window (main window,
 // plugin editor) so the WM doesn't bury it under existing windows or

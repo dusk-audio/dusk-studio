@@ -61,7 +61,7 @@ src/ui/AnalogVuMeter.cpp	113
 src/ui/AnalogVuMeter.h	7
 src/ui/AudioRegionEditor.cpp	339
 src/ui/AudioRegionEditor.h	86
-src/ui/AudioSettingsPanel.cpp	100
+src/ui/AudioSettingsPanel.cpp	99
 src/ui/AudioSettingsPanel.h	39
 src/ui/AuxLaneComponent.cpp	168
 src/ui/AuxLaneComponent.h	28
@@ -69,13 +69,13 @@ src/ui/AuxView.cpp	60
 src/ui/AuxView.h	5
 src/ui/BounceDialog.cpp	45
 src/ui/BounceDialog.h	12
-src/ui/BusComponent.cpp	329
+src/ui/BusComponent.cpp	309
 src/ui/BusComponent.h	47
 src/ui/ChannelCompEditor.cpp	128
 src/ui/ChannelCompEditor.h	20
 src/ui/ChannelEqEditor.cpp	93
 src/ui/ChannelEqEditor.h	13
-src/ui/ChannelStripComponent.cpp	786
+src/ui/ChannelStripComponent.cpp	771
 src/ui/ChannelStripComponent.h	111
 src/ui/ClapPluginEditorComponent.cpp	11
 src/ui/ClapPluginEditorComponent.h	7
@@ -119,7 +119,7 @@ src/ui/Lv2PluginEditorComponent.cpp	3
 src/ui/Lv2PluginEditorComponent.h	4
 src/ui/MainComponent.cpp	458
 src/ui/MainComponent.h	57
-src/ui/MasterStripComponent.cpp	402
+src/ui/MasterStripComponent.cpp	381
 src/ui/MasterStripComponent.h	59
 src/ui/MasteringEqEditor.cpp	112
 src/ui/MasteringEqEditor.h	18
@@ -133,7 +133,7 @@ src/ui/MiniTimelineStrip.cpp	19
 src/ui/MiniTimelineStrip.h	10
 src/ui/MultiImportTargetPicker.cpp	78
 src/ui/MultiImportTargetPicker.h	11
-src/ui/NativeEditorEmbedScale.h	12
+src/ui/NativeEditorEmbedScale.h	7
 src/ui/PianoRollComponent.cpp	381
 src/ui/PianoRollComponent.h	61
 src/ui/PlatformWindowing.h	14
@@ -174,7 +174,7 @@ src/ui/WindowState.cpp	7
 src/ui/WindowState.h	5
 src/ui/multisample/AriaGuiComponent.cpp	90
 src/ui/multisample/AriaGuiComponent.h	17
-src/ui/multisample/DuskMultisampleEditor.cpp	71
+src/ui/multisample/DuskMultisampleEditor.cpp	68
 src/ui/multisample/DuskMultisampleEditor.h	21
 src/util/CrashHandler.cpp	32
 src/util/CrashHandler.h	4

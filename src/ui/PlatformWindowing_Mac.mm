@@ -105,6 +105,14 @@ private:
 
 
 bool hasUsableDisplay()                                   { return true; }
+double nativeViewBackingScale (void* nativeViewHandle)
+{
+    auto* const view = static_cast<NSView*> (nativeViewHandle);
+    auto* const window = view != nil ? [view window] : nil;
+    const double scale = window != nil ? [window backingScaleFactor]
+                                       : [[NSScreen mainScreen] backingScaleFactor];
+    return scale > 0.0 ? scale : 1.0;
+}
 void bringWindowToFront (juce::ComponentPeer&)             {}
 void flushWindowOperations()                                {}
 void prepareNativePeerForChildAttach (juce::ComponentPeer&) {}

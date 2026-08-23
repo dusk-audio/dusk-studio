@@ -116,6 +116,7 @@ void prepareForTopLevelDestruction (juce::Component& topLevel)
     topLevel.giveAwayKeyboardFocus();
 }
 bool hasUsableDisplay() { return true; }   // native windowing always present
+double nativeViewBackingScale (void*) { return 1.0; }
 void clearXInputFocus() {}                 // X-only; no-op on Windows
 void requestFocusOnMainWaylandSurface() {} // Wayland-only; no-op on Windows
 void preferX11ForNextNativeWindow() {}     // Linux-only; no-op on Windows

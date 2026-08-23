@@ -51,7 +51,13 @@ Read `VERSION`. Compute the new version (explicit argument, else patch bump).
 Refuse to reuse an existing tag:
 
 ```bash
-git rev-parse -q --verify "refs/tags/v$NEW_VERSION" >/dev/null && { echo "STOP: tag v$NEW_VERSION exists"; exit 1; }
+git rev-parse -q --verify "refs/tags/v$NEW_VERSION" >/dev/null \
+  && { echo "STOP: tag v$NEW_VERSION exists locally"; exit 1; }
+# A local checkout that never fetched the tag has no ref to find, so ask origin
+# before the release commit is pushed. A failed lookup is a stop, not a pass.
+REMOTE_TAG=$(git ls-remote --tags --refs origin "refs/tags/v$NEW_VERSION") \
+  || { echo "STOP: cannot query origin for tag v$NEW_VERSION"; exit 1; }
+[ -z "$REMOTE_TAG" ] || { echo "STOP: tag v$NEW_VERSION exists on origin"; exit 1; }
 ```
 
 **Never move a published tag.** If a released version needs different binaries,
@@ -137,17 +143,37 @@ git push origin "refs/tags/v$NEW_VERSION"
 Query by commit, not by eye. The Linux release workflow runs once per architecture,
 so a name appearing at all is not evidence that both of its runs passed.
 
+A run that has not registered yet, or is queued or in progress, is pending, not
+failed - a single snapshot taken right after the tag push reads every workflow as
+a failure. Poll until each one is terminal, and stop on the timeout instead of
+waiting forever.
+
 ```bash
 set -euo pipefail
-RUNS=$(gh run list --commit "$RELEASE_COMMIT" --limit 50 \
-       --json name,status,conclusion,headSha)
-for wf in "Linux release (tarball)" "macOS release (unsigned DMG)" \
-          "Windows build" "Manual PDF"; do
-  echo "$RUNS" | jq -e --arg wf "$wf" --arg sha "$RELEASE_COMMIT" '
-    [.[] | select(.name == $wf and .headSha == $sha)] as $r
-    | ($r | length) > 0
-      and ($r | all(.status == "completed" and .conclusion == "success"))' >/dev/null \
-    || { echo "STOP: $wf did not fully succeed on $RELEASE_COMMIT"; exit 1; }
+WORKFLOWS=("Linux release (tarball)" "macOS release (unsigned DMG)" \
+           "Windows build" "Manual PDF")
+DEADLINE=$(( $(date +%s) + 3600 ))
+while :; do
+  RUNS=$(gh run list --commit "$RELEASE_COMMIT" --limit 50 \
+         --json name,status,conclusion,headSha)
+  PENDING=0
+  for wf in "${WORKFLOWS[@]}"; do
+    STATE=$(echo "$RUNS" | jq -r --arg wf "$wf" --arg sha "$RELEASE_COMMIT" '
+      [.[] | select(.name == $wf and .headSha == $sha)] as $r
+      | if ($r | length) == 0 then "pending"
+        elif ($r | any(.status != "completed")) then "pending"
+        elif ($r | all(.conclusion == "success")) then "success"
+        else "failed" end')
+    case "$STATE" in
+      success) ;;
+      pending) PENDING=1 ;;
+      *) echo "STOP: $wf did not fully succeed on $RELEASE_COMMIT"; exit 1 ;;
+    esac
+  done
+  [ "$PENDING" -eq 1 ] || break
+  [ "$(date +%s)" -lt "$DEADLINE" ] \
+    || { echo "STOP: workflows still pending on $RELEASE_COMMIT after 60 min"; exit 1; }
+  sleep 30
 done
 ```
 
@@ -181,9 +207,21 @@ All six are present, so every entry must verify. `--ignore-missing` belongs in t
 advice given to users, who download one payload; here it would pass a release with
 an asset missing.
 
+`shasum -c` says nothing about a payload the file never listed, so a short or
+duplicated `SHA256SUMS` verifies clean. Prove the entry set is exactly the five
+payloads first, then verify.
+
 ```bash
 set -euo pipefail
-shasum -a 256 -c SHA256SUMS
+LISTED=$(awk '{sub(/^\*/, "", $2); print $2}' SHA256SUMS | sort)
+PRESENT=$(ls -1 | grep -vx SHA256SUMS | sort)
+[ "$(printf '%s\n' "$LISTED" | wc -l)" -eq 5 ] \
+  || { echo "STOP: SHA256SUMS does not carry exactly 5 entries"; exit 1; }
+[ "$(printf '%s\n' "$LISTED" | sort -u | wc -l)" -eq 5 ] \
+  || { echo "STOP: SHA256SUMS names a payload more than once"; exit 1; }
+diff <(printf '%s\n' "$LISTED") <(printf '%s\n' "$PRESENT") \
+  || { echo "STOP: SHA256SUMS entries do not match the downloaded payloads"; exit 1; }
+shasum -a 256 --strict -c SHA256SUMS
 ```
 
 **macOS.** The DMG carries a license agreement, so `hdiutil` blocks and reports

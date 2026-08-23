@@ -3,6 +3,7 @@
 #include "NotepadEditor.h"
 #include "NotepadChords.h"
 #include "NotepadEditorCore.h"
+#include "NotepadGraphicsCompatibility.h"
 #include "NotepadTheme.h"
 #include "../foundation/MessageThread.h"
 
@@ -28,7 +29,6 @@
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
-#include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <optional>
@@ -132,20 +132,10 @@ void logGraphicsIdentity()
                 (int) maxTexture);
 }
 
-// DGL's OpenGL3 backend calls entry points that a pre-3.0 context does not
-// export: it prints "glActiveTexture != nullptr" and then the notepad dies with
-// the host application. A Windows session on the generic GDI renderer - a plain
-// VM display adapter, or an RDP session - is exactly that context, so the
-// capability has to be checked before the editor is built on top of it.
-bool contextProvidesOpenGL3()
+notepad::GraphicsCompatibility graphicsCompatibility()
 {
-    const auto* const version = reinterpret_cast<const char*> (glGetString (GL_VERSION));
-    if (version == nullptr)
-        return false;
-    const auto* digit = version;
-    while (*digit != '\0' && (*digit < '0' || *digit > '9'))
-        ++digit;
-    return std::atoi (digit) >= 3;
+    return notepad::assessGraphicsCompatibility (glString (GL_VERSION),
+                                                 glString (GL_RENDERER));
 }
 
 ImVec4 colour (unsigned int hex)
@@ -197,13 +187,7 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
     protected:
         void onImGuiDisplay() override
         {
-            const bool firstDraw = ! owner.loggedFirstDraw;
-            owner.loggedFirstDraw = true;
-            if (firstDraw)
-                notepadLog ("stage: first onImGuiDisplay entered");
             owner.draw (static_cast<float> (getWidth()), static_cast<float> (getHeight()));
-            if (firstDraw)
-                notepadLog ("stage: first onImGuiDisplay returned");
         }
 
         bool onKeyboard (const DGL::Widget::KeyboardEvent& event) override
@@ -316,10 +300,6 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
         markdownFocusRequested = false;
         closeRequested = false;
         closeWasPumped = false;
-        loggedFirstIdle = false;
-        loggedFirstIdleReturn = false;
-        loggedFirstDraw = false;
-        tracedFirstDraw = false;
         hasSessionFile = sessionExists;
         documentDirty = unsavedChanges;
         saveFailed = false;
@@ -330,15 +310,11 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
 
         try
         {
-            notepadLog ("stage: creating window %dx%d at %d,%d scale=%.2f",
-                        geometry.width, geometry.height, geometry.x, geometry.y,
-                        (double) geometry.scaleFactor);
             window = std::make_unique<DGL::Window> (
                 app, nativeParent, geometry.width, geometry.height,
                 geometry.scaleFactor, false);
             // A display without a usable GL configuration leaves Pugl with an
             // unrealised view: no native handle, and a size hint that never took.
-            notepadLog ("stage: window constructed");
             if (window->getNativeWindowHandle() == 0
                 || window->getWidth() < 2 || window->getHeight() < 2)
             {
@@ -358,18 +334,14 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
                 window.reset();
                 return false;
             }
-            notepadLog ("stage: embedded offset applied");
-            bool usableContext = false;
+            auto compatibility = notepad::GraphicsCompatibility::noOpenGL3;
             {
                 DGL::Window::ScopedGraphicsContext context (*window);
-                notepadLog ("stage: graphics context current");
                 logGraphicsIdentity();
-                usableContext = contextProvidesOpenGL3();
-                if (usableContext)
+                compatibility = graphicsCompatibility();
+                if (compatibility == notepad::GraphicsCompatibility::supported)
                 {
-                    notepadLog ("stage: creating editor widget");
                     editorWidget = std::make_unique<EditorWidget> (*window, *this);
-                    notepadLog ("stage: editor widget constructed");
                     // DGL sizes a top-level widget from a resize event. Window creation
                     // and resize are one synchronous operation on macOS, so that event
                     // has already been delivered by the time this widget exists and it
@@ -379,22 +351,22 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
                     // is already this size and so emits no event.
                     static_cast<DGL::Widget*> (editorWidget.get())
                         ->setSize (window->getWidth(), window->getHeight());
-                    notepadLog ("stage: building font atlas");
                     buildFontAtlas (static_cast<float> (notepad::kTypeScale.lyric
                                                         * window->getScaleFactor()));
-                    notepadLog ("stage: font atlas built");
                 }
             }
-            if (! usableContext)
+            if (compatibility != notepad::GraphicsCompatibility::supported)
             {
-                notepadLog ("display provides no OpenGL 3 context; "
-                            "notepad unavailable");
+                if (compatibility == notepad::GraphicsCompatibility::unsafeMesaD3D12)
+                    notepadLog ("Mesa D3D12 (OpenGL Compatibility Pack) is known "
+                                "to terminate the host; notepad unavailable");
+                else
+                    notepadLog ("display provides no OpenGL 3 context; "
+                                "notepad unavailable");
                 window.reset();
                 return false;
             }
-            notepadLog ("stage: focusing window");
             window->focus();
-            notepadLog ("stage: open complete");
         }
         catch (const std::exception& error)
         {
@@ -505,18 +477,8 @@ private:
 
     void timerCallback() override
     {
-        if (! loggedFirstIdle)
-        {
-            loggedFirstIdle = true;
-            notepadLog ("stage: first idle - entering event pump");
-        }
         if (! pumpEvents())
             return;
-        if (! loggedFirstIdleReturn)
-        {
-            loggedFirstIdleReturn = true;
-            notepadLog ("stage: first idle returned");
-        }
         // Close requests come from the native host boundary. Wait until DPF
         // returns from the event pump before destroying its embedded widget
         // and native child.
@@ -540,11 +502,11 @@ private:
         }
     }
 
-    // A graphics driver that fails a call from inside the event pump throws out
-    // of it: Mesa's D3D12 backend raises a COM error as a C++ exception, and
-    // letting that reach the host's message loop takes the whole application
-    // down with the notepad. The notepad closes instead, and the session keeps
-    // whatever was typed because the text is mirrored to the DAW as it changes.
+    // A graphics driver that fails a call from inside the event pump can throw
+    // out of it. Letting that reach the host's message loop takes the whole
+    // application down with the notepad. The notepad closes instead, and the
+    // session keeps whatever was typed because the text is mirrored to the DAW
+    // as it changes.
     bool pumpEvents()
     {
         try
@@ -940,13 +902,6 @@ private:
 
     void draw (float width, float height)
     {
-        const bool trace = ! tracedFirstDraw;
-        const auto mark = [trace] (const char* stage)
-        {
-            if (trace)
-                notepadLog ("stage: draw %s", stage);
-        };
-        mark ("entered");
         auto& style = ImGui::GetStyle();
         style.WindowBorderSize = 0.0f;
         style.FrameBorderSize = 0.0f;
@@ -967,7 +922,6 @@ private:
         style.Colors[ImGuiCol_Text] = colour (notepad::kStagePalette.lyric);
         style.Colors[ImGuiCol_TextDisabled] = colour (notepad::kStagePalette.muted);
 
-        mark ("style applied");
         ImGui::SetNextWindowPos (ImVec2 (0.0f, 0.0f));
         ImGui::SetNextWindowSize (ImVec2 (width, height));
         ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (0.0f, 0.0f));
@@ -977,10 +931,8 @@ private:
                       | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar
                       | ImGuiWindowFlags_NoScrollWithMouse);
 
-        mark ("window begun");
         ImGui::SetCursorPos (ImVec2 (22.0f, 14.0f));
         ImGui::TextUnformatted ("SESSION NOTEPAD");
-        mark ("header text drawn");
         ImGui::SetCursorPos (ImVec2 (22.0f, 34.0f));
         ImGui::PushStyleColor (ImGuiCol_Text, colour (notepad::kStagePalette.muted));
         ImGui::TextUnformatted ("Lyrics and session notes");
@@ -1000,19 +952,15 @@ private:
         if (bands.ribbon > 0.0f)
         {
             ImGui::SetCursorPos (ImVec2 (0.0f, ribbonTop));
-            mark ("ribbon begin");
             drawRibbon (bands.ribbon);
-            mark ("ribbon done");
         }
         if (bands.chart > 0.0f)
         {
             ImGui::SetCursorPos (ImVec2 (0.0f, chartTop));
-            mark ("chart begin");
             if (markdownView)
                 drawMarkdownEditor (bands.chart);
             else
                 drawEditor (bands.chart);
-            mark ("chart done");
         }
 
         if (bands.status > 0.0f)
@@ -1062,24 +1010,17 @@ private:
             ImGui::EndChild();
             ImGui::PopStyleVar();
             ImGui::PopStyleColor();
-            mark ("status done");
         }
 
         ImGui::End();
-        mark ("window ended");
         ImGui::PopStyleColor();
         ImGui::PopStyleVar();
-        tracedFirstDraw = true;
     }
 
     float toolbarLabelPadding = kToolbarButtonLabelPadding;
     float toolbarGap = 5.0f;
     float toolbarTightGap = 4.0f;
     float toolbarGroupGap = 16.0f;
-    bool loggedFirstIdle = false;
-    bool loggedFirstIdleReturn = false;
-    bool loggedFirstDraw = false;
-    bool tracedFirstDraw = false;
     EmbeddedApplication app;
     std::unique_ptr<DGL::Window> window;
     std::unique_ptr<EditorWidget> editorWidget;

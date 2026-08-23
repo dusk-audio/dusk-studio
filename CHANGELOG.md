@@ -5,12 +5,13 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [0.13.1] - 2026-08-21
+## [0.13.1] - 2026-08-23
 
-A packaging fix release. The 0.13.0 macOS disk image could not launch on any
-machine, and both the disk image and the Windows installer carried Linux
-desktop-integration files they had no use for. Windows also gains Dusk Studio's
-own CLAP and VST3 hosts, which until now were Linux and macOS only.
+A packaging and Windows-safety fix release. The 0.13.0 macOS disk image could
+not launch on any machine, and both the disk image and the Windows installer
+carried Linux desktop-integration files they had no use for. Windows also gains
+Dusk Studio's own CLAP and VST3 hosts, which until now were Linux and macOS
+only.
 
 ### Added
 
@@ -24,6 +25,18 @@ own CLAP and VST3 hosts, which until now were Linux and macOS only.
 
 ### Fixed
 
+- **The session notepad was half-size on Retina Macs.** JUCE places its window
+  in Cocoa points while the embedded DGL editor expects backing pixels. The
+  notepad now uses the parent view's actual backing scale for its bounds and
+  font atlas, without changing Windows, Linux or non-Retina sizing.
+- **The Windows notepad could end Dusk Studio.** Displays limited to OpenGL 1.1
+  now refuse the OpenGL 3 editor cleanly. Microsoft's OpenGL Compatibility Pack
+  advertises OpenGL 4.6 through Mesa's D3D12 renderer but terminates the host
+  while presenting the first frame, so that known-bad renderer is refused too;
+  the session and the rest of the application remain open. Native AMD, Intel
+  and NVIDIA OpenGL drivers and Mesa llvmpipe remain eligible. Temporary
+  first-frame stage tracing used to place the failures has been removed, while
+  the GL identity and actionable failure diagnostics remain.
 - **macOS: the 0.13.0 disk image could not launch.** The application linked
   four Homebrew libraries by absolute path with none of them copied into the
   bundle, so the loader looked in a location that exists only on the build
