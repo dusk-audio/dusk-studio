@@ -303,6 +303,9 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
                const std::string& markdown,
                bool sessionExists, bool unsavedChanges)
     {
+        // Cleared before the first return so the reason never outlives the
+        // attempt it describes.
+        lastFailure.clear();
         stopTimer();
         destroyEmbeddedWindow();
         if (nativeParent == 0 || geometry.width < 2 || geometry.height < 2)
@@ -323,7 +326,6 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
         savedMarkdown = unsavedChanges ? std::optional<std::string> {}
                                        : std::optional<std::string> { markdown };
         history.clear();
-        lastFailure.clear();
 
         if (const auto failed = probe.previousFailure(); ! failed.empty())
         {
