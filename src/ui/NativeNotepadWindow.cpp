@@ -323,12 +323,16 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
         savedMarkdown = unsavedChanges ? std::optional<std::string> {}
                                        : std::optional<std::string> { markdown };
         history.clear();
+        lastFailure.clear();
 
         if (const auto failed = probe.previousFailure(); ! failed.empty())
         {
+            const auto marker = probe.path().string();
             notepadLog ("a previous run ended while the notepad was drawing its "
                         "first frame on %s; notepad unavailable. Delete %s to try again",
-                        failed.c_str(), probe.path().string().c_str());
+                        failed.c_str(), marker.c_str());
+            lastFailure = "Notepad off: a previous run ended while it drew its first frame on "
+                        + failed + ". Delete " + marker + " to try again.";
             return false;
         }
         firstFrameConfirmed = false;
@@ -386,11 +390,18 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
             if (compatibility != notepad::GraphicsCompatibility::supported)
             {
                 if (compatibility == notepad::GraphicsCompatibility::unsafeMesaD3D12)
+                {
                     notepadLog ("Mesa D3D12 (OpenGL Compatibility Pack) is known "
                                 "to terminate the host; notepad unavailable");
+                    lastFailure = "Notepad unavailable: the OpenGL Compatibility Pack renderer "
+                                  "ends the application. Install your graphics vendor's driver.";
+                }
                 else
+                {
                     notepadLog ("display provides no OpenGL 3 context; "
                                 "notepad unavailable");
+                    lastFailure = "Notepad unavailable: this display provides no OpenGL 3 context.";
+                }
                 window.reset();
                 return false;
             }
@@ -406,6 +417,7 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
             // the caller can act on, so the failure has to be converted here
             // into the false return the caller already handles.
             notepadLog ("cannot embed: %s", error.what());
+            lastFailure = std::string ("Notepad unavailable: cannot embed (") + error.what() + ").";
             destroyEmbeddedWindowSafely();
             return false;
         }
@@ -427,6 +439,8 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
     }
 
     bool isOpen() const noexcept { return window != nullptr || closeRequested; }
+
+    const std::string& lastOpenFailure() const noexcept { return lastFailure; }
 
     void setEmbeddedGeometry (EmbeddedGeometry geometry)
     {
@@ -1056,6 +1070,7 @@ private:
     float toolbarGap = 5.0f;
     float toolbarTightGap = 4.0f;
     float toolbarGroupGap = 16.0f;
+    std::string lastFailure;
     notepad::FirstFrameProbe probe { firstFrameMarkerPath() };
     bool firstFrameConfirmed = false;
     bool graphicsFailed = false;
@@ -1110,6 +1125,11 @@ bool NativeNotepadWindow::open (std::uintptr_t nativeParent, EmbeddedGeometry ge
 void NativeNotepadWindow::close()
 {
     impl->close();
+}
+
+const std::string& NativeNotepadWindow::lastOpenFailure() const noexcept
+{
+    return impl->lastOpenFailure();
 }
 
 void NativeNotepadWindow::setEmbeddedGeometry (EmbeddedGeometry geometry)

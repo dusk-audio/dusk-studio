@@ -5550,7 +5550,10 @@ void MainComponent::toggleNotepad()
     {
         notepadDim.reset();
         notepadEditorHider.restore();
-        setStatusText ("Unable to embed session notepad with the current display backend");
+        const auto& why = notepadWindow->lastOpenFailure();
+        setStatusText (why.empty()
+                           ? "Unable to embed session notepad with the current display backend"
+                           : why.c_str());
     }
 #endif
 }
