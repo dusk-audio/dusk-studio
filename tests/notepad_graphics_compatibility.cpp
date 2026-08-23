@@ -1,5 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
-#include <catch2/catch_approx.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "ui/NotepadGraphicsCompatibility.h"
 #include "ui/NativeEditorEmbedScale.h"
@@ -9,20 +9,24 @@
 #include <string>
 
 using duskstudio::notepad::GraphicsCompatibility;
-using Catch::Approx;
+using Catch::Matchers::WithinRel;
 
 TEST_CASE ("Notepad Cocoa embedding uses the display backing scale",
            "[notepad][scale]")
 {
-    CHECK (duskstudio::embedscale::factorFromSources (1.0, 1.0, 2.0, true) == Approx (2.0));
-    CHECK (duskstudio::embedscale::factorFromSources (1.25, 1.0, 2.0, true) == Approx (2.5));
+    CHECK_THAT (duskstudio::embedscale::factorFromSources (1.0, 1.0, 2.0, true),
+                WithinRel (2.0, 1e-12));
+    CHECK_THAT (duskstudio::embedscale::factorFromSources (1.25, 1.0, 2.0, true),
+                WithinRel (2.5, 1e-12));
 }
 
 TEST_CASE ("Native embeds retain the peer platform scale outside Cocoa",
            "[notepad][scale]")
 {
-    CHECK (duskstudio::embedscale::factorFromSources (1.0, 1.5, 2.0, false) == Approx (1.5));
-    CHECK (duskstudio::embedscale::factorFromSources (1.25, 1.5, 2.0, false) == Approx (1.875));
+    CHECK_THAT (duskstudio::embedscale::factorFromSources (1.0, 1.5, 2.0, false),
+                WithinRel (1.5, 1e-12));
+    CHECK_THAT (duskstudio::embedscale::factorFromSources (1.25, 1.5, 2.0, false),
+                WithinRel (1.875, 1e-12));
 }
 using duskstudio::notepad::assessGraphicsCompatibility;
 
