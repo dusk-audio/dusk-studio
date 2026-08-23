@@ -283,6 +283,12 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
     {
         stopTimer();
         destroyEmbeddedWindow();
+        // Teardown can beat the first event-pump tick, so the marker armed by
+        // open() would outlive a notepad that never had anything wrong with
+        // it. Orderly destruction clears it; a driver that failed the pump
+        // keeps it, which is the case the next launch has to know about.
+        if (! graphicsFailed)
+            probe.disarm();
     }
 
     void setCallbacks (TextChangedCallback changed, ClosedCallback closed,
@@ -326,6 +332,7 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
             return false;
         }
         firstFrameConfirmed = false;
+        graphicsFailed = false;
 
         try
         {
@@ -551,6 +558,7 @@ private:
             notepadLog ("graphics driver failed during the event pump");
         }
 
+        graphicsFailed = true;
         stopTimer();
         destroyEmbeddedWindowSafely();
         closeRequested = false;
@@ -1050,6 +1058,7 @@ private:
     float toolbarGroupGap = 16.0f;
     notepad::FirstFrameProbe probe { firstFrameMarkerPath() };
     bool firstFrameConfirmed = false;
+    bool graphicsFailed = false;
     EmbeddedApplication app;
     std::unique_ptr<DGL::Window> window;
     std::unique_ptr<EditorWidget> editorWidget;
