@@ -5465,6 +5465,12 @@ void MainComponent::toggleNotepad()
         return;
     }
 
+    if (! appconfig::getNotepadEnabled())
+    {
+        setStatusText ("Notepad is switched off in app-config.properties (notepad_enabled)");
+        return;
+    }
+
     if (notepadWindow == nullptr)
         notepadWindow = std::make_unique<NativeNotepadWindow>();
 

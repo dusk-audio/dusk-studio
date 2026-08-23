@@ -19,6 +19,7 @@ namespace
 {
 constexpr const char* kKeyUiScale            = "ui_scale";
 constexpr const char* kKeyScanOnStartup      = "scan_plugins_on_startup";
+constexpr const char* kKeyNotepadEnabled     = "notepad_enabled";
 constexpr const char* kKeyTapeStripExpanded  = "tape_strip_expanded_default";
 constexpr const char* kKeyFollowPlayhead     = "follow_playhead_default";
 constexpr const char* kKeyStopBehavior       = "stop_behavior";
@@ -172,6 +173,18 @@ bool getScanPluginsOnStartup()
 void setScanPluginsOnStartup (bool scan)
 {
     writeKey (kKeyScanOnStartup, scan ? "1" : "0");
+}
+
+bool getNotepadEnabled()
+{
+    const auto raw = readKey (kKeyNotepadEnabled);
+    if (raw.empty()) return true;
+    return isTruthy (raw);
+}
+
+void setNotepadEnabled (bool enabled)
+{
+    writeKey (kKeyNotepadEnabled, enabled ? "1" : "0");
 }
 
 bool getTapeStripExpandedDefault()

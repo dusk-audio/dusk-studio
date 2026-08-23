@@ -3,8 +3,10 @@
 #include "NotepadEditor.h"
 #include "NotepadChords.h"
 #include "NotepadEditorCore.h"
+#include "NotepadFirstFrameProbe.h"
 #include "NotepadGraphicsCompatibility.h"
 #include "NotepadTheme.h"
+#include "../foundation/Fs.h"
 #include "../foundation/MessageThread.h"
 
 #if defined (_WIN32)
@@ -130,6 +132,14 @@ void logGraphicsIdentity()
                 glString (GL_VENDOR), glString (GL_RENDERER),
                 glString (GL_VERSION), glString (GL_SHADING_LANGUAGE_VERSION),
                 (int) maxTexture);
+}
+
+std::filesystem::path firstFrameMarkerPath()
+{
+    const auto cfg = dusk::fs::userConfigDir();
+    if (cfg.empty())
+        return {};
+    return cfg / "Dusk Studio" / "notepad-first-frame";
 }
 
 notepad::GraphicsCompatibility graphicsCompatibility()
@@ -308,6 +318,15 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
                                        : std::optional<std::string> { markdown };
         history.clear();
 
+        if (const auto failed = probe.previousFailure(); ! failed.empty())
+        {
+            notepadLog ("a previous run ended while the notepad was drawing its "
+                        "first frame on %s; notepad unavailable. Delete %s to try again",
+                        failed.c_str(), probe.path().string().c_str());
+            return false;
+        }
+        firstFrameConfirmed = false;
+
         try
         {
             window = std::make_unique<DGL::Window> (
@@ -335,9 +354,11 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
                 return false;
             }
             auto compatibility = notepad::GraphicsCompatibility::noOpenGL3;
+            std::string renderer;
             {
                 DGL::Window::ScopedGraphicsContext context (*window);
                 logGraphicsIdentity();
+                renderer = glString (GL_RENDERER);
                 compatibility = graphicsCompatibility();
                 if (compatibility == notepad::GraphicsCompatibility::supported)
                 {
@@ -367,6 +388,7 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
                 return false;
             }
             window->focus();
+            probe.arm (renderer);
         }
         catch (const std::exception& error)
         {
@@ -512,6 +534,11 @@ private:
         try
         {
             app.idle();
+            if (! firstFrameConfirmed)
+            {
+                firstFrameConfirmed = true;
+                probe.disarm();
+            }
             return true;
         }
         catch (const std::exception& error)
@@ -1021,6 +1048,8 @@ private:
     float toolbarGap = 5.0f;
     float toolbarTightGap = 4.0f;
     float toolbarGroupGap = 16.0f;
+    notepad::FirstFrameProbe probe { firstFrameMarkerPath() };
+    bool firstFrameConfirmed = false;
     EmbeddedApplication app;
     std::unique_ptr<DGL::Window> window;
     std::unique_ptr<EditorWidget> editorWidget;

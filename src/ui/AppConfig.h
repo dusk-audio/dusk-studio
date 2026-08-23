@@ -27,6 +27,14 @@ void  setUiScaleOverride (float scale);
 bool getScanPluginsOnStartup();
 void setScanPluginsOnStartup (bool scan);
 
+// Open the session notepad when the user asks for it. Dusk Studio refuses the
+// notepad on its own when the display cannot back it, and permanently after a
+// graphics driver has ended the application while presenting its first frame.
+// This is the explicit switch on top of that: set it false to keep the notepad
+// closed whatever the display reports. Default true.
+bool getNotepadEnabled();
+void setNotepadEnabled (bool enabled);
+
 // Expand the tape TIMELINE strip by default on app launch. When false
 // (default) the strip starts collapsed so the channel strips get full
 // vertical room; user toggles via TapeStrip's TIMELINE button. Persisted
