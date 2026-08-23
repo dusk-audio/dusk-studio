@@ -145,7 +145,10 @@ void writeKey (const std::string& key, const std::string& value)
     }
     if (! replaced) lines.push_back (key + "=" + value);
 
-    dusk::fs::writeStringToFile (file, dusk::text::joinIntoString (lines, "\n"));
+    // Terminate the last line. The manual tells users to set keys here by
+    // hand, and an unterminated file silently glues an appended key onto the
+    // previous one.
+    dusk::fs::writeStringToFile (file, dusk::text::joinIntoString (lines, "\n") + "\n");
 }
 } // namespace
 

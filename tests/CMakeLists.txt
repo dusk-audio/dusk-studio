@@ -153,6 +153,8 @@ add_executable(dusk-studio-tests
     notepad_theme.cpp
     notepad_graphics_compatibility.cpp
     notepad_first_frame_probe.cpp
+    appconfig_store.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/AppConfig.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/NotepadDocument.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/NotepadEditorCore.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/NotepadChords.cpp
