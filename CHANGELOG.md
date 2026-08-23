@@ -37,6 +37,14 @@ only.
   and NVIDIA OpenGL drivers and Mesa llvmpipe remain eligible. Temporary
   first-frame stage tracing used to place the failures has been removed, while
   the GL identity and actionable failure diagnostics remain.
+- **A graphics driver can no longer cost the same session twice.** Refusing a
+  renderer by name only helps against drivers somebody has already lost work
+  to, and the failure exits cleanly, so there is no error for the notepad to
+  catch and act on. Dusk Studio now records which renderer it is about to draw
+  the notepad's first frame on and clears that record once a frame completes.
+  A run that never comes back leaves it behind, and the next launch declines to
+  open the notepad and names the renderer responsible. The notepad can also be
+  switched off outright with `notepad_enabled` in `app-config.properties`.
 - **macOS: the 0.13.0 disk image could not launch.** The application linked
   four Homebrew libraries by absolute path with none of them copied into the
   bundle, so the loader looked in a location that exists only on the build
