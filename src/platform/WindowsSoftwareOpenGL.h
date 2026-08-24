@@ -3,6 +3,13 @@
 #if defined (_WIN32) && defined (DUSKSTUDIO_USE_WINDOWS_SOFTWARE_OPENGL)
 
 #include <cstdlib>
+
+#ifndef WIN32_LEAN_AND_MEAN
+ #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+ #define NOMINMAX
+#endif
 #include <windows.h>
 
 namespace duskstudio::platform
