@@ -540,6 +540,30 @@ if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
     target_link_libraries(DuskStudio PRIVATE dusk_notepad_ui)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_NOTEPAD=1)
 
+    # Gate spike for the GUI tower: a standalone framework application window rendering one
+    # channel strip, used to measure frame cost and prove the shell. It ships with nothing,
+    # links no part of the app, and stays off unless asked for. Configure a separate build
+    # directory for it, since the windowing backend is a per-configure choice: use
+    # -DDGL_BACKEND=wayland there to keep a dual-stack box off XWayland.
+    option(DUSKSTUDIO_BUILD_GUI_SPIKE "Build the non-shipping GUI tower gate spike" OFF)
+    if(DUSKSTUDIO_BUILD_GUI_SPIKE)
+        add_executable(dusk-gui-spike
+            tools/gui-spike/GuiSpikeMain.cpp
+            tools/gui-spike/ChannelStripView.cpp
+            "${DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp")
+        target_include_directories(dusk-gui-spike PRIVATE
+            "${DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR}/opengl")
+        target_compile_definitions(dusk-gui-spike PRIVATE
+            DUSKSTUDIO_DGL_RESOURCES=${DUSKSTUDIO_DGL_RESOURCES_NS})
+        target_link_libraries(dusk-gui-spike PRIVATE
+            dgl-opengl3
+            dgl-opengl3-definitions
+            dgl-system-libs-definitions)
+        target_compile_features(dusk-gui-spike PRIVATE cxx_std_17)
+        set_target_properties(dusk-gui-spike PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/gui-spike")
+    endif()
+
     if(WIN32)
         # The system OpenGL path can be GDI Generic 1.1 on VMs and over Remote
         # Desktop. The MSI puts Mesa beside DuskStudio.exe, and Main.cpp selects
