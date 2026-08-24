@@ -476,11 +476,30 @@ if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
     message(STATUS "Using DPF from: ${DUSKSTUDIO_DPF_SOURCE_DIR}")
     message(STATUS "Using DPF-Widgets from: ${DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR}")
 
+    # The namespace holding DGL's built-in font moved with the fork's DPF -> DAF rename.
+    # Read the spelling out of the checkout instead of guessing it from the path.
+    file(READ "${DUSKSTUDIO_DPF_SOURCE_DIR}/dgl/src/Resources.hpp" DUSKSTUDIO_DGL_RESOURCES_HPP)
+    if(DUSKSTUDIO_DGL_RESOURCES_HPP MATCHES "namespace[ \t]+daf_resources")
+        set(DUSKSTUDIO_DGL_RESOURCES_NS daf_resources)
+    else()
+        set(DUSKSTUDIO_DGL_RESOURCES_NS dpf_resources)
+    endif()
+    unset(DUSKSTUDIO_DGL_RESOURCES_HPP)
+
+    # The fork renamed its public surface from DPF to DAF (Dusk Audio Framework);
+    # the option names and the DGL helper function moved with it. Set and call
+    # both spellings so a checkout from either side of that rename configures.
     set(DPF_LIBRARIES OFF CACHE BOOL "Build DPF's complete library set" FORCE)
     set(DPF_EXAMPLES OFF CACHE BOOL "Build DPF examples" FORCE)
+    set(DAF_LIBRARIES OFF CACHE BOOL "Build DAF's complete library set" FORCE)
+    set(DAF_EXAMPLES OFF CACHE BOOL "Build DAF examples" FORCE)
     add_subdirectory("${DUSKSTUDIO_DPF_SOURCE_DIR}"
                      "${CMAKE_CURRENT_BINARY_DIR}/DPF" EXCLUDE_FROM_ALL)
-    dpf__add_dgl_opengl3(TRUE FALSE FALSE)
+    if(COMMAND daf__add_dgl_opengl3)
+        daf__add_dgl_opengl3(TRUE FALSE FALSE)
+    else()
+        dpf__add_dgl_opengl3(TRUE FALSE FALSE)
+    endif()
     target_compile_options(dgl-opengl3 PRIVATE
         $<$<COMPILE_LANG_AND_ID:CXX,GNU>:-Wno-cpp;-Wno-stringop-overflow>
         $<$<COMPILE_LANG_AND_ID:CXX,Clang,AppleClang>:-Wno-cpp>)
@@ -494,6 +513,8 @@ if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
         "${DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp")
     target_include_directories(dusk_notepad_ui PRIVATE
         "${DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR}/opengl")
+    target_compile_definitions(dusk_notepad_ui PRIVATE
+        DUSKSTUDIO_DGL_RESOURCES=${DUSKSTUDIO_DGL_RESOURCES_NS})
 
     if(MSVC)
         # Windows' GL header and opengl32 stop at OpenGL 1.1, and DPF-Widgets hands Dear
