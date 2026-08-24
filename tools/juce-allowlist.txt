@@ -1,4 +1,4 @@
-src/DuskStudioApp.cpp	117
+src/DuskStudioApp.cpp	118
 src/DuskStudioApp.h	7
 src/dsp/AuxLaneStrip.cpp	17
 src/dsp/AuxLaneStrip.h	23
@@ -18,8 +18,8 @@ src/engine/DuskStudioPlayHead.h	4
 src/engine/FileImporter.cpp	20
 src/engine/FileImporter.h	4
 src/engine/JuceCompat.h	5
-src/engine/MasteringPlayer.cpp	3
-src/engine/MasteringPlayer.h	8
+src/engine/MasteringPlayer.cpp	2
+src/engine/MasteringPlayer.h	7
 src/engine/PlaybackEngine.cpp	4
 src/engine/PlaybackEngine.h	4
 src/engine/PluginManager.cpp	112
@@ -164,7 +164,7 @@ src/ui/TransportBar.cpp	183
 src/ui/TransportBar.h	32
 src/ui/TunerOverlay.h	58
 src/ui/UpdateChecker.h	27
-src/ui/VirtualKeyboardComponent.cpp	78
+src/ui/VirtualKeyboardComponent.cpp	76
 src/ui/VirtualKeyboardComponent.h	15
 src/ui/Vst3PluginEditorComponent.cpp	8
 src/ui/Vst3PluginEditorComponent.h	7

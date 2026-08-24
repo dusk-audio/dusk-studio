@@ -219,8 +219,7 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
     }
 
     const int usedL = interpL.process (ratio, inScratch.getReadPointer (0), L, numSamples);
-    const int usedR = interpR.process (ratio, inScratch.getReadPointer (1), R, numSamples);
-    juce::ignoreUnused (usedR);   // both consume identically for equal ratios
+    interpR.process (ratio, inScratch.getReadPointer (1), R, numSamples);   // same ratio, same consumption
 
     const std::int64_t consumed = std::min ((std::int64_t) usedL,
                                               (std::int64_t) (length - start));

@@ -5,6 +5,7 @@
 #include <atomic>
 #include <memory>
 #include "audiofile/BufferedFileReader.h"
+#include "../foundation/LagrangeInterpolator.h"
 
 namespace duskstudio
 {
@@ -82,7 +83,7 @@ private:
     // in-flight block from racing the resize.
     std::atomic<double> speedRatio { 1.0 };
     juce::AudioBuffer<float>  inScratch;
-    juce::LagrangeInterpolator interpL, interpR;
+    dusk::audio::LagrangeInterpolator interpL, interpR;
     std::int64_t resampleReadPos = -1;   // audio thread only
     int    preparedBlockSize   = 0;    // message thread only
     double preparedDeviceRate  = 0.0;  // message thread only
