@@ -5,7 +5,7 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [0.13.1] - 2026-08-23
+## [0.13.1] - 2026-08-24
 
 A packaging and Windows-safety fix release. The 0.13.0 macOS disk image could
 not launch on any machine, and both the disk image and the Windows installer
