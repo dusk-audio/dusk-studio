@@ -7,7 +7,7 @@ src/dsp/ChannelStrip.h	29
 src/dsp/MasteringChain.h	4
 src/engine/AudioEngine.cpp	86
 src/engine/AudioEngine.h	15
-src/engine/AudioPipelineSelfTest.cpp	23
+src/engine/AudioPipelineSelfTest.cpp	22
 src/engine/BounceEngine.cpp	44
 src/engine/BounceEngine.h	18
 src/engine/DpAligner.cpp	3

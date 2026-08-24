@@ -551,7 +551,7 @@ namespace
 // Goertzel sliding magnitude estimator. Returns the linear amplitude of a
 // single discrete frequency component in the input buffer. O(N) per
 // frequency; we only probe a handful so this is cheap compared to a full
-// FFT and avoids the juce::dsp::FFT plumbing.
+// FFT and needs no FFT plumbing of its own.
 float goertzelMagnitude (const float* x, int n, double freqHz, double sr)
 {
     if (n <= 0 || sr <= 0.0) return 0.0f;
