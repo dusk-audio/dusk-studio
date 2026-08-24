@@ -5,7 +5,7 @@
 #include "audiofile/FileWriter.h"
 #include "midi/MidiFileReader.h"
 #include "../foundation/PlanarBuffer.h"
-#include <juce_audio_basics/juce_audio_basics.h>
+#include "../foundation/WindowedSincInterpolator.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -285,11 +285,11 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         // interpolators consumed.
         const double ratio = srcSampleRate / sessionSr;
         const int needIn   = (int) std::ceil ((double) kGrain * ratio)
-                               + (int) juce::WindowedSincInterpolator::getBaseLatency() + 8;
+                               + (int) dusk::audio::WindowedSincInterpolator::getBaseLatency() + 8;
         dusk::audio::PlanarBuffer confChunk, carry;
         confChunk.setSize (req.targetChannels, kGrain);
         carry.setSize     (req.targetChannels, needIn + kGrain);
-        std::array<juce::WindowedSincInterpolator, 2> interp;
+        std::array<dusk::audio::WindowedSincInterpolator, 2> interp;
         for (auto& i : interp) i.reset();
 
         // The sinc kernel delays its output by getBaseLatency() INPUT samples;
@@ -298,7 +298,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         // amount). Discard the equivalent output-domain prefix; EOF zero-pad
         // above supplies the extra input the tail needs.
         std::int64_t discard = (std::int64_t) std::llround (
-            (double) juce::WindowedSincInterpolator::getBaseLatency() / ratio);
+            (double) dusk::audio::WindowedSincInterpolator::getBaseLatency() / ratio);
 
         int         carryLen = 0;
         std::int64_t srcPos   = 0;
