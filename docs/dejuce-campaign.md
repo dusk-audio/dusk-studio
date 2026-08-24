@@ -149,6 +149,11 @@ reimplemented.
    event loop = rewrite of MessageThread.cpp, call sites already converged
    by the events-remainder tower, PR #112. ~120 files, 50%+ of total
    effort, multi-release. Unlinks everything else, `juce_core` last.
+   **Gate passed (#301, 2026-08-24): GO.** Spike, measurements, backend gap
+   audit, framework revision reconciliation and phases G0-G6 in
+   [dejuce-gui-plan.md](dejuce-gui-plan.md) — read that first, this entry is
+   the summary it supersedes. The fork stack is now named DAF (Dusk Audio
+   Framework); repos, CMake variables and paths still say DPF.
 
 Done since the last queue edit: events remainder (PR #112, zero gate
 movement by design), FFT (branch dejuce/fft — DpAligner + MasteringEqEditor
