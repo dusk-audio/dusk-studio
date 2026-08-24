@@ -132,7 +132,10 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/multisample/Sf2Reader.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/multisample/Sf2ToSfz.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/HardwareInsertSlot.cpp
+    file_importer_midi.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/FileImporter.cpp
+    midi_file_reader.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/midi/MidiFileReader.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/DpImporter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/DpAligner.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/RecordManager.cpp

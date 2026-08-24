@@ -3,6 +3,7 @@
 #include "../foundation/Text.h"
 #include "audiofile/FileReader.h"
 #include "audiofile/FileWriter.h"
+#include "midi/MidiFileReader.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <algorithm>
 #include <array>
@@ -17,7 +18,7 @@ namespace duskstudio::fileimport
 namespace
 {
 template <typename FileType>
-std::filesystem::path audioPath (const FileType& file)
+std::filesystem::path toStdPath (const FileType& file)
 {
     return std::filesystem::u8path (file.getFullPathName().toStdString());
 }
@@ -111,7 +112,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
     std::unique_ptr<dusk::audio::FileReader> reader;
     for (int attempt = 0; attempt < 5 && reader == nullptr; ++attempt)
     {
-        reader = dusk::audio::FileReader::open (audioPath (req.source));
+        reader = dusk::audio::FileReader::open (toStdPath (req.source));
         if (reader == nullptr && attempt < 4)
             juce::Thread::sleep (20);
     }
@@ -218,7 +219,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
     std::unique_ptr<dusk::audio::FileWriter> writer;
     for (int attempt = 0; attempt < 5; ++attempt)
     {
-        writer = dusk::audio::FileWriter::create (audioPath (outFile), writeSpec);
+        writer = dusk::audio::FileWriter::create (toStdPath (outFile), writeSpec);
         if (writer != nullptr)
             break;
         if (attempt < 4)
@@ -414,41 +415,35 @@ MidiImportResult importMidi (const MidiImportRequest& req)
         return result;
     }
 
-    juce::FileInputStream in (req.source);
-    if (! in.openedOk())
-    {
-        result.errorMessage = "Could not open MIDI file for reading";
-        return result;
-    }
-
-    juce::MidiFile mf;
-    if (! mf.readFrom (in))
+    midi::MidiFileReader mf;
+    if (! mf.readFile (toStdPath (req.source)))
     {
         result.errorMessage = "Failed to parse MIDI file";
         return result;
     }
 
-    const auto timeFormat = mf.getTimeFormat();
-    const bool isSmpte    = (timeFormat < 0);
+    const int    timeFormat     = mf.timeFormat();
+    const bool   isSmpte        = mf.isSmpteTimeFormat();
+    const double ticksPerSecond = mf.smpteTicksPerSecond();
+    if (isSmpte && ticksPerSecond <= 0.0)
+    {
+        result.errorMessage = "Unsupported MIDI time format";
+        return result;
+    }
 
-    // For SMPTE-formatted files, convert to seconds first then rebuild
-    // tick positions at session BPM. PPQ files use a direct rescale.
-    if (isSmpte)
-        mf.convertTimestampTicksToSeconds();
-
-    auto timestampToProjectTicks = [&] (double rawTime) -> std::int64_t
+    // An SMPTE file's ticks are absolute time, so they become project ticks via
+    // the session tempo; a PPQ file's ticks are already musical and only need a
+    // resolution rescale.
+    auto timestampToProjectTicks = [&] (std::int64_t rawTick) -> std::int64_t
     {
         if (isSmpte)
         {
-            // rawTime is in seconds.
-            const double samples = rawTime * sessionSr;
+            const double samples = ((double) rawTick / ticksPerSecond) * sessionSr;
             return duskstudio::samplesToTicks ((std::int64_t) std::llround (samples),
                                             sessionSr,
                                             req.sessionBpm);
         }
-        // rawTime is in source-PPQ ticks.
-        return rescaleTicks ((std::int64_t) std::llround (rawTime),
-                              (int) timeFormat);
+        return rescaleTicks (rawTick, timeFormat);
     };
 
     // Merge all tracks into one flat event list. Skip meta events; we
@@ -466,31 +461,21 @@ MidiImportResult importMidi (const MidiImportRequest& req)
     std::vector<MidiCc>   ccs;
     std::int64_t maxTick = 0;
 
-    const int numTracks = mf.getNumTracks();
-    for (int t = 0; t < numTracks; ++t)
+    for (const auto& track : mf.tracks())
     {
-        const auto* track = mf.getTrack (t);
-        if (track == nullptr) continue;
-
-        for (int i = 0; i < track->getNumEvents(); ++i)
+        for (const auto& msg : track)
         {
-            const auto* ev = track->getEventPointer (i);
-            const auto& msg = ev->message;
-
-            const auto tick = timestampToProjectTicks (msg.getTimeStamp());
+            const auto tick = timestampToProjectTicks (msg.tick);
             if (tick > maxTick) maxTick = tick;
 
             if (msg.isNoteOn())
             {
-                const int ch   = msg.getChannel();
-                const int note = msg.getNoteNumber();
-                const int vel  = msg.getVelocity();
-                open[{ ch, note }].push_back ({ tick, vel });
+                open[{ msg.channel(), msg.noteNumber() }].push_back ({ tick, msg.velocity() });
             }
-            else if (msg.isNoteOff() || (msg.isNoteOn() && msg.getVelocity() == 0))
+            else if (msg.isNoteOff())
             {
-                const int ch   = msg.getChannel();
-                const int note = msg.getNoteNumber();
+                const int ch   = msg.channel();
+                const int note = msg.noteNumber();
                 auto it = open.find ({ ch, note });
                 if (it != open.end() && ! it->second.empty())
                 {
@@ -508,12 +493,11 @@ MidiImportResult importMidi (const MidiImportRequest& req)
             else if (msg.isController())
             {
                 MidiCc cc;
-                cc.channel    = msg.getChannel();
-                cc.controller = msg.getControllerNumber();
-                cc.value      = msg.getControllerValue();
+                cc.channel    = msg.channel();
+                cc.controller = msg.controllerNumber();
+                cc.value      = msg.controllerValue();
                 cc.atTick     = tick;
                 ccs.push_back (cc);
-                if (tick > maxTick) maxTick = tick;
             }
             // Meta events / sysex / tempo / time-sig: skipped.
         }

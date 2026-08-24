@@ -46,6 +46,7 @@
 #include "../engine/DpAligner.h"
 #include "../engine/audiofile/FileReader.h"
 #include "../engine/audiofile/FileWriter.h"
+#include "../engine/midi/MidiFileReader.h"
 #include "../foundation/Text.h"
 #include <algorithm>
 
@@ -72,6 +73,32 @@ juce::Array<juce::File> toFileArray (const std::vector<std::filesystem::path>& p
     juce::Array<juce::File> out;
     for (auto& p : paths) out.add (toFile (p));
     return out;
+}
+
+// Note count and rendered length for the import picker's file card. False when
+// the file does not parse, which each caller reports its own way.
+bool peekMidiSummary (const juce::File& file, ImportTargetPicker::FileSummary& summary)
+{
+    midi::MidiFileReader reader;
+    if (! reader.readFile (toPath (file)))
+        return false;
+
+    int noteCount = 0;
+    std::int64_t maxTick = 0;
+    for (const auto& track : reader.tracks())
+        for (const auto& ev : track)
+        {
+            if (ev.isNoteOn()) ++noteCount;
+            maxTick = std::max (maxTick, ev.tick);
+        }
+
+    const int ppq = reader.timeFormat();
+    summary.numMidiNotes = noteCount;
+    summary.lengthTicks  = (ppq > 0 && ppq != kMidiTicksPerQuarter)
+                              ? (std::int64_t) std::llround ((double) maxTick
+                                   * (double) kMidiTicksPerQuarter / (double) ppq)
+                              : maxTick;
+    return true;
 }
 
 #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
@@ -3881,41 +3908,16 @@ void MainComponent::runMidiImportFlow (const juce::File& source,
                                           std::int64_t timelineStart,
                                           int trackHint)
 {
-    juce::MidiFile peek;
-    {
-        juce::FileInputStream in (source);
-        if (! in.openedOk() || ! peek.readFrom (in))
-        {
-            showImportError ("Import MIDI", "Could not read MIDI file.");
-            return;
-        }
-    }
     ImportTargetPicker::FileSummary summary;
     summary.file        = source;
     summary.isMidi      = true;
     summary.numChannels = -1;
 
-    int noteCount = 0;
-    std::int64_t maxTick = 0;
-    const int ppq = (int) peek.getTimeFormat();
-    for (int t = 0; t < peek.getNumTracks(); ++t)
+    if (! peekMidiSummary (source, summary))
     {
-        if (const auto* trk = peek.getTrack (t))
-        {
-            for (int i = 0; i < trk->getNumEvents(); ++i)
-            {
-                const auto& m = trk->getEventPointer (i)->message;
-                if (m.isNoteOn() && m.getVelocity() > 0) ++noteCount;
-                maxTick = std::max (maxTick,
-                                        (std::int64_t) std::llround (m.getTimeStamp()));
-            }
-        }
+        showImportError ("Import MIDI", "Could not read MIDI file.");
+        return;
     }
-    summary.numMidiNotes = noteCount;
-    summary.lengthTicks  = (ppq > 0 && ppq != kMidiTicksPerQuarter)
-                              ? (std::int64_t) std::llround ((double) maxTick
-                                   * (double) kMidiTicksPerQuarter / (double) ppq)
-                              : maxTick;
 
     auto picker = std::make_unique<ImportTargetPicker> (
         session,
@@ -4000,7 +4002,7 @@ void MainComponent::importPrompt()
     }
 
     // One picker for both kinds. enqueueImports / openMultiImportPicker route
-    // each chosen file by extension (audio -> reader peek, MIDI -> MidiFile
+    // each chosen file by extension (audio -> reader peek, MIDI -> file
     // peek) and the target picker flips a track's mode to match the dropped
     // file, so a mixed audio+MIDI selection is handled in a single batch.
     const auto startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
@@ -4455,9 +4457,9 @@ void MainComponent::openMultiImportPicker (juce::Array<juce::File> files,
                                               std::int64_t timelineStart)
 {
     // Peek each file to build a FileSummary the picker can render. Audio
-    // peek opens an audio reader; MIDI peek runs MidiFile::readFrom +
-    // counts notes. Both happen synchronously on the message thread - the
-    // user clicked Import and is waiting for the modal to appear.
+    // peek opens an audio reader; MIDI peek parses the file and counts
+    // notes. Both happen synchronously on the message thread - the user
+    // clicked Import and is waiting for the modal to appear.
     std::vector<ImportTargetPicker::FileSummary> summaries;
     summaries.reserve ((size_t) files.size());
     for (const auto& f : files)
@@ -4469,28 +4471,7 @@ void MainComponent::openMultiImportPicker (juce::Array<juce::File> files,
 
         if (s.isMidi)
         {
-            juce::MidiFile peek;
-            juce::FileInputStream in (f);
-            if (in.openedOk() && peek.readFrom (in))
-            {
-                int noteCount = 0;
-                std::int64_t maxTick = 0;
-                const int ppq = (int) peek.getTimeFormat();
-                for (int t = 0; t < peek.getNumTracks(); ++t)
-                    if (const auto* trk = peek.getTrack (t))
-                        for (int i = 0; i < trk->getNumEvents(); ++i)
-                        {
-                            const auto& m = trk->getEventPointer (i)->message;
-                            if (m.isNoteOn() && m.getVelocity() > 0) ++noteCount;
-                            maxTick = std::max (maxTick,
-                                (std::int64_t) std::llround (m.getTimeStamp()));
-                        }
-                s.numMidiNotes = noteCount;
-                s.lengthTicks  = (ppq > 0 && ppq != kMidiTicksPerQuarter)
-                                    ? (std::int64_t) std::llround ((double) maxTick
-                                          * (double) kMidiTicksPerQuarter / (double) ppq)
-                                    : maxTick;
-            }
+            peekMidiSummary (f, s);
             s.numChannels = -1;
         }
         else

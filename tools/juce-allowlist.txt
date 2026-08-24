@@ -15,7 +15,7 @@ src/engine/DpAligner.h	3
 src/engine/DpImporter.cpp	41
 src/engine/DpImporter.h	6
 src/engine/DuskStudioPlayHead.h	4
-src/engine/FileImporter.cpp	20
+src/engine/FileImporter.cpp	18
 src/engine/FileImporter.h	4
 src/engine/JuceCompat.h	5
 src/engine/MasteringPlayer.cpp	2
@@ -115,7 +115,7 @@ src/ui/ImportTargetPicker.cpp	97
 src/ui/ImportTargetPicker.h	11
 src/ui/Lv2PluginEditorComponent.cpp	3
 src/ui/Lv2PluginEditorComponent.h	4
-src/ui/MainComponent.cpp	458
+src/ui/MainComponent.cpp	455
 src/ui/MainComponent.h	57
 src/ui/MasterStripComponent.cpp	381
 src/ui/MasterStripComponent.h	59
