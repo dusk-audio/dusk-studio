@@ -283,12 +283,13 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
     {
         stopTimer();
         destroyEmbeddedWindow();
-        // Teardown can beat the first event-pump tick, so a marker this open()
-        // armed would outlive a notepad that never had anything wrong with it.
-        // Only the run that armed the marker may clear it: one left by an
-        // earlier run is the refusal the next launch has to see, and a driver
-        // that failed the pump has earned the one it left.
-        if (armedMarker && ! graphicsFailed)
+        // The marker means "armed a frame and never came back", so only a run
+        // that armed one may clear it, and only if that is no longer what it
+        // says. A completed frame settles it whatever happened afterwards, and
+        // removing it here also covers a disarm that failed silently at the
+        // time. Without a frame, a pump that failed keeps its marker: that is
+        // the refusal the next launch has to see.
+        if (armedMarker && (firstFrameConfirmed || ! graphicsFailed))
             probe.disarm();
     }
 
