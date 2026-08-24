@@ -532,7 +532,6 @@ StripFrameResult ChannelStripView::draw (ImDrawList& dl, ImVec2 origin, float wi
     ctx.activeDrag = &activeDrag;
     ctx.dragStartValue = &dragStartValue;
 
-    const int startVtx = dl.VtxBuffer.Size;
     auto s = [scale] (float v) { return v * scale; };
     char buf[32];
 
@@ -914,7 +913,6 @@ StripFrameResult ChannelStripView::draw (ImDrawList& dl, ImVec2 origin, float wi
         }
     }
 
-    lastVertexCount = dl.VtxBuffer.Size - startVtx;
     lastWidgetCount = ctx.widgets;
     return result;
 }

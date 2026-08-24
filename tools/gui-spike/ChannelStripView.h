@@ -43,18 +43,15 @@ public:
     void setEditingName (bool yes) noexcept { editingName = yes; }
     bool isEditingName() const noexcept { return editingName; }
 
-    // Frame counters, so the shell can report what the strip actually cost.
-    int lastVertexCount = 0;
+    // Read by the shell's overlay, so a run reports what the strip actually cost.
     int lastWidgetCount = 0;
 
 private:
     MeterBallistics inputMeter;
-    MeterBallistics inputMeterR;
     float displayedGrDb = 0.0f;
 
     std::string activeDrag;
     float dragStartValue = 0.0f;
-    float dragStartY = 0.0f;
     bool editingName = false;
     char nameBuffer[64] = {};
 };

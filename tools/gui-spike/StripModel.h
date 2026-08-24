@@ -59,7 +59,6 @@ struct StripParams
 
     std::array<std::atomic<bool>, 4> busAssign {};
 
-    std::atomic<bool>  hpfEnabled { false };
     std::atomic<float> hpfFreq { 20.0f };
     std::atomic<float> lpfFreq { 20000.0f };
     std::atomic<bool>  eqEnabled   { true };
@@ -70,24 +69,18 @@ struct StripParams
     std::atomic<float> lfGainDb { 3.0f };  std::atomic<float> lfFreq { 100.0f };
 
     std::atomic<bool>  compEnabled { true };
-    std::atomic<int>   compMode    { 1 };
     std::atomic<float> compFetRatioIndex { 0.0f };
     std::atomic<float> compFetAttack  { 0.2f };
     std::atomic<float> compFetRelease { 400.0f };
     std::atomic<float> compFetOutput  { 0.0f };
     std::atomic<float> compFetThresholdDb { -14.0f };
-    std::atomic<float> compOptoGain { 50.0f };
-    std::atomic<bool>  compOptoLimit { false };
 
-    std::atomic<bool>  auxSendsBypassed { false };
     std::array<std::atomic<float>, 4> auxSendDb { { { -12.0f }, { -100.0f }, { -24.0f }, { -100.0f } } };
     std::array<std::atomic<bool>, 4>  auxSendPreFader {};
 
     // Written by the stub source thread, read by the frame. Same contract as the engine's
     // meter atomics: dBFS, absolute per-block peak, no ballistics on the writer side.
     std::atomic<float> meterInputDb { -100.0f };
-    std::atomic<float> meterInputRDb { -100.0f };
-    std::atomic<float> meterOutLDb { -100.0f };
     std::atomic<float> meterGrDb   { 0.0f };
 
     static constexpr float kAuxSendOffDb = -100.0f;
@@ -143,8 +136,6 @@ public:
                 const float db   = 20.0f * std::log10 (std::max (1.0e-5f, lin));
 
                 params.meterInputDb.store (db, std::memory_order_relaxed);
-                params.meterInputRDb.store (db - 2.5f, std::memory_order_relaxed);
-                params.meterOutLDb.store (db - 1.0f, std::memory_order_relaxed);
 
                 const float over = db - params.compFetThresholdDb.load (std::memory_order_relaxed);
                 params.meterGrDb.store (over > 0.0f ? -over * 0.6f : 0.0f, std::memory_order_relaxed);
