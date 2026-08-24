@@ -151,7 +151,15 @@ cmake -S . -B build-spike -G Ninja -DCMAKE_BUILD_TYPE=Release \
       -DDUSKSTUDIO_BUILD_GUI_SPIKE=ON -DDGL_BACKEND=wayland \
       -DJUCE_PATH=... -DDUSK_PLUGINS_PATH=... -DDPF_PATH=... -DDPF_WIDGETS_PATH=...
 cmake --build build-spike --target dusk-gui-spike -j6
+
+tools/gui-spike/headless-compositor.sh &
+XDG_RUNTIME_DIR=/tmp/dusk-headless WAYLAND_DISPLAY=dusk-headless \
+  env -u DISPLAY ./build-spike/gui-spike/dusk-gui-spike --seconds 10 --strips 24
 ```
+
+`headless-compositor.sh` starts a `mutter` with its own runtime directory, dbus
+session and display name. Nothing Dusk-owned goes on the live session's socket:
+a crash in one of these surfaces takes the desktop with it.
 
 It draws the strip from `ChannelStripComponent::resized()`'s real geometry, with
 the colours, fonts, knob dome, fader cap and segmented meter ported from
@@ -441,9 +449,9 @@ Per phase, non-negotiable:
   generalise it.
 - A live-Wayland pass on Marc's desktop for every view the phase touches. The
   standing rule that the app binary only runs under Xvfb applies to the JUCE
-  build; a framework-native build has to be run on a real compositor, and the
-  private headless `mutter` recipe in `tools/gui-spike/` is the safe way to do
-  that from an agent session.
+  build; a framework-native build has to be run on a real compositor, and
+  `tools/gui-spike/headless-compositor.sh` is the safe way to do that from an
+  agent session.
 
 Owed to Marc's bench, and not inferable from this gate:
 
