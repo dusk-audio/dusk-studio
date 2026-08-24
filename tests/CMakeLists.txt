@@ -132,7 +132,10 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/multisample/Sf2Reader.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/multisample/Sf2ToSfz.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/HardwareInsertSlot.cpp
+    file_importer_midi.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/FileImporter.cpp
+    midi_file_reader.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/midi/MidiFileReader.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/DpImporter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/DpAligner.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/RecordManager.cpp
@@ -187,12 +190,17 @@ target_link_libraries(dusk-studio-tests PRIVATE dusk-pffft)
 target_sources(dusk-studio-tests PRIVATE
     foundation_text.cpp
     foundation_text_format.cpp
+    foundation_vector_ops.cpp
     foundation_fs.cpp
     foundation_special_locations.cpp
     foundation_json.cpp
     foundation_audio_math.cpp
     foundation_int_delay_line.cpp
+    foundation_spsc_index_fifo.cpp
+    foundation_lagrange_interpolator.cpp
     foundation_midi_buffer.cpp
+    foundation_midi_note_name.cpp
+    foundation_planar_buffer.cpp
     midi_ring.cpp
     midi_collector.cpp
     lv2_state_paths.cpp)

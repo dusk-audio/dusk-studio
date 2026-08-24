@@ -1,5 +1,6 @@
 #include "VirtualKeyboardComponent.h"
 #include "AppConfig.h"
+#include "../foundation/MidiNoteName.h"
 #if defined(__linux__)
  #include "KeyboardStateLinux.h"
 #endif
@@ -421,7 +422,7 @@ void VirtualKeyboardComponent::paint (juce::Graphics& g)
     g.setColour (juce::Colour (0xff8090a0));
     g.setFont (juce::Font (juce::FontOptions (12.0f)));
     const auto status = juce::String ("CH ") + juce::String (channel)
-                      + "   Centre: " + juce::MidiMessage::getMidiNoteName (centreNote, true, true, 4);
+                      + "   Centre: " + dusk::midiNoteName (centreNote);
     // Leave room on the right for the 4 header buttons (4 × 56 + gaps ≈ 252).
     const float reservedRight = 260.0f;
     auto statusRect = titleArea.reduced (10.0f, 2.0f);
@@ -512,7 +513,7 @@ void VirtualKeyboardComponent::paint (juce::Graphics& g)
         {
             g.setColour (active ? juce::Colour (0xffe8f0fa) : juce::Colour (0xff6a6a72));
             g.setFont (juce::Font (juce::FontOptions (10.0f)));
-            g.drawText (juce::MidiMessage::getMidiNoteName (m, true, true, 4),
+            g.drawText (dusk::midiNoteName (m),
                         r.reduced (4.0f, 3.0f).removeFromBottom (12.0f),
                         juce::Justification::bottomLeft);
         }

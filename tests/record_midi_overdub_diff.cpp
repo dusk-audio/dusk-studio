@@ -46,9 +46,11 @@ TEST_CASE ("MIDI overdub replacing one region still emits a commit diff",
     RecordManager rm (session);
     REQUIRE (rm.startRecording (kSampleRate, 0));
 
-    juce::MidiBuffer block;
-    block.addEvent (juce::MidiMessage::noteOn  (1, 64, (juce::uint8) 100), 0);
-    block.addEvent (juce::MidiMessage::noteOff (1, 64), 200);
+    dusk::MidiBuffer block;
+    const std::uint8_t noteOn[]  { 0x90, 64, 100 };
+    const std::uint8_t noteOff[] { 0x80, 64, 0 };
+    block.addEvent (noteOn, 3, 0);
+    block.addEvent (noteOff, 3, 200);
     rm.writeMidiBlock (0, block, 0);
 
     rm.stopRecording (kTotal);

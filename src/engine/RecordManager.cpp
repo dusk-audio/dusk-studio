@@ -1348,14 +1348,6 @@ void RecordManager::writeMidiBlockImpl (int trackIndex,
 }
 
 void RecordManager::writeMidiBlock (int trackIndex,
-                                    const juce::MidiBuffer& events,
-                                    std::int64_t blockStartFromRecord,
-                                    const LoopCaptureSpan* explicitLoopSpan) noexcept
-{
-    writeMidiBlockImpl (trackIndex, events, blockStartFromRecord, explicitLoopSpan);
-}
-
-void RecordManager::writeMidiBlock (int trackIndex,
                                     const dusk::MidiBuffer& events,
                                     std::int64_t blockStartFromRecord,
                                     const LoopCaptureSpan* explicitLoopSpan) noexcept

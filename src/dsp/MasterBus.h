@@ -1,9 +1,8 @@
 #pragma once
 
-#include <juce_audio_basics/juce_audio_basics.h>
-#include <juce_dsp/juce_dsp.h>
 #include <atomic>
 #include <memory>
+#include <vector>
 #include "../foundation/IntDelayLine.h"
 #include "../foundation/SmoothedValue.h"
 #include "../foundation/StereoOversampler.h"
@@ -52,9 +51,10 @@ private:
     // so toggling it would pop. We blend the pre-tape (dry) signal against the
     // processed (wet) output over 20 ms here instead. Tape is skipped entirely
     // once fully faded out, so a disengaged tape still costs ~nothing.
-    juce::SmoothedValue<float>  tapeMix { 0.0f };    // 0 = dry, 1 = wet
+    dusk::audio::SmoothedValue<float> tapeMix { 0.0f }; // 0 = dry, 1 = wet
     bool                        tapeMixPrimed = false;
-    juce::AudioBuffer<float>    tapeDryBuffer;       // pre-allocated; holds dry during the fade
+    std::vector<float>          tapeDryL;
+    std::vector<float>          tapeDryR;
     duskaudio::MultiQTube             tubeEQ;
     duskaudio::UniversalCompressorDSP busComp;
     // Max samples per busComp.processBlock call (the oversampled prepare block
@@ -95,18 +95,14 @@ private:
     // tail from the last time the wrap ran.
     bool prevWrapActive { false };
 
-    // juce::dsp integer delay line, retained for the tape crossfade dry-path PDC
-    // below.
-    using OsDelayLine = juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None>;
-
     // Dry-path PDC for the tape crossfade. Tape adds its own oversampler
     // latency when engaged (0 at 1×); delaying the dry by the same amount keeps
     // the on/off blend phase-coherent (no comb mid-fade) and seamless (no
     // timing jump at the fade ends). Resolved in prepare from the core's
     // reported latency; max sized to it. Fed every block at >0 latency so the
     // ring stays warm for the next toggle - a constant, sub-ms master latency.
-    OsDelayLine tapeDryDelayL { 1 };
-    OsDelayLine tapeDryDelayR { 1 };
+    dusk::audio::IntDelayLine tapeDryDelayL;
+    dusk::audio::IntDelayLine tapeDryDelayR;
     int tapeLatencySamples = 0;
 
     // VU-RMS smoother state - 300 ms tau on the audio thread, the VU standard

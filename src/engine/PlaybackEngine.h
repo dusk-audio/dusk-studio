@@ -1,11 +1,11 @@
 #pragma once
 
-#include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_core/juce_core.h>
 #include <array>
 #include <atomic>
 #include <memory>
 #include "audiofile/BufferedFileReader.h"
+#include "../foundation/PlanarBuffer.h"
 #include "../session/Session.h"
 
 namespace duskstudio
@@ -142,6 +142,6 @@ private:
             { c.fetch_sub (1, std::memory_order_release); }
     };
 
-    juce::AudioBuffer<float> readScratch;
+    dusk::audio::PlanarBuffer readScratch;
 };
 } // namespace duskstudio

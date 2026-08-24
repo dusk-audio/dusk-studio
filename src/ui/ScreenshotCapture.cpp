@@ -28,6 +28,7 @@
 #include "BounceDialog.h"
 #include "../engine/BounceEngine.h"
 #include "../engine/audiofile/FileWriter.h"
+#include "../foundation/PlanarBuffer.h"
 
 #include "../session/Session.h"
 #include "../engine/AudioEngine.h"
@@ -95,15 +96,14 @@ juce::File writeDemoWav (const juce::File& dir, double sampleRate)
 
     const int numCh     = 2;
     const int numFrames = (int) (sampleRate * 1.8);
-    juce::AudioBuffer<float> buf (numCh, numFrames);
+    dusk::audio::PlanarBuffer buf;
+    buf.setSize (numCh, numFrames);
     for (int n = 0; n < numFrames; ++n)
     {
         const double t   = (double) n / sampleRate;
         const double env = std::sin (juce::MathConstants<double>::pi * (double) n / numFrames);
-        const float  l   = (float) (env * 0.6 * std::sin (2.0 * juce::MathConstants<double>::pi * 196.0 * t));
-        const float  r   = (float) (env * 0.6 * std::sin (2.0 * juce::MathConstants<double>::pi * 198.0 * t));
-        buf.setSample (0, n, l);
-        buf.setSample (1, n, r);
+        buf.channel (0)[n] = (float) (env * 0.6 * std::sin (2.0 * juce::MathConstants<double>::pi * 196.0 * t));
+        buf.channel (1)[n] = (float) (env * 0.6 * std::sin (2.0 * juce::MathConstants<double>::pi * 198.0 * t));
     }
 
     file.deleteFile();
@@ -115,7 +115,7 @@ juce::File writeDemoWav (const juce::File& dir, double sampleRate)
     auto writer = dusk::audio::FileWriter::create (
         std::filesystem::u8path (file.getFullPathName().toStdString()), spec);
     if (writer == nullptr
-        || ! writer->write (buf.getArrayOfReadPointers(), numCh, numFrames))
+        || ! writer->write (buf.data(), numCh, numFrames))
         return {};
     return file;
 }

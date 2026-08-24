@@ -8,6 +8,7 @@
 #include <vector>
 #include "../foundation/IntDelayLine.h"
 #include "../foundation/MidiBuffer.h"
+#include "../foundation/PlanarBuffer.h"
 #include "../foundation/SmoothedValue.h"
 #include "../foundation/StereoOversampler.h"
 #include "../session/Session.h"
@@ -323,9 +324,8 @@ private:
     std::vector<float> tempMono;
 
     // 2-channel even on mono so a mid-session mono->stereo flip doesn't
-    // fault on missing filter / envelope state. Shared with the plugin /
-    // hardware insert hosting path, so it stays a juce::AudioBuffer.
-    juce::AudioBuffer<float> tempStereoBuffer;
+    // fault on missing filter / envelope state.
+    dusk::audio::PlanarBuffer tempStereoBuffer;
 
     // Per-strip Dusk Studio-side oversampler wrapping (EQ + Comp). The donor
     // EQ's always-on console saturation and the comp's saturation alias hard at
@@ -395,7 +395,7 @@ private:
     // activeInsertMode = what we're currently running; insertMode = what
     // the UI wants. Mismatch triggers ramp-out / swap / ramp-in.
     int activeInsertMode = kInsertPlugin;
-    juce::SmoothedValue<float> activeInsertGain;
+    dusk::audio::SmoothedValue<float> activeInsertGain;
 
     std::vector<float> insertScratchL;
     std::vector<float> insertScratchR;

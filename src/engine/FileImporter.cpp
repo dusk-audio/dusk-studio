@@ -3,6 +3,8 @@
 #include "../foundation/Text.h"
 #include "audiofile/FileReader.h"
 #include "audiofile/FileWriter.h"
+#include "midi/MidiFileReader.h"
+#include "../foundation/PlanarBuffer.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <algorithm>
 #include <array>
@@ -17,7 +19,7 @@ namespace duskstudio::fileimport
 namespace
 {
 template <typename FileType>
-std::filesystem::path audioPath (const FileType& file)
+std::filesystem::path toStdPath (const FileType& file)
 {
     return std::filesystem::u8path (file.getFullPathName().toStdString());
 }
@@ -39,36 +41,35 @@ std::string makeImportedFilename (int trackIndex, const juce::String& extension 
 // Channel-conform the first `numSamples` of `src` into `dst` (both pre-sized
 // to at least numSamples). Handles 1->2 duplicate, 2->1 sum-and-halve, and
 // pass-through. No allocation; caller owns both buffers.
-void conformChunk (const juce::AudioBuffer<float>& src,
-                    juce::AudioBuffer<float>& dst,
+void conformChunk (const dusk::audio::PlanarBuffer& src,
+                    dusk::audio::PlanarBuffer& dst,
                     int targetChannels,
                     int numSamples)
 {
-    const int srcCh = src.getNumChannels();
+    const int srcCh = src.numChannels();
     const int n     = numSamples;
-    jassert (dst.getNumChannels() == targetChannels);
-    jassert (dst.getNumSamples()  >= n && src.getNumSamples() >= n);
+    jassert (dst.numChannels() == targetChannels);
+    jassert (dst.numSamples()  >= n && src.numSamples() >= n);
 
     if (srcCh == 1 && targetChannels == 2)
     {
-        dst.copyFrom (0, 0, src, 0, 0, n);
-        dst.copyFrom (1, 0, src, 0, 0, n);
+        dusk::audio::vecCopy (dst.channel (0), src.channel (0), n);
+        dusk::audio::vecCopy (dst.channel (1), src.channel (0), n);
         return;
     }
     if (srcCh >= 2 && targetChannels == 1)
     {
-        // Mix L+R at 0.5 each. juce::AudioBuffer::copyFrom doesn't take
-        // a gain when the source is another AudioBuffer, so we clear +
-        // accumulate via addFrom (which DOES have the gain overload).
-        dst.clear();
-        dst.addFrom (0, 0, src, 0, 0, n, 0.5f);
-        dst.addFrom (0, 0, src, 1, 0, n, 0.5f);
+        const float* l = src.channel (0);
+        const float* r = src.channel (1);
+        float*       d = dst.channel (0);
+        for (int i = 0; i < n; ++i)
+            d[i] = 0.5f * (l[i] + r[i]);
         return;
     }
     // Pass-through: copy as many channels as both sides have.
     const int common = std::min (srcCh, targetChannels);
     for (int c = 0; c < common; ++c)
-        dst.copyFrom (c, 0, src, c, 0, n);
+        dusk::audio::vecCopy (dst.channel (c), src.channel (c), n);
 }
 } // namespace
 
@@ -111,7 +112,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
     std::unique_ptr<dusk::audio::FileReader> reader;
     for (int attempt = 0; attempt < 5 && reader == nullptr; ++attempt)
     {
-        reader = dusk::audio::FileReader::open (audioPath (req.source));
+        reader = dusk::audio::FileReader::open (toStdPath (req.source));
         if (reader == nullptr && attempt < 4)
             juce::Thread::sleep (20);
     }
@@ -218,7 +219,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
     std::unique_ptr<dusk::audio::FileWriter> writer;
     for (int attempt = 0; attempt < 5; ++attempt)
     {
-        writer = dusk::audio::FileWriter::create (audioPath (outFile), writeSpec);
+        writer = dusk::audio::FileWriter::create (toStdPath (outFile), writeSpec);
         if (writer != nullptr)
             break;
         if (attempt < 4)
@@ -231,18 +232,18 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         return result;
     }
 
-    auto readChunk = [&reader, srcChannels] (auto& buffer, std::int64_t start,
-                                              int frames)
+    auto readChunk = [&reader, srcChannels] (dusk::audio::PlanarBuffer& buffer,
+                                              std::int64_t start, int frames)
     {
-        return reader->read (buffer.getArrayOfWritePointers(), srcChannels,
-                             start, frames) == frames;
+        return reader->read (buffer.data(), srcChannels, start, frames) == frames;
     };
-    auto writeChunk = [&writer] (const auto& buffer, int start, int frames)
+    auto writeChunk = [&writer] (const dusk::audio::PlanarBuffer& buffer,
+                                  int start, int frames)
     {
         std::array<const float*, 2> channels {};
-        for (int c = 0; c < buffer.getNumChannels(); ++c)
-            channels[(size_t) c] = buffer.getReadPointer (c, start);
-        return writer->write (channels.data(), buffer.getNumChannels(), frames);
+        for (int c = 0; c < buffer.numChannels(); ++c)
+            channels[(size_t) c] = buffer.channel (c) + start;
+        return writer->write (channels.data(), buffer.numChannels(), frames);
     };
 
     // Stream decode -> conform -> (sinc-)resample -> write in bounded chunks.
@@ -251,13 +252,15 @@ AudioImportResult importAudio (const AudioImportRequest& req)
     // froze the message thread on the allocation; this loop peaks at a few
     // hundred KB regardless of source length.
     constexpr int kGrain = 65536;
-    juce::AudioBuffer<float> srcChunk  (srcChannels,      kGrain);
-    juce::AudioBuffer<float> outChunk  (req.targetChannels, kGrain);
+    dusk::audio::PlanarBuffer srcChunk, outChunk;
+    srcChunk.setSize (srcChannels,        kGrain);
+    outChunk.setSize (req.targetChannels, kGrain);
     bool wrote = true;
 
     if (! needsResample)
     {
-        juce::AudioBuffer<float> confChunk (req.targetChannels, kGrain);
+        dusk::audio::PlanarBuffer confChunk;
+        confChunk.setSize (req.targetChannels, kGrain);
         std::int64_t pos = 0;
         while (pos < srcLength && wrote)
         {
@@ -283,8 +286,9 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         const double ratio = srcSampleRate / sessionSr;
         const int needIn   = (int) std::ceil ((double) kGrain * ratio)
                                + (int) juce::WindowedSincInterpolator::getBaseLatency() + 8;
-        juce::AudioBuffer<float> confChunk (req.targetChannels, kGrain);
-        juce::AudioBuffer<float> carry     (req.targetChannels, needIn + kGrain);
+        dusk::audio::PlanarBuffer confChunk, carry;
+        confChunk.setSize (req.targetChannels, kGrain);
+        carry.setSize     (req.targetChannels, needIn + kGrain);
         std::array<juce::WindowedSincInterpolator, 2> interp;
         for (auto& i : interp) i.reset();
 
@@ -312,9 +316,10 @@ AudioImportResult importAudio (const AudioImportRequest& req)
                     break;
                 }
                 conformChunk (srcChunk, confChunk, req.targetChannels, n);
-                const int room = std::min (n, carry.getNumSamples() - carryLen);
+                const int room = std::min (n, carry.numSamples() - carryLen);
                 for (int c = 0; c < req.targetChannels; ++c)
-                    carry.copyFrom (c, carryLen, confChunk, c, 0, room);
+                    dusk::audio::vecCopy (carry.channel (c) + carryLen,
+                                           confChunk.channel (c), room);
                 carryLen += room;
                 srcPos   += room;
             }
@@ -322,8 +327,8 @@ AudioImportResult importAudio (const AudioImportRequest& req)
             if (carryLen < needIn)   // EOF: silence-pad so the tail flushes
             {
                 for (int c = 0; c < req.targetChannels; ++c)
-                    juce::FloatVectorOperations::clear (
-                        carry.getWritePointer (c) + carryLen, needIn - carryLen);
+                    dusk::audio::vecClear (carry.channel (c) + carryLen,
+                                            needIn - carryLen);
                 carryLen = needIn;
             }
 
@@ -332,8 +337,8 @@ AudioImportResult importAudio (const AudioImportRequest& req)
             int consumed = 0;
             for (int c = 0; c < req.targetChannels; ++c)
                 consumed = interp[(size_t) c].process (ratio,
-                                                        carry.getReadPointer (c),
-                                                        outChunk.getWritePointer (c),
+                                                        carry.channel (c),
+                                                        outChunk.channel (c),
                                                         nOut);
             const int skip       = (int) std::min ((std::int64_t) nOut, discard);
             const int writeCount = nOut - skip;
@@ -345,7 +350,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
             consumed = std::clamp (consumed, 0, carryLen);
             for (int c = 0; c < req.targetChannels; ++c)
             {
-                auto* p = carry.getWritePointer (c);
+                auto* p = carry.channel (c);
                 std::memmove (p, p + consumed,
                                sizeof (float) * (size_t) (carryLen - consumed));
             }
@@ -414,41 +419,35 @@ MidiImportResult importMidi (const MidiImportRequest& req)
         return result;
     }
 
-    juce::FileInputStream in (req.source);
-    if (! in.openedOk())
-    {
-        result.errorMessage = "Could not open MIDI file for reading";
-        return result;
-    }
-
-    juce::MidiFile mf;
-    if (! mf.readFrom (in))
+    midi::MidiFileReader mf;
+    if (! mf.readFile (toStdPath (req.source)))
     {
         result.errorMessage = "Failed to parse MIDI file";
         return result;
     }
 
-    const auto timeFormat = mf.getTimeFormat();
-    const bool isSmpte    = (timeFormat < 0);
+    const int    timeFormat     = mf.timeFormat();
+    const bool   isSmpte        = mf.isSmpteTimeFormat();
+    const double ticksPerSecond = mf.smpteTicksPerSecond();
+    if (isSmpte && ticksPerSecond <= 0.0)
+    {
+        result.errorMessage = "Unsupported MIDI time format";
+        return result;
+    }
 
-    // For SMPTE-formatted files, convert to seconds first then rebuild
-    // tick positions at session BPM. PPQ files use a direct rescale.
-    if (isSmpte)
-        mf.convertTimestampTicksToSeconds();
-
-    auto timestampToProjectTicks = [&] (double rawTime) -> std::int64_t
+    // An SMPTE file's ticks are absolute time, so they become project ticks via
+    // the session tempo; a PPQ file's ticks are already musical and only need a
+    // resolution rescale.
+    auto timestampToProjectTicks = [&] (std::int64_t rawTick) -> std::int64_t
     {
         if (isSmpte)
         {
-            // rawTime is in seconds.
-            const double samples = rawTime * sessionSr;
+            const double samples = ((double) rawTick / ticksPerSecond) * sessionSr;
             return duskstudio::samplesToTicks ((std::int64_t) std::llround (samples),
                                             sessionSr,
                                             req.sessionBpm);
         }
-        // rawTime is in source-PPQ ticks.
-        return rescaleTicks ((std::int64_t) std::llround (rawTime),
-                              (int) timeFormat);
+        return rescaleTicks (rawTick, timeFormat);
     };
 
     // Merge all tracks into one flat event list. Skip meta events; we
@@ -466,31 +465,21 @@ MidiImportResult importMidi (const MidiImportRequest& req)
     std::vector<MidiCc>   ccs;
     std::int64_t maxTick = 0;
 
-    const int numTracks = mf.getNumTracks();
-    for (int t = 0; t < numTracks; ++t)
+    for (const auto& track : mf.tracks())
     {
-        const auto* track = mf.getTrack (t);
-        if (track == nullptr) continue;
-
-        for (int i = 0; i < track->getNumEvents(); ++i)
+        for (const auto& msg : track)
         {
-            const auto* ev = track->getEventPointer (i);
-            const auto& msg = ev->message;
-
-            const auto tick = timestampToProjectTicks (msg.getTimeStamp());
+            const auto tick = timestampToProjectTicks (msg.tick);
             if (tick > maxTick) maxTick = tick;
 
             if (msg.isNoteOn())
             {
-                const int ch   = msg.getChannel();
-                const int note = msg.getNoteNumber();
-                const int vel  = msg.getVelocity();
-                open[{ ch, note }].push_back ({ tick, vel });
+                open[{ msg.channel(), msg.noteNumber() }].push_back ({ tick, msg.velocity() });
             }
-            else if (msg.isNoteOff() || (msg.isNoteOn() && msg.getVelocity() == 0))
+            else if (msg.isNoteOff())
             {
-                const int ch   = msg.getChannel();
-                const int note = msg.getNoteNumber();
+                const int ch   = msg.channel();
+                const int note = msg.noteNumber();
                 auto it = open.find ({ ch, note });
                 if (it != open.end() && ! it->second.empty())
                 {
@@ -508,12 +497,11 @@ MidiImportResult importMidi (const MidiImportRequest& req)
             else if (msg.isController())
             {
                 MidiCc cc;
-                cc.channel    = msg.getChannel();
-                cc.controller = msg.getControllerNumber();
-                cc.value      = msg.getControllerValue();
+                cc.channel    = msg.channel();
+                cc.controller = msg.controllerNumber();
+                cc.value      = msg.controllerValue();
                 cc.atTick     = tick;
                 ccs.push_back (cc);
-                if (tick > maxTick) maxTick = tick;
             }
             // Meta events / sysex / tempo / time-sig: skipped.
         }
