@@ -513,6 +513,10 @@ smuggled into a tower — do it in G0 if it is cheap, otherwise as a standalone 
   `dpf__add_dgl_opengl3` and `dpf_resources` fallbacks, retire when the pin
   lands on the reconciled revision (§1.5).
 
+Deliberately left saying DPF: the shipped changelog entries and the per-release
+handoff documents, which are records of what was true at a revision rather than
+instructions for today.
+
 ## 8. Resume phrase
 
 "GUI tower, phase G<n>" — read this file, then

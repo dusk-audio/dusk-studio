@@ -129,7 +129,7 @@ LAME. The Linux and Windows guides list the exact package or manifest setup.
 |----------|-----|
 | Linux | [BUILDING-LINUX.md](BUILDING-LINUX.md) |
 | Windows | [BUILDING-WINDOWS.md](BUILDING-WINDOWS.md) |
-| macOS | Mirror of Linux flow; upstream JUCE 8.0.4, sibling `plugins`, the same pinned DPF stack, and static libsodium supplied through `DUSKSTUDIO_SODIUM_ROOT`. Built and tested per push on `macos-14` (Apple Silicon Sonoma) - see [.github/workflows/macos-build.yml](.github/workflows/macos-build.yml). |
+| macOS | Mirror of Linux flow; upstream JUCE 8.0.4, sibling `plugins`, the same pinned DAF stack, and static libsodium supplied through `DUSKSTUDIO_SODIUM_ROOT`. Built and tested per push on `macos-14` (Apple Silicon Sonoma) - see [.github/workflows/macos-build.yml](.github/workflows/macos-build.yml). |
 | Linux tarball packaging | [packaging/README.md](packaging/README.md) |
 | End-user manual / troubleshooting | [MANUAL.md](MANUAL.md) |
 
