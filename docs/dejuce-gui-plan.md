@@ -29,7 +29,7 @@ and the accessibility bridge in §4. None of them is a research problem.
 
 ### 1.1 Where the two lines stand
 
-The app pins `DPF_REV=f9fbc62a` (`.github/actions/clone-dpf-stack/action.yml`),
+The app pins `DAF_REV=f9fbc62a` (`.github/actions/clone-dpf-stack/action.yml`),
 which is the tip of the framework branch `fix/wayland-review-findings`. That
 commit is **not** an ancestor of the framework's `main`, which is the line the
 Dusk plug-ins follow. Both descend from `a9b033c2`.
@@ -91,7 +91,7 @@ top of `main`:
 
 Validated on this box: `dusk_notepad_ui` and the whole `DuskStudio` target build
 clean against the result, and the spike runs on it. The prepared branch is
-`dusk/301-reconcile` in the framework clone at `/home/marc/projects/DPF`; it has
+`dusk/301-reconcile` in the framework clone at `/home/marc/projects/DAF`; it has
 never been pushed, so it has to be recreated or transplanted before the PR.
 
 ### 1.3 What the app has to change to consume `main`
@@ -130,10 +130,12 @@ build directory rather than beside the app.
 
 ### 1.5 Proposal to Marc
 
-- Merge the three commits above into the framework `main`, as one reviewed PR.
-- Re-pin `DPF_REV` in `.github/actions/clone-dpf-stack/action.yml` to the merge
-  commit; that action is the single source of truth for every workflow.
-- Re-pin `DPF_WIDGETS_REV` to the widgets repository's `main`, which is two
+- Merge the three commits above into `main` of `dusk-audio/DAF`, as one reviewed
+  PR.
+- Re-pin `DAF_REV` in `.github/actions/clone-dpf-stack/action.yml` to the merge
+  commit; that action is the single source of truth for every workflow, and it
+  already clones from `https://github.com/dusk-audio/DAF.git`.
+- Re-pin `DAF_WIDGETS_REV` to `main` of `dusk-audio/DAF-Widgets`, which is two
   commits ahead of the current pin and carries the matching rename. There is no
   divergence there.
 - Delete the branch `fix/wayland-review-findings` once merged, so no third line
@@ -149,7 +151,7 @@ Zero JUCE, links no part of the app.
 ```
 cmake -S . -B build-spike -G Ninja -DCMAKE_BUILD_TYPE=Release \
       -DDUSKSTUDIO_BUILD_GUI_SPIKE=ON -DDGL_BACKEND=wayland \
-      -DJUCE_PATH=... -DDUSK_PLUGINS_PATH=... -DDPF_PATH=... -DDPF_WIDGETS_PATH=...
+      -DJUCE_PATH=... -DDUSK_PLUGINS_PATH=... -DDAF_PATH=... -DDAF_WIDGETS_PATH=...
 cmake --build build-spike --target dusk-gui-spike -j6
 
 tools/gui-spike/headless-compositor.sh &
@@ -349,28 +351,38 @@ Each phase ends with the app shipping.
 ### G0 — Framework alignment
 
 No user-visible change. Land §1: reconcile the framework revision, move
-`DPF_REV` and `DPF_WIDGETS_REV`, pass `-DDGL_BACKEND=wayland` on Linux app and
+`DAF_REV` and `DAF_WIDGETS_REV`, pass `-DDGL_BACKEND=wayland` on Linux app and
 CI configures, drop the dual-spelling handling.
 
 Owns: `CMakeLists.txt`, `.github/actions/clone-dpf-stack/action.yml`, the
-Linux workflows, `src/ui/NativeNotepadWindow.cpp`.
+Linux workflows, `src/ui/NativeNotepadWindow.cpp`. Take the leftover mechanical
+renames in §7 here too if they are cheap.
 Gate movement: none. Verify: full build, ctest, notepad opens under Xvfb and
 under headless `mutter`.
 
 ### G1 — Widget kit and theme
 
-No user-visible change. Promote the spike's drawing layer into a real module the
-app and the first-party plugin UIs share: theme tokens from
-`DuskStudioLookAndFeel`, the SSL knob, the fader, the segmented meter, the GR
-strip, the module pill, buttons, the value bubble and the text field. Settle the
+No user-visible change. Promote the spike's drawing layer into a real module in
+DAF-Widgets that the app and the first-party plug-in UIs both consume: theme
+tokens from `DuskStudioLookAndFeel`, the SSL knob, the fader, the segmented
+meter, the GR strip, the module pill, buttons, the value bubble and the text
+field. Settle the
 shortcut routing rule (§4.2), the glyph strategy (§4.3), and the draw-list
 caching from §2.2 here, before anything depends on them. Fix §4.1 and §4.4 in
 the framework.
 
-New files, all JUCE-free: `src/ui/imgui/DuskTheme.h`, `DuskWidgets.{h,cpp}`,
-`DuskImGuiHost.{h,cpp}` (the embedded-window lifecycle lifted out of
-`NativeNotepadWindow`). Reconcile with the plug-ins repo's
-`shared-dpf/ui/DuskImGuiWidgets.hpp` rather than forking a second knob.
+New app-side files, all JUCE-free: `src/ui/imgui/DuskImGuiHost.{h,cpp}`, the
+embedded-window lifecycle lifted out of `NativeNotepadWindow`.
+
+**The shared widget kit's home is `dusk-audio/DAF-Widgets`, not the plug-ins
+repo** (Marc, 2026-08-24). The knob, fader, meter, module pill and theme tokens
+go there, beside the Dear ImGui layer they build on, and both Dusk Studio and the
+plug-ins consume them from that one place. The plug-ins repo's
+`shared-dpf/ui/DuskImGuiWidgets.hpp` is the previous home: anything in it worth
+keeping migrates into DAF-Widgets, and it is not extended in place. Do not fork a
+second knob in `src/ui/`, and do not add to `shared-dpf/ui/` — a widget that only
+Dusk Studio needs still belongs in DAF-Widgets if a plug-in could ever want it.
+
 Gate movement: none. Verify: golden-image tests against captured frames, plus
 `NativeNotepadWindow` rebased onto `DuskImGuiHost` as the first consumer.
 
@@ -476,13 +488,30 @@ Owed to Marc's bench, and not inferable from this gate:
 
 ## 7. Naming
 
-Marc renamed the fork stack to **DAF, the Dusk Audio Framework**, on
-2026-08-24. It is a naming decision only. The GitHub repositories, the CMake
-variables (`DPF_PATH`, `DPF_WIDGETS_PATH`, `DPF_REV`), the CI action directory
-and the app's own identifiers still say DPF, and this plan deliberately leaves
-them alone: renaming them is a mechanical pass that should happen on its own,
-not smuggled into a tower. Prose in this document and in tower PRs says DAF; code
-and paths say DPF until that pass lands.
+The fork stack is **DAF, the Dusk Audio Framework**. The rename is real, not
+prospective: `dusk-audio/DPF` is now `dusk-audio/DAF` and `dusk-audio/DPF-Widgets`
+is now `dusk-audio/DAF-Widgets`, the old URLs redirect, and the framework's `main`
+already renamed its own public surface. **All future development is on DAF**; a
+DPF spelling anywhere in this tree is transitional, not a second supported name.
+
+Already moved: the repositories themselves, the framework's public API, the app's
+preferred CMake variables (`DAF_PATH`, `DAF_WIDGETS_PATH`), the sibling
+auto-detect (`../DAF` and `../DAF-Widgets` are tried first), the CI action's
+clone URLs and pin variables, and the contributor build instructions.
+
+Still mechanical, and deliberately left for a pass of its own rather than
+smuggled into a tower — do it in G0 if it is cheap, otherwise as a standalone PR:
+
+- `.github/actions/clone-dpf-stack/` is still the action's directory name, and
+  its `RUNNER_TEMP/DPF` checkout directories and the `-DDPF_PATH=` flags in the
+  workflows still use the old spelling. All three are named by 16 references
+  across 8 workflow files, which is why they did not move here.
+- `LICENSES.txt` records provenance as `dusk-audio/DPF rev <sha>`. It is
+  hand-maintained release-audit surface and has to be regenerated when the pin
+  moves anyway, so the repo name moves with the pin, not before it.
+- The `DPF_PATH` / `DPF_WIDGETS_PATH` fallbacks in the app's CMake, and the
+  `dpf__add_dgl_opengl3` and `dpf_resources` fallbacks, retire when the pin
+  lands on the reconciled revision (§1.5).
 
 ## 8. Resume phrase
 
