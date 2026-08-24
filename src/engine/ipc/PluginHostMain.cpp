@@ -41,6 +41,7 @@
 #include "platform/IpcChannel.h"
 #include "platform/IpcShm.h"
 #include "platform/IpcSync.h"
+#include "platform/WindowsSoftwareOpenGL.h"
 
 #include <cerrno>
 #include <cstdio>
@@ -57,6 +58,15 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#if defined (DUSKSTUDIO_USE_WINDOWS_SOFTWARE_OPENGL)
+namespace
+{
+// Normally inherited from DuskStudio.exe, but make direct scan/host launches
+// deterministic too: plugins can import opengl32.dll before opening an editor.
+const duskstudio::platform::ForcePackagedSoftwareOpenGL forcePackagedSoftwareOpenGL;
+}
+#endif
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_events/juce_events.h>

@@ -420,6 +420,22 @@ if(NOT DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD AND NOT DUSKSTUDIO_NOTEPAD_DEPS_FOUND)
     message(STATUS "Native notepad: DPF / DPF-Widgets not found - disabled")
 endif()
 
+if(WIN32)
+    set(DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR "" CACHE PATH
+        "Directory containing the pinned x64 Mesa opengl32.dll and libgallium_wgl.dll")
+    if(DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR)
+        foreach(_duskstudio_mesa_file opengl32.dll libgallium_wgl.dll)
+            if(NOT EXISTS "${DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR}/${_duskstudio_mesa_file}")
+                message(FATAL_ERROR
+                    "DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR is missing ${_duskstudio_mesa_file}: "
+                    "${DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR}")
+            endif()
+        endforeach()
+        message(STATUS
+            "Windows notepad software renderer: ${DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR}")
+    endif()
+endif()
+
 if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
     if(DEFINED DPF_PATH)
         if(NOT EXISTS "${DPF_PATH}/CMakeLists.txt")
@@ -502,6 +518,39 @@ if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
 
     target_link_libraries(DuskStudio PRIVATE dusk_notepad_ui)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_NOTEPAD=1)
+
+    if(WIN32)
+        # The system OpenGL path can be GDI Generic 1.1 on VMs and over Remote
+        # Desktop. The MSI puts Mesa beside DuskStudio.exe, and Main.cpp selects
+        # llvmpipe during static initialisation, before the first GL context is
+        # created. Doing this in the real process also covers taskbar pins,
+        # command-line launches and file associations, not just MSI shortcuts.
+        if(DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR)
+            target_compile_definitions(DuskStudio PRIVATE
+                DUSKSTUDIO_USE_WINDOWS_SOFTWARE_OPENGL=1)
+            target_compile_definitions(dusk_notepad_ui PRIVATE
+                DUSKSTUDIO_USE_WINDOWS_SOFTWARE_OPENGL=1)
+
+            # This imports opengl32.dll before C++ initialisers run, uses the
+            # exact startup selector compiled into the app, creates a real WGL
+            # context, and fails unless Mesa reports llvmpipe. The Windows CI
+            # executes it after the normal Release build.
+            add_executable(dusk-windows-software-opengl-probe
+                tools/windows-software-opengl-probe.cpp)
+            target_include_directories(dusk-windows-software-opengl-probe PRIVATE src)
+            target_compile_features(dusk-windows-software-opengl-probe PRIVATE cxx_std_17)
+            target_compile_definitions(dusk-windows-software-opengl-probe PRIVATE
+                DUSKSTUDIO_USE_WINDOWS_SOFTWARE_OPENGL=1)
+            target_link_libraries(dusk-windows-software-opengl-probe PRIVATE
+                opengl32 gdi32 user32)
+            add_custom_command(TARGET dusk-windows-software-opengl-probe POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR}/opengl32.dll"
+                    "${DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR}/libgallium_wgl.dll"
+                    "$<TARGET_FILE_DIR:dusk-windows-software-opengl-probe>"
+                VERBATIM)
+        endif()
+    endif()
 endif()
 
 target_sources(DuskStudio PRIVATE
@@ -1126,6 +1175,11 @@ if(_duskstudio_oop_enabled)
         JUCE_DONT_DECLARE_PROJECTINFO=1
         JUCE_USE_CURL=0
         JUCE_WEB_BROWSER=0)
+    if(WIN32 AND DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD
+       AND DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR)
+        target_compile_definitions(dusk-studio-plugin-host PRIVATE
+            DUSKSTUDIO_USE_WINDOWS_SOFTWARE_OPENGL=1)
+    endif()
     target_link_libraries(dusk-studio-plugin-host PRIVATE
         juce::juce_audio_processors
         juce::juce_audio_formats
@@ -1511,6 +1565,13 @@ endif()
 install(TARGETS DuskStudio
         RUNTIME DESTINATION bin
         BUNDLE  DESTINATION .)
+if(WIN32 AND DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD
+   AND DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR)
+    install(FILES
+                "${DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR}/opengl32.dll"
+                "${DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR}/libgallium_wgl.dll"
+            DESTINATION bin)
+endif()
 if(APPLE)
     # Installing a bundle rewrites its Mach-O load commands, so the POST_BUILD
     # signature above is invalid by the time CPack stages the .app, and the

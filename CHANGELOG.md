@@ -25,18 +25,27 @@ only.
 
 ### Fixed
 
+- **The Windows installer now opens the session notepad on basic-display,
+  virtual-machine, and Remote Desktop sessions.** The MSI carries a pinned
+  Mesa software OpenGL renderer, and the application selects llvmpipe before
+  creating its first OpenGL context regardless of how it was launched.
+  This avoids both Windows' OpenGL 1.1 `GDI Generic` fallback and the unstable
+  Mesa-on-D3D12 Compatibility Pack path. The payload and archive are SHA-256
+  verified during CI packaging, and a missing renderer makes packaging fail
+  instead of producing another installer with a non-working notepad. Upgrades
+  also retire a first-frame failure marker written by an older release.
 - **The session notepad was half-size on Retina Macs.** JUCE places its window
   in Cocoa points while the embedded DGL editor expects backing pixels. The
   notepad now uses the parent view's actual backing scale for its bounds and
   font atlas, without changing Windows, Linux or non-Retina sizing.
-- **The Windows notepad could end Dusk Studio.** Displays limited to OpenGL 1.1
-  now refuse the OpenGL 3 editor cleanly. Microsoft's OpenGL Compatibility Pack
+- **The Windows notepad could end Dusk Studio.** Source builds still refuse a
+  display limited to OpenGL 1.1 cleanly. Microsoft's OpenGL Compatibility Pack
   advertises OpenGL 4.6 through Mesa's D3D12 renderer but terminates the host
   while presenting the first frame, so that known-bad renderer is refused too;
-  the session and the rest of the application remain open. Native AMD, Intel
-  and NVIDIA OpenGL drivers and Mesa llvmpipe remain eligible. Temporary
-  first-frame stage tracing used to place the failures has been removed, while
-  the GL identity and actionable failure diagnostics remain.
+  the session and the rest of the application remain open. The installer avoids
+  both paths with its bundled llvmpipe renderer. Temporary first-frame stage
+  tracing used to place the failures has been removed, while the GL identity
+  and actionable failure diagnostics remain.
 - **A graphics driver can no longer cost the same session twice.** Refusing a
   renderer by name only helps against drivers somebody has already lost work
   to, and the failure exits cleanly, so there is no error for the notepad to

@@ -65,6 +65,33 @@ TEST_CASE ("A marker with no renderer recorded still refuses", "[notepad][probe]
     CHECK (FirstFrameProbe { marker }.previousFailure() == "an unidentified renderer");
 }
 
+TEST_CASE ("A renderer upgrade clears only a marker from an older release",
+           "[notepad][probe]")
+{
+    const auto marker = scratchDir ("renderer-upgrade") / "notepad-first-frame";
+    const FirstFrameProbe probe { marker };
+
+    std::error_code ec;
+    stdfs::create_directories (marker.parent_path(), ec);
+    std::ofstream { marker } << "D3D12 (Microsoft Basic Render Driver)\n";
+    CHECK (probe.clearLegacyPreviousFailure());
+    CHECK (probe.previousFailure().empty());
+
+    probe.arm ("llvmpipe (LLVM 22.1.8, 256 bits)");
+    CHECK_FALSE (probe.clearLegacyPreviousFailure());
+    CHECK (stdfs::exists (marker));
+
+    // A later opt-out to a hardware driver must not disable the guard: this is
+    // a new-format marker even though the renderer does not contain llvmpipe.
+    probe.arm ("Some Future GPU");
+    CHECK_FALSE (probe.clearLegacyPreviousFailure());
+    CHECK (stdfs::exists (marker));
+    std::ifstream markerContents { marker };
+    std::string firstLine;
+    std::getline (markerContents, firstLine);
+    CHECK (firstLine == "Some Future GPU");
+}
+
 TEST_CASE ("Nowhere to keep the marker costs the guard, not the notepad",
            "[notepad][probe]")
 {

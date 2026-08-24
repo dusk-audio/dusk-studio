@@ -1,5 +1,5 @@
 <!-- summary-start -->
-Fixes the macOS disk image, which could not launch in 0.13.0, restores the notepad's full size on Retina Macs, protects Windows sessions from incompatible notepad graphics drivers, removes Linux desktop files from macOS and Windows packages, and adds native CLAP and VST3 plugin hosting on Windows.
+Fixes the macOS disk image, which could not launch in 0.13.0, restores the notepad's full size on Retina Macs, makes the Windows notepad work in VMs, Remote Desktop and basic-display sessions, removes Linux desktop files from macOS and Windows packages, and adds native CLAP and VST3 plugin hosting on Windows.
 <!-- summary-end -->
 
 ### Downloads
@@ -16,13 +16,12 @@ Fixes the macOS disk image, which could not launch in 0.13.0, restores the notep
 - **macOS** (`.dmg`, Apple Silicon / arm64 only): unsigned. Right-click the app
   -> Open to bypass Gatekeeper on first launch.
 - **Windows** (`.msi`, x64): unsigned. SmartScreen may warn - choose More info
-  -> Run anyway. Statically linked, no vc_redist needed. The notepad works on
-  a conforming software OpenGL renderer and refuses the known-bad Microsoft
-  OpenGL Compatibility Pack, but it has not yet been verified on physical
-  Windows GPU hardware. If some other driver does end the application while
-  the notepad is drawing its first frame, the next launch refuses the notepad
-  rather than repeating it, so that failure costs one session and not every
-  session.
+  -> Run anyway. Statically linked, no vc_redist needed. The installer includes
+  a pinned Mesa llvmpipe renderer, so the notepad works in virtual machines,
+  Remote Desktop sessions and systems whose basic display adapter provides only
+  OpenGL 1.1. OpenGL surfaces in Dusk Studio and its plugin-host children use
+  CPU rendering; the audio engine is unaffected. A first-frame driver failure
+  remains guarded so it cannot cost the same session twice.
 - **Manual** (`MANUAL.pdf`): the Dusk Studio user manual for this release.
 
 Check a download against the `SHA256SUMS` asset before installing. It covers

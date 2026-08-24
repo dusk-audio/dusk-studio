@@ -330,6 +330,10 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
                                        : std::optional<std::string> { markdown };
         history.clear();
 
+       #if defined (DUSKSTUDIO_USE_WINDOWS_SOFTWARE_OPENGL)
+        if (probe.clearLegacyPreviousFailure())
+            notepadLog ("discarded a first-frame marker written before the packaged renderer fix");
+       #endif
         if (const auto failed = probe.previousFailure(); ! failed.empty())
         {
             const auto marker = probe.path().string();

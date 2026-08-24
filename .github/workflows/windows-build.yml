@@ -214,7 +214,8 @@ jobs:
         # required on every platform. x64-windows-static = static libs + /MT
         # static CRT, matching the whole tree's CMAKE_MSVC_RUNTIME_LIBRARY
         # (sfizz forces /MT). The -md triplet (/MD) would LNK2038 against the
-        # /MT objects. They link into the binary, so no DLLs ship in the MSI.
+        # /MT objects. These vcpkg libraries link into the binary, so they add
+        # no runtime DLLs to the MSI.
         # CMake's find_library/find_path pick them up via CMAKE_PREFIX_PATH
         # (forward-slashed so cmake parses the path cleanly).
         # Manifest mode: versions come from vcpkg.json's builtin-baseline and
@@ -225,6 +226,14 @@ jobs:
         run: |
           vcpkg install --triplet x64-windows-static
           echo "VCPKG_PREFIX=${GITHUB_WORKSPACE//\\//}/vcpkg_installed/x64-windows-static" >> "$GITHUB_ENV"
+
+      - name: Fetch pinned Mesa llvmpipe fallback for the notepad
+        shell: pwsh
+        run: |
+          $destination = Join-Path $env:RUNNER_TEMP "dusk-mesa-softgl"
+          .\scripts\fetch-windows-software-opengl.ps1 -Destination $destination
+          $cmakePath = $destination.Replace('\', '/')
+          "MESA_SOFTGL_PATH=$cmakePath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Configure (CMake / Visual Studio 17 2022 / x64)
         shell: bash
@@ -239,6 +248,7 @@ jobs:
             -DDPF_WIDGETS_PATH="${RT_UNIX}/DPF-Widgets" \
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
             -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}" \
+            -DDUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR="${MESA_SOFTGL_PATH}" \
             -DDUSKSTUDIO_ENABLE_LTO=ON \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
             -DDUSKSTUDIO_NATIVE_VST3=ON
@@ -250,6 +260,19 @@ jobs:
       - name: Build (Release)
         shell: bash
         run: cmake --build build --config Release -j4
+
+      - name: Verify packaged Mesa selects llvmpipe
+        shell: pwsh
+        run: |
+          $probes = @(Get-ChildItem build -Recurse -File `
+              -Filter "dusk-windows-software-opengl-probe.exe")
+          if ($probes.Count -ne 1) {
+              throw "expected one Windows software OpenGL probe, found $($probes.Count)"
+          }
+          & $probes[0].FullName
+          if ($LASTEXITCODE -ne 0) {
+              throw "Windows software OpenGL probe failed (exit $LASTEXITCODE)"
+          }
 
       - name: Build + run tests (release gate)
         # No MSI ships unless the suite passes on MSVC. FileImporter cases are

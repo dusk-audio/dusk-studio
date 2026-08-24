@@ -517,6 +517,44 @@ LAME / libmp3lame (MP3 bounce export — optional)
              libmp3lame available.
   Upstream : https://lame.sourceforge.io/
 
+Mesa for Windows software OpenGL fallback (Windows MSI only)
+  Version  : Mesa 26.2.0, built with LLVM 22.1.8 by pal1000's
+             mesa-dist-win 26.2.0 MSVC release
+  License  : Mesa core and pal1000 distribution tooling MIT; LLVM
+             Apache-2.0 WITH LLVM-exception (with legacy portions under the
+             University of Illinois/NCSA license); zlib 1.3.2 zlib; zstd
+             1.5.7 BSD-3-Clause; Microsoft DirectX-Headers 1.619.5 MIT;
+             SPIR-V Tools Apache-2.0 and SPIR-V Headers MIT. The applicable
+             notices and the LLVM exception are reproduced below; the Apache
+             License 2.0 already reproduced there covers LLVM and SPIR-V
+             Tools as well as the existing SheenBidi and Abseil entries.
+  Path     : not vendored — scripts/fetch-windows-software-opengl.ps1 fetches
+             mesa3d-26.2.0-release-msvc.7z during the Windows release job and
+             extracts x64/opengl32.dll plus x64/libgallium_wgl.dll. CMake
+             installs those two files beside DuskStudio.exe in the MSI.
+  Notes    : The archive is pinned to SHA-256
+             dcb2719ef346dab5b609fcb193a5f13cfc4b0502e3f4de1ad43d349477402f47;
+             the two installed files are independently pinned to
+             33b217ed7947b48684baa987914475898a2b4d7d64cce96b078216c67a633582
+             and
+             1a2e49cd5fdb1a857d98117ab04240d723b57da5dffe6d07f5386f42014557c1.
+             The latter is pal1000's multi-driver Gallium DLL, so this
+             inventory covers its complete published MSVC build surface even
+             though Dusk Studio explicitly selects only llvmpipe. The PE
+             import tables of both installed DLLs contain only the sibling
+             libgallium_wgl.dll and Windows system DLLs; the LLVM JIT and any
+             zlib/zstd code used by the target are statically incorporated.
+             No Visual C++ redistributable is required. The package is used
+             unmodified.
+  Upstream : https://gitlab.freedesktop.org/mesa/mesa ,
+             https://github.com/pal1000/mesa-dist-win ,
+             https://github.com/llvm/llvm-project ,
+             https://github.com/microsoft/DirectX-Headers ,
+             https://github.com/KhronosGroup/SPIRV-Tools ,
+             https://github.com/KhronosGroup/SPIRV-Headers ,
+             https://github.com/madler/zlib ,
+             https://github.com/facebook/zstd
+
 System shared libraries (Linux builds — linked dynamically, never bundled)
   License  : PipeWire MIT; ALSA / libasound LGPL-2.1-or-later; libX11 and the
              X extension libraries it comes with (Xcursor, Xext, Xrandr) MIT;
@@ -1307,17 +1345,18 @@ For more information on this, and how to apply and follow the GNU AGPL, see
 <https://www.gnu.org/licenses/>.
 
 --------------------------------------------------------------------------------
-Apache License 2.0 — covers both Apache-2.0 components in the binary:
+Apache License 2.0 — covers the Apache-2.0 components in the binary:
   SheenBidi 2.9.0, Copyright (C) 2014-2025 Muhammad Tayyab Akram
   abseil-cpp LTS 20230125.3, Copyright The Abseil Authors (Google Inc.
   per external/sfizz/external/abseil-cpp/AUTHORS)
+  LLVM 22.1.8 and SPIR-V Tools in the Windows Mesa fallback
 Text below is modules/juce_graphics/unicode/sheenbidi/LICENSE verbatim,
 including the blank line it opens with. abseil ships the same license at
 external/sfizz/external/abseil-cpp/LICENSE; the only differences there are that
 it spells the two apache.org URLs https rather than http and that it ends with
-a trailing blank line instead of opening with one. Neither project ships a
-NOTICE file, so Apache-2.0 section 4(d) adds nothing to the section 4(a) copy
-provided here.
+a trailing blank line instead of opening with one. No listed project ships an
+applicable NOTICE file, so Apache-2.0 section 4(d) adds nothing to the section
+4(a) copy provided here. LLVM's additional exception follows this license.
 --------------------------------------------------------------------------------
 
                                  Apache License
@@ -1521,6 +1560,252 @@ provided here.
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
+
+--------------------------------------------------------------------------------
+LLVM 22.1.8 — exceptions to Apache-2.0 and legacy NCSA notice
+LICENSE.TXT at llvm/llvm-project tag llvmorg-22.1.8. The Apache-2.0 text is
+the block immediately above.
+--------------------------------------------------------------------------------
+
+---- LLVM Exceptions to the Apache 2.0 License ----
+
+As an exception, if, as a result of your compiling your source code, portions
+of this Software are embedded into an Object form of such source code, you
+may redistribute such embedded portions in such Object form without complying
+with the conditions of Sections 4(a), 4(b) and 4(d) of the License.
+
+In addition, if you combine or link compiled forms of this Software with
+software that is licensed under the GPLv2 ("Combined Software") and if a
+court of competent jurisdiction determines that the patent provision (Section
+3), the indemnity provision (Section 9) or other Section of the License
+conflicts with the conditions of the GPLv2, you may retroactively and
+prospectively choose to deem waived or otherwise exclude such Section(s) of
+the License, but only in their entirety and only with respect to the Combined
+Software.
+
+University of Illinois/NCSA Open Source License
+
+Copyright (c) 2003-2019 University of Illinois at Urbana-Champaign.
+All rights reserved.
+
+Developed by:
+
+    LLVM Team
+
+    University of Illinois at Urbana-Champaign
+
+    http://llvm.org
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal with
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+    * Redistributions of source code must retain the above copyright notice,
+      this list of conditions and the following disclaimers.
+
+    * Redistributions in binary form must reproduce the above copyright notice,
+      this list of conditions and the following disclaimers in the
+      documentation and/or other materials provided with the distribution.
+
+    * Neither the names of the LLVM Team, University of Illinois at
+      Urbana-Champaign, nor the names of its contributors may be used to
+      endorse or promote products derived from this Software without specific
+      prior written permission.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE
+SOFTWARE.
+
+--------------------------------------------------------------------------------
+Mesa 26.2.0 — MIT license template and project license statement
+licenses/MIT.txt and docs/license.rst at Mesa tag mesa-26.2.0. Mesa records
+copyright holders in the individual source files covered by this license.
+--------------------------------------------------------------------------------
+
+The core Mesa library is licensed according to the terms of the MIT license.
+Most of the Mesa code is licensed under MIT license, but individual files may
+have their own licenses. In general, consult each source file SPDX identifier
+for license terms.
+
+MIT License
+
+Copyright (c) <year> <copyright holders>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------------------
+mesa-dist-win 26.2.0 — MIT
+LICENSE at pal1000/mesa-dist-win tag 26.2.0
+--------------------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2017-2020 pal1000
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------------------
+zlib 1.3.2 — zlib license
+LICENSE at madler/zlib tag v1.3.2
+--------------------------------------------------------------------------------
+
+Copyright notice:
+
+ (C) 1995-2026 Jean-loup Gailly and Mark Adler
+
+  This software is provided 'as-is', without any express or implied
+  warranty.  In no event will the authors be held liable for any damages
+  arising from the use of this software.
+
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
+
+  1. The origin of this software must not be misrepresented; you must not
+     claim that you wrote the original software. If you use this software
+     in a product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.
+
+  Jean-loup Gailly        Mark Adler
+  jloup@gzip.org          madler@alumni.caltech.edu
+
+--------------------------------------------------------------------------------
+Zstandard 1.5.7 — BSD-3-Clause
+LICENSE at facebook/zstd tag v1.5.7
+--------------------------------------------------------------------------------
+
+BSD License
+
+For Zstandard software
+
+Copyright (c) Meta Platforms, Inc. and affiliates. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+ * Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+ * Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+ * Neither the name Facebook, nor Meta, nor the names of its contributors may
+   be used to endorse or promote products derived from this software without
+   specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+--------------------------------------------------------------------------------
+Microsoft DirectX-Headers 1.619.5 — MIT
+LICENSE at microsoft/DirectX-Headers tag v1.619.5
+--------------------------------------------------------------------------------
+
+Copyright (c) Microsoft Corporation.
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED *AS IS*, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------------------
+SPIR-V Headers — MIT
+LICENSE at KhronosGroup/SPIRV-Headers rev
+29981f65241605e08b0ede4cfeb999fe3b723c6a
+--------------------------------------------------------------------------------
+
+Files: All files except for those called out below.
+Copyright (c) 2015-2024 The Khronos Group Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and/or associated documentation files (the
+"Materials"), to deal in the Materials without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Materials, and to
+permit persons to whom the Materials are furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be included
+in all copies or substantial portions of the Materials.
+
+MODIFICATIONS TO THIS FILE MAY MEAN IT NO LONGER ACCURATELY REFLECTS
+KHRONOS STANDARDS. THE UNMODIFIED, NORMATIVE VERSIONS OF KHRONOS
+SPECIFICATIONS AND HEADER INFORMATION ARE LOCATED AT
+   https://www.khronos.org/registry/
+
+THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+MATERIALS OR THE USE OR OTHER DEALINGS IN THE MATERIALS.
 
 --------------------------------------------------------------------------------
 HarfBuzz 10.1.0 — Old MIT

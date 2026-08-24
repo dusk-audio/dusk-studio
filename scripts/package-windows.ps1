@@ -29,6 +29,14 @@ if (-not (Get-Command "candle.exe" -ErrorAction SilentlyContinue)) {
     Write-Error "WIX Toolset not on PATH — install from https://wixtoolset.org/"
 }
 
+$CMakeCache = Get-Content "$BuildDir\CMakeCache.txt" -Raw
+if ($CMakeCache -notmatch '(?m)^DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD:BOOL=ON\r?$') {
+    throw "Windows MSI packaging requires DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON (a cached OFF is sticky). Reconfigure explicitly with valid DPF_PATH and DPF_WIDGETS_PATH checkouts, then rebuild."
+}
+if ($CMakeCache -notmatch '(?m)^DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR:PATH=.+\r?$') {
+    throw "Windows MSI packaging requires the notepad software renderer. Run scripts\fetch-windows-software-opengl.ps1 and reconfigure with -DDUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR=<output>."
+}
+
 # CPack consumes CMake's install rules. Validate that layout before building
 # the MSI so a compiled-but-uninstalled helper cannot silently ship again.
 $InstallCheckDir = Join-Path ([System.IO.Path]::GetTempPath()) `
@@ -44,6 +52,13 @@ try {
         $InstalledExe = Join-Path (Join-Path $InstallCheckDir "bin") $RequiredExe
         if (-not (Test-Path -PathType Leaf $InstalledExe)) {
             throw "install layout missing required executable: $InstalledExe"
+        }
+    }
+
+    foreach ($GraphicsFile in @("opengl32.dll", "libgallium_wgl.dll")) {
+        $InstalledGraphicsFile = Join-Path (Join-Path $InstallCheckDir "bin") $GraphicsFile
+        if (-not (Test-Path -PathType Leaf $InstalledGraphicsFile)) {
+            throw "install layout missing Windows notepad software renderer: $InstalledGraphicsFile. Run scripts\fetch-windows-software-opengl.ps1 and reconfigure with -DDUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR=<output>."
         }
     }
 
@@ -65,7 +80,7 @@ try {
             throw "install layout contains forbidden directory: $ForbiddenDir"
         }
     }
-    Write-Host "Validated install layout: app + plugin scan host + license texts; no development files"
+    Write-Host "Validated install layout: app + notepad software renderer + plugin scan host + license texts; no development files"
 } finally {
     Remove-Item -Recurse -Force $InstallCheckDir -ErrorAction SilentlyContinue
 }

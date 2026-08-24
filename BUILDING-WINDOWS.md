@@ -108,6 +108,34 @@ C:\dev\dusk-studio\build\DuskStudio_artefacts\Release\DuskStudio.exe
 
 Double-click to run, or launch from the terminal.
 
+The ordinary development executable uses the machine's OpenGL driver. The MSI
+adds a deterministic software-rendering path for displays that expose only
+Windows' OpenGL 1.1 fallback (common in VMs and Remote Desktop sessions). To
+build the same package locally, fetch the pinned, checksum-verified payload and
+pass its directory at configure time:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\fetch-windows-software-opengl.ps1 `
+  -Destination "$env:TEMP\dusk-mesa-softgl"
+```
+
+```cmd
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 ^
+  -DCMAKE_PREFIX_PATH="%CD%/vcpkg_installed/x64-windows-static" ^
+  -DASIOSDK_PATH=C:/dev/asiosdk ^
+  -DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON ^
+  -DDUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR="%TEMP%/dusk-mesa-softgl"
+cmake --build build --config Release -j6
+powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1 -BuildDir build
+```
+
+The package step deliberately fails when the native notepad or either Mesa DLL
+is missing. The packaged `DuskStudio.exe` selects Mesa llvmpipe before its
+first OpenGL context, so Start-menu shortcuts, desktop shortcuts, taskbar pins,
+file associations, and command-line launches all use the same safe renderer.
+Ordinary development builds remain on the machine's OpenGL driver; keep using
+`DuskStudio.exe` as Visual Studio's startup target for source-level debugging.
+
 ### Building Debug instead
 
 ```cmd
@@ -164,6 +192,10 @@ Useful for confirming the audio engine wires up correctly without needing to dri
 ## Known caveats on Windows
 
 - **PlatformWindowing_Windows.cpp is a stub.** Most things work; the file exists as the place to land Windows-specific window-management fixes if/when XEmbed-equivalent bugs surface. CMake picks the per-platform implementation at [CMakeLists.txt:641-647](CMakeLists.txt#L641-L647).
+- **The packaged notepad uses software OpenGL.** The packaged application uses
+  the bundled llvmpipe renderer so the notepad behaves consistently on native,
+  virtual, and remote displays. This uses CPU rendering for OpenGL surfaces in
+  Dusk Studio and its plugin-host children; the audio engine is unaffected.
 - **No ASIO without the SDK.** WASAPI is the default; ASIO requires the SDK download above. Most users will be fine on WASAPI.
 - **The ALSA backend is not compiled.** [CMakeLists.txt:754](CMakeLists.txt#L754) gates Dusk Studio's custom ALSA `AudioIODeviceType` behind `UNIX AND NOT APPLE`. Windows falls through to JUCE's stock WASAPI/ASIO types.
 - **Compiler warnings.** Project is primarily developed on Clang/GCC. MSVC may emit warnings; none are fatal. `/WX` (warnings-as-errors) is not enabled.

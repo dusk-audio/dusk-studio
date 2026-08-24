@@ -1,4 +1,5 @@
 #include "DuskStudioApp.h"
+#include "platform/WindowsSoftwareOpenGL.h"
 
 #if defined (_WIN32)
 #include <clocale>
@@ -6,6 +7,13 @@
 
 namespace
 {
+#if defined (DUSKSTUDIO_USE_WINDOWS_SOFTWARE_OPENGL)
+// Keep this as an explicit object in the real executable: direct launches,
+// taskbar pins and file associations all have to select llvmpipe before the
+// framework creates its first WGL context.
+const duskstudio::platform::ForcePackagedSoftwareOpenGL forcePackagedSoftwareOpenGL;
+#endif
+
 // Windows leaves a redirected stderr fully buffered, so a process that dies
 // without unwinding takes its diagnostics with it - which is how the notepad's
 // failure on a Windows 11 test box first presented, as a silent exit with an

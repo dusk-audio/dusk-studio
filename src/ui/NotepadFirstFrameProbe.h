@@ -35,6 +35,10 @@ public:
             return {};
         std::string renderer;
         std::getline (in, renderer);
+        // Accept the tag-first layout used during development of v2 as well as
+        // the shipped renderer-first layout below.
+        if (renderer == markerVersion)
+            std::getline (in, renderer);
         return renderer.empty() ? std::string ("an unidentified renderer") : renderer;
     }
 
@@ -47,7 +51,9 @@ public:
         std::ofstream out (marker, std::ios::trunc);
         // Flushed rather than left to the destructor: the process this guards
         // against dies without unwinding.
-        out << renderer << '\n';
+        // Keep the renderer on line one so an older release still names it
+        // correctly when reading a marker written by this release.
+        out << renderer << '\n' << markerVersion << '\n';
         out.flush();
     }
 
@@ -57,9 +63,30 @@ public:
         std::filesystem::remove (marker, ec);
     }
 
+    // Releases before the packaged Windows software renderer wrote only the
+    // renderer name. Clear that old-format marker once so the fixed stack gets
+    // one attempt; every marker written by this release remains sticky,
+    // regardless of renderer, and retains the crash guard on later switches.
+    bool clearLegacyPreviousFailure() const
+    {
+        if (marker.empty())
+            return false;
+        std::ifstream in (marker);
+        if (! in)
+            return false;
+        std::string firstLine, secondLine;
+        std::getline (in, firstLine);
+        std::getline (in, secondLine);
+        if (firstLine == markerVersion || secondLine == markerVersion)
+            return false;
+        disarm();
+        return true;
+    }
+
     const std::filesystem::path& path() const noexcept { return marker; }
 
 private:
+    static constexpr const char* markerVersion = "dusk-notepad-first-frame-v2";
     std::filesystem::path marker;
 };
 } // namespace duskstudio::notepad
