@@ -200,6 +200,7 @@ target_sources(dusk-studio-tests PRIVATE
     foundation_lagrange_interpolator.cpp
     foundation_midi_buffer.cpp
     foundation_midi_note_name.cpp
+    foundation_planar_buffer.cpp
     midi_ring.cpp
     midi_collector.cpp
     lv2_state_paths.cpp)

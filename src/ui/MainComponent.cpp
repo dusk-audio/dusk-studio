@@ -47,6 +47,7 @@
 #include "../engine/audiofile/FileReader.h"
 #include "../engine/audiofile/FileWriter.h"
 #include "../engine/midi/MidiFileReader.h"
+#include "../foundation/PlanarBuffer.h"
 #include "../foundation/Text.h"
 #include <algorithm>
 
@@ -4055,18 +4056,21 @@ juce::File makeStereoTempWav (const juce::File& left, const juce::File& right)
     // a 2-ch stream in fixed-size chunks so a long take doesn't allocate the
     // whole file up front.
     constexpr int kChunk = 1 << 16;   // 64k samples per pass
-    juce::AudioBuffer<float> lbuf (1, kChunk), rbuf (1, kChunk), out (2, kChunk);
+    dusk::audio::PlanarBuffer lbuf, rbuf, out;
+    lbuf.setSize (1, kChunk);
+    rbuf.setSize (1, kChunk);
+    out.setSize  (2, kChunk);
     for (std::int64_t pos = 0; pos < len; pos += kChunk)
     {
         const int n = (int) std::min ((std::int64_t) kChunk, len - pos);
-        if (rl->read (lbuf.getArrayOfWritePointers(), 1, pos, n) != n
-            || rr->read (rbuf.getArrayOfWritePointers(), 1, pos, n) != n)
+        if (rl->read (lbuf.data(), 1, pos, n) != n
+            || rr->read (rbuf.data(), 1, pos, n) != n)
         {
             writer.reset(); tmp.deleteFile(); return {};
         }
-        out.copyFrom (0, 0, lbuf, 0, 0, n);
-        out.copyFrom (1, 0, rbuf, 0, 0, n);
-        if (! writer->write (out.getArrayOfReadPointers(), 2, n))
+        dusk::audio::vecCopy (out.channel (0), lbuf.channel (0), n);
+        dusk::audio::vecCopy (out.channel (1), rbuf.channel (0), n);
+        if (! writer->write (out.data(), 2, n))
         {
             writer.reset(); tmp.deleteFile(); return {};
         }

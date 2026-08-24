@@ -47,7 +47,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     for (auto& b : auxSendPre) b = false;
 
     tempMono.assign ((size_t) std::max (1, blockSize), 0.0f);
-    tempStereoBuffer.setSize (2, std::max (1, blockSize), false, false, true);
+    tempStereoBuffer.setSize (2, std::max (1, blockSize));
 
     // Hardware insert + the plugin <-> hardware crossfade gate. Same
     // 20 ms ramp as the rest of the strip so the transition feels in
@@ -858,7 +858,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
 
     if ((int) tempMono.size() < numSamples)
         return;  // can't allocate on the audio thread; bail safely (silence)
-    if (stereo && tempStereoBuffer.getNumSamples() < numSamples)
+    if (stereo && tempStereoBuffer.numSamples() < numSamples)
         return;
 
     // Skip the heavy DSP when the strip isn't passing to master and the
@@ -1182,8 +1182,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         // tracks zero the scratch and let the (instrument) plugin fill it
         // from the filtered per-track MIDI events. Both then proceed
         // through the same EQ + Comp + accumulate pipeline.
-        auto* L = tempStereoBuffer.getWritePointer (0);
-        auto* R = tempStereoBuffer.getWritePointer (1);
+        auto* L = tempStereoBuffer.channel (0);
+        auto* R = tempStereoBuffer.channel (1);
 
         if (isFrozen)
         {

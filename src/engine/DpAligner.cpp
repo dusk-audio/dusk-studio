@@ -2,7 +2,7 @@
 
 #include "audiofile/FileReader.h"
 #include "../foundation/Fft.h"
-#include <juce_audio_basics/juce_audio_basics.h>
+#include "../foundation/PlanarBuffer.h"
 
 #include <algorithm>
 #include <cmath>
@@ -39,14 +39,14 @@ std::vector<float> decodeMono (const juce::File& f, double& sampleRateOut)
     // first two channels. This also preserves the legacy behaviour for an
     // unexpected file with more than two channels.
     const int usedCh = std::min (ch, 2);
-    juce::AudioBuffer<float> buf (usedCh, (int) len);
-    buf.clear();
-    if (reader->read (buf.getArrayOfWritePointers(), usedCh, 0, len) != len) return out;
+    dusk::audio::PlanarBuffer buf;
+    buf.setSize (usedCh, (int) len);
+    if (reader->read (buf.data(), usedCh, 0, len) != len) return out;
 
     out.resize ((size_t) len);
     if (usedCh == 1)
     {
-        std::copy (buf.getReadPointer (0), buf.getReadPointer (0) + len, out.begin());
+        std::copy (buf.channel (0), buf.channel (0) + len, out.begin());
     }
     else
     {
@@ -54,7 +54,7 @@ std::vector<float> decodeMono (const juce::File& f, double& sampleRateOut)
         for (std::int64_t i = 0; i < len; ++i)
         {
             float s = 0.0f;
-            for (int c = 0; c < usedCh; ++c) s += buf.getSample (c, (int) i);
+            for (int c = 0; c < usedCh; ++c) s += buf.channel (c)[i];
             out[(size_t) i] = s * inv;
         }
     }

@@ -8,9 +8,11 @@
 #include "FadeCurve.h"
 #include "../engine/AudioEngine.h"
 #include "../engine/Transport.h"
+#include "../engine/audiofile/FileReader.h"
 #include "../session/RegionEditActions.h"
 #include "../session/SnapHelpers.h"
 #include "../foundation/Decibels.h"
+#include "../foundation/PlanarBuffer.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -3522,12 +3524,14 @@ void AudioRegionEditor::normalizeRegion()
     // Non-destructive: scan the slice in chunks to find peak, then adjust
     // gainDb so peak hits ~-0.1 dBFS. Source file untouched. Chunked so a
     // multi-minute region doesn't allocate gigabytes.
-    std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (r->file));
+    auto reader = dusk::audio::FileReader::open (
+        std::filesystem::u8path (r->file.getFullPathName().toStdString()));
     if (reader == nullptr) return;
 
-    const int channels = std::max (1, (int) reader->numChannels);
+    const int channels = std::max (1, reader->info().numChannels);
     constexpr int kChunkSamples = 1 << 16;   // 64k frames per chunk
-    juce::AudioBuffer<float> buf (channels, kChunkSamples);
+    dusk::audio::PlanarBuffer buf;
+    buf.setSize (channels, kChunkSamples);
 
     float peak = 0.0f;
     std::int64_t done = 0;
@@ -3535,13 +3539,15 @@ void AudioRegionEditor::normalizeRegion()
     {
         const int thisChunk = (int) std::min<std::int64_t> (kChunkSamples,
                                                                   r->lengthInSamples - done);
-        reader->read (&buf, 0, thisChunk, r->sourceOffset + done, true, true);
+        const int got = (int) reader->read (buf.data(), channels,
+                                             r->sourceOffset + done, thisChunk);
+        if (got <= 0) break;
         for (int c = 0; c < channels; ++c)
         {
-            const auto rng = buf.findMinMax (c, 0, thisChunk);
-            peak = std::max ({peak, std::abs (rng.getStart()), std::abs (rng.getEnd())});
+            const auto rng = dusk::audio::findSignedMinMax (buf.channel (c), got);
+            peak = std::max ({ peak, std::abs (rng.min), std::abs (rng.max) });
         }
-        done += thisChunk;
+        done += got;
     }
     if (peak <= 1.0e-6f) return;   // silence; nothing to normalize
 

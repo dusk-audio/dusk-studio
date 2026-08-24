@@ -43,10 +43,7 @@ void PlaybackEngine::prepare (int maxBlockSize)
     // Pre-allocate the stereo scratch buffer once. Channel 1 is unused for
     // mono regions but allocated so the audio-thread read path never has to
     // grow on a stereo region.
-    readScratch.setSize (2, std::max (1, maxBlockSize),
-                          /*keepExistingContent*/ false,
-                          /*clearExtraSpace*/      false,
-                          /*avoidReallocating*/    false);
+    readScratch.setSize (2, std::max (1, maxBlockSize));
 }
 
 void PlaybackEngine::refreshLiveRegionParams()
@@ -247,15 +244,14 @@ void PlaybackEngine::primeLoopCaches (std::int64_t loopStart, std::int64_t loopE
             // the audio path duplicate it keeps that case center-panned instead
             // of silencing the right side.
             const bool stereo = (rs.numChannels == 2) && fillReader->info().numChannels >= 2;
-            juce::AudioBuffer<float> tmp (2, len);
-            tmp.clear();
-            float* fillDest[2] = { tmp.getWritePointer (0), tmp.getWritePointer (1) };
-            fillReader->read (fillDest, stereo ? 2 : 1,
+            dusk::audio::PlanarBuffer tmp;
+            tmp.setSize (2, len);
+            fillReader->read (tmp.data(), stereo ? 2 : 1,
                                rs.sourceOffset + (cacheStart - rs.timelineStart), len);
 
-            rs.loopCacheL.assign (tmp.getReadPointer (0), tmp.getReadPointer (0) + len);
+            rs.loopCacheL.assign (tmp.channel (0), tmp.channel (0) + len);
             if (stereo)
-                rs.loopCacheR.assign (tmp.getReadPointer (1), tmp.getReadPointer (1) + len);
+                rs.loopCacheR.assign (tmp.channel (1), tmp.channel (1) + len);
             else
                 rs.loopCacheR.clear();
             rs.loopCacheTimelineStart = cacheStart;
@@ -412,8 +408,8 @@ void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
         // If this fires, prepare() was called with a maxBlockSize smaller than
         // the host's actual block size. Skip silently in release so we don't
         // crash, but make the misconfiguration visible in debug.
-        jassert (withinSamples <= readScratch.getNumSamples());
-        if (withinSamples > readScratch.getNumSamples()) continue;
+        jassert (withinSamples <= readScratch.numSamples());
+        if (withinSamples > readScratch.numSamples()) continue;
 
         const std::int64_t readStart = r.sourceOffset + (firstWithin - r.timelineStart);
         // For mono regions, read L only. For stereo, read both. readScratch is
@@ -421,8 +417,7 @@ void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
         // over a mono file reads one channel and duplicates below, rather than
         // taking the reader's zero-filled second channel as silence.
         const bool readStereo = (r.numChannels == 2) && r.reader->info().numChannels >= 2;
-        float* dest[2] = { readScratch.getWritePointer (0), readScratch.getWritePointer (1) };
-        r.reader->readRt (dest, readStereo ? 2 : 1, readStart, withinSamples);
+        r.reader->readRt (readScratch.data(), readStereo ? 2 : 1, readStart, withinSamples);
 
         // Serve the loop-start window from the pre-cache: the forward-only
         // reader misses (returns silence) right after a wrap's backward
@@ -439,10 +434,10 @@ void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
             const int dstOff = (int) (ovStart - firstWithin);
             const int srcOff = (int) (ovStart - r.loopCacheTimelineStart);
             const int n      = (int) (ovEnd - ovStart);
-            std::memcpy (readScratch.getWritePointer (0) + dstOff,
+            std::memcpy (readScratch.channel (0) + dstOff,
                           r.loopCacheL.data() + srcOff, sizeof (float) * (size_t) n);
             if (readStereo && ! r.loopCacheR.empty())
-                std::memcpy (readScratch.getWritePointer (1) + dstOff,
+                std::memcpy (readScratch.channel (1) + dstOff,
                               r.loopCacheR.data() + srcOff, sizeof (float) * (size_t) n);
         }
 
@@ -468,8 +463,8 @@ void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
         const std::int64_t regionStart = r.timelineStart;
         const float fadeInDenom  = (fadeIn  > 0) ? (float) fadeIn  : 1.0f;
         const float fadeOutDenom = (fadeOut > 0) ? (float) fadeOut : 1.0f;
-        const auto* srcL = readScratch.getReadPointer (0);
-        const auto* srcR = readStereo ? readScratch.getReadPointer (1) : srcL;
+        const auto* srcL = readScratch.channel (0);
+        const auto* srcR = readStereo ? readScratch.channel (1) : srcL;
         const float regionGain = r.gainLinear;
         for (int i = 0; i < withinSamples; ++i)
         {

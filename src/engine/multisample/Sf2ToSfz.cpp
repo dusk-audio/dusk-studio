@@ -2,14 +2,13 @@
 
 #include "../audiofile/FileWriter.h"
 
-#include <juce_audio_basics/juce_audio_basics.h>
-
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace duskstudio
 {
@@ -93,8 +92,8 @@ bool writeSampleWav(juce::FileInputStream& in,
     if (in.read(pcm.getData(), (int) wanted) != (int) wanted)
         return false;
 
-    juce::AudioBuffer<float> buf (1, numFrames);
-    auto* w = buf.getWritePointer(0);
+    std::vector<float> buf ((std::size_t) numFrames);
+    float* w = buf.data();
     for (int i = 0; i < numFrames; ++i)
     {
         // SF2 PCM is little-endian signed 16-bit; FileInputStream::read
@@ -112,7 +111,8 @@ bool writeSampleWav(juce::FileInputStream& in,
     auto writer = dusk::audio::FileWriter::create (
         std::filesystem::u8path (outWav.getFullPathName().toStdString()), spec);
     if (writer == nullptr) { outWav.deleteFile(); return false; }
-    const bool ok = writer->write (buf.getArrayOfReadPointers(), 1, numFrames);
+    const float* const channels[1] = { buf.data() };
+    const bool ok = writer->write (channels, 1, numFrames);
     writer.reset();
     return ok;
 }

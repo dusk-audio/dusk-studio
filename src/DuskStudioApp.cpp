@@ -40,6 +40,7 @@
 #endif
 #include "session/Session.h"
 #include "foundation/Decibels.h"
+#include "foundation/PlanarBuffer.h"
 #include "foundation/VectorOps.h"
 
 #include <algorithm>
@@ -1379,13 +1380,14 @@ private:
     {
         const int numCh = 2;
         const int numFrames = (int) (sr * kContentSeconds);
-        juce::AudioBuffer<float> buf (numCh, numFrames);
+        dusk::audio::PlanarBuffer buf;
+        buf.setSize (numCh, numFrames);
         for (int n = 0; n < numFrames; ++n)
         {
             const double t   = (double) n / sr;
             const double env = std::sin (juce::MathConstants<double>::pi * (double) n / numFrames);
-            buf.setSample (0, n, (float) (env * 0.6 * std::sin (2.0 * juce::MathConstants<double>::pi * fL * t)));
-            buf.setSample (1, n, (float) (env * 0.6 * std::sin (2.0 * juce::MathConstants<double>::pi * fR * t)));
+            buf.channel (0)[n] = (float) (env * 0.6 * std::sin (2.0 * juce::MathConstants<double>::pi * fL * t));
+            buf.channel (1)[n] = (float) (env * 0.6 * std::sin (2.0 * juce::MathConstants<double>::pi * fR * t));
         }
         file.deleteFile();
         dusk::audio::WriteSpec spec;
@@ -1396,7 +1398,7 @@ private:
         auto writer = dusk::audio::FileWriter::create (
             std::filesystem::u8path (file.getFullPathName().toStdString()), spec);
         if (writer == nullptr
-            || ! writer->write (buf.getArrayOfReadPointers(), numCh, numFrames))
+            || ! writer->write (buf.data(), numCh, numFrames))
             return {};
         return file;
     }
@@ -1523,17 +1525,18 @@ private:
             std::fprintf (stdout, "[FAIL] %s: output WAV has zero samples\n", label);
             return false;
         }
-        juce::AudioBuffer<float> buf (std::max (1, readerChannels), n);
-        if (reader->read (buf.getArrayOfWritePointers(), buf.getNumChannels(), 0, n) != n)
+        dusk::audio::PlanarBuffer buf;
+        buf.setSize (std::max (1, readerChannels), n);
+        if (reader->read (buf.data(), buf.numChannels(), 0, n) != n)
         {
             std::fprintf (stdout, "[FAIL] %s: short read from output WAV\n", label);
             return false;
         }
         bool allFinite = true;
         float peak = 0.0f;
-        for (int c = 0; c < buf.getNumChannels(); ++c)
+        for (int c = 0; c < buf.numChannels(); ++c)
         {
-            const float* d = buf.getReadPointer (c);
+            const float* d = buf.channel (c);
             for (int i = 0; i < n; ++i)
             {
                 if (! std::isfinite (d[i])) { allFinite = false; break; }
