@@ -79,8 +79,11 @@ public:
         std::getline (in, secondLine);
         if (firstLine == markerVersion || secondLine == markerVersion)
             return false;
-        disarm();
-        return true;
+        // Windows fstream handles do not grant FILE_SHARE_DELETE, so the
+        // marker cannot be removed until this reader is closed.
+        in.close();
+        std::error_code ec;
+        return std::filesystem::remove (marker, ec);
     }
 
     const std::filesystem::path& path() const noexcept { return marker; }
