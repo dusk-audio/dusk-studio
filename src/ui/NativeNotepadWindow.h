@@ -37,6 +37,9 @@ public:
     bool open (std::uintptr_t nativeParent, EmbeddedGeometry geometry,
                const std::string& markdown,
                bool hasSessionFile, bool hasUnsavedChanges);
+    // Why the last open() returned false, phrased for the user. Empty when
+    // open() succeeded or was never called.
+    const std::string& lastOpenFailure() const noexcept;
     void setEmbeddedGeometry (EmbeddedGeometry geometry);
     // Teardown is deferred over two event-pump ticks; close() only asks for it.
     void close();

@@ -19,7 +19,10 @@ Fixes the macOS disk image, which could not launch in 0.13.0, restores the notep
   -> Run anyway. Statically linked, no vc_redist needed. The notepad works on
   a conforming software OpenGL renderer and refuses the known-bad Microsoft
   OpenGL Compatibility Pack, but it has not yet been verified on physical
-  Windows GPU hardware.
+  Windows GPU hardware. If some other driver does end the application while
+  the notepad is drawing its first frame, the next launch refuses the notepad
+  rather than repeating it, so that failure costs one session and not every
+  session.
 - **Manual** (`MANUAL.pdf`): the Dusk Studio user manual for this release.
 
 Check a download against the `SHA256SUMS` asset before installing. It covers

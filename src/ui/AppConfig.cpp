@@ -19,6 +19,7 @@ namespace
 {
 constexpr const char* kKeyUiScale            = "ui_scale";
 constexpr const char* kKeyScanOnStartup      = "scan_plugins_on_startup";
+constexpr const char* kKeyNotepadEnabled     = "notepad_enabled";
 constexpr const char* kKeyTapeStripExpanded  = "tape_strip_expanded_default";
 constexpr const char* kKeyFollowPlayhead     = "follow_playhead_default";
 constexpr const char* kKeyStopBehavior       = "stop_behavior";
@@ -144,7 +145,10 @@ void writeKey (const std::string& key, const std::string& value)
     }
     if (! replaced) lines.push_back (key + "=" + value);
 
-    dusk::fs::writeStringToFile (file, dusk::text::joinIntoString (lines, "\n"));
+    // Terminate the last line. The manual tells users to set keys here by
+    // hand, and an unterminated file silently glues an appended key onto the
+    // previous one.
+    dusk::fs::writeStringToFile (file, dusk::text::joinIntoString (lines, "\n") + "\n");
 }
 } // namespace
 
@@ -172,6 +176,18 @@ bool getScanPluginsOnStartup()
 void setScanPluginsOnStartup (bool scan)
 {
     writeKey (kKeyScanOnStartup, scan ? "1" : "0");
+}
+
+bool getNotepadEnabled()
+{
+    const auto raw = readKey (kKeyNotepadEnabled);
+    if (raw.empty()) return true;
+    return isTruthy (raw);
+}
+
+void setNotepadEnabled (bool enabled)
+{
+    writeKey (kKeyNotepadEnabled, enabled ? "1" : "0");
 }
 
 bool getTapeStripExpandedDefault()

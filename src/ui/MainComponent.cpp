@@ -5465,6 +5465,12 @@ void MainComponent::toggleNotepad()
         return;
     }
 
+    if (! appconfig::getNotepadEnabled())
+    {
+        setStatusText ("Notepad is switched off in app-config.properties (notepad_enabled)");
+        return;
+    }
+
     if (notepadWindow == nullptr)
         notepadWindow = std::make_unique<NativeNotepadWindow>();
 
@@ -5544,7 +5550,10 @@ void MainComponent::toggleNotepad()
     {
         notepadDim.reset();
         notepadEditorHider.restore();
-        setStatusText ("Unable to embed session notepad with the current display backend");
+        const auto& why = notepadWindow->lastOpenFailure();
+        setStatusText (why.empty()
+                           ? "Unable to embed session notepad with the current display backend"
+                           : why.c_str());
     }
 #endif
 }
