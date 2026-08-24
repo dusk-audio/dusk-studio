@@ -395,7 +395,7 @@ private:
     // activeInsertMode = what we're currently running; insertMode = what
     // the UI wants. Mismatch triggers ramp-out / swap / ramp-in.
     int activeInsertMode = kInsertPlugin;
-    juce::SmoothedValue<float> activeInsertGain;
+    dusk::audio::SmoothedValue<float> activeInsertGain;
 
     std::vector<float> insertScratchL;
     std::vector<float> insertScratchR;

@@ -3,7 +3,7 @@ src/DuskStudioApp.h	7
 src/dsp/AuxLaneStrip.cpp	17
 src/dsp/AuxLaneStrip.h	23
 src/dsp/ChannelStrip.cpp	22
-src/dsp/ChannelStrip.h	30
+src/dsp/ChannelStrip.h	29
 src/dsp/MasteringChain.h	4
 src/engine/AudioEngine.cpp	86
 src/engine/AudioEngine.h	15
@@ -27,7 +27,7 @@ src/engine/PluginManager.h	29
 src/engine/PluginSlot.cpp	73
 src/engine/PluginSlot.h	40
 src/engine/RecordManager.cpp	3
-src/engine/RecordManager.h	3
+src/engine/RecordManager.h	2
 src/engine/device/DeviceManager.h	3
 src/engine/device/DeviceManagerJuce.cpp	44
 src/engine/hosting/NativePluginId.h	8
