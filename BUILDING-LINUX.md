@@ -59,11 +59,11 @@ Dusk Studio expects four sibling repositories alongside its own checkout:
 ├── dusk-studio/       (this repo)
 ├── JUCE-wayland/      (plugdata-team fork, branch: wayland-juce8)
 ├── plugins/           (Dusk Audio plugins, donor DSP)
-├── DPF/               (DISTRHO Plugin Framework — native notepad UI)
-└── DPF-Widgets/       (Dear ImGui layer for DPF)
+├── DAF/               (Dusk Audio Framework — native notepad UI)
+└── DAF-Widgets/       (Dear ImGui layer for DAF)
 ```
 
-CMake auto-discovers these. Override with `-DJUCE_PATH=...`, `-DDUSK_PLUGINS_PATH=...`, `-DDPF_PATH=...`, `-DDPF_WIDGETS_PATH=...` if you keep them elsewhere.
+CMake auto-discovers these. Override with `-DJUCE_PATH=...`, `-DDUSK_PLUGINS_PATH=...`, `-DDAF_PATH=...`, `-DDAF_WIDGETS_PATH=...` if you keep them elsewhere.
 
 ### Why the JUCE-wayland fork (Linux-only)
 
@@ -103,32 +103,32 @@ build and release workflows but is not on the donor repository's current
 
 If you also keep an upstream `JUCE/` sibling for cross-OS dev, CMake prefers `JUCE-wayland/` on Linux and falls back to `JUCE/` only if the fork isn't there.
 
-### The native notepad (DPF + Dear ImGui)
+### The native notepad (DAF + Dear ImGui)
 
-The session notepad is Dusk Studio's first native UI window: DPF/DGL for the OpenGL surface, DPF-Widgets for the Dear ImGui layer. Both come from Dusk-owned forks so an upstream rebase can't break a build.
+The session notepad is Dusk Studio's first native UI window: DAF/DGL for the OpenGL surface, DAF-Widgets for the Dear ImGui layer. Both come from Dusk-owned forks so an upstream rebase can't break a build.
 
 ```bash
 cd ~/projects
-git clone https://github.com/dusk-audio/DPF.git
-git -C DPF checkout f9fbc62af6fa7ce638a6f1e1482896c385a4955e
-git -C DPF submodule update --init
-git clone https://github.com/dusk-audio/DPF-Widgets.git
-git -C DPF-Widgets checkout 668de17f06abdeb98d5a4b62594bd634f8d1ac2e
+git clone https://github.com/dusk-audio/DAF.git
+git -C DAF checkout f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+git -C DAF submodule update --init
+git clone https://github.com/dusk-audio/DAF-Widgets.git
+git -C DAF-Widgets checkout 668de17f06abdeb98d5a4b62594bd634f8d1ac2e
 ```
 
-Clone then check out the SHA, rather than cloning a branch: DPF's pin is the tip of `fix/wayland-review-findings`, which was never merged to that fork's `main`. (DPF-Widgets' pin happens to be its `main` tip today, but pin it the same way.) Neither branch may be deleted upstream — a plain clone would stop reaching the commit, and CI fetches the same SHAs. Both checkouts end up on a detached HEAD, which is what you want here. The submodule step is not optional either: DGL pulls its windowing layer from `dgl/src/pugl-upstream`.
+Clone then check out the SHA, rather than cloning a branch: DAF's pin is the tip of `fix/wayland-review-findings`, which was never merged to that fork's `main`. (DAF-Widgets' pin happens to be its `main` tip today, but pin it the same way.) Neither branch may be deleted upstream — a plain clone would stop reaching the commit, and CI fetches the same SHAs. Both checkouts end up on a detached HEAD, which is what you want here. The submodule step is not optional either: DGL pulls its windowing layer from `dgl/src/pugl-upstream`.
 
 The pins live in [.github/actions/clone-dpf-stack/action.yml](.github/actions/clone-dpf-stack/action.yml), which is the single source of truth for every workflow — read them from there if it ever disagrees with the commands above.
 
 Missing either checkout, `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` defaults to **OFF** and configure says so once, quietly:
 
 ```
--- Native notepad: DPF / DPF-Widgets not found - disabled
+-- Native notepad: DAF / DAF-Widgets not found - disabled
 ```
 
 The rest of the app builds and runs normally, but opening the notepad reports *"Notepad unavailable: built without the native notepad UI"*. Passing `-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON` with a checkout missing turns that into a configure error instead of a silent downgrade.
 
-That OFF is sticky, because `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` is a **cached** CMake option — the one dependency here that a later reconfigure won't pick up on its own. Configure `build-linux/` before cloning DPF and cloning it afterwards changes nothing on the next configure, and the "not found" line stops printing too, so nothing hints that the notepad is still off. Either configure into a fresh build directory or force the cache, keeping the rest of the flags from [Configure + build](#configure--build) below:
+That OFF is sticky, because `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` is a **cached** CMake option — the one dependency here that a later reconfigure won't pick up on its own. Configure `build-linux/` before cloning DAF and cloning it afterwards changes nothing on the next configure, and the "not found" line stops printing too, so nothing hints that the notepad is still off. Either configure into a fresh build directory or force the cache, keeping the rest of the flags from [Configure + build](#configure--build) below:
 
 ```bash
 cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release \
@@ -178,8 +178,8 @@ cmake --build build-linux-debug -j6
 cmake -S . -B build-linux \
   -DJUCE_PATH=/some/other/JUCE \
   -DDUSK_PLUGINS_PATH=/some/other/plugins \
-  -DDPF_PATH=/some/other/DPF \
-  -DDPF_WIDGETS_PATH=/some/other/DPF-Widgets
+  -DDAF_PATH=/some/other/DAF \
+  -DDAF_WIDGETS_PATH=/some/other/DAF-Widgets
 ```
 
 ## Tests

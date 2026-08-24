@@ -393,31 +393,74 @@ else()
         "the plugins repo to ../plugins (sibling directory).")
 endif()
 
+# Resolves a framework checkout into <outVar>, or leaves it empty when none is
+# present. EXPLICIT names -D variables in preference order; the first one set
+# wins, and if what it points at is not a checkout that is a hard error rather
+# than a silent fall back to a sibling. SEARCH names directories relative to the
+# source tree, tried in order. MARKER is the file that identifies a checkout.
+function(duskstudio_resolve_framework_dir outVar)
+    cmake_parse_arguments(ARG "" "MARKER;LABEL" "EXPLICIT;SEARCH" ${ARGN})
+
+    foreach(pathVar IN LISTS ARG_EXPLICIT)
+        if(DEFINED ${pathVar})
+            if(NOT EXISTS "${${pathVar}}/${ARG_MARKER}")
+                message(FATAL_ERROR
+                    "${pathVar}=${${pathVar}} has no ${ARG_MARKER} - it is not a "
+                    "${ARG_LABEL} checkout.")
+            endif()
+            set(${outVar} "${${pathVar}}" PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+
+    foreach(candidate IN LISTS ARG_SEARCH)
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${candidate}/${ARG_MARKER}")
+            set(${outVar} "${CMAKE_CURRENT_SOURCE_DIR}/${candidate}" PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+
+    set(${outVar} "" PARENT_SCOPE)
+endfunction()
+
 # Native first-party UI surface for the session notepad. The editor is built on
-# the same DPF/DGL + Dear ImGui stack selected for the final GUI tower, so the
+# the same DAF/DGL + Dear ImGui stack selected for the final GUI tower, so the
 # feature does not add another JUCE widget that would need to be ported later.
-# During development, explicit paths win over sibling checkouts; the external/
-# fallbacks are the eventual pinned release dependencies.
+#
+# The framework is Dusk's own hard fork, renamed from DPF to DAF (Dusk Audio
+# Framework). DAF_PATH and DAF_WIDGETS_PATH are the spellings to use; the DPF
+# ones still resolve, and retire once every checkout and CI image has moved.
+#
+# Resolution order per checkout: an explicit path wins, then a sibling clone,
+# then the vendored external/ copy, and at each rung the DAF name is tried
+# before the DPF one. An explicit path that is not a checkout is a hard error
+# rather than a silent fall-through to a sibling.
+duskstudio_resolve_framework_dir(DUSKSTUDIO_DAF_SOURCE_DIR
+    MARKER   CMakeLists.txt
+    LABEL    DAF
+    EXPLICIT DAF_PATH DPF_PATH
+    SEARCH   ../DAF ../DPF external/DAF external/DPF)
+duskstudio_resolve_framework_dir(DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR
+    MARKER   opengl/DearImGui.hpp
+    LABEL    DAF-Widgets
+    EXPLICIT DAF_WIDGETS_PATH DPF_WIDGETS_PATH
+    SEARCH   ../DAF-Widgets ../DPF-Widgets external/DAF-Widgets external/DPF-Widgets)
+
 # OFF drops the notepad window (DUSKSTUDIO_HAS_NATIVE_NOTEPAD guards its call
-# sites) so a configure without the DPF checkouts - a test-only tree, say - is
-# still possible. The default follows the checkouts, same as the native LV2
-# host follows its dev libs: a machine without DPF still configures, while an
+# sites) so a configure without the framework checkouts - a test-only tree, say
+# - is still possible. The default follows the checkouts, same as the native LV2
+# host follows its dev libs: a machine without them still configures, while an
 # EXPLICIT -DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON with them missing (what CI
-# effectively exercises by passing DPF_PATH) stays a configure error.
+# effectively exercises by passing DAF_PATH) stays a configure error.
 set(DUSKSTUDIO_NOTEPAD_DEPS_FOUND OFF)
-if((DEFINED DPF_PATH
-    OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../DPF/CMakeLists.txt"
-    OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/DPF/CMakeLists.txt")
-   AND (DEFINED DPF_WIDGETS_PATH
-    OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../DPF-Widgets/opengl/DearImGui.hpp"
-    OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/DPF-Widgets/opengl/DearImGui.hpp"))
+if(DUSKSTUDIO_DAF_SOURCE_DIR AND DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR)
     set(DUSKSTUDIO_NOTEPAD_DEPS_FOUND ON)
 endif()
 option(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD
-       "Build the native DPF/DGL + Dear ImGui session notepad window"
+       "Build the native DAF/DGL + Dear ImGui session notepad window"
        ${DUSKSTUDIO_NOTEPAD_DEPS_FOUND})
 if(NOT DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD AND NOT DUSKSTUDIO_NOTEPAD_DEPS_FOUND)
-    message(STATUS "Native notepad: DPF / DPF-Widgets not found - disabled")
+    message(STATUS "Native notepad: DAF / DAF-Widgets not found - disabled")
 endif()
 
 if(WIN32)
@@ -437,48 +480,26 @@ if(WIN32)
 endif()
 
 if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
-    if(DEFINED DPF_PATH)
-        if(NOT EXISTS "${DPF_PATH}/CMakeLists.txt")
-            message(FATAL_ERROR
-                "DPF_PATH=${DPF_PATH} has no CMakeLists.txt - it is not a DPF checkout.")
-        endif()
-        set(DUSKSTUDIO_DPF_SOURCE_DIR "${DPF_PATH}")
-    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../DPF/CMakeLists.txt")
-        set(DUSKSTUDIO_DPF_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../DPF")
-    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/DPF/CMakeLists.txt")
-        set(DUSKSTUDIO_DPF_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/DPF")
-    else()
+    if(NOT DUSKSTUDIO_DAF_SOURCE_DIR)
         message(FATAL_ERROR
-            "DPF is required for the native notepad UI. Set -DDPF_PATH=/path/to/DPF, "
-            "clone it to ../DPF, initialise external/DPF, or configure with "
+            "DAF is required for the native notepad UI. Set -DDAF_PATH=/path/to/DAF, "
+            "clone it to ../DAF, initialise external/DAF, or configure with "
+            "-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=OFF.")
+    endif()
+    if(NOT DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR)
+        message(FATAL_ERROR
+            "DAF-Widgets is required for the native notepad UI. Set "
+            "-DDAF_WIDGETS_PATH=/path/to/DAF-Widgets, clone it to ../DAF-Widgets, "
+            "initialise external/DAF-Widgets, or configure with "
             "-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=OFF.")
     endif()
 
-    if(DEFINED DPF_WIDGETS_PATH)
-        if(NOT EXISTS "${DPF_WIDGETS_PATH}/opengl/DearImGui.hpp")
-            message(FATAL_ERROR
-                "DPF_WIDGETS_PATH=${DPF_WIDGETS_PATH} has no opengl/DearImGui.hpp - "
-                "it is not a DPF-Widgets checkout.")
-        endif()
-        set(DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR "${DPF_WIDGETS_PATH}")
-    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../DPF-Widgets/opengl/DearImGui.hpp")
-        set(DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../DPF-Widgets")
-    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/DPF-Widgets/opengl/DearImGui.hpp")
-        set(DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/DPF-Widgets")
-    else()
-        message(FATAL_ERROR
-            "DPF-Widgets is required for the native notepad UI. Set "
-            "-DDPF_WIDGETS_PATH=/path/to/DPF-Widgets, clone it to ../DPF-Widgets, "
-            "initialise external/DPF-Widgets, or configure with "
-            "-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=OFF.")
-    endif()
-
-    message(STATUS "Using DPF from: ${DUSKSTUDIO_DPF_SOURCE_DIR}")
-    message(STATUS "Using DPF-Widgets from: ${DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR}")
+    message(STATUS "Using DAF from: ${DUSKSTUDIO_DAF_SOURCE_DIR}")
+    message(STATUS "Using DAF-Widgets from: ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}")
 
     # The namespace holding DGL's built-in font moved with the fork's DPF -> DAF rename.
     # Read the spelling out of the checkout instead of guessing it from the path.
-    file(READ "${DUSKSTUDIO_DPF_SOURCE_DIR}/dgl/src/Resources.hpp" DUSKSTUDIO_DGL_RESOURCES_HPP)
+    file(READ "${DUSKSTUDIO_DAF_SOURCE_DIR}/dgl/src/Resources.hpp" DUSKSTUDIO_DGL_RESOURCES_HPP)
     if(DUSKSTUDIO_DGL_RESOURCES_HPP MATCHES "namespace[ \t]+daf_resources")
         set(DUSKSTUDIO_DGL_RESOURCES_NS daf_resources)
     else()
@@ -493,8 +514,8 @@ if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
     set(DPF_EXAMPLES OFF CACHE BOOL "Build DPF examples" FORCE)
     set(DAF_LIBRARIES OFF CACHE BOOL "Build DAF's complete library set" FORCE)
     set(DAF_EXAMPLES OFF CACHE BOOL "Build DAF examples" FORCE)
-    add_subdirectory("${DUSKSTUDIO_DPF_SOURCE_DIR}"
-                     "${CMAKE_CURRENT_BINARY_DIR}/DPF" EXCLUDE_FROM_ALL)
+    add_subdirectory("${DUSKSTUDIO_DAF_SOURCE_DIR}"
+                     "${CMAKE_CURRENT_BINARY_DIR}/DAF" EXCLUDE_FROM_ALL)
     if(COMMAND daf__add_dgl_opengl3)
         daf__add_dgl_opengl3(TRUE FALSE FALSE)
     else()
@@ -510,14 +531,14 @@ if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
         src/ui/NotepadEditorCore.cpp
         src/ui/NotepadEditor.cpp
         src/ui/NativeNotepadWindow.cpp
-        "${DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp")
+        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp")
     target_include_directories(dusk_notepad_ui PRIVATE
-        "${DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR}/opengl")
+        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl")
     target_compile_definitions(dusk_notepad_ui PRIVATE
         DUSKSTUDIO_DGL_RESOURCES=${DUSKSTUDIO_DGL_RESOURCES_NS})
 
     if(MSVC)
-        # Windows' GL header and opengl32 stop at OpenGL 1.1, and DPF-Widgets hands Dear
+        # Windows' GL header and opengl32 stop at OpenGL 1.1, and DAF-Widgets hands Dear
         # ImGui's OpenGL3 backend a "custom loader" (DGL's OpenGL.hpp) that carries GL 3.x
         # prototypes on Linux and macOS only - so DearImGui.cpp does not compile here at
         # all. Force-include a loader that resolves those entry points through
@@ -527,7 +548,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
         target_sources(dusk_notepad_ui PRIVATE src/ui/ImGuiGlLoaderWin32.cpp)
         target_include_directories(dusk_notepad_ui PRIVATE src/ui)
         set_source_files_properties(
-            "${DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp"
+            "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp"
             PROPERTIES COMPILE_OPTIONS "/FIImGuiGlLoaderWin32.h")
     endif()
 
@@ -550,13 +571,13 @@ if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
         add_executable(dusk-gui-spike
             tools/gui-spike/GuiSpikeMain.cpp
             tools/gui-spike/ChannelStripView.cpp
-            "${DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp")
+            "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp")
         target_include_directories(dusk-gui-spike PRIVATE
-            "${DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR}/opengl")
+            "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl")
         target_compile_definitions(dusk-gui-spike PRIVATE
             DUSKSTUDIO_DGL_RESOURCES=${DUSKSTUDIO_DGL_RESOURCES_NS})
         if(MSVC)
-            # Same GL 3.x loader the notepad needs, for the same reason: DPF-Widgets hands
+            # Same GL 3.x loader the notepad needs, for the same reason: DAF-Widgets hands
             # Dear ImGui a custom loader that only carries those prototypes off Windows.
             target_sources(dusk-gui-spike PRIVATE src/ui/ImGuiGlLoaderWin32.cpp)
             target_include_directories(dusk-gui-spike PRIVATE src/ui)

@@ -1,37 +1,42 @@
-name: Clone DPF stack (dusk-audio forks, pinned)
+name: Clone DAF stack (dusk-audio forks, pinned)
 description: >
-  Pinned DPF + DPF-Widgets checkouts into RUNNER_TEMP for the native notepad
-  UI. DPF/DGL + Dear ImGui back that UI, so the root configure hard-requires
+  Pinned DAF + DAF-Widgets checkouts into RUNNER_TEMP for the native notepad
+  UI. DAF/DGL + Dear ImGui back that UI, so the root configure hard-requires
   both checkouts. Pinned to Dusk-owned forks for the same reason JUCE is: a
   third-party rebase must not be able to break a build. The submodule pull
   brings in dgl/src/pugl-upstream from dusk-audio/pugl (the pinned rev's
   .gitmodules already points there). The pins below are the single source of
   truth for every workflow.
 
+  The framework was renamed from DPF to DAF (Dusk Audio Framework) and the
+  repositories moved with it. The checkout directories and this action's own
+  directory name still say DPF because every workflow names them; they move in
+  the mechanical rename pass, not here.
+
 runs:
   using: composite
   steps:
-    - name: Clone pinned DPF + DPF-Widgets
+    - name: Clone pinned DAF + DAF-Widgets
       shell: bash
       env:
-        DPF_REPO: https://github.com/dusk-audio/DPF.git
-        DPF_REV: f9fbc62af6fa7ce638a6f1e1482896c385a4955e
-        DPF_WIDGETS_REPO: https://github.com/dusk-audio/DPF-Widgets.git
-        DPF_WIDGETS_REV: 668de17f06abdeb98d5a4b62594bd634f8d1ac2e
+        DAF_REPO: https://github.com/dusk-audio/DAF.git
+        DAF_REV: f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+        DAF_WIDGETS_REPO: https://github.com/dusk-audio/DAF-Widgets.git
+        DAF_WIDGETS_REV: 668de17f06abdeb98d5a4b62594bd634f8d1ac2e
       run: |
         set -euo pipefail
         git init -q "${RUNNER_TEMP}/DPF"
         cd "${RUNNER_TEMP}/DPF"
-        git remote add origin "${DPF_REPO}"
-        git fetch --depth 1 origin "${DPF_REV}"
-        git checkout -q "${DPF_REV}"
-        [[ "$(git rev-parse HEAD)" == "${DPF_REV}" ]] || {
-          echo "ERROR: DPF checkout $(git rev-parse HEAD) != pinned ${DPF_REV}" >&2; exit 1; }
+        git remote add origin "${DAF_REPO}"
+        git fetch --depth 1 origin "${DAF_REV}"
+        git checkout -q "${DAF_REV}"
+        [[ "$(git rev-parse HEAD)" == "${DAF_REV}" ]] || {
+          echo "ERROR: DAF checkout $(git rev-parse HEAD) != pinned ${DAF_REV}" >&2; exit 1; }
         git submodule update --init --depth 1
         git init -q "${RUNNER_TEMP}/DPF-Widgets"
         cd "${RUNNER_TEMP}/DPF-Widgets"
-        git remote add origin "${DPF_WIDGETS_REPO}"
-        git fetch --depth 1 origin "${DPF_WIDGETS_REV}"
-        git checkout -q "${DPF_WIDGETS_REV}"
-        [[ "$(git rev-parse HEAD)" == "${DPF_WIDGETS_REV}" ]] || {
-          echo "ERROR: DPF-Widgets checkout $(git rev-parse HEAD) != pinned ${DPF_WIDGETS_REV}" >&2; exit 1; }
+        git remote add origin "${DAF_WIDGETS_REPO}"
+        git fetch --depth 1 origin "${DAF_WIDGETS_REV}"
+        git checkout -q "${DAF_WIDGETS_REV}"
+        [[ "$(git rev-parse HEAD)" == "${DAF_WIDGETS_REV}" ]] || {
+          echo "ERROR: DAF-Widgets checkout $(git rev-parse HEAD) != pinned ${DAF_WIDGETS_REV}" >&2; exit 1; }
