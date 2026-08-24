@@ -15,7 +15,7 @@ src/engine/DpAligner.h	3
 src/engine/DpImporter.cpp	41
 src/engine/DpImporter.h	6
 src/engine/DuskStudioPlayHead.h	4
-src/engine/FileImporter.cpp	9
+src/engine/FileImporter.cpp	5
 src/engine/FileImporter.h	4
 src/engine/JuceCompat.h	5
 src/engine/MasteringPlayer.cpp	2

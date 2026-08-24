@@ -198,6 +198,7 @@ target_sources(dusk-studio-tests PRIVATE
     foundation_int_delay_line.cpp
     foundation_spsc_index_fifo.cpp
     foundation_lagrange_interpolator.cpp
+    foundation_windowed_sinc_interpolator.cpp
     foundation_midi_buffer.cpp
     foundation_midi_note_name.cpp
     foundation_planar_buffer.cpp
