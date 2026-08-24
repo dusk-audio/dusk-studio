@@ -555,6 +555,12 @@ if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
             "${DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR}/opengl")
         target_compile_definitions(dusk-gui-spike PRIVATE
             DUSKSTUDIO_DGL_RESOURCES=${DUSKSTUDIO_DGL_RESOURCES_NS})
+        if(MSVC)
+            # Same GL 3.x loader the notepad needs, for the same reason: DPF-Widgets hands
+            # Dear ImGui a custom loader that only carries those prototypes off Windows.
+            target_sources(dusk-gui-spike PRIVATE src/ui/ImGuiGlLoaderWin32.cpp)
+            target_include_directories(dusk-gui-spike PRIVATE src/ui)
+        endif()
         target_link_libraries(dusk-gui-spike PRIVATE
             dgl-opengl3
             dgl-opengl3-definitions

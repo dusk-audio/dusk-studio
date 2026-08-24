@@ -90,7 +90,9 @@ top of `main`:
 3. A new commit adding `DGL_BACKEND` (§1.4).
 
 Validated on this box: `dusk_notepad_ui` and the whole `DuskStudio` target build
-clean against the result, and the spike runs on it.
+clean against the result, and the spike runs on it. The prepared branch is
+`dusk/301-reconcile` in the framework clone at `/home/marc/projects/DPF`; it has
+never been pushed, so it has to be recreated or transplanted before the PR.
 
 ### 1.3 What the app has to change to consume `main`
 
@@ -200,15 +202,15 @@ Three levers, in the order they should be tried:
    segments each because `ImDrawList` has no radial gradient; a small
    pre-rendered dome texture tinted per band would collapse it to four vertices.
 
-Lever 3 alone is worth measuring first: at 39 widgets per strip, the knobs are
-the bulk of the 25,690 vertices.
+Lever 3 alone is worth measuring first: a strip carries 21 knobs at roughly 600
+vertices each, so the domes are about half of its 25,690.
 
 ### 2.3 Everything else the spike exercised
 
 | Property | Result |
 |---|---|
 | Native Wayland, no X11 in the loop | Confirmed. Links `wayland-client`/`-egl`/`-cursor`; `DGL_BACKEND=wayland` reports "Wayland (requested)" |
-| Resize | 20 programmatic resizes over 12 s at 8 strips: 60 fps held, worst frame 23.3 ms, no stall or crash |
+| Resize | 19 programmatic resizes over 12 s at 8 strips: 60 fps held, worst frame 23.3 ms, no stall or crash |
 | Scale | Rendering at an application scale of 2.0 reflows correctly and costs the same 5.0% |
 | Renderer and context lifetime | Four full window create/destroy cycles then a measured run: renderer identical each time, no leak, no failed realize |
 | Knob drag, wheel, double-click reset | Pass |
@@ -457,6 +459,11 @@ Owed to Marc's bench, and not inferable from this gate:
 - **Decoration behaviour on GNOME.** Row 13 above is read from the source; confirm on
   the desktop before committing to CSD.
 - **Second GPU / Intel path.** All numbers are from the discrete Vega M.
+- **macOS and Windows compiles of the spike.** Only Linux was available. The
+  spike has no platform code beyond a `getrusage` block that compiles out
+  elsewhere, and its CMake carries the same MSVC GL 3.x loader the notepad
+  needs, but neither has been built. If the shell's portability is in question
+  before G5, build `dusk-gui-spike` on both.
 - **The accessibility decision** (§3, row 9), which is Marc's call and gates G3.
 
 ## 7. Naming
