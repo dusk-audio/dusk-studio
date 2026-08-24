@@ -283,11 +283,12 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
     {
         stopTimer();
         destroyEmbeddedWindow();
-        // Teardown can beat the first event-pump tick, so the marker armed by
-        // open() would outlive a notepad that never had anything wrong with
-        // it. Orderly destruction clears it; a driver that failed the pump
-        // keeps it, which is the case the next launch has to know about.
-        if (! graphicsFailed)
+        // Teardown can beat the first event-pump tick, so a marker this open()
+        // armed would outlive a notepad that never had anything wrong with it.
+        // Only the run that armed the marker may clear it: one left by an
+        // earlier run is the refusal the next launch has to see, and a driver
+        // that failed the pump has earned the one it left.
+        if (armedMarker && ! graphicsFailed)
             probe.disarm();
     }
 
@@ -303,9 +304,10 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
                const std::string& markdown,
                bool sessionExists, bool unsavedChanges)
     {
-        // Cleared before the first return so the reason never outlives the
-        // attempt it describes.
+        // Cleared before the first return so neither outlives the attempt it
+        // describes.
         lastFailure.clear();
+        armedMarker = false;
         stopTimer();
         destroyEmbeddedWindow();
         if (nativeParent == 0 || geometry.width < 2 || geometry.height < 2)
@@ -409,6 +411,7 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
             }
             window->focus();
             probe.arm (renderer);
+            armedMarker = true;
         }
         catch (const std::exception& error)
         {
@@ -1076,6 +1079,7 @@ private:
     notepad::FirstFrameProbe probe { firstFrameMarkerPath() };
     bool firstFrameConfirmed = false;
     bool graphicsFailed = false;
+    bool armedMarker = false;
     EmbeddedApplication app;
     std::unique_ptr<DGL::Window> window;
     std::unique_ptr<EditorWidget> editorWidget;
