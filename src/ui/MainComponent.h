@@ -377,14 +377,16 @@ private:
     // Embedded modal so it appears centered on the main UI with a dim
     // backdrop. Both torn down together via dismissStartupDialog.
    #if DUSKSTUDIO_HAS_NATIVE_UI
+    // The decoded app icon, RGBA, kept alive for as long as the view can draw it.
+    // Declared ahead of the window so it outlives the view that points into it,
+    // which reverse-order destruction would otherwise reverse.
+    std::vector<unsigned char> startupBrandRgba;
+    int startupBrandWidth = 0;
+    int startupBrandHeight = 0;
     std::unique_ptr<imgui::DuskPanelWindow> startupWindow;
     // The window owns the view; this reaches it to raise the update banner when the
     // async tag check answers. Only read while the window is open.
     imgui::StartupView* startupView = nullptr;
-    // The decoded app icon, RGBA, kept alive for as long as the view can draw it.
-    std::vector<unsigned char> startupBrandRgba;
-    int startupBrandWidth = 0;
-    int startupBrandHeight = 0;
    #endif
     std::unique_ptr<class DimOverlay>    startupDim;
     // onDone runs AFTER the async teardown completes, so a caller can open the
