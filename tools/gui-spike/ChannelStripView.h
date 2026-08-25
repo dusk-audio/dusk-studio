@@ -43,6 +43,9 @@ public:
     void setEditingName (bool yes) noexcept { editingName = yes; }
     bool isEditingName() const noexcept { return editingName; }
 
+    // The shell hides the pointer for the duration of a knob drag, the way the JUCE strip does.
+    bool isDragging() const noexcept { return ! activeDrag.empty(); }
+
     // Read by the shell's overlay, so a run reports what the strip actually cost.
     int lastWidgetCount = 0;
 

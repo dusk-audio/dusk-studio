@@ -27,12 +27,6 @@
 # include "src/Resources.hpp"
 #endif
 
-// The framework fork renamed this namespace along with the rest of its public surface; the
-// configure reads the spelling out of the checkout so both sides of that rename compile.
-#ifndef DUSKSTUDIO_DGL_RESOURCES
-# define DUSKSTUDIO_DGL_RESOURCES dpf_resources
-#endif
-
 #include <algorithm>
 #include <cmath>
 #include <cstdarg>
@@ -246,8 +240,8 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
 
         io.Fonts->Clear();
         bodyFont = io.Fonts->AddFontFromMemoryTTF (
-            (void*) DUSKSTUDIO_DGL_RESOURCES::dejavusans_ttf,
-            DUSKSTUDIO_DGL_RESOURCES::dejavusans_ttf_size,
+            (void*) daf_resources::dejavusans_ttf,
+            daf_resources::dejavusans_ttf_size,
             size, &embeddedConfig, kDocumentGlyphRanges);
 
         boldFont = addPlatformFont (*io.Fonts, {

@@ -29,11 +29,20 @@ accessibility bridge in §3. None of them is a research problem.
 
 ## 1. Framework revision reconciliation
 
+**Landed.** The framework side is merged and the app is on it: `dusk-audio/DAF`
+`main` is `92c3d1a7` — the reconciled Wayland revision plus the
+application-contract fixes — with its pugl submodule at `43d8e349`, and
+`dusk-audio/DAF-Widgets` `main` is `77daa22`. G0 moved `DAF_REV` and
+`DAF_WIDGETS_REV` onto both. One action is left and it is Marc's: **delete the
+branch `fix/wayland-review-findings` in `dusk-audio/DAF`**, so no third line can
+accumulate. The rest of this section is the record of what was reconciled and
+why.
+
 ### 1.1 Where the two lines stand
 
-The app pins `DAF_REV=f9fbc62a` (`.github/actions/clone-dpf-stack/action.yml`),
-which is the tip of the framework branch `fix/wayland-review-findings`. That
-commit is **not** an ancestor of the framework's `main`, which is the line the
+The app pinned `DAF_REV=f9fbc62a` (`.github/actions/clone-dpf-stack/action.yml`),
+the tip of the framework branch `fix/wayland-review-findings`. That commit is
+**not** an ancestor of the framework's `main`, which is the line the
 Dusk plug-ins follow. Both descend from `a9b033c2`.
 
 | | Commits since `a9b033c2` | Carries |
@@ -41,9 +50,11 @@ Dusk plug-ins follow. Both descend from `a9b033c2`.
 | Pinned branch `f9fbc62a` | 3 | `Window::setEmbeddedOffset`, the Wayland lifecycle and scaling fixes, the pugl mirror pointer |
 | `main` | 31 | The DPF to DAF rename, a second round of Wayland lifetime fixes, AU and CLAP fixes, CI hardening, the pugl mirror pointer |
 
-The pugl submodule is pinned to `5e2621d7` on **both** sides, so the Wayland
-backend's own history is not divergent. All divergence is in the framework
-repository itself.
+Before the reconciliation the pugl submodule was pinned to `5e2621d7` on
+**both** sides, so the Wayland backend's own history was not divergent; all
+divergence was in the framework repository itself. (`43d8e349`, the landed pin
+recorded in §1, is where the `dusk/302-app-contract` work later moved the
+submodule.)
 
 **Nothing on the pinned branch is superseded by main, and nothing on main is
 superseded by the branch.** They are two independent rounds of work on the same
@@ -68,10 +79,9 @@ window to scale 1 for its whole life and the matching `onPuglConfigure` hook
 that propagates a live scale change never runs. Main is missing both halves of
 that mechanism.
 
-### 1.2 The proposed reconciled revision
+### 1.2 The reconciled revision
 
-Prepared and validated locally; the push and merge are Marc's. Three commits on
-top of `main`:
+Merged as three commits on top of `main`:
 
 1. Cherry-pick `f9fbc62a` (`setEmbeddedOffset`). Applies cleanly except for the
    two `DISTRHO_SAFE_ASSERT_RETURN` uses, which become `DAF_SAFE_ASSERT_RETURN`.
@@ -91,17 +101,15 @@ top of `main`:
      explains why.
 3. A new commit adding `DGL_BACKEND` (§1.4).
 
-Validated on this box: `dusk_notepad_ui` and the whole `DuskStudio` target build
-clean against the result, and the spike runs on it. The prepared branch is
-`dusk/301-reconcile` in the framework clone at `/home/marc/projects/DAF`; it has
-never been pushed, so it has to be recreated or transplanted before the PR.
+`dusk_notepad_ui` and the whole `DuskStudio` target build clean against the
+result, and the spike runs on it.
 
-Stacked on top of it is `dusk/302-app-contract`, four commits closing §3 rows 5,
-6 and 8 and the framework half of §4.1 (issue #302). One of those commits only
-moves the pugl submodule, whose own two commits are on `dusk/302-app-contract`
-in `dusk-audio/pugl`. The ImGui bridge half of §4.1 and the fix for §4.4 are on
-`dusk/302-app-contract` in `dusk-audio/DAF-Widgets`. All three branches are
-local and validated here; §1.5 gives the order they have to be pushed in.
+Stacked on top of it was `dusk/302-app-contract`, four commits closing §3 rows
+5, 6 and 8 and the framework half of §4.1 (issue #302). One of those commits
+only moves the pugl submodule, whose own two commits merged in
+`dusk-audio/pugl`. The ImGui bridge half of §4.1 and the fix for §4.4 came the
+same way in `dusk-audio/DAF-Widgets`. Everything named here is now on the
+respective `main`.
 
 ### 1.3 What the app has to change to consume `main`
 
@@ -113,50 +121,61 @@ The rename is not cosmetic at the build interface. Three things move:
 | `dpf__add_dgl_opengl3()` | `daf__add_dgl_opengl3()` | root `CMakeLists.txt` |
 | `namespace dpf_resources` | `namespace daf_resources` | `src/ui/NativeNotepadWindow.cpp` |
 
-Commit `39d19a6` on this branch makes all three accept either spelling, so the
-tree configures against the current pin and against the reconciled revision.
-When the pin moves, that dual handling collapses to the DAF spelling and the
-`DUSKSTUDIO_DGL_RESOURCES` macro goes away; it exists only to span the two live
-revisions.
+Commit `39d19a6` made all three accept either spelling so the tree configured
+against both live revisions. G0 retired that: the build speaks only DAF and the
+`DUSKSTUDIO_DGL_RESOURCES` macro is gone. `DPF_PATH` / `DPF_WIDGETS_PATH` and
+the `../DPF` search rungs stay until the mechanical rename pass (§7), because
+the workflows still name them.
 
-### 1.4 The backend is chosen by accident today
+### 1.4 Choosing the backend
 
 `daf__add_dgl_system_libs` selects X11 whenever the X11 development files are
-installed, and Wayland only when they are absent. There is no way to ask for
-Wayland. On a dual-stack developer box or CI image the failure is silent: the
+installed, and Wayland only when they are absent. Before `DGL_BACKEND` there was
+no way to ask for Wayland. On a dual-stack box or CI image that is silent: the
 build succeeds and the app runs, just against XWayland — which is precisely what
 the zero-XWayland policy for Dusk-owned surfaces forbids.
 
-Proposed commit 3 adds `DGL_BACKEND` with values `auto` (the old behaviour, and
-still the default), `x11` and `wayland`, and fails the configure when the
-requested backend's libraries are missing. Linux app and CI configures then pass
-`-DDGL_BACKEND=wayland` explicitly.
+Commit 3 added `DGL_BACKEND` with values `auto` (the old behaviour, and still
+the default), `x11` and `wayland`, and fails the configure when the requested
+backend's libraries are missing.
 
 Note the consequence for build layout: **the backend is a per-configure choice**,
 because one `dgl-opengl3` target serves every consumer in the tree. A build
 directory is X11 or Wayland, not both. The spike therefore lives in its own
 build directory rather than beside the app.
 
-### 1.5 Proposal to Marc
+**The app's own configures cannot take `wayland` yet, and G0 did not give it to
+them.** The vehicle every phase up to G5 uses is a framework child window placed
+inside the JUCE main window, and Wayland has no window embedding: pugl says so
+(`wayland.c`, "Wayland has no window embedding, ignoring parent"),
+`puglSetWindowPosition` answers `PUGL_UNSUPPORTED` there, and
+`NativeNotepadWindow` deliberately refuses the backend rather than let the
+notepad escape into a separate top-level. A `-DDGL_BACKEND=wayland` app build
+therefore ships a notepad that cannot open, which G0 is not allowed to do. The
+flag belongs to the spike's build directory today; the app's Linux configures
+take it at G5, in the same change that stops embedding and gives the shell its
+own decorations. `BUILDING-LINUX.md` documents the rule.
 
-- Push and merge in this order, because each step is what makes the next one
-  build:
-  1. `dusk/302-app-contract` in `dusk-audio/pugl`, or the submodule pointer the
-     DAF branch carries dangles for every clone including CI.
-  2. `dusk/301-reconcile` in `dusk-audio/DAF` (the three commits above), then the
-     `dusk/302-app-contract` branch stacked on it.
-  3. `dusk/302-app-contract` in `dusk-audio/DAF-Widgets`, which needs DAF's new
-     widget focus callback to compile.
-- Re-pin `DAF_REV` in `.github/actions/clone-dpf-stack/action.yml` to the merge
-  commit; that action is the single source of truth for every workflow, and it
-  already clones from `https://github.com/dusk-audio/DAF.git`.
-- Re-pin `DAF_WIDGETS_REV` to `main` of `dusk-audio/DAF-Widgets`, which is two
-  commits ahead of the current pin and carries the matching rename, plus the
-  bridge work above once it merges. There is no divergence there.
-- Delete the branch `fix/wayland-review-findings` once merged, so no third line
-  can accumulate.
-- Retire the dual-spelling handling in the app's `CMakeLists.txt` and
-  `NativeNotepadWindow.cpp` in the same PR that moves the pin.
+### 1.5 What was agreed, and what is left
+
+Done, in this order, because each step is what made the next one build:
+
+1. `dusk/302-app-contract` in `dusk-audio/pugl`, or the submodule pointer the
+   DAF branch carries would dangle for every clone including CI.
+2. `dusk/301-reconcile` in `dusk-audio/DAF` (the three commits above), then the
+   `dusk/302-app-contract` branch stacked on it.
+3. `dusk/302-app-contract` in `dusk-audio/DAF-Widgets`, which needs DAF's widget
+   focus callback to compile.
+4. `DAF_REV` and `DAF_WIDGETS_REV` re-pinned in
+   `.github/actions/clone-dpf-stack/action.yml`, the single source of truth for
+   every workflow, and the dual-spelling handling retired from the app's
+   `CMakeLists.txt` and `NativeNotepadWindow.cpp` in the same change.
+5. `LICENSES.txt` regenerated against the new revisions: both provenance stamps,
+   the pugl submodule rev, and the Wayland notice inventory, which gained the
+   xdg-foreign-unstable-v2 protocol pair.
+
+Left, and it is Marc's: **delete the branch `fix/wayland-review-findings` in
+`dusk-audio/DAF`**, so no third line can accumulate.
 
 ## 2. What the gate spike measured
 
@@ -397,15 +416,19 @@ Each phase ends with the app shipping.
 
 ### G0 — Framework alignment
 
-No user-visible change. Land §1: reconcile the framework revision, move
-`DAF_REV` and `DAF_WIDGETS_REV`, pass `-DDGL_BACKEND=wayland` on Linux app and
-CI configures, drop the dual-spelling handling.
+**Landed.** No user-visible change. `DAF_REV` and `DAF_WIDGETS_REV` moved to the
+reconciled revisions (§1), the dual-spelling handling is gone, `LICENSES.txt`
+carries the new provenance, and the spike's two validation commits are in the
+tree. `DGL_BACKEND` is documented in `BUILDING-LINUX.md` but **not** passed on
+any app configure: §1.4 says why, and G5 is where the app takes it.
 
-Owns: `CMakeLists.txt`, `.github/actions/clone-dpf-stack/action.yml`, the
-Linux workflows, `src/ui/NativeNotepadWindow.cpp`. Take the leftover mechanical
-renames in §7 here too if they are cheap.
-Gate movement: none. Verify: full build, ctest, notepad opens under Xvfb and
-under headless `mutter`.
+Owned: `CMakeLists.txt`, `.github/actions/clone-dpf-stack/action.yml`,
+`src/ui/NativeNotepadWindow.cpp`, `LICENSES.txt`, `BUILDING-LINUX.md`. The
+leftover mechanical renames in §7 stayed out: the checkout directories and
+`-DDPF_PATH` flags are named by 16 references across 8 workflow files, which is
+a pass of its own.
+Gate movement: none. Verified: full build, 787 tests, notepad opens under Xvfb,
+spike selftest 9 of 9 under headless `mutter`.
 
 ### G1 — Widget kit and theme
 
@@ -551,19 +574,20 @@ preferred CMake variables (`DAF_PATH`, `DAF_WIDGETS_PATH`), the sibling
 auto-detect (`../DAF` and `../DAF-Widgets` are tried first), the CI action's
 clone URLs and pin variables, and the contributor build instructions.
 
+Moved with the G0 pin, because a stale provenance record is a defect rather than
+a naming preference: `LICENSES.txt` now reads `dusk-audio/DAF rev <sha>`, and
+the `dpf__add_dgl_opengl3` and `dpf_resources` fallbacks are gone.
+
 Still mechanical, and deliberately left for a pass of its own rather than
-smuggled into a tower — do it in G0 if it is cheap, otherwise as a standalone PR:
+smuggled into a tower:
 
 - `.github/actions/clone-dpf-stack/` is still the action's directory name, and
   its `RUNNER_TEMP/DPF` checkout directories and the `-DDPF_PATH=` flags in the
   workflows still use the old spelling. All three are named by 16 references
   across 8 workflow files, which is why they did not move here.
-- `LICENSES.txt` records provenance as `dusk-audio/DPF rev <sha>`. It is
-  hand-maintained release-audit surface and has to be regenerated when the pin
-  moves anyway, so the repo name moves with the pin, not before it.
-- The `DPF_PATH` / `DPF_WIDGETS_PATH` fallbacks in the app's CMake, and the
-  `dpf__add_dgl_opengl3` and `dpf_resources` fallbacks, retire when the pin
-  lands on the reconciled revision (§1.5).
+- The `DPF_PATH` / `DPF_WIDGETS_PATH` variables and the `../DPF` search rungs in
+  the app's CMake stay until those workflow flags move, since they are what the
+  flags land on.
 
 Deliberately left saying DPF: the shipped changelog entries and the per-release
 handoff documents, which are records of what was true at a revision rather than
