@@ -150,9 +150,9 @@ class StartupViewImpl final : public StartupView
 {
 public:
     StartupViewImpl (std::vector<RecentSession> recentSessions, const unsigned char* brandRgba,
-                     int brandW, int brandH, StartupCallbacks cb)
+                     int brandW, int brandH, std::function<void()> downloads)
         : recents (std::move (recentSessions)), brandPixels (brandRgba),
-          brandWidth (brandW), brandHeight (brandH), callbacks (std::move (cb))
+          brandWidth (brandW), brandHeight (brandH), openDownloads (std::move (downloads))
     {
         // The newest session is selected on open so Enter or Open works without an
         // extra click.
@@ -184,10 +184,12 @@ public:
 
     bool takeDismissRequest() override
     {
-        const bool wanted = dismissRequested;
-        dismissRequested = false;
+        const bool wanted = action != StartupAction::none;
         return wanted;
     }
+
+    StartupAction chosenAction() const override { return action; }
+    const std::string& chosenPath() const override { return path; }
 
     void draw (dw::Context& ctx, ImVec2 origin, ImVec2 size) override
     {
@@ -232,10 +234,10 @@ private:
         drawTab (ctx, "##tab-recent", ImVec2 (left, y), width, "RECENT", true);
         y += scale * kTabH;
         if (drawTab (ctx, "##tab-open", ImVec2 (left, y), width, "OPEN", false))
-            act (callbacks.openFile);
+            action = StartupAction::openFile;
         y += scale * kTabH;
         if (drawTab (ctx, "##tab-new", ImVec2 (left, y), width, "NEW", false))
-            act (callbacks.newSession);
+            action = StartupAction::newSession;
     }
 
     bool drawTab (dw::Context& ctx, const char* id, ImVec2 at, float width,
@@ -289,7 +291,7 @@ private:
         if (dw::textButton (ctx, "##quit",
                             ImVec2 (right - scale * kFooterButtonW, buttonTop),
                             ImVec2 (right, buttonBottom), "Quit", false, quit).clicked)
-            act (callbacks.quit);
+            action = StartupAction::quit;
     }
 
     void drawMain (dw::Context& ctx, ImVec2 tl, ImVec2 br)
@@ -334,8 +336,8 @@ private:
         const bool lit = blinks >= kMaxBlinks || flashOn;
 
         if (dw::hitArea (ctx, "##update-banner", at, br)
-            && ImGui::IsMouseClicked (ImGuiMouseButton_Left))
-            act (callbacks.openDownloads);
+            && ImGui::IsMouseClicked (ImGuiMouseButton_Left) && openDownloads)
+            openDownloads();
 
         dw::text (ctx, ctx.fonts->band, scale * 12.0f,
                   ImVec2 (at.x, at.y + scale * 5.0f), width,
@@ -433,7 +435,7 @@ private:
 
         if (ImGui::IsKeyPressed (ImGuiKey_Escape, false))
         {
-            act (callbacks.skip);
+            action = StartupAction::skip;
             return;
         }
         if (ImGui::IsKeyPressed (ImGuiKey_Enter, false)
@@ -455,34 +457,24 @@ private:
     {
         if (selectedRow < 0 || selectedRow >= static_cast<int> (recents.size()))
             return;
-        const auto path = recents[static_cast<std::size_t> (selectedRow)].path;
-        if (callbacks.openRecent)
-            callbacks.openRecent (path);
-        dismissRequested = true;
-    }
-
-    // Every action dismisses. The host's callback may tear the panel down from
-    // under this frame, so the flag is raised rather than the window closed here.
-    void act (const std::function<void()>& callback)
-    {
-        if (callback)
-            callback();
-        dismissRequested = true;
+        path = recents[static_cast<std::size_t> (selectedRow)].path;
+        action = StartupAction::openRecent;
     }
 
     std::vector<RecentSession> recents;
     const unsigned char* brandPixels = nullptr;
     int brandWidth = 0;
     int brandHeight = 0;
-    StartupCallbacks callbacks;
+    std::function<void()> openDownloads;
     AtlasImage brand;
     std::string updateBanner;
+    std::string path;
+    StartupAction action = StartupAction::none;
     int selectedRow = -1;
     int scrollRow = 0;
     int blinkFrames = 0;
     int blinks = kMaxBlinks;
     bool flashOn = true;
-    bool dismissRequested = false;
 };
 } // namespace
 
@@ -505,10 +497,10 @@ std::vector<RecentSession> scanRecentSessions (const std::vector<std::filesystem
 std::unique_ptr<StartupView> makeStartupView (std::vector<RecentSession> recents,
                                               const unsigned char* brandRgba,
                                               int brandWidth, int brandHeight,
-                                              StartupCallbacks callbacks)
+                                              std::function<void()> openDownloads)
 {
     return std::unique_ptr<StartupView> (
         new StartupViewImpl (std::move (recents), brandRgba, brandWidth, brandHeight,
-                             std::move (callbacks)));
+                             std::move (openDownloads)));
 }
 } // namespace duskstudio::imgui

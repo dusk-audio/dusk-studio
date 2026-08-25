@@ -2342,7 +2342,10 @@ bool MainComponent::openStartupPanel (bool demoRecents)
     imgui::DuskPanelWindow::Callbacks callbacks;
     // Only the dialog's own actions dismiss it. A stray click on the DAW behind
     // must not: losing the picker mid-choice cost a user their work once already.
-    callbacks.dismissed = [this] { dismissStartupDialog(); };
+    // The choice runs from dismissStartupDialog's follow-up, once the framework
+    // child is down - a file chooser opened while it is still mapped lands behind
+    // it, invisible and holding focus.
+    callbacks.dismissed = [this] { runStartupChoice(); };
     callbacks.closed = [this]
     {
         startupView = nullptr;
@@ -2365,34 +2368,17 @@ bool MainComponent::openStartupPanel (bool demoRecents)
     };
     startupWindow->setCallbacks (std::move (callbacks));
 
-    imgui::StartupCallbacks actions;
-    actions.openRecent = [this] (const std::string& path)
-    {
-        loadSessionFromJson (juce::File (path).getChildFile ("session.json"));
-    };
-    actions.newSession = [this] { newSessionPrompt(); };
-    actions.openFile = [this] { openFromFilePrompt(); };
-    actions.skip = [] {};   // the bootstrap default dir stays
-    actions.quit = [this]
-    {
-        startupQuitRequested = true;
-        if (auto* app = juce::JUCEApplicationBase::getInstance())
-            app->systemRequestedQuit();
-    };
-    // Dusk-owned so the destination can change without an app update; the
-    // artifacts behind it are supporter-gated, so no direct URL exists.
-    actions.openDownloads = []
-    {
-        juce::URL ("https://builds.duskaudio.com/latest").launchInDefaultBrowser();
-    };
-
     loadStartupBrandImage();
     auto recents = demoRecents ? demoStartupRecents()
                                : imgui::scanRecentSessions (RecentSessions::load());
+    // The downloads page is Dusk-owned so the destination can change without an app
+    // update, and the artifacts behind it are supporter-gated, so no direct URL
+    // exists. It is the one banner action that leaves the dialog up.
     auto view = imgui::makeStartupView (
         std::move (recents),
         startupBrandRgba.empty() ? nullptr : startupBrandRgba.data(),
-        startupBrandWidth, startupBrandHeight, std::move (actions));
+        startupBrandWidth, startupBrandHeight,
+        [] { juce::URL ("https://builds.duskaudio.com/latest").launchInDefaultBrowser(); });
     startupView = view.get();
     startupWindow->setView (std::unique_ptr<imgui::DuskPanelView> (view.release()));
 
@@ -2428,6 +2414,44 @@ bool MainComponent::openStartupPanel (bool demoRecents)
             self->startupView->setUpdateAvailable (tag.toStdString());
         });
     return true;
+   #endif
+}
+
+void MainComponent::runStartupChoice()
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    const auto action = startupView != nullptr ? startupView->chosenAction()
+                                               : imgui::StartupAction::skip;
+    const auto path = startupView != nullptr ? startupView->chosenPath() : std::string();
+
+    if (action == imgui::StartupAction::quit)
+    {
+        startupQuitRequested = true;
+        dismissStartupDialog();
+        if (auto* app = juce::JUCEApplicationBase::getInstance())
+            app->systemRequestedQuit();
+        return;
+    }
+
+    juce::Component::SafePointer<MainComponent> safeThis (this);
+    dismissStartupDialog ([safeThis, action, path]
+    {
+        auto* const self = safeThis.getComponent();
+        if (self == nullptr)
+            return;
+        switch (action)
+        {
+            case imgui::StartupAction::openRecent:
+                self->loadSessionFromJson (juce::File (path).getChildFile ("session.json"));
+                break;
+            case imgui::StartupAction::newSession: self->newSessionPrompt(); break;
+            case imgui::StartupAction::openFile:   self->openFromFilePrompt(); break;
+            case imgui::StartupAction::skip:
+            case imgui::StartupAction::quit:
+            case imgui::StartupAction::none:
+                break;   // the bootstrap default dir stays
+        }
+    });
    #endif
 }
 

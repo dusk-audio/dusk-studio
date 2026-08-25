@@ -394,6 +394,9 @@ private:
     // Decodes the app icon into startupBrandRgba once; the panel draws it from the
     // font atlas, which the framework side cannot fill from a PNG on its own.
     void loadStartupBrandImage();
+    // Reads what the startup panel was dismissed with and runs it once the panel is
+    // down. Called from the panel's dismissed callback, while its view is alive.
+    void runStartupChoice();
     // demoRecents fills the table with three fixed names for the manual's figure,
     // where the real list is whatever the capture machine happens to have.
     bool openStartupPanel (bool demoRecents);

@@ -24,15 +24,17 @@ struct RecentSession
 // header is the only way to fill those columns without a running engine.
 std::vector<RecentSession> scanRecentSessions (const std::vector<std::filesystem::path>& paths);
 
-// Every action is a callback; the view holds no session state.
-struct StartupCallbacks
+// What the user picked. Every one of these dismisses the dialog, and the host runs
+// the choice only once the panel is down: a file chooser opened while the framework
+// child is still mapped would land behind it.
+enum class StartupAction
 {
-    std::function<void (const std::string& path)> openRecent;
-    std::function<void()> newSession;
-    std::function<void()> openFile;
-    std::function<void()> skip;
-    std::function<void()> quit;
-    std::function<void()> openDownloads;
+    none,
+    openRecent,
+    newSession,
+    openFile,
+    skip,
+    quit
 };
 
 // The launch dialog: the wordmark and the Recent / Open / New nav down the left, the
@@ -43,12 +45,18 @@ public:
     // Shows the update banner above the table heading. Called when the async tag
     // check finds a release newer than this build.
     virtual void setUpdateAvailable (const std::string& tagName) = 0;
+
+    // Read from the dismissed callback, while the view is still alive.
+    virtual StartupAction chosenAction() const = 0;
+    virtual const std::string& chosenPath() const = 0;
 };
 
 // `brandRgba` is the decoded app icon, width * height * 4 bytes, and must outlive the
 // view: the framework side has no image reader, so the host decodes it.
+// `openDownloads` is the one action that does not dismiss: the update banner hands
+// the viewer to a browser and leaves the dialog where it was.
 std::unique_ptr<StartupView> makeStartupView (std::vector<RecentSession> recents,
                                               const unsigned char* brandRgba,
                                               int brandWidth, int brandHeight,
-                                              StartupCallbacks callbacks);
+                                              std::function<void()> openDownloads);
 } // namespace duskstudio::imgui
