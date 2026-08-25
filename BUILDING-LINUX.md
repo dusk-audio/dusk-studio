@@ -110,15 +110,26 @@ The session notepad is Dusk Studio's first native UI window: DAF/DGL for the Ope
 ```bash
 cd ~/projects
 git clone https://github.com/dusk-audio/DAF.git
-git -C DAF checkout f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+git -C DAF checkout 92c3d1a75450e8b8eaf963efe875f5742c7a1c84
 git -C DAF submodule update --init
 git clone https://github.com/dusk-audio/DAF-Widgets.git
-git -C DAF-Widgets checkout 668de17f06abdeb98d5a4b62594bd634f8d1ac2e
+git -C DAF-Widgets checkout 77daa2256582ef5e707b6fa8ca27bb757afd8de0
 ```
 
-Clone then check out the SHA, rather than cloning a branch: DAF's pin is the tip of `fix/wayland-review-findings`, which was never merged to that fork's `main`. (DAF-Widgets' pin happens to be its `main` tip today, but pin it the same way.) Neither branch may be deleted upstream — a plain clone would stop reaching the commit, and CI fetches the same SHAs. Both checkouts end up on a detached HEAD, which is what you want here. The submodule step is not optional either: DGL pulls its windowing layer from `dgl/src/pugl-upstream`.
+Clone then check out the SHA, rather than building whatever `main` points at today: both pins are on their fork's `main`, but a branch tip moves and CI fetches these exact SHAs. Both checkouts end up on a detached HEAD, which is what you want here. The submodule step is not optional either: DGL pulls its windowing layer from `dgl/src/pugl-upstream`.
 
 The pins live in [.github/actions/clone-dpf-stack/action.yml](.github/actions/clone-dpf-stack/action.yml), which is the single source of truth for every workflow — read them from there if it ever disagrees with the commands above.
+
+#### Windowing backend
+
+DGL picks X11 or Wayland at configure time, and `-DDGL_BACKEND=` decides which: `auto` (the default) takes X11 whenever the X11 development files are installed and Wayland only when they are absent, `x11` and `wayland` ask for one and fail the configure if its development files are missing. Because one `dgl-opengl3` target serves every consumer in the tree, this is a property of the whole build directory: it is X11 or Wayland, not both.
+
+Leave it at `auto` for the app. The notepad is a native child window placed inside the JUCE main window, and Wayland has no window embedding — a `-DDGL_BACKEND=wayland` build of the app therefore refuses to open the notepad, reporting *Unable to embed session notepad with the current display backend*. The flag is there for the GUI tower's own build directories, which run standalone framework windows on a real Wayland session:
+
+```bash
+cmake -S . -B build-spike -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DDUSKSTUDIO_BUILD_GUI_SPIKE=ON -DDGL_BACKEND=wayland
+```
 
 Missing either checkout, `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` defaults to **OFF** and configure says so once, quietly:
 
