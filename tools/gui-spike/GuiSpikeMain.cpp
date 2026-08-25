@@ -220,6 +220,8 @@ public:
         const int h = options.height > 0 ? options.height
                     : static_cast<int> ((duskspike::layout::kMinStripHeight + 20.0f) * scale);
         setSize (static_cast<uint> (w), static_cast<uint> (h));
+        requestedWidth = w;
+        requestedHeight = h;
 
         strips.resize (static_cast<std::size_t> (std::max (1, options.strips)));
         views.resize (strips.size());
@@ -262,6 +264,17 @@ public:
     int repaintsSkipped() const noexcept { return skippedRepaints; }
     bool captureMatched() const noexcept { return compareOk; }
     bool captureCompared() const noexcept { return compared; }
+    bool captureWritten() const noexcept { return captured; }
+    // A window the display could not grant means the frame is clipped, and every
+    // count taken off it is short. Measurements have to say so rather than read
+    // like the whole console.
+    bool sizeWasGranted() const noexcept
+    {
+        return static_cast<int> (getWidth()) >= requestedWidth
+            && static_cast<int> (getHeight()) >= requestedHeight;
+    }
+    int requestedW() const noexcept { return requestedWidth; }
+    int requestedH() const noexcept { return requestedHeight; }
 
     // What a file dialog opened through xdg-desktop-portal would be parented to.
     std::string portalHandle() const { return Window::getPortalParentHandle(); }
@@ -315,9 +328,12 @@ protected:
                          static_cast<std::size_t> (image.width) * 3,
                          image.rgb.data() + static_cast<std::size_t> (row) * image.width * 3);
 
-        if (writePpm (options.capturePath, image))
+        captured = writePpm (options.capturePath, image);
+        if (captured)
             std::printf ("[spike] captured frame %d to %s (%dx%d)\n", frames,
                          options.capturePath.c_str(), image.width, image.height);
+        else
+            std::fprintf (stderr, "[spike] could not write %s\n", options.capturePath.c_str());
 
         if (options.comparePath.empty())
             return;
@@ -683,6 +699,9 @@ private:
     bool liveInteraction = false;
     bool compareOk = true;
     bool compared = false;
+    bool captured = false;
+    int requestedWidth = 0;
+    int requestedHeight = 0;
 
     bool measuring = true;
     int selftestStep = 0;
@@ -706,7 +725,18 @@ int main (int argc, char* argv[])
     for (int i = 1; i < argc; ++i)
     {
         const std::string a = argv[i];
-        auto next = [&] () -> const char* { return i + 1 < argc ? argv[++i] : "0"; };
+        // A flag that wants a value and is handed the next flag instead would take it as
+        // zero and swallow it, so the run would measure something nobody asked for.
+        bool missingValue = false;
+        auto next = [&] () -> const char*
+        {
+            if (i + 1 >= argc || std::string (argv[i + 1]).rfind ("--", 0) == 0)
+            {
+                missingValue = true;
+                return "0";
+            }
+            return argv[++i];
+        };
 
         if      (a == "--seconds") opts.seconds = std::atof (next());
         else if (a == "--strips")  opts.strips = std::atoi (next());
@@ -737,6 +767,20 @@ int main (int argc, char* argv[])
                          "                      [--full-rate] [--vector-knobs]\n"
                          "                      [--glyph-report]\n");
             return 0;
+        }
+        else
+        {
+            // Everything this tool prints is a number that ends up in a design
+            // document, so a misspelled flag has to stop the run rather than
+            // quietly measure something else.
+            std::fprintf (stderr, "unknown option: %s\n", a.c_str());
+            return 2;
+        }
+
+        if (missingValue)
+        {
+            std::fprintf (stderr, "%s needs a value\n", a.c_str());
+            return 2;
         }
     }
 
@@ -795,6 +839,12 @@ int main (int argc, char* argv[])
 
     std::printf ("[spike] frames=%zu wall=%.2fs mean=%.3fms p50=%.3fms p95=%.3fms worst=%.3fms\n",
                  d.size(), wall, sum / static_cast<double> (d.size()), p50, p95, worst);
+    std::printf ("[spike] window=%dx%d requested=%dx%d\n",
+                 (int) window.getWidth(), (int) window.getHeight(),
+                 window.requestedW(), window.requestedH());
+    if (! window.sizeWasGranted())
+        std::fprintf (stderr, "[spike] WARNING: the display clipped the window, so the vertex "
+                              "and cost figures below cover only the visible strips\n");
     std::printf ("[spike] effective fps=%.1f  cpu=%.2fs (%.1f%% of one core)  verts/frame=%d  strips=%d\n",
                  static_cast<double> (d.size()) / std::max (1.0e-6, wall),
                  cpu, 100.0 * cpu / std::max (1.0e-6, wall),
@@ -816,6 +866,20 @@ int main (int argc, char* argv[])
             ++failures;
     }
 
+    // A capture or a compare that never happened must not read as a pass: the
+    // frame the run was asked for is the only thing that makes either verdict
+    // mean anything.
+    if (! opts.capturePath.empty() && ! window.captureWritten())
+    {
+        std::fprintf (stderr, "[spike] frame %d was never captured\n", opts.captureFrame);
+        return 3;
+    }
+    if (! opts.comparePath.empty() && ! window.captureCompared())
+    {
+        std::fprintf (stderr, "[spike] frame %d was never compared against %s\n",
+                      opts.captureFrame, opts.comparePath.c_str());
+        return 3;
+    }
     if (window.captureCompared() && ! window.captureMatched())
         return 3;
     return failures == 0 ? 0 : 2;
