@@ -28,7 +28,7 @@ runs:
         DAF_REPO: https://github.com/dusk-audio/DAF.git
         DAF_REV: 92c3d1a75450e8b8eaf963efe875f5742c7a1c84
         DAF_WIDGETS_REPO: https://github.com/dusk-audio/DAF-Widgets.git
-        DAF_WIDGETS_REV: 77daa2256582ef5e707b6fa8ca27bb757afd8de0
+        DAF_WIDGETS_REV: b55ea3dcd64b85f04c241d0a8e9b9547b5185ca2
       run: |
         set -euo pipefail
         git init -q "${RUNNER_TEMP}/DPF"
