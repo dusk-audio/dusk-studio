@@ -166,12 +166,15 @@ Dusk Audio plugins (donor DSP cores)
     - TapeMachine  (full tape emulation)
     - shared/AnalogEmulation (TubeEmulation, TransformerEmulation, etc.)
 
-sfizz (SFZ / SoundFont sampler engine — powers the multisample instrument)
-  Version  : 1.2.3, submodule rev
-             31b23c260b43815c36af48afc504261726146a3a
+dusk-fizz (SFZ / SoundFont sampler engine — powers the multisample instrument)
+  Version  : 1.2.3 lineage, submodule rev
+             034c2af42c69bd5cfbc1249955b8760873bc111c
   License  : BSD-2-Clause (external/sfizz/LICENSE)
   Path     : external/sfizz/ (git submodule, built as a static library)
-  Upstream : https://github.com/sfztools/sfizz
+  Fork home: https://github.com/dusk-audio/dusk-fizz (Dusk-maintained hard
+             fork; the code keeps its upstream sfizz names and namespaces)
+  Upstream : https://github.com/sfztools/sfizz (archived by its owner
+             2026-06-21, read-only)
   Notes    : Built library-only — JACK / render / LV2 / VST3 / AU / demos /
              tests / devtools are all disabled, so their dependencies are not
              compiled in. The sub-components below ship vendored inside sfizz
