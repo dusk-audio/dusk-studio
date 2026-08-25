@@ -146,6 +146,17 @@ cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON
 ```
 
+#### Windowing backend
+
+DGL picks X11 or Wayland at configure time, and `-DDGL_BACKEND=` decides which: `auto` (the default) takes X11 whenever the X11 development files are installed and Wayland only when they are absent, `x11` and `wayland` ask for one and fail the configure if its development files are missing. Because one `dgl-opengl3` target serves every consumer in the tree, this is a property of the whole build directory: it is X11 or Wayland, not both.
+
+Leave it at `auto` for the app. The notepad is a native child window placed inside the JUCE main window, and Wayland has no window embedding — a `-DDGL_BACKEND=wayland` build of the app therefore refuses to open the notepad, reporting *Unable to embed session notepad with the current display backend*. The flag is there for the GUI tower's own build directories, which run standalone framework windows on a real Wayland session:
+
+```bash
+cmake -S . -B build-spike -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DDUSKSTUDIO_BUILD_GUI_SPIKE=ON -DDGL_BACKEND=wayland
+```
+
 ## Configure + build
 
 From the Dusk Studio directory:
