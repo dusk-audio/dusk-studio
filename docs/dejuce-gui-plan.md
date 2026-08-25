@@ -180,7 +180,10 @@ Left, and it is Marc's: **delete the branch `fix/wayland-review-findings` in
 ## 2. What the gate spike measured
 
 Source: `tools/gui-spike/`. Off by default behind `DUSKSTUDIO_BUILD_GUI_SPIKE`.
-Zero JUCE, links no part of the app.
+Zero JUCE. Since G1 it is the widget kit's harness rather than a standalone
+sketch: it draws its strip through `DuskWidgets` and links exactly one app file,
+the JUCE-free `src/ui/imgui/DuskTheme.cpp`, so what it measures and captures is
+the palette the app ships.
 
 ```
 cmake -S . -B build-spike -G Ninja -DCMAKE_BUILD_TYPE=Release \
@@ -248,6 +251,37 @@ Three levers, in the order they should be tried:
 
 Lever 3 alone is worth measuring first: a strip carries 21 knobs at roughly 600
 vertices each, so the domes are about half of its 25,690.
+
+**Settled in G1, with numbers.** Lever 3 was measured first and it decided the
+question. The dome is now three tinted quads read out of the font atlas
+(`DuskWidgets::KnobAtlas`): a body multiplied by the knob's own colour, with its
+rim and drop shadow baked in as black because black survives that multiplication,
+a white sheen, and the pointer ticks. Only the pointer is still drawn per frame,
+because it turns. That took the full console from 606,096 vertices a frame to
+59,868, and from 45.6% of a core to 7.5%. Lever 2 followed as a rule in the
+window's idle tick rather than a per-strip one - an immediate-mode frame is
+rebuilt whole, so the granularity actually available is the window, and the
+console is a 30 Hz picture unless a control is under the pointer - taking 24
+strips to 5.2%. **Lever 1 was not implemented.** Caching a strip's draw list
+buys a memcpy over a rebuild of 2,500 vertices, and costs a retained list per
+strip plus an invalidation rule per parameter; the budget it would defend is
+already an eighth of what the gate measured. The kit keeps the shape that makes
+it possible later - `meterBackground()` and `meterBar()` are separate calls, so a
+view that does cache can keep the well and its segment grid and redraw only the
+bar - and G3 revisits it only if a view turns out heavier than the console.
+
+Same machine, same method, ten second runs:
+
+| Strips | gate baseline | baked domes, 60 Hz | baked domes + 30 Hz idle | verts/frame |
+|---|---|---|---|---|
+| 1 | 4.7% | 3.0% | 2.7% | 25,690 -> 2,930 |
+| 8 | 18.3% | 4.4% | 3.0% | 205,492 -> 23,412 |
+| 24 | 45.6% | 7.5% | 5.2% | 606,096 -> 59,868 |
+
+`--vector-knobs` is the control: it puts the strip back on the drawn dome and
+reproduces the gate's own numbers (46.0% at 24 strips), so what the table shows is
+the dome and not the port. The worst frame fell with the mean - 33.8 ms to 19.9 ms
+at 24 strips - because the spikes were the vertex buffer growing.
 
 ### 2.3 Everything else the spike exercised
 
@@ -384,6 +418,15 @@ global shortcut layer needs its own routing rule — the spike uses "no text fie
 open and no item active" — and the tower should settle that rule once, in the
 widget kit, rather than per view.
 
+**Settled in G1**, as `DuskWidgets::shortcutsAvailable()`: an application may take a
+key when no text field is open, no item is active, and no modal is up. The first
+clause is the kit's own - a view that submits a `textField()` raises a flag on the
+frame's context, so the rule already holds on the frame the field appears, before
+ImGui has made it the active item. The third is what `IsAnyItemActive()` misses on
+its own: a modal that is up owns the keyboard even when nothing inside it is being
+edited. Views ask the kit rather than deciding for themselves; the spike's selftest
+carries a case for a shortcut withheld while the strip name is being typed.
+
 ### 4.3 The font atlas is a fixed glyph set
 
 ImGui bakes glyphs at atlas build time. The default range is Latin, which
@@ -391,6 +434,33 @@ silently dropped the fader's infinity mark; the JUCE UI gets it free from the
 system font. Every non-Latin mark the UI uses has to be declared. Track name
 entry is worse: a user typing in any non-Latin script gets nothing. Decide in
 G1 whether to bake a wide range, or to load glyphs on demand.
+
+**Settled in G1: named marks on the faces a view draws with, one wide face for text
+entry.** `DuskWidgets::consoleGlyphRanges()` names what the widgets actually draw -
+Latin-1, which carries the phase and degree marks, plus the infinity mark, the
+dashes and quotes, arrows, triangles and the accidentals - and every drawing face is
+baked from it. `textEntryGlyphRanges()` adds Greek, Cyrillic, Hebrew, Arabic,
+Devanagari, currency, CJK punctuation and kana, and is baked once, for the single
+face `textField()` uses. A new mark goes into the first list, where every face picks
+it up. Nothing loads glyphs on demand: rebuilding an atlas mid-run means
+re-uploading the texture from inside a frame, for a cost the table below does not
+justify.
+
+Measured with `dusk-gui-spike --glyph-report` across the eight faces a console
+needs, from DejaVu Sans, the framework's embedded fallback:
+
+| Policy | atlas at scale 1 | at scale 2 | glyphs | build |
+|---|---|---|---|---|
+| named marks, every face | 512x1024, 2 MB | 1024x2048, 8 MB | 1,848 | 9 ms |
+| named marks + wide text entry (shipped) | 1024x1024, 4 MB | 2048x2048, 16 MB | 3,723 | 19 ms |
+| wide on every face | 2048x2048, 16 MB | 4096x4096, 64 MB | 16,848 | 92 ms |
+| whole Unicode blocks, every face | 2048x2048, 16 MB | 4096x4096, 64 MB | 11,704 | 63 ms |
+
+The wide half of the shipped policy is what makes a non-Latin track name typable at
+all, and it doubles a 2 MB atlas. Baking it on every face quadruples that again, for
+glyphs no drawing face can ever show. The last row is what the spike's first cut
+cost by naming whole Unicode blocks instead of marks: the same texture as the wide
+bake, for a third fewer glyphs.
 
 ### 4.4 `ImGuiWidget<StandaloneWindow>` did not call `done()`
 
@@ -432,17 +502,44 @@ spike selftest 9 of 9 under headless `mutter`.
 
 ### G1 — Widget kit and theme
 
-No user-visible change. Promote the spike's drawing layer into a real module in
-DAF-Widgets that the app and the first-party plug-in UIs both consume: theme
-tokens from `DuskStudioLookAndFeel`, the SSL knob, the fader, the segmented
-meter, the GR strip, the module pill, buttons, the value bubble and the text
-field. Settle the
-shortcut routing rule (§4.2), the glyph strategy (§4.3), and the draw-list
-caching from §2.2 here, before anything depends on them. §4.1 and §4.4 are
-already fixed in the framework and arrive with the G0 repin.
+**Landed.** No user-visible change. The spike's drawing layer is a module in
+DAF-Widgets that the app and the first-party plug-in UIs both consume:
+`opengl/DuskWidgets.{hpp,cpp}` carries the SSL knob and its baked dome, the
+full-travel fader with its dB gutter, the segmented meter, the gain-reduction
+column, the module pill, buttons, the drag value bubble and the text field, plus
+the pieces a view needs around them - the skewed `Range`, the meter ballistics,
+the shared value formatting, the font builder and the glyph sets. It depends on
+Dear ImGui alone, not on DGL, and builds under C++11 so a plug-in UI can take it.
+Values go in and come back out: no widget writes through a pointer, so the caller
+decides whether a parameter lives in an atomic, a host parameter or a plain
+float. `tests/duskwidgets` in that repo is a gallery of the whole set.
 
-New app-side files, all JUCE-free: `src/ui/imgui/DuskImGuiHost.{h,cpp}`, the
-embedded-window lifecycle lifted out of `NativeNotepadWindow`.
+App-side, all JUCE-free:
+
+- `src/ui/imgui/DuskTheme.{h,cpp}` — the console palette as the kit's theme
+  tokens plus the accents the kit has no opinion about. The values are
+  `DuskStudioLookAndFeel`'s, written out rather than read from it: reading the
+  look-and-feel would couple a new file to JUCE for a table of colours, and the
+  gate would gain a file. Each value names the constant it came from.
+- `src/ui/imgui/DuskImGuiHost.{h,cpp}` — the embedded-window lifecycle lifted out
+  of `NativeNotepadWindow`: create the child over the host window, refuse a
+  display that cannot carry it, pump the framework's loop on a message-thread
+  timer, survive a driver that fails inside that pump, and tear the child down
+  over the two ticks the platform needs to unmap it. A view is now the widget the
+  caller builds in `createWidget`; everything around it belongs to the host.
+- `src/ui/imgui/FirstFrameProbe.h` — the first-frame guard, moved out of
+  `NotepadFirstFrameProbe.h` because it guards a window rather than the notepad.
+  Its marker format string is unchanged: an installed build's marker has to stay
+  readable by the next one.
+
+`NativeNotepadWindow` is the first consumer, rebased onto the host and 268 lines
+shorter, with the same user-facing failure text and the same deferred close.
+
+Landing order: the widget set has to be on `dusk-audio/DAF-Widgets` `main` before
+the app change merges, and `DAF_WIDGETS_REV` in
+`.github/actions/clone-dpf-stack/action.yml` has to name that commit rather than a
+branch tip. Every workflow clones that revision; a branch that is deleted after
+its merge would strand all of them.
 
 One trap in the API: `StandaloneWindow` inherits a `setCursor` from both of its
 bases, so app code has to name the window's, `Window::setCursor(...)`.
@@ -456,8 +553,23 @@ keeping migrates into DAF-Widgets, and it is not extended in place. Do not fork 
 second knob in `src/ui/`, and do not add to `shared-dpf/ui/` — a widget that only
 Dusk Studio needs still belongs in DAF-Widgets if a plug-in could ever want it.
 
-Gate movement: none. Verify: golden-image tests against captured frames, plus
-`NativeNotepadWindow` rebased onto `DuskImGuiHost` as the first consumer.
+Gate movement: none — 178 files, 9,050 uses, unchanged. Verified: full app build
+with no new warnings; 807 Catch2 cases green, eight of them a new headless
+`imgui_widget_kit` suite that draws a whole strip with no window, no GL and no
+compositor and asserts what the draw list contains, the baked dome against the
+drawn one included; the notepad opens under Xvfb through the new host; spike
+selftest 11 of 11 under headless `mutter` (the gate's nine plus the value bubble
+and the withheld shortcut); the §2.2 and §4.3 measurements above.
+
+Golden frames: `tools/gui-spike/golden-frames.sh capture|compare <dir>` captures
+five variants - a strip, that strip at scale 2, a bank of eight, the modal, the
+context menu - under a private headless compositor and diffs a later run against
+them channel by channel; `--static` freezes the meters so the frame is the same
+every run. On one machine it is exact: repeat runs differ by zero in every
+channel. That is why the goldens are captured on the spot rather than committed -
+a different GPU or driver renders the same draw list to slightly different pixels,
+so a committed set would be a per-machine expectation dressed up as a repository
+one. The invariant that does belong in CI went into the headless suite instead.
 
 ### G2 — Dialogs and panels
 
@@ -532,8 +644,9 @@ Per phase, non-negotiable:
 - `tools/juce-gate.sh` passes, and every file the phase claims is gone from
   `tools/juce-allowlist.txt`. Files leave and never rejoin.
 - Golden-image capture under headless `mutter`, diffed against the JUCE render of
-  the same view. The spike's `--capture` shows the mechanism; G1 should
-  generalise it.
+  the same view. `tools/gui-spike/golden-frames.sh` is the mechanism from G1
+  onwards: capture before the change, compare after, and read the per-machine
+  caveat in G1 before treating a mismatch as a defect.
 - A live-Wayland pass on Marc's desktop for every view the phase touches. The
   standing rule that the app binary only runs under Xvfb applies to the JUCE
   build; a framework-native build has to be run on a real compositor, and
