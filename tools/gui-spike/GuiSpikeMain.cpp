@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <utility>
 #include <vector>
 
 #if defined (__unix__)
@@ -107,9 +108,6 @@ public:
         }
 
         buildFonts (scale);
-        reportGraphics();
-
-        done();
     }
 
     ~SpikeWindow() override
@@ -131,6 +129,11 @@ protected:
     // only point where a readback is the frame the compositor is about to show.
     void onDisplay() override
     {
+        // The widget kit releases the scoped graphics context at the end of its constructor,
+        // so the first frame is the earliest point where GL can be asked what it is.
+        if (renderer.empty())
+            reportGraphics();
+
         DGL::ImGuiStandaloneWindow::onDisplay();
 
         if (options.capturePath.empty() || frames != options.captureFrame)
@@ -172,6 +175,12 @@ protected:
 
     bool onCharacterInput (const DGL::Widget::CharacterInputEvent& e) override
     { ++textEvents; return DGL::ImGuiStandaloneWindow::onCharacterInput (e); }
+
+    void onFocusChanged (const DGL::Widget::FocusEvent& e) override
+    {
+        if (e.focus) ++focusInEvents; else ++focusOutEvents;
+        DGL::ImGuiStandaloneWindow::onFocusChanged (e);
+    }
 
     void onImGuiDisplay() override
     {
@@ -233,11 +242,24 @@ protected:
 
         vertices = dl->VtxBuffer.Size;
 
+        // Hide the pointer for the length of a knob drag, the idiom every DAW knob uses.
+        bool dragging = false;
+        for (const auto& v : views)
+            dragging = dragging || v.isDragging();
+
+        if (dragging != pointerHidden)
+        {
+            pointerHidden = dragging;
+            // Both bases carry a setCursor, so the window's has to be named.
+            cursorCalls += Window::setCursor (dragging ? DGL::kMouseCursorNone
+                                                       : DGL::kMouseCursorArrow) ? 1 : 0;
+        }
+
         // Keyboard: the shell owns the shortcuts a view would not, so a key press proves it
         // reaches the application and not only the focused text field.
         // Not gated on io.WantCaptureKeyboard: the widgets library forces keyboard nav on,
-        // which pins that flag true, and the ImGui bridge never reports window focus, so it
-        // says nothing about whether the application may take the key.
+        // which pins that flag true, so it says nothing about whether the application may
+        // take the key.
         if (! views[0].isEditingName() && ! ImGui::IsAnyItemActive())
         {
             auto& p = *strips[0];
@@ -253,9 +275,15 @@ protected:
                 application.quit();
         }
 
-        if (firstResult.openInsertMenu || (options.demo == 2 && frames == 30))
+        // A popup id is derived from the id stack of the window that is current when it is
+        // opened, so both halves have to happen inside this window: the selftest runs before
+        // the console is begun and can only ask for a popup, never open one itself.
+        if (firstResult.openInsertMenu || std::exchange (requestInsertMenu, false)
+            || (options.demo == 2 && frames == 30))
             ImGui::OpenPopup ("##insertMenu");
-        if (ImGui::BeginPopup ("##insertMenu"))
+
+        insertMenuUp = ImGui::BeginPopup ("##insertMenu");
+        if (insertMenuUp)
         {
             ImGui::TextDisabled ("Insert slot");
             ImGui::Separator();
@@ -266,9 +294,10 @@ protected:
             ImGui::EndPopup();
         }
 
-        if (firstResult.openIoModal || (options.demo == 1 && frames == 30))
+        if (firstResult.openIoModal || std::exchange (requestIoModal, false)
+            || (options.demo == 1 && frames == 30))
             ImGui::OpenPopup ("Channel input");
-        drawIoModal (w, h, scale);
+        ioModalUp = drawIoModal (w, h, scale);
 
         drawHud (w, scale);
 
@@ -279,6 +308,7 @@ protected:
 
 public:
     int pointerEvents = 0, keyEvents = 0, textEvents = 0;
+    int focusInEvents = 0, focusOutEvents = 0, cursorCalls = 0;
     std::vector<std::string> selftestLog;
 
 private:
@@ -330,8 +360,8 @@ private:
                                                  && p.name.find ('Z') != std::string::npos); break;
 
             case 64: io.AddMousePosEvent (2.0f, 2.0f); io.AddMouseButtonEvent (0, false); break;
-            case 66: ImGui::OpenPopup ("Channel input"); break;
-            case 70: note ("modal is open", ImGui::IsPopupOpen ("Channel input")); break;
+            case 66: requestIoModal = true; break;
+            case 70: note ("modal is open", ioModalUp); break;
             // What has to hold for an embedded modal: the strip underneath stops taking
             // the pointer while it is up.
             case 72: io.AddMousePosEvent (hfGain.x, hfGain.y); break;
@@ -341,21 +371,30 @@ private:
             case 80: note ("modal blocks the strip underneath",
                            std::fabs (p.hfGainDb.load() - selftestBefore) < 0.01f); break;
 
-            case 84: ImGui::OpenPopup ("##insertMenu"); break;
-            case 88: note ("context menu is open", ImGui::IsPopupOpen ("##insertMenu")); break;
-            case 92: application.quit(); break;
+            case 84: requestInsertMenu = true; break;
+            case 88: note ("context menu is open", insertMenuUp); break;
+
+            // A key held while the window loses the focus must not stay down. The compositor
+            // this runs under has no seat, so the focus change is delivered through the
+            // framework's own callback rather than through a real one.
+            case 90: io.AddKeyEvent (ImGuiKey_M, true); break;
+            case 92: keyWasHeld = ImGui::IsKeyDown (ImGuiKey_M);
+                     onFocusChanged (DGL::Widget::FocusEvent()); break;
+            case 94: note ("focus loss clears a held key",
+                           keyWasHeld && ! ImGui::IsKeyDown (ImGuiKey_M)); break;
+            case 96: application.quit(); break;
             default: break;
         }
     }
 
-    void drawIoModal (float w, float h, float scale)
+    bool drawIoModal (float w, float h, float scale)
     {
         ImGui::SetNextWindowPos (ImVec2 (w * 0.5f, h * 0.5f), ImGuiCond_Always, ImVec2 (0.5f, 0.5f));
         ImGui::SetNextWindowSize (ImVec2 (290.0f * scale, 0.0f));
 
         if (! ImGui::BeginPopupModal ("Channel input", nullptr,
                                       ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove))
-            return;
+            return false;
 
         static const char* modes[] = { "Mono", "Stereo", "MIDI" };
         static const char* ins[]   = { "In 1", "In 2", "In 3", "In 4" };
@@ -368,6 +407,7 @@ private:
             ImGui::CloseCurrentPopup();
 
         ImGui::EndPopup();
+        return true;
     }
 
     void drawHud (float w, float scale)
@@ -449,10 +489,14 @@ private:
     std::string renderer;
     std::string menuChoice;
     int modeIndex = 0, inputIndex = 0, inputRIndex = 1;
+    bool requestIoModal = false, requestInsertMenu = false;
+    bool ioModalUp = false, insertMenuUp = false;
+    bool pointerHidden = false;
 
     bool measuring = true;
     int selftestStep = 0;
     float selftestBefore = 0.0f;
+    bool keyWasHeld = false;
     int frames = 0;
     int vertices = 0;
     std::chrono::steady_clock::time_point lastFrame {};
@@ -543,8 +587,10 @@ int main (int argc, char* argv[])
                  cpu, 100.0 * cpu / std::max (1.0e-6, wall),
                  window.lastVertices(), opts.strips);
     std::printf ("[spike] renderer=%s\n", window.rendererName().c_str());
-    std::printf ("[spike] input events: pointer=%d key=%d text=%d\n",
-                 window.pointerEvents, window.keyEvents, window.textEvents);
+    std::printf ("[spike] input events: pointer=%d key=%d text=%d focusIn=%d focusOut=%d\n",
+                 window.pointerEvents, window.keyEvents, window.textEvents,
+                 window.focusInEvents, window.focusOutEvents);
+    std::printf ("[spike] cursor changes accepted by the backend: %d\n", window.cursorCalls);
 
     int failures = 0;
     for (const auto& line : window.selftestLog)
