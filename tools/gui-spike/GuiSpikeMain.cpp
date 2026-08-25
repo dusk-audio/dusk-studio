@@ -280,8 +280,13 @@ protected:
 
         // A popup id is derived from the id stack of the window that is current when it is
         // opened, so both halves have to happen inside this window: the selftest runs before
-        // the console is begun and can only ask for a popup, never open one itself.
-        if (firstResult.openInsertMenu || std::exchange (requestInsertMenu, false)
+        // the console is begun and can only ask for a popup, never open one itself. Both
+        // requests are taken here rather than inside the conditions below, which would leave
+        // one of them set whenever the strip asks for the same popup on the same frame.
+        const bool insertMenuRequested = std::exchange (requestInsertMenu, false);
+        const bool ioModalRequested = std::exchange (requestIoModal, false);
+
+        if (firstResult.openInsertMenu || insertMenuRequested
             || (options.demo == 2 && frames == 30))
             ImGui::OpenPopup ("##insertMenu");
 
@@ -297,7 +302,7 @@ protected:
             ImGui::EndPopup();
         }
 
-        if (firstResult.openIoModal || std::exchange (requestIoModal, false)
+        if (firstResult.openIoModal || ioModalRequested
             || (options.demo == 1 && frames == 30))
             ImGui::OpenPopup ("Channel input");
         ioModalUp = drawIoModal (w, h, scale);
