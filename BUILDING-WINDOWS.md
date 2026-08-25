@@ -16,7 +16,7 @@ This document is aimed at a developer with a Windows machine who has been handed
    vcpkg install --triplet x64-windows-static
    ```
 
-   Manifest mode rejects per-package arguments: `vcpkg install libsndfile:x64-windows-static` errors out while `vcpkg.json` is present. Your vcpkg clone must also already contain the baseline commit, because vcpkg resolves it locally and will not fetch it; clones updated on or after 2026-08-01 have it, so `git pull` in the vcpkg clone first if yours is older. The packages land in `vcpkg_installed\x64-windows-static` under the checkout, so add `-DCMAKE_PREFIX_PATH=<repo-root>/vcpkg_installed/x64-windows-static` to the configure line, forward slashes as with the DPF paths below.
+   Manifest mode rejects per-package arguments: `vcpkg install libsndfile:x64-windows-static` errors out while `vcpkg.json` is present. Your vcpkg clone must also already contain the baseline commit, because vcpkg resolves it locally and will not fetch it; clones updated on or after 2026-08-01 have it, so `git pull` in the vcpkg clone first if yours is older. The packages land in `vcpkg_installed\x64-windows-static` under the checkout, so add `-DCMAKE_PREFIX_PATH=<repo-root>/vcpkg_installed/x64-windows-static` to the configure line, forward slashes as with the DAF paths below.
 4. **Steinberg ASIO SDK** — effectively required for the Visual Studio flow in this document, despite reading like an extra. A multi-config generator with Release among its configurations fails the configure without it ([CMakeLists.txt:694-701](CMakeLists.txt#L694-L701) and [:728-735](CMakeLists.txt#L728-L735)), which is exactly what `-G "Visual Studio 17 2022"` gives you: a shipping Windows binary must not silently come out WASAPI-only. Download from https://www.steinberg.net/asiosdk, accept the EULA, unzip somewhere stable, then pass `-DASIOSDK_PATH=C:/path/to/asiosdk` (its `common/` must contain `iasiodrv.h`). To skip the download on a first dev build, pass `-DDUSKSTUDIO_REQUIRE_ASIO=OFF` instead and accept WASAPI only.
 
 ## Repository layout
@@ -28,11 +28,11 @@ C:\dev\
 ├── dusk-studio\       (this repo)
 ├── JUCE\              (JUCE 8.0.x, the framework)
 ├── plugins\           (Dusk Audio plugins, donor DSP)
-├── DPF\               (DISTRHO Plugin Framework — native notepad UI)
-└── DPF-Widgets\       (Dear ImGui layer for DPF)
+├── DAF\               (Dusk Audio Framework — native notepad UI)
+└── DAF-Widgets\       (Dear ImGui layer for DAF)
 ```
 
-CMake auto-discovers these. If you put them elsewhere, pass `-DJUCE_PATH=...`, `-DDUSK_PLUGINS_PATH=...`, `-DDPF_PATH=...`, and `-DDPF_WIDGETS_PATH=...` at configure time.
+CMake auto-discovers these. If you put them elsewhere, pass `-DJUCE_PATH=...`, `-DDUSK_PLUGINS_PATH=...`, `-DDAF_PATH=...`, and `-DDAF_WIDGETS_PATH=...` at configure time.
 
 ### Clone everything
 
@@ -59,32 +59,32 @@ When that pin moves, update every workflow and this guide together.
 
 The Dusk Studio repo's own directory name (`dusk-studio\`) doesn't matter to the build, so rename it if you prefer.
 
-### The native notepad (DPF + Dear ImGui)
+### The native notepad (DAF + Dear ImGui)
 
-The session notepad is a native window built on DPF/DGL plus the Dear ImGui layer from DPF-Widgets, rather than a JUCE component. Both come from Dusk-owned forks pinned to the revisions CI builds:
+The session notepad is a native window built on DAF/DGL plus the Dear ImGui layer from DAF-Widgets, rather than a JUCE component. Both come from Dusk-owned forks pinned to the revisions CI builds:
 
 ```cmd
 cd C:\dev
-git clone https://github.com/dusk-audio/DPF.git
-git -C DPF checkout f9fbc62af6fa7ce638a6f1e1482896c385a4955e
-git -C DPF submodule update --init
-git clone https://github.com/dusk-audio/DPF-Widgets.git
-git -C DPF-Widgets checkout 668de17f06abdeb98d5a4b62594bd634f8d1ac2e
+git clone https://github.com/dusk-audio/DAF.git
+git -C DAF checkout f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+git -C DAF submodule update --init
+git clone https://github.com/dusk-audio/DAF-Widgets.git
+git -C DAF-Widgets checkout 668de17f06abdeb98d5a4b62594bd634f8d1ac2e
 ```
 
-Clone then check out the SHA, rather than cloning a branch: DPF's pin is the tip of `fix/wayland-review-findings`, which was never merged to that fork's `main`. (DPF-Widgets' pin happens to be its `main` tip today, but pin it the same way.) Neither branch may be deleted upstream — a plain clone would stop reaching the commit, and CI fetches the same SHAs. The submodule step is not optional either: DGL pulls its windowing layer from `dgl/src/pugl-upstream`. The pins live in [.github/actions/clone-dpf-stack/action.yml](.github/actions/clone-dpf-stack/action.yml), the single source of truth for every workflow.
+Clone then check out the SHA, rather than cloning a branch: DAF's pin is the tip of `fix/wayland-review-findings`, which was never merged to that fork's `main`. (DAF-Widgets' pin happens to be its `main` tip today, but pin it the same way.) Neither branch may be deleted upstream — a plain clone would stop reaching the commit, and CI fetches the same SHAs. The submodule step is not optional either: DGL pulls its windowing layer from `dgl/src/pugl-upstream`. The pins live in [.github/actions/clone-dpf-stack/action.yml](.github/actions/clone-dpf-stack/action.yml), the single source of truth for every workflow.
 
 Missing either checkout, `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` defaults to **OFF** and configure says so once, quietly:
 
 ```
--- Native notepad: DPF / DPF-Widgets not found - disabled
+-- Native notepad: DAF / DAF-Widgets not found - disabled
 ```
 
 The build otherwise completes as normal, but opening the notepad reports *"Notepad unavailable: built without the native notepad UI"*. Passing `-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON` with a checkout missing makes it a configure error instead.
 
-That OFF is sticky, because `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` is a **cached** CMake option — the one dependency here a later reconfigure won't pick up on its own. Configure `build\` before cloning DPF and cloning it afterwards changes nothing on the next configure, and the "not found" line stops printing too. Either configure into a fresh build directory or add `-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON` to the configure command below.
+That OFF is sticky, because `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` is a **cached** CMake option — the one dependency here a later reconfigure won't pick up on its own. Configure `build\` before cloning DAF and cloning it afterwards changes nothing on the next configure, and the "not found" line stops printing too. Either configure into a fresh build directory or add `-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON` to the configure command below.
 
-If you override the paths explicitly, give DPF **forward slashes** — `-DDPF_PATH=C:/dev/DPF`. DPF's own CMake re-parses the value, and backslashes come through as invalid escapes.
+If you override the paths explicitly, give DAF **forward slashes** — `-DDAF_PATH=C:/dev/DAF`. DAF's own CMake re-parses the value, and backslashes come through as invalid escapes.
 
 ## Configure + build
 
@@ -158,8 +158,8 @@ In VS, right-click the **DuskStudio** project → **Set as Startup Project** →
 cmake -S . -B build ^
   -DJUCE_PATH=C:/some/other/JUCE ^
   -DDUSK_PLUGINS_PATH=C:/some/other/plugins ^
-  -DDPF_PATH=C:/some/other/DPF ^
-  -DDPF_WIDGETS_PATH=C:/some/other/DPF-Widgets ^
+  -DDAF_PATH=C:/some/other/DAF ^
+  -DDAF_WIDGETS_PATH=C:/some/other/DAF-Widgets ^
   -G "Visual Studio 17 2022" -A x64
 ```
 

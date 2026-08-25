@@ -149,6 +149,14 @@ reimplemented.
    event loop = rewrite of MessageThread.cpp, call sites already converged
    by the events-remainder tower, PR #112. ~120 files, 50%+ of total
    effort, multi-release. Unlinks everything else, `juce_core` last.
+   **Gate passed (#301, 2026-08-24): GO.** Spike, measurements, backend gap
+   audit, framework revision reconciliation and phases G0-G6 in
+   [dejuce-gui-plan.md](dejuce-gui-plan.md) — read that first, this entry is
+   the summary it supersedes. The fork stack is now DAF (Dusk Audio Framework):
+   the repos are `dusk-audio/DAF` and `dusk-audio/DAF-Widgets`, all future work
+   is on DAF, and the shared ImGui widget kit lives in DAF-Widgets rather than
+   the plugins repo's `shared-dpf/ui`. What still says DPF is listed in that
+   spec's Naming section.
 
 Done since the last queue edit: events remainder (PR #112, zero gate
 movement by design), FFT (branch dejuce/fft — DpAligner + MasteringEqEditor
