@@ -20,10 +20,12 @@ console strips hold it at 45.6%. Nothing in the spike argued for a different
 framework, and the two defects it did surface (window focus is never delivered
 to the ImGui layer, and window decorations are absent under GNOME) are bounded
 work inside a framework the project already owns, not reasons to change course.
+The focus half is since fixed and validated on the prepared framework branches
+(§4.1).
 
 The GO is conditional on three things being treated as tower work rather than
-discovered late: the focus/decoration gaps in §4, the frame-cost ceiling in §2,
-and the accessibility bridge in §4. None of them is a research problem.
+discovered late: the decoration gap in §3, the frame-cost ceiling in §2, and the
+accessibility bridge in §3. None of them is a research problem.
 
 ## 1. Framework revision reconciliation
 
@@ -94,6 +96,13 @@ clean against the result, and the spike runs on it. The prepared branch is
 `dusk/301-reconcile` in the framework clone at `/home/marc/projects/DAF`; it has
 never been pushed, so it has to be recreated or transplanted before the PR.
 
+Stacked on top of it is `dusk/302-app-contract`, four commits closing §3 rows 5,
+6 and 8 and the framework half of §4.1 (issue #302). One of those commits only
+moves the pugl submodule, whose own two commits are on `dusk/302-app-contract`
+in `dusk-audio/pugl`. The ImGui bridge half of §4.1 and the fix for §4.4 are on
+`dusk/302-app-contract` in `dusk-audio/DAF-Widgets`. All three branches are
+local and validated here; §1.5 gives the order they have to be pushed in.
+
 ### 1.3 What the app has to change to consume `main`
 
 The rename is not cosmetic at the build interface. Three things move:
@@ -130,14 +139,20 @@ build directory rather than beside the app.
 
 ### 1.5 Proposal to Marc
 
-- Merge the three commits above into `main` of `dusk-audio/DAF`, as one reviewed
-  PR.
+- Push and merge in this order, because each step is what makes the next one
+  build:
+  1. `dusk/302-app-contract` in `dusk-audio/pugl`, or the submodule pointer the
+     DAF branch carries dangles for every clone including CI.
+  2. `dusk/301-reconcile` in `dusk-audio/DAF` (the three commits above), then the
+     `dusk/302-app-contract` branch stacked on it.
+  3. `dusk/302-app-contract` in `dusk-audio/DAF-Widgets`, which needs DAF's new
+     widget focus callback to compile.
 - Re-pin `DAF_REV` in `.github/actions/clone-dpf-stack/action.yml` to the merge
   commit; that action is the single source of truth for every workflow, and it
   already clones from `https://github.com/dusk-audio/DAF.git`.
 - Re-pin `DAF_WIDGETS_REV` to `main` of `dusk-audio/DAF-Widgets`, which is two
-  commits ahead of the current pin and carries the matching rename. There is no
-  divergence there.
+  commits ahead of the current pin and carries the matching rename, plus the
+  bridge work above once it merges. There is no divergence there.
 - Delete the branch `fix/wayland-review-findings` once merged, so no third line
   can accumulate.
 - Retire the dual-spelling handling in the app's `CMakeLists.txt` and
@@ -177,10 +192,10 @@ its own dbus session, its own Wayland display name), never the live desktop.
 GL is **hardware**, not llvmpipe: `AMD Radeon RX Vega M GH (radeonsi, vegam,
 Mesa 24.3.3)`, GL 4.6 compatibility profile.
 
-Headless is not the same as the desktop. It has no seat, so no real pointer or
-keyboard events arrive; it does not run the desktop's compositing or effects;
-and its idea of output scale is fixed. **The live-desktop pass is Marc's bench
-and is owed** (§6).
+Headless is not the same as the desktop. Its `wl_seat` exists but advertises
+zero capabilities, so no pointer, keyboard or keyboard-focus events ever arrive;
+it does not run the desktop's compositing or effects; and its idea of output
+scale is fixed. **The live-desktop pass is Marc's bench and is owed** (§6).
 
 ### 2.2 Frame pacing and cost
 
@@ -228,12 +243,15 @@ vertices each, so the domes are about half of its 25,690.
 | Shell keyboard shortcut | Pass |
 | Modal opens and dims | Pass |
 | Context menu opens | Pass |
-| Modal blocks the strip underneath | **Fail** — see §4.1 |
+| Modal blocks the strip underneath | Pass, once the spike opened the popup in the right id scope — see §4.1 |
+| Key held across a focus change is released | Pass, on the prepared framework branches (§4.1) |
 
 The interaction results come from `--selftest`, which injects at the ImGui event
-queue. A headless compositor has no seat, so the run reports
-`pointer=0 key=0 text=0` through the real path: the spike proves the widget
-layer, and deliberately proves nothing about pugl's seat handling.
+queue. The headless compositor's seat advertises no capabilities, so the run
+reports `pointer=0 key=0 text=0 focusIn=0 focusOut=0` through the real path: the
+spike proves the widget layer, and deliberately proves nothing about pugl's seat
+handling. Real focus delivery was proven separately, on the X11 backend under
+Xvfb with two spike windows swapping focus.
 
 ## 3. Framework gap audit for an application
 
@@ -247,10 +265,10 @@ desktop application.
 | 2 | Drag and drop | Absent (offers actively declined) | `wayland.c:1909` |
 | 3 | Multiple top-level windows | Present | `wayland.c:186`, `wayland.h:151` |
 | 4 | Transient parent / modal | Partial (parent yes, modal no) | `wayland.c:3070`, `:3813` |
-| 5 | Portal parenting (xdg-foreign) | Absent | no protocol vendored |
-| 6 | Keyboard focus | Partial (pugl emits, DGL drops) | `wayland.c:1555`, `:3851` |
+| 5 | Portal parenting (xdg-foreign) | Fixed on `dusk/302-app-contract`, lands with the G0 repin | `wayland.c` export, `Window::getPortalParentHandle()` |
+| 6 | Keyboard focus | Fixed on `dusk/302-app-contract`, lands with the G0 repin | `wayland.c:1555`, `Widget::onFocusChanged` |
 | 7 | Clipboard | Partial (text only, no primary) | `wayland.c:4093`, `:4109` |
-| 8 | Cursors | Partial (10 shapes, no hide, no custom) | `wayland.c:2519`, `:2568` |
+| 8 | Cursors | Hide fixed on `dusk/302-app-contract`, lands with the G0 repin; still no custom image | `wayland.c:2519`, `kMouseCursorNone` |
 | 9 | Accessibility | Absent (nothing in the tree) | — |
 | 10 | Headless automation | Absent in the backend | `wayland.c:2911` |
 | 11 | HiDPI / fractional scaling | Present | `wayland.c:312`, `:355` |
@@ -272,17 +290,29 @@ Detail on the ones that change the plan:
   which the portastudio aesthetic arguably wants anyway — or hit-tested edges
   wired to `xdg_toplevel.move`/`.resize`. Prefer CSD: it is one place, it is
   themeable, and it removes the compositor dependency entirely.
-- **Focus (6).** pugl dispatches `PUGL_FOCUS_IN`/`OUT`, but DGL has no focus
-  callback on `Widget` and never surfaces them, and the widgets library's ImGui
-  bridge never calls `io.AddFocusEvent()`. §4.1 covers the consequences.
-- **Cursors (8).** There is no hidden-cursor path and no custom cursor image.
-  The hide-pointer-and-warp idiom that every DAW knob drag uses is therefore
-  unavailable. Add a `PUGL_CURSOR_NONE` shape; it is a one-line
-  `wl_pointer_set_cursor(..., NULL, ...)` in the backend.
+- **Focus (6).** DGL had no focus callback on `Widget` and never surfaced pugl's
+  `PUGL_FOCUS_IN`/`OUT`, and the widgets library's ImGui bridge never called
+  `io.AddFocusEvent()`. Worse than the audit read: on X11 pugl itself swallowed
+  the events, because its dispatch loop updated the input context in the
+  `FocusIn`/`FocusOut` cases and returned without dispatching. Both halves are
+  fixed on the prepared branches — pugl dispatches, `Widget::onFocusChanged`
+  carries it to every widget, and the bridge forwards it — with grab-mode
+  crossings filtered out, since ImGui clears mouse buttons on focus loss and a
+  menu's grab would cancel a live drag. §4.1 covers what that did and did not
+  explain.
+- **Cursors (8).** There was no hidden-cursor path and no custom cursor image,
+  so the hide-pointer idiom every DAW knob drag uses was unavailable.
+  `PUGL_CURSOR_NONE` now exists on all four backends (a null cursor surface on
+  Wayland, an empty pixmap on X11, a transparent image on macOS, a null
+  `HCURSOR` on Windows) and reaches DGL as `kMouseCursorNone`. A custom cursor
+  image is still absent and nothing in the tower needs one.
 - **Portal parenting (5).** Every file chooser opened through
-  xdg-desktop-portal will be unparented, so it can appear behind the main window
-  or on another workspace. Needed by G2, which is where the first file dialog
-  moves.
+  xdg-desktop-portal would have been unparented, appearing behind the main
+  window or on another workspace. The prepared branches vendor
+  xdg-foreign-unstable-v2, export the toplevel while realizing it, and hand the
+  application the string the portal wants through
+  `Window::getPortalParentHandle()`: `x11:` and a window id, or `wayland:` and
+  an xdg-foreign handle, empty where there is none. Verified on both backends.
 - **Accessibility (9).** Nothing exists, in either the framework or ImGui, and
   `src/ui/` already carries JUCE accessibility labelling that would regress
   silently. This needs a deliberate decision from Marc before G3, not after:
@@ -297,21 +327,34 @@ Detail on the ones that change the plan:
 
 ## 4. Defects the spike found
 
-### 4.1 Window focus never reaches the ImGui layer
+### 4.1 Window focus never reached the ImGui layer
 
-`DGL::Widget` has no focus callback and the widgets library's `DearImGui.cpp`
-never calls `io.AddFocusEvent()`, so ImGui always believes the window is
-unfocused. Three consequences, all observed:
+`DGL::Widget` had no focus callback and the widgets library's `DearImGui.cpp`
+never called `io.AddFocusEvent()`, so ImGui was never told whether the window
+had the keyboard. On X11 it was worse: pugl's own dispatch loop handled
+`FocusIn`/`FocusOut` by updating the input context and returning, so the event
+never left the backend either.
 
-- ImGui's modal never takes navigation focus, so its input blocking does not
-  engage. The spike's modal dims the console correctly and still lets a drag
-  reach a knob behind it. The `EmbeddedModal` seam depends on that blocking.
-- `Escape` does not close a popup, because that routing runs through navigation.
-- Key state is never cleared on focus loss, so a modifier held while switching
-  windows stays down.
+**Two of the three consequences this section originally claimed were not
+consequences of that at all.** The `modal blocks the strip underneath` selftest
+case failed because of a defect in the spike, not in the framework: it called
+`ImGui::OpenPopup` before `ImGui::Begin("##console")`, and a popup id is derived
+from the id stack of the window that is current, so it opened a different popup
+from the one `BeginPopupModal` draws inside the console. Instrumenting the case
+showed `GetTopMostPopupModal()` returning null while `IsPopupOpen()` returned
+true: the modal was never on screen, which is why nothing was blocked. With the
+popup opened in the right scope and no framework change at all, the case passes
+and `Escape` closes a popup too. ImGui's modal blocking runs through
+`UpdateHoveredWindowAndCaptureFlags`, which never needed a platform focus event.
 
-Fix in the framework, not the app: surface pugl's `PUGL_FOCUS_IN`/`OUT` as a DGL
-widget callback and have the ImGui bridge forward it. Owner: G1.
+What was real is the third: key state is never cleared on focus loss, so a
+modifier held while switching windows stays down. That needed the framework fix,
+and has it on the prepared branches — `Widget::onFocusChanged` surfaced through
+DGL (§3, row 6), `io.AddFocusEvent()` in the bridge, and the pugl X11 dispatch
+corrected — adopted by the app at the G0 repin. The spike carries a ninth
+selftest case for it, and the original eight still pass.
+
+Owner: already prepared; G1 consumes it.
 
 ### 4.2 `WantCaptureKeyboard` is not a usable gate
 
@@ -330,12 +373,16 @@ system font. Every non-Latin mark the UI uses has to be declared. Track name
 entry is worse: a user typing in any non-Latin script gets nothing. Decide in
 G1 whether to bake a wide range, or to load glyphs on demand.
 
-### 4.4 `ImGuiWidget<StandaloneWindow>` does not call `done()`
+### 4.4 `ImGuiWidget<StandaloneWindow>` did not call `done()`
 
 `StandaloneWindow` documents that `done()` must be called at the end of the
 constructor to release the scoped graphics context. The widgets library's
-standalone specialisation does not, so the final subclass has to. Either fix it
-upstream or write it down; the spike calls `done()` itself.
+standalone specialisation did not, so the final subclass had to. Fixed upstream
+on the prepared branches: both standalone constructors call it, and `done()` is
+idempotent so a subclass that still calls it is unaffected. The one thing that
+changes for subclasses is that their own constructor body now runs with no
+graphics context — the spike had to move its `glGetString` reporting to the
+first frame — and `reinit()` is the way to ask for one back.
 
 ## 5. Phases
 
@@ -368,11 +415,14 @@ tokens from `DuskStudioLookAndFeel`, the SSL knob, the fader, the segmented
 meter, the GR strip, the module pill, buttons, the value bubble and the text
 field. Settle the
 shortcut routing rule (§4.2), the glyph strategy (§4.3), and the draw-list
-caching from §2.2 here, before anything depends on them. Fix §4.1 and §4.4 in
-the framework.
+caching from §2.2 here, before anything depends on them. §4.1 and §4.4 are
+already fixed in the framework and arrive with the G0 repin.
 
 New app-side files, all JUCE-free: `src/ui/imgui/DuskImGuiHost.{h,cpp}`, the
 embedded-window lifecycle lifted out of `NativeNotepadWindow`.
+
+One trap in the API: `StandaloneWindow` inherits a `setCursor` from both of its
+bases, so app code has to name the window's, `Window::setCursor(...)`.
 
 **The shared widget kit's home is `dusk-audio/DAF-Widgets`, not the plug-ins
 repo** (Marc, 2026-08-24). The knob, fader, meter, module pill and theme tokens
@@ -393,7 +443,9 @@ each becoming an embedded framework window: `AudioSettingsPanel`,
 `StartupDialog`, `ChannelCompEditor`, `MasteringEqEditor`,
 `MasteringLimiterEditor`, `VirtualKeyboardComponent`. Re-point the
 `EmbeddedModal`, `DuskComboBox` and `showContextMenu` seams at ImGui
-implementations. Needs portal parenting (§3, row 5) for the first file dialog.
+implementations. Portal parenting is no longer new work here: the first file
+dialog reads `Window::getPortalParentHandle()` from the reconciled framework
+(§3, row 5) and passes it as the portal's parent window.
 
 Owns: roughly 12 files, ~6,000 lines. Gate: those files leave the allowlist.
 Verify: each panel captured headlessly and diffed against its JUCE screenshot;
