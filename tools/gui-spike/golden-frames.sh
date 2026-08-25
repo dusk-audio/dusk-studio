@@ -46,23 +46,30 @@ VARIANTS=(
 )
 
 RUNTIME_DIR=$(mktemp -d /tmp/dusk-golden.XXXXXX)
+# Unique per run, so the cleanup below can name this compositor and only this one.
+DISPLAY_NAME="dusk-golden-$$"
 COMPOSITOR=""
 cleanup() {
+    # The compositor script execs dbus-run-session, which forks mutter into a session
+    # of its own. Signalling the pid this script backgrounded reaches neither, so mutter
+    # outlives the run and keeps a socket in the runtime directory removed below. The
+    # display name is what identifies it.
     [[ -n "$COMPOSITOR" ]] && kill "$COMPOSITOR" >/dev/null 2>&1
+    pkill -f "wayland-display=$DISPLAY_NAME" >/dev/null 2>&1
     # The session bus starts gvfs, which mounts inside the runtime directory.
     fusermount -u "$RUNTIME_DIR/gvfs" >/dev/null 2>&1
     rm -rf "$RUNTIME_DIR" >/dev/null 2>&1
 }
 trap cleanup EXIT
 
-DUSK_HEADLESS_RUNTIME_DIR="$RUNTIME_DIR" DUSK_HEADLESS_DISPLAY=dusk-golden \
+DUSK_HEADLESS_RUNTIME_DIR="$RUNTIME_DIR" DUSK_HEADLESS_DISPLAY="$DISPLAY_NAME" \
     "$HERE/headless-compositor.sh" >/dev/null 2>&1 &
 COMPOSITOR=$!
 for _ in $(seq 1 100); do
-    [[ -S "$RUNTIME_DIR/dusk-golden" ]] && break
+    [[ -S "$RUNTIME_DIR/$DISPLAY_NAME" ]] && break
     sleep 0.1
 done
-if [[ ! -S "$RUNTIME_DIR/dusk-golden" ]]; then
+if [[ ! -S "$RUNTIME_DIR/$DISPLAY_NAME" ]]; then
     echo "error: the headless compositor did not come up" >&2
     exit 1
 fi
@@ -87,7 +94,7 @@ for variant in "${VARIANTS[@]}"; do
     fi
 
     # shellcheck disable=SC2086 # the variant's arguments are meant to split
-    line=$(XDG_RUNTIME_DIR="$RUNTIME_DIR" WAYLAND_DISPLAY=dusk-golden \
+    line=$(XDG_RUNTIME_DIR="$RUNTIME_DIR" WAYLAND_DISPLAY="$DISPLAY_NAME" \
         env -u DISPLAY "$SPIKE" --seconds 3 --static --quiet --capture-frame 60 \
         --capture "$out" $args "${compare[@]}" 2>&1)
     code=$?
