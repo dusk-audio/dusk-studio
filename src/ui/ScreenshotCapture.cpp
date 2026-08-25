@@ -22,7 +22,6 @@
 #include "AudioSettingsPanel.h"
 #include "MidiBindingsPanel.h"
 #include "HardwareInsertEditor.h"
-#include "StartupDialog.h"
 #include "PluginPickerPanel.h"
 #include "BounceDialog.h"
 #include "../engine/BounceEngine.h"
@@ -393,16 +392,8 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         modalShot (tp, w, h, "fx-03-tape.png", 300);
         m.tapeEnabled.store (wasTapeEnabled, std::memory_order_relaxed);
     }
-    {
-        // Startup dialog - full-bleed, so size it to the window.
-        juce::Array<juce::File> recents {
-            juce::File ("~/Music/Dusk Studio/Album Demo").getFullPathName(),
-            juce::File ("~/Music/Dusk Studio/Live Take 3").getFullPathName(),
-            juce::File ("~/Music/Dusk Studio/Vocal Comp").getFullPathName()
-        };
-        StartupDialog sd (recents);
-        modalShot (sd, getWidth(), getHeight(), "qg-01-startup.png", 300);
-    }
+    // qg-01-startup is the native startup panel now, captured with the other
+    // framework children in captureNativePanels below.
     {
         // Plugin picker with a synthetic effect list (no real scan in capture mode).
         auto mk = [] (const char* n, const char* mfr, const char* cat)
@@ -491,11 +482,25 @@ void MainComponent::captureNativePanels (std::string outDir)
                 return;
             }
             me->openVirtualKeyboardForCapture (outDir + "/vkb-01-virtual-keyboard.ppm");
-            dusk::Timer::callAfterDelay (1500, [safeThis, quitNow]
+            dusk::Timer::callAfterDelay (1500, [safeThis, quitNow, outDir]
             {
-                if (auto* last = safeThis.getComponent())
-                    last->closeVirtualKeyboard();
-                dusk::Timer::callAfterDelay (400, quitNow);
+                auto* const withKeyboard = safeThis.getComponent();
+                if (withKeyboard == nullptr)
+                {
+                    quitNow();
+                    return;
+                }
+                withKeyboard->closeVirtualKeyboard();
+
+                dusk::Timer::callAfterDelay (400, [safeThis, quitNow, outDir]
+                {
+                    if (auto* last = safeThis.getComponent())
+                        last->openStartupForCapture (outDir + "/qg-01-startup.ppm");
+                    // Quitting with the startup panel still up is the point: its
+                    // dismissal would run the launch follow-ups the harness has
+                    // already been past for a whole session.
+                    dusk::Timer::callAfterDelay (1500, quitNow);
+                });
             });
         });
     });

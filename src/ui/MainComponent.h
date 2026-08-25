@@ -18,7 +18,11 @@ namespace duskstudio
 namespace dp { struct SongScan; }
 class NativeNotepadWindow;
 
-namespace imgui { class DuskPanelWindow; }
+namespace imgui
+{
+class DuskPanelWindow;
+class StartupView;
+}
 
 class MainComponent final : public juce::Component,
                              public juce::MenuBarModel,
@@ -372,12 +376,30 @@ private:
 
     // Embedded modal so it appears centered on the main UI with a dim
     // backdrop. Both torn down together via dismissStartupDialog.
-    std::unique_ptr<class StartupDialog> startupDialog;
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    std::unique_ptr<imgui::DuskPanelWindow> startupWindow;
+    // The window owns the view; this reaches it to raise the update banner when the
+    // async tag check answers. Only read while the window is open.
+    imgui::StartupView* startupView = nullptr;
+    // The decoded app icon, RGBA, kept alive for as long as the view can draw it.
+    std::vector<unsigned char> startupBrandRgba;
+    int startupBrandWidth = 0;
+    int startupBrandHeight = 0;
+   #endif
     std::unique_ptr<class DimOverlay>    startupDim;
     // onDone runs AFTER the async teardown completes, so a caller can open the
     // next UI (e.g. a session-load recovery prompt) without stacking it over
     // the still-present startup dialog.
     void dismissStartupDialog (std::function<void()> onDone = {});
+    // Decodes the app icon into startupBrandRgba once; the panel draws it from the
+    // font atlas, which the framework side cannot fill from a PNG on its own.
+    void loadStartupBrandImage();
+    // demoRecents fills the table with three fixed names for the manual's figure,
+    // where the real list is whatever the capture machine happens to have.
+    bool openStartupPanel (bool demoRecents);
+    // Screenshot-harness only: open the startup panel and read its own steady frame
+    // back into `capturePath`.
+    void openStartupForCapture (const std::string& capturePath);
 
     // Cross-OS cursor overlay - paints Grab / Cut / Draw glyphs at the
     // mouse position via a 60 Hz JUCE timer, bypassing the platform

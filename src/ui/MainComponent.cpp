@@ -3,6 +3,12 @@
 #include <cstdio>
 #include <cstdlib>  // std::getenv (DUSKSTUDIO_USE_OOP_PLUGINS)
 #include "AppConfig.h"
+#if __has_include("BinaryData.h")
+ #include "BinaryData.h"
+ #define DUSKSTUDIO_HAS_BINARY_ICON 1
+#else
+ #define DUSKSTUDIO_HAS_BINARY_ICON 0
+#endif
 #include "AudioSettingsPanel.h"
 #include "DuskFileBrowser.h"
 #include "AuxView.h"
@@ -11,6 +17,7 @@
 #include "ShortcutsPanel.h"
 #include "SupportersPanel.h"
 #if DUSKSTUDIO_HAS_NATIVE_UI
+ #include "imgui/StartupView.h"
  #include "imgui/VirtualKeyboardView.h"
  #include "NativeNotepadWindow.h"
  #include "NativeEditorEmbedScale.h"
@@ -30,7 +37,6 @@
 #include "TunerOverlay.h"
 #include "../session/SessionTemplates.h"
 #include "MasteringView.h"
-#include "StartupDialog.h"
 #include "UpdateChecker.h"
 #include "SystemStatusBar.h"
 #include "TapeStrip.h"
@@ -1978,12 +1984,8 @@ void MainComponent::resized()
     // Re-centre the startup modal + its dim backdrop when the main window
     // resizes while the dialog is up. DimOverlay::parentSizeChanged handles
     // its own resize, but we still drive the centred dialog bounds.
-    if (startupDialog != nullptr)
-    {
-        startupDialog->setBounds (getLocalBounds()
-                                       .withSizeKeepingCentre (startupDialog->getWidth(),
-                                                                  startupDialog->getHeight()));
-    }
+    if (startupDim != nullptr)
+        startupDim->setBounds (getLocalBounds());
 
    #if DUSKSTUDIO_HAS_NATIVE_UI
     if (notepadWindow != nullptr && notepadWindow->isOpen())
@@ -2273,64 +2275,192 @@ void MainComponent::doMixdown()
     });
 }
 
+#if DUSKSTUDIO_HAS_NATIVE_UI
+namespace
+{
+// The manual's startup figure, so it reads the same on any machine. The format
+// columns stay empty because these directories do not exist, which is exactly what
+// the figure showed before.
+std::vector<imgui::RecentSession> demoStartupRecents()
+{
+    std::vector<imgui::RecentSession> rows;
+    for (const char* const name : { "Album Demo", "Live Take 3", "Vocal Comp" })
+    {
+        imgui::RecentSession row;
+        row.path = std::string ("~/Music/Dusk Studio/") + name;
+        row.name = name;
+        rows.push_back (std::move (row));
+    }
+    return rows;
+}
+} // namespace
+#endif
+
 void MainComponent::launchStartupDialog()
 {
-    auto recents = toFileArray (RecentSessions::load());
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    // Nothing to show and nothing to choose, so the bootstrap default session is
+    // what the DAW opens with - the same outcome as skipping the dialog.
+    startupDialogPending = false;
+   #else
+    if (openStartupPanel (false))
+        return;
 
-    startupDialog = std::make_unique<StartupDialog> (recents);
-    // Fixed size - the table scrolls internally when the list grows past
-    // what fits, so we don't need to grow the dialog with row count.
-    startupDialog->setSize (720, 460);
+    // A display that cannot carry the panel must not leave the app looking wedged
+    // behind a dim overlay, so the launch continues as if the dialog was skipped.
+    startupDialogPending = false;
+    setStatusText ("Startup dialog unavailable on this display; opened the default session");
+    maybeStartStartupPluginScan();
+   #endif
+}
 
-    startupDialog->onOpenRecent = [this] (juce::File dir)
+void MainComponent::openStartupForCapture (const std::string& capturePath)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (openStartupPanel (true))
+        startupWindow->captureNextFrameTo (capturePath);
+   #else
+    (void) capturePath;
+   #endif
+}
+
+bool MainComponent::openStartupPanel (bool demoRecents)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) demoRecents;
+    return false;
+   #else
+    auto* const topLevel = getTopLevelComponent();
+    const auto parentHandle = topLevel != nullptr
+                            ? embedscale::nativeParentHandle (*topLevel) : 0;
+    if (parentHandle == 0)
+        return false;
+
+    startupWindow = std::make_unique<imgui::DuskPanelWindow> (
+        "dusk-studio-startup", "startup", "Startup dialog");
+
+    imgui::DuskPanelWindow::Callbacks callbacks;
+    // Only the dialog's own actions dismiss it. A stray click on the DAW behind
+    // must not: losing the picker mid-choice cost a user their work once already.
+    callbacks.dismissed = [this] { dismissStartupDialog(); };
+    callbacks.closed = [this]
     {
-        loadSessionFromJson (dir.getChildFile ("session.json"));
+        startupView = nullptr;
+        startupDim.reset();
     };
-    startupDialog->onNewSession = [this] { newSessionPrompt(); };
-    startupDialog->onOpenFile   = [this] { openFromFilePrompt(); };
-    startupDialog->onSkip       = [] {};  // nothing - the bootstrap default dir stays
-    startupDialog->onQuit       = [this]
+    callbacks.geometry = [this]
+    {
+        auto* const top = getTopLevelComponent();
+        if (top == nullptr || startupWindow == nullptr)
+            return imgui::DuskPanelWindow::Geometry {};
+        const auto plate = startupWindow->plateSize();
+        const auto bounds = embedscale::centredChildBounds (*top, plate.width, plate.height);
+        if (startupDim != nullptr)
+        {
+            startupDim->setBounds (top->getLocalBounds());
+            startupDim->setNativeChildArea (bounds.expanded (1));
+        }
+        const auto g = embedscale::childGeometryFor (*top, bounds);
+        return imgui::DuskPanelWindow::Geometry { g.x, g.y, g.width, g.height, g.scale };
+    };
+    startupWindow->setCallbacks (std::move (callbacks));
+
+    imgui::StartupCallbacks actions;
+    actions.openRecent = [this] (const std::string& path)
+    {
+        loadSessionFromJson (juce::File (path).getChildFile ("session.json"));
+    };
+    actions.newSession = [this] { newSessionPrompt(); };
+    actions.openFile = [this] { openFromFilePrompt(); };
+    actions.skip = [] {};   // the bootstrap default dir stays
+    actions.quit = [this]
     {
         startupQuitRequested = true;
         if (auto* app = juce::JUCEApplicationBase::getInstance())
             app->systemRequestedQuit();
     };
-    // closeDialog calls onDismiss after each action; the host (us) tears
-    // down the embedded dialog + its dim backdrop together.
-    startupDialog->onDismiss    = [this] { dismissStartupDialog(); };
-
-    // Dim backdrop covers the rest of the UI and SWALLOWS clicks so the
-    // startup dialog behaves like a modal - clicking the dim or the DAW
-    // behind it must NOT dismiss the dialog (the user lost work that
-    // way: accidental click on the timeline disappeared the picker
-    // mid-choice). Dismissal is only via Quit / Open / NEW / OPEN /
-    // RECENT or Escape on the dialog itself.
-    startupDim = std::make_unique<DimOverlay>();
-    startupDim->setBounds (getLocalBounds());
-    startupDim->onClick = [] {};
-    addAndMakeVisible (startupDim.get());
-
-    // Centered on the main window. The dialog is plain dark - no native
-    // title bar - to match the embedded-modal aesthetic shared with the
-    // TapeMachine gear modal and the TIMELINE EQ/COMP popups.
-    const auto bounds = getLocalBounds()
-                            .withSizeKeepingCentre (startupDialog->getWidth(),
-                                                       startupDialog->getHeight());
-    startupDialog->setBounds (bounds);
-    addAndMakeVisible (startupDialog.get());
-
-    // Background tag probe -> flashing sidebar badge when a newer
-    // release exists. SafePointer: the response may arrive after the
-    // dialog is dismissed.
+    // Dusk-owned so the destination can change without an app update; the
+    // artifacts behind it are supporter-gated, so no direct URL exists.
+    actions.openDownloads = []
     {
-        juce::Component::SafePointer<StartupDialog> safeDlg (startupDialog.get());
-        updatecheck::checkForNewerTagAsync (JUCE_APPLICATION_VERSION_STRING,
-            [safeDlg] (const juce::String& tag)
-            {
-                if (auto* dlg = safeDlg.getComponent())
-                    dlg->setUpdateAvailable (tag);
-            });
+        juce::URL ("https://builds.duskaudio.com/latest").launchInDefaultBrowser();
+    };
+
+    loadStartupBrandImage();
+    auto recents = demoRecents ? demoStartupRecents()
+                               : imgui::scanRecentSessions (RecentSessions::load());
+    auto view = imgui::makeStartupView (
+        std::move (recents),
+        startupBrandRgba.empty() ? nullptr : startupBrandRgba.data(),
+        startupBrandWidth, startupBrandHeight, std::move (actions));
+    startupView = view.get();
+    startupWindow->setView (std::unique_ptr<imgui::DuskPanelView> (view.release()));
+
+    const auto plate = startupWindow->plateSize();
+    const auto logical = embedscale::centredChildBounds (*topLevel, plate.width, plate.height);
+
+    startupDim = std::make_unique<DimOverlay>();
+    startupDim->setBounds (topLevel->getLocalBounds());
+    startupDim->setNativeChildArea (logical.expanded (1));
+    startupDim->onClick = [] {};
+    topLevel->addAndMakeVisible (startupDim.get());
+
+    const auto geometry = embedscale::childGeometryFor (*topLevel, logical);
+    if (! startupWindow->open (parentHandle,
+                               { geometry.x, geometry.y, geometry.width, geometry.height,
+                                 geometry.scale }))
+    {
+        startupView = nullptr;
+        startupDim.reset();
+        startupWindow.reset();
+        return false;
     }
+
+    // Background tag probe, then a flashing badge in the dialog when a newer
+    // release exists. The response can arrive after the dialog is dismissed.
+    juce::Component::SafePointer<MainComponent> safeThis (this);
+    updatecheck::checkForNewerTagAsync (JUCE_APPLICATION_VERSION_STRING,
+        [safeThis] (const juce::String& tag)
+        {
+            auto* const self = safeThis.getComponent();
+            if (self == nullptr || self->startupView == nullptr)
+                return;
+            self->startupView->setUpdateAvailable (tag.toStdString());
+        });
+    return true;
+   #endif
+}
+
+void MainComponent::loadStartupBrandImage()
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI && DUSKSTUDIO_HAS_BINARY_ICON
+    if (! startupBrandRgba.empty())
+        return;
+
+    // The framework side has no image reader, so the icon is decoded here and the
+    // panel takes the pixels straight into its font atlas.
+    const auto image = juce::ImageCache::getFromMemory (BinaryData::dsicon_png,
+                                                        BinaryData::dsicon_pngSize);
+    if (! image.isValid())
+        return;
+
+    startupBrandWidth = image.getWidth();
+    startupBrandHeight = image.getHeight();
+    startupBrandRgba.resize (static_cast<std::size_t> (startupBrandWidth)
+                             * static_cast<std::size_t> (startupBrandHeight) * 4u);
+
+    // Per-pixel rather than through a bitmap lock: this runs once, on an icon.
+    auto* out = startupBrandRgba.data();
+    for (int y = 0; y < startupBrandHeight; ++y)
+        for (int x = 0; x < startupBrandWidth; ++x)
+        {
+            const auto colour = image.getPixelAt (x, y);
+            *out++ = colour.getRed();
+            *out++ = colour.getGreen();
+            *out++ = colour.getBlue();
+            *out++ = colour.getAlpha();
+        }
+   #endif
 }
 
 void MainComponent::dismissStartupDialog (std::function<void()> onDone)
@@ -2344,7 +2474,10 @@ void MainComponent::dismissStartupDialog (std::function<void()> onDone)
     dusk::callAsync ([safeThis, onDone = std::move (onDone)]
     {
         if (safeThis == nullptr) return;
-        safeThis->startupDialog.reset();
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        safeThis->startupView = nullptr;
+        safeThis->startupWindow.reset();
+       #endif
         safeThis->startupDim.reset();
         // The dialog held keyboard focus; with it gone, pull focus back to the
         // main canvas so transport / edit shortcuts work without a stray click

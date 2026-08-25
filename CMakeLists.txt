@@ -550,6 +550,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
     # of the stack stays behind DuskPanelWindow.
     target_sources(DuskStudio PRIVATE
         src/ui/imgui/ChannelCompView.cpp
+        src/ui/imgui/StartupView.cpp
         src/ui/imgui/VirtualKeyboardView.cpp)
     target_include_directories(DuskStudio PRIVATE
         "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl")
@@ -688,7 +689,6 @@ target_sources(DuskStudio PRIVATE
     src/ui/ChannelStripComponent.cpp
     src/ui/CompMeterStrip.cpp
     src/ui/SelfTestPanel.cpp
-    src/ui/StartupDialog.cpp
     src/engine/AudioPipelineSelfTest.cpp
     src/ui/ConsoleView.cpp
     src/ui/DimOverlay.cpp

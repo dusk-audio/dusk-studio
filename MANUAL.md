@@ -63,7 +63,7 @@ You can also open an existing session directly: pass its `session.json` (or the 
 
 The Startup dialog also performs a quick update check against the public repository: if a release newer than your build exists, a flashing **Update available** banner with the new version number appears above the Recent Sessions list. The check is silent when you're up to date or offline, and nothing is sent beyond the request itself.
 
-![First-launch window with the Startup dialog visible.](docs/images/qg-01-startup.png)
+![The Startup dialog, listing the sessions you last worked on.](docs/images/qg-01-startup.png)
 
 The main window is laid out top to bottom: menu bar, stage selector (RECORDING / MIXING / MASTERING / AUX), bank selector, transport bar, tape strip toggle, console. The console fills the rest of the window with 24 channel strips, 4 buses, and the master.
 

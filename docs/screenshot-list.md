@@ -35,7 +35,7 @@ of them reads whatever the engine last wrote rather than resting.
 
 | Filename                   | Manual | Auto | What to capture                                                     |
 | -------------------------- | ------ | ---- | ------------------------------------------------------------------ |
-| `qg-01-startup.png`        | L66    | ✅   | First-launch window, Startup dialog visible, audio device unset.   |
+| `qg-01-startup.png`        | L66    | ✅   | Startup dialog with three fixed demo rows. Native panel: the app reads its own frame back and the script converts it. |
 | `qg-02-audio-settings.png` | L74    | ✅   | `Settings → Audio` panel, a real interface selected.               |
 | `qg-03-arm-track.png`      | L86    | ✅   | RECORDING: ARM on, input selected, IN off, live meter visible.    |
 | `qg-04-record-rolling.png` | L94    | ✅   | Mid-record: meters lit, a region drawing into the tape strip.      |
