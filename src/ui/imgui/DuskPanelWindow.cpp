@@ -460,11 +460,4 @@ bool DuskPanelWindow::isOpen() const noexcept
     return impl->host.isOpen();
 }
 
-std::string DuskPanelWindow::portalParentHandle() const
-{
-    if (auto* const window = impl->host.window())
-        if (const auto* const handle = window->getPortalParentHandle())
-            return handle;
-    return {};
-}
 } // namespace duskstudio::imgui

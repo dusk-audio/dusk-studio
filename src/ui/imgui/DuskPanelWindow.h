@@ -161,10 +161,6 @@ public:
     void close();
     bool isOpen() const noexcept;
 
-    // What a file dialog opened through xdg-desktop-portal should be parented to:
-    // "x11:<id>", "wayland:<handle>", or empty where the backend has none.
-    std::string portalParentHandle() const;
-
 private:
     struct Impl;
     std::unique_ptr<Impl> impl;
