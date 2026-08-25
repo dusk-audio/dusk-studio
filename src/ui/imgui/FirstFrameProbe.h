@@ -6,16 +6,16 @@
 #include <system_error>
 #include <utility>
 
-namespace duskstudio::notepad
+namespace duskstudio::imgui
 {
-// A graphics driver that ends the host while presenting the notepad's first
+// A graphics driver that ends the host while presenting a native window's first
 // frame leaves nothing to catch: the D3D12 case exits zero through a graceful
 // shutdown, so neither the event-pump guard nor any try block sees it.
 // Refusing a renderer by name only covers drivers somebody has already lost a
 // session to. This marker is what covers the rest: it is written before the
 // first frame is pumped and removed once one has completed, so a run that
 // never comes back leaves it behind and the next launch declines to open the
-// notepad again.
+// window again.
 class FirstFrameProbe
 {
 public:
@@ -25,7 +25,7 @@ public:
     // The renderer recorded by a run that never completed a frame. Empty when
     // the previous run was fine, and empty when there is nowhere to keep the
     // marker - an unusable config directory costs the protection, not the
-    // notepad.
+    // window.
     std::string previousFailure() const
     {
         if (marker.empty())
@@ -89,7 +89,10 @@ public:
     const std::filesystem::path& path() const noexcept { return marker; }
 
 private:
+    // Written into every marker and matched when one is read back, so it names the
+    // release that introduced the format rather than the window that uses it. A
+    // marker left by an installed build has to stay readable by the next one.
     static constexpr const char* markerVersion = "dusk-notepad-first-frame-v2";
     std::filesystem::path marker;
 };
-} // namespace duskstudio::notepad
+} // namespace duskstudio::imgui

@@ -507,6 +507,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
         $<$<COMPILE_LANG_AND_ID:CXX,Clang,AppleClang>:-Wno-cpp>)
 
     add_library(dusk_notepad_ui STATIC
+        src/ui/imgui/DuskImGuiHost.cpp
         src/ui/NotepadDocument.cpp
         src/ui/NotepadChords.cpp
         src/ui/NotepadEditorCore.cpp
