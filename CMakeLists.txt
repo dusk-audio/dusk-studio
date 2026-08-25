@@ -508,12 +508,15 @@ if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
 
     add_library(dusk_notepad_ui STATIC
         src/ui/imgui/DuskImGuiHost.cpp
+        src/ui/imgui/DuskTheme.cpp
+        src/ui/imgui/DuskPanelWindow.cpp
         src/ui/NotepadDocument.cpp
         src/ui/NotepadChords.cpp
         src/ui/NotepadEditorCore.cpp
         src/ui/NotepadEditor.cpp
         src/ui/NativeNotepadWindow.cpp
-        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp")
+        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp"
+        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DuskWidgets.cpp")
     target_include_directories(dusk_notepad_ui PRIVATE
         "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl")
 
