@@ -22,6 +22,11 @@ enum class ShellShortcut
     setLoopOut,
     setPunchIn,
     setPunchOut,
-    toggleFullscreen
+    toggleFullscreen,
+
+    // Sentinel: the shell's binding table is checked against this, so adding a
+    // shortcut without the key press it maps to fails the build rather than
+    // reaching the panel and doing nothing.
+    count
 };
 } // namespace duskstudio::imgui

@@ -103,7 +103,7 @@ src/ui/EditCursors.cpp	58
 src/ui/EditCursors.h	7
 src/ui/EditModeToolbar.cpp	48
 src/ui/EditModeToolbar.h	10
-src/ui/EmbeddedModal.h	66
+src/ui/EmbeddedModal.h	68
 src/ui/FadeCurve.h	10
 src/ui/FreezeDialog.cpp	36
 src/ui/FreezeDialog.h	9

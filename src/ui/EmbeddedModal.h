@@ -886,25 +886,33 @@ inline bool dispatchShellShortcut (imgui::ShellShortcut shortcut)
 
     // Key codes, not KeyPress objects: isModalForwardableShortcut reads these same
     // codes, so the two forwarders cannot drift on what counts as a shortcut.
-    struct Binding { int code; int character; };
+    //
+    // The punch pair carries Shift. keyPressed accepts either bracket glyph so the
+    // shifted X11 form still reaches it, but it picks punch over loop by reading the
+    // modifier, not the glyph - so a shifted binding sent bare would quietly set the
+    // loop boundary the user was not asking for.
+    struct Binding { int code; int character; int mods; };
     static const Binding bindings[] = {
-        { juce::KeyPress::spaceKey, ' ' },
-        { 'R', 'r' },
-        { juce::KeyPress::homeKey, 0 },
-        { '.', '.' },
-        { 'L', 'l' },
-        { 'P', 'p' },
-        { '[', '[' },
-        { ']', ']' },
-        { '{', '{' },
-        { '}', '}' },
-        { juce::KeyPress::F11Key, 0 }
+        { juce::KeyPress::spaceKey, ' ', 0 },
+        { 'R', 'r', 0 },
+        { juce::KeyPress::homeKey, 0, 0 },
+        { '.', '.', 0 },
+        { 'L', 'l', 0 },
+        { 'P', 'p', 0 },
+        { '[', '[', 0 },
+        { ']', ']', 0 },
+        { '{', '{', juce::ModifierKeys::shiftModifier },
+        { '}', '}', juce::ModifierKeys::shiftModifier },
+        { juce::KeyPress::F11Key, 0, 0 }
     };
+    static_assert (std::size (bindings)
+                       == static_cast<std::size_t> (imgui::ShellShortcut::count),
+                   "every ShellShortcut needs the key press the shell binds it to");
 
     const auto index = static_cast<std::size_t> (shortcut);
     if (index >= std::size (bindings))
         return false;
-    return target->keyPressed (juce::KeyPress (bindings[index].code, {},
+    return target->keyPressed (juce::KeyPress (bindings[index].code, bindings[index].mods,
                                                bindings[index].character));
 }
 
