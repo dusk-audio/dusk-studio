@@ -50,9 +50,11 @@ Dusk plug-ins follow. Both descend from `a9b033c2`.
 | Pinned branch `f9fbc62a` | 3 | `Window::setEmbeddedOffset`, the Wayland lifecycle and scaling fixes, the pugl mirror pointer |
 | `main` | 31 | The DPF to DAF rename, a second round of Wayland lifetime fixes, AU and CLAP fixes, CI hardening, the pugl mirror pointer |
 
-The pugl submodule is pinned to `5e2621d7` on **both** sides, so the Wayland
-backend's own history is not divergent. All divergence is in the framework
-repository itself.
+Before the reconciliation the pugl submodule was pinned to `5e2621d7` on
+**both** sides, so the Wayland backend's own history was not divergent; all
+divergence was in the framework repository itself. (`43d8e349`, the landed pin
+recorded in §1, is where the `dusk/302-app-contract` work later moved the
+submodule.)
 
 **Nothing on the pinned branch is superseded by main, and nothing on main is
 superseded by the branch.** They are two independent rounds of work on the same
