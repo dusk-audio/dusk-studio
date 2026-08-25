@@ -15,10 +15,6 @@
 # include "src/Resources.hpp"
 #endif
 
-#ifndef DUSKSTUDIO_DGL_RESOURCES
-# define DUSKSTUDIO_DGL_RESOURCES dpf_resources
-#endif
-
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -417,8 +413,8 @@ private:
         auto add = [&] (float size)
         {
             return io.Fonts->AddFontFromMemoryTTF (
-                const_cast<void*> (static_cast<const void*> (DUSKSTUDIO_DGL_RESOURCES::dejavusans_ttf)),
-                DUSKSTUDIO_DGL_RESOURCES::dejavusans_ttf_size, size * scale, &cfg, ranges);
+                const_cast<void*> (static_cast<const void*> (daf_resources::dejavusans_ttf)),
+                daf_resources::dejavusans_ttf_size, size * scale, &cfg, ranges);
         };
 
         // One face per design size rather than one scaled face: the strip's 8 pt column
