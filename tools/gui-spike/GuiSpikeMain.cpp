@@ -1,16 +1,20 @@
-// Non-shipping gate spike for the GUI tower (issue #301). It puts one Dusk Studio channel
-// strip on a native application window driven by the Dusk Audio Framework's DGL/pugl stack
-// and Dear ImGui, with no JUCE anywhere in the target, and reports what a 60 Hz frame of it
-// costs. It is a measuring instrument, not a step toward the shipping UI.
+// Harness for the Dusk widget kit and the GUI tower's frame-cost work (issue #301). It
+// puts Dusk Studio channel strips on a native application window driven by the Dusk Audio
+// Framework's DGL/pugl stack and Dear ImGui, with no JUCE anywhere in the target, and
+// reports what a frame of them costs. It also captures and compares golden frames, and
+// measures what a font atlas costs per glyph policy. It ships with nothing.
 
 #include "ChannelStripView.h"
+#include "StripLayout.h"
 #include "StripModel.h"
-#include "StripTheme.h"
+
+#include "../../src/ui/imgui/DuskTheme.h"
 
 #include <Application.hpp>
 #include <OpenGL.hpp>
 #include <DearImGui.hpp>
 #include <DearImGui/imgui_internal.h>
+#include <DuskWidgets.hpp>
 #ifndef DGL_NO_SHARED_RESOURCES
 # include "src/Resources.hpp"
 #endif
@@ -28,6 +32,8 @@
 # include <sys/resource.h>
 #endif
 
+namespace dw = DuskWidgets;
+
 namespace
 {
 
@@ -42,9 +48,21 @@ struct Options
     bool   resizeSweep = false;
     bool   quiet = false;
     std::string capturePath;
+    std::string comparePath;
     int    captureFrame = 60;
+    int    tolerance = 2;
     bool   selftest = false;
     int    demo = 0;           // 1 opens the modal, 2 opens the insert menu
+    bool   adaptiveRedraw = true;
+    bool   bakedKnobs = true;
+    bool   staticMeters = false;
+};
+
+struct Image
+{
+    int width = 0;
+    int height = 0;
+    std::vector<unsigned char> rgb;
 };
 
 double cpuSeconds()
@@ -75,6 +93,114 @@ const char* glStr (unsigned int name)
     return s != nullptr ? s : "(null)";
 }
 
+bool writePpm (const std::string& path, const Image& image)
+{
+    FILE* const f = std::fopen (path.c_str(), "wb");
+    if (f == nullptr)
+        return false;
+    std::fprintf (f, "P6\n%d %d\n255\n", image.width, image.height);
+    std::fwrite (image.rgb.data(), 1, image.rgb.size(), f);
+    std::fclose (f);
+    return true;
+}
+
+bool readPpm (const std::string& path, Image& image)
+{
+    FILE* const f = std::fopen (path.c_str(), "rb");
+    if (f == nullptr)
+        return false;
+
+    int maxValue = 0;
+    const bool header = std::fscanf (f, "P6 %d %d %d", &image.width, &image.height, &maxValue) == 3
+                     && maxValue == 255 && image.width > 0 && image.height > 0;
+    if (! header || std::fgetc (f) == EOF)
+    {
+        std::fclose (f);
+        return false;
+    }
+
+    image.rgb.resize (static_cast<std::size_t> (image.width) * image.height * 3);
+    const bool ok = std::fread (image.rgb.data(), 1, image.rgb.size(), f) == image.rgb.size();
+    std::fclose (f);
+    return ok;
+}
+
+// Compares two captures channel by channel. A headless GL stack renders the same draw
+// list to the same pixels run after run, so the tolerance is there for a driver or
+// compositor change rather than for noise.
+bool compareImages (const Image& captured, const Image& golden, int tolerance,
+                    int& worstDelta, long& differing)
+{
+    worstDelta = 0;
+    differing = 0;
+    if (captured.width != golden.width || captured.height != golden.height)
+        return false;
+
+    for (std::size_t i = 0; i < captured.rgb.size(); ++i)
+    {
+        const int delta = std::abs (static_cast<int> (captured.rgb[i])
+                                    - static_cast<int> (golden.rgb[i]));
+        worstDelta = std::max (worstDelta, delta);
+        if (delta > tolerance)
+            ++differing;
+    }
+    return differing == 0;
+}
+
+#ifndef DGL_NO_SHARED_RESOURCES
+// What a font atlas costs per glyph policy, which is the evidence the tower's glyph
+// decision rests on. Nothing here needs a window or a GL context.
+void reportGlyphCost (float scale)
+{
+    // What the console faces carried before the ranges were named glyph by glyph:
+    // three whole blocks, most of which nothing draws.
+    static const ImWchar blockRanges[] = { 0x0020, 0x024f, 0x2000, 0x22ff, 0x2500, 0x25ff, 0 };
+
+    struct Policy { const char* name; const ImWchar* console; const ImWchar* entry; };
+    const Policy policies[] = {
+        { "declared marks, every face", dw::consoleGlyphRanges(), dw::consoleGlyphRanges() },
+        { "declared marks + wide text entry (shipped)", dw::consoleGlyphRanges(),
+          dw::textEntryGlyphRanges() },
+        { "wide on every face", dw::textEntryGlyphRanges(), dw::textEntryGlyphRanges() },
+        { "whole punctuation blocks, every face", blockRanges, blockRanges },
+    };
+
+    for (const auto& policy : policies)
+    {
+        ImFontAtlas atlas;
+        ImFontConfig config;
+        config.FontDataOwnedByAtlas = false;
+        config.OversampleH = 2;
+        config.OversampleV = 2;
+        config.PixelSnapH = false;
+
+        const dw::FontSizes sizes;
+        const float faces[] = { sizes.caption, sizes.label, sizes.pill, sizes.band,
+                                sizes.title, sizes.value, sizes.valueLarge, sizes.textEntry };
+        for (int i = 0; i < 8; ++i)
+            atlas.AddFontFromMemoryTTF (
+                const_cast<void*> (static_cast<const void*> (daf_resources::dejavusans_ttf)),
+                daf_resources::dejavusans_ttf_size, faces[i] * scale, &config,
+                i == 7 ? policy.entry : policy.console);
+
+        const auto before = std::chrono::steady_clock::now();
+        unsigned char* pixels = nullptr;
+        int width = 0, height = 0;
+        atlas.GetTexDataAsRGBA32 (&pixels, &width, &height);
+        const double ms = std::chrono::duration<double, std::milli> (
+            std::chrono::steady_clock::now() - before).count();
+
+        int glyphs = 0;
+        for (const ImFont* const font : atlas.Fonts)
+            glyphs += font->Glyphs.Size;
+
+        std::printf ("[spike] atlas %-42s %5dx%-5d %7.2f MB  %6d glyphs  build %.0f ms\n",
+                     policy.name, width, height,
+                     static_cast<double> (width) * height * 4.0 / (1024.0 * 1024.0), glyphs, ms);
+    }
+}
+#endif
+
 } // namespace
 
 class SpikeWindow final : public DGL::ImGuiStandaloneWindow
@@ -83,7 +209,7 @@ public:
     SpikeWindow (DGL::Application& app, const Options& opts)
         : DGL::ImGuiStandaloneWindow (app, 13.0f), application (app), options (opts)
     {
-        setTitle ("Dusk Studio GUI gate spike");
+        setTitle ("Dusk Studio GUI widget kit harness");
         setResizable (true);
 
         const float scale = static_cast<float> (options.scaleOverride > 0.0
@@ -103,8 +229,18 @@ public:
             char name[32];
             std::snprintf (name, sizeof name, "TRK %02d", static_cast<int> (i) + 1);
             strips[i]->name = name;
-            sources.emplace_back (new duskspike::StubMeterSource (*strips[i]));
-            sources.back()->start();
+
+            if (options.staticMeters)
+            {
+                strips[i]->meterInputDb.store (-8.0f);
+                strips[i]->meterGrDb.store (-3.0f);
+                views[i].setStaticMeters (true);
+            }
+            else
+            {
+                sources.emplace_back (new duskspike::StubMeterSource (*strips[i]));
+                sources.back()->start();
+            }
         }
 
         buildFonts (scale);
@@ -122,12 +258,34 @@ public:
     int framesDrawn() const noexcept { return frames; }
     const std::string& rendererName() const noexcept { return renderer; }
     int lastVertices() const noexcept { return vertices; }
+    int lastWidgets() const noexcept { return widgets; }
+    int repaintsSkipped() const noexcept { return skippedRepaints; }
+    bool captureMatched() const noexcept { return compareOk; }
+    bool captureCompared() const noexcept { return compared; }
 
     // What a file dialog opened through xdg-desktop-portal would be parented to.
     std::string portalHandle() const { return Window::getPortalParentHandle(); }
 
 protected:
-    // pugl has no screenshot hook, so the spike takes its own: the base onDisplay has
+    // The console is a 30 Hz picture: its meters are written at 30 Hz and nothing else
+    // moves unless a control is under the pointer. Repainting it at 60 spends the frame
+    // budget twice for one picture, so the idle tick drops every other repaint until
+    // something is live.
+    void idleCallback() override
+    {
+        if (! options.adaptiveRedraw || liveInteraction)
+        {
+            DGL::ImGuiStandaloneWindow::idleCallback();
+            return;
+        }
+
+        if (((++idleTicks) & 1) == 0)
+            DGL::ImGuiStandaloneWindow::idleCallback();
+        else
+            ++skippedRepaints;
+    }
+
+    // pugl has no screenshot hook, so the harness takes its own: the base onDisplay has
     // finished submitting the frame and the buffer has not been swapped yet, which is the
     // only point where a readback is the frame the compositor is about to show.
     void onDisplay() override
@@ -142,24 +300,43 @@ protected:
         if (options.capturePath.empty() || frames != options.captureFrame)
             return;
 
-        const int w = static_cast<int> (getWidth());
-        const int h = static_cast<int> (getHeight());
-        std::vector<unsigned char> pixels (static_cast<std::size_t> (w) * h * 3);
+        Image image;
+        image.width = static_cast<int> (getWidth());
+        image.height = static_cast<int> (getHeight());
+        image.rgb.resize (static_cast<std::size_t> (image.width) * image.height * 3);
 
         glFinish();
         glPixelStorei (GL_PACK_ALIGNMENT, 1);
-        glReadPixels (0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+        std::vector<unsigned char> flipped (image.rgb.size());
+        glReadPixels (0, 0, image.width, image.height, GL_RGB, GL_UNSIGNED_BYTE, flipped.data());
+        for (int row = 0; row < image.height; ++row)
+            std::copy_n (flipped.data()
+                             + static_cast<std::size_t> (image.height - 1 - row) * image.width * 3,
+                         static_cast<std::size_t> (image.width) * 3,
+                         image.rgb.data() + static_cast<std::size_t> (row) * image.width * 3);
 
-        if (FILE* const f = std::fopen (options.capturePath.c_str(), "wb"))
+        if (writePpm (options.capturePath, image))
+            std::printf ("[spike] captured frame %d to %s (%dx%d)\n", frames,
+                         options.capturePath.c_str(), image.width, image.height);
+
+        if (options.comparePath.empty())
+            return;
+
+        Image golden;
+        compared = true;
+        if (! readPpm (options.comparePath, golden))
         {
-            std::fprintf (f, "P6\n%d %d\n255\n", w, h);
-            for (int row = h - 1; row >= 0; --row)
-                std::fwrite (pixels.data() + static_cast<std::size_t> (row) * w * 3, 1,
-                             static_cast<std::size_t> (w) * 3, f);
-            std::fclose (f);
-            std::printf ("[spike] captured frame %d to %s (%dx%d)\n",
-                         frames, options.capturePath.c_str(), w, h);
+            std::printf ("[spike] golden %s could not be read\n", options.comparePath.c_str());
+            compareOk = false;
+            return;
         }
+
+        int worst = 0;
+        long differing = 0;
+        compareOk = compareImages (image, golden, options.tolerance, worst, differing);
+        std::printf ("[spike] golden %s: %s (worst channel delta %d, %ld pixels over tolerance %d)\n",
+                     options.comparePath.c_str(), compareOk ? "match" : "MISMATCH", worst,
+                     differing, options.tolerance);
     }
 
     // Counted so a run can say whether the compositor delivered any input at all, rather
@@ -220,30 +397,46 @@ protected:
         ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (0.0f, 0.0f));
         ImGui::PushStyleVar (ImGuiStyleVar_WindowBorderSize, 0.0f);
         ImGui::PushStyleColor (ImGuiCol_WindowBg,
-                               ImGui::ColorConvertU32ToFloat4 (IM_COL32 (0x12, 0x12, 0x14, 255)));
+                               ImGui::ColorConvertU32ToFloat4 (
+                                   duskstudio::imgui::consolePalette().consoleBack));
         ImGui::Begin ("##console", nullptr,
                       ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize
                       | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar
                       | ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-        auto* const dl = ImGui::GetWindowDrawList();
+        dw::Context ctx;
+        ctx.dl = ImGui::GetWindowDrawList();
+        ctx.theme = &duskstudio::imgui::consolePalette().widgets;
+        ctx.fonts = &fonts;
+        ctx.knobAtlas = options.bakedKnobs ? &knobAtlas : nullptr;
+        ctx.drag = &drag;
+        ctx.scale = scale;
 
         const float stripW = duskspike::layout::kStripWidth * scale;
         const float gap = 4.0f * scale;
-        const float stripH = std::max (duskspike::layout::kMinStripHeight * scale, h - 12.0f * scale);
+        const float stripH = std::max (duskspike::layout::kMinStripHeight * scale,
+                                       h - 12.0f * scale);
         float x = 6.0f * scale;
 
         duskspike::StripFrameResult firstResult;
         for (std::size_t i = 0; i < views.size(); ++i)
         {
-            const auto r = views[i].draw (*dl, ImVec2 (x, 6.0f * scale), stripW, stripH,
-                                          scale, *strips[i], fonts);
+            // Two strips carry the same control names, so each one needs its own id scope
+            // or only the last of them can be hovered.
+            ImGui::PushID (static_cast<int> (i));
+            const auto r = views[i].draw (ctx, ImVec2 (x, 6.0f * scale), stripW, stripH,
+                                          *strips[i]);
+            ImGui::PopID();
             if (i == 0)
                 firstResult = r;
             x += stripW + gap;
         }
 
-        vertices = dl->VtxBuffer.Size;
+        bubbleSeen = bubbleSeen || drag.bubbleText[0] != 0;
+        dw::drawDragBubble (ctx);
+
+        vertices = ctx.dl->VtxBuffer.Size;
+        widgets = ctx.widgets;
 
         // Hide the pointer for the length of a knob drag, the idiom every DAW knob uses.
         bool dragging = false;
@@ -259,11 +452,10 @@ protected:
         }
 
         // Keyboard: the shell owns the shortcuts a view would not, so a key press proves it
-        // reaches the application and not only the focused text field.
-        // Not gated on io.WantCaptureKeyboard: the widgets library forces keyboard nav on,
-        // which pins that flag true, so it says nothing about whether the application may
-        // take the key.
-        if (! views[0].isEditingName() && ! ImGui::IsAnyItemActive())
+        // reaches the application and not only the focused text field. The rule is the
+        // kit's, so every Dusk view answers the question the same way.
+        shortcutsWereAvailable = dw::shortcutsAvailable (ctx);
+        if (shortcutsWereAvailable)
         {
             auto& p = *strips[0];
             if (ImGui::IsKeyPressed (ImGuiKey_M, false))
@@ -309,6 +501,11 @@ protected:
 
         drawHud (w, scale);
 
+        // What the next idle tick needs to know: a picture nobody is touching may be
+        // repainted at half rate.
+        liveInteraction = ImGui::IsAnyItemActive() || ImGui::IsAnyItemHovered()
+                       || ImGui::GetIO().WantTextInput || insertMenuUp || ioModalUp;
+
         ImGui::End();
         ImGui::PopStyleColor();
         ImGui::PopStyleVar (2);
@@ -344,7 +541,8 @@ private:
             case 12: selftestBefore = p.hfGainDb.load(); io.AddMouseButtonEvent (0, true); break;
             case 14: io.AddMousePosEvent (hfGain.x, hfGain.y - 40.0f * scale); break;
             case 16: io.AddMouseButtonEvent (0, false); break;
-            case 18: note ("knob drag changes value", p.hfGainDb.load() > selftestBefore + 0.5f); break;
+            case 18: note ("knob drag changes value", p.hfGainDb.load() > selftestBefore + 0.5f);
+                     note ("knob drag floats a value bubble", bubbleSeen); break;
 
             case 22: io.AddMouseWheelEvent (0.0f, 3.0f); break;
             case 24: note ("knob wheel changes value", p.hfGainDb.load() != selftestBefore); break;
@@ -362,6 +560,8 @@ private:
 
             case 48: views[0].setEditingName (true); break;
             case 52: io.AddInputCharacter ('Z'); break;
+            case 54: note ("an open text field withholds the shortcut",
+                           ! shortcutsWereAvailable); break;
             case 56: io.AddKeyEvent (ImGuiKey_Enter, true); break;
             case 57: io.AddKeyEvent (ImGuiKey_Enter, false); break;
             case 62: note ("text entry commits", ! views[0].isEditingName()
@@ -433,49 +633,25 @@ private:
         const ImVec2 at (w - 380.0f * scale, 6.0f * scale);
         dl->AddRectFilled (at, ImVec2 (w - 6.0f * scale, at.y + 18.0f * scale),
                            IM_COL32 (0, 0, 0, 160), 3.0f);
-        dl->AddText (fonts.mono, 11.0f * scale, ImVec2 (at.x + 6.0f * scale, at.y + 3.0f * scale),
+        dl->AddText (fonts.value, 11.0f * scale, ImVec2 (at.x + 6.0f * scale, at.y + 3.0f * scale),
                      IM_COL32 (0xc0, 0xc0, 0xc8, 255), line);
     }
 
     void buildFonts (float scale)
     {
+       #ifndef DGL_NO_SHARED_RESOURCES
         auto& io = ImGui::GetIO();
         io.Fonts->Clear();
-
-        ImFontConfig cfg;
-        cfg.FontDataOwnedByAtlas = false;
-        cfg.OversampleH = 2;
-        cfg.OversampleV = 2;
-        cfg.PixelSnapH = false;
-
-        // ImGui bakes a fixed glyph set. The default range is Latin only, which silently
-        // drops the fader's infinity mark - a glyph the JUCE strip gets for free from the
-        // system font. Every non-Latin mark the UI uses has to be declared here.
-        static const ImWchar ranges[] = {
-            0x0020, 0x024f,   // Latin and its supplements
-            0x2000, 0x22ff,   // punctuation, arrows, maths (infinity lives here)
-            0x2500, 0x25ff,   // box drawing and geometric shapes
-            0
-        };
-
-        auto add = [&] (float size)
-        {
-            return io.Fonts->AddFontFromMemoryTTF (
-                const_cast<void*> (static_cast<const void*> (daf_resources::dejavusans_ttf)),
-                daf_resources::dejavusans_ttf_size, size * scale, &cfg, ranges);
-        };
-
-        // One face per design size rather than one scaled face: the strip's 8 pt column
-        // headers are unreadable if they are a scaled 13 pt atlas entry.
-        fonts.small   = add (8.0f);
-        fonts.label   = add (9.0f);
-        fonts.pill    = add (10.5f);
-        fonts.band    = add (12.0f);
-        fonts.name    = add (13.0f);
-        fonts.mono    = add (11.0f);
-        fonts.monoBig = add (14.0f);
+        fonts = dw::buildFonts (*io.Fonts,
+                                daf_resources::dejavusans_ttf,
+                                static_cast<int> (daf_resources::dejavusans_ttf_size), scale);
+        // The dome rectangles have to be reserved before the atlas is packed and filled
+        // in after, so the knob costs three quads instead of a thousand vertices.
+        knobAtlas.reserve (*io.Fonts, static_cast<int> (128.0f * std::max (1.0f, scale)));
         io.FontDefault = fonts.band;
         io.Fonts->Build();
+        knobAtlas.rasterise (*io.Fonts);
+       #endif
     }
 
     void reportGraphics()
@@ -492,7 +668,9 @@ private:
     std::vector<std::unique_ptr<duskspike::StripParams>> strips;
     std::vector<std::unique_ptr<duskspike::StubMeterSource>> sources;
     std::vector<duskspike::ChannelStripView> views;
-    duskspike::StripFonts fonts;
+    dw::Fonts fonts;
+    dw::KnobAtlas knobAtlas;
+    dw::DragState drag;
 
     std::string renderer;
     std::string menuChoice;
@@ -500,6 +678,11 @@ private:
     bool requestIoModal = false, requestInsertMenu = false;
     bool ioModalUp = false, insertMenuUp = false;
     bool pointerHidden = false;
+    bool bubbleSeen = false;
+    bool shortcutsWereAvailable = false;
+    bool liveInteraction = false;
+    bool compareOk = true;
+    bool compared = false;
 
     bool measuring = true;
     int selftestStep = 0;
@@ -507,6 +690,9 @@ private:
     bool keyWasHeld = false;
     int frames = 0;
     int vertices = 0;
+    int widgets = 0;
+    unsigned int idleTicks = 0;
+    int skippedRepaints = 0;
     std::chrono::steady_clock::time_point lastFrame {};
     std::chrono::steady_clock::time_point startedAt {};
     std::vector<double> frameDeltas;
@@ -515,6 +701,7 @@ private:
 int main (int argc, char* argv[])
 {
     Options opts;
+    bool glyphReport = false;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -531,18 +718,35 @@ int main (int argc, char* argv[])
         else if (a == "--quiet")   opts.quiet = true;
         else if (a == "--capture") opts.capturePath = next();
         else if (a == "--capture-frame") opts.captureFrame = std::atoi (next());
+        else if (a == "--compare") opts.comparePath = next();
+        else if (a == "--tolerance") opts.tolerance = std::atoi (next());
         else if (a == "--selftest") opts.selftest = true;
         else if (a == "--demo")    opts.demo = std::atoi (next());
+        else if (a == "--full-rate") opts.adaptiveRedraw = false;
+        else if (a == "--vector-knobs") opts.bakedKnobs = false;
+        else if (a == "--static")  opts.staticMeters = true;
+        else if (a == "--glyph-report") glyphReport = true;
         else if (a == "--help")
         {
             std::printf ("usage: dusk-gui-spike [--seconds N] [--strips N] [--reopen N]\n"
                          "                      [--scale F] [--width N] [--height N]\n"
-                         "                      [--resize-sweep] [--quiet]\n"
+                         "                      [--resize-sweep] [--quiet] [--static]\n"
                          "                      [--capture FILE.ppm] [--capture-frame N]\n"
-                         "                      [--selftest] [--demo 1|2]\n");
+                         "                      [--compare FILE.ppm] [--tolerance N]\n"
+                         "                      [--selftest] [--demo 1|2]\n"
+                         "                      [--full-rate] [--vector-knobs]\n"
+                         "                      [--glyph-report]\n");
             return 0;
         }
     }
+
+   #ifndef DGL_NO_SHARED_RESOURCES
+    if (glyphReport)
+    {
+        reportGlyphCost (opts.scaleOverride > 0.0 ? static_cast<float> (opts.scaleOverride) : 1.0f);
+        return 0;
+    }
+   #endif
 
     DGL::Application app (true);
     app.setClassName ("dusk-studio-gui-spike");
@@ -555,6 +759,7 @@ int main (int argc, char* argv[])
         Options warm = opts;
         warm.seconds = 0.35;
         warm.quiet = true;
+        warm.capturePath.clear();
         SpikeWindow w (app, warm);
         w.show();
         app.exec (4);
@@ -594,6 +799,8 @@ int main (int argc, char* argv[])
                  static_cast<double> (d.size()) / std::max (1.0e-6, wall),
                  cpu, 100.0 * cpu / std::max (1.0e-6, wall),
                  window.lastVertices(), opts.strips);
+    std::printf ("[spike] widgets/frame=%d  repaints skipped=%d\n",
+                 window.lastWidgets(), window.repaintsSkipped());
     std::printf ("[spike] renderer=%s\n", window.rendererName().c_str());
     std::printf ("[spike] input events: pointer=%d key=%d text=%d focusIn=%d focusOut=%d\n",
                  window.pointerEvents, window.keyEvents, window.textEvents,
@@ -609,5 +816,7 @@ int main (int argc, char* argv[])
             ++failures;
     }
 
+    if (window.captureCompared() && ! window.captureMatched())
+        return 3;
     return failures == 0 ? 0 : 2;
 }

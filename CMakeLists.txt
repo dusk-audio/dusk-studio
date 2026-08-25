@@ -550,6 +550,8 @@ if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
         add_executable(dusk-gui-spike
             tools/gui-spike/GuiSpikeMain.cpp
             tools/gui-spike/ChannelStripView.cpp
+            src/ui/imgui/DuskTheme.cpp
+            "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DuskWidgets.cpp"
             "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp")
         target_include_directories(dusk-gui-spike PRIVATE
             "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl")
