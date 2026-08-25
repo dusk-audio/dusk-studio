@@ -123,6 +123,9 @@ public:
     const std::string& rendererName() const noexcept { return renderer; }
     int lastVertices() const noexcept { return vertices; }
 
+    // What a file dialog opened through xdg-desktop-portal would be parented to.
+    std::string portalHandle() const { return Window::getPortalParentHandle(); }
+
 protected:
     // pugl has no screenshot hook, so the spike takes its own: the base onDisplay has
     // finished submitting the frame and the buffer has not been swapped yet, which is the
@@ -591,6 +594,7 @@ int main (int argc, char* argv[])
                  window.pointerEvents, window.keyEvents, window.textEvents,
                  window.focusInEvents, window.focusOutEvents);
     std::printf ("[spike] cursor changes accepted by the backend: %d\n", window.cursorCalls);
+    std::printf ("[spike] portal parent handle: \"%s\"\n", window.portalHandle().c_str());
 
     int failures = 0;
     for (const auto& line : window.selftestLog)
