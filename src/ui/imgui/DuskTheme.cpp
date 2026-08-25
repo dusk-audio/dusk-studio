@@ -55,8 +55,9 @@ ConsolePalette buildPalette()
 
     p.armOn        = argb (0xffd03030);
     p.armOffText   = argb (0xffd06060);
-    p.muteOn       = argb (0xffff4500);
-    p.soloOn       = argb (0xffcccc00);
+    p.muteOn       = argb (0xffff4500);  // Colours::orangered
+    // Colours::yellow.darker (0.2f), which scales by 1/1.2 rather than by 0.8.
+    p.soloOn       = argb (0xffd4d400);
     p.phaseOn      = argb (0xff70c0d0);
     p.printOn      = argb (0xffd09060);
     p.insertText   = argb (0xff9080c0);
