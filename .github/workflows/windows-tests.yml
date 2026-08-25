@@ -156,7 +156,7 @@ jobs:
         # failing to build here only surfaced in windows-build.yml, which runs on
         # a release tag. Compiling the one target keeps that off tag day.
         shell: bash
-        run: cmake --build build-tests --config Release --target dusk_notepad_ui -j4
+        run: cmake --build build-tests --config Release --target dusk_native_ui -j4
 
       - name: Run tests
         # Full Catch2 suite on MSVC, minus the FileImporter cases. Those write
