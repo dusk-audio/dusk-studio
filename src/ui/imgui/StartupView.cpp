@@ -182,10 +182,15 @@ public:
     // session is what the DAW opens with, which is what skipping means.
     bool escapeDismisses() const override { return false; }
 
+    // Reported once. The choice itself has to survive for the host to read it from
+    // the dismissed callback, and the teardown it starts takes a couple of event-pump
+    // ticks - long enough to re-report and run the action twice.
     bool takeDismissRequest() override
     {
-        const bool wanted = action != StartupAction::none;
-        return wanted;
+        if (action == StartupAction::none || reported)
+            return false;
+        reported = true;
+        return true;
     }
 
     StartupAction chosenAction() const override { return action; }
@@ -470,6 +475,7 @@ private:
     std::string updateBanner;
     std::string path;
     StartupAction action = StartupAction::none;
+    bool reported = false;
     int selectedRow = -1;
     int scrollRow = 0;
     int blinkFrames = 0;
