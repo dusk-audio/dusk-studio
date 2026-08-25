@@ -45,7 +45,8 @@ from a clean Ubuntu 22.04 build.
 Configure into a fresh `build-linux/`. `DUSKSTUDIO_ENABLE_NATIVE_UI` is a
 cached option: a directory first configured without the DPF checkouts keeps the
 notepad off after you clone them, and drops its STATUS line too, so a release
-built in a reused directory can ship without the notepad and without saying so.
+built in a reused directory can ship without any of the native views - notepad,
+startup dialog, compressor editor, virtual keyboard - and without saying so.
 
 ```bash
 # 1. Build Dusk Studio as usual.
