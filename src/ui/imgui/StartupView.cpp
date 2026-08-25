@@ -491,8 +491,12 @@ std::vector<RecentSession> scanRecentSessions (const std::vector<std::filesystem
     for (const auto& path : paths)
     {
         RecentSession row;
-        row.path = path.string();
-        row.name = path.filename().string();
+        // u8string, not string: the recents file stores UTF-8 and RecentSessions reads
+        // it back through u8path, but native_string() on Windows is the ANSI code page.
+        // The row is drawn as UTF-8 and handed back as a UTF-8 file path, so anything
+        // outside ASCII would come back mangled and fail to load.
+        row.path = path.u8string();
+        row.name = path.filename().u8string();
         row.lastModified = formatLastModified (path);
         inferAudioFormat (path, row.sampleRate, row.bitDepth);
         rows.push_back (std::move (row));
