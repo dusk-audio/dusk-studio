@@ -43,6 +43,12 @@ public:
     // False keeps Escape inside the view (a text field being edited, a popup that
     // should close first). The window dismisses on Escape only when this is true.
     virtual bool escapeDismisses() const { return true; }
+
+    // A view that closes itself - a Cancel button, or the shortcut that opened it
+    // pressed again - raises this and the window dismisses. Cleared by the read,
+    // because a framework child has no parent chain for an unhandled key to walk
+    // the way a JUCE modal body did.
+    virtual bool takeDismissRequest() { return false; }
 };
 
 // A native modal panel over the JUCE shell.

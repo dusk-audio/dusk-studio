@@ -467,14 +467,37 @@ void MainComponent::captureNativePanels (std::string outDir)
     session.track (0).meterGrDb.store (0.0f, std::memory_order_relaxed);
     strip0->openCompEditorForCapture (outDir + "/fx-02-comp.ppm");
 
+    // One panel at a time: each is a modal surface, and two open at once would put
+    // one child over the other.
     juce::Component::SafePointer<MainComponent> safeThis (this);
-    dusk::Timer::callAfterDelay (1500, [safeThis, quitNow]
+    dusk::Timer::callAfterDelay (1500, [safeThis, quitNow, outDir]
     {
-        if (auto* self = safeThis.getComponent())
-            if (self->consoleView != nullptr)
-                if (auto* s = self->consoleView->getStripComponent (0))
-                    s->closeCompEditorForCapture();
-        dusk::Timer::callAfterDelay (400, quitNow);
+        auto* const self = safeThis.getComponent();
+        if (self == nullptr)
+        {
+            quitNow();
+            return;
+        }
+        if (self->consoleView != nullptr)
+            if (auto* s = self->consoleView->getStripComponent (0))
+                s->closeCompEditorForCapture();
+
+        dusk::Timer::callAfterDelay (400, [safeThis, quitNow, outDir]
+        {
+            auto* const me = safeThis.getComponent();
+            if (me == nullptr)
+            {
+                quitNow();
+                return;
+            }
+            me->openVirtualKeyboardForCapture (outDir + "/vkb-01-virtual-keyboard.ppm");
+            dusk::Timer::callAfterDelay (1500, [safeThis, quitNow]
+            {
+                if (auto* last = safeThis.getComponent())
+                    last->closeVirtualKeyboard();
+                dusk::Timer::callAfterDelay (400, quitNow);
+            });
+        });
     });
 }
 } // namespace duskstudio

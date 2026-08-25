@@ -10,9 +10,11 @@
 #include "PluginScanModal.h"
 #include "ShortcutsPanel.h"
 #include "SupportersPanel.h"
-#if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+#if DUSKSTUDIO_HAS_NATIVE_UI
+ #include "imgui/VirtualKeyboardView.h"
  #include "NativeNotepadWindow.h"
  #include "NativeEditorEmbedScale.h"
+ #include "imgui/DuskPanelWindow.h"
 #endif
 #include "DuskContextMenu.h"
 #include "../session/MidiBindings.h"
@@ -26,7 +28,6 @@
 #include "PlatformWindowing.h"
 #include "AudioRegionEditor.h"
 #include "TunerOverlay.h"
-#include "VirtualKeyboardComponent.h"
 #include "../session/SessionTemplates.h"
 #include "MasteringView.h"
 #include "StartupDialog.h"
@@ -102,7 +103,7 @@ bool peekMidiSummary (const juce::File& file, ImportTargetPicker::FileSummary& s
     return true;
 }
 
-#if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+#if DUSKSTUDIO_HAS_NATIVE_UI
 // Where the embedded notepad child sits inside the top-level window, in
 // logical coordinates. The native child's geometry and the dim overlay's
 // click-outside test are the same rectangle in two coordinate spaces.
@@ -1093,7 +1094,10 @@ MainComponent::~MainComponent()
     scanModal            .closeAndDeleteBodyNow();
     quitModal            .closeAndDeleteBodyNow();
     recoveryModal        .closeAndDeleteBodyNow();
-    virtualKeyboardModal .closeAndDeleteBodyNow();
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    virtualKeyboardWindow.reset();
+    virtualKeyboardDim.reset();
+   #endif
     importTargetModal    .closeAndDeleteBodyNow();
     shortcutsModal       .closeAndDeleteBodyNow();
     supportersModal      .closeAndDeleteBodyNow();
@@ -1981,7 +1985,7 @@ void MainComponent::resized()
                                                                   startupDialog->getHeight()));
     }
 
-   #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+   #if DUSKSTUDIO_HAS_NATIVE_UI
     if (notepadWindow != nullptr && notepadWindow->isOpen())
     {
         if (auto* const topLevel = getTopLevelComponent())
@@ -2595,7 +2599,7 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
     if (! SessionSerializer::saveNotepad (dir, notepadText))
     {
         notepadDirty = true;
-       #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+       #if DUSKSTUDIO_HAS_NATIVE_UI
         if (notepadWindow != nullptr)
             notepadWindow->markSaveFailed();
        #endif
@@ -2653,7 +2657,7 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
     if (saveOk)
     {
         notepadDirty = false;
-       #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+       #if DUSKSTUDIO_HAS_NATIVE_UI
         if (notepadWindow != nullptr)
             notepadWindow->markSaved();
        #endif
@@ -5399,47 +5403,137 @@ void MainComponent::closeTuner()
     session.tuneTrackIndex.store (-1, std::memory_order_relaxed);
 }
 
+void MainComponent::closeVirtualKeyboard()
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (virtualKeyboardWindow != nullptr && virtualKeyboardWindow->isOpen())
+        virtualKeyboardWindow->close();
+   #endif
+}
+
+void MainComponent::openVirtualKeyboardForCapture (const std::string& capturePath)
+{
+    toggleVirtualKeyboard();
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (virtualKeyboardWindow != nullptr && virtualKeyboardWindow->isOpen())
+        virtualKeyboardWindow->captureNextFrameTo (capturePath);
+   #else
+    (void) capturePath;
+   #endif
+}
+
 void MainComponent::toggleVirtualKeyboard()
 {
-    if (virtualKeyboardModal.isOpen())
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    setStatusText ("Virtual keyboard unavailable: built without the native UI");
+   #else
+    if (virtualKeyboardWindow != nullptr && virtualKeyboardWindow->isOpen())
     {
-        // Closing the VKB: also reset any in-flight step-record
-        // chord state on the open piano roll. Stale held-counters
-        // would otherwise survive across VKB open/close cycles.
+        // Closing the VKB: also reset any in-flight step-record chord state on the
+        // open piano roll. Stale held-counters would otherwise survive across VKB
+        // open / close cycles.
         if (pianoRoll != nullptr)
             pianoRoll->resetStepRecordState();
-        virtualKeyboardModal.close();
+        closeVirtualKeyboard();
         return;
     }
 
-    auto body = std::make_unique<VirtualKeyboardComponent> (engine);
-    body->setSize (720, 220);
+    auto* const topLevel = getTopLevelComponent();
+    const auto parentHandle = topLevel != nullptr
+                            ? embedscale::nativeParentHandle (*topLevel) : 0;
+    if (parentHandle == 0)
+    {
+        setStatusText ("Virtual keyboard unavailable: main window is not ready");
+        return;
+    }
 
-    // Step-record wiring: when the piano roll is open at the time
-    // each VKB note fires, the note also lands as a MidiNote at
-    // the playhead. We capture by SafePointer so closing either
-    // modal can't dangle. The roll's stepRecordNoteOn/Off handle
-    // the chord-aware playhead-advance logic.
+    if (auto hook = EmbeddedModal::beforeModalShown())
+        hook();
+
+    if (virtualKeyboardWindow == nullptr)
+    {
+        virtualKeyboardWindow = std::make_unique<imgui::DuskPanelWindow> (
+            "dusk-studio-virtual-keyboard", "virtual-keyboard", "Virtual keyboard");
+
+        imgui::DuskPanelWindow::Callbacks callbacks;
+        callbacks.dismissed = [this] { closeVirtualKeyboard(); };
+        callbacks.closed = [this]
+        {
+            virtualKeyboardDim.reset();
+            virtualKeyboardHider.restore();
+            reclaimFocusFromNotepad();
+        };
+        callbacks.shortcut = [] (imgui::ShellShortcut shortcut)
+        {
+            return dispatchShellShortcut (shortcut);
+        };
+        callbacks.geometry = [this]
+        {
+            auto* const top = getTopLevelComponent();
+            if (top == nullptr || virtualKeyboardWindow == nullptr)
+                return imgui::DuskPanelWindow::Geometry {};
+            const auto plate = virtualKeyboardWindow->plateSize();
+            const auto bounds = embedscale::centredChildBounds (*top, plate.width,
+                                                                plate.height);
+            if (virtualKeyboardDim != nullptr)
+            {
+                virtualKeyboardDim->setBounds (top->getLocalBounds());
+                virtualKeyboardDim->setNativeChildArea (bounds.expanded (1));
+            }
+            const auto g = embedscale::childGeometryFor (*top, bounds);
+            return imgui::DuskPanelWindow::Geometry { g.x, g.y, g.width, g.height, g.scale };
+        };
+        virtualKeyboardWindow->setCallbacks (std::move (callbacks));
+    }
+
+    // Step-record wiring: while the piano roll is open, each typed note also lands as
+    // a MidiNote at the playhead. The roll's stepRecordNoteOn / Off handle the
+    // chord-aware playhead advance.
     juce::Component::SafePointer<MainComponent> safeThis (this);
-    body->onNoteOn = [safeThis] (int note, int vel, int /*chan*/)
-    {
-        if (auto* self = safeThis.getComponent())
-            if (self->pianoRoll != nullptr)
-                self->pianoRoll->stepRecordNoteOn (note, vel);
-    };
-    body->onNoteOff = [safeThis] (int note, int /*chan*/)
-    {
-        if (auto* self = safeThis.getComponent())
-            if (self->pianoRoll != nullptr)
-                self->pianoRoll->stepRecordNoteOff (note);
-    };
+    virtualKeyboardWindow->setView (imgui::makeVirtualKeyboardView (
+        engine,
+        [safeThis] (int note, int velocity, int)
+        {
+            if (auto* self = safeThis.getComponent())
+                if (self->pianoRoll != nullptr)
+                    self->pianoRoll->stepRecordNoteOn (note, velocity);
+        },
+        [safeThis] (int note, int)
+        {
+            if (auto* self = safeThis.getComponent())
+                if (self->pianoRoll != nullptr)
+                    self->pianoRoll->stepRecordNoteOff (note);
+        }));
 
-    virtualKeyboardModal.show (*this, std::move (body));
+    const auto plate = virtualKeyboardWindow->plateSize();
+    const auto logical = embedscale::centredChildBounds (*topLevel, plate.width,
+                                                         plate.height);
+
+    virtualKeyboardDim = std::make_unique<DimOverlay> (virtualKeyboardWindow->dimAlpha());
+    virtualKeyboardDim->setBounds (topLevel->getLocalBounds());
+    virtualKeyboardDim->setNativeChildArea (logical.expanded (1));
+    virtualKeyboardDim->onClick = [this] { closeVirtualKeyboard(); };
+    topLevel->addAndMakeVisible (virtualKeyboardDim.get());
+    virtualKeyboardHider.hideUnder (*topLevel, { virtualKeyboardDim.get() });
+
+    const auto geometry = embedscale::childGeometryFor (*topLevel, logical);
+    if (! virtualKeyboardWindow->open (parentHandle,
+                                       { geometry.x, geometry.y, geometry.width,
+                                         geometry.height, geometry.scale }))
+    {
+        virtualKeyboardDim.reset();
+        virtualKeyboardHider.restore();
+        const auto& why = virtualKeyboardWindow->lastOpenFailure();
+        setStatusText (why.empty()
+                           ? "Virtual keyboard unavailable: this display cannot carry it"
+                           : why.c_str());
+    }
+   #endif
 }
 
 void MainComponent::toggleNotepad()
 {
-#if ! DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+#if ! DUSKSTUDIO_HAS_NATIVE_UI
     setStatusText ("Notepad unavailable: built without the native notepad UI");
 #else
     if (notepadWindow != nullptr && notepadWindow->isOpen())
@@ -5545,7 +5639,7 @@ void MainComponent::toggleNotepad()
 
 void MainComponent::dismissNotepad (bool saveChanges)
 {
-   #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+   #if DUSKSTUDIO_HAS_NATIVE_UI
     const bool wasOpen = notepadDim != nullptr;
     if (notepadWindow != nullptr)
     {
@@ -5586,7 +5680,7 @@ void MainComponent::reclaimFocusFromNotepad()
 
 void MainComponent::yieldNotepadWindow (bool saveChanges)
 {
-   #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+   #if DUSKSTUDIO_HAS_NATIVE_UI
     // The dim exists for exactly as long as the notepad does, including the
     // deferred native teardown between close() and its closed callback.
     if (notepadDim != nullptr)
@@ -5602,7 +5696,7 @@ bool MainComponent::saveNotepadNow()
     const auto dir = session.getSessionDirectory();
     if (dir == juce::File())
     {
-       #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+       #if DUSKSTUDIO_HAS_NATIVE_UI
         if (notepadWindow != nullptr)
             notepadWindow->markSaveFailed();
        #endif
@@ -5612,14 +5706,14 @@ bool MainComponent::saveNotepadNow()
     if (SessionSerializer::saveNotepad (dir, notepadText))
     {
         notepadDirty = false;
-       #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+       #if DUSKSTUDIO_HAS_NATIVE_UI
         if (notepadWindow != nullptr)
             notepadWindow->markSaved();
        #endif
         return true;
     }
 
-   #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+   #if DUSKSTUDIO_HAS_NATIVE_UI
     if (notepadWindow != nullptr)
         notepadWindow->markSaveFailed();
    #endif

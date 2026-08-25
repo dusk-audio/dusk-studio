@@ -42,7 +42,7 @@ Done outside CMake by `scripts/package-tarball.sh`, which stages the program
 directory, copies the integration assets, and packs everything with `tar`. Run
 from a clean Ubuntu 22.04 build.
 
-Configure into a fresh `build-linux/`. `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` is a
+Configure into a fresh `build-linux/`. `DUSKSTUDIO_ENABLE_NATIVE_UI` is a
 cached option: a directory first configured without the DPF checkouts keeps the
 notepad off after you clone them, and drops its STATUS line too, so a release
 built in a reused directory can ship without the notepad and without saying so.

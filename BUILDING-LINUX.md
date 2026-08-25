@@ -120,19 +120,19 @@ Clone then check out the SHA, rather than building whatever `main` points at tod
 
 The pins live in [.github/actions/clone-dpf-stack/action.yml](.github/actions/clone-dpf-stack/action.yml), which is the single source of truth for every workflow — read them from there if it ever disagrees with the commands above.
 
-Missing either checkout, `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` defaults to **OFF** and configure says so once, quietly:
+Missing either checkout, `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults to **OFF** and configure says so once, quietly:
 
 ```
 -- Native notepad: DAF / DAF-Widgets not found - disabled
 ```
 
-The rest of the app builds and runs normally, but opening the notepad reports *"Notepad unavailable: built without the native notepad UI"*. Passing `-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON` with a checkout missing turns that into a configure error instead of a silent downgrade.
+The rest of the app builds and runs normally, but opening the notepad reports *"Notepad unavailable: built without the native notepad UI"*. Passing `-DDUSKSTUDIO_ENABLE_NATIVE_UI=ON` with a checkout missing turns that into a configure error instead of a silent downgrade.
 
-That OFF is sticky, because `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` is a **cached** CMake option — the one dependency here that a later reconfigure won't pick up on its own. Configure `build-linux/` before cloning DAF and cloning it afterwards changes nothing on the next configure, and the "not found" line stops printing too, so nothing hints that the notepad is still off. Either configure into a fresh build directory or force the cache, keeping the rest of the flags from [Configure + build](#configure--build) below:
+That OFF is sticky, because `DUSKSTUDIO_ENABLE_NATIVE_UI` is a **cached** CMake option — the one dependency here that a later reconfigure won't pick up on its own. Configure `build-linux/` before cloning DAF and cloning it afterwards changes nothing on the next configure, and the "not found" line stops printing too, so nothing hints that the notepad is still off. Either configure into a fresh build directory or force the cache, keeping the rest of the flags from [Configure + build](#configure--build) below:
 
 ```bash
 cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON
+  -DDUSKSTUDIO_ENABLE_NATIVE_UI=ON
 ```
 
 #### Windowing backend

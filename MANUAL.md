@@ -560,9 +560,11 @@ In compact mode (window narrower than 1850 pixels), `TIMELINE` becomes `▾` and
 
 ## The virtual keyboard
 
+![The virtual MIDI keyboard, with the typing letter printed on each key it plays.](docs/images/vkb-01-virtual-keyboard.png)
+
 The ⌨ button (or **K**) opens an on-screen MIDI keyboard. It belongs to the transport bar, not to any one view: it opens in any stage, with or without the piano roll. It appears as a MIDI source called **Virtual Keyboard (Dusk Studio)** in each track's MIDI input picker, and loading an instrument onto a track with no input bound selects it automatically so the instrument is playable straight away.
 
-While it is open, every letter and digit in its layout belongs to the keyboard rather than to the shortcuts — **P** and **R** play their notes instead of toggling punch and record, at any octave (shift the octave high enough that a key runs past the top of the MIDI range and it simply does nothing). Keys outside the layout still work as usual, so **Space**, **.**, **L**, **[** / **]** keep driving the transport, and **K** or **Esc** closes the keyboard.
+Each key is labelled with the typing letter that plays it, and every C is labelled with its octave. **Oct -** / **Oct +** and the **Up** / **Down** arrows move the octave, **Ch -** / **Ch +** and **Left** / **Right** move the MIDI channel, and you can click or drag across the keys with the mouse for a glissando. While it is open, every letter and digit in its layout belongs to the keyboard rather than to the shortcuts — **P** and **R** play their notes instead of toggling punch and record, at any octave (shift the octave high enough that a key runs past the top of the MIDI range and it simply does nothing). Keys outside the layout still work as usual, so **Space**, **.**, **L**, **[** / **]** keep driving the transport, and **K** or **Esc** closes the keyboard.
 
 ## The notepad
 

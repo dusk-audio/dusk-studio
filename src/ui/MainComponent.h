@@ -18,6 +18,8 @@ namespace duskstudio
 namespace dp { struct SongScan; }
 class NativeNotepadWindow;
 
+namespace imgui { class DuskPanelWindow; }
+
 class MainComponent final : public juce::Component,
                              public juce::MenuBarModel,
                              private dusk::Timer
@@ -283,7 +285,17 @@ private:
     EmbeddedModal quitModal;
     // Replaces juce::AlertWindow so styling matches the rest of the app.
     EmbeddedModal recoveryModal;
-    EmbeddedModal virtualKeyboardModal;
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    // The virtual keyboard is native: a framework child over the window with a dim
+    // sibling behind it, the shape every ported panel takes. Built on first open.
+    std::unique_ptr<imgui::DuskPanelWindow> virtualKeyboardWindow;
+    std::unique_ptr<DimOverlay> virtualKeyboardDim;
+    PluginEditorHider virtualKeyboardHider;
+   #endif
+    void closeVirtualKeyboard();
+    // Screenshot-harness only: open the virtual keyboard and ask it to read its own
+    // steady frame back into `capturePath`.
+    void openVirtualKeyboardForCapture (const std::string& capturePath);
     EmbeddedModal importTargetModal;
     EmbeddedModal scanModal;
     EmbeddedModal shortcutsModal;
@@ -321,7 +333,7 @@ private:
     // saveChanges=false leaves the sidecar for a decision still pending.
     void yieldNotepadWindow (bool saveChanges = true);
     void reclaimFocusFromNotepad();
-   #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+   #if DUSKSTUDIO_HAS_NATIVE_UI
     std::unique_ptr<NativeNotepadWindow> notepadWindow;
     std::unique_ptr<class DimOverlay> notepadDim;
     PluginEditorHider notepadEditorHider;

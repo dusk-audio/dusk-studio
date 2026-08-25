@@ -1,6 +1,6 @@
 # Dusk Studio — Manual Screenshot List
 
-The 31 unique PNGs referenced by `MANUAL.md` (32 refs — `np-09-tape-strip.png`
+The 32 unique PNGs referenced by `MANUAL.md` (33 refs — `np-09-tape-strip.png`
 is used twice), plus `np-12-notepad.png`, whose embed is pulled until it is
 reshot. Capture target: `docs/images/<name>.png`. Filenames must match the
 markers embedded in `MANUAL.md` exactly.
@@ -69,6 +69,7 @@ of them reads whatever the engine last wrote rather than resting.
 | `ed-05-piano-roll-full.png`     | L1316  | ✅   | Piano roll with notes, a CC ramp, scale highlight.        |
 | `fx-01-eq.png`                  | L707   | ✅   | Channel EQ editor — HPF/LPF + 4 bands, curve-shaped.      |
 | `fx-02-comp.png`                | L729   | ✅   | Channel compressor editor (VCA mode). Native panel: the app reads its own frame back and the script converts it. |
+| `vkb-01-virtual-keyboard.png`   | L563   | ✅   | Virtual MIDI keyboard. Native panel, same route as `fx-02-comp.png`. |
 | `fx-03-tape.png`                | L884   | ✅   | Master tape-machine editor (native panel).                |
 | `mm-01-automation-modes.png`    | L1404  | ✅   | A fader's automation-mode label (READ / WRITE / TOUCH).   |
 | `mm-02-mastering-chain.png`     | L965   | ✅   | Mastering chain with EQ, comp, and limiter engaged.       |

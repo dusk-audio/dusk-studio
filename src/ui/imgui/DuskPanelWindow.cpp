@@ -227,8 +227,11 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         view->draw (ctx, bodyTl, body);
         dw::drawDragBubble (ctx);
 
-        if (ImGui::IsMouseClicked (ImGuiMouseButton_Left)
-            && ! ImGui::IsMouseHoveringRect (ImVec2 (0.0f, 0.0f), ImVec2 (width, height), false))
+        if (view->takeDismissRequest())
+            requestDismiss();
+        else if (ImGui::IsMouseClicked (ImGuiMouseButton_Left)
+                 && ! ImGui::IsMouseHoveringRect (ImVec2 (0.0f, 0.0f), ImVec2 (width, height),
+                                                  false))
             requestDismiss();
         else if (view->escapeDismisses() && dw::shortcutsAvailable (ctx)
                  && ImGui::IsKeyPressed (ImGuiKey_Escape, false))

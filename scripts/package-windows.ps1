@@ -30,8 +30,8 @@ if (-not (Get-Command "candle.exe" -ErrorAction SilentlyContinue)) {
 }
 
 $CMakeCache = Get-Content "$BuildDir\CMakeCache.txt" -Raw
-if ($CMakeCache -notmatch '(?m)^DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD:BOOL=ON\r?$') {
-    throw "Windows MSI packaging requires DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON (a cached OFF is sticky). Reconfigure explicitly with valid DPF_PATH and DPF_WIDGETS_PATH checkouts, then rebuild."
+if ($CMakeCache -notmatch '(?m)^DUSKSTUDIO_ENABLE_NATIVE_UI:BOOL=ON\r?$') {
+    throw "Windows MSI packaging requires DUSKSTUDIO_ENABLE_NATIVE_UI=ON (a cached OFF is sticky). Reconfigure explicitly with valid DPF_PATH and DPF_WIDGETS_PATH checkouts, then rebuild."
 }
 if ($CMakeCache -notmatch '(?m)^DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR:PATH=.+\r?$') {
     throw "Windows MSI packaging requires the notepad software renderer. Run scripts\fetch-windows-software-opengl.ps1 and reconfigure with -DDUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR=<output>."

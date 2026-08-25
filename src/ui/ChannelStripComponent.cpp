@@ -4,9 +4,11 @@
 #include "DuskLabelEditor.h"
 #include "DuskStudioLookAndFeel.h"
 #include "ChannelEqEditor.h"
-#include "NativeEditorEmbedScale.h"
-#include "imgui/ChannelCompView.h"
-#include "imgui/DuskPanelWindow.h"
+#if DUSKSTUDIO_HAS_NATIVE_UI
+ #include "NativeEditorEmbedScale.h"
+ #include "imgui/ChannelCompView.h"
+ #include "imgui/DuskPanelWindow.h"
+#endif
 #include "DimOverlay.h"
 #include "EmbeddedModal.h"
 #include "HardwareInsertEditor.h"
@@ -1496,10 +1498,12 @@ ChannelStripComponent::~ChannelStripComponent()
     // any member destructs. Same variant MainComponent uses for shutdown.
     eqEditorModal.closeAndDeleteBodyNow();
     auxEditorModal.closeAndDeleteBodyNow();
+   #if DUSKSTUDIO_HAS_NATIVE_UI
     // The native comp window's teardown drops its own view and framework child; no
     // deferred message-loop tick is involved, so a quit with it open is safe here.
     compEditorWindow.reset();
     compEditorDim.reset();
+   #endif
     ioConfigModal.closeAndDeleteBodyNow();
     // FreezeDialog's destructor cancels a BounceEngine render against the
     // engine and the HW-insert editor talks to the strip - both must run
@@ -3740,8 +3744,12 @@ void ChannelStripComponent::openEqEditorPopup()
 void ChannelStripComponent::openCompEditorForCapture (const std::string& capturePath)
 {
     openCompEditorPopup();
+   #if DUSKSTUDIO_HAS_NATIVE_UI
     if (compEditorWindow != nullptr && compEditorWindow->isOpen())
         compEditorWindow->captureNextFrameTo (capturePath);
+   #else
+    (void) capturePath;
+   #endif
 }
 
 void ChannelStripComponent::closeCompEditorForCapture()
@@ -3751,12 +3759,19 @@ void ChannelStripComponent::closeCompEditorForCapture()
 
 void ChannelStripComponent::closeCompEditorPopup()
 {
+   #if DUSKSTUDIO_HAS_NATIVE_UI
     if (compEditorWindow != nullptr && compEditorWindow->isOpen())
         compEditorWindow->close();
+   #endif
 }
 
 void ChannelStripComponent::openCompEditorPopup()
 {
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    showDuskAlert (*this, "Compressor",
+                   "The compressor editor needs the native UI, which this build "
+                   "was made without.");
+   #else
     if (compEditorWindow != nullptr && compEditorWindow->isOpen())
     {
         compEditorWindow->close();
@@ -3855,6 +3870,7 @@ void ChannelStripComponent::openCompEditorPopup()
                                      "backend."
                                    : why.c_str());
     }
+   #endif
 }
 
 namespace

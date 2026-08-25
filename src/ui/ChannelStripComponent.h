@@ -445,11 +445,13 @@ private:
     // COMP is native: a framework child covering the host window, drawing its own
     // dim and plate. Built on first open because the framework window is a real
     // graphics resource and most strips never open one.
+   #if DUSKSTUDIO_HAS_NATIVE_UI
     std::unique_ptr<imgui::DuskPanelWindow> compEditorWindow;
     // The child is an opaque native surface, so the dim behind it is a JUCE sibling
     // exactly as the session notepad arranges it, and it owns the click-outside.
     std::unique_ptr<DimOverlay> compEditorDim;
     PluginEditorHider compEditorHider;
+   #endif
     void openEqEditorPopup();
     void openCompEditorPopup();
     void closeCompEditorPopup();

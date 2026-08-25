@@ -1,9 +1,9 @@
 #pragma once
 
-// JUCE-free by design. This header is included from JUCE translation units
-// (VirtualKeyboardComponent.cpp), while its .cpp includes <X11/Xlib.h>, whose
-// `#define KeyPress` / `Bool` / `None` macros would shred JUCE names. Keeping
-// the X11 include sealed inside KeyboardStateLinux.cpp lets both sides coexist.
+// JUCE-free by design. This header is included from translation units that also
+// see JUCE, while its .cpp includes <X11/Xlib.h>, whose `#define KeyPress` /
+// `Bool` / `None` macros would shred JUCE names. Keeping the X11 include sealed
+// inside KeyboardStateLinux.cpp lets both sides coexist.
 
 namespace duskstudio
 {
@@ -15,10 +15,11 @@ namespace duskstudio
 // unaffected by the auto-repeat event pairs.
 //
 // juceKeyCode is JUCE's key code (uppercase ASCII for the mapped letters/
-// digits). Returns:
+// digits), which is also how the native virtual keyboard names its layout keys.
+// Returns:
 //   1  -> key physically down
 //   0  -> key physically up
-//  -1  -> unknown (no X display, or keysym unmapped) - caller should fall back
-//         to JUCE KeyPress::isKeyCurrentlyDown.
+//  -1  -> unknown (no X display, or keysym unmapped) - the caller falls back to
+//         whatever key state its own toolkit tracks.
 int isKeyPhysicallyDown (int juceKeyCode) noexcept;
 } // namespace duskstudio
