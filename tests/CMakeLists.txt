@@ -255,6 +255,34 @@ if(DUSK_PLUGINS_PATH)
         ${DUSK_PLUGINS_PATH}/plugins/shared)
 endif()
 
+# The Dear ImGui widget kit and one console strip drawn through it, headlessly: no
+# window, no GL and no compositor, so the frame-cost work the GUI tower rests on has a
+# regression test that runs everywhere. Gated on the DAF-Widgets checkout the kit lives
+# in, the same way the app gates the native notepad on it. Dear ImGui's own translation
+# units are compiled here directly - the framework's bridge is what needs DGL, the
+# widgets do not.
+if(DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR)
+    target_sources(dusk-studio-tests PRIVATE
+        imgui_widget_kit.cpp
+        ${CMAKE_SOURCE_DIR}/src/ui/imgui/DuskTheme.cpp
+        ${CMAKE_SOURCE_DIR}/tools/gui-spike/ChannelStripView.cpp
+        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DuskWidgets.cpp
+        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui/imgui.cpp
+        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui/imgui_draw.cpp
+        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui/imgui_tables.cpp
+        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui/imgui_widgets.cpp)
+    target_include_directories(dusk-studio-tests SYSTEM PRIVATE
+        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl)
+    # Dear ImGui is vendored third-party code and does not build clean under this
+    # target's warning set. The app silences it the same way for dgl-opengl3.
+    set_source_files_properties(
+        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui/imgui.cpp
+        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui/imgui_draw.cpp
+        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui/imgui_tables.cpp
+        ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui/imgui_widgets.cpp
+        PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>")
+endif()
+
 target_compile_definitions(dusk-studio-tests PRIVATE
     DUSKSTUDIO_VERSION_STRING="${PROJECT_VERSION}"
     JUCE_WEB_BROWSER=0
