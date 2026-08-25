@@ -257,8 +257,8 @@ question. The dome is now three tinted quads read out of the font atlas
 (`DuskWidgets::KnobAtlas`): a body multiplied by the knob's own colour, with its
 rim and drop shadow baked in as black because black survives that multiplication,
 a white sheen, and the pointer ticks. Only the pointer is still drawn per frame,
-because it turns. That took the full console from 606,096 vertices a frame to
-59,868, and from 45.6% of a core to 7.5%. Lever 2 followed as a rule in the
+because it turns. That took the full console from 616,756 vertices a frame to
+70,420, and from 45.6% of a core to 7.5%. Lever 2 followed as a rule in the
 window's idle tick rather than a per-strip one - an immediate-mode frame is
 rebuilt whole, so the granularity actually available is the window, and the
 console is a 30 Hz picture unless a control is under the pointer - taking 24
@@ -276,7 +276,15 @@ Same machine, same method, ten second runs:
 |---|---|---|---|---|
 | 1 | 4.7% | 3.0% | 2.7% | 25,690 -> 2,930 |
 | 8 | 18.3% | 4.4% | 3.0% | 205,492 -> 23,412 |
-| 24 | 45.6% | 7.5% | 5.2% | 606,096 -> 59,868 |
+| 24 | 45.6% | 7.5% | 5.2% | 616,756 -> 70,420 |
+
+A 24-strip window is 5,088 px wide, so that row needs a display to match:
+`DUSK_HEADLESS_MONITOR=5120x1200`. Taken on the headless compositor's default
+1,920 px monitor it reads 606,096 -> 59,868 instead, because the strips past the
+edge draw no text - the spike now prints the window it was granted beside the one
+it asked for, and warns when they differ, since a clipped frame is not the
+console. The 1- and 8-strip rows fit either way, and the corrected 24-strip
+figures are what their per-strip costs project to.
 
 `--vector-knobs` is the control: it puts the strip back on the drawn dome and
 reproduces the gate's own numbers (46.0% at 24 strips), so what the table shows is
@@ -532,7 +540,7 @@ App-side, all JUCE-free:
   Its marker format string is unchanged: an installed build's marker has to stay
   readable by the next one.
 
-`NativeNotepadWindow` is the first consumer, rebased onto the host and 268 lines
+`NativeNotepadWindow` is the first consumer, rebased onto the host and 271 lines
 shorter, with the same user-facing failure text and the same deferred close.
 
 Landing order: the widget set has to be on `dusk-audio/DAF-Widgets` `main` before
