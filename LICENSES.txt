@@ -326,14 +326,19 @@ DAF / DGL (Dusk Audio Framework graphics layer — backs the native notepad UI)
                                2013-2026 and 2008-2018 respectively; on the
                                include path for MSVC builds only)
 
-DAF-Widgets (DGL / Dear ImGui bridge — the notepad's immediate-mode UI layer)
-  Version  : dusk-audio/DAF-Widgets rev 77daa2256582ef5e707b6fa8ca27bb757afd8de0
+DAF-Widgets (DGL / Dear ImGui bridge — the notepad's immediate-mode UI layer,
+             and the Dusk console widget set)
+  Version  : dusk-audio/DAF-Widgets rev 1c09e1ef29f92ae7feb200bac8febdf814cf5e4a
              (CI pin DAF_WIDGETS_REV in .github/actions/clone-dpf-stack/action.yml)
   License  : ISC — Copyright (C) 2012-2021 Filipe Coelho <falktx@falktx.com>
+             and Copyright (C) 2026 Dusk Audio for opengl/DuskWidgets.{hpp,cpp}
              (DAF-Widgets/LICENSE)
   Path     : not in tree — sibling checkout ../DAF-Widgets,
              -DDAF_WIDGETS_PATH=..., or external/DAF-Widgets;
              opengl/DearImGui.cpp compiles into the dusk_notepad_ui library.
+             opengl/DuskWidgets.cpp is built by the GUI tower's spike and unit
+             tests only, and joins the shipped binary with the first native view
+             that draws through it.
   Upstream : https://github.com/DISTRHO/DPF-Widgets
 
 Dear ImGui (immediate-mode GUI — notepad editor, toolbar, chord charts)
@@ -4313,7 +4318,7 @@ MATERIALS OR THE USE OR OTHER DEALINGS IN THE MATERIALS.
 --------------------------------------------------------------------------------
 DAF-Widgets — ISC
 LICENSE at dusk-audio/DAF-Widgets rev
-77daa2256582ef5e707b6fa8ca27bb757afd8de0
+1c09e1ef29f92ae7feb200bac8febdf814cf5e4a
 --------------------------------------------------------------------------------
 
 DISTRHO Plugin Framework (DPF)
@@ -4368,7 +4373,7 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 --------------------------------------------------------------------------------
 Dear ImGui 1.91.9b — MIT
 opengl/DearImGui/LICENSE.txt at dusk-audio/DAF-Widgets rev
-77daa2256582ef5e707b6fa8ca27bb757afd8de0
+1c09e1ef29f92ae7feb200bac8febdf814cf5e4a
 --------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -4396,7 +4401,7 @@ SOFTWARE.
 --------------------------------------------------------------------------------
 imgui-knobs — MIT
 opengl/DearImGuiKnobs/LICENSE at dusk-audio/DAF-Widgets rev
-77daa2256582ef5e707b6fa8ca27bb757afd8de0
+1c09e1ef29f92ae7feb200bac8febdf814cf5e4a
 --------------------------------------------------------------------------------
 
 MIT License
@@ -4424,7 +4429,7 @@ SOFTWARE.
 --------------------------------------------------------------------------------
 imgui_toggle — ISC-style permission grant
 opengl/DearImGuiToggle/LICENSE at dusk-audio/DAF-Widgets rev
-77daa2256582ef5e707b6fa8ca27bb757afd8de0
+1c09e1ef29f92ae7feb200bac8febdf814cf5e4a
 --------------------------------------------------------------------------------
 
 Copyright © 2022 nitz — chris marc dailey https://cmd.wtf
@@ -4447,7 +4452,7 @@ LICENSE at bluescan/proggyfonts rev
 stream expands to 41,208 bytes. Its Adler-32 is 0x48f962f7 and its SHA-256 is
 527d2a443ce051f93f7e77b855609722b8cb220a9f104b4aa037be5c90b71324; all three
 values match that revision's ProggyClean.ttf byte for byte at
-dusk-audio/DAF-Widgets rev 77daa2256582ef5e707b6fa8ca27bb757afd8de0.
+dusk-audio/DAF-Widgets rev 1c09e1ef29f92ae7feb200bac8febdf814cf5e4a.
 --------------------------------------------------------------------------------
 
 MIT License

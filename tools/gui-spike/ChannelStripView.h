@@ -2,23 +2,12 @@
 
 #include "StripModel.h"
 
-#include <DearImGui.hpp>
+#include <DuskWidgets.hpp>
 
 #include <string>
 
 namespace duskspike
 {
-
-struct StripFonts
-{
-    ImFont* small   = nullptr;  // 8 pt column headers
-    ImFont* label   = nullptr;  // 9 pt knob labels
-    ImFont* pill    = nullptr;  // 10.5 pt module headers
-    ImFont* band    = nullptr;  // 12 pt band / filter labels
-    ImFont* name    = nullptr;  // 13 pt strip name
-    ImFont* mono    = nullptr;  // 11 pt numeric readouts
-    ImFont* monoBig = nullptr;  // 14 pt fader readout
-};
 
 // Which interaction the frame just asked for, so the shell can drive the pieces that
 // belong to the application rather than the strip.
@@ -32,30 +21,29 @@ struct StripFrameResult
 class ChannelStripView
 {
 public:
-    StripFrameResult draw (ImDrawList& dl,
-                           ImVec2 origin,
-                           float width,
-                           float height,
-                           float scale,
-                           StripParams& params,
-                           const StripFonts& fonts);
+    StripFrameResult draw (DuskWidgets::Context& ctx, ImVec2 origin, float width, float height,
+                           StripParams& params);
 
-    void setEditingName (bool yes) noexcept { editingName = yes; }
+    void setEditingName (bool yes) noexcept { editingName = yes; nameFocusPending = yes; }
+
+    // Golden captures need a frame that is the same every run, so the meters stop
+    // smoothing and show whatever the source last wrote.
+    void setStaticMeters (bool yes) noexcept { staticMeters = yes; }
     bool isEditingName() const noexcept { return editingName; }
 
     // The shell hides the pointer for the duration of a knob drag, the way the JUCE strip does.
-    bool isDragging() const noexcept { return ! activeDrag.empty(); }
+    bool isDragging() const noexcept { return dragging; }
 
     // Read by the shell's overlay, so a run reports what the strip actually cost.
     int lastWidgetCount = 0;
 
 private:
-    MeterBallistics inputMeter;
+    DuskWidgets::MeterBallistics inputMeter;
     float displayedGrDb = 0.0f;
-
-    std::string activeDrag;
-    float dragStartValue = 0.0f;
+    bool dragging = false;
     bool editingName = false;
+    bool nameFocusPending = false;
+    bool staticMeters = false;
     char nameBuffer[64] = {};
 };
 

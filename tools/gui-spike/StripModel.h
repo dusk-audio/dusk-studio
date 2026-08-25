@@ -1,5 +1,7 @@
 #pragma once
 
+#include <DuskWidgets.hpp>
+
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -10,37 +12,8 @@
 namespace duskspike
 {
 
-// A skewed range with the same shape as the one the strip's sliders use, so a knob
-// sweep in the spike lands on the same value it would land on in the app.
-struct Range
-{
-    float start = 0.0f;
-    float end   = 1.0f;
-    float skew  = 1.0f;
-
-    static Range withMidPoint (float s, float e, float mid) noexcept
-    {
-        Range r { s, e, 1.0f };
-        const float t = (mid - s) / (e - s);
-        if (t > 0.0f && t < 1.0f)
-            r.skew = std::log (0.5f) / std::log (t);
-        return r;
-    }
-
-    float toNorm (float v) const noexcept
-    {
-        const float t = (v - start) / (end - start);
-        const float c = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
-        return skew == 1.0f ? c : std::pow (c, skew);
-    }
-
-    float fromNorm (float n) const noexcept
-    {
-        const float c = n < 0.0f ? 0.0f : (n > 1.0f ? 1.0f : n);
-        const float t = skew == 1.0f ? c : std::pow (c, 1.0f / skew);
-        return start + (end - start) * t;
-    }
-};
+// The kit owns the skewed range and the meter ballistics; the spike only names them.
+using Range = DuskWidgets::Range;
 
 // The shipping parameters are plain atomics on ChannelStripParams; the spike mirrors the
 // subset the strip draws, at the same ranges and defaults, so the knob feel is comparable.
@@ -155,37 +128,6 @@ private:
     StripParams& params;
     std::atomic<bool> running { false };
     std::thread thread;
-};
-
-// The ballistics the shipping strip applies in its 30 Hz timer callback, kept on the UI
-// side and driven per frame so the spike shows the same needle behaviour at 60 Hz.
-struct MeterBallistics
-{
-    float displayed = -100.0f;
-    float peakHold  = -100.0f;
-    int   peakHoldFrames = 0;
-
-    void tick (float incoming, float framesPerUiTick)
-    {
-        const float decay = 1.0f - std::pow (1.0f - 0.15f, 1.0f / framesPerUiTick);
-
-        if (incoming > displayed) displayed = incoming;
-        else                      displayed += (incoming - displayed) * decay;
-
-        if (incoming >= peakHold)
-        {
-            peakHold = incoming;
-            peakHoldFrames = static_cast<int> (18.0f * framesPerUiTick);
-        }
-        else if (peakHoldFrames > 0)
-        {
-            --peakHoldFrames;
-        }
-        else
-        {
-            peakHold = std::max (-100.0f, peakHold - 1.5f / framesPerUiTick);
-        }
-    }
 };
 
 } // namespace duskspike

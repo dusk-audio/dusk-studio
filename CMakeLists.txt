@@ -507,6 +507,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
         $<$<COMPILE_LANG_AND_ID:CXX,Clang,AppleClang>:-Wno-cpp>)
 
     add_library(dusk_notepad_ui STATIC
+        src/ui/imgui/DuskImGuiHost.cpp
         src/ui/NotepadDocument.cpp
         src/ui/NotepadChords.cpp
         src/ui/NotepadEditorCore.cpp
@@ -550,6 +551,8 @@ if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
         add_executable(dusk-gui-spike
             tools/gui-spike/GuiSpikeMain.cpp
             tools/gui-spike/ChannelStripView.cpp
+            src/ui/imgui/DuskTheme.cpp
+            "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DuskWidgets.cpp"
             "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp")
         target_include_directories(dusk-gui-spike PRIVATE
             "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl")
