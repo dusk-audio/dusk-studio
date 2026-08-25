@@ -2300,8 +2300,13 @@ void MainComponent::launchStartupDialog()
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_UI
     // Nothing to show and nothing to choose, so the bootstrap default session is
-    // what the DAW opens with - the same outcome as skipping the dialog.
+    // what the DAW opens with - the same outcome as skipping the dialog. Kick the
+    // scan the way every other exit from this dialog does: the gate was raised
+    // before the first resized(), so clearing it here leaves nobody to start one.
+    // Skipping by environment variable never raises the gate at all, which is why
+    // only this path needs the call.
     startupDialogPending = false;
+    maybeStartStartupPluginScan();
    #else
     if (openStartupPanel (false))
         return;
