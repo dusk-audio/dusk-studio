@@ -587,7 +587,7 @@ each becoming an embedded framework window: `AudioSettingsPanel`,
 `MasteringLimiterEditor`, `VirtualKeyboardComponent`.
 
 **Three landed: `ChannelCompEditor`, `VirtualKeyboardComponent`,
-`StartupDialog`.** Gate movement: 178 files / 9,050 uses to 172 / 8,683.
+`StartupDialog`.** Gate movement: 178 files / 9,050 uses to 172 / 8,685.
 
 The vehicle is `src/ui/imgui/DuskPanelWindow`, and it is the part worth
 knowing before adding the fourth panel. **The child covers the panel's plate and
