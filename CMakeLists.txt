@@ -544,6 +544,15 @@ if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
     target_link_libraries(DuskStudio PRIVATE dusk_notepad_ui)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_NOTEPAD=1)
 
+    # The panel views read the session's atomics directly, so they compile in the
+    # app target where those headers already resolve rather than in the framework
+    # library. They need Dear ImGui and the widget kit's headers only; the DGL half
+    # of the stack stays behind DuskPanelWindow.
+    target_sources(DuskStudio PRIVATE
+        src/ui/imgui/ChannelCompView.cpp)
+    target_include_directories(DuskStudio PRIVATE
+        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl")
+
     # Gate spike for the GUI tower: a standalone framework application window rendering one
     # channel strip, used to measure frame cost and prove the shell. It ships with nothing,
     # links no part of the app, and stays off unless asked for. Configure a separate build
@@ -674,7 +683,6 @@ target_sources(DuskStudio PRIVATE
     src/ui/BusComponent.cpp
     src/ui/BounceDialog.cpp
     src/ui/FreezeDialog.cpp
-    src/ui/ChannelCompEditor.cpp
     src/ui/ChannelEqEditor.cpp
     src/ui/ChannelStripComponent.cpp
     src/ui/CompMeterStrip.cpp

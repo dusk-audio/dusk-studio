@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "DimOverlay.h"
+#include "imgui/ShellShortcut.h"
 #include "../foundation/MessageThread.h"
 #include <functional>
 #include <initializer_list>
@@ -871,6 +872,41 @@ private:
     // so they are hidden for the modal's lifetime.
     PluginEditorHider editorHider_;
 };
+
+// A native panel window holds keyboard focus at the platform level, so the transport
+// keys die inside it exactly as they would at a JUCE modal body. The panel reports
+// which shortcut the user asked for and this turns it back into the key press
+// MainComponent binds - the same hop keyPressed above makes, from the other side of
+// the framework boundary.
+inline bool dispatchShellShortcut (imgui::ShellShortcut shortcut)
+{
+    auto* const target = EmbeddedModal::focusRestoreTarget().getComponent();
+    if (target == nullptr)
+        return false;
+
+    // Key codes, not KeyPress objects: isModalForwardableShortcut reads these same
+    // codes, so the two forwarders cannot drift on what counts as a shortcut.
+    struct Binding { int code; int character; };
+    static const Binding bindings[] = {
+        { juce::KeyPress::spaceKey, ' ' },
+        { 'R', 'r' },
+        { juce::KeyPress::homeKey, 0 },
+        { '.', '.' },
+        { 'L', 'l' },
+        { 'P', 'p' },
+        { '[', '[' },
+        { ']', ']' },
+        { '{', '{' },
+        { '}', '}' },
+        { juce::KeyPress::F11Key, 0 }
+    };
+
+    const auto index = static_cast<std::size_t> (shortcut);
+    if (index >= std::size (bindings))
+        return false;
+    return target->keyPressed (juce::KeyPress (bindings[index].code, {},
+                                               bindings[index].character));
+}
 
 // Global KeyListener that forwards transport / navigation hotkeys (Space, R,
 // Home, '.', F11 - see isModalForwardableShortcut) to the registered

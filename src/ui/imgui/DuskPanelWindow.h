@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ShellShortcut.h"
+
 #include <DuskWidgets.hpp>
 
 #include <cstdint>
@@ -9,27 +11,6 @@
 
 namespace duskstudio::imgui
 {
-// The transport and navigation keys a modal keeps live for the DAW behind it. The
-// shell binds them; a native view has no way to name a JUCE key press, so it reports
-// which of these the user asked for and the shell turns that back into its own
-// shortcut. The set is deliberately the one the JUCE modals forward: transport,
-// loop and punch, playhead home, fullscreen. Nothing that edits the arrangement
-// hidden behind the panel.
-enum class ShellShortcut
-{
-    playStop,
-    record,
-    playheadToZero,
-    stopAndRewind,
-    toggleLoop,
-    togglePunch,
-    setLoopIn,
-    setLoopOut,
-    setPunchIn,
-    setPunchOut,
-    toggleFullscreen
-};
-
 // What a native panel implements. The view owns its parameters and draws into the
 // frame the window gives it; everything around the body - the dim, the panel plate,
 // dismissal, the shortcut gate - belongs to the window.
@@ -48,9 +29,10 @@ public:
     // unless the host window is too small for it.
     virtual void draw (DuskWidgets::Context& ctx, ImVec2 origin, ImVec2 size) = 0;
 
-    // How dark the DAW behind the panel goes. The processing editors use the lighter
-    // 0.28 so the strip meters stay readable while auditioning; decision panels keep
-    // the 0.55 default.
+    // How dark the DAW behind the panel goes. A framework child is opaque, so the
+    // dim is the host's to paint behind it; this is what the panel asks for. The
+    // processing editors use the lighter 0.28 so the strip meters stay readable
+    // while auditioning; decision panels keep the 0.55 default.
     virtual float dimAlpha() const { return 0.55f; }
 
     // A view that binds a bare transport key to its own input - the virtual
@@ -65,14 +47,23 @@ public:
 
 // A native modal panel over the JUCE shell.
 //
-// The child window covers the whole host window rather than just the panel plate, so
-// the dim, the click-outside test and any popup the body opens are all inside one
-// framework surface: a combo dropped near the panel's edge has the rest of the window
-// to open into, and no JUCE sibling has to be kept in sync with the child's rectangle.
-// It is also the shape G5 ends at, where the shell itself is this window.
+// The child covers the panel's plate and nothing more, because a framework child is
+// an opaque native surface: one sized to the whole window would paint black over the
+// DAW instead of dimming it. The dim and the click-outside test therefore stay on the
+// host's side, exactly as the session notepad already arranges them, and the caller
+// keeps a dim overlay behind the child sized from plateSize().
 class DuskPanelWindow final
 {
 public:
+    // The plate's size in design pixels: the body its view asks for plus the frame
+    // drawn around it. What the caller centres in the host window. Zero until a view
+    // is set.
+    struct PlateSize
+    {
+        int width = 0;
+        int height = 0;
+    };
+
     struct Geometry
     {
         int x = 0;
@@ -94,6 +85,11 @@ public:
 
         // A transport key the panel did not claim. Return true if the shell took it.
         std::function<bool (ShellShortcut)> shortcut;
+
+        // Where the child belongs now. Polled while the window is open so a host
+        // resized underneath it follows without every caller having to listen for
+        // one; leaving it empty pins the child to the geometry open() was given.
+        std::function<Geometry()> geometry;
     };
 
     // `logTag` prefixes this window's diagnostics and names its first-frame marker,
@@ -105,6 +101,16 @@ public:
 
     // The view is built before open() and released when the window closes.
     void setView (std::unique_ptr<DuskPanelView> view);
+
+    PlateSize plateSize() const;
+
+    // What the host should paint behind the child, from the current view.
+    float dimAlpha() const;
+
+    // Write the next steady frame to `path` as a PPM, once, then forget it. How a
+    // native panel reaches the manual's figures: the JUCE screenshot harness cannot
+    // snapshot a framework child, so the application reads its own frame back.
+    void captureNextFrameTo (std::string path);
 
     bool open (std::uintptr_t nativeParent, Geometry geometry);
 

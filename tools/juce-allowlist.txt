@@ -69,8 +69,6 @@ src/ui/BounceDialog.cpp	45
 src/ui/BounceDialog.h	12
 src/ui/BusComponent.cpp	309
 src/ui/BusComponent.h	47
-src/ui/ChannelCompEditor.cpp	128
-src/ui/ChannelCompEditor.h	20
 src/ui/ChannelEqEditor.cpp	93
 src/ui/ChannelEqEditor.h	13
 src/ui/ChannelStripComponent.cpp	771
@@ -105,7 +103,7 @@ src/ui/EditCursors.cpp	58
 src/ui/EditCursors.h	7
 src/ui/EditModeToolbar.cpp	48
 src/ui/EditModeToolbar.h	10
-src/ui/EmbeddedModal.h	62
+src/ui/EmbeddedModal.h	66
 src/ui/FadeCurve.h	10
 src/ui/FreezeDialog.cpp	36
 src/ui/FreezeDialog.h	9
@@ -131,7 +129,7 @@ src/ui/MiniTimelineStrip.cpp	19
 src/ui/MiniTimelineStrip.h	10
 src/ui/MultiImportTargetPicker.cpp	78
 src/ui/MultiImportTargetPicker.h	11
-src/ui/NativeEditorEmbedScale.h	7
+src/ui/NativeEditorEmbedScale.h	12
 src/ui/PianoRollComponent.cpp	381
 src/ui/PianoRollComponent.h	61
 src/ui/PlatformWindowing.h	14
@@ -144,7 +142,7 @@ src/ui/PluginPickerPanel.cpp	70
 src/ui/PluginPickerPanel.h	13
 src/ui/PluginScanModal.cpp	28
 src/ui/PluginScanModal.h	10
-src/ui/ScreenshotCapture.cpp	30
+src/ui/ScreenshotCapture.cpp	31
 src/ui/SectionPillButton.h	7
 src/ui/SelfTestPanel.cpp	10
 src/ui/SelfTestPanel.h	7

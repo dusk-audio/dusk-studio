@@ -30,6 +30,11 @@ public:
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
 
+    // Capture tail for the views that render into a framework child, which the
+    // snapshot path cannot reach. Runs from the live message loop and quits when
+    // the last one is written.
+    void captureNativePanels (std::string outDir);
+
     // Screenshot-capture harness (DUSKSTUDIO_CAPTURE_DIR). Synthesises a
     // small demo session, drives each documented stage / strip / modal,
     // writes PNGs into outDir, then quits the app. Defined in

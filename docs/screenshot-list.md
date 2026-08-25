@@ -16,6 +16,12 @@ The harness drives the real app via `DUSKSTUDIO_CAPTURE_DIR` (see
 the notepad is manual — it is a native window the harness cannot reach — with
 notes below.
 
+Panels ported to the native GUI stack are still automatic, by a different route:
+`createComponentSnapshot` cannot reach a framework child, so those panels read
+their own steady frame back as a PPM and the script converts it. Their figures
+are taken at the end of the run, after the bounce phase, so a live meter in one
+of them reads whatever the engine last wrote rather than resting.
+
 **Capture conventions (manual shots)**
 
 - Linux: `gnome-screenshot -w` (window) or `import -window <id>` (ImageMagick).
@@ -62,7 +68,7 @@ notes below.
 | `ed-04-region-editor-modal.png` | L1264  | ✅   | Region editor modal over a region with fade-in/out.       |
 | `ed-05-piano-roll-full.png`     | L1316  | ✅   | Piano roll with notes, a CC ramp, scale highlight.        |
 | `fx-01-eq.png`                  | L707   | ✅   | Channel EQ editor — HPF/LPF + 4 bands, curve-shaped.      |
-| `fx-02-comp.png`                | L729   | ✅   | Channel compressor editor (VCA mode).                     |
+| `fx-02-comp.png`                | L729   | ✅   | Channel compressor editor (VCA mode). Native panel: the app reads its own frame back and the script converts it. |
 | `fx-03-tape.png`                | L884   | ✅   | Master tape-machine editor (native panel).                |
 | `mm-01-automation-modes.png`    | L1404  | ✅   | A fader's automation-mode label (READ / WRITE / TOUCH).   |
 | `mm-02-mastering-chain.png`     | L965   | ✅   | Mastering chain with EQ, comp, and limiter engaged.       |

@@ -18,7 +18,6 @@
 #include "AudioRegionEditor.h"
 #include "PianoRollComponent.h"
 #include "ChannelEqEditor.h"
-#include "ChannelCompEditor.h"
 #include "TapePanel.h"
 #include "AudioSettingsPanel.h"
 #include "MidiBindingsPanel.h"
@@ -385,16 +384,6 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         modalShot (eq, w, h, "fx-01-eq.png", 300);
     }
     {
-        // Channel compressor editor (VCA mode, mid gain-reduction).
-        auto& s = session.track (0).strip;
-        s.compEnabled.store (true, std::memory_order_relaxed);
-        s.compMode.store (2, std::memory_order_relaxed);   // VCA
-        ChannelCompEditor cp (session.track (0));
-        const int w = cp.getWidth()  > 0 ? cp.getWidth()  : 380;
-        const int h = cp.getHeight() > 0 ? cp.getHeight() : 360;
-        modalShot (cp, w, h, "fx-02-comp.png", 300);
-    }
-    {
         auto& m = session.master();
         const bool wasTapeEnabled = m.tapeEnabled.load (std::memory_order_relaxed);
         m.tapeEnabled.store (true, std::memory_order_relaxed);
@@ -447,7 +436,45 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
     }
     alias ("qg-07-bounce-dialog.png", "bnc-01-bounce-dialog.png");
 
-    std::fprintf (stderr, "[Dusk Studio/capture] done\n");
-    juce::JUCEApplication::getInstance()->quit();
+    // The native panels come last and from the running message loop: their frames
+    // are drawn by a message-thread timer, so a phase that blocks the loop the way
+    // settle() does would capture nothing. captureNativePanels quits when it is done.
+    captureNativePanels (outDir.getFullPathName().toStdString());
+}
+
+void MainComponent::captureNativePanels (std::string outDir)
+{
+    const auto quitNow = []
+    {
+        std::fprintf (stderr, "[Dusk Studio/capture] done\n");
+        juce::JUCEApplication::getInstance()->quit();
+    };
+
+    auto* const strip0 = consoleView != nullptr ? consoleView->getStripComponent (0)
+                                                : nullptr;
+    if (strip0 == nullptr)
+    {
+        quitNow();
+        return;
+    }
+
+    auto& strip = session.track (0).strip;
+    strip.compEnabled.store (true, std::memory_order_relaxed);
+    strip.compMode.store (2, std::memory_order_relaxed);   // VCA
+    // The bounce phase above leaves the input meter reading, and this figure is of
+    // the panel rather than of a signal. Park the meters at rest.
+    session.track (0).meterInputDb.store (-100.0f, std::memory_order_relaxed);
+    session.track (0).meterGrDb.store (0.0f, std::memory_order_relaxed);
+    strip0->openCompEditorForCapture (outDir + "/fx-02-comp.ppm");
+
+    juce::Component::SafePointer<MainComponent> safeThis (this);
+    dusk::Timer::callAfterDelay (1500, [safeThis, quitNow]
+    {
+        if (auto* self = safeThis.getComponent())
+            if (self->consoleView != nullptr)
+                if (auto* s = self->consoleView->getStripComponent (0))
+                    s->closeCompEditorForCapture();
+        dusk::Timer::callAfterDelay (400, quitNow);
+    });
 }
 } // namespace duskstudio

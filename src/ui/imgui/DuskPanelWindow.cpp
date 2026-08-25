@@ -2,16 +2,20 @@
 #include "DuskImGuiHost.h"
 #include "DuskTheme.h"
 #include "../../foundation/Fs.h"
+#include "../../foundation/MessageThread.h"
 
 #include <DearImGui.hpp>
+#include <OpenGL.hpp>
 #ifndef DGL_NO_SHARED_RESOURCES
 # include "src/Resources.hpp"
 #endif
 
 #include <algorithm>
 #include <array>
-#include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <utility>
+#include <vector>
 
 namespace duskstudio::imgui
 {
@@ -23,14 +27,8 @@ namespace dw = DuskWidgets;
 // land in the same plate the JUCE modals draw, or the family stops reading as one.
 constexpr float kPlateMargin = 6.0f;
 constexpr float kPlateRounding = 8.0f;
-constexpr unsigned int kPlateShadow = 0x141418ffu;
 constexpr unsigned int kPlateFill = 0x202024ffu;
 constexpr unsigned int kPlateBorder = 0x3a3a42ffu;
-
-// EmbeddedModal centres a body inside the host with this much slack at each edge, and
-// shrinks it rather than letting it run off. Matching it keeps a panel in the same
-// place it opened before the port.
-constexpr float kHostSlack = 16.0f;
 
 ImU32 rgba (unsigned int hex)
 {
@@ -62,6 +60,24 @@ const std::array<ShortcutBinding, 9>& shortcutBindings()
     return bindings;
 }
 
+// A native panel renders into its own framework child, which the JUCE screenshot
+// harness cannot reach through createComponentSnapshot. The application reads its
+// own frame back instead, the way the gate spike's --capture does, so the manual's
+// figures for a ported panel come from the same run as everything else.
+//
+// PPM because it needs no encoder; the capture script converts.
+bool writePpm (const std::string& path, int width, int height,
+               const std::vector<unsigned char>& rgb)
+{
+    std::FILE* const file = std::fopen (path.c_str(), "wb");
+    if (file == nullptr)
+        return false;
+    std::fprintf (file, "P6\n%d %d\n255\n", width, height);
+    const bool ok = std::fwrite (rgb.data(), 1, rgb.size(), file) == rgb.size();
+    std::fclose (file);
+    return ok;
+}
+
 std::filesystem::path firstFrameMarkerPath (const std::string& logTag)
 {
     const auto cfg = dusk::fs::userConfigDir();
@@ -71,7 +87,13 @@ std::filesystem::path firstFrameMarkerPath (const std::string& logTag)
 }
 } // namespace
 
-struct DuskPanelWindow::Impl final
+bool operator!= (const DuskPanelWindow::Geometry& a, const DuskPanelWindow::Geometry& b)
+{
+    return a.x != b.x || a.y != b.y || a.width != b.width || a.height != b.height
+        || a.scaleFactor < b.scaleFactor || b.scaleFactor < a.scaleFactor;
+}
+
+struct DuskPanelWindow::Impl final : private dusk::Timer
 {
     class PanelWidget final : public DGL::ImGuiTopLevelWidget
     {
@@ -86,6 +108,13 @@ struct DuskPanelWindow::Impl final
                         static_cast<float> (getWindow().getScaleFactor()));
         }
 
+        void onDisplay() override
+        {
+            DGL::ImGuiTopLevelWidget::onDisplay();
+            owner.captureFrameIfAsked (static_cast<int> (getWidth()),
+                                       static_cast<int> (getHeight()));
+        }
+
     private:
         Impl& owner;
     };
@@ -94,6 +123,49 @@ struct DuskPanelWindow::Impl final
         : host ({ std::move (className), logTag, std::move (displayName) },
                 firstFrameMarkerPath (logTag))
     {
+    }
+
+    ~Impl() override { stopTimer(); }
+
+    void startGeometryPolling() { startTimer (16); }
+    void stopGeometryPolling() { stopTimer(); }
+
+    void timerCallback() override
+    {
+        if (! callbacks.geometry || ! host.isOpen())
+            return;
+        const auto wanted = callbacks.geometry();
+        if (wanted != lastGeometry)
+        {
+            lastGeometry = wanted;
+            host.setGeometry ({ wanted.x, wanted.y, wanted.width, wanted.height,
+                                wanted.scaleFactor });
+        }
+    }
+
+    // Frame 30 rather than the first: the meter ballistics and any smoother have
+    // settled by then, so two runs of the same panel produce the same picture.
+    void captureFrameIfAsked (int width, int height)
+    {
+        if (capturePath.empty() || width < 1 || height < 1)
+            return;
+        if (++framesDrawn != 30)
+            return;
+
+        std::vector<unsigned char> rgb (static_cast<std::size_t> (width * height * 3));
+        glReadPixels (0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, rgb.data());
+
+        // GL reads bottom-up.
+        std::vector<unsigned char> flipped (rgb.size());
+        const std::size_t stride = static_cast<std::size_t> (width) * 3;
+        for (int row = 0; row < height; ++row)
+            std::copy (rgb.begin() + static_cast<std::ptrdiff_t> (stride * static_cast<std::size_t> (height - 1 - row)),
+                       rgb.begin() + static_cast<std::ptrdiff_t> (stride * static_cast<std::size_t> (height - row)),
+                       flipped.begin() + static_cast<std::ptrdiff_t> (stride * static_cast<std::size_t> (row)));
+
+        if (! writePpm (capturePath, width, height, flipped))
+            host.log ("could not write the capture to %s", capturePath.c_str());
+        capturePath.clear();
     }
 
     void buildFonts (float scale)
@@ -137,36 +209,26 @@ struct DuskPanelWindow::Impl final
         ctx.drag = &drag;
         ctx.scale = scale;
 
-        const float dim = std::clamp (view->dimAlpha(), 0.0f, 1.0f);
-        ctx.dl->AddRectFilled (ImVec2 (0.0f, 0.0f), ImVec2 (width, height),
-                               IM_COL32 (0, 0, 0, static_cast<int> (dim * 255.0f + 0.5f)));
-
-        const auto preferred = view->preferredSize();
-        const ImVec2 body (std::min (preferred.x * scale, std::max (1.0f, width - kHostSlack * scale)),
-                           std::min (preferred.y * scale, std::max (1.0f, height - kHostSlack * scale)));
-        const ImVec2 bodyTl (std::round ((width - body.x) * 0.5f),
-                             std::round ((height - body.y) * 0.5f));
-        const ImVec2 bodyBr (bodyTl.x + body.x, bodyTl.y + body.y);
-
+        // The child is the plate: the frame runs along its own edges and the body
+        // sits inside the margin. The shadow the JUCE backdrop cast has nowhere to
+        // fall here - it would land on the plate itself - so the frame carries the
+        // panel on its own.
         const float margin = kPlateMargin * scale;
         const float rounding = kPlateRounding * scale;
-        const ImVec2 plateTl (bodyTl.x - margin, bodyTl.y - margin);
-        const ImVec2 plateBr (bodyBr.x + margin, bodyBr.y + margin);
-        ctx.dl->AddRectFilled (ImVec2 (plateTl.x, plateTl.y + 4.0f * scale),
-                               ImVec2 (plateBr.x, plateBr.y + 4.0f * scale),
-                               dw::withAlpha (rgba (kPlateShadow), 0.55f), rounding);
-        ctx.dl->AddRectFilled (plateTl, plateBr, rgba (kPlateFill), rounding);
-        ctx.dl->AddRect (ImVec2 (plateTl.x + 0.5f, plateTl.y + 0.5f),
-                         ImVec2 (plateBr.x - 0.5f, plateBr.y - 0.5f),
+        ctx.dl->AddRectFilled (ImVec2 (0.0f, 0.0f), ImVec2 (width, height),
+                               rgba (kPlateFill), rounding);
+        ctx.dl->AddRect (ImVec2 (0.5f, 0.5f), ImVec2 (width - 0.5f, height - 0.5f),
                          rgba (kPlateBorder), rounding, 0, scale);
+
+        const ImVec2 bodyTl (margin, margin);
+        const ImVec2 body (std::max (1.0f, width - margin * 2.0f),
+                           std::max (1.0f, height - margin * 2.0f));
 
         view->draw (ctx, bodyTl, body);
         dw::drawDragBubble (ctx);
 
-        // The plate frame is part of the panel, not the backdrop: a click on the
-        // rounded ring around the body must not read as a dismissal.
-        const bool pointerOutside = ! ImGui::IsMouseHoveringRect (plateTl, plateBr, false);
-        if (ImGui::IsMouseClicked (ImGuiMouseButton_Left) && pointerOutside)
+        if (ImGui::IsMouseClicked (ImGuiMouseButton_Left)
+            && ! ImGui::IsMouseHoveringRect (ImVec2 (0.0f, 0.0f), ImVec2 (width, height), false))
             requestDismiss();
         else if (view->escapeDismisses() && dw::shortcutsAvailable (ctx)
                  && ImGui::IsKeyPressed (ImGuiKey_Escape, false))
@@ -223,6 +285,9 @@ struct DuskPanelWindow::Impl final
     dw::Fonts fonts;
     dw::KnobAtlas knobAtlas;
     dw::DragState drag;
+    Geometry lastGeometry;
+    std::string capturePath;
+    int framesDrawn = 0;
     DuskImGuiHost host;
 };
 
@@ -247,6 +312,7 @@ DuskPanelWindow::DuskPanelWindow (std::string className, std::string logTag,
     };
     callbacks.closed = [this]
     {
+        impl->stopGeometryPolling();
         impl->view.reset();
         if (auto callback = impl->callbacks.closed)
             callback();
@@ -266,10 +332,35 @@ void DuskPanelWindow::setView (std::unique_ptr<DuskPanelView> view)
     impl->view = std::move (view);
 }
 
+DuskPanelWindow::PlateSize DuskPanelWindow::plateSize() const
+{
+    if (impl->view == nullptr)
+        return {};
+    const auto body = impl->view->preferredSize();
+    const auto frame = static_cast<int> (kPlateMargin) * 2;
+    return { static_cast<int> (body.x) + frame, static_cast<int> (body.y) + frame };
+}
+
+float DuskPanelWindow::dimAlpha() const
+{
+    return impl->view != nullptr ? impl->view->dimAlpha() : 0.55f;
+}
+
+void DuskPanelWindow::captureNextFrameTo (std::string path)
+{
+    impl->capturePath = std::move (path);
+}
+
 bool DuskPanelWindow::open (std::uintptr_t nativeParent, Geometry geometry)
 {
-    return impl->host.open (nativeParent, { geometry.x, geometry.y, geometry.width,
-                                            geometry.height, geometry.scaleFactor });
+    impl->lastGeometry = geometry;
+    impl->framesDrawn = 0;
+    if (! impl->host.open (nativeParent, { geometry.x, geometry.y, geometry.width,
+                                           geometry.height, geometry.scaleFactor }))
+        return false;
+
+    impl->startGeometryPolling();
+    return true;
 }
 
 const std::string& DuskPanelWindow::lastOpenFailure() const noexcept
