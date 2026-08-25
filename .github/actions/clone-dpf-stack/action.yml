@@ -13,6 +13,10 @@ description: >
   directory name still say DPF because every workflow names them; they move in
   the mechanical rename pass, not here.
 
+  Both revisions below are the tip of their repository's main. The Wayland
+  lifecycle work that used to live on an unmerged branch is reconciled into
+  that line, so a pin no longer depends on a branch surviving upstream.
+
 runs:
   using: composite
   steps:
@@ -20,9 +24,9 @@ runs:
       shell: bash
       env:
         DAF_REPO: https://github.com/dusk-audio/DAF.git
-        DAF_REV: f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+        DAF_REV: 92c3d1a75450e8b8eaf963efe875f5742c7a1c84
         DAF_WIDGETS_REPO: https://github.com/dusk-audio/DAF-Widgets.git
-        DAF_WIDGETS_REV: 668de17f06abdeb98d5a4b62594bd634f8d1ac2e
+        DAF_WIDGETS_REV: 77daa2256582ef5e707b6fa8ca27bb757afd8de0
       run: |
         set -euo pipefail
         git init -q "${RUNNER_TEMP}/DPF"
