@@ -116,7 +116,7 @@ git clone https://github.com/dusk-audio/DAF-Widgets.git
 git -C DAF-Widgets checkout 77daa2256582ef5e707b6fa8ca27bb757afd8de0
 ```
 
-Clone then check out the SHA, rather than building whatever `main` points at today: both pins are on their fork's `main`, but a branch tip moves and CI fetches these exact SHAs. Both checkouts end up on a detached HEAD, which is what you want here. The submodule step is not optional either: DGL pulls its windowing layer from `dgl/src/pugl-upstream`.
+Clone then check out the SHA, rather than building whatever `main` points at today: both pins are on their fork's `main`, but a branch tip moves and CI fetches these exact SHAs. Both checkouts end up on a detached HEAD, which is what you want here. The submodule step is not optional either: DGL pulls its windowing layer from `dgl/src/pugl-upstream`. That submodule's recorded revision does still depend on a branch surviving in `dusk-audio/pugl`, unlike the two pins above: it is not on that repository's `main`.
 
 The pins live in [.github/actions/clone-dpf-stack/action.yml](.github/actions/clone-dpf-stack/action.yml), which is the single source of truth for every workflow — read them from there if it ever disagrees with the commands above.
 

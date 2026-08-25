@@ -13,9 +13,11 @@ description: >
   directory name still say DPF because every workflow names them; they move in
   the mechanical rename pass, not here.
 
-  Both revisions below are the tip of their repository's main. The Wayland
-  lifecycle work that used to live on an unmerged branch is reconciled into
-  that line, so a pin no longer depends on a branch surviving upstream.
+  Both revisions below are the tip of their repository's main, so neither one
+  depends on a branch surviving upstream. The pugl submodule DAF carries still
+  does: its recorded revision sits on a branch in dusk-audio/pugl rather than
+  on that repository's main, and deleting the branch would strand the submodule
+  step below for every clone, this one included.
 
 runs:
   using: composite
