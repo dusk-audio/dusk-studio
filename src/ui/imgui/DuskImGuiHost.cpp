@@ -50,6 +50,13 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
     ~Impl() override
     {
         stopTimer();
+        // The host is a member of the view whose state these callbacks reach into,
+        // so anything declared after it has already been destroyed by the time this
+        // runs. Drop them before the teardown below, which would otherwise call
+        // widgetReleased on a half-destroyed view. Neither callback means anything
+        // to an object that is going away: one clears pointers into the atlas being
+        // released, the other reports a close nobody is left to hear.
+        callbacks = {};
         destroyEmbeddedWindow();
         // The marker means "armed a frame and never came back", so only a run
         // that armed one may clear it, and only if that is no longer what it

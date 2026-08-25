@@ -33,6 +33,8 @@ public:
         double scaleFactor = 1.0;
     };
 
+    // None of these run while the host itself is being destroyed: a view owns the
+    // host as a member, so its own state is already gone by then.
     struct Callbacks
     {
         // Build the view. Runs with the new window's graphics context current, so it may
