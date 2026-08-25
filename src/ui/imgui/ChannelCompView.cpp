@@ -126,15 +126,17 @@ public:
 private:
     void advanceMeters()
     {
-        // The JUCE editor's 30 Hz timer coefficients. The window runs at 60, so a
-        // frame advances half a tick and the two surfaces settle the same way.
+        // The JUCE editor ran these at 30 Hz with 0.18 and 0.10; the window draws at
+        // 60, so a frame is half a tick and the per-frame coefficient is
+        // 1 - sqrt(1 - a) rather than a/2. Halving it would decay the meters faster
+        // than the strip's, which is the one thing the two must agree on.
         const float gr = track.meterGrDb.load (std::memory_order_relaxed);
         if (gr < displayedGrDb) displayedGrDb = gr;
-        else                    displayedGrDb += (gr - displayedGrDb) * 0.09f;
+        else                    displayedGrDb += (gr - displayedGrDb) * 0.0945f;
 
         const float in = track.meterInputDb.load (std::memory_order_relaxed);
         if (in > displayedInputDb) displayedInputDb = in;
-        else                       displayedInputDb += (in - displayedInputDb) * 0.05f;
+        else                       displayedInputDb += (in - displayedInputDb) * 0.0513f;
     }
 
     void drawHeader (dw::Context& ctx, ChannelStripParams& strip, ImVec2 at, float width)
