@@ -1,8 +1,10 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "PlatformWindowing.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 namespace duskstudio::embedscale
 {
@@ -65,5 +67,61 @@ inline juce::Rectangle<int> toPhysical (const juce::Component& c,
 inline int fromPhysical (const juce::Component& c, int physical)
 {
     return std::max (1, static_cast<int> (std::floor (physical / factor (c) + 0.5)));
+}
+
+// Where an embedded native child sits, and the scale the framework should draw it
+// at. macOS reports the backing scale off the view rather than the peer, which is
+// why the factor is assembled from three sources rather than read from factor().
+struct NativeChildGeometry
+{
+    int x = 0;
+    int y = 0;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    double scale = 1.0;
+};
+
+// The logical rectangle a child of this size takes when centred in the window,
+// shrunk rather than allowed to run off the edges. Used twice per panel: once for
+// the child's own geometry, once for the dim overlay's click-through region.
+inline juce::Rectangle<int> centredChildBounds (const juce::Component& topLevel,
+                                                int logicalWidth, int logicalHeight)
+{
+    const auto bounds = topLevel.getLocalBounds();
+    return bounds.withSizeKeepingCentre (
+        std::clamp (logicalWidth, 0, std::max (0, bounds.getWidth() - 16)),
+        std::clamp (logicalHeight, 0, std::max (0, bounds.getHeight() - 16)));
+}
+
+inline NativeChildGeometry childGeometryFor (const juce::Component& topLevel,
+                                             juce::Rectangle<int> logical)
+{
+    auto* const peer = topLevel.getPeer();
+    const double peerScale = peer != nullptr ? peer->getPlatformScaleFactor() : 1.0;
+    const double backingScale = peer != nullptr
+                              ? platform::nativeViewBackingScale (peer->getNativeHandle())
+                              : 1.0;
+   #if JUCE_MAC
+    constexpr bool useNativeViewScale = true;
+   #else
+    constexpr bool useNativeViewScale = false;
+   #endif
+    const double scale = factorFromSources (globalScale(), peerScale, backingScale,
+                                            useNativeViewScale);
+    const auto bounds = toPhysicalBounds (logical.getX(), logical.getY(),
+                                          logical.getWidth(), logical.getHeight(), scale);
+    return { bounds.x, bounds.y,
+             static_cast<std::uint32_t> (std::max (2, bounds.width)),
+             static_cast<std::uint32_t> (std::max (2, bounds.height)),
+             scale };
+}
+
+// The handle a native child embeds into, or 0 when the window is not realised yet.
+inline std::uintptr_t nativeParentHandle (const juce::Component& topLevel)
+{
+    auto* const peer = topLevel.getPeer();
+    if (peer == nullptr || peer->getNativeHandle() == nullptr)
+        return 0;
+    return reinterpret_cast<std::uintptr_t> (peer->getNativeHandle());
 }
 } // namespace duskstudio::embedscale

@@ -74,15 +74,15 @@ git -C DAF-Widgets checkout 668de17f06abdeb98d5a4b62594bd634f8d1ac2e
 
 Clone then check out the SHA, rather than cloning a branch: DAF's pin is the tip of `fix/wayland-review-findings`, which was never merged to that fork's `main`. (DAF-Widgets' pin happens to be its `main` tip today, but pin it the same way.) Neither branch may be deleted upstream — a plain clone would stop reaching the commit, and CI fetches the same SHAs. The submodule step is not optional either: DGL pulls its windowing layer from `dgl/src/pugl-upstream`. The pins live in [.github/actions/clone-dpf-stack/action.yml](.github/actions/clone-dpf-stack/action.yml), the single source of truth for every workflow.
 
-Missing either checkout, `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` defaults to **OFF** and configure says so once, quietly:
+Missing either checkout, `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults to **OFF** and configure says so once, quietly:
 
+```text
+-- Native UI: DAF / DAF-Widgets not found - disabled
 ```
--- Native notepad: DAF / DAF-Widgets not found - disabled
-```
 
-The build otherwise completes as normal, but opening the notepad reports *"Notepad unavailable: built without the native notepad UI"*. Passing `-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON` with a checkout missing makes it a configure error instead.
+The build otherwise completes as normal, but every native view is gone: opening the notepad reports *"Notepad unavailable: built without the native notepad UI"*, the compressor editor and virtual keyboard say the same of themselves, and the startup dialog does not appear. Passing `-DDUSKSTUDIO_ENABLE_NATIVE_UI=ON` with a checkout missing makes it a configure error instead.
 
-That OFF is sticky, because `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` is a **cached** CMake option — the one dependency here a later reconfigure won't pick up on its own. Configure `build\` before cloning DAF and cloning it afterwards changes nothing on the next configure, and the "not found" line stops printing too. Either configure into a fresh build directory or add `-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON` to the configure command below.
+That OFF is sticky, because `DUSKSTUDIO_ENABLE_NATIVE_UI` is a **cached** CMake option — the one dependency here a later reconfigure won't pick up on its own. Configure `build\` before cloning DAF and cloning it afterwards changes nothing on the next configure, and the "not found" line stops printing too. Either configure into a fresh build directory or add `-DDUSKSTUDIO_ENABLE_NATIVE_UI=ON` to the configure command below.
 
 If you override the paths explicitly, give DAF **forward slashes** — `-DDAF_PATH=C:/dev/DAF`. DAF's own CMake re-parses the value, and backslashes come through as invalid escapes.
 
@@ -123,7 +123,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\fetch-windows-software-opengl
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64 ^
   -DCMAKE_PREFIX_PATH="%CD%/vcpkg_installed/x64-windows-static" ^
   -DASIOSDK_PATH=C:/dev/asiosdk ^
-  -DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON ^
+  -DDUSKSTUDIO_ENABLE_NATIVE_UI=ON ^
   -DDUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR="%TEMP%/dusk-mesa-softgl"
 cmake --build build --config Release -j6
 powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1 -BuildDir build

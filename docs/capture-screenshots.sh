@@ -11,6 +11,7 @@
 # so no GPU / Wayland surface is needed.
 #
 # Requires: Xvfb  (openSUSE: sudo zypper install xorg-x11-server-Xvfb)
+#           ImageMagick, for the native panels' own frame readback
 # Set DUSK_JOBS to override the conservative six-worker build fallback.
 
 set -euo pipefail
@@ -60,6 +61,20 @@ env -u WAYLAND_DISPLAY \
     timeout 180 "${BIN}" 2>&1 | tee "${LOG}" >&2 || true
 
 rm -rf "${OUT}/_demo"
+
+# The native panels read their own frames back as PPM - a framework child is not
+# reachable through JUCE's snapshot path - so convert those to the PNGs MANUAL.md
+# embeds.
+shopt -s nullglob
+for ppm in "${OUT}"/*.ppm; do
+  if ! command -v magick >/dev/null 2>&1; then
+    echo "error: ImageMagick (magick) is needed to convert the native panel captures" >&2
+    exit 1
+  fi
+  magick "${ppm}" "${ppm%.ppm}.png"
+  rm -f "${ppm}"
+done
+shopt -u nullglob
 
 # The harness quits the app itself and Linux teardown still returns nonzero, so
 # the exit status says nothing. Its own "done" line is the only signal that

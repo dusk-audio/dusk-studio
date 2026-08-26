@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "DimOverlay.h"
+#include "imgui/ShellShortcut.h"
 #include "../foundation/MessageThread.h"
 #include <functional>
 #include <initializer_list>
@@ -871,6 +872,49 @@ private:
     // so they are hidden for the modal's lifetime.
     PluginEditorHider editorHider_;
 };
+
+// A native panel window holds keyboard focus at the platform level, so the transport
+// keys die inside it exactly as they would at a JUCE modal body. The panel reports
+// which shortcut the user asked for and this turns it back into the key press
+// MainComponent binds - the same hop keyPressed above makes, from the other side of
+// the framework boundary.
+inline bool dispatchShellShortcut (imgui::ShellShortcut shortcut)
+{
+    auto* const target = EmbeddedModal::focusRestoreTarget().getComponent();
+    if (target == nullptr)
+        return false;
+
+    // Key codes, not KeyPress objects: isModalForwardableShortcut reads these same
+    // codes, so the two forwarders cannot drift on what counts as a shortcut.
+    //
+    // The punch pair carries Shift. keyPressed accepts either bracket glyph so the
+    // shifted X11 form still reaches it, but it picks punch over loop by reading the
+    // modifier, not the glyph - so a shifted binding sent bare would quietly set the
+    // loop boundary the user was not asking for.
+    struct Binding { int code; int character; int mods; };
+    static const Binding bindings[] = {
+        { juce::KeyPress::spaceKey, ' ', 0 },
+        { 'R', 'r', 0 },
+        { juce::KeyPress::homeKey, 0, 0 },
+        { '.', '.', 0 },
+        { 'L', 'l', 0 },
+        { 'P', 'p', 0 },
+        { '[', '[', 0 },
+        { ']', ']', 0 },
+        { '{', '{', juce::ModifierKeys::shiftModifier },
+        { '}', '}', juce::ModifierKeys::shiftModifier },
+        { juce::KeyPress::F11Key, 0, 0 }
+    };
+    static_assert (std::size (bindings)
+                       == static_cast<std::size_t> (imgui::ShellShortcut::count),
+                   "every ShellShortcut needs the key press the shell binds it to");
+
+    const auto index = static_cast<std::size_t> (shortcut);
+    if (index >= std::size (bindings))
+        return false;
+    return target->keyPressed (juce::KeyPress (bindings[index].code, bindings[index].mods,
+                                               bindings[index].character));
+}
 
 // Global KeyListener that forwards transport / navigation hotkeys (Space, R,
 // Home, '.', F11 - see isModalForwardableShortcut) to the registered

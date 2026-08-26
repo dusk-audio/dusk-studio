@@ -18,6 +18,8 @@ namespace duskstudio
 {
 class AudioEngine;
 
+namespace imgui { class DuskPanelWindow; }
+
 class ChannelStripComponent final : public juce::Component,
                                        private dusk::Timer
 {
@@ -34,6 +36,12 @@ public:
     // Screenshot-harness only: apply the current meter atoms and tracking
     // toggles synchronously because the harness blocks normal timer delivery.
     void refreshMetersForCapture();
+
+    // Screenshot-harness only: open / close the native compressor panel, whose
+    // framework child createComponentSnapshot cannot reach. `capturePath` asks the
+    // panel to read its own steady frame back into that file.
+    void openCompEditorForCapture (const std::string& capturePath);
+    void closeCompEditorForCapture();
 
     // Screenshot-harness only: force the track into the given mode (0=mono,
     // 1=stereo, 2=MIDI), open the I/O config popup, and return its body for
@@ -420,6 +428,11 @@ public:
     // the main window race-crashes the compositor on Linux/Wayland.
     void dropPluginEditor (NativeEditorTeardown teardown);
 
+    // Public for the same reason: the shell closes this before showing a modal,
+    // because the panel is an opaque native child and a modal opening behind it
+    // can be neither seen nor clicked.
+    void closeCompEditorPopup();
+
 private:
 
     bool compactMode = false;
@@ -433,8 +446,17 @@ private:
     // restore all handled internally). Mutually exclusive - opening one closes
     // the others.
     EmbeddedModal eqEditorModal;
-    EmbeddedModal compEditorModal;
     EmbeddedModal auxEditorModal;
+    // COMP is native: a framework child covering the host window, drawing its own
+    // dim and plate. Built on first open because the framework window is a real
+    // graphics resource and most strips never open one.
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    std::unique_ptr<imgui::DuskPanelWindow> compEditorWindow;
+    // The child is an opaque native surface, so the dim behind it is a JUCE sibling
+    // exactly as the session notepad arranges it, and it owns the click-outside.
+    std::unique_ptr<DimOverlay> compEditorDim;
+    PluginEditorHider compEditorHider;
+   #endif
     void openEqEditorPopup();
     void openCompEditorPopup();
     void openAuxEditorPopup();

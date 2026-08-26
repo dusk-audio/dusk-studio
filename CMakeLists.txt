@@ -446,21 +446,21 @@ duskstudio_resolve_framework_dir(DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR
     EXPLICIT DAF_WIDGETS_PATH DPF_WIDGETS_PATH
     SEARCH   ../DAF-Widgets ../DPF-Widgets external/DAF-Widgets external/DPF-Widgets)
 
-# OFF drops the notepad window (DUSKSTUDIO_HAS_NATIVE_NOTEPAD guards its call
-# sites) so a configure without the framework checkouts - a test-only tree, say
-# - is still possible. The default follows the checkouts, same as the native LV2
+# OFF drops every native view - the notepad and the GUI tower's ported dialogs and
+# panels (DUSKSTUDIO_HAS_NATIVE_UI guards their call sites) - so a configure without
+# the framework checkouts - a test-only tree, say - is still possible. The default follows the checkouts, same as the native LV2
 # host follows its dev libs: a machine without them still configures, while an
-# EXPLICIT -DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON with them missing (what CI
+# EXPLICIT -DDUSKSTUDIO_ENABLE_NATIVE_UI=ON with them missing (what CI
 # effectively exercises by passing DAF_PATH) stays a configure error.
-set(DUSKSTUDIO_NOTEPAD_DEPS_FOUND OFF)
+set(DUSKSTUDIO_NATIVE_UI_DEPS_FOUND OFF)
 if(DUSKSTUDIO_DAF_SOURCE_DIR AND DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR)
-    set(DUSKSTUDIO_NOTEPAD_DEPS_FOUND ON)
+    set(DUSKSTUDIO_NATIVE_UI_DEPS_FOUND ON)
 endif()
-option(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD
-       "Build the native DAF/DGL + Dear ImGui session notepad window"
-       ${DUSKSTUDIO_NOTEPAD_DEPS_FOUND})
-if(NOT DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD AND NOT DUSKSTUDIO_NOTEPAD_DEPS_FOUND)
-    message(STATUS "Native notepad: DAF / DAF-Widgets not found - disabled")
+option(DUSKSTUDIO_ENABLE_NATIVE_UI
+       "Build the native DAF/DGL + Dear ImGui views (notepad, dialogs and panels)"
+       ${DUSKSTUDIO_NATIVE_UI_DEPS_FOUND})
+if(NOT DUSKSTUDIO_ENABLE_NATIVE_UI AND NOT DUSKSTUDIO_NATIVE_UI_DEPS_FOUND)
+    message(STATUS "Native UI: DAF / DAF-Widgets not found - disabled")
 endif()
 
 if(WIN32)
@@ -479,19 +479,19 @@ if(WIN32)
     endif()
 endif()
 
-if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
+if(DUSKSTUDIO_ENABLE_NATIVE_UI)
     if(NOT DUSKSTUDIO_DAF_SOURCE_DIR)
         message(FATAL_ERROR
-            "DAF is required for the native notepad UI. Set -DDAF_PATH=/path/to/DAF, "
+            "DAF is required for the native UI. Set -DDAF_PATH=/path/to/DAF, "
             "clone it to ../DAF, initialise external/DAF, or configure with "
-            "-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=OFF.")
+            "-DDUSKSTUDIO_ENABLE_NATIVE_UI=OFF.")
     endif()
     if(NOT DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR)
         message(FATAL_ERROR
-            "DAF-Widgets is required for the native notepad UI. Set "
+            "DAF-Widgets is required for the native UI. Set "
             "-DDAF_WIDGETS_PATH=/path/to/DAF-Widgets, clone it to ../DAF-Widgets, "
             "initialise external/DAF-Widgets, or configure with "
-            "-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=OFF.")
+            "-DDUSKSTUDIO_ENABLE_NATIVE_UI=OFF.")
     endif()
 
     message(STATUS "Using DAF from: ${DUSKSTUDIO_DAF_SOURCE_DIR}")
@@ -506,15 +506,18 @@ if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
         $<$<COMPILE_LANG_AND_ID:CXX,GNU>:-Wno-cpp;-Wno-stringop-overflow>
         $<$<COMPILE_LANG_AND_ID:CXX,Clang,AppleClang>:-Wno-cpp>)
 
-    add_library(dusk_notepad_ui STATIC
+    add_library(dusk_native_ui STATIC
         src/ui/imgui/DuskImGuiHost.cpp
+        src/ui/imgui/DuskTheme.cpp
+        src/ui/imgui/DuskPanelWindow.cpp
         src/ui/NotepadDocument.cpp
         src/ui/NotepadChords.cpp
         src/ui/NotepadEditorCore.cpp
         src/ui/NotepadEditor.cpp
         src/ui/NativeNotepadWindow.cpp
-        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp")
-    target_include_directories(dusk_notepad_ui PRIVATE
+        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp"
+        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DuskWidgets.cpp")
+    target_include_directories(dusk_native_ui PRIVATE
         "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl")
 
     if(MSVC)
@@ -525,21 +528,32 @@ if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
         # wglGetProcAddress, the way DGL resolves its own. The header is named without a
         # path so cl finds it on the include path; a /FI carrying an absolute path breaks
         # on a source tree whose path contains spaces.
-        target_sources(dusk_notepad_ui PRIVATE src/ui/ImGuiGlLoaderWin32.cpp)
-        target_include_directories(dusk_notepad_ui PRIVATE src/ui)
+        target_sources(dusk_native_ui PRIVATE src/ui/ImGuiGlLoaderWin32.cpp)
+        target_include_directories(dusk_native_ui PRIVATE src/ui)
         set_source_files_properties(
             "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp"
             PROPERTIES COMPILE_OPTIONS "/FIImGuiGlLoaderWin32.h")
     endif()
 
-    target_link_libraries(dusk_notepad_ui PRIVATE
+    target_link_libraries(dusk_native_ui PRIVATE
         dgl-opengl3
         dgl-opengl3-definitions
         dgl-system-libs-definitions)
-    target_compile_features(dusk_notepad_ui PUBLIC cxx_std_17)
+    target_compile_features(dusk_native_ui PUBLIC cxx_std_17)
 
-    target_link_libraries(DuskStudio PRIVATE dusk_notepad_ui)
-    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_NOTEPAD=1)
+    target_link_libraries(DuskStudio PRIVATE dusk_native_ui)
+    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_UI=1)
+
+    # The panel views read the session's atomics directly, so they compile in the
+    # app target where those headers already resolve rather than in the framework
+    # library. They need Dear ImGui and the widget kit's headers only; the DGL half
+    # of the stack stays behind DuskPanelWindow.
+    target_sources(DuskStudio PRIVATE
+        src/ui/imgui/ChannelCompView.cpp
+        src/ui/imgui/StartupView.cpp
+        src/ui/imgui/VirtualKeyboardView.cpp)
+    target_include_directories(DuskStudio PRIVATE
+        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl")
 
     # Gate spike for the GUI tower: a standalone framework application window rendering one
     # channel strip, used to measure frame cost and prove the shell. It ships with nothing,
@@ -580,7 +594,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
         if(DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR)
             target_compile_definitions(DuskStudio PRIVATE
                 DUSKSTUDIO_USE_WINDOWS_SOFTWARE_OPENGL=1)
-            target_compile_definitions(dusk_notepad_ui PRIVATE
+            target_compile_definitions(dusk_native_ui PRIVATE
                 DUSKSTUDIO_USE_WINDOWS_SOFTWARE_OPENGL=1)
 
             # This imports opengl32.dll before C++ initialisers run, uses the
@@ -671,12 +685,10 @@ target_sources(DuskStudio PRIVATE
     src/ui/BusComponent.cpp
     src/ui/BounceDialog.cpp
     src/ui/FreezeDialog.cpp
-    src/ui/ChannelCompEditor.cpp
     src/ui/ChannelEqEditor.cpp
     src/ui/ChannelStripComponent.cpp
     src/ui/CompMeterStrip.cpp
     src/ui/SelfTestPanel.cpp
-    src/ui/StartupDialog.cpp
     src/engine/AudioPipelineSelfTest.cpp
     src/ui/ConsoleView.cpp
     src/ui/DimOverlay.cpp
@@ -700,7 +712,6 @@ target_sources(DuskStudio PRIVATE
     src/ui/TapeStrip.cpp
     src/ui/MiniTimelineStrip.cpp
     src/ui/TransportBar.cpp
-    src/ui/VirtualKeyboardComponent.cpp
     src/ui/WindowState.cpp)
 
 # libsndfile backs all audio file I/O and is required on every platform. The
@@ -1228,7 +1239,7 @@ if(_duskstudio_oop_enabled)
         JUCE_DONT_DECLARE_PROJECTINFO=1
         JUCE_USE_CURL=0
         JUCE_WEB_BROWSER=0)
-    if(WIN32 AND DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD
+    if(WIN32 AND DUSKSTUDIO_ENABLE_NATIVE_UI
        AND DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR)
         target_compile_definitions(dusk-studio-plugin-host PRIVATE
             DUSKSTUDIO_USE_WINDOWS_SOFTWARE_OPENGL=1)
@@ -1618,7 +1629,7 @@ endif()
 install(TARGETS DuskStudio
         RUNTIME DESTINATION bin
         BUNDLE  DESTINATION .)
-if(WIN32 AND DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD
+if(WIN32 AND DUSKSTUDIO_ENABLE_NATIVE_UI
    AND DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR)
     install(FILES
                 "${DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR}/opengl32.dll"

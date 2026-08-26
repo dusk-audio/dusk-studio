@@ -18,12 +18,10 @@
 #include "AudioRegionEditor.h"
 #include "PianoRollComponent.h"
 #include "ChannelEqEditor.h"
-#include "ChannelCompEditor.h"
 #include "TapePanel.h"
 #include "AudioSettingsPanel.h"
 #include "MidiBindingsPanel.h"
 #include "HardwareInsertEditor.h"
-#include "StartupDialog.h"
 #include "PluginPickerPanel.h"
 #include "BounceDialog.h"
 #include "../engine/BounceEngine.h"
@@ -385,16 +383,6 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         modalShot (eq, w, h, "fx-01-eq.png", 300);
     }
     {
-        // Channel compressor editor (VCA mode, mid gain-reduction).
-        auto& s = session.track (0).strip;
-        s.compEnabled.store (true, std::memory_order_relaxed);
-        s.compMode.store (2, std::memory_order_relaxed);   // VCA
-        ChannelCompEditor cp (session.track (0));
-        const int w = cp.getWidth()  > 0 ? cp.getWidth()  : 380;
-        const int h = cp.getHeight() > 0 ? cp.getHeight() : 360;
-        modalShot (cp, w, h, "fx-02-comp.png", 300);
-    }
-    {
         auto& m = session.master();
         const bool wasTapeEnabled = m.tapeEnabled.load (std::memory_order_relaxed);
         m.tapeEnabled.store (true, std::memory_order_relaxed);
@@ -404,16 +392,8 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         modalShot (tp, w, h, "fx-03-tape.png", 300);
         m.tapeEnabled.store (wasTapeEnabled, std::memory_order_relaxed);
     }
-    {
-        // Startup dialog - full-bleed, so size it to the window.
-        juce::Array<juce::File> recents {
-            juce::File ("~/Music/Dusk Studio/Album Demo").getFullPathName(),
-            juce::File ("~/Music/Dusk Studio/Live Take 3").getFullPathName(),
-            juce::File ("~/Music/Dusk Studio/Vocal Comp").getFullPathName()
-        };
-        StartupDialog sd (recents);
-        modalShot (sd, getWidth(), getHeight(), "qg-01-startup.png", 300);
-    }
+    // qg-01-startup is the native startup panel now, captured with the other
+    // framework children in captureNativePanels below.
     {
         // Plugin picker with a synthetic effect list (no real scan in capture mode).
         auto mk = [] (const char* n, const char* mfr, const char* cat)
@@ -447,7 +427,82 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
     }
     alias ("qg-07-bounce-dialog.png", "bnc-01-bounce-dialog.png");
 
-    std::fprintf (stderr, "[Dusk Studio/capture] done\n");
-    juce::JUCEApplication::getInstance()->quit();
+    // The native panels come last and from the running message loop: their frames
+    // are drawn by a message-thread timer, so a phase that blocks the loop the way
+    // settle() does would capture nothing. captureNativePanels quits when it is done.
+    captureNativePanels (outDir.getFullPathName().toStdString());
+}
+
+void MainComponent::captureNativePanels (std::string outDir)
+{
+    const auto quitNow = []
+    {
+        std::fprintf (stderr, "[Dusk Studio/capture] done\n");
+        juce::JUCEApplication::getInstance()->quit();
+    };
+
+    auto* const strip0 = consoleView != nullptr ? consoleView->getStripComponent (0)
+                                                : nullptr;
+    if (strip0 == nullptr)
+    {
+        quitNow();
+        return;
+    }
+
+    auto& strip = session.track (0).strip;
+    strip.compEnabled.store (true, std::memory_order_relaxed);
+    strip.compMode.store (2, std::memory_order_relaxed);   // VCA
+    // The bounce phase above leaves the input meter reading, and this figure is of
+    // the panel rather than of a signal. Park the meters at rest.
+    session.track (0).meterInputDb.store (-100.0f, std::memory_order_relaxed);
+    session.track (0).meterGrDb.store (0.0f, std::memory_order_relaxed);
+    strip0->openCompEditorForCapture (outDir + "/fx-02-comp.ppm");
+
+    // One panel at a time: each is a modal surface, and two open at once would put
+    // one child over the other.
+    juce::Component::SafePointer<MainComponent> safeThis (this);
+    dusk::Timer::callAfterDelay (1500, [safeThis, quitNow, outDir]
+    {
+        auto* const self = safeThis.getComponent();
+        if (self == nullptr)
+        {
+            quitNow();
+            return;
+        }
+        if (self->consoleView != nullptr)
+            if (auto* s = self->consoleView->getStripComponent (0))
+                s->closeCompEditorForCapture();
+
+        dusk::Timer::callAfterDelay (400, [safeThis, quitNow, outDir]
+        {
+            auto* const me = safeThis.getComponent();
+            if (me == nullptr)
+            {
+                quitNow();
+                return;
+            }
+            me->openVirtualKeyboardForCapture (outDir + "/vkb-01-virtual-keyboard.ppm");
+            dusk::Timer::callAfterDelay (1500, [safeThis, quitNow, outDir]
+            {
+                auto* const withKeyboard = safeThis.getComponent();
+                if (withKeyboard == nullptr)
+                {
+                    quitNow();
+                    return;
+                }
+                withKeyboard->closeVirtualKeyboard();
+
+                dusk::Timer::callAfterDelay (400, [safeThis, quitNow, outDir]
+                {
+                    if (auto* last = safeThis.getComponent())
+                        last->openStartupForCapture (outDir + "/qg-01-startup.ppm");
+                    // Quitting with the startup panel still up is the point: its
+                    // dismissal would run the launch follow-ups the harness has
+                    // already been past for a whole session.
+                    dusk::Timer::callAfterDelay (1500, quitNow);
+                });
+            });
+        });
+    });
 }
 } // namespace duskstudio

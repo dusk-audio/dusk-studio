@@ -101,7 +101,7 @@ Merged as three commits on top of `main`:
      explains why.
 3. A new commit adding `DGL_BACKEND` (§1.4).
 
-`dusk_notepad_ui` and the whole `DuskStudio` target build clean against the
+`dusk_native_ui` and the whole `DuskStudio` target build clean against the
 result, and the spike runs on it.
 
 Stacked on top of it was `dusk/302-app-contract`, four commits closing §3 rows
@@ -584,15 +584,68 @@ one. The invariant that does belong in CI went into the headless suite instead.
 First shipping phase. Move the self-contained modal family, one file per commit,
 each becoming an embedded framework window: `AudioSettingsPanel`,
 `StartupDialog`, `ChannelCompEditor`, `MasteringEqEditor`,
-`MasteringLimiterEditor`, `VirtualKeyboardComponent`. Re-point the
-`EmbeddedModal`, `DuskComboBox` and `showContextMenu` seams at ImGui
-implementations. Portal parenting is no longer new work here: the first file
-dialog reads `Window::getPortalParentHandle()` from the reconciled framework
-(§3, row 5) and passes it as the portal's parent window.
+`MasteringLimiterEditor`, `VirtualKeyboardComponent`.
 
-Owns: roughly 12 files, ~6,000 lines. Gate: those files leave the allowlist.
+**Three landed: `ChannelCompEditor`, `VirtualKeyboardComponent`,
+`StartupDialog`.** Gate movement: 178 files / 9,050 uses to 172 / 8,685.
+
+The vehicle is `src/ui/imgui/DuskPanelWindow`, and it is the part worth
+knowing before adding the fourth panel. **The child covers the panel's plate and
+nothing more.** A framework child is an opaque native surface, so one sized to
+the whole window paints black over the DAW instead of dimming it - that was
+tried first and the capture is unambiguous. The dim and the click-outside
+therefore stay a JUCE `DimOverlay` behind the child, the way the notepad already
+arranges them, and the caller sizes it from `plateSize()`. The window draws the
+plate itself with `EmbeddedModal::Backdrop`'s geometry and colours, polls a
+geometry callback so a host resized underneath it re-centres without every caller
+listening for one, and forwards the transport keys as a `ShellShortcut` the JUCE
+side turns back into a key press. A view with no parent chain also has no way to
+let an unhandled key walk up to the shell, so `takeDismissRequest()` is how a
+view closes itself - the virtual keyboard's own **K** needs it.
+
+**The three seams cannot be re-pointed, and do not need to be.** All three are
+JUCE-typed by construction: `EmbeddedModal::show` takes a
+`std::unique_ptr<juce::Component>` body, `DuskComboBox` *is* a
+`juce::ComboBox` subclass overriding `showPopup()`, and `showContextMenu` takes
+a `juce::PopupMenu`. There is no interface behind any of them to point somewhere
+else, and a native view holds none of those types. What a native view uses
+instead: `EmbeddedModal` -> `DuskPanelWindow`, which carries the same contract
+and consumes the genuinely shared halves of `EmbeddedModal` (`beforeModalShown`,
+`focusRestoreTarget`, `PluginEditorHider`, and the new `dispatchShellShortcut`);
+`DuskComboBox` -> `ImGui::BeginCombo` styled from `DuskTheme`;
+`showContextMenu` -> `ImGui::BeginPopupContextItem`. That is the notepad's
+existing practice for chrome the widget kit has no opinion about, and it means
+the remaining panels need no DAF-Widgets round to proceed. The 49 / 28 / 16 JUCE
+consumers of the three seams are untouched and stay that way until their own
+phases.
+
+Portal parenting stayed unconsumed: no panel here opens a file dialog from
+inside its own window. The startup dialog hands the chooser to the host, which
+runs it after the child is down - which is required anyway, since a JUCE modal
+opened over a mapped framework child lands behind it.
+
+Left, with what anchors each:
+
+- **`AudioSettingsPanel`** is not self-contained. It owns a
+  `DuskAudioDeviceSelector` (a separate JUCE component wrapping
+  `juce::AudioDeviceSelectorComponent`, not in this phase's list), hosts two
+  `EmbeddedModal`s of its own (MIDI bindings, self-test) that would land behind
+  its own child, and drives the live UI-scale preview that
+  `EmbeddedModal::setOwnedBodyScaleInvariant` exists solely to serve. Port the
+  device selector first, or take the panel and the selector as one phase.
+- **`MasteringEqEditor`** and **`MasteringLimiterEditor`** are not modals: they
+  are inline children of `MasteringView`, sized by its `resized()`
+  (`MasteringView.cpp:551`, `:591`), shown and hidden with the stage
+  (`MainComponent.cpp:2195`), and `MasteringView` opens `exportModal` over
+  itself (`:823`) - which a native sibling would bury. The cheapest unlock is
+  making `EmbeddedModal::beforeModalShown()` a list rather than one slot, so a
+  view can register its own "close my native children" hook beside the notepad's.
+
 Verify: each panel captured headlessly and diffed against its JUCE screenshot;
-ctest; live-Wayland pass per panel.
+ctest; live-Wayland pass per panel. A ported panel's figure cannot come from
+`createComponentSnapshot`, which cannot reach a framework child, so the
+application reads its own steady frame back as a PPM and
+`docs/capture-screenshots.sh` converts it - the model §3 row 10 calls for.
 
 ### G3 — The console
 

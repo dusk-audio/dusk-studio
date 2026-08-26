@@ -335,10 +335,10 @@ DAF-Widgets (DGL / Dear ImGui bridge — the notepad's immediate-mode UI layer,
              (DAF-Widgets/LICENSE)
   Path     : not in tree — sibling checkout ../DAF-Widgets,
              -DDAF_WIDGETS_PATH=..., or external/DAF-Widgets;
-             opengl/DearImGui.cpp compiles into the dusk_notepad_ui library.
-             opengl/DuskWidgets.cpp is built by the GUI tower's spike and unit
-             tests only, and joins the shipped binary with the first native view
-             that draws through it.
+             opengl/DearImGui.cpp and opengl/DuskWidgets.cpp both compile into
+             the dusk_native_ui library, which links into the Dusk Studio
+             binary: the widget set ships from the dialogs phase on, drawn
+             through by the ported panels as well as the spike and unit tests.
   Upstream : https://github.com/DISTRHO/DPF-Widgets
 
 Dear ImGui (immediate-mode GUI — notepad editor, toolbar, chord charts)
