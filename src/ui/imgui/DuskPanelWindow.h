@@ -35,6 +35,11 @@ public:
     // while auditioning; decision panels keep the 0.55 default.
     virtual float dimAlpha() const { return 0.55f; }
 
+    // False for a view that is not a modal - an inline editor sitting inside a stage
+    // rather than floating over one. The window then draws no plate and hands the view
+    // its whole rectangle, which the view fills with its own panel surface.
+    virtual bool wantsPlate() const { return true; }
+
     // A view that binds a bare transport key to its own input - the virtual
     // keyboard's note letters - claims it here, and the window stops forwarding it.
     // Claim implies consume: a claimed key never reaches the shell.

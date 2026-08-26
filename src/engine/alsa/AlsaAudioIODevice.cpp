@@ -253,7 +253,7 @@ void readInterleavedFloat (const void* src, float* const* dest,
 // ----- Periods knob ----------------------------------------------------------
 //
 // 2 is the Ardour default and the lowest-latency setting that gives the kernel
-// any slack. Range [2, 16]. UI lives in AudioSettingsPanel and updates this
+// any slack. Range [2, 16]. UI lives in AudioSettingsView and updates this
 // before triggering a re-open of the device.
 // Periods = number of buffer fragments the ALSA ring is split into.
 // 2 (the bare minimum) gives the kernel exactly one period of slack
