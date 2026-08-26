@@ -5,12 +5,12 @@
 namespace duskstudio
 {
 PluginScanModal::PluginScanModal (PluginManager& mgr,
-                                  std::function<void (int)> onFinishedIn)
+                                  std::function<void (int, bool)> onFinishedIn)
     : manager (mgr),
       onFinished (std::move (onFinishedIn)),
       progressBar (progressValue)
 {
-    setSize (420, 150);
+    setSize (420, 190);
 
     titleLabel.setText ("Scanning plugins...", juce::dontSendNotification);
     titleLabel.setFont (juce::Font (juce::FontOptions (16.0f, juce::Font::bold)));
@@ -26,6 +26,11 @@ PluginScanModal::PluginScanModal (PluginManager& mgr,
     progressBar.setColour (juce::ProgressBar::backgroundColourId, juce::Colour (0xff101012));
     progressBar.setColour (juce::ProgressBar::foregroundColourId, juce::Colour (0xff5fa8ff));
     addAndMakeVisible (progressBar);
+
+    cancelButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff202024));
+    cancelButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xffd0d0d0));
+    cancelButton.onClick = [this] { requestCancel(); };
+    addAndMakeVisible (cancelButton);
 
     startedAtMs = juce::Time::getMillisecondCounter();
     std::fprintf (stderr, "[Dusk Studio] PluginScanModal: created, starting worker thread\n");
@@ -56,6 +61,24 @@ PluginScanModal::~PluginScanModal()
         worker->stopThread (5000);
         worker.reset();
     }
+}
+
+void PluginScanModal::requestCancel()
+{
+    // Don't relabel a scan that already finished. completeShown covers a result
+    // that is on screen; scanDone covers the ticks between the worker returning
+    // and the timer noticing. A cancel landing in the few instructions before
+    // the worker publishes scanDone still marks the result cancelled - that
+    // changes the wording only, never what was scanned.
+    if (completeShown || scanDone.load (std::memory_order_acquire)) return;
+    if (aborting.exchange (true)) return;
+
+    // The scanner's watchdog polls the flag, so the plugin being probed is ended
+    // within a tick instead of sitting out the rest of its timeout.
+    worker->signalThreadShouldExit();
+
+    cancelButton.setEnabled (false);
+    titleLabel.setText ("Cancelling scan...", juce::dontSendNotification);
 }
 
 void PluginScanModal::Worker::run()
@@ -104,10 +127,13 @@ void PluginScanModal::timerCallback()
         completeAtMs  = juce::Time::getMillisecondCounter();
 
         const int added = addedCount.load (std::memory_order_relaxed);
-        titleLabel.setText ("Plugin scan complete", juce::dontSendNotification);
+        const bool cancelled = aborting.load (std::memory_order_relaxed);
+        titleLabel.setText (cancelled ? "Plugin scan cancelled" : "Plugin scan complete",
+                            juce::dontSendNotification);
         statusLabel.setText (juce::String (added) + " new plugin"
                                  + (added == 1 ? "" : "s") + " added.",
                              juce::dontSendNotification);
+        cancelButton.setVisible (false);
         progressValue = 1.0;
         progressBar.repaint();
     }
@@ -125,14 +151,16 @@ void PluginScanModal::timerCallback()
         // lambda never touches `this`.
         if (onFinished)
             dusk::callAsync (
-                [cb = onFinished, count = addedCount.load (std::memory_order_relaxed)]
-                { cb (count); });
+                [cb = onFinished, count = addedCount.load (std::memory_order_relaxed),
+                 cancelled = aborting.load (std::memory_order_relaxed)]
+                { cb (count, cancelled); });
     }
 }
 
 void PluginScanModal::resized()
 {
     auto area = getLocalBounds().reduced (20);
+    cancelButton.setBounds (area.removeFromBottom (30).removeFromRight (90));
     titleLabel.setBounds (area.removeFromTop (26));
     area.removeFromTop (10);
     progressBar.setBounds (area.removeFromTop (22));

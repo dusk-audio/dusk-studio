@@ -1517,7 +1517,7 @@ There is no VST2 support. See *Native plugin hosting (Linux, macOS, and Windows)
 
 ## Scanning
 
-Dusk Studio does not automatically scan plugins on first launch. Open any plugin picker (right-click any channel insert slot → **+ Plugin**, or the aux lane plugin slot) and click **Scan plugins**. Scanning takes 10–30 seconds for a large collection.
+Dusk Studio does not automatically scan plugins on first launch. Open any plugin picker (right-click any channel insert slot → **+ Plugin**, or the aux lane plugin slot) and click **Scan plugins**. Scanning takes 10–30 seconds for a large collection and runs behind a progress window naming the plugin being probed, so the app stays responsive rather than appearing to hang. Click **Cancel** there, or press Esc, to stop early. The plugin being probed is skipped and plugins already added stay in the picker, but a CLAP or VST3 pass through Dusk Studio's own hosts is abandoned rather than recorded half-finished, so its earlier results stand until you run **Scan plugins** again. The LV2 and Audio Unit passes read manifests rather than plugin code and finish on their own once started.
 
 Plugin scan results are cached in:
 
@@ -1527,7 +1527,9 @@ Plugin scan results are cached in:
 
 The native hosts keep their own sidecar caches next to it (`clap-cache.json` and `vst3-native-cache.json` on every OS, `lv2-native-cache.json` on Linux and macOS, `au-native-cache.json` on macOS), rebuilt by the same **Scan plugins** button. Existing XML sidecars are used as a fallback whenever the matching JSON cache cannot be loaded, including when it is absent, malformed, or unusable; subsequent scans write JSON. The native LV2 scan reads only the bundles' manifests, and the native AU scan reads the macOS Audio Component registry metadata; neither scan instantiates plugin code, so a broken plugin cannot crash that scan and is simply skipped (or reported when you try to load it).
 
-To re-scan on every launch, enable **Settings → General → Scan plugins on startup**. The startup scan runs in the background behind a progress window (it shows the plugin currently being scanned and a progress bar), so the app stays responsive instead of appearing to hang while a large collection is scanned.
+To re-scan on every launch, enable **Settings → General → Scan plugins on startup**. It uses the same progress window, cancels the same way, and reports what it found to the session log rather than to an alert.
+
+A plugin that never finishes being probed — most often one waiting on a licence or authorisation dialog it cannot show during a scan — is given 30 seconds and then ended, so the scan moves on to the next one. A standard-host plugin is quarantined at that point and skipped by every later scan; the alert at the end of a **Scan plugins** run says how many are quarantined and which file to delete to probe them again. CLAP and VST3 bundles read by Dusk Studio's own hosts are only skipped, and are probed again on the next scan.
 
 ## Loading a plugin
 
@@ -2354,8 +2356,8 @@ Two variants:
 ### Plugin scan complete
 
 - **When**: The scanner finishes (startup-auto or manual).
-- **Text**: title "Plugin scan complete", body "1 new plugin added." (singular) or "N new plugins added." (plural).
-- **Buttons**: none — the dialog holds briefly, then closes itself.
+- **Text**: title "Plugin scan complete", body "1 new plugin added." (singular) or "N new plugins added." (plural). A cancelled scan titles "Plugin scan cancelled" and reports what it added before you stopped it.
+- **Buttons**: **Cancel** while scanning, then none — the dialog holds briefly, then closes itself.
 
 ### Plugin slot labels (inline, not a dialog)
 

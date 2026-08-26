@@ -194,7 +194,7 @@ void runScanModal (PluginManager& manager, juce::Component* parent,
 
     auto body = std::make_unique<PluginScanModal> (manager,
         [&modal, &manager, safeHost, onAlertDismiss = std::move (onAlertDismiss)]
-        (int added) mutable
+        (int added, bool cancelled) mutable
         {
             modal.close();
 
@@ -202,6 +202,11 @@ void runScanModal (PluginManager& manager, juce::Component* parent,
                 "Added %d plugin%s to the picker. (Total known: %d)",
                 added, added == 1 ? "" : "s",
                 manager.getPluginCount());
+
+            if (cancelled)
+                message = "You stopped the scan. " + message
+                        + "\n\nThe rest of your collection was not scanned; "
+                          "run Scan plugins again to finish.";
 
             // On a shipped build this warning means the install lost its child
             // executable, so name the path that was looked for.
@@ -224,14 +229,17 @@ void runScanModal (PluginManager& manager, juce::Component* parent,
                         << manager.getCacheFile().getFullPathName();
 
             if (auto* h = safeHost.getComponent())
-                showDuskAlert (*h, "Plugin scan complete", std::move (message),
-                                  std::move (onAlertDismiss));
+                showDuskAlert (*h, cancelled ? "Plugin scan cancelled" : "Plugin scan complete",
+                                  std::move (message), std::move (onAlertDismiss));
             else if (onAlertDismiss)
                 onAlertDismiss();
         });
 
-    modal.show (*host, std::move (body), /*onDismiss*/ {},
-                /*dismissOnClickOutside*/ false, /*dismissOnEscape*/ false);
+    // Esc cancels rather than dismissing: tearing the modal down mid-scan would
+    // join the worker on the message thread. The scan unwinds and closes itself.
+    auto* scan = body.get();
+    modal.show (*host, std::move (body), /*onDismiss*/ [scan] { scan->requestCancel(); },
+                /*dismissOnClickOutside*/ false, /*dismissOnEscape*/ true);
 }
 
 namespace
