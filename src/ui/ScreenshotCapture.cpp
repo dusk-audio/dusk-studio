@@ -19,7 +19,6 @@
 #include "PianoRollComponent.h"
 #include "ChannelEqEditor.h"
 #include "TapePanel.h"
-#include "AudioSettingsPanel.h"
 #include "MidiBindingsPanel.h"
 #include "HardwareInsertEditor.h"
 #include "PluginPickerPanel.h"
@@ -297,12 +296,9 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
     settle (300);
     snapshotComponent (auxView.get(), outDir, "np-07-aux-view.png");
 
-    // MASTERING stage
-    switchToStage (AudioEngine::Stage::Mastering);
-    resized();
-    settle (300);
-    snapshotComponent (masteringView.get(), outDir, "np-08-mastering-view.png");
-    snapshotComponent (masteringView.get(), outDir, "mm-02-mastering-chain.png");
+    // np-08 / mm-02 are the mastering stage, whose EQ and limiter panels are framework
+    // children: that figure is taken in captureNativePanels below, from the running
+    // message loop, because a child cannot draw while settle() holds the loop.
 
     // Back to a normal stage before modal shots.
     switchToStage (AudioEngine::Stage::Mixing);
@@ -357,10 +353,6 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
     }
     alias ("np-11-piano-roll.png", "ed-05-piano-roll-full.png");
     {
-        AudioSettingsPanel p (engine.getDeviceManager(), engine, session);
-        modalShot (p, 720, 560, "qg-02-audio-settings.png", 400);
-    }
-    {
         MidiBindingsPanel p (session, engine, [] {});
         modalShot (p, MidiBindingsPanel::kPanelW, MidiBindingsPanel::kPanelH, "sync-01-mcu-bindings.png", 300);
     }
@@ -392,8 +384,8 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         modalShot (tp, w, h, "fx-03-tape.png", 300);
         m.tapeEnabled.store (wasTapeEnabled, std::memory_order_relaxed);
     }
-    // qg-01-startup is the native startup panel now, captured with the other
-    // framework children in captureNativePanels below.
+    // qg-01-startup and qg-02-audio-settings are native panels now, captured with
+    // the other framework children in captureNativePanels below.
     {
         // Plugin picker with a synthetic effect list (no real scan in capture mode).
         auto mk = [] (const char* n, const char* mfr, const char* cat)
@@ -433,76 +425,161 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
     captureNativePanels (outDir.getFullPathName().toStdString());
 }
 
-void MainComponent::captureNativePanels (std::string outDir)
+namespace
 {
-    const auto quitNow = []
-    {
-        std::fprintf (stderr, "[Dusk Studio/capture] done\n");
-        juce::JUCEApplication::getInstance()->quit();
-    };
-
-    auto* const strip0 = consoleView != nullptr ? consoleView->getStripComponent (0)
-                                                : nullptr;
-    if (strip0 == nullptr)
-    {
-        quitNow();
+// One PPM a framework child read its own frame back into, pasted into a JUCE snapshot
+// at the rectangle the child covers. Under the harness the window is unscaled, so the
+// two are the same pixels; a scaled run is letterboxed rather than skewed.
+void pastePpm (juce::Image& into, const juce::File& ppm, juce::Rectangle<int> at)
+{
+    juce::FileInputStream stream (ppm);
+    if (! stream.openedOk())
         return;
+
+    if (stream.readNextLine().trim() != "P6")
+        return;
+    const auto dimensions = juce::StringArray::fromTokens (stream.readNextLine().trim(),
+                                                           true);
+    if (dimensions.size() < 2 || stream.readNextLine().trim() != "255")
+        return;
+
+    const int width = dimensions[0].getIntValue();
+    const int height = dimensions[1].getIntValue();
+    if (width < 1 || height < 1)
+        return;
+
+    std::vector<unsigned char> rgb (static_cast<std::size_t> (width)
+                                    * static_cast<std::size_t> (height) * 3u);
+    if (stream.read (rgb.data(), static_cast<int> (rgb.size()))
+        != static_cast<int> (rgb.size()))
+        return;
+
+    juce::Image frame (juce::Image::RGB, width, height, false);
+    {
+        const juce::Image::BitmapData pixels (frame, juce::Image::BitmapData::writeOnly);
+        for (int y = 0; y < height; ++y)
+        {
+            const unsigned char* row = rgb.data()
+                                     + static_cast<std::size_t> (y)
+                                           * static_cast<std::size_t> (width) * 3u;
+            for (int x = 0; x < width; ++x, row += 3)
+                pixels.setPixelColour (x, y, juce::Colour (row[0], row[1], row[2]));
+        }
     }
 
-    auto& strip = session.track (0).strip;
-    strip.compEnabled.store (true, std::memory_order_relaxed);
-    strip.compMode.store (2, std::memory_order_relaxed);   // VCA
-    // The bounce phase above leaves the input meter reading, and this figure is of
-    // the panel rather than of a signal. Park the meters at rest.
-    session.track (0).meterInputDb.store (-100.0f, std::memory_order_relaxed);
-    session.track (0).meterGrDb.store (0.0f, std::memory_order_relaxed);
-    strip0->openCompEditorForCapture (outDir + "/fx-02-comp.ppm");
+    juce::Graphics g (into);
+    g.drawImage (frame, at.toFloat(), juce::RectanglePlacement::centred);
+    ppm.deleteFile();
+}
+} // namespace
 
-    // One panel at a time: each is a modal surface, and two open at once would put
-    // one child over the other.
+void MainComponent::captureNativePanels (std::string outDir)
+{
+    // Written as a list rather than nested callbacks because every step needs the
+    // message loop to actually run between them: a framework child draws from a
+    // message-thread timer, so the blocking settle() the snapshot phase uses would
+    // leave it with nothing on screen.
+    struct Step
+    {
+        int delayMs;   // how long the loop runs before this step
+        std::function<void (MainComponent&)> run;
+    };
+
+    auto masteringCaptures =
+        std::make_shared<std::vector<MasteringView::NativePanelCapture>>();
+    const juce::File dir { juce::String (outDir) };
+
+    auto steps = std::make_shared<std::vector<Step>>();
+
+    // The mastering stage's EQ and limiter are framework children inside a JUCE view, so
+    // its figure is the JUCE snapshot with each child's own frame pasted back in.
+    steps->push_back ({ 0, [] (MainComponent& self)
+    {
+        self.switchToStage (AudioEngine::Stage::Mastering);
+        self.resized();
+    } });
+    steps->push_back ({ 900, [masteringCaptures, dir] (MainComponent& self)
+    {
+        if (self.masteringView != nullptr)
+            *masteringCaptures = self.masteringView->captureNativePanels (dir);
+    } });
+    steps->push_back ({ 1500, [masteringCaptures, dir] (MainComponent& self)
+    {
+        auto* const view = self.masteringView.get();
+        if (view != nullptr && view->getWidth() > 0 && view->getHeight() > 0)
+        {
+            auto image = view->createComponentSnapshot (view->getLocalBounds(), true);
+            for (const auto& capture : *masteringCaptures)
+                pastePpm (image, capture.file, capture.bounds);
+            writePng (image, dir.getChildFile ("np-08-mastering-view.png"));
+            writePng (image, dir.getChildFile ("mm-02-mastering-chain.png"));
+        }
+        self.switchToStage (AudioEngine::Stage::Mixing);
+        self.resized();
+    } });
+
+    steps->push_back ({ 600, [outDir] (MainComponent& self)
+    {
+        auto* const strip0 = self.consoleView != nullptr
+                           ? self.consoleView->getStripComponent (0) : nullptr;
+        if (strip0 == nullptr)
+            return;
+        auto& strip = self.session.track (0).strip;
+        strip.compEnabled.store (true, std::memory_order_relaxed);
+        strip.compMode.store (2, std::memory_order_relaxed);   // VCA
+        // The bounce phase above leaves the input meter reading, and this figure is of
+        // the panel rather than of a signal. Park the meters at rest.
+        self.session.track (0).meterInputDb.store (-100.0f, std::memory_order_relaxed);
+        self.session.track (0).meterGrDb.store (0.0f, std::memory_order_relaxed);
+        strip0->openCompEditorForCapture (outDir + "/fx-02-comp.ppm");
+    } });
+    // One panel at a time: each is a modal surface, and two open at once would put one
+    // child over the other.
+    steps->push_back ({ 1500, [] (MainComponent& self)
+    {
+        if (self.consoleView != nullptr)
+            if (auto* strip0 = self.consoleView->getStripComponent (0))
+                strip0->closeCompEditorForCapture();
+    } });
+    steps->push_back ({ 400, [outDir] (MainComponent& self)
+    {
+        self.openVirtualKeyboardForCapture (outDir + "/vkb-01-virtual-keyboard.ppm");
+    } });
+    steps->push_back ({ 1500, [] (MainComponent& self) { self.closeVirtualKeyboard(); } });
+    steps->push_back ({ 400, [outDir] (MainComponent& self)
+    {
+        self.openAudioSettingsForCapture (outDir + "/qg-02-audio-settings.ppm");
+    } });
+    steps->push_back ({ 1500, [] (MainComponent& self) { self.closeAudioSettings(); } });
+    // Quitting with the startup panel still up is the point: dismissing it would run the
+    // launch follow-ups the harness has already been past for a whole session.
+    steps->push_back ({ 400, [outDir] (MainComponent& self)
+    {
+        self.openStartupForCapture (outDir + "/qg-01-startup.ppm");
+    } });
+    steps->push_back ({ 1500, [] (MainComponent&) {} });
+
     juce::Component::SafePointer<MainComponent> safeThis (this);
-    dusk::Timer::callAfterDelay (1500, [safeThis, quitNow, outDir]
+    auto runFrom = std::make_shared<std::function<void (std::size_t)>>();
+    // The runner holds itself weakly and the pending timer holds it strongly, so it
+    // lives exactly as long as it has a step left. Capturing it strongly inside itself
+    // would be a cycle that never frees.
+    std::weak_ptr<std::function<void (std::size_t)>> weakRunner = runFrom;
+    *runFrom = [safeThis, steps, weakRunner] (std::size_t index)
     {
         auto* const self = safeThis.getComponent();
-        if (self == nullptr)
+        if (self == nullptr || index >= steps->size())
         {
-            quitNow();
+            std::fprintf (stderr, "[Dusk Studio/capture] done\n");
+            juce::JUCEApplication::getInstance()->quit();
             return;
         }
-        if (self->consoleView != nullptr)
-            if (auto* s = self->consoleView->getStripComponent (0))
-                s->closeCompEditorForCapture();
-
-        dusk::Timer::callAfterDelay (400, [safeThis, quitNow, outDir]
-        {
-            auto* const me = safeThis.getComponent();
-            if (me == nullptr)
-            {
-                quitNow();
-                return;
-            }
-            me->openVirtualKeyboardForCapture (outDir + "/vkb-01-virtual-keyboard.ppm");
-            dusk::Timer::callAfterDelay (1500, [safeThis, quitNow, outDir]
-            {
-                auto* const withKeyboard = safeThis.getComponent();
-                if (withKeyboard == nullptr)
-                {
-                    quitNow();
-                    return;
-                }
-                withKeyboard->closeVirtualKeyboard();
-
-                dusk::Timer::callAfterDelay (400, [safeThis, quitNow, outDir]
-                {
-                    if (auto* last = safeThis.getComponent())
-                        last->openStartupForCapture (outDir + "/qg-01-startup.ppm");
-                    // Quitting with the startup panel still up is the point: its
-                    // dismissal would run the launch follow-ups the harness has
-                    // already been past for a whole session.
-                    dusk::Timer::callAfterDelay (1500, quitNow);
-                });
-            });
-        });
-    });
+        (*steps)[index].run (*self);
+        const auto next = index + 1;
+        const int delay = next < steps->size() ? (*steps)[next].delayMs : 0;
+        if (auto runner = weakRunner.lock())
+            dusk::Timer::callAfterDelay (delay, [runner, next] { (*runner) (next); });
+    };
+    (*runFrom) (0);
 }
 } // namespace duskstudio

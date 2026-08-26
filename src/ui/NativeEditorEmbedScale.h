@@ -116,6 +116,34 @@ inline NativeChildGeometry childGeometryFor (const juce::Component& topLevel,
              scale };
 }
 
+// A child pinned to the physical size it had when it opened, so an app-wide UI-scale
+// change rescales the DAW behind it and leaves the panel alone. The audio settings
+// panel is the control surface for that change: a panel that rescaled with everything
+// else would move the slider out from under the pointer mid-drag.
+//
+// The logical rectangle grows as the app zooms out and shrinks as it zooms in, so the
+// physical one it converts to stays put; the draw scale is taken back to the reference
+// for the same reason.
+struct PinnedChild
+{
+    juce::Rectangle<int> logical;     // for the dim overlay's click-through region
+    NativeChildGeometry geometry;
+};
+
+inline PinnedChild pinnedChildGeometry (const juce::Component& topLevel,
+                                        int designWidth, int designHeight,
+                                        double referenceGlobalScale)
+{
+    const double live = std::max (0.01, globalScale());
+    const double inverseZoom = std::max (0.01, referenceGlobalScale) / live;
+    const auto bounds = centredChildBounds (
+        topLevel, static_cast<int> (std::floor (designWidth * inverseZoom + 0.5)),
+        static_cast<int> (std::floor (designHeight * inverseZoom + 0.5)));
+    auto geometry = childGeometryFor (topLevel, bounds);
+    geometry.scale *= inverseZoom;
+    return { bounds, geometry };
+}
+
 // The handle a native child embeds into, or 0 when the window is not realised yet.
 inline std::uintptr_t nativeParentHandle (const juce::Component& topLevel)
 {
