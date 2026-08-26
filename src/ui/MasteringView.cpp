@@ -484,6 +484,15 @@ void MasteringView::applyNativePanelSync()
         };
         juce::Component::SafePointer<MasteringView> safeThis (this);
         NativePanelProxy* const proxy = &panel.proxy;
+        // A close takes two ticks of the framework's pump and the window reads as open
+        // for both of them, so a proxy that comes back inside that window would be
+        // answered with a geometry change on a child about to be destroyed. Re-running
+        // the sync once the close has landed is what puts the panel back.
+        callbacks.closed = [safeThis]
+        {
+            if (auto* const self = safeThis.getComponent())
+                self->scheduleNativePanelSync();
+        };
         callbacks.geometry = [safeThis, proxy]
         {
             auto* const self = safeThis.getComponent();
