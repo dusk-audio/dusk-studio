@@ -126,17 +126,34 @@ public:
 private:
     void advanceMeters()
     {
-        // The JUCE editor ran these at 30 Hz with 0.18 and 0.10; the window draws at
+        // CompMeterStrip runs these at 30 Hz with 0.18 and 0.15; the window draws at
         // 60, so a frame is half a tick and the per-frame coefficient is
         // 1 - sqrt(1 - a) rather than a/2. Halving it would decay the meters faster
-        // than the strip's, which is the one thing the two must agree on.
+        // than the strip's, which is the one thing the two must agree on - the strip
+        // is visible through the dim while this panel is up.
+        const float in = track.meterInputDb.load (std::memory_order_relaxed);
+        if (in > displayedInputDb) displayedInputDb = in;
+        else                       displayedInputDb += (in - displayedInputDb) * 0.0780f;
+
+        // The donor's detector holds its last computed reduction when it is bypassed
+        // and when the input stops, so without these gates the bar freezes at whatever
+        // it was applying while the strip behind reads nothing. Same two gates and the
+        // same snap the strip uses, for the same reasons.
+        constexpr float kSilenceFloor = -50.0f;
+        const bool engaged = track.strip.compEnabled.load (std::memory_order_relaxed);
+        const bool inputSilent = displayedInputDb < kSilenceFloor;
+
+        if (! engaged || inputSilent)
+        {
+            displayedGrDb = 0.0f;
+            return;
+        }
+
         const float gr = track.meterGrDb.load (std::memory_order_relaxed);
         if (gr < displayedGrDb) displayedGrDb = gr;
         else                    displayedGrDb += (gr - displayedGrDb) * 0.0945f;
-
-        const float in = track.meterInputDb.load (std::memory_order_relaxed);
-        if (in > displayedInputDb) displayedInputDb = in;
-        else                       displayedInputDb += (in - displayedInputDb) * 0.0513f;
+        // A decaying tail within a fraction of a dB looks like a stuck LED.
+        if (displayedGrDb > -0.05f) displayedGrDb = 0.0f;
     }
 
     void drawHeader (dw::Context& ctx, ChannelStripParams& strip, ImVec2 at, float width)
@@ -273,19 +290,26 @@ private:
         const ImVec2 dragBr (inBr.x + scale * 2.0f, base + scale * 2.0f);
         const bool hovered = dw::hitArea (ctx, "##comp-threshold", dragTl, dragBr);
 
-        if (ImGui::IsItemActive())
-            applyThresholdAt (strip, ImGui::GetIO().MousePos.y, inTl.y, inBr.y);
-        else if (hovered && ImGui::IsMouseDoubleClicked (ImGuiMouseButton_Left))
+        // The double click has to be tested before the drag, not after it: hitArea is
+        // an InvisibleButton, so the second press makes the item active and a test
+        // that sits behind IsItemActive is never reached. The kit's own fader keeps
+        // the two apart for the same reason.
+        if (hovered && ImGui::IsMouseDoubleClicked (ImGuiMouseButton_Left))
             comp::resetTrackCompThreshold (strip);
+        else if (ImGui::IsItemActive())
+            applyThresholdAt (strip, ImGui::GetIO().MousePos.y, inTl.y, inBr.y, scale);
 
         drawThresholdHandle (ctx, strip, inTl, inBr, handleX);
     }
 
     void applyThresholdAt (ChannelStripParams& strip, float pointerY, float barTop,
-                           float barBottom)
+                           float barBottom, float scale)
     {
-        const float travel = std::max (1.0f, (barBottom - barTop) - 4.0f);
-        const float frac = clampf (0.0f, 1.0f, (barBottom - 2.0f - pointerY) / travel);
+        // The same insets drawThresholdHandle places the handle with, so the pointer
+        // and the handle stay together at a scale other than 1.
+        const float travel = std::max (1.0f, (barBottom - barTop) - scale * 4.0f);
+        const float frac = clampf (0.0f, 1.0f,
+                                   (barBottom - scale * 2.0f - pointerY) / travel);
         comp::applyTrackCompThresholdDb (
             strip, comp::fracToValue (comp::thresholdDomainFor (strip), frac));
         // Touching the threshold engages the comp, the same rule the inline strip's
