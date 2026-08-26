@@ -444,8 +444,21 @@ private:
         channel = std::clamp (channel + delta, 1, 16);
     }
 
+    // Typing and the mouse can hold the same key at once, so a note counts its
+    // sources: the synth hears one note-on when the first arrives and one note-off
+    // only when the last lets go, rather than a release from either cutting the
+    // note the other is still holding.
+    std::uint8_t& sourceCount (int note, int chan) noexcept
+    {
+        return sources[static_cast<std::size_t> (note & 0x7f) * 16u
+                       + static_cast<std::size_t> (std::clamp (chan, 1, 16) - 1)];
+    }
+
     void sendNoteOn (int note, int chan)
     {
+        if (++sourceCount (note, chan) > 1)
+            return;
+
         // Clamp rather than mask: masking wraps an out-of-range channel onto a
         // different one instead of the nearest valid one.
         const std::uint8_t bytes[3] {
@@ -459,6 +472,10 @@ private:
 
     void sendNoteOff (int note, int chan)
     {
+        auto& count = sourceCount (note, chan);
+        if (count == 0 || --count > 0)
+            return;
+
         const std::uint8_t bytes[3] {
             static_cast<std::uint8_t> (0x80 | (std::clamp (chan, 1, 16) - 1)),
             static_cast<std::uint8_t> (note & 0x7f), 0 };
@@ -490,6 +507,7 @@ private:
     std::function<void (int, int)> noteOff;
     std::array<HeldNote, 29> held {};
     HeldNote mouseHeld {};
+    std::array<std::uint8_t, 128 * 16> sources {};
     int centreNote = 36;
     int channel = 1;
     bool dismissRequested = false;
