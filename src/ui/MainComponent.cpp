@@ -2462,7 +2462,11 @@ void MainComponent::runStartupChoice()
         switch (action)
         {
             case imgui::StartupAction::openRecent:
-                self->loadSessionFromJson (juce::File (path).getChildFile ("session.json"));
+                // Through toFile: the row carries a UTF-8 path out of RecentSessions,
+                // and the narrow conversion a bare construction would use drops
+                // non-ASCII on Windows.
+                self->loadSessionFromJson (
+                    toFile (std::filesystem::u8path (path)).getChildFile ("session.json"));
                 break;
             case imgui::StartupAction::newSession: self->newSessionPrompt(); break;
             case imgui::StartupAction::openFile:   self->openFromFilePrompt(); break;
@@ -5583,8 +5587,16 @@ void MainComponent::closeTuner()
 void MainComponent::closeVirtualKeyboard()
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    if (virtualKeyboardWindow != nullptr && virtualKeyboardWindow->isOpen())
-        virtualKeyboardWindow->close();
+    if (virtualKeyboardWindow == nullptr || ! virtualKeyboardWindow->isOpen())
+        return;
+
+    // Every route out of the keyboard ends here - the toggle, Escape and the click
+    // outside the plate, the modal yield, and the close a graphics failure forces -
+    // so the in-flight step-record chord state is reset here rather than at one of
+    // them. Stale held-counters would otherwise survive to the next open.
+    if (pianoRoll != nullptr)
+        pianoRoll->resetStepRecordState();
+    virtualKeyboardWindow->close();
    #endif
 }
 
@@ -5606,11 +5618,6 @@ void MainComponent::toggleVirtualKeyboard()
    #else
     if (virtualKeyboardWindow != nullptr && virtualKeyboardWindow->isOpen())
     {
-        // Closing the VKB: also reset any in-flight step-record chord state on the
-        // open piano roll. Stale held-counters would otherwise survive across VKB
-        // open / close cycles.
-        if (pianoRoll != nullptr)
-            pianoRoll->resetStepRecordState();
         closeVirtualKeyboard();
         return;
     }
