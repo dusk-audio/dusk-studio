@@ -384,7 +384,8 @@ private:
                       kThreshBoxBorder, kThreshBoxText, value);
 
         float dragged = 0.0f;
-        const auto action = dragColumn (ctx, "##limiter-thresh", bar, dragged);
+        const auto action = dragColumn (ctx, "##limiter-thresh", bar, dragged,
+                                        threshResetHeld);
         if (action == DragAction::reset)
             params.limiterDriveDb.store (0.0f, std::memory_order_relaxed);
         else if (action == DragAction::moved)
@@ -415,7 +416,8 @@ private:
                       kCeilingLine, kCeilingBoxText, value);
 
         float dragged = 0.0f;
-        const auto action = dragColumn (ctx, "##limiter-ceiling", bar, dragged);
+        const auto action = dragColumn (ctx, "##limiter-ceiling", bar, dragged,
+                                        ceilingResetHeld);
         if (action == DragAction::reset)
             params.limiterCeilingDb.store (-0.3f, std::memory_order_relaxed);
         else if (action == DragAction::moved)
@@ -427,17 +429,31 @@ private:
 
     // The whole column is the drag target, the way the JUCE editor's expanded hit
     // rectangle was, so the line can be grabbed anywhere across the meter.
-    DragAction dragColumn (dw::Context& ctx, const char* id, const Rect& bar, float& atY)
+    //
+    // `resetHeld` is what keeps a double-click's reset: the second press leaves the
+    // button down, and without it the frames before the release would drag the value
+    // straight back to wherever the pointer was clicked.
+    DragAction dragColumn (dw::Context& ctx, const char* id, const Rect& bar, float& atY,
+                           bool& resetHeld)
     {
         const float padX = ctx.s (10.0f);
         const float padY = ctx.s (4.0f);
         dw::hitArea (ctx, id, ImVec2 (bar.x0 - padX, bar.y0 - padY),
                      ImVec2 (bar.x1 + padX, bar.y1 + padY));
 
-        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked (ImGuiMouseButton_Left))
-            return DragAction::reset;
         if (! ImGui::IsItemActive())
+        {
+            resetHeld = false;
             return DragAction::none;
+        }
+        if (ImGui::IsMouseDoubleClicked (ImGuiMouseButton_Left))
+        {
+            resetHeld = true;
+            return DragAction::reset;
+        }
+        if (resetHeld)
+            return DragAction::none;
+
         atY = ImGui::GetIO().MousePos.y;
         return DragAction::moved;
     }
@@ -538,6 +554,8 @@ private:
     float meterClock = 0.0f;
     int mode = 0;
     bool stereoLink = false;
+    bool threshResetHeld = false;
+    bool ceilingResetHeld = false;
 };
 } // namespace
 

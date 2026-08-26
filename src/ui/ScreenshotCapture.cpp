@@ -561,7 +561,11 @@ void MainComponent::captureNativePanels (std::string outDir)
 
     juce::Component::SafePointer<MainComponent> safeThis (this);
     auto runFrom = std::make_shared<std::function<void (std::size_t)>>();
-    *runFrom = [safeThis, steps, runFrom] (std::size_t index)
+    // The runner holds itself weakly and the pending timer holds it strongly, so it
+    // lives exactly as long as it has a step left. Capturing it strongly inside itself
+    // would be a cycle that never frees.
+    std::weak_ptr<std::function<void (std::size_t)>> weakRunner = runFrom;
+    *runFrom = [safeThis, steps, weakRunner] (std::size_t index)
     {
         auto* const self = safeThis.getComponent();
         if (self == nullptr || index >= steps->size())
@@ -573,7 +577,8 @@ void MainComponent::captureNativePanels (std::string outDir)
         (*steps)[index].run (*self);
         const auto next = index + 1;
         const int delay = next < steps->size() ? (*steps)[next].delayMs : 0;
-        dusk::Timer::callAfterDelay (delay, [runFrom, next] { (*runFrom) (next); });
+        if (auto runner = weakRunner.lock())
+            dusk::Timer::callAfterDelay (delay, [runner, next] { (*runner) (next); });
     };
     (*runFrom) (0);
 }
