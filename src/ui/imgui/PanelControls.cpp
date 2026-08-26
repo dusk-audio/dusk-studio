@@ -249,8 +249,14 @@ void formTooltip (const char* text)
 {
     if (! ImGui::IsItemHovered (ImGuiHoveredFlags_ForTooltip))
         return;
+    // The wrap position belongs to the window the text is submitted into, so it has to
+    // be pushed inside the tooltip rather than around a SetTooltip call - which opens
+    // and closes a window of its own and leaves the prose on one unreadable line.
+    if (! ImGui::BeginTooltip())
+        return;
     ImGui::PushTextWrapPos (ImGui::GetFontSize() * 24.0f);
-    ImGui::SetTooltip ("%s", text);
+    ImGui::TextUnformatted (text);
     ImGui::PopTextWrapPos();
+    ImGui::EndTooltip();
 }
 } // namespace duskstudio::imgui

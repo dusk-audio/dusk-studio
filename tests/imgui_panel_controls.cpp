@@ -4,6 +4,10 @@
 #include "ui/imgui/DuskTheme.h"
 #include "ui/imgui/PanelControls.h"
 
+// FindWindowByName: a tooltip is a window of its own, and its size is the only place
+// its wrapping is observable from outside a renderer.
+#include <DearImGui/imgui_internal.h>
+
 #include <string>
 
 // The settings panels' form controls, driven with no window, no GL and no compositor:
@@ -255,6 +259,38 @@ TEST_CASE ("formCombo opens on a click and reports the item picked")
 
     REQUIRE (picked);
     REQUIRE (selected == 1);
+}
+
+TEST_CASE ("formTooltip wraps the prose a settings row explains itself with")
+{
+    HeadlessPanel panel;
+    bool value = false;
+    float unwrappedWidth = 0.0f;
+
+    static const char* const kProse =
+        "Samples subtracted from each recorded audio take's timeline start, to "
+        "compensate for input round-trip latency (converters, external gear, "
+        "unreported plugin delay). Saved per-machine; applies to the next take.";
+
+    const auto submit = [&] (dw::Context& ctx)
+    {
+        formCheckbox (ctx, "##row", kRowTl, kRowBr.y - kRowTl.y, "A settings row", value);
+        formTooltip (kProse);
+        unwrappedWidth = ImGui::CalcTextSize (kProse).x;
+    };
+
+    // A tooltip's hover test carries a stationary check and a short delay, so it takes
+    // a run of frames with the pointer held still before the tip is submitted at all.
+    panel.movePointer (ImVec2 (kRowTl.x + 8.0f, kRowCentre.y));
+    for (int i = 0; i < 40; ++i)
+        panel.frame (submit);
+
+    auto* const tip = ImGui::FindWindowByName ("##Tooltip_00");
+    REQUIRE (tip != nullptr);
+    // A tooltip window always auto-fits its content, so an unwrapped one is as wide as
+    // the whole sentence - several times the display.
+    REQUIRE (unwrappedWidth > 0.0f);
+    REQUIRE (tip->Size.x < unwrappedWidth * 0.5f);
 }
 
 TEST_CASE ("formCombo on a disabled row does not open")
