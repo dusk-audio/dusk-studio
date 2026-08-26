@@ -741,8 +741,10 @@ private:
             return;
 
         uiScaleFrames = 0;
-        if (host.previewUiScale)
-            host.previewUiScale (uiScale);
+        // Between frames, not inside one: a preview re-lays out the whole JUCE tree the
+        // panel is floating over, and this is running from the framework's event pump.
+        const float scale = uiScale;
+        deferred ([this, scale] { if (host.previewUiScale) host.previewUiScale (scale); });
         if (moved.released)
             appconfig::setUiScaleOverride (uiScale);
     }
