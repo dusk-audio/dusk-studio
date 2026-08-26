@@ -586,11 +586,13 @@ each becoming an embedded framework window: `AudioSettingsPanel`,
 `StartupDialog`, `ChannelCompEditor`, `MasteringEqEditor`,
 `MasteringLimiterEditor`, `VirtualKeyboardComponent`.
 
-**Three landed: `ChannelCompEditor`, `VirtualKeyboardComponent`,
-`StartupDialog`.** Gate movement: 178 files / 9,050 uses to 172 / 8,685.
+**Landed, in two passes.** `ChannelCompEditor`, `VirtualKeyboardComponent` and
+`StartupDialog` first (178 files / 9,050 uses to 172 / 8,684), then
+`AudioSettingsPanel` with `DuskAudioDeviceSelector`, `MasteringEqEditor` and
+`MasteringLimiterEditor` (172 / 8,684 to 164 / 8,257).
 
-The vehicle is `src/ui/imgui/DuskPanelWindow`, and it is the part worth
-knowing before adding the fourth panel. **The child covers the panel's plate and
+The vehicle is `src/ui/imgui/DuskPanelWindow`, and it is the part worth knowing
+before adding a panel of any kind. **A modal child covers the panel's plate and
 nothing more.** A framework child is an opaque native surface, so one sized to
 the whole window paints black over the DAW instead of dimming it - that was
 tried first and the capture is unambiguous. The dim and the click-outside
@@ -614,32 +616,51 @@ and consumes the genuinely shared halves of `EmbeddedModal` (`beforeModalShown`,
 `focusRestoreTarget`, `PluginEditorHider`, and the new `dispatchShellShortcut`);
 `DuskComboBox` -> `ImGui::BeginCombo` styled from `DuskTheme`;
 `showContextMenu` -> `ImGui::BeginPopupContextItem`. That is the notepad's
-existing practice for chrome the widget kit has no opinion about, and it means
-the remaining panels need no DAF-Widgets round to proceed. The 49 / 28 / 16 JUCE
-consumers of the three seams are untouched and stay that way until their own
-phases.
+existing practice for chrome the widget kit has no opinion about, and it held:
+the whole phase landed with no DAF-Widgets round. The 49 / 28 / 16 JUCE consumers
+of the three seams are untouched and stay that way until their own phases.
 
 Portal parenting stayed unconsumed: no panel here opens a file dialog from
 inside its own window. The startup dialog hands the chooser to the host, which
 runs it after the child is down - which is required anyway, since a JUCE modal
 opened over a mapped framework child lands behind it.
 
-Left, with what anchors each:
+What the second pass added, because none of it was true of a self-contained modal:
 
-- **`AudioSettingsPanel`** is not self-contained. It owns a
-  `DuskAudioDeviceSelector` (a separate JUCE component wrapping
-  `juce::AudioDeviceSelectorComponent`, not in this phase's list), hosts two
-  `EmbeddedModal`s of its own (MIDI bindings, self-test) that would land behind
-  its own child, and drives the live UI-scale preview that
-  `EmbeddedModal::setOwnedBodyScaleInvariant` exists solely to serve. Port the
-  device selector first, or take the panel and the selector as one phase.
-- **`MasteringEqEditor`** and **`MasteringLimiterEditor`** are not modals: they
-  are inline children of `MasteringView`, sized by its `resized()`
-  (`MasteringView.cpp:551`, `:591`), shown and hidden with the stage
-  (`MainComponent.cpp:2195`), and `MasteringView` opens `exportModal` over
-  itself (`:823`) - which a native sibling would bury. The cheapest unlock is
-  making `EmbeddedModal::beforeModalShown()` a list rather than one slot, so a
-  view can register its own "close my native children" hook beside the notepad's.
+- **Form controls.** `src/ui/imgui/PanelControls` is the dropdown, tick box,
+  slider and section rule a settings panel needs and the console widget kit
+  deliberately has none of. They are Dear ImGui's own, styled from `DuskTheme`
+  plus the field colours JUCE's dark scheme painted these with, so the port lands
+  on the same picture. `ComboModel` lives there too: `BeginCombo` wants a
+  contiguous array of pointers, which a growing vector of strings cannot supply
+  until it has stopped growing.
+- **A panel pinned against its own preview.** The settings panel is the control
+  surface for the app-wide UI scale, so it keeps the physical size it opened at
+  while everything behind it rescales - what
+  `EmbeddedModal::setOwnedBodyScaleInvariant`'s inverse body transform did, done
+  instead on the child's geometry (`embedscale::pinnedChildGeometry`). That
+  leaves the transform with no callers; it goes with the modal family.
+- **A panel that hands the window over.** MIDI bindings and self-test are JUCE
+  modals, so the settings panel closes, the modal runs, and dismissing it brings
+  the panel back. A device-error alert takes the same route. That is the startup
+  dialog's chooser handoff, wired explicitly rather than through the hook.
+- **An inline view takes no plate.** `DuskPanelView::wantsPlate()` is false for
+  the two mastering panels: the window draws nothing and hands the view its whole
+  child, which the view fills with the panel surface the JUCE editors painted.
+- **A native surface that steps aside for a modal, and comes back.** Each
+  mastering panel keeps a JUCE proxy carrying `kPluginEditorTag`; the proxy's
+  bounds are where the child goes, and its visibility is what `PluginEditorHider`
+  already toggles for a hosted plugin editor. The panel closes and reopens with
+  it, which also gives it the stage switch for free. **This is not the
+  `beforeModalShown` list this section first sketched**, and the reason matters
+  for G3 and G4: that hook fires for every `EmbeddedModal`, including the stage's
+  own combo boxes, and it has no matching signal to bring anything back. The
+  hider fires only for a surface that asked for the window to itself, and it
+  restores. `beforeModalShown` stays one slot.
+- **A figure a snapshot cannot take.** `np-08` is a JUCE view with two framework
+  children inside it, so it is the `createComponentSnapshot` image with each
+  child's own frame pasted back in, taken from the capture run's tail where the
+  message loop is actually running.
 
 Verify: each panel captured headlessly and diffed against its JUCE screenshot;
 ctest; live-Wayland pass per panel. A ported panel's figure cannot come from
