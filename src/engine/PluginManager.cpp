@@ -23,6 +23,7 @@
 #endif
 
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <map>
@@ -157,6 +158,8 @@ bool loadNativeCacheSources (
 // native-bundle child further down, which are gated independently (macOS
 // without OOP support still scans native bundles through the child).
 #if DUSKSTUDIO_HAS_OOP_PLUGINS || DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
+using ScanChildProcess = juce::ChildProcess;
+
 namespace
 {
 // A plugin can take a few seconds to instantiate on a cold cache; give a
@@ -195,7 +198,8 @@ struct SandboxedScan
 // isRunning() reaps the child and the pid becomes reusable the moment it does,
 // so the reader publishes reading=false inside the same lock that gates every
 // kill. Without that interlock a late kill lands on an unrelated process.
-SandboxedScan driveSandboxedScan (juce::ChildProcess& proc, const std::atomic<bool>* abort)
+SandboxedScan driveSandboxedScan (ScanChildProcess& proc, const std::atomic<bool>* abort,
+                                  std::uint32_t timeoutMs = kScanTimeoutMs)
 {
     SandboxedScan result;
 
@@ -225,7 +229,7 @@ SandboxedScan driveSandboxedScan (juce::ChildProcess& proc, const std::atomic<bo
                 if (abort != nullptr && abort->load (std::memory_order_relaxed))
                     cancelled = true;
                 else if (juce::Time::getMillisecondCounter() - startMs
-                             >= (std::uint32_t) kScanTimeoutMs)
+                             >= timeoutMs)
                     expired = true;
                 else
                     continue;
@@ -358,7 +362,7 @@ public:
             return true;
         }
 
-        juce::ChildProcess proc;
+        ScanChildProcess proc;
         const juce::StringArray args { hostExecutable, "--scan",
                                        format.getName(), fileOrIdentifier };
 
@@ -688,7 +692,7 @@ PluginManager::NativeScanOutcome PluginManager::scanNativeBundleSandboxed (
     if (hostExe == juce::File() || ! hostExe.existsAsFile())
         return NativeScanOutcome::NoSandbox;
 
-    juce::ChildProcess proc;
+    ScanChildProcess proc;
     const juce::StringArray args { hostExe.getFullPathName(), "--scan-native",
                                    format, bundle.getFullPathName() };
     if (! proc.start (args, juce::ChildProcess::wantStdOut))
@@ -1106,6 +1110,17 @@ juce::String PluginManager::descriptorToLegacyXml (const PluginDescriptor& sourc
 }
 
 #if defined(DUSKSTUDIO_TESTS)
+ #if DUSKSTUDIO_HAS_OOP_PLUGINS || DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
+std::array<bool, 3> driveSandboxedScanForTest (
+    ScanChildProcess& process, const std::atomic<bool>* abort, std::uint32_t timeoutMs)
+{
+    const auto scan = driveSandboxedScan (process, abort, timeoutMs);
+    return { scan.verdict == SandboxedScan::Verdict::Completed,
+             scan.verdict == SandboxedScan::Verdict::Cancelled,
+             scan.timedOut };
+}
+ #endif
+
 PluginDescriptor PluginManager::descriptorFromJuceForTest (
     const juce::PluginDescription& source)
 {
