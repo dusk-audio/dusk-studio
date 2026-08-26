@@ -638,8 +638,9 @@ What the second pass added, because none of it was true of a self-contained moda
   surface for the app-wide UI scale, so it keeps the physical size it opened at
   while everything behind it rescales - what
   `EmbeddedModal::setOwnedBodyScaleInvariant`'s inverse body transform did, done
-  instead on the child's geometry (`embedscale::pinnedChildGeometry`). That
-  leaves the transform with no callers; it goes with the modal family.
+  instead on the child's geometry (`embedscale::pinnedChildGeometry`). That was
+  the transform's only caller, so it is deleted rather than left to the phase
+  that retires the modal family.
 - **A panel that hands the window over.** MIDI bindings and self-test are JUCE
   modals, so the settings panel closes, the modal runs, and dismissing it brings
   the panel back. A device-error alert takes the same route. That is the startup

@@ -298,8 +298,6 @@ public:
         const auto bounds = parent.getLocalBounds();
         const int w = std::max (1, body_->getWidth());
         const int h = std::max (1, body_->getHeight());
-        ownedPreferredBodyWidth = w;
-        ownedPreferredBodyHeight = h;
         const auto bodyBounds = bounds.withSizeKeepingCentre (
             std::min (w, bounds.getWidth()  - 16),
             std::min (h, bounds.getHeight() - 16));
@@ -464,7 +462,6 @@ public:
             userOnDismiss = {};
             userOnDismissOutside = {};
             borrowedHostResized = {};
-            ownedBodyScaleInvariant = false;
             return;
         }
 
@@ -555,7 +552,6 @@ public:
         userOnDismiss = {};
         userOnDismissOutside = {};
         borrowedHostResized = {};
-        ownedBodyScaleInvariant = false;
     }
 
     // Shutdown-only teardown. close() defers body destruction to the
@@ -598,7 +594,6 @@ public:
         userOnDismiss = {};
         userOnDismissOutside = {};
         borrowedHostResized = {};
-        ownedBodyScaleInvariant = false;
     }
 
     bool isOpen() const noexcept { return body_ != nullptr || borrowedBody_ != nullptr; }
@@ -641,79 +636,6 @@ public:
         // the old, smaller frame behind it.
         if (backdrop_ != nullptr)
             backdrop_->setBounds (body->getBounds().expanded (kBackdropMargin));
-    }
-
-    // Keep an owned modal at the physical size it had when opened while the
-    // app's global UI scale changes. This lets a settings panel remain a stable
-    // control surface while the DAW behind it previews each zoom value.
-    void setOwnedBodyScaleInvariant (bool invariant)
-    {
-        if (body_ == nullptr) return;
-        ownedBodyScaleInvariant = invariant;
-        ownedBodyReferenceGlobalScale = std::max (
-            0.01f, juce::Desktop::getInstance().getGlobalScaleFactor());
-        refitOwnedBodyToHost();
-    }
-
-    // Owning bodies such as the Audio Settings scrolling host have a preferred
-    // size but must shrink and re-centre when their host changes logical size.
-    // When physical-scale invariance is enabled, an inverse component transform
-    // cancels the app zoom for both the body and its frame.
-    void refitOwnedBodyToHost()
-    {
-        if (body_ == nullptr || host == nullptr) return;
-
-        const auto bounds = host->getLocalBounds();
-        const int preferredW = std::max (1, ownedPreferredBodyWidth);
-        const int preferredH = std::max (1, ownedPreferredBodyHeight);
-
-        if (ownedBodyScaleInvariant)
-        {
-            const float currentGlobalScale = std::max (
-                0.01f, juce::Desktop::getInstance().getGlobalScaleFactor());
-            const float inverseZoom = ownedBodyReferenceGlobalScale
-                                    / currentGlobalScale;
-            const float availableW = (float) std::max (1, bounds.getWidth()  - 16);
-            const float availableH = (float) std::max (1, bounds.getHeight() - 16);
-            const float fittedScale = std::min (
-                { inverseZoom, availableW / (float) preferredW,
-                               availableH / (float) preferredH });
-            const float visualW = (float) preferredW * fittedScale;
-            const float visualH = (float) preferredH * fittedScale;
-            const float visualX = (float) bounds.getCentreX() - visualW * 0.5f;
-            const float visualY = (float) bounds.getCentreY() - visualH * 0.5f;
-
-            body_->setBounds (0, 0, preferredW, preferredH);
-            body_->setTransform (juce::AffineTransform (
-                fittedScale, 0.0f, visualX,
-                0.0f, fittedScale, visualY));
-
-            if (backdrop_ != nullptr)
-            {
-                const int framedW = preferredW + kBackdropMargin * 2;
-                const int framedH = preferredH + kBackdropMargin * 2;
-                backdrop_->setBounds (0, 0, framedW, framedH);
-                backdrop_->setTransform (juce::AffineTransform (
-                    fittedScale, 0.0f, visualX - kBackdropMargin * fittedScale,
-                    0.0f, fittedScale, visualY - kBackdropMargin * fittedScale));
-            }
-            if (dim_ != nullptr)
-                dim_->setBounds (bounds);
-            return;
-        }
-
-        body_->setTransform ({});
-        if (backdrop_ != nullptr)
-            backdrop_->setTransform ({});
-        const auto bodyBounds = bounds.withSizeKeepingCentre (
-            std::min (preferredW, std::max (1, bounds.getWidth()  - 16)),
-            std::min (preferredH, std::max (1, bounds.getHeight() - 16)));
-
-        body_->setBounds (bodyBounds);
-        if (backdrop_ != nullptr)
-            backdrop_->setBounds (bodyBounds.expanded (kBackdropMargin));
-        if (dim_ != nullptr)
-            dim_->setBounds (bounds);
     }
 
 private:
@@ -854,9 +776,6 @@ private:
     std::unique_ptr<DimOverlay> dim_;
     std::unique_ptr<Backdrop> backdrop_;
     std::unique_ptr<juce::Component> body_;
-    int ownedPreferredBodyWidth = 1;
-    int ownedPreferredBodyHeight = 1;
-    float ownedBodyReferenceGlobalScale = 1.0f;
     juce::Component* borrowedBody_ = nullptr;
     std::function<void()> userOnDismiss;
     std::function<void()> userOnDismissOutside;
@@ -865,7 +784,6 @@ private:
     bool escapeDismisses = true;
     bool forwardShortcuts_ = true;
     bool listeningForOutsideClicks = false;
-    bool ownedBodyScaleInvariant = false;
 
     // Plugin editors (OOP / XEmbed / GL-rendering hosts especially) paint
     // above the modal in the native window's z-order regardless of toFront(),
