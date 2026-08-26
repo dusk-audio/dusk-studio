@@ -603,7 +603,7 @@ MainComponent::MainComponent()
     // default off. Synchronous - blocks the message thread for a few
     // Push the user's persisted Stop-behavior preference into the session
     // atom so AudioEngine::stop reads the right policy on the first Stop
-    // after launch. The AudioSettingsPanel combo updates this same atom
+    // after launch. The audio settings panel's combo updates this same atom
     // when the user changes the dropdown.
     session.stopBehavior.store ((int) appconfig::getStopBehavior(),
                                   std::memory_order_relaxed);

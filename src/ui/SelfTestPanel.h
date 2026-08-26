@@ -9,8 +9,8 @@ class AudioEngine;
 class Session;
 
 // Modal panel that runs the AudioPipelineSelfTest and displays the formatted
-// log in a copy-able TextEditor. Spawned from AudioSettingsPanel's
-// "Run Self-Test" button.
+// log in a copy-able TextEditor. MainComponent puts it up when the audio
+// settings panel's "Run Self-Test" button asks for it.
 class SelfTestPanel final : public juce::Component
 {
 public:

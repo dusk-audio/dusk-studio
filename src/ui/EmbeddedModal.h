@@ -558,7 +558,7 @@ public:
     // next message-loop tick; on the quit path the dispatch loop has
     // already exited, so the deferred lambda runs after AudioEngine is
     // destroyed and a body whose destructor talks to the engine
-    // (AudioSettingsPanel, PluginScanModal, BounceDialog) frees memory
+    // (SelfTestPanel, PluginScanModal, BounceDialog) frees memory
     // it then dereferences. This variant destroys the body in place.
     // Only call when no body callback is on the stack - i.e. from
     // ~MainComponent / beginSafeShutdown.

@@ -2421,21 +2421,20 @@ void DuskStudioApp::shutdown()
     if (mainWindow != nullptr)
         WindowState::save (mainWindow->getWindowStateAsString());
 
-    // Dismiss any still-open modal dialogs (e.g. the Audio Device selector)
-    // BEFORE destroying mainWindow. The selector's `AudioDeviceSelectorComponent`
-    // is registered as a change-listener on `AudioEngine::deviceManager`. If we
-    // skip this, `mainWindow.reset()` destroys MainComponent -> AudioEngine ->
-    // AudioDeviceManager, then ScopedJuceInitialiser_GUI's destructor (which
-    // runs AFTER us, in JUCEApplicationBase::main) destroys ModalComponentManager,
-    // which finally destroys the dialog - its destructor calls removeChangeListener
-    // on the freed AudioDeviceManager -> SIGSEGV.
+    // Anything registered as a change listener on `AudioEngine::deviceManager`
+    // has to come off BEFORE mainWindow is destroyed. If it does not,
+    // `mainWindow.reset()` destroys MainComponent -> AudioEngine -> the device
+    // manager, then ScopedJuceInitialiser_GUI's destructor (which runs AFTER us,
+    // in JUCEApplicationBase::main) destroys ModalComponentManager, which finally
+    // destroys the dialog - its destructor calls removeChangeListener on the
+    // freed device manager -> SIGSEGV.
     //
-    // The AudioSettingsPanel modal dialog is freed inside MainComponent's
-    // destructor (via a tracked Component::SafePointer) so the
-    // AudioDeviceSelectorComponent's listener-removal happens while
-    // AudioDeviceManager is still alive. cancelAllModalComponents() here
-    // is unhelpful - it only marks dialogs inactive and queues an async
-    // delete that never fires before main() returns.
+    // MainComponent's destructor is where that happens: it frees every modal
+    // body in place and takes the native settings window down, so each listener
+    // comes off while the device manager is still alive.
+    // cancelAllModalComponents() here is unhelpful - it only marks dialogs
+    // inactive and queues an async delete that never fires before main()
+    // returns.
 
     // Bypass plugin destruction on the way out. Some Linux plugins
     // (notably u-he Diva) have buggy destructors that fail with

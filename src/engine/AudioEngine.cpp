@@ -1196,7 +1196,7 @@ void AudioEngine::reresolveTrackMidiFromSession()
     // source/output and the MCU control surface each store a saved identifier,
     // so a session load must remap them to current bank indices too - else the
     // engine's sync + MCU consumers read stale indices until the user reopens
-    // Audio Settings. release-ordered to match their setters in AudioSettingsPanel.
+    // Audio Settings. release-ordered to match their setters in AudioSettingsView.
     session.syncSourceInputIdx   .store (midiIn .resolveIndex (session.syncSourceInputIdentifier.toStdString()), std::memory_order_release);
     session.syncOutputIdx        .store (midiOut.resolveIndex (session.syncOutputIdentifier     .toStdString()), std::memory_order_release);
     session.mcu.resolvedInputIdx .store (midiIn .resolveIndex (session.mcu.inputIdentifier      .toStdString()), std::memory_order_release);
@@ -1231,7 +1231,7 @@ void AudioEngine::rebuildMidiBanks()
     // Re-resolve the session's sync + MCU wiring against the fresh banks so a
     // hot-plug doesn't strand an index at a stale slot (STAYS in the engine -
     // the banks don't know session identifiers). Empty / no match = -1. release
-    // pairs with the audio-thread acquires and the AudioSettingsPanel setters.
+    // pairs with the audio-thread acquires and the AudioSettingsView setters.
     session.syncSourceInputIdx   .store (midiIn .resolveIndex (session.syncSourceInputIdentifier.toStdString()), std::memory_order_release);
     session.mcu.resolvedInputIdx .store (midiIn .resolveIndex (session.mcu.inputIdentifier      .toStdString()), std::memory_order_release);
     session.syncOutputIdx        .store (midiOut.resolveIndex (session.syncOutputIdentifier     .toStdString()), std::memory_order_release);
@@ -3450,7 +3450,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     // emitter share a sample-time origin (matters when a user has Dusk Studio
     // as both slave AND master - rare but possible via a MIDI thru).
     // acquire pairs with the release stores in rebuildMidiBanks and
-    // AudioSettingsPanel: any state the writer published before flipping the
+    // AudioSettingsView: any state the writer published before flipping the
     // index (the opened output port + its background-thread state) is visible
     // here before we route bytes to it.
     const int syncOutIdx = session.syncOutputIdx.load (std::memory_order_acquire);
