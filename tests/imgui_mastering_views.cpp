@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "dsp/BrickwallLimiter.h"
 #include "session/Session.h"
@@ -101,11 +102,18 @@ struct EqSnapshot
         }
     }
 
-    bool operator== (const EqSnapshot& other) const
-    {
-        return freq == other.freq && gain == other.gain && q == other.q;
-    }
 };
+
+// Tolerance zero: the assertion is that no write happened at all.
+void requireUnchanged (const EqSnapshot& after, const EqSnapshot& before)
+{
+    for (std::size_t i = 0; i < before.freq.size(); ++i)
+    {
+        REQUIRE_THAT (after.freq[i], Catch::Matchers::WithinAbs (before.freq[i], 0.0));
+        REQUIRE_THAT (after.gain[i], Catch::Matchers::WithinAbs (before.gain[i], 0.0));
+        REQUIRE_THAT (after.q[i], Catch::Matchers::WithinAbs (before.q[i], 0.0));
+    }
+}
 } // namespace
 
 TEST_CASE ("the mastering EQ view draws without writing to its band parameters")
@@ -124,7 +132,7 @@ TEST_CASE ("the mastering EQ view draws without writing to its band parameters")
     REQUIRE (panel.frame (*view) > 0);
     REQUIRE (panel.frame (*view) > 0);
 
-    REQUIRE (EqSnapshot (params) == before);
+    requireUnchanged (EqSnapshot (params), before);
 }
 
 TEST_CASE ("the mastering EQ header engages the section")
@@ -175,8 +183,8 @@ TEST_CASE ("the mastering limiter view draws without writing to its parameters")
     REQUIRE (panel.frame (*view) > 0);
     REQUIRE (panel.frame (*view) > 0);
 
-    REQUIRE (params.limiterDriveDb.load() == drive);
-    REQUIRE (params.limiterCeilingDb.load() == ceiling);
+    REQUIRE_THAT (params.limiterDriveDb.load(), Catch::Matchers::WithinAbs (drive, 0.0));
+    REQUIRE_THAT (params.limiterCeilingDb.load(), Catch::Matchers::WithinAbs (ceiling, 0.0));
     REQUIRE (params.limiterMode.load() == mode);
 }
 
