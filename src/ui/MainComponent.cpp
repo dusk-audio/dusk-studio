@@ -2240,8 +2240,15 @@ void MainComponent::openAudioSettings()
                     owner->session, owner->engine,
                     [safeThis]
                     {
-                        if (auto* back = safeThis.getComponent())
-                            back->midiBindingsModal.close();
+                        auto* const back = safeThis.getComponent();
+                        if (back == nullptr)
+                            return;
+                        // close() does not run the modal's own dismiss callback, so the
+                        // way back to the settings panel has to be taken here too - or
+                        // the panel's Done button leaves the user in the bare window
+                        // while Esc returns them to where they came from.
+                        back->midiBindingsModal.close();
+                        back->openAudioSettings();
                     }),
                 [safeThis]
                 {
@@ -2269,8 +2276,11 @@ void MainComponent::openAudioSettings()
             panel->setSize (760, 560);
             panel->onCloseRequested = [safeThis]
             {
-                if (auto* back = safeThis.getComponent())
-                    back->selfTestModal.close();
+                auto* const back = safeThis.getComponent();
+                if (back == nullptr)
+                    return;
+                back->selfTestModal.close();
+                back->openAudioSettings();
             };
             owner->selfTestModal.show (*owner, std::move (panel),
                                        [safeThis]
