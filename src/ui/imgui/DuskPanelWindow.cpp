@@ -296,13 +296,16 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         // The child is the plate: the frame runs along its own edges and the body
         // sits inside the margin. The shadow the JUCE backdrop cast has nowhere to
         // fall here - it would land on the plate itself - so the frame carries the
-        // panel on its own.
-        const float margin = kPlateMargin * scale;
-        const float rounding = kPlateRounding * scale;
-        ctx.dl->AddRectFilled (ImVec2 (0.0f, 0.0f), ImVec2 (width, height),
-                               rgba (kPlateFill), rounding);
-        ctx.dl->AddRect (ImVec2 (0.5f, 0.5f), ImVec2 (width - 0.5f, height - 0.5f),
-                         rgba (kPlateBorder), rounding, 0, scale);
+        // panel on its own. An inline view takes no plate and gets the whole child.
+        const float margin = view->wantsPlate() ? kPlateMargin * scale : 0.0f;
+        if (view->wantsPlate())
+        {
+            const float rounding = kPlateRounding * scale;
+            ctx.dl->AddRectFilled (ImVec2 (0.0f, 0.0f), ImVec2 (width, height),
+                                   rgba (kPlateFill), rounding);
+            ctx.dl->AddRect (ImVec2 (0.5f, 0.5f), ImVec2 (width - 0.5f, height - 0.5f),
+                             rgba (kPlateBorder), rounding, 0, scale);
+        }
 
         const ImVec2 bodyTl (margin, margin);
         const ImVec2 body (std::max (1.0f, width - margin * 2.0f),
@@ -422,7 +425,7 @@ DuskPanelWindow::PlateSize DuskPanelWindow::plateSize() const
     if (impl->view == nullptr)
         return {};
     const auto body = impl->view->preferredSize();
-    const auto frame = static_cast<int> (kPlateMargin) * 2;
+    const auto frame = impl->view->wantsPlate() ? static_cast<int> (kPlateMargin) * 2 : 0;
     return { static_cast<int> (body.x) + frame, static_cast<int> (body.y) + frame };
 }
 

@@ -3,11 +3,15 @@
 #include "CompHeaderButton.h"
 #include "DuskContextMenu.h"
 #include "DuskFileBrowser.h"
-#include "MasteringEqEditor.h"
-#include "MasteringLimiterEditor.h"
 #include "../dsp/MultibandCompPresets.h"
 #include "../engine/BounceEngine.h"
 #include "../engine/MasteringPlayer.h"
+#if DUSKSTUDIO_HAS_NATIVE_UI
+ #include "NativeEditorEmbedScale.h"
+ #include "imgui/DuskPanelWindow.h"
+ #include "imgui/MasteringEqView.h"
+ #include "imgui/MasteringLimiterView.h"
+#endif
 #include <algorithm>
 #if DUSKSTUDIO_HAS_DUSK_DSP
   #include "ModernCompressorPanels.h"   // multi-comp - MultibandCompressorPanel
@@ -19,6 +23,21 @@ namespace
 {
 template <typename T>
 inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
+
+#if DUSKSTUDIO_HAS_NATIVE_UI
+// Where a panel's framework child belongs, from the rectangle its proxy occupies in the
+// stage.
+imgui::DuskPanelWindow::Geometry nativePanelGeometry (const juce::Component& view,
+                                                      const juce::Component& proxy)
+{
+    auto* const topLevel = view.getTopLevelComponent();
+    if (topLevel == nullptr)
+        return {};
+    const auto logical = topLevel->getLocalArea (&view, proxy.getBounds());
+    const auto g = embedscale::childGeometryFor (*topLevel, logical);
+    return { g.x, g.y, g.width, g.height, g.scale };
+}
+#endif
 }
 
 WaveformDisplay::WaveformDisplay (MasteringPlayer& p)
@@ -287,10 +306,12 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     waveform = std::make_unique<WaveformDisplay> (engine.getMasteringPlayer());
     addAndMakeVisible (waveform.get());
 
-    // Custom Digital EQ editor (curve + band controls)
-    eqEditor = std::make_unique<MasteringEqEditor> (session.mastering(),
-                                                     &engine.getMasteringChain());
-    addAndMakeVisible (eqEditor.get());
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    eqProxy.onVisibilityChanged = [this] { scheduleNativePanelSync(); };
+    limiterProxy.onVisibilityChanged = [this] { scheduleNativePanelSync(); };
+    addAndMakeVisible (eqProxy);
+    addAndMakeVisible (limiterProxy);
+   #endif
 
     // Embedded Multiband Comp editor + header wrapper
     // The mastering chain's UniversalCompressor is in Multiband mode (7),
@@ -355,11 +376,6 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     compPanelWrapper->addAndMakeVisible (compPresetCombo);
 #endif
 
-    // Custom Limiter editor
-    limiterEditor = std::make_unique<MasteringLimiterEditor> (
-        session.mastering(), engine.getMasteringChain().getLimiter());
-    addAndMakeVisible (limiterEditor.get());
-
     // Reflect the loaded source file from the session, if any.
     if (m.sourceFile != juce::File())
         loadFile (m.sourceFile);
@@ -368,7 +384,144 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     startTimerHz (20);
 }
 
-MasteringView::~MasteringView() { stopTimer(); }   // before derived members destruct
+MasteringView::~MasteringView()
+{
+    stopTimer();   // before derived members destruct
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    // The framework children reach back into this view through their callbacks, so they
+    // go down while it is still whole.
+    eqWindow.reset();
+    limiterWindow.reset();
+   #endif
+}
+
+void MasteringView::visibilityChanged()
+{
+    scheduleNativePanelSync();
+}
+
+void MasteringView::parentHierarchyChanged()
+{
+    // The native children embed into the top-level window's handle, which only exists
+    // once this view is in a realised hierarchy.
+    scheduleNativePanelSync();
+}
+
+void MasteringView::scheduleNativePanelSync()
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (nativeSyncPending)
+        return;
+    nativeSyncPending = true;
+    juce::Component::SafePointer<MasteringView> safeThis (this);
+    dusk::callAsync ([safeThis]
+    {
+        if (auto* self = safeThis.getComponent())
+        {
+            self->nativeSyncPending = false;
+            self->applyNativePanelSync();
+        }
+    });
+   #endif
+}
+
+void MasteringView::applyNativePanelSync()
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    auto* const topLevel = getTopLevelComponent();
+    const auto parentHandle = topLevel != nullptr
+                            ? embedscale::nativeParentHandle (*topLevel) : 0;
+
+    struct Panel
+    {
+        std::unique_ptr<imgui::DuskPanelWindow>& window;
+        NativePanelProxy& proxy;
+        const char* className;
+        const char* logTag;
+        const char* displayName;
+        std::unique_ptr<imgui::DuskPanelView> (*makeView) (MasteringView&);
+    };
+    const Panel panels[] = {
+        { eqWindow, eqProxy, "dusk-studio-mastering-eq", "mastering-eq", "Mastering EQ",
+          [] (MasteringView& self)
+          {
+              return imgui::makeMasteringEqView (self.session.mastering(),
+                                                 &self.engine.getMasteringChain());
+          } },
+        { limiterWindow, limiterProxy, "dusk-studio-mastering-limiter", "mastering-limiter",
+          "Mastering limiter",
+          [] (MasteringView& self)
+          {
+              return imgui::makeMasteringLimiterView (
+                  self.session.mastering(), self.engine.getMasteringChain().getLimiter());
+          } }
+    };
+
+    for (const auto& panel : panels)
+    {
+        const bool wanted = parentHandle != 0 && isShowing() && panel.proxy.isVisible()
+                         && ! panel.proxy.getBounds().isEmpty();
+
+        if (! wanted)
+        {
+            if (panel.window != nullptr && panel.window->isOpen())
+                panel.window->close();
+            continue;
+        }
+        if (panel.window != nullptr && panel.window->isOpen())
+        {
+            panel.window->setGeometry (nativePanelGeometry (*this, panel.proxy));
+            continue;
+        }
+
+        panel.window = std::make_unique<imgui::DuskPanelWindow> (
+            panel.className, panel.logTag, panel.displayName);
+
+        imgui::DuskPanelWindow::Callbacks callbacks;
+        callbacks.shortcut = [] (imgui::ShellShortcut shortcut)
+        {
+            return dispatchShellShortcut (shortcut);
+        };
+        juce::Component::SafePointer<MasteringView> safeThis (this);
+        NativePanelProxy* const proxy = &panel.proxy;
+        callbacks.geometry = [safeThis, proxy]
+        {
+            auto* const self = safeThis.getComponent();
+            if (self == nullptr)
+                return imgui::DuskPanelWindow::Geometry {};
+            return nativePanelGeometry (*self, *proxy);
+        };
+        panel.window->setCallbacks (std::move (callbacks));
+
+        panel.window->setView (panel.makeView (*this));
+
+        if (! panel.window->open (parentHandle, nativePanelGeometry (*this, panel.proxy)))
+            panel.window.reset();
+    }
+   #endif
+}
+
+std::vector<MasteringView::NativePanelCapture>
+MasteringView::captureNativePanels (const juce::File& dir)
+{
+    std::vector<NativePanelCapture> captures;
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    const auto ask = [&] (std::unique_ptr<imgui::DuskPanelWindow>& window,
+                          const NativePanelProxy& proxy, const char* name)
+    {
+        if (window == nullptr || ! window->isOpen())
+            return;
+        const auto file = dir.getChildFile (name);
+        window->captureNextFrameTo (file.getFullPathName().toStdString());
+        captures.push_back ({ proxy.getBounds(), file });
+    };
+    ask (eqWindow, eqProxy, "_mastering-eq.ppm");
+    ask (limiterWindow, limiterProxy, "_mastering-limiter.ppm");
+   #else
+    juce::ignoreUnused (dir);
+   #endif
+    return captures;
+}
 
 void MasteringView::applyMultibandPreset (int presetIndex)
 {
@@ -547,9 +700,9 @@ void MasteringView::resized()
     auto limPanel  = panelsRow;
     juce::ignoreUnused (limW);
 
-    // EQ panel - custom curve + band-controls editor.
-    if (eqEditor != nullptr)
-        eqEditor->setBounds (eqPanel);
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    eqProxy.setBounds (eqPanel);
+   #endif
 
     // Multiband Comp panel - wrapper hosts its own title + ON toggle on
     // top, then the embedded plugin editor takes the rest of the panel.
@@ -587,9 +740,10 @@ void MasteringView::resized()
             compEditor->setBounds (inner);
     }
 
-    // Limiter panel - custom Waves L4-style editor.
-    if (limiterEditor != nullptr)
-        limiterEditor->setBounds (limPanel);
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    limiterProxy.setBounds (limPanel);
+    scheduleNativePanelSync();
+   #endif
 }
 
 void MasteringView::timerCallback()

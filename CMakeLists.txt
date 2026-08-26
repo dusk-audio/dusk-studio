@@ -552,6 +552,8 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         src/ui/imgui/AudioDeviceSelector.cpp
         src/ui/imgui/AudioSettingsView.cpp
         src/ui/imgui/ChannelCompView.cpp
+        src/ui/imgui/MasteringEqView.cpp
+        src/ui/imgui/MasteringLimiterView.cpp
         src/ui/imgui/PanelControls.cpp
         src/ui/imgui/StartupView.cpp
         src/ui/imgui/VirtualKeyboardView.cpp)
@@ -698,8 +700,6 @@ target_sources(DuskStudio PRIVATE
     src/ui/MainComponent.cpp
     src/ui/ScreenshotCapture.cpp
     src/ui/MultiImportTargetPicker.cpp
-    src/ui/MasteringEqEditor.cpp
-    src/ui/MasteringLimiterEditor.cpp
     src/ui/MasteringView.cpp
     src/ui/MasterStripComponent.cpp
     src/ui/MidiBindingsPanel.cpp
