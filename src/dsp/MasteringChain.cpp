@@ -46,9 +46,7 @@ void MasteringChain::prepare (double sampleRate, int blockSize, int oversampling
     // Scope ring: power-of-two, large enough that a single FFT window (2048)
     // is rarely overwritten mid-copy even at large block sizes.
     constexpr int kScopeRingSize = 1 << 14;   // 16384
-    if (scopeRing.getNumSamples() != kScopeRingSize)
-        scopeRing.setSize (1, kScopeRingSize, false, false, true);
-    scopeRing.clear();
+    scopeRing.assign (kScopeRingSize, 0.0f);
     scopeRingMask.store (kScopeRingSize - 1, std::memory_order_relaxed);
     scopeWritePos.store (0, std::memory_order_relaxed);
 
@@ -59,7 +57,7 @@ void MasteringChain::pushScope (const float* L, const float* R, int n) noexcept
 {
     const int mask = scopeRingMask.load (std::memory_order_relaxed);
     if (mask == 0) return;
-    float* ring = scopeRing.getWritePointer (0);
+    float* ring = scopeRing.data();
     long long wp = scopeWritePos.load (std::memory_order_relaxed);
     for (int i = 0; i < n; ++i)
         ring[(int) (wp++ & mask)] = 0.5f * (L[i] + R[i]);
@@ -68,13 +66,13 @@ void MasteringChain::pushScope (const float* L, const float* R, int n) noexcept
 
 int MasteringChain::readScopeLatest (float* dest, int count) const noexcept
 {
-    const int ringSize = scopeRing.getNumSamples();
+    const int ringSize = (int) scopeRing.size();
     if (ringSize == 0 || count <= 0 || dest == nullptr) return 0;
     count = std::min (count, ringSize);
     const int mask = scopeRingMask.load (std::memory_order_relaxed);
     if (mask == 0) return 0;   // matches pushScope; guards a mask-not-yet-stored race
     const long long wp = scopeWritePos.load (std::memory_order_acquire);
-    const float* ring = scopeRing.getReadPointer (0);
+    const float* ring = scopeRing.data();
     const long long start = wp - count;
     for (int i = 0; i < count; ++i)
         dest[i] = ring[(int) ((start + i) & mask)];

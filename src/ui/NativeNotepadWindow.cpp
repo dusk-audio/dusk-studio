@@ -3,24 +3,11 @@
 #include "NotepadEditor.h"
 #include "NotepadChords.h"
 #include "NotepadEditorCore.h"
-#include "NotepadFirstFrameProbe.h"
 #include "NotepadGraphicsCompatibility.h"
 #include "NotepadTheme.h"
 #include "../foundation/Fs.h"
-#include "../foundation/MessageThread.h"
+#include "imgui/DuskImGuiHost.h"
 
-#if defined (_WIN32)
-# ifndef WIN32_LEAN_AND_MEAN
-#  define WIN32_LEAN_AND_MEAN
-# endif
-# ifndef NOMINMAX
-#  define NOMINMAX
-# endif
-# include <windows.h>
-#endif
-
-#include <Application.hpp>
-#include <OpenGL.hpp>
 #include <DearImGui.hpp>
 #include <DearImGui/imgui_internal.h>
 #ifndef DGL_NO_SHARED_RESOURCES
@@ -28,9 +15,6 @@
 #endif
 
 #include <algorithm>
-#include <cmath>
-#include <cstdarg>
-#include <cstdio>
 #include <ctime>
 #include <filesystem>
 #include <optional>
@@ -95,57 +79,12 @@ std::string clockLabel()
     return buffer;
 }
 
-// Diagnostics go to stderr and, on Windows, to the debugger channel as well: a
-// capture there survives a process that dies without flushing its stdio.
-void notepadLog (const char* format, ...)
-{
-    char message[512] {};
-    va_list args;
-    va_start (args, format);
-    std::vsnprintf (message, sizeof message, format, args);
-    va_end (args);
-
-    std::fprintf (stderr, "[Dusk Studio/notepad] %s\n", message);
-    // setvbuf only binds if nothing has written to the stream yet, and static
-    // initialisation order across translation units is unspecified, so the
-    // unbuffered mode set in Main.cpp cannot be assumed here.
-    std::fflush (stderr);
-   #if defined (_WIN32)
-    char forDebugger[560] {};
-    std::snprintf (forDebugger, sizeof forDebugger,
-                   "[Dusk Studio/notepad] %s\n", message);
-    ::OutputDebugStringA (forDebugger);
-   #endif
-}
-
-const char* glString (unsigned int name)
-{
-    const auto* const value = reinterpret_cast<const char*> (glGetString (name));
-    return value != nullptr ? value : "(null)";
-}
-
-void logGraphicsIdentity()
-{
-    GLint maxTexture = 0;
-    glGetIntegerv (GL_MAX_TEXTURE_SIZE, &maxTexture);
-    notepadLog ("GL vendor=%s renderer=%s version=%s glsl=%s maxTexture=%d",
-                glString (GL_VENDOR), glString (GL_RENDERER),
-                glString (GL_VERSION), glString (GL_SHADING_LANGUAGE_VERSION),
-                (int) maxTexture);
-}
-
 std::filesystem::path firstFrameMarkerPath()
 {
     const auto cfg = dusk::fs::userConfigDir();
     if (cfg.empty())
         return {};
     return cfg / "Dusk Studio" / "notepad-first-frame";
-}
-
-notepad::GraphicsCompatibility graphicsCompatibility()
-{
-    return notepad::assessGraphicsCompatibility (glString (GL_VERSION),
-                                                 glString (GL_RENDERER));
 }
 
 ImVec4 colour (unsigned int hex)
@@ -176,17 +115,8 @@ int resizeMarkdownBuffer (ImGuiInputTextCallbackData* data)
 
 } // namespace
 
-struct NativeNotepadWindow::Impl final : private dusk::Timer
+struct NativeNotepadWindow::Impl final
 {
-    class EmbeddedApplication final : public DGL::Application
-    {
-    public:
-        EmbeddedApplication() : DGL::Application (false)
-        {
-            setClassName ("dusk-studio-notepad");
-        }
-    };
-
     class EditorWidget final : public DGL::ImGuiTopLevelWidget
     {
     public:
@@ -218,6 +148,43 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
 
     Impl()
     {
+        imgui::DuskImGuiHost::Callbacks callbacks;
+        callbacks.createWidget = [this] (DGL::Window& window)
+        {
+            auto widget = std::make_unique<EditorWidget> (window, *this);
+            buildFontAtlas (static_cast<float> (notepad::kTypeScale.lyric
+                                                * window.getScaleFactor()));
+            return std::unique_ptr<DGL::TopLevelWidget> (widget.release());
+        };
+        callbacks.checkGraphics = [this] (const char* version, const char* renderer)
+        {
+            const auto compatibility = notepad::assessGraphicsCompatibility (version, renderer);
+            if (compatibility == notepad::GraphicsCompatibility::supported)
+                return std::string();
+
+            if (compatibility == notepad::GraphicsCompatibility::unsafeMesaD3D12)
+            {
+                host.log ("Mesa D3D12 (OpenGL Compatibility Pack) is known "
+                          "to terminate the host; notepad unavailable");
+                return std::string ("Notepad unavailable: the OpenGL Compatibility Pack renderer "
+                                    "ends the application. Install your graphics vendor's driver.");
+            }
+
+            host.log ("display provides no OpenGL 3 context; notepad unavailable");
+            return std::string ("Notepad unavailable: this display provides no OpenGL 3 context.");
+        };
+        callbacks.widgetReleased = [this]
+        {
+            bodyFont = boldFont = italicFont = boldItalicFont = monoFont = nullptr;
+            editor.setFonts ({});
+        };
+        callbacks.closed = [this]
+        {
+            if (onClosed)
+                onClosed();
+        };
+        host.setCallbacks (std::move (callbacks));
+
         editor.onDocumentChanged = [this] { notifyTextChanged(); };
         editor.onLinkActivated = [this] (const std::string& target)
         {
@@ -240,8 +207,8 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
 
         io.Fonts->Clear();
         bodyFont = io.Fonts->AddFontFromMemoryTTF (
-            (void*) dpf_resources::dejavusans_ttf,
-            dpf_resources::dejavusans_ttf_size,
+            (void*) daf_resources::dejavusans_ttf,
+            daf_resources::dejavusans_ttf_size,
             size, &embeddedConfig, kDocumentGlyphRanges);
 
         boldFont = addPlatformFont (*io.Fonts, {
@@ -279,20 +246,6 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
         editor.setFonts ({ bodyFont, boldFont, italicFont, boldItalicFont, monoFont });
     }
 
-    ~Impl()
-    {
-        stopTimer();
-        destroyEmbeddedWindow();
-        // The marker means "armed a frame and never came back", so only a run
-        // that armed one may clear it, and only if that is no longer what it
-        // says. A completed frame settles it whatever happened afterwards, and
-        // removing it here also covers a disarm that failed silently at the
-        // time. Without a frame, a pump that failed keeps its marker: that is
-        // the refusal the next launch has to see.
-        if (armedMarker && (firstFrameConfirmed || ! graphicsFailed))
-            probe.disarm();
-    }
-
     void setCallbacks (TextChangedCallback changed, ClosedCallback closed,
                        LinkOpenedCallback linkOpened)
     {
@@ -302,26 +255,14 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
     }
 
     bool open (std::uintptr_t nativeParent, EmbeddedGeometry geometry,
-               const std::string& markdown,
-               bool sessionExists, bool unsavedChanges)
+               const std::string& markdown, bool sessionExists, bool unsavedChanges)
     {
-        // Cleared before the first return so neither outlives the attempt it
-        // describes.
-        lastFailure.clear();
-        armedMarker = false;
-        stopTimer();
-        destroyEmbeddedWindow();
-        if (nativeParent == 0 || geometry.width < 2 || geometry.height < 2)
-            return false;
-
         document.setMarkdown (markdown);
         editor.reset ({ 0, 0 });
         editor.requestFocus();
         markdownView = false;
         markdownEntrySnapshot.reset();
         markdownFocusRequested = false;
-        closeRequested = false;
-        closeWasPumped = false;
         hasSessionFile = sessionExists;
         documentDirty = unsavedChanges;
         saveFailed = false;
@@ -330,134 +271,28 @@ struct NativeNotepadWindow::Impl final : private dusk::Timer
                                        : std::optional<std::string> { markdown };
         history.clear();
 
-       #if defined (DUSKSTUDIO_USE_WINDOWS_SOFTWARE_OPENGL)
-        if (probe.clearLegacyPreviousFailure())
-            notepadLog ("discarded a first-frame marker written before the packaged renderer fix");
-       #endif
-        if (const auto failed = probe.previousFailure(); ! failed.empty())
-        {
-            const auto marker = probe.path().string();
-            notepadLog ("a previous run ended while the notepad was drawing its "
-                        "first frame on %s; notepad unavailable. Delete %s to try again",
-                        failed.c_str(), marker.c_str());
-            lastFailure = "Notepad off: a previous run ended while it drew its first frame on "
-                        + failed + ". Delete " + marker + " to try again.";
-            return false;
-        }
-        firstFrameConfirmed = false;
-        graphicsFailed = false;
-
-        try
-        {
-            window = std::make_unique<DGL::Window> (
-                app, nativeParent, geometry.width, geometry.height,
-                geometry.scaleFactor, false);
-            // A display without a usable GL configuration leaves Pugl with an
-            // unrealised view: no native handle, and a size hint that never took.
-            if (window->getNativeWindowHandle() == 0
-                || window->getWidth() < 2 || window->getHeight() < 2)
-            {
-                window.reset();
-                return false;
-            }
-
-            // Dusk Studio owns both native windows, so it also owns the child's
-            // in-parent placement. The explicit DPF embed API leaves normal plugin
-            // windows under host control.
-            // Native Wayland cannot embed a surface owned by DPF's display
-            // connection into the legacy shell's surface. Refuse that backend
-            // instead of silently falling back to the separate top-level window
-            // that Pugl otherwise creates for an unsupported parent.
-            if (! window->setEmbeddedOffset (geometry.x, geometry.y))
-            {
-                window.reset();
-                return false;
-            }
-            auto compatibility = notepad::GraphicsCompatibility::noOpenGL3;
-            std::string renderer;
-            {
-                DGL::Window::ScopedGraphicsContext context (*window);
-                logGraphicsIdentity();
-                renderer = glString (GL_RENDERER);
-                compatibility = graphicsCompatibility();
-                if (compatibility == notepad::GraphicsCompatibility::supported)
-                {
-                    editorWidget = std::make_unique<EditorWidget> (*window, *this);
-                    // DGL sizes a top-level widget from a resize event. Window creation
-                    // and resize are one synchronous operation on macOS, so that event
-                    // has already been delivered by the time this widget exists and it
-                    // would keep a 0x0 size forever, laying the document out into
-                    // nothing. Apply the window's size the way DGL's own resize path
-                    // does; TopLevelWidget::setSize only forwards to the window, which
-                    // is already this size and so emits no event.
-                    static_cast<DGL::Widget*> (editorWidget.get())
-                        ->setSize (window->getWidth(), window->getHeight());
-                    buildFontAtlas (static_cast<float> (notepad::kTypeScale.lyric
-                                                        * window->getScaleFactor()));
-                }
-            }
-            if (compatibility != notepad::GraphicsCompatibility::supported)
-            {
-                if (compatibility == notepad::GraphicsCompatibility::unsafeMesaD3D12)
-                {
-                    notepadLog ("Mesa D3D12 (OpenGL Compatibility Pack) is known "
-                                "to terminate the host; notepad unavailable");
-                    lastFailure = "Notepad unavailable: the OpenGL Compatibility Pack renderer "
-                                  "ends the application. Install your graphics vendor's driver.";
-                }
-                else
-                {
-                    notepadLog ("display provides no OpenGL 3 context; "
-                                "notepad unavailable");
-                    lastFailure = "Notepad unavailable: this display provides no OpenGL 3 context.";
-                }
-                window.reset();
-                return false;
-            }
-            window->focus();
-            probe.arm (renderer);
-            armedMarker = true;
-        }
-        catch (const std::exception& error)
-        {
-            // A display that cannot back the child with the context DGL asks
-            // for throws out of the constructor. open() runs inside a native
-            // window procedure, where an escaping C++ exception is a fatal
-            // callback exception that kills the process instead of something
-            // the caller can act on, so the failure has to be converted here
-            // into the false return the caller already handles.
-            notepadLog ("cannot embed: %s", error.what());
-            lastFailure = std::string ("Notepad unavailable: cannot embed (") + error.what() + ").";
-            destroyEmbeddedWindowSafely();
-            return false;
-        }
-        startTimer (16);
-        return true;
+        return host.open (nativeParent, { geometry.x, geometry.y, geometry.width,
+                                          geometry.height, geometry.scaleFactor });
     }
 
     void close()
     {
-        if (window == nullptr)
-            return;
         // Dismissal can arrive from the DAW side (the dim backdrop) without
         // ever reaching the editor's own mouse handling, and the sidecar save
         // follows immediately. Settle an open chord slot here so every route
         // out of the notepad keeps the chord that was being typed.
         editor.closeChordEntry();
-        closeRequested = true;
-        closeWasPumped = false;
+        host.close();
     }
 
-    bool isOpen() const noexcept { return window != nullptr || closeRequested; }
+    bool isOpen() const noexcept { return host.isOpen(); }
 
-    const std::string& lastOpenFailure() const noexcept { return lastFailure; }
+    const std::string& lastOpenFailure() const noexcept { return host.lastOpenFailure(); }
 
     void setEmbeddedGeometry (EmbeddedGeometry geometry)
     {
-        if (window == nullptr || geometry.width < 2 || geometry.height < 2)
-            return;
-        window->setSize (geometry.width, geometry.height);
-        window->setEmbeddedOffset (geometry.x, geometry.y);
+        host.setGeometry ({ geometry.x, geometry.y, geometry.width, geometry.height,
+                            geometry.scaleFactor });
     }
 
     void markSaved()
@@ -526,104 +361,6 @@ private:
         editor.reset (restored.selection);
         editor.requestFocus();
         notifyTextChanged();
-    }
-
-    void timerCallback() override
-    {
-        if (! pumpEvents())
-            return;
-        // Close requests come from the native host boundary. Wait until DPF
-        // returns from the event pump before destroying its embedded widget
-        // and native child.
-        if (closeRequested && window != nullptr)
-        {
-            destroyEmbeddedWindow();
-            closeWasPumped = true;
-            return;
-        }
-
-        if (closeRequested && closeWasPumped)
-        {
-            // The destroy happened on the previous tick and returned, so the
-            // pump at the top of this one is the tick the platform needed to
-            // finish unmapping the child before focus returns to the DAW.
-            closeRequested = false;
-            closeWasPumped = false;
-            stopTimer();
-            if (onClosed)
-                onClosed();
-        }
-    }
-
-    // A graphics driver that fails a call from inside the event pump can throw
-    // out of it. Letting that reach the host's message loop takes the whole
-    // application down with the notepad. The notepad closes instead, and the
-    // session keeps whatever was typed because the text is mirrored to the DAW
-    // as it changes.
-    bool pumpEvents()
-    {
-        try
-        {
-            app.idle();
-            if (! firstFrameConfirmed)
-            {
-                firstFrameConfirmed = true;
-                probe.disarm();
-            }
-            return true;
-        }
-        catch (const std::exception& error)
-        {
-            notepadLog ("graphics driver failed during the event pump: %s",
-                        error.what());
-        }
-        catch (...)
-        {
-            notepadLog ("graphics driver failed during the event pump");
-        }
-
-        graphicsFailed = true;
-        stopTimer();
-        destroyEmbeddedWindowSafely();
-        closeRequested = false;
-        closeWasPumped = false;
-        if (onClosed)
-            onClosed();
-        return false;
-    }
-
-    // Both failure paths run because the driver already failed once, and the
-    // ordinary teardown makes the context current again to release the widget.
-    // A second failure there must not escape into the host's message loop, so
-    // the last resort drops the objects and the font state the atlas owned.
-    void destroyEmbeddedWindowSafely()
-    {
-        try
-        {
-            destroyEmbeddedWindow();
-        }
-        catch (...)
-        {
-            editorWidget.reset();
-            window.reset();
-            bodyFont = boldFont = italicFont = boldItalicFont = monoFont = nullptr;
-            editor.setFonts ({});
-        }
-    }
-
-    void destroyEmbeddedWindow()
-    {
-        if (window == nullptr)
-            return;
-
-        if (editorWidget != nullptr)
-        {
-            DGL::Window::ScopedGraphicsContext context (*window);
-            editorWidget.reset();
-        }
-        window.reset();
-        bodyFont = boldFont = italicFont = boldItalicFont = monoFont = nullptr;
-        editor.setFonts ({});
     }
 
     void notifyTextChanged()
@@ -1080,14 +817,8 @@ private:
     float toolbarGap = 5.0f;
     float toolbarTightGap = 4.0f;
     float toolbarGroupGap = 16.0f;
-    std::string lastFailure;
-    notepad::FirstFrameProbe probe { firstFrameMarkerPath() };
-    bool firstFrameConfirmed = false;
-    bool graphicsFailed = false;
-    bool armedMarker = false;
-    EmbeddedApplication app;
-    std::unique_ptr<DGL::Window> window;
-    std::unique_ptr<EditorWidget> editorWidget;
+    imgui::DuskImGuiHost host { { "dusk-studio-notepad", "notepad", "Notepad" },
+                                firstFrameMarkerPath() };
     NotepadDocument document;
     notepad::UndoStack history;
     NotepadEditor editor { document, history };
@@ -1105,8 +836,6 @@ private:
     std::string savedAtLabel;
     bool markdownView = false;
     bool markdownFocusRequested = false;
-    bool closeRequested = false;
-    bool closeWasPumped = false;
     bool hasSessionFile = false;
     bool documentDirty = false;
     bool saveFailed = false;

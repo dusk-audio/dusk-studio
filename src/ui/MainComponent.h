@@ -18,6 +18,12 @@ namespace duskstudio
 namespace dp { struct SongScan; }
 class NativeNotepadWindow;
 
+namespace imgui
+{
+class DuskPanelWindow;
+class StartupView;
+}
+
 class MainComponent final : public juce::Component,
                              public juce::MenuBarModel,
                              private dusk::Timer
@@ -29,6 +35,11 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
+
+    // Capture tail for the views that render into a framework child, which the
+    // snapshot path cannot reach. Runs from the live message loop and quits when
+    // the last one is written.
+    void captureNativePanels (std::string outDir);
 
     // Screenshot-capture harness (DUSKSTUDIO_CAPTURE_DIR). Synthesises a
     // small demo session, drives each documented stage / strip / modal,
@@ -278,7 +289,17 @@ private:
     EmbeddedModal quitModal;
     // Replaces juce::AlertWindow so styling matches the rest of the app.
     EmbeddedModal recoveryModal;
-    EmbeddedModal virtualKeyboardModal;
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    // The virtual keyboard is native: a framework child over the window with a dim
+    // sibling behind it, the shape every ported panel takes. Built on first open.
+    std::unique_ptr<imgui::DuskPanelWindow> virtualKeyboardWindow;
+    std::unique_ptr<DimOverlay> virtualKeyboardDim;
+    PluginEditorHider virtualKeyboardHider;
+   #endif
+    void closeVirtualKeyboard();
+    // Screenshot-harness only: open the virtual keyboard and ask it to read its own
+    // steady frame back into `capturePath`.
+    void openVirtualKeyboardForCapture (const std::string& capturePath);
     EmbeddedModal importTargetModal;
     EmbeddedModal scanModal;
     EmbeddedModal shortcutsModal;
@@ -316,7 +337,7 @@ private:
     // saveChanges=false leaves the sidecar for a decision still pending.
     void yieldNotepadWindow (bool saveChanges = true);
     void reclaimFocusFromNotepad();
-   #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+   #if DUSKSTUDIO_HAS_NATIVE_UI
     std::unique_ptr<NativeNotepadWindow> notepadWindow;
     std::unique_ptr<class DimOverlay> notepadDim;
     PluginEditorHider notepadEditorHider;
@@ -355,12 +376,35 @@ private:
 
     // Embedded modal so it appears centered on the main UI with a dim
     // backdrop. Both torn down together via dismissStartupDialog.
-    std::unique_ptr<class StartupDialog> startupDialog;
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    // The decoded app icon, RGBA, kept alive for as long as the view can draw it.
+    // Declared ahead of the window so it outlives the view that points into it,
+    // which reverse-order destruction would otherwise reverse.
+    std::vector<unsigned char> startupBrandRgba;
+    int startupBrandWidth = 0;
+    int startupBrandHeight = 0;
+    std::unique_ptr<imgui::DuskPanelWindow> startupWindow;
+    // The window owns the view; this reaches it to raise the update banner when the
+    // async tag check answers. Only read while the window is open.
+    imgui::StartupView* startupView = nullptr;
+   #endif
     std::unique_ptr<class DimOverlay>    startupDim;
     // onDone runs AFTER the async teardown completes, so a caller can open the
     // next UI (e.g. a session-load recovery prompt) without stacking it over
     // the still-present startup dialog.
     void dismissStartupDialog (std::function<void()> onDone = {});
+    // Decodes the app icon into startupBrandRgba once; the panel draws it from the
+    // font atlas, which the framework side cannot fill from a PNG on its own.
+    void loadStartupBrandImage();
+    // Reads what the startup panel was dismissed with and runs it once the panel is
+    // down. Called from the panel's dismissed callback, while its view is alive.
+    void runStartupChoice();
+    // demoRecents fills the table with three fixed names for the manual's figure,
+    // where the real list is whatever the capture machine happens to have.
+    bool openStartupPanel (bool demoRecents);
+    // Screenshot-harness only: open the startup panel and read its own steady frame
+    // back into `capturePath`.
+    void openStartupForCapture (const std::string& capturePath);
 
     // Cross-OS cursor overlay - paints Grab / Cut / Draw glyphs at the
     // mouse position via a 60 Hz JUCE timer, bypassing the platform

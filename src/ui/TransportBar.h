@@ -224,7 +224,7 @@ public:
     // modal) so this stays decoupled from track-selection lookup.
     std::function<void()> onTunerToggle;
 
-    // MainComponent owns the VirtualKeyboardComponent embedded modal.
+    // MainComponent owns the virtual keyboard panel.
     std::function<void()> onVirtualKeyboardToggle;
 
     // MainComponent owns the DPF notepad embedded in its native parent window.

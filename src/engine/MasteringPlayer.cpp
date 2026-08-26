@@ -48,10 +48,7 @@ void MasteringPlayer::prepare (int maxBlockSize, double deviceSampleRate)
 {
     const bool drained = parkAndWaitForAudio();
     if (drained)
-        readScratch.setSize (2, std::max (1, maxBlockSize),
-                              /*keepExistingContent*/ false,
-                              /*clearExtraSpace*/      false,
-                              /*avoidReallocating*/    false);
+        readScratch.setSize (2, std::max (1, maxBlockSize));
     preparedBlockSize  = std::max (1, maxBlockSize);
     preparedDeviceRate = deviceSampleRate;
     if (drained)
@@ -69,7 +66,7 @@ void MasteringPlayer::updateResampleState()
     // interpolator's history margin.
     const int inNeeded = (int) std::ceil ((double) preparedBlockSize
                                            * std::max (1.0, ratio)) + 8;
-    inScratch.setSize (2, std::max (1, inNeeded), false, false, false);
+    inScratch.setSize (2, std::max (1, inNeeded));
     interpL.reset();
     interpR.reset();
     speedRatio.store (ratio, std::memory_order_release);
@@ -172,17 +169,17 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
     {
         const int  available = (int) std::min ((std::int64_t) numSamples,
                                                   (std::int64_t) (length - start));
-        if (available > readScratch.getNumSamples()) return;  // shouldn't happen
+        if (available > readScratch.numSamples()) return;  // shouldn't happen
 
         // The reader zero-fills destination channels the file doesn't have, so
         // a mono source is duplicated here to keep the stage stereo.
-        float* dest[2] = { readScratch.getWritePointer (0), readScratch.getWritePointer (1) };
-        r->readRt (dest, 2, start, available);
+        r->readRt (readScratch.data(), 2, start, available);
         if (mono)
-            std::memcpy (dest[1], dest[0], sizeof (float) * (size_t) available);
+            std::memcpy (readScratch.channel (1), readScratch.channel (0),
+                          sizeof (float) * (size_t) available);
 
-        std::memcpy (L, readScratch.getReadPointer (0), sizeof (float) * (size_t) available);
-        std::memcpy (R, readScratch.getReadPointer (1), sizeof (float) * (size_t) available);
+        std::memcpy (L, readScratch.channel (0), sizeof (float) * (size_t) available);
+        std::memcpy (R, readScratch.channel (1), sizeof (float) * (size_t) available);
 
         playhead.fetch_add (available, std::memory_order_relaxed);
 
@@ -196,7 +193,7 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
     // right speed and pitch. The playhead advances by SOURCE samples
     // consumed, keeping every UI position/seek in the source domain.
     const int inNeeded = (int) std::ceil ((double) numSamples * ratio) + 8;
-    if (inNeeded > inScratch.getNumSamples()) return;  // prepare/load sizes this
+    if (inNeeded > inScratch.numSamples()) return;  // prepare/load sizes this
 
     // A seek (or first block after load) breaks read continuity - drop the
     // interpolators' history so the jump doesn't smear.
@@ -212,15 +209,14 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
     inScratch.clear();
     if (inAvailable > 0)
     {
-        float* dest[2] = { inScratch.getWritePointer (0), inScratch.getWritePointer (1) };
-        r->readRt (dest, 2, start, inAvailable);
+        r->readRt (inScratch.data(), 2, start, inAvailable);
         if (mono)
-            std::memcpy (dest[1], dest[0], sizeof (float) * (size_t) inAvailable);
+            std::memcpy (inScratch.channel (1), inScratch.channel (0),
+                          sizeof (float) * (size_t) inAvailable);
     }
 
-    const int usedL = interpL.process (ratio, inScratch.getReadPointer (0), L, numSamples);
-    const int usedR = interpR.process (ratio, inScratch.getReadPointer (1), R, numSamples);
-    juce::ignoreUnused (usedR);   // both consume identically for equal ratios
+    const int usedL = interpL.process (ratio, inScratch.channel (0), L, numSamples);
+    interpR.process (ratio, inScratch.channel (1), R, numSamples);   // same ratio, same consumption
 
     const std::int64_t consumed = std::min ((std::int64_t) usedL,
                                               (std::int64_t) (length - start));

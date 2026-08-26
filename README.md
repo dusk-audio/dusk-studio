@@ -60,7 +60,7 @@ GPL source on this repo — build from source and the binary costs you nothing b
 | macOS DMG (unsigned, ad-hoc) | Working (CI publishes to private releases repo on tag) |
 | Deeper a11y (full screen-reader labels + keyboard-only mixer nav) | Floor only |
 
-The C++ suite declares 776 Catch2 test cases across 156 test source files. Linux
+The C++ suite declares 816 Catch2 test cases across 165 test source files. Linux
 (amd64 + arm64) and macOS builds run on every push; Windows tests run on every
 push + PR; Linux ThreadSanitizer runs on every PR + push.
 
@@ -99,7 +99,7 @@ Channels 1-24 ───────────────→ 4 Aux Buses ─�
 
 - **DSP** is extracted from the Dusk Audio plugin suite (4K EQ, Multi-Comp FET/Opto/VCA, Multi-Q, TapeMachine, shared AnalogEmulation) so the mixer and the standalone plugins share a single DSP source of truth.
 - **Plugin host**: CLAP + VST3 + LV2 + AU on every channel strip; aux returns host reverb / delay. In-process by default; the **opt-in** out-of-process sandbox (`DUSKSTUDIO_USE_OOP_PLUGINS=1`) runs each plugin in a child via a per-platform IPC backend (Linux `memfd_create` + `futex`, macOS `shm_open` + `os_sync_wait_on_address`, Windows `CreateFileMapping` + `WaitOnAddress`) so a crashing plugin can't take the host down. Standard-host plugin *scanning* runs in that child; native CLAP and VST3 bundle scanning uses a child too, on its own gate, and falls back in-process when no child binary is present; native LV2 and AU discovery never loads plugin code. The macOS sandbox needs `os_sync_wait_on_address`, so it compiles in only at deployment target 14.4 or later: the released DMG targets macOS 11 and ships no child binary, so it hosts and scans everything in-process.
-- **Soundfonts**: `.sfz` and `.sf2` play through the built-in [sfizz](https://github.com/dusk-audio/sfizz) engine (SF2 → SFZ on load). No external synth required.
+- **Soundfonts**: `.sfz` and `.sf2` play through the built-in [dusk-fizz](https://github.com/dusk-audio/dusk-fizz) engine, our maintained hard fork of sfizz (SF2 → SFZ on load). No external synth required.
 
 ## Repository
 
@@ -112,7 +112,7 @@ src/
   session/     # Session model + JSON serialisation
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
   util/        # CrashHandler (FileLogger + signal-handler reports)
-tests/         # 776 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
+tests/         # 816 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME, macOS bundle — for tarball + DMG builds
 DuskStudio.md  # authoritative product spec
 MANUAL.md      # end-user manual (Pandoc-buildable to PDF via docs/build-pdf.sh)
@@ -129,7 +129,7 @@ LAME. The Linux and Windows guides list the exact package or manifest setup.
 |----------|-----|
 | Linux | [BUILDING-LINUX.md](BUILDING-LINUX.md) |
 | Windows | [BUILDING-WINDOWS.md](BUILDING-WINDOWS.md) |
-| macOS | Mirror of Linux flow; upstream JUCE 8.0.4, sibling `plugins`, the same pinned DPF stack, and static libsodium supplied through `DUSKSTUDIO_SODIUM_ROOT`. Built and tested per push on `macos-14` (Apple Silicon Sonoma) - see [.github/workflows/macos-build.yml](.github/workflows/macos-build.yml). |
+| macOS | Mirror of Linux flow; upstream JUCE 8.0.4, sibling `plugins`, the same pinned DAF stack, and static libsodium supplied through `DUSKSTUDIO_SODIUM_ROOT`. Built and tested per push on `macos-14` (Apple Silicon Sonoma) - see [.github/workflows/macos-build.yml](.github/workflows/macos-build.yml). |
 | Linux tarball packaging | [packaging/README.md](packaging/README.md) |
 | End-user manual / troubleshooting | [MANUAL.md](MANUAL.md) |
 

@@ -3,6 +3,12 @@
 #include <cstdio>
 #include <cstdlib>  // std::getenv (DUSKSTUDIO_USE_OOP_PLUGINS)
 #include "AppConfig.h"
+#if __has_include("BinaryData.h")
+ #include "BinaryData.h"
+ #define DUSKSTUDIO_HAS_BINARY_ICON 1
+#else
+ #define DUSKSTUDIO_HAS_BINARY_ICON 0
+#endif
 #include "AudioSettingsPanel.h"
 #include "DuskFileBrowser.h"
 #include "AuxView.h"
@@ -10,9 +16,12 @@
 #include "PluginScanModal.h"
 #include "ShortcutsPanel.h"
 #include "SupportersPanel.h"
-#if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+#if DUSKSTUDIO_HAS_NATIVE_UI
+ #include "imgui/StartupView.h"
+ #include "imgui/VirtualKeyboardView.h"
  #include "NativeNotepadWindow.h"
  #include "NativeEditorEmbedScale.h"
+ #include "imgui/DuskPanelWindow.h"
 #endif
 #include "DuskContextMenu.h"
 #include "../session/MidiBindings.h"
@@ -26,10 +35,8 @@
 #include "PlatformWindowing.h"
 #include "AudioRegionEditor.h"
 #include "TunerOverlay.h"
-#include "VirtualKeyboardComponent.h"
 #include "../session/SessionTemplates.h"
 #include "MasteringView.h"
-#include "StartupDialog.h"
 #include "UpdateChecker.h"
 #include "SystemStatusBar.h"
 #include "TapeStrip.h"
@@ -46,6 +53,8 @@
 #include "../engine/DpAligner.h"
 #include "../engine/audiofile/FileReader.h"
 #include "../engine/audiofile/FileWriter.h"
+#include "../engine/midi/MidiFileReader.h"
+#include "../foundation/PlanarBuffer.h"
 #include "../foundation/Text.h"
 #include <algorithm>
 
@@ -74,7 +83,33 @@ juce::Array<juce::File> toFileArray (const std::vector<std::filesystem::path>& p
     return out;
 }
 
-#if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+// Note count and rendered length for the import picker's file card. False when
+// the file does not parse, which each caller reports its own way.
+bool peekMidiSummary (const juce::File& file, ImportTargetPicker::FileSummary& summary)
+{
+    midi::MidiFileReader reader;
+    if (! reader.readFile (toPath (file)))
+        return false;
+
+    int noteCount = 0;
+    std::int64_t maxTick = 0;
+    for (const auto& track : reader.tracks())
+        for (const auto& ev : track)
+        {
+            if (ev.isNoteOn()) ++noteCount;
+            maxTick = std::max (maxTick, ev.tick);
+        }
+
+    const int ppq = reader.timeFormat();
+    summary.numMidiNotes = noteCount;
+    summary.lengthTicks  = (ppq > 0 && ppq != kMidiTicksPerQuarter)
+                              ? (std::int64_t) std::llround ((double) maxTick
+                                   * (double) kMidiTicksPerQuarter / (double) ppq)
+                              : maxTick;
+    return true;
+}
+
+#if DUSKSTUDIO_HAS_NATIVE_UI
 // Where the embedded notepad child sits inside the top-level window, in
 // logical coordinates. The native child's geometry and the dim overlay's
 // click-outside test are the same rectangle in two coordinate spaces.
@@ -890,7 +925,22 @@ MainComponent::MainComponent()
     // beforeModalShown). The notepad saves whenever it closes, so the alerts
     // that can fire over it - sample-rate mismatch, device lost - take it back
     // rather than open where nobody can see or click them.
-    EmbeddedModal::beforeModalShown() = [this] { yieldNotepadWindow(); };
+    EmbeddedModal::beforeModalShown() = [this]
+    {
+        yieldNotepadWindow();
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        // Every native view is an opaque child over the shell, so a modal that opens
+        // behind one is invisible and unclickable - not just the notepad. The panels
+        // that a user opened deliberately step aside the way it does. The startup
+        // dialog is left alone: dismissing it would spend the session choice nobody
+        // has made yet, and it is never up alongside these two.
+        closeVirtualKeyboard();
+        if (consoleView != nullptr)
+            for (int t = 0; t < Session::kNumTracks; ++t)
+                if (auto* strip = consoleView->getStripComponent (t))
+                    strip->closeCompEditorPopup();
+       #endif
+    };
 
     // Startup: if the saved audio device was in use (held by PipeWire / JACK /
     // another DAW), the engine ctor already tried to fall back to a working one.
@@ -1065,7 +1115,10 @@ MainComponent::~MainComponent()
     scanModal            .closeAndDeleteBodyNow();
     quitModal            .closeAndDeleteBodyNow();
     recoveryModal        .closeAndDeleteBodyNow();
-    virtualKeyboardModal .closeAndDeleteBodyNow();
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    virtualKeyboardWindow.reset();
+    virtualKeyboardDim.reset();
+   #endif
     importTargetModal    .closeAndDeleteBodyNow();
     shortcutsModal       .closeAndDeleteBodyNow();
     supportersModal      .closeAndDeleteBodyNow();
@@ -1949,14 +2002,10 @@ void MainComponent::resized()
     // Re-centre the startup modal + its dim backdrop when the main window
     // resizes while the dialog is up. DimOverlay::parentSizeChanged handles
     // its own resize, but we still drive the centred dialog bounds.
-    if (startupDialog != nullptr)
-    {
-        startupDialog->setBounds (getLocalBounds()
-                                       .withSizeKeepingCentre (startupDialog->getWidth(),
-                                                                  startupDialog->getHeight()));
-    }
+    if (startupDim != nullptr)
+        startupDim->setBounds (getLocalBounds());
 
-   #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+   #if DUSKSTUDIO_HAS_NATIVE_UI
     if (notepadWindow != nullptr && notepadWindow->isOpen())
     {
         if (auto* const topLevel = getTopLevelComponent())
@@ -2244,64 +2293,225 @@ void MainComponent::doMixdown()
     });
 }
 
+#if DUSKSTUDIO_HAS_NATIVE_UI
+namespace
+{
+// The manual's startup figure, so it reads the same on any machine. The format
+// columns stay empty because these directories do not exist, which is exactly what
+// the figure showed before.
+std::vector<imgui::RecentSession> demoStartupRecents()
+{
+    std::vector<imgui::RecentSession> rows;
+    for (const char* const name : { "Album Demo", "Live Take 3", "Vocal Comp" })
+    {
+        imgui::RecentSession row;
+        row.path = std::string ("~/Music/Dusk Studio/") + name;
+        row.name = name;
+        rows.push_back (std::move (row));
+    }
+    return rows;
+}
+} // namespace
+#endif
+
 void MainComponent::launchStartupDialog()
 {
-    auto recents = toFileArray (RecentSessions::load());
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    // Nothing to show and nothing to choose, so the bootstrap default session is
+    // what the DAW opens with - the same outcome as skipping the dialog. Kick the
+    // scan the way every other exit from this dialog does: the gate was raised
+    // before the first resized(), so clearing it here leaves nobody to start one.
+    // Skipping by environment variable never raises the gate at all, which is why
+    // only this path needs the call.
+    startupDialogPending = false;
+    maybeStartStartupPluginScan();
+   #else
+    if (openStartupPanel (false))
+        return;
 
-    startupDialog = std::make_unique<StartupDialog> (recents);
-    // Fixed size - the table scrolls internally when the list grows past
-    // what fits, so we don't need to grow the dialog with row count.
-    startupDialog->setSize (720, 460);
+    // A display that cannot carry the panel must not leave the app looking wedged
+    // behind a dim overlay, so the launch continues as if the dialog was skipped.
+    startupDialogPending = false;
+    setStatusText ("Startup dialog unavailable on this display; opened the default session");
+    maybeStartStartupPluginScan();
+   #endif
+}
 
-    startupDialog->onOpenRecent = [this] (juce::File dir)
+void MainComponent::openStartupForCapture (const std::string& capturePath)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (openStartupPanel (true))
+        startupWindow->captureNextFrameTo (capturePath);
+   #else
+    (void) capturePath;
+   #endif
+}
+
+bool MainComponent::openStartupPanel (bool demoRecents)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) demoRecents;
+    return false;
+   #else
+    auto* const topLevel = getTopLevelComponent();
+    const auto parentHandle = topLevel != nullptr
+                            ? embedscale::nativeParentHandle (*topLevel) : 0;
+    if (parentHandle == 0)
+        return false;
+
+    startupWindow = std::make_unique<imgui::DuskPanelWindow> (
+        "dusk-studio-startup", "startup", "Startup dialog");
+
+    imgui::DuskPanelWindow::Callbacks callbacks;
+    // Only the dialog's own actions dismiss it. A stray click on the DAW behind
+    // must not: losing the picker mid-choice cost a user their work once already.
+    // The choice runs from dismissStartupDialog's follow-up, once the framework
+    // child is down - a file chooser opened while it is still mapped lands behind
+    // it, invisible and holding focus.
+    callbacks.dismissed = [this] { runStartupChoice(); };
+    callbacks.closed = [this]
     {
-        loadSessionFromJson (dir.getChildFile ("session.json"));
+        startupView = nullptr;
+        startupDim.reset();
     };
-    startupDialog->onNewSession = [this] { newSessionPrompt(); };
-    startupDialog->onOpenFile   = [this] { openFromFilePrompt(); };
-    startupDialog->onSkip       = [] {};  // nothing - the bootstrap default dir stays
-    startupDialog->onQuit       = [this]
+    callbacks.geometry = [this]
+    {
+        auto* const top = getTopLevelComponent();
+        if (top == nullptr || startupWindow == nullptr)
+            return imgui::DuskPanelWindow::Geometry {};
+        const auto plate = startupWindow->plateSize();
+        const auto bounds = embedscale::centredChildBounds (*top, plate.width, plate.height);
+        if (startupDim != nullptr)
+        {
+            startupDim->setBounds (top->getLocalBounds());
+            startupDim->setNativeChildArea (bounds.expanded (1));
+        }
+        const auto g = embedscale::childGeometryFor (*top, bounds);
+        return imgui::DuskPanelWindow::Geometry { g.x, g.y, g.width, g.height, g.scale };
+    };
+    startupWindow->setCallbacks (std::move (callbacks));
+
+    loadStartupBrandImage();
+    auto recents = demoRecents ? demoStartupRecents()
+                               : imgui::scanRecentSessions (RecentSessions::load());
+    // The downloads page is Dusk-owned so the destination can change without an app
+    // update, and the artifacts behind it are supporter-gated, so no direct URL
+    // exists. It is the one banner action that leaves the dialog up.
+    auto view = imgui::makeStartupView (
+        std::move (recents),
+        startupBrandRgba.empty() ? nullptr : startupBrandRgba.data(),
+        startupBrandWidth, startupBrandHeight,
+        [] { juce::URL ("https://builds.duskaudio.com/latest").launchInDefaultBrowser(); });
+    startupView = view.get();
+    startupWindow->setView (std::unique_ptr<imgui::DuskPanelView> (view.release()));
+
+    const auto plate = startupWindow->plateSize();
+    const auto logical = embedscale::centredChildBounds (*topLevel, plate.width, plate.height);
+
+    startupDim = std::make_unique<DimOverlay>();
+    startupDim->setBounds (topLevel->getLocalBounds());
+    startupDim->setNativeChildArea (logical.expanded (1));
+    startupDim->onClick = [] {};
+    topLevel->addAndMakeVisible (startupDim.get());
+
+    const auto geometry = embedscale::childGeometryFor (*topLevel, logical);
+    if (! startupWindow->open (parentHandle,
+                               { geometry.x, geometry.y, geometry.width, geometry.height,
+                                 geometry.scale }))
+    {
+        startupView = nullptr;
+        startupDim.reset();
+        startupWindow.reset();
+        return false;
+    }
+
+    // Background tag probe, then a flashing badge in the dialog when a newer
+    // release exists. The response can arrive after the dialog is dismissed.
+    juce::Component::SafePointer<MainComponent> safeThis (this);
+    updatecheck::checkForNewerTagAsync (JUCE_APPLICATION_VERSION_STRING,
+        [safeThis] (const juce::String& tag)
+        {
+            auto* const self = safeThis.getComponent();
+            if (self == nullptr || self->startupView == nullptr)
+                return;
+            self->startupView->setUpdateAvailable (tag.toStdString());
+        });
+    return true;
+   #endif
+}
+
+void MainComponent::runStartupChoice()
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    const auto action = startupView != nullptr ? startupView->chosenAction()
+                                               : imgui::StartupAction::skip;
+    const auto path = startupView != nullptr ? startupView->chosenPath() : std::string();
+
+    if (action == imgui::StartupAction::quit)
     {
         startupQuitRequested = true;
+        dismissStartupDialog();
         if (auto* app = juce::JUCEApplicationBase::getInstance())
             app->systemRequestedQuit();
-    };
-    // closeDialog calls onDismiss after each action; the host (us) tears
-    // down the embedded dialog + its dim backdrop together.
-    startupDialog->onDismiss    = [this] { dismissStartupDialog(); };
-
-    // Dim backdrop covers the rest of the UI and SWALLOWS clicks so the
-    // startup dialog behaves like a modal - clicking the dim or the DAW
-    // behind it must NOT dismiss the dialog (the user lost work that
-    // way: accidental click on the timeline disappeared the picker
-    // mid-choice). Dismissal is only via Quit / Open / NEW / OPEN /
-    // RECENT or Escape on the dialog itself.
-    startupDim = std::make_unique<DimOverlay>();
-    startupDim->setBounds (getLocalBounds());
-    startupDim->onClick = [] {};
-    addAndMakeVisible (startupDim.get());
-
-    // Centered on the main window. The dialog is plain dark - no native
-    // title bar - to match the embedded-modal aesthetic shared with the
-    // TapeMachine gear modal and the TIMELINE EQ/COMP popups.
-    const auto bounds = getLocalBounds()
-                            .withSizeKeepingCentre (startupDialog->getWidth(),
-                                                       startupDialog->getHeight());
-    startupDialog->setBounds (bounds);
-    addAndMakeVisible (startupDialog.get());
-
-    // Background tag probe -> flashing sidebar badge when a newer
-    // release exists. SafePointer: the response may arrive after the
-    // dialog is dismissed.
-    {
-        juce::Component::SafePointer<StartupDialog> safeDlg (startupDialog.get());
-        updatecheck::checkForNewerTagAsync (JUCE_APPLICATION_VERSION_STRING,
-            [safeDlg] (const juce::String& tag)
-            {
-                if (auto* dlg = safeDlg.getComponent())
-                    dlg->setUpdateAvailable (tag);
-            });
+        return;
     }
+
+    juce::Component::SafePointer<MainComponent> safeThis (this);
+    dismissStartupDialog ([safeThis, action, path]
+    {
+        auto* const self = safeThis.getComponent();
+        if (self == nullptr)
+            return;
+        switch (action)
+        {
+            case imgui::StartupAction::openRecent:
+                // Through toFile: the row carries a UTF-8 path out of RecentSessions,
+                // and the narrow conversion a bare construction would use drops
+                // non-ASCII on Windows.
+                self->loadSessionFromJson (
+                    toFile (std::filesystem::u8path (path)).getChildFile ("session.json"));
+                break;
+            case imgui::StartupAction::newSession: self->newSessionPrompt(); break;
+            case imgui::StartupAction::openFile:   self->openFromFilePrompt(); break;
+            case imgui::StartupAction::skip:
+            case imgui::StartupAction::quit:
+            case imgui::StartupAction::none:
+                break;   // the bootstrap default dir stays
+        }
+    });
+   #endif
+}
+
+void MainComponent::loadStartupBrandImage()
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI && DUSKSTUDIO_HAS_BINARY_ICON
+    if (! startupBrandRgba.empty())
+        return;
+
+    // The framework side has no image reader, so the icon is decoded here and the
+    // panel takes the pixels straight into its font atlas.
+    const auto image = juce::ImageCache::getFromMemory (BinaryData::dsicon_png,
+                                                        BinaryData::dsicon_pngSize);
+    if (! image.isValid())
+        return;
+
+    startupBrandWidth = image.getWidth();
+    startupBrandHeight = image.getHeight();
+    startupBrandRgba.resize (static_cast<std::size_t> (startupBrandWidth)
+                             * static_cast<std::size_t> (startupBrandHeight) * 4u);
+
+    // Per-pixel rather than through a bitmap lock: this runs once, on an icon.
+    auto* out = startupBrandRgba.data();
+    for (int y = 0; y < startupBrandHeight; ++y)
+        for (int x = 0; x < startupBrandWidth; ++x)
+        {
+            const auto colour = image.getPixelAt (x, y);
+            *out++ = colour.getRed();
+            *out++ = colour.getGreen();
+            *out++ = colour.getBlue();
+            *out++ = colour.getAlpha();
+        }
+   #endif
 }
 
 void MainComponent::dismissStartupDialog (std::function<void()> onDone)
@@ -2315,7 +2525,10 @@ void MainComponent::dismissStartupDialog (std::function<void()> onDone)
     dusk::callAsync ([safeThis, onDone = std::move (onDone)]
     {
         if (safeThis == nullptr) return;
-        safeThis->startupDialog.reset();
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        safeThis->startupView = nullptr;
+        safeThis->startupWindow.reset();
+       #endif
         safeThis->startupDim.reset();
         // The dialog held keyboard focus; with it gone, pull focus back to the
         // main canvas so transport / edit shortcuts work without a stray click
@@ -2570,7 +2783,7 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
     if (! SessionSerializer::saveNotepad (dir, notepadText))
     {
         notepadDirty = true;
-       #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+       #if DUSKSTUDIO_HAS_NATIVE_UI
         if (notepadWindow != nullptr)
             notepadWindow->markSaveFailed();
        #endif
@@ -2628,7 +2841,7 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
     if (saveOk)
     {
         notepadDirty = false;
-       #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+       #if DUSKSTUDIO_HAS_NATIVE_UI
         if (notepadWindow != nullptr)
             notepadWindow->markSaved();
        #endif
@@ -3884,41 +4097,16 @@ void MainComponent::runMidiImportFlow (const juce::File& source,
                                           std::int64_t timelineStart,
                                           int trackHint)
 {
-    juce::MidiFile peek;
-    {
-        juce::FileInputStream in (source);
-        if (! in.openedOk() || ! peek.readFrom (in))
-        {
-            showImportError ("Import MIDI", "Could not read MIDI file.");
-            return;
-        }
-    }
     ImportTargetPicker::FileSummary summary;
     summary.file        = source;
     summary.isMidi      = true;
     summary.numChannels = -1;
 
-    int noteCount = 0;
-    std::int64_t maxTick = 0;
-    const int ppq = (int) peek.getTimeFormat();
-    for (int t = 0; t < peek.getNumTracks(); ++t)
+    if (! peekMidiSummary (source, summary))
     {
-        if (const auto* trk = peek.getTrack (t))
-        {
-            for (int i = 0; i < trk->getNumEvents(); ++i)
-            {
-                const auto& m = trk->getEventPointer (i)->message;
-                if (m.isNoteOn() && m.getVelocity() > 0) ++noteCount;
-                maxTick = std::max (maxTick,
-                                        (std::int64_t) std::llround (m.getTimeStamp()));
-            }
-        }
+        showImportError ("Import MIDI", "Could not read MIDI file.");
+        return;
     }
-    summary.numMidiNotes = noteCount;
-    summary.lengthTicks  = (ppq > 0 && ppq != kMidiTicksPerQuarter)
-                              ? (std::int64_t) std::llround ((double) maxTick
-                                   * (double) kMidiTicksPerQuarter / (double) ppq)
-                              : maxTick;
 
     auto picker = std::make_unique<ImportTargetPicker> (
         session,
@@ -4003,7 +4191,7 @@ void MainComponent::importPrompt()
     }
 
     // One picker for both kinds. enqueueImports / openMultiImportPicker route
-    // each chosen file by extension (audio -> reader peek, MIDI -> MidiFile
+    // each chosen file by extension (audio -> reader peek, MIDI -> file
     // peek) and the target picker flips a track's mode to match the dropped
     // file, so a mixed audio+MIDI selection is handled in a single batch.
     const auto startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
@@ -4056,18 +4244,21 @@ juce::File makeStereoTempWav (const juce::File& left, const juce::File& right)
     // a 2-ch stream in fixed-size chunks so a long take doesn't allocate the
     // whole file up front.
     constexpr int kChunk = 1 << 16;   // 64k samples per pass
-    juce::AudioBuffer<float> lbuf (1, kChunk), rbuf (1, kChunk), out (2, kChunk);
+    dusk::audio::PlanarBuffer lbuf, rbuf, out;
+    lbuf.setSize (1, kChunk);
+    rbuf.setSize (1, kChunk);
+    out.setSize  (2, kChunk);
     for (std::int64_t pos = 0; pos < len; pos += kChunk)
     {
         const int n = (int) std::min ((std::int64_t) kChunk, len - pos);
-        if (rl->read (lbuf.getArrayOfWritePointers(), 1, pos, n) != n
-            || rr->read (rbuf.getArrayOfWritePointers(), 1, pos, n) != n)
+        if (rl->read (lbuf.data(), 1, pos, n) != n
+            || rr->read (rbuf.data(), 1, pos, n) != n)
         {
             writer.reset(); tmp.deleteFile(); return {};
         }
-        out.copyFrom (0, 0, lbuf, 0, 0, n);
-        out.copyFrom (1, 0, rbuf, 0, 0, n);
-        if (! writer->write (out.getArrayOfReadPointers(), 2, n))
+        dusk::audio::vecCopy (out.channel (0), lbuf.channel (0), n);
+        dusk::audio::vecCopy (out.channel (1), rbuf.channel (0), n);
+        if (! writer->write (out.data(), 2, n))
         {
             writer.reset(); tmp.deleteFile(); return {};
         }
@@ -4458,9 +4649,9 @@ void MainComponent::openMultiImportPicker (juce::Array<juce::File> files,
                                               std::int64_t timelineStart)
 {
     // Peek each file to build a FileSummary the picker can render. Audio
-    // peek opens an audio reader; MIDI peek runs MidiFile::readFrom +
-    // counts notes. Both happen synchronously on the message thread - the
-    // user clicked Import and is waiting for the modal to appear.
+    // peek opens an audio reader; MIDI peek parses the file and counts
+    // notes. Both happen synchronously on the message thread - the user
+    // clicked Import and is waiting for the modal to appear.
     std::vector<ImportTargetPicker::FileSummary> summaries;
     summaries.reserve ((size_t) files.size());
     for (const auto& f : files)
@@ -4472,28 +4663,7 @@ void MainComponent::openMultiImportPicker (juce::Array<juce::File> files,
 
         if (s.isMidi)
         {
-            juce::MidiFile peek;
-            juce::FileInputStream in (f);
-            if (in.openedOk() && peek.readFrom (in))
-            {
-                int noteCount = 0;
-                std::int64_t maxTick = 0;
-                const int ppq = (int) peek.getTimeFormat();
-                for (int t = 0; t < peek.getNumTracks(); ++t)
-                    if (const auto* trk = peek.getTrack (t))
-                        for (int i = 0; i < trk->getNumEvents(); ++i)
-                        {
-                            const auto& m = trk->getEventPointer (i)->message;
-                            if (m.isNoteOn() && m.getVelocity() > 0) ++noteCount;
-                            maxTick = std::max (maxTick,
-                                (std::int64_t) std::llround (m.getTimeStamp()));
-                        }
-                s.numMidiNotes = noteCount;
-                s.lengthTicks  = (ppq > 0 && ppq != kMidiTicksPerQuarter)
-                                    ? (std::int64_t) std::llround ((double) maxTick
-                                          * (double) kMidiTicksPerQuarter / (double) ppq)
-                                    : maxTick;
-            }
+            peekMidiSummary (f, s);
             s.numChannels = -1;
         }
         else
@@ -5417,47 +5587,140 @@ void MainComponent::closeTuner()
     session.tuneTrackIndex.store (-1, std::memory_order_relaxed);
 }
 
+void MainComponent::closeVirtualKeyboard()
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (virtualKeyboardWindow == nullptr || ! virtualKeyboardWindow->isOpen())
+        return;
+
+    // Every route out of the keyboard ends here - the toggle, Escape and the click
+    // outside the plate, the modal yield, and the close a graphics failure forces -
+    // so the in-flight step-record chord state is reset here rather than at one of
+    // them. Stale held-counters would otherwise survive to the next open.
+    if (pianoRoll != nullptr)
+        pianoRoll->resetStepRecordState();
+    virtualKeyboardWindow->close();
+   #endif
+}
+
+void MainComponent::openVirtualKeyboardForCapture (const std::string& capturePath)
+{
+    toggleVirtualKeyboard();
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (virtualKeyboardWindow != nullptr && virtualKeyboardWindow->isOpen())
+        virtualKeyboardWindow->captureNextFrameTo (capturePath);
+   #else
+    (void) capturePath;
+   #endif
+}
+
 void MainComponent::toggleVirtualKeyboard()
 {
-    if (virtualKeyboardModal.isOpen())
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    setStatusText ("Virtual keyboard unavailable: built without the native UI");
+   #else
+    if (virtualKeyboardWindow != nullptr && virtualKeyboardWindow->isOpen())
     {
-        // Closing the VKB: also reset any in-flight step-record
-        // chord state on the open piano roll. Stale held-counters
-        // would otherwise survive across VKB open/close cycles.
-        if (pianoRoll != nullptr)
-            pianoRoll->resetStepRecordState();
-        virtualKeyboardModal.close();
+        closeVirtualKeyboard();
         return;
     }
 
-    auto body = std::make_unique<VirtualKeyboardComponent> (engine);
-    body->setSize (720, 220);
+    auto* const topLevel = getTopLevelComponent();
+    const auto parentHandle = topLevel != nullptr
+                            ? embedscale::nativeParentHandle (*topLevel) : 0;
+    if (parentHandle == 0)
+    {
+        setStatusText ("Virtual keyboard unavailable: main window is not ready");
+        return;
+    }
 
-    // Step-record wiring: when the piano roll is open at the time
-    // each VKB note fires, the note also lands as a MidiNote at
-    // the playhead. We capture by SafePointer so closing either
-    // modal can't dangle. The roll's stepRecordNoteOn/Off handle
-    // the chord-aware playhead-advance logic.
+    if (auto hook = EmbeddedModal::beforeModalShown())
+        hook();
+
+    if (virtualKeyboardWindow == nullptr)
+    {
+        virtualKeyboardWindow = std::make_unique<imgui::DuskPanelWindow> (
+            "dusk-studio-virtual-keyboard", "virtual-keyboard", "Virtual keyboard");
+
+        imgui::DuskPanelWindow::Callbacks callbacks;
+        callbacks.dismissed = [this] { closeVirtualKeyboard(); };
+        callbacks.closed = [this]
+        {
+            virtualKeyboardDim.reset();
+            virtualKeyboardHider.restore();
+            reclaimFocusFromNotepad();
+        };
+        callbacks.shortcut = [] (imgui::ShellShortcut shortcut)
+        {
+            return dispatchShellShortcut (shortcut);
+        };
+        callbacks.geometry = [this]
+        {
+            auto* const top = getTopLevelComponent();
+            if (top == nullptr || virtualKeyboardWindow == nullptr)
+                return imgui::DuskPanelWindow::Geometry {};
+            const auto plate = virtualKeyboardWindow->plateSize();
+            const auto bounds = embedscale::centredChildBounds (*top, plate.width,
+                                                                plate.height);
+            if (virtualKeyboardDim != nullptr)
+            {
+                virtualKeyboardDim->setBounds (top->getLocalBounds());
+                virtualKeyboardDim->setNativeChildArea (bounds.expanded (1));
+            }
+            const auto g = embedscale::childGeometryFor (*top, bounds);
+            return imgui::DuskPanelWindow::Geometry { g.x, g.y, g.width, g.height, g.scale };
+        };
+        virtualKeyboardWindow->setCallbacks (std::move (callbacks));
+    }
+
+    // Step-record wiring: while the piano roll is open, each typed note also lands as
+    // a MidiNote at the playhead. The roll's stepRecordNoteOn / Off handle the
+    // chord-aware playhead advance.
     juce::Component::SafePointer<MainComponent> safeThis (this);
-    body->onNoteOn = [safeThis] (int note, int vel, int /*chan*/)
-    {
-        if (auto* self = safeThis.getComponent())
-            if (self->pianoRoll != nullptr)
-                self->pianoRoll->stepRecordNoteOn (note, vel);
-    };
-    body->onNoteOff = [safeThis] (int note, int /*chan*/)
-    {
-        if (auto* self = safeThis.getComponent())
-            if (self->pianoRoll != nullptr)
-                self->pianoRoll->stepRecordNoteOff (note);
-    };
+    virtualKeyboardWindow->setView (imgui::makeVirtualKeyboardView (
+        engine,
+        [safeThis] (int note, int velocity, int)
+        {
+            if (auto* self = safeThis.getComponent())
+                if (self->pianoRoll != nullptr)
+                    self->pianoRoll->stepRecordNoteOn (note, velocity);
+        },
+        [safeThis] (int note, int)
+        {
+            if (auto* self = safeThis.getComponent())
+                if (self->pianoRoll != nullptr)
+                    self->pianoRoll->stepRecordNoteOff (note);
+        }));
 
-    virtualKeyboardModal.show (*this, std::move (body));
+    const auto plate = virtualKeyboardWindow->plateSize();
+    const auto logical = embedscale::centredChildBounds (*topLevel, plate.width,
+                                                         plate.height);
+
+    virtualKeyboardDim = std::make_unique<DimOverlay> (virtualKeyboardWindow->dimAlpha());
+    virtualKeyboardDim->setBounds (topLevel->getLocalBounds());
+    virtualKeyboardDim->setNativeChildArea (logical.expanded (1));
+    virtualKeyboardDim->onClick = [this] { closeVirtualKeyboard(); };
+    topLevel->addAndMakeVisible (virtualKeyboardDim.get());
+    virtualKeyboardHider.hideUnder (*topLevel, { virtualKeyboardDim.get() });
+
+    const auto geometry = embedscale::childGeometryFor (*topLevel, logical);
+    if (! virtualKeyboardWindow->open (parentHandle,
+                                       { geometry.x, geometry.y, geometry.width,
+                                         geometry.height, geometry.scale }))
+    {
+        virtualKeyboardDim.reset();
+        virtualKeyboardHider.restore();
+        const auto& why = virtualKeyboardWindow->lastOpenFailure();
+        setStatusText (why.empty()
+                           ? "Virtual keyboard unavailable: this display cannot carry it"
+                           : why.c_str());
+    }
+   #endif
 }
 
 void MainComponent::toggleNotepad()
 {
-#if ! DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+#if ! DUSKSTUDIO_HAS_NATIVE_UI
     setStatusText ("Notepad unavailable: built without the native notepad UI");
 #else
     if (notepadWindow != nullptr && notepadWindow->isOpen())
@@ -5563,7 +5826,7 @@ void MainComponent::toggleNotepad()
 
 void MainComponent::dismissNotepad (bool saveChanges)
 {
-   #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+   #if DUSKSTUDIO_HAS_NATIVE_UI
     const bool wasOpen = notepadDim != nullptr;
     if (notepadWindow != nullptr)
     {
@@ -5604,7 +5867,7 @@ void MainComponent::reclaimFocusFromNotepad()
 
 void MainComponent::yieldNotepadWindow (bool saveChanges)
 {
-   #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+   #if DUSKSTUDIO_HAS_NATIVE_UI
     // The dim exists for exactly as long as the notepad does, including the
     // deferred native teardown between close() and its closed callback.
     if (notepadDim != nullptr)
@@ -5620,7 +5883,7 @@ bool MainComponent::saveNotepadNow()
     const auto dir = session.getSessionDirectory();
     if (dir == juce::File())
     {
-       #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+       #if DUSKSTUDIO_HAS_NATIVE_UI
         if (notepadWindow != nullptr)
             notepadWindow->markSaveFailed();
        #endif
@@ -5630,14 +5893,14 @@ bool MainComponent::saveNotepadNow()
     if (SessionSerializer::saveNotepad (dir, notepadText))
     {
         notepadDirty = false;
-       #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+       #if DUSKSTUDIO_HAS_NATIVE_UI
         if (notepadWindow != nullptr)
             notepadWindow->markSaved();
        #endif
         return true;
     }
 
-   #if DUSKSTUDIO_HAS_NATIVE_NOTEPAD
+   #if DUSKSTUDIO_HAS_NATIVE_UI
     if (notepadWindow != nullptr)
         notepadWindow->markSaveFailed();
    #endif

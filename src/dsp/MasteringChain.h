@@ -2,6 +2,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <atomic>
+#include <vector>
 #include "BrickwallLimiter.h"
 #include "LoudnessMeter.h"
 #include "MasteringDigitalEq.h"
@@ -72,7 +73,7 @@ private:
 
     // Post-EQ scope ring (power-of-two length; mask-indexed). Written on the
     // audio thread, read on the message thread - see readScopeLatest.
-    juce::AudioBuffer<float> scopeRing;
+    std::vector<float>       scopeRing;
     std::atomic<long long>   scopeWritePos { 0 };
     std::atomic<int>         scopeRingMask { 0 };   // written in prepare, read by both threads
     void pushScope (const float* L, const float* R, int n) noexcept;

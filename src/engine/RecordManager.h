@@ -1,11 +1,11 @@
 #pragma once
 
-#include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_core/juce_core.h>
 #include <array>
 #include <atomic>
 #include <memory>
 #include "../foundation/MidiBuffer.h"
+#include "../foundation/SpscIndexFifo.h"
 #include "../session/Session.h"
 #include "audiofile/ThreadedFileWriter.h"
 #include "audiofile/WriterDrainPool.h"
@@ -92,10 +92,6 @@ public:
     // Audio thread. blockStartFromRecord can be negative during count-in
     // pre-roll; events with negative sample positions are dropped at
     // drain time. Lock-free push into a pre-sized ring.
-    void writeMidiBlock (int trackIndex,
-                          const juce::MidiBuffer& events,
-                          std::int64_t blockStartFromRecord,
-                          const LoopCaptureSpan* explicitLoopSpan = nullptr) noexcept;
     void writeMidiBlock (int trackIndex,
                           const dusk::MidiBuffer& events,
                           std::int64_t blockStartFromRecord,
@@ -199,11 +195,11 @@ private:
             std::uint8_t data2 = 0;
             int passOrdinal = 0;
         };
-        // AbstractFifo keeps one sentinel slot, so 65,537 registered slots
+        // SpscIndexFifo keeps one sentinel slot, so 65,537 registered slots
         // provide a bounded usable capacity of 65,536 events.
         static constexpr int kCapacity = 65536 + 1;
         std::vector<RawEvent>  events;
-        juce::AbstractFifo     fifo { kCapacity };
+        dusk::SpscIndexFifo    fifo { kCapacity };
         std::atomic<std::uint64_t> overflowCount { 0 };
         PerTrackMidi() : events ((size_t) kCapacity) {}
     };

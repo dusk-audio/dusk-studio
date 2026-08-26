@@ -1,10 +1,11 @@
 #pragma once
 
-#include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_core/juce_core.h>
 #include <atomic>
 #include <memory>
 #include "audiofile/BufferedFileReader.h"
+#include "../foundation/LagrangeInterpolator.h"
+#include "../foundation/PlanarBuffer.h"
 
 namespace duskstudio
 {
@@ -65,7 +66,7 @@ private:
 
     juce::File loadedFile;
 
-    juce::AudioBuffer<float> readScratch;  // 2 ch × maxBlockSize, pre-allocated
+    dusk::audio::PlanarBuffer readScratch;   // 2 ch x maxBlockSize, pre-allocated
 
     // Resampling state. speedRatio = sourceRate / deviceRate; 1 (within
     // epsilon) takes the exact-copy path. inScratch is sized on the message
@@ -81,8 +82,8 @@ private:
     // resetting any of them - a ratio publish alone wouldn't stop an
     // in-flight block from racing the resize.
     std::atomic<double> speedRatio { 1.0 };
-    juce::AudioBuffer<float>  inScratch;
-    juce::LagrangeInterpolator interpL, interpR;
+    dusk::audio::PlanarBuffer inScratch;
+    dusk::audio::LagrangeInterpolator interpL, interpR;
     std::int64_t resampleReadPos = -1;   // audio thread only
     int    preparedBlockSize   = 0;    // message thread only
     double preparedDeviceRate  = 0.0;  // message thread only

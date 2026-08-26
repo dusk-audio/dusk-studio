@@ -63,7 +63,7 @@ You can also open an existing session directly: pass its `session.json` (or the 
 
 The Startup dialog also performs a quick update check against the public repository: if a release newer than your build exists, a flashing **Update available** banner with the new version number appears above the Recent Sessions list. The check is silent when you're up to date or offline, and nothing is sent beyond the request itself.
 
-![First-launch window with the Startup dialog visible.](docs/images/qg-01-startup.png)
+![The Startup dialog, listing the sessions you last worked on.](docs/images/qg-01-startup.png)
 
 The main window is laid out top to bottom: menu bar, stage selector (RECORDING / MIXING / MASTERING / AUX), bank selector, transport bar, tape strip toggle, console. The console fills the rest of the window with 24 channel strips, 4 buses, and the master.
 
@@ -560,9 +560,11 @@ In compact mode (window narrower than 1850 pixels), `TIMELINE` becomes `▾` and
 
 ## The virtual keyboard
 
+![The virtual MIDI keyboard, with the typing letter printed on each key it plays.](docs/images/vkb-01-virtual-keyboard.png)
+
 The ⌨ button (or **K**) opens an on-screen MIDI keyboard. It belongs to the transport bar, not to any one view: it opens in any stage, with or without the piano roll. It appears as a MIDI source called **Virtual Keyboard (Dusk Studio)** in each track's MIDI input picker, and loading an instrument onto a track with no input bound selects it automatically so the instrument is playable straight away.
 
-While it is open, every letter and digit in its layout belongs to the keyboard rather than to the shortcuts — **P** and **R** play their notes instead of toggling punch and record, at any octave (shift the octave high enough that a key runs past the top of the MIDI range and it simply does nothing). Keys outside the layout still work as usual, so **Space**, **.**, **L**, **[** / **]** keep driving the transport, and **K** or **Esc** closes the keyboard.
+Each key is labelled with the typing letter that plays it, and every C is labelled with its octave. **Oct -** / **Oct +** and the **Up** / **Down** arrows move the octave, **Ch -** / **Ch +** and **Left** / **Right** move the MIDI channel, and you can click or drag across the keys with the mouse for a glissando. While it is open, every letter and digit in its layout belongs to the keyboard rather than to the shortcuts — **P** and **R** play their notes instead of toggling punch and record, at any octave (shift the octave high enough that a key runs past the top of the MIDI range and it simply does nothing). Keys outside the layout still work as usual, so **Space**, **.**, **L**, **[** / **]** keep driving the transport, and **K** or **Esc** closes the keyboard.
 
 ## The notepad
 
@@ -753,6 +755,8 @@ EQ in Dusk Studio does **not cramp** near Nyquist; the British EQ does its own i
 The channel compressor has three mutually-exclusive modes. Settings are remembered per mode — switch from FET back to Opto and your Opto settings are exactly as you left them.
 
 Click the header's left status light to bypass or engage the compressor; click the **COMP** label once to open the editor. Right-click anywhere on the header for the COMP menu — the mode (**Opto**, **FET**, **VCA**), **Reset comp**, and **Open editor…**.
+
+Every knob here takes a vertical drag; hold **Shift** while dragging for fine adjustment, use the scroll wheel for small steps, and double-click to return the knob to its default. Those defaults follow the active mode rather than one shared pair: **ATTACK** and **RELEASE** return to 0.2 ms / 400 ms in FET and 1 ms / 100 ms in VCA, which are the values a fresh track starts with, so a double-click and a new track agree. Double-clicking the threshold handle resets the **threshold only** — in FET mode the input and output drive keep their settings, matching what the same gesture does on the channel strip's meter and on a control surface.
 
 All three modes share one set of knobs — **THRESHOLD, RATIO, ATTACK, RELEASE, MAKEUP** — that route to the right underlying parameter for whichever mode is active. Set the **threshold** by dragging the triangle handle on the gain-reduction meter strip (this also engages the compressor); the remaining knobs sit in a 2×2 grid below the header. The **MAKEUP** knob is the shared makeup gain and is available in every mode; its range follows the active mode — −40 to +40 dB in Opto (the optical gain dial's full span), −20 to +20 dB in FET and VCA. Knob ranges retune per mode, as listed below.
 

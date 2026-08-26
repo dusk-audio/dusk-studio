@@ -6,6 +6,7 @@
 #include "../engine/audiofile/FileWriter.h"
 #include "../foundation/Base64.h"
 #include "../foundation/Decibels.h"
+#include "../foundation/PlanarBuffer.h"
 
 #include <algorithm>
 
@@ -1168,8 +1169,8 @@ bool JoinRegionsAction::perform()
 
     const auto totalSamples = (int) std::clamp<std::int64_t> (
         totalLen, 1, std::numeric_limits<int>::max());
-    juce::AudioBuffer<float> mixBuf (chs, totalSamples);
-    mixBuf.clear();
+    dusk::audio::PlanarBuffer mixBuf;
+    mixBuf.setSize (chs, totalSamples);
 
     for (const auto& reg : beforeRegions)
     {
@@ -1179,17 +1180,20 @@ bool JoinRegionsAction::perform()
         const int regSamples = (int) std::clamp<std::int64_t> (
             reg.lengthInSamples, 0, std::numeric_limits<int>::max());
         if (regSamples == 0) continue;
-        juce::AudioBuffer<float> tmp (chs, regSamples);
-        tmp.clear();
-        if (rdr->read (tmp.getArrayOfWritePointers(), chs, reg.sourceOffset,
-                       regSamples) != regSamples)
+        dusk::audio::PlanarBuffer tmp;
+        tmp.setSize (chs, regSamples);
+        if (rdr->read (tmp.data(), chs, reg.sourceOffset, regSamples) != regSamples)
             return false;   // unreadable region body - abort the join, leave regions unchanged
                             // (no output file created yet, nothing to clean up)
-        tmp.applyGain (dusk::audio::decibelsToGain (
-            std::clamp (reg.gainDb, -60.0f, 24.0f), -60.0f));
+        const float gain = dusk::audio::decibelsToGain (
+            std::clamp (reg.gainDb, -60.0f, 24.0f), -60.0f);
         const int destOffset = (int) (reg.timelineStart - firstStart);
         for (int c = 0; c < chs; ++c)
-            mixBuf.addFrom (c, destOffset, tmp, c, 0, regSamples);
+        {
+            float* src = tmp.channel (c);
+            for (int i = 0; i < regSamples; ++i) src[i] *= gain;
+            dusk::audio::vecAdd (mixBuf.channel (c) + destOffset, src, regSamples);
+        }
     }
 
     auto takesDir = session.getSessionDirectory().getChildFile ("takes");
@@ -1208,7 +1212,7 @@ bool JoinRegionsAction::perform()
     writeSpec.format        = dusk::audio::WriteSpec::Format::Wav;
     auto writer = dusk::audio::FileWriter::create (audioPath (outFile), writeSpec);
     if (writer == nullptr) { outFile.deleteFile(); return false; }
-    if (! writer->write (mixBuf.getArrayOfReadPointers(), chs, totalSamples))
+    if (! writer->write (mixBuf.data(), chs, totalSamples))
     {
         writer.reset();
         outFile.deleteFile();
@@ -1367,19 +1371,20 @@ bool ReverseRegionAction::perform()
         // whole region without ever holding it all in RAM, and a failed read or
         // write aborts + discards the partial file instead of committing garbage.
         constexpr int kChunk = 1 << 16;   // 64k frames per chunk
-        juce::AudioBuffer<float> chunk (chs, kChunk);
+        dusk::audio::PlanarBuffer chunk;
+        chunk.setSize (chs, kChunk);
         std::int64_t remaining = len;
         bool ioOk = true;
         while (remaining > 0)
         {
             const int n = (int) std::min ((std::int64_t) kChunk, remaining);
             chunk.clear();
-            if (rdr->read (chunk.getArrayOfWritePointers(), chs,
+            if (rdr->read (chunk.data(), chs,
                            beforeState.sourceOffset + (remaining - n), n) != n)
             { ioOk = false; break; }
             for (int c = 0; c < chs; ++c)
-                std::reverse (chunk.getWritePointer (c), chunk.getWritePointer (c) + n);
-            if (! writer->write (chunk.getArrayOfReadPointers(), chs, n))
+                std::reverse (chunk.channel (c), chunk.channel (c) + n);
+            if (! writer->write (chunk.data(), chs, n))
             { ioOk = false; break; }
             remaining -= n;
         }

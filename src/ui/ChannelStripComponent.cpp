@@ -4,7 +4,11 @@
 #include "DuskLabelEditor.h"
 #include "DuskStudioLookAndFeel.h"
 #include "ChannelEqEditor.h"
-#include "ChannelCompEditor.h"
+#if DUSKSTUDIO_HAS_NATIVE_UI
+ #include "NativeEditorEmbedScale.h"
+ #include "imgui/ChannelCompView.h"
+ #include "imgui/DuskPanelWindow.h"
+#endif
 #include "DimOverlay.h"
 #include "EmbeddedModal.h"
 #include "HardwareInsertEditor.h"
@@ -1493,8 +1497,13 @@ ChannelStripComponent::~ChannelStripComponent()
     // those members are still alive - closeAndDeleteBodyNow() runs here, before
     // any member destructs. Same variant MainComponent uses for shutdown.
     eqEditorModal.closeAndDeleteBodyNow();
-    compEditorModal.closeAndDeleteBodyNow();
     auxEditorModal.closeAndDeleteBodyNow();
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    // The native comp window's teardown drops its own view and framework child; no
+    // deferred message-loop tick is involved, so a quit with it open is safe here.
+    compEditorWindow.reset();
+    compEditorDim.reset();
+   #endif
     ioConfigModal.closeAndDeleteBodyNow();
     // FreezeDialog's destructor cancels a BounceEngine render against the
     // engine and the HW-insert editor talks to the strip - both must run
@@ -3718,7 +3727,7 @@ void ChannelStripComponent::openEqEditorPopup()
     if (eqEditorModal.isOpen()) { eqEditorModal.close(); return; }
 
     // Mutual exclusion - one processing editor at a time.
-    if (compEditorModal.isOpen()) compEditorModal.close();
+    closeCompEditorPopup();
     if (auxEditorModal.isOpen())  auxEditorModal.close();
 
     auto panel = std::make_unique<ChannelEqEditor> (track);
@@ -3732,23 +3741,136 @@ void ChannelStripComponent::openEqEditorPopup()
                         /*dismissOnEscape*/ true, kEditorDimAlpha);
 }
 
+void ChannelStripComponent::openCompEditorForCapture (const std::string& capturePath)
+{
+    openCompEditorPopup();
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (compEditorWindow != nullptr && compEditorWindow->isOpen())
+        compEditorWindow->captureNextFrameTo (capturePath);
+   #else
+    (void) capturePath;
+   #endif
+}
+
+void ChannelStripComponent::closeCompEditorForCapture()
+{
+    closeCompEditorPopup();
+}
+
+void ChannelStripComponent::closeCompEditorPopup()
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (compEditorWindow != nullptr && compEditorWindow->isOpen())
+        compEditorWindow->close();
+   #endif
+}
+
 void ChannelStripComponent::openCompEditorPopup()
 {
-    if (compEditorModal.isOpen()) { compEditorModal.close(); return; }
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    showDuskAlert (*this, "Compressor",
+                   "The compressor editor needs the native UI, which this build "
+                   "was made without.");
+   #else
+    if (compEditorWindow != nullptr && compEditorWindow->isOpen())
+    {
+        compEditorWindow->close();
+        return;
+    }
 
     if (eqEditorModal.isOpen())  eqEditorModal.close();
     if (auxEditorModal.isOpen()) auxEditorModal.close();
 
-    // ChannelCompEditor sizes itself in its ctor (uniform height across all
-    // comp modes - see refreshLabelsForMode), so it's fully sized before show().
-    auto panel = std::make_unique<ChannelCompEditor> (track);
-
     auto* topLevel = getTopLevelComponent();
     if (topLevel == nullptr) topLevel = this;
+    const auto parentHandle = embedscale::nativeParentHandle (*topLevel);
+    if (parentHandle == 0)
+    {
+        showDuskAlert (*topLevel, "Compressor",
+                       "The compressor editor cannot open: the main window is not ready.");
+        return;
+    }
 
-    compEditorModal.show (*topLevel, std::move (panel),
-                          /*onDismiss*/ {}, /*dismissOnClickOutside*/ true,
-                          /*dismissOnEscape*/ true, kEditorDimAlpha);
+    // A modal centred over an embedded native child lands inside it, so the notepad
+    // has to go before another native surface takes the window.
+    if (auto hook = EmbeddedModal::beforeModalShown())
+        hook();
+
+    if (compEditorWindow == nullptr)
+    {
+        compEditorWindow = std::make_unique<imgui::DuskPanelWindow> (
+            "dusk-studio-comp-editor", "comp-editor", "Compressor");
+
+        // Raw `this` rather than a SafePointer: the strip owns the window, and the
+        // window's teardown drops the host's callbacks before anything can fire, so
+        // no callback outlives the strip.
+        imgui::DuskPanelWindow::Callbacks callbacks;
+        callbacks.dismissed = [this] { closeCompEditorPopup(); };
+        callbacks.closed = [this]
+        {
+            compEditorDim.reset();
+            compEditorHider.restore();
+            if (auto* target = EmbeddedModal::focusRestoreTarget().getComponent())
+                target->grabKeyboardFocus();
+        };
+        callbacks.shortcut = [] (imgui::ShellShortcut shortcut)
+        {
+            return dispatchShellShortcut (shortcut);
+        };
+        // Polled while the panel is open, so a host resized underneath it re-centres
+        // the child and the dim's click-through region together.
+        callbacks.geometry = [this]
+        {
+            auto* const top = getTopLevelComponent();
+            if (top == nullptr || compEditorWindow == nullptr)
+                return imgui::DuskPanelWindow::Geometry {};
+
+            const auto plate = compEditorWindow->plateSize();
+            const auto bounds = embedscale::centredChildBounds (*top, plate.width,
+                                                                plate.height);
+            if (compEditorDim != nullptr)
+            {
+                compEditorDim->setBounds (top->getLocalBounds());
+                compEditorDim->setNativeChildArea (bounds.expanded (1));
+            }
+            const auto g = embedscale::childGeometryFor (*top, bounds);
+            return imgui::DuskPanelWindow::Geometry { g.x, g.y, g.width, g.height, g.scale };
+        };
+        compEditorWindow->setCallbacks (std::move (callbacks));
+    }
+
+    compEditorWindow->setView (imgui::makeChannelCompView (track));
+
+    const auto plate = compEditorWindow->plateSize();
+    const auto logical = embedscale::centredChildBounds (*topLevel, plate.width, plate.height);
+
+    compEditorDim = std::make_unique<DimOverlay> (compEditorWindow->dimAlpha());
+    compEditorDim->setBounds (topLevel->getLocalBounds());
+    // A press over the child reaches the overlay too - JUCE takes XInput2 on the
+    // top-level while the raw child takes core events - so the child's own area must
+    // not read as a click outside. One pixel of slack absorbs the rounding.
+    compEditorDim->setNativeChildArea (logical.expanded (1));
+    compEditorDim->onClick = [this] { closeCompEditorPopup(); };
+    topLevel->addAndMakeVisible (compEditorDim.get());
+
+    // Native plugin editors paint above any framework child regardless of z-order,
+    // so they hide for the panel's lifetime exactly as under an embedded modal.
+    compEditorHider.hideUnder (*topLevel, { compEditorDim.get() });
+
+    const auto geometry = embedscale::childGeometryFor (*topLevel, logical);
+    if (! compEditorWindow->open (parentHandle,
+                                  { geometry.x, geometry.y, geometry.width,
+                                    geometry.height, geometry.scale }))
+    {
+        compEditorDim.reset();
+        compEditorHider.restore();
+        const auto& why = compEditorWindow->lastOpenFailure();
+        showDuskAlert (*topLevel, "Compressor",
+                       why.empty() ? "The compressor editor cannot open on this display "
+                                     "backend."
+                                   : why.c_str());
+    }
+   #endif
 }
 
 namespace
@@ -3965,7 +4087,7 @@ void ChannelStripComponent::openAuxEditorPopup()
     if (auxEditorModal.isOpen()) { auxEditorModal.close(); return; }
 
     if (eqEditorModal.isOpen())   eqEditorModal.close();
-    if (compEditorModal.isOpen()) compEditorModal.close();
+    closeCompEditorPopup();
 
     // AuxSendsCompactPanel sizes itself in its ctor (setSize 260x130).
     auto panel = std::make_unique<AuxSendsCompactPanel> (track, session);

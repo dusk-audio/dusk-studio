@@ -166,12 +166,15 @@ Dusk Audio plugins (donor DSP cores)
     - TapeMachine  (full tape emulation)
     - shared/AnalogEmulation (TubeEmulation, TransformerEmulation, etc.)
 
-sfizz (SFZ / SoundFont sampler engine — powers the multisample instrument)
-  Version  : 1.2.3, submodule rev
-             31b23c260b43815c36af48afc504261726146a3a
+dusk-fizz (SFZ / SoundFont sampler engine — powers the multisample instrument)
+  Version  : 1.2.3 lineage, submodule rev
+             034c2af42c69bd5cfbc1249955b8760873bc111c
   License  : BSD-2-Clause (external/sfizz/LICENSE)
   Path     : external/sfizz/ (git submodule, built as a static library)
-  Upstream : https://github.com/sfztools/sfizz
+  Fork home: https://github.com/dusk-audio/dusk-fizz (Dusk-maintained hard
+             fork; the code keeps its upstream sfizz names and namespaces)
+  Upstream : https://github.com/sfztools/sfizz (archived by its owner
+             2026-06-21, read-only)
   Notes    : Built library-only — JACK / render / LV2 / VST3 / AU / demos /
              tests / devtools are all disabled, so their dependencies are not
              compiled in. The sub-components below ship vendored inside sfizz
@@ -269,14 +272,14 @@ pffft (FFT backend behind dusk::audio::Fft — spectrum analyser, DP alignment)
              FFTPACKv5 license text applies and is reproduced in full at the
              top of external/pffft/pffft.h.
 
-DPF / DGL (DISTRHO Plugin Framework graphics layer — backs the native notepad UI)
-  Version  : dusk-audio/DPF rev f9fbc62af6fa7ce638a6f1e1482896c385a4955e
-             (CI pin DPF_REV in .github/actions/clone-dpf-stack/action.yml)
+DAF / DGL (Dusk Audio Framework graphics layer — backs the native notepad UI)
+  Version  : dusk-audio/DAF rev 92c3d1a75450e8b8eaf963efe875f5742c7a1c84
+             (CI pin DAF_REV in .github/actions/clone-dpf-stack/action.yml)
   License  : ISC — Copyright (C) 2012-2025 Filipe Coelho <falktx@falktx.com>
-             (DPF/LICENSE)
-  Path     : not in tree — sibling checkout ../DPF, -DDPF_PATH=..., or
-             external/DPF. Only the DGL OpenGL3 subset is built
-             (dpf__add_dgl_opengl3); the resulting dgl-opengl3 static library
+             (DAF/LICENSE)
+  Path     : not in tree — sibling checkout ../DAF, -DDAF_PATH=..., or
+             external/DAF. Only the DGL OpenGL3 subset is built
+             (daf__add_dgl_opengl3); the resulting dgl-opengl3 static library
              is linked into the Dusk Studio binary. No plugin wrappers, no
              examples.
   Upstream : https://github.com/DISTRHO/DPF
@@ -289,13 +292,14 @@ DPF / DGL (DISTRHO Plugin Framework graphics layer — backs the native notepad 
                                Loftis / Harrison Consoles 2011-2012 and Robin
                                Gareus 2013 under the same ISC terms;
                                submodule dusk-audio/pugl rev
-                               5e2621d714ddf1cb0f86e852f8ba5dffe04aa3a3)
-                               On Linux without X11, dpf__add_dgl_opengl3
-                               selects DPF's vendored Wayland path instead.
-                               Its 12 Wayland-specific source/header files
+                               43d8e349c7ca7c4d76778a8c48b73226105bed14)
+                               On Linux without X11, or with
+                               -DDGL_BACKEND=wayland, daf__add_dgl_opengl3
+                               selects DAF's vendored Wayland path instead.
+                               Its 14 Wayland-specific source/header files
                                carry three additional ISC notice variants
-                               (David Robillard and DPF contributors) and four
-                               MIT protocol notice variants; all seven are
+                               (David Robillard and DAF contributors) and five
+                               MIT protocol notice variants; all eight are
                                reproduced below. The OpenGL3 target compiles
                                wayland_gl.c, not the unused wayland_cairo.c.
                - NanoVG        zlib  dgl/src/nanovg/LICENSE.txt
@@ -322,21 +326,26 @@ DPF / DGL (DISTRHO Plugin Framework graphics layer — backs the native notepad 
                                2013-2026 and 2008-2018 respectively; on the
                                include path for MSVC builds only)
 
-DPF-Widgets (DGL / Dear ImGui bridge — the notepad's immediate-mode UI layer)
-  Version  : dusk-audio/DPF-Widgets rev 668de17f06abdeb98d5a4b62594bd634f8d1ac2e
-             (CI pin DPF_WIDGETS_REV in .github/actions/clone-dpf-stack/action.yml)
+DAF-Widgets (DGL / Dear ImGui bridge — the notepad's immediate-mode UI layer,
+             and the Dusk console widget set)
+  Version  : dusk-audio/DAF-Widgets rev 1c09e1ef29f92ae7feb200bac8febdf814cf5e4a
+             (CI pin DAF_WIDGETS_REV in .github/actions/clone-dpf-stack/action.yml)
   License  : ISC — Copyright (C) 2012-2021 Filipe Coelho <falktx@falktx.com>
-             (DPF-Widgets/LICENSE)
-  Path     : not in tree — sibling checkout ../DPF-Widgets,
-             -DDPF_WIDGETS_PATH=..., or external/DPF-Widgets;
-             opengl/DearImGui.cpp compiles into the dusk_notepad_ui library.
+             and Copyright (C) 2026 Dusk Audio for opengl/DuskWidgets.{hpp,cpp}
+             (DAF-Widgets/LICENSE)
+  Path     : not in tree — sibling checkout ../DAF-Widgets,
+             -DDAF_WIDGETS_PATH=..., or external/DAF-Widgets;
+             opengl/DearImGui.cpp and opengl/DuskWidgets.cpp both compile into
+             the dusk_native_ui library, which links into the Dusk Studio
+             binary: the widget set ships from the dialogs phase on, drawn
+             through by the ported panels as well as the spike and unit tests.
   Upstream : https://github.com/DISTRHO/DPF-Widgets
 
 Dear ImGui (immediate-mode GUI — notepad editor, toolbar, chord charts)
   Version  : 1.91.9b (IMGUI_VERSION in opengl/DearImGui/imgui.h)
   License  : MIT — Copyright (c) 2014-2025 Omar Cornut
-             (DPF-Widgets/opengl/DearImGui/LICENSE.txt)
-  Path     : vendored inside DPF-Widgets at opengl/DearImGui/; pulled into the
+             (DAF-Widgets/opengl/DearImGui/LICENSE.txt)
+  Path     : vendored inside DAF-Widgets at opengl/DearImGui/; pulled into the
              build as one translation unit by that repo's DearImGui.cpp.
   Upstream : https://github.com/ocornut/imgui
   Notes    : DearImGui.cpp also #includes three further projects into the same
@@ -350,7 +359,7 @@ Dear ImGui (immediate-mode GUI — notepad editor, toolbar, chord charts)
                                https://cmd.wtf)
                - ProggyClean.ttf  MIT  (Copyright (c) 2004, 2005 Tristan
                                Grimmer; notice at
-                               opengl/DearImGui/imgui_draw.cpp). DPF hands the
+                               opengl/DearImGui/imgui_draw.cpp). DAF hands the
                                notepad DejaVu Sans, but
                                IMGUI_DISABLE_DEFAULT_FONT stays commented out
                                in opengl/DearImGui/imconfig.h, so the
@@ -569,7 +578,7 @@ System shared libraries (Linux builds — linked dynamically, never bundled)
              audio backend, ALSA the fallback backend and the MIDI transport,
              X11 the plugin-editor embedding host, and GL the renderer the
              native notepad UI draws through. Three more arrive indirectly:
-             DPF's dgl-system-libs adds libdbus-1 when pkg-config finds it, and
+             DAF's dgl-system-libs adds libdbus-1 when pkg-config finds it, and
              JUCE's juce_graphics module declares freetype2 and fontconfig as
              Linux packages, so both land on the link line without either name
              appearing in this repo's CMakeLists.txt.
@@ -3787,8 +3796,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE
 SOFTWARE.
 
 --------------------------------------------------------------------------------
-DPF / DGL — ISC
-LICENSE at dusk-audio/DPF rev f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+DAF / DGL — ISC
+LICENSE at dusk-audio/DAF rev 92c3d1a75450e8b8eaf963efe875f5742c7a1c84
 --------------------------------------------------------------------------------
 
 Copyright (C) 2012-2025 Filipe Coelho <falktx@falktx.com>
@@ -3807,9 +3816,9 @@ PERFORMANCE OF THIS SOFTWARE.
 
 --------------------------------------------------------------------------------
 pugl — ISC
-dgl/src/pugl-upstream/COPYING at dusk-audio/DPF rev
-f9fbc62af6fa7ce638a6f1e1482896c385a4955e, pugl submodule rev
-5e2621d714ddf1cb0f86e852f8ba5dffe04aa3a3
+dgl/src/pugl-upstream/COPYING at dusk-audio/DAF rev
+92c3d1a75450e8b8eaf963efe875f5742c7a1c84, pugl submodule rev
+43d8e349c7ca7c4d76778a8c48b73226105bed14
 --------------------------------------------------------------------------------
 
 Copyright 2011-2022 David Robillard <d@drobilla.net>
@@ -3826,9 +3835,9 @@ WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
 ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-DPF's dgl/src/pugl.cpp compiles common.c and internal.c, then the OpenGL and
+DAF's dgl/src/pugl.cpp compiles common.c and internal.c, then the OpenGL and
 stub source for the selected Linux, macOS, or Windows backend. Recursing their
-headers at pugl rev 5e2621d714ddf1cb0f86e852f8ba5dffe04aa3a3
+headers at pugl rev 43d8e349c7ca7c4d76778a8c48b73226105bed14
 produces the distinct source notices below. Every block ends with
 `SPDX-License-Identifier: ISC` and therefore uses the complete ISC permission
 and disclaimer immediately above.
@@ -3871,36 +3880,37 @@ win.c:
 Copyright 2012-2023 David Robillard <d@drobilla.net>
 
 --------------------------------------------------------------------------------
-DPF no-X11 Wayland OpenGL3 backend — ISC and MIT notices
-dgl/src/pugl.cpp HAVE_WAYLAND branch at dusk-audio/DPF rev
-f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+DAF no-X11 Wayland OpenGL3 backend — ISC and MIT notices
+dgl/src/pugl.cpp HAVE_WAYLAND branch at dusk-audio/DAF rev
+92c3d1a75450e8b8eaf963efe875f5742c7a1c84
 --------------------------------------------------------------------------------
 
-dpf__add_dgl_opengl3 defines DGL_OPENGL, so a supported Linux build without
-X11 compiles wayland.c, wayland.h, wayland_stub.c and wayland_gl.c, but not
-wayland_cairo.c. pugl.cpp also directly includes all four generated protocol C
-files and their four client headers. These 12 Wayland-specific files carry
-exactly seven distinct notices: the three ISC source notices and four MIT
-protocol notices below. Each protocol C/header pair has byte-identical notice
-text after removal of its generated comment-container markers; both explicit
-paths are recorded with every block.
+daf__add_dgl_opengl3 defines DGL_OPENGL, so a supported Linux build without
+X11, or one configured with -DDGL_BACKEND=wayland, compiles wayland.c,
+wayland.h, wayland_stub.c and wayland_gl.c, but not wayland_cairo.c. pugl.cpp
+also directly includes all five generated protocol C files and their five
+client headers. These 14 Wayland-specific files carry exactly eight distinct
+notices: the three ISC source notices and five MIT protocol notices below.
+Each protocol C/header pair has byte-identical notice text after removal of
+its generated comment-container markers; both explicit paths are recorded
+with every block.
 
 dgl/src/pugl-extra/wayland.c and dgl/src/pugl-extra/wayland.h:
 
 Copyright 2012-2023 David Robillard <d@drobilla.net>
-Copyright 2025 DISTRHO Plugin Framework contributors
+Copyright 2025 Dusk Audio Framework contributors
 SPDX-License-Identifier: ISC
 
 dgl/src/pugl-extra/wayland_stub.c:
 
 Copyright 2012-2021 David Robillard <d@drobilla.net>
-Copyright 2025 DISTRHO Plugin Framework contributors
+Copyright 2025 Dusk Audio Framework contributors
 SPDX-License-Identifier: ISC
 
 dgl/src/pugl-extra/wayland_gl.c:
 
 Copyright 2012-2022 David Robillard <d@drobilla.net>
-Copyright 2025 DISTRHO Plugin Framework contributors
+Copyright 2025 Dusk Audio Framework contributors
 SPDX-License-Identifier: ISC
 
 The complete ISC permission and disclaimer for each of those three SPDX
@@ -4007,10 +4017,34 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
+dgl/src/pugl-extra/wayland-protocols/xdg-foreign-unstable-v2-protocol.c and
+dgl/src/pugl-extra/wayland-protocols/xdg-foreign-unstable-v2-client-protocol.h:
+
+Copyright © 2015-2016 Red Hat Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice (including the next
+paragraph) shall be included in all copies or substantial portions of the
+Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
 --------------------------------------------------------------------------------
 NanoVG — zlib license
-dgl/src/nanovg/LICENSE.txt at dusk-audio/DPF rev
-f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+dgl/src/nanovg/LICENSE.txt at dusk-audio/DAF rev
+92c3d1a75450e8b8eaf963efe875f5742c7a1c84
 --------------------------------------------------------------------------------
 
 Copyright (c) 2013 Mikko Mononen memon@inside.org
@@ -4033,8 +4067,8 @@ misrepresented as being the original software.
 
 --------------------------------------------------------------------------------
 fontstash — zlib license
-Notice at the head of dgl/src/nanovg/fontstash.h at dusk-audio/DPF rev
-f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+Notice at the head of dgl/src/nanovg/fontstash.h at dusk-audio/DAF rev
+92c3d1a75450e8b8eaf963efe875f5742c7a1c84
 --------------------------------------------------------------------------------
 
 Copyright (c) 2009-2013 Mikko Mononen memon@inside.org
@@ -4055,8 +4089,8 @@ freely, subject to the following restrictions:
 
 --------------------------------------------------------------------------------
 fontstash embedded UTF-8 decoder — MIT
-Notice at dgl/src/nanovg/fontstash.h:509-510 at dusk-audio/DPF rev
-f9fbc62af6fa7ce638a6f1e1482896c385a4955e. NanoVG.cpp compiles nanovg.c,
+Notice at dgl/src/nanovg/fontstash.h:509-510 at dusk-audio/DAF rev
+92c3d1a75450e8b8eaf963efe875f5742c7a1c84. NanoVG.cpp compiles nanovg.c,
 which includes fontstash.h. The compiled 2010 decoder variation carries these
 exact source lines:
 
@@ -4089,8 +4123,8 @@ SOFTWARE.
 
 --------------------------------------------------------------------------------
 stb_truetype — MIT / public domain dual license
-Notice at the foot of dgl/src/nanovg/stb_truetype.h at dusk-audio/DPF rev
-f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+Notice at the foot of dgl/src/nanovg/stb_truetype.h at dusk-audio/DAF rev
+92c3d1a75450e8b8eaf963efe875f5742c7a1c84
 --------------------------------------------------------------------------------
 
 ------------------------------------------------------------------------------
@@ -4135,8 +4169,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 --------------------------------------------------------------------------------
 stb_image — public-domain dedication and fallback permission
-License notice in dgl/src/nanovg/stb_image.h at dusk-audio/DPF rev
-f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+License notice in dgl/src/nanovg/stb_image.h at dusk-audio/DAF rev
+92c3d1a75450e8b8eaf963efe875f5742c7a1c84
 --------------------------------------------------------------------------------
 
 This software is in the public domain. Where that dedication is not
@@ -4145,8 +4179,8 @@ distribute, and modify this file as you see fit.
 
 --------------------------------------------------------------------------------
 DejaVu Sans — Bitstream Vera Fonts License and Arev Fonts License
-dgl/src/resources/LICENSE-DejaVuSans.ttf.txt at dusk-audio/DPF rev
-f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+dgl/src/resources/LICENSE-DejaVuSans.ttf.txt at dusk-audio/DAF rev
+92c3d1a75450e8b8eaf963efe875f5742c7a1c84
 --------------------------------------------------------------------------------
 
 Fonts are (c) Bitstream (see below). DejaVu changes are in public domain.
@@ -4250,7 +4284,7 @@ from Tavmjong Bah. For further information, contact: tavmjong @ free
 --------------------------------------------------------------------------------
 Khronos GL headers — MIT notices
 dgl/src/khronos/GL/glext.h and dgl/src/khronos/KHR/khrplatform.h at
-dusk-audio/DPF rev f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+dusk-audio/DAF rev 92c3d1a75450e8b8eaf963efe875f5742c7a1c84
 --------------------------------------------------------------------------------
 
 glext.h carries this exact notice:
@@ -4282,9 +4316,9 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 MATERIALS OR THE USE OR OTHER DEALINGS IN THE MATERIALS.
 
 --------------------------------------------------------------------------------
-DPF-Widgets — ISC
-LICENSE at dusk-audio/DPF-Widgets rev
-668de17f06abdeb98d5a4b62594bd634f8d1ac2e
+DAF-Widgets — ISC
+LICENSE at dusk-audio/DAF-Widgets rev
+1c09e1ef29f92ae7feb200bac8febdf814cf5e4a
 --------------------------------------------------------------------------------
 
 DISTRHO Plugin Framework (DPF)
@@ -4303,7 +4337,7 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 opengl/DearImGui.cpp carries this distinct complete source notice:
 
-Dear ImGui for DPF
+Dear ImGui for DAF
 Copyright (C) 2021 Jean Pierre Cimalando <jp-dev@inbox.ru>
 Copyright (C) 2021-2025 Filipe Coelho <falktx@falktx.com>
 
@@ -4321,7 +4355,7 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 The included opengl/DearImGui.hpp carries the same complete notice with the
 earlier Filipe Coelho range:
 
-Dear ImGui for DPF
+Dear ImGui for DAF
 Copyright (C) 2021 Jean Pierre Cimalando <jp-dev@inbox.ru>
 Copyright (C) 2021-2024 Filipe Coelho <falktx@falktx.com>
 
@@ -4338,8 +4372,8 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 --------------------------------------------------------------------------------
 Dear ImGui 1.91.9b — MIT
-opengl/DearImGui/LICENSE.txt at dusk-audio/DPF-Widgets rev
-668de17f06abdeb98d5a4b62594bd634f8d1ac2e
+opengl/DearImGui/LICENSE.txt at dusk-audio/DAF-Widgets rev
+1c09e1ef29f92ae7feb200bac8febdf814cf5e4a
 --------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -4366,8 +4400,8 @@ SOFTWARE.
 
 --------------------------------------------------------------------------------
 imgui-knobs — MIT
-opengl/DearImGuiKnobs/LICENSE at dusk-audio/DPF-Widgets rev
-668de17f06abdeb98d5a4b62594bd634f8d1ac2e
+opengl/DearImGuiKnobs/LICENSE at dusk-audio/DAF-Widgets rev
+1c09e1ef29f92ae7feb200bac8febdf814cf5e4a
 --------------------------------------------------------------------------------
 
 MIT License
@@ -4394,8 +4428,8 @@ SOFTWARE.
 
 --------------------------------------------------------------------------------
 imgui_toggle — ISC-style permission grant
-opengl/DearImGuiToggle/LICENSE at dusk-audio/DPF-Widgets rev
-668de17f06abdeb98d5a4b62594bd634f8d1ac2e
+opengl/DearImGuiToggle/LICENSE at dusk-audio/DAF-Widgets rev
+1c09e1ef29f92ae7feb200bac8febdf814cf5e4a
 --------------------------------------------------------------------------------
 
 Copyright © 2022 nitz — chris marc dailey https://cmd.wtf
@@ -4418,7 +4452,7 @@ LICENSE at bluescan/proggyfonts rev
 stream expands to 41,208 bytes. Its Adler-32 is 0x48f962f7 and its SHA-256 is
 527d2a443ce051f93f7e77b855609722b8cb220a9f104b4aa037be5c90b71324; all three
 values match that revision's ProggyClean.ttf byte for byte at
-dusk-audio/DPF-Widgets rev 668de17f06abdeb98d5a4b62594bd634f8d1ac2e.
+dusk-audio/DAF-Widgets rev 1c09e1ef29f92ae7feb200bac8febdf814cf5e4a.
 --------------------------------------------------------------------------------
 
 MIT License

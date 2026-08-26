@@ -1,11 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "ui/NotepadFirstFrameProbe.h"
+#include "ui/imgui/FirstFrameProbe.h"
 
 #include <filesystem>
 #include <fstream>
 
-using duskstudio::notepad::FirstFrameProbe;
+using duskstudio::imgui::FirstFrameProbe;
 
 namespace
 {

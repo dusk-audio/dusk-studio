@@ -44,7 +44,7 @@ cmake --build build -j6
 ./build/DuskStudio_artefacts/Release/DuskStudio
 ```
 
-JUCE, the Dusk plugins repo, and the DPF stack behind the native notepad are auto-discovered from sibling directories (`../JUCE` / `../JUCE-wayland`, `../plugins`, `../DPF`, `../DPF-Widgets`). See Part 5 for what happens when discovery fails — it will, eventually, and the error messages are not always obvious.
+JUCE, the Dusk plugins repo, and the DAF stack behind the native notepad are auto-discovered from sibling directories (`../JUCE` / `../JUCE-wayland`, `../plugins`, `../DAF`, `../DAF-Widgets`). See Part 5 for what happens when discovery fails — it will, eventually, and the error messages are not always obvious.
 
 **Checkpoint:** the app launches, you can create a track, arm it, and play a click.
 
@@ -300,22 +300,22 @@ CMake auto-detects four external repos at configure time, on top of three git su
 
 - **JUCE:** `-DJUCE_PATH=…` wins; else on Linux it prefers `../JUCE-wayland` (a plugdata-team fork with ~5 local commits Dusk Studio depends on — XEmbed, X11-on-Wayland fix, peer-creation latch), falling back to `../JUCE`; on macOS it uses `../JUCE` (upstream). The upstream-vs-fork API difference (`addDefaultFormatsToManager`) is hidden behind [src/engine/JuceCompat.h](../src/engine/JuceCompat.h) — call `duskstudio::juce_compat::addDefaultFormats(fm)` and never sprinkle `#ifdef __linux__` at call sites.
 - **Dusk plugins:** `-DDUSK_PLUGINS_PATH=…` wins; else `../plugins`, and that is the whole list. Check out the `DONOR_REV` shared by the build and release workflows: the required framework-free compressor core is not on the donor repository's current `main`. Build at any other revision and you build against that revision's DSP and layout. Missing entirely, configure only *warns*: you get a recorder with no EQ, comp, or tape rather than a failed build, so read the configure output.
-- **DPF + DPF-Widgets** (the native notepad UI): `-DDPF_PATH=…` / `-DDPF_WIDGETS_PATH=…` win; else `../DPF` and `../DPF-Widgets`, else the `external/` fallbacks, which are placeholders for the eventual release pinning and are not populated today. The two checks are ANDed, so missing *either* one quietly defaults `DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` to OFF, announced by one easy-to-miss STATUS line (`Native notepad: DPF / DPF-Widgets not found - disabled`); at runtime the notepad then reports *"Notepad unavailable: built without the native notepad UI"*. Forcing `-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON` without them is a configure error rather than a silent downgrade. Clone the Dusk-owned forks at the revisions CI pins — [.github/actions/clone-dpf-stack/action.yml](../.github/actions/clone-dpf-stack/action.yml) is the single source of truth for those pins:
+- **DAF + DAF-Widgets** (the native UI: notepad, startup dialog, compressor editor, virtual keyboard): `-DDAF_PATH=…` / `-DDAF_WIDGETS_PATH=…` win (the older `-DDPF_PATH=…` / `-DDPF_WIDGETS_PATH=…` still resolve, and retire once every checkout and CI image has moved); else `../DAF` and `../DAF-Widgets`, then `../DPF` and `../DPF-Widgets`, else the `external/` fallbacks, which are placeholders for the eventual release pinning and are not populated today. The two checks are ANDed, so missing *either* one quietly defaults `DUSKSTUDIO_ENABLE_NATIVE_UI` to OFF, announced by one easy-to-miss STATUS line (`Native UI: DAF / DAF-Widgets not found - disabled`); at runtime every native view is gone - the notepad reports *"Notepad unavailable: built without the native notepad UI"*, the compressor editor and virtual keyboard say the same of themselves, and the startup dialog simply does not appear. Forcing `-DDUSKSTUDIO_ENABLE_NATIVE_UI=ON` without them is a configure error rather than a silent downgrade. Clone the Dusk-owned forks at the revisions CI pins — [.github/actions/clone-dpf-stack/action.yml](../.github/actions/clone-dpf-stack/action.yml) is the single source of truth for those pins:
 
 ```bash
 cd /path/to/dusk-studio
 
-git clone https://github.com/dusk-audio/DPF.git ../DPF
-git -C ../DPF checkout f9fbc62af6fa7ce638a6f1e1482896c385a4955e
-git -C ../DPF submodule update --init     # dgl/src/pugl-upstream
+git clone https://github.com/dusk-audio/DAF.git ../DAF
+git -C ../DAF checkout f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+git -C ../DAF submodule update --init     # dgl/src/pugl-upstream
 
-git clone https://github.com/dusk-audio/DPF-Widgets.git ../DPF-Widgets
-git -C ../DPF-Widgets checkout 668de17f06abdeb98d5a4b62594bd634f8d1ac2e
+git clone https://github.com/dusk-audio/DAF-Widgets.git ../DAF-Widgets
+git -C ../DAF-Widgets checkout 668de17f06abdeb98d5a4b62594bd634f8d1ac2e
 ```
 
-Clone then check out the SHA rather than cloning a branch: DPF's pin is the tip of `fix/wayland-review-findings`, never merged to that fork's `main` (DPF-Widgets' pin is its `main` tip today, but treat it the same). Neither branch may be deleted upstream, or both these commands and CI's fetch-by-SHA stop resolving.
+Clone then check out the SHA rather than cloning a branch: DAF's pin is the tip of `fix/wayland-review-findings`, never merged to that fork's `main` (DAF-Widgets' pin is its `main` tip today, but treat it the same). Neither branch may be deleted upstream, or both these commands and CI's fetch-by-SHA stop resolving.
 
-`DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD` is a cached `option()`, which makes the OFF sticky in a nasty way: configure a build dir before the checkouts exist, add them later, and re-running CMake in that same dir leaves the notepad off — and the STATUS line above no longer prints, because its guard also requires the deps to be missing. Use a fresh build dir after cloning, or pass `-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON` to overwrite the cache entry.
+`DUSKSTUDIO_ENABLE_NATIVE_UI` is a cached `option()`, which makes the OFF sticky in a nasty way: configure a build dir before the checkouts exist, add them later, and re-running CMake in that same dir leaves the notepad off — and the STATUS line above no longer prints, because its guard also requires the deps to be missing. Use a fresh build dir after cloning, or pass `-DDUSKSTUDIO_ENABLE_NATIVE_UI=ON` to overwrite the cache entry.
 
 The cross-OS layout (development happens on macOS, Linux testing on a separate machine — both use the same build-dir names so switching machines never needs a reconfigure):
 
@@ -601,7 +601,7 @@ manual checks that the script cannot cover:
   accidentals display correctly.
 - Extract both Linux tarballs and smoke each binary only on its matching
   architecture, under a private Xvfb display with `WAYLAND_DISPLAY` unset.
-  Never let a release binary touch the live Wayland session. DPF/DGL windows
+  Never let a release binary touch the live Wayland session. DAF/DGL windows
   that require GLX belong in the hardware pass.
 - Inspect the tarball, DMG, and MSI payloads. Each must be Dusk-only, with no
   `JUCE-*` paths, and each must contain the complete

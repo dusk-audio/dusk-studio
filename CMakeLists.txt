@@ -393,31 +393,74 @@ else()
         "the plugins repo to ../plugins (sibling directory).")
 endif()
 
+# Resolves a framework checkout into <outVar>, or leaves it empty when none is
+# present. EXPLICIT names -D variables in preference order; the first one set
+# wins, and if what it points at is not a checkout that is a hard error rather
+# than a silent fall back to a sibling. SEARCH names directories relative to the
+# source tree, tried in order. MARKER is the file that identifies a checkout.
+function(duskstudio_resolve_framework_dir outVar)
+    cmake_parse_arguments(ARG "" "MARKER;LABEL" "EXPLICIT;SEARCH" ${ARGN})
+
+    foreach(pathVar IN LISTS ARG_EXPLICIT)
+        if(DEFINED ${pathVar})
+            if(NOT EXISTS "${${pathVar}}/${ARG_MARKER}")
+                message(FATAL_ERROR
+                    "${pathVar}=${${pathVar}} has no ${ARG_MARKER} - it is not a "
+                    "${ARG_LABEL} checkout.")
+            endif()
+            set(${outVar} "${${pathVar}}" PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+
+    foreach(candidate IN LISTS ARG_SEARCH)
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${candidate}/${ARG_MARKER}")
+            set(${outVar} "${CMAKE_CURRENT_SOURCE_DIR}/${candidate}" PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+
+    set(${outVar} "" PARENT_SCOPE)
+endfunction()
+
 # Native first-party UI surface for the session notepad. The editor is built on
-# the same DPF/DGL + Dear ImGui stack selected for the final GUI tower, so the
+# the same DAF/DGL + Dear ImGui stack selected for the final GUI tower, so the
 # feature does not add another JUCE widget that would need to be ported later.
-# During development, explicit paths win over sibling checkouts; the external/
-# fallbacks are the eventual pinned release dependencies.
-# OFF drops the notepad window (DUSKSTUDIO_HAS_NATIVE_NOTEPAD guards its call
-# sites) so a configure without the DPF checkouts - a test-only tree, say - is
-# still possible. The default follows the checkouts, same as the native LV2
-# host follows its dev libs: a machine without DPF still configures, while an
-# EXPLICIT -DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=ON with them missing (what CI
-# effectively exercises by passing DPF_PATH) stays a configure error.
-set(DUSKSTUDIO_NOTEPAD_DEPS_FOUND OFF)
-if((DEFINED DPF_PATH
-    OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../DPF/CMakeLists.txt"
-    OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/DPF/CMakeLists.txt")
-   AND (DEFINED DPF_WIDGETS_PATH
-    OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../DPF-Widgets/opengl/DearImGui.hpp"
-    OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/DPF-Widgets/opengl/DearImGui.hpp"))
-    set(DUSKSTUDIO_NOTEPAD_DEPS_FOUND ON)
+#
+# The framework is Dusk's own hard fork, renamed from DPF to DAF (Dusk Audio
+# Framework). DAF_PATH and DAF_WIDGETS_PATH are the spellings to use; the DPF
+# ones still resolve, and retire once every checkout and CI image has moved.
+#
+# Resolution order per checkout: an explicit path wins, then a sibling clone,
+# then the vendored external/ copy, and at each rung the DAF name is tried
+# before the DPF one. An explicit path that is not a checkout is a hard error
+# rather than a silent fall-through to a sibling.
+duskstudio_resolve_framework_dir(DUSKSTUDIO_DAF_SOURCE_DIR
+    MARKER   CMakeLists.txt
+    LABEL    DAF
+    EXPLICIT DAF_PATH DPF_PATH
+    SEARCH   ../DAF ../DPF external/DAF external/DPF)
+duskstudio_resolve_framework_dir(DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR
+    MARKER   opengl/DearImGui.hpp
+    LABEL    DAF-Widgets
+    EXPLICIT DAF_WIDGETS_PATH DPF_WIDGETS_PATH
+    SEARCH   ../DAF-Widgets ../DPF-Widgets external/DAF-Widgets external/DPF-Widgets)
+
+# OFF drops every native view - the notepad and the GUI tower's ported dialogs and
+# panels (DUSKSTUDIO_HAS_NATIVE_UI guards their call sites) - so a configure without
+# the framework checkouts - a test-only tree, say - is still possible. The default follows the checkouts, same as the native LV2
+# host follows its dev libs: a machine without them still configures, while an
+# EXPLICIT -DDUSKSTUDIO_ENABLE_NATIVE_UI=ON with them missing (what CI
+# effectively exercises by passing DAF_PATH) stays a configure error.
+set(DUSKSTUDIO_NATIVE_UI_DEPS_FOUND OFF)
+if(DUSKSTUDIO_DAF_SOURCE_DIR AND DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR)
+    set(DUSKSTUDIO_NATIVE_UI_DEPS_FOUND ON)
 endif()
-option(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD
-       "Build the native DPF/DGL + Dear ImGui session notepad window"
-       ${DUSKSTUDIO_NOTEPAD_DEPS_FOUND})
-if(NOT DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD AND NOT DUSKSTUDIO_NOTEPAD_DEPS_FOUND)
-    message(STATUS "Native notepad: DPF / DPF-Widgets not found - disabled")
+option(DUSKSTUDIO_ENABLE_NATIVE_UI
+       "Build the native DAF/DGL + Dear ImGui views (notepad, dialogs and panels)"
+       ${DUSKSTUDIO_NATIVE_UI_DEPS_FOUND})
+if(NOT DUSKSTUDIO_ENABLE_NATIVE_UI AND NOT DUSKSTUDIO_NATIVE_UI_DEPS_FOUND)
+    message(STATUS "Native UI: DAF / DAF-Widgets not found - disabled")
 endif()
 
 if(WIN32)
@@ -436,88 +479,111 @@ if(WIN32)
     endif()
 endif()
 
-if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
-    if(DEFINED DPF_PATH)
-        if(NOT EXISTS "${DPF_PATH}/CMakeLists.txt")
-            message(FATAL_ERROR
-                "DPF_PATH=${DPF_PATH} has no CMakeLists.txt - it is not a DPF checkout.")
-        endif()
-        set(DUSKSTUDIO_DPF_SOURCE_DIR "${DPF_PATH}")
-    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../DPF/CMakeLists.txt")
-        set(DUSKSTUDIO_DPF_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../DPF")
-    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/DPF/CMakeLists.txt")
-        set(DUSKSTUDIO_DPF_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/DPF")
-    else()
+if(DUSKSTUDIO_ENABLE_NATIVE_UI)
+    if(NOT DUSKSTUDIO_DAF_SOURCE_DIR)
         message(FATAL_ERROR
-            "DPF is required for the native notepad UI. Set -DDPF_PATH=/path/to/DPF, "
-            "clone it to ../DPF, initialise external/DPF, or configure with "
-            "-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=OFF.")
+            "DAF is required for the native UI. Set -DDAF_PATH=/path/to/DAF, "
+            "clone it to ../DAF, initialise external/DAF, or configure with "
+            "-DDUSKSTUDIO_ENABLE_NATIVE_UI=OFF.")
+    endif()
+    if(NOT DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR)
+        message(FATAL_ERROR
+            "DAF-Widgets is required for the native UI. Set "
+            "-DDAF_WIDGETS_PATH=/path/to/DAF-Widgets, clone it to ../DAF-Widgets, "
+            "initialise external/DAF-Widgets, or configure with "
+            "-DDUSKSTUDIO_ENABLE_NATIVE_UI=OFF.")
     endif()
 
-    if(DEFINED DPF_WIDGETS_PATH)
-        if(NOT EXISTS "${DPF_WIDGETS_PATH}/opengl/DearImGui.hpp")
-            message(FATAL_ERROR
-                "DPF_WIDGETS_PATH=${DPF_WIDGETS_PATH} has no opengl/DearImGui.hpp - "
-                "it is not a DPF-Widgets checkout.")
-        endif()
-        set(DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR "${DPF_WIDGETS_PATH}")
-    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../DPF-Widgets/opengl/DearImGui.hpp")
-        set(DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../DPF-Widgets")
-    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/DPF-Widgets/opengl/DearImGui.hpp")
-        set(DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/DPF-Widgets")
-    else()
-        message(FATAL_ERROR
-            "DPF-Widgets is required for the native notepad UI. Set "
-            "-DDPF_WIDGETS_PATH=/path/to/DPF-Widgets, clone it to ../DPF-Widgets, "
-            "initialise external/DPF-Widgets, or configure with "
-            "-DDUSKSTUDIO_ENABLE_NATIVE_NOTEPAD=OFF.")
-    endif()
+    message(STATUS "Using DAF from: ${DUSKSTUDIO_DAF_SOURCE_DIR}")
+    message(STATUS "Using DAF-Widgets from: ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}")
 
-    message(STATUS "Using DPF from: ${DUSKSTUDIO_DPF_SOURCE_DIR}")
-    message(STATUS "Using DPF-Widgets from: ${DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR}")
-
-    set(DPF_LIBRARIES OFF CACHE BOOL "Build DPF's complete library set" FORCE)
-    set(DPF_EXAMPLES OFF CACHE BOOL "Build DPF examples" FORCE)
-    add_subdirectory("${DUSKSTUDIO_DPF_SOURCE_DIR}"
-                     "${CMAKE_CURRENT_BINARY_DIR}/DPF" EXCLUDE_FROM_ALL)
-    dpf__add_dgl_opengl3(TRUE FALSE FALSE)
+    set(DAF_LIBRARIES OFF CACHE BOOL "Build DAF's complete library set" FORCE)
+    set(DAF_EXAMPLES OFF CACHE BOOL "Build DAF examples" FORCE)
+    add_subdirectory("${DUSKSTUDIO_DAF_SOURCE_DIR}"
+                     "${CMAKE_CURRENT_BINARY_DIR}/DAF" EXCLUDE_FROM_ALL)
+    daf__add_dgl_opengl3(TRUE FALSE FALSE)
     target_compile_options(dgl-opengl3 PRIVATE
         $<$<COMPILE_LANG_AND_ID:CXX,GNU>:-Wno-cpp;-Wno-stringop-overflow>
         $<$<COMPILE_LANG_AND_ID:CXX,Clang,AppleClang>:-Wno-cpp>)
 
-    add_library(dusk_notepad_ui STATIC
+    add_library(dusk_native_ui STATIC
+        src/ui/imgui/DuskImGuiHost.cpp
+        src/ui/imgui/DuskTheme.cpp
+        src/ui/imgui/DuskPanelWindow.cpp
         src/ui/NotepadDocument.cpp
         src/ui/NotepadChords.cpp
         src/ui/NotepadEditorCore.cpp
         src/ui/NotepadEditor.cpp
         src/ui/NativeNotepadWindow.cpp
-        "${DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp")
-    target_include_directories(dusk_notepad_ui PRIVATE
-        "${DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR}/opengl")
+        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp"
+        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DuskWidgets.cpp")
+    target_include_directories(dusk_native_ui PRIVATE
+        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl")
 
     if(MSVC)
-        # Windows' GL header and opengl32 stop at OpenGL 1.1, and DPF-Widgets hands Dear
+        # Windows' GL header and opengl32 stop at OpenGL 1.1, and DAF-Widgets hands Dear
         # ImGui's OpenGL3 backend a "custom loader" (DGL's OpenGL.hpp) that carries GL 3.x
         # prototypes on Linux and macOS only - so DearImGui.cpp does not compile here at
         # all. Force-include a loader that resolves those entry points through
         # wglGetProcAddress, the way DGL resolves its own. The header is named without a
         # path so cl finds it on the include path; a /FI carrying an absolute path breaks
         # on a source tree whose path contains spaces.
-        target_sources(dusk_notepad_ui PRIVATE src/ui/ImGuiGlLoaderWin32.cpp)
-        target_include_directories(dusk_notepad_ui PRIVATE src/ui)
+        target_sources(dusk_native_ui PRIVATE src/ui/ImGuiGlLoaderWin32.cpp)
+        target_include_directories(dusk_native_ui PRIVATE src/ui)
         set_source_files_properties(
-            "${DUSKSTUDIO_DPF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp"
+            "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp"
             PROPERTIES COMPILE_OPTIONS "/FIImGuiGlLoaderWin32.h")
     endif()
 
-    target_link_libraries(dusk_notepad_ui PRIVATE
+    target_link_libraries(dusk_native_ui PRIVATE
         dgl-opengl3
         dgl-opengl3-definitions
         dgl-system-libs-definitions)
-    target_compile_features(dusk_notepad_ui PUBLIC cxx_std_17)
+    target_compile_features(dusk_native_ui PUBLIC cxx_std_17)
 
-    target_link_libraries(DuskStudio PRIVATE dusk_notepad_ui)
-    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_NOTEPAD=1)
+    target_link_libraries(DuskStudio PRIVATE dusk_native_ui)
+    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_UI=1)
+
+    # The panel views read the session's atomics directly, so they compile in the
+    # app target where those headers already resolve rather than in the framework
+    # library. They need Dear ImGui and the widget kit's headers only; the DGL half
+    # of the stack stays behind DuskPanelWindow.
+    target_sources(DuskStudio PRIVATE
+        src/ui/imgui/ChannelCompView.cpp
+        src/ui/imgui/StartupView.cpp
+        src/ui/imgui/VirtualKeyboardView.cpp)
+    target_include_directories(DuskStudio PRIVATE
+        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl")
+
+    # Gate spike for the GUI tower: a standalone framework application window rendering one
+    # channel strip, used to measure frame cost and prove the shell. It ships with nothing,
+    # links no part of the app, and stays off unless asked for. Configure a separate build
+    # directory for it, since the windowing backend is a per-configure choice: use
+    # -DDGL_BACKEND=wayland there to keep a dual-stack box off XWayland.
+    option(DUSKSTUDIO_BUILD_GUI_SPIKE "Build the non-shipping GUI tower gate spike" OFF)
+    if(DUSKSTUDIO_BUILD_GUI_SPIKE)
+        add_executable(dusk-gui-spike
+            tools/gui-spike/GuiSpikeMain.cpp
+            tools/gui-spike/ChannelStripView.cpp
+            src/ui/imgui/DuskTheme.cpp
+            "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DuskWidgets.cpp"
+            "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp")
+        target_include_directories(dusk-gui-spike PRIVATE
+            "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl")
+        if(MSVC)
+            # Same GL 3.x loader the notepad needs, for the same reason: DAF-Widgets hands
+            # Dear ImGui a custom loader that only carries those prototypes off Windows.
+            target_sources(dusk-gui-spike PRIVATE src/ui/ImGuiGlLoaderWin32.cpp)
+            target_include_directories(dusk-gui-spike PRIVATE src/ui)
+        endif()
+        target_link_libraries(dusk-gui-spike PRIVATE
+            dgl-opengl3
+            dgl-opengl3-definitions
+            dgl-system-libs-definitions)
+        target_compile_features(dusk-gui-spike PRIVATE cxx_std_17)
+        set_target_properties(dusk-gui-spike PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/gui-spike")
+    endif()
 
     if(WIN32)
         # The system OpenGL path can be GDI Generic 1.1 on VMs and over Remote
@@ -528,7 +594,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD)
         if(DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR)
             target_compile_definitions(DuskStudio PRIVATE
                 DUSKSTUDIO_USE_WINDOWS_SOFTWARE_OPENGL=1)
-            target_compile_definitions(dusk_notepad_ui PRIVATE
+            target_compile_definitions(dusk_native_ui PRIVATE
                 DUSKSTUDIO_USE_WINDOWS_SOFTWARE_OPENGL=1)
 
             # This imports opengl32.dll before C++ initialisers run, uses the
@@ -576,6 +642,7 @@ target_sources(DuskStudio PRIVATE
     # DeviceManager: native orchestrator on Linux (DeviceManager.cpp), JUCE-wrapped
     # fallback off Linux (DeviceManagerJuce.cpp). Gated below the target_sources().
     src/engine/midi/MidiDevices.cpp
+    src/engine/midi/MidiFileReader.cpp
     src/engine/NativePluginCache.cpp
     src/engine/PlaybackEngine.cpp
     src/engine/PluginDescriptor.cpp
@@ -618,12 +685,10 @@ target_sources(DuskStudio PRIVATE
     src/ui/BusComponent.cpp
     src/ui/BounceDialog.cpp
     src/ui/FreezeDialog.cpp
-    src/ui/ChannelCompEditor.cpp
     src/ui/ChannelEqEditor.cpp
     src/ui/ChannelStripComponent.cpp
     src/ui/CompMeterStrip.cpp
     src/ui/SelfTestPanel.cpp
-    src/ui/StartupDialog.cpp
     src/engine/AudioPipelineSelfTest.cpp
     src/ui/ConsoleView.cpp
     src/ui/DimOverlay.cpp
@@ -647,7 +712,6 @@ target_sources(DuskStudio PRIVATE
     src/ui/TapeStrip.cpp
     src/ui/MiniTimelineStrip.cpp
     src/ui/TransportBar.cpp
-    src/ui/VirtualKeyboardComponent.cpp
     src/ui/WindowState.cpp)
 
 # libsndfile backs all audio file I/O and is required on every platform. The
@@ -1175,7 +1239,7 @@ if(_duskstudio_oop_enabled)
         JUCE_DONT_DECLARE_PROJECTINFO=1
         JUCE_USE_CURL=0
         JUCE_WEB_BROWSER=0)
-    if(WIN32 AND DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD
+    if(WIN32 AND DUSKSTUDIO_ENABLE_NATIVE_UI
        AND DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR)
         target_compile_definitions(dusk-studio-plugin-host PRIVATE
             DUSKSTUDIO_USE_WINDOWS_SOFTWARE_OPENGL=1)
@@ -1565,7 +1629,7 @@ endif()
 install(TARGETS DuskStudio
         RUNTIME DESTINATION bin
         BUNDLE  DESTINATION .)
-if(WIN32 AND DUSKSTUDIO_ENABLE_NATIVE_NOTEPAD
+if(WIN32 AND DUSKSTUDIO_ENABLE_NATIVE_UI
    AND DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR)
     install(FILES
                 "${DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR}/opengl32.dll"
