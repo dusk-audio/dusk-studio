@@ -220,7 +220,7 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
     {
         if (capturePath.empty() || width < 1 || height < 1)
             return;
-        if (++framesDrawn != 30)
+        if (++framesDrawn < 30)
             return;
 
         std::vector<unsigned char> rgb (static_cast<std::size_t> (width * height * 3));
@@ -425,6 +425,7 @@ float DuskPanelWindow::dimAlpha() const
 void DuskPanelWindow::captureNextFrameTo (std::string path)
 {
     impl->capturePath = std::move (path);
+    impl->framesDrawn = 0;
 }
 
 bool DuskPanelWindow::open (std::uintptr_t nativeParent, Geometry geometry)
