@@ -428,6 +428,11 @@ public:
     // the main window race-crashes the compositor on Linux/Wayland.
     void dropPluginEditor (NativeEditorTeardown teardown);
 
+    // Public for the same reason: the shell closes this before showing a modal,
+    // because the panel is an opaque native child and a modal opening behind it
+    // can be neither seen nor clicked.
+    void closeCompEditorPopup();
+
 private:
 
     bool compactMode = false;
@@ -454,7 +459,6 @@ private:
    #endif
     void openEqEditorPopup();
     void openCompEditorPopup();
-    void closeCompEditorPopup();
     void openAuxEditorPopup();
     void setAuxSectionVisible (bool visible);
 

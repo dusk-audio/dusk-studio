@@ -925,7 +925,22 @@ MainComponent::MainComponent()
     // beforeModalShown). The notepad saves whenever it closes, so the alerts
     // that can fire over it - sample-rate mismatch, device lost - take it back
     // rather than open where nobody can see or click them.
-    EmbeddedModal::beforeModalShown() = [this] { yieldNotepadWindow(); };
+    EmbeddedModal::beforeModalShown() = [this]
+    {
+        yieldNotepadWindow();
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        // Every native view is an opaque child over the shell, so a modal that opens
+        // behind one is invisible and unclickable - not just the notepad. The panels
+        // that a user opened deliberately step aside the way it does. The startup
+        // dialog is left alone: dismissing it would spend the session choice nobody
+        // has made yet, and it is never up alongside these two.
+        closeVirtualKeyboard();
+        if (consoleView != nullptr)
+            for (int t = 0; t < Session::kNumTracks; ++t)
+                if (auto* strip = consoleView->getStripComponent (t))
+                    strip->closeCompEditorPopup();
+       #endif
+    };
 
     // Startup: if the saved audio device was in use (held by PipeWire / JACK /
     // another DAW), the engine ctor already tried to fall back to a working one.
