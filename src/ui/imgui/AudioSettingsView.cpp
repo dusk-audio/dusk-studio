@@ -558,7 +558,11 @@ private:
 
     void drawHint (const dw::Context& ctx, ImVec2 at, float width, const char* text)
     {
-        ImFont* const font = ctx.fonts->label;
+        // The kit draws nothing on a null font; dereferencing FontSize here would crash
+        // instead. Fall back to the frame's current font, which is never null.
+        ImFont* font = ctx.fonts->label;
+        if (font == nullptr)
+            font = ImGui::GetFont();
         dw::text (ctx, font, font->FontSize,
                   ImVec2 (at.x + ctx.s (kControlInset),
                           at.y + (ctx.s (kRowH) - font->FontSize) * 0.5f),
