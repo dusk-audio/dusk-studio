@@ -416,12 +416,20 @@ private:
                     float height, int mode)
     {
         const auto domain = comp::ratioKnobDomainFor (strip);
-        const float value = mode == 1
-            ? fetRatioDisplayFor (strip.compFetRatio.load (std::memory_order_relaxed))
-            : strip.compVcaRatio.load (std::memory_order_relaxed);
+        const int fetIndex = mode == 1 ? std::clamp (strip.compFetRatio.load (std::memory_order_relaxed),
+                                                     0, comp::kFetRatioMaxIndex)
+                                       : -1;
+        const float value = mode == 1 ? fetRatioDisplayFor (fetIndex)
+                                      : strip.compVcaRatio.load (std::memory_order_relaxed);
 
         char buffer[32];
-        std::snprintf (buffer, sizeof buffer, "%.1f:1", static_cast<double> (value));
+        // The last rung is the all-in mode, not a fifth ratio: it shares 20:1's knob
+        // position, so printing the number would make the two read identically. The
+        // manual lists it as "All" and the engine names it the same.
+        if (fetIndex == comp::kFetRatioMaxIndex)
+            std::snprintf (buffer, sizeof buffer, "All");
+        else
+            std::snprintf (buffer, sizeof buffer, "%.1f:1", static_cast<double> (value));
 
         const auto result = knobCell (ctx, "##comp-ratio", at, width, height, "RATIO", buffer,
                                       value, rangeWithMid (domain, mode == 1 ? 4.0f : 8.0f),
