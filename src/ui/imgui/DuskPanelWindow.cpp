@@ -223,8 +223,17 @@ struct DuskPanelWindow::Impl final : private dusk::Timer
         if (++framesDrawn < 30)
             return;
 
-        std::vector<unsigned char> rgb (static_cast<std::size_t> (width * height * 3));
+        std::vector<unsigned char> rgb (static_cast<std::size_t> (width)
+                                        * static_cast<std::size_t> (height) * 3u);
+
+        // The rows below are read back tightly packed. GL pads them to four bytes by
+        // default, which skews every row whose width is not a multiple of four - the
+        // plates happen to be today, but a scale factor decides that, not the layout.
+        GLint previousAlignment = 4;
+        glGetIntegerv (GL_PACK_ALIGNMENT, &previousAlignment);
+        glPixelStorei (GL_PACK_ALIGNMENT, 1);
         glReadPixels (0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, rgb.data());
+        glPixelStorei (GL_PACK_ALIGNMENT, previousAlignment);
 
         // GL reads bottom-up.
         std::vector<unsigned char> flipped (rgb.size());
