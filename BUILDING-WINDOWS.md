@@ -80,7 +80,7 @@ Missing either checkout, `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults to **OFF** and c
 -- Native UI: DAF / DAF-Widgets not found - disabled
 ```
 
-The build otherwise completes as normal, but every native view is gone: opening the notepad reports *"Notepad unavailable: built without the native notepad UI"*, the compressor editor and virtual keyboard say the same of themselves, and the startup dialog does not appear. Passing `-DDUSKSTUDIO_ENABLE_NATIVE_UI=ON` with a checkout missing makes it a configure error instead.
+The build otherwise completes as normal, but every native view is gone: opening the notepad reports *"Notepad unavailable: built without the native notepad UI"*, the compressor editor, the virtual keyboard and the audio settings panel say the same of themselves, and the startup dialog does not appear. Passing `-DDUSKSTUDIO_ENABLE_NATIVE_UI=ON` with a checkout missing makes it a configure error instead.
 
 That OFF is sticky, because `DUSKSTUDIO_ENABLE_NATIVE_UI` is a **cached** CMake option — the one dependency here a later reconfigure won't pick up on its own. Configure `build\` before cloning DAF and cloning it afterwards changes nothing on the next configure, and the "not found" line stops printing too. Either configure into a fresh build directory or add `-DDUSKSTUDIO_ENABLE_NATIVE_UI=ON` to the configure command below.
 

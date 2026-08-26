@@ -22,7 +22,9 @@ their own steady frame back as a PPM and the script converts it. Their figures
 are taken at the end of the run, after the bounce phase, which leaves the input
 meter reading - so the harness parks the compressor panel's meters at rest
 before capturing it, because that figure is of the panel and not of a signal.
-The startup dialog and the virtual keyboard have no meters to settle.
+The startup dialog, the virtual keyboard and the audio settings panel have no
+meters to settle. The settings panel is taller than a 1200 px display can grant,
+so its figure is the panel scrolled to the top, which is what opening it shows.
 
 **Capture conventions (manual shots)**
 
@@ -38,7 +40,7 @@ The startup dialog and the virtual keyboard have no meters to settle.
 | Filename                   | Manual | Auto | What to capture                                                     |
 | -------------------------- | ------ | ---- | ------------------------------------------------------------------ |
 | `qg-01-startup.png`        | L66    | ✅   | Startup dialog with three fixed demo rows. Native panel: the app reads its own frame back and the script converts it. |
-| `qg-02-audio-settings.png` | L74    | ✅   | `Settings → Audio` panel, a real interface selected.               |
+| `qg-02-audio-settings.png` | L74    | ✅   | `Settings → Audio` panel, a real interface selected. Native panel: the app reads its own frame back and the script converts it. |
 | `qg-03-arm-track.png`      | L86    | ✅   | RECORDING: ARM on, input selected, IN off, live meter visible.    |
 | `qg-04-record-rolling.png` | L94    | ✅   | Mid-record: meters lit, a region drawing into the tape strip.      |
 | `qg-05-overdub.png`        | L102   | ✅   | Track 1 has a region; track 2 mid-record.                          |

@@ -87,6 +87,16 @@ public:
 
 private:
     void openAudioSettings();
+    void closeAudioSettings();
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    // A JUCE modal opened over the native settings panel would land behind it, so the
+    // panel steps down first and `showModal` runs once its child is off the screen.
+    // Each of those modals brings the panel back when it dismisses.
+    void handOffAudioSettings (std::function<void()> showModal);
+   #endif
+    // Screenshot-harness only: open the panel and ask it to read its own steady frame
+    // back into `capturePath`.
+    void openAudioSettingsForCapture (const std::string& capturePath);
     void openBounceDialog();
     void openBounceStemsDialog();
     bool toggleFullScreen();
@@ -278,12 +288,24 @@ private:
     std::unique_ptr<class MasteringView> masteringView;
     std::unique_ptr<class AuxView>       auxView;
 
-    // Explicitly torn down in our dtor BEFORE AudioEngine destructs -
-    // the dialog hosts an AudioDeviceSelectorComponent that listens to
-    // engine.deviceManager. Letting JUCE's ModalComponentManager clean
-    // it up at app exit (which runs AFTER us) would deref a freed
-    // AudioDeviceManager -> SIGSEGV.
-    EmbeddedModal audioSettingsModal;
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    // The audio settings panel is native: a framework child over the window with a dim
+    // sibling behind it. Explicitly torn down in our dtor BEFORE AudioEngine destructs
+    // - its view listens to the device manager and the engine.
+    std::unique_ptr<imgui::DuskPanelWindow> audioSettingsWindow;
+    std::unique_ptr<DimOverlay> audioSettingsDim;
+    PluginEditorHider audioSettingsHider;
+    // The app-wide scale the panel opened at. The panel is the control surface for the
+    // UI-scale preview, so it stays the physical size it opened with while everything
+    // behind it rescales - what the JUCE panel's inverse body transform did.
+    double audioSettingsReferenceScale = 1.0;
+    // Run once the panel's child is off the screen: the JUCE modal it stepped down for.
+    std::function<void()> audioSettingsHandOff;
+   #endif
+    // Both open over the settings panel, and both are JUCE modals, so the panel hands
+    // the window to them and comes back on dismissal.
+    EmbeddedModal midiBindingsModal;
+    EmbeddedModal selfTestModal;
     EmbeddedModal mixdownModal;
     EmbeddedModal bounceModal;
     EmbeddedModal quitModal;

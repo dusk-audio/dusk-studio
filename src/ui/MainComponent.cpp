@@ -9,14 +9,16 @@
 #else
  #define DUSKSTUDIO_HAS_BINARY_ICON 0
 #endif
-#include "AudioSettingsPanel.h"
 #include "DuskFileBrowser.h"
 #include "AuxView.h"
 #include "BounceDialog.h"
 #include "PluginScanModal.h"
 #include "ShortcutsPanel.h"
 #include "SupportersPanel.h"
+#include "MidiBindingsPanel.h"
+#include "SelfTestPanel.h"
 #if DUSKSTUDIO_HAS_NATIVE_UI
+ #include "imgui/AudioSettingsView.h"
  #include "imgui/StartupView.h"
  #include "imgui/VirtualKeyboardView.h"
  #include "NativeNotepadWindow.h"
@@ -935,6 +937,7 @@ MainComponent::MainComponent()
         // dialog is left alone: dismissing it would spend the session choice nobody
         // has made yet, and it is never up alongside these two.
         closeVirtualKeyboard();
+        closeAudioSettings();
         if (consoleView != nullptr)
             for (int t = 0; t < Session::kNumTracks; ++t)
                 if (auto* strip = consoleView->getStripComponent (t))
@@ -1101,21 +1104,28 @@ MainComponent::~MainComponent()
     // would defer body destruction to the next message-loop tick - but
     // the dispatch loop has already exited on this path, so the deferred
     // lambda would run AFTER our AudioEngine + AudioDeviceManager are
-    // gone. AudioSettingsPanel's destructor removes listeners from both;
-    // PluginScanModal's stops a worker that calls into the engine-owned
-    // PluginManager; BounceDialog's cancels + joins a BounceEngine
+    // gone. SelfTestPanel's destructor removes listeners from the engine and the
+    // device manager; PluginScanModal's stops a worker that calls into the
+    // engine-owned PluginManager; BounceDialog's cancels + joins a BounceEngine
     // rendering through the engine; DpImportProgressPanel holds a
     // DpImportJob& and a 20 Hz timer, so a leaked body outlives the job
     // it polls. All of those must run while the engine is still alive.
     // No body callback can be on the stack here (the dtor runs from app
     // shutdown), so in-place destruction is safe.
-    audioSettingsModal   .closeAndDeleteBodyNow();
+    midiBindingsModal    .closeAndDeleteBodyNow();
+    selfTestModal        .closeAndDeleteBodyNow();
     mixdownModal         .closeAndDeleteBodyNow();
     bounceModal          .closeAndDeleteBodyNow();
     scanModal            .closeAndDeleteBodyNow();
     quitModal            .closeAndDeleteBodyNow();
     recoveryModal        .closeAndDeleteBodyNow();
    #if DUSKSTUDIO_HAS_NATIVE_UI
+    // The settings view listens to the engine and the device manager, so its window
+    // goes down here rather than waiting for a deferred teardown that would run after
+    // both are gone.
+    audioSettingsHandOff = nullptr;
+    audioSettingsWindow.reset();
+    audioSettingsDim.reset();
     virtualKeyboardWindow.reset();
     virtualKeyboardDim.reset();
    #endif
@@ -2014,12 +2024,6 @@ void MainComponent::resized()
         }
     }
    #endif
-
-    // A live UI-scale preview changes this component's logical dimensions
-    // while the native window keeps the same physical rectangle. Refit the
-    // settings host using its inverse transform so the modal remains visually
-    // stable while only the DAW behind it changes scale.
-    audioSettingsModal.refitOwnedBodyToHost();
 }
 
 void MainComponent::refreshSnapUi()
@@ -2072,73 +2076,275 @@ void MainComponent::setTimelineVisible (bool show)
     resized();
 }
 
+#if DUSKSTUDIO_HAS_NATIVE_UI
+namespace
+{
+// JUCE refreshes its display model when the global scale changes, and the Cocoa and
+// Windows peers resize their component tree from it. The X11 peer's screen-size
+// callback deliberately does not, so there the new logical bounds have to be carried
+// back into the peer by hand.
+//
+// That round trip is confined to X11 because it is only correct where the peer is
+// inert. logicalToPhysical and physicalToLogical both fold in the global scale factor,
+// so converting out and back across a scale change divides the window's logical size by
+// the ratio between the two scales, and neither takes a display argument, so on a
+// multi-display desktop it converts against the primary display rather than the one
+// holding the window. Where the peer already resizes itself, that shrinks the window
+// toward nothing and can throw it onto another screen.
+void applyGlobalUiScale (juce::Component& source, float scale)
+{
+    auto& desktop = juce::Desktop::getInstance();
+    if (std::abs (desktop.getGlobalScaleFactor() - scale) < 0.0001f)
+        return;
+
+   #if ! JUCE_LINUX
+    (void) source;
+    desktop.setGlobalScaleFactor (scale);
+   #else
+    auto* topLevel = source.getTopLevelComponent();
+    auto* peer = topLevel != nullptr ? topLevel->getPeer() : nullptr;
+    if (peer == nullptr)
+    {
+        desktop.setGlobalScaleFactor (scale);
+        return;
+    }
+
+    juce::Component::SafePointer<juce::Component> safeTopLevel (topLevel);
+    const auto physicalBounds = desktop.getDisplays().logicalToPhysical (peer->getBounds());
+    const bool wasFullScreen = peer->isFullScreen();
+
+    desktop.setGlobalScaleFactor (scale);
+
+    if (auto* component = safeTopLevel.getComponent())
+    {
+        if (auto* refreshedPeer = component->getPeer())
+        {
+            const auto logicalBounds = desktop.getDisplays().physicalToLogical (physicalBounds);
+            const auto componentBoundsBefore = component->getBounds();
+            refreshedPeer->setBounds (logicalBounds, wasFullScreen);
+
+            // The physical-to-logical round trip can produce unchanged JUCE bounds even
+            // though the global scale changed. Force JUCE's base relayout callback in
+            // that case; LinuxComponentPeer's override otherwise only refreshes frame
+            // extents and leaves every child at the old scale.
+            if (component->getBounds() == componentBoundsBefore)
+                refreshedPeer->juce::ComponentPeer::handleScreenSizeChange();
+        }
+    }
+   #endif
+}
+} // namespace
+#endif
+
 void MainComponent::openAudioSettings()
 {
-    // Embedded modal - identical UX to a window (Esc to dismiss, click
-    // outside to close, body holds focus) but rendered over the main
-    // canvas so we don't fragment across OS windows. The Modal helper
-    // handles the dim overlay + body lifetime.
-    if (audioSettingsModal.isOpen()) return;
-    auto panel = std::make_unique<AudioSettingsPanel> (engine.getDeviceManager(),
-                                                          engine, session);
-    // Tall enough that the new grouped layout (Audio + Control Surface +
-    // MIDI Bindings + MIDI Sync + General + Advanced, each with a
-    // section header + separator) fits without any group being clipped.
-    // The Audio block hosts the DuskAudioDeviceSelector in a fixed slot
-    // sized to its preferred height - see AudioSettingsPanel::resized.
-    constexpr int kPanelW = 820;
-    // Content height that fits every section (the selector block sizes to its
-    // own preferred height) - anything less clips the Advanced rows (ALSA
-    // periods / oversampling / self-test / rescan, plus the Multicore DSP row)
-    // off the bottom even with a scroll wrapper, because the viewport never
-    // sees the missing pixels.
-    constexpr int kPanelH = 1180;
-    panel->setSize (kPanelW, kPanelH);
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    setStatusText ("Audio settings unavailable: built without the native UI");
+   #else
+    if (audioSettingsWindow != nullptr && audioSettingsWindow->isOpen())
+        return;
 
-    // Wrap the panel in a Viewport so the full content is reachable on
-    // displays shorter than kPanelH (1080p with bars, smaller laptop
-    // screens, scaled UI). Without this, the Advanced section's ALSA
-    // periods / oversampling / self-test controls clip off the bottom
-    // edge with no way to reach them.
-    class ScrollingHost final : public juce::Component
+    auto* const topLevel = getTopLevelComponent();
+    const auto parentHandle = topLevel != nullptr
+                            ? embedscale::nativeParentHandle (*topLevel) : 0;
+    if (parentHandle == 0)
     {
-    public:
-        ScrollingHost (std::unique_ptr<juce::Component> content,
-                        int contentW, int contentH)
-        {
-            content->setSize (contentW, contentH);
-            viewport.setViewedComponent (content.release(), /*deleteWhenRemoved*/ true);
-            viewport.setScrollBarsShown (true, false);
-            addAndMakeVisible (viewport);
-        }
-        void resized() override { viewport.setBounds (getLocalBounds()); }
-    private:
-        juce::Viewport viewport;
-    };
+        setStatusText ("Audio settings unavailable: main window is not ready");
+        return;
+    }
 
-    // Reserve room for the dim/backdrop margin + transport row + menu
-    // bar that frame the modal - without this, the centred modal
-    // overflows the visible canvas at the bottom and the Advanced
-    // section gets clipped even though the host theoretically "fits"
-    // inside MainComponent's bounds.
-    const int availH = std::max (300, getHeight() - 200);
-    const int hostH  = std::min (kPanelH, availH);
-    const int sbW    = juce::Component().getLookAndFeel().getDefaultScrollbarWidth();
-    auto host = std::make_unique<ScrollingHost> (std::move (panel),
-                                                   kPanelW, kPanelH);
-    host->setSize (kPanelW + sbW + 4, hostH);
-    // Re-apply per-machine prefs the panel may have changed that live on
-    // MainComponent's side (currently the autosave cadence).
+    if (auto hook = EmbeddedModal::beforeModalShown())
+        hook();
+
+    audioSettingsReferenceScale = embedscale::globalScale();
+
+    audioSettingsWindow = std::make_unique<imgui::DuskPanelWindow> (
+        "dusk-studio-audio-settings", "audio-settings", "Audio settings");
+
+    imgui::DuskPanelWindow::Callbacks callbacks;
+    callbacks.dismissed = [this] { closeAudioSettings(); };
+    callbacks.closed = [this]
+    {
+        audioSettingsDim.reset();
+        audioSettingsHider.restore();
+        reclaimFocusFromNotepad();
+        // Whatever the panel changed, the autosave cadence is the one setting that
+        // lives on this side, so the timer restarts at the value it now holds.
+        startTimer (appconfig::getAutosaveIntervalSeconds() * 1000);
+        if (auto handOff = std::exchange (audioSettingsHandOff, {}))
+            handOff();
+    };
+    callbacks.shortcut = [] (imgui::ShellShortcut shortcut)
+    {
+        return dispatchShellShortcut (shortcut);
+    };
+    callbacks.geometry = [this]
+    {
+        auto* const top = getTopLevelComponent();
+        if (top == nullptr || audioSettingsWindow == nullptr)
+            return imgui::DuskPanelWindow::Geometry {};
+        const auto plate = audioSettingsWindow->plateSize();
+        const auto pinned = embedscale::pinnedChildGeometry (*top, plate.width, plate.height,
+                                                             audioSettingsReferenceScale);
+        if (audioSettingsDim != nullptr)
+        {
+            audioSettingsDim->setBounds (top->getLocalBounds());
+            audioSettingsDim->setNativeChildArea (pinned.logical.expanded (1));
+        }
+        return imgui::DuskPanelWindow::Geometry { pinned.geometry.x, pinned.geometry.y,
+                                                  pinned.geometry.width,
+                                                  pinned.geometry.height,
+                                                  pinned.geometry.scale };
+    };
+    audioSettingsWindow->setCallbacks (std::move (callbacks));
+
     juce::Component::SafePointer<MainComponent> safeThis (this);
-    audioSettingsModal.show (*this, std::move (host), [safeThis]
+    imgui::AudioSettingsHost host;
+    host.alert = [safeThis] (std::string title, std::string message)
+    {
+        auto* const self = safeThis.getComponent();
+        if (self == nullptr)
+            return;
+        self->handOffAudioSettings ([safeThis, title = std::move (title),
+                                     message = std::move (message)]
+        {
+            auto* const owner = safeThis.getComponent();
+            if (owner == nullptr)
+                return;
+            showDuskAlert (*owner, title, message,
+                           [safeThis]
+                           {
+                               if (auto* back = safeThis.getComponent())
+                                   back->openAudioSettings();
+                           });
+        });
+    };
+    host.previewUiScale = [safeThis] (float scale)
     {
         if (auto* self = safeThis.getComponent())
+            applyGlobalUiScale (*self, scale);
+    };
+    host.openMidiBindings = [safeThis]
+    {
+        auto* const self = safeThis.getComponent();
+        if (self == nullptr)
+            return;
+        self->handOffAudioSettings ([safeThis]
         {
-            self->audioSettingsModal.close();
-            self->startTimer (appconfig::getAutosaveIntervalSeconds() * 1000);
-        }
-    });
-    audioSettingsModal.setOwnedBodyScaleInvariant (true);
+            auto* const owner = safeThis.getComponent();
+            if (owner == nullptr)
+                return;
+            owner->midiBindingsModal.show (
+                *owner,
+                std::make_unique<MidiBindingsPanel> (
+                    owner->session, owner->engine,
+                    [safeThis]
+                    {
+                        if (auto* back = safeThis.getComponent())
+                            back->midiBindingsModal.close();
+                    }),
+                [safeThis]
+                {
+                    auto* const back = safeThis.getComponent();
+                    if (back == nullptr)
+                        return;
+                    back->midiBindingsModal.close();
+                    back->openAudioSettings();
+                });
+        });
+    };
+    host.openSelfTest = [safeThis]
+    {
+        auto* const self = safeThis.getComponent();
+        if (self == nullptr)
+            return;
+        self->handOffAudioSettings ([safeThis]
+        {
+            auto* const owner = safeThis.getComponent();
+            if (owner == nullptr)
+                return;
+            auto panel = std::make_unique<SelfTestPanel> (owner->engine,
+                                                          owner->engine.getDeviceManager(),
+                                                          owner->session);
+            panel->setSize (760, 560);
+            panel->onCloseRequested = [safeThis]
+            {
+                if (auto* back = safeThis.getComponent())
+                    back->selfTestModal.close();
+            };
+            owner->selfTestModal.show (*owner, std::move (panel),
+                                       [safeThis]
+                                       {
+                                           auto* const back = safeThis.getComponent();
+                                           if (back == nullptr)
+                                               return;
+                                           back->selfTestModal.close();
+                                           back->openAudioSettings();
+                                       });
+        });
+    };
+
+    audioSettingsWindow->setView (imgui::makeAudioSettingsView (engine.getDeviceManager(),
+                                                                engine, session,
+                                                                std::move (host)));
+
+    const auto plate = audioSettingsWindow->plateSize();
+    const auto pinned = embedscale::pinnedChildGeometry (*topLevel, plate.width, plate.height,
+                                                         audioSettingsReferenceScale);
+
+    audioSettingsDim = std::make_unique<DimOverlay> (audioSettingsWindow->dimAlpha());
+    audioSettingsDim->setBounds (topLevel->getLocalBounds());
+    audioSettingsDim->setNativeChildArea (pinned.logical.expanded (1));
+    audioSettingsDim->onClick = [this] { closeAudioSettings(); };
+    topLevel->addAndMakeVisible (audioSettingsDim.get());
+    audioSettingsHider.hideUnder (*topLevel, { audioSettingsDim.get() });
+
+    if (! audioSettingsWindow->open (parentHandle,
+                                     { pinned.geometry.x, pinned.geometry.y,
+                                       pinned.geometry.width, pinned.geometry.height,
+                                       pinned.geometry.scale }))
+    {
+        audioSettingsDim.reset();
+        audioSettingsHider.restore();
+        const auto& why = audioSettingsWindow->lastOpenFailure();
+        setStatusText (why.empty()
+                           ? "Audio settings unavailable: this display cannot carry it"
+                           : why.c_str());
+    }
+   #endif
+}
+
+void MainComponent::closeAudioSettings()
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (audioSettingsWindow != nullptr && audioSettingsWindow->isOpen())
+        audioSettingsWindow->close();
+   #endif
+}
+
+#if DUSKSTUDIO_HAS_NATIVE_UI
+void MainComponent::handOffAudioSettings (std::function<void()> showModal)
+{
+    if (audioSettingsWindow == nullptr || ! audioSettingsWindow->isOpen())
+    {
+        if (showModal)
+            showModal();
+        return;
+    }
+    audioSettingsHandOff = std::move (showModal);
+    closeAudioSettings();
+}
+#endif
+
+void MainComponent::openAudioSettingsForCapture (const std::string& capturePath)
+{
+    openAudioSettings();
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (audioSettingsWindow != nullptr && audioSettingsWindow->isOpen())
+        audioSettingsWindow->captureNextFrameTo (capturePath);
+   #else
+    (void) capturePath;
+   #endif
 }
 
 void MainComponent::openShortcuts()

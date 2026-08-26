@@ -19,7 +19,6 @@
 #include "PianoRollComponent.h"
 #include "ChannelEqEditor.h"
 #include "TapePanel.h"
-#include "AudioSettingsPanel.h"
 #include "MidiBindingsPanel.h"
 #include "HardwareInsertEditor.h"
 #include "PluginPickerPanel.h"
@@ -357,10 +356,6 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
     }
     alias ("np-11-piano-roll.png", "ed-05-piano-roll-full.png");
     {
-        AudioSettingsPanel p (engine.getDeviceManager(), engine, session);
-        modalShot (p, 720, 560, "qg-02-audio-settings.png", 400);
-    }
-    {
         MidiBindingsPanel p (session, engine, [] {});
         modalShot (p, MidiBindingsPanel::kPanelW, MidiBindingsPanel::kPanelH, "sync-01-mcu-bindings.png", 300);
     }
@@ -392,8 +387,8 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         modalShot (tp, w, h, "fx-03-tape.png", 300);
         m.tapeEnabled.store (wasTapeEnabled, std::memory_order_relaxed);
     }
-    // qg-01-startup is the native startup panel now, captured with the other
-    // framework children in captureNativePanels below.
+    // qg-01-startup and qg-02-audio-settings are native panels now, captured with
+    // the other framework children in captureNativePanels below.
     {
         // Plugin picker with a synthetic effect list (no real scan in capture mode).
         auto mk = [] (const char* n, const char* mfr, const char* cat)
@@ -494,12 +489,33 @@ void MainComponent::captureNativePanels (std::string outDir)
 
                 dusk::Timer::callAfterDelay (400, [safeThis, quitNow, outDir]
                 {
-                    if (auto* last = safeThis.getComponent())
-                        last->openStartupForCapture (outDir + "/qg-01-startup.ppm");
-                    // Quitting with the startup panel still up is the point: its
-                    // dismissal would run the launch follow-ups the harness has
-                    // already been past for a whole session.
-                    dusk::Timer::callAfterDelay (1500, quitNow);
+                    auto* const settings = safeThis.getComponent();
+                    if (settings == nullptr)
+                    {
+                        quitNow();
+                        return;
+                    }
+                    settings->openAudioSettingsForCapture (outDir + "/qg-02-audio-settings.ppm");
+                    dusk::Timer::callAfterDelay (1500, [safeThis, quitNow, outDir]
+                    {
+                        auto* const withSettings = safeThis.getComponent();
+                        if (withSettings == nullptr)
+                        {
+                            quitNow();
+                            return;
+                        }
+                        withSettings->closeAudioSettings();
+
+                        dusk::Timer::callAfterDelay (400, [safeThis, quitNow, outDir]
+                        {
+                            if (auto* last = safeThis.getComponent())
+                                last->openStartupForCapture (outDir + "/qg-01-startup.ppm");
+                            // Quitting with the startup panel still up is the point: its
+                            // dismissal would run the launch follow-ups the harness has
+                            // already been past for a whole session.
+                            dusk::Timer::callAfterDelay (1500, quitNow);
+                        });
+                    });
                 });
             });
         });

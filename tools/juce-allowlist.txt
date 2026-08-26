@@ -59,8 +59,6 @@ src/ui/AnalogVuMeter.cpp	113
 src/ui/AnalogVuMeter.h	7
 src/ui/AudioRegionEditor.cpp	336
 src/ui/AudioRegionEditor.h	86
-src/ui/AudioSettingsPanel.cpp	99
-src/ui/AudioSettingsPanel.h	39
 src/ui/AuxLaneComponent.cpp	168
 src/ui/AuxLaneComponent.h	28
 src/ui/AuxView.cpp	60
@@ -88,8 +86,6 @@ src/ui/DimOverlay.h	6
 src/ui/DpImportDialog.h	46
 src/ui/DuskAlerts.cpp	96
 src/ui/DuskAlerts.h	19
-src/ui/DuskAudioDeviceSelector.cpp	20
-src/ui/DuskAudioDeviceSelector.h	8
 src/ui/DuskComboBox.cpp	190
 src/ui/DuskComboBox.h	5
 src/ui/DuskContextMenu.cpp	51
@@ -113,7 +109,7 @@ src/ui/ImportTargetPicker.cpp	97
 src/ui/ImportTargetPicker.h	11
 src/ui/Lv2PluginEditorComponent.cpp	3
 src/ui/Lv2PluginEditorComponent.h	4
-src/ui/MainComponent.cpp	456
+src/ui/MainComponent.cpp	457
 src/ui/MainComponent.h	57
 src/ui/MasterStripComponent.cpp	381
 src/ui/MasterStripComponent.h	59
@@ -129,7 +125,7 @@ src/ui/MiniTimelineStrip.cpp	19
 src/ui/MiniTimelineStrip.h	10
 src/ui/MultiImportTargetPicker.cpp	78
 src/ui/MultiImportTargetPicker.h	11
-src/ui/NativeEditorEmbedScale.h	12
+src/ui/NativeEditorEmbedScale.h	14
 src/ui/PianoRollComponent.cpp	381
 src/ui/PianoRollComponent.h	61
 src/ui/PlatformWindowing.h	14
