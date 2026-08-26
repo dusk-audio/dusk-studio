@@ -589,7 +589,7 @@ each becoming an embedded framework window: `AudioSettingsPanel`,
 **Landed, in two passes.** `ChannelCompEditor`, `VirtualKeyboardComponent` and
 `StartupDialog` first (178 files / 9,050 uses to 172 / 8,684), then
 `AudioSettingsPanel` with `DuskAudioDeviceSelector`, `MasteringEqEditor` and
-`MasteringLimiterEditor` (172 / 8,684 to 164 / 8,257).
+`MasteringLimiterEditor` (172 / 8,684 to 164 / 8,253).
 
 The vehicle is `src/ui/imgui/DuskPanelWindow`, and it is the part worth knowing
 before adding a panel of any kind. **A modal child covers the panel's plate and
