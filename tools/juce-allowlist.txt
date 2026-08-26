@@ -7,7 +7,7 @@ src/dsp/ChannelStrip.h	32
 src/dsp/MasterBus.cpp	3
 src/dsp/MasterBus.h	7
 src/dsp/MasteringChain.h	5
-src/engine/AudioEngine.cpp	140
+src/engine/AudioEngine.cpp	139
 src/engine/AudioEngine.h	18
 src/engine/AudioPipelineSelfTest.cpp	23
 src/engine/BounceEngine.cpp	47
@@ -20,6 +20,7 @@ src/engine/DuskStudioPlayHead.h	4
 src/engine/FileImporter.cpp	20
 src/engine/FileImporter.h	4
 src/engine/JuceCompat.h	5
+src/engine/LegacyStateBase64.h	8
 src/engine/MasteringPlayer.cpp	3
 src/engine/MasteringPlayer.h	8
 src/engine/PlaybackEngine.cpp	6
@@ -50,7 +51,7 @@ src/session/MarkerEditActions.h	4
 src/session/MidiBindings.cpp	47
 src/session/MidiBindings.h	10
 src/session/ParamEditAction.h	2
-src/session/RegionEditActions.cpp	36
+src/session/RegionEditActions.cpp	35
 src/session/RegionEditActions.h	16
 src/session/Session.cpp	10
 src/session/Session.h	76

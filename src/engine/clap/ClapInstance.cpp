@@ -289,7 +289,21 @@ bool ClapInstance::loadState (const std::vector<uint8_t>& in)
         if (n > 0) { std::memcpy (buffer, c->data + c->pos, n); c->pos += n; }
         return (int64_t) n;   // 0 = EOF
     };
-    return st->load (plugin, &is);
+    if (! st->load (plugin, &is)) return false;
+
+    // Restored state can select a mode with different lookahead (linear phase,
+    // oversampling), so the value cached at activate() no longer describes the
+    // plugin. Re-read it or the host compensates by the wrong amount.
+    // clap_plugin_latency.get is [main-thread & active].
+    if (active)
+    {
+        if (const auto* lat = static_cast<const clap_plugin_latency_t*> (
+                plugin->get_extension (plugin, CLAP_EXT_LATENCY));
+            lat != nullptr && lat->get != nullptr)
+            latencySamples = (int) lat->get (plugin);
+    }
+
+    return true;
 }
 
 bool ClapInstance::getParamValue (clap_id id, double& out) const

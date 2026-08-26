@@ -55,6 +55,8 @@ add_executable(dusk-studio-tests
     fade_curve_path.cpp
     file_importer_audio.cpp
     hardware_insert.cpp
+    base64_decode.cpp
+    legacy_state_base64.cpp
     session_round_trip.cpp
     session_tape_migration.cpp
     session_freeze_roundtrip.cpp

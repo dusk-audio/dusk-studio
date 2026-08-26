@@ -4,6 +4,7 @@
 #include "../engine/Transport.h"
 #include "../engine/audiofile/FileReader.h"
 #include "../engine/audiofile/FileWriter.h"
+#include "../foundation/Base64.h"
 #include "../foundation/Decibels.h"
 
 #include <algorithm>
@@ -483,12 +484,7 @@ namespace
 #if DUSKSTUDIO_HAS_NATIVE_AU
 std::vector<uint8_t> decodeCarriedState (const juce::String& base64)
 {
-    std::vector<uint8_t> out;
-    juce::MemoryBlock blob;
-    if (blob.fromBase64Encoding (base64) && blob.getSize() > 0)
-        out.assign (static_cast<const uint8_t*> (blob.getData()),
-                    static_cast<const uint8_t*> (blob.getData()) + blob.getSize());
-    return out;
+    return dusk::base64::decode (base64.toRawUTF8(), base64.getNumBytesAsUTF8());
 }
 #endif
 

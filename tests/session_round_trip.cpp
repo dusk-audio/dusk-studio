@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "foundation/Base64.h"
 #include "session/Session.h"
 #include "session/SessionSerializer.h"
 
@@ -178,18 +179,27 @@ TEST_CASE ("SessionSerializer round-trips an aux native-CLAP slot", "[session][s
     const auto dir = makeTempSessionDir();
     const auto target = dir.getChildFile ("session.json");
 
+    // Encoded the way AudioEngine::publishPluginStateForSave writes it, so the
+    // stored string is checked against the decoder the restore path uses instead
+    // of only against itself.
+    const std::vector<std::uint8_t> state { 0x00, 0x01, 0xfe, 0xff, 0x7f, 0x80, 0x2b, 0x2f };
+    const auto encoded = juce::Base64::toBase64 (state.data(), state.size());
+
     Session a;
     auto& lane = a.auxLane (1);
     lane.nativeClapPath[0]        = "/home/user/.clap/DuskVerb.clap";
     lane.nativeClapPluginId[0]    = "com.dusk.duskverb";
-    lane.nativeClapStateBase64[0] = "Q0xBUFNUQVRFYmxvYg==";
+    lane.nativeClapStateBase64[0] = encoded;
     REQUIRE (SessionSerializer::save (a, target));
 
     Session b;
     REQUIRE (SessionSerializer::load (b, target));
     REQUIRE (b.auxLane (1).nativeClapPath[0]        == "/home/user/.clap/DuskVerb.clap");
     REQUIRE (b.auxLane (1).nativeClapPluginId[0]    == "com.dusk.duskverb");
-    REQUIRE (b.auxLane (1).nativeClapStateBase64[0] == "Q0xBUFNUQVRFYmxvYg==");
+
+    const auto& stored = b.auxLane (1).nativeClapStateBase64[0];
+    REQUIRE (stored == encoded);
+    REQUIRE (dusk::base64::decode (stored.toRawUTF8(), stored.getNumBytesAsUTF8()) == state);
 
     // A lane with no native CLAP stays empty (keys omitted on write).
     REQUIRE (b.auxLane (0).nativeClapPath[0].isEmpty());
