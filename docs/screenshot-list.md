@@ -19,8 +19,10 @@ notes below.
 Panels ported to the native GUI stack are still automatic, by a different route:
 `createComponentSnapshot` cannot reach a framework child, so those panels read
 their own steady frame back as a PPM and the script converts it. Their figures
-are taken at the end of the run, after the bounce phase, so a live meter in one
-of them reads whatever the engine last wrote rather than resting.
+are taken at the end of the run, after the bounce phase, which leaves the input
+meter reading - so the harness parks the compressor panel's meters at rest
+before capturing it, because that figure is of the panel and not of a signal.
+The startup dialog and the virtual keyboard have no meters to settle.
 
 **Capture conventions (manual shots)**
 
@@ -70,7 +72,7 @@ of them reads whatever the engine last wrote rather than resting.
 | `fx-01-eq.png`                  | L731   | ✅   | Channel EQ editor — HPF/LPF + 4 bands, curve-shaped.      |
 | `fx-02-comp.png`                | L753   | ✅   | Channel compressor editor (VCA mode). Native panel: the app reads its own frame back and the script converts it. |
 | `vkb-01-virtual-keyboard.png`   | L563   | ✅   | Virtual MIDI keyboard. Native panel, same route as `fx-02-comp.png`. |
-| `fx-03-tape.png`                | L910   | ✅   | Master tape-machine editor (native panel).                |
+| `fx-03-tape.png`                | L910   | ✅   | Master tape-machine editor. JUCE panel, taken through the snapshot route. |
 | `mm-01-automation-modes.png`    | L1434  | ✅   | A fader's automation-mode label (READ / WRITE / TOUCH).   |
 | `mm-02-mastering-chain.png`     | L991   | ✅   | Mastering chain with EQ, comp, and limiter engaged.       |
 | `pl-01-plugin-picker.png`       | L1508  | ✅   | Plugin picker panel populated.                            |
