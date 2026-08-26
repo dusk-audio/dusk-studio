@@ -756,7 +756,7 @@ The channel compressor has three mutually-exclusive modes. Settings are remember
 
 Click the header's left status light to bypass or engage the compressor; click the **COMP** label once to open the editor. Right-click anywhere on the header for the COMP menu — the mode (**Opto**, **FET**, **VCA**), **Reset comp**, and **Open editor…**.
 
-Every knob here takes a vertical drag; hold **Shift** while dragging for fine adjustment, use the scroll wheel for small steps, and double-click to return the knob to its default.
+Every knob here takes a vertical drag; hold **Shift** while dragging for fine adjustment, use the scroll wheel for small steps, and double-click to return the knob to its default. Those defaults follow the active mode rather than one shared pair: **ATTACK** and **RELEASE** return to 0.2 ms / 400 ms in FET and 1 ms / 100 ms in VCA, which are the values a fresh track starts with, so a double-click and a new track agree. Double-clicking the threshold handle resets the **threshold only** — in FET mode the input and output drive keep their settings, matching what the same gesture does on the channel strip's meter and on a control surface.
 
 All three modes share one set of knobs — **THRESHOLD, RATIO, ATTACK, RELEASE, MAKEUP** — that route to the right underlying parameter for whichever mode is active. Set the **threshold** by dragging the triangle handle on the gain-reduction meter strip (this also engages the compressor); the remaining knobs sit in a 2×2 grid below the header. The **MAKEUP** knob is the shared makeup gain and is available in every mode; its range follows the active mode — −40 to +40 dB in Opto (the optical gain dial's full span), −20 to +20 dB in FET and VCA. Knob ranges retune per mode, as listed below.
 
