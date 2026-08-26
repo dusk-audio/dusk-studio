@@ -25,7 +25,7 @@ src/engine/MasteringPlayer.cpp	3
 src/engine/MasteringPlayer.h	8
 src/engine/PlaybackEngine.cpp	6
 src/engine/PlaybackEngine.h	4
-src/engine/PluginManager.cpp	112
+src/engine/PluginManager.cpp	109
 src/engine/PluginManager.h	29
 src/engine/PluginSlot.cpp	73
 src/engine/PluginSlot.h	42
@@ -145,8 +145,8 @@ src/ui/PluginPickerHelpers.cpp	135
 src/ui/PluginPickerHelpers.h	23
 src/ui/PluginPickerPanel.cpp	70
 src/ui/PluginPickerPanel.h	13
-src/ui/PluginScanModal.cpp	28
-src/ui/PluginScanModal.h	10
+src/ui/PluginScanModal.cpp	33
+src/ui/PluginScanModal.h	11
 src/ui/ScreenshotCapture.cpp	31
 src/ui/SectionPillButton.h	7
 src/ui/SelfTestPanel.cpp	10

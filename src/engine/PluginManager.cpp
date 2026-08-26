@@ -22,7 +22,12 @@
   #include "au/AuScanner.h"
 #endif
 
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <map>
+#include <mutex>
+#include <thread>
 
 namespace duskstudio
 {
@@ -157,6 +162,158 @@ namespace
 // A plugin can take a few seconds to instantiate on a cold cache; give a
 // generous ceiling and treat anything past it as a hang.
 constexpr int kScanTimeoutMs = 30000;
+
+// Bounded so a child that chatters instead of finishing cannot grow the parent
+// without limit for the whole timeout.
+constexpr size_t kMaxScanOutputBytes = 8 * 1024 * 1024;
+
+struct SandboxedScan
+{
+    enum class Verdict
+    {
+        Completed,      // child produced a payload; trust it
+        Cancelled,      // user stopped the scan; the file is untouched, not at fault
+        Failed,         // crash, hang, or a flood of output
+        Unsupervised    // no watchdog, so the scan was never safe to start
+    };
+
+    Verdict     verdict  = Verdict::Failed;
+    bool        timedOut = false;         // picks the log line; never the verdict
+    bool        tooMuchOutput = false;
+    std::string payload;
+};
+
+// Drive one already-started sandboxed child to a verdict.
+//
+// readProcessOutput does not return until it has filled its buffer or the child
+// exits, so a deadline polled from this thread never fires against a plugin
+// sitting on a license dialog and writing nothing. A watchdog enforces the
+// deadline and the cancel flag instead - ending the child is what releases the
+// read - and re-issues the kill every tick, because a killed child frees the
+// reader only once the pipe reaches EOF.
+//
+// isRunning() reaps the child and the pid becomes reusable the moment it does,
+// so the reader publishes reading=false inside the same lock that gates every
+// kill. Without that interlock a late kill lands on an unrelated process.
+SandboxedScan driveSandboxedScan (juce::ChildProcess& proc, const std::atomic<bool>* abort)
+{
+    SandboxedScan result;
+
+    juce::MemoryOutputStream captured;
+    char buf[8192];
+
+    std::mutex              watchMutex;
+    std::condition_variable watchDone;
+    bool reading   = true;   // all three guarded by watchMutex
+    bool cancelled = false;
+    bool expired   = false;
+
+    std::thread watchdog;
+    try
+    {
+        watchdog = std::thread ([&]
+        {
+            // Wrap-safe elapsed check: unsigned subtraction is correct across a
+            // single getMillisecondCounter() wrap (every ~49 days of uptime), so
+            // compare the interval rather than an absolute deadline.
+            const std::uint32_t startMs = juce::Time::getMillisecondCounter();
+            std::unique_lock<std::mutex> lock (watchMutex);
+
+            while (! watchDone.wait_for (lock, std::chrono::milliseconds (25),
+                                         [&reading] { return ! reading; }))
+            {
+                if (abort != nullptr && abort->load (std::memory_order_relaxed))
+                    cancelled = true;
+                else if (juce::Time::getMillisecondCounter() - startMs
+                             >= (std::uint32_t) kScanTimeoutMs)
+                    expired = true;
+                else
+                    continue;
+
+                proc.kill();   // TerminateProcess on Windows - unblocks a modal dialog
+            }
+        });
+    }
+    catch (const std::system_error& e)
+    {
+        // Without a watchdog the read below can block forever. Refuse the file
+        // rather than wedge the whole scan on it.
+        proc.kill();
+        proc.waitForProcessToFinish (200);
+        std::fprintf (stderr, "[Dusk Studio/scan] could not start the scan watchdog: %s\n",
+                      e.what());
+        std::fflush (stderr);
+        result.verdict = SandboxedScan::Verdict::Unsupervised;
+        return result;
+    }
+
+    {
+        // A joinable std::thread destructor terminates the process, so every way
+        // out of the loop below - including a throw - has to pass through here.
+        struct Joiner
+        {
+            ~Joiner()
+            {
+                { std::lock_guard<std::mutex> lock (mutex); reading = false; }
+                done.notify_one();
+                thread.join();
+            }
+
+            std::thread&             thread;
+            std::mutex&              mutex;
+            std::condition_variable& done;
+            bool&                    reading;
+        } joiner { watchdog, watchMutex, watchDone, reading };
+
+        for (;;)
+        {
+            const int n = proc.readProcessOutput (buf, (int) sizeof buf);
+            if (n > 0)
+            {
+                captured.write (buf, (size_t) n);
+                if (captured.getDataSize() < kMaxScanOutputBytes) continue;
+
+                {
+                    // Under the lock like every other kill, so the watchdog
+                    // cannot also be killing while this one runs.
+                    std::lock_guard<std::mutex> lock (watchMutex);
+                    reading = false;
+                    proc.kill();
+                }
+                result.tooMuchOutput = true;
+                break;
+            }
+
+            bool finished = false;
+            {
+                std::lock_guard<std::mutex> lock (watchMutex);
+                if (! proc.isRunning()) { reading = false; finished = true; }
+            }
+            if (! finished) { juce::Thread::sleep (5); continue; }
+
+            int extra;
+            while ((extra = proc.readProcessOutput (buf, (int) sizeof buf)) > 0)
+                captured.write (buf, (size_t) extra);
+            break;
+        }
+    }
+
+    if (result.tooMuchOutput || cancelled || expired)
+        proc.waitForProcessToFinish (200);   // reap: kill() never waitpid()s
+
+    result.timedOut = expired;
+    result.payload  = scanproto::extractPayload (captured.toString().toStdString());
+
+    // A payload carries both sentinels, so having one proves the child finished
+    // the scan. That outranks everything the watchdog saw: a deadline that
+    // expired while the child was already exiting, or a flood that arrived
+    // alongside a good answer, would otherwise blacklist a plugin that scanned
+    // fine. timedOut and tooMuchOutput only pick the log line.
+    if (! result.payload.empty()) result.verdict = SandboxedScan::Verdict::Completed;
+    else if (cancelled)           result.verdict = SandboxedScan::Verdict::Cancelled;
+    else                          result.verdict = SandboxedScan::Verdict::Failed;
+    return result;
+}
 } // namespace
 #endif
 
@@ -213,70 +370,39 @@ public:
             return true;
         }
 
-        juce::MemoryOutputStream captured;
-        char buf[8192];
-        // Wrap-safe elapsed check: unsigned subtraction is correct across a
-        // single getMillisecondCounter() wrap (every ~49 days of uptime), so
-        // compare the interval rather than an absolute deadline.
-        const std::uint32_t startMs = juce::Time::getMillisecondCounter();
-        bool aborted  = false;
-        bool timedOut = false;
+        const auto scan = driveSandboxedScan (proc, abort);
 
-        for (;;)
+        if (scan.verdict == SandboxedScan::Verdict::Unsupervised)
         {
-            const int n = proc.readProcessOutput (buf, (int) sizeof buf);
-            if (n > 0) { captured.write (buf, (size_t) n); continue; }
-
-            if (! proc.isRunning())
-            {
-                int extra;
-                while ((extra = proc.readProcessOutput (buf, (int) sizeof buf)) > 0)
-                    captured.write (buf, (size_t) extra);
-                break;
-            }
-
-            // Cancel / app-shutdown: kill the child immediately rather than
-            // waiting out its timeout. Not a crash, so don't blacklist.
-            if (abort != nullptr && abort->load (std::memory_order_relaxed))
-            {
-                proc.kill();
-                proc.waitForProcessToFinish (200);  // reap: kill() SIGKILLs but never waitpid()s
-                aborted = true;
-                break;
-            }
-
-            if (juce::Time::getMillisecondCounter() - startMs >= (std::uint32_t) kScanTimeoutMs)
-            {
-                proc.kill();                         // TerminateProcess on Windows - unblocks a modal dialog
-                proc.waitForProcessToFinish (200);   // reap the SIGKILLed child, no zombie
-                timedOut = true;
-                break;
-            }
-            juce::Thread::sleep (5);
+            // Same rule as a missing host binary: skip, don't scan in-process,
+            // don't blacklist.
+            noteSandboxUnavailable (fileOrIdentifier);
+            return true;
         }
 
-        // Abort tears the whole scan down; leave the in-flight file UNSCANNED
-        // (return true) rather than blacklisting a plugin the user cancelled on.
-        if (aborted) return true;
+        // Cancel tears the whole scan down; leave the in-flight file UNSCANNED
+        // (return true) rather than blacklisting a plugin the user stopped on.
+        if (scan.verdict == SandboxedScan::Verdict::Cancelled) return true;
 
-        const auto payload = scanproto::extractPayload (captured.toString().toStdString());
-
-        if (timedOut || payload.empty())
+        if (scan.verdict == SandboxedScan::Verdict::Failed)
         {
-            // A hang (timed out) or a crash (child died with no clean payload):
-            // quarantine so the next scan skips it instead of re-hanging /
-            // re-crashing. A hung scan is most often a plugin blocking on a
-            // license / authorization dialog it cannot show during discovery.
+            // A hang, a crash, or a flood of output: quarantine so the next scan
+            // skips it instead of re-hanging / re-crashing. A hung scan is most
+            // often a plugin blocking on a license / authorization dialog it
+            // cannot show during discovery.
             knownList.addToBlacklist (fileOrIdentifier);
-            std::fprintf (stderr, timedOut
-                ? "[Dusk Studio/scan] quarantined \"%s\": timed out (possible license dialog)\n"
-                : "[Dusk Studio/scan] quarantined \"%s\": scan crashed (no payload)\n",
+            std::fprintf (stderr,
+                scan.tooMuchOutput
+                    ? "[Dusk Studio/scan] quarantined \"%s\": flooded the scan output\n"
+                : scan.timedOut
+                    ? "[Dusk Studio/scan] quarantined \"%s\": timed out (possible license dialog)\n"
+                    : "[Dusk Studio/scan] quarantined \"%s\": scan crashed (no payload)\n",
                 fileOrIdentifier.toRawUTF8());
             std::fflush (stderr);
             return false;
         }
 
-        const auto parsed = scanproto::parsePayload (payload);
+        const auto parsed = scanproto::parsePayload (scan.payload);
         if (! parsed.has_value())
         {
             knownList.addToBlacklist (fileOrIdentifier);
@@ -536,13 +662,15 @@ int PluginManager::scanInstalledPlugins (
     const bool blacklistGrew = knownPluginList.getBlacklistedFiles().size() != blacklistBefore;
     if (added > 0 || pruned > 0 || blacklistGrew) saveCache();
 
-    if (! aborting)
-    {
-        scanClapPlugins();        // CLAP isn't a juce format - scan it alongside the JUCE pass
-        scanLv2Plugins();         // native-LV2 rows are separate from JUCE's LV2 format
-        scanVst3NativePlugins();  // native-VST3 rows are separate from JUCE's VST3 format
-        scanAuPlugins();          // native-AU rows come from the macOS component registry
-    }
+    // Each phase is re-gated on the live flag, not the one sampled before the
+    // JUCE pass: a cancel raised during the CLAP phase has to stop the VST3 one
+    // too, or Cancel stays inert for the rest of the native scan.
+    const auto cancelled = [abort] { return abort != nullptr && abort->load (std::memory_order_relaxed); };
+
+    if (! aborting && ! cancelled()) scanClapPlugins (abort);        // CLAP isn't a juce format - scan it alongside the JUCE pass
+    if (! aborting && ! cancelled()) scanLv2Plugins();               // native-LV2 rows are separate from JUCE's LV2 format
+    if (! aborting && ! cancelled()) scanVst3NativePlugins (abort);  // native-VST3 rows are separate from JUCE's VST3 format
+    if (! aborting && ! cancelled()) scanAuPlugins();                // native-AU rows come from the macOS component registry
     return added;
 }
 
@@ -552,83 +680,95 @@ int PluginManager::scanInstalledPlugins (
 // couldn't spawn (caller falls back in-process); a spawned child that crashes
 // or times out yields no payload and the bundle is skipped - re-probed next
 // scan, but never fatal.
-bool PluginManager::scanNativeBundleSandboxed (const char* format, const juce::File& bundle,
-                                               std::vector<PluginDescriptor>& into) const
+PluginManager::NativeScanOutcome PluginManager::scanNativeBundleSandboxed (
+    const char* format, const juce::File& bundle,
+    std::vector<PluginDescriptor>& into, const std::atomic<bool>* abort) const
 {
     const juce::File hostExe (getHostExecutablePath());
     if (hostExe == juce::File() || ! hostExe.existsAsFile())
-        return false;
+        return NativeScanOutcome::NoSandbox;
 
     juce::ChildProcess proc;
     const juce::StringArray args { hostExe.getFullPathName(), "--scan-native",
                                    format, bundle.getFullPathName() };
     if (! proc.start (args, juce::ChildProcess::wantStdOut))
-        return false;
+        return NativeScanOutcome::NoSandbox;
 
-    juce::MemoryOutputStream captured;
-    char buf[8192];
-    const std::uint32_t startMs = juce::Time::getMillisecondCounter();
-    for (;;)
+    const auto scan = driveSandboxedScan (proc, abort);
+
+    // A child DID run and was killed unsupervised, so the bundle's factory may
+    // have executed already. Falling back in-process would run it again with no
+    // isolation at all - skip instead, and re-probe on the next scan.
+    if (scan.verdict == SandboxedScan::Verdict::Unsupervised)
+        return NativeScanOutcome::Handled;
+
+    if (scan.verdict == SandboxedScan::Verdict::Cancelled)
+        return NativeScanOutcome::Cancelled;
+
+    if (scan.verdict == SandboxedScan::Verdict::Failed)
     {
-        const int n = proc.readProcessOutput (buf, (int) sizeof buf);
-        if (n > 0) { captured.write (buf, (size_t) n); continue; }
-        if (! proc.isRunning())
-        {
-            int extra;
-            while ((extra = proc.readProcessOutput (buf, (int) sizeof buf)) > 0)
-                captured.write (buf, (size_t) extra);
-            break;
-        }
-        if (juce::Time::getMillisecondCounter() - startMs >= (std::uint32_t) kScanTimeoutMs)
-        {
-            proc.kill();
-            proc.waitForProcessToFinish (200);   // reap the SIGKILLed child, no zombie
-            break;
-        }
-        juce::Thread::sleep (5);
+        // Crash / hang / flood - handled (skip the bundle) so the caller doesn't
+        // re-execute the failing code in-process. Native scans have no
+        // quarantine store of their own; the bundle is re-probed next scan.
+        std::fprintf (stderr,
+            scan.tooMuchOutput
+                ? "[Dusk Studio/scan] native %s bundle skipped (flooded the scan output): %s\n"
+            : scan.timedOut
+                ? "[Dusk Studio/scan] native %s bundle skipped (timed out): %s\n"
+                : "[Dusk Studio/scan] native %s bundle skipped (child failed): %s\n",
+            format, bundle.getFullPathName().toRawUTF8());
+        std::fflush (stderr);
+        return NativeScanOutcome::Handled;
     }
 
-    const auto payload = scanproto::extractPayload (captured.toString().toStdString());
-    if (payload.empty())
-    {
-        // Crash / hang / no sentinels - treat as handled (skip the bundle) so the
-        // caller doesn't re-execute the crashing code in-process.
-        std::fprintf (stderr, "[Dusk Studio/scan] native %s bundle skipped (child failed): %s\n",
-                      format, bundle.getFullPathName().toRawUTF8());
-        return true;
-    }
-    auto found = scanproto::parsePayload (payload);
+    auto found = scanproto::parsePayload (scan.payload);
     if (! found.has_value())
     {
         std::fprintf (stderr,
                       "[Dusk Studio/scan] native %s bundle skipped (malformed child payload): %s\n",
                       format, bundle.getFullPathName().toRawUTF8());
-        return true;
+        std::fflush (stderr);
+        return NativeScanOutcome::Handled;
     }
     into.insert (into.end(), std::make_move_iterator (found->begin()),
                  std::make_move_iterator (found->end()));
-    return true;
+    return NativeScanOutcome::Handled;
 }
 #endif
 
-void PluginManager::scanClapPlugins()
+void PluginManager::scanClapPlugins (const std::atomic<bool>* abort)
 {
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     // Discover OUTSIDE the lock (executes every bundle's factory - slow), swap
     // in under it. The cache write also stays outside so a picker open on the
     // message thread can't stall behind this thread's file I/O.
     std::vector<PluginDescriptor> fresh;
+    bool cancelled = false;
     for (const auto& path : clap::ClapScanner::findClapFiles (clap::ClapScanner::defaultSearchPaths()))
     {
+        // Between bundles as well as inside one, or a cancel would still have to
+        // wait out every remaining bundle in this phase.
+        if (abort != nullptr && abort->load (std::memory_order_relaxed)) { cancelled = true; break; }
+
         const juce::File file (juce::String::fromUTF8 (path.u8string().c_str()));
-        if (! scanNativeBundleSandboxed ("clap", file, fresh))
+        const auto outcome = scanNativeBundleSandboxed ("clap", file, fresh, abort);
+        if (outcome == NativeScanOutcome::Cancelled) { cancelled = true; break; }
+        if (outcome == NativeScanOutcome::NoSandbox)
             nativescan::appendClapRows (path, fresh);   // no sandbox available - in-process
     }
+
+    // `fresh` REPLACES the previous results, so publishing a run that stopped
+    // early would drop every bundle after the stop from the picker and from the
+    // cache on disk. Keep what the last complete scan found instead.
+    if (cancelled) return;
+
     {
         const juce::ScopedLock sl (nativeDescriptionsLock);
         clapDescriptions.swap (fresh);
     }
     saveNativeCache (clapDescriptions, "clap-cache.json");
+#else
+    (void) abort;
 #endif
 }
 
@@ -771,21 +911,32 @@ std::vector<PluginDescriptor> PluginManager::getLv2InstrumentDescriptions() cons
     return filterByInstrumentFlag (lv2Descriptions, true);
 }
 
-void PluginManager::scanVst3NativePlugins()
+void PluginManager::scanVst3NativePlugins (const std::atomic<bool>* abort)
 {
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     std::vector<PluginDescriptor> fresh;
+    bool cancelled = false;
     for (const auto& path : vst3::Vst3Scanner::findVst3Bundles (vst3::Vst3Scanner::defaultSearchPaths()))
     {
+        // See scanClapPlugins: a cancel must not wait out the remaining bundles,
+        // and a phase that stopped early must not replace the cached results.
+        if (abort != nullptr && abort->load (std::memory_order_relaxed)) { cancelled = true; break; }
+
         const juce::File file (juce::String::fromUTF8 (path.u8string().c_str()));
-        if (! scanNativeBundleSandboxed ("vst3", file, fresh))
+        const auto outcome = scanNativeBundleSandboxed ("vst3", file, fresh, abort);
+        if (outcome == NativeScanOutcome::Cancelled) { cancelled = true; break; }
+        if (outcome == NativeScanOutcome::NoSandbox)
             nativescan::appendVst3Rows (path, fresh);   // no sandbox available - in-process
     }
+    if (cancelled) return;
+
     {
         const juce::ScopedLock sl (nativeDescriptionsLock);
         vst3NativeDescriptions.swap (fresh);
     }
     saveNativeCache (vst3NativeDescriptions, "vst3-native-cache.json");
+#else
+    (void) abort;
 #endif
 }
 

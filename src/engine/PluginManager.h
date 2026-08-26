@@ -41,7 +41,7 @@ public:
 
     std::vector<PluginDescriptor> getClapEffectDescriptions() const;
     std::vector<PluginDescriptor> getClapInstrumentDescriptions() const;
-    void scanClapPlugins();
+    void scanClapPlugins (const std::atomic<bool>* abort = nullptr);
 
     std::vector<PluginDescriptor> getLv2EffectDescriptions() const;
     std::vector<PluginDescriptor> getLv2InstrumentDescriptions() const;
@@ -49,7 +49,7 @@ public:
 
     std::vector<PluginDescriptor> getVst3NativeEffectDescriptions() const;
     std::vector<PluginDescriptor> getVst3NativeInstrumentDescriptions() const;
-    void scanVst3NativePlugins();
+    void scanVst3NativePlugins (const std::atomic<bool>* abort = nullptr);
 
     std::vector<PluginDescriptor> getAuEffectDescriptions() const;
     std::vector<PluginDescriptor> getAuInstrumentDescriptions() const;
@@ -116,8 +116,17 @@ private:
 
     juce::File nativeCacheFile (const char* fileName) const;
 #if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
-    bool scanNativeBundleSandboxed (const char* format, const juce::File& bundle,
-                                    std::vector<PluginDescriptor>& into) const;
+    // What one sandboxed native-bundle scan settled.
+    enum class NativeScanOutcome
+    {
+        Handled,     // the child settled it; do NOT re-run the bundle in-process
+        NoSandbox,   // no usable child was started; the caller falls back in-process
+        Cancelled    // user stopped the scan; abandon the phase without caching it
+    };
+
+    NativeScanOutcome scanNativeBundleSandboxed (const char* format, const juce::File& bundle,
+                                                 std::vector<PluginDescriptor>& into,
+                                                 const std::atomic<bool>* abort) const;
 #endif
     void loadNativeCache (std::vector<PluginDescriptor>& into,
                           const char* jsonFileName, const char* legacyXmlFileName,
