@@ -591,7 +591,8 @@ private:
         mainOutput.add ("1-2 (default)");
         mainOutputIds.push_back (1);
 
-        if (auto* const device = deviceManager.getCurrentDevice())
+        auto* const device = deviceManager.getCurrentDevice();
+        if (device != nullptr)
         {
             // Only offer pairs the engine can actually write to: both channels must be
             // in the device's active-output set, or the master would appear to vanish.
@@ -615,7 +616,13 @@ private:
         mainOutput.finish (selected);
 
         // Persist the fallback so the engine does not keep routing the master to a pair
-        // that is no longer active while the panel shows "1-2 (default)".
+        // that is no longer active while the panel shows "1-2 (default)". Only while a
+        // device is there to say which pairs are active: with none, every pair but the
+        // default is missing because nothing has been enumerated, and writing the
+        // fallback then would drop a stored routing the next open would have honoured.
+        if (device == nullptr)
+            return;
+
         const int normalized = mainOutputIds[static_cast<std::size_t> (selected)] <= 1
                              ? -1 : mainOutputIds[static_cast<std::size_t> (selected)];
         if (normalized != stored)
