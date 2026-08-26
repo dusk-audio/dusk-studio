@@ -104,10 +104,13 @@ bool peekMidiSummary (const juce::File& file, ImportTargetPicker::FileSummary& s
 
     const int ppq = reader.timeFormat();
     summary.numMidiNotes = noteCount;
-    summary.lengthTicks  = (ppq > 0 && ppq != kMidiTicksPerQuarter)
-                              ? (std::int64_t) std::llround ((double) maxTick
-                                   * (double) kMidiTicksPerQuarter / (double) ppq)
-                              : maxTick;
+    if (ppq <= 0)
+        summary.lengthTicks = 0;   // SMPTE division: maxTick is frame-based, not beats
+    else if (ppq == kMidiTicksPerQuarter)
+        summary.lengthTicks = maxTick;
+    else
+        summary.lengthTicks = (std::int64_t) std::llround (
+            (double) maxTick * (double) kMidiTicksPerQuarter / (double) ppq);
     return true;
 }
 
@@ -4879,7 +4882,8 @@ void MainComponent::openMultiImportPicker (juce::Array<juce::File> files,
 
         if (s.isMidi)
         {
-            peekMidiSummary (f, s);
+            if (! peekMidiSummary (f, s))
+                continue;
             s.numChannels = -1;
         }
         else

@@ -2,6 +2,7 @@
 
 #include "../foundation/Base64.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -16,11 +17,17 @@ namespace detail
 // the JUCE plugin path keep reading back after the de-JUCE swap.
 inline int legacySextet (char c) noexcept
 {
-    static constexpr char table[] =
+    static constexpr char alphabet[] =
         ".ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+";
-    for (int i = 0; i < 64; ++i)
-        if (table[i] == c) return i;
-    return -1;
+    static const auto reverse = []
+    {
+        std::array<signed char, 256> t {};
+        t.fill (-1);
+        for (int i = 0; i < 64; ++i)
+            t[(unsigned char) alphabet[i]] = (signed char) i;
+        return t;
+    }();
+    return reverse[(unsigned char) c];
 }
 
 // Decode of the MemoryBlock form, mirroring JUCE's MemoryBlock fromBase64Encoding
