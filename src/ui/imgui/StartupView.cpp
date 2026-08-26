@@ -377,7 +377,7 @@ private:
 
         const float rowsTop = tl.y + scale * kHeaderRowH;
         const float rowH = scale * kRowH;
-        const int visibleRows = std::max (0, static_cast<int> ((br.y - rowsTop) / rowH));
+        visibleRows = std::max (0, static_cast<int> ((br.y - rowsTop) / rowH));
 
         // The list scrolls under the pointer rather than growing a scrollbar: at
         // twenty visible rows a wheel is the only gesture that matters here.
@@ -456,6 +456,20 @@ private:
             selectedRow = std::clamp (selectedRow + 1, 0, last);
         else if (ImGui::IsKeyPressed (ImGuiKey_UpArrow, true))
             selectedRow = std::clamp (selectedRow - 1, 0, last);
+        scrollToSelection();
+    }
+
+    // The arrows and the wheel share one offset, so a keyboard move has to pull the
+    // window onto the row it selected - otherwise the selection walks off screen and
+    // Enter opens a session the user cannot see.
+    void scrollToSelection()
+    {
+        if (visibleRows < 1 || selectedRow < 0)
+            return;
+        scrollRow = std::clamp (scrollRow, std::max (0, selectedRow - visibleRows + 1),
+                                selectedRow);
+        scrollRow = std::clamp (scrollRow, 0,
+                                std::max (0, static_cast<int> (recents.size()) - visibleRows));
     }
 
     void openSelected()
@@ -478,6 +492,7 @@ private:
     bool reported = false;
     int selectedRow = -1;
     int scrollRow = 0;
+    int visibleRows = 0;
     int blinkFrames = 0;
     int blinks = kMaxBlinks;
     bool flashOn = true;
