@@ -218,7 +218,7 @@ static std::vector<uint8_t> decodeBase64Blob (const juce::String& s, const char*
     // 0.13.1 migrated Audio Unit and soundfont slots onto their native keys
     // without transcoding, so a session it converted holds the JUCE form here.
     if (blob.empty())
-        blob = decodeLegacyStateBase64 (s);
+        blob = decodeLegacyStateBase64 (s.toStdString());
 
     if (blob.empty())
     {
@@ -260,7 +260,9 @@ static void migrateLegacyAuSlot (
 
     // Writes nativeState only on success, so a legacy blob that cannot be read
     // leaves the slot exactly as it was.
-    if (! transcodeLegacyStateBase64 (legacyState, nativeState)) return;
+    std::string transcoded;
+    if (! transcodeLegacyStateBase64 (legacyState.toStdString(), transcoded)) return;
+    nativeState = transcoded;
 
     nativeIdentifier = id.toString();
     descriptor.reset();
@@ -294,8 +296,10 @@ static void migrateLegacyMultisampleTrack (Track& track, PluginManager& manager)
 
     // See migrateLegacyAuSlot: an unreadable blob aborts the migration with the
     // legacy pair untouched rather than moving a slot whose state is lost.
-    if (! transcodeLegacyStateBase64 (track.pluginStateBase64,
-                                      track.nativeMultisampleStateBase64)) return;
+    std::string transcoded;
+    if (! transcodeLegacyStateBase64 (track.pluginStateBase64.toStdString(),
+                                      transcoded)) return;
+    track.nativeMultisampleStateBase64 = transcoded;
 
     track.nativeMultisamplePath = descriptor->location;
     track.pluginDescriptor.reset();

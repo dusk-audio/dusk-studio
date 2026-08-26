@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 // RFC 4648 base64 decoding. JUCE's MemoryBlock base64 pair is a DIFFERENT format
@@ -54,6 +55,51 @@ inline std::vector<std::uint8_t> decode (const char* utf8, std::size_t length)
             bits -= 8;
             out.push_back ((std::uint8_t) ((accumulator >> bits) & 0xffu));
         }
+    }
+    return out;
+}
+
+// Canonical RFC 4648 encoding, '=' padding included: byte-for-byte what JUCE's
+// Base64 helper emitted, so state strings written before the de-JUCE swap
+// compare equal to ones written after it.
+inline std::string encode (const std::uint8_t* data, std::size_t length)
+{
+    static constexpr char alphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    std::string out;
+    if (data == nullptr || length == 0) return out;
+    out.reserve (((length + 2) / 3) * 4);
+
+    std::size_t i = 0;
+    for (; i + 3 <= length; i += 3)
+    {
+        const std::uint32_t v = ((std::uint32_t) data[i] << 16)
+                              | ((std::uint32_t) data[i + 1] << 8)
+                              | (std::uint32_t) data[i + 2];
+        out.push_back (alphabet[(v >> 18) & 63]);
+        out.push_back (alphabet[(v >> 12) & 63]);
+        out.push_back (alphabet[(v >> 6) & 63]);
+        out.push_back (alphabet[v & 63]);
+    }
+
+    const std::size_t rem = length - i;
+    if (rem == 1)
+    {
+        const std::uint32_t v = (std::uint32_t) data[i] << 16;
+        out.push_back (alphabet[(v >> 18) & 63]);
+        out.push_back (alphabet[(v >> 12) & 63]);
+        out.push_back ('=');
+        out.push_back ('=');
+    }
+    else if (rem == 2)
+    {
+        const std::uint32_t v = ((std::uint32_t) data[i] << 16)
+                              | ((std::uint32_t) data[i + 1] << 8);
+        out.push_back (alphabet[(v >> 18) & 63]);
+        out.push_back (alphabet[(v >> 12) & 63]);
+        out.push_back (alphabet[(v >> 6) & 63]);
+        out.push_back ('=');
     }
     return out;
 }
