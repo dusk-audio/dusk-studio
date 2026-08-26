@@ -18,7 +18,6 @@ src/engine/DuskStudioPlayHead.h	4
 src/engine/FileImporter.cpp	5
 src/engine/FileImporter.h	4
 src/engine/JuceCompat.h	5
-src/engine/LegacyStateBase64.h	8
 src/engine/MasteringPlayer.cpp	2
 src/engine/MasteringPlayer.h	4
 src/engine/PlaybackEngine.cpp	3

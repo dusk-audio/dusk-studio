@@ -6,6 +6,7 @@
 #include <juce_core/juce_core.h>
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 using duskstudio::decodeLegacyStateBase64;
@@ -13,9 +14,9 @@ using duskstudio::transcodeLegacyStateBase64;
 
 namespace
 {
-std::vector<std::uint8_t> decode (const juce::String& s)
+std::vector<std::uint8_t> decode (const std::string& s)
 {
-    return dusk::base64::decode (s.toRawUTF8(), s.getNumBytesAsUTF8());
+    return dusk::base64::decode (s.data(), s.size());
 }
 } // namespace
 
@@ -26,17 +27,23 @@ std::vector<std::uint8_t> decode (const juce::String& s)
 TEST_CASE ("legacy state transcodes onto the native keys", "[session][migration]")
 {
     const std::vector<std::uint8_t> original { 0x00, 0x11, 0xfe, 0xff, 0x7f, 0x80, 0x2b, 0x2f, 0x41 };
-    const auto legacy = juce::MemoryBlock (original.data(), original.size()).toBase64Encoding();
+    const auto legacy = juce::MemoryBlock (original.data(), original.size())
+                            .toBase64Encoding().toStdString();
 
-    juce::String migrated;
+    std::string migrated;
     REQUIRE (transcodeLegacyStateBase64 (legacy, migrated));
     REQUIRE (migrated != legacy);
     REQUIRE (decode (migrated) == original);
+
+    // The transcoded form must be byte-identical to what juce::Base64 used to
+    // write, so sessions saved before and after the de-JUCE swap compare equal.
+    REQUIRE (migrated
+             == juce::Base64::toBase64 (original.data(), original.size()).toStdString());
 }
 
 TEST_CASE ("legacy state transcode reports unreadable input", "[session][migration]")
 {
-    juce::String migrated { "untouched" };
+    std::string migrated { "untouched" };
 
     // No '.' byte-count prefix: not the legacy encoding at all. Migrating on a
     // false return would strand the only copy of the user's settings.
@@ -46,7 +53,7 @@ TEST_CASE ("legacy state transcode reports unreadable input", "[session][migrati
 
     // An empty legacy slot has nothing to lose and migrates cleanly.
     REQUIRE (transcodeLegacyStateBase64 ({}, migrated));
-    REQUIRE (migrated.isEmpty());
+    REQUIRE (migrated.empty());
 }
 
 // A plugin that saved no state at all encodes as "0.". Reading that as a failure
@@ -54,12 +61,12 @@ TEST_CASE ("legacy state transcode reports unreadable input", "[session][migrati
 // that no longer exists - the soundfont would simply never load.
 TEST_CASE ("legacy state transcode accepts an empty saved state", "[session][migration]")
 {
-    const auto legacy = juce::MemoryBlock().toBase64Encoding();
+    const auto legacy = juce::MemoryBlock().toBase64Encoding().toStdString();
     REQUIRE (legacy == "0.");
 
-    juce::String migrated { "untouched" };
+    std::string migrated { "untouched" };
     REQUIRE (transcodeLegacyStateBase64 (legacy, migrated));
-    REQUIRE (migrated.isEmpty());
+    REQUIRE (migrated.empty());
 }
 
 // 0.13.1 copied the legacy string onto the native key instead of transcoding it,
@@ -68,7 +75,8 @@ TEST_CASE ("legacy state transcode accepts an empty saved state", "[session][mig
 TEST_CASE ("0.13.1-migrated state still decodes", "[session][migration]")
 {
     const std::vector<std::uint8_t> original { 0x7f, 0x00, 0xc3, 0x2a, 0xff };
-    const auto carried = juce::MemoryBlock (original.data(), original.size()).toBase64Encoding();
+    const auto carried = juce::MemoryBlock (original.data(), original.size())
+                             .toBase64Encoding().toStdString();
 
     REQUIRE (decode (carried).empty());                    // not RFC 4648
     REQUIRE (decodeLegacyStateBase64 (carried) == original);
@@ -76,6 +84,28 @@ TEST_CASE ("0.13.1-migrated state still decodes", "[session][migration]")
     // The fallback must not claim RFC 4648 strings: it needs the '.' byte-count
     // prefix, which base64 output never contains.
     REQUIRE (decodeLegacyStateBase64 (
-                 juce::Base64::toBase64 (original.data(), original.size())).empty());
+                 juce::Base64::toBase64 (original.data(), original.size()).toStdString())
+                 .empty());
     REQUIRE (decodeLegacyStateBase64 ({}).empty());
+}
+
+// The decoder no longer calls into JUCE, so its bit-order agreement with
+// juce::MemoryBlock is an implementation promise rather than a shared code
+// path. Sweep every payload length across a few group alignments so a
+// bit-cursor mistake at any 6-bit boundary fails loudly here instead of
+// silently corrupting a restored plugin state.
+TEST_CASE ("legacy decode matches juce::MemoryBlock across lengths", "[session][migration]")
+{
+    for (int n = 0; n <= 32; ++n)
+    {
+        std::vector<std::uint8_t> original;
+        original.reserve ((size_t) n);
+        for (int i = 0; i < n; ++i)
+            original.push_back ((std::uint8_t) (i * 37 + n * 11 + 3));
+
+        const auto legacy = juce::MemoryBlock (original.data(), original.size())
+                                .toBase64Encoding().toStdString();
+
+        REQUIRE (decodeLegacyStateBase64 (legacy) == original);
+    }
 }
