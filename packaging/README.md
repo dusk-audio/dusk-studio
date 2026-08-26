@@ -43,14 +43,17 @@ directory, copies the integration assets, and packs everything with `tar`. Run
 from a clean Ubuntu 22.04 build.
 
 Configure into a fresh `build-linux/`. `DUSKSTUDIO_ENABLE_NATIVE_UI` is a
-cached option: a directory first configured without the DPF checkouts keeps the
-notepad off after you clone them, and drops its STATUS line too, so a release
+cached option: a directory first configured without the DAF checkouts keeps the
+native UI off after you clone them, and drops its STATUS line too, so a release
 built in a reused directory can ship without any of the native views - notepad,
 startup dialog, compressor editor, virtual keyboard - and without saying so.
+Pass it explicitly below: for a release the silent downgrade is the failure
+worth converting into a configure error, which is what naming it ON does.
 
 ```bash
 # 1. Build Dusk Studio as usual.
-cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DDUSKSTUDIO_ENABLE_NATIVE_UI=ON
 cmake --build build-linux -j6
 
 # 2. Pack the tarball.

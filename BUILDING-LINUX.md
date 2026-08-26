@@ -122,7 +122,7 @@ The pins live in [.github/actions/clone-dpf-stack/action.yml](.github/actions/cl
 
 Missing either checkout, `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults to **OFF** and configure says so once, quietly:
 
-```
+```text
 -- Native UI: DAF / DAF-Widgets not found - disabled
 ```
 

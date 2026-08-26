@@ -76,7 +76,7 @@ Clone then check out the SHA, rather than cloning a branch: DAF's pin is the tip
 
 Missing either checkout, `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults to **OFF** and configure says so once, quietly:
 
-```
+```text
 -- Native UI: DAF / DAF-Widgets not found - disabled
 ```
 
