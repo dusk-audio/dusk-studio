@@ -5,6 +5,43 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
+## [0.13.2] - Unreleased
+
+### Fixed
+
+- **Plugin settings are restored again when a session is reopened.** Every
+  plugin loaded through Dusk Studio's own CLAP, LV2, VST3, Audio Unit and
+  multisample hosts came back at its default settings after a save, a quit and
+  a reopen, no matter which format it was. The settings were written to
+  `session.json` correctly all along; the code that read them back used a
+  different, incompatible text encoding to the one that wrote them, so it saw
+  nothing and left the plugin untouched. Plugins hosted through the application
+  framework were never affected. Sessions saved by an earlier release carry
+  usable settings and recover them on this one, in either of the two forms
+  earlier releases wrote, with one exception:
+  a session that was reopened under the fault and then saved again had its
+  stored settings overwritten with the defaults that were on screen at the
+  time, and those are gone. Opening a session now hands each plugin its
+  settings as it loads, so a session carrying several heavy plugins can take
+  a little longer to open, with a brief silence while that happens.
+- **A plugin that hangs while being scanned no longer takes the scan with it.**
+  Scanning probes each plugin in a separate process so a bad one cannot crash
+  Dusk Studio, and gives it 30 seconds before declaring it stuck. That deadline
+  could never fire: the code waiting for the child process to say something did
+  not come back until the child said it, so a plugin blocking on a licence or
+  authorisation dialog it cannot show during discovery held the scan open
+  indefinitely. A watchdog now enforces the deadline and ends the plugin so the
+  scan moves on, for CLAP and VST3 bundles read by Dusk Studio's own hosts as
+  well as for the standard host, which had the same fault. A plugin that
+  finishes just as the clock runs out is no longer quarantined for it.
+- **The plugin scan can be stopped.** The progress window has a **Cancel**
+  button, and Esc does the same: the scan stops at the plugin being probed and
+  skips it rather than quarantining it. Plugins found before the stop stay in
+  the picker, though a CLAP or VST3 pass through Dusk Studio's own hosts is
+  discarded rather than recorded half-finished, so run the scan again when you
+  want a complete list. Before this the window could not be dismissed at all,
+  so a scan that went wrong left no way into the rest of the application.
+
 ## [0.13.1] - 2026-08-24
 
 A packaging and Windows-safety fix release. The 0.13.0 macOS disk image could

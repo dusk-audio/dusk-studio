@@ -1,9 +1,11 @@
 #include "RegionEditActions.h"
 #include "../engine/AudioEngine.h"
+#include "../engine/LegacyStateBase64.h"
 #include "../engine/PlaybackEngine.h"
 #include "../engine/Transport.h"
 #include "../engine/audiofile/FileReader.h"
 #include "../engine/audiofile/FileWriter.h"
+#include "../foundation/Base64.h"
 #include "../foundation/Decibels.h"
 #include "../foundation/PlanarBuffer.h"
 
@@ -484,12 +486,15 @@ namespace
 #if DUSKSTUDIO_HAS_NATIVE_AU
 std::vector<uint8_t> decodeCarriedState (const juce::String& base64)
 {
-    std::vector<uint8_t> out;
-    juce::MemoryBlock blob;
-    if (blob.fromBase64Encoding (base64) && blob.getSize() > 0)
-        out.assign (static_cast<const uint8_t*> (blob.getData()),
-                    static_cast<const uint8_t*> (blob.getData()) + blob.getSize());
-    return out;
+    auto blob = dusk::base64::decode (base64.toRawUTF8(), base64.getNumBytesAsUTF8());
+
+    // Same fallback as AudioEngine's decodeBase64Blob: a 0.13.1-migrated slot
+    // carries the JUCE MemoryBlock form on the native key, which RFC 4648
+    // rejects outright. Dropping it here would clone the slot empty and let the
+    // next save write defaults over the only surviving copy.
+    if (blob.empty())
+        blob = duskstudio::decodeLegacyStateBase64 (base64.toStdString());
+    return blob;
 }
 #endif
 

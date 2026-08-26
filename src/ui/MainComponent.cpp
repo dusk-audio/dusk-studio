@@ -104,10 +104,13 @@ bool peekMidiSummary (const juce::File& file, ImportTargetPicker::FileSummary& s
 
     const int ppq = reader.timeFormat();
     summary.numMidiNotes = noteCount;
-    summary.lengthTicks  = (ppq > 0 && ppq != kMidiTicksPerQuarter)
-                              ? (std::int64_t) std::llround ((double) maxTick
-                                   * (double) kMidiTicksPerQuarter / (double) ppq)
-                              : maxTick;
+    if (ppq <= 0)
+        summary.lengthTicks = 0;   // SMPTE division: maxTick is frame-based, not beats
+    else if (ppq == kMidiTicksPerQuarter)
+        summary.lengthTicks = maxTick;
+    else
+        summary.lengthTicks = (std::int64_t) std::llround (
+            (double) maxTick * (double) kMidiTicksPerQuarter / (double) ppq);
     return true;
 }
 
@@ -1711,7 +1714,7 @@ void MainComponent::maybeStartStartupPluginScan()
         std::fflush (stderr);
 
         auto& mgr = self->engine.getPluginManager();
-        auto body = std::make_unique<PluginScanModal> (mgr, [safe] (int added)
+        auto body = std::make_unique<PluginScanModal> (mgr, [safe] (int added, bool cancelled)
         {
             auto* s = safe.getComponent();
             if (s == nullptr) return;
@@ -1720,8 +1723,8 @@ void MainComponent::maybeStartStartupPluginScan()
             const int total = m.getEffectDescriptions().size()
                             + m.getInstrumentDescriptions().size();
             std::fprintf (stderr,
-                          "[Dusk Studio] Scan-on-startup: added %d new plugins (%d total).\n",
-                          added, total);
+                          "[Dusk Studio] Scan-on-startup: %s, added %d new plugins (%d total).\n",
+                          cancelled ? "cancelled" : "finished", added, total);
             if (const int skipped = m.getLastScanSandboxSkips(); skipped > 0)
                 std::fprintf (stderr,
                               "[Dusk Studio] Scan-on-startup: sandbox unavailable - %d plugin(s) left unscanned.\n",
@@ -1729,11 +1732,14 @@ void MainComponent::maybeStartStartupPluginScan()
             std::fflush (stderr);
         });
 
-        // Locked modal (no click-outside / Esc dismiss): it closes itself when
-        // the scan completes.
-        self->scanModal.show (*self, std::move (body), /*onDismiss*/ {},
+        // No click-outside dismiss; the modal closes itself when the scan
+        // completes. Esc cancels rather than dismissing: tearing the modal down
+        // mid-scan would join the worker on the message thread.
+        auto* scan = body.get();
+        self->scanModal.show (*self, std::move (body),
+                              /*onDismiss*/ [scan] { scan->requestCancel(); },
                               /*dismissOnClickOutside*/ false,
-                              /*dismissOnEscape*/ false);
+                              /*dismissOnEscape*/ true);
     });
 }
 
@@ -4876,7 +4882,8 @@ void MainComponent::openMultiImportPicker (juce::Array<juce::File> files,
 
         if (s.isMidi)
         {
-            peekMidiSummary (f, s);
+            if (! peekMidiSummary (f, s))
+                continue;
             s.numChannels = -1;
         }
         else

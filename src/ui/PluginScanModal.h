@@ -16,18 +16,25 @@ class PluginManager;
 // doesn't look like a frozen app. Mirrors BounceDialog's worker-thread +
 // Timer pattern.
 //
-// Lifetime: handed to an EmbeddedModal (the caller keeps the modal alive).
-// When the scan finishes, the Timer fires onFinished(addedCount) so the caller
-// can close the modal + surface a result. The destructor signals the worker to
-// abort mid-file (via the atomic the scanner polls between child-process reads)
-// and joins it, so quitting the app mid-scan doesn't hang on a slow plugin.
+// Lifetime: handed to an EmbeddedModal (the caller keeps the modal alive). When
+// the scan finishes, the Timer fires onFinished so the caller can close the
+// modal + surface a result. The destructor raises the same abort flag the
+// scanner's watchdog polls and then joins the worker, so quitting the app
+// mid-scan doesn't hang on a slow plugin.
 class PluginScanModal final : public juce::Component,
                               private dusk::Timer
 {
 public:
+    // onFinished reports what the scan added and whether the user stopped it,
+    // so the caller can word its follow-up as a partial result.
     PluginScanModal (PluginManager& manager,
-                     std::function<void (int addedCount)> onFinished);
+                     std::function<void (int addedCount, bool cancelled)> onFinished);
     ~PluginScanModal() override;
+
+    // Stop probing and let the scan unwind on its own; the modal then closes
+    // through the normal completion path with whatever was found so far.
+    // Message thread only. Idempotent, and a no-op once the scan has finished.
+    void requestCancel();
 
     void resized() override;
     void paint (juce::Graphics&) override;
@@ -44,7 +51,7 @@ private:
     };
 
     PluginManager&                       manager;
-    std::function<void (int)>            onFinished;
+    std::function<void (int, bool)>      onFinished;
 
     std::atomic<bool>  aborting   { false };
     std::atomic<bool>  scanDone   { false };
@@ -56,6 +63,7 @@ private:
 
     juce::Label        titleLabel;
     juce::Label        statusLabel;
+    juce::TextButton   cancelButton { "Cancel" };
     // Declared BEFORE progressBar: the ProgressBar ctor binds a double& to
     // this, and members construct in declaration order - so it must be live
     // (initialised) before progressBar's ctor runs.

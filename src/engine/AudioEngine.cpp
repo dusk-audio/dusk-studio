@@ -11,6 +11,8 @@
 #include "CompModeMap.h"
 #include "../session/RegionEditActions.h"
 #include "DeviceFallbackMessage.h"
+#include "LegacyStateBase64.h"
+#include "../foundation/Base64.h"
 #include "../foundation/MessageThread.h"
 #if DUSKSTUDIO_HAS_NATIVE_AU
  #include "au/AuBundle.h"
@@ -253,15 +255,28 @@ static std::filesystem::path lv2StateDirFor (Session& session, const juce::Strin
 #if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3 \
     || DUSKSTUDIO_HAS_NATIVE_AU || DUSKSTUDIO_HAS_MULTISAMPLE
 // Session-carried native plugin state blob (base64) -> bytes. Empty on any
-// decode failure - callers treat "no state" and "bad state" the same.
-static std::vector<uint8_t> decodeBase64Blob (const juce::String& s)
+// decode failure - callers treat "no state" and "bad state" the same, so an
+// unreadable blob is otherwise indistinguishable from a plugin that saved
+// nothing. Say so once, or a corrupted session restores defaults with no trace.
+static std::vector<uint8_t> decodeBase64Blob (const juce::String& s, const char* slotKind)
 {
-    std::vector<uint8_t> blob;
-    if (s.isEmpty()) return blob;
-    juce::MemoryBlock mb;
-    if (mb.fromBase64Encoding (s) && mb.getSize() > 0)
-        blob.assign (static_cast<const uint8_t*> (mb.getData()),
-                     static_cast<const uint8_t*> (mb.getData()) + mb.getSize());
+    if (s.isEmpty()) return {};
+
+    auto blob = dusk::base64::decode (s.toRawUTF8(), s.getNumBytesAsUTF8());
+
+    // 0.13.1 migrated Audio Unit and soundfont slots onto their native keys
+    // without transcoding, so a session it converted holds the JUCE form here.
+    if (blob.empty())
+        blob = decodeLegacyStateBase64 (s.toStdString());
+
+    if (blob.empty())
+    {
+        std::fprintf (stderr,
+                      "[Dusk Studio/session] %s state is unreadable (%d chars); "
+                      "restoring the slot at its defaults\n",
+                      slotKind, s.length());
+        std::fflush (stderr);
+    }
     return blob;
 }
 #endif
@@ -292,8 +307,13 @@ static void migrateLegacyAuSlot (
     au::ComponentId id;
     if (! au::ComponentId::parse (candidate->location, id)) return;
 
+    // Writes nativeState only on success, so a legacy blob that cannot be read
+    // leaves the slot exactly as it was.
+    std::string transcoded;
+    if (! transcodeLegacyStateBase64 (legacyState.toStdString(), transcoded)) return;
+    nativeState = transcoded;
+
     nativeIdentifier = id.toString();
-    nativeState = legacyState;
     descriptor.reset();
     legacyXml.clear();
     legacyState.clear();
@@ -323,8 +343,14 @@ static void migrateLegacyMultisampleTrack (Track& track, PluginManager& manager)
     // wiping it here would destroy the blob on the next save and restore nothing.
     if (descriptor->location.empty()) return;
 
-    track.nativeMultisamplePath        = descriptor->location;
-    track.nativeMultisampleStateBase64 = track.pluginStateBase64;
+    // See migrateLegacyAuSlot: an unreadable blob aborts the migration with the
+    // legacy pair untouched rather than moving a slot whose state is lost.
+    std::string transcoded;
+    if (! transcodeLegacyStateBase64 (track.pluginStateBase64.toStdString(),
+                                      transcoded)) return;
+    track.nativeMultisampleStateBase64 = transcoded;
+
+    track.nativeMultisamplePath = descriptor->location;
     track.pluginDescriptor.reset();
     track.pluginLegacyDescriptionXml.clear();
     track.pluginStateBase64.clear();
@@ -2081,7 +2107,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             slot.unload();
             strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
 
-            auto blob = decodeBase64Blob (track.nativeClapStateBase64);
+            auto blob = decodeBase64Blob (track.nativeClapStateBase64, "track CLAP");
 
             const juce::File clapFile (track.nativeClapPath);
             if (strip.isPrepared())
@@ -2121,7 +2147,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             slot.unload();
             strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
 
-            auto blob = decodeBase64Blob (track.nativeLv2StateBase64);
+            auto blob = decodeBase64Blob (track.nativeLv2StateBase64, "track LV2");
 
             const juce::File lv2File (track.nativeLv2Path);
             if (strip.isPrepared())
@@ -2163,7 +2189,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             slot.unload();
             strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
 
-            auto blob = decodeBase64Blob (track.nativeVst3StateBase64);
+            auto blob = decodeBase64Blob (track.nativeVst3StateBase64, "track VST3");
 
             const juce::File vst3File (track.nativeVst3Path);
             if (strip.isPrepared())
@@ -2198,7 +2224,7 @@ void AudioEngine::consumePluginStateAfterLoad()
         {
             slot.unload();
             strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
-            auto blob = decodeBase64Blob (track.nativeAuStateBase64);
+            auto blob = decodeBase64Blob (track.nativeAuStateBase64, "track Audio Unit");
             if (strip.isPrepared())
             {
                 suspendProcessing();
@@ -2233,7 +2259,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             slot.unload();
             strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
 
-            auto blob = decodeBase64Blob (track.nativeMultisampleStateBase64);
+            auto blob = decodeBase64Blob (track.nativeMultisampleStateBase64, "track multisample");
 
             const juce::File soundfont (track.nativeMultisamplePath);
             if (strip.isPrepared())
@@ -2366,7 +2392,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 slot.unload();   // ensure no JUCE plugin lingers in this slot
                 strip.insertMode[(size_t) s].store (AuxLaneStrip::kInsertPlugin, std::memory_order_release);
 
-                auto blob = decodeBase64Blob (lane.nativeClapStateBase64[(size_t) s]);
+                auto blob = decodeBase64Blob (lane.nativeClapStateBase64[(size_t) s], "aux CLAP");
 
                 const juce::File clapFile (lane.nativeClapPath[(size_t) s]);
                 if (strip.isPrepared())
@@ -2404,7 +2430,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 slot.unload();
                 strip.insertMode[(size_t) s].store (AuxLaneStrip::kInsertPlugin, std::memory_order_release);
 
-                auto blob = decodeBase64Blob (lane.nativeLv2StateBase64[(size_t) s]);
+                auto blob = decodeBase64Blob (lane.nativeLv2StateBase64[(size_t) s], "aux LV2");
 
                 const juce::File lv2File (lane.nativeLv2Path[(size_t) s]);
                 if (strip.isPrepared())
@@ -2449,7 +2475,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 slot.unload();
                 strip.insertMode[(size_t) s].store (AuxLaneStrip::kInsertPlugin, std::memory_order_release);
 
-                auto blob = decodeBase64Blob (lane.nativeVst3StateBase64[(size_t) s]);
+                auto blob = decodeBase64Blob (lane.nativeVst3StateBase64[(size_t) s], "aux VST3");
 
                 const juce::File vst3File (lane.nativeVst3Path[(size_t) s]);
                 if (strip.isPrepared())
@@ -2486,7 +2512,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 slot.unload();
                 strip.insertMode[(size_t) s].store (
                     AuxLaneStrip::kInsertPlugin, std::memory_order_release);
-                auto blob = decodeBase64Blob (lane.nativeAuStateBase64[(size_t) s]);
+                auto blob = decodeBase64Blob (lane.nativeAuStateBase64[(size_t) s], "aux Audio Unit");
                 const auto identifier = lane.nativeAuIdentifier[(size_t) s];
                 if (strip.isPrepared())
                 {
