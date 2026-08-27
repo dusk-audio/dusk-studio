@@ -130,6 +130,61 @@ TEST_CASE ("Native VST3 instrument produces audio from notes", "[vst3][instrumen
     // anything prove the bridge — Diva maps the usual suspects.
     INFO ("IMidiMapping assignments: " << slot.getInstance()->midiCcMappingCount());
 }
+
+TEST_CASE ("Native VST3 instrument state round-trips into a fresh slot",
+           "[vst3][instrument][state][regression][issue-355]")
+{
+    const char* path = std::getenv ("DUSKSTUDIO_TEST_INSTRUMENT_VST3");
+    if (path == nullptr || *path == '\0')
+    { SUCCEED ("DUSKSTUDIO_TEST_INSTRUMENT_VST3 not set — skipping"); return; }
+
+    const std::filesystem::path module = std::filesystem::u8path (path);
+    duskstudio::vst3::Vst3Bundle bundle;
+    std::string err;
+    REQUIRE (bundle.load (path, err));
+    std::string classId;
+    for (const auto& d : bundle.plugins())
+        if (d.isInstrument) { classId = d.id; break; }
+    REQUIRE_FALSE (classId.empty());
+
+    duskstudio::vst3::NativeVst3Slot source;
+    REQUIRE (source.load (module, 48000.0, kBlock, err, classId));
+    int targetIdx = -1;
+    double changedValue = 0.0;
+    for (int i = 0; i < source.paramCount(); ++i)
+    {
+        const auto* p = source.paramInfo (i);
+        double current = 0.0;
+        if (p != nullptr && p->stepCount == 0 && p->canAutomate && ! p->isReadOnly
+            && source.getParamValue (p->id, current))
+        {
+            targetIdx = i;
+            changedValue = current > 0.5 ? 0.0 : 1.0;
+            source.setParamValue (p->id, changedValue);
+            break;
+        }
+    }
+    REQUIRE (targetIdx >= 0);
+    driveSilence (source, 1);
+
+    const auto* target = source.paramInfo (targetIdx);
+    REQUIRE (target != nullptr);
+    INFO ("state parameter: " << target->name << " (id=" << target->id << ")");
+    double savedValue = 0.0;
+    REQUIRE (source.getParamValue (target->id, savedValue));
+    REQUIRE (std::abs (savedValue - changedValue) <= 1.0e-5);
+
+    std::vector<uint8_t> blob;
+    REQUIRE (source.saveState (blob));
+    REQUIRE_FALSE (blob.empty());
+
+    duskstudio::vst3::NativeVst3Slot restored;
+    REQUIRE (restored.load (module, 48000.0, kBlock, err, classId));
+    REQUIRE (restored.loadState (blob));
+    double restoredValue = 0.0;
+    REQUIRE (restored.getParamValue (target->id, restoredValue));
+    REQUIRE (std::abs (restoredValue - savedValue) <= 1.0e-5);
+}
 #endif
 
 #if DUSKSTUDIO_HAS_NATIVE_LV2

@@ -501,6 +501,20 @@ TEST_CASE ("DuskMultisampleProcessor: failed SFZ browse preserves the retained S
         REQUIRE (primed.instance->getLastLoadError().isEmpty());
     }
 
+    SECTION ("native slot prime loads defaults but reports a corrupt state")
+    {
+        std::vector<std::uint8_t> corruptState { 0x00, 0x7f, 0x42 };
+        std::string primeError;
+        auto primed = duskstudio::NativeMultisampleSlot::prime (
+            sf2Path, 48000.0, 512, primeError, &corruptState);
+
+        REQUIRE (primed);
+        REQUIRE (primed.stateRestoreFailed);
+        REQUIRE (primed.instance->hasLoadedRuntime());
+        REQUIRE (primed.instance->getLoadedPathSnapshot() == sf2Path.string());
+        REQUIRE (primeError.find ("state restore failed") != std::string::npos);
+    }
+
     SECTION ("same-path state restore selects preset zero")
     {
         REQUIRE (source.reloadCurrentFile (error));

@@ -36,11 +36,11 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
             // set to kInsertPlugin by the engine before it stashed this.
             const juce::File p (pendingClapPath[(size_t) s]);
             std::string err;
-            const bool ok = ncs.load (std::filesystem::u8path (p.getFullPathName().toStdString()),
-                                      preparedSampleRate, preparedBlockSize, err,
-                                      pendingClapPluginId[(size_t) s].toStdString());
+            bool ok = ncs.load (std::filesystem::u8path (p.getFullPathName().toStdString()),
+                                preparedSampleRate, preparedBlockSize, err,
+                                pendingClapPluginId[(size_t) s].toStdString());
             if (ok && ! pendingClapState[(size_t) s].empty())
-                ncs.loadState (pendingClapState[(size_t) s]);
+                ok = ncs.loadState (pendingClapState[(size_t) s]);
             nativeReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
             pendingClapPath[(size_t) s].clear();
             pendingClapPluginId[(size_t) s].clear();
@@ -56,6 +56,9 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
         {
             std::string err;
             const bool ok = nls.reactivate (preparedSampleRate, preparedBlockSize, err);
+            // See ChannelStrip::prepare: do not leave a live-but-unsaveable
+            // replacement available for edits after a partial LV2 rebuild.
+            if (! ok) nls.unload();
             lv2ReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
         }
         else if (pendingLv2Path[(size_t) s].isNotEmpty())
@@ -64,13 +67,13 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
             {
                 const juce::File p (pendingLv2Path[(size_t) s]);
                 std::string err;
-                const bool ok = nls.load (std::filesystem::u8path (p.getFullPathName().toStdString()),
-                                          preparedSampleRate, preparedBlockSize, err,
-                                          pendingLv2PluginId[(size_t) s].toStdString());
+                bool ok = nls.load (std::filesystem::u8path (p.getFullPathName().toStdString()),
+                                    preparedSampleRate, preparedBlockSize, err,
+                                    pendingLv2PluginId[(size_t) s].toStdString());
                 if (ok && ! pendingLv2State[(size_t) s].empty())
                 {
                     nls.setStateDirectory (pendingLv2StateDir[(size_t) s]);
-                    nls.loadState (pendingLv2State[(size_t) s]);
+                    ok = nls.loadState (pendingLv2State[(size_t) s]);
                 }
                 lv2ReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
             }
@@ -99,11 +102,11 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
             {
                 const juce::File p (pendingVst3Path[(size_t) s]);
                 std::string err;
-                const bool ok = nvs.load (std::filesystem::u8path (p.getFullPathName().toStdString()),
-                                          preparedSampleRate, preparedBlockSize, err,
-                                          pendingVst3PluginId[(size_t) s].toStdString());
+                bool ok = nvs.load (std::filesystem::u8path (p.getFullPathName().toStdString()),
+                                    preparedSampleRate, preparedBlockSize, err,
+                                    pendingVst3PluginId[(size_t) s].toStdString());
                 if (ok && ! pendingVst3State[(size_t) s].empty())
-                    nvs.loadState (pendingVst3State[(size_t) s]);
+                    ok = nvs.loadState (pendingVst3State[(size_t) s]);
                 vst3ReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
             }
             pendingVst3Path[(size_t) s].clear();
@@ -129,11 +132,11 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
             {
                 std::string err;
                 const auto identifier = pendingAuIdentifier[(size_t) s].toStdString();
-                const bool ok = nas.load (std::filesystem::u8path (identifier),
-                                          preparedSampleRate, preparedBlockSize,
-                                          err, identifier);
+                bool ok = nas.load (std::filesystem::u8path (identifier),
+                                    preparedSampleRate, preparedBlockSize,
+                                    err, identifier);
                 if (ok && ! pendingAuState[(size_t) s].empty())
-                    nas.loadState (pendingAuState[(size_t) s]);
+                    ok = nas.loadState (pendingAuState[(size_t) s]);
                 auReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
             }
             pendingAuIdentifier[(size_t) s].clear();

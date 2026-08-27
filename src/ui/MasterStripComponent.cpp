@@ -947,59 +947,37 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     addAndMakeVisible (compRatLabel); addAndMakeVisible (compAtkLabel);
     addAndMakeVisible (compRelLabel); addAndMakeVisible (compMakLabel);
 
-    // TAPE pill (compact / tape-strip mode only) retains its existing grammar:
-    // left-click toggles tapeEnabled, right-click opens the section menu, and
-    // double-click opens the editor. Lit state reflects the tapeEnabled atom.
+    // Compact TAPE uses the same split status/editor hitboxes as EQ and COMP.
     {
         const auto tapeAccent = juce::Colour (0xffd0a060);
-        tapeButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff282830));
-        tapeButton.setColour (juce::TextButton::buttonOnColourId, tapeAccent.withMultipliedAlpha (0.85f));
-        tapeButton.setColour (juce::TextButton::textColourOffId,  tapeAccent.withMultipliedBrightness (0.8f));
-        tapeButton.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
-        tapeButton.setMouseClickGrabsKeyboardFocus (false);
-        tapeButton.setClickingTogglesState (false);   // toggle path goes through the atom, not the button state
-        tapeButton.setToggleState (params.tapeEnabled.load (std::memory_order_relaxed),
-                                    juce::dontSendNotification);
-        tapeButton.setTooltip ("Left-click tape on/off. Right-click for the TAPE menu. Double-click to open the editor.");
-        // Tape carries toggle, menu and editor on one target, so it keeps the
-        // double-click gesture. EQ and COMP split the status light and the
-        // label into separate hitboxes instead.
-        tapeButton.onClick = [this]
-        {
-            const bool now = ! params.tapeEnabled.load (std::memory_order_relaxed);
-            params.tapeEnabled.store (now, std::memory_order_relaxed);
-            tapeButton.setToggleState (now, juce::dontSendNotification);
-        };
-        tapeButton.onRightClick  = [this] (const juce::MouseEvent&) { showTapeSectionMenu(); };
-        tapeButton.onDoubleClick = [this] { openTapeMachineModal(); };
-        addAndMakeVisible (tapeButton);
+        tapeButton.setAccentColour (tapeAccent);
+        tapeButton.setCallbacks (
+            [this] { return ! params.tapeEnabled.load (std::memory_order_relaxed); },
+            [this]
+            {
+                const bool now = ! params.tapeEnabled.load (std::memory_order_relaxed);
+                params.tapeEnabled.store (now, std::memory_order_relaxed);
+            },
+            [this] { openTapeMachineModal(); },
+            [this] { showTapeSectionMenu(); });
+        tapeButton.setTooltip ("Click the light to bypass/engage tape; click TAPE to open the editor; right-click for the TAPE menu.");
+        addChildComponent (tapeButton);
+
+        // Expanded TAPE matches the same split-button treatment.
+        tapeHeaderBtn = std::make_unique<SplitModuleButton> ("TAPE");
+        tapeHeaderBtn->setAccentColour (tapeAccent);
+        tapeHeaderBtn->setCallbacks (
+            [this] { return ! params.tapeEnabled.load (std::memory_order_relaxed); },
+            [this]
+            {
+                const bool now = ! params.tapeEnabled.load (std::memory_order_relaxed);
+                params.tapeEnabled.store (now, std::memory_order_relaxed);
+            },
+            [this] { openTapeMachineModal(); },
+            [this] { showTapeSectionMenu(); });
+        tapeHeaderBtn->setTooltip ("Click the light to bypass/engage tape; click TAPE to open the editor; right-click for the TAPE menu.");
+        addAndMakeVisible (tapeHeaderBtn.get());
     }
-
-    // Regular-mode TAPE header keeps its legacy CompHeaderButton grammar.
-    // Left-click toggles enable, right-click opens the TAPE section menu,
-    // and double-click opens the editor (tape has no inline
-    // controls, so the popup is its only editor). The LED reflects
-    // tapeEnabled. setCompactMode swaps visibility between this header and
-    // the compact tapeButton pill above.
-    tapeHeaderBtn = std::make_unique<CompHeaderButton> (
-        /*getEnabled*/            [this] { return params.tapeEnabled.load (std::memory_order_relaxed); },
-        /*onToggle (left-click)*/ [this]
-                        {
-                            const bool now = ! params.tapeEnabled.load (std::memory_order_relaxed);
-                            params.tapeEnabled.store (now, std::memory_order_relaxed);
-                            if (tapeHeaderBtn != nullptr) tapeHeaderBtn->repaint();
-                        },
-        /*onPick*/       [this] { showTapeSectionMenu(); },
-        /*onDoubleClick*/[this] { openTapeMachineModal(); });
-    tapeHeaderBtn->setLabelText ("TAPE");
-    tapeHeaderBtn->setTooltip ("Left-click to bypass / engage tape. Right-click for the TAPE menu. Double-click to open the editor.");
-    addAndMakeVisible (tapeHeaderBtn.get());
-
-    // Default mode is regular (compactMode = false). Hide the compact
-    // tapeButton initially so the header CompHeaderButton owns the
-    // slot. setCompactMode swaps the two whenever the TIMELINE tape
-    // strip toggles.
-    tapeButton.setVisible (false);
 
     faderSlider.setRange (ChannelStripParams::kFaderMinDb, ChannelStripParams::kFaderMaxDb, 0.1);
     faderSlider.setSkewFactorFromMidPoint (-12.0);
@@ -1143,6 +1121,15 @@ void MasterStripComponent::timerCallback()
             compCompactButton.refresh();
         }
     }
+    {
+        const int tapeOn = params.tapeEnabled.load (std::memory_order_relaxed) ? 1 : 0;
+        if (tapeOn != lastTapeOn)
+        {
+            lastTapeOn = tapeOn;
+            tapeButton.refresh();
+            if (tapeHeaderBtn != nullptr) tapeHeaderBtn->refresh();
+        }
+    }
 
     // Output peak per channel - fast attack, slow release; with peak-hold.
     auto smoothChannel = [] (float& displayed, float& peakHold, int& peakFrames, float src)
@@ -1234,15 +1221,6 @@ void MasterStripComponent::timerCallback()
         (void) eqOn;
     }
     if (compHeaderBtn != nullptr) compHeaderBtn->refresh();
-    {
-        // TAPE pill state - sync toggle from atom so MIDI bind / future
-        // automation reflects the lit state.
-        const bool tapeOn = params.tapeEnabled.load (std::memory_order_relaxed);
-        if (tapeButton.getToggleState() != tapeOn)
-            tapeButton.setToggleState (tapeOn, juce::dontSendNotification);
-        if (tapeHeaderBtn != nullptr) tapeHeaderBtn->repaint();   // LED reflects atom
-    }
-
     // Cross-surface sync: when the popup EQ editor mutates an atom, the
     // inline knob / combo lags until something else triggers a repaint.
     // Poll every atom against the inline widget and snap if the values
@@ -1397,10 +1375,8 @@ void MasterStripComponent::paint (juce::Graphics& g)
     }
     if (! tapeArea.isEmpty())
     {
-        // Warm tape-deck chassis (TEAC/Studer brown) + amber accent - ties to
-        // the tape pill's amber and gives the header its own band so it reads
-        // as a section, not part of the fader area below. The transparent
-        // CompHeaderButton lets this tint show through, same as EQ / COMP.
+        // Warm tape-deck chassis (TEAC/Studer brown) + amber accent. The inset
+        // split button leaves the band visible around it, as in EQ and COMP.
         g.setColour (juce::Colour (0xff261d12));
         g.fillRoundedRectangle (tapeArea.toFloat(), 3.0f);
         g.setColour (juce::Colour (0xffd0a060).withAlpha (0.45f));
@@ -1571,12 +1547,11 @@ void MasterStripComponent::setCompactMode (bool compact)
     if (compactMode == compact) return;
     compactMode = compact;
 
-    // Reset the gated-repaint sentinels so the next timer tick republishes
-    // the pill colours after re-entering compact mode (matches the
-    // BusComponent fix - without this a previous cache value would
-    // suppress the first refresh when EQ/COMP state hasn't flipped).
+    // Reset the repaint caches so the newly visible button variant refreshes
+    // on the next timer tick even when its section state has not changed.
     lastCompactEqOn   = -1;
     lastCompactCompOn = -1;
+    lastTapeOn        = -1;
 
     const bool sec = ! compact;
     if (eqHeaderBtn != nullptr) eqHeaderBtn->setVisible (sec);
@@ -1597,7 +1572,7 @@ void MasterStripComponent::setCompactMode (bool compact)
     eqCompactButton  .setVisible (compact);
     compCompactButton.setVisible (compact);
 
-    // TAPE: compact shows the amber pill, regular shows the CompHeaderButton.
+    // TAPE: compact and regular layouts use equivalent split buttons.
     tapeButton.setVisible (compact);
     if (tapeHeaderBtn != nullptr) tapeHeaderBtn->setVisible (sec);
 
@@ -1783,22 +1758,19 @@ void MasterStripComponent::resized()
     area.removeFromTop (6);
     } // end !compactMode EQ + COMP branch
 
-    // TAPE row - compact mode uses the pill-style tapeButton (click
-    // opens editor, atom drives lit state); regular mode swaps in
-    // tapeHeaderBtn (legacy CompHeaderButton with a green LED).
+    // TAPE row swaps between equivalent compact and regular split buttons.
     // Visibility is set in setCompactMode.
     // Compact size matches the master EQ + COMP pills above
     // (20h × reduced(4,0)) so the three-pill stack reads as one
-    // visual unit; non-compact tapeHeaderBtn keeps its taller native
-    // header dimensions for the LED + label pairing.
-    const int tapeRowH = compactMode ? 20 : 22;
-    const int tapeReduceX = compactMode ? 4 : 2;
+    // visual unit; the regular chassis adds a 2 px vertical inset.
+    const int tapeRowH = compactMode ? 20 : 24;
     auto tapeRow = area.removeFromTop (tapeRowH);
     // Regular mode: frame the TAPE header in its own chassis band (like EQ /
     // COMP) so it reads as a distinct section, not part of the fader area
     // below. Compact mode already has the amber pill, so no band there.
     tapeArea = compactMode ? juce::Rectangle<int>() : tapeRow;
-    auto buttonRow = tapeRow.reduced (tapeReduceX, 0);
+    auto buttonRow = compactMode ? tapeRow.reduced (4, 0)
+                                 : tapeRow.reduced (4, 2);
     if (compactMode)                              tapeButton.setBounds (buttonRow);
     else if (tapeHeaderBtn != nullptr)            tapeHeaderBtn->setBounds (buttonRow);
 

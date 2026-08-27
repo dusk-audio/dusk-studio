@@ -1,5 +1,5 @@
 <!-- summary-start -->
-Fixes the macOS disk image, which could not launch in 0.13.0, restores the notepad's full size on Retina Macs, makes the Windows notepad work in VMs, Remote Desktop and basic-display sessions, removes Linux desktop files from macOS and Windows packages, and adds native CLAP and VST3 plugin hosting on Windows.
+Restores hosted plugin settings when reopening sessions, prevents hung plugin scans from wedging, and adds scan cancellation.
 <!-- summary-end -->
 
 ### Downloads

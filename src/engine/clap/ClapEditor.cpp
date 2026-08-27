@@ -76,10 +76,17 @@ bool ClapEditor::embed (void* parentHandle, int x, int y, int w, int h, std::str
     clap_window_t win {};
     win.api = CLAP_WINDOW_API_X11;
     win.x11 = (clap_xwnd) containerHandle;
+
+    // CLAP's embedded-GUI lifecycle puts the initial size before set_parent().
+    // Reversing those calls can leave OpenGL-backed children uninitialised, which
+    // presents as an empty editor. A plugin may reject a host size and keep
+    // its preferred size, so preserve the previous best-effort resize behaviour.
+    if (resizable && gui->set_size != nullptr)
+        (void) gui->set_size (plugin, (uint32_t) ww, (uint32_t) hh);
+
     if (gui->set_parent == nullptr || ! gui->set_parent (plugin, &win))
     { errorOut = "gui set_parent() failed"; close(); return false; }
 
-    if (resizable && gui->set_size != nullptr) gui->set_size (plugin, (uint32_t) ww, (uint32_t) hh);
     if (gui->show != nullptr && ! gui->show (plugin))
     { errorOut = "gui show() failed"; close(); return false; }
 

@@ -1,0 +1,20 @@
+@prefix atom:  <http://lv2plug.in/ns/ext/atom#> .
+@prefix doap:  <http://usefulinc.com/ns/doap#> .
+@prefix lv2:   <http://lv2plug.in/ns/lv2core#> .
+@prefix state: <http://lv2plug.in/ns/ext/state#> .
+@prefix urid:  <http://lv2plug.in/ns/ext/urid#> .
+
+<urn:duskstudio:test:file-state>
+    a lv2:Plugin ;
+    doap:name "Dusk file-state fixture" ;
+    lv2:requiredFeature urid:map ;
+    lv2:extensionData state:interface ;
+    lv2:port
+        [ a lv2:InputPort, lv2:AudioPort ;
+          lv2:index 0 ; lv2:symbol "in_l" ; lv2:name "Input L" ],
+        [ a lv2:InputPort, lv2:AudioPort ;
+          lv2:index 1 ; lv2:symbol "in_r" ; lv2:name "Input R" ],
+        [ a lv2:OutputPort, lv2:AudioPort ;
+          lv2:index 2 ; lv2:symbol "out_l" ; lv2:name "Output L" ],
+        [ a lv2:OutputPort, lv2:AudioPort ;
+          lv2:index 3 ; lv2:symbol "out_r" ; lv2:name "Output R" ] .

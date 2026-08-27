@@ -25,7 +25,8 @@ std::vector<std::uint8_t> bytesOf (const std::string& s)
 // juce::MemoryBlock::fromBase64Encoding, a size-prefixed private format that
 // rejects every RFC string, so every CLAP / LV2 / VST3 / AU / multisample slot
 // silently restored to its default state.
-TEST_CASE ("dusk::base64 decodes what juce::Base64 encodes", "[base64][foundation]")
+TEST_CASE ("dusk::base64 decodes what juce::Base64 encodes",
+           "[base64][foundation][regression][issue-355]")
 {
     juce::Random random (0x5eed);
 

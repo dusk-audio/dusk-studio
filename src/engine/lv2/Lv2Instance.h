@@ -63,8 +63,8 @@ public:
     // Session-scoped directory for FILE-BACKED plugin state (a sampler's
     // loaded bank, a convolution IR). Empty = blob-only save (control ports
     // + in-memory state:interface - the pre-file-state behaviour). Set by
-    // the engine before saveState/loadState. saveState rotates
-    // <dir>/prev <- <dir>/cur and snapshots referenced files into cur/;
+    // the engine before saveState/loadState. saveState stages a new generation,
+    // then rotates <dir>/prev <- <dir>/cur only after serialization succeeds;
     // loadState resolves the blob's abstract paths against cur/.
     void setStateDirectory (const std::filesystem::path& dir);
 
@@ -122,6 +122,9 @@ public:
     int lastTouchedParamIndex() const noexcept;
 
 private:
+    bool saveStateBlobOnly (std::vector<uint8_t>& out) const;
+    bool loadStateInternal (const std::vector<uint8_t>& in,
+                            bool recoverFileGeneration);
     struct Impl;
     std::unique_ptr<Impl> impl;
 };

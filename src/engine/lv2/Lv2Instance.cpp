@@ -24,6 +24,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <iterator>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -104,6 +107,10 @@ struct Lv2Instance::Impl
     // absolute ourselves. Returned strings are malloc'd - the plugin frees
     // them through freePathCb (or plain free()), per the state spec.
     std::filesystem::path stateDir;
+    // A failed restore leaves the instance at defaults. Refuse later snapshots
+    // from that instance so an ignored restore error cannot rotate away the
+    // carried file-backed generations with a default-state save.
+    bool stateRestoreFailed = false;
 
     static char* absolutePathCb (LV2_State_Map_Path_Handle handle, const char* abstractPath)
     {
@@ -335,6 +342,7 @@ int  Lv2Instance::getLatencySamples() const noexcept { return impl->latencySampl
 bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::string& errorOut)
 {
     impl->freeInstance();
+    impl->stateRestoreFailed = false;
     impl->plugin = static_cast<const LilvPlugin*> (bundle.pluginByUri (uri));
     if (impl->plugin == nullptr) { errorOut = "plugin URI not found in bundle: " + uri; return false; }
 
@@ -659,7 +667,8 @@ bool Lv2Instance::reactivate (double sampleRate, int maxBlockFrames, std::string
     // (control ports + state:interface); fall back to the raw port values when it
     // can't. The blob already reflects staged UI writes via getPortValue's shadow.
     std::vector<uint8_t> blob;
-    saveState (blob);
+    const bool carriedRestoreFailure = impl->stateRestoreFailed;
+    saveStateBlobOnly (blob);
     const std::vector<float> saved = impl->portValues;
     // freeInstance bumps the epoch before the rebuild, so a failed activate
     // still leaves the embed marked stale.
@@ -667,7 +676,15 @@ bool Lv2Instance::reactivate (double sampleRate, int maxBlockFrames, std::string
     if (! activate (sampleRate, maxBlockFrames, errorOut)) return false;
     if (! blob.empty())
     {
-        loadState (blob);
+        // This blob was just captured from the live instance, rather than read
+        // from the persisted session. Its file paths already describe the
+        // active cur/ generation, so do not require byte equality with the
+        // older session blob stored there.
+        if (! loadStateInternal (blob, false))
+        {
+            errorOut = "LV2 state restore failed after reactivation";
+            return false;
+        }
     }
     else if (saved.size() == impl->portValues.size())
     {
@@ -677,6 +694,11 @@ bool Lv2Instance::reactivate (double sampleRate, int maxBlockFrames, std::string
         for (uint32_t idx : impl->controlPorts)
             if ((size_t) idx < impl->uiDirty.size() && impl->uiDirty[(size_t) idx] != 0)
                 impl->portValues[(size_t) idx] = impl->uiShadow[(size_t) idx];
+    }
+    if (carriedRestoreFailure)
+    {
+        errorOut = "LV2 state remained unavailable after reactivation";
+        return false;
     }
     return true;
 }
@@ -795,73 +817,170 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
 
 void Lv2Instance::setStateDirectory (const std::filesystem::path& dir)
 {
-    impl->stateDir = dir;
+    impl->stateDir = statepaths::normalizeStateDirectory (dir);
 }
 
-bool Lv2Instance::saveState (std::vector<uint8_t>& out) const
+bool Lv2Instance::saveStateBlobOnly (std::vector<uint8_t>& out) const
 {
     out.clear();
-    if (impl->instance == nullptr || impl->plugin == nullptr || impl->world == nullptr)
+    if (impl->instance == nullptr || impl->plugin == nullptr || impl->world == nullptr
+        || impl->stateRestoreFailed)
         return false;
-
-    // Snapshot control-port values + the plugin's state:interface blob (JUCE-
-    // wrapped plugins keep everything there) into a lilv state, serialized as
-    // Turtle. With a state directory set, lilv also snapshots FILE-BACKED
-    // state (sample banks, IRs) into <dir>/cur/ and emits abstract paths in
-    // the Turtle; without one, file-writing plugins keep only their in-memory
-    // state (the pre-file-state behaviour, fine for effects).
-    std::string curPath;
-    if (! impl->stateDir.empty())
-    {
-        // Rotate generations instead of wiping: a disk-streaming sampler may
-        // still be reading the files the PREVIOUS save snapshotted - those
-        // survive one more save cycle in prev/.
-        std::error_code ec;
-        const auto cur  = impl->stateDir / "cur";
-        const auto prev = impl->stateDir / "prev";
-        std::filesystem::remove_all (prev, ec);
-        bool rotated = ! ec;
-        if (rotated && std::filesystem::is_directory (cur, ec))
-        {
-            std::filesystem::rename (cur, prev, ec);
-            rotated = ! ec;
-        }
-        if (rotated)
-        {
-            std::filesystem::create_directories (cur, ec);
-            curPath = cur.u8string();
-        }
-        // Rotation failed: leave curPath empty so lilv gets no directory and
-        // falls back to a blob-only (in-memory) save rather than writing a new
-        // generation on top of the stale cur/ files.
-    }
-    const char* dirC = curPath.empty() ? nullptr : curPath.c_str();
 
     LilvState* state = lilv_state_new_from_instance (
         impl->plugin, impl->instance, &impl->mapFeature,
-        dirC, dirC, dirC, dirC,
+        nullptr, nullptr, nullptr, nullptr,
         &Impl::getPortValue, impl.get(),
         LV2_STATE_IS_POD | LV2_STATE_IS_PORTABLE, impl->features.data());
     if (state == nullptr) return false;
 
-    char* ttl = lilv_state_to_string (impl->world, &impl->mapFeature, &impl->unmapFeature,
-                                      state, "urn:duskstudio:lv2state", nullptr);
+    char* ttl = lilv_state_to_string (
+        impl->world, &impl->mapFeature, &impl->unmapFeature,
+        state, "urn:duskstudio:lv2state", nullptr);
     lilv_state_free (state);
     if (ttl == nullptr) return false;
-
     out.assign (ttl, ttl + std::strlen (ttl));
     lilv_free (ttl);
     return ! out.empty();
 }
 
+bool Lv2Instance::saveState (std::vector<uint8_t>& out) const
+{
+    if (impl->stateDir.empty()) return saveStateBlobOnly (out);
+
+    out.clear();
+    if (impl->instance == nullptr || impl->plugin == nullptr || impl->world == nullptr
+        || impl->stateRestoreFailed)
+        return false;
+
+    // Snapshot control-port values + the plugin's state:interface blob (JUCE-
+    // wrapped plugins keep everything there) into a lilv state, serialized as
+    // Turtle. With a state directory set, lilv also snapshots FILE-BACKED
+    // state (sample banks, IRs) into a fresh <dir>/next/ generation and emits
+    // abstract paths in the Turtle. A successful serialization publishes next/
+    // as cur/ below; without a directory, file-writing plugins keep only their
+    // in-memory state (the pre-file-state behaviour, fine for effects).
+    std::error_code ec;
+    const auto next = statepaths::prepareNextGeneration (impl->stateDir, ec);
+    // Never report a successful blob-only save for a slot configured with
+    // file-backed state: that would silently stop carrying its external files
+    // after a staging or recovery failure.
+    if (next.empty()) return false;
+
+    // A restored plugin refers to files in cur/. Lilv must consider that the
+    // scratch generation so it preserves their bytes in the stable copy store,
+    // then links the new generation to those copies.
+    const auto copyDir = impl->stateDir / "copy";
+    const auto linkDir = impl->stateDir / "link";
+    std::filesystem::create_directories (copyDir, ec);
+    if (! ec) std::filesystem::create_directories (linkDir, ec);
+    if (ec)
+    {
+        statepaths::discardNextGeneration (impl->stateDir);
+        return false;
+    }
+    const auto scratchPath = (impl->stateDir / "cur").u8string();
+    const auto copyPath = copyDir.u8string();
+    const auto linkPath = linkDir.u8string();
+    const auto savePath = next.u8string();
+
+    LilvState* state = lilv_state_new_from_instance (
+        impl->plugin, impl->instance, &impl->mapFeature,
+        scratchPath.c_str(), copyPath.c_str(), linkPath.c_str(), savePath.c_str(),
+        &Impl::getPortValue, impl.get(),
+        LV2_STATE_IS_POD | LV2_STATE_IS_PORTABLE, impl->features.data());
+    if (state == nullptr)
+    {
+        statepaths::discardNextGeneration (impl->stateDir);
+        return false;
+    }
+
+    std::vector<uint8_t> serialized;
+    constexpr const char* stateFile = "state.ttl";
+    const int saveResult = lilv_state_save (
+        impl->world, &impl->mapFeature, &impl->unmapFeature, state,
+        "urn:duskstudio:lv2state", savePath.c_str(), stateFile);
+    lilv_state_free (state);
+    if (saveResult != 0)
+    {
+        statepaths::discardNextGeneration (impl->stateDir);
+        return false;
+    }
+
+    std::ifstream input (next / stateFile, std::ios::binary);
+    serialized.assign (std::istreambuf_iterator<char> (input),
+                       std::istreambuf_iterator<char>());
+    if ((! input.good() && ! input.eof()) || serialized.empty())
+    {
+        statepaths::discardNextGeneration (impl->stateDir);
+        return false;
+    }
+
+    // Only now that both the plugin snapshot and Turtle serialization succeeded
+    // may the fresh files replace cur/. Until this point a restored plugin's
+    // absolute cur/ paths remain valid throughout the save.
+    if (! statepaths::commitNextGeneration (impl->stateDir, ec))
+    {
+        // commitNextGeneration may have moved cur aside before the publish or
+        // rollback failed. Preserve the complete staged generation as recovery
+        // data; the next prepare removes it only when cur exists.
+        return false;
+    }
+
+    out = std::move (serialized);
+    return true;
+}
+
 bool Lv2Instance::loadState (const std::vector<uint8_t>& in)
+{
+    return loadStateInternal (in, true);
+}
+
+bool Lv2Instance::loadStateInternal (const std::vector<uint8_t>& in,
+                                     bool recoverFileGeneration)
 {
     if (impl->instance == nullptr || impl->world == nullptr || in.empty())
         return false;
 
-    const std::string ttl (in.begin(), in.end());
-    LilvState* state = lilv_state_new_from_string (impl->world, &impl->mapFeature, ttl.c_str());
-    if (state == nullptr) return false;
+    LilvState* state = nullptr;
+    if (! impl->stateDir.empty() && recoverFileGeneration)
+    {
+        const std::string_view persistedState {
+            reinterpret_cast<const char*> (in.data()), in.size() };
+        std::error_code recoveryError;
+        if (! statepaths::recoverGeneration (impl->stateDir, persistedState,
+                                             recoveryError))
+        {
+            impl->stateRestoreFailed = true;
+            return false;
+        }
+
+        const auto stateFile = impl->stateDir / "cur" / "state.ttl";
+        std::ifstream input (stateFile, std::ios::binary);
+        const std::vector<uint8_t> saved {
+            std::istreambuf_iterator<char> (input), std::istreambuf_iterator<char>() };
+        if (saved == in)
+        {
+            LilvNode* subject = lilv_new_uri (impl->world, "urn:duskstudio:lv2state");
+            state = lilv_state_new_from_file (
+                impl->world, &impl->mapFeature, subject, stateFile.c_str());
+            lilv_node_free (subject);
+        }
+    }
+
+    // Blob-only snapshots and states written by older versions contain no
+    // relative file URIs, so the filesystem-independent parser remains the
+    // compatible fallback.
+    if (state == nullptr)
+    {
+        const std::string ttl (in.begin(), in.end());
+        state = lilv_state_new_from_string (impl->world, &impl->mapFeature, ttl.c_str());
+    }
+    if (state == nullptr)
+    {
+        impl->stateRestoreFailed = true;
+        return false;
+    }
 
     // Restores control ports through setPortValue (the plugin reads portValues on
     // its next run()) and hands the state:interface blob to the plugin. Callers
@@ -882,6 +1001,7 @@ bool Lv2Instance::loadState (const std::vector<uint8_t>& in)
     lilv_state_restore (state, impl->instance, &Impl::setPortValue, impl.get(),
                         0, feats.data());
     lilv_state_free (state);
+    impl->stateRestoreFailed = false;
     return true;
 }
 

@@ -65,11 +65,13 @@ bool ClapEditor::embed (void* parentHandle, int x, int y, int w, int h,
     clap_window_t win {};
     win.api = CLAP_WINDOW_API_COCOA;
     win.cocoa = (clap_nsview) container;
+
+    if (resizable && gui->set_size != nullptr)
+        (void) gui->set_size (plugin, (uint32_t) ww, (uint32_t) hh);
+
     if (gui->set_parent == nullptr || ! gui->set_parent (plugin, &win))
     { errorOut = "gui set_parent() failed"; close(); return false; }
 
-    if (resizable && gui->set_size != nullptr)
-        gui->set_size (plugin, (uint32_t) ww, (uint32_t) hh);
     if (gui->show != nullptr && ! gui->show (plugin))
     { errorOut = "gui show() failed"; close(); return false; }
 

@@ -73,16 +73,82 @@ bool ClapInstance::create (const ClapBundle& bundle, const std::string& pluginId
         return false;
     }
 
-    // Channel counts of the first audio port in / out (the aux path is stereo;
-    // a full port-config negotiation comes with the multi-port increment).
-    int inCh = 0, outCh = 0;
+    // Snapshot every advertised audio port while the plugin is deactivated.
+    // The mixer exposes one main insert bus, but CLAP process() still requires
+    // the complete port array. Complex modular plugins commonly advertise
+    // several stereo buses and may dereference all of them.
+    audioInPorts.clear();
+    audioOutPorts.clear();
+    mainAudioInPort = mainAudioOutPort = -1;
+    bool audioPortsOk = true;
     if (const auto* ap = static_cast<const clap_plugin_audio_ports_t*> (
             plugin->get_extension (plugin, CLAP_EXT_AUDIO_PORTS));
         ap != nullptr && ap->count != nullptr && ap->get != nullptr)
     {
-        clap_audio_port_info_t info {};
-        if (ap->count (plugin, true)  > 0 && ap->get (plugin, 0, true,  &info)) inCh  = (int) info.channel_count;
-        if (ap->count (plugin, false) > 0 && ap->get (plugin, 0, false, &info)) outCh = (int) info.channel_count;
+        auto readPorts = [&] (bool isInput, std::vector<AudioPort>& ports,
+                              int& mainPort)
+        {
+            constexpr uint32_t kMaxPorts = 64;
+            constexpr uint32_t kMaxChannelsPerPort = 64;
+            constexpr uint32_t kMaxTotalChannels = 256;
+            const uint32_t count = ap->count (plugin, isInput);
+            if (count > kMaxPorts)
+            {
+                errorOut = "plugin advertises too many audio ports";
+                return false;
+            }
+
+            uint32_t totalChannels = 0;
+            ports.reserve (count);
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                clap_audio_port_info_t info {};
+                if (! ap->get (plugin, i, isInput, &info)
+                    || info.channel_count == 0
+                    || info.channel_count > kMaxChannelsPerPort
+                    || totalChannels > kMaxTotalChannels - info.channel_count)
+                {
+                    errorOut = "plugin advertises an invalid audio-port layout";
+                    return false;
+                }
+
+                // Some plugins incorrectly mark more than one port as main.
+                // Preserve the historical first-port selection and keep every
+                // later port connected as an auxiliary bus.
+                const bool isMain = (info.flags & CLAP_AUDIO_PORT_IS_MAIN) != 0
+                                 && mainPort < 0;
+                if (isMain)
+                    mainPort = (int) i;
+
+                AudioPort port;
+                port.channelCount = info.channel_count;
+                port.channelOffset = totalChannels;
+                port.isMain = isMain;
+                port.name.assign (info.name, ::strnlen (info.name, sizeof (info.name)));
+                ports.push_back (std::move (port));
+                totalChannels += info.channel_count;
+            }
+
+            // Older plugins sometimes omit the main flag. Preserve the host's
+            // historical first-port behavior while still connecting all buses.
+            if (! ports.empty() && mainPort < 0)
+            {
+                mainPort = 0;
+                ports.front().isMain = true;
+            }
+            return true;
+        };
+
+        audioPortsOk = readPorts (true, audioInPorts, mainAudioInPort)
+                    && readPorts (false, audioOutPorts, mainAudioOutPort);
+    }
+
+    if (! audioPortsOk)
+    {
+        plugin->destroy (plugin);
+        plugin = nullptr;
+        owningBundle = nullptr;
+        return false;
     }
 
     // Note input (instruments / MIDI-driven effects) via CLAP_EXT_NOTE_PORTS.
@@ -108,10 +174,10 @@ bool ClapInstance::create (const ClapBundle& bundle, const std::string& pluginId
     // The InsertAdapter folds any layout onto the stereo insert; the only hard
     // requirements are an audio output and, for input-less plugins, a note port
     // to drive them (a plugin with neither is unhostable in a mixer slot).
-    if (outCh < 1 || (inCh == 0 && ! noteInPort))
+    if (mainAudioOutPort < 0 || (mainAudioInPort < 0 && ! noteInPort))
     {
-        errorOut = inCh == 0 ? "plugin has no audio input and no note input"
-                             : "plugin has no audio output";
+        errorOut = mainAudioOutPort < 0 ? "plugin has no audio output"
+                                        : "plugin has no audio input and no note input";
         plugin->destroy (plugin);
         plugin = nullptr;
         owningBundle = nullptr;
@@ -122,13 +188,19 @@ bool ClapInstance::create (const ClapBundle& bundle, const std::string& pluginId
     // reads it to fold the stereo insert onto the plugin's real channel counts).
     layout = {};
     {
-        if (inCh > 0)
+        for (size_t i = 0; i < audioInPorts.size(); ++i)
         {
+            const auto& port = audioInPorts[i];
             hosting::BusInfo in;
             in.kind = hosting::BusInfo::Kind::Audio; in.dir = hosting::BusInfo::Direction::Input;
-            in.role = hosting::BusInfo::Role::Main;  in.channelCount = inCh;  in.active = true; in.name = "Input";
+            in.role = (int) i == mainAudioInPort ? hosting::BusInfo::Role::Main
+                                                 : hosting::BusInfo::Role::Aux;
+            in.channelCount = (int) port.channelCount;
+            in.active = true;
+            in.name = port.name.empty() ? "Input" : port.name;
+            if ((int) i == mainAudioInPort)
+                layout.mainInIndex = (int) layout.inputs.size();
             layout.inputs.push_back (in);
-            layout.mainInIndex = 0;
         }
         if (noteInPort)
         {
@@ -139,12 +211,21 @@ bool ClapInstance::create (const ClapBundle& bundle, const std::string& pluginId
             layout.inputs.push_back (ev);
         }
 
-        hosting::BusInfo out;
-        out.kind = hosting::BusInfo::Kind::Audio; out.dir = hosting::BusInfo::Direction::Output;
-        out.role = hosting::BusInfo::Role::Main;  out.channelCount = outCh; out.active = true; out.name = "Output";
-        layout.outputs.push_back (out);
-        layout.mainOutIndex = 0;
-        layout.isInstrument = (inCh == 0);
+        for (size_t i = 0; i < audioOutPorts.size(); ++i)
+        {
+            const auto& port = audioOutPorts[i];
+            hosting::BusInfo out;
+            out.kind = hosting::BusInfo::Kind::Audio; out.dir = hosting::BusInfo::Direction::Output;
+            out.role = (int) i == mainAudioOutPort ? hosting::BusInfo::Role::Main
+                                                   : hosting::BusInfo::Role::Aux;
+            out.channelCount = (int) port.channelCount;
+            out.active = true;
+            out.name = port.name.empty() ? "Output" : port.name;
+            if ((int) i == mainAudioOutPort)
+                layout.mainOutIndex = (int) layout.outputs.size();
+            layout.outputs.push_back (out);
+        }
+        layout.isInstrument = mainAudioInPort < 0;
     }
 
     // Snapshot the parameter list for automation / display. [main-thread]
@@ -191,17 +272,41 @@ bool ClapInstance::activate (double sampleRate, int maxBlock, std::string& error
         || ! plugin->activate (plugin, sampleRate, 1, (uint32_t) maxFrames))
     { errorOut = "activate() failed"; return false; }
 
-    // Plugin latency is valid post-activate; cache it for PDC. Size the CLAP
-    // buffer pointer arrays to the negotiated channel counts so processBlock
-    // just points them at the caller's scratch each block (no RT alloc).
+    // Plugin latency is valid post-activate; cache it for PDC.
     latencySamples = 0;
     if (const auto* lat = static_cast<const clap_plugin_latency_t*> (
             plugin->get_extension (plugin, CLAP_EXT_LATENCY));
         lat != nullptr && lat->get != nullptr)
         latencySamples = (int) lat->get (plugin);
 
-    clapInData .assign ((size_t) layout.mainInChannels(),  nullptr);
-    clapOutData.assign ((size_t) layout.mainOutChannels(), nullptr);
+    // Allocate a valid buffer for every channel of every advertised port. The
+    // main port is repointed to the insert adapter at process time; all extra
+    // ports remain connected to these silence/sink buffers.
+    auto prepareAudioPorts = [this] (const std::vector<AudioPort>& ports,
+                                     std::vector<clap_audio_buffer_t>& buffers,
+                                     std::vector<float*>& channelData,
+                                     std::vector<float>& scratch)
+    {
+        size_t totalChannels = 0;
+        for (const auto& port : ports) totalChannels += port.channelCount;
+
+        buffers.assign (ports.size(), clap_audio_buffer_t {});
+        channelData.assign (totalChannels, nullptr);
+        scratch.assign (totalChannels * (size_t) maxFrames, 0.0f);
+        for (size_t i = 0; i < ports.size(); ++i)
+        {
+            const auto& port = ports[i];
+            for (uint32_t c = 0; c < port.channelCount; ++c)
+            {
+                const size_t channel = (size_t) port.channelOffset + c;
+                channelData[channel] = scratch.data() + channel * (size_t) maxFrames;
+            }
+            buffers[i].data32 = channelData.data() + port.channelOffset;
+            buffers[i].channel_count = port.channelCount;
+        }
+    };
+    prepareAudioPorts (audioInPorts, clapInBuffers, clapInData, clapInScratch);
+    prepareAudioPorts (audioOutPorts, clapOutBuffers, clapOutData, clapOutScratch);
 
     startFailed = false;   // a fresh activation may try start_processing again
     active = true;
@@ -413,64 +518,36 @@ void ClapInstance::processStereo (const float* inL, const float* inR,
         return;
     }
 
-    if (startFailed)   // plugin already refused to start - stay silent, don't hammer it every block
-    {
-        std::memset (outL, 0, sizeof (float) * (size_t) numFrames);
-        std::memset (outR, 0, sizeof (float) * (size_t) numFrames);
-        return;
-    }
-
-    if (! processing)
-    {
-        // The calling thread is the audio thread for this instance.
-        hostObj.setAudioThread (std::this_thread::get_id());
-        if (plugin->start_processing != nullptr && ! plugin->start_processing (plugin))
-        {
-            startFailed = true;
-            std::memset (outL, 0, sizeof (float) * (size_t) numFrames);
-            std::memset (outR, 0, sizeof (float) * (size_t) numFrames);
-            return;
-        }
-        processing = true;
-    }
-
-    drainParamRing();
-
     const auto n = (size_t) numFrames;
-    std::memcpy (inScratchL.data(), inL, sizeof (float) * n);
-    std::memcpy (inScratchR.data(), inR != nullptr ? inR : inL, sizeof (float) * n);
+    const int mainInputs = layout.mainInChannels();
+    if (mainInputs == 1)
+    {
+        const float* right = inR != nullptr ? inR : inL;
+        for (int i = 0; i < numFrames; ++i)
+            inScratchL[(size_t) i] = 0.5f * (inL[i] + right[i]);
+    }
+    else if (mainInputs >= 2)
+    {
+        std::memcpy (inScratchL.data(), inL, sizeof (float) * n);
+        std::memcpy (inScratchR.data(), inR != nullptr ? inR : inL, sizeof (float) * n);
+    }
+    std::fill (outScratchL.begin(), outScratchL.begin() + numFrames, 0.0f);
+    std::fill (outScratchR.begin(), outScratchR.begin() + numFrames, 0.0f);
 
     float* inPtrs[2]  = { inScratchL.data(),  inScratchR.data()  };
     float* outPtrs[2] = { outScratchL.data(), outScratchR.data() };
-
-    clap_audio_buffer_t inBuf {};
-    inBuf.data32       = inPtrs;
-    inBuf.channel_count = 2;
-
-    clap_audio_buffer_t outBuf {};
-    outBuf.data32       = outPtrs;
-    outBuf.channel_count = 2;
-
-    clap_process_t p {};
-    p.steady_time         = -1;          // free-running
-    p.frames_count        = (uint32_t) numFrames;
-    p.transport           = nullptr;
-    p.audio_inputs        = &inBuf;
-    p.audio_inputs_count  = 1;
-    p.audio_outputs       = &outBuf;
-    p.audio_outputs_count = 1;
-    p.in_events           = &inEvents;
-    p.out_events          = &emptyOut;
-
-    const auto status = plugin->process (plugin, &p);
-    if (status == CLAP_PROCESS_ERROR)
-    {
-        std::fill (outScratchL.begin(), outScratchL.begin() + numFrames, 0.0f);
-        std::fill (outScratchR.begin(), outScratchR.begin() + numFrames, 0.0f);
-    }
+    hosting::PortBuffers io;
+    io.mainIn = mainInputs > 0 ? inPtrs : nullptr;
+    io.mainInChannels = std::min (mainInputs, 2);
+    io.mainOut = outPtrs;
+    io.mainOutChannels = std::min (layout.mainOutChannels(), 2);
+    io.numFrames = numFrames;
+    processBlock (io);
 
     std::memcpy (outL, outScratchL.data(), sizeof (float) * n);
-    std::memcpy (outR, outScratchR.data(), sizeof (float) * n);
+    std::memcpy (outR,
+                 layout.mainOutChannels() == 1 ? outScratchL.data() : outScratchR.data(),
+                 sizeof (float) * n);
 }
 
 void ClapInstance::processBlock (const hosting::PortBuffers& io) noexcept
@@ -515,31 +592,55 @@ void ClapInstance::processBlock (const hosting::PortBuffers& io) noexcept
     if (io.midiIn != nullptr)
         appendMidiEvents (*io.midiIn);
 
-    // Point the CLAP audio buffers straight at the caller's pre-sized scratch - the
-    // plugin writes its output there, no instance-owned copy. Clamp to the channel
-    // counts negotiated at activate() so a mismatched block can't over-index; a null
-    // mainIn (instrument-style caller) processes as zero input ports.
-    const int nin  = io.mainIn != nullptr ? std::min (io.mainInChannels, (int) clapInData.size()) : 0;
-    const int nout = std::min (io.mainOutChannels, (int) clapOutData.size());
-    for (int c = 0; c < nin;  ++c) clapInData [(size_t) c] = io.mainIn[c];
-    for (int c = 0; c < nout; ++c) clapOutData[(size_t) c] = io.mainOut[c];
-
-    clap_audio_buffer_t inBuf {};
-    inBuf.data32        = clapInData.data();
-    inBuf.channel_count = (uint32_t) nin;
-
-    clap_audio_buffer_t outBuf {};
-    outBuf.data32        = clapOutData.data();
-    outBuf.channel_count = (uint32_t) nout;
+    // Point every port at caller storage or its owned silence/sink buffer.
+    // Missing input channels and auxiliary inputs are cleared every block;
+    // discarded output scratch does not need a redundant clear.
+    auto resetPortBuffers = [numFrames, this] (const std::vector<AudioPort>& ports,
+                                               std::vector<clap_audio_buffer_t>& buffers,
+                                               std::vector<float*>& channelData,
+                                               std::vector<float>& scratch,
+                                               int mainPort,
+                                               float* const* supplied,
+                                               int suppliedChannels,
+                                               bool clearOwned)
+    {
+        for (size_t i = 0; i < ports.size(); ++i)
+        {
+            const auto& port = ports[i];
+            for (uint32_t c = 0; c < port.channelCount; ++c)
+            {
+                const size_t channel = (size_t) port.channelOffset + c;
+                float* const owned = scratch.data() + channel * (size_t) maxFrames;
+                const bool useSupplied = (int) i == mainPort
+                                      && supplied != nullptr
+                                      && (int) c < suppliedChannels
+                                      && supplied[c] != nullptr;
+                if (useSupplied)
+                    channelData[channel] = supplied[c];
+                else
+                {
+                    if (clearOwned)
+                        std::fill (owned, owned + numFrames, 0.0f);
+                    channelData[channel] = owned;
+                }
+            }
+            buffers[i].data32 = channelData.data() + port.channelOffset;
+            buffers[i].channel_count = port.channelCount;
+        }
+    };
+    resetPortBuffers (audioInPorts, clapInBuffers, clapInData, clapInScratch,
+                      mainAudioInPort, io.mainIn, io.mainInChannels, true);
+    resetPortBuffers (audioOutPorts, clapOutBuffers, clapOutData, clapOutScratch,
+                      mainAudioOutPort, io.mainOut, io.mainOutChannels, false);
 
     clap_process_t p {};
     p.steady_time         = -1;          // free-running
     p.frames_count        = (uint32_t) numFrames;
     p.transport           = nullptr;
-    p.audio_inputs        = nin > 0 ? &inBuf : nullptr;
-    p.audio_inputs_count  = nin > 0 ? 1u : 0u;
-    p.audio_outputs       = &outBuf;
-    p.audio_outputs_count = 1u;
+    p.audio_inputs        = clapInBuffers.empty() ? nullptr : clapInBuffers.data();
+    p.audio_inputs_count  = (uint32_t) clapInBuffers.size();
+    p.audio_outputs       = clapOutBuffers.data();
+    p.audio_outputs_count = (uint32_t) clapOutBuffers.size();
     p.in_events           = &inEvents;
     p.out_events          = &emptyOut;
 

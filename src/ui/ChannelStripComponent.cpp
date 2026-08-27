@@ -5008,7 +5008,16 @@ void ChannelStripComponent::showColourMenu()
             if (self == nullptr) return;
             if (result == 1001)
             {
-                self->nameLabel.showEditor();
+                // DuskContextMenu closes its EmbeddedModal before invoking this
+                // callback. close() has already queued a deferred focus restore;
+                // opening the Label editor synchronously lets that restore steal
+                // focus on the next tick and the label immediately dismisses the editor.
+                // Queue this after the restore so Rename track stays open.
+                dusk::callAsync ([safe]
+                {
+                    if (auto* strip = safe.getComponent())
+                        strip->nameLabel.showEditor();
+                });
                 return;
             }
             if (result == 1010) { self->openPluginPicker(); return; }
