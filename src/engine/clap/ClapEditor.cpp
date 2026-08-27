@@ -7,6 +7,37 @@
 
 namespace duskstudio::clap
 {
+namespace
+{
+// The container's fill has to be a colour a plugin is unlikely to paint over
+// the whole sampled patch, because reading that colour back is how the host
+// tells "no window and nothing drawn" from "the plugin drew into the container
+// itself". Black would fail that test against every dark plugin UI. Composed
+// from the parent's visual masks so it lands on the intended colour whatever
+// the depth/layout is (the container is created with CopyFromParent).
+unsigned long containerFillPixel (Display* dpy, ::Window parent)
+{
+    XWindowAttributes pa {};
+    if (XGetWindowAttributes (dpy, parent, &pa) != 0 && pa.visual != nullptr
+        && pa.visual->red_mask != 0 && pa.visual->green_mask != 0 && pa.visual->blue_mask != 0)
+    {
+        auto channel = [] (unsigned long mask, unsigned long value)
+        {
+            int shift = 0;
+            while (((mask >> shift) & 1ul) == 0ul) ++shift;
+            int bits = 0;
+            for (unsigned long m = mask >> shift; (m & 1ul) != 0ul; m >>= 1) ++bits;
+            const unsigned long scaled = bits >= 8 ? value << (bits - 8) : value >> (8 - bits);
+            return (scaled << shift) & mask;
+        };
+        return channel (pa.visual->red_mask,   0x23)
+             | channel (pa.visual->green_mask, 0x1e)
+             | channel (pa.visual->blue_mask,  0x2b);
+    }
+    return BlackPixel (dpy, DefaultScreen (dpy));
+}
+} // namespace
+
 ClapEditor::~ClapEditor() { close(); }
 
 bool ClapEditor::open (const ::clap_plugin* p, ClapHost& host, std::string& errorOut)
@@ -50,11 +81,13 @@ bool ClapEditor::embed (void* parentHandle, int x, int y, int w, int h, std::str
     const int ww = w > 0 ? w : (prefW > 0 ? prefW : 400);
     const int hh = h > 0 ? h : (prefH > 0 ? prefH : 300);
 
-    // Solid (black) background, NOT background_pixmap=None: on map the server fills
-    // the window with this pixel instead of leaving stale framebuffer behind it
-    // (otherwise the mixer underneath shows through until the plugin's child paints).
+    // Solid (near-black) background, NOT background_pixmap=None: on map the server
+    // fills the window with this pixel instead of leaving stale framebuffer behind
+    // it (otherwise the mixer underneath shows through until the plugin's child
+    // paints). readContainerContent() compares against the same pixel.
+    containerFill = containerFillPixel (dpy, (Window) (std::uintptr_t) parentHandle);
     XSetWindowAttributes swa {};
-    swa.background_pixel = BlackPixel (dpy, DefaultScreen (dpy));
+    swa.background_pixel = containerFill;
     swa.border_pixel     = 0;
     swa.event_mask       = StructureNotifyMask;
     // Keep the WM's hands off this window in every transient state (JUCE's
@@ -145,32 +178,31 @@ void ClapEditor::mapPluginChildren()
     XFlush (dpy);
 }
 
-bool ClapEditor::containerIsUntouched() const
+ClapEditor::ContainerContent ClapEditor::readContainerContent() const
 {
-    if (platformContext == nullptr || containerHandle == 0) return false;
+    if (platformContext == nullptr || containerHandle == 0) return ContainerContent::unknown;
     auto* dpy = (Display*) platformContext;
 
     XWindowAttributes attr {};
     if (XGetWindowAttributes (dpy, (Window) containerHandle, &attr) == 0
         || attr.map_state != IsViewable)
-        return false;   // cannot read it back - do not claim the plugin drew nothing
+        return ContainerContent::unknown;   // cannot read it back - decide nothing
 
     const int sw = std::min (attr.width, 64), sh = std::min (attr.height, 64);
-    if (sw <= 0 || sh <= 0) return false;
+    if (sw <= 0 || sh <= 0) return ContainerContent::unknown;
 
     auto* image = XGetImage (dpy, (Window) containerHandle,
                              (attr.width - sw) / 2, (attr.height - sh) / 2,
                              (unsigned) sw, (unsigned) sh, AllPlanes, ZPixmap);
-    if (image == nullptr) return false;
+    if (image == nullptr) return ContainerContent::unknown;
 
-    const unsigned long background = BlackPixel (dpy, DefaultScreen (dpy));
-    bool untouched = true;
-    for (int y = 0; y < sh && untouched; ++y)
+    bool drawn = false;
+    for (int y = 0; y < sh && ! drawn; ++y)
         for (int x = 0; x < sw; ++x)
-            if (XGetPixel (image, x, y) != background) { untouched = false; break; }
+            if (XGetPixel (image, x, y) != containerFill) { drawn = true; break; }
 
     XDestroyImage (image);
-    return untouched;
+    return drawn ? ContainerContent::drawn : ContainerContent::background;
 }
 
 void ClapEditor::setBounds (int x, int y, int w, int h)
@@ -274,6 +306,7 @@ void ClapEditor::close()
         created = embedded = mapped = false;
         sinceEmbedMs = childPollMs = 0.0;
         childSeen = childrenLogged = containerEmpty = false;
+        untouchedPolls = 0;
         return;
     }
 
@@ -299,6 +332,7 @@ void ClapEditor::close()
     created = embedded = mapped = false;
     sinceEmbedMs = childPollMs = 0.0;
     childSeen = childrenLogged = containerEmpty = false;
+    untouchedPolls = 0;
 }
 
 void ClapEditor::drainPendingCallbacks()
@@ -360,20 +394,32 @@ void ClapEditor::pump (double elapsedMs)
         {
             childPollMs = 0.0;
             mapPluginChildren();
-            if (childSeen) reveal();   // a late window still gets its container back
-        }
-        if (! childSeen && ! containerEmpty && sinceEmbedMs >= kChildWindowGraceMs)
-        {
-            if (containerIsUntouched())
+            if (childSeen)
+                reveal();   // a late window still gets its container back
+            else if (! containerEmpty && sinceEmbedMs >= kChildWindowGraceMs)
             {
-                containerEmpty = true;
-                std::fprintf (stderr, "[clap editor] plugin put no window in the container\n");
-                hide();   // an empty container would cover the host's explanation
-            }
-            else
-            {
-                childSeen = true;   // drawn into directly - nothing to map, stop looking
-                std::fprintf (stderr, "[clap editor] plugin draws into the container itself\n");
+                switch (readContainerContent())
+                {
+                    case ContainerContent::drawn:
+                        childSeen = true;   // drawn into directly - nothing to map, stop looking
+                        std::fprintf (stderr, "[clap editor] plugin draws into the container itself\n");
+                        break;
+
+                    case ContainerContent::background:
+                        // Only after several polls a second apart: a plugin that has
+                        // simply not painted yet must not be hidden as an empty editor.
+                        if (++untouchedPolls >= kUntouchedPollsToConfirm)
+                        {
+                            containerEmpty = true;
+                            std::fprintf (stderr, "[clap editor] plugin put no window in the container\n");
+                            hide();   // an empty container would cover the host's explanation
+                        }
+                        break;
+
+                    case ContainerContent::unknown:
+                        untouchedPolls = 0;   // inconclusive - leave the container visible
+                        break;
+                }
             }
         }
     }

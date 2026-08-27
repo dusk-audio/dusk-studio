@@ -132,7 +132,13 @@ private:
     // A plugin is allowed to draw into the container itself instead of putting
     // a window in it, so "no child window" alone does not mean "nothing there".
     // Reads the container back to tell the two apart.
-    bool containerIsUntouched() const;
+    enum class ContainerContent
+    {
+        drawn,        // something other than our own fill is in there
+        background,   // still exactly the fill we put in on map
+        unknown       // could not read it back - decides nothing
+    };
+    ContainerContent readContainerContent() const;
 #endif
 
     const ::clap_plugin*     plugin = nullptr;
@@ -148,10 +154,19 @@ private:
     // How long a plugin gets to put a window in the container before the host
     // treats the editor as empty and says so.
     static constexpr double kChildWindowGraceMs = 2000.0;
+    // Polls (1 s apart, past the grace) that must all read back as our own fill
+    // before the editor is declared empty and hidden. A plugin that draws into
+    // the container directly may still not have painted at the grace deadline.
+    static constexpr int kUntouchedPollsToConfirm = 2;
     double sinceEmbedMs = 0.0, childPollMs = 0.0;
     bool   childSeen = false;        // the plugin put a window in the container
     bool   childrenLogged = false;
     bool   containerEmpty = false;   // grace expired and nothing was drawn either
+    int    untouchedPolls = 0;
+    // The fill the server puts in the container on map. Deliberately NOT black:
+    // a plugin drawing a black UI into the container would read back as an
+    // untouched container and get hidden as empty.
+    unsigned long containerFill = 0;
 #endif
     bool leakOnClose = false; // shutdown: skip gui->destroy (u-he hangs there)
 

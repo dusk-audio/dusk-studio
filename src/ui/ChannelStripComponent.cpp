@@ -2472,6 +2472,9 @@ void ChannelStripComponent::openPluginEditor()
             {
                 std::fprintf (stderr, "[chan clap] %s\n", err.toRawUTF8());
                 clapEditor.reset();
+                // Nothing gets shown on this path, so without this the click on the
+                // slot looks like it did nothing at all.
+                showDuskAlert (*this, "Couldn't open CLAP editor", err);
                 return;
             }
             clapEditor->bindOwner (engine.getChannelStrip (trackIndex).getNativeClapSlot());
