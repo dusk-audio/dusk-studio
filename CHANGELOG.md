@@ -14,8 +14,9 @@ canonical source.
   among others - the host built its parameter list in whatever order the plugin
   library handed the properties over, which is not the same order every time. A
   MIDI control learned to one knob could therefore end up on a different knob
-  after a restart. The list is now ordered by the plugin's own property names, so
-  a saved binding keeps pointing at the parameter it was learned on. Bindings
+  after a restart. The list is now ordered by each parameter's property URI - the
+  identifier the plugin itself gives it, which does not change between launches -
+  so a saved binding keeps pointing at the parameter it was learned on. Bindings
   saved by an earlier release may land on the wrong parameter once, and stay put
   after they are re-learned.
 - **A plugin that loses its settings now says so.** When a plugin hands back no
