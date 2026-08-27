@@ -97,6 +97,13 @@ public:
     bool isOpen()      const noexcept { return created; }
     bool isEmbedded()  const noexcept { return embedded; }
 
+#if defined(__linux__)
+    // True once the embed window has been up long enough to be sure the plugin
+    // is never going to put a window in it. The editor area is then a container
+    // with nothing inside, which reads on screen as an unexplained blank panel.
+    bool pluginWindowMissing() const noexcept { return embedded && containerEmpty; }
+#endif
+
     // Set by the JUCE wrapper: the plugin asked to resize / the GUI closed.
     std::function<void (int, int)> onResize;
     std::function<void()>          onClosed;
@@ -115,6 +122,19 @@ private:
     // Component off-thread.
     void drainPendingCallbacks();
 
+#if defined(__linux__)
+    // Map any window the plugin has put inside our container. A plugin that
+    // creates or reparents its window off the message thread lands after
+    // gui->show() returns, so this is also polled from pump() for a short
+    // while afterwards.
+    void mapPluginChildren();
+
+    // A plugin is allowed to draw into the container itself instead of putting
+    // a window in it, so "no child window" alone does not mean "nothing there".
+    // Reads the container back to tell the two apart.
+    bool containerIsUntouched() const;
+#endif
+
     const ::clap_plugin*     plugin = nullptr;
     const clap_plugin_gui_t* gui    = nullptr;
     ClapHost* hostPtr = nullptr;
@@ -124,6 +144,15 @@ private:
     int  prefW = 0, prefH = 0;
     bool created = false, embedded = false, mapped = false;
     bool resizable = false;   // gui->can_resize: calling set_size when false aborts some plugins (u-he)
+#if defined(__linux__)
+    // How long a plugin gets to put a window in the container before the host
+    // treats the editor as empty and says so.
+    static constexpr double kChildWindowGraceMs = 2000.0;
+    double sinceEmbedMs = 0.0, childPollMs = 0.0;
+    bool   childSeen = false;        // the plugin put a window in the container
+    bool   childrenLogged = false;
+    bool   containerEmpty = false;   // grace expired and nothing was drawn either
+#endif
     bool leakOnClose = false; // shutdown: skip gui->destroy (u-he hangs there)
 
     std::atomic<bool> pendingResize { false };

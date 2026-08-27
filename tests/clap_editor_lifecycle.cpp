@@ -41,3 +41,36 @@ TEST_CASE ("CLAP editors size the GUI before parenting it",
         REQUIRE (setParent < show);
     }
 }
+
+TEST_CASE ("the X11 CLAP editor maps whatever window the plugin parents into it",
+           "[clap][editor][regression][issue-361]")
+{
+    const auto source = readSource ("src/engine/clap/ClapEditor.cpp");
+
+    const auto embed = source.find ("bool ClapEditor::embed");
+    const auto setParent = source.find ("gui->set_parent", embed);
+    const auto mapChildren = source.find ("mapPluginChildren", setParent);
+    REQUIRE (embed != std::string::npos);
+    REQUIRE (setParent != std::string::npos);
+    REQUIRE (mapChildren != std::string::npos);
+
+    // A plugin that builds its window off the message thread parents it after
+    // embed() returns, so the one map at embed time is not enough.
+    REQUIRE (source.find ("mapPluginChildren", mapChildren + 1) != std::string::npos);
+    REQUIRE (source.find ("XMapWindow (dpy, children[i])") != std::string::npos);
+}
+
+TEST_CASE ("a CLAP gui show() that reports failure keeps the editor",
+           "[clap][editor][regression][issue-361]")
+{
+    const auto source = readSource ("src/engine/clap/ClapEditor.cpp");
+    const auto embed = source.find ("bool ClapEditor::embed");
+    const auto show = source.find ("gui->show", embed);
+    REQUIRE (show != std::string::npos);
+
+    // Everything from the show call to the end of embed(): a close() there would
+    // destroy a GUI that may well be about to draw, leaving a blank editor.
+    const auto embedEnd = source.find ("\n}", show);
+    REQUIRE (embedEnd != std::string::npos);
+    REQUIRE (source.find ("close()", show) > embedEnd);
+}

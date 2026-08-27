@@ -5,6 +5,20 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
+## [Unreleased]
+
+### Fixed
+
+- **A CLAP plugin whose window does not appear now says so.** Some plugins put
+  their window inside the editor area without making it visible, or build it a
+  moment after the host asks them to; either way the editor opened as a blank
+  panel with nothing in it. Dusk Studio now makes the plugin's window visible
+  itself, keeps watching for one that arrives late, and if the plugin never
+  opens a window, the editor area says that instead of staying blank. A plugin
+  that reports a failure from its own show step but draws anyway keeps its
+  editor rather than losing it, and any reason an editor could not open is
+  printed to the terminal and shown in the panel.
+
 ## [0.13.2] - 2026-08-26
 
 ### Fixed

@@ -71,8 +71,8 @@ src/ui/ChannelEqEditor.cpp	93
 src/ui/ChannelEqEditor.h	13
 src/ui/ChannelStripComponent.cpp	771
 src/ui/ChannelStripComponent.h	111
-src/ui/ClapPluginEditorComponent.cpp	11
-src/ui/ClapPluginEditorComponent.h	7
+src/ui/ClapPluginEditorComponent.cpp	18
+src/ui/ClapPluginEditorComponent.h	8
 src/ui/CompBypassLed.h	10
 src/ui/CompHeaderButton.h	35
 src/ui/CompMeterStrip.cpp	53

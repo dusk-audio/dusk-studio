@@ -2468,7 +2468,12 @@ void ChannelStripComponent::openPluginEditor()
         {
             clapEditor = std::make_unique<ClapPluginEditorComponent>();
             juce::String err;
-            if (! clapEditor->attach (*inst, err)) { clapEditor.reset(); return; }
+            if (! clapEditor->attach (*inst, err))
+            {
+                std::fprintf (stderr, "[chan clap] %s\n", err.toRawUTF8());
+                clapEditor.reset();
+                return;
+            }
             clapEditor->bindOwner (engine.getChannelStrip (trackIndex).getNativeClapSlot());
         }
         pluginEditorModal.showBorrowed (*parent, *clapEditor, onClose);

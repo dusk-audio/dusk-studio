@@ -1,6 +1,7 @@
 #include "ClapEditor.h"
 
 #include <algorithm>
+#include <cstdio>
 
 #include <X11/Xlib.h>
 
@@ -87,12 +88,89 @@ bool ClapEditor::embed (void* parentHandle, int x, int y, int w, int h, std::str
     if (gui->set_parent == nullptr || ! gui->set_parent (plugin, &win))
     { errorOut = "gui set_parent() failed"; close(); return false; }
 
-    if (gui->show != nullptr && ! gui->show (plugin))
-    { errorOut = "gui show() failed"; close(); return false; }
+    // A plugin can settle on its own size while parenting, so re-read it before
+    // the caller fits its view to preferredWidth/Height.
+    uint32_t sw = 0, sh = 0;
+    if (gui->get_size != nullptr && gui->get_size (plugin, &sw, &sh) && sw > 0 && sh > 0)
+    { prefW = (int) sw; prefH = (int) sh; }
+
+    // A false return is NOT fatal. Tearing the GUI down here leaves a live
+    // editor view with nothing behind it, which is worse than a plugin whose
+    // show() reports failure and then draws anyway.
+    const bool shown = gui->show != nullptr && gui->show (plugin);
 
     embedded = true;
     mapped   = true;
+
+    // The plugin's window may be an unmapped child of our container - the VST3
+    // and LV2 hosts both map theirs explicitly for the same reason.
+    XSync (dpy, False);
+    mapPluginChildren();
+
+    std::fprintf (stderr,
+        "[clap editor] embed: container=0x%lx %dx%d+%d+%d resizable=%d preferred=%dx%d show=%d\n",
+        (unsigned long) containerHandle, ww, hh, x, y, (int) resizable, prefW, prefH, (int) shown);
     return true;
+}
+
+void ClapEditor::mapPluginChildren()
+{
+    if (platformContext == nullptr || containerHandle == 0) return;
+    auto* dpy = (Display*) platformContext;
+
+    ::Window root {}, parent {}, *children = nullptr;
+    unsigned int count = 0;
+    if (! XQueryTree (dpy, (Window) containerHandle, &root, &parent, &children, &count))
+        return;
+
+    for (unsigned int i = 0; i < count; ++i)
+    {
+        XWindowAttributes attr {};
+        if (XGetWindowAttributes (dpy, children[i], &attr) == 0) continue;
+        if (! childrenLogged)
+            std::fprintf (stderr,
+                "[clap editor] plugin window 0x%lx %dx%d+%d+%d depth=%d mapped=%d\n",
+                (unsigned long) children[i], attr.width, attr.height, attr.x, attr.y,
+                attr.depth, (int) (attr.map_state == IsViewable));
+        if (attr.map_state != IsViewable)
+            XMapWindow (dpy, children[i]);
+    }
+    if (children != nullptr) XFree (children);
+
+    if (count > 0)
+    {
+        childSeen      = true;
+        childrenLogged = true;
+    }
+    XFlush (dpy);
+}
+
+bool ClapEditor::containerIsUntouched() const
+{
+    if (platformContext == nullptr || containerHandle == 0) return false;
+    auto* dpy = (Display*) platformContext;
+
+    XWindowAttributes attr {};
+    if (XGetWindowAttributes (dpy, (Window) containerHandle, &attr) == 0
+        || attr.map_state != IsViewable)
+        return false;   // cannot read it back - do not claim the plugin drew nothing
+
+    const int sw = std::min (attr.width, 64), sh = std::min (attr.height, 64);
+    if (sw <= 0 || sh <= 0) return false;
+
+    auto* image = XGetImage (dpy, (Window) containerHandle,
+                             (attr.width - sw) / 2, (attr.height - sh) / 2,
+                             (unsigned) sw, (unsigned) sh, AllPlanes, ZPixmap);
+    if (image == nullptr) return false;
+
+    const unsigned long background = BlackPixel (dpy, DefaultScreen (dpy));
+    bool untouched = true;
+    for (int y = 0; y < sh && untouched; ++y)
+        for (int x = 0; x < sw; ++x)
+            if (XGetPixel (image, x, y) != background) { untouched = false; break; }
+
+    XDestroyImage (image);
+    return untouched;
 }
 
 void ClapEditor::setBounds (int x, int y, int w, int h)
@@ -138,6 +216,9 @@ bool ClapEditor::getActualGeometry (int& x, int& y, int& w, int& h) const
 
 void ClapEditor::reveal()
 {
+    // An empty container is an opaque black rectangle over the editor area, and
+    // it would cover the host's own explanation of why nothing is in it.
+    if (pluginWindowMissing()) return;
     if (platformContext == nullptr || containerHandle == 0 || mapped) return;
     XMapWindow ((Display*) platformContext, (Window) containerHandle);
     XFlush ((Display*) platformContext);
@@ -191,6 +272,8 @@ void ClapEditor::close()
         gui = nullptr;
         plugin = nullptr;
         created = embedded = mapped = false;
+        sinceEmbedMs = childPollMs = 0.0;
+        childSeen = childrenLogged = containerEmpty = false;
         return;
     }
 
@@ -214,6 +297,8 @@ void ClapEditor::close()
     gui = nullptr;
     plugin = nullptr;
     created = embedded = mapped = false;
+    sinceEmbedMs = childPollMs = 0.0;
+    childSeen = childrenLogged = containerEmpty = false;
 }
 
 void ClapEditor::drainPendingCallbacks()
@@ -263,6 +348,35 @@ void ClapEditor::pump (double elapsedMs)
     drainPendingCallbacks();
 
     if (hostPtr != nullptr) hostPtr->pumpGui (elapsedMs);
+
+    // A plugin can parent its window well after gui->show() returned, so keep
+    // looking for one - briskly at first, then slowly - rather than mapping only
+    // what existed at embed time.
+    if (embedded && ! childSeen)
+    {
+        sinceEmbedMs += elapsedMs;
+        childPollMs  += elapsedMs;
+        if (childPollMs >= (sinceEmbedMs >= kChildWindowGraceMs ? 1000.0 : 100.0))
+        {
+            childPollMs = 0.0;
+            mapPluginChildren();
+            if (childSeen) reveal();   // a late window still gets its container back
+        }
+        if (! childSeen && ! containerEmpty && sinceEmbedMs >= kChildWindowGraceMs)
+        {
+            if (containerIsUntouched())
+            {
+                containerEmpty = true;
+                std::fprintf (stderr, "[clap editor] plugin put no window in the container\n");
+                hide();   // an empty container would cover the host's explanation
+            }
+            else
+            {
+                childSeen = true;   // drawn into directly - nothing to map, stop looking
+                std::fprintf (stderr, "[clap editor] plugin draws into the container itself\n");
+            }
+        }
+    }
 
     // Drain our host-window connection so its event queue (ConfigureNotify, etc.)
     // doesn't grow unbounded. The plugin's own window events ride its own fd,
