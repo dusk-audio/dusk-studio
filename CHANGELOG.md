@@ -9,6 +9,19 @@ canonical source.
 
 ### Fixed
 
+- **LV2 plugin parameters keep the same numbering between launches.** For plugins
+  whose parameters are properties rather than ports - anything built with JUCE,
+  among others - the host built its parameter list in whatever order the plugin
+  library handed the properties over, which is not the same order every time. A
+  MIDI control learned to one knob could therefore end up on a different knob
+  after a restart. The list is now ordered by the plugin's own property names, so
+  a saved binding keeps pointing at the parameter it was learned on. Bindings
+  saved by an earlier release may land on the wrong parameter once, and stay put
+  after they are re-learned.
+- **A plugin that loses its settings now says so.** When a plugin hands back no
+  settings to save, or refuses the settings a session gives it, the terminal says
+  which track and which format; both cases used to pass in silence and show up
+  only as a plugin that came back at its defaults.
 - **A CLAP plugin whose window does not appear now says so.** Some plugins put
   their window inside the editor area without making it visible, or build it a
   moment after the host asks them to; either way the editor opened as a blank

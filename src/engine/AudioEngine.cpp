@@ -279,6 +279,36 @@ static std::vector<uint8_t> decodeBase64Blob (const juce::String& s, const char*
     }
     return blob;
 }
+
+// Snapshot a loaded native slot's state into its session string. A plugin that
+// hands back nothing leaves the stored copy alone - the same outcome as a slot
+// the user emptied, which is why it says so rather than passing silently.
+template <typename SlotType>
+static void captureNativeState (SlotType& slot, juce::String& stateOut,
+                                const char* slotKind, int index)
+{
+    std::vector<uint8_t> blob;
+    if (slot.saveState (blob) && ! blob.empty())
+    {
+        stateOut = juce::Base64::toBase64 (blob.data(), blob.size());
+        return;
+    }
+    std::fprintf (stderr,
+                  "[Dusk Studio/session] %s %d saved no state; keeping the stored copy\n",
+                  slotKind, index + 1);
+    std::fflush (stderr);
+}
+
+// The blob decoded, the plugin loaded, and the plugin then refused the bytes.
+// Without this the slot silently comes up at its defaults.
+static void noteStateRejected (const char* slotKind, int index, std::size_t bytes)
+{
+    std::fprintf (stderr,
+                  "[Dusk Studio/session] %s %d rejected its saved state (%zu bytes); "
+                  "running at defaults\n",
+                  slotKind, index + 1, bytes);
+    std::fflush (stderr);
+}
 #endif
 
 #if DUSKSTUDIO_HAS_NATIVE_AU
@@ -1784,10 +1814,9 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
         {
             track.nativeClapPath     = strip.getNativeClapSlot().getPath();
             track.nativeClapPluginId = strip.getNativeClapSlot().getPluginId();
-            std::vector<uint8_t> blob;
-            if (! strip.nativeClapReloadFailed()
-                && strip.getNativeClapSlot().saveState (blob) && ! blob.empty())
-                track.nativeClapStateBase64 = juce::Base64::toBase64 (blob.data(), blob.size());
+            if (! strip.nativeClapReloadFailed())
+                captureNativeState (strip.getNativeClapSlot(), track.nativeClapStateBase64,
+                                    "track CLAP", t);
         }
         else if (! strip.nativeClapReloadFailed())
         {
@@ -1806,14 +1835,13 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
         {
             track.nativeLv2Path     = strip.getNativeLv2Slot().getPath();
             track.nativeLv2PluginId = strip.getNativeLv2Slot().getPluginId();
-            std::vector<uint8_t> blob;
             strip.getNativeLv2Slot().setStateDirectory (
                 lv2StateDirFor (session, "track" + juce::String (t + 1).paddedLeft ('0', 2)));
             // Preserve the carried blob when a plugin can't serialize (no state
             // extension / save failure) - don't wipe it on a save round-trip.
-            if (! strip.nativeLv2ReloadFailed()
-                && strip.getNativeLv2Slot().saveState (blob) && ! blob.empty())
-                track.nativeLv2StateBase64 = juce::Base64::toBase64 (blob.data(), blob.size());
+            if (! strip.nativeLv2ReloadFailed())
+                captureNativeState (strip.getNativeLv2Slot(), track.nativeLv2StateBase64,
+                                    "track LV2", t);
         }
         else if (! strip.nativeLv2ReloadFailed())
         {
@@ -1827,12 +1855,11 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
         {
             track.nativeVst3Path     = strip.getNativeVst3Slot().getPath();
             track.nativeVst3PluginId = strip.getNativeVst3Slot().getPluginId();
-            std::vector<uint8_t> blob;
             // See the LV2 block above: preserve the carried blob when the plugin
             // can't serialize.
-            if (! strip.nativeVst3ReloadFailed()
-                && strip.getNativeVst3Slot().saveState (blob) && ! blob.empty())
-                track.nativeVst3StateBase64 = juce::Base64::toBase64 (blob.data(), blob.size());
+            if (! strip.nativeVst3ReloadFailed())
+                captureNativeState (strip.getNativeVst3Slot(), track.nativeVst3StateBase64,
+                                    "track VST3", t);
         }
         else if (! strip.nativeVst3ReloadFailed())
         {
@@ -1845,10 +1872,9 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
         if (strip.isNativeAuLoaded())
         {
             track.nativeAuIdentifier = strip.getNativeAuSlot().getPluginId();
-            std::vector<uint8_t> blob;
-            if (! strip.nativeAuReloadFailed()
-                && strip.getNativeAuSlot().saveState (blob) && ! blob.empty())
-                track.nativeAuStateBase64 = juce::Base64::toBase64 (blob.data(), blob.size());
+            if (! strip.nativeAuReloadFailed())
+                captureNativeState (strip.getNativeAuSlot(), track.nativeAuStateBase64,
+                                    "track AU", t);
         }
         else if (! strip.nativeAuReloadFailed())
         {
@@ -1867,10 +1893,10 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
         if (persistedSoundfont.isNotEmpty())
         {
             track.nativeMultisamplePath = persistedSoundfont;
-            std::vector<uint8_t> blob;
-            if (! strip.nativeMultisampleReloadFailed()
-                && strip.getNativeMultisampleSlot().saveState (blob) && ! blob.empty())
-                track.nativeMultisampleStateBase64 = juce::Base64::toBase64 (blob.data(), blob.size());
+            if (! strip.nativeMultisampleReloadFailed())
+                captureNativeState (strip.getNativeMultisampleSlot(),
+                                    track.nativeMultisampleStateBase64,
+                                    "track multisample", t);
         }
         else if (! strip.nativeMultisampleReloadFailed())
         {
@@ -1898,10 +1924,10 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
             {
                 lane.nativeClapPath[(size_t) s]     = strip.getNativeClapSlot (s).getPath();
                 lane.nativeClapPluginId[(size_t) s] = strip.getNativeClapSlot (s).getPluginId();
-                std::vector<uint8_t> blob;
-                if (! strip.nativeClapReloadFailed (s)
-                    && strip.getNativeClapSlot (s).saveState (blob) && ! blob.empty())
-                    lane.nativeClapStateBase64[(size_t) s] = juce::Base64::toBase64 (blob.data(), blob.size());
+                if (! strip.nativeClapReloadFailed (s))
+                    captureNativeState (strip.getNativeClapSlot (s),
+                                        lane.nativeClapStateBase64[(size_t) s],
+                                        "aux CLAP", s);
             }
             else if (! strip.nativeClapReloadFailed (s))
             {
@@ -1918,15 +1944,15 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
             {
                 lane.nativeLv2Path[(size_t) s]     = strip.getNativeLv2Slot (s).getPath();
                 lane.nativeLv2PluginId[(size_t) s] = strip.getNativeLv2Slot (s).getPluginId();
-                std::vector<uint8_t> blob;
                 strip.getNativeLv2Slot (s).setStateDirectory (
                     lv2StateDirFor (session, "aux" + juce::String (a + 1)
                                                  + "_slot" + juce::String (s + 1)));
                 // See the track block above: preserve the carried blob when the
                 // plugin can't serialize.
-                if (! strip.nativeLv2ReloadFailed (s)
-                    && strip.getNativeLv2Slot (s).saveState (blob) && ! blob.empty())
-                    lane.nativeLv2StateBase64[(size_t) s] = juce::Base64::toBase64 (blob.data(), blob.size());
+                if (! strip.nativeLv2ReloadFailed (s))
+                    captureNativeState (strip.getNativeLv2Slot (s),
+                                        lane.nativeLv2StateBase64[(size_t) s],
+                                        "aux LV2", s);
             }
             else if (! strip.nativeLv2ReloadFailed (s))
             {
@@ -1940,10 +1966,10 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
             {
                 lane.nativeVst3Path[(size_t) s]     = strip.getNativeVst3Slot (s).getPath();
                 lane.nativeVst3PluginId[(size_t) s] = strip.getNativeVst3Slot (s).getPluginId();
-                std::vector<uint8_t> blob;
-                if (! strip.nativeVst3ReloadFailed (s)
-                    && strip.getNativeVst3Slot (s).saveState (blob) && ! blob.empty())
-                    lane.nativeVst3StateBase64[(size_t) s] = juce::Base64::toBase64 (blob.data(), blob.size());
+                if (! strip.nativeVst3ReloadFailed (s))
+                    captureNativeState (strip.getNativeVst3Slot (s),
+                                        lane.nativeVst3StateBase64[(size_t) s],
+                                        "aux VST3", s);
             }
             else if (! strip.nativeVst3ReloadFailed (s))
             {
@@ -1956,11 +1982,10 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
             if (strip.isNativeAuLoaded (s))
             {
                 lane.nativeAuIdentifier[(size_t) s] = strip.getNativeAuSlot (s).getPluginId();
-                std::vector<uint8_t> blob;
-                if (! strip.nativeAuReloadFailed (s)
-                    && strip.getNativeAuSlot (s).saveState (blob) && ! blob.empty())
-                    lane.nativeAuStateBase64[(size_t) s]
-                        = juce::Base64::toBase64 (blob.data(), blob.size());
+                if (! strip.nativeAuReloadFailed (s))
+                    captureNativeState (strip.getNativeAuSlot (s),
+                                        lane.nativeAuStateBase64[(size_t) s],
+                                        "aux AU", s);
             }
             else if (! strip.nativeAuReloadFailed (s))
             {
@@ -2119,7 +2144,10 @@ void AudioEngine::consumePluginStateAfterLoad()
                 std::string err;
                 bool ok = strip.loadNativeClap (clapFile, err, track.nativeClapPluginId);
                 if (ok && ! blob.empty())
+                {
                     ok = strip.getNativeClapSlot().loadState (blob);
+                    if (! ok) noteStateRejected ("track CLAP", t, blob.size());
+                }
                 resumeProcessing();
                 if (! ok)
                 {
@@ -2163,6 +2191,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                     strip.getNativeLv2Slot().setStateDirectory (
                         lv2StateDirFor (session, "track" + juce::String (t + 1).paddedLeft ('0', 2)));
                     ok = strip.getNativeLv2Slot().loadState (blob);
+                    if (! ok) noteStateRejected ("track LV2", t, blob.size());
                 }
                 resumeProcessing();
                 if (! ok)
@@ -2201,7 +2230,10 @@ void AudioEngine::consumePluginStateAfterLoad()
                 std::string err;
                 bool ok = strip.loadNativeVst3 (vst3File, err, track.nativeVst3PluginId);
                 if (ok && ! blob.empty())
+                {
                     ok = strip.getNativeVst3Slot().loadState (blob);
+                    if (! ok) noteStateRejected ("track VST3", t, blob.size());
+                }
                 resumeProcessing();
                 if (! ok)
                 {
@@ -2234,7 +2266,10 @@ void AudioEngine::consumePluginStateAfterLoad()
                 std::string err;
                 bool ok = strip.loadNativeAu (track.nativeAuIdentifier, err);
                 if (ok && ! blob.empty())
+                {
                     ok = strip.getNativeAuSlot().loadState (blob);
+                    if (! ok) noteStateRejected ("track AU", t, blob.size());
+                }
                 resumeProcessing();
                 if (! ok)
                 {
@@ -2406,7 +2441,10 @@ void AudioEngine::consumePluginStateAfterLoad()
                     bool ok = strip.loadNativeClap (s, clapFile, err,
                                                     lane.nativeClapPluginId[(size_t) s]);
                     if (ok && ! blob.empty())
+                    {
                         ok = strip.getNativeClapSlot (s).loadState (blob);
+                        if (! ok) noteStateRejected ("aux CLAP", s, blob.size());
+                    }
                     resumeProcessing();
                     if (! ok)
                     {
@@ -2449,6 +2487,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                             lv2StateDirFor (session, "aux" + juce::String (a + 1)
                                                          + "_slot" + juce::String (s + 1)));
                         ok = strip.getNativeLv2Slot (s).loadState (blob);
+                        if (! ok) noteStateRejected ("aux LV2", s, blob.size());
                     }
                     resumeProcessing();
                     if (! ok)
@@ -2489,7 +2528,10 @@ void AudioEngine::consumePluginStateAfterLoad()
                     bool ok = strip.loadNativeVst3 (s, vst3File, err,
                                                     lane.nativeVst3PluginId[(size_t) s]);
                     if (ok && ! blob.empty())
+                    {
                         ok = strip.getNativeVst3Slot (s).loadState (blob);
+                        if (! ok) noteStateRejected ("aux VST3", s, blob.size());
+                    }
                     resumeProcessing();
                     if (! ok)
                     {
@@ -2524,7 +2566,10 @@ void AudioEngine::consumePluginStateAfterLoad()
                     std::string err;
                     bool ok = strip.loadNativeAu (s, identifier, err);
                     if (ok && ! blob.empty())
+                    {
                         ok = strip.getNativeAuSlot (s).loadState (blob);
+                        if (! ok) noteStateRejected ("aux AU", s, blob.size());
+                    }
                     resumeProcessing();
                     if (! ok)
                     {

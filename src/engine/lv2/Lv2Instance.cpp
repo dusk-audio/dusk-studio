@@ -444,6 +444,12 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
         if (LilvNodes* props = lilv_world_find_nodes (world,
                                    lilv_plugin_get_uri (impl->plugin), patchWritable, nullptr))
         {
+            // lilv does not define an iteration order for a node collection, so the
+            // properties come out in a different order per instance. Parameter INDEX
+            // is what MIDI bindings persist and what the UI addresses, so collect
+            // first and append sorted by property URI - stable across instances,
+            // launches and machines.
+            std::vector<std::pair<std::string, ParamInfo>> patchParams;
             LILV_FOREACH (nodes, it, props)
             {
                 const LilvNode* prop = lilv_nodes_get (props, it);
@@ -485,9 +491,14 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
                     lilv_nodes_free (pps);
                 }
                 impl->patchShadow[p.id & ~Impl::kPatchIdFlag] = p.defaultValue;
-                impl->params.push_back (std::move (p));
+                patchParams.emplace_back (lilv_node_as_uri (prop), std::move (p));
             }
             lilv_nodes_free (props);
+
+            std::sort (patchParams.begin(), patchParams.end(),
+                       [] (const auto& a, const auto& b) { return a.first < b.first; });
+            for (auto& entry : patchParams)
+                impl->params.push_back (std::move (entry.second));
         }
         lilv_node_free (patchWritable); lilv_node_free (rdfsLabel);
         lilv_node_free (rdfsRange);     lilv_node_free (atomFloat);

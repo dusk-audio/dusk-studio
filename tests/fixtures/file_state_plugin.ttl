@@ -1,14 +1,103 @@
 @prefix atom:  <http://lv2plug.in/ns/ext/atom#> .
+@prefix patch: <http://lv2plug.in/ns/ext/patch#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix doap:  <http://usefulinc.com/ns/doap#> .
 @prefix lv2:   <http://lv2plug.in/ns/lv2core#> .
 @prefix state: <http://lv2plug.in/ns/ext/state#> .
 @prefix urid:  <http://lv2plug.in/ns/ext/urid#> .
+
+# Declared out of URI order on purpose: the host must expose parameters sorted by
+# property URI, because parameter INDEX is what MIDI bindings persist and lilv
+# defines no iteration order for a node collection.
+<urn:duskstudio:test:file-state#zeta>
+    a lv2:Parameter ;
+    rdfs:label "zeta" ;
+    rdfs:range atom:Float ;
+    lv2:minimum 0.0 ; lv2:maximum 1.0 ; lv2:default 0.0 .
+
+<urn:duskstudio:test:file-state#mu>
+    a lv2:Parameter ;
+    rdfs:label "mu" ;
+    rdfs:range atom:Float ;
+    lv2:minimum 0.0 ; lv2:maximum 1.0 ; lv2:default 0.0 .
+
+<urn:duskstudio:test:file-state#alpha>
+    a lv2:Parameter ;
+    rdfs:label "alpha" ;
+    rdfs:range atom:Float ;
+    lv2:minimum 0.0 ; lv2:maximum 1.0 ; lv2:default 0.0 .
+
+<urn:duskstudio:test:file-state#tau>
+    a lv2:Parameter ;
+    rdfs:label "tau" ;
+    rdfs:range atom:Float ;
+    lv2:minimum 0.0 ; lv2:maximum 1.0 ; lv2:default 0.0 .
+
+<urn:duskstudio:test:file-state#beta>
+    a lv2:Parameter ;
+    rdfs:label "beta" ;
+    rdfs:range atom:Float ;
+    lv2:minimum 0.0 ; lv2:maximum 1.0 ; lv2:default 0.0 .
+
+<urn:duskstudio:test:file-state#rho>
+    a lv2:Parameter ;
+    rdfs:label "rho" ;
+    rdfs:range atom:Float ;
+    lv2:minimum 0.0 ; lv2:maximum 1.0 ; lv2:default 0.0 .
+
+<urn:duskstudio:test:file-state#kappa>
+    a lv2:Parameter ;
+    rdfs:label "kappa" ;
+    rdfs:range atom:Float ;
+    lv2:minimum 0.0 ; lv2:maximum 1.0 ; lv2:default 0.0 .
+
+<urn:duskstudio:test:file-state#delta>
+    a lv2:Parameter ;
+    rdfs:label "delta" ;
+    rdfs:range atom:Float ;
+    lv2:minimum 0.0 ; lv2:maximum 1.0 ; lv2:default 0.0 .
+
+<urn:duskstudio:test:file-state#omega>
+    a lv2:Parameter ;
+    rdfs:label "omega" ;
+    rdfs:range atom:Float ;
+    lv2:minimum 0.0 ; lv2:maximum 1.0 ; lv2:default 0.0 .
+
+<urn:duskstudio:test:file-state#gamma>
+    a lv2:Parameter ;
+    rdfs:label "gamma" ;
+    rdfs:range atom:Float ;
+    lv2:minimum 0.0 ; lv2:maximum 1.0 ; lv2:default 0.0 .
+
+<urn:duskstudio:test:file-state#sigma>
+    a lv2:Parameter ;
+    rdfs:label "sigma" ;
+    rdfs:range atom:Float ;
+    lv2:minimum 0.0 ; lv2:maximum 1.0 ; lv2:default 0.0 .
+
+<urn:duskstudio:test:file-state#epsilon>
+    a lv2:Parameter ;
+    rdfs:label "epsilon" ;
+    rdfs:range atom:Float ;
+    lv2:minimum 0.0 ; lv2:maximum 1.0 ; lv2:default 0.0 .
 
 <urn:duskstudio:test:file-state>
     a lv2:Plugin ;
     doap:name "Dusk file-state fixture" ;
     lv2:requiredFeature urid:map ;
     lv2:extensionData state:interface ;
+    patch:writable <urn:duskstudio:test:file-state#zeta> ,
+                   <urn:duskstudio:test:file-state#mu> ,
+                   <urn:duskstudio:test:file-state#alpha> ,
+                   <urn:duskstudio:test:file-state#tau> ,
+                   <urn:duskstudio:test:file-state#beta> ,
+                   <urn:duskstudio:test:file-state#rho> ,
+                   <urn:duskstudio:test:file-state#kappa> ,
+                   <urn:duskstudio:test:file-state#delta> ,
+                   <urn:duskstudio:test:file-state#omega> ,
+                   <urn:duskstudio:test:file-state#gamma> ,
+                   <urn:duskstudio:test:file-state#sigma> ,
+                   <urn:duskstudio:test:file-state#epsilon> ;
     lv2:port
         [ a lv2:InputPort, lv2:AudioPort ;
           lv2:index 0 ; lv2:symbol "in_l" ; lv2:name "Input L" ],

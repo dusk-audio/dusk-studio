@@ -6,8 +6,10 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "engine/lv2/NativeLv2Slot.h"
+#include "foundation/Base64.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -16,6 +18,20 @@
 
 namespace
 {
+// The app runs the plugin and then drains its patch:Set replies on a message-thread
+// timer (AudioEngine's parameter poll). Parameters that ride atom messages only reach
+// the host's value surface through that pair, so a state test has to do both.
+void settleParamSurface (duskstudio::lv2::NativeLv2Slot& slot, int block, int blocks)
+{
+    std::vector<float> L ((size_t) block, 0.0f), R ((size_t) block, 0.0f);
+    for (int b = 0; b < blocks; ++b)
+    {
+        slot.processStereo (L.data(), R.data(), L.data(), R.data(), block);
+        if (auto* instance = slot.getInstance())
+            instance->drainPatchFeedback();
+    }
+}
+
 float driveTone (duskstudio::lv2::NativeLv2Slot& slot, std::vector<float>& L,
                  std::vector<float>& R, int block, int blocks)
 {
@@ -218,7 +234,7 @@ TEST_CASE ("NativeLv2Slot state round-trips into a fresh slot",
     REQUIRE (targetIdx >= 0);
 
     std::vector<float> left ((size_t) kBlock), right ((size_t) kBlock);
-    source.processStereo (left.data(), right.data(), left.data(), right.data(), kBlock);
+    settleParamSurface (source, kBlock, 4);
     const auto* target = source.paramInfo (targetIdx);
     REQUIRE (target != nullptr);
     double savedValue = 0.0;
@@ -234,7 +250,95 @@ TEST_CASE ("NativeLv2Slot state round-trips into a fresh slot",
     duskstudio::lv2::NativeLv2Slot restored;
     REQUIRE (restored.load (bundle, 48000.0, kBlock, err, source.getPluginId()));
     REQUIRE (restored.loadState (blob));
+    settleParamSurface (restored, kBlock, 4);
+    // Patch-property ids embed a runtime URID, which is assigned per instance and
+    // is NOT comparable across two of them. Index is the stable identity - the
+    // same one MIDI bindings persist.
+    const auto* restoredParam = restored.paramInfo (targetIdx);
+    REQUIRE (restoredParam != nullptr);
+    REQUIRE (restoredParam->name == target->name);
     double restoredValue = 0.0;
-    REQUIRE (restored.getParamValue (target->id, restoredValue));
+    REQUIRE (restored.getParamValue (restoredParam->id, restoredValue));
+    INFO ("param '" << target->name << "' patchProperty=" << target->isPatchProperty
+          << " range " << target->minValue << ".." << target->maxValue);
     REQUIRE_THAT (restoredValue, Catch::Matchers::WithinAbs (savedValue, tolerance));
 }
+
+TEST_CASE ("NativeLv2Slot state round-trips through a state directory",
+           "[lv2][slot][state][regression][issue-355]")
+{
+    const char* path = std::getenv ("DUSKSTUDIO_TEST_LV2");
+    if (path == nullptr || *path == '\0')
+    {
+        SUCCEED ("DUSKSTUDIO_TEST_LV2 not set - skipping live LV2-state test");
+        return;
+    }
+
+    // The engine always hands a track's LV2 slot a state directory, which selects
+    // a completely different save path to the blob-only one above.
+    const auto stateDir = std::filesystem::temp_directory_path()
+                        / ("dusk-lv2-statedir-" + std::to_string (
+                               std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::error_code ec;
+    std::filesystem::create_directories (stateDir, ec);
+    REQUIRE_FALSE (ec);
+
+    constexpr int kBlock = 256;
+    const std::filesystem::path bundle = std::filesystem::u8path (path);
+    duskstudio::lv2::NativeLv2Slot source;
+    std::string err;
+    REQUIRE (source.load (bundle, 48000.0, kBlock, err));
+    source.setStateDirectory (stateDir);
+
+    int targetIdx = -1;
+    double changedValue = 0.0;
+    for (int i = 0; i < source.paramCount(); ++i)
+    {
+        const auto* p = source.paramInfo (i);
+        double current = 0.0;
+        if (p != nullptr && p->maxValue > p->minValue
+            && source.getParamValue (p->id, current))
+        {
+            targetIdx = i;
+            changedValue = std::abs (current - p->minValue)
+                               > 0.5 * ((double) p->maxValue - (double) p->minValue)
+                             ? p->minValue : p->maxValue;
+            source.setParamValue (p->id, changedValue);
+            break;
+        }
+    }
+    REQUIRE (targetIdx >= 0);
+
+    settleParamSurface (source, kBlock, 4);
+    const auto* target = source.paramInfo (targetIdx);
+    REQUIRE (target != nullptr);
+    double savedValue = 0.0;
+    REQUIRE (source.getParamValue (target->id, savedValue));
+
+    std::vector<uint8_t> blob;
+    REQUIRE (source.saveState (blob));
+    REQUIRE_FALSE (blob.empty());
+
+    duskstudio::lv2::NativeLv2Slot restored;
+    REQUIRE (restored.load (bundle, 48000.0, kBlock, err, source.getPluginId()));
+    restored.setStateDirectory (stateDir);
+    // The session carries the blob as base64, so round-trip it the way a save and
+    // reopen does rather than handing the bytes straight back.
+    const auto encoded = dusk::base64::encode (blob.data(), blob.size());
+    const auto decoded = dusk::base64::decode (encoded.data(), encoded.size());
+    REQUIRE (decoded == blob);
+
+    REQUIRE (restored.loadState (decoded));
+    settleParamSurface (restored, kBlock, 4);
+    const auto* restoredParam = restored.paramInfo (targetIdx);   // see the id note above
+    REQUIRE (restoredParam != nullptr);
+    double restoredValue = 0.0;
+    REQUIRE (restored.getParamValue (restoredParam->id, restoredValue));
+    const double tolerance = 1.0e-5 * ((double) target->maxValue - (double) target->minValue)
+                             + 1.0e-9;
+    INFO ("param '" << target->name << "' patchProperty=" << target->isPatchProperty);
+    REQUIRE_THAT (restoredValue, Catch::Matchers::WithinAbs (savedValue, tolerance));
+
+    std::filesystem::remove_all (stateDir, ec);
+}
+

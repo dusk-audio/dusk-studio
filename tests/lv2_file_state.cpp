@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <algorithm>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
@@ -221,4 +222,30 @@ TEST_CASE ("LV2 failed file-backed restore cannot overwrite carried generations"
                        / duskstudio::lv2::statepaths::kStateFileName)
              == "new current");
     REQUIRE_FALSE (fs::exists (stateDir / "next"));
+}
+
+TEST_CASE ("LV2 patch parameters are exposed in a stable order",
+           "[lv2][params][regression][issue-355]")
+{
+    // Parameter INDEX is the identity MIDI bindings persist, so it has to mean
+    // the same parameter on the next launch. lilv defines no iteration order for
+    // the property collection, and the fixture declares its two properties in the
+    // reverse of their URI order to catch a host that just takes what it is given.
+    duskstudio::lv2::Lv2Bundle bundle;
+    std::string error;
+    REQUIRE (bundle.load (DUSKSTUDIO_FILE_STATE_LV2_FIXTURE_PATH, error));
+
+    duskstudio::lv2::Lv2Instance instance;
+    REQUIRE (instance.create (bundle, kPluginUri, error));
+    REQUIRE (instance.activate (48000.0, 32, error));
+
+    std::vector<std::string> names;
+    for (int i = 0; i < instance.paramCount(); ++i)
+        if (const auto* p = instance.paramInfo (i); p != nullptr && p->isPatchProperty)
+            names.push_back (p->name);
+
+    auto sorted = names;
+    std::sort (sorted.begin(), sorted.end());
+    REQUIRE (names.size() == 12);
+    REQUIRE (names == sorted);
 }
