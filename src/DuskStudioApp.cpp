@@ -790,8 +790,11 @@ static bool runHeadlessPipelineTest (const juce::String& pluginPath)
     }
     else
     {
-        // Default-state path: track 0 in MIDI mode + load the plugin.
+        // Default-state path: track 0 in MIDI mode + load the plugin. Enable
+        // input monitoring so the engine actually enters the live instrument
+        // path.
         session->track (0).mode.store ((int) Track::Mode::Midi, std::memory_order_relaxed);
+        session->track (0).inputMonitor.store (true, std::memory_order_relaxed);
 #if DUSKSTUDIO_HAS_MULTISAMPLE
         if (MultisampleBundle::isSoundfontExtension (
                 std::filesystem::u8path (pluginPath.toStdString())))

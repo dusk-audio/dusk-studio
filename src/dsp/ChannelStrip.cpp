@@ -108,11 +108,11 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     {
         const juce::File p (pendingClapPath);
         std::string err;
-        const bool ok = nativeClapSlot.load (std::filesystem::u8path (p.getFullPathName().toStdString()),
-                                             preparedSampleRate, preparedBlockSize, err,
-                                             pendingClapPluginId.toStdString());
+        bool ok = nativeClapSlot.load (std::filesystem::u8path (p.getFullPathName().toStdString()),
+                                       preparedSampleRate, preparedBlockSize, err,
+                                       pendingClapPluginId.toStdString());
         if (ok && ! pendingClapState.empty())
-            nativeClapSlot.loadState (pendingClapState);
+            ok = nativeClapSlot.loadState (pendingClapState);
         nativeReloadFailed.store (! ok, std::memory_order_relaxed);
         pendingClapPath.clear();
         pendingClapPluginId.clear();
@@ -124,6 +124,10 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     {
         std::string err;
         const bool ok = nativeLv2Slot.reactivate (preparedSampleRate, preparedBlockSize, err);
+        // A partial LV2 rebuild can remain audible while its file-backed state
+        // is no longer restorable or saveable. Take it offline so continued UI
+        // edits cannot appear to save; the failure flag preserves session refs.
+        if (! ok) nativeLv2Slot.unload();
         lv2ReloadFailed.store (! ok, std::memory_order_relaxed);
     }
     else if (pendingLv2Path.isNotEmpty())
@@ -132,13 +136,13 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         {
             const juce::File p (pendingLv2Path);
             std::string err;
-            const bool ok = nativeLv2Slot.load (std::filesystem::u8path (p.getFullPathName().toStdString()),
-                                                preparedSampleRate, preparedBlockSize, err,
-                                                pendingLv2PluginId.toStdString());
+            bool ok = nativeLv2Slot.load (std::filesystem::u8path (p.getFullPathName().toStdString()),
+                                          preparedSampleRate, preparedBlockSize, err,
+                                          pendingLv2PluginId.toStdString());
             if (ok && ! pendingLv2State.empty())
             {
                 nativeLv2Slot.setStateDirectory (pendingLv2StateDir);
-                nativeLv2Slot.loadState (pendingLv2State);
+                ok = nativeLv2Slot.loadState (pendingLv2State);
             }
             lv2ReloadFailed.store (! ok, std::memory_order_relaxed);
         }
@@ -163,11 +167,11 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         {
             const juce::File p (pendingVst3Path);
             std::string err;
-            const bool ok = nativeVst3Slot.load (std::filesystem::u8path (p.getFullPathName().toStdString()),
-                                                 preparedSampleRate, preparedBlockSize, err,
-                                                 pendingVst3PluginId.toStdString());
+            bool ok = nativeVst3Slot.load (std::filesystem::u8path (p.getFullPathName().toStdString()),
+                                           preparedSampleRate, preparedBlockSize, err,
+                                           pendingVst3PluginId.toStdString());
             if (ok && ! pendingVst3State.empty())
-                nativeVst3Slot.loadState (pendingVst3State);
+                ok = nativeVst3Slot.loadState (pendingVst3State);
             vst3ReloadFailed.store (! ok, std::memory_order_relaxed);
         }
         pendingVst3Path.clear();
@@ -188,11 +192,11 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         {
             std::string err;
             const auto identifier = pendingAuIdentifier.toStdString();
-            const bool ok = nativeAuSlot.load (
+            bool ok = nativeAuSlot.load (
                 std::filesystem::u8path (identifier), preparedSampleRate,
                 preparedBlockSize, err, identifier);
             if (ok && ! pendingAuState.empty())
-                nativeAuSlot.loadState (pendingAuState);
+                ok = nativeAuSlot.loadState (pendingAuState);
             auReloadFailed.store (! ok, std::memory_order_relaxed);
         }
         pendingAuIdentifier.clear();
@@ -213,11 +217,11 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         {
             const juce::File p (pendingMultisamplePath);
             std::string err;
-            const bool ok = nativeMultisampleSlot.load (
+            bool ok = nativeMultisampleSlot.load (
                 std::filesystem::u8path (p.getFullPathName().toStdString()),
                 preparedSampleRate, preparedBlockSize, err);
             if (ok && ! pendingMultisampleState.empty())
-                nativeMultisampleSlot.loadState (pendingMultisampleState);
+                ok = nativeMultisampleSlot.loadState (pendingMultisampleState);
             multisampleReloadFailed.store (! ok, std::memory_order_relaxed);
         }
         pendingMultisamplePath.clear();

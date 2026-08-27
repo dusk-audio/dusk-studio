@@ -83,7 +83,7 @@ the full headers; these figures document that collapsed presentation.
 | ---------------------------- | ------ | ---- | ---------------------------------------------------------- |
 | `cs-01-channel-compact.png`  | —      | ✅   | One channel strip in compact mode (EQ / COMP / AUX pills). |
 | `cs-02-bus-compact.png`      | —      | ✅   | One bus strip in compact mode (EQ / COMP pills).           |
-| `cs-03-master-compact.png`   | —      | ✅   | Master strip in compact mode (EQ / COMP / TAPE pills).     |
+| `cs-03-master-compact.png`   | —      | ✅   | Master strip in compact mode (EQ / COMP / TAPE split buttons). |
 
 ## I/O config popup (captured, not yet referenced by `MANUAL.md`)
 

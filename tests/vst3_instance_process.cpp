@@ -8,6 +8,7 @@
 
 #include "engine/hosting/InsertAdapter.h"
 #include "engine/vst3/Vst3Bundle.h"
+#include "engine/vst3/Vst3BusPlan.h"
 #include "engine/vst3/Vst3HostContext.h"
 #include "engine/vst3/Vst3Instance.h"
 
@@ -17,7 +18,46 @@
 #include <cmath>
 #include <cstdlib>
 #include <string>
+#include <utility>
 #include <vector>
+
+TEST_CASE ("VST3 modular bus plan activates every bus with independent scratch",
+           "[vst3][bus][regression][issue-361]")
+{
+    using namespace duskstudio::vst3::detail;
+
+    std::vector<std::pair<AudioBusDirection, int>> activated;
+    activateAllAudioBuses (3, 4, [&] (AudioBusDirection direction, int bus)
+    {
+        activated.emplace_back (direction, bus);
+    });
+    REQUIRE (activated == std::vector<std::pair<AudioBusDirection, int>> {
+        { AudioBusDirection::Input, 0 }, { AudioBusDirection::Input, 1 },
+        { AudioBusDirection::Input, 2 }, { AudioBusDirection::Output, 0 },
+        { AudioBusDirection::Output, 1 }, { AudioBusDirection::Output, 2 },
+        { AudioBusDirection::Output, 3 }
+    });
+
+    const int inputChannels[] = { 2, 1, 8 };
+    const int outputChannels[] = { 2, 8, 1, 4 };
+    const auto shape = planScratch (
+        3, 4,
+        [&] (int bus) { return inputChannels[bus]; },
+        [&] (int bus) { return outputChannels[bus]; });
+    REQUIRE (shape.inputChannels == 11);
+    REQUIRE (shape.outputChannels == 15);
+    REQUIRE (shape.widestBus == 8);
+
+    constexpr int frames = 64;
+    std::vector<float> scratch (shape.outputChannels * (std::size_t) frames);
+    for (std::size_t channel = 0; channel < shape.outputChannels; ++channel)
+    {
+        const auto offset = scratchChannelOffset (channel, frames);
+        REQUIRE (offset + frames <= scratch.size());
+        if (channel > 0)
+            REQUIRE (offset != scratchChannelOffset (channel - 1, frames));
+    }
+}
 
 TEST_CASE ("Vst3Instance instantiates + processes a VST3 effect via InsertAdapter", "[vst3][instance]")
 {

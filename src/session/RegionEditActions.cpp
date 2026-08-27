@@ -532,8 +532,12 @@ void applyNativeSlot (AudioEngine& engine, const CloneNativeSnapshot& s,
 
     engine.suspendProcessing();
     std::string err;
-    const bool loaded = load (err);
-    if (loaded && ! s.state.empty()) restoreState();
+    bool loaded = load (err);
+    if (loaded && ! s.state.empty() && ! restoreState())
+    {
+        loaded = false;
+        err = "state restore failed";
+    }
     engine.resumeProcessing();
 
     if (! loaded)
@@ -842,7 +846,7 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
                 [&] (std::string& loadErr)
                 { return strip.loadNativeClap (
                     juce::File (s.clap.path), loadErr, s.clap.pluginId); },
-                [&] { strip.getNativeClapSlot().loadState (s.clap.state); },
+                [&] { return strip.getNativeClapSlot().loadState (s.clap.state); },
                 [&] { strip.markNativeClapRestoreFailed(); });
             t.nativeClapPath = s.clap.path;
             t.nativeClapPluginId = s.clap.pluginId;
@@ -862,7 +866,7 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
                 [&] (std::string& loadErr)
                 { return strip.loadNativeLv2 (
                     juce::File (s.lv2.path), loadErr, s.lv2.pluginId); },
-                [&] { strip.getNativeLv2Slot().loadState (s.lv2.state); },
+                [&] { return strip.getNativeLv2Slot().loadState (s.lv2.state); },
                 [&] { strip.markNativeLv2RestoreFailed(); });
             t.nativeLv2Path = s.lv2.path;
             t.nativeLv2PluginId = s.lv2.pluginId;
@@ -882,7 +886,7 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
                 [&] (std::string& loadErr)
                 { return strip.loadNativeVst3 (
                     juce::File (s.vst3.path), loadErr, s.vst3.pluginId); },
-                [&] { strip.getNativeVst3Slot().loadState (s.vst3.state); },
+                [&] { return strip.getNativeVst3Slot().loadState (s.vst3.state); },
                 [&] { strip.markNativeVst3RestoreFailed(); });
             t.nativeVst3Path = s.vst3.path;
             t.nativeVst3PluginId = s.vst3.pluginId;
@@ -898,9 +902,9 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
         {
             engine.suspendProcessing();
             std::string auErr;
-            const bool loaded = strip.loadNativeAu (s.auIdentifier, auErr);
+            bool loaded = strip.loadNativeAu (s.auIdentifier, auErr);
             if (loaded && ! s.auState.empty())
-                strip.getNativeAuSlot().loadState (s.auState);
+                loaded = strip.getNativeAuSlot().loadState (s.auState);
             engine.resumeProcessing();
 
             if (! loaded)
@@ -953,6 +957,7 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
             if (s.multisamplePath.isNotEmpty())
                 primed = strip.primeNativeMultisample (juce::File (s.multisamplePath),
                                                         msErr, &s.multisampleState);
+            const bool msStateRestored = ! primed.stateRestoreFailed;
             strip.getNativeMultisampleSlot().drainPendingLoads();
 
             engine.suspendProcessing();
@@ -961,7 +966,7 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
             else        strip.unloadNativeMultisample();
             engine.resumeProcessing();
 
-            if (! msLoaded && s.multisamplePath.isNotEmpty())
+            if ((! msLoaded || ! msStateRestored) && s.multisamplePath.isNotEmpty())
             {
                 // Keep the reference so a save right after the clone still
                 // round-trips it and the load can be retried, exactly like a

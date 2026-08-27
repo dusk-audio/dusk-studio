@@ -258,9 +258,8 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         snapshotComponent (consoleView->getBusComponent (0),   outDir, "np-05-bus-strip.png");
         snapshotComponent (consoleView->getMasterStripComponent(), outDir, "np-06-master-strip.png");
 
-        // Compact-mode strips: EQ / COMP / AUX collapse into split buttons;
-        // TAPE retains its existing section-pill grammar. Capture channel, bus,
-        // and master compacted,
+        // Compact-mode strips: EQ / COMP / AUX / TAPE use split buttons.
+        // Capture channel, bus, and master compacted,
         // then restore full mode so later shots aren't collapsed.
         consoleView->setStripsCompactMode (true);
         resized();

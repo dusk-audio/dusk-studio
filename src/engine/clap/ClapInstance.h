@@ -5,6 +5,7 @@
 #include "../hosting/SpscRing.h"
 
 #include <clap/events.h>
+#include <clap/process.h>
 
 #include <array>
 #include <atomic>
@@ -25,8 +26,8 @@ class ClapBundle;
 // single producer) and consumed as CLAP events by the next process() block.
 //
 // Implements the host-agnostic INativeInstance so one plugin slot can drive
-// CLAP, VST3 and LV2 through a single pointer. processStereo() is the legacy
-// stereo entry, retained as the reference for verifying processBlock's output.
+// CLAP, VST3 and LV2 through a single pointer. processStereo() is a compatibility
+// adapter for older tests and call sites; production routing uses processBlock().
 class ClapInstance : public hosting::INativeInstance
 {
 public:
@@ -47,9 +48,8 @@ public:
 
     // Create + init the plugin `pluginId` from `bundle`. The bundle owns the
     // dlopen'd .clap whose code backs the plugin's vtable, so it MUST outlive this
-    // instance - we keep a reference to make that dependency explicit. Requires a
-    // stereo-in / stereo-out plugin (the aux path; relaxed in a later increment).
-    // False (+ errorOut) on failure.
+    // instance - we keep a reference to make that dependency explicit. False
+    // (+ errorOut) on failure.
     bool create (const ClapBundle& bundle, const std::string& pluginId, std::string& errorOut);
 
     // The negotiated bus/port shape, populated at create(). [INativeInstance]
@@ -77,9 +77,8 @@ public:
     // 0 until activate() or if the plugin has no latency extension. [INativeInstance]
     int getLatencySamples() const noexcept override { return latencySamples; }
 
-    // Audio thread. Legacy stereo entry - inL/inR -> outL/outR through the plugin.
-    // Superseded by processBlock (the slot routes production audio through that);
-    // retained as the reference implementation for the processBlock equivalence test.
+    // Audio thread. Compatibility stereo adapter - inL/inR -> outL/outR through
+    // processBlock(). The slot routes production audio through processBlock directly.
     void processStereo (const float* inL, const float* inR,
                         float* outL, float* outR, int numFrames) noexcept;
 
@@ -135,15 +134,28 @@ private:
     hosting::PortLayout layout;   // negotiated at create()
     int latencySamples = 0;       // cached at activate() from CLAP_EXT_LATENCY
 
-    // Separate input + output scratch so we never assume the plugin supports
-    // in-place processing. Sized in activate(). Used by the legacy processStereo.
+    // Separate input + output scratch so the compatibility stereo adapter never
+    // assumes the plugin supports in-place processing. Sized in activate().
     std::vector<float> inScratchL, inScratchR, outScratchL, outScratchR;
 
-    // Per-channel pointer arrays the CLAP process buffers point at. processBlock
-    // fills these from PortBuffers each block (pointers into the caller's scratch),
-    // so the plugin writes its output straight there - no instance-owned audio copy.
-    // Sized in activate() to the negotiated channel counts.
+    struct AudioPort
+    {
+        uint32_t channelCount = 0;
+        uint32_t channelOffset = 0;
+        bool isMain = false;
+        std::string name;
+    };
+    std::vector<AudioPort> audioInPorts, audioOutPorts;
+    int mainAudioInPort = -1, mainAudioOutPort = -1;
+
+    // One CLAP audio buffer per advertised port, backed by flattened channel
+    // pointer arrays. The selected main port is repointed to PortBuffers each
+    // block; every other port stays connected to pre-sized silence/sink storage.
+    // CLAP requires process() to receive the complete advertised port array,
+    // even when the mixer only exposes one stereo insert.
+    std::vector<clap_audio_buffer_t> clapInBuffers, clapOutBuffers;
     std::vector<float*> clapInData, clapOutData;
+    std::vector<float> clapInScratch, clapOutScratch;
 
     // Output event list handed to every process() call. We accept and ignore the
     // plugin's outgoing events for now (try_push returns true). Member, not a

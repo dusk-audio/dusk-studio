@@ -71,6 +71,7 @@ public:
         std::unique_ptr<MultisampleBundle>        bundle;
         std::unique_ptr<DuskMultisampleProcessor> instance;
         std::string                               path;
+        bool                                      stateRestoreFailed = false;
 
         explicit operator bool() const noexcept { return instance != nullptr; }
     };
@@ -92,8 +93,13 @@ public:
 
         auto inst = std::make_unique<DuskMultisampleProcessor>();
         const bool hasState = state != nullptr && ! state->empty();
-        if (hasState)
-            inst->loadState (*state);
+        if (hasState && ! inst->loadState (*state))
+        {
+            // Keep the soundfont audible at defaults, but carry the failure to
+            // the caller so saving cannot overwrite the only persisted state.
+            primed.stateRestoreFailed = true;
+            errorOut = "state restore failed; loaded soundfont at defaults";
+        }
         const bool stateRuntimeLoaded = inst->hasLoadedRuntime();
         if (! stateRuntimeLoaded)
         {

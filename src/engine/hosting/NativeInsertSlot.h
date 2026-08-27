@@ -99,9 +99,13 @@ public:
         if (instance == nullptr) { errorOut = "no instance"; return false; }
         // `ready`/`instance` are unchanged across the call; the audio thread (fenced
         // by the engine gate) sees active==false mid-swap and no-ops, then resumes.
-        if (! instance->reactivate (sampleRate, maxBlock, errorOut)) return false;
-        adapter.prepare (instance->portLayout(), maxBlock);   // block size may have changed
-        return true;
+        const bool restored = instance->reactivate (sampleRate, maxBlock, errorOut);
+        // A format may successfully rebuild its live instance but fail to carry
+        // its state. Keep the adapter in step with that active replacement even
+        // while reporting the partial failure to the caller.
+        if (instance->isActive())
+            adapter.prepare (instance->portLayout(), maxBlock);
+        return restored;
     }
 
     // App shutdown: release the instance + bundle WITHOUT destroying (u-he plugins

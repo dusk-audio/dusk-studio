@@ -5,10 +5,8 @@
 #include "../session/Session.h"
 #include "AnalogVuMeter.h"
 #include "CompMeterStrip.h"
-#include "CompHeaderButton.h"
 #include "DuskComboBox.h"
 #include "EmbeddedModal.h"
-#include "SectionPillButton.h"
 #include "SplitModuleButton.h"
 #include "../foundation/MessageThread.h"
 
@@ -34,10 +32,11 @@ public:
 private:
     bool compactVu = false;
     bool compactMode = false;
-    // Gate the compact-pill repaint on actual state change so the
-    // 30 Hz timer doesn't burn a repaint per tick.
+    // Gate split-button repaints on actual state changes so the 30 Hz timer
+    // does not repaint static controls every tick.
     int lastCompactEqOn   = -1;
     int lastCompactCompOn = -1;
+    int lastTapeOn        = -1;
     void timerCallback() override;
 
     MasterBusParams& params;
@@ -81,15 +80,11 @@ private:
     juce::Slider     compMakeup    { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Label      compRatLabel, compAtkLabel, compRelLabel, compMakLabel;
 
-    // Compact-mode pill labelled "TAPE". Unified section grammar (identical
-    // to the expanded tapeHeaderBtn): left-click toggles tapeEnabled, right-
-    // click opens the TAPE section menu, double-click opens the tape panel.
-    // The lit state is driven by the tapeEnabled atom (synced from the 30 Hz
-    // timer) so the panel's arm-on-touch is still reflected here.
-    SectionPillButton tapeButton { "TAPE" };
-    // Expanded-mode TAPE header keeps the legacy grammar: left-click
-    // toggles, right-click opens the menu, and double-click opens the panel.
-    std::unique_ptr<CompHeaderButton> tapeHeaderBtn;
+    // Tape uses the same split enable/editor grammar as EQ and COMP in both
+    // layouts. The left status hitbox toggles tapeEnabled; the right label
+    // opens the editor; right-clicking either side opens the section menu.
+    SplitModuleButton tapeButton { "TAPE" };
+    std::unique_ptr<SplitModuleButton> tapeHeaderBtn;
     void openTapeMachineModal();
     std::unique_ptr<class DimOverlay> tapeMachineDim;
     juce::Component::SafePointer<juce::Component> tapeMachineModal;
