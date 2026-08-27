@@ -1758,6 +1758,8 @@ The binding is captured and immediately active. The next time that CC arrives, t
 
 **Plugin parameters**: right-click a loaded insert slot and choose **MIDI Learn last-touched parameter**. Move the target knob in the plugin's own editor first, then trigger your controller — the binding targets whichever parameter you touched last. This works for standard-host plugins and for every native host (CLAP and VST3-Native on every OS, LV2-Native on Linux and macOS, and AudioUnit on macOS), including LV2 plugins whose parameters are atom "patch" properties (JUCE-built LV2s, notably).
 
+A binding to an LV2 patch property saved before 0.13.3 may come back pointing at a different parameter of the same plugin, because the parameter order those releases recorded was not stable between launches. Re-learn it once and it stays put.
+
 ## Trigger types
 
 Dusk Studio recognises four kinds of incoming messages:
