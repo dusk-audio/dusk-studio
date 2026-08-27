@@ -2144,6 +2144,15 @@ The session references a plugin Dusk Studio cannot find on this machine.
 - The saved state is preserved — the next session save will round-trip it intact.
 - Install the missing plugin (or run a fresh plugin scan if it is already installed) and reload the session. The slot will populate.
 
+## "CLAP editor unavailable"
+
+A CLAP plugin's editor could not be shown, and the panel says which step failed instead of standing empty. The wording after the heading is the reason:
+
+- **the plugin opened no window** - the plugin took the editor area and then put nothing in it. Nothing is wrong with the audio side: bypass the editor and the plugin still processes. Check the terminal output for the `[clap editor]` lines, and try the same plugin's VST3 or LV2 build if it ships one.
+- **gui set_parent() failed**, **plugin has no embedded-X11 GUI**, or a similar step name - the plugin refused to hand over its editor. Plugins that only offer a floating window of their own are not embeddable and report this.
+
+Launching Dusk Studio from a terminal prints the full embed sequence, including the plugin's own window geometry, which is what a bug report about a blank editor needs.
+
 ## Auto-bypass
 
 A plugin is using more than 60% (or 85% in OOP mode) of the audio buffer time for three blocks in a row, and has been bypassed for safety.
