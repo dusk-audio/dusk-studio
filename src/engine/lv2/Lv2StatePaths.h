@@ -25,9 +25,22 @@ namespace duskstudio::lv2::statepaths
 inline constexpr const char* kReadyMarkerName = ".ready";
 inline constexpr const char* kStateFileName = "state.ttl";
 
+// Resolve symlinked existing prefixes while preserving a state-directory
+// suffix that has not been created yet. On macOS this also normalizes the
+// /var -> /private/var alias before lilv hands mapPath a canonical path.
+inline std::filesystem::path normalizeStateDirectory (
+    const std::filesystem::path& stateDir)
+{
+    if (stateDir.empty()) return {};
+    std::error_code ec;
+    const auto canonical = std::filesystem::weakly_canonical (stateDir, ec);
+    return ec ? stateDir.lexically_normal() : canonical;
+}
+
 // Match SessionSerializer's durability policy without coupling this pure
-// filesystem helper to JUCE. The LV2 host currently ships on Linux; other
-// platforms keep the same process-crash-safe rename protocol as a no-op here.
+// filesystem helper to JUCE. The LV2 host currently ships on Linux and macOS;
+// other platforms keep the same process-crash-safe rename protocol but omit
+// the platform-specific durability sync here.
 inline void syncPathBestEffort (const std::filesystem::path& path) noexcept
 {
 #if defined(__linux__) || defined(__APPLE__)

@@ -817,7 +817,7 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
 
 void Lv2Instance::setStateDirectory (const std::filesystem::path& dir)
 {
-    impl->stateDir = dir;
+    impl->stateDir = statepaths::normalizeStateDirectory (dir);
 }
 
 bool Lv2Instance::saveStateBlobOnly (std::vector<uint8_t>& out) const

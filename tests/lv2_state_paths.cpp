@@ -51,7 +51,7 @@ private:
 void writeText (const stdfs::path& path, const char* text)
 {
     stdfs::create_directories (path.parent_path());
-    std::ofstream out (path);
+    std::ofstream out (path, std::ios::binary | std::ios::trunc);
     out << text;
     if (! out) throw std::runtime_error ("could not write LV2 state test file");
 }
@@ -99,6 +99,25 @@ TEST_CASE ("LV2 state paths: absolute under cur/ becomes relative", "[lv2][state
     const auto curStr = (dir / "cur").u8string();
     REQUIRE (toAbstract (dir, curStr) == curStr);
 }
+
+#if defined(__linux__) || defined(__APPLE__)
+TEST_CASE ("LV2 state paths: canonical state root handles a symlink alias",
+           "[lv2][state][regression][issue-357]")
+{
+    TempDirectory temp;
+    const auto realRoot = temp.path() / "real";
+    const auto aliasRoot = temp.path() / "alias";
+    stdfs::create_directories (realRoot);
+    stdfs::create_directory_symlink (realRoot, aliasRoot);
+
+    const auto canonicalRoot = stdfs::weakly_canonical (realRoot);
+    const auto stateDir = normalizeStateDirectory (aliasRoot / "state");
+    REQUIRE (stateDir == canonicalRoot / "state");
+
+    const auto payload = canonicalRoot / "state" / "cur" / "payload.txt";
+    REQUIRE (toAbstract (stateDir, payload.u8string()) == "payload.txt");
+}
+#endif
 
 TEST_CASE ("LV2 state paths: refuse escaping abstract paths", "[lv2][state]")
 {

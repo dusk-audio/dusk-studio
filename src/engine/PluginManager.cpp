@@ -25,7 +25,6 @@
 #include <atomic>
 #include <array>
 #include <chrono>
-#include <condition_variable>
 #include <map>
 #include <mutex>
 #include <thread>
@@ -206,10 +205,14 @@ SandboxedScan driveSandboxedScan (ScanChildProcess& proc, const std::atomic<bool
     juce::MemoryOutputStream captured;
     char buf[8192];
 
-    std::mutex              watchMutex;
-    std::condition_variable watchDone;
-    bool reading   = true;   // all three guarded by watchMutex
-    bool cancelled = false;
+    // TSan does not model std::condition_variable's mutex release reliably on
+    // this path and reports the reader's process check as a double lock. A
+    // short explicit poll keeps the watchdog bounded without that false
+    // synchronization edge. processMutex prevents a late kill after
+    // isRunning() has reaped the child and made its PID reusable.
+    std::mutex       processMutex;
+    std::atomic<bool> reading { true };
+    bool cancelled = false;   // watchdog-owned; read only after join()
     bool expired   = false;
 
     std::thread watchdog;
@@ -221,19 +224,19 @@ SandboxedScan driveSandboxedScan (ScanChildProcess& proc, const std::atomic<bool
             // single getMillisecondCounter() wrap (every ~49 days of uptime), so
             // compare the interval rather than an absolute deadline.
             const std::uint32_t startMs = juce::Time::getMillisecondCounter();
-            std::unique_lock<std::mutex> lock (watchMutex);
-
-            while (! watchDone.wait_for (lock, std::chrono::milliseconds (25),
-                                         [&reading] { return ! reading; }))
+            while (reading.load (std::memory_order_acquire))
             {
-                if (abort != nullptr && abort->load (std::memory_order_relaxed))
-                    cancelled = true;
-                else if (juce::Time::getMillisecondCounter() - startMs
-                             >= timeoutMs)
-                    expired = true;
-                else
-                    continue;
+                std::this_thread::sleep_for (std::chrono::milliseconds (5));
+                const bool cancelRequested = abort != nullptr
+                    && abort->load (std::memory_order_relaxed);
+                const bool deadlineReached =
+                    juce::Time::getMillisecondCounter() - startMs >= timeoutMs;
+                if (! cancelRequested && ! deadlineReached) continue;
 
+                std::lock_guard<std::mutex> processLock (processMutex);
+                if (! reading.load (std::memory_order_acquire)) break;
+                if (cancelRequested) cancelled = true;
+                else                 expired = true;
                 proc.kill();   // TerminateProcess on Windows - unblocks a modal dialog
             }
         });
@@ -258,16 +261,13 @@ SandboxedScan driveSandboxedScan (ScanChildProcess& proc, const std::atomic<bool
         {
             ~Joiner()
             {
-                { std::lock_guard<std::mutex> lock (mutex); reading = false; }
-                done.notify_one();
+                reading.store (false, std::memory_order_release);
                 thread.join();
             }
 
-            std::thread&             thread;
-            std::mutex&              mutex;
-            std::condition_variable& done;
-            bool&                    reading;
-        } joiner { watchdog, watchMutex, watchDone, reading };
+            std::thread&       thread;
+            std::atomic<bool>& reading;
+        } joiner { watchdog, reading };
 
         for (;;)
         {
@@ -280,8 +280,8 @@ SandboxedScan driveSandboxedScan (ScanChildProcess& proc, const std::atomic<bool
                 {
                     // Under the lock like every other kill, so the watchdog
                     // cannot also be killing while this one runs.
-                    std::lock_guard<std::mutex> lock (watchMutex);
-                    reading = false;
+                    std::lock_guard<std::mutex> lock (processMutex);
+                    reading.store (false, std::memory_order_release);
                     proc.kill();
                 }
                 result.tooMuchOutput = true;
@@ -290,10 +290,18 @@ SandboxedScan driveSandboxedScan (ScanChildProcess& proc, const std::atomic<bool
 
             bool finished = false;
             {
-                std::lock_guard<std::mutex> lock (watchMutex);
-                if (! proc.isRunning()) { reading = false; finished = true; }
+                std::lock_guard<std::mutex> lock (processMutex);
+                if (! proc.isRunning())
+                {
+                    reading.store (false, std::memory_order_release);
+                    finished = true;
+                }
             }
-            if (! finished) { juce::Thread::sleep (5); continue; }
+            if (! finished)
+            {
+                std::this_thread::sleep_for (std::chrono::milliseconds (5));
+                continue;
+            }
 
             int extra;
             while ((extra = proc.readProcessOutput (buf, (int) sizeof buf)) > 0)
