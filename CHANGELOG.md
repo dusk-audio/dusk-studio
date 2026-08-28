@@ -9,6 +9,11 @@ canonical source.
 
 ### Fixed
 
+- **LV2 plugin windows open with the sound's current settings.** Opening or
+  reopening an LV2 editor used to leave its controls at the plugin's factory
+  defaults even though the restored audio engine was already using the saved
+  values. The host now seeds the window from the live parameter state and keeps
+  it in sync with MIDI Learn and other host-side changes.
 - **LV2 plugin parameters keep the same numbering between launches.** For plugins
   whose parameters are properties rather than ports - anything built with JUCE,
   among others - the host built its parameter list in whatever order the plugin

@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <vector>
 
 namespace duskstudio::lv2
@@ -38,6 +39,8 @@ struct Lv2Editor::Impl
 
     int  prefW = 0, prefH = 0;
     bool discovered = false, embedded = false, visible = false, leakOnClose = false;
+    std::vector<float> sentParameterValues;
+    std::vector<uint8_t> parameterValueSent;
 
     static void writePort (SuilController controller, uint32_t portIndex,
                            uint32_t bufferSize, uint32_t protocol, const void* buffer)
@@ -57,6 +60,35 @@ struct Lv2Editor::Impl
         const int index = self->instance != nullptr
                             ? self->instance->portIndexForSymbol (symbol) : -1;
         return index >= 0 ? static_cast<uint32_t> (index) : LV2UI_INVALID_PORT_INDEX;
+    }
+
+    void syncParameterValues (bool force)
+    {
+        if (instance == nullptr || suilInstance == nullptr) return;
+        instance->drainPatchFeedback();
+
+        const int count = instance->uiParameterEventCount();
+        if (sentParameterValues.size() != static_cast<size_t> (count))
+        {
+            sentParameterValues.assign (static_cast<size_t> (count), 0.0f);
+            parameterValueSent.assign (static_cast<size_t> (count), 0);
+            force = true;
+        }
+
+        Lv2Instance::UiParameterEvent event;
+        for (int i = 0; i < count; ++i)
+        {
+            if (! instance->currentUiParameterEvent (i, event)) continue;
+            if (! force && parameterValueSent[static_cast<size_t> (i)] != 0
+                && std::memcmp (&sentParameterValues[static_cast<size_t> (i)], &event.value,
+                                sizeof (event.value)) == 0)
+                continue;
+
+            suil_instance_port_event (suilInstance, event.portIndex,
+                                      event.sizeBytes, event.protocol, event.data.data());
+            sentParameterValues[static_cast<size_t> (i)] = event.value;
+            parameterValueSent[static_cast<size_t> (i)] = 1;
+        }
     }
 
     static int uiResize (LV2UI_Feature_Handle handle, int w, int h)
@@ -227,6 +259,9 @@ bool Lv2Editor::embed (std::uintptr_t parentHandle, int x, int y, int w, int h,
         return false;
     }
 
+    impl->instance->requestPatchParameterValuesForUi();
+    impl->syncParameterValues (true);
+
     if ([impl->uiView superview] != impl->container)
         [impl->container addSubview:impl->uiView];
 
@@ -343,6 +378,8 @@ void Lv2Editor::close()
     impl->suilInstance = nullptr;
     impl->suilHost     = nullptr;
     impl->idleIface    = nullptr;
+    impl->sentParameterValues.clear();
+    impl->parameterValueSent.clear();
 
     if (impl->container != nil)
     {
@@ -368,10 +405,10 @@ bool Lv2Editor::getActualGeometry (int&, int&, int&, int&) const
 
 void Lv2Editor::pump()
 {
-    if (! impl->embedded || impl->idleIface == nullptr || impl->suilInstance == nullptr)
-        return;
+    impl->syncParameterValues (false);
 
-    if (impl->idleIface->idle (suil_instance_get_handle (impl->suilInstance)) != 0)
+    if (impl->embedded && impl->idleIface != nullptr && impl->suilInstance != nullptr
+        && impl->idleIface->idle (suil_instance_get_handle (impl->suilInstance)) != 0)
     {
         impl->idleIface = nullptr;
         if (onClosed) onClosed();
