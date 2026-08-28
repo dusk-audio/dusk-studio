@@ -111,6 +111,27 @@ inline bool generationMatches (const std::filesystem::path& generation,
     return ! input.bad();
 }
 
+// Releases before generation-managed state still created cur/ for every LV2
+// slot, including blob-only slots, but never wrote state.ttl or .ready there.
+// Those two files therefore distinguish a managed cur/ (which must match the
+// persisted blob) from the legacy restore root (which the blob parser may use).
+// Treat an inspection error conservatively as managed so unreadable new state
+// cannot silently fall through to a potentially wrong file-backed restore.
+inline bool generationUsesManagedFormat (const std::filesystem::path& generation)
+{
+    const auto markerExists = [] (const std::filesystem::path& marker)
+    {
+        std::error_code ec;
+        const auto status = std::filesystem::symlink_status (marker, ec);
+        // A dangling symlink or unreadable marker is still evidence of the
+        // managed format and must take the strict failure path.
+        if (ec == std::errc::no_such_file_or_directory) return false;
+        return ec || status.type() != std::filesystem::file_type::not_found;
+    };
+    return markerExists (generation / kStateFileName)
+        || markerExists (generation / kReadyMarkerName);
+}
+
 inline bool isWithin (const std::filesystem::path& root,
                       const std::filesystem::path& candidate)
 {
@@ -320,6 +341,8 @@ inline bool recoverGeneration (const std::filesystem::path& stateDir,
     const bool hasNext = std::filesystem::exists (next, ec);
     if (ec) return false;
     const bool nextIsReady = hasNext && generationIsReady (next);
+    const bool curUsesManagedFormat = hasCur && generationUsesManagedFormat (cur);
+    const bool prevUsesManagedFormat = hasPrev && generationUsesManagedFormat (prev);
 
     enum class Choice { None, Cur, Prev, Next, Older };
     Choice choice = Choice::None;
@@ -334,7 +357,9 @@ inline bool recoverGeneration (const std::filesystem::path& stateDir,
         // compatible with the string parser. Once generations exist, however,
         // resolving a non-matching blob against arbitrary cur/ files can hand a
         // restored plugin the wrong sample bank. Refuse that ambiguous restore.
-        if (choice == Choice::None && (hasCur || hasPrev || nextIsReady || hasOlder))
+        if (choice == Choice::None
+            && (curUsesManagedFormat || prevUsesManagedFormat
+                || nextIsReady || hasOlder))
         {
             ec = std::make_error_code (std::errc::state_not_recoverable);
             return false;

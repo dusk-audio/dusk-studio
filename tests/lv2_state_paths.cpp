@@ -247,6 +247,15 @@ TEST_CASE ("LV2 restore refuses generations that do not match the persisted blob
     REQUIRE (readText (temp.path() / "cur" / kStateFileName) == "newer state");
     REQUIRE (readText (temp.path() / "prev" / kStateFileName) == "older state");
 
+    // The presence of a managed-format marker is enough to make a generation
+    // strict. A corrupt ready marker must not be mistaken for markerless legacy
+    // cur/ and allowed through the blob parser.
+    TempDirectory corruptMarker ("dusk-lv2-state-generation-");
+    writeText (corruptMarker.path() / "cur" / kReadyMarkerName, "corrupt\n");
+    REQUIRE_FALSE (recoverGeneration (
+        corruptMarker.path(), "portable blob-only state", ec));
+    REQUIRE (ec == std::errc::state_not_recoverable);
+
     // Old blob-only sessions have no generations and remain parseable.
     TempDirectory legacy ("dusk-lv2-state-generation-");
     REQUIRE (recoverGeneration (legacy.path(), "portable blob-only state", ec));
@@ -260,4 +269,68 @@ TEST_CASE ("LV2 restore refuses generations that do not match the persisted blob
         stagedLegacy.path(), "portable blob-only state", ec));
     REQUIRE_FALSE (ec);
     REQUIRE_FALSE (stdfs::exists (stagedLegacy.path() / "next"));
+}
+
+TEST_CASE ("LV2 restore accepts the empty cur directory shipped by legacy sessions",
+           "[lv2][state][regression][issue-385]")
+{
+    TempDirectory legacy ("dusk-lv2-state-generation-");
+    stdfs::create_directories (legacy.path() / "cur");
+
+    std::error_code ec;
+    REQUIRE (recoverGeneration (legacy.path(), "legacy serialized state", ec));
+    REQUIRE_FALSE (ec);
+    REQUIRE (stdfs::is_directory (legacy.path() / "cur"));
+}
+
+TEST_CASE ("LV2 restore accepts legacy cur and prev file-backed generations",
+           "[lv2][state][regression][issue-385]")
+{
+    TempDirectory legacy ("dusk-lv2-state-generation-");
+    const auto currentSample = legacy.path() / "cur" / "samples" / "voice.wav";
+    const auto previousSample = legacy.path() / "prev" / "samples" / "voice.wav";
+    writeText (currentSample, "current legacy sample bytes");
+    writeText (previousSample, "previous legacy sample bytes");
+
+    std::error_code ec;
+    REQUIRE (recoverGeneration (legacy.path(), "legacy serialized state", ec));
+    REQUIRE_FALSE (ec);
+    REQUIRE (stdfs::path (toAbsolute (legacy.path(), "samples/voice.wav"))
+             == currentSample);
+    REQUIRE (readText (currentSample) == "current legacy sample bytes");
+    REQUIRE (readText (previousSample) == "previous legacy sample bytes");
+
+    // A legacy save interrupted after cur/ rotated to prev/ must promote that
+    // markerless fallback before resolving the blob's relative file paths.
+    TempDirectory interrupted ("dusk-lv2-state-generation-");
+    const auto interruptedSample =
+        interrupted.path() / "prev" / "samples" / "voice.wav";
+    writeText (interruptedSample, "interrupted legacy sample bytes");
+    REQUIRE (recoverGeneration (
+        interrupted.path(), "legacy serialized state", ec));
+    REQUIRE_FALSE (ec);
+    const auto promotedSample = interrupted.path() / "cur" / "samples" / "voice.wav";
+    REQUIRE (readText (promotedSample) == "interrupted legacy sample bytes");
+    REQUIRE_FALSE (stdfs::exists (interrupted.path() / "prev"));
+}
+
+TEST_CASE ("LV2 restore makePath does not poison a blob-only session on reopen",
+           "[lv2][state][regression][issue-385]")
+{
+    TempDirectory session ("dusk-lv2-state-generation-");
+    constexpr const char* state = "portable blob-only state";
+    std::error_code ec;
+
+    // First open has no generated state, so the serialized-state parser is the
+    // source of truth. A plugin may call state:makePath while restoring it.
+    REQUIRE (recoverGeneration (session.path(), state, ec));
+    const auto derived = makeRestorePath (session.path(), "cache/derived.bin", ec);
+    REQUIRE_FALSE (ec);
+    writeText (derived, "derived on first open");
+
+    // Reopening the unchanged session must still reach that same blob parser;
+    // makePath's legacy cur/ is not an incomplete new-format generation.
+    REQUIRE (recoverGeneration (session.path(), state, ec));
+    REQUIRE_FALSE (ec);
+    REQUIRE (readText (derived) == "derived on first open");
 }
