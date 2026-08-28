@@ -126,6 +126,27 @@ TEST_CASE ("LV2 state paths: refuse escaping abstract paths", "[lv2][state]")
     REQUIRE (toAbsolute (dir, "../../secret.wav") == "../../secret.wav");
 }
 
+TEST_CASE ("LV2 state paths: restore makePath stays under cur/", "[lv2][state]")
+{
+    TempDirectory temp;
+    std::error_code ec;
+
+    const auto nested = makeRestorePath (temp.path(), "restore/payload.txt", ec);
+    REQUIRE_FALSE (ec);
+    REQUIRE (nested == temp.path() / "cur" / "restore" / "payload.txt");
+    REQUIRE (stdfs::is_directory (nested.parent_path()));
+
+    for (const auto* unsafe : { "", ".", "../escape", "restore/../../escape" })
+    {
+        REQUIRE (makeRestorePath (temp.path(), unsafe, ec).empty());
+        REQUIRE (ec == std::errc::invalid_argument);
+    }
+
+    const auto absolute = (temp.path() / "outside.txt").u8string();
+    REQUIRE (makeRestorePath (temp.path(), absolute, ec).empty());
+    REQUIRE (ec == std::errc::invalid_argument);
+}
+
 TEST_CASE ("LV2 state paths: abstract<->absolute round-trips under cur/", "[lv2][state]")
 {
     const stdfs::path dir = "/session/state/lv2/track01";
@@ -259,4 +280,13 @@ TEST_CASE ("LV2 restore refuses generations that do not match the persisted blob
     TempDirectory legacy;
     REQUIRE (recoverGeneration (legacy.path(), "portable blob-only state", ec));
     REQUIRE_FALSE (ec);
+
+    // An interrupted save that never acquired its ready marker is not a
+    // generation. It must not make that same legacy blob ambiguous.
+    TempDirectory stagedLegacy;
+    writeText (stagedLegacy.path() / "next" / kStateFileName, "incomplete");
+    REQUIRE (recoverGeneration (
+        stagedLegacy.path(), "portable blob-only state", ec));
+    REQUIRE_FALSE (ec);
+    REQUIRE_FALSE (stdfs::exists (stagedLegacy.path() / "next"));
 }

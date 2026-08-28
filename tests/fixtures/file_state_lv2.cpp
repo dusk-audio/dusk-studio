@@ -15,6 +15,7 @@ namespace
 constexpr const char* kPluginUri = "urn:duskstudio:test:file-state";
 constexpr const char* kPathKey = "urn:duskstudio:test:file-state#path";
 constexpr const char* kPayload = "dusk-lv2-file-state-v1";
+constexpr const char* kRestorePayload = "dusk-lv2-restore-make-path-v1";
 
 template <typename T>
 const T* feature (const LV2_Feature* const* features, const char* uri)
@@ -121,8 +122,9 @@ LV2_State_Status restore (LV2_Handle instance, LV2_State_Retrieve_Function retri
 {
     auto& self = *static_cast<Instance*> (instance);
     const auto* mapPath = feature<LV2_State_Map_Path> (features, LV2_STATE__mapPath);
+    const auto* makePath = feature<LV2_State_Make_Path> (features, LV2_STATE__makePath);
     const auto* freePath = feature<LV2_State_Free_Path> (features, LV2_STATE__freePath);
-    if (mapPath == nullptr || freePath == nullptr)
+    if (mapPath == nullptr || makePath == nullptr || freePath == nullptr)
         return LV2_STATE_ERR_NO_FEATURE;
 
     size_t size = 0;
@@ -144,7 +146,15 @@ LV2_State_Status restore (LV2_Handle instance, LV2_State_Retrieve_Function retri
     std::string payload ((std::istreambuf_iterator<char> (input)),
                          std::istreambuf_iterator<char>());
     self.restoredReadable = input.is_open() && payload == kPayload;
-    return self.restoredReadable ? LV2_STATE_SUCCESS : LV2_STATE_ERR_UNKNOWN;
+    if (! self.restoredReadable) return LV2_STATE_ERR_UNKNOWN;
+
+    char* restorePath = makePath->path (makePath->handle, "restore/payload.txt");
+    if (restorePath == nullptr) return LV2_STATE_ERR_UNKNOWN;
+    std::ofstream output (restorePath, std::ios::binary | std::ios::trunc);
+    output << kRestorePayload;
+    const bool wroteRestorePayload = static_cast<bool> (output);
+    freePath->free_path (freePath->handle, restorePath);
+    return wroteRestorePayload ? LV2_STATE_SUCCESS : LV2_STATE_ERR_UNKNOWN;
 }
 
 const LV2_State_Interface stateInterface { &save, &restore };

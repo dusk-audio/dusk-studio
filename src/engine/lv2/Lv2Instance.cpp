@@ -101,7 +101,7 @@ struct Lv2Instance::Impl
              uridPatchPut = 0, uridPatchBody = 0, uridSequence = 0, uridFloatType = 0,
              uridUridType = 0;
 
-    // state:mapPath / state:freePath for file-backed state
+    // state:mapPath / state:makePath / state:freePath for file-backed state
     // Save side: lilv builds its own map/make-path from the directories we
     // hand lilv_state_new_from_instance. Restore side: the blob carries
     // ABSTRACT (cur/-relative) paths, so we supply the mapping back to
@@ -124,6 +124,15 @@ struct Lv2Instance::Impl
         if (absolutePath == nullptr) return nullptr;
         auto* self = static_cast<Impl*> (handle);
         return ::strdup (statepaths::toAbstract (self->stateDir, absolutePath).c_str());
+    }
+    static char* makePathCb (LV2_State_Make_Path_Handle handle, const char* requestedPath)
+    {
+        if (requestedPath == nullptr) return nullptr;
+        auto* self = static_cast<Impl*> (handle);
+        std::error_code ec;
+        const auto path = statepaths::makeRestorePath (
+            self->stateDir, requestedPath, ec);
+        return ec ? nullptr : ::strdup (path.u8string().c_str());
     }
     static void freePathCb (LV2_State_Free_Path_Handle, char* path) { ::free (path); }
 
@@ -1029,15 +1038,19 @@ bool Lv2Instance::loadStateInternal (const std::vector<uint8_t>& in,
     // its next run()) and hands the state:interface blob to the plugin. Callers
     // fence the audio thread when the instance is live - same as activate().
     // mapPath/freePath resolve the blob's abstract file paths against the
-    // slot's state directory (no-ops when none is set / the blob has none).
+    // slot's state directory. makePath lets restore create derived files in
+    // cur/ without escaping the slot's state directory.
     LV2_State_Map_Path  mapPath  { impl.get(), &Impl::abstractPathCb, &Impl::absolutePathCb };
+    LV2_State_Make_Path makePath { impl.get(), &Impl::makePathCb };
     LV2_State_Free_Path freePath { nullptr, &Impl::freePathCb };
     LV2_Feature mapPathFeat  { LV2_STATE__mapPath,  &mapPath };
+    LV2_Feature makePathFeat { LV2_STATE__makePath, &makePath };
     LV2_Feature freePathFeat { LV2_STATE__freePath, &freePath };
     std::vector<const LV2_Feature*> feats;
     for (const auto* f : impl->features)
         if (f != nullptr) feats.push_back (f);
     feats.push_back (&mapPathFeat);
+    feats.push_back (&makePathFeat);
     feats.push_back (&freePathFeat);
     feats.push_back (nullptr);
 

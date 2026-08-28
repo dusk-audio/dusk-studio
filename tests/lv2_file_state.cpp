@@ -21,6 +21,7 @@ namespace
 namespace fs = std::filesystem;
 constexpr const char* kPluginUri = "urn:duskstudio:test:file-state";
 constexpr const char* kPayload = "dusk-lv2-file-state-v1";
+constexpr const char* kRestorePayload = "dusk-lv2-restore-make-path-v1";
 
 class TempDirectory
 {
@@ -109,6 +110,8 @@ TEST_CASE ("LV2 file-backed state survives consecutive save and restore generati
     REQUIRE (second.loadState (firstBlob));
     REQUIRE (readFile (stateDir / "cur" / duskstudio::lv2::statepaths::kStateFileName)
              == std::string (firstBlob.begin(), firstBlob.end()));
+    REQUIRE (readFile (stateDir / "cur" / "restore" / "payload.txt")
+             == kRestorePayload);
     REQUIRE_FALSE (fs::exists (stateDir / "next"));
     requireRestoredAudio (second);
 
@@ -153,6 +156,8 @@ TEST_CASE ("LV2 file-backed state survives consecutive save and restore generati
     REQUIRE (third.create (bundle, kPluginUri, error));
     REQUIRE (third.activate (48000.0, 32, error));
     REQUIRE (third.loadState (secondBlob));
+    REQUIRE (readFile (relocatedStateDir / "cur" / "restore" / "payload.txt")
+             == kRestorePayload);
     requireRestoredAudio (third);
 }
 

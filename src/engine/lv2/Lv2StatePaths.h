@@ -334,7 +334,7 @@ inline bool recoverGeneration (const std::filesystem::path& stateDir,
         // compatible with the string parser. Once generations exist, however,
         // resolving a non-matching blob against arbitrary cur/ files can hand a
         // restored plugin the wrong sample bank. Refuse that ambiguous restore.
-        if (choice == Choice::None && (hasCur || hasPrev || hasNext || hasOlder))
+        if (choice == Choice::None && (hasCur || hasPrev || nextIsReady || hasOlder))
         {
             ec = std::make_error_code (std::errc::state_not_recoverable);
             return false;
@@ -492,6 +492,33 @@ inline std::string toAbsolute (const std::filesystem::path& stateDir,
         || *rel.begin() == std::filesystem::path (".."))
         return abstractPath;
     return resolved.u8string();
+}
+
+// Restore-side state:makePath. The plugin may create the returned file, so
+// create its leading directories while keeping every request inside cur/.
+inline std::filesystem::path makeRestorePath (
+    const std::filesystem::path& stateDir, const std::string& requestedPath,
+    std::error_code& ec)
+{
+    ec.clear();
+    const auto requested = std::filesystem::u8path (requestedPath);
+    if (stateDir.empty() || requested.empty()
+        || requested == std::filesystem::path (".") || requested.is_absolute())
+    {
+        ec = std::make_error_code (std::errc::invalid_argument);
+        return {};
+    }
+
+    const auto cur = (stateDir / "cur").lexically_normal();
+    const auto resolved = (cur / requested).lexically_normal();
+    if (! isWithin (cur, resolved))
+    {
+        ec = std::make_error_code (std::errc::invalid_argument);
+        return {};
+    }
+
+    std::filesystem::create_directories (resolved.parent_path(), ec);
+    return ec ? std::filesystem::path {} : resolved;
 }
 
 // Save side: an absolute path lilv hands us becomes a cur/-relative abstract
