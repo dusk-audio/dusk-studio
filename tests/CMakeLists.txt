@@ -51,6 +51,7 @@ add_executable(dusk-studio-tests
     x11_anti_pattern_guard.cpp
     clap_editor_lifecycle.cpp
     lv2_editor_sync.cpp
+    plugin_state_diagnostics.cpp
     channel_strip_context_rename.cpp
     snap_helpers.cpp
     fade_shapes.cpp
@@ -302,14 +303,6 @@ target_compile_definitions(dusk-studio-tests PRIVATE
 # Gate native CLAP tests + sources to match the app build. The bundle-load test
 # follows the same platform implementation selected by DUSKSTUDIO_NATIVE_CLAP.
 if(DUSKSTUDIO_NATIVE_CLAP)
-    add_library(dusk-studio-multi-bus-clap-fixture MODULE
-        fixtures/multi_bus_clap.cpp)
-    set_target_properties(dusk-studio-multi-bus-clap-fixture PROPERTIES
-        PREFIX ""
-        SUFFIX ".clap")
-    target_compile_features(dusk-studio-multi-bus-clap-fixture PRIVATE cxx_std_17)
-    target_include_directories(dusk-studio-multi-bus-clap-fixture PRIVATE
-        ${CMAKE_SOURCE_DIR}/external/clap/include)
     target_compile_definitions(dusk-studio-tests PRIVATE
         DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-multi-bus-clap-fixture>")
     add_dependencies(dusk-studio-tests dusk-studio-multi-bus-clap-fixture)

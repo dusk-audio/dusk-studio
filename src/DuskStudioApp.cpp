@@ -1262,12 +1262,108 @@ static bool runHeadlessSelfTest()
                       "synthetic tests will still run, backend tests may show degraded info\n",
                       maxWaitMs);
 
-    AudioPipelineSelfTest test (*engine, engine->getDeviceManager(), *session);
-    const auto report = test.runAll();
+    std::string report;
+    if (! envFlagSet ("DUSKSTUDIO_CLAP_STATE_TEST_ONLY"))
+    {
+        AudioPipelineSelfTest test (*engine, engine->getDeviceManager(), *session);
+        report = test.runAll();
+        std::fprintf (stdout, "%s\n", report.c_str());
+        std::fflush (stdout);
+    }
+    bool passed = report.find ("[FAIL]") == std::string::npos;
 
-    std::fprintf (stdout, "%s\n", report.c_str());
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    constexpr int trackIndex = 4;
+    constexpr int auxLaneIndex = 3;
+    constexpr int auxSlotIndex = 0;
+    constexpr int blockSize = 64;
+
+    bool clapPassed = true;
+    auto expect = [&clapPassed] (bool condition, const char* message)
+    {
+        if (! condition)
+        {
+            std::fprintf (stdout, "[FAIL] Native CLAP session round-trip: %s\n", message);
+            clapPassed = false;
+        }
+        return condition;
+    };
+
+    std::fprintf (stdout, "[RUN] Native CLAP track + aux session state round-trip\n");
     std::fflush (stdout);
-    return report.find ("[FAIL]") == std::string::npos;
+    engine->detachAudioCallback();
+    engine->prepareForSelfTest (48000.0, blockSize);
+
+    const juce::File fixture (DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH);
+    auto& trackStrip = engine->getChannelStrip (trackIndex);
+    auto& auxStrip = engine->getAuxLaneStrip (auxLaneIndex);
+    std::string error;
+    const bool trackLoaded = trackStrip.loadNativeClap (fixture, error);
+    expect (trackLoaded, "could not load the track fixture");
+    error.clear();
+    const bool auxLoaded = auxStrip.loadNativeClap (auxSlotIndex, fixture, error);
+    expect (auxLoaded, "could not load the aux fixture");
+
+    if (trackLoaded && auxLoaded)
+    {
+        std::array<float, blockSize> left {};
+        std::array<float, blockSize> right {};
+        trackStrip.getNativeClapSlot().processStereo (
+            left.data(), right.data(), left.data(), right.data(), blockSize);
+        for (int i = 0; i < 3; ++i)
+            auxStrip.getNativeClapSlot (auxSlotIndex).processStereo (
+                left.data(), right.data(), left.data(), right.data(), blockSize);
+
+        engine->publishPluginStateForSave (true);
+        const auto trackPath = session->track (trackIndex).nativeClapPath;
+        const auto trackId = session->track (trackIndex).nativeClapPluginId;
+        const auto trackState = session->track (trackIndex).nativeClapStateBase64;
+        const auto auxPath = session->auxLane (auxLaneIndex)
+                                     .nativeClapPath[(size_t) auxSlotIndex];
+        const auto auxId = session->auxLane (auxLaneIndex)
+                                   .nativeClapPluginId[(size_t) auxSlotIndex];
+        const auto auxState = session->auxLane (auxLaneIndex)
+                                      .nativeClapStateBase64[(size_t) auxSlotIndex];
+
+        expect (trackPath == fixture.getFullPathName(), "track path was not published");
+        expect (auxPath == fixture.getFullPathName(), "aux path was not published");
+        expect (trackId == "studio.dusk.test.multi-bus", "track plugin ID was not published");
+        expect (auxId == "studio.dusk.test.multi-bus", "aux plugin ID was not published");
+        expect (trackState.isNotEmpty(), "track state was empty");
+        expect (auxState.isNotEmpty(), "aux state was empty");
+        expect (trackState != auxState, "track and aux state did not diverge");
+
+        const auto tempDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                 .getNonexistentChildFile ("dusk-clap-state-roundtrip", {}, false);
+        const auto sessionFile = tempDir.getChildFile ("session.json");
+        expect (tempDir.createDirectory().wasOk(), "could not create the temporary session directory");
+        expect (SessionSerializer::save (*session, sessionFile), "session JSON save failed");
+        expect (SessionSerializer::load (*session, sessionFile), "session JSON load failed");
+
+        expect (session->track (trackIndex).nativeClapStateBase64 == trackState,
+                "track state changed in session JSON");
+        expect (session->auxLane (auxLaneIndex)
+                           .nativeClapStateBase64[(size_t) auxSlotIndex] == auxState,
+                "aux state changed in session JSON");
+
+        engine->consumePluginStateAfterLoad();
+        expect (engine->getLastPluginLoadFailures().empty(), "restore reported a plugin load failure");
+        engine->publishPluginStateForSave (true);
+        expect (session->track (trackIndex).nativeClapStateBase64 == trackState,
+                "track state changed after restore");
+        expect (session->auxLane (auxLaneIndex)
+                           .nativeClapStateBase64[(size_t) auxSlotIndex] == auxState,
+                "aux state changed after restore");
+        tempDir.deleteRecursively();
+    }
+
+    if (clapPassed)
+        std::fprintf (stdout, "[PASS] Native CLAP track + aux session state round-trip\n");
+    std::fflush (stdout);
+    passed = passed && clapPassed;
+#endif
+
+    return passed;
 }
 
 // Headless bounce regression harness: DUSKSTUDIO_BOUNCE_TEST=<plugin path>.

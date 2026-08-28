@@ -301,12 +301,19 @@ static void captureNativeState (SlotType& slot, juce::String& stateOut,
 
 // The blob decoded, the plugin loaded, and the plugin then refused the bytes.
 // Without this the slot silently comes up at its defaults.
-static void noteStateRejected (const char* slotKind, int index, std::size_t bytes)
+static void noteStateRejected (const char* slotKind, int index, std::size_t bytes,
+                               int auxLane = -1)
 {
-    std::fprintf (stderr,
-                  "[Dusk Studio/session] %s %d rejected its saved state (%zu bytes); "
-                  "running at defaults\n",
-                  slotKind, index + 1, bytes);
+    if (auxLane >= 0)
+        std::fprintf (stderr,
+                      "[Dusk Studio/session] %s lane %d slot %d rejected its saved state "
+                      "(%zu bytes); running at defaults\n",
+                      slotKind, auxLane + 1, index + 1, bytes);
+    else
+        std::fprintf (stderr,
+                      "[Dusk Studio/session] %s %d rejected its saved state (%zu bytes); "
+                      "running at defaults\n",
+                      slotKind, index + 1, bytes);
     std::fflush (stderr);
 }
 #endif
@@ -2443,7 +2450,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                     if (ok && ! blob.empty())
                     {
                         ok = strip.getNativeClapSlot (s).loadState (blob);
-                        if (! ok) noteStateRejected ("aux CLAP", s, blob.size());
+                        if (! ok) noteStateRejected ("aux CLAP", s, blob.size(), a);
                     }
                     resumeProcessing();
                     if (! ok)
@@ -2487,7 +2494,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                             lv2StateDirFor (session, "aux" + juce::String (a + 1)
                                                          + "_slot" + juce::String (s + 1)));
                         ok = strip.getNativeLv2Slot (s).loadState (blob);
-                        if (! ok) noteStateRejected ("aux LV2", s, blob.size());
+                        if (! ok) noteStateRejected ("aux LV2", s, blob.size(), a);
                     }
                     resumeProcessing();
                     if (! ok)
@@ -2530,7 +2537,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                     if (ok && ! blob.empty())
                     {
                         ok = strip.getNativeVst3Slot (s).loadState (blob);
-                        if (! ok) noteStateRejected ("aux VST3", s, blob.size());
+                        if (! ok) noteStateRejected ("aux VST3", s, blob.size(), a);
                     }
                     resumeProcessing();
                     if (! ok)
@@ -2568,7 +2575,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                     if (ok && ! blob.empty())
                     {
                         ok = strip.getNativeAuSlot (s).loadState (blob);
-                        if (! ok) noteStateRejected ("aux AU", s, blob.size());
+                        if (! ok) noteStateRejected ("aux AU", s, blob.size(), a);
                     }
                     resumeProcessing();
                     if (! ok)

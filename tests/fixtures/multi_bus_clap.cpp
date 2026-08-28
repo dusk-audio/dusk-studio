@@ -1,5 +1,7 @@
 #include <clap/clap.h>
 
+#include <array>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <new>
@@ -7,8 +9,16 @@
 namespace
 {
 constexpr const char* kPluginId = "studio.dusk.test.multi-bus";
+constexpr std::array<std::uint8_t, 8> kStateHeader {
+    'D', 'S', 'K', 'C', 1, 0, 0, 0
+};
 constexpr const char* kFeatures[] = { CLAP_PLUGIN_FEATURE_AUDIO_EFFECT,
                                       CLAP_PLUGIN_FEATURE_STEREO, nullptr };
+
+struct PluginData
+{
+    std::uint32_t processCount = 0;
+};
 
 const clap_plugin_descriptor_t kDescriptor {
     CLAP_VERSION_INIT,
@@ -45,10 +55,70 @@ bool CLAP_ABI audioPortGet (const clap_plugin_t*, uint32_t index, bool isInput,
 
 const clap_plugin_audio_ports_t kAudioPorts { audioPortCount, audioPortGet };
 
+bool writeAll (const clap_ostream_t* stream, const void* data, std::uint64_t size)
+{
+    if (stream == nullptr || stream->write == nullptr) return false;
+    auto* bytes = static_cast<const std::uint8_t*> (data);
+    std::uint64_t written = 0;
+    while (written < size)
+    {
+        const auto n = stream->write (stream, bytes + written, size - written);
+        if (n <= 0 || static_cast<std::uint64_t> (n) > size - written) return false;
+        written += static_cast<std::uint64_t> (n);
+    }
+    return true;
+}
+
+bool readAll (const clap_istream_t* stream, void* data, std::uint64_t size)
+{
+    if (stream == nullptr || stream->read == nullptr) return false;
+    auto* bytes = static_cast<std::uint8_t*> (data);
+    std::uint64_t read = 0;
+    while (read < size)
+    {
+        const auto n = stream->read (stream, bytes + read, size - read);
+        if (n <= 0 || static_cast<std::uint64_t> (n) > size - read) return false;
+        read += static_cast<std::uint64_t> (n);
+    }
+    return true;
+}
+
+bool CLAP_ABI stateSave (const clap_plugin_t* plugin, const clap_ostream_t* stream)
+{
+    const auto* data = static_cast<const PluginData*> (plugin->plugin_data);
+    const std::array<std::uint8_t, 4> count {
+        static_cast<std::uint8_t> (data->processCount),
+        static_cast<std::uint8_t> (data->processCount >> 8),
+        static_cast<std::uint8_t> (data->processCount >> 16),
+        static_cast<std::uint8_t> (data->processCount >> 24)
+    };
+    return writeAll (stream, kStateHeader.data(), kStateHeader.size())
+        && writeAll (stream, count.data(), count.size());
+}
+
+bool CLAP_ABI stateLoad (const clap_plugin_t* plugin, const clap_istream_t* stream)
+{
+    std::array<std::uint8_t, 8> header {};
+    std::array<std::uint8_t, 4> count {};
+    if (! readAll (stream, header.data(), header.size())
+        || ! readAll (stream, count.data(), count.size())
+        || header != kStateHeader)
+        return false;
+
+    auto* data = static_cast<PluginData*> (plugin->plugin_data);
+    data->processCount = static_cast<std::uint32_t> (count[0])
+                       | (static_cast<std::uint32_t> (count[1]) << 8)
+                       | (static_cast<std::uint32_t> (count[2]) << 16)
+                       | (static_cast<std::uint32_t> (count[3]) << 24);
+    return true;
+}
+
+const clap_plugin_state_t kState { stateSave, stateLoad };
+
 bool CLAP_ABI pluginInit (const clap_plugin_t*) { return true; }
 void CLAP_ABI pluginDestroy (const clap_plugin_t* plugin)
 {
-    delete static_cast<int*> (plugin->plugin_data);
+    delete static_cast<PluginData*> (plugin->plugin_data);
     delete plugin;
 }
 bool CLAP_ABI pluginActivate (const clap_plugin_t*, double, uint32_t, uint32_t) { return true; }
@@ -57,7 +127,8 @@ bool CLAP_ABI pluginStart (const clap_plugin_t*) { return true; }
 void CLAP_ABI pluginStop (const clap_plugin_t*) {}
 void CLAP_ABI pluginReset (const clap_plugin_t*) {}
 
-clap_process_status CLAP_ABI pluginProcess (const clap_plugin_t*, const clap_process_t* process)
+clap_process_status CLAP_ABI pluginProcess (const clap_plugin_t* plugin,
+                                            const clap_process_t* process)
 {
     if (process == nullptr || process->audio_inputs_count != 2
         || process->audio_outputs_count != 2)
@@ -86,12 +157,15 @@ clap_process_status CLAP_ABI pluginProcess (const clap_plugin_t*, const clap_pro
                 = process->audio_inputs[1].data32[channel][frame];
         }
     }
+    ++static_cast<PluginData*> (plugin->plugin_data)->processCount;
     return CLAP_PROCESS_CONTINUE;
 }
 
 const void* CLAP_ABI pluginExtension (const clap_plugin_t*, const char* id)
 {
-    return std::strcmp (id, CLAP_EXT_AUDIO_PORTS) == 0 ? &kAudioPorts : nullptr;
+    if (std::strcmp (id, CLAP_EXT_AUDIO_PORTS) == 0) return &kAudioPorts;
+    if (std::strcmp (id, CLAP_EXT_STATE) == 0) return &kState;
+    return nullptr;
 }
 void CLAP_ABI pluginMainThread (const clap_plugin_t*) {}
 
@@ -105,16 +179,16 @@ const clap_plugin_t* CLAP_ABI createPlugin (const clap_plugin_factory_t*,
         return nullptr;
 
     auto* plugin = new (std::nothrow) clap_plugin_t {};
-    auto* marker = new (std::nothrow) int (1);
-    if (plugin == nullptr || marker == nullptr)
+    auto* data = new (std::nothrow) PluginData {};
+    if (plugin == nullptr || data == nullptr)
     {
         delete plugin;
-        delete marker;
+        delete data;
         return nullptr;
     }
 
     plugin->desc = &kDescriptor;
-    plugin->plugin_data = marker;
+    plugin->plugin_data = data;
     plugin->init = pluginInit;
     plugin->destroy = pluginDestroy;
     plugin->activate = pluginActivate;
