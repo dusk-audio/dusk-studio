@@ -43,9 +43,9 @@ cd C:\dev
 git clone --recurse-submodules https://github.com/dusk-audio/dusk-studio.git
 git clone --branch 8.0.4 https://github.com/juce-framework/JUCE.git
 git clone https://github.com/dusk-audio/dusk-audio-plugins.git plugins
-git -C plugins fetch --depth 1 origin 69f04318e3b7063e382c80ac1cde2388170e668b
+git -C plugins fetch --depth 1 origin 0a1b17f8e9dbecd26bf78dd45704c6c149e4b2ea
 git -C plugins checkout --detach FETCH_HEAD
-git -C plugins rev-parse HEAD | findstr /x /c:"69f04318e3b7063e382c80ac1cde2388170e668b" >nul || (echo ERROR: donor checkout did not reach the pinned revision & exit /b 1)
+git -C plugins rev-parse HEAD | findstr /x /c:"0a1b17f8e9dbecd26bf78dd45704c6c149e4b2ea" >nul || (echo ERROR: donor checkout did not reach the pinned revision & exit /b 1)
 ```
 
 `--recurse-submodules` matters: `external/sfizz` carries the SF2 / multisample instrument engine, and CMake gates it purely on the header being present ([CMakeLists.txt:1164](CMakeLists.txt#L1164)) — clone without it and the feature is gone with no diagnostic. If you already cloned flat, run `git submodule update --init --recursive`.

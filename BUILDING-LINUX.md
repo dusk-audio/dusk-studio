@@ -80,9 +80,9 @@ cd ~/projects
 git clone --recurse-submodules https://github.com/dusk-audio/dusk-studio.git
 git clone --branch wayland-juce8 https://github.com/plugdata-team/JUCE.git JUCE-wayland
 git clone https://github.com/dusk-audio/dusk-audio-plugins.git plugins
-git -C plugins fetch --depth 1 origin 69f04318e3b7063e382c80ac1cde2388170e668b
+git -C plugins fetch --depth 1 origin 0a1b17f8e9dbecd26bf78dd45704c6c149e4b2ea
 git -C plugins checkout --detach FETCH_HEAD
-test "$(git -C plugins rev-parse HEAD)" = 69f04318e3b7063e382c80ac1cde2388170e668b || {
+test "$(git -C plugins rev-parse HEAD)" = 0a1b17f8e9dbecd26bf78dd45704c6c149e4b2ea || {
   echo "ERROR: donor checkout did not reach the pinned revision" >&2
   false
 }
