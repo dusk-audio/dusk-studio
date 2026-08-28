@@ -473,9 +473,6 @@ if (_duskstudio_ipc_test_enabled)
     target_compile_definitions(dusk-studio-tests PRIVATE
         DUSKSTUDIO_HAS_OOP_PLUGINS=1
         DUSKSTUDIO_PLUGIN_HOST_PATH="$<TARGET_FILE:dusk-studio-plugin-host>")
-    if (WIN32)
-        target_link_libraries(dusk-studio-tests PRIVATE synchronization)
-    endif()
     add_dependencies(dusk-studio-tests dusk-studio-plugin-host)
 endif()
 

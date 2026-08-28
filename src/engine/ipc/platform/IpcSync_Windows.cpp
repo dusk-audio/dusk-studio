@@ -3,22 +3,16 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
-#include <synchapi.h>
 
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 
-// WaitOnAddress / WakeByAddressSingle (synchapi.h, Win8+). The wait
-// function compares the value at `addr` against the value at
-// `&compare`; if they differ on entry it returns immediately (mapping
-// to WaitResult::ValueChanged). Otherwise it sleeps until a wake call
-// targets the same address, or the timeout elapses.
-//
-// Works across processes when `addr` lies inside a shared mapping
-// (CreateFileMapping + MapViewOfFile) - the kernel hashes the page
-// frame, the same way Linux futex does.
-//
-// Link with synchronization.lib.
+// WaitOnAddress / WakeByAddressSingle can wake only threads in the calling
+// process. Windows therefore uses an unnamed auto-reset event created as
+// inheritable before CreateProcess. Both processes retain a handle to the same
+// kernel object; the shared sequence word still supplies the value predicate
+// and recovers safely from coalesced or early SetEvent calls.
 
 namespace duskstudio::ipc::platform
 {
@@ -46,34 +40,77 @@ DWORD deadlineToTimeoutMs (const Deadline& d) noexcept
     const auto now    = steady_clock::now().time_since_epoch();
     if (target <= now) return 0;
     const auto delta = target - now;
-    const auto ms = duration_cast<milliseconds> (delta).count();
+    // WaitForSingleObject takes whole milliseconds. Round upward so a positive
+    // sub-millisecond remainder cannot expire before the absolute deadline.
+    const auto ms = duration_cast<milliseconds> (delta + nanoseconds (999999)).count();
     if (ms < 0)             return 0;
     if (ms > 0x7fffffffLL)  return 0x7fffffff;
     return (DWORD) ms;
 }
 } // namespace
 
-WaitResult waitOnAddress (std::atomic<std::uint32_t>* addr,
-                            std::uint32_t expected,
-                            const Deadline* deadline) noexcept
+InterprocessSignal::~InterprocessSignal()
 {
-    const DWORD timeoutMs = (deadline != nullptr)
+    close();
+}
+
+bool InterprocessSignal::create (std::string& errorOut) noexcept
+{
+    close();
+
+    SECURITY_ATTRIBUTES sa {};
+    sa.nLength = sizeof (sa);
+    sa.bInheritHandle = TRUE;
+
+    nativeHandle.h = ::CreateEventA (&sa, FALSE, FALSE, nullptr);
+    if (isValid (nativeHandle)) return true;
+
+    char buf[128];
+    std::snprintf (buf, sizeof (buf), "CreateEvent failed: %lu",
+                   (unsigned long) ::GetLastError());
+    errorOut = buf;
+    nativeHandle.h = nullptr;
+    return false;
+}
+
+bool InterprocessSignal::sendToChild (NativeHandle& channel) const noexcept
+{
+    return sendHandle (channel, nativeHandle);
+}
+
+bool InterprocessSignal::receiveFromParent (NativeHandle& channel) noexcept
+{
+    close();
+    return recvHandle (channel, nativeHandle);
+}
+
+void InterprocessSignal::close() noexcept
+{
+    closeHandle (nativeHandle);
+}
+
+WaitResult InterprocessSignal::wait (std::atomic<std::uint32_t>* addr,
+                                      std::uint32_t expected,
+                                      const Deadline* deadline) noexcept
+{
+    if (! isValid (nativeHandle)) return WaitResult::Error;
+    if (addr->load (std::memory_order_acquire) != expected)
+        return WaitResult::ValueChanged;
+
+    const DWORD timeoutMs = deadline != nullptr
                               ? deadlineToTimeoutMs (*deadline)
                               : INFINITE;
-
-    // Don't short-circuit on timeoutMs == 0 - pass it through so the
-    // value-comparison in WaitOnAddress still runs; otherwise a wake
-    // that arrived between the caller's load and our call would look
-    // like a timeout to the caller and trigger a spurious crash.
-    const BOOL ok = ::WaitOnAddress (addr, &expected, sizeof (expected), timeoutMs);
-    if (ok) return WaitResult::Awoken;
-    if (::GetLastError() == ERROR_TIMEOUT) return WaitResult::Timeout;
+    const DWORD result = ::WaitForSingleObject (
+        reinterpret_cast<HANDLE> (nativeHandle.h), timeoutMs);
+    if (result == WAIT_OBJECT_0) return WaitResult::Awoken;
+    if (result == WAIT_TIMEOUT)  return WaitResult::Timeout;
     return WaitResult::Error;
 }
 
-void wakeOneAddress (std::atomic<std::uint32_t>* addr) noexcept
+void InterprocessSignal::wake (std::atomic<std::uint32_t>*) noexcept
 {
-    ::WakeByAddressSingle (addr);
+    if (isValid (nativeHandle))
+        (void) ::SetEvent (reinterpret_cast<HANDLE> (nativeHandle.h));
 }
 
 void cpuRelax() noexcept

@@ -99,6 +99,12 @@ bool RemotePluginConnection::connect (const std::string& hostExecutablePath,
     hdr->replySeq.store (0, std::memory_order_relaxed);
     hdr->state.store (kStateReady, std::memory_order_relaxed);
 
+    if (! commandSignal.create (errorOut) || ! replySignal.create (errorOut))
+    {
+        disconnect();
+        return false;
+    }
+
     platform::ChannelPair pair;
     if (! platform::createChannelPair (pair, errorOut))
     {
@@ -120,6 +126,13 @@ bool RemotePluginConnection::connect (const std::string& hostExecutablePath,
     if (! platform::sendHandle (controlChannel, shm.handle()))
     {
         errorOut = std::string ("sendHandle failed: ") + std::strerror (errno);
+        disconnect();
+        return false;
+    }
+    if (! commandSignal.sendToChild (controlChannel)
+        || ! replySignal.sendToChild (controlChannel))
+    {
+        errorOut = "failed to send audio synchronization handles";
         disconnect();
         return false;
     }
@@ -196,7 +209,7 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
 
     const std::uint32_t mySeq = ++localSeq;
     hdr->cmdSeq.store (mySeq, std::memory_order_release);
-    platform::wakeOneAddress (&hdr->cmdSeq);
+    commandSignal.wake (&hdr->cmdSeq);
 
     auto deserialiseMidiOut = [&]
     {
@@ -249,13 +262,13 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
             return false;
         }
         // Pass the CURRENT replySeq as the "expected" value for the
-        // futex. After a prior call's timeout, replySeq can be stuck
+        // signal wait. After a prior call's timeout, replySeq can be stuck
         // at an older value (e.g. mySeq-2); a hardcoded `mySeq-1`
-        // would mismatch and cause waitOnAddress to spin-return
+        // would mismatch and cause the value-aware wait to spin-return
         // ValueChanged until the deadline. Reading the live value
         // makes the wait correctly block until the child actually
         // bumps replySeq.
-        const auto r = platform::waitOnAddress (&hdr->replySeq, seen, &deadline);
+        const auto r = replySignal.wait (&hdr->replySeq, seen, &deadline);
         if (r == platform::WaitResult::Timeout)
         {
             crashed.store (true, std::memory_order_release);
@@ -674,13 +687,15 @@ void RemotePluginConnection::disconnect()
         {
             auto* hdr = headerOf (shm.data());
             hdr->state.store (kStateTeardown, std::memory_order_release);
-            platform::wakeOneAddress (&hdr->cmdSeq);
+            commandSignal.wake (&hdr->cmdSeq);
         }
         child.terminate (500);
     }
     stopReaderThread();
     platform::closeHandle (controlChannel);
     shm.close();
+    commandSignal.close();
+    replySignal.close();
 }
 
 } // namespace duskstudio::ipc

@@ -170,11 +170,23 @@ jobs:
         # stable. Drop the -E to run them locally.
         #
         # Loopback / firewall: the Windows IPC layer uses named pipes
-        # (\\.\pipe\dusk-studio-ipc-*) + CreateFileMapping + WaitOnAddress.
+        # (\\.\pipe\dusk-studio-ipc-*) + CreateFileMapping + kernel events.
         # None of those traverse a network adapter, so no firewall
         # exception is needed. GitHub-hosted windows-latest runners
         # permit anonymous named-pipe IPC inside the runner session
         # without elevation.
         shell: bash
         run: |
+          inventory="$(ctest --test-dir build-tests -N -C Release)"
+          printf '%s\n' "$inventory"
+          for required in \
+            "ipc-stub: connect, round-trip 32 blocks, byte-exact echo" \
+            "ipc-stub: rejects oversize block" \
+            "ipc-stub: timeout is bounded and marks the connection crashed" \
+            "ipc-stub: repeated connect, block, and teardown"; do
+            grep -Fq "$required" <<< "$inventory" || {
+              echo "::error::required Windows IPC regression missing from CTest: $required" >&2
+              exit 1
+            }
+          done
           ctest --test-dir build-tests --output-on-failure -C Release -E "FileImporter"

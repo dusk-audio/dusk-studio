@@ -1204,7 +1204,7 @@ endif()
 #
 # Supported platforms:
 #   Linux   : memfd_create + futex + socketpair + SCM_RIGHTS
-#   Windows : CreateFileMapping + WaitOnAddress + named pipe
+#   Windows : CreateFileMapping + inheritable events + named pipe
 #   macOS   : shm_open + os_sync_wait_on_address + socketpair + SCM_RIGHTS
 #             (requires macOS 14.4 — os_sync_wait_on_address shared
 #             addresses were added in Sonoma 14.4; older systems fall
@@ -1255,13 +1255,6 @@ if(_duskstudio_oop_enabled)
         src/engine/ipc/IpcSelfTest.cpp
         ${_duskstudio_ipc_platform_sources})
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_OOP_PLUGINS=1)
-    if(WIN32)
-        # WaitOnAddress / WakeByAddressSingle live in synchronization.lib
-        # (re-exported by API-Set "api-ms-win-core-synch-l1-2-0.dll" on
-        # Win8+). Link explicitly on the parent so the IPC sync layer
-        # resolves; the child binary links it too below.
-        target_link_libraries(DuskStudio PRIVATE synchronization)
-    endif()
 
     # dusk-studio-plugin-host is a JUCE console app so it can pull in the
     # AudioPluginFormatManager + AudioPluginInstance machinery and the
@@ -1304,7 +1297,7 @@ if(_duskstudio_oop_enabled)
     if(WIN32)
         # shell32: CommandLineToArgvW, which the child uses to read its own
         # arguments as UTF-16 instead of trusting the ANSI-converted argv.
-        target_link_libraries(dusk-studio-plugin-host PRIVATE synchronization shell32)
+        target_link_libraries(dusk-studio-plugin-host PRIVATE shell32)
     endif()
     target_include_directories(dusk-studio-plugin-host PRIVATE src)
     target_include_directories(dusk-studio-plugin-host SYSTEM PRIVATE external/json)

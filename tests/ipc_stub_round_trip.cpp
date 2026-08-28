@@ -2,12 +2,12 @@
 //   • RemotePluginConnection can spawn the dusk-studio-plugin-host child in
 //     --ipc-stub mode (the dependency-light Phase 1 echo loop).
 //   • processBlockSync round-trips audio buffers through the platform's
-//     shared-memory + wait-on-address pair without timing out.
+//     shared-memory + cross-process signal pair without timing out.
 //   • The stub's echo is byte-exact (output equals input) — catches any
 //     SHM offset / channel-stride drift between parent and child.
 //
 // Platforms: Linux (memfd_create + futex), Windows (CreateFileMapping +
-// WaitOnAddress), macOS 14.4+ (shm_open + os_sync_wait_on_address). The
+// auto-reset events), macOS 14.4+ (shm_open + os_sync_wait_on_address). The
 // transport differences are hidden behind RemotePluginConnection, so this
 // file uses only platform-agnostic APIs. tests/CMakeLists.txt gates the
 // translation unit on _duskstudio_ipc_test_enabled, which mirrors the
@@ -19,6 +19,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 
 #include <cmath>
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -30,20 +31,8 @@ constexpr int  kIterations = 32;
 constexpr long long kTimeoutNs = 100'000'000LL;  // 100 ms
 } // namespace
 
-// Windows-specific IPC stub: the round-trip currently fails on
-// windows-latest CI — processBlockSync returns false on first iter,
-// likely a named-pipe handshake timing issue under MSVC's debug
-// runtime. Phase 3b's cross-platform unguarding made the test
-// COMPILE on Windows; making it PASS is real Windows-IPC-debug work
-// out of v0.10 beta scope. Hidden tag so ctest skips on Windows;
-// Linux + macOS still exercise it.
-#if defined(_WIN32)
-TEST_CASE ("ipc-stub: connect, round-trip 32 blocks, byte-exact echo",
-            "[.][ipc][windows-broken]")
-#else
 TEST_CASE ("ipc-stub: connect, round-trip 32 blocks, byte-exact echo",
             "[ipc]")
-#endif
 {
     duskstudio::ipc::RemotePluginConnection conn;
 
@@ -119,4 +108,48 @@ TEST_CASE ("ipc-stub: rejects oversize block", "[ipc]")
     dusk::MidiBuffer midi;
     REQUIRE_FALSE (conn.processBlockSync (in, 1, 1, 4096, midi, 1'000'000LL));
     REQUIRE_FALSE (conn.isCrashed());  // bad-input rejection isn't a crash
+}
+
+TEST_CASE ("ipc-stub: timeout is bounded and marks the connection crashed", "[ipc]")
+{
+    duskstudio::ipc::RemotePluginConnection conn;
+
+    std::string err;
+    REQUIRE (conn.connect (DUSKSTUDIO_PLUGIN_HOST_PATH, "--ipc-stub-timeout", err));
+
+    std::vector<float> input ((std::size_t) kBlockSize, 0.25f);
+    const float* in[1] { input.data() };
+    dusk::MidiBuffer midi;
+
+    const auto started = std::chrono::steady_clock::now();
+    REQUIRE_FALSE (conn.processBlockSync (in, 1, 1, kBlockSize, midi, 20'000'000LL));
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+
+    REQUIRE (conn.isCrashed());
+    REQUIRE (elapsed < std::chrono::seconds (2));
+
+    // Explicit repeated teardown must wake the stalled child and remain
+    // idempotent; the destructor calls it once more after this scope.
+    conn.disconnect();
+    conn.disconnect();
+}
+
+TEST_CASE ("ipc-stub: repeated connect, block, and teardown", "[ipc]")
+{
+    for (int run = 0; run < 4; ++run)
+    {
+        duskstudio::ipc::RemotePluginConnection conn;
+        std::string err;
+        REQUIRE (conn.connect (DUSKSTUDIO_PLUGIN_HOST_PATH, "--ipc-stub", err));
+
+        float sample = (float) run + 0.125f;
+        const float* in[1] { &sample };
+        dusk::MidiBuffer midi;
+        REQUIRE (conn.processBlockSync (in, 1, 1, 1, midi, kTimeoutNs));
+        REQUIRE (conn.readOutChannel (0)[0] == sample);
+        REQUIRE (conn.getRoundTripCount() == 1);
+
+        conn.disconnect();
+        conn.disconnect();
+    }
 }
