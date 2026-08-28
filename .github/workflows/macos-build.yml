@@ -105,9 +105,9 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
             echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
 
-      - name: Clone DPF stack (dusk-audio forks, pinned)
-        # Pins + rationale live in .github/actions/clone-dpf-stack.
-        uses: ./.github/actions/clone-dpf-stack
+      - name: Clone DAF stack (dusk-audio forks, pinned)
+        # Pins + rationale live in .github/actions/clone-daf-stack.
+        uses: ./.github/actions/clone-daf-stack
 
       - name: Configure (Release)
         run: |
@@ -118,8 +118,8 @@ jobs:
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
-            -DDPF_PATH="${RUNNER_TEMP}/DPF" \
-            -DDPF_WIDGETS_PATH="${RUNNER_TEMP}/DPF-Widgets" \
+            -DDAF_PATH="${RUNNER_TEMP}/DAF" \
+            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets" \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
             -DDUSKSTUDIO_NATIVE_LV2=ON \
             -DDUSKSTUDIO_NATIVE_VST3=ON
@@ -148,8 +148,8 @@ jobs:
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
-            -DDPF_PATH="${RUNNER_TEMP}/DPF" \
-            -DDPF_WIDGETS_PATH="${RUNNER_TEMP}/DPF-Widgets" \
+            -DDAF_PATH="${RUNNER_TEMP}/DAF" \
+            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets" \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
             -DDUSKSTUDIO_NATIVE_LV2=ON \
             -DDUSKSTUDIO_NATIVE_VST3=ON

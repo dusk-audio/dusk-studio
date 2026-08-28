@@ -22,11 +22,11 @@ Dusk Studio registers with GNOME Software / KDE Discover and double-clicking
 
 - A Release build in `build-linux/` with both the `DuskStudio` and
   `dusk-studio-plugin-host` artefacts present.
-- The DPF stack discoverable at configure time — sibling `../DPF` and
-  `../DPF-Widgets` checkouts, or `-DDPF_PATH=` / `-DDPF_WIDGETS_PATH=`. Miss
+- The DAF stack discoverable at configure time — sibling `../DAF` and
+  `../DAF-Widgets` checkouts, or `-DDAF_PATH=` / `-DDAF_WIDGETS_PATH=`. Miss
   either and the native notepad is compiled out of the binary you are about to
   ship, announced by nothing louder than a
-  `Native notepad: DPF / DPF-Widgets not found - disabled` line in the
+  `Native UI: DAF / DAF-Widgets not found - disabled` line in the
   configure log. Clone instructions and the pinned revisions are in
   `BUILDING-LINUX.md` under "The native notepad".
 - The committed 256×256 icon at `packaging/DuskStudio.png` — the size the

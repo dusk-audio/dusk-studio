@@ -40,7 +40,7 @@ why.
 
 ### 1.1 Where the two lines stand
 
-The app pinned `DAF_REV=f9fbc62a` (`.github/actions/clone-dpf-stack/action.yml`),
+The app pinned `DAF_REV=f9fbc62a` (`.github/actions/clone-daf-stack/action.yml`),
 the tip of the framework branch `fix/wayland-review-findings`. That commit is
 **not** an ancestor of the framework's `main`, which is the line the
 Dusk plug-ins follow. Both descend from `a9b033c2`.
@@ -48,7 +48,7 @@ Dusk plug-ins follow. Both descend from `a9b033c2`.
 | | Commits since `a9b033c2` | Carries |
 |---|---|---|
 | Pinned branch `f9fbc62a` | 3 | `Window::setEmbeddedOffset`, the Wayland lifecycle and scaling fixes, the pugl mirror pointer |
-| `main` | 31 | The DPF to DAF rename, a second round of Wayland lifetime fixes, AU and CLAP fixes, CI hardening, the pugl mirror pointer |
+| `main` | 31 | The framework rename to DAF, a second round of Wayland lifetime fixes, AU and CLAP fixes, CI hardening, the pugl mirror pointer |
 
 Before the reconciliation the pugl submodule was pinned to `5e2621d7` on
 **both** sides, so the Wayland backend's own history was not divergent; all
@@ -113,19 +113,11 @@ respective `main`.
 
 ### 1.3 What the app has to change to consume `main`
 
-The rename is not cosmetic at the build interface. Three things move:
-
-| Was | Is | Where it bites |
-|---|---|---|
-| `DPF_LIBRARIES` / `DPF_EXAMPLES` | `DAF_LIBRARIES` / `DAF_EXAMPLES` | root `CMakeLists.txt` |
-| `dpf__add_dgl_opengl3()` | `daf__add_dgl_opengl3()` | root `CMakeLists.txt` |
-| `namespace dpf_resources` | `namespace daf_resources` | `src/ui/NativeNotepadWindow.cpp` |
-
-Commit `39d19a6` made all three accept either spelling so the tree configured
-against both live revisions. G0 retired that: the build speaks only DAF and the
-`DUSKSTUDIO_DGL_RESOURCES` macro is gone. `DPF_PATH` / `DPF_WIDGETS_PATH` and
-the `../DPF` search rungs stay until the mechanical rename pass (§7), because
-the workflows still name them.
+The rename changed the build interface: the root options are
+`DAF_LIBRARIES` / `DAF_EXAMPLES`, the helper is `daf__add_dgl_opengl3()`, and
+the resource namespace is `daf_resources`. The build now speaks only DAF and
+the temporary compatibility aliases and `DUSKSTUDIO_DGL_RESOURCES` macro are
+gone.
 
 ### 1.4 Choosing the backend
 
@@ -167,7 +159,7 @@ Done, in this order, because each step is what made the next one build:
 3. `dusk/302-app-contract` in `dusk-audio/DAF-Widgets`, which needs DAF's widget
    focus callback to compile.
 4. `DAF_REV` and `DAF_WIDGETS_REV` re-pinned in
-   `.github/actions/clone-dpf-stack/action.yml`, the single source of truth for
+   `.github/actions/clone-daf-stack/action.yml`, the single source of truth for
    every workflow, and the dual-spelling handling retired from the app's
    `CMakeLists.txt` and `NativeNotepadWindow.cpp` in the same change.
 5. `LICENSES.txt` regenerated against the new revisions: both provenance stamps,
@@ -500,11 +492,11 @@ carries the new provenance, and the spike's two validation commits are in the
 tree. `DGL_BACKEND` is documented in `BUILDING-LINUX.md` but **not** passed on
 any app configure: §1.4 says why, and G5 is where the app takes it.
 
-Owned: `CMakeLists.txt`, `.github/actions/clone-dpf-stack/action.yml`,
+Owned: `CMakeLists.txt`, `.github/actions/clone-daf-stack/action.yml`,
 `src/ui/NativeNotepadWindow.cpp`, `LICENSES.txt`, `BUILDING-LINUX.md`. The
-leftover mechanical renames in §7 stayed out: the checkout directories and
-`-DDPF_PATH` flags are named by 16 references across 8 workflow files, which is
-a pass of its own.
+leftover legacy checkout-directory and path-variable spellings were named by 16
+references across 8 workflow files and deliberately stayed out for a mechanical
+pass of their own.
 Gate movement: none. Verified: full build, 787 tests, notepad opens under Xvfb,
 spike selftest 9 of 9 under headless `mutter`.
 
@@ -545,7 +537,7 @@ shorter, with the same user-facing failure text and the same deferred close.
 
 Landing order: the widget set has to be on `dusk-audio/DAF-Widgets` `main` before
 the app change merges, and `DAF_WIDGETS_REV` in
-`.github/actions/clone-dpf-stack/action.yml` has to name that commit rather than a
+`.github/actions/clone-daf-stack/action.yml` has to name that commit rather than a
 branch tip. Every workflow clones that revision; a branch that is deleted after
 its merge would strand all of them.
 
@@ -555,10 +547,10 @@ bases, so app code has to name the window's, `Window::setCursor(...)`.
 **The shared widget kit's home is `dusk-audio/DAF-Widgets`, not the plug-ins
 repo** (Marc, 2026-08-24). The knob, fader, meter, module pill and theme tokens
 go there, beside the Dear ImGui layer they build on, and both Dusk Studio and the
-plug-ins consume them from that one place. The plug-ins repo's
-`shared-dpf/ui/DuskImGuiWidgets.hpp` is the previous home: anything in it worth
-keeping migrates into DAF-Widgets, and it is not extended in place. Do not fork a
-second knob in `src/ui/`, and do not add to `shared-dpf/ui/` — a widget that only
+plug-ins consume them from that one place. The plug-ins repo's former shared UI
+header is the previous home: anything in it worth keeping migrates into
+DAF-Widgets, and it is not extended in place. Do not fork a second knob in
+`src/ui/`, and do not add to the former shared UI directory — a widget that only
 Dusk Studio needs still belongs in DAF-Widgets if a plug-in could ever want it.
 
 Gate movement: none — 178 files, 9,050 uses, unchanged. Verified: full app build
@@ -759,35 +751,11 @@ Owed to Marc's bench, and not inferable from this gate:
 
 ## 7. Naming
 
-The fork stack is **DAF, the Dusk Audio Framework**. The rename is real, not
-prospective: `dusk-audio/DPF` is now `dusk-audio/DAF` and `dusk-audio/DPF-Widgets`
-is now `dusk-audio/DAF-Widgets`, the old URLs redirect, and the framework's `main`
-already renamed its own public surface. **All future development is on DAF**; a
-DPF spelling anywhere in this tree is transitional, not a second supported name.
-
-Already moved: the repositories themselves, the framework's public API, the app's
-preferred CMake variables (`DAF_PATH`, `DAF_WIDGETS_PATH`), the sibling
-auto-detect (`../DAF` and `../DAF-Widgets` are tried first), the CI action's
-clone URLs and pin variables, and the contributor build instructions.
-
-Moved with the G0 pin, because a stale provenance record is a defect rather than
-a naming preference: `LICENSES.txt` now reads `dusk-audio/DAF rev <sha>`, and
-the `dpf__add_dgl_opengl3` and `dpf_resources` fallbacks are gone.
-
-Still mechanical, and deliberately left for a pass of its own rather than
-smuggled into a tower:
-
-- `.github/actions/clone-dpf-stack/` is still the action's directory name, and
-  its `RUNNER_TEMP/DPF` checkout directories and the `-DDPF_PATH=` flags in the
-  workflows still use the old spelling. All three are named by 16 references
-  across 8 workflow files, which is why they did not move here.
-- The `DPF_PATH` / `DPF_WIDGETS_PATH` variables and the `../DPF` search rungs in
-  the app's CMake stay until those workflow flags move, since they are what the
-  flags land on.
-
-Deliberately left saying DPF: the shipped changelog entries and the per-release
-handoff documents, which are records of what was true at a revision rather than
-instructions for today.
+The fork stack is **DAF, the Dusk Audio Framework**. All current and future
+development uses `dusk-audio/DAF`, `dusk-audio/DAF-Widgets`, and the Pugl fork
+pinned by DAF. The app exposes only `DAF_PATH` / `DAF_WIDGETS_PATH`, searches
+only `../DAF` / `../DAF-Widgets`, and CI uses
+`.github/actions/clone-daf-stack/` with `RUNNER_TEMP/DAF` checkout directories.
 
 ## 8. Resume phrase
 

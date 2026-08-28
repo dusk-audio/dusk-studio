@@ -5946,7 +5946,7 @@ void MainComponent::toggleNotepad()
     if (notepadWindow != nullptr && notepadWindow->isOpen())
     {
         // The close callback restores the DAW and flushes the sidecar once the
-        // embedded DPF child has actually disappeared.
+        // embedded DAF child has actually disappeared.
         notepadWindow->close();
         return;
     }
@@ -6004,7 +6004,7 @@ void MainComponent::toggleNotepad()
 
     // A JUCE sibling beneath the embedded native child blocks the DAW and
     // receives clicks outside the notepad. Keep dismissal at this native host
-    // boundary: the DPF/ImGui editor owns document editing only, while close()
+    // boundary: the DAF/ImGui editor owns document editing only, while close()
     // preserves the deferred native teardown -> onClosed -> saveNotepadNow()
     // sequence above.
     notepadDim = std::make_unique<DimOverlay> (0.80f);

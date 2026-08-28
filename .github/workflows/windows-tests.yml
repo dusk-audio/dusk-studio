@@ -73,9 +73,9 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
             echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
 
-      - name: Clone DPF stack (dusk-audio forks, pinned)
-        # Pins + rationale live in .github/actions/clone-dpf-stack.
-        uses: ./.github/actions/clone-dpf-stack
+      - name: Clone DAF stack (dusk-audio forks, pinned)
+        # Pins + rationale live in .github/actions/clone-daf-stack.
+        uses: ./.github/actions/clone-daf-stack
 
       - name: Fetch Steinberg ASIO SDK
         # Test binary itself doesn't use ASIO, but the top-level CMake
@@ -118,7 +118,7 @@ jobs:
       - name: Configure tests (CMake / Visual Studio 17 2022 / x64)
         shell: bash
         run: |
-          # DPF's cmake re-parses these paths, so backslashes from RUNNER_TEMP
+          # DAF's cmake re-parses these paths, so backslashes from RUNNER_TEMP
           # become invalid \-escapes there; hand it forward slashes (same
           # conversion the vcpkg prefix uses above).
           RT_UNIX="${RUNNER_TEMP//\\//}"
@@ -128,8 +128,8 @@ jobs:
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
-            -DDPF_PATH="${RT_UNIX}/DPF" \
-            -DDPF_WIDGETS_PATH="${RT_UNIX}/DPF-Widgets" \
+            -DDAF_PATH="${RT_UNIX}/DAF" \
+            -DDAF_WIDGETS_PATH="${RT_UNIX}/DAF-Widgets" \
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
             -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}" \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
@@ -151,7 +151,7 @@ jobs:
         run: cmake --build build-tests --config Release --target dusk-studio-tests -j4
 
       - name: Build the native notepad UI
-        # The Catch2 target does not reach the DPF/DGL + Dear ImGui notepad, so
+        # The Catch2 target does not reach the DAF/DGL + Dear ImGui notepad, so
         # nothing on a push ever compiled it on MSVC - the ImGui OpenGL3 backend
         # failing to build here only surfaced in windows-build.yml, which runs on
         # a release tag. Compiling the one target keeps that off tag day.

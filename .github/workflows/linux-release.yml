@@ -185,9 +185,9 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
             echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
 
-      - name: Clone DPF stack (dusk-audio forks, pinned)
-        # Pins + rationale live in .github/actions/clone-dpf-stack.
-        uses: ./.github/actions/clone-dpf-stack
+      - name: Clone DAF stack (dusk-audio forks, pinned)
+        # Pins + rationale live in .github/actions/clone-daf-stack.
+        uses: ./.github/actions/clone-daf-stack
 
       - name: Refresh Patreon supporters
         # Bakes the live supporters list into the release binary via
@@ -262,8 +262,8 @@ jobs:
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
-            -DDPF_PATH="${RUNNER_TEMP}/DPF" \
-            -DDPF_WIDGETS_PATH="${RUNNER_TEMP}/DPF-Widgets"
+            -DDAF_PATH="${RUNNER_TEMP}/DAF" \
+            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets"
 
       - name: Verify the static libsodium archive was selected
         run: |
@@ -313,8 +313,8 @@ jobs:
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
-            -DDPF_PATH="${RUNNER_TEMP}/DPF" \
-            -DDPF_WIDGETS_PATH="${RUNNER_TEMP}/DPF-Widgets"
+            -DDAF_PATH="${RUNNER_TEMP}/DAF" \
+            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets"
           cmake --build build-tests --target dusk-studio-tests -j6
           ctest --test-dir build-tests --output-on-failure
 

@@ -137,7 +137,7 @@ struct Lv2Instance::Impl
     static void freePathCb (LV2_State_Free_Path_Handle, char* path) { ::free (path); }
 
     // Assemble the full feature list for instantiate: urid map/unmap + the block-size
-    // and sample-rate options + boundedBlockLength. JUCE/DPF-wrapped plugins REQUIRE
+    // and sample-rate options + boundedBlockLength. Framework-wrapped plugins REQUIRE
     // options + boundedBlockLength and refuse to instantiate without them.
     void assembleFeatures (double sr, int maxBlock)
     {

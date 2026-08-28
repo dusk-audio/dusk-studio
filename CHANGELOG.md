@@ -247,7 +247,7 @@ fixes are ported here and are listed below rather than under a 0.12.7 heading.
   (`libsodium-dev` on Debian and Ubuntu, the vcpkg manifest on Windows).
 - **License texts ship with the packages.** The tarball, the deb and rpm,
   the DMG and the MSI now carry `LICENSE` and `LICENSES.txt`, and the
-  attribution list credits the notepad's UI stack (DPF, Dear ImGui, pugl and
+  attribution list credits the notepad's UI stack (DAF, Dear ImGui, pugl and
   the components they embed) along with the CLAP headers. A completeness pass
   then covered the framework's bundled text-shaping, image and codec
   libraries, reproduced every license text that must accompany a binary - the

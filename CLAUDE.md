@@ -38,7 +38,7 @@ Two things the gate still can't catch — you must:
 | `juce::ScopedNoDenormals` | `dusk::audio::ScopedNoDenormals` | [ScopedNoDenormals.h](src/foundation/ScopedNoDenormals.h) |
 | `juce::dsp::Oversampling` | `dusk::audio::StereoOversampler` | [StereoOversampler.h](src/foundation/StereoOversampler.h) |
 | `juce::dsp::DelayLine` | `dusk::audio::IntDelayLine` | [IntDelayLine.h](src/foundation/IntDelayLine.h) |
-| `juce::dsp::IIR::Filter` | `duskaudio::Biquad` (donor DuskFilters) | donor `shared-dpf/dsp/DuskFilters.hpp` |
+| `juce::dsp::IIR::Filter` | `duskaudio::Biquad` (donor DuskFilters) | donor shared DSP directory, auto-discovered by the `FourKEQDSP.hpp` + `DuskOversampler.hpp` API markers |
 | `juce::MidiBuffer` / `MidiMessage` | `dusk::MidiBuffer` | [MidiBuffer.h](src/foundation/MidiBuffer.h) |
 | `juce::MidiInput` / `MidiOutput` / `MidiMessageCollector` | `duskstudio::midi` seam + native backend | [src/engine/midi/](src/engine/midi/) (`JuceMidiBackend.cpp` is the mac/win fallback and the ONLY place these are still allowed) |
 | `juce::Timer`, `MessageManager::callAsync` | `dusk::Timer`, `dusk::callAsync` | [MessageThread.h](src/foundation/MessageThread.h) |
@@ -47,7 +47,7 @@ Two things the gate still can't catch — you must:
 | `juce::AudioFormatReader/Writer` | libsndfile wrappers | [src/engine/audiofile/](src/engine/audiofile/) |
 | `juce::AudioIODevice(Type)`, `AudioDeviceManager`, `BigInteger` masks | `dusk::audio` device interfaces | [src/engine/device/](src/engine/device/) (seam; native backend in progress) |
 
-**No seam yet (still JUCE — don't spread it to clean files):** the GUI tower (`juce::Component/Graphics/Colour/Font/Slider/Label/Button` — a bespoke Wayland toolkit is the finale), plugin-hosting `juce::AudioProcessor`/`AudioPluginInstance`, donor `juce::AudioProcessorValueTreeState` (being ported JUCE→DPF in the plugins repo), and `juce::AbstractFifo`. Editing these inside their already-coupled files is fine; do not pull them into a currently-clean file. For new UI use `DuskComboBox` / `duskstudio::showContextMenu`, never raw `juce::ComboBox` / `PopupMenu::showMenuAsync` / `juce::FileChooser`.
+**No seam yet (still JUCE — don't spread it to clean files):** the GUI tower (`juce::Component/Graphics/Colour/Font/Slider/Label/Button` — a bespoke Wayland toolkit is the finale), plugin-hosting `juce::AudioProcessor`/`AudioPluginInstance`, donor `juce::AudioProcessorValueTreeState` (being ported JUCE→DAF in the plugins repo), and `juce::AbstractFifo`. Editing these inside their already-coupled files is fine; do not pull them into a currently-clean file. For new UI use `DuskComboBox` / `duskstudio::showContextMenu`, never raw `juce::ComboBox` / `PopupMenu::showMenuAsync` / `juce::FileChooser`.
 
 ## Build
 
@@ -122,7 +122,7 @@ Dusk Studio's DSP classes (`ChannelStrip`, `AuxBusStrip`, `MasterBus`, `Masterin
 
 Dusk Studio has two parameter sources, both following the same "cache-the-atomic-pointer-once, read-lock-free-on-the-audio-thread" rule:
 
-> **De-JUCE:** source 1 (session `std::atomic<T>`) is already JUCE-free — new audio params go there. Source 2's APVTS is donor DSP being ported JUCE→DPF; don't add a *new* APVTS-backed processor.
+> **De-JUCE:** source 1 (session `std::atomic<T>`) is already JUCE-free — new audio params go there. Source 2's APVTS is donor DSP being ported JUCE→DAF; don't add a *new* APVTS-backed processor.
 
 1. **Session-level atomics** — `ChannelStripParams::faderDb`, `AuxBusParams::eqLfGainDb`, etc. are plain `std::atomic<T>` members of structs in [src/session/Session.h](src/session/Session.h). The UI mutates via `.store(v, std::memory_order_relaxed)` on `onValueChange`; the audio thread reads via `.load(std::memory_order_relaxed)`. New audio params go here.
 2. **APVTS atoms in vendored DSP** — `UniversalCompressor`, `BritishEQProcessor`, `TubeEQProcessor` etc. expose their parameters via `juce::AudioProcessorValueTreeState::getRawParameterValue("name")`. Cache the returned pointer ONCE in a `bindCompParams()`-style function called from `prepare`. The audio thread writes via `storeAtom(p, v)` at the top of each block (lock-free, notification-free path) and the donor's `processBlock` reads it.

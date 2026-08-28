@@ -66,13 +66,17 @@ The session notepad is a native window built on DAF/DGL plus the Dear ImGui laye
 ```cmd
 cd C:\dev
 git clone https://github.com/dusk-audio/DAF.git
-git -C DAF checkout f9fbc62af6fa7ce638a6f1e1482896c385a4955e
+git -C DAF checkout 92c3d1a75450e8b8eaf963efe875f5742c7a1c84
 git -C DAF submodule update --init
 git clone https://github.com/dusk-audio/DAF-Widgets.git
-git -C DAF-Widgets checkout 668de17f06abdeb98d5a4b62594bd634f8d1ac2e
+git -C DAF-Widgets checkout 1c09e1ef29f92ae7feb200bac8febdf814cf5e4a
 ```
 
-Clone then check out the SHA, rather than cloning a branch: DAF's pin is the tip of `fix/wayland-review-findings`, which was never merged to that fork's `main`. (DAF-Widgets' pin happens to be its `main` tip today, but pin it the same way.) Neither branch may be deleted upstream — a plain clone would stop reaching the commit, and CI fetches the same SHAs. The submodule step is not optional either: DGL pulls its windowing layer from `dgl/src/pugl-upstream`. The pins live in [.github/actions/clone-dpf-stack/action.yml](.github/actions/clone-dpf-stack/action.yml), the single source of truth for every workflow.
+Clone then check out the SHA rather than building whatever a branch points at today. The submodule step is not optional: DGL pulls the Dusk Pugl fork into `dgl/src/pugl-upstream`. The pins live in [.github/actions/clone-daf-stack/action.yml](.github/actions/clone-daf-stack/action.yml), the single source of truth for every workflow.
+
+The pinned Pugl revision is carried by `dusk-pin-5e2621d`, not Pugl's `main`.
+Do not delete that branch: a fresh DAF submodule checkout and every CI build
+depend on the commit remaining reachable.
 
 Missing either checkout, `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults to **OFF** and configure says so once, quietly:
 

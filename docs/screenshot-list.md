@@ -112,7 +112,7 @@ The harness renders the track I/O config popup in all three modes. No
 
 ## Manual-only shots (notes)
 
-- **`np-12-notepad.png`**: the notepad is a separate DPF/DGL native window, so
+- **`np-12-notepad.png`**: the notepad is a separate DAF/DGL native window, so
   JUCE's `createComponentSnapshot` cannot capture it — and DGL will not open
   under Xvfb, so this one has to be shot on a live desktop session rather than
   through `capture-screenshots.sh`.

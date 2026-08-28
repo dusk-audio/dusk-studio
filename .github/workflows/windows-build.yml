@@ -143,9 +143,9 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
             echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
 
-      - name: Clone DPF stack (dusk-audio forks, pinned)
-        # Pins + rationale live in .github/actions/clone-dpf-stack.
-        uses: ./.github/actions/clone-dpf-stack
+      - name: Clone DAF stack (dusk-audio forks, pinned)
+        # Pins + rationale live in .github/actions/clone-daf-stack.
+        uses: ./.github/actions/clone-daf-stack
 
       - name: Refresh Patreon supporters
         # See linux-release.yml for the rationale. Bakes the live list into the
@@ -238,14 +238,14 @@ jobs:
       - name: Configure (CMake / Visual Studio 17 2022 / x64)
         shell: bash
         run: |
-          # Forward slashes for DPF's cmake - see windows-tests.yml.
+          # Forward slashes for DAF's cmake - see windows-tests.yml.
           RT_UNIX="${RUNNER_TEMP//\\//}"
           cmake -S . -B build \
             -G "Visual Studio 17 2022" -A x64 \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
-            -DDPF_PATH="${RT_UNIX}/DPF" \
-            -DDPF_WIDGETS_PATH="${RT_UNIX}/DPF-Widgets" \
+            -DDAF_PATH="${RT_UNIX}/DAF" \
+            -DDAF_WIDGETS_PATH="${RT_UNIX}/DAF-Widgets" \
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
             -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}" \
             -DDUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR="${MESA_SOFTGL_PATH}" \
@@ -282,7 +282,7 @@ jobs:
         # importAudio retries both file opens to harden real imports.
         shell: bash
         run: |
-          # Forward slashes for DPF's cmake - see windows-tests.yml.
+          # Forward slashes for DAF's cmake - see windows-tests.yml.
           RT_UNIX="${RUNNER_TEMP//\\//}"
           cmake -S . -B build-tests \
             -G "Visual Studio 17 2022" -A x64 \
@@ -290,8 +290,8 @@ jobs:
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
-            -DDPF_PATH="${RT_UNIX}/DPF" \
-            -DDPF_WIDGETS_PATH="${RT_UNIX}/DPF-Widgets" \
+            -DDAF_PATH="${RT_UNIX}/DAF" \
+            -DDAF_WIDGETS_PATH="${RT_UNIX}/DAF-Widgets" \
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
             -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}" \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \

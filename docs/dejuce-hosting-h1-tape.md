@@ -124,16 +124,16 @@ selftest under Xvfb (tape sweep now exercises the core); screenshot harness
 every affected variant per standing rule); AI-slop sweep; MANUAL.md audit
 (tape editor screenshots/wording likely reference donor UI — update).
 
-## H1d — TM2 DPF UI embed (Marc's call 2026-07-26, supersedes the JUCE panel)
+## H1d — TM2 DAF UI embed (Marc's call 2026-07-26, supersedes the JUCE panel)
 
-The tape editor must be TapeMachine2's own DPF/ImGui UI, not a JUCE
+The tape editor must be TapeMachine2's own DAF/ImGui UI, not a JUCE
 recreation. Direction chosen over hosting the .clap: keep the in-process
-TapeMachineDSP + session TapeParams from H1a; compile the TM2 DPF UI stack
+TapeMachineDSP + session TapeParams from H1a; compile the TM2 DAF UI stack
 (TapeMachineUI.cpp + DuskImGuiWidgets + DGL-OpenGL) into Dusk Studio and
 embed its DGL window as an X11 child (same reparent/embed pattern as
 ClapPluginEditorComponent), bridging:
 
-- UI -> engine: DPF setParameterValue(index) mapped through
+- UI -> engine: DAF setParameterValue(index) mapped through
   TapeMachineParams.hpp enum onto session TapeParams atoms (arm-on-touch
   preserved).
 - engine -> UI: parameterChanged pushed from a 30 Hz atom-diff sync.

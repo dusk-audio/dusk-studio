@@ -60,7 +60,7 @@ reimplemented.
   as reference (deliberate re-voice, tests re-baselined);
   `dusk::audio::StereoOversampler` + `IntDelayLine`; MasteringDigitalEq,
   BrickwallLimiter, LoudnessMeter, BusStrip/ChannelStrip/MasterBus flipped
-  onto donor DPF cores.
+  onto framework-free donor cores.
 - **Threading**: `dusk::AutoResetEvent` + std::thread in the multicore worker
   pool; native SCHED_RR priority.
 - **MIDI content model**: `dusk::MidiBuffer`/`MidiMessage` (byte-view);
@@ -123,13 +123,13 @@ reimplemented.
    [dejuce-hosting-plan.md](dejuce-hosting-plan.md)); the whole JUCE
    hosting path (PluginSlot/PluginManager JUCE half/PluginHostMain loop) and
    both remaining in-app JUCE donor processors (TapeMachine -> TapeMachineDSP,
-   Multiband UniversalCompressor -> donor DPF port) are deleted. Unlinks
+   Multiband UniversalCompressor -> framework-free donor port) are deleted. Unlinks
    `juce_audio_processors` globally; `juce_audio_utils` and
    `juce_audio_formats` stay for AudioThumbnail — GUI tower unlinks those.
    Multi-PR tower, phases H1-H6 in
    [dejuce-hosting-plan.md](dejuce-hosting-plan.md).
 2. **GUI tower (finale)** — framework decision (Marc, 2026-07-27): build on
-   the hard-forked DPF stack, not a bespoke retained toolkit. App UI =
+   the hard-forked DAF stack, not a bespoke retained toolkit. App UI =
    Dear ImGui + DuskImGuiWidgets on EGL, over a Dusk-written **Wayland
    backend for pugl** in the fork (xdg-shell surfaces, EGL contexts, input,
    clipboard, cursors — pugl ships mac/win/X11 only today). The earlier
@@ -155,8 +155,8 @@ reimplemented.
    the summary it supersedes. The fork stack is now DAF (Dusk Audio Framework):
    the repos are `dusk-audio/DAF` and `dusk-audio/DAF-Widgets`, all future work
    is on DAF, and the shared ImGui widget kit lives in DAF-Widgets rather than
-   the plugins repo's `shared-dpf/ui`. What still says DPF is listed in that
-   spec's Naming section.
+   the plugins repo's former shared widget directory. The spec's Naming section
+   records the completed cleanup.
 
 Done since the last queue edit: events remainder (PR #112, zero gate
 movement by design), FFT (branch dejuce/fft — DpAligner + MasteringEqEditor

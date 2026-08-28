@@ -510,9 +510,9 @@ if(DUSK_PLUGINS_PATH)
         ${CMAKE_SOURCE_DIR}/src/dsp/MasteringChain.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasteringDigitalEq.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/LoudnessMeter.cpp
-        "${DUSK_PLUGINS_PATH}/plugins/shared-dpf/dsp/FourKEQDSP.cpp"
+        "${DUSKSTUDIO_DONOR_DSP_DIR}/FourKEQDSP.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core/UniversalCompressorDSP.cpp"
+        "${DUSKSTUDIO_COMPRESSOR_CORE_SOURCE}"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/shared/LEDMeter.cpp"
@@ -551,14 +551,14 @@ if(DUSK_PLUGINS_PATH)
     target_include_directories(dusk-studio-tests SYSTEM PRIVATE
         "${CMAKE_SOURCE_DIR}/external/projucer-shim"
         "${DUSK_PLUGINS_PATH}/plugins/shared"
-        "${DUSK_PLUGINS_PATH}/plugins/shared-dpf"
+        "${DUSKSTUDIO_DONOR_SHARED_DIR}"
         "${DUSK_PLUGINS_PATH}/plugins/shared/AnalogEmulation"
         "${DUSK_PLUGINS_PATH}/plugins/shared/channel-comp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-q"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/HardwareEmulation"
-        "${DUSK_PLUGINS_PATH}/plugins/shared-dpf/dsp"
+        "${DUSKSTUDIO_DONOR_DSP_DIR}"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI")

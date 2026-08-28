@@ -227,7 +227,7 @@ public:
     // MainComponent owns the virtual keyboard panel.
     std::function<void()> onVirtualKeyboardToggle;
 
-    // MainComponent owns the DPF notepad embedded in its native parent window.
+    // MainComponent owns the DAF notepad embedded in its native parent window.
     std::function<void()> onNotepadToggle;
 
     void setTapeStripExpanded (bool expanded);
