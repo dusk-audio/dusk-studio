@@ -57,7 +57,7 @@ the native notepad build and safely refuses to overwrite a dirty checkout:
   DAF_WIDGETS=/home/marc/projects/dusk-daf-widgets-013
   JUCE_REV=4d85afa175a45e0b5da11f9211de3ba88705588e
   DONOR_REV=69f04318e3b7063e382c80ac1cde2388170e668b
-  DAF_REV=92c3d1a75450e8b8eaf963efe875f5742c7a1c84
+  DAF_REV=dfc50729f7a7d31dc0e0740c863bf88dee71c7c2
   DAF_WIDGETS_REV=1c09e1ef29f92ae7feb200bac8febdf814cf5e4a
 
   fetch_pin() {
