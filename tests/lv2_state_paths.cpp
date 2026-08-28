@@ -206,6 +206,26 @@ TEST_CASE ("LV2 state paths: restore makePath refuses a symlinked parent",
     REQUIRE_FALSE (stdfs::exists (outside / "deeper"));
 }
 
+TEST_CASE ("LV2 state paths: restore makePath refuses a symlinked cur",
+           "[lv2][state][regression][issue-393]")
+{
+    TempDirectory temp ("dusk-lv2-state-generation-");
+    const auto stateDir = temp.path() / "state";
+    const auto outside = temp.path() / "outside";
+    stdfs::create_directories (stateDir);
+    stdfs::create_directories (outside);
+    stdfs::create_directory_symlink (outside, stateDir / "cur");
+
+    std::error_code ec;
+    REQUIRE (makeRestorePath (stateDir, "payload.txt", ec).empty());
+    REQUIRE (ec);
+    REQUIRE_FALSE (stdfs::exists (outside / "payload.txt"));
+
+    REQUIRE (makeRestorePath (stateDir, "nested/payload.txt", ec).empty());
+    REQUIRE (ec);
+    REQUIRE_FALSE (stdfs::exists (outside / "nested"));
+}
+
 TEST_CASE ("LV2 state paths: restore makePath refuses a symlinked leaf",
            "[lv2][state][regression][issue-393]")
 {

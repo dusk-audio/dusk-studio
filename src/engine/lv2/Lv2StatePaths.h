@@ -4,6 +4,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <set>
 #include <string>
 #include <string_view>
@@ -559,47 +560,42 @@ inline bool prepareContainedPath (const std::filesystem::path& cur,
     std::filesystem::create_directories (cur, ec);
     if (ec) return false;
 
-    std::vector<std::filesystem::path> parts (relative.begin(), relative.end());
-    if (parts.empty())
-    {
-        ec = std::make_error_code (std::errc::invalid_argument);
-        return false;
-    }
-
 #if defined(__linux__) || defined(__APPLE__)
     // Each level is created and reopened relative to the previous descriptor
     // with O_NOFOLLOW, so a symlink swapped in between the check and the
-    // creation fails the open rather than redirecting it.
+    // creation fails the open rather than redirecting it. Opening cur the same
+    // way is what rejects a state root that is itself a link.
     const auto fail = [&ec] { ec = std::error_code (errno, std::generic_category()); };
 
     int dir = ::open (cur.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (dir < 0) { fail(); return false; }
 
     bool ok = true;
-    for (size_t i = 0; i + 1 < parts.size(); ++i)
+    for (auto part = relative.begin(); part != relative.end(); ++part)
     {
-        if (::mkdirat (dir, parts[i].c_str(), 0777) != 0 && errno != EEXIST)
+        if (std::next (part) == relative.end())
+        {
+            struct stat leaf {};
+            if (::fstatat (dir, part->c_str(), &leaf, AT_SYMLINK_NOFOLLOW) == 0
+                && S_ISLNK (leaf.st_mode))
+            {
+                ec = std::make_error_code (std::errc::too_many_symbolic_link_levels);
+                ok = false;
+            }
+            break;
+        }
+
+        if (::mkdirat (dir, part->c_str(), 0777) != 0 && errno != EEXIST)
         {
             fail();
             ok = false;
             break;
         }
-        const int child = ::openat (dir, parts[i].c_str(),
+        const int child = ::openat (dir, part->c_str(),
                                     O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
         if (child < 0) { fail(); ok = false; break; }
         ::close (dir);
         dir = child;
-    }
-
-    if (ok)
-    {
-        struct stat leaf {};
-        if (::fstatat (dir, parts.back().c_str(), &leaf, AT_SYMLINK_NOFOLLOW) == 0
-            && S_ISLNK (leaf.st_mode))
-        {
-            ec = std::make_error_code (std::errc::too_many_symbolic_link_levels);
-            ok = false;
-        }
     }
 
     ::close (dir);
@@ -610,15 +606,24 @@ inline bool prepareContainedPath (const std::filesystem::path& cur,
     // is_symlink also catches a Windows junction, which reports its own
     // file_type and would slip past a symlink-only test.
     using FileType = std::filesystem::file_type;
-    auto walk = cur;
-    for (size_t i = 0; i < parts.size(); ++i)
+
+    // create_directories leaves an existing link alone, so cur has to be shown
+    // to be a real directory before anything is built underneath it.
+    if (std::filesystem::symlink_status (cur, ec).type() != FileType::directory)
     {
-        walk /= parts[i];
+        ec = std::make_error_code (std::errc::too_many_symbolic_link_levels);
+        return false;
+    }
+
+    auto walk = cur;
+    for (auto part = relative.begin(); part != relative.end(); ++part)
+    {
+        walk /= *part;
         const auto type = std::filesystem::symlink_status (walk, ec).type();
         if (ec && ec != std::errc::no_such_file_or_directory) return false;
         ec.clear();
 
-        const bool isLeaf = i + 1 == parts.size();
+        const bool isLeaf = std::next (part) == relative.end();
         // A plugin may reuse a directory or file it made earlier; anything else
         // that already occupies the name is a reparse point or worse.
         if (type != FileType::not_found && type != FileType::directory
