@@ -25,6 +25,7 @@
 #endif
 #include "engine/audiofile/FileReader.h"
 #include "engine/audiofile/FileWriter.h"
+#include "foundation/Fs.h"
 #include "foundation/MessageThread.h"
 #include "session/SessionSerializer.h"
 #include "util/CrashHandler.h"
@@ -1294,14 +1295,17 @@ static bool runHeadlessSelfTest()
     engine->detachAudioCallback();
     engine->prepareForSelfTest (48000.0, blockSize);
 
-    const juce::File fixture (DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH);
+    const auto fixture = std::filesystem::u8path (
+        DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH);
     auto& trackStrip = engine->getChannelStrip (trackIndex);
     auto& auxStrip = engine->getAuxLaneStrip (auxLaneIndex);
     std::string error;
-    const bool trackLoaded = trackStrip.loadNativeClap (fixture, error);
+    const bool trackLoaded = trackStrip.getNativeClapSlot().load (
+        fixture, 48000.0, blockSize, error, "studio.dusk.test.multi-bus");
     expect (trackLoaded, "could not load the track fixture");
     error.clear();
-    const bool auxLoaded = auxStrip.loadNativeClap (auxSlotIndex, fixture, error);
+    const bool auxLoaded = auxStrip.getNativeClapSlot (auxSlotIndex).load (
+        fixture, 48000.0, blockSize, error, "studio.dusk.test.multi-bus");
     expect (auxLoaded, "could not load the aux fixture");
 
     if (trackLoaded && auxLoaded)
@@ -1325,18 +1329,23 @@ static bool runHeadlessSelfTest()
         const auto auxState = session->auxLane (auxLaneIndex)
                                       .nativeClapStateBase64[(size_t) auxSlotIndex];
 
-        expect (trackPath == fixture.getFullPathName(), "track path was not published");
-        expect (auxPath == fixture.getFullPathName(), "aux path was not published");
+        expect (trackPath.toStdString() == fixture.u8string(),
+                "track path was not published");
+        expect (auxPath.toStdString() == fixture.u8string(),
+                "aux path was not published");
         expect (trackId == "studio.dusk.test.multi-bus", "track plugin ID was not published");
         expect (auxId == "studio.dusk.test.multi-bus", "aux plugin ID was not published");
         expect (trackState.isNotEmpty(), "track state was empty");
         expect (auxState.isNotEmpty(), "aux state was empty");
         expect (trackState != auxState, "track and aux state did not diverge");
 
-        const auto tempDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                                 .getNonexistentChildFile ("dusk-clap-state-roundtrip", {}, false);
-        const auto sessionFile = tempDir.getChildFile ("session.json");
-        expect (tempDir.createDirectory().wasOk(), "could not create the temporary session directory");
+        const auto tempDir = dusk::fs::tempDir()
+            / ("dusk-clap-state-roundtrip-" + std::to_string (
+                std::chrono::steady_clock::now().time_since_epoch().count()));
+        const auto sessionFile = tempDir / "session.json";
+        std::error_code filesystemError;
+        std::filesystem::create_directories (tempDir, filesystemError);
+        expect (! filesystemError, "could not create the temporary session directory");
         expect (SessionSerializer::save (*session, sessionFile), "session JSON save failed");
         expect (SessionSerializer::load (*session, sessionFile), "session JSON load failed");
 
@@ -1354,7 +1363,7 @@ static bool runHeadlessSelfTest()
         expect (session->auxLane (auxLaneIndex)
                            .nativeClapStateBase64[(size_t) auxSlotIndex] == auxState,
                 "aux state changed after restore");
-        tempDir.deleteRecursively();
+        std::filesystem::remove_all (tempDir, filesystemError);
     }
 
     if (clapPassed)

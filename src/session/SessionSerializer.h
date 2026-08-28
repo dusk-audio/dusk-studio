@@ -3,6 +3,8 @@
 #include <juce_core/juce_core.h>
 #include "Session.h"
 
+#include <filesystem>
+
 namespace duskstudio
 {
 // Serialise / restore a Session to/from JSON on disk. Save uses an atomic
@@ -14,6 +16,8 @@ class SessionSerializer
 public:
     static bool save (const Session& session, const juce::File& target);
     static bool load (Session& session,       const juce::File& source);
+    static bool save (const Session& session, const std::filesystem::path& target);
+    static bool load (Session& session,       const std::filesystem::path& source);
 
     // Build the JSON snapshot without writing it. Lets the autosave path
     // hash the serialised state to skip redundant writes when nothing has
