@@ -24,6 +24,8 @@ if(APPLE)
     enable_language(OBJCXX)
 endif()
 
+option(DUSKSTUDIO_BUILD_TESTS "Build Dusk Studio unit tests with Catch2" OFF)
+
 # Native CLAP host (src/engine/clap/) is available on Linux, macOS, and
 # Windows. Default ON there, OFF elsewhere; it can be forced off to test the
 # feature-gated path.
@@ -1024,18 +1026,17 @@ endif()
 # Native CLAP host, gated by DUSKSTUDIO_NATIVE_CLAP. DUSKSTUDIO_HAS_NATIVE_CLAP
 # guards every conditional native-host path in the source.
 if(DUSKSTUDIO_NATIVE_CLAP)
-    # Shared by the native-slot unit tests and the full-engine self-test. The
-    # fixture advertises two buses and serialises a process counter, so one
-    # bundle exercises both bus layout and session state without a third-party
-    # plugin dependency.
-    add_library(dusk-studio-multi-bus-clap-fixture MODULE
-        tests/fixtures/multi_bus_clap.cpp)
-    set_target_properties(dusk-studio-multi-bus-clap-fixture PROPERTIES
-        PREFIX ""
-        SUFFIX ".clap")
-    target_compile_features(dusk-studio-multi-bus-clap-fixture PRIVATE cxx_std_17)
-    target_include_directories(dusk-studio-multi-bus-clap-fixture PRIVATE
-        ${CMAKE_SOURCE_DIR}/external/clap/include)
+    if(DUSKSTUDIO_BUILD_TESTS)
+        # Shared by the native-slot unit tests and the full-engine self-test.
+        add_library(dusk-studio-multi-bus-clap-fixture MODULE
+            tests/fixtures/multi_bus_clap.cpp)
+        set_target_properties(dusk-studio-multi-bus-clap-fixture PROPERTIES
+            PREFIX ""
+            SUFFIX ".clap")
+        target_compile_features(dusk-studio-multi-bus-clap-fixture PRIVATE cxx_std_17)
+        target_include_directories(dusk-studio-multi-bus-clap-fixture PRIVATE
+            ${CMAKE_SOURCE_DIR}/external/clap/include)
+    endif()
 
     target_sources(DuskStudio PRIVATE
         src/engine/clap/ClapBundle.cpp
@@ -1050,10 +1051,12 @@ if(DUSKSTUDIO_NATIVE_CLAP)
     elseif(WIN32)
         target_sources(DuskStudio PRIVATE src/engine/clap/ClapEditor_Win.cpp)
     endif()
-    target_compile_definitions(DuskStudio PRIVATE
-        DUSKSTUDIO_HAS_NATIVE_CLAP=1
-        DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-multi-bus-clap-fixture>")
-    add_dependencies(DuskStudio dusk-studio-multi-bus-clap-fixture)
+    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_CLAP=1)
+    if(TARGET dusk-studio-multi-bus-clap-fixture)
+        target_compile_definitions(DuskStudio PRIVATE
+            DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-multi-bus-clap-fixture>")
+        add_dependencies(DuskStudio dusk-studio-multi-bus-clap-fixture)
+    endif()
 endif()
 
 # Native LV2 host — lilv (discovery/instantiation) + suil (UI embed), both ISC.
@@ -1633,7 +1636,6 @@ if(DUSKSTUDIO_ENABLE_TSAN AND NOT MSVC)
     add_link_options(-fsanitize=thread)
 endif()
 
-option(DUSKSTUDIO_BUILD_TESTS "Build Dusk Studio unit tests with Catch2" OFF)
 if(DUSKSTUDIO_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)

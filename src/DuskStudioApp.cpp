@@ -1273,7 +1273,7 @@ static bool runHeadlessSelfTest()
     }
     bool passed = report.find ("[FAIL]") == std::string::npos;
 
-#if DUSKSTUDIO_HAS_NATIVE_CLAP
+#if DUSKSTUDIO_HAS_NATIVE_CLAP && defined(DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH)
     constexpr int trackIndex = 4;
     constexpr int auxLaneIndex = 3;
     constexpr int auxSlotIndex = 0;
@@ -1370,6 +1370,15 @@ static bool runHeadlessSelfTest()
         std::fprintf (stdout, "[PASS] Native CLAP track + aux session state round-trip\n");
     std::fflush (stdout);
     passed = passed && clapPassed;
+#elif DUSKSTUDIO_HAS_NATIVE_CLAP
+    std::fprintf (stdout,
+                  "[SKIP] Native CLAP track + aux session state round-trip "
+                  "(fixture not built; configure with DUSKSTUDIO_BUILD_TESTS=ON)\n");
+    std::fflush (stdout);
+    if (envFlagSet ("DUSKSTUDIO_CLAP_STATE_TEST_ONLY"))
+    {
+        passed = false;
+    }
 #endif
 
     return passed;
