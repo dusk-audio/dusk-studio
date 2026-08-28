@@ -46,7 +46,7 @@ Add `Lv2Scanner` (mirror `src/engine/clap/ClapScanner` — walk `LV2_PATH` + `~/
 Mirror `src/ui/ClapPluginEditorComponent` + `src/engine/clap/ClapEditor`, but embed via **suil** (`suil_instance_new` into an unmapped X11 host window, reparent `suil_instance_get_widget`). This is where the actual JUCE-escape payoff lands, and the riskiest — read the CLAP editor's X11 embed sequence carefully (unmapped-until-reveal, XMapWindow host before reparent) and the `PlatformWindowing` `preferX11ForNextNativeWindow` / non-fatal-X-error-handler shims. Requires `suil` (already found via pkg-config).
 
 ## Gotchas already handled in `Lv2Instance` (don't undo)
-- JUCE/DPF-wrapped LV2 plugins hard-require **urid-map + options(min/max/nominal block + sampleRate) + boundedBlockLength**; Ardour's minimal plugins don't. The feature set is built in `Lv2Instance::assembleFeatures`.
+- Framework-wrapped LV2 plugins hard-require **urid-map + options(min/max/nominal block + sampleRate) + boundedBlockLength**; Ardour's minimal plugins don't. The feature set is built in `Lv2Instance::assembleFeatures`.
 - **Output atom ports** need `atom->size` re-advertised before every `run()` (done).
 - Every LV2 port (audio/control/atom/**CV/unknown**) must be connected before `run()` or it's UB.
 - Bundle URIs must end in `/`.

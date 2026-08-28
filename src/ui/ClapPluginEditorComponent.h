@@ -9,6 +9,8 @@
 #include "../foundation/MessageThread.h"
 #include "NativeEditorOwner.h"
 
+#include <string>
+
 namespace duskstudio
 {
 // JUCE bridge for a natively-hosted CLAP plugin editor: loads a .clap, creates +
@@ -55,6 +57,7 @@ public:
     // release what this host owns. See NativeEditorOwner.h.
     void abandonInstance();
 
+    void paint (juce::Graphics&) override;
     void resized() override;
     void parentHierarchyChanged() override;
     void visibilityChanged() override;
@@ -80,6 +83,7 @@ private:
     clap::ClapEditor   editor;
     NativeEditorOwner      owner;
     clap::NativeClapSlot*  ownerSlot = nullptr;
+    std::string lastError;   // shown in place of an empty editor area
     bool abandoned = false;
     bool ownsInstance = false;
     bool loaded    = false;
@@ -91,6 +95,7 @@ private:
     int  driftLogsLeft     = 10;
     bool geometryLostLogged = false;
     bool embedCheckLogged   = false;
+    bool blankReported      = false;
 #endif
 };
 } // namespace duskstudio

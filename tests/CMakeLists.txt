@@ -29,6 +29,7 @@ add_executable(dusk-studio-tests
     plugin_descriptor.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PluginDescriptor.cpp
     plugin_manager_descriptor.cpp
+    plugin_scan_watchdog.cpp
     plugin_slot_persistence.cpp
     plugin_slot_lifecycle.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PluginManager.cpp
@@ -48,6 +49,9 @@ add_executable(dusk-studio-tests
     embedded_modal_close_safety.cpp
     native_editor_owner.cpp
     x11_anti_pattern_guard.cpp
+    clap_editor_lifecycle.cpp
+    plugin_state_diagnostics.cpp
+    channel_strip_context_rename.cpp
     snap_helpers.cpp
     fade_shapes.cpp
     crossfade.cpp
@@ -298,6 +302,10 @@ target_compile_definitions(dusk-studio-tests PRIVATE
 # Gate native CLAP tests + sources to match the app build. The bundle-load test
 # follows the same platform implementation selected by DUSKSTUDIO_NATIVE_CLAP.
 if(DUSKSTUDIO_NATIVE_CLAP)
+    target_compile_definitions(dusk-studio-tests PRIVATE
+        DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-multi-bus-clap-fixture>")
+    add_dependencies(dusk-studio-tests dusk-studio-multi-bus-clap-fixture)
+
     if(APPLE)
         # The directory-bundle resolver test needs a valid Mach-O image that
         # dlopen can safely inspect. Copying the running test executable aborts
@@ -330,15 +338,35 @@ endif()
 # Native LV2 host — lilv/suil (ISC), ON when the dev libs are present (detected in
 # the top-level CMakeLists; PkgConfig::LILV etc. are GLOBAL imported targets).
 if(DUSKSTUDIO_NATIVE_LV2)
+    set(DUSKSTUDIO_FILE_STATE_LV2_BUNDLE
+        "${CMAKE_CURRENT_BINARY_DIR}/file-state-fixture.lv2")
+    file(MAKE_DIRECTORY "${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}")
+    configure_file(fixtures/file_state_manifest.ttl
+        "${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}/manifest.ttl" COPYONLY)
+    configure_file(fixtures/file_state_plugin.ttl
+        "${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}/file_state_plugin.ttl" COPYONLY)
+    add_library(dusk-studio-file-state-lv2-fixture MODULE
+        fixtures/file_state_lv2.cpp)
+    set_target_properties(dusk-studio-file-state-lv2-fixture PROPERTIES
+        PREFIX ""
+        OUTPUT_NAME "file_state_fixture"
+        LIBRARY_OUTPUT_DIRECTORY "${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}")
+    target_compile_features(dusk-studio-file-state-lv2-fixture PRIVATE cxx_std_17)
+    target_link_libraries(dusk-studio-file-state-lv2-fixture PRIVATE PkgConfig::LV2)
+
     target_sources(dusk-studio-tests PRIVATE
         lv2_bundle_load.cpp
+        lv2_file_state.cpp
         lv2_instance_process.cpp
         lv2_native_slot.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Bundle.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Instance.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Scanner.cpp)
     target_link_libraries(dusk-studio-tests PRIVATE PkgConfig::LILV PkgConfig::SUIL PkgConfig::LV2)
-    target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_LV2=1)
+    target_compile_definitions(dusk-studio-tests PRIVATE
+        DUSKSTUDIO_HAS_NATIVE_LV2=1
+        DUSKSTUDIO_FILE_STATE_LV2_FIXTURE_PATH="${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}")
+    add_dependencies(dusk-studio-tests dusk-studio-file-state-lv2-fixture)
 endif()
 
 if(DUSKSTUDIO_NATIVE_CLAP OR DUSKSTUDIO_NATIVE_LV2 OR DUSKSTUDIO_NATIVE_VST3)
@@ -445,9 +473,6 @@ if (_duskstudio_ipc_test_enabled)
     target_compile_definitions(dusk-studio-tests PRIVATE
         DUSKSTUDIO_HAS_OOP_PLUGINS=1
         DUSKSTUDIO_PLUGIN_HOST_PATH="$<TARGET_FILE:dusk-studio-plugin-host>")
-    if (WIN32)
-        target_link_libraries(dusk-studio-tests PRIVATE synchronization)
-    endif()
     add_dependencies(dusk-studio-tests dusk-studio-plugin-host)
 endif()
 
@@ -482,9 +507,9 @@ if(DUSK_PLUGINS_PATH)
         ${CMAKE_SOURCE_DIR}/src/dsp/MasteringChain.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasteringDigitalEq.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/LoudnessMeter.cpp
-        "${DUSK_PLUGINS_PATH}/plugins/shared-dpf/dsp/FourKEQDSP.cpp"
+        "${DUSKSTUDIO_DONOR_DSP_DIR}/FourKEQDSP.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core/UniversalCompressorDSP.cpp"
+        "${DUSKSTUDIO_COMPRESSOR_CORE_SOURCE}"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/shared/LEDMeter.cpp"
@@ -523,14 +548,14 @@ if(DUSK_PLUGINS_PATH)
     target_include_directories(dusk-studio-tests SYSTEM PRIVATE
         "${CMAKE_SOURCE_DIR}/external/projucer-shim"
         "${DUSK_PLUGINS_PATH}/plugins/shared"
-        "${DUSK_PLUGINS_PATH}/plugins/shared-dpf"
+        "${DUSKSTUDIO_DONOR_SHARED_DIR}"
         "${DUSK_PLUGINS_PATH}/plugins/shared/AnalogEmulation"
         "${DUSK_PLUGINS_PATH}/plugins/shared/channel-comp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-q"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/HardwareEmulation"
-        "${DUSK_PLUGINS_PATH}/plugins/shared-dpf/dsp"
+        "${DUSKSTUDIO_DONOR_DSP_DIR}"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI")

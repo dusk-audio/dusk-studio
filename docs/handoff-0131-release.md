@@ -112,9 +112,9 @@ the *installed* copy, and requires the image root to hold only `DuskStudio.app`,
 `LICENSE` and `LICENSES.txt`. `hdiutil` needs `yes |` and its own `PIPESTATUS` read
 because the image carries a license agreement.
 
-If the build box is missing `../DPF` or `../DPF-Widgets`, configure fails hard rather
+If the build box is missing `../DAF` or `../DAF-Widgets`, configure fails hard rather
 than quietly dropping the notepad. Clone them at the pins in
-[.github/actions/clone-dpf-stack/action.yml](../.github/actions/clone-dpf-stack/action.yml).
+[.github/actions/clone-daf-stack/action.yml](../.github/actions/clone-daf-stack/action.yml).
 
 ### Windows
 

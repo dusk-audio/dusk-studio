@@ -23,9 +23,19 @@ Deadline deadlineFromNow (long long nsFromNow) noexcept
     return d;
 }
 
-WaitResult waitOnAddress (std::atomic<std::uint32_t>* addr,
-                            std::uint32_t expected,
-                            const Deadline* deadline) noexcept
+InterprocessSignal::~InterprocessSignal()
+{
+    close();
+}
+
+bool InterprocessSignal::create (std::string&) noexcept { return true; }
+bool InterprocessSignal::sendToChild (NativeHandle&) const noexcept { return true; }
+bool InterprocessSignal::receiveFromParent (NativeHandle&) noexcept { return true; }
+void InterprocessSignal::close() noexcept {}
+
+WaitResult InterprocessSignal::wait (std::atomic<std::uint32_t>* addr,
+                                      std::uint32_t expected,
+                                      const Deadline* deadline) noexcept
 {
     struct timespec abs {};
     const struct timespec* absPtr = nullptr;
@@ -50,7 +60,7 @@ WaitResult waitOnAddress (std::atomic<std::uint32_t>* addr,
     }
 }
 
-void wakeOneAddress (std::atomic<std::uint32_t>* addr) noexcept
+void InterprocessSignal::wake (std::atomic<std::uint32_t>* addr) noexcept
 {
     (void) ::syscall (SYS_futex, addr, FUTEX_WAKE, 1, nullptr, nullptr, 0);
 }

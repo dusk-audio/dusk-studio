@@ -24,6 +24,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <iterator>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -80,6 +83,7 @@ struct Lv2Instance::Impl
         uridInt    = mapUri (this, LV2_ATOM__Int);
         uridLong   = mapUri (this, LV2_ATOM__Long);
         uridObject        = mapUri (this, LV2_ATOM__Object);
+        uridPatchGet      = mapUri (this, LV2_PATCH__Get);
         uridPatchSet      = mapUri (this, LV2_PATCH__Set);
         uridPatchProperty = mapUri (this, LV2_PATCH__property);
         uridPatchValue    = mapUri (this, LV2_PATCH__value);
@@ -92,18 +96,22 @@ struct Lv2Instance::Impl
         uridUridType      = mapUri (this, LV2_ATOM__URID);
     }
     LV2_URID uridFloat = 0, uridDouble = 0, uridInt = 0, uridLong = 0;
-    LV2_URID uridObject = 0, uridPatchSet = 0, uridPatchProperty = 0,
+    LV2_URID uridObject = 0, uridPatchGet = 0, uridPatchSet = 0, uridPatchProperty = 0,
              uridPatchValue = 0, uridEventTransfer = 0, uridMidiEvent = 0,
              uridPatchPut = 0, uridPatchBody = 0, uridSequence = 0, uridFloatType = 0,
              uridUridType = 0;
 
-    // state:mapPath / state:freePath for file-backed state
+    // state:mapPath / state:makePath / state:freePath for file-backed state
     // Save side: lilv builds its own map/make-path from the directories we
     // hand lilv_state_new_from_instance. Restore side: the blob carries
     // ABSTRACT (cur/-relative) paths, so we supply the mapping back to
     // absolute ourselves. Returned strings are malloc'd - the plugin frees
     // them through freePathCb (or plain free()), per the state spec.
     std::filesystem::path stateDir;
+    // A failed restore leaves the instance at defaults. Refuse later snapshots
+    // from that instance so an ignored restore error cannot rotate away the
+    // carried file-backed generations with a default-state save.
+    bool stateRestoreFailed = false;
 
     static char* absolutePathCb (LV2_State_Map_Path_Handle handle, const char* abstractPath)
     {
@@ -117,10 +125,19 @@ struct Lv2Instance::Impl
         auto* self = static_cast<Impl*> (handle);
         return ::strdup (statepaths::toAbstract (self->stateDir, absolutePath).c_str());
     }
+    static char* makePathCb (LV2_State_Make_Path_Handle handle, const char* requestedPath)
+    {
+        if (requestedPath == nullptr) return nullptr;
+        auto* self = static_cast<Impl*> (handle);
+        std::error_code ec;
+        const auto path = statepaths::makeRestorePath (
+            self->stateDir, requestedPath, ec);
+        return ec ? nullptr : ::strdup (path.u8string().c_str());
+    }
     static void freePathCb (LV2_State_Free_Path_Handle, char* path) { ::free (path); }
 
     // Assemble the full feature list for instantiate: urid map/unmap + the block-size
-    // and sample-rate options + boundedBlockLength. JUCE/DPF-wrapped plugins REQUIRE
+    // and sample-rate options + boundedBlockLength. Framework-wrapped plugins REQUIRE
     // options + boundedBlockLength and refuse to instantiate without them.
     void assembleFeatures (double sr, int maxBlock)
     {
@@ -196,6 +213,37 @@ struct Lv2Instance::Impl
     // instance-access shortcut loses nothing - see forwardUiAtomEvent).
     struct AtomBlob { uint32_t size = 0; uint8_t data[128]; };
     hosting::SpscRing<AtomBlob, 64> atomRing;
+
+    uint32_t forgePatchSet (LV2_URID property, float value,
+                            uint8_t* data, size_t capacity) noexcept
+    {
+        LV2_Atom_Forge forge;
+        lv2_atom_forge_init (&forge, &mapFeature);
+        lv2_atom_forge_set_buffer (&forge, data, capacity);
+        LV2_Atom_Forge_Frame frame;
+        if (lv2_atom_forge_object (&forge, &frame, 0, uridPatchSet) == 0) return 0;
+        lv2_atom_forge_key (&forge, uridPatchProperty);
+        lv2_atom_forge_urid (&forge, property);
+        lv2_atom_forge_key (&forge, uridPatchValue);
+        lv2_atom_forge_float (&forge, value);
+        lv2_atom_forge_pop (&forge, &frame);
+        const auto* atom = reinterpret_cast<const LV2_Atom*> (data);
+        const auto size = (uint32_t) sizeof (LV2_Atom) + atom->size;
+        return size <= capacity ? size : 0;
+    }
+
+    uint32_t forgePatchGet (uint8_t* data, size_t capacity) noexcept
+    {
+        LV2_Atom_Forge forge;
+        lv2_atom_forge_init (&forge, &mapFeature);
+        lv2_atom_forge_set_buffer (&forge, data, capacity);
+        LV2_Atom_Forge_Frame frame;
+        if (lv2_atom_forge_object (&forge, &frame, 0, uridPatchGet) == 0) return 0;
+        lv2_atom_forge_pop (&forge, &frame);
+        const auto* atom = reinterpret_cast<const LV2_Atom*> (data);
+        const auto size = (uint32_t) sizeof (LV2_Atom) + atom->size;
+        return size <= capacity ? size : 0;
+    }
 
     // Which atomInPorts entry takes injected events: the lv2:control-designated
     // port, else the first atom input.
@@ -335,6 +383,7 @@ int  Lv2Instance::getLatencySamples() const noexcept { return impl->latencySampl
 bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::string& errorOut)
 {
     impl->freeInstance();
+    impl->stateRestoreFailed = false;
     impl->plugin = static_cast<const LilvPlugin*> (bundle.pluginByUri (uri));
     if (impl->plugin == nullptr) { errorOut = "plugin URI not found in bundle: " + uri; return false; }
 
@@ -436,6 +485,12 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
         if (LilvNodes* props = lilv_world_find_nodes (world,
                                    lilv_plugin_get_uri (impl->plugin), patchWritable, nullptr))
         {
+            // lilv does not define an iteration order for a node collection, so the
+            // properties come out in a different order per instance. Parameter INDEX
+            // is what MIDI bindings persist and what the UI addresses, so collect
+            // first and append sorted by property URI - stable across instances,
+            // launches and machines.
+            std::vector<std::pair<std::string, ParamInfo>> patchParams;
             LILV_FOREACH (nodes, it, props)
             {
                 const LilvNode* prop = lilv_nodes_get (props, it);
@@ -477,9 +532,14 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
                     lilv_nodes_free (pps);
                 }
                 impl->patchShadow[p.id & ~Impl::kPatchIdFlag] = p.defaultValue;
-                impl->params.push_back (std::move (p));
+                patchParams.emplace_back (lilv_node_as_uri (prop), std::move (p));
             }
             lilv_nodes_free (props);
+
+            std::sort (patchParams.begin(), patchParams.end(),
+                       [] (const auto& a, const auto& b) { return a.first < b.first; });
+            for (auto& entry : patchParams)
+                impl->params.push_back (std::move (entry.second));
         }
         lilv_node_free (patchWritable); lilv_node_free (rdfsLabel);
         lilv_node_free (rdfsRange);     lilv_node_free (atomFloat);
@@ -659,7 +719,8 @@ bool Lv2Instance::reactivate (double sampleRate, int maxBlockFrames, std::string
     // (control ports + state:interface); fall back to the raw port values when it
     // can't. The blob already reflects staged UI writes via getPortValue's shadow.
     std::vector<uint8_t> blob;
-    saveState (blob);
+    const bool carriedRestoreFailure = impl->stateRestoreFailed;
+    saveStateBlobOnly (blob);
     const std::vector<float> saved = impl->portValues;
     // freeInstance bumps the epoch before the rebuild, so a failed activate
     // still leaves the embed marked stale.
@@ -667,7 +728,15 @@ bool Lv2Instance::reactivate (double sampleRate, int maxBlockFrames, std::string
     if (! activate (sampleRate, maxBlockFrames, errorOut)) return false;
     if (! blob.empty())
     {
-        loadState (blob);
+        // This blob was just captured from the live instance, rather than read
+        // from the persisted session. Its file paths already describe the
+        // active cur/ generation, so do not require byte equality with the
+        // older session blob stored there.
+        if (! loadStateInternal (blob, false))
+        {
+            errorOut = "LV2 state restore failed after reactivation";
+            return false;
+        }
     }
     else if (saved.size() == impl->portValues.size())
     {
@@ -677,6 +746,11 @@ bool Lv2Instance::reactivate (double sampleRate, int maxBlockFrames, std::string
         for (uint32_t idx : impl->controlPorts)
             if ((size_t) idx < impl->uiDirty.size() && impl->uiDirty[(size_t) idx] != 0)
                 impl->portValues[(size_t) idx] = impl->uiShadow[(size_t) idx];
+    }
+    if (carriedRestoreFailure)
+    {
+        errorOut = "LV2 state remained unavailable after reactivation";
+        return false;
     }
     return true;
 }
@@ -795,93 +869,195 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
 
 void Lv2Instance::setStateDirectory (const std::filesystem::path& dir)
 {
-    impl->stateDir = dir;
+    impl->stateDir = statepaths::normalizeStateDirectory (dir);
 }
 
-bool Lv2Instance::saveState (std::vector<uint8_t>& out) const
+bool Lv2Instance::saveStateBlobOnly (std::vector<uint8_t>& out) const
 {
     out.clear();
-    if (impl->instance == nullptr || impl->plugin == nullptr || impl->world == nullptr)
+    if (impl->instance == nullptr || impl->plugin == nullptr || impl->world == nullptr
+        || impl->stateRestoreFailed)
         return false;
-
-    // Snapshot control-port values + the plugin's state:interface blob (JUCE-
-    // wrapped plugins keep everything there) into a lilv state, serialized as
-    // Turtle. With a state directory set, lilv also snapshots FILE-BACKED
-    // state (sample banks, IRs) into <dir>/cur/ and emits abstract paths in
-    // the Turtle; without one, file-writing plugins keep only their in-memory
-    // state (the pre-file-state behaviour, fine for effects).
-    std::string curPath;
-    if (! impl->stateDir.empty())
-    {
-        // Rotate generations instead of wiping: a disk-streaming sampler may
-        // still be reading the files the PREVIOUS save snapshotted - those
-        // survive one more save cycle in prev/.
-        std::error_code ec;
-        const auto cur  = impl->stateDir / "cur";
-        const auto prev = impl->stateDir / "prev";
-        std::filesystem::remove_all (prev, ec);
-        bool rotated = ! ec;
-        if (rotated && std::filesystem::is_directory (cur, ec))
-        {
-            std::filesystem::rename (cur, prev, ec);
-            rotated = ! ec;
-        }
-        if (rotated)
-        {
-            std::filesystem::create_directories (cur, ec);
-            curPath = cur.u8string();
-        }
-        // Rotation failed: leave curPath empty so lilv gets no directory and
-        // falls back to a blob-only (in-memory) save rather than writing a new
-        // generation on top of the stale cur/ files.
-    }
-    const char* dirC = curPath.empty() ? nullptr : curPath.c_str();
 
     LilvState* state = lilv_state_new_from_instance (
         impl->plugin, impl->instance, &impl->mapFeature,
-        dirC, dirC, dirC, dirC,
+        nullptr, nullptr, nullptr, nullptr,
         &Impl::getPortValue, impl.get(),
         LV2_STATE_IS_POD | LV2_STATE_IS_PORTABLE, impl->features.data());
     if (state == nullptr) return false;
 
-    char* ttl = lilv_state_to_string (impl->world, &impl->mapFeature, &impl->unmapFeature,
-                                      state, "urn:duskstudio:lv2state", nullptr);
+    char* ttl = lilv_state_to_string (
+        impl->world, &impl->mapFeature, &impl->unmapFeature,
+        state, "urn:duskstudio:lv2state", nullptr);
     lilv_state_free (state);
     if (ttl == nullptr) return false;
-
     out.assign (ttl, ttl + std::strlen (ttl));
     lilv_free (ttl);
     return ! out.empty();
 }
 
+bool Lv2Instance::saveState (std::vector<uint8_t>& out) const
+{
+    if (impl->stateDir.empty()) return saveStateBlobOnly (out);
+
+    out.clear();
+    if (impl->instance == nullptr || impl->plugin == nullptr || impl->world == nullptr
+        || impl->stateRestoreFailed)
+        return false;
+
+    // Snapshot control-port values + the plugin's state:interface blob (JUCE-
+    // wrapped plugins keep everything there) into a lilv state, serialized as
+    // Turtle. With a state directory set, lilv also snapshots FILE-BACKED
+    // state (sample banks, IRs) into a fresh <dir>/next/ generation and emits
+    // abstract paths in the Turtle. A successful serialization publishes next/
+    // as cur/ below; without a directory, file-writing plugins keep only their
+    // in-memory state (the pre-file-state behaviour, fine for effects).
+    std::error_code ec;
+    const auto next = statepaths::prepareNextGeneration (impl->stateDir, ec);
+    // Never report a successful blob-only save for a slot configured with
+    // file-backed state: that would silently stop carrying its external files
+    // after a staging or recovery failure.
+    if (next.empty()) return false;
+
+    // A restored plugin refers to files in cur/. Lilv must consider that the
+    // scratch generation so it preserves their bytes in the stable copy store,
+    // then links the new generation to those copies.
+    const auto copyDir = impl->stateDir / "copy";
+    const auto linkDir = impl->stateDir / "link";
+    std::filesystem::create_directories (copyDir, ec);
+    if (! ec) std::filesystem::create_directories (linkDir, ec);
+    if (ec)
+    {
+        statepaths::discardNextGeneration (impl->stateDir);
+        return false;
+    }
+    const auto scratchPath = (impl->stateDir / "cur").u8string();
+    const auto copyPath = copyDir.u8string();
+    const auto linkPath = linkDir.u8string();
+    const auto savePath = next.u8string();
+
+    LilvState* state = lilv_state_new_from_instance (
+        impl->plugin, impl->instance, &impl->mapFeature,
+        scratchPath.c_str(), copyPath.c_str(), linkPath.c_str(), savePath.c_str(),
+        &Impl::getPortValue, impl.get(),
+        LV2_STATE_IS_POD | LV2_STATE_IS_PORTABLE, impl->features.data());
+    if (state == nullptr)
+    {
+        statepaths::discardNextGeneration (impl->stateDir);
+        return false;
+    }
+
+    std::vector<uint8_t> serialized;
+    constexpr const char* stateFile = "state.ttl";
+    const int saveResult = lilv_state_save (
+        impl->world, &impl->mapFeature, &impl->unmapFeature, state,
+        "urn:duskstudio:lv2state", savePath.c_str(), stateFile);
+    lilv_state_free (state);
+    if (saveResult != 0)
+    {
+        statepaths::discardNextGeneration (impl->stateDir);
+        return false;
+    }
+
+    std::ifstream input (next / stateFile, std::ios::binary);
+    serialized.assign (std::istreambuf_iterator<char> (input),
+                       std::istreambuf_iterator<char>());
+    if ((! input.good() && ! input.eof()) || serialized.empty())
+    {
+        statepaths::discardNextGeneration (impl->stateDir);
+        return false;
+    }
+
+    // Only now that both the plugin snapshot and Turtle serialization succeeded
+    // may the fresh files replace cur/. Until this point a restored plugin's
+    // absolute cur/ paths remain valid throughout the save.
+    if (! statepaths::commitNextGeneration (impl->stateDir, ec))
+    {
+        // commitNextGeneration may have moved cur aside before the publish or
+        // rollback failed. Preserve the complete staged generation as recovery
+        // data; the next prepare removes it only when cur exists.
+        return false;
+    }
+
+    out = std::move (serialized);
+    return true;
+}
+
 bool Lv2Instance::loadState (const std::vector<uint8_t>& in)
+{
+    return loadStateInternal (in, true);
+}
+
+bool Lv2Instance::loadStateInternal (const std::vector<uint8_t>& in,
+                                     bool recoverFileGeneration)
 {
     if (impl->instance == nullptr || impl->world == nullptr || in.empty())
         return false;
 
-    const std::string ttl (in.begin(), in.end());
-    LilvState* state = lilv_state_new_from_string (impl->world, &impl->mapFeature, ttl.c_str());
-    if (state == nullptr) return false;
+    LilvState* state = nullptr;
+    if (! impl->stateDir.empty() && recoverFileGeneration)
+    {
+        const std::string_view persistedState {
+            reinterpret_cast<const char*> (in.data()), in.size() };
+        std::error_code recoveryError;
+        if (! statepaths::recoverGeneration (impl->stateDir, persistedState,
+                                             recoveryError))
+        {
+            impl->stateRestoreFailed = true;
+            return false;
+        }
+
+        const auto stateFile = impl->stateDir / "cur" / "state.ttl";
+        std::ifstream input (stateFile, std::ios::binary);
+        const std::vector<uint8_t> saved {
+            std::istreambuf_iterator<char> (input), std::istreambuf_iterator<char>() };
+        if (saved == in)
+        {
+            LilvNode* subject = lilv_new_uri (impl->world, "urn:duskstudio:lv2state");
+            state = lilv_state_new_from_file (
+                impl->world, &impl->mapFeature, subject, stateFile.c_str());
+            lilv_node_free (subject);
+        }
+    }
+
+    // Blob-only snapshots and states written by older versions contain no
+    // relative file URIs, so the filesystem-independent parser remains the
+    // compatible fallback.
+    if (state == nullptr)
+    {
+        const std::string ttl (in.begin(), in.end());
+        state = lilv_state_new_from_string (impl->world, &impl->mapFeature, ttl.c_str());
+    }
+    if (state == nullptr)
+    {
+        impl->stateRestoreFailed = true;
+        return false;
+    }
 
     // Restores control ports through setPortValue (the plugin reads portValues on
     // its next run()) and hands the state:interface blob to the plugin. Callers
     // fence the audio thread when the instance is live - same as activate().
     // mapPath/freePath resolve the blob's abstract file paths against the
-    // slot's state directory (no-ops when none is set / the blob has none).
+    // slot's state directory. makePath lets restore create derived files in
+    // cur/ without escaping the slot's state directory.
     LV2_State_Map_Path  mapPath  { impl.get(), &Impl::abstractPathCb, &Impl::absolutePathCb };
+    LV2_State_Make_Path makePath { impl.get(), &Impl::makePathCb };
     LV2_State_Free_Path freePath { nullptr, &Impl::freePathCb };
     LV2_Feature mapPathFeat  { LV2_STATE__mapPath,  &mapPath };
+    LV2_Feature makePathFeat { LV2_STATE__makePath, &makePath };
     LV2_Feature freePathFeat { LV2_STATE__freePath, &freePath };
     std::vector<const LV2_Feature*> feats;
     for (const auto* f : impl->features)
         if (f != nullptr) feats.push_back (f);
     feats.push_back (&mapPathFeat);
+    feats.push_back (&makePathFeat);
     feats.push_back (&freePathFeat);
     feats.push_back (nullptr);
 
     lilv_state_restore (state, impl->instance, &Impl::setPortValue, impl.get(),
                         0, feats.data());
     lilv_state_free (state);
+    impl->stateRestoreFailed = false;
     return true;
 }
 
@@ -958,25 +1134,13 @@ void Lv2Instance::setParamValue (uint32_t paramId, double value) noexcept
         return;
     }
 
-    // patch:Set { property = <prop>, value = Float } forged into a blob the
-    // audio thread injects into the control atom port next block.
     const LV2_URID propUrid = paramId & ~Impl::kPatchIdFlag;
     Impl::AtomBlob blob;
-    LV2_Atom_Forge forge;
-    lv2_atom_forge_init (&forge, &impl->mapFeature);
-    lv2_atom_forge_set_buffer (&forge, blob.data, sizeof (blob.data));
-    LV2_Atom_Forge_Frame frame;
-    lv2_atom_forge_object (&forge, &frame, 0, impl->uridPatchSet);
-    lv2_atom_forge_key (&forge, impl->uridPatchProperty);
-    lv2_atom_forge_urid (&forge, propUrid);
-    lv2_atom_forge_key (&forge, impl->uridPatchValue);
-    lv2_atom_forge_float (&forge, v);
-    lv2_atom_forge_pop (&forge, &frame);
-    const auto* atom = reinterpret_cast<const LV2_Atom*> (blob.data);
-    blob.size = (uint32_t) sizeof (LV2_Atom) + atom->size;
+    blob.size = impl->forgePatchSet (propUrid, v, blob.data, sizeof (blob.data));
 
     impl->patchShadow[propUrid] = v;
-    impl->atomRing.push (blob);   // full => drop (pathological flood only)
+    if (blob.size != 0)
+        impl->atomRing.push (blob);   // full => drop (pathological flood only)
 }
 
 void Lv2Instance::drainPatchFeedback()
@@ -996,6 +1160,50 @@ int Lv2Instance::lastTouchedParamIndex() const noexcept
 uint32_t Lv2Instance::uiEventTransferUrid() const noexcept
 {
     return impl->uridEventTransfer;
+}
+
+int Lv2Instance::uiParameterEventCount() const noexcept
+{
+    return (int) impl->params.size();
+}
+
+bool Lv2Instance::currentUiParameterEvent (int index, UiParameterEvent& out) const
+{
+    out = {};
+    const auto* param = paramInfo (index);
+    if (param == nullptr) return false;
+
+    double value = 0.0;
+    if (! getParamValue (param->id, value)) return false;
+    out.value = (float) value;
+
+    if (! param->isPatchProperty)
+    {
+        out.portIndex = param->id;
+        out.sizeBytes = sizeof (float);
+        std::memcpy (out.data.data(), &out.value, sizeof (out.value));
+        return true;
+    }
+
+    if (impl->controlAtomOutPos < 0) return false;
+    out.portIndex = impl->atomOutPorts[(size_t) impl->controlAtomOutPos];
+    out.protocol = impl->uridEventTransfer;
+    out.sizeBytes = impl->forgePatchSet (
+        param->id & ~Impl::kPatchIdFlag, out.value, out.data.data(), out.data.size());
+    return out.sizeBytes != 0;
+}
+
+void Lv2Instance::requestPatchParameterValuesForUi() noexcept
+{
+    if (impl->atomInPorts.empty()) return;
+    if (std::none_of (impl->params.begin(), impl->params.end(),
+                      [] (const ParamInfo& param) { return param.isPatchProperty; }))
+        return;
+
+    Impl::AtomBlob blob;
+    blob.size = impl->forgePatchGet (blob.data, sizeof (blob.data));
+    if (blob.size != 0)
+        impl->atomRing.push (blob);
 }
 
 void Lv2Instance::forwardUiAtomEvent (const void* atomData, uint32_t sizeBytes) noexcept

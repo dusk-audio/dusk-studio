@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "../src/engine/hosting/NativeInsertSlot.h"
 #include "../src/ui/NativeEditorOwner.h"
@@ -65,15 +66,54 @@ struct FakeBundle
     bool load (const std::string&, std::string&) { return true; }
 };
 
-struct FakeSlotInstance
+struct FakeSlotInstance final : public duskstudio::hosting::INativeInstance
 {
-    bool create (FakeBundle&, const std::string&, std::string&) { return true; }
-    bool activate (double, int, std::string&) { active = true; return true; }
-    bool isActive() const noexcept { return active; }
-    const duskstudio::hosting::PortLayout& portLayout() const noexcept { return layout; }
+    bool create (FakeBundle&, const std::string&, std::string&)
+    {
+        duskstudio::hosting::BusInfo in;
+        in.kind = duskstudio::hosting::BusInfo::Kind::Audio;
+        in.dir = duskstudio::hosting::BusInfo::Direction::Input;
+        in.role = duskstudio::hosting::BusInfo::Role::Main;
+        in.channelCount = 2;
+        in.active = true;
+        auto out = in;
+        out.dir = duskstudio::hosting::BusInfo::Direction::Output;
+        layout.inputs = { in };
+        layout.outputs = { out };
+        layout.mainInIndex = 0;
+        layout.mainOutIndex = 0;
+        return true;
+    }
+    bool activate (double, int, std::string&) override { active = true; return true; }
+    void deactivate() override { active = false; }
+    bool reactivate (double, int, std::string& error) override
+    {
+        active = true;
+        if (! failReactivation)
+        {
+            error.clear();
+            return true;
+        }
+        error = "state carry failed";
+        return false;
+    }
+    bool isActive() const noexcept override { return active; }
+    const duskstudio::hosting::PortLayout& portLayout() const noexcept override { return layout; }
+    void processBlock (const duskstudio::hosting::PortBuffers& io) noexcept override
+    {
+        ++processCalls;
+        for (int channel = 0; channel < io.mainOutChannels; ++channel)
+            for (int frame = 0; frame < io.numFrames; ++frame)
+                io.mainOut[channel][frame] = io.mainIn[channel][frame] * 0.5f;
+    }
+    bool saveState (std::vector<uint8_t>&) const override { return true; }
+    bool loadState (const std::vector<uint8_t>&) override { return true; }
+    int getLatencySamples() const noexcept override { return 0; }
 
     duskstudio::hosting::PortLayout layout;
     bool active = false;
+    bool failReactivation = true;
+    int processCalls = 0;
 };
 
 struct FakeTraits
@@ -144,6 +184,53 @@ TEST_CASE ("NativeInsertSlot bumps its generation on every identity change")
     slot.leakForShutdown();
     REQUIRE (slot.generation() != afterReload);
     REQUIRE (owner.isStale (slot));
+}
+
+TEST_CASE ("NativeInsertSlot resizes its adapter after a partial reactivate failure",
+           "[hosting][slot][regression][issue-357]")
+{
+    duskstudio::hosting::NativeInsertSlot<FakeTraits> slot;
+    std::string error;
+    REQUIRE (slot.load ("fake.bundle", 48000.0, 8, error));
+    REQUIRE_FALSE (slot.reactivate (48000.0, 16, error));
+    REQUIRE (slot.getInstance()->isActive());
+
+    std::vector<float> left (16, 1.0f);
+    std::vector<float> right (16, -1.0f);
+    slot.processStereo (left.data(), right.data(), left.data(), right.data(), 16);
+    REQUIRE (slot.getInstance()->processCalls == 1);
+    REQUIRE_THAT (left.front(), Catch::Matchers::WithinAbs (0.5, 1.0e-6));
+    REQUIRE_THAT (right.front(), Catch::Matchers::WithinAbs (-0.5, 1.0e-6));
+}
+
+TEST_CASE ("failed reactivation can be quarantined without destroying a live editor instance",
+           "[hosting][slot][regression][issue-386]")
+{
+    duskstudio::hosting::NativeInsertSlot<FakeTraits> slot;
+    std::string error;
+    REQUIRE (slot.load ("fake.bundle", 48000.0, 8, error));
+    auto* const instance = slot.getInstance();
+    const auto generation = slot.generation();
+
+    REQUIRE_FALSE (slot.reactivate (192000.0, 32, error));
+    REQUIRE (slot.hasActiveInstance());
+    slot.quarantineAfterFailedReactivation();
+    REQUIRE (slot.isLoaded());
+    REQUIRE_FALSE (slot.isProcessingOnline());
+    REQUIRE (slot.getInstance() == instance);
+    REQUIRE (slot.generation() == generation);
+
+    std::vector<float> left (32, 1.0f);
+    std::vector<float> right (32, -1.0f);
+    slot.processStereo (left.data(), right.data(), left.data(), right.data(), 32);
+    REQUIRE (instance->processCalls == 0);
+    REQUIRE_THAT (left.front(), Catch::Matchers::WithinAbs (1.0, 1.0e-12));
+    REQUIRE_THAT (right.front(), Catch::Matchers::WithinAbs (-1.0, 1.0e-12));
+
+    instance->failReactivation = false;
+    REQUIRE (slot.reactivate (48000.0, 8, error));
+    REQUIRE (slot.isProcessingOnline());
+    REQUIRE (slot.getInstance() == instance);
 }
 
 TEST_CASE ("AbandonInstance quiesces only while the plugin is live")

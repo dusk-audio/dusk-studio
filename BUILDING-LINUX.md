@@ -80,9 +80,9 @@ cd ~/projects
 git clone --recurse-submodules https://github.com/dusk-audio/dusk-studio.git
 git clone --branch wayland-juce8 https://github.com/plugdata-team/JUCE.git JUCE-wayland
 git clone https://github.com/dusk-audio/dusk-audio-plugins.git plugins
-git -C plugins fetch --depth 1 origin 69f04318e3b7063e382c80ac1cde2388170e668b
+git -C plugins fetch --depth 1 origin 0a1b17f8e9dbecd26bf78dd45704c6c149e4b2ea
 git -C plugins checkout --detach FETCH_HEAD
-test "$(git -C plugins rev-parse HEAD)" = 69f04318e3b7063e382c80ac1cde2388170e668b || {
+test "$(git -C plugins rev-parse HEAD)" = 0a1b17f8e9dbecd26bf78dd45704c6c149e4b2ea || {
   echo "ERROR: donor checkout did not reach the pinned revision" >&2
   false
 }
@@ -113,12 +113,16 @@ git clone https://github.com/dusk-audio/DAF.git
 git -C DAF checkout 92c3d1a75450e8b8eaf963efe875f5742c7a1c84
 git -C DAF submodule update --init
 git clone https://github.com/dusk-audio/DAF-Widgets.git
-git -C DAF-Widgets checkout 77daa2256582ef5e707b6fa8ca27bb757afd8de0
+git -C DAF-Widgets checkout 1c09e1ef29f92ae7feb200bac8febdf814cf5e4a
 ```
 
-Clone then check out the SHA, rather than building whatever `main` points at today: both pins are on their fork's `main`, but a branch tip moves and CI fetches these exact SHAs. Both checkouts end up on a detached HEAD, which is what you want here. The submodule step is not optional either: DGL pulls its windowing layer from `dgl/src/pugl-upstream`. That submodule's recorded revision does still depend on a branch surviving in `dusk-audio/pugl`, unlike the two pins above: it is not on that repository's `main`.
+Clone then check out the SHA, rather than building whatever `main` points at today: a branch tip moves and CI fetches these exact SHAs. Both checkouts end up on a detached HEAD, which is what you want here. The submodule step is not optional: DGL pulls the Dusk Pugl fork into `dgl/src/pugl-upstream`.
 
-The pins live in [.github/actions/clone-dpf-stack/action.yml](.github/actions/clone-dpf-stack/action.yml), which is the single source of truth for every workflow — read them from there if it ever disagrees with the commands above.
+The pinned Pugl revision is carried by `dusk-pin-5e2621d`, not Pugl's `main`.
+Do not delete that branch: a fresh DAF submodule checkout and every CI build
+depend on the commit remaining reachable.
+
+The pins live in [.github/actions/clone-daf-stack/action.yml](.github/actions/clone-daf-stack/action.yml), which is the single source of truth for every workflow — read them from there if it ever disagrees with the commands above.
 
 Missing either checkout, `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults to **OFF** and configure says so once, quietly:
 

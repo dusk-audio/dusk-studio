@@ -1,5 +1,6 @@
 #include "Lv2Editor.h"
 #include "Lv2Instance.h"
+#include "Lv2UiParameterSync.h"
 
 #include <lilv/lilv.h>
 #include <suil/suil.h>
@@ -11,7 +12,6 @@
 #include <X11/Xlib.h>
 
 #include <algorithm>
-#include <cstring>
 #include <vector>
 
 namespace duskstudio::lv2
@@ -43,6 +43,7 @@ struct Lv2Editor::Impl
 
     int  prefW = 0, prefH = 0;
     bool discovered = false, embedded = false, mapped = false, leakOnClose = false;
+    Lv2UiParameterSync parameterSync;
 
     // suil host callbacks (message thread: the UI runs off our idle pump)
     static void writePort (SuilController c, uint32_t portIndex, uint32_t bufferSize,
@@ -66,6 +67,16 @@ struct Lv2Editor::Impl
         const int idx = self->instance != nullptr
                           ? self->instance->portIndexForSymbol (symbol) : -1;
         return idx >= 0 ? (uint32_t) idx : LV2UI_INVALID_PORT_INDEX;
+    }
+
+    void syncParameterValues (bool force)
+    {
+        if (instance == nullptr || suilInstance == nullptr) return;
+        parameterSync.sendCurrentValues (*instance, force, [this] (const auto& event)
+        {
+            suil_instance_port_event (suilInstance, event.portIndex,
+                                      event.sizeBytes, event.protocol, event.data.data());
+        });
     }
 
     static int uiResize (LV2UI_Feature_Handle handle, int w, int h)
@@ -168,7 +179,7 @@ bool Lv2Editor::embed (std::uintptr_t parentHandle, int x, int y, int w, int h,
     swa.override_redirect = True;
     impl->hostWindow = XCreateWindow (dpy, (Window) parentHandle, x, y,
                                       (unsigned) ww, (unsigned) hh, 0,
-                                      CopyFromParent, InputOutput, CopyFromParent,
+                                      CopyFromParent, InputOutput, nullptr,
                                       CWBackPixel | CWBorderPixel | CWEventMask | CWOverrideRedirect, &swa);
     // Viewable BEFORE the UI instantiates into it - toolkit wrappers (and JUCE-
     // wrapped UIs) can abort realising into an unmapped parent.
@@ -209,6 +220,9 @@ bool Lv2Editor::embed (std::uintptr_t parentHandle, int x, int y, int w, int h,
     impl->uiWindow = (unsigned long) (uintptr_t) suil_instance_get_widget (impl->suilInstance);
     if (impl->uiWindow == 0)
     { errorOut = "UI produced no widget"; close(); return false; }
+
+    impl->instance->requestPatchParameterValuesForUi();
+    impl->syncParameterValues (true);
 
     impl->idleIface = static_cast<const LV2UI_Idle_Interface*> (
         suil_instance_extension_data (impl->suilInstance, LV2_UI__idleInterface));
@@ -343,6 +357,7 @@ void Lv2Editor::close()
     impl->suilInstance = nullptr;
     impl->suilHost     = nullptr;
     impl->idleIface    = nullptr;
+    impl->parameterSync.reset();
 
     if (impl->display != nullptr)
     {
@@ -360,6 +375,8 @@ void Lv2Editor::close()
 
 void Lv2Editor::pump()
 {
+    impl->syncParameterValues (false);
+
     if (impl->embedded && impl->idleIface != nullptr && impl->suilInstance != nullptr)
     {
         // Non-zero: the UI wants to close (spec: "non-zero if the UI has been

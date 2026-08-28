@@ -274,7 +274,7 @@ pffft (FFT backend behind dusk::audio::Fft — spectrum analyser, DP alignment)
 
 DAF / DGL (Dusk Audio Framework graphics layer — backs the native notepad UI)
   Version  : dusk-audio/DAF rev 92c3d1a75450e8b8eaf963efe875f5742c7a1c84
-             (CI pin DAF_REV in .github/actions/clone-dpf-stack/action.yml)
+             (CI pin DAF_REV in .github/actions/clone-daf-stack/action.yml)
   License  : ISC — Copyright (C) 2012-2025 Filipe Coelho <falktx@falktx.com>
              (DAF/LICENSE)
   Path     : not in tree — sibling checkout ../DAF, -DDAF_PATH=..., or
@@ -329,7 +329,7 @@ DAF / DGL (Dusk Audio Framework graphics layer — backs the native notepad UI)
 DAF-Widgets (DGL / Dear ImGui bridge — the notepad's immediate-mode UI layer,
              and the Dusk console widget set)
   Version  : dusk-audio/DAF-Widgets rev 1c09e1ef29f92ae7feb200bac8febdf814cf5e4a
-             (CI pin DAF_WIDGETS_REV in .github/actions/clone-dpf-stack/action.yml)
+             (CI pin DAF_WIDGETS_REV in .github/actions/clone-daf-stack/action.yml)
   License  : ISC — Copyright (C) 2012-2021 Filipe Coelho <falktx@falktx.com>
              and Copyright (C) 2026 Dusk Audio for opengl/DuskWidgets.{hpp,cpp}
              (DAF-Widgets/LICENSE)

@@ -8,8 +8,8 @@
 #include <thread>
 
 // macOS 14.4+ provides os_sync_wait_on_address - equivalent to
-// Linux's FUTEX_WAIT_BITSET / Windows' WaitOnAddress, and supports
-// cross-process wait/wake when the address is in a shared mapping
+// Linux's FUTEX_WAIT_BITSET, and supports cross-process wait/wake when
+// the address is in a shared mapping
 // via the OS_SYNC_WAIT_ON_ADDRESS_SHARED flag.
 //
 // Older macOS would need a fallback (named sem_open + sem_wait, or
@@ -47,9 +47,19 @@ std::uint64_t remainingNs (const Deadline& d) noexcept
 }
 } // namespace
 
-WaitResult waitOnAddress (std::atomic<std::uint32_t>* addr,
-                            std::uint32_t expected,
-                            const Deadline* deadline) noexcept
+InterprocessSignal::~InterprocessSignal()
+{
+    close();
+}
+
+bool InterprocessSignal::create (std::string&) noexcept { return true; }
+bool InterprocessSignal::sendToChild (NativeHandle&) const noexcept { return true; }
+bool InterprocessSignal::receiveFromParent (NativeHandle&) noexcept { return true; }
+void InterprocessSignal::close() noexcept {}
+
+WaitResult InterprocessSignal::wait (std::atomic<std::uint32_t>* addr,
+                                      std::uint32_t expected,
+                                      const Deadline* deadline) noexcept
 {
     constexpr os_sync_wait_on_address_flags_t flags = OS_SYNC_WAIT_ON_ADDRESS_SHARED;
 
@@ -76,7 +86,7 @@ WaitResult waitOnAddress (std::atomic<std::uint32_t>* addr,
     }
 }
 
-void wakeOneAddress (std::atomic<std::uint32_t>* addr) noexcept
+void InterprocessSignal::wake (std::atomic<std::uint32_t>* addr) noexcept
 {
     (void) ::os_sync_wake_by_address_any (addr, sizeof (std::uint32_t),
                                              OS_SYNC_WAKE_BY_ADDRESS_SHARED);

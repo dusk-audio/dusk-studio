@@ -23,8 +23,8 @@
 #endif
 
 #include <atomic>
+#include <array>
 #include <chrono>
-#include <condition_variable>
 #include <map>
 #include <mutex>
 #include <thread>
@@ -157,6 +157,8 @@ bool loadNativeCacheSources (
 // native-bundle child further down, which are gated independently (macOS
 // without OOP support still scans native bundles through the child).
 #if DUSKSTUDIO_HAS_OOP_PLUGINS || DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
+using ScanChildProcess = juce::ChildProcess;
+
 namespace
 {
 // A plugin can take a few seconds to instantiate on a cold cache; give a
@@ -195,17 +197,22 @@ struct SandboxedScan
 // isRunning() reaps the child and the pid becomes reusable the moment it does,
 // so the reader publishes reading=false inside the same lock that gates every
 // kill. Without that interlock a late kill lands on an unrelated process.
-SandboxedScan driveSandboxedScan (juce::ChildProcess& proc, const std::atomic<bool>* abort)
+SandboxedScan driveSandboxedScan (ScanChildProcess& proc, const std::atomic<bool>* abort,
+                                  std::uint32_t timeoutMs = kScanTimeoutMs)
 {
     SandboxedScan result;
 
     juce::MemoryOutputStream captured;
     char buf[8192];
 
-    std::mutex              watchMutex;
-    std::condition_variable watchDone;
-    bool reading   = true;   // all three guarded by watchMutex
-    bool cancelled = false;
+    // TSan does not model std::condition_variable's mutex release reliably on
+    // this path and reports the reader's process check as a double lock. A
+    // short explicit poll keeps the watchdog bounded without that false
+    // synchronization edge. processMutex prevents a late kill after
+    // isRunning() has reaped the child and made its PID reusable.
+    std::mutex       processMutex;
+    std::atomic<bool> reading { true };
+    bool cancelled = false;   // watchdog-owned; read only after join()
     bool expired   = false;
 
     std::thread watchdog;
@@ -217,19 +224,19 @@ SandboxedScan driveSandboxedScan (juce::ChildProcess& proc, const std::atomic<bo
             // single getMillisecondCounter() wrap (every ~49 days of uptime), so
             // compare the interval rather than an absolute deadline.
             const std::uint32_t startMs = juce::Time::getMillisecondCounter();
-            std::unique_lock<std::mutex> lock (watchMutex);
-
-            while (! watchDone.wait_for (lock, std::chrono::milliseconds (25),
-                                         [&reading] { return ! reading; }))
+            while (reading.load (std::memory_order_acquire))
             {
-                if (abort != nullptr && abort->load (std::memory_order_relaxed))
-                    cancelled = true;
-                else if (juce::Time::getMillisecondCounter() - startMs
-                             >= (std::uint32_t) kScanTimeoutMs)
-                    expired = true;
-                else
-                    continue;
+                std::this_thread::sleep_for (std::chrono::milliseconds (5));
+                const bool cancelRequested = abort != nullptr
+                    && abort->load (std::memory_order_relaxed);
+                const bool deadlineReached =
+                    juce::Time::getMillisecondCounter() - startMs >= timeoutMs;
+                if (! cancelRequested && ! deadlineReached) continue;
 
+                std::lock_guard<std::mutex> processLock (processMutex);
+                if (! reading.load (std::memory_order_acquire)) break;
+                if (cancelRequested) cancelled = true;
+                else                 expired = true;
                 proc.kill();   // TerminateProcess on Windows - unblocks a modal dialog
             }
         });
@@ -254,16 +261,13 @@ SandboxedScan driveSandboxedScan (juce::ChildProcess& proc, const std::atomic<bo
         {
             ~Joiner()
             {
-                { std::lock_guard<std::mutex> lock (mutex); reading = false; }
-                done.notify_one();
+                reading.store (false, std::memory_order_release);
                 thread.join();
             }
 
-            std::thread&             thread;
-            std::mutex&              mutex;
-            std::condition_variable& done;
-            bool&                    reading;
-        } joiner { watchdog, watchMutex, watchDone, reading };
+            std::thread&       thread;
+            std::atomic<bool>& reading;
+        } joiner { watchdog, reading };
 
         for (;;)
         {
@@ -276,8 +280,8 @@ SandboxedScan driveSandboxedScan (juce::ChildProcess& proc, const std::atomic<bo
                 {
                     // Under the lock like every other kill, so the watchdog
                     // cannot also be killing while this one runs.
-                    std::lock_guard<std::mutex> lock (watchMutex);
-                    reading = false;
+                    std::lock_guard<std::mutex> lock (processMutex);
+                    reading.store (false, std::memory_order_release);
                     proc.kill();
                 }
                 result.tooMuchOutput = true;
@@ -286,10 +290,18 @@ SandboxedScan driveSandboxedScan (juce::ChildProcess& proc, const std::atomic<bo
 
             bool finished = false;
             {
-                std::lock_guard<std::mutex> lock (watchMutex);
-                if (! proc.isRunning()) { reading = false; finished = true; }
+                std::lock_guard<std::mutex> lock (processMutex);
+                if (! proc.isRunning())
+                {
+                    reading.store (false, std::memory_order_release);
+                    finished = true;
+                }
             }
-            if (! finished) { juce::Thread::sleep (5); continue; }
+            if (! finished)
+            {
+                std::this_thread::sleep_for (std::chrono::milliseconds (5));
+                continue;
+            }
 
             int extra;
             while ((extra = proc.readProcessOutput (buf, (int) sizeof buf)) > 0)
@@ -358,7 +370,7 @@ public:
             return true;
         }
 
-        juce::ChildProcess proc;
+        ScanChildProcess proc;
         const juce::StringArray args { hostExecutable, "--scan",
                                        format.getName(), fileOrIdentifier };
 
@@ -688,7 +700,7 @@ PluginManager::NativeScanOutcome PluginManager::scanNativeBundleSandboxed (
     if (hostExe == juce::File() || ! hostExe.existsAsFile())
         return NativeScanOutcome::NoSandbox;
 
-    juce::ChildProcess proc;
+    ScanChildProcess proc;
     const juce::StringArray args { hostExe.getFullPathName(), "--scan-native",
                                    format, bundle.getFullPathName() };
     if (! proc.start (args, juce::ChildProcess::wantStdOut))
@@ -1106,6 +1118,17 @@ juce::String PluginManager::descriptorToLegacyXml (const PluginDescriptor& sourc
 }
 
 #if defined(DUSKSTUDIO_TESTS)
+ #if DUSKSTUDIO_HAS_OOP_PLUGINS || DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
+std::array<bool, 3> driveSandboxedScanForTest (
+    ScanChildProcess& process, const std::atomic<bool>* abort, std::uint32_t timeoutMs)
+{
+    const auto scan = driveSandboxedScan (process, abort, timeoutMs);
+    return { scan.verdict == SandboxedScan::Verdict::Completed,
+             scan.verdict == SandboxedScan::Verdict::Cancelled,
+             scan.timedOut };
+}
+ #endif
+
 PluginDescriptor PluginManager::descriptorFromJuceForTest (
     const juce::PluginDescription& source)
 {

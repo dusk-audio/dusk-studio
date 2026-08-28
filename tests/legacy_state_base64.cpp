@@ -72,7 +72,8 @@ TEST_CASE ("legacy state transcode accepts an empty saved state", "[session][mig
 // 0.13.1 copied the legacy string onto the native key instead of transcoding it,
 // and its reader took it. A session it converted, then never re-saved with the
 // slot loaded, still holds that form; reading only RFC 4648 would reset it.
-TEST_CASE ("0.13.1-migrated state still decodes", "[session][migration]")
+TEST_CASE ("0.13.1-migrated state still decodes",
+           "[session][migration][regression][issue-355]")
 {
     const std::vector<std::uint8_t> original { 0x7f, 0x00, 0xc3, 0x2a, 0xff };
     const auto carried = juce::MemoryBlock (original.data(), original.size())

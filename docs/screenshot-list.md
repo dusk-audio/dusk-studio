@@ -86,15 +86,16 @@ so its figure is the panel scrolled to the top, which is what opening it shows.
 ## Compact-mode strips (captured, not yet referenced by `MANUAL.md`)
 
 The harness collapses the channel, bus, and master strips into compact mode
-(EQ / COMP — plus TAPE / AUX — become section pills) and snapshots each. The
-pills carry the same left-toggle / right-menu / double-click-editor grammar as
-the full headers; these figures document that collapsed presentation.
+(EQ / COMP — plus TAPE / AUX — become split buttons) and snapshots each. Each
+split button keeps the two hitboxes of the full headers — the status box toggles
+bypass, the label opens the editor, and a right-click anywhere opens the section
+menu; these figures document that collapsed presentation.
 
 | Filename                     | Manual | Auto | What to capture                                             |
 | ---------------------------- | ------ | ---- | ---------------------------------------------------------- |
-| `cs-01-channel-compact.png`  | —      | ✅   | One channel strip in compact mode (EQ / COMP / AUX pills). |
-| `cs-02-bus-compact.png`      | —      | ✅   | One bus strip in compact mode (EQ / COMP pills).           |
-| `cs-03-master-compact.png`   | —      | ✅   | Master strip in compact mode (EQ / COMP / TAPE pills).     |
+| `cs-01-channel-compact.png`  | —      | ✅   | One channel strip in compact mode (EQ / COMP / AUX buttons). |
+| `cs-02-bus-compact.png`      | —      | ✅   | One bus strip in compact mode (EQ / COMP split buttons).     |
+| `cs-03-master-compact.png`   | —      | ✅   | Master strip in compact mode (EQ / COMP / TAPE split buttons). |
 
 ## I/O config popup (captured, not yet referenced by `MANUAL.md`)
 
@@ -111,7 +112,7 @@ The harness renders the track I/O config popup in all three modes. No
 
 ## Manual-only shots (notes)
 
-- **`np-12-notepad.png`**: the notepad is a separate DPF/DGL native window, so
+- **`np-12-notepad.png`**: the notepad is a separate DAF/DGL native window, so
   JUCE's `createComponentSnapshot` cannot capture it — and DGL will not open
   under Xvfb, so this one has to be shot on a live desktop session rather than
   through `capture-screenshots.sh`.

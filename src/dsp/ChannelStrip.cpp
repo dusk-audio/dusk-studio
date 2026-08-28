@@ -103,20 +103,37 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         // GUI is attached to (plugin->destroy with a live GUI aborts u-he plugins) and
         // reset the plugin's parameters. Track failure so the save path keeps the
         // persisted path instead of mistaking a failed re-activate for a user removal.
+        const auto pluginName = hosting::nativePluginName (nativeClapSlot.getPath(),
+                                                           nativeClapSlot.getPluginId());
         std::string err;
-        const bool ok = nativeClapSlot.reactivate (preparedSampleRate, preparedBlockSize, err);
-        nativeReloadFailed.store (! ok, std::memory_order_relaxed);
+        const bool loaded = nativeClapSlot.reactivate (
+            preparedSampleRate, preparedBlockSize, err);
+        const auto reason = hosting::enforceReactivationPolicy (
+            loaded, err, [&] { nativeClapSlot.quarantineAfterFailedReactivation(); });
+        const bool wasFailed = nativeReloadFailed.exchange (
+            ! reason.empty(), std::memory_order_relaxed);
+        if (! reason.empty() && ! wasFailed)
+            nativeRestoreFailures.push_back ({ "CLAP", pluginName, reason });
     }
     else if (pendingClapPath.isNotEmpty())
     {
         const juce::File p (pendingClapPath);
+        const auto pluginName = hosting::nativePluginName (
+            p.getFullPathName().toStdString(), pendingClapPluginId.toStdString());
+        const bool stateWasSupplied = ! pendingClapState.empty();
         std::string err;
-        const bool ok = nativeClapSlot.load (std::filesystem::u8path (p.getFullPathName().toStdString()),
-                                             preparedSampleRate, preparedBlockSize, err,
-                                             pendingClapPluginId.toStdString());
-        if (ok && ! pendingClapState.empty())
-            nativeClapSlot.loadState (pendingClapState);
-        nativeReloadFailed.store (! ok, std::memory_order_relaxed);
+        const bool loaded = nativeClapSlot.load (
+            std::filesystem::u8path (p.getFullPathName().toStdString()),
+            preparedSampleRate, preparedBlockSize, err,
+            pendingClapPluginId.toStdString());
+        const bool stateAccepted = ! stateWasSupplied
+                                || (loaded && nativeClapSlot.loadState (pendingClapState));
+        const auto reason = hosting::enforceRestorePolicy (
+            loaded, stateWasSupplied, stateAccepted, err, pendingClapState.size(),
+            [&] { nativeClapSlot.unload(); });
+        nativeReloadFailed.store (! reason.empty(), std::memory_order_relaxed);
+        if (! reason.empty())
+            nativeRestoreFailures.push_back ({ "CLAP", pluginName, reason });
         pendingClapPath.clear();
         pendingClapPluginId.clear();
         pendingClapState.clear();
@@ -125,25 +142,45 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     if (nativeLv2Slot.isLoaded())
     {
+        const auto pluginName = hosting::nativePluginName (nativeLv2Slot.getPath(),
+                                                           nativeLv2Slot.getPluginId());
         std::string err;
-        const bool ok = nativeLv2Slot.reactivate (preparedSampleRate, preparedBlockSize, err);
-        lv2ReloadFailed.store (! ok, std::memory_order_relaxed);
+        const bool loaded = nativeLv2Slot.reactivate (
+            preparedSampleRate, preparedBlockSize, err);
+        const auto reason = hosting::enforceReactivationPolicy (
+            loaded, err, nativeLv2Slot.hasActiveInstance(),
+            [&] { nativeLv2Slot.quarantineAfterFailedReactivation(); },
+            [&] { nativeLv2Slot.unload(); });
+        const bool wasFailed = lv2ReloadFailed.exchange (
+            ! reason.empty(), std::memory_order_relaxed);
+        if (! reason.empty() && ! wasFailed)
+            nativeRestoreFailures.push_back ({ "LV2", pluginName, reason });
     }
     else if (pendingLv2Path.isNotEmpty())
     {
         if (! isNativeClapLoaded())   // both pendings set (corrupt session): CLAP wins
         {
             const juce::File p (pendingLv2Path);
+            const auto pluginName = hosting::nativePluginName (
+                p.getFullPathName().toStdString(), pendingLv2PluginId.toStdString());
+            const bool stateWasSupplied = ! pendingLv2State.empty();
             std::string err;
-            const bool ok = nativeLv2Slot.load (std::filesystem::u8path (p.getFullPathName().toStdString()),
-                                                preparedSampleRate, preparedBlockSize, err,
-                                                pendingLv2PluginId.toStdString());
-            if (ok && ! pendingLv2State.empty())
+            const bool loaded = nativeLv2Slot.load (
+                std::filesystem::u8path (p.getFullPathName().toStdString()),
+                preparedSampleRate, preparedBlockSize, err,
+                pendingLv2PluginId.toStdString());
+            bool stateAccepted = ! stateWasSupplied;
+            if (loaded && stateWasSupplied)
             {
                 nativeLv2Slot.setStateDirectory (pendingLv2StateDir);
-                nativeLv2Slot.loadState (pendingLv2State);
+                stateAccepted = nativeLv2Slot.loadState (pendingLv2State);
             }
-            lv2ReloadFailed.store (! ok, std::memory_order_relaxed);
+            const auto reason = hosting::enforceRestorePolicy (
+                loaded, stateWasSupplied, stateAccepted, err, pendingLv2State.size(),
+                [&] { nativeLv2Slot.unload(); });
+            lv2ReloadFailed.store (! reason.empty(), std::memory_order_relaxed);
+            if (! reason.empty())
+                nativeRestoreFailures.push_back ({ "LV2", pluginName, reason });
         }
         // Consumed either way - a CLAP-suppressed pending must not replay on a
         // later prepare() once the CLAP is unloaded.
@@ -156,22 +193,39 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     if (nativeVst3Slot.isLoaded())
     {
+        const auto pluginName = hosting::nativePluginName (nativeVst3Slot.getPath(),
+                                                           nativeVst3Slot.getPluginId());
         std::string err;
-        const bool ok = nativeVst3Slot.reactivate (preparedSampleRate, preparedBlockSize, err);
-        vst3ReloadFailed.store (! ok, std::memory_order_relaxed);
+        const bool loaded = nativeVst3Slot.reactivate (
+            preparedSampleRate, preparedBlockSize, err);
+        const auto reason = hosting::enforceReactivationPolicy (
+            loaded, err, [&] { nativeVst3Slot.quarantineAfterFailedReactivation(); });
+        const bool wasFailed = vst3ReloadFailed.exchange (
+            ! reason.empty(), std::memory_order_relaxed);
+        if (! reason.empty() && ! wasFailed)
+            nativeRestoreFailures.push_back ({ "VST3", pluginName, reason });
     }
     else if (pendingVst3Path.isNotEmpty())
     {
         if (! isNativeClapLoaded() && ! isNativeLv2Loaded())   // several pendings set (corrupt session): CLAP > LV2 > VST3
         {
             const juce::File p (pendingVst3Path);
+            const auto pluginName = hosting::nativePluginName (
+                p.getFullPathName().toStdString(), pendingVst3PluginId.toStdString());
+            const bool stateWasSupplied = ! pendingVst3State.empty();
             std::string err;
-            const bool ok = nativeVst3Slot.load (std::filesystem::u8path (p.getFullPathName().toStdString()),
-                                                 preparedSampleRate, preparedBlockSize, err,
-                                                 pendingVst3PluginId.toStdString());
-            if (ok && ! pendingVst3State.empty())
-                nativeVst3Slot.loadState (pendingVst3State);
-            vst3ReloadFailed.store (! ok, std::memory_order_relaxed);
+            const bool loaded = nativeVst3Slot.load (
+                std::filesystem::u8path (p.getFullPathName().toStdString()),
+                preparedSampleRate, preparedBlockSize, err,
+                pendingVst3PluginId.toStdString());
+            const bool stateAccepted = ! stateWasSupplied
+                                || (loaded && nativeVst3Slot.loadState (pendingVst3State));
+            const auto reason = hosting::enforceRestorePolicy (
+                loaded, stateWasSupplied, stateAccepted, err, pendingVst3State.size(),
+                [&] { nativeVst3Slot.unload(); });
+            vst3ReloadFailed.store (! reason.empty(), std::memory_order_relaxed);
+            if (! reason.empty())
+                nativeRestoreFailures.push_back ({ "VST3", pluginName, reason });
         }
         pendingVst3Path.clear();
         pendingVst3PluginId.clear();
@@ -181,9 +235,17 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
 #if DUSKSTUDIO_HAS_NATIVE_AU
     if (nativeAuSlot.isLoaded())
     {
+        const auto pluginName = hosting::nativePluginName (nativeAuSlot.getPath(),
+                                                           nativeAuSlot.getPluginId());
         std::string err;
-        const bool ok = nativeAuSlot.reactivate (preparedSampleRate, preparedBlockSize, err);
-        auReloadFailed.store (! ok, std::memory_order_relaxed);
+        const bool loaded = nativeAuSlot.reactivate (
+            preparedSampleRate, preparedBlockSize, err);
+        const auto reason = hosting::enforceReactivationPolicy (
+            loaded, err, [&] { nativeAuSlot.quarantineAfterFailedReactivation(); });
+        const bool wasFailed = auReloadFailed.exchange (
+            ! reason.empty(), std::memory_order_relaxed);
+        if (! reason.empty() && ! wasFailed)
+            nativeRestoreFailures.push_back ({ "AU", pluginName, reason });
     }
     else if (pendingAuIdentifier.isNotEmpty())
     {
@@ -191,12 +253,18 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         {
             std::string err;
             const auto identifier = pendingAuIdentifier.toStdString();
-            const bool ok = nativeAuSlot.load (
+            const bool stateWasSupplied = ! pendingAuState.empty();
+            const bool loaded = nativeAuSlot.load (
                 std::filesystem::u8path (identifier), preparedSampleRate,
                 preparedBlockSize, err, identifier);
-            if (ok && ! pendingAuState.empty())
-                nativeAuSlot.loadState (pendingAuState);
-            auReloadFailed.store (! ok, std::memory_order_relaxed);
+            const bool stateAccepted = ! stateWasSupplied
+                                || (loaded && nativeAuSlot.loadState (pendingAuState));
+            const auto reason = hosting::enforceRestorePolicy (
+                loaded, stateWasSupplied, stateAccepted, err, pendingAuState.size(),
+                [&] { nativeAuSlot.unload(); });
+            auReloadFailed.store (! reason.empty(), std::memory_order_relaxed);
+            if (! reason.empty())
+                nativeRestoreFailures.push_back ({ "AU", identifier, reason });
         }
         pendingAuIdentifier.clear();
         pendingAuState.clear();
@@ -205,9 +273,17 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     if (nativeMultisampleSlot.isLoaded())
     {
+        const auto pluginName = hosting::nativePluginName (nativeMultisampleSlot.getPath());
         std::string err;
-        const bool ok = nativeMultisampleSlot.reactivate (preparedSampleRate, preparedBlockSize, err);
-        multisampleReloadFailed.store (! ok, std::memory_order_relaxed);
+        const bool loaded = nativeMultisampleSlot.reactivate (
+            preparedSampleRate, preparedBlockSize, err);
+        const auto reason = hosting::enforceReactivationPolicy (
+            loaded, err,
+            [&] { nativeMultisampleSlot.quarantineAfterFailedReactivation(); });
+        const bool wasFailed = multisampleReloadFailed.exchange (
+            ! reason.empty(), std::memory_order_relaxed);
+        if (! reason.empty() && ! wasFailed)
+            nativeRestoreFailures.push_back ({ "multisample", pluginName, reason });
     }
     else if (pendingMultisamplePath.isNotEmpty())
     {
@@ -215,13 +291,21 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
             && ! isNativeAuLoaded())
         {
             const juce::File p (pendingMultisamplePath);
+            const auto pluginName = p.getFileNameWithoutExtension().toStdString();
+            const bool stateWasSupplied = ! pendingMultisampleState.empty();
             std::string err;
-            const bool ok = nativeMultisampleSlot.load (
+            const bool loaded = nativeMultisampleSlot.load (
                 std::filesystem::u8path (p.getFullPathName().toStdString()),
                 preparedSampleRate, preparedBlockSize, err);
-            if (ok && ! pendingMultisampleState.empty())
-                nativeMultisampleSlot.loadState (pendingMultisampleState);
-            multisampleReloadFailed.store (! ok, std::memory_order_relaxed);
+            const bool stateAccepted = ! stateWasSupplied
+                || (loaded && nativeMultisampleSlot.loadState (pendingMultisampleState));
+            const auto reason = hosting::enforceRestorePolicy (
+                loaded, stateWasSupplied, stateAccepted, err,
+                pendingMultisampleState.size(),
+                [&] { nativeMultisampleSlot.unload(); });
+            multisampleReloadFailed.store (! reason.empty(), std::memory_order_relaxed);
+            if (! reason.empty())
+                nativeRestoreFailures.push_back ({ "multisample", pluginName, reason });
         }
         pendingMultisamplePath.clear();
         pendingMultisampleState.clear();
@@ -491,6 +575,12 @@ void ChannelStrip::publishSmoothedCompParams (int numSamples) noexcept
 #else
     (void) numSamples;
 #endif
+}
+
+std::vector<hosting::NativeRestoreFailure> ChannelStrip::takeNativeRestoreFailures()
+{
+    auto failures = std::move (nativeRestoreFailures);
+    return failures;
 }
 
 void ChannelStrip::bindHardwareInsert (const HardwareInsertParams& params) noexcept

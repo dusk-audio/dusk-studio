@@ -280,7 +280,7 @@ float peakResidualSubSample (const Render& donor, const Render& core, int firstS
 
 using Catch::Matchers::WithinAbs;
 
-TEST_CASE ("TapeMachineDSP nulls against the JUCE donor at 1x", "[tape][ab]")
+TEST_CASE ("TapeMachineDSP nulls against the JUCE donor at 1x", "[tape][ab][regression][issue-383]")
 {
     std::vector<float> inL, inR;
     makeInput (inL, inR, true);

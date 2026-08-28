@@ -2,6 +2,7 @@
 
 #include "../hosting/INativeInstance.h"
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -38,6 +39,15 @@ public:
         bool        isPatchProperty = false;   // written as a patch:Set atom, not a port
     };
 
+    struct UiParameterEvent
+    {
+        uint32_t portIndex = 0;
+        uint32_t protocol = 0;
+        uint32_t sizeBytes = 0;
+        float value = 0.0f;
+        alignas (uint64_t) std::array<uint8_t, 128> data {};
+    };
+
     Lv2Instance();
     ~Lv2Instance() override;
     Lv2Instance (const Lv2Instance&)            = delete;
@@ -63,8 +73,8 @@ public:
     // Session-scoped directory for FILE-BACKED plugin state (a sampler's
     // loaded bank, a convolution IR). Empty = blob-only save (control ports
     // + in-memory state:interface - the pre-file-state behaviour). Set by
-    // the engine before saveState/loadState. saveState rotates
-    // <dir>/prev <- <dir>/cur and snapshots referenced files into cur/;
+    // the engine before saveState/loadState. saveState stages a new generation,
+    // then rotates <dir>/prev <- <dir>/cur only after serialization succeeds;
     // loadState resolves the blob's abstract paths against cur/.
     void setStateDirectory (const std::filesystem::path& dir);
 
@@ -107,11 +117,19 @@ public:
     uint32_t uiEventTransferUrid() const noexcept;
     void forwardUiAtomEvent (const void* atomData, uint32_t sizeBytes) noexcept;
 
+    // Host -> UI parameter events. Control ports use protocol 0 with a float;
+    // patch properties use eventTransfer with a patch:Set on the designated
+    // control atom output. Payloads remain opaque here so editors need no LV2
+    // atom headers and suil is called only from their message-thread pump.
+    int  uiParameterEventCount() const noexcept;
+    bool currentUiParameterEvent (int index, UiParameterEvent& out) const;
+    void requestPatchParameterValuesForUi() noexcept;
+
     // Parameters (message thread). Enumerated once at create().
     int              paramCount() const noexcept;
     const ParamInfo* paramInfo (int index) const noexcept;
-    // Patch properties read back the last host/UI-written value (the plugin's
-    // own patch:Put responses aren't parsed yet).
+    // Patch properties read back the last host/UI-written value or the latest
+    // patch:Set / patch:Put response drained from the plugin.
     bool getParamValue (uint32_t paramId, double& out) const;
     // Clamps to the parameter's range; control ports stage through
     // setControlPortValue, patch properties as a patch:Set atom on the control
@@ -122,6 +140,9 @@ public:
     int lastTouchedParamIndex() const noexcept;
 
 private:
+    bool saveStateBlobOnly (std::vector<uint8_t>& out) const;
+    bool loadStateInternal (const std::vector<uint8_t>& in,
+                            bool recoverFileGeneration);
     struct Impl;
     std::unique_ptr<Impl> impl;
 };

@@ -5,7 +5,40 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [0.13.2] - Unreleased
+## [Unreleased]
+
+### Fixed
+
+- **LV2 plugin windows open with the sound's current settings.** Opening or
+  reopening an LV2 editor used to leave its controls at the plugin's factory
+  defaults even though the restored audio engine was already using the saved
+  values. The host now seeds the window from the live parameter state and keeps
+  it in sync with MIDI Learn and other host-side changes.
+- **LV2 plugin parameters keep the same numbering between launches.** For plugins
+  whose parameters are properties rather than ports - anything built with JUCE,
+  among others - the host built its parameter list in whatever order the plugin
+  library handed the properties over, which is not the same order every time. A
+  MIDI control learned to one knob could therefore end up on a different knob
+  after a restart. The list is now ordered by each parameter's property URI - the
+  identifier the plugin itself gives it, which does not change between launches -
+  so a saved binding keeps pointing at the parameter it was learned on. Bindings
+  saved by an earlier release may land on the wrong parameter once, and stay put
+  after they are re-learned.
+- **A plugin that loses its settings now says so.** When a plugin hands back no
+  settings to save, or refuses the settings a session gives it, the terminal says
+  which track and which format; both cases used to pass in silence and show up
+  only as a plugin that came back at its defaults.
+- **A CLAP plugin whose window does not appear now says so.** Some plugins put
+  their window inside the editor area without making it visible, or build it a
+  moment after the host asks them to; either way the editor opened as a blank
+  panel with nothing in it. Dusk Studio now makes the plugin's window visible
+  itself, keeps watching for one that arrives late, and if the plugin never
+  opens a window, the editor area says that instead of staying blank. A plugin
+  that reports a failure from its own show step but draws anyway keeps its
+  editor rather than losing it, and any reason an editor could not open is
+  printed to the terminal and shown in the panel.
+
+## [0.13.2] - 2026-08-26
 
 ### Fixed
 
@@ -214,7 +247,7 @@ fixes are ported here and are listed below rather than under a 0.12.7 heading.
   (`libsodium-dev` on Debian and Ubuntu, the vcpkg manifest on Windows).
 - **License texts ship with the packages.** The tarball, the deb and rpm,
   the DMG and the MSI now carry `LICENSE` and `LICENSES.txt`, and the
-  attribution list credits the notepad's UI stack (DPF, Dear ImGui, pugl and
+  attribution list credits the notepad's UI stack (DAF, Dear ImGui, pugl and
   the components they embed) along with the CLAP headers. A completeness pass
   then covered the framework's bundled text-shaping, image and codec
   libraries, reproduced every license text that must accompany a binary - the

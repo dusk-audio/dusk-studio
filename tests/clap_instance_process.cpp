@@ -4,15 +4,53 @@
 // See docs/native-clap-host-plan.md.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "engine/clap/ClapBundle.h"
 #include "engine/clap/ClapInstance.h"
+#include "engine/hosting/InsertAdapter.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <string>
 #include <vector>
+
+TEST_CASE ("ClapInstance connects every advertised bus and tolerates duplicate main flags",
+           "[clap][instance][regression][issue-361]")
+{
+    const std::string fixture = DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH;
+    duskstudio::clap::ClapBundle bundle;
+    std::string err;
+    REQUIRE (bundle.load (fixture, err));
+    REQUIRE (bundle.plugins().size() == 1);
+
+    duskstudio::clap::ClapInstance inst;
+    REQUIRE (inst.create (bundle, bundle.plugins().front().id, err));
+    REQUIRE (inst.portLayout().inputs.size() == 2);
+    REQUIRE (inst.portLayout().outputs.size() == 2);
+    REQUIRE (inst.portLayout().mainInIndex == 0);
+    REQUIRE (inst.portLayout().mainOutIndex == 0);
+    REQUIRE (inst.activate (48000.0, 64, err));
+
+    duskstudio::hosting::InsertAdapter adapter;
+    adapter.prepare (inst.portLayout(), 64);
+    std::vector<float> left (64), right (64);
+    for (size_t i = 0; i < left.size(); ++i)
+    {
+        left[i] = (float) i / 64.0f;
+        right[i] = -(float) i / 64.0f;
+    }
+    const auto expectedLeft = left;
+    const auto expectedRight = right;
+
+    adapter.process (inst, left.data(), right.data(), 64);
+    for (size_t i = 0; i < left.size(); ++i)
+    {
+        REQUIRE_THAT (left[i], Catch::Matchers::WithinAbs (expectedLeft[i], 1.0e-7f));
+        REQUIRE_THAT (right[i], Catch::Matchers::WithinAbs (expectedRight[i], 1.0e-7f));
+    }
+}
 
 TEST_CASE ("ClapInstance loads + processes a real CLAP plugin", "[clap][instance]")
 {
@@ -34,9 +72,13 @@ TEST_CASE ("ClapInstance loads + processes a real CLAP plugin", "[clap][instance
     // Single-plugin fixture (e.g. DuskVerb), so front() is deterministic.
     REQUIRE (inst.create (bundle, bundle.plugins().front().id, err));
     REQUIRE (inst.activate (48000.0, 512, err));
-    // create() rejects anything but stereo-in/stereo-out, so a plugin that reaches here
-    // is 2/2 — assert it before driving the stereo processStereo assertions below.
-    REQUIRE (inst.outputChannels() == 2);
+    // This test exercises the compatibility stereo adapter, so skip plugins whose
+    // main output cannot provide its left/right pair.
+    if (inst.outputChannels() < 2)
+    {
+        SUCCEED ("plugin has fewer than two main outputs — skipping stereo process test");
+        return;
+    }
 
     constexpr int kBlock = 512;
     constexpr int kBlocks = 40;   // drive enough blocks for any tail to settle

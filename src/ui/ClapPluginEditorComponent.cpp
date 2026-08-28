@@ -55,7 +55,11 @@ bool ClapPluginEditorComponent::openEditorOn (clap::ClapInstance& inst, juce::St
 {
     std::string err;
     if (! editor.open (inst.getPlugin(), inst.getHost(), err))
-    { errorOut = "editor: " + juce::String (err); return false; }
+    {
+        errorOut  = "editor: " + juce::String (err);
+        lastError = err;
+        return false;
+    }
 
     // The plugin asked to resize -> resize this component (which re-bounds the host
     // window). The GUI closed -> tear the editor down.
@@ -143,6 +147,15 @@ void ClapPluginEditorComponent::tryEmbed()
     if (ok)
     {
         embedded = true;
+        lastError.clear();
+#if defined(__linux__)
+        blankReported = false;
+#endif
+        // The plugin can settle on its own size while parenting, so fit to what
+        // it reports rather than to the bounds we asked for.
+        if (editor.preferredWidth() > 0 && editor.preferredHeight() > 0)
+            setSize (componentExtentFromEditor (editor.preferredWidth()),
+                     componentExtentFromEditor (editor.preferredHeight()));
         // Re-sync unconditionally: a synchronous gui resize during embed can
         // move this component (modal recentre) while `embedded` was still
         // false, so the moved()/resized() pushes were skipped and the native
@@ -152,6 +165,8 @@ void ClapPluginEditorComponent::tryEmbed()
     }
     else
     {
+        lastError = err;
+        repaint();
         std::fprintf (stderr, "[clap editor] embed failed: %s\n", err.c_str());
         // A failed embed tears the ClapEditor down (set_parent/show call close()), so
         // the GUI is gone. Stop treating this component as live - otherwise the next
@@ -174,6 +189,25 @@ void ClapPluginEditorComponent::pushBounds()
     const auto area = editorBoundsInPeer();
     editor.setBounds (area.getX(), area.getY(),
                       std::max (1, area.getWidth()), std::max (1, area.getHeight()));
+}
+
+void ClapPluginEditorComponent::paint (juce::Graphics& g)
+{
+    // An embedded editor is covered by the plugin's own native window, so this
+    // only ever draws when there is nothing to cover it - a failed open/embed,
+    // or a plugin that parented itself and then put no window in the container.
+    std::string message = lastError;
+#if defined(__linux__)
+    if (message.empty() && editor.pluginWindowMissing())
+        message = "the plugin opened no window";
+#endif
+    if (message.empty()) return;
+
+    g.fillAll (juce::Colour (0xff202024));
+    g.setColour (juce::Colour (0xffb4b4bc));
+    g.setFont (juce::Font (juce::FontOptions (13.0f)));
+    g.drawFittedText (juce::String ("CLAP editor unavailable\n" + message),
+                      getLocalBounds().reduced (24), juce::Justification::centred, 4);
 }
 
 void ClapPluginEditorComponent::resized()              { if (embedded) pushBounds(); else tryEmbed(); }
@@ -276,7 +310,13 @@ void ClapPluginEditorComponent::timerCallback()
     // also be polled. tryEmbed no-ops until showing.
     if (embedded)
     {
-        if (isShowing()) editor.reveal();
+        if (isShowing())
+        {
+#if defined(__linux__)
+            if (! editor.pluginWindowMissing())
+#endif
+                editor.reveal();
+        }
         else             editor.hide();
 #if defined(__linux__)
         verifyGeometry();
@@ -291,5 +331,15 @@ void ClapPluginEditorComponent::timerCallback()
     const auto elapsed = (double) (now - lastPumpMs);
     lastPumpMs = now;
     editor.pump (elapsed);
+
+#if defined(__linux__)
+    // The pump above is what decides the plugin never put a window in the
+    // container; nothing else would repaint the area it just gave up on.
+    if (blankReported != editor.pluginWindowMissing())
+    {
+        blankReported = ! blankReported;
+        repaint();
+    }
+#endif
 }
 } // namespace duskstudio

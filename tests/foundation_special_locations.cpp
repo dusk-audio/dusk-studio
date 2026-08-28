@@ -49,6 +49,23 @@ TEST_CASE ("dusk::fs special locations match juce::File", "[foundation][fs]")
 #endif
     }
 
+    SECTION ("createUniqueTempDirectory atomically claims distinct paths")
+    {
+        const auto first = fs::createUniqueTempDirectory ("dusk-fs-test-");
+        const auto second = fs::createUniqueTempDirectory ("dusk-fs-test-");
+        REQUIRE_FALSE (first.empty());
+        REQUIRE_FALSE (second.empty());
+        REQUIRE (first != second);
+        REQUIRE (stdfs::is_directory (first));
+        REQUIRE (stdfs::is_directory (second));
+
+        std::error_code ec;
+        stdfs::remove_all (first, ec);
+        REQUIRE_FALSE (ec);
+        stdfs::remove_all (second, ec);
+        REQUIRE_FALSE (ec);
+    }
+
     SECTION ("currentExecutablePath points at the same file as juce")
     {
         // JUCE resolves via dladdr (path relative to CWD); dusk reads /proc/self/exe.

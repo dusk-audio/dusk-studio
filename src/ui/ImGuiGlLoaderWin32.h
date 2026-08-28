@@ -1,7 +1,7 @@
 #pragma once
 
 // Windows' GL header and opengl32 stop at OpenGL 1.1, so every GL 3.x entry point Dear
-// ImGui's OpenGL3 backend calls is undeclared and unlinkable there. DPF-Widgets compiles
+// ImGui's OpenGL3 backend calls is undeclared and unlinkable there. DAF-Widgets compiles
 // that backend with IMGUI_IMPL_OPENGL_LOADER_CUSTOM (opengl/DearImGui.cpp) and points it at
 // DGL's OpenGL.hpp, which carries the prototypes on Linux and macOS only.
 //

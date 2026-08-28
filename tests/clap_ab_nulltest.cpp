@@ -1,6 +1,6 @@
-// A/B null-test: the generalized processBlock (driven through the InsertAdapter,
-// as the production slot runs it) must produce the same audio as the legacy
-// processStereo for a stereo plugin. Fresh instances of the same plugin are fed
+// A/B null-test: processBlock driven through the production InsertAdapter must
+// produce the same audio as the compatibility processStereo adapter. Fresh
+// instances of the same plugin are fed
 // identical input; their outputs must match within the plugin's own instance-to-
 // instance variance. Gated on DUSKSTUDIO_TEST_CLAP=/path/to.clap so CI without a
 // plugin stays green.
@@ -38,7 +38,7 @@ TEST_CASE ("ClapInstance: processBlock nulls against processStereo", "[clap][hos
     constexpr int    kBlock = 256;
 
     // Three fresh instances of the same plugin: ref1 + ref2 both driven by the
-    // legacy processStereo (their sample-by-sample difference is the plugin's own
+    // compatibility processStereo adapter (their sample-by-sample difference is the plugin's own
     // instance-to-instance non-determinism floor — tape/analog emulations are not
     // bit-identical across instances), and gen driven by the generalized
     // InsertAdapter → processBlock. The generalized path is correct iff gen is no
@@ -47,8 +47,7 @@ TEST_CASE ("ClapInstance: processBlock nulls against processStereo", "[clap][hos
     clap::ClapInstance ref1, ref2, gen;
     if (! ref1.create (bundle, id, err))
     {
-        // create() rejects anything but stereo-in/stereo-out (e.g. an instrument
-        // like Diva). Not a valid stereo insert → nothing for this A/B to compare.
+        // A plugin with no usable main output is not valid for this A/B.
         SUCCEED ("plugin is not a stereo insert (" + err + ") — skipping A/B null-test");
         return;
     }

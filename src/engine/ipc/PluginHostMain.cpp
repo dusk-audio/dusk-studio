@@ -135,7 +135,7 @@ bool sendControlReply (ipcp::NativeHandle& ch, std::uint32_t op,
 }
 
 // --- Phase 1 echo mode (kept for the IPC self-test) ----------------------
-int runIpcStub (int argc, const char* const* argv) noexcept
+int runIpcStub (int argc, const char* const* argv, bool suppressReplies) noexcept
 {
     ipcp::NativeHandle channel = ipcp::locateInheritedChannel (argc, argv);
     if (! ipcp::isValid (channel))
@@ -148,6 +148,15 @@ int runIpcStub (int argc, const char* const* argv) noexcept
     if (! ipcp::recvHandle (channel, shmHandle))
     {
         std::fprintf (stderr, "[dusk-studio-plugin-host] recvHandle failed\n");
+        return 1;
+    }
+
+    ipcp::InterprocessSignal commandSignal;
+    ipcp::InterprocessSignal replySignal;
+    if (! commandSignal.receiveFromParent (channel)
+        || ! replySignal.receiveFromParent (channel))
+    {
+        std::fprintf (stderr, "[dusk-studio-plugin-host] recv sync handle failed\n");
         return 1;
     }
 
@@ -180,7 +189,7 @@ int runIpcStub (int argc, const char* const* argv) noexcept
         const auto cmd = hdr->cmdSeq.load (std::memory_order_acquire);
         if (cmd == lastSeq)
         {
-            (void) ipcp::waitOnAddress (&hdr->cmdSeq, cmd, nullptr);
+            (void) commandSignal.wait (&hdr->cmdSeq, cmd, nullptr);
             continue;
         }
 
@@ -207,8 +216,10 @@ int runIpcStub (int argc, const char* const* argv) noexcept
             std::memcpy (midiOut (shm.data()), midiIn (shm.data()), midiInBytes);
 
         lastSeq = cmd;
+        if (suppressReplies)
+            continue;
         hdr->replySeq.store (cmd, std::memory_order_release);
-        ipcp::wakeOneAddress (&hdr->replySeq);
+        replySignal.wake (&hdr->replySeq);
     }
 
     return 0;
@@ -225,6 +236,8 @@ struct HostState
     ipcp::SharedMemory shm;
     BlockHeader* hdr = nullptr;
     ipcp::NativeHandle channel {};
+    ipcp::InterprocessSignal commandSignal;
+    ipcp::InterprocessSignal replySignal;
 
     juce::AudioPluginFormatManager formatManager;
     juce::KnownPluginList knownList;
@@ -696,7 +709,7 @@ void audioWorkerLoop (HostState& host) noexcept
         const auto cmd = host.hdr->cmdSeq.load (std::memory_order_acquire);
         if (cmd == lastSeq)
         {
-            (void) ipcp::waitOnAddress (&host.hdr->cmdSeq, cmd, nullptr);
+            (void) host.commandSignal.wait (&host.hdr->cmdSeq, cmd, nullptr);
             continue;
         }
 
@@ -787,7 +800,7 @@ void audioWorkerLoop (HostState& host) noexcept
 
         lastSeq = cmd;
         host.hdr->replySeq.store (cmd, std::memory_order_release);
-        ipcp::wakeOneAddress (&host.hdr->replySeq);
+        host.replySignal.wake (&host.hdr->replySeq);
     }
 }
 
@@ -805,6 +818,12 @@ int runIpcHost (int argc, const char* const* argv) noexcept
     if (! ipcp::recvHandle (host.channel, shmHandle))
     {
         std::fprintf (stderr, "recvHandle failed\n");
+        return 1;
+    }
+    if (! host.commandSignal.receiveFromParent (host.channel)
+        || ! host.replySignal.receiveFromParent (host.channel))
+    {
+        std::fprintf (stderr, "recv sync handle failed\n");
         return 1;
     }
 
@@ -886,7 +905,7 @@ int runIpcHost (int argc, const char* const* argv) noexcept
         }
         host.shouldQuit.store (true, std::memory_order_release);
         host.hdr->state.store (kStateTeardown, std::memory_order_release);
-        ipcp::wakeOneAddress (&host.hdr->cmdSeq);
+        host.commandSignal.wake (&host.hdr->cmdSeq);
         juce::MessageManager::getInstance()->stopDispatchLoop();
     });
 
@@ -1054,11 +1073,13 @@ int main (int argc, char** argv)
    #endif
 
     bool ipcStub = false;
+    bool ipcStubTimeout = false;
     bool ipcHost = false;
     bool scan    = false;
     for (int i = 1; i < argc; ++i)
     {
         if (std::strcmp (args[i], "--ipc-stub") == 0) ipcStub = true;
+        if (std::strcmp (args[i], "--ipc-stub-timeout") == 0) ipcStubTimeout = true;
         if (std::strcmp (args[i], "--ipc-host") == 0) ipcHost = true;
         if (std::strcmp (args[i], "--scan")     == 0) scan    = true;
 #if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
@@ -1067,7 +1088,7 @@ int main (int argc, char** argv)
     }
 
     if (scan)    return runScan (argc, args);
-    if (ipcStub) return runIpcStub (argc, args);
+    if (ipcStub || ipcStubTimeout) return runIpcStub (argc, args, ipcStubTimeout);
     if (ipcHost) return runIpcHost (argc, args);
 
     std::fprintf (stderr,

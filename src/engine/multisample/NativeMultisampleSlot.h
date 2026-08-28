@@ -71,6 +71,7 @@ public:
         std::unique_ptr<MultisampleBundle>        bundle;
         std::unique_ptr<DuskMultisampleProcessor> instance;
         std::string                               path;
+        bool                                      stateRestoreFailed = false;
 
         explicit operator bool() const noexcept { return instance != nullptr; }
     };
@@ -92,8 +93,14 @@ public:
 
         auto inst = std::make_unique<DuskMultisampleProcessor>();
         const bool hasState = state != nullptr && ! state->empty();
-        if (hasState)
-            inst->loadState (*state);
+        if (hasState && ! inst->loadState (*state))
+        {
+            // Carry the failure to the caller. The caller deliberately does
+            // not commit this primed default-state instance, so the saved blob
+            // remains authoritative and the session slot stays offline.
+            primed.stateRestoreFailed = true;
+            errorOut = "state restore failed";
+        }
         const bool stateRuntimeLoaded = inst->hasLoadedRuntime();
         if (! stateRuntimeLoaded)
         {
@@ -125,6 +132,7 @@ public:
         adapter.prepare (instance->portLayout(), maxBlock);
         loadedPath = std::move (primed.path);
         loadedPluginId.clear();
+        processingOnline.store (true, std::memory_order_release);
         ready.store (true, std::memory_order_release);
         return true;
     }

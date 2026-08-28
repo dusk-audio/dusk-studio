@@ -344,7 +344,7 @@ private:
 
     void toggleVirtualKeyboard();
 
-    // Session notepad (lyrics/notes). The editor is a native DPF/DGL + Dear
+    // Session notepad (lyrics/notes). The editor is a native DAF/DGL + Dear
     // ImGui child window embedded in the DAW. The JUCE shell owns the dimmed,
     // click-to-dismiss backdrop beneath that native child, so the editor stays
     // independent of the host's modal/dismissal UI. The live text mirrors the

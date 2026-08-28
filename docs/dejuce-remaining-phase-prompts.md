@@ -135,7 +135,7 @@ never push without Marc's word, no attribution trailers. Record in the ledger
 consolidation is done and H1d + H2 are unblocked.
 ```
 
-## Prompt 5 — H2-donor (Multiband compressor DPF port, plugins repo)
+## Prompt 5 — H2-donor (Multiband compressor DAF port, plugins repo)
 
 ```
 You are executing the donor half of hosting-tower phase H2 of the Dusk Studio
@@ -146,10 +146,10 @@ repo, then work in the donor plugins repo.
 
 Goal: port UniversalCompressor mode 7 (Multiband) into a JUCE-free core —
 extend the multi-comp/core scope or create a sibling MultibandCompressorDSP,
-following the established donor DPF-core pattern (TapeMachine/core
+following the established donor framework-free-core pattern (TapeMachine/core
 TapeMachineDSP is the reference: plain C++ core, atomic setters, PORT_NOTES.md
-documenting semantics). Marc's direction: "Multicomp will need to be ported to
-DPF". The Dusk Studio consumer surface to design against: MasteringChain
+documenting semantics). Marc's direction is to port Multicomp onto the Dusk
+framework. The Dusk Studio consumer surface to design against: MasteringChain
 bindCompParams and MasteringView's embedded donor MultibandCompressorPanel
 writing mb_* APVTS params — enumerate those params first and give the core an
 equivalent setter surface. A/B parity harness vs the JUCE UniversalCompressor
@@ -194,7 +194,7 @@ Session compatibility: test the one-way migration with a real 0.12 session.
 Update spec status; end with resume phrase.
 ```
 
-## Prompt 7 — H1d (TapeMachine2 DPF UI embed)
+## Prompt 7 — H1d (TapeMachine2 DAF UI embed)
 
 ```
 You are executing hosting-tower phase H1d of the Dusk Studio de-JUCE campaign
@@ -209,10 +209,10 @@ TapeMachineParams.hpp between 69f0431 and donor main.
 
 Create a branch (dejuce/hosting-h1d). Work: extend session TapeParams + core
 setters to TM2's current param surface (head width, gain link, wow/flutter
-enable, advanced page, preset bar); compile the TM2 DPF UI stack
+enable, advanced page, preset bar); compile the TM2 DAF UI stack
 (TapeMachineUI.cpp + DuskImGuiWidgets + DGL-OpenGL) into Dusk Studio; embed
 its DGL window as an X11 child using the ClapPluginEditorComponent
-reparent/embed pattern. Bridges: UI→engine via DPF setParameterValue mapped
+reparent/embed pattern. Bridges: UI→engine via DAF setParameterValue mapped
 through the TapeMachineParams enum onto session TapeParams atoms
 (arm-on-touch preserved); engine→UI via a 30 Hz atom-diff sync calling
 parameterChanged; meters via strong definitions of the DuskAccessBridge weak
@@ -273,12 +273,12 @@ You are executing the GUI-tower entry gate of the Dusk Studio de-JUCE campaign
 on the LINUX machine (Wayland work). Read docs/dejuce-campaign.md §Remaining
 towers item 2 — it records Marc's 2026-07-27 framework decision: app UI =
 Dear ImGui + DuskImGuiWidgets on EGL over a Dusk-written Wayland backend for
-pugl in the hard-forked DPF stack (pugl ships mac/win/X11 only today; the
+pugl in the hard-forked DAF stack (pugl ships mac/win/X11 only today; the
 bespoke-toolkit plan is DROPPED). The gate: a spike proving the app shell as a
 native Wayland window rendering ONE channel strip in ImGui at 60 Hz with
 working input.
 
-Scope: in the DPF fork, implement enough of a pugl Wayland backend to open an
+Scope: in the DAF fork, implement enough of a pugl Wayland backend to open an
 xdg-shell toplevel with an EGL context, pump input (pointer + keyboard), and
 run the ImGui frame loop; then render one Dusk channel strip (fader, pan, EQ
 knobs, meters — DuskImGuiWidgets where they exist) bound to a stub or live
@@ -309,7 +309,7 @@ docs/dejuce-hosting-h5-platform.md (status line, locked decisions, scout
 ground truth, phased increments with ≤5-file lists, per-phase verification,
 bench debts, resume phrase). The spec must own, at minimum: completing the
 pugl Wayland backend (xdg-shell, EGL, input, clipboard, cursors, IME, DnD,
-multi-window) in the DPF fork; the MessageThread.cpp event-loop rewrite (call
+multi-window) in the DAF fork; the MessageThread.cpp event-loop rewrite (call
 sites already converged by PR #112); per-view immediate-mode rewrites of ~120
 files behind the existing DuskComboBox / DuskContextMenu / LookAndFeel /
 EmbeddedModal seams; an ImGui theme replicating the current LookAndFeel

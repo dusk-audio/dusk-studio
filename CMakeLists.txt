@@ -24,6 +24,8 @@ if(APPLE)
     enable_language(OBJCXX)
 endif()
 
+option(DUSKSTUDIO_BUILD_TESTS "Build Dusk Studio unit tests with Catch2" OFF)
+
 # Native CLAP host (src/engine/clap/) is available on Linux, macOS, and
 # Windows. Default ON there, OFF elsewhere; it can be forced off to test the
 # feature-gated path.
@@ -393,6 +395,43 @@ else()
         "the plugins repo to ../plugins (sibling directory).")
 endif()
 
+if(DEFINED DUSK_PLUGINS_PATH)
+    # Locate the donor's framework-free shared DSP surface by its API marker,
+    # not by the donor repository's historical directory spelling. This keeps
+    # Dusk Studio independent of framework-era naming while the 0.13 branch
+    # remains pinned to the audio behavior covered by its A/B tests.
+    file(GLOB _duskstudio_donor_dsp_candidates LIST_DIRECTORIES true
+        "${DUSK_PLUGINS_PATH}/plugins/shared-*/dsp")
+    set(_duskstudio_compatible_donor_dsp_dirs "")
+    foreach(_candidate IN LISTS _duskstudio_donor_dsp_candidates)
+        if(EXISTS "${_candidate}/FourKEQDSP.hpp"
+           AND EXISTS "${_candidate}/DuskOversampler.hpp")
+            list(APPEND _duskstudio_compatible_donor_dsp_dirs "${_candidate}")
+        endif()
+    endforeach()
+    list(LENGTH _duskstudio_compatible_donor_dsp_dirs
+        _duskstudio_compatible_donor_dsp_dir_count)
+    if(_duskstudio_compatible_donor_dsp_dir_count EQUAL 0)
+        message(FATAL_ERROR
+            "Dusk plugins donor has no compatible framework-free shared DSP directory")
+    elseif(_duskstudio_compatible_donor_dsp_dir_count GREATER 1)
+        message(FATAL_ERROR
+            "Dusk plugins donor has multiple compatible shared DSP directories: "
+            "${_duskstudio_compatible_donor_dsp_dirs}")
+    endif()
+    list(GET _duskstudio_compatible_donor_dsp_dirs 0 DUSKSTUDIO_DONOR_DSP_DIR)
+    get_filename_component(DUSKSTUDIO_DONOR_SHARED_DIR
+        "${DUSKSTUDIO_DONOR_DSP_DIR}" DIRECTORY)
+
+    set(DUSKSTUDIO_COMPRESSOR_CORE_SOURCE
+        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core/UniversalCompressorDSP.cpp")
+    if(NOT EXISTS "${DUSKSTUDIO_COMPRESSOR_CORE_SOURCE}")
+        message(FATAL_ERROR
+            "Dusk plugins donor lacks the 0.13-compatible compressor core; "
+            "use the revision pinned by the build workflows")
+    endif()
+endif()
+
 # Resolves a framework checkout into <outVar>, or leaves it empty when none is
 # present. EXPLICIT names -D variables in preference order; the first one set
 # wins, and if what it points at is not a checkout that is a hard error rather
@@ -427,24 +466,19 @@ endfunction()
 # the same DAF/DGL + Dear ImGui stack selected for the final GUI tower, so the
 # feature does not add another JUCE widget that would need to be ported later.
 #
-# The framework is Dusk's own hard fork, renamed from DPF to DAF (Dusk Audio
-# Framework). DAF_PATH and DAF_WIDGETS_PATH are the spellings to use; the DPF
-# ones still resolve, and retire once every checkout and CI image has moved.
-#
 # Resolution order per checkout: an explicit path wins, then a sibling clone,
-# then the vendored external/ copy, and at each rung the DAF name is tried
-# before the DPF one. An explicit path that is not a checkout is a hard error
+# then the vendored external/ copy. An explicit path that is not a checkout is a hard error
 # rather than a silent fall-through to a sibling.
 duskstudio_resolve_framework_dir(DUSKSTUDIO_DAF_SOURCE_DIR
     MARKER   CMakeLists.txt
     LABEL    DAF
-    EXPLICIT DAF_PATH DPF_PATH
-    SEARCH   ../DAF ../DPF external/DAF external/DPF)
+    EXPLICIT DAF_PATH
+    SEARCH   ../DAF external/DAF)
 duskstudio_resolve_framework_dir(DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR
     MARKER   opengl/DearImGui.hpp
     LABEL    DAF-Widgets
-    EXPLICIT DAF_WIDGETS_PATH DPF_WIDGETS_PATH
-    SEARCH   ../DAF-Widgets ../DPF-Widgets external/DAF-Widgets external/DPF-Widgets)
+    EXPLICIT DAF_WIDGETS_PATH
+    SEARCH   ../DAF-Widgets external/DAF-Widgets)
 
 # OFF drops every native view - the notepad and the GUI tower's ported dialogs and
 # panels (DUSKSTUDIO_HAS_NATIVE_UI guards their call sites) - so a configure without
@@ -1024,6 +1058,18 @@ endif()
 # Native CLAP host, gated by DUSKSTUDIO_NATIVE_CLAP. DUSKSTUDIO_HAS_NATIVE_CLAP
 # guards every conditional native-host path in the source.
 if(DUSKSTUDIO_NATIVE_CLAP)
+    if(DUSKSTUDIO_BUILD_TESTS)
+        # Shared by the native-slot unit tests and the full-engine self-test.
+        add_library(dusk-studio-multi-bus-clap-fixture MODULE
+            tests/fixtures/multi_bus_clap.cpp)
+        set_target_properties(dusk-studio-multi-bus-clap-fixture PROPERTIES
+            PREFIX ""
+            SUFFIX ".clap")
+        target_compile_features(dusk-studio-multi-bus-clap-fixture PRIVATE cxx_std_17)
+        target_include_directories(dusk-studio-multi-bus-clap-fixture PRIVATE
+            ${CMAKE_SOURCE_DIR}/external/clap/include)
+    endif()
+
     target_sources(DuskStudio PRIVATE
         src/engine/clap/ClapBundle.cpp
         src/engine/clap/ClapHost.cpp
@@ -1158,7 +1204,7 @@ endif()
 #
 # Supported platforms:
 #   Linux   : memfd_create + futex + socketpair + SCM_RIGHTS
-#   Windows : CreateFileMapping + WaitOnAddress + named pipe
+#   Windows : CreateFileMapping + inheritable events + named pipe
 #   macOS   : shm_open + os_sync_wait_on_address + socketpair + SCM_RIGHTS
 #             (requires macOS 14.4 — os_sync_wait_on_address shared
 #             addresses were added in Sonoma 14.4; older systems fall
@@ -1209,13 +1255,6 @@ if(_duskstudio_oop_enabled)
         src/engine/ipc/IpcSelfTest.cpp
         ${_duskstudio_ipc_platform_sources})
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_OOP_PLUGINS=1)
-    if(WIN32)
-        # WaitOnAddress / WakeByAddressSingle live in synchronization.lib
-        # (re-exported by API-Set "api-ms-win-core-synch-l1-2-0.dll" on
-        # Win8+). Link explicitly on the parent so the IPC sync layer
-        # resolves; the child binary links it too below.
-        target_link_libraries(DuskStudio PRIVATE synchronization)
-    endif()
 
     # dusk-studio-plugin-host is a JUCE console app so it can pull in the
     # AudioPluginFormatManager + AudioPluginInstance machinery and the
@@ -1258,7 +1297,7 @@ if(_duskstudio_oop_enabled)
     if(WIN32)
         # shell32: CommandLineToArgvW, which the child uses to read its own
         # arguments as UTF-16 instead of trusting the ANSI-converted argv.
-        target_link_libraries(dusk-studio-plugin-host PRIVATE synchronization shell32)
+        target_link_libraries(dusk-studio-plugin-host PRIVATE shell32)
     endif()
     target_include_directories(dusk-studio-plugin-host PRIVATE src)
     target_include_directories(dusk-studio-plugin-host SYSTEM PRIVATE external/json)
@@ -1327,10 +1366,10 @@ if(DEFINED DUSK_PLUGINS_PATH)
     # without the vendored headers blocking the build.
     target_include_directories(DuskStudio SYSTEM PRIVATE
         "${DUSK_PLUGINS_PATH}/plugins/shared"
-        "${DUSK_PLUGINS_PATH}/plugins/shared-dpf"
+        "${DUSKSTUDIO_DONOR_SHARED_DIR}"
         "${DUSK_PLUGINS_PATH}/plugins/shared/AnalogEmulation"
         "${DUSK_PLUGINS_PATH}/plugins/shared/channel-comp"
-        "${DUSK_PLUGINS_PATH}/plugins/shared-dpf/dsp"
+        "${DUSKSTUDIO_DONOR_DSP_DIR}"
         "${DUSK_PLUGINS_PATH}/plugins/multi-q"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core"
@@ -1351,8 +1390,8 @@ if(DEFINED DUSK_PLUGINS_PATH)
     # only under DUSK_PLUGINS_PATH.
     target_sources(DuskStudio PRIVATE
         src/dsp/MasterTape.cpp
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core/UniversalCompressorDSP.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/shared-dpf/dsp/FourKEQDSP.cpp"
+        "${DUSKSTUDIO_COMPRESSOR_CORE_SOURCE}"
+        "${DUSKSTUDIO_DONOR_DSP_DIR}/FourKEQDSP.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
@@ -1617,7 +1656,6 @@ if(DUSKSTUDIO_ENABLE_TSAN AND NOT MSVC)
     add_link_options(-fsanitize=thread)
 endif()
 
-option(DUSKSTUDIO_BUILD_TESTS "Build Dusk Studio unit tests with Catch2" OFF)
 if(DUSKSTUDIO_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)

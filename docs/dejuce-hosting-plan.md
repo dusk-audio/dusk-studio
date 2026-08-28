@@ -36,7 +36,9 @@ merges. Read `docs/dejuce-campaign.md` + the memory ledger first.
 - Remaining JUCE donor in-app: UniversalCompressor mode 7 Multiband
   (MasteringChain bindCompParams + MasteringView's embedded donor
   MultibandCompressorPanel writing mb_*).
-- TapeMachine2 = TapeMachine/dpf-plugin + TapeMachine/core TapeMachineDSP:
+- TapeMachine2 = the donor's legacy TapeMachine plug-in wrapper (locate it by
+  `PluginProcessor.cpp`, not a framework-era directory name) +
+  TapeMachine/core TapeMachineDSP:
   verbatim port of the same algorithm Dusk Studio hosts today (null-test
   expected), 20 atomic setters + VU getters + latencySamples. Two donor
   setters are documented DEAD: setSaturation, setNoiseEnabled — check which
@@ -70,13 +72,13 @@ merges. Read `docs/dejuce-campaign.md` + the memory ledger first.
   blob, and the AudioEngine state/playhead sites are gone. Native
   `src/ui/TapePanel.{h,cpp}` replaces TapeMachineModalEditor; the donor
   TapeMachine sources left the app build. A/B null test in
-  `tests/tape_core_ab.cpp`. Remaining: H1d (TM2 DPF UI embed) once the donor
+  `tests/tape_core_ab.cpp`. Remaining: H1d (TM2 DAF UI embed) once the donor
   is consolidated - see
   [dejuce-hosting-h1-tape.md](dejuce-hosting-h1-tape.md).
 - **H2 — Mastering multiband (donor first, then Dusk Studio).** Donor:
   port Multiband mode into a JUCE-free core (extend
-  multi-comp/core scope or sibling MultibandCompressorDSP; Marc's
-  "Multicomp will need to be ported to DPF"). Merge donor main, bump
+  multi-comp/core scope or sibling MultibandCompressorDSP; Marc's direction
+  was to port Multicomp onto the Dusk framework). Merge donor main, bump
   DONOR_REV in all 8 workflows together. Dusk Studio: MasteringChain off
   UniversalCompressor/APVTS onto the new core; MasteringView native
   multiband panel replacing the embedded donor panel. A/B vs JUCE

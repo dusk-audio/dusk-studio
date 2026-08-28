@@ -1,0 +1,41 @@
+name: Clone DAF stack (dusk-audio forks, pinned)
+description: >
+  Pinned DAF + DAF-Widgets checkouts into RUNNER_TEMP for the native UI.
+  DAF/DGL + Dear ImGui back that UI, so the root configure hard-requires both
+  checkouts. Pinned to Dusk-owned forks so a third-party rebase cannot break a
+  build. The DAF submodule pull brings in Dusk's pinned local Pugl fork. The
+  pins below are the single source of truth for every workflow.
+
+runs:
+  using: composite
+  steps:
+    - name: Clone pinned DAF + DAF-Widgets
+      shell: bash
+      env:
+        DAF_REPO: https://github.com/dusk-audio/DAF.git
+        DAF_REV: dfc50729f7a7d31dc0e0740c863bf88dee71c7c2
+        PUGL_REV: 43d8e349c7ca7c4d76778a8c48b73226105bed14
+        DAF_WIDGETS_REPO: https://github.com/dusk-audio/DAF-Widgets.git
+        DAF_WIDGETS_REV: 1c09e1ef29f92ae7feb200bac8febdf814cf5e4a
+      run: |
+        set -euo pipefail
+        git init -q "${RUNNER_TEMP}/DAF"
+        cd "${RUNNER_TEMP}/DAF"
+        git remote add origin "${DAF_REPO}"
+        git fetch --depth 1 origin "${DAF_REV}"
+        git checkout -q "${DAF_REV}"
+        [[ "$(git rev-parse HEAD)" == "${DAF_REV}" ]] || {
+          echo "ERROR: DAF checkout $(git rev-parse HEAD) != pinned ${DAF_REV}" >&2; exit 1; }
+        [[ "$(git config -f .gitmodules --get submodule.dgl/src/pugl-upstream.url)" == \
+            "https://github.com/dusk-audio/pugl.git" ]] || {
+          echo "ERROR: DAF is not pinned to the Dusk Pugl fork" >&2; exit 1; }
+        git submodule update --init --depth 1
+        [[ "$(git -C dgl/src/pugl-upstream rev-parse HEAD)" == "${PUGL_REV}" ]] || {
+          echo "ERROR: Pugl checkout $(git -C dgl/src/pugl-upstream rev-parse HEAD) != pinned ${PUGL_REV}" >&2; exit 1; }
+        git init -q "${RUNNER_TEMP}/DAF-Widgets"
+        cd "${RUNNER_TEMP}/DAF-Widgets"
+        git remote add origin "${DAF_WIDGETS_REPO}"
+        git fetch --depth 1 origin "${DAF_WIDGETS_REV}"
+        git checkout -q "${DAF_WIDGETS_REV}"
+        [[ "$(git rev-parse HEAD)" == "${DAF_WIDGETS_REV}" ]] || {
+          echo "ERROR: DAF-Widgets checkout $(git rev-parse HEAD) != pinned ${DAF_WIDGETS_REV}" >&2; exit 1; }

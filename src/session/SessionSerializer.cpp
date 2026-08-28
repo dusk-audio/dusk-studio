@@ -37,8 +37,16 @@ inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, s
 // Save path builds ordered_json so key order follows insertion order, keeping
 // session.json diffs stable across saves.
 using JObj = nlohmann::ordered_json;
+using juce::File;
+using juce::String;
 
-inline std::string toStd (const juce::String& s) { return s.toStdString(); }
+inline std::string toStd (const String& s) { return s.toStdString(); }
+
+File fileFromPath (const std::filesystem::path& path)
+{
+    const auto utf8 = path.u8string();
+    return File (String::fromUTF8 (utf8.c_str()));
+}
 
 inline JObj descriptorToObject (const PluginDescriptor& descriptor)
 {
@@ -1947,9 +1955,14 @@ bool SessionSerializer::writeAtomic (const juce::File& target, const juce::Strin
     return true;
 }
 
-bool SessionSerializer::save (const Session& s, const juce::File& target)
+bool SessionSerializer::save (const Session& s, const File& target)
 {
     return writeAtomic (target, serialize (s));
+}
+
+bool SessionSerializer::save (const Session& s, const std::filesystem::path& target)
+{
+    return save (s, fileFromPath (target));
 }
 
 bool SessionSerializer::saveNotepad (const juce::File& sessionDir, const juce::String& text)
@@ -1967,7 +1980,7 @@ juce::String SessionSerializer::loadNotepad (const juce::File& sessionDir)
     return source.existsAsFile() ? source.loadFileAsString() : juce::String();
 }
 
-bool SessionSerializer::load (Session& s, const juce::File& source)
+bool SessionSerializer::load (Session& s, const File& source)
 {
     if (! source.existsAsFile()) return false;
     nlohmann::json root = nlohmann::json::parse (source.loadFileAsString().toStdString(), nullptr, false);
@@ -2704,6 +2717,11 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     // so the audio thread's any-X-soloed reads are correct on first callback.
     s.recomputeRtCounters();
     return true;
+}
+
+bool SessionSerializer::load (Session& s, const std::filesystem::path& source)
+{
+    return load (s, fileFromPath (source));
 }
 
 SessionSerializer::ConsolidationResult

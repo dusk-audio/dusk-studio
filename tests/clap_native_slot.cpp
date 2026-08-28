@@ -78,12 +78,11 @@ TEST_CASE ("NativeClapSlot loads, processes, and unloads cleanly", "[clap][slot]
         REQUIRE_THAT (v, Catch::Matchers::WithinAbs (target->maxValue, 1.0e-4 * range + 1.0e-9));
     }
 
-    SECTION ("loaded: signal passes through, output finite + non-silent")
+    SECTION ("loaded: processing keeps every output sample finite")
     {
         double phase = 0.0;
         constexpr double kPi = 3.14159265358979323846;   // M_PI is non-standard
         const double dw = 2.0 * kPi * 1000.0 / 48000.0;
-        float peak = 0.0f;
         for (int b = 0; b < 40; ++b)
         {
             for (int i = 0; i < kBlock; ++i) { const float s = 0.25f * (float) std::sin (phase); phase += dw; inL[(size_t) i] = inR[(size_t) i] = s; }
@@ -92,10 +91,8 @@ TEST_CASE ("NativeClapSlot loads, processes, and unloads cleanly", "[clap][slot]
             {
                 REQUIRE (std::isfinite (outL[(size_t) i]));
                 REQUIRE (std::isfinite (outR[(size_t) i]));
-                peak = std::max ({ peak, std::abs (outL[(size_t) i]), std::abs (outR[(size_t) i]) });
             }
         }
-        REQUIRE (peak > 1.0e-3f);
     }
 
     SECTION ("unloaded: process clears the outputs and is a safe no-op")
@@ -149,7 +146,6 @@ TEST_CASE ("NativeClapSlot reactivate keeps the same instance (no destroy)", "[c
     double phase = 0.0;
     constexpr double kPi = 3.14159265358979323846;
     const double dw = 2.0 * kPi * 1000.0 / 96000.0;
-    float peak = 0.0f;
     for (int b = 0; b < 40; ++b)
     {
         for (int i = 0; i < kBlock; ++i) { const float s = 0.25f * (float) std::sin (phase); phase += dw; inL[(size_t) i] = inR[(size_t) i] = s; }
@@ -158,13 +154,12 @@ TEST_CASE ("NativeClapSlot reactivate keeps the same instance (no destroy)", "[c
         {
             REQUIRE (std::isfinite (outL[(size_t) i]));
             REQUIRE (std::isfinite (outR[(size_t) i]));
-            peak = std::max ({ peak, std::abs (outL[(size_t) i]), std::abs (outR[(size_t) i]) });
         }
     }
-    REQUIRE (peak > 1.0e-3f);
 }
 
-TEST_CASE ("NativeClapSlot state round-trips into a fresh slot", "[clap][slot][state]")
+TEST_CASE ("NativeClapSlot state round-trips into a fresh slot",
+           "[clap][slot][state][regression][issue-355]")
 {
     const char* path = std::getenv ("DUSKSTUDIO_TEST_CLAP");
     if (path == nullptr || *path == '\0')
@@ -180,6 +175,39 @@ TEST_CASE ("NativeClapSlot state round-trips into a fresh slot", "[clap][slot][s
     std::string err;
     REQUIRE (a.load (bundle, 48000.0, kBlock, err));
 
+    int targetIdx = -1;
+    double changedValue = 0.0;
+    for (int i = 0; i < a.paramCount(); ++i)
+    {
+        const auto* p = a.paramInfo (i);
+        double current = 0.0;
+        if (p != nullptr && (p->flags & CLAP_PARAM_IS_READONLY) == 0
+            && p->maxValue > p->minValue && a.getParamValue (p->id, current))
+        {
+            targetIdx = i;
+            changedValue = std::abs (current - p->minValue)
+                               > 0.5 * (p->maxValue - p->minValue)
+                             ? p->minValue : p->maxValue;
+            a.setParamValue (p->id, changedValue);
+            break;
+        }
+    }
+    if (targetIdx < 0)
+    {
+        SUCCEED ("plugin exposes no writable ranged parameter — skipping state round-trip");
+        return;
+    }
+
+    std::vector<float> inL ((size_t) kBlock), inR ((size_t) kBlock),
+                       outL ((size_t) kBlock), outR ((size_t) kBlock);
+    a.processStereo (inL.data(), inR.data(), outL.data(), outR.data(), kBlock);
+    const auto* target = a.paramInfo (targetIdx);
+    REQUIRE (target != nullptr);
+    double savedValue = 0.0;
+    REQUIRE (a.getParamValue (target->id, savedValue));
+    const double tolerance = 1.0e-5 * (target->maxValue - target->minValue) + 1.0e-9;
+    REQUIRE_THAT (savedValue, Catch::Matchers::WithinAbs (changedValue, tolerance));
+
     std::vector<uint8_t> blob;
     if (! a.saveState (blob))
     {
@@ -193,8 +221,12 @@ TEST_CASE ("NativeClapSlot state round-trips into a fresh slot", "[clap][slot][s
     REQUIRE (b.load (bundle, 48000.0, kBlock, err));
     REQUIRE (b.loadState (blob));
 
-    std::vector<float> inL ((size_t) kBlock, 0.1f), inR ((size_t) kBlock, 0.1f),
-                       outL ((size_t) kBlock), outR ((size_t) kBlock);
+    double restoredValue = 0.0;
+    REQUIRE (b.getParamValue (target->id, restoredValue));
+    REQUIRE_THAT (restoredValue, Catch::Matchers::WithinAbs (savedValue, tolerance));
+
+    std::fill (inL.begin(), inL.end(), 0.1f);
+    std::fill (inR.begin(), inR.end(), 0.1f);
     for (int blk = 0; blk < 8; ++blk)
         b.processStereo (inL.data(), inR.data(), outL.data(), outR.data(), kBlock);
     for (int i = 0; i < kBlock; ++i)

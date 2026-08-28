@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -254,6 +255,24 @@ inline std::filesystem::path tempDir()
     if (const char* t = std::getenv ("TMPDIR")) return std::filesystem::path (t);
     return std::filesystem::path ("/tmp");
 #endif
+}
+
+inline std::filesystem::path createUniqueTempDirectory (std::string_view prefix)
+{
+    static std::atomic<std::uint64_t> sequence { 0 };
+    const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto base = tempDir();
+
+    for (int attempt = 0; attempt < 128; ++attempt)
+    {
+        const auto ticket = sequence.fetch_add (1, std::memory_order_relaxed);
+        const auto candidate = base / (std::string (prefix) + std::to_string (tick)
+                                        + "-" + std::to_string (ticket));
+        std::error_code error;
+        if (std::filesystem::create_directory (candidate, error)) return candidate;
+        if (error) return {};
+    }
+    return {};
 }
 
 // JUCE File::currentExecutableFile.

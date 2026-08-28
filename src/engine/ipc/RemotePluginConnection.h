@@ -4,6 +4,7 @@
 #include "platform/IpcChannel.h"
 #include "platform/IpcProcess.h"
 #include "platform/IpcShm.h"
+#include "platform/IpcSync.h"
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -20,7 +21,7 @@ namespace duskstudio::ipc
 // Parent-side connection to a dusk-studio-plugin-host child process. Owns:
 //   - the SHM file descriptor (memfd_create) and its mmap.
 //   - the child PID + fork/exec + waitpid lifecycle.
-//   - the futex round-trip that drives processBlockSync.
+//   - the cross-process signal round-trip that drives processBlockSync.
 //
 // Phase 1 surface is intentionally minimal: just construct, run a stub
 // echo round-trip, tear down. Plugin loading, state save/restore, editor
@@ -30,7 +31,7 @@ namespace duskstudio::ipc
 // Threading rules:
 //   - construct / connect / disconnect       - message thread only.
 //   - processBlockSync                       - audio thread, RT-safe
-//     (no allocations, no syscalls beyond the futex pair).
+//     (no allocations, no syscalls beyond the platform signal pair).
 //   - isCrashed                              - any thread, atomic load.
 class RemotePluginConnection
 {
@@ -153,7 +154,7 @@ public:
     // capped at PluginIpc::kMidiBytes (16 KB). Events that don't fit are
     // dropped - same behaviour as the child's serialiser.
     //
-    // RT-safe: only memcpy + futex syscalls, no allocation. The output
+    // RT-safe: only memcpy + bounded signal syscalls, no allocation. The output
     // MIDI buffer is rebuilt via clear() + addEvent() into the caller's
     // `midi`; dusk::MidiBuffer::clear is RT-safe and addEvent drops
     // events over the reserved cap instead of allocating - the engine
@@ -212,6 +213,8 @@ private:
     platform::SharedMemory  shm;
     platform::ChildProcess  child;
     platform::NativeHandle  controlChannel {};
+    platform::InterprocessSignal commandSignal;
+    platform::InterprocessSignal replySignal;
 
     std::uint32_t   localSeq { 0 };
     std::atomic<std::uint64_t> roundTrips { 0 };

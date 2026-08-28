@@ -456,10 +456,18 @@ public:
     {
         juce::String location;
         juce::String pluginName;
+        std::string format;
+        std::string reason;
     };
     const std::vector<PluginLoadFailure>& getLastPluginLoadFailures() const noexcept
     {
         return lastPluginLoadFailures;
+    }
+    using PluginRestoreAlertSink =
+        std::function<void (std::vector<PluginLoadFailure>)>;
+    void setPluginRestoreAlertSink (PluginRestoreAlertSink sink) noexcept
+    {
+        onPluginRestoreAlert_ = std::move (sink);
     }
 
     // releaseResources on every loaded plugin. Diva's terminate()
@@ -565,6 +573,7 @@ private:
     RecordManager   recordManager   { session };
 
     std::vector<PluginLoadFailure> lastPluginLoadFailures;
+    void collectDeferredNativeRestoreFailures();
     PlaybackEngine  playbackEngine  { session };
     PluginManager   pluginManager;
     juce::UndoManager undoManager;
@@ -956,6 +965,7 @@ private:
 
     DeviceLostAlertSink onDeviceLostAlert_;
     RecordBlockedSink   onRecordBlocked_;
+    PluginRestoreAlertSink onPluginRestoreAlert_;
 
     // First sample committed to disk. Under count-in the playhead is
     // rolled back before this; writes are skipped until it catches up.

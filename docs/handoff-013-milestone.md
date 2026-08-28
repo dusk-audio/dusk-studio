@@ -53,12 +53,12 @@ the native notepad build and safely refuses to overwrite a dirty checkout:
   set -euo pipefail
   JUCE=/home/marc/projects/dusk-juce-013
   DONOR=/home/marc/projects/dusk-plugins-013
-  DPF=/home/marc/projects/dusk-dpf-013
-  DPF_WIDGETS=/home/marc/projects/dusk-dpf-widgets-013
+  DAF=/home/marc/projects/dusk-daf-013
+  DAF_WIDGETS=/home/marc/projects/dusk-daf-widgets-013
   JUCE_REV=4d85afa175a45e0b5da11f9211de3ba88705588e
-  DONOR_REV=69f04318e3b7063e382c80ac1cde2388170e668b
-  DPF_REV=f9fbc62af6fa7ce638a6f1e1482896c385a4955e
-  DPF_WIDGETS_REV=668de17f06abdeb98d5a4b62594bd634f8d1ac2e
+  DONOR_REV=0a1b17f8e9dbecd26bf78dd45704c6c149e4b2ea
+  DAF_REV=dfc50729f7a7d31dc0e0740c863bf88dee71c7c2
+  DAF_WIDGETS_REV=1c09e1ef29f92ae7feb200bac8febdf814cf5e4a
 
   fetch_pin() {
     local checkout=$1
@@ -92,21 +92,21 @@ the native notepad build and safely refuses to overwrite a dirty checkout:
   fetch_pin "$JUCE" https://github.com/dusk-audio/JUCE-wayland.git \
     "$JUCE_REV" refs/tags/dusk-wayland-v2
   fetch_pin "$DONOR" https://github.com/dusk-audio/dusk-audio-plugins.git "$DONOR_REV"
-  fetch_pin "$DPF" https://github.com/dusk-audio/DPF.git "$DPF_REV"
-  git -C "$DPF" submodule update --init --depth 1
-  fetch_pin "$DPF_WIDGETS" https://github.com/dusk-audio/DPF-Widgets.git \
-    "$DPF_WIDGETS_REV"
+  fetch_pin "$DAF" https://github.com/dusk-audio/DAF.git "$DAF_REV"
+  git -C "$DAF" submodule update --init --depth 1
+  fetch_pin "$DAF_WIDGETS" https://github.com/dusk-audio/DAF-Widgets.git \
+    "$DAF_WIDGETS_REV"
 )
 
 JUCE=/home/marc/projects/dusk-juce-013
 DONOR=/home/marc/projects/dusk-plugins-013
-DPF=/home/marc/projects/dusk-dpf-013
-DPF_WIDGETS=/home/marc/projects/dusk-dpf-widgets-013
+DAF=/home/marc/projects/dusk-daf-013
+DAF_WIDGETS=/home/marc/projects/dusk-daf-widgets-013
 ```
 
 Before using the revisions above, compare them with every file under
 `.github/workflows/` that defines `JUCE_REV` or `DONOR_REV`, plus
-`.github/actions/clone-dpf-stack/action.yml`, `BUILDING-LINUX.md`,
+`.github/actions/clone-daf-stack/action.yml`, `BUILDING-LINUX.md`,
 `BUILDING-WINDOWS.md`, `docs/MAINTAINER-GUIDE.md`, and `LICENSES.txt`; all
 tracked copies must move together when a pin changes. Initialize this
 repository's submodules as well:
@@ -127,13 +127,13 @@ cmake --fresh -S . -B build-w -DCMAKE_BUILD_TYPE=Release \
   -DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON \
   -DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON \
   -DJUCE_PATH="$JUCE" -DDUSK_PLUGINS_PATH="$DONOR" \
-  -DDPF_PATH="$DPF" -DDPF_WIDGETS_PATH="$DPF_WIDGETS"
+  -DDAF_PATH="$DAF" -DDAF_WIDGETS_PATH="$DAF_WIDGETS"
 cmake --fresh -S . -B build-tests-w -DCMAKE_BUILD_TYPE=Release \
   -DDUSKSTUDIO_BUILD_TESTS=ON \
   -DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON \
   -DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON \
   -DJUCE_PATH="$JUCE" -DDUSK_PLUGINS_PATH="$DONOR" \
-  -DDPF_PATH="$DPF" -DDPF_WIDGETS_PATH="$DPF_WIDGETS"
+  -DDAF_PATH="$DAF" -DDAF_WIDGETS_PATH="$DAF_WIDGETS"
 ```
 
 Run these commands sequentially with the dev-box concurrency limit, then run
