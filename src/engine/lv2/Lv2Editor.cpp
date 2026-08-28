@@ -1,5 +1,6 @@
 #include "Lv2Editor.h"
 #include "Lv2Instance.h"
+#include "Lv2UiParameterSync.h"
 
 #include <lilv/lilv.h>
 #include <suil/suil.h>
@@ -11,7 +12,6 @@
 #include <X11/Xlib.h>
 
 #include <algorithm>
-#include <cstring>
 #include <vector>
 
 namespace duskstudio::lv2
@@ -43,8 +43,7 @@ struct Lv2Editor::Impl
 
     int  prefW = 0, prefH = 0;
     bool discovered = false, embedded = false, mapped = false, leakOnClose = false;
-    std::vector<float> sentParameterValues;
-    std::vector<uint8_t> parameterValueSent;
+    Lv2UiParameterSync parameterSync;
 
     // suil host callbacks (message thread: the UI runs off our idle pump)
     static void writePort (SuilController c, uint32_t portIndex, uint32_t bufferSize,
@@ -73,30 +72,11 @@ struct Lv2Editor::Impl
     void syncParameterValues (bool force)
     {
         if (instance == nullptr || suilInstance == nullptr) return;
-        instance->drainPatchFeedback();
-
-        const int count = instance->uiParameterEventCount();
-        if (sentParameterValues.size() != (size_t) count)
+        parameterSync.sendCurrentValues (*instance, force, [this] (const auto& event)
         {
-            sentParameterValues.assign ((size_t) count, 0.0f);
-            parameterValueSent.assign ((size_t) count, 0);
-            force = true;
-        }
-
-        Lv2Instance::UiParameterEvent event;
-        for (int i = 0; i < count; ++i)
-        {
-            if (! instance->currentUiParameterEvent (i, event)) continue;
-            if (! force && parameterValueSent[(size_t) i] != 0
-                && std::memcmp (&sentParameterValues[(size_t) i], &event.value,
-                                sizeof (event.value)) == 0)
-                continue;
-
             suil_instance_port_event (suilInstance, event.portIndex,
                                       event.sizeBytes, event.protocol, event.data.data());
-            sentParameterValues[(size_t) i] = event.value;
-            parameterValueSent[(size_t) i] = 1;
-        }
+        });
     }
 
     static int uiResize (LV2UI_Feature_Handle handle, int w, int h)
@@ -377,8 +357,7 @@ void Lv2Editor::close()
     impl->suilInstance = nullptr;
     impl->suilHost     = nullptr;
     impl->idleIface    = nullptr;
-    impl->sentParameterValues.clear();
-    impl->parameterValueSent.clear();
+    impl->parameterSync.reset();
 
     if (impl->display != nullptr)
     {

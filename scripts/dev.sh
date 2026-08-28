@@ -8,7 +8,7 @@
 #   scripts/dev.sh            # app + tests + ctest (default)
 #   scripts/dev.sh app        # configure + build app only
 #   scripts/dev.sh tests      # configure + build tests + ctest
-#   scripts/dev.sh selftest   # build app, then self-test under private Xvfb
+#   scripts/dev.sh selftest   # build app, then full + CLAP state self-tests under Xvfb
 #
 # Pass extra cmake args via CMAKE_ARGS env (e.g. -DJUCE_PATH=...). Override the
 # conservative parallel-build limit with DUSK_JOBS only when the host has room.
@@ -26,7 +26,10 @@ if [[ ! "$JOBS" =~ ^[1-9][0-9]*$ ]]; then
   exit 2
 fi
 
-EXTRA_ARGS="${CMAKE_ARGS:-}"
+EXTRA_ARGS=()
+if [[ -n "${CMAKE_ARGS:-}" ]]; then
+  read -r -a EXTRA_ARGS <<< "${CMAKE_ARGS}"
+fi
 TARGET="${1:-all}"
 
 link_compile_commands() {
@@ -39,14 +42,14 @@ link_compile_commands() {
 }
 
 build_app() {
-  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${EXTRA_ARGS}
+  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release "${EXTRA_ARGS[@]}"
   cmake --build build -j"${JOBS}"
   link_compile_commands build
 }
 
 build_tests() {
   cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release \
-    -DDUSKSTUDIO_BUILD_TESTS=ON ${EXTRA_ARGS}
+    -DDUSKSTUDIO_BUILD_TESTS=ON "${EXTRA_ARGS[@]}"
   cmake --build build-tests --target dusk-studio-tests -j"${JOBS}"
   ctest --test-dir build-tests --output-on-failure
 }
@@ -57,6 +60,12 @@ case "${TARGET}" in
   selftest)
     build_app
     scripts/run-selftest-xvfb.sh
+    cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release \
+      -DDUSKSTUDIO_BUILD_TESTS=ON "${EXTRA_ARGS[@]}"
+    cmake --build build-tests --target dusk-studio-multi-bus-clap-fixture -j"${JOBS}"
+    DUSKSTUDIO_CLAP_STATE_TEST_ONLY=1 \
+    DUSKSTUDIO_CLAP_STATE_FIXTURE="${REPO_ROOT}/build-tests/dusk-studio-multi-bus-clap-fixture.clap" \
+      scripts/run-selftest-xvfb.sh "${REPO_ROOT}/build/DuskStudio_artefacts/Release/DuskStudio"
     ;;
   all)
     build_app

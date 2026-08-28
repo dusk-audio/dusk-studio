@@ -4,6 +4,7 @@
 // without synths stays green.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "support/DuskMidiTestBridge.h"
 
@@ -172,7 +173,7 @@ TEST_CASE ("Native VST3 instrument state round-trips into a fresh slot",
     INFO ("state parameter: " << target->name << " (id=" << target->id << ")");
     double savedValue = 0.0;
     REQUIRE (source.getParamValue (target->id, savedValue));
-    REQUIRE (std::abs (savedValue - changedValue) <= 1.0e-5);
+    REQUIRE_THAT (savedValue, Catch::Matchers::WithinAbs (changedValue, 1.0e-5));
 
     std::vector<uint8_t> blob;
     REQUIRE (source.saveState (blob));
@@ -183,7 +184,7 @@ TEST_CASE ("Native VST3 instrument state round-trips into a fresh slot",
     REQUIRE (restored.loadState (blob));
     double restoredValue = 0.0;
     REQUIRE (restored.getParamValue (target->id, restoredValue));
-    REQUIRE (std::abs (restoredValue - savedValue) <= 1.0e-5);
+    REQUIRE_THAT (restoredValue, Catch::Matchers::WithinAbs (savedValue, 1.0e-5));
 }
 #endif
 

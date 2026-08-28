@@ -1052,11 +1052,6 @@ if(DUSKSTUDIO_NATIVE_CLAP)
         target_sources(DuskStudio PRIVATE src/engine/clap/ClapEditor_Win.cpp)
     endif()
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_CLAP=1)
-    if(TARGET dusk-studio-multi-bus-clap-fixture)
-        target_compile_definitions(DuskStudio PRIVATE
-            DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-multi-bus-clap-fixture>")
-        add_dependencies(DuskStudio dusk-studio-multi-bus-clap-fixture)
-    endif()
 endif()
 
 # Native LV2 host — lilv (discovery/instantiation) + suil (UI embed), both ISC.

@@ -4,9 +4,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "TestTempDirectory.h"
 #include "engine/lv2/Lv2StatePaths.h"
 
-#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
@@ -16,37 +16,7 @@ namespace stdfs = std::filesystem;
 
 namespace
 {
-class TempDirectory
-{
-public:
-    TempDirectory()
-    {
-        const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
-        for (unsigned attempt = 0; attempt < 100; ++attempt)
-        {
-            value = stdfs::temp_directory_path()
-                  / ("dusk-lv2-state-generation-" + std::to_string (tick)
-                     + "-" + std::to_string (attempt));
-            std::error_code ec;
-            if (stdfs::create_directory (value, ec)) return;
-            if (ec)
-                throw std::runtime_error ("could not create LV2 state test directory");
-            // Another process atomically won this candidate; try the next.
-        }
-        throw std::runtime_error ("could not allocate LV2 state test directory");
-    }
-
-    ~TempDirectory()
-    {
-        std::error_code ignored;
-        stdfs::remove_all (value, ignored);
-    }
-
-    const stdfs::path& path() const noexcept { return value; }
-
-private:
-    stdfs::path value;
-};
+using TempDirectory = duskstudio::test::TempDirectory;
 
 void writeText (const stdfs::path& path, const char* text)
 {
@@ -104,7 +74,7 @@ TEST_CASE ("LV2 state paths: absolute under cur/ becomes relative", "[lv2][state
 TEST_CASE ("LV2 state paths: canonical state root handles a symlink alias",
            "[lv2][state][regression][issue-357]")
 {
-    TempDirectory temp;
+    TempDirectory temp ("dusk-lv2-state-generation-");
     const auto realRoot = temp.path() / "real";
     const auto aliasRoot = temp.path() / "alias";
     stdfs::create_directories (realRoot);
@@ -128,7 +98,7 @@ TEST_CASE ("LV2 state paths: refuse escaping abstract paths", "[lv2][state]")
 
 TEST_CASE ("LV2 state paths: restore makePath stays under cur/", "[lv2][state]")
 {
-    TempDirectory temp;
+    TempDirectory temp ("dusk-lv2-state-generation-");
     std::error_code ec;
 
     const auto nested = makeRestorePath (temp.path(), "restore/payload.txt", ec);
@@ -159,7 +129,7 @@ TEST_CASE ("LV2 state paths: abstract<->absolute round-trips under cur/", "[lv2]
 TEST_CASE ("LV2 file-backed save stages before rotating cur",
            "[lv2][state][regression][issue-357]")
 {
-    TempDirectory temp;
+    TempDirectory temp ("dusk-lv2-state-generation-");
     const auto curSample = temp.path() / "cur" / "samples" / "voice.wav";
     writeText (curSample, "generation one");
 
@@ -203,7 +173,7 @@ TEST_CASE ("LV2 file-backed save stages before rotating cur",
 TEST_CASE ("LV2 staging recovers only a complete next generation",
            "[lv2][state][regression][issue-357]")
 {
-    TempDirectory temp;
+    TempDirectory temp ("dusk-lv2-state-generation-");
     writeText (temp.path() / "next" / "state.bin", "incomplete");
 
     std::error_code ec;
@@ -222,7 +192,7 @@ TEST_CASE ("LV2 staging recovers only a complete next generation",
     REQUIRE (readText (temp.path() / "cur" / "state.bin") == "recoverable");
     REQUIRE_FALSE (stdfs::exists (afterRecovery / "state.bin"));
 
-    TempDirectory fallback;
+    TempDirectory fallback ("dusk-lv2-state-generation-");
     writeText (fallback.path() / "prev" / "state.bin", "previous");
     writeText (fallback.path() / "next" / "state.bin", "incomplete");
     const auto afterFallback = prepareNextGeneration (fallback.path(), ec);
@@ -233,21 +203,22 @@ TEST_CASE ("LV2 staging recovers only a complete next generation",
     // Restore must follow the persisted blob, not whichever rename happened
     // last before a crash. This is the state after next/ became cur/ but before
     // the enclosing session save committed.
-    TempDirectory restore;
+    TempDirectory restore ("dusk-lv2-state-generation-");
     writeText (restore.path() / "cur" / kStateFileName, "uncommitted");
     writeText (restore.path() / "prev" / kStateFileName, "persisted");
     writeText (restore.path() / "prev.old" / kStateFileName, "older");
     REQUIRE (recoverGeneration (restore.path(), "persisted", ec));
     REQUIRE_FALSE (ec);
     REQUIRE (readText (restore.path() / "cur" / kStateFileName) == "persisted");
-    REQUIRE (readText (restore.path() / "prev" / kStateFileName) == "older");
+    REQUIRE (readText (restore.path() / "prev" / kStateFileName) == "uncommitted");
+    REQUIRE (readText (restore.path() / "prev.old" / kStateFileName) == "older");
     REQUIRE_FALSE (stdfs::exists (restore.path() / "rejected"));
 }
 
 TEST_CASE ("LV2 failed file-backed save leaves cur and prev untouched",
            "[lv2][state][regression][issue-357]")
 {
-    TempDirectory temp;
+    TempDirectory temp ("dusk-lv2-state-generation-");
     writeText (temp.path() / "cur"  / "state.bin", "current");
     writeText (temp.path() / "prev" / "state.bin", "previous");
 
@@ -266,7 +237,7 @@ TEST_CASE ("LV2 failed file-backed save leaves cur and prev untouched",
 TEST_CASE ("LV2 restore refuses generations that do not match the persisted blob",
            "[lv2][state][regression][issue-357]")
 {
-    TempDirectory temp;
+    TempDirectory temp ("dusk-lv2-state-generation-");
     writeText (temp.path() / "cur" / kStateFileName, "newer state");
     writeText (temp.path() / "prev" / kStateFileName, "older state");
 
@@ -277,13 +248,13 @@ TEST_CASE ("LV2 restore refuses generations that do not match the persisted blob
     REQUIRE (readText (temp.path() / "prev" / kStateFileName) == "older state");
 
     // Old blob-only sessions have no generations and remain parseable.
-    TempDirectory legacy;
+    TempDirectory legacy ("dusk-lv2-state-generation-");
     REQUIRE (recoverGeneration (legacy.path(), "portable blob-only state", ec));
     REQUIRE_FALSE (ec);
 
     // An interrupted save that never acquired its ready marker is not a
     // generation. It must not make that same legacy blob ambiguous.
-    TempDirectory stagedLegacy;
+    TempDirectory stagedLegacy ("dusk-lv2-state-generation-");
     writeText (stagedLegacy.path() / "next" / kStateFileName, "incomplete");
     REQUIRE (recoverGeneration (
         stagedLegacy.path(), "portable blob-only state", ec));

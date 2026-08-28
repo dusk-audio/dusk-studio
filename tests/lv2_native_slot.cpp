@@ -5,11 +5,11 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "TestTempDirectory.h"
 #include "engine/lv2/NativeLv2Slot.h"
 #include "foundation/Base64.h"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -276,12 +276,8 @@ TEST_CASE ("NativeLv2Slot state round-trips through a state directory",
 
     // The engine always hands a track's LV2 slot a state directory, which selects
     // a completely different save path to the blob-only one above.
-    const auto stateDir = std::filesystem::temp_directory_path()
-                        / ("dusk-lv2-statedir-" + std::to_string (
-                               std::chrono::steady_clock::now().time_since_epoch().count()));
-    std::error_code ec;
-    std::filesystem::create_directories (stateDir, ec);
-    REQUIRE_FALSE (ec);
+    duskstudio::test::TempDirectory temp ("dusk-lv2-statedir-");
+    const auto& stateDir = temp.path();
 
     constexpr int kBlock = 256;
     const std::filesystem::path bundle = std::filesystem::u8path (path);
@@ -339,6 +335,4 @@ TEST_CASE ("NativeLv2Slot state round-trips through a state directory",
     INFO ("param '" << target->name << "' patchProperty=" << target->isPatchProperty);
     REQUIRE_THAT (restoredValue, Catch::Matchers::WithinAbs (savedValue, tolerance));
 
-    std::filesystem::remove_all (stateDir, ec);
 }
-

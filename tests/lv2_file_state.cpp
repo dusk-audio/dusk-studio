@@ -1,12 +1,13 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "TestTempDirectory.h"
 #include "engine/hosting/InsertAdapter.h"
 #include "engine/lv2/Lv2Bundle.h"
 #include "engine/lv2/Lv2Instance.h"
 #include "engine/lv2/Lv2StatePaths.h"
+#include "engine/lv2/Lv2UiParameterSync.h"
 
-#include <chrono>
 #include <filesystem>
 #include <algorithm>
 #include <cstring>
@@ -23,35 +24,7 @@ constexpr const char* kPluginUri = "urn:duskstudio:test:file-state";
 constexpr const char* kPayload = "dusk-lv2-file-state-v1";
 constexpr const char* kRestorePayload = "dusk-lv2-restore-make-path-v1";
 
-class TempDirectory
-{
-public:
-    TempDirectory()
-    {
-        const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
-        for (unsigned attempt = 0; attempt < 100; ++attempt)
-        {
-            value = fs::temp_directory_path()
-                  / ("dusk-lv2-file-state-integration-" + std::to_string (tick)
-                     + "-" + std::to_string (attempt));
-            std::error_code ec;
-            if (fs::create_directory (value, ec)) return;
-            if (ec) throw std::runtime_error ("could not create LV2 state test directory");
-        }
-        throw std::runtime_error ("could not allocate LV2 state test directory");
-    }
-
-    ~TempDirectory()
-    {
-        std::error_code ignored;
-        fs::remove_all (value, ignored);
-    }
-
-    const fs::path& path() const noexcept { return value; }
-
-private:
-    fs::path value;
-};
+using TempDirectory = duskstudio::test::TempDirectory;
 
 std::string readFile (const fs::path& path)
 {
@@ -76,7 +49,7 @@ void requireRestoredAudio (duskstudio::lv2::Lv2Instance& instance)
 TEST_CASE ("LV2 file-backed state survives consecutive save and restore generations",
            "[lv2][state][integration][regression][issue-357]")
 {
-    TempDirectory temp;
+    TempDirectory temp ("dusk-lv2-file-state-integration-");
     const auto stateDir = temp.path() / "state";
 
     duskstudio::lv2::Lv2Bundle bundle;
@@ -164,7 +137,7 @@ TEST_CASE ("LV2 file-backed state survives consecutive save and restore generati
 TEST_CASE ("LV2 file-backed save replaces an incomplete staging generation",
            "[lv2][state][integration][regression][issue-357]")
 {
-    TempDirectory temp;
+    TempDirectory temp ("dusk-lv2-file-state-integration-");
     const auto stateDir = temp.path() / "state";
     fs::create_directories (stateDir / "next");
     std::ofstream (stateDir / "next" / "recovery.bin", std::ios::binary)
@@ -189,7 +162,7 @@ TEST_CASE ("LV2 file-backed save replaces an incomplete staging generation",
 TEST_CASE ("LV2 failed file-backed restore cannot overwrite carried generations",
            "[lv2][state][integration][regression][issue-357]")
 {
-    TempDirectory temp;
+    TempDirectory temp ("dusk-lv2-file-state-integration-");
     const auto stateDir = temp.path() / "state";
 
     duskstudio::lv2::Lv2Bundle bundle;
@@ -299,4 +272,25 @@ TEST_CASE ("LV2 editor events carry current control and patch values",
     REQUIRE (event.protocol == instance.uiEventTransferUrid());
     REQUIRE (event.sizeBytes > sizeof (float));
     REQUIRE_THAT (event.value, Catch::Matchers::WithinAbs (0.625f, 1.0e-7f));
+
+    duskstudio::lv2::Lv2UiParameterSync sync;
+    std::vector<duskstudio::lv2::Lv2Instance::UiParameterEvent> sent;
+    auto capture = [&sent] (const auto& uiEvent) { sent.push_back (uiEvent); };
+
+    sync.sendCurrentValues (instance, true, capture);
+    REQUIRE (sent.size() == (size_t) instance.uiParameterEventCount());
+    sent.clear();
+    sync.sendCurrentValues (instance, false, capture);
+    REQUIRE (sent.empty());
+
+    instance.setParamValue (control->id, 0.5);
+    sync.sendCurrentValues (instance, false, capture);
+    REQUIRE (sent.size() == 1);
+    REQUIRE (sent.front().portIndex == control->id);
+    sent.clear();
+
+    instance.setParamValue (patch->id, 0.375);
+    sync.sendCurrentValues (instance, false, capture);
+    REQUIRE (sent.size() == 1);
+    REQUIRE (sent.front().protocol == instance.uiEventTransferUrid());
 }

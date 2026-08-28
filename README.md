@@ -60,7 +60,7 @@ GPL source on this repo — build from source and the binary costs you nothing b
 | macOS DMG (unsigned, ad-hoc) | Working (CI publishes to private releases repo on tag) |
 | Deeper a11y (full screen-reader labels + keyboard-only mixer nav) | Floor only |
 
-The C++ suite declares 861 Catch2 test cases across 173 test source files. Linux
+The C++ suite declares 861 Catch2 test cases across 172 test source files. Linux
 (amd64 + arm64) and macOS builds run on every push; Windows tests run on every
 push + PR; Linux ThreadSanitizer runs on every PR + push.
 

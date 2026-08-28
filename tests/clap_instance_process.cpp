@@ -16,16 +16,13 @@
 #include <string>
 #include <vector>
 
-#ifndef DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH
- #define DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH ""
-#endif
-
 TEST_CASE ("ClapInstance connects every advertised bus and tolerates duplicate main flags",
            "[clap][instance][regression][issue-361]")
 {
+    const std::string fixture = DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH;
     duskstudio::clap::ClapBundle bundle;
     std::string err;
-    REQUIRE (bundle.load (DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH, err));
+    REQUIRE (bundle.load (fixture, err));
     REQUIRE (bundle.plugins().size() == 1);
 
     duskstudio::clap::ClapInstance inst;

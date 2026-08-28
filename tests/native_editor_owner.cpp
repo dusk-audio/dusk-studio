@@ -1,9 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "../src/engine/hosting/NativeInsertSlot.h"
 #include "../src/ui/NativeEditorOwner.h"
 
-#include <cmath>
 #include <memory>
 #include <vector>
 
@@ -193,8 +193,8 @@ TEST_CASE ("NativeInsertSlot resizes its adapter after a partial reactivate fail
     std::vector<float> right (16, -1.0f);
     slot.processStereo (left.data(), right.data(), left.data(), right.data(), 16);
     REQUIRE (slot.getInstance()->processCalls == 1);
-    REQUIRE (std::abs (left.front() - 0.5f) < 1.0e-6f);
-    REQUIRE (std::abs (right.front() + 0.5f) < 1.0e-6f);
+    REQUIRE_THAT (left.front(), Catch::Matchers::WithinAbs (0.5, 1.0e-6));
+    REQUIRE_THAT (right.front(), Catch::Matchers::WithinAbs (-0.5, 1.0e-6));
 }
 
 TEST_CASE ("AbandonInstance quiesces only while the plugin is live")

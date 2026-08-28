@@ -3,6 +3,7 @@
 #include "GeneratedMidiBudget.h"
 #include "LoopTimeline.h"
 #include "PdcMath.h"
+#include "PluginStateDiagnostics.h"
 #include "RtPriority.h"
 #include "../dsp/OutputPairRouting.h"
 #include "McuReceiver.h"
@@ -304,16 +305,9 @@ static void captureNativeState (SlotType& slot, juce::String& stateOut,
 static void noteStateRejected (const char* slotKind, int index, std::size_t bytes,
                                int auxLane = -1)
 {
-    if (auxLane >= 0)
-        std::fprintf (stderr,
-                      "[Dusk Studio/session] %s lane %d slot %d rejected its saved state "
-                      "(%zu bytes); running at defaults\n",
-                      slotKind, auxLane + 1, index + 1, bytes);
-    else
-        std::fprintf (stderr,
-                      "[Dusk Studio/session] %s %d rejected its saved state (%zu bytes); "
-                      "running at defaults\n",
-                      slotKind, index + 1, bytes);
+    const auto message = pluginstate::stateRejectedMessage (slotKind, index, bytes, auxLane);
+    std::fputs (message.c_str(), stderr);
+    std::fputc ('\n', stderr);
     std::fflush (stderr);
 }
 #endif

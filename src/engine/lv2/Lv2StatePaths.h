@@ -369,7 +369,12 @@ inline bool recoverGeneration (const std::filesystem::path& stateDir,
             ec = recoveryError;
             return false;
         }
-        if (hasOlder)
+        if (hasCur)
+        {
+            std::filesystem::rename (rejected, prev, ec);
+            if (ec) return false;
+        }
+        else if (hasOlder)
         {
             std::filesystem::rename (older, prev, ec);
             if (ec) return false;

@@ -180,7 +180,6 @@ void ClapEditor::mapPluginChildren()
         {
             containerEmpty = false;
             untouchedPolls = 0;
-            reveal();
         }
     }
     XFlush (dpy);
@@ -199,6 +198,9 @@ ClapEditor::ContainerContent ClapEditor::readContainerContent() const
     const int sw = std::min (attr.width, 64), sh = std::min (attr.height, 64);
     if (sw <= 0 || sh <= 0) return ContainerContent::unknown;
 
+    // JUCE installs a process-wide non-fatal X error handler, so BadMatch from
+    // a window moving off-screen between the attribute read and this call is
+    // reported as a null image instead of terminating the host.
     auto* image = XGetImage (dpy, (Window) containerHandle,
                              (attr.width - sw) / 2, (attr.height - sh) / 2,
                              (unsigned) sw, (unsigned) sh, AllPlanes, ZPixmap);
@@ -261,11 +263,15 @@ bool ClapEditor::getActualGeometry (int& x, int& y, int& w, int& h) const
 
 void ClapEditor::reveal()
 {
-    // An empty container is an opaque black rectangle over the editor area, and
-    // it would cover the host's own explanation of why nothing is in it.
-    if (pluginWindowMissing()) return;
-    if (platformContext == nullptr || containerHandle == 0 || mapped) return;
-    XMapWindow ((Display*) platformContext, (Window) containerHandle);
+    if (platformContext == nullptr || containerHandle == 0) return;
+    if (containerEmpty)
+    {
+        containerEmpty = false;
+        untouchedPolls = 0;
+        sinceEmbedMs = childPollMs = 0.0;
+    }
+    if (mapped) return;
+    XMapWindow (static_cast<Display*> (platformContext), (Window) containerHandle);
     XFlush ((Display*) platformContext);
     mapped = true;
 }
@@ -407,9 +413,7 @@ void ClapEditor::pump (double elapsedMs)
         {
             childPollMs = 0.0;
             mapPluginChildren();
-            if (childSeen)
-                reveal();   // a late window still gets its container back
-            else if (! containerEmpty && sinceEmbedMs >= kChildWindowGraceMs)
+            if (! childSeen && ! containerEmpty && sinceEmbedMs >= kChildWindowGraceMs)
             {
                 switch (readContainerContent())
                 {

@@ -310,7 +310,13 @@ void ClapPluginEditorComponent::timerCallback()
     // also be polled. tryEmbed no-ops until showing.
     if (embedded)
     {
-        if (isShowing()) editor.reveal();
+        if (isShowing())
+        {
+#if defined(__linux__)
+            if (! editor.pluginWindowMissing())
+#endif
+                editor.reveal();
+        }
         else             editor.hide();
 #if defined(__linux__)
         verifyGeometry();

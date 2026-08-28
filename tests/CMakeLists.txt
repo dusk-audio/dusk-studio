@@ -50,7 +50,6 @@ add_executable(dusk-studio-tests
     native_editor_owner.cpp
     x11_anti_pattern_guard.cpp
     clap_editor_lifecycle.cpp
-    lv2_editor_sync.cpp
     plugin_state_diagnostics.cpp
     channel_strip_context_rename.cpp
     snap_helpers.cpp

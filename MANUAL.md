@@ -1758,7 +1758,7 @@ The binding is captured and immediately active. The next time that CC arrives, t
 
 **Plugin parameters**: right-click a loaded insert slot and choose **MIDI Learn last-touched parameter**. Move the target knob in the plugin's own editor first, then trigger your controller — the binding targets whichever parameter you touched last. This works for standard-host plugins and for every native host (CLAP and VST3-Native on every OS, LV2-Native on Linux and macOS, and AudioUnit on macOS), including LV2 plugins whose parameters are atom "patch" properties (JUCE-built LV2s, notably).
 
-A binding to an LV2 patch property saved before 0.13.3 may come back pointing at a different parameter of the same plugin, because the parameter order those releases recorded was not stable between launches. Re-learn it once and it stays put.
+A binding to an LV2 patch property saved by an earlier build may come back pointing at a different parameter of the same plugin, because the recorded parameter order was not stable between launches. Re-learn it once and it stays put.
 
 ## Trigger types
 
@@ -2150,10 +2150,10 @@ The session references a plugin Dusk Studio cannot find on this machine.
 
 A CLAP plugin's editor could not be shown, and the panel says which step failed instead of standing empty. The wording after the heading is the reason:
 
-- **the plugin opened no window** - the plugin took the editor area and then put nothing in it. Nothing is wrong with the audio side: bypass the editor and the plugin still processes. Check the terminal output for the `[clap editor]` lines, and try the same plugin's VST3 or LV2 build if it ships one.
+- **the plugin opened no window** (Linux only) - the plugin took the editor area and then put nothing in it. Nothing is wrong with the audio side: bypass the editor and the plugin still processes. Check the terminal output for the `[clap editor]` lines. Try the same plugin's VST3 or LV2 build if it ships one.
 - **gui set_parent() failed**, **plugin has no embedded-X11 GUI**, or a similar step name - the plugin refused to hand over its editor. Plugins that only offer a floating window of their own are not embeddable and report this.
 
-Launching Dusk Studio from a terminal prints the full embed sequence, including the plugin's own window geometry, which is what a bug report about a blank editor needs.
+On Linux, launching Dusk Studio from a terminal prints the full embed sequence, including the plugin's own window geometry, which is what a bug report about a blank editor needs.
 
 ## Auto-bypass
 

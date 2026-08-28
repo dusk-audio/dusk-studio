@@ -1273,7 +1273,18 @@ static bool runHeadlessSelfTest()
     }
     bool passed = report.find ("[FAIL]") == std::string::npos;
 
-#if DUSKSTUDIO_HAS_NATIVE_CLAP && defined(DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH)
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    const char* fixturePath = std::getenv ("DUSKSTUDIO_CLAP_STATE_FIXTURE");
+    if (fixturePath == nullptr || *fixturePath == '\0')
+    {
+        std::fputs ("[SKIP] Native CLAP track + aux session state round-trip "
+                    "(set DUSKSTUDIO_CLAP_STATE_FIXTURE to the test plugin)\n",
+                    stdout);
+        std::fflush (stdout);
+        if (envFlagSet ("DUSKSTUDIO_CLAP_STATE_TEST_ONLY")) passed = false;
+        return passed;
+    }
+
     constexpr int trackIndex = 4;
     constexpr int auxLaneIndex = 3;
     constexpr int auxSlotIndex = 0;
@@ -1295,8 +1306,7 @@ static bool runHeadlessSelfTest()
     engine->detachAudioCallback();
     engine->prepareForSelfTest (48000.0, blockSize);
 
-    const auto fixture = std::filesystem::u8path (
-        DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH);
+    const auto fixture = std::filesystem::u8path (fixturePath);
     auto& trackStrip = engine->getChannelStrip (trackIndex);
     auto& auxStrip = engine->getAuxLaneStrip (auxLaneIndex);
     std::string error;
@@ -1339,13 +1349,12 @@ static bool runHeadlessSelfTest()
         expect (auxState.isNotEmpty(), "aux state was empty");
         expect (trackState != auxState, "track and aux state did not diverge");
 
-        const auto tempDir = dusk::fs::tempDir()
-            / ("dusk-clap-state-roundtrip-" + std::to_string (
-                std::chrono::steady_clock::now().time_since_epoch().count()));
+        const auto tempDir = dusk::fs::createUniqueTempDirectory (
+            "dusk-clap-state-roundtrip-");
+        if (! expect (! tempDir.empty(), "could not create the temporary session directory"))
+            return false;
         const auto sessionFile = tempDir / "session.json";
         std::error_code filesystemError;
-        std::filesystem::create_directories (tempDir, filesystemError);
-        expect (! filesystemError, "could not create the temporary session directory");
         expect (SessionSerializer::save (*session, sessionFile), "session JSON save failed");
         expect (SessionSerializer::load (*session, sessionFile), "session JSON load failed");
 
@@ -1370,10 +1379,10 @@ static bool runHeadlessSelfTest()
         std::fprintf (stdout, "[PASS] Native CLAP track + aux session state round-trip\n");
     std::fflush (stdout);
     passed = passed && clapPassed;
-#elif DUSKSTUDIO_HAS_NATIVE_CLAP
+#else
     std::fprintf (stdout,
                   "[SKIP] Native CLAP track + aux session state round-trip "
-                  "(fixture not built; configure with DUSKSTUDIO_BUILD_TESTS=ON)\n");
+                  "(built without the native CLAP host)\n");
     std::fflush (stdout);
     if (envFlagSet ("DUSKSTUDIO_CLAP_STATE_TEST_ONLY"))
     {

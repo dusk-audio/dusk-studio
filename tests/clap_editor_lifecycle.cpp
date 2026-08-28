@@ -60,7 +60,7 @@ TEST_CASE ("the X11 CLAP editor maps whatever window the plugin parents into it"
     REQUIRE (source.find ("XMapWindow (dpy, children[i])") != std::string::npos);
 }
 
-TEST_CASE ("a late X11 CLAP child revives a container previously judged empty",
+TEST_CASE ("a late X11 CLAP child revives the empty latch without mapping a hidden container",
            "[clap][editor][regression][issue-361]")
 {
     const auto source = readSource ("src/engine/clap/ClapEditor.cpp");
@@ -68,15 +68,53 @@ TEST_CASE ("a late X11 CLAP child revives a container previously judged empty",
     const auto nextMethod = source.find ("ClapEditor::ContainerContent", mapChildren);
     const auto clearEmpty = source.find ("containerEmpty = false", mapChildren);
     const auto clearPolls = source.find ("untouchedPolls = 0", mapChildren);
-    const auto reveal = source.find ("reveal()", mapChildren);
 
     REQUIRE (mapChildren != std::string::npos);
     REQUIRE (nextMethod != std::string::npos);
     REQUIRE (clearEmpty < nextMethod);
     REQUIRE (clearPolls < nextMethod);
-    REQUIRE (reveal < nextMethod);
-    REQUIRE (clearEmpty < reveal);
-    REQUIRE (clearPolls < reveal);
+    REQUIRE (source.substr (mapChildren, nextMethod - mapChildren).find ("reveal()")
+             == std::string::npos);
+
+    const auto pump = source.find ("void ClapEditor::pump");
+    const auto lateMap = source.find ("mapPluginChildren()", pump);
+    const auto contentCheck = source.find ("readContainerContent()", lateMap);
+    REQUIRE (pump != std::string::npos);
+    REQUIRE (lateMap != std::string::npos);
+    REQUIRE (contentCheck != std::string::npos);
+    REQUIRE (source.substr (lateMap, contentCheck - lateMap).find ("reveal()")
+             == std::string::npos);
+}
+
+TEST_CASE ("an X11 CLAP editor judged empty retries when explicitly revealed",
+           "[clap][editor][regression][issue-361]")
+{
+    const auto editorSource = readSource ("src/engine/clap/ClapEditor.cpp");
+    const auto reveal = editorSource.find ("void ClapEditor::reveal()");
+    const auto hide = editorSource.find ("void ClapEditor::hide()", reveal);
+    const auto clearEmpty = editorSource.find ("containerEmpty = false", reveal);
+    const auto clearPolls = editorSource.find ("untouchedPolls = 0", reveal);
+    const auto mapWindow = editorSource.find ("XMapWindow", reveal);
+
+    REQUIRE (reveal != std::string::npos);
+    REQUIRE (hide != std::string::npos);
+    REQUIRE (clearEmpty < hide);
+    REQUIRE (clearPolls < hide);
+    REQUIRE (mapWindow < hide);
+    REQUIRE (clearEmpty < mapWindow);
+    REQUIRE (clearPolls < mapWindow);
+
+    const auto componentSource = readSource ("src/ui/ClapPluginEditorComponent.cpp");
+    const auto timer = componentSource.find ("void ClapPluginEditorComponent::timerCallback()");
+    const auto pump = componentSource.find ("editor.pump", timer);
+    const auto missingGuard = componentSource.find ("! editor.pluginWindowMissing()", timer);
+    const auto timerReveal = componentSource.find ("editor.reveal()", timer);
+
+    REQUIRE (timer != std::string::npos);
+    REQUIRE (pump != std::string::npos);
+    REQUIRE (missingGuard < pump);
+    REQUIRE (timerReveal < pump);
+    REQUIRE (missingGuard < timerReveal);
 }
 
 TEST_CASE ("the X11 empty-container check ignores pixels outside the visual depth",

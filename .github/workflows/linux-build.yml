@@ -178,6 +178,14 @@ jobs:
       - name: Run tests
         run: ctest --test-dir build-tests --output-on-failure
 
+      - name: Engine CLAP state round-trip (xvfb)
+        run: |
+          timeout 60 xvfb-run --auto-servernum \
+            env DUSKSTUDIO_RUN_SELFTEST=1 \
+                DUSKSTUDIO_CLAP_STATE_TEST_ONLY=1 \
+                DUSKSTUDIO_CLAP_STATE_FIXTURE="$PWD/build-tests/dusk-studio-multi-bus-clap-fixture.clap" \
+            build-linux/DuskStudio_artefacts/Release/DuskStudio
+
       - name: ccache stats
         if: always()
         run: ccache -s
