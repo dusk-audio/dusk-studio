@@ -4,6 +4,7 @@
 #include <cstdio>
 
 #include <X11/Xlib.h>
+#include <X11/Xutil.h>
 
 namespace duskstudio::clap
 {
@@ -98,7 +99,7 @@ bool ClapEditor::embed (void* parentHandle, int x, int y, int w, int h, std::str
     containerHandle = (std::uintptr_t) XCreateWindow (
         dpy, (Window) (std::uintptr_t) parentHandle, x, y,
         (unsigned) ww, (unsigned) hh, 0,
-        CopyFromParent, InputOutput, CopyFromParent,
+        CopyFromParent, InputOutput, nullptr,
         CWBackPixel | CWBorderPixel | CWEventMask | CWOverrideRedirect, &swa);
     // Map the host window BEFORE set_parent: some plugins (u-he Satin) abort() when
     // reparented into a non-viewable window. tryEmbed only runs when this component is
@@ -172,8 +173,15 @@ void ClapEditor::mapPluginChildren()
 
     if (count > 0)
     {
+        const bool firstChild = ! childSeen;
         childSeen      = true;
         childrenLogged = true;
+        if (firstChild)
+        {
+            containerEmpty = false;
+            untouchedPolls = 0;
+            reveal();
+        }
     }
     XFlush (dpy);
 }
@@ -196,10 +204,15 @@ ClapEditor::ContainerContent ClapEditor::readContainerContent() const
                              (unsigned) sw, (unsigned) sh, AllPlanes, ZPixmap);
     if (image == nullptr) return ContainerContent::unknown;
 
+    unsigned long colourMask = AllPlanes;
+    if (attr.visual != nullptr)
+        colourMask = attr.visual->red_mask | attr.visual->green_mask | attr.visual->blue_mask;
+
     bool drawn = false;
     for (int y = 0; y < sh && ! drawn; ++y)
         for (int x = 0; x < sw; ++x)
-            if (XGetPixel (image, x, y) != containerFill) { drawn = true; break; }
+            if ((XGetPixel (image, x, y) & colourMask) != (containerFill & colourMask))
+            { drawn = true; break; }
 
     XDestroyImage (image);
     return drawn ? ContainerContent::drawn : ContainerContent::background;

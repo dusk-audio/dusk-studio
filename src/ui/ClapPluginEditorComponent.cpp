@@ -166,6 +166,7 @@ void ClapPluginEditorComponent::tryEmbed()
     else
     {
         lastError = err;
+        repaint();
         std::fprintf (stderr, "[clap editor] embed failed: %s\n", err.c_str());
         // A failed embed tears the ClapEditor down (set_parent/show call close()), so
         // the GUI is gone. Stop treating this component as live - otherwise the next
