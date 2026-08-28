@@ -117,7 +117,11 @@ struct Lv2Instance::Impl
     {
         if (abstractPath == nullptr) return nullptr;
         auto* self = static_cast<Impl*> (handle);
-        return ::strdup (statepaths::toAbsolute (self->stateDir, abstractPath).c_str());
+        const auto absolute = statepaths::toAbsolute (self->stateDir, abstractPath);
+        // A refused blob value must not fall through as the relative string it
+        // came in as: the plugin would resolve it against the process working
+        // directory and read a file outside the session entirely.
+        return absolute.empty() ? nullptr : ::strdup (absolute.c_str());
     }
     static char* abstractPathCb (LV2_State_Map_Path_Handle handle, const char* absolutePath)
     {
