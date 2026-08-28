@@ -104,9 +104,12 @@ TEST_CASE ("LV2 state paths: refuse escaping abstract paths",
         REQUIRE (toAbsolute (dir, traversal).empty());
 
     // A valid in-root path still maps, and an absolute one still passes through.
+    // Build the absolute case from current_path: a leading separator alone is
+    // not an absolute path on Windows, where the root name carries the drive.
     REQUIRE (stdfs::path (toAbsolute (dir, "samples/kick.wav"))
              == cur / "samples" / "kick.wav");
-    REQUIRE (toAbsolute (dir, "/etc/passwd") == "/etc/passwd");
+    const auto external = (stdfs::current_path() / "shared" / "ir.wav").u8string();
+    REQUIRE (toAbsolute (dir, external) == external);
 
     // Backslashes are a separator on Windows and an ordinary filename character
     // elsewhere, so assert the invariant that holds on both: whatever comes
