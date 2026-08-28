@@ -1780,11 +1780,14 @@ void ChannelStripComponent::openPluginPicker()
                                         // One host per insert: a successful JUCE load evicts any
                                         // native slot - the audio chain checks natives first, so a
                                         // lingering native would silently shadow the picked plugin.
+                                        const bool hadLiveNative = chStrip.isNativeClapLoaded()
+                                            || chStrip.isNativeLv2Loaded()
+                                            || chStrip.isNativeVst3Loaded()
+                                            || chStrip.isNativeAuLoaded()
+                                            || chStrip.isNativeMultisampleLoaded();
                                         if (self->pluginSlot.isLoaded()
-                                            && (chStrip.isNativeClapLoaded() || chStrip.isNativeLv2Loaded()
-                                                || chStrip.isNativeVst3Loaded()
-                                                || chStrip.isNativeAuLoaded()
-                                                || chStrip.isNativeMultisampleLoaded()))
+                                            && (hadLiveNative
+                                                || chStrip.nativeInsertRestoreFailed()))
                                         {
    #if DUSKSTUDIO_HAS_NATIVE_CLAP
                                             self->clapEditor.reset();   // references the dying instance
@@ -1803,13 +1806,13 @@ void ChannelStripComponent::openPluginPicker()
                                             self->multisampleEditor.reset();
                                             self->multisampleEditorOwner = nullptr;
    #endif
-                                            self->engine.suspendProcessing();
+                                            if (hadLiveNative) self->engine.suspendProcessing();
                                             chStrip.unloadNativeClap();
                                             chStrip.unloadNativeLv2();
                                             chStrip.unloadNativeVst3();
                                             chStrip.unloadNativeAu();
                                             chStrip.unloadNativeMultisample();
-                                            self->engine.resumeProcessing();
+                                            if (hadLiveNative) self->engine.resumeProcessing();
                                             self->track.nativeClapPath = {};
                                             self->track.nativeClapPluginId = {};
                                             self->track.nativeClapStateBase64 = {};
@@ -1940,6 +1943,13 @@ void ChannelStripComponent::openPluginPicker()
 
 void ChannelStripComponent::openHardwareInsertEditor()
 {
+    // Replacing an offline native placeholder with hardware is an explicit
+    // recovery choice. Clear the preserved native reference first; otherwise
+    // its failure flag wins the slot label/menu and the next save resurrects
+    // the plug-in alongside the hardware insert.
+    if (engine.getChannelStrip (trackIndex).nativeInsertRestoreFailed())
+        unloadPluginSlot();
+
     // Flip the strip to Hardware mode FIRST so the audio thread's
     // crossfade gate (Phase 3) starts ramping in even before the user
     // touches a control. The editor itself mutates `track.hardwareInsert`
@@ -2080,6 +2090,33 @@ void ChannelStripComponent::unloadPluginSlot()
     }
 #endif
 
+    // A failed load can leave only the preserved session reference, with no
+    // native instance for the format-specific branches above to match.
+    auto& failedStrip = engine.getChannelStrip (trackIndex);
+    if (failedStrip.nativeInsertRestoreFailed())
+    {
+        failedStrip.unloadNativeClap();
+        failedStrip.unloadNativeLv2();
+        failedStrip.unloadNativeVst3();
+        failedStrip.unloadNativeAu();
+        failedStrip.unloadNativeMultisample();
+        track.nativeClapPath = {};
+        track.nativeClapPluginId = {};
+        track.nativeClapStateBase64 = {};
+        track.nativeLv2Path = {};
+        track.nativeLv2PluginId = {};
+        track.nativeLv2StateBase64 = {};
+        track.nativeVst3Path = {};
+        track.nativeVst3PluginId = {};
+        track.nativeVst3StateBase64 = {};
+        track.nativeAuIdentifier = {};
+        track.nativeAuStateBase64 = {};
+        track.nativeMultisamplePath = {};
+        track.nativeMultisampleStateBase64 = {};
+        refreshPluginSlotButton();
+        return;
+    }
+
     pluginSlot.unload();
     refreshPluginSlotButton();
 }
@@ -2122,6 +2159,11 @@ void ChannelStripComponent::showPluginSlotMenu()
                            "MIDI Learn last-touched parameter",
                            lastParam >= 0);
         }
+    }
+    else if (engine.getChannelStrip (trackIndex).nativeInsertRestoreFailed())
+    {
+        menu.addItem (2002, "Replace insert...");
+        menu.addItem (2003, "Remove plugin");
     }
     else if (engine.getChannelStrip (trackIndex).insertMode.load (std::memory_order_acquire)
                  == ChannelStrip::kInsertHardware)
@@ -2201,6 +2243,20 @@ void ChannelStripComponent::refreshPluginSlotButton()
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     syncMultisampleEditorOwner();
 #endif
+    auto nativeLabel = [] (const juce::String& name, bool offline)
+    {
+        return offline
+            ? juce::String (juce::CharPointer_UTF8 ("\xe2\x9a\xa0 ")) + name + " (offline)"
+            : juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xbe ")) + name;
+    };
+    auto setNativeTooltip = [this] (bool offline)
+    {
+        pluginSlotButton.setTooltip (offline
+            ? "This plug-in is offline after a restore or reactivation failure. "
+              "Its saved reference and state will be preserved. Right-click to "
+              "replace or remove it."
+            : "Click to toggle the plug-in editor; right-click for Replace / Remove.");
+    };
     // Native CLAP insert - name from the loaded .clap bundle. The JUCE pluginSlot is
     // empty for a native insert, so this must precede the slot-based bookkeeping below
     // (which would otherwise mislabel "Insert" and drop the live clap editor). Linux-only.
@@ -2210,7 +2266,9 @@ void ChannelStripComponent::refreshPluginSlotButton()
         const auto nm = juce::File (engine.getChannelStrip (trackIndex)
                                       .getNativeClapSlot().getPath())
                           .getFileNameWithoutExtension();
-        const auto label = juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xbe ")) + nm;
+        const bool offline = engine.getChannelStrip (trackIndex).nativeClapReloadFailed();
+        const auto label = nativeLabel (nm, offline);
+        setNativeTooltip (offline);
         if (label == lastSlotName) return;
         lastSlotName = label;
         pluginSlotButton.setButtonText (label);
@@ -2224,7 +2282,9 @@ void ChannelStripComponent::refreshPluginSlotButton()
         const auto nm = juce::File (engine.getChannelStrip (trackIndex)
                                       .getNativeLv2Slot().getPath())
                           .getFileNameWithoutExtension();
-        const auto label = juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xbe ")) + nm;
+        const bool offline = engine.getChannelStrip (trackIndex).nativeLv2ReloadFailed();
+        const auto label = nativeLabel (nm, offline);
+        setNativeTooltip (offline);
         if (label == lastSlotName) return;
         lastSlotName = label;
         pluginSlotButton.setButtonText (label);
@@ -2237,7 +2297,9 @@ void ChannelStripComponent::refreshPluginSlotButton()
         const auto nm = juce::File (engine.getChannelStrip (trackIndex)
                                       .getNativeVst3Slot().getPath())
                           .getFileNameWithoutExtension();
-        const auto label = juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xbe ")) + nm;
+        const bool offline = engine.getChannelStrip (trackIndex).nativeVst3ReloadFailed();
+        const auto label = nativeLabel (nm, offline);
+        setNativeTooltip (offline);
         if (label == lastSlotName) return;
         lastSlotName = label;
         pluginSlotButton.setButtonText (label);
@@ -2250,7 +2312,9 @@ void ChannelStripComponent::refreshPluginSlotButton()
         auto nm = juce::String::fromUTF8 (engine.getChannelStrip (trackIndex)
                                               .getNativeAuSlot().displayName().c_str());
         if (nm.isEmpty()) nm = "Audio Unit";
-        const auto label = juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xbe ")) + nm;
+        const bool offline = engine.getChannelStrip (trackIndex).nativeAuReloadFailed();
+        const auto label = nativeLabel (nm, offline);
+        setNativeTooltip (offline);
         if (label == lastSlotName) return;
         lastSlotName = label;
         pluginSlotButton.setButtonText (label);
@@ -2268,15 +2332,54 @@ void ChannelStripComponent::refreshPluginSlotButton()
         // show the generic label rather than a bare arrow. Handled in-branch so a
         // loaded multisample never reaches the JUCE-slot bookkeeping below, which
         // describes an insert this strip isn't running.
-        const auto label = nm.isNotEmpty()
-            ? juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xbe ")) + nm
-            : juce::String ("Insert");
+        const bool offline = engine.getChannelStrip (trackIndex)
+                                   .nativeMultisampleReloadFailed();
+        const auto label = nm.isNotEmpty() ? nativeLabel (nm, offline)
+                                           : juce::String ("Insert");
+        setNativeTooltip (offline);
         if (label == lastSlotName) return;
         lastSlotName = label;
         pluginSlotButton.setButtonText (label);
         return;
     }
 #endif
+
+    // A failed session restore may have unloaded the instance completely. The
+    // saved path/state still belong to this slot, so keep an explicit offline
+    // placeholder instead of making it look empty and healthy.
+    if (engine.getChannelStrip (trackIndex).nativeInsertRestoreFailed())
+    {
+        juce::String name ("native plug-in");
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+        if (engine.getChannelStrip (trackIndex).nativeClapReloadFailed())
+            name = juce::File (track.nativeClapPath).getFileNameWithoutExtension();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+        if (engine.getChannelStrip (trackIndex).nativeLv2ReloadFailed())
+            name = juce::File (track.nativeLv2Path).getFileNameWithoutExtension();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+        if (engine.getChannelStrip (trackIndex).nativeVst3ReloadFailed())
+            name = juce::File (track.nativeVst3Path).getFileNameWithoutExtension();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+        if (engine.getChannelStrip (trackIndex).nativeAuReloadFailed())
+            name = track.nativeAuIdentifier;
+#endif
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+        if (engine.getChannelStrip (trackIndex).nativeMultisampleReloadFailed())
+            name = juce::File (track.nativeMultisamplePath).getFileNameWithoutExtension();
+#endif
+        if (name.isEmpty()) name = "native plug-in";
+        const auto label = nativeLabel (name, true);
+        setNativeTooltip (true);
+        if (label != lastSlotName)
+        {
+            lastSlotName = label;
+            pluginSlotButton.setButtonText (label);
+        }
+        return;
+    }
 
     const int mode = engine.getChannelStrip (trackIndex)
                        .insertMode.load (std::memory_order_relaxed);

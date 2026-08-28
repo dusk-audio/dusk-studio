@@ -2094,6 +2094,18 @@ void AudioEngine::consumePluginStateAfterLoad()
         return juce::String ("(unknown)");
     };
 
+    auto pluginFormat = [this] (const std::optional<PluginDescriptor>& descriptor,
+                                const juce::String& legacyXml) -> std::string
+    {
+        if (descriptor.has_value() && ! descriptor->formatName.empty())
+            return descriptor->formatName;
+        PluginDescriptor converted;
+        if (pluginManager.descriptorFromLegacyXml (legacyXml, converted)
+            && ! converted.formatName.empty())
+            return converted.formatName;
+        return "JUCE-hosted";
+    };
+
 #if DUSKSTUDIO_HAS_NATIVE_AU
     auto auName = [this] (const juce::String& identifier)
     {
@@ -2143,21 +2155,27 @@ void AudioEngine::consumePluginStateAfterLoad()
             {
                 suspendProcessing();
                 std::string err;
-                bool ok = strip.loadNativeClap (clapFile, err, track.nativeClapPluginId);
-                if (ok && ! blob.empty())
+                const bool stateWasSupplied = ! blob.empty();
+                const bool loaded = strip.loadNativeClap (
+                    clapFile, err, track.nativeClapPluginId);
+                bool stateAccepted = ! stateWasSupplied;
+                if (loaded && stateWasSupplied)
                 {
-                    ok = strip.getNativeClapSlot().loadState (blob);
-                    if (! ok) noteStateRejected ("track CLAP", t, blob.size());
+                    stateAccepted = strip.getNativeClapSlot().loadState (blob);
+                    if (! stateAccepted) noteStateRejected ("track CLAP", t, blob.size());
                 }
+                const auto reason = hosting::enforceRestorePolicy (
+                    loaded, stateWasSupplied, stateAccepted, err, blob.size(),
+                    [&] { strip.unloadNativeClap(); });
                 resumeProcessing();
-                if (! ok)
+                if (! reason.empty())
                 {
                     // A failed RESTORE is not a user removal - mark it so the save
                     // path keeps the persisted refs (loadNativeClap cleared the flag).
                     strip.markNativeClapRestoreFailed();
                     lastPluginLoadFailures.push_back ({
                         "Track " + juce::String (t + 1),
-                        clapFile.getFileNameWithoutExtension() });
+                        clapFile.getFileNameWithoutExtension(), "CLAP", reason });
                 }
             }
             else
@@ -2186,21 +2204,27 @@ void AudioEngine::consumePluginStateAfterLoad()
             {
                 suspendProcessing();
                 std::string err;
-                bool ok = strip.loadNativeLv2 (lv2File, err, track.nativeLv2PluginId);
-                if (ok && ! blob.empty())
+                const bool stateWasSupplied = ! blob.empty();
+                const bool loaded = strip.loadNativeLv2 (
+                    lv2File, err, track.nativeLv2PluginId);
+                bool stateAccepted = ! stateWasSupplied;
+                if (loaded && stateWasSupplied)
                 {
                     strip.getNativeLv2Slot().setStateDirectory (
                         lv2StateDirFor (session, "track" + juce::String (t + 1).paddedLeft ('0', 2)));
-                    ok = strip.getNativeLv2Slot().loadState (blob);
-                    if (! ok) noteStateRejected ("track LV2", t, blob.size());
+                    stateAccepted = strip.getNativeLv2Slot().loadState (blob);
+                    if (! stateAccepted) noteStateRejected ("track LV2", t, blob.size());
                 }
+                const auto reason = hosting::enforceRestorePolicy (
+                    loaded, stateWasSupplied, stateAccepted, err, blob.size(),
+                    [&] { strip.unloadNativeLv2(); });
                 resumeProcessing();
-                if (! ok)
+                if (! reason.empty())
                 {
                     strip.markNativeLv2RestoreFailed();   // keep refs - see the CLAP twin
                     lastPluginLoadFailures.push_back ({
                         "Track " + juce::String (t + 1),
-                        lv2File.getFileNameWithoutExtension() });
+                        lv2File.getFileNameWithoutExtension(), "LV2", reason });
                 }
             }
             else
@@ -2229,19 +2253,25 @@ void AudioEngine::consumePluginStateAfterLoad()
             {
                 suspendProcessing();
                 std::string err;
-                bool ok = strip.loadNativeVst3 (vst3File, err, track.nativeVst3PluginId);
-                if (ok && ! blob.empty())
+                const bool stateWasSupplied = ! blob.empty();
+                const bool loaded = strip.loadNativeVst3 (
+                    vst3File, err, track.nativeVst3PluginId);
+                bool stateAccepted = ! stateWasSupplied;
+                if (loaded && stateWasSupplied)
                 {
-                    ok = strip.getNativeVst3Slot().loadState (blob);
-                    if (! ok) noteStateRejected ("track VST3", t, blob.size());
+                    stateAccepted = strip.getNativeVst3Slot().loadState (blob);
+                    if (! stateAccepted) noteStateRejected ("track VST3", t, blob.size());
                 }
+                const auto reason = hosting::enforceRestorePolicy (
+                    loaded, stateWasSupplied, stateAccepted, err, blob.size(),
+                    [&] { strip.unloadNativeVst3(); });
                 resumeProcessing();
-                if (! ok)
+                if (! reason.empty())
                 {
                     strip.markNativeVst3RestoreFailed();   // keep refs - see the CLAP twin
                     lastPluginLoadFailures.push_back ({
                         "Track " + juce::String (t + 1),
-                        vst3File.getFileNameWithoutExtension() });
+                        vst3File.getFileNameWithoutExtension(), "VST3", reason });
                 }
             }
             else
@@ -2265,19 +2295,24 @@ void AudioEngine::consumePluginStateAfterLoad()
             {
                 suspendProcessing();
                 std::string err;
-                bool ok = strip.loadNativeAu (track.nativeAuIdentifier, err);
-                if (ok && ! blob.empty())
+                const bool stateWasSupplied = ! blob.empty();
+                const bool loaded = strip.loadNativeAu (track.nativeAuIdentifier, err);
+                bool stateAccepted = ! stateWasSupplied;
+                if (loaded && stateWasSupplied)
                 {
-                    ok = strip.getNativeAuSlot().loadState (blob);
-                    if (! ok) noteStateRejected ("track AU", t, blob.size());
+                    stateAccepted = strip.getNativeAuSlot().loadState (blob);
+                    if (! stateAccepted) noteStateRejected ("track AU", t, blob.size());
                 }
+                const auto reason = hosting::enforceRestorePolicy (
+                    loaded, stateWasSupplied, stateAccepted, err, blob.size(),
+                    [&] { strip.unloadNativeAu(); });
                 resumeProcessing();
-                if (! ok)
+                if (! reason.empty())
                 {
                     strip.markNativeAuRestoreFailed();
                     lastPluginLoadFailures.push_back ({
                         "Track " + juce::String (t + 1),
-                        auName (track.nativeAuIdentifier) });
+                        auName (track.nativeAuIdentifier), "AU", reason });
                 }
             }
             else
@@ -2307,6 +2342,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 // audio thread untouched; only the swap is gated.
                 std::string err;
                 auto primed = strip.primeNativeMultisample (soundfont, err, &blob);
+                const bool stateWasSupplied = ! blob.empty();
                 const bool stateRestored = ! primed.stateRestoreFailed;
                 // The swap destroys the outgoing instance - join its loader here,
                 // not with the audio thread parked (mirrors the teardown below).
@@ -2319,17 +2355,21 @@ void AudioEngine::consumePluginStateAfterLoad()
                 strip.unloadNativeLv2();
                 strip.unloadNativeVst3();
                 strip.unloadNativeAu();
-                strip.unloadNativeMultisample();
-                bool ok = false;
-                if (primed) ok = strip.commitNativeMultisample (std::move (primed));
+                bool loaded = static_cast<bool> (primed);
+                if (loaded && stateRestored)
+                    loaded = strip.commitNativeMultisample (std::move (primed));
+                const auto reason = hosting::enforceRestorePolicy (
+                    loaded, stateWasSupplied, stateRestored, err, blob.size(),
+                    [&] { strip.unloadNativeMultisample(); });
                 resumeProcessing();
-                if (! ok || ! stateRestored)
+                if (! reason.empty())
                 {
                     // Must follow the unload above, which clears the flag.
                     strip.markNativeMultisampleRestoreFailed();   // keep refs - see the CLAP twin
                     lastPluginLoadFailures.push_back ({
                         "Track " + juce::String (t + 1),
-                        soundfont.getFileNameWithoutExtension() });
+                        soundfont.getFileNameWithoutExtension(),
+                        "multisample", reason });
                 }
             }
             else
@@ -2399,7 +2439,11 @@ void AudioEngine::consumePluginStateAfterLoad()
             lastPluginLoadFailures.push_back ({
                 "Track " + juce::String (t + 1),
                 pluginName (track.pluginDescriptor,
-                            track.pluginLegacyDescriptionXml) });
+                            track.pluginLegacyDescriptionXml),
+                pluginFormat (track.pluginDescriptor,
+                              track.pluginLegacyDescriptionXml),
+                error.isNotEmpty() ? error.toStdString()
+                                   : "plug-in restore failed without a diagnostic" });
         }
         track.pluginDescriptor = slot.getDescriptorForSave (0);
         track.pluginLegacyDescriptionXml = slot.getLegacyDescriptionXmlForSave();
@@ -2439,20 +2483,26 @@ void AudioEngine::consumePluginStateAfterLoad()
                 {
                     suspendProcessing();   // load is not RT-safe; fence the audio thread
                     std::string err;
-                    bool ok = strip.loadNativeClap (s, clapFile, err,
-                                                    lane.nativeClapPluginId[(size_t) s]);
-                    if (ok && ! blob.empty())
+                    const bool stateWasSupplied = ! blob.empty();
+                    const bool loaded = strip.loadNativeClap (
+                        s, clapFile, err, lane.nativeClapPluginId[(size_t) s]);
+                    bool stateAccepted = ! stateWasSupplied;
+                    if (loaded && stateWasSupplied)
                     {
-                        ok = strip.getNativeClapSlot (s).loadState (blob);
-                        if (! ok) noteStateRejected ("aux CLAP", s, blob.size(), a);
+                        stateAccepted = strip.getNativeClapSlot (s).loadState (blob);
+                        if (! stateAccepted)
+                            noteStateRejected ("aux CLAP", s, blob.size(), a);
                     }
+                    const auto reason = hosting::enforceRestorePolicy (
+                        loaded, stateWasSupplied, stateAccepted, err, blob.size(),
+                        [&] { strip.unloadNativeClap (s); });
                     resumeProcessing();
-                    if (! ok)
+                    if (! reason.empty())
                     {
                         strip.markNativeClapRestoreFailed (s);   // keep refs - restore, not removal
                         lastPluginLoadFailures.push_back ({
                             "Aux " + juce::String (a + 1) + " slot " + juce::String (s + 1),
-                            clapFile.getFileNameWithoutExtension() });
+                            clapFile.getFileNameWithoutExtension(), "CLAP", reason });
                     }
                 }
                 else
@@ -2480,23 +2530,29 @@ void AudioEngine::consumePluginStateAfterLoad()
                 {
                     suspendProcessing();   // load is not RT-safe; fence the audio thread
                     std::string err;
-                    bool ok = strip.loadNativeLv2 (s, lv2File, err,
-                                                   lane.nativeLv2PluginId[(size_t) s]);
-                    if (ok && ! blob.empty())
+                    const bool stateWasSupplied = ! blob.empty();
+                    const bool loaded = strip.loadNativeLv2 (
+                        s, lv2File, err, lane.nativeLv2PluginId[(size_t) s]);
+                    bool stateAccepted = ! stateWasSupplied;
+                    if (loaded && stateWasSupplied)
                     {
                         strip.getNativeLv2Slot (s).setStateDirectory (
                             lv2StateDirFor (session, "aux" + juce::String (a + 1)
                                                          + "_slot" + juce::String (s + 1)));
-                        ok = strip.getNativeLv2Slot (s).loadState (blob);
-                        if (! ok) noteStateRejected ("aux LV2", s, blob.size(), a);
+                        stateAccepted = strip.getNativeLv2Slot (s).loadState (blob);
+                        if (! stateAccepted)
+                            noteStateRejected ("aux LV2", s, blob.size(), a);
                     }
+                    const auto reason = hosting::enforceRestorePolicy (
+                        loaded, stateWasSupplied, stateAccepted, err, blob.size(),
+                        [&] { strip.unloadNativeLv2 (s); });
                     resumeProcessing();
-                    if (! ok)
+                    if (! reason.empty())
                     {
                         strip.markNativeLv2RestoreFailed (s);   // keep refs - restore, not removal
                         lastPluginLoadFailures.push_back ({
                             "Aux " + juce::String (a + 1) + " slot " + juce::String (s + 1),
-                            lv2File.getFileNameWithoutExtension() });
+                            lv2File.getFileNameWithoutExtension(), "LV2", reason });
                     }
                 }
                 else
@@ -2526,20 +2582,26 @@ void AudioEngine::consumePluginStateAfterLoad()
                 {
                     suspendProcessing();   // load is not RT-safe; fence the audio thread
                     std::string err;
-                    bool ok = strip.loadNativeVst3 (s, vst3File, err,
-                                                    lane.nativeVst3PluginId[(size_t) s]);
-                    if (ok && ! blob.empty())
+                    const bool stateWasSupplied = ! blob.empty();
+                    const bool loaded = strip.loadNativeVst3 (
+                        s, vst3File, err, lane.nativeVst3PluginId[(size_t) s]);
+                    bool stateAccepted = ! stateWasSupplied;
+                    if (loaded && stateWasSupplied)
                     {
-                        ok = strip.getNativeVst3Slot (s).loadState (blob);
-                        if (! ok) noteStateRejected ("aux VST3", s, blob.size(), a);
+                        stateAccepted = strip.getNativeVst3Slot (s).loadState (blob);
+                        if (! stateAccepted)
+                            noteStateRejected ("aux VST3", s, blob.size(), a);
                     }
+                    const auto reason = hosting::enforceRestorePolicy (
+                        loaded, stateWasSupplied, stateAccepted, err, blob.size(),
+                        [&] { strip.unloadNativeVst3 (s); });
                     resumeProcessing();
-                    if (! ok)
+                    if (! reason.empty())
                     {
                         strip.markNativeVst3RestoreFailed (s);   // keep refs - restore, not removal
                         lastPluginLoadFailures.push_back ({
                             "Aux " + juce::String (a + 1) + " slot " + juce::String (s + 1),
-                            vst3File.getFileNameWithoutExtension() });
+                            vst3File.getFileNameWithoutExtension(), "VST3", reason });
                     }
                 }
                 else
@@ -2565,19 +2627,25 @@ void AudioEngine::consumePluginStateAfterLoad()
                 {
                     suspendProcessing();
                     std::string err;
-                    bool ok = strip.loadNativeAu (s, identifier, err);
-                    if (ok && ! blob.empty())
+                    const bool stateWasSupplied = ! blob.empty();
+                    const bool loaded = strip.loadNativeAu (s, identifier, err);
+                    bool stateAccepted = ! stateWasSupplied;
+                    if (loaded && stateWasSupplied)
                     {
-                        ok = strip.getNativeAuSlot (s).loadState (blob);
-                        if (! ok) noteStateRejected ("aux AU", s, blob.size(), a);
+                        stateAccepted = strip.getNativeAuSlot (s).loadState (blob);
+                        if (! stateAccepted)
+                            noteStateRejected ("aux AU", s, blob.size(), a);
                     }
+                    const auto reason = hosting::enforceRestorePolicy (
+                        loaded, stateWasSupplied, stateAccepted, err, blob.size(),
+                        [&] { strip.unloadNativeAu (s); });
                     resumeProcessing();
-                    if (! ok)
+                    if (! reason.empty())
                     {
                         strip.markNativeAuRestoreFailed (s);
                         lastPluginLoadFailures.push_back ({
                             "Aux " + juce::String (a + 1) + " slot " + juce::String (s + 1),
-                            auName (identifier) });
+                            auName (identifier), "AU", reason });
                     }
                 }
                 else
@@ -2641,7 +2709,10 @@ void AudioEngine::consumePluginStateAfterLoad()
                       << " slot " << (s + 1) << ": " << error);
                 lastPluginLoadFailures.push_back ({
                     "Aux " + juce::String (a + 1) + " / slot " + juce::String (s + 1),
-                    pluginName (descriptor, legacyXml) });
+                    pluginName (descriptor, legacyXml),
+                    pluginFormat (descriptor, legacyXml),
+                    error.isNotEmpty() ? error.toStdString()
+                                       : "plug-in restore failed without a diagnostic" });
             }
             descriptor = slot.getDescriptorForSave (0);
             legacyXml = slot.getLegacyDescriptionXmlForSave();
@@ -2802,6 +2873,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     for (auto& s : strips)        s.prepare (sr, bs, oxFactor);
     for (auto& a : busStrips)     a.prepare (sr, bs, oxFactor);
     for (auto& a : auxLaneStrips) a.prepare (sr, bs);
+    collectDeferredNativeRestoreFailures();
     master.prepare (sr, bs, oxFactor);
 
     auxSilentRunSamples.fill (0);
@@ -2898,6 +2970,65 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     {
         workerPoolStarted = true;
         reconcileWorkerPool (resolveTargetWorkers());
+    }
+}
+
+void AudioEngine::collectDeferredNativeRestoreFailures()
+{
+    std::vector<PluginLoadFailure> newFailures;
+    auto collect = [this, &newFailures] (
+        juce::String location, hosting::NativeRestoreFailure failure)
+    {
+        PluginLoadFailure row {
+            std::move (location),
+            juce::String::fromUTF8 (failure.pluginName.c_str()),
+            failure.format,
+            failure.reason
+        };
+        std::fprintf (stderr, "[Dusk Studio/session] %s\n",
+                      pluginstate::restoreFailureLine (
+                          row.location.toStdString(), row.pluginName.toStdString(),
+                          failure.format, failure.reason).c_str());
+        newFailures.push_back (std::move (row));
+    };
+
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        for (auto& failure : strips[(size_t) t].takeNativeRestoreFailures())
+            collect ("Track " + juce::String (t + 1), std::move (failure));
+
+    for (int a = 0; a < Session::kNumAuxLanes; ++a)
+        for (auto& failure : auxLaneStrips[(size_t) a].takeNativeRestoreFailures())
+            collect ("Aux " + juce::String (a + 1) + " slot "
+                         + juce::String (failure.slotIndex + 1),
+                     std::move (failure));
+
+    if (! newFailures.empty())
+    {
+        // Keep the public post-load diagnostic complete even when the restore was
+        // deferred until the first device prepare. Rate changes can revisit the
+        // same failure, so retain unique rows only and bound the history.
+        constexpr size_t kMaxRememberedFailures = 256;
+        for (const auto& failure : newFailures)
+        {
+            const auto duplicate = std::find_if (
+                lastPluginLoadFailures.begin(), lastPluginLoadFailures.end(),
+                [&failure] (const PluginLoadFailure& prior)
+                {
+                    return prior.location == failure.location
+                        && prior.pluginName == failure.pluginName
+                        && prior.format == failure.format
+                        && prior.reason == failure.reason;
+                });
+            if (duplicate == lastPluginLoadFailures.end())
+            {
+                if (lastPluginLoadFailures.size() == kMaxRememberedFailures)
+                    lastPluginLoadFailures.erase (lastPluginLoadFailures.begin());
+                lastPluginLoadFailures.push_back (failure);
+            }
+        }
+        std::fflush (stderr);
+        if (onPluginRestoreAlert_)
+            onPluginRestoreAlert_ (std::move (newFailures));
     }
 }
 

@@ -1254,7 +1254,7 @@ static bool runHeadlessSelfTest()
     int waited = 0;
     while (engine->getCurrentSampleRate() <= 0.0 && waited < maxWaitMs)
     {
-        juce::Thread::sleep (pollIntervalMs);
+        std::this_thread::sleep_for (std::chrono::milliseconds (pollIntervalMs));
         waited += pollIntervalMs;
     }
     if (engine->getCurrentSampleRate() <= 0.0)
@@ -1372,6 +1372,81 @@ static bool runHeadlessSelfTest()
         expect (session->auxLane (auxLaneIndex)
                            .nativeClapStateBase64[(size_t) auxSlotIndex] == auxState,
                 "aux state changed after restore");
+
+        // Issue #386: a plug-in that rejects a saved blob must not remain
+        // audible at defaults while the save path silently preserves the old
+        // blob. Exercise both already-prepared engine slots and the
+        // pre-prepare deferred strip path with the rejecting fixture.
+        const std::array<std::uint8_t, 3> corruptState { 0x00, 0x7f, 0x42 };
+        const char* const corruptBase64 = "AH9C";   // RFC 4648: { 0x00, 0x7f, 0x42 }
+        session->track (trackIndex).nativeClapStateBase64 = corruptBase64;
+        session->auxLane (auxLaneIndex)
+               .nativeClapStateBase64[(size_t) auxSlotIndex] = corruptBase64;
+
+        engine->consumePluginStateAfterLoad();
+        expect (! trackStrip.isNativeClapLoaded(),
+                "prepared track stayed online after rejecting saved state");
+        expect (! auxStrip.isNativeClapLoaded (auxSlotIndex),
+                "prepared aux stayed online after rejecting saved state");
+        expect (trackStrip.nativeClapReloadFailed(),
+                "prepared track did not preserve its failed-restore reference");
+        expect (auxStrip.nativeClapReloadFailed (auxSlotIndex),
+                "prepared aux did not preserve its failed-restore reference");
+        const auto& preparedFailures = engine->getLastPluginLoadFailures();
+        expect (preparedFailures.size() == 2,
+                "prepared rejection did not report both track and aux failures");
+        if (preparedFailures.size() == 2)
+        {
+            expect (preparedFailures[0].format == "CLAP"
+                        && preparedFailures[0].reason.find ("3 bytes") != std::string::npos
+                        && preparedFailures[0].reason.find ("offline") != std::string::npos,
+                    "prepared track rejection omitted format or reason");
+            expect (preparedFailures[1].format == "CLAP"
+                        && preparedFailures[1].reason.find ("3 bytes") != std::string::npos
+                        && preparedFailures[1].reason.find ("offline") != std::string::npos,
+                    "prepared aux rejection omitted format or reason");
+        }
+        engine->publishPluginStateForSave (true);
+        expect (session->track (trackIndex).nativeClapStateBase64 == corruptBase64,
+                "prepared track rejection discarded the saved state");
+        expect (session->auxLane (auxLaneIndex)
+                           .nativeClapStateBase64[(size_t) auxSlotIndex] == corruptBase64,
+                "prepared aux rejection discarded the saved state");
+
+        const juce::File fixtureFile (fixturePath);
+        ChannelStrip deferredTrack;
+        deferredTrack.setPendingNativeClap (
+            fixtureFile,
+            std::vector<std::uint8_t> (corruptState.begin(), corruptState.end()),
+            "studio.dusk.test.multi-bus");
+        deferredTrack.prepare (48000.0, blockSize);
+        expect (! deferredTrack.isNativeClapLoaded(),
+                "deferred track stayed online after rejecting saved state");
+        expect (deferredTrack.nativeClapReloadFailed(),
+                "deferred track did not preserve its failed-restore reference");
+        const auto deferredTrackFailures = deferredTrack.takeNativeRestoreFailures();
+        expect (deferredTrackFailures.size() == 1
+                    && deferredTrackFailures[0].format == "CLAP"
+                    && deferredTrackFailures[0].reason.find ("3 bytes") != std::string::npos,
+                "deferred track rejection omitted format or reason");
+
+        AuxLaneStrip deferredAux;
+        deferredAux.setPendingNativeClap (
+            auxSlotIndex,
+            fixtureFile,
+            std::vector<std::uint8_t> (corruptState.begin(), corruptState.end()),
+            "studio.dusk.test.multi-bus");
+        deferredAux.prepare (48000.0, blockSize);
+        expect (! deferredAux.isNativeClapLoaded (auxSlotIndex),
+                "deferred aux stayed online after rejecting saved state");
+        expect (deferredAux.nativeClapReloadFailed (auxSlotIndex),
+                "deferred aux did not preserve its failed-restore reference");
+        const auto deferredAuxFailures = deferredAux.takeNativeRestoreFailures();
+        expect (deferredAuxFailures.size() == 1
+                    && deferredAuxFailures[0].slotIndex == auxSlotIndex
+                    && deferredAuxFailures[0].format == "CLAP"
+                    && deferredAuxFailures[0].reason.find ("3 bytes") != std::string::npos,
+                "deferred aux rejection omitted slot, format, or reason");
         std::filesystem::remove_all (tempDir, filesystemError);
     }
 

@@ -12,10 +12,9 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
     preparedSampleRate = sampleRate;
     preparedBlockSize  = std::max (1, blockSize);
 
-    // A loaded native CLAP was activated at the prior spec; re-activate at the
-    // new one. Reload by path (the instance has no in-place re-prepare) - a
-    // sample-rate change resets DSP state anyway. Engine fences this via its
-    // process gate, so the audio thread never sees a half-swapped slot.
+    // Loaded native plug-ins were activated at the prior spec; re-activate at
+    // the new one without changing their identity. Engine fences this via its
+    // process gate, so the audio thread never sees a half-prepared slot.
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     for (int s = 0; s < kMaxPlugins; ++s)
     {
@@ -26,22 +25,39 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
             // the editor's GUI is attached to - plugin->destroy with a live GUI aborts
             // u-he plugins - and resets the plugin's parameters. reactivate keeps the
             // instance + GUI + state and only re-sizes for the new spec.
+            const auto pluginName = hosting::nativePluginName (ncs.getPath(), ncs.getPluginId());
             std::string err;
-            const bool ok = ncs.reactivate (preparedSampleRate, preparedBlockSize, err);
-            nativeReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
+            const bool loaded = ncs.reactivate (preparedSampleRate, preparedBlockSize, err);
+            const auto reason = hosting::enforceReactivationPolicy (
+                loaded, err, [&] { ncs.quarantineAfterFailedReactivation(); });
+            const bool wasFailed = nativeReloadFailed[(size_t) s].exchange (
+                ! reason.empty(), std::memory_order_relaxed);
+            if (! reason.empty() && ! wasFailed)
+                nativeRestoreFailures.push_back ({ "CLAP", pluginName, reason, s });
         }
         else if (pendingClapPath[(size_t) s].isNotEmpty())
         {
             // Pending session-restore load - SR is known now. insertMode was already
             // set to kInsertPlugin by the engine before it stashed this.
             const juce::File p (pendingClapPath[(size_t) s]);
+            const auto pluginName = hosting::nativePluginName (
+                p.getFullPathName().toStdString(),
+                pendingClapPluginId[(size_t) s].toStdString());
+            const bool stateWasSupplied = ! pendingClapState[(size_t) s].empty();
             std::string err;
-            bool ok = ncs.load (std::filesystem::u8path (p.getFullPathName().toStdString()),
-                                preparedSampleRate, preparedBlockSize, err,
-                                pendingClapPluginId[(size_t) s].toStdString());
-            if (ok && ! pendingClapState[(size_t) s].empty())
-                ok = ncs.loadState (pendingClapState[(size_t) s]);
-            nativeReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
+            const bool loaded = ncs.load (
+                std::filesystem::u8path (p.getFullPathName().toStdString()),
+                preparedSampleRate, preparedBlockSize, err,
+                pendingClapPluginId[(size_t) s].toStdString());
+            const bool stateAccepted = ! stateWasSupplied
+                || (loaded && ncs.loadState (pendingClapState[(size_t) s]));
+            const auto reason = hosting::enforceRestorePolicy (
+                loaded, stateWasSupplied, stateAccepted, err,
+                pendingClapState[(size_t) s].size(), [&] { ncs.unload(); });
+            nativeReloadFailed[(size_t) s].store (! reason.empty(),
+                                                  std::memory_order_relaxed);
+            if (! reason.empty())
+                nativeRestoreFailures.push_back ({ "CLAP", pluginName, reason, s });
             pendingClapPath[(size_t) s].clear();
             pendingClapPluginId[(size_t) s].clear();
             pendingClapState[(size_t) s].clear();
@@ -54,28 +70,45 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
         auto& nls = nativeLv2Slots[(size_t) s];
         if (nls.isLoaded())
         {
+            const auto pluginName = hosting::nativePluginName (nls.getPath(), nls.getPluginId());
             std::string err;
-            const bool ok = nls.reactivate (preparedSampleRate, preparedBlockSize, err);
-            // See ChannelStrip::prepare: do not leave a live-but-unsaveable
-            // replacement available for edits after a partial LV2 rebuild.
-            if (! ok) nls.unload();
-            lv2ReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
+            const bool loaded = nls.reactivate (preparedSampleRate, preparedBlockSize, err);
+            const auto reason = hosting::enforceReactivationPolicy (
+                loaded, err, nls.hasActiveInstance(),
+                [&] { nls.quarantineAfterFailedReactivation(); },
+                [&] { nls.unload(); });
+            const bool wasFailed = lv2ReloadFailed[(size_t) s].exchange (
+                ! reason.empty(), std::memory_order_relaxed);
+            if (! reason.empty() && ! wasFailed)
+                nativeRestoreFailures.push_back ({ "LV2", pluginName, reason, s });
         }
         else if (pendingLv2Path[(size_t) s].isNotEmpty())
         {
             if (! isNativeClapLoaded (s))   // both pendings set (corrupt session): CLAP wins
             {
                 const juce::File p (pendingLv2Path[(size_t) s]);
+                const auto pluginName = hosting::nativePluginName (
+                    p.getFullPathName().toStdString(),
+                    pendingLv2PluginId[(size_t) s].toStdString());
+                const bool stateWasSupplied = ! pendingLv2State[(size_t) s].empty();
                 std::string err;
-                bool ok = nls.load (std::filesystem::u8path (p.getFullPathName().toStdString()),
-                                    preparedSampleRate, preparedBlockSize, err,
-                                    pendingLv2PluginId[(size_t) s].toStdString());
-                if (ok && ! pendingLv2State[(size_t) s].empty())
+                const bool loaded = nls.load (
+                    std::filesystem::u8path (p.getFullPathName().toStdString()),
+                    preparedSampleRate, preparedBlockSize, err,
+                    pendingLv2PluginId[(size_t) s].toStdString());
+                bool stateAccepted = ! stateWasSupplied;
+                if (loaded && stateWasSupplied)
                 {
                     nls.setStateDirectory (pendingLv2StateDir[(size_t) s]);
-                    ok = nls.loadState (pendingLv2State[(size_t) s]);
+                    stateAccepted = nls.loadState (pendingLv2State[(size_t) s]);
                 }
-                lv2ReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
+                const auto reason = hosting::enforceRestorePolicy (
+                    loaded, stateWasSupplied, stateAccepted, err,
+                    pendingLv2State[(size_t) s].size(), [&] { nls.unload(); });
+                lv2ReloadFailed[(size_t) s].store (! reason.empty(),
+                                                   std::memory_order_relaxed);
+                if (! reason.empty())
+                    nativeRestoreFailures.push_back ({ "LV2", pluginName, reason, s });
             }
             // Consumed either way - a CLAP-suppressed pending must not replay on a
             // later prepare() once the CLAP is unloaded.
@@ -92,22 +125,39 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
         auto& nvs = nativeVst3Slots[(size_t) s];
         if (nvs.isLoaded())
         {
+            const auto pluginName = hosting::nativePluginName (nvs.getPath(), nvs.getPluginId());
             std::string err;
-            const bool ok = nvs.reactivate (preparedSampleRate, preparedBlockSize, err);
-            vst3ReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
+            const bool loaded = nvs.reactivate (preparedSampleRate, preparedBlockSize, err);
+            const auto reason = hosting::enforceReactivationPolicy (
+                loaded, err, [&] { nvs.quarantineAfterFailedReactivation(); });
+            const bool wasFailed = vst3ReloadFailed[(size_t) s].exchange (
+                ! reason.empty(), std::memory_order_relaxed);
+            if (! reason.empty() && ! wasFailed)
+                nativeRestoreFailures.push_back ({ "VST3", pluginName, reason, s });
         }
         else if (pendingVst3Path[(size_t) s].isNotEmpty())
         {
             if (! isNativeClapLoaded (s) && ! isNativeLv2Loaded (s))   // several pendings set (corrupt session): CLAP > LV2 > VST3
             {
                 const juce::File p (pendingVst3Path[(size_t) s]);
+                const auto pluginName = hosting::nativePluginName (
+                    p.getFullPathName().toStdString(),
+                    pendingVst3PluginId[(size_t) s].toStdString());
+                const bool stateWasSupplied = ! pendingVst3State[(size_t) s].empty();
                 std::string err;
-                bool ok = nvs.load (std::filesystem::u8path (p.getFullPathName().toStdString()),
-                                    preparedSampleRate, preparedBlockSize, err,
-                                    pendingVst3PluginId[(size_t) s].toStdString());
-                if (ok && ! pendingVst3State[(size_t) s].empty())
-                    ok = nvs.loadState (pendingVst3State[(size_t) s]);
-                vst3ReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
+                const bool loaded = nvs.load (
+                    std::filesystem::u8path (p.getFullPathName().toStdString()),
+                    preparedSampleRate, preparedBlockSize, err,
+                    pendingVst3PluginId[(size_t) s].toStdString());
+                const bool stateAccepted = ! stateWasSupplied
+                    || (loaded && nvs.loadState (pendingVst3State[(size_t) s]));
+                const auto reason = hosting::enforceRestorePolicy (
+                    loaded, stateWasSupplied, stateAccepted, err,
+                    pendingVst3State[(size_t) s].size(), [&] { nvs.unload(); });
+                vst3ReloadFailed[(size_t) s].store (! reason.empty(),
+                                                    std::memory_order_relaxed);
+                if (! reason.empty())
+                    nativeRestoreFailures.push_back ({ "VST3", pluginName, reason, s });
             }
             pendingVst3Path[(size_t) s].clear();
             pendingVst3PluginId[(size_t) s].clear();
@@ -121,9 +171,15 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
         auto& nas = nativeAuSlots[(size_t) s];
         if (nas.isLoaded())
         {
+            const auto pluginName = hosting::nativePluginName (nas.getPath(), nas.getPluginId());
             std::string err;
-            const bool ok = nas.reactivate (preparedSampleRate, preparedBlockSize, err);
-            auReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
+            const bool loaded = nas.reactivate (preparedSampleRate, preparedBlockSize, err);
+            const auto reason = hosting::enforceReactivationPolicy (
+                loaded, err, [&] { nas.quarantineAfterFailedReactivation(); });
+            const bool wasFailed = auReloadFailed[(size_t) s].exchange (
+                ! reason.empty(), std::memory_order_relaxed);
+            if (! reason.empty() && ! wasFailed)
+                nativeRestoreFailures.push_back ({ "AU", pluginName, reason, s });
         }
         else if (pendingAuIdentifier[(size_t) s].isNotEmpty())
         {
@@ -132,12 +188,19 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
             {
                 std::string err;
                 const auto identifier = pendingAuIdentifier[(size_t) s].toStdString();
-                bool ok = nas.load (std::filesystem::u8path (identifier),
-                                    preparedSampleRate, preparedBlockSize,
-                                    err, identifier);
-                if (ok && ! pendingAuState[(size_t) s].empty())
-                    ok = nas.loadState (pendingAuState[(size_t) s]);
-                auReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
+                const bool stateWasSupplied = ! pendingAuState[(size_t) s].empty();
+                const bool loaded = nas.load (
+                    std::filesystem::u8path (identifier), preparedSampleRate,
+                    preparedBlockSize, err, identifier);
+                const bool stateAccepted = ! stateWasSupplied
+                    || (loaded && nas.loadState (pendingAuState[(size_t) s]));
+                const auto reason = hosting::enforceRestorePolicy (
+                    loaded, stateWasSupplied, stateAccepted, err,
+                    pendingAuState[(size_t) s].size(), [&] { nas.unload(); });
+                auReloadFailed[(size_t) s].store (! reason.empty(),
+                                                  std::memory_order_relaxed);
+                if (! reason.empty())
+                    nativeRestoreFailures.push_back ({ "AU", identifier, reason, s });
             }
             pendingAuIdentifier[(size_t) s].clear();
             pendingAuState[(size_t) s].clear();
@@ -170,6 +233,12 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
     // addEvent calls (PluginSlot / RemotePluginConnection deserialise)
     // can't grow it. 4 KB matches the channel-strip allotment.
     pluginMidiScratch.ensureSize (4096);
+}
+
+std::vector<hosting::NativeRestoreFailure> AuxLaneStrip::takeNativeRestoreFailures()
+{
+    auto failures = std::move (nativeRestoreFailures);
+    return failures;
 }
 
 void AuxLaneStrip::bindHardwareInsert (int slotIdx, const HardwareInsertParams& params) noexcept

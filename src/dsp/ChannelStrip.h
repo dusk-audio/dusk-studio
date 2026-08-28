@@ -13,6 +13,7 @@
 #include "../foundation/StereoOversampler.h"
 #include "../session/Session.h"
 #include "../engine/PluginSlot.h"
+#include "../engine/hosting/NativeRestorePolicy.h"
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
   #include "../engine/clap/NativeClapSlot.h"   // Linux-only native CLAP host
 #endif
@@ -78,6 +79,7 @@ public:
     // Mirrors AuxLaneStrip. Message thread; engine fences load/unload via its gate.
     // Linux-only (DUSKSTUDIO_HAS_NATIVE_CLAP); stubbed elsewhere so callers compile.
     bool isPrepared() const noexcept { return preparedSampleRate > 0.0 && preparedBlockSize > 0; }
+    std::vector<hosting::NativeRestoreFailure> takeNativeRestoreFailures();
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     bool loadNativeClap   (const juce::File& path, std::string& errorOut,
                            const juce::String& pluginId = {});
@@ -183,6 +185,13 @@ public:
     void unloadNativeMultisample() noexcept {}
     bool nativeMultisampleReloadFailed() const noexcept { return false; }
 #endif
+
+    bool nativeInsertRestoreFailed() const noexcept
+    {
+        return nativeClapReloadFailed() || nativeLv2ReloadFailed()
+            || nativeVst3ReloadFailed() || nativeAuReloadFailed()
+            || nativeMultisampleReloadFailed();
+    }
 
     // Whether a native host owns the insert with an instrument loaded (no main
     // audio input - MIDI drives it). Gates the track-mode/unload interplay.
@@ -363,6 +372,7 @@ private:
     std::atomic<bool>     multisampleReloadFailed { false };
 #endif
     HardwareInsertSlot hardwareSlot;
+    std::vector<hosting::NativeRestoreFailure> nativeRestoreFailures;
 
     // Stashed in prepare() so loadNativeClap / pending-restore can (re)activate at spec.
     double preparedSampleRate = 0.0;

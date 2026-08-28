@@ -8,6 +8,7 @@
 #include "../foundation/SmoothedValue.h"
 #include "../session/Session.h"
 #include "../engine/PluginSlot.h"
+#include "../engine/hosting/NativeRestorePolicy.h"
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
   #include "../engine/clap/NativeClapSlot.h"   // Linux-only native CLAP host
 #endif
@@ -69,6 +70,7 @@ public:
     // is the JUCE-hosting replacement (see docs/native-clap-host-plan.md). Empty by
     // default, so a lane with no native CLAP behaves exactly as before. Message thread.
     bool isPrepared() const noexcept { return preparedSampleRate > 0.0 && preparedBlockSize > 0; }
+    std::vector<hosting::NativeRestoreFailure> takeNativeRestoreFailures();
 
     // Linux-only native CLAP host (DUSKSTUDIO_HAS_NATIVE_CLAP); stubbed elsewhere so the
     // bool/void API still compiles. getNativeClapSlot returns a clap type -> Linux-only.
@@ -159,6 +161,12 @@ public:
     bool nativeVst3ReloadFailed (int) const noexcept { return false; }
 #endif
 
+    bool nativeInsertRestoreFailed (int slotIdx) const noexcept
+    {
+        return nativeClapReloadFailed (slotIdx) || nativeLv2ReloadFailed (slotIdx)
+            || nativeVst3ReloadFailed (slotIdx) || nativeAuReloadFailed (slotIdx);
+    }
+
     // MIDI Learn: last-touched parameter of whichever host owns the slot
     // (same precedence as the audio chain); -1 when empty or untouched.
     int insertLastTouchedParamIndex (int slotIdx) const noexcept
@@ -202,6 +210,7 @@ private:
 
     std::array<PluginSlot, kMaxPlugins> slots;
     std::array<HardwareInsertSlot, kMaxPlugins> hardwareSlots;
+    std::vector<hosting::NativeRestoreFailure> nativeRestoreFailures;
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     std::array<clap::NativeClapSlot, kMaxPlugins> nativeClapSlots;
     std::array<std::atomic<bool>,    kMaxPlugins> nativeReloadFailed {};

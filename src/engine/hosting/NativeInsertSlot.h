@@ -75,12 +75,14 @@ public:
         loadedPath     = path.u8string();
         loadedPluginId = pickedId;
         gen.fetch_add (1, std::memory_order_relaxed);
+        processingOnline.store (true, std::memory_order_release);
         ready.store (true, std::memory_order_release);
         return true;
     }
 
     void unload()
     {
+        processingOnline.store (false, std::memory_order_release);
         ready.store (false, std::memory_order_release);
         gen.fetch_add (1, std::memory_order_relaxed);
         instance.reset();   // destroy the plugin first - its vtables live in the bundle
@@ -105,13 +107,35 @@ public:
         // while reporting the partial failure to the caller.
         if (instance->isActive())
             adapter.prepare (instance->portLayout(), maxBlock);
+        if (restored)
+            processingOnline.store (true, std::memory_order_release);
         return restored;
+    }
+
+    // Keep an instance available to its native editor and state serializer,
+    // while making its audio path an offline (silent) slot. Used only after a
+    // failed reactivation; unloading here can destroy a plug-in under live GUI
+    // handles. A later successful reactivate() clears the quarantine.
+    void quarantineAfterFailedReactivation() noexcept
+    {
+        processingOnline.store (false, std::memory_order_release);
+    }
+
+    bool isProcessingOnline() const noexcept
+    {
+        return processingOnline.load (std::memory_order_acquire);
+    }
+
+    bool hasActiveInstance() const noexcept
+    {
+        return instance != nullptr && instance->isActive();
     }
 
     // App shutdown: release the instance + bundle WITHOUT destroying (u-he plugins
     // hang in deactivate/destroy/dlclose). The process is exiting; the OS reclaims it.
     void leakForShutdown() noexcept
     {
+        processingOnline.store (false, std::memory_order_release);
         ready.store (false, std::memory_order_release);
         gen.fetch_add (1, std::memory_order_relaxed);
         (void) instance.release();
@@ -158,10 +182,8 @@ public:
             if (outR != nullptr) std::memset (outR, 0, n);
         };
 
-        // Clear when empty or momentarily inactive (mid-reactivate, fenced by the
-        // engine gate) - a no-op silent pass.
         if (! ready.load (std::memory_order_acquire) || instance == nullptr
-            || ! instance->isActive() || inL == nullptr)
+            || inL == nullptr)
         {
             clearOutputs();
             return;
@@ -170,12 +192,27 @@ public:
         if (numFrames <= 0) return;
         const size_t n = sizeof (float) * (size_t) numFrames;
 
-        if (bypassed.load (std::memory_order_relaxed))
+        // A quarantined effect is an offline insert, not a channel mute: fall
+        // back to dry audio automatically. Instruments receive silent dry
+        // input, so they remain silent. Explicit bypass uses the same path and
+        // remains available even when a failed activation left the instance
+        // inactive.
+        if (! processingOnline.load (std::memory_order_acquire)
+            || bypassed.load (std::memory_order_relaxed))
         {
             // Passthrough - copy in->out (a no-op when called in-place).
             if (outL != nullptr && outL != inL) std::memcpy (outL, inL, n);
             const float* r = (inR != nullptr) ? inR : inL;
             if (outR != nullptr && outR != r)   std::memcpy (outR, r, n);
+            return;
+        }
+
+        // A momentarily inactive instance (mid-reactivate, fenced by the
+        // engine gate) is a silent no-op until its caller either succeeds or
+        // quarantines it into the dry fallback above.
+        if (! instance->isActive())
+        {
+            clearOutputs();
             return;
         }
 
@@ -243,6 +280,7 @@ protected:
     // on load / reactivate; owns its own scratch (no plugin refs, teardown order-free).
     InsertAdapter     adapter;
     std::atomic<bool>          ready    { false };
+    std::atomic<bool>          processingOnline { false };
     std::atomic<bool>          bypassed { false };
     std::atomic<std::uint64_t> gen      { 0 };
     std::string       loadedPath;

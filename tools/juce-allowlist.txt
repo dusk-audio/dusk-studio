@@ -59,7 +59,7 @@ src/ui/AnalogVuMeter.cpp	113
 src/ui/AnalogVuMeter.h	7
 src/ui/AudioRegionEditor.cpp	336
 src/ui/AudioRegionEditor.h	86
-src/ui/AuxLaneComponent.cpp	168
+src/ui/AuxLaneComponent.cpp	175
 src/ui/AuxLaneComponent.h	28
 src/ui/AuxView.cpp	60
 src/ui/AuxView.h	5
@@ -109,7 +109,7 @@ src/ui/ImportTargetPicker.cpp	97
 src/ui/ImportTargetPicker.h	11
 src/ui/Lv2PluginEditorComponent.cpp	3
 src/ui/Lv2PluginEditorComponent.h	4
-src/ui/MainComponent.cpp	457
+src/ui/MainComponent.cpp	459
 src/ui/MainComponent.h	57
 src/ui/MasteringView.cpp	154
 src/ui/MasteringView.h	32

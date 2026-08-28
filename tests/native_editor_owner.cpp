@@ -89,6 +89,11 @@ struct FakeSlotInstance final : public duskstudio::hosting::INativeInstance
     bool reactivate (double, int, std::string& error) override
     {
         active = true;
+        if (! failReactivation)
+        {
+            error.clear();
+            return true;
+        }
         error = "state carry failed";
         return false;
     }
@@ -107,6 +112,7 @@ struct FakeSlotInstance final : public duskstudio::hosting::INativeInstance
 
     duskstudio::hosting::PortLayout layout;
     bool active = false;
+    bool failReactivation = true;
     int processCalls = 0;
 };
 
@@ -195,6 +201,36 @@ TEST_CASE ("NativeInsertSlot resizes its adapter after a partial reactivate fail
     REQUIRE (slot.getInstance()->processCalls == 1);
     REQUIRE_THAT (left.front(), Catch::Matchers::WithinAbs (0.5, 1.0e-6));
     REQUIRE_THAT (right.front(), Catch::Matchers::WithinAbs (-0.5, 1.0e-6));
+}
+
+TEST_CASE ("failed reactivation can be quarantined without destroying a live editor instance",
+           "[hosting][slot][regression][issue-386]")
+{
+    duskstudio::hosting::NativeInsertSlot<FakeTraits> slot;
+    std::string error;
+    REQUIRE (slot.load ("fake.bundle", 48000.0, 8, error));
+    auto* const instance = slot.getInstance();
+    const auto generation = slot.generation();
+
+    REQUIRE_FALSE (slot.reactivate (192000.0, 32, error));
+    REQUIRE (slot.hasActiveInstance());
+    slot.quarantineAfterFailedReactivation();
+    REQUIRE (slot.isLoaded());
+    REQUIRE_FALSE (slot.isProcessingOnline());
+    REQUIRE (slot.getInstance() == instance);
+    REQUIRE (slot.generation() == generation);
+
+    std::vector<float> left (32, 1.0f);
+    std::vector<float> right (32, -1.0f);
+    slot.processStereo (left.data(), right.data(), left.data(), right.data(), 32);
+    REQUIRE (instance->processCalls == 0);
+    REQUIRE_THAT (left.front(), Catch::Matchers::WithinAbs (1.0, 1.0e-12));
+    REQUIRE_THAT (right.front(), Catch::Matchers::WithinAbs (-1.0, 1.0e-12));
+
+    instance->failReactivation = false;
+    REQUIRE (slot.reactivate (48000.0, 8, error));
+    REQUIRE (slot.isProcessingOnline());
+    REQUIRE (slot.getInstance() == instance);
 }
 
 TEST_CASE ("AbandonInstance quiesces only while the plugin is live")

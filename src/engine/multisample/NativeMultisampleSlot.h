@@ -95,10 +95,11 @@ public:
         const bool hasState = state != nullptr && ! state->empty();
         if (hasState && ! inst->loadState (*state))
         {
-            // Keep the soundfont audible at defaults, but carry the failure to
-            // the caller so saving cannot overwrite the only persisted state.
+            // Carry the failure to the caller. The caller deliberately does
+            // not commit this primed default-state instance, so the saved blob
+            // remains authoritative and the session slot stays offline.
             primed.stateRestoreFailed = true;
-            errorOut = "state restore failed; loaded soundfont at defaults";
+            errorOut = "state restore failed";
         }
         const bool stateRuntimeLoaded = inst->hasLoadedRuntime();
         if (! stateRuntimeLoaded)
@@ -131,6 +132,7 @@ public:
         adapter.prepare (instance->portLayout(), maxBlock);
         loadedPath = std::move (primed.path);
         loadedPluginId.clear();
+        processingOnline.store (true, std::memory_order_release);
         ready.store (true, std::memory_order_release);
         return true;
     }

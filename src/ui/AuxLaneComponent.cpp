@@ -652,6 +652,20 @@ void AuxLaneComponent::refreshSlotControls (int i)
 {
     auto& slotRef = strip.getPluginSlot (i);
     auto& ui      = slots[(size_t) i];
+    auto nativeLabel = [] (const juce::String& name, bool offline)
+    {
+        return offline
+            ? juce::String (juce::CharPointer_UTF8 ("\xe2\x9a\xa0 ")) + name + " (offline)"
+            : name;
+    };
+    auto setNativeTooltip = [&ui] (bool offline)
+    {
+        ui.openOrAddButton.setTooltip (offline
+            ? "This plug-in is offline after a restore or reactivation failure. "
+              "Its saved reference and state will be preserved; replace or remove "
+              "it to recover this slot."
+            : "Click to toggle the plug-in editor.");
+    };
 
     const int mode = strip.insertMode[(size_t) i].load (std::memory_order_relaxed);
     if (mode == AuxLaneStrip::kInsertHardware)
@@ -698,10 +712,13 @@ void AuxLaneComponent::refreshSlotControls (int i)
     {
         const auto name = juce::File (strip.getNativeClapSlot (i).getPath())
                               .getFileNameWithoutExtension();
-        if (name != ui.displayedName)
+        const bool offline = strip.nativeClapReloadFailed (i);
+        const auto label = nativeLabel (name, offline);
+        setNativeTooltip (offline);
+        if (label != ui.displayedName)
         {
-            ui.displayedName = name;
-            ui.openOrAddButton.setButtonText (name);
+            ui.displayedName = label;
+            ui.openOrAddButton.setButtonText (label);
             resized();   // lay out the header strip (name + BYP + X)
         }
         ui.bypassButton.setVisible (true);
@@ -716,10 +733,13 @@ void AuxLaneComponent::refreshSlotControls (int i)
     {
         const auto name = juce::File (strip.getNativeLv2Slot (i).getPath())
                               .getFileNameWithoutExtension();
-        if (name != ui.displayedName)
+        const bool offline = strip.nativeLv2ReloadFailed (i);
+        const auto label = nativeLabel (name, offline);
+        setNativeTooltip (offline);
+        if (label != ui.displayedName)
         {
-            ui.displayedName = name;
-            ui.openOrAddButton.setButtonText (name);
+            ui.displayedName = label;
+            ui.openOrAddButton.setButtonText (label);
             resized();
         }
         ui.bypassButton.setVisible (true);
@@ -734,10 +754,13 @@ void AuxLaneComponent::refreshSlotControls (int i)
     {
         const auto name = juce::File (strip.getNativeVst3Slot (i).getPath())
                               .getFileNameWithoutExtension();
-        if (name != ui.displayedName)
+        const bool offline = strip.nativeVst3ReloadFailed (i);
+        const auto label = nativeLabel (name, offline);
+        setNativeTooltip (offline);
+        if (label != ui.displayedName)
         {
-            ui.displayedName = name;
-            ui.openOrAddButton.setButtonText (name);
+            ui.displayedName = label;
+            ui.openOrAddButton.setButtonText (label);
             resized();
         }
         ui.bypassButton.setVisible (true);
@@ -752,10 +775,13 @@ void AuxLaneComponent::refreshSlotControls (int i)
     {
         auto name = juce::String::fromUTF8 (strip.getNativeAuSlot (i).displayName().c_str());
         if (name.isEmpty()) name = "Audio Unit";
-        if (name != ui.displayedName)
+        const bool offline = strip.nativeAuReloadFailed (i);
+        const auto label = nativeLabel (name, offline);
+        setNativeTooltip (offline);
+        if (label != ui.displayedName)
         {
-            ui.displayedName = name;
-            ui.openOrAddButton.setButtonText (name);
+            ui.displayedName = label;
+            ui.openOrAddButton.setButtonText (label);
             resized();
         }
         ui.bypassButton.setVisible (true);
@@ -765,6 +791,44 @@ void AuxLaneComponent::refreshSlotControls (int i)
         return;
     }
 #endif
+
+    // A failed load can leave no live instance. Keep the saved native reference
+    // visible as an offline row so the user can replace or remove it explicitly.
+    if (strip.nativeInsertRestoreFailed (i))
+    {
+        juce::String name ("native plug-in");
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+        if (strip.nativeClapReloadFailed (i))
+            name = juce::File (lane.nativeClapPath[(size_t) i])
+                       .getFileNameWithoutExtension();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+        if (strip.nativeLv2ReloadFailed (i))
+            name = juce::File (lane.nativeLv2Path[(size_t) i])
+                       .getFileNameWithoutExtension();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+        if (strip.nativeVst3ReloadFailed (i))
+            name = juce::File (lane.nativeVst3Path[(size_t) i])
+                       .getFileNameWithoutExtension();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+        if (strip.nativeAuReloadFailed (i))
+            name = lane.nativeAuIdentifier[(size_t) i];
+#endif
+        if (name.isEmpty()) name = "native plug-in";
+        const auto label = nativeLabel (name, true);
+        setNativeTooltip (true);
+        if (label != ui.displayedName)
+        {
+            ui.displayedName = label;
+            ui.openOrAddButton.setButtonText (label);
+            resized();
+        }
+        ui.bypassButton.setVisible (false);
+        ui.removeButton.setVisible (true);
+        return;
+    }
 
     if (slotRef.isLoaded())
     {
@@ -873,22 +937,26 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
                                             // One host per slot: a successful JUCE load evicts any
                                             // native slot - the audio chain checks natives first, so
                                             // a lingering native would shadow the picked plugin.
+                                            const bool hadLiveNative =
+                                                self->strip.isNativeClapLoaded (slotIdx)
+                                                || self->strip.isNativeLv2Loaded (slotIdx)
+                                                || self->strip.isNativeVst3Loaded (slotIdx)
+                                                || self->strip.isNativeAuLoaded (slotIdx);
                                             if (self->strip.getPluginSlot (slotIdx).isLoaded()
-                                                && (self->strip.isNativeClapLoaded (slotIdx)
-                                                    || self->strip.isNativeLv2Loaded (slotIdx)
-                                                    || self->strip.isNativeVst3Loaded (slotIdx)
-                                                    || self->strip.isNativeAuLoaded (slotIdx)))
+                                                && (hadLiveNative
+                                                    || self->strip.nativeInsertRestoreFailed (
+                                                        slotIdx)))
                                             {
                                                 self->detachClapEditorForSlot (slotIdx);
                                                 self->detachLv2EditorForSlot (slotIdx);
                                                 self->detachVst3EditorForSlot (slotIdx);
                                                 self->detachAuEditorForSlot (slotIdx);
-                                                self->engine.suspendProcessing();
+                                                if (hadLiveNative) self->engine.suspendProcessing();
                                                 self->strip.unloadNativeClap (slotIdx);
                                                 self->strip.unloadNativeLv2 (slotIdx);
                                                 self->strip.unloadNativeVst3 (slotIdx);
                                                 self->strip.unloadNativeAu (slotIdx);
-                                                self->engine.resumeProcessing();
+                                                if (hadLiveNative) self->engine.resumeProcessing();
                                                 self->lane.nativeClapPath[(size_t) slotIdx].clear();
                                                 self->lane.nativeClapPluginId[(size_t) slotIdx].clear();
                                                 self->lane.nativeClapStateBase64[(size_t) slotIdx].clear();
@@ -925,6 +993,38 @@ void AuxLaneComponent::openHardwareInsertEditor (int slotIdx)
 {
     if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return;
 
+    // Hardware replaces an offline native placeholder. Remove the preserved
+    // native reference here so session save cannot revive it behind the new
+    // routing and so the failure flag no longer masks the HW controls.
+    if (strip.nativeInsertRestoreFailed (slotIdx))
+    {
+        const bool hadLiveNative = strip.isNativeClapLoaded (slotIdx)
+                                || strip.isNativeLv2Loaded (slotIdx)
+                                || strip.isNativeVst3Loaded (slotIdx)
+                                || strip.isNativeAuLoaded (slotIdx);
+        if (hadLiveNative) engine.suspendProcessing();
+        detachClapEditorForSlot (slotIdx);
+        detachLv2EditorForSlot (slotIdx);
+        detachVst3EditorForSlot (slotIdx);
+        detachAuEditorForSlot (slotIdx);
+        strip.unloadNativeClap (slotIdx);
+        strip.unloadNativeLv2 (slotIdx);
+        strip.unloadNativeVst3 (slotIdx);
+        strip.unloadNativeAu (slotIdx);
+        if (hadLiveNative) engine.resumeProcessing();
+        lane.nativeClapPath[(size_t) slotIdx].clear();
+        lane.nativeClapPluginId[(size_t) slotIdx].clear();
+        lane.nativeClapStateBase64[(size_t) slotIdx].clear();
+        lane.nativeLv2Path[(size_t) slotIdx].clear();
+        lane.nativeLv2PluginId[(size_t) slotIdx].clear();
+        lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
+        lane.nativeVst3Path[(size_t) slotIdx].clear();
+        lane.nativeVst3PluginId[(size_t) slotIdx].clear();
+        lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
+        lane.nativeAuIdentifier[(size_t) slotIdx].clear();
+        lane.nativeAuStateBase64[(size_t) slotIdx].clear();
+    }
+
     // Flip the lane's slot to Hardware mode immediately so the audio
     // thread's crossfade gate (Phase 3) begins ramping in even before
     // the user touches a control inside the editor.
@@ -955,11 +1055,13 @@ void AuxLaneComponent::unloadSlot (int slotIdx)
         if (self == nullptr) return;
         self->detachEditorForSlot (slotIdx);
         self->detachHardwareInsertForSlot (slotIdx);
-        const bool hadNative = self->strip.isNativeClapLoaded (slotIdx)
-                            || self->strip.isNativeLv2Loaded (slotIdx)
-                            || self->strip.isNativeVst3Loaded (slotIdx)
-                            || self->strip.isNativeAuLoaded (slotIdx);
-        if (hadNative) self->engine.suspendProcessing();
+        const bool hadLiveNative = self->strip.isNativeClapLoaded (slotIdx)
+                                || self->strip.isNativeLv2Loaded (slotIdx)
+                                || self->strip.isNativeVst3Loaded (slotIdx)
+                                || self->strip.isNativeAuLoaded (slotIdx);
+        const bool hadNativeReference = hadLiveNative
+                                     || self->strip.nativeInsertRestoreFailed (slotIdx);
+        if (hadLiveNative) self->engine.suspendProcessing();
         // Tear the shared native editors down INSIDE the suspended window: their
         // destructors reach into the instance the audio path is reading.
         self->detachClapEditorForSlot (slotIdx);
@@ -967,13 +1069,13 @@ void AuxLaneComponent::unloadSlot (int slotIdx)
         self->detachVst3EditorForSlot (slotIdx);
         self->detachAuEditorForSlot (slotIdx);
         self->strip.getPluginSlot (slotIdx).unload();
-        if (hadNative)
+        if (hadNativeReference)
         {
             self->strip.unloadNativeClap (slotIdx);
             self->strip.unloadNativeLv2 (slotIdx);
             self->strip.unloadNativeVst3 (slotIdx);
             self->strip.unloadNativeAu (slotIdx);
-            self->engine.resumeProcessing();
+            if (hadLiveNative) self->engine.resumeProcessing();
             self->lane.nativeClapPath[(size_t) slotIdx].clear();
             self->lane.nativeClapPluginId[(size_t) slotIdx].clear();
             self->lane.nativeClapStateBase64[(size_t) slotIdx].clear();
@@ -1828,7 +1930,8 @@ void AuxLaneComponent::resized()
     // the HW insert.
     const bool nativeLoaded = strip.isNativeClapLoaded (0) || strip.isNativeLv2Loaded (0)
                            || strip.isNativeVst3Loaded (0) || strip.isNativeAuLoaded (0);
-    if (slot0.isLoaded() || slot0.isOffline() || hardware || nativeLoaded)
+    if (slot0.isLoaded() || slot0.isOffline() || hardware || nativeLoaded
+        || strip.nativeInsertRestoreFailed (0))
     {
         auto headerStrip = center.removeFromTop (kSlotHeaderH);
         ui.removeButton.setBounds (headerStrip.removeFromRight (28));

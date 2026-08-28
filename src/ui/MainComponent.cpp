@@ -49,6 +49,7 @@
 #include "../session/SessionSerializer.h"
 #include "../engine/FileImporter.h"
 #include "../engine/PlaybackEngine.h"
+#include "../engine/PluginStateDiagnostics.h"
 #include "ImportTargetPicker.h"
 #include "DpImportDialog.h"
 #include "../engine/DpImporter.h"
@@ -83,6 +84,25 @@ juce::Array<juce::File> toFileArray (const std::vector<std::filesystem::path>& p
     juce::Array<juce::File> out;
     for (auto& p : paths) out.add (toFile (p));
     return out;
+}
+
+auto pluginRestoreFailureBody (const std::vector<AudioEngine::PluginLoadFailure>& failures)
+{
+    juce::String body =
+        "These plug-ins could not be loaded, restored, or reactivated and are "
+        "offline. Saved references and state were preserved where available:\n\n";
+    for (const auto& failure : failures)
+    {
+        const auto line = pluginstate::restoreFailureLine (
+            failure.location.toStdString(), failure.pluginName.toStdString(),
+            failure.format, failure.reason);
+        body += "    " + juce::String::fromUTF8 (line.c_str()) + "\n";
+    }
+    body += "\nResolve the reported error. For a saved-state failure, correct the "
+            "plug-in installation or compatibility issue and reload the session. "
+            "For a device or render-rate failure, restore a supported audio setting "
+            "or remove and reload the plug-in.";
+    return body;
 }
 
 // Note count and rendered length for the import picker's file card. False when
@@ -926,6 +946,21 @@ MainComponent::MainComponent()
         showDuskAlert (*this, "Audio device disconnected", msg);
     });
 
+    // Surface deferred session restores and later device/render-rate
+    // reactivation failures through the same detailed in-window path used by
+    // immediate restores.
+    engine.setPluginRestoreAlertSink ([this] (std::vector<AudioEngine::PluginLoadFailure> failures)
+    {
+        auto body = pluginRestoreFailureBody (failures);
+        juce::Component::SafePointer<MainComponent> safeThis (this);
+        dusk::callAsync (
+            [body = std::move (body), safeThis]
+            {
+                if (auto* self = safeThis.getComponent())
+                    showDuskAlert (*self, "Plug-in unavailable", body);
+            });
+    });
+
     // The notepad and an embedded modal must never share the window (see
     // beforeModalShown). The notepad saves whenever it closes, so the alerts
     // that can fire over it - sample-rate mismatch, device lost - take it back
@@ -1070,6 +1105,7 @@ MainComponent::~MainComponent()
 {
     tearingDown = true;
     stopTimer();   // halt autosave before tearing down engine / session
+    engine.setPluginRestoreAlertSink ({});
 
     // Drop the modal hook before anything else: its closure holds a raw this,
     // and the teardown below can still raise an alert.
@@ -3851,20 +3887,13 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
         const auto& failures = engine.getLastPluginLoadFailures();
         if (! failures.empty())
         {
-            juce::String body =
-                "These plugins from the saved session could not be loaded "
-                "and were left empty:\n\n";
-            for (const auto& f : failures)
-                body += "    " + f.location + "  -  " + f.pluginName + "\n";
-            body += "\nCheck that the plugins are still installed for the "
-                    "right format (VST3 / LV2 / AU / CLAP) and that this binary "
-                    "can find them, then reload the session.";
+            auto body = pluginRestoreFailureBody (failures);
             juce::Component::SafePointer<MainComponent> safeThis (this);
             dusk::callAsync (
                 [body = std::move (body), safeThis]
                 {
                     if (auto* self = safeThis.getComponent())
-                        showDuskAlert (*self, "Missing plugins", body);
+                        showDuskAlert (*self, "Plug-in unavailable", body);
                 });
         }
     }

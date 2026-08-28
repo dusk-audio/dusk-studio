@@ -2311,12 +2311,12 @@ Two variants:
 - **Success**: "Thinned [before] automation points down to [after]." — Buttons: OK.
 - **Action**: Stop playback and set all strips to **Off** mode, then retry.
 
-### Missing plugins
+### Plug-in unavailable
 
-- **When**: Session load found plugin references that can't be instantiated on this machine.
-- **Text**: "These plugins from the saved session could not be loaded and were left empty: [per-plugin: location — plugin name]. Check that the plugins are still installed for the right format (VST3 / LV2 / AU / CLAP) and that this binary can find them, then reload the session."
+- **When**: A plug-in could not be loaded, rejected saved state, or failed to reactivate for a new device or offline-render sample rate/buffer size.
+- **Text**: "These plug-ins could not be loaded, restored, or reactivated and are offline. Saved references and state were preserved where available: [per-plugin: location — plugin name [format]: exact failure reason]. Resolve the reported error. For a saved-state failure, correct the plug-in installation or compatibility issue and reload the session. For a device or render-rate failure, restore a supported audio setting or remove and reload the plug-in."
 - **Buttons**: OK.
-- **Action**: Install the missing plugins (or the right plugin format) and reload the session. Saved state for offline plugins is preserved on disk; it round-trips through the next save.
+- **Action**: Follow the reason shown for that slot. Saved references and state for offline plug-ins round-trip through the next save; reactivation failures also recover automatically if a later device configuration succeeds.
 
 ### About Dusk Studio
 
