@@ -2371,6 +2371,13 @@ void ChannelStripComponent::refreshPluginSlotButton()
             name = juce::File (track.nativeMultisamplePath).getFileNameWithoutExtension();
 #endif
         if (name.isEmpty()) name = "native plug-in";
+
+        // A clone / undo replay can empty the JUCE slot while marking the native
+        // restore failed, leaving the cached editor on a dying AudioProcessor.
+        // The slot-based bookkeeping at the tail never runs on this path.
+        if (pluginEditor != nullptr && pluginSlot.getLoadedName().isEmpty())
+            dropPluginEditor (NativeEditorTeardown::Destroy);
+
         const auto label = nativeLabel (name, true);
         setNativeTooltip (true);
         if (label != lastSlotName)

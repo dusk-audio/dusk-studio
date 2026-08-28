@@ -126,7 +126,9 @@ TEST_CASE ("ipc-stub: timeout is bounded and marks the connection crashed", "[ip
     const auto elapsed = std::chrono::steady_clock::now() - started;
 
     REQUIRE (conn.isCrashed());
-    REQUIRE (elapsed < std::chrono::seconds (2));
+    // Wide enough for scheduling slack over the 20 ms deadline, tight enough
+    // that a build ignoring the deadline still fails.
+    REQUIRE (elapsed < std::chrono::milliseconds (250));
 
     // Explicit repeated teardown must wake the stalled child and remain
     // idempotent; the destructor calls it once more after this scope.
