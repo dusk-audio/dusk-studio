@@ -83,6 +83,7 @@ struct Lv2Instance::Impl
         uridInt    = mapUri (this, LV2_ATOM__Int);
         uridLong   = mapUri (this, LV2_ATOM__Long);
         uridObject        = mapUri (this, LV2_ATOM__Object);
+        uridPatchGet      = mapUri (this, LV2_PATCH__Get);
         uridPatchSet      = mapUri (this, LV2_PATCH__Set);
         uridPatchProperty = mapUri (this, LV2_PATCH__property);
         uridPatchValue    = mapUri (this, LV2_PATCH__value);
@@ -95,7 +96,7 @@ struct Lv2Instance::Impl
         uridUridType      = mapUri (this, LV2_ATOM__URID);
     }
     LV2_URID uridFloat = 0, uridDouble = 0, uridInt = 0, uridLong = 0;
-    LV2_URID uridObject = 0, uridPatchSet = 0, uridPatchProperty = 0,
+    LV2_URID uridObject = 0, uridPatchGet = 0, uridPatchSet = 0, uridPatchProperty = 0,
              uridPatchValue = 0, uridEventTransfer = 0, uridMidiEvent = 0,
              uridPatchPut = 0, uridPatchBody = 0, uridSequence = 0, uridFloatType = 0,
              uridUridType = 0;
@@ -203,6 +204,37 @@ struct Lv2Instance::Impl
     // instance-access shortcut loses nothing - see forwardUiAtomEvent).
     struct AtomBlob { uint32_t size = 0; uint8_t data[128]; };
     hosting::SpscRing<AtomBlob, 64> atomRing;
+
+    uint32_t forgePatchSet (LV2_URID property, float value,
+                            uint8_t* data, size_t capacity) noexcept
+    {
+        LV2_Atom_Forge forge;
+        lv2_atom_forge_init (&forge, &mapFeature);
+        lv2_atom_forge_set_buffer (&forge, data, capacity);
+        LV2_Atom_Forge_Frame frame;
+        if (lv2_atom_forge_object (&forge, &frame, 0, uridPatchSet) == 0) return 0;
+        lv2_atom_forge_key (&forge, uridPatchProperty);
+        lv2_atom_forge_urid (&forge, property);
+        lv2_atom_forge_key (&forge, uridPatchValue);
+        lv2_atom_forge_float (&forge, value);
+        lv2_atom_forge_pop (&forge, &frame);
+        const auto* atom = reinterpret_cast<const LV2_Atom*> (data);
+        const auto size = (uint32_t) sizeof (LV2_Atom) + atom->size;
+        return size <= capacity ? size : 0;
+    }
+
+    uint32_t forgePatchGet (uint8_t* data, size_t capacity) noexcept
+    {
+        LV2_Atom_Forge forge;
+        lv2_atom_forge_init (&forge, &mapFeature);
+        lv2_atom_forge_set_buffer (&forge, data, capacity);
+        LV2_Atom_Forge_Frame frame;
+        if (lv2_atom_forge_object (&forge, &frame, 0, uridPatchGet) == 0) return 0;
+        lv2_atom_forge_pop (&forge, &frame);
+        const auto* atom = reinterpret_cast<const LV2_Atom*> (data);
+        const auto size = (uint32_t) sizeof (LV2_Atom) + atom->size;
+        return size <= capacity ? size : 0;
+    }
 
     // Which atomInPorts entry takes injected events: the lv2:control-designated
     // port, else the first atom input.
@@ -1089,25 +1121,13 @@ void Lv2Instance::setParamValue (uint32_t paramId, double value) noexcept
         return;
     }
 
-    // patch:Set { property = <prop>, value = Float } forged into a blob the
-    // audio thread injects into the control atom port next block.
     const LV2_URID propUrid = paramId & ~Impl::kPatchIdFlag;
     Impl::AtomBlob blob;
-    LV2_Atom_Forge forge;
-    lv2_atom_forge_init (&forge, &impl->mapFeature);
-    lv2_atom_forge_set_buffer (&forge, blob.data, sizeof (blob.data));
-    LV2_Atom_Forge_Frame frame;
-    lv2_atom_forge_object (&forge, &frame, 0, impl->uridPatchSet);
-    lv2_atom_forge_key (&forge, impl->uridPatchProperty);
-    lv2_atom_forge_urid (&forge, propUrid);
-    lv2_atom_forge_key (&forge, impl->uridPatchValue);
-    lv2_atom_forge_float (&forge, v);
-    lv2_atom_forge_pop (&forge, &frame);
-    const auto* atom = reinterpret_cast<const LV2_Atom*> (blob.data);
-    blob.size = (uint32_t) sizeof (LV2_Atom) + atom->size;
+    blob.size = impl->forgePatchSet (propUrid, v, blob.data, sizeof (blob.data));
 
     impl->patchShadow[propUrid] = v;
-    impl->atomRing.push (blob);   // full => drop (pathological flood only)
+    if (blob.size != 0)
+        impl->atomRing.push (blob);   // full => drop (pathological flood only)
 }
 
 void Lv2Instance::drainPatchFeedback()
@@ -1127,6 +1147,50 @@ int Lv2Instance::lastTouchedParamIndex() const noexcept
 uint32_t Lv2Instance::uiEventTransferUrid() const noexcept
 {
     return impl->uridEventTransfer;
+}
+
+int Lv2Instance::uiParameterEventCount() const noexcept
+{
+    return (int) impl->params.size();
+}
+
+bool Lv2Instance::currentUiParameterEvent (int index, UiParameterEvent& out) const
+{
+    out = {};
+    const auto* param = paramInfo (index);
+    if (param == nullptr) return false;
+
+    double value = 0.0;
+    if (! getParamValue (param->id, value)) return false;
+    out.value = (float) value;
+
+    if (! param->isPatchProperty)
+    {
+        out.portIndex = param->id;
+        out.sizeBytes = sizeof (float);
+        std::memcpy (out.data.data(), &out.value, sizeof (out.value));
+        return true;
+    }
+
+    if (impl->controlAtomOutPos < 0) return false;
+    out.portIndex = impl->atomOutPorts[(size_t) impl->controlAtomOutPos];
+    out.protocol = impl->uridEventTransfer;
+    out.sizeBytes = impl->forgePatchSet (
+        param->id & ~Impl::kPatchIdFlag, out.value, out.data.data(), out.data.size());
+    return out.sizeBytes != 0;
+}
+
+void Lv2Instance::requestPatchParameterValuesForUi() noexcept
+{
+    if (impl->atomInPorts.empty()) return;
+    if (std::none_of (impl->params.begin(), impl->params.end(),
+                      [] (const ParamInfo& param) { return param.isPatchProperty; }))
+        return;
+
+    Impl::AtomBlob blob;
+    blob.size = impl->forgePatchGet (blob.data, sizeof (blob.data));
+    if (blob.size != 0)
+        impl->atomRing.push (blob);
 }
 
 void Lv2Instance::forwardUiAtomEvent (const void* atomData, uint32_t sizeBytes) noexcept

@@ -9,6 +9,7 @@
 #include <chrono>
 #include <filesystem>
 #include <algorithm>
+#include <cstring>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
@@ -248,4 +249,49 @@ TEST_CASE ("LV2 patch parameters are exposed in a stable order",
     std::sort (sorted.begin(), sorted.end());
     REQUIRE (names.size() == 12);
     REQUIRE (names == sorted);
+}
+
+TEST_CASE ("LV2 editor events carry current control and patch values",
+           "[lv2][editor][regression][issue-355]")
+{
+    duskstudio::lv2::Lv2Bundle bundle;
+    std::string error;
+    REQUIRE (bundle.load (DUSKSTUDIO_FILE_STATE_LV2_FIXTURE_PATH, error));
+
+    duskstudio::lv2::Lv2Instance instance;
+    REQUIRE (instance.create (bundle, kPluginUri, error));
+    REQUIRE (instance.activate (48000.0, 32, error));
+    REQUIRE (instance.uiParameterEventCount() == instance.paramCount());
+
+    int controlIndex = -1;
+    int patchIndex = -1;
+    for (int i = 0; i < instance.paramCount(); ++i)
+    {
+        const auto* param = instance.paramInfo (i);
+        if (param != nullptr && param->isPatchProperty)
+            patchIndex = i;
+        else if (param != nullptr)
+            controlIndex = i;
+    }
+    REQUIRE (controlIndex >= 0);
+    REQUIRE (patchIndex >= 0);
+
+    const auto* control = instance.paramInfo (controlIndex);
+    instance.setParamValue (control->id, 0.75);
+    duskstudio::lv2::Lv2Instance::UiParameterEvent event;
+    REQUIRE (instance.currentUiParameterEvent (controlIndex, event));
+    REQUIRE (event.portIndex == control->id);
+    REQUIRE (event.protocol == 0);
+    REQUIRE (event.sizeBytes == sizeof (float));
+    float controlValue = 0.0f;
+    std::memcpy (&controlValue, event.data.data(), sizeof (controlValue));
+    REQUIRE_THAT (controlValue, Catch::Matchers::WithinAbs (0.75f, 1.0e-7f));
+
+    const auto* patch = instance.paramInfo (patchIndex);
+    instance.setParamValue (patch->id, 0.625);
+    REQUIRE (instance.currentUiParameterEvent (patchIndex, event));
+    REQUIRE (event.portIndex == 6);
+    REQUIRE (event.protocol == instance.uiEventTransferUrid());
+    REQUIRE (event.sizeBytes > sizeof (float));
+    REQUIRE_THAT (event.value, Catch::Matchers::WithinAbs (0.625f, 1.0e-7f));
 }

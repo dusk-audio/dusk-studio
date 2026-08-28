@@ -2,6 +2,7 @@
 
 #include "../hosting/INativeInstance.h"
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -36,6 +37,15 @@ public:
         float       minValue = 0.0f, maxValue = 1.0f, defaultValue = 0.0f;
         bool        stepped = false;           // toggled / integer / enumeration
         bool        isPatchProperty = false;   // written as a patch:Set atom, not a port
+    };
+
+    struct UiParameterEvent
+    {
+        uint32_t portIndex = 0;
+        uint32_t protocol = 0;
+        uint32_t sizeBytes = 0;
+        float value = 0.0f;
+        alignas (uint64_t) std::array<uint8_t, 128> data {};
     };
 
     Lv2Instance();
@@ -107,11 +117,19 @@ public:
     uint32_t uiEventTransferUrid() const noexcept;
     void forwardUiAtomEvent (const void* atomData, uint32_t sizeBytes) noexcept;
 
+    // Host -> UI parameter events. Control ports use protocol 0 with a float;
+    // patch properties use eventTransfer with a patch:Set on the designated
+    // control atom output. Payloads remain opaque here so editors need no LV2
+    // atom headers and suil is called only from their message-thread pump.
+    int  uiParameterEventCount() const noexcept;
+    bool currentUiParameterEvent (int index, UiParameterEvent& out) const;
+    void requestPatchParameterValuesForUi() noexcept;
+
     // Parameters (message thread). Enumerated once at create().
     int              paramCount() const noexcept;
     const ParamInfo* paramInfo (int index) const noexcept;
-    // Patch properties read back the last host/UI-written value (the plugin's
-    // own patch:Put responses aren't parsed yet).
+    // Patch properties read back the last host/UI-written value or the latest
+    // patch:Set / patch:Put response drained from the plugin.
     bool getParamValue (uint32_t paramId, double& out) const;
     // Clamps to the parameter's range; control ports stage through
     // setControlPortValue, patch properties as a patch:Set atom on the control
