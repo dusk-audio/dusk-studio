@@ -60,9 +60,9 @@ race:dusk::SpscIndexFifo
 # reader thread parks a reply, and it never draws the release/acquire edge that
 # hands the parked reply back to the caller. That surfaces as a double lock on
 # controlMutex - the reader does acquire it, which proves no thread held it -
-# and as a race on the reply slot both sides only ever touch under that mutex.
-# Same modelling gap as the dusk::AutoResetEvent entries above.
+# and as a race on the reply slot, which only these two functions touch and
+# only under that mutex. Same modelling gap as the dusk::AutoResetEvent entries
+# above. Verified against a local build that stubs out the interceptor: these
+# two entries silence both reports, and no lock-order-inversion report appears.
 mutex:duskstudio::ipc::RemotePluginConnection::readerLoop
-deadlock:duskstudio::ipc::RemotePluginConnection::readerLoop
-race:duskstudio::ipc::RemotePluginConnection::readerLoop
 race:duskstudio::ipc::RemotePluginConnection::sendAndAwaitReply
