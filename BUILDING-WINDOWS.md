@@ -17,7 +17,7 @@ This document is aimed at a developer with a Windows machine who has been handed
    ```
 
    Manifest mode rejects per-package arguments: `vcpkg install libsndfile:x64-windows-static` errors out while `vcpkg.json` is present. Your vcpkg clone must also already contain the baseline commit, because vcpkg resolves it locally and will not fetch it; clones updated on or after 2026-08-01 have it, so `git pull` in the vcpkg clone first if yours is older. The packages land in `vcpkg_installed\x64-windows-static` under the checkout, so add `-DCMAKE_PREFIX_PATH=<repo-root>/vcpkg_installed/x64-windows-static` to the configure line, forward slashes as with the DAF paths below.
-4. **Steinberg ASIO SDK** — effectively required for the Visual Studio flow in this document, despite reading like an extra. A multi-config generator with Release among its configurations fails the configure without it ([CMakeLists.txt:694-701](CMakeLists.txt#L694-L701) and [:728-735](CMakeLists.txt#L728-L735)), which is exactly what `-G "Visual Studio 17 2022"` gives you: a shipping Windows binary must not silently come out WASAPI-only. Download from https://www.steinberg.net/asiosdk, accept the EULA, unzip somewhere stable, then pass `-DASIOSDK_PATH=C:/path/to/asiosdk` (its `common/` must contain `iasiodrv.h`). To skip the download on a first dev build, pass `-DDUSKSTUDIO_REQUIRE_ASIO=OFF` instead and accept WASAPI only.
+4. **Steinberg ASIO SDK** — required for every Windows configuration. Dusk Studio does not support ASIO-less Windows builds. Download from https://www.steinberg.net/asiosdk, accept the EULA, unzip somewhere stable, then pass `-DASIOSDK_PATH=C:/path/to/asiosdk` (its `common/` must contain `iasiodrv.h`). CMake fails closed when the SDK is absent.
 
 ## Repository layout
 
@@ -102,7 +102,7 @@ cmake -S . -B build -G "Visual Studio 17 2022" -A x64 ^
 cmake --build build --config Release -j6
 ```
 
-Swap `-DASIOSDK_PATH=...` for `-DDUSKSTUDIO_REQUIRE_ASIO=OFF` if you skipped the SDK download. The first configure pulls in JUCE's CMake helpers and may take a minute. Subsequent configures are fast.
+The first configure pulls in JUCE's CMake helpers and may take a minute. Subsequent configures are fast. There is no ASIO-less fallback configuration.
 
 The built binary lands at:
 
@@ -200,7 +200,9 @@ Useful for confirming the audio engine wires up correctly without needing to dri
   the bundled llvmpipe renderer so the notepad behaves consistently on native,
   virtual, and remote displays. This uses CPU rendering for OpenGL surfaces in
   Dusk Studio and its plugin-host children; the audio engine is unaffected.
-- **No ASIO without the SDK.** WASAPI is the default; ASIO requires the SDK download above. Most users will be fine on WASAPI.
+- **Every Windows build requires the ASIO SDK.** This is a build-time
+  requirement. At runtime, Dusk Studio prefers an installed ASIO driver and
+  falls back to WASAPI when no ASIO driver is available.
 - **The ALSA backend is not compiled.** [CMakeLists.txt:754](CMakeLists.txt#L754) gates Dusk Studio's custom ALSA `AudioIODeviceType` behind `UNIX AND NOT APPLE`. Windows falls through to JUCE's stock WASAPI/ASIO types.
 - **Compiler warnings.** Project is primarily developed on Clang/GCC. MSVC may emit warnings; none are fatal. `/WX` (warnings-as-errors) is not enabled.
 - **MinGW/MSYS2 not tested.** Stick to MSVC via Visual Studio 2022.
