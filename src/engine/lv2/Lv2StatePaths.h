@@ -4,6 +4,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <set>
 #include <string>
 #include <string_view>
@@ -11,7 +12,9 @@
 #include <vector>
 
 #if defined(__linux__) || defined(__APPLE__)
+ #include <cerrno>
  #include <fcntl.h>
+ #include <sys/stat.h>
  #include <unistd.h>
 #endif
 
@@ -504,24 +507,139 @@ inline bool commitNextGeneration (const std::filesystem::path& stateDir,
     return publishReadyNext (stateDir, ec);
 }
 
+// How far down the resolved path canonical containment may be enforced. A
+// generation's entries are symlinks into <dir>/copy for files the plugin wrote
+// and into <dir>/link for files it only referenced, and a link-store entry
+// points straight at the user's original file outside the session - resolving
+// the leaf would reject an ordinary external sample. Only real directories sit
+// above it, so a symlink there is never something lilv wrote.
+inline bool parentsResolveInsideStateDirectory (
+    const std::filesystem::path& stateDir, const std::filesystem::path& resolved)
+{
+    std::error_code ec;
+    const auto canonicalRoot = std::filesystem::weakly_canonical (stateDir, ec);
+    const auto root = ec ? stateDir.lexically_normal() : canonicalRoot;
+    ec.clear();
+    const auto parents = std::filesystem::weakly_canonical (resolved.parent_path(), ec);
+    return ! ec && isWithin (root, parents);
+}
+
 // Restore side: an abstract path from a state blob resolves against <dir>/cur.
 // Already-absolute abstract paths (and an empty stateDir) pass through. A blob
-// with "../" segments that would escape cur/ is refused (passed through
-// unresolved) rather than mapped to a file outside the state directory.
+// value that escapes the state directory - lexically through "../" segments, or
+// through a symlinked directory planted in its prefix - yields an empty string.
+// Handing the unresolved value back instead would leave the plugin resolving it
+// against the process working directory, which is both outside the session and
+// dependent on where the application was launched from.
 inline std::string toAbsolute (const std::filesystem::path& stateDir,
                                const std::string& abstractPath)
 {
     const auto abstract = std::filesystem::u8path (abstractPath);
-    if (stateDir.empty() || abstract.empty()
-        || abstract == std::filesystem::path (".") || abstract.is_absolute())
-        return abstractPath;
-    const auto cur      = stateDir / "cur";
+    if (stateDir.empty() || abstract.is_absolute()) return abstractPath;
+    if (abstract.empty() || abstract == std::filesystem::path (".")) return {};
+
+    const auto cur      = (stateDir / "cur").lexically_normal();
     const auto resolved = (cur / abstract).lexically_normal();
-    const auto rel      = resolved.lexically_relative (cur);
-    if (rel.empty() || rel == std::filesystem::path (".")
-        || *rel.begin() == std::filesystem::path (".."))
-        return abstractPath;
+    if (! isWithin (cur, resolved)) return {};
+    if (! parentsResolveInsideStateDirectory (stateDir, resolved)) return {};
     return resolved.u8string();
+}
+
+// Create the leading directories of a cur/-relative request without ever
+// traversing a symlink, and refuse a leaf that already exists as one. Lexical
+// containment alone is not enough: a symlink left in the state tree by a
+// crafted session (or by a plugin that wrote one itself) redirects an
+// in-root-looking write anywhere on the filesystem. Refusing a symlinked leaf
+// costs nothing legitimate - lilv's own leaf symlinks point into the shared
+// copy/link stores, and writing through one would corrupt the file every other
+// generation references.
+inline bool prepareContainedPath (const std::filesystem::path& cur,
+                                  const std::filesystem::path& relative,
+                                  std::error_code& ec)
+{
+    std::filesystem::create_directories (cur, ec);
+    if (ec) return false;
+
+#if defined(__linux__) || defined(__APPLE__)
+    // Each level is created and reopened relative to the previous descriptor
+    // with O_NOFOLLOW, so a symlink swapped in between the check and the
+    // creation fails the open rather than redirecting it. Opening cur the same
+    // way is what rejects a state root that is itself a link.
+    const auto fail = [&ec] { ec = std::error_code (errno, std::generic_category()); };
+
+    int dir = ::open (cur.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (dir < 0) { fail(); return false; }
+
+    bool ok = true;
+    for (auto part = relative.begin(); part != relative.end(); ++part)
+    {
+        if (std::next (part) == relative.end())
+        {
+            struct stat leaf {};
+            if (::fstatat (dir, part->c_str(), &leaf, AT_SYMLINK_NOFOLLOW) == 0
+                && S_ISLNK (leaf.st_mode))
+            {
+                ec = std::make_error_code (std::errc::too_many_symbolic_link_levels);
+                ok = false;
+            }
+            break;
+        }
+
+        if (::mkdirat (dir, part->c_str(), 0777) != 0 && errno != EEXIST)
+        {
+            fail();
+            ok = false;
+            break;
+        }
+        const int child = ::openat (dir, part->c_str(),
+                                    O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        if (child < 0) { fail(); ok = false; break; }
+        ::close (dir);
+        dir = child;
+    }
+
+    ::close (dir);
+    return ok;
+#else
+    // No openat equivalent here, so the walk is check-then-create and only as
+    // race-resistant as the platform makes it. Testing the type rather than
+    // is_symlink also catches a Windows junction, which reports its own
+    // file_type and would slip past a symlink-only test.
+    using FileType = std::filesystem::file_type;
+
+    // create_directories leaves an existing link alone, so cur has to be shown
+    // to be a real directory before anything is built underneath it.
+    if (std::filesystem::symlink_status (cur, ec).type() != FileType::directory)
+    {
+        ec = std::make_error_code (std::errc::too_many_symbolic_link_levels);
+        return false;
+    }
+
+    auto walk = cur;
+    for (auto part = relative.begin(); part != relative.end(); ++part)
+    {
+        walk /= *part;
+        const auto type = std::filesystem::symlink_status (walk, ec).type();
+        if (ec && ec != std::errc::no_such_file_or_directory) return false;
+        ec.clear();
+
+        const bool isLeaf = std::next (part) == relative.end();
+        // A plugin may reuse a directory or file it made earlier; anything else
+        // that already occupies the name is a reparse point or worse.
+        if (type != FileType::not_found && type != FileType::directory
+            && ! (isLeaf && type == FileType::regular))
+        {
+            ec = std::make_error_code (std::errc::too_many_symbolic_link_levels);
+            return false;
+        }
+        if (isLeaf) break;
+
+        std::filesystem::create_directory (walk, ec);
+        if (ec && ! std::filesystem::is_directory (walk)) return false;
+        ec.clear();
+    }
+    return true;
+#endif
 }
 
 // Restore-side state:makePath. The plugin may create the returned file, so
@@ -547,8 +665,9 @@ inline std::filesystem::path makeRestorePath (
         return {};
     }
 
-    std::filesystem::create_directories (resolved.parent_path(), ec);
-    return ec ? std::filesystem::path {} : resolved;
+    if (! prepareContainedPath (cur, resolved.lexically_relative (cur), ec))
+        return {};
+    return resolved;
 }
 
 // Save side: an absolute path lilv hands us becomes a cur/-relative abstract
