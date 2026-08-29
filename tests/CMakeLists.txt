@@ -468,6 +468,7 @@ endif()
 if (_duskstudio_ipc_test_enabled)
     target_sources(dusk-studio-tests PRIVATE
         ipc_stub_round_trip.cpp
+        ipc_worker_park.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/ipc/RemotePluginConnection.cpp
         ${_duskstudio_ipc_test_sources})
     target_compile_definitions(dusk-studio-tests PRIVATE

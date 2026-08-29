@@ -33,6 +33,7 @@
 
 #include "PluginIpc.h"
 #include "PluginScanProtocol.h"
+#include "WorkerPark.h"
 #if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
  #include "../NativeScanRows.h"
 #endif
@@ -225,6 +226,128 @@ int runIpcStub (int argc, const char* const* argv, bool suppressReplies) noexcep
     return 0;
 }
 
+// Test-only child shape used by the cross-platform regression suite. It runs
+// the real shared-memory worker/control topology with a processor that remains
+// inside processBlock longer than the production park deadline. The mutation
+// callback aborts if it is ever entered while processing, so receiving the
+// explicit park-timeout reply proves the callback was not touched first.
+struct ParkTimeoutTestProcessor
+{
+    std::atomic<bool> processing { false };
+
+    void processBlock()
+    {
+        processing.store (true, std::memory_order_release);
+        std::this_thread::sleep_for (std::chrono::milliseconds (250));
+        processing.store (false, std::memory_order_release);
+    }
+
+    void mutate()
+    {
+        if (processing.load (std::memory_order_acquire))
+            std::abort();
+    }
+};
+
+int runIpcParkTimeoutStub (int argc, const char* const* argv) noexcept
+{
+    ipcp::NativeHandle channel = ipcp::locateInheritedChannel (argc, argv);
+    if (! ipcp::isValid (channel)) return 1;
+
+    ipcp::NativeHandle shmHandle;
+    if (! ipcp::recvHandle (channel, shmHandle)) return 1;
+
+    ipcp::InterprocessSignal commandSignal;
+    ipcp::InterprocessSignal replySignal;
+    if (! commandSignal.receiveFromParent (channel)
+        || ! replySignal.receiveFromParent (channel))
+        return 1;
+
+    ipcp::SharedMemory shm;
+    std::string err;
+    if (! shm.mapInheritedHandle (shmHandle, kTotalSize, err)) return 1;
+
+    auto* block = headerOf (shm.data());
+    if (block->magic != kMagic || block->version != kVersion) return 1;
+
+    char ready = 'k';
+    if (! ipcp::writeExact (channel, &ready, 1)) return 1;
+
+    ParkTimeoutTestProcessor processor;
+    std::atomic<ParkTimeoutTestProcessor*> currentProcessor { &processor };
+    std::atomic<bool> shouldQuit { false };
+
+    std::thread worker ([&]
+    {
+        std::uint32_t lastSequence = 0;
+        while (! shouldQuit.load (std::memory_order_acquire))
+        {
+            const auto command = block->cmdSeq.load (std::memory_order_acquire);
+            if (command == lastSequence)
+            {
+                (void) commandSignal.wait (&block->cmdSeq, command, nullptr);
+                continue;
+            }
+
+            if (auto* current = currentProcessor.load (std::memory_order_acquire))
+                current->processBlock();
+
+            lastSequence = command;
+            block->replySeq.store (command, std::memory_order_release);
+            replySignal.wake (&block->replySeq);
+        }
+    });
+
+    while (true)
+    {
+        ControlMsgHeader request {};
+        if (! ipcp::readExact (channel, &request, sizeof (request))) break;
+        if (request.payloadLen > kMaxControlPayload
+            || request.totalLen != (std::uint32_t) sizeof (request) + request.payloadLen)
+            break;
+
+        std::vector<std::uint8_t> payload (request.payloadLen);
+        if (request.payloadLen > 0
+            && ! ipcp::readExact (channel, payload.data(), request.payloadLen))
+            break;
+
+        std::uint32_t status = 99;
+        const auto op = (OpCode) request.op;
+        if (op == OpCode::Ping)
+        {
+            status = processor.processing.load (std::memory_order_acquire) ? 0u : 1u;
+        }
+        else if (op == OpCode::PrepareToPlay || op == OpCode::Release
+                 || op == OpCode::GetState || op == OpCode::SetState)
+        {
+            const bool parked = duskstudio::ipc::withParkedWorker (
+                currentProcessor, block->cmdSeq, block->replySeq,
+                [&] { processor.mutate(); });
+            if (parked)
+                currentProcessor.store (&processor, std::memory_order_release);
+            status = parked ? 0u : kControlStatusWorkerParkTimeout;
+        }
+
+        if (status == kControlStatusWorkerParkTimeout)
+            block->state.store (kStateCrashed, std::memory_order_release);
+
+        const bool replySent = sendControlReply (channel, request.op, status, nullptr, 0);
+
+        if (status == kControlStatusWorkerParkTimeout)
+        {
+            replySignal.wake (&block->replySeq);
+            std::_Exit (EXIT_FAILURE);
+        }
+        if (! replySent) break;
+    }
+
+    shouldQuit.store (true, std::memory_order_release);
+    block->state.store (kStateTeardown, std::memory_order_release);
+    commandSignal.wake (&block->cmdSeq);
+    worker.join();
+    return 0;
+}
+
 // --- Phase 2 host mode ---------------------------------------------------
 
 #if JUCE_MAC
@@ -382,27 +505,22 @@ bool parsePluginDescriptionXml (const juce::String& xml,
 // plugins crash hard if the host violates it (the parent uses the same
 // pattern around its own state I/O via AtomicPark.h).
 //
-// Mechanism: clear currentInstance so the worker no-ops on any new
-// cmdSeq bump, then wait until cmdSeq == replySeq (worker has drained
-// every command it had in flight). 50 ms ceiling caps the stall if the
-// worker somehow falls behind; we'd rather risk one stale audio block
-// than wedge the control channel.
+// Mechanism: clear currentInstance so the worker no-ops on any new cmdSeq
+// bump, then wait until cmdSeq == replySeq (worker has drained every command
+// it had in flight). A worker that misses the bounded deadline is unsafe to
+// mutate: leave the pointer parked, report a terminal RPC error, and let the
+// control loop exit the child after sending that reply.
 template <typename Fn>
-void withParkedWorker (HostState& host, Fn&& fn)
+std::uint32_t withParkedHostWorker (HostState& host, Fn&& fn)
 {
-    host.currentInstance.store (nullptr, std::memory_order_release);
-    const auto deadline = std::chrono::steady_clock::now()
-                         + std::chrono::milliseconds (50);
-    while (std::chrono::steady_clock::now() < deadline)
+    if (! duskstudio::ipc::withParkedWorker (
+            host.currentInstance, host.hdr->cmdSeq, host.hdr->replySeq, fn))
     {
-        const auto cs = host.hdr->cmdSeq .load (std::memory_order_acquire);
-        const auto rs = host.hdr->replySeq.load (std::memory_order_acquire);
-        if (cs == rs) break;
-        std::this_thread::sleep_for (std::chrono::microseconds (200));
+        host.hdr->state.store (kStateCrashed, std::memory_order_release);
+        return kControlStatusWorkerParkTimeout;
     }
-    fn();
-    host.currentInstance.store (host.ownedInstance.get(),
-                                  std::memory_order_release);
+    host.currentInstance.store (host.ownedInstance.get(), std::memory_order_release);
+    return 0;
 }
 
 std::uint32_t handleLoadPlugin (HostState& host,
@@ -490,18 +608,17 @@ std::uint32_t handlePrepareToPlay (HostState& host,
     PrepareToPlayPayload p {};
     std::memcpy (&p, payload.data(), sizeof (p));
     if (host.ownedInstance == nullptr) return 0;
-    withParkedWorker (host, [&]
+    return withParkedHostWorker (host, [&]
     {
         host.ownedInstance->prepareToPlay (p.sampleRate, p.blockSize);
         host.currentSampleRate = p.sampleRate;
         host.currentBlockSize  = p.blockSize;
     });
-    return 0;
 }
 
 std::uint32_t handleRelease (HostState& host)
 {
-    withParkedWorker (host, [&]
+    return withParkedHostWorker (host, [&]
     {
         if (host.ownedInstance != nullptr)
         {
@@ -519,7 +636,6 @@ std::uint32_t handleRelease (HostState& host)
             host.ownedInstance.reset();
         }
     });
-    return 0;
 }
 
 std::uint32_t handleGetState (HostState& host,
@@ -527,11 +643,12 @@ std::uint32_t handleGetState (HostState& host,
 {
     if (host.ownedInstance == nullptr) return 1;
     juce::MemoryBlock mb;
-    withParkedWorker (host, [&]
+    const auto parkStatus = withParkedHostWorker (host, [&]
     {
         const juce::MessageManagerLock mml;
         host.ownedInstance->getStateInformation (mb);
     });
+    if (parkStatus != 0) return parkStatus;
     if (mb.getSize() > kStateBytes) return 2;
     std::memcpy (static_cast<char*> (host.shm.data()) + kStateOffset,
                   mb.getData(), mb.getSize());
@@ -549,13 +666,13 @@ std::uint32_t handleSetState (HostState& host,
     std::uint32_t sz = 0;
     std::memcpy (&sz, payload.data(), sizeof (sz));
     if (sz > kStateBytes) return 3;
-    withParkedWorker (host, [&]
+    const auto parkStatus = withParkedHostWorker (host, [&]
     {
         const juce::MessageManagerLock mml;
         host.ownedInstance->setStateInformation (
             static_cast<const char*> (host.shm.data()) + kStateOffset, (int) sz);
     });
-    return 0;
+    return parkStatus;
 }
 
 std::uint32_t handleShowEditor (HostState& host,
@@ -898,10 +1015,17 @@ int runIpcHost (int argc, const char* const* argv) noexcept
                 default:                     status = 99; break;
             }
 
-            if (! sendControlReply (host.channel, hdr.op, status,
-                                     reply.empty() ? nullptr : reply.data(),
-                                     (std::uint32_t) reply.size()))
-                break;
+            const bool replySent = sendControlReply (
+                host.channel, hdr.op, status,
+                reply.empty() ? nullptr : reply.data(),
+                (std::uint32_t) reply.size());
+
+            if (status == kControlStatusWorkerParkTimeout)
+            {
+                host.replySignal.wake (&host.hdr->replySeq);
+                std::_Exit (EXIT_FAILURE);
+            }
+            if (! replySent) break;
         }
         host.shouldQuit.store (true, std::memory_order_release);
         host.hdr->state.store (kStateTeardown, std::memory_order_release);
@@ -1074,12 +1198,14 @@ int main (int argc, char** argv)
 
     bool ipcStub = false;
     bool ipcStubTimeout = false;
+    bool ipcParkTimeoutStub = false;
     bool ipcHost = false;
     bool scan    = false;
     for (int i = 1; i < argc; ++i)
     {
         if (std::strcmp (args[i], "--ipc-stub") == 0) ipcStub = true;
         if (std::strcmp (args[i], "--ipc-stub-timeout") == 0) ipcStubTimeout = true;
+        if (std::strcmp (args[i], "--ipc-park-timeout-stub") == 0) ipcParkTimeoutStub = true;
         if (std::strcmp (args[i], "--ipc-host") == 0) ipcHost = true;
         if (std::strcmp (args[i], "--scan")     == 0) scan    = true;
 #if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
@@ -1089,6 +1215,7 @@ int main (int argc, char** argv)
 
     if (scan)    return runScan (argc, args);
     if (ipcStub || ipcStubTimeout) return runIpcStub (argc, args, ipcStubTimeout);
+    if (ipcParkTimeoutStub) return runIpcParkTimeoutStub (argc, args);
     if (ipcHost) return runIpcHost (argc, args);
 
     std::fprintf (stderr,

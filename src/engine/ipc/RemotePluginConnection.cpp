@@ -155,7 +155,7 @@ bool RemotePluginConnection::connect (const std::string& hostExecutablePath,
     // a reader thread there would block forever on readExact. The
     // self-test connects with extraArg=="--ipc-stub" and would
     // otherwise leak a permanently-blocked thread per connection.
-    if (extraArg == "--ipc-host")
+    if (extraArg == "--ipc-host" || extraArg == "--ipc-park-timeout-stub")
         startReaderThread();
 
     return true;
@@ -340,6 +340,8 @@ bool RemotePluginConnection::sendAndAwaitReply (OpCode op,
     hdrOut   = replyHeader;
     replyOut = std::move (replyPayload);
     replyReady = false;
+    if (hdrOut.status == kControlStatusWorkerParkTimeout)
+        crashed.store (true, std::memory_order_release);
     return true;
 }
 
