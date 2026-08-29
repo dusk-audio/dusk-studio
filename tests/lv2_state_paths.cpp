@@ -51,10 +51,12 @@ TEST_CASE ("LV2 state paths: abstract resolves under cur/", "[lv2][state]")
     // An already-absolute abstract path is left untouched.
     const auto abs = (stdfs::current_path() / "shared" / "ir.wav").u8string();
     REQUIRE (toAbsolute (dir, abs) == abs);
+    // Anything that does not name a file under cur/ is refused outright rather
+    // than handed back for the plugin to resolve against its own directory.
     REQUIRE (toAbsolute (dir, "").empty());
-    REQUIRE (toAbsolute (dir, ".") == ".");
-    REQUIRE (toAbsolute (dir, "./") == "./");
-    REQUIRE (toAbsolute (dir, "samples/..") == "samples/..");
+    REQUIRE (toAbsolute (dir, ".").empty());
+    REQUIRE (toAbsolute (dir, "./").empty());
+    REQUIRE (toAbsolute (dir, "samples/..").empty());
 }
 
 TEST_CASE ("LV2 state paths: absolute under cur/ becomes relative", "[lv2][state]")
@@ -89,12 +91,80 @@ TEST_CASE ("LV2 state paths: canonical state root handles a symlink alias",
 }
 #endif
 
-TEST_CASE ("LV2 state paths: refuse escaping abstract paths", "[lv2][state]")
+TEST_CASE ("LV2 state paths: refuse escaping abstract paths",
+           "[lv2][state][regression][issue-392]")
 {
     const stdfs::path dir = "/session/state/lv2/track01";
-    // A blob that tries to climb out of cur/ is handed back unresolved.
-    REQUIRE (toAbsolute (dir, "../../secret.wav") == "../../secret.wav");
+    const auto cur = (dir / "cur").lexically_normal();
+
+    // A blob that climbs out of cur/ resolves to nothing. Returning the input
+    // would leave the plugin resolving it against the working directory.
+    for (const auto* traversal : { "../../secret.wav", "..", "../",
+                                   "samples/../../secret.wav", "a/b/../../../etc/passwd" })
+        REQUIRE (toAbsolute (dir, traversal).empty());
+
+    // A valid in-root path still maps, and an absolute one still passes through.
+    // Build the absolute case from current_path: a leading separator alone is
+    // not an absolute path on Windows, where the root name carries the drive.
+    REQUIRE (stdfs::path (toAbsolute (dir, "samples/kick.wav"))
+             == cur / "samples" / "kick.wav");
+    const auto external = (stdfs::current_path() / "shared" / "ir.wav").u8string();
+    REQUIRE (toAbsolute (dir, external) == external);
+
+    // Backslashes are a separator on Windows and an ordinary filename character
+    // elsewhere, so assert the invariant that holds on both: whatever comes
+    // back is either a refusal or a path under cur/.
+    for (const auto* mixed : { "..\\..\\secret.wav", "samples\\..\\..\\secret.wav",
+                               "samples\\kick.wav" })
+    {
+        const auto mapped = toAbsolute (dir, mixed);
+        if (! mapped.empty()) REQUIRE (isWithin (cur, stdfs::path (mapped)));
+    }
 }
+
+#if defined(__linux__) || defined(__APPLE__)
+TEST_CASE ("LV2 state paths: refuse abstract paths that escape through a directory symlink",
+           "[lv2][state][regression][issue-392]")
+{
+    TempDirectory temp ("dusk-lv2-state-generation-");
+    const auto stateDir = temp.path() / "state";
+    const auto outside = temp.path() / "outside";
+    stdfs::create_directories (stateDir / "cur");
+    stdfs::create_directories (outside / "deeper");
+    writeText (outside / "secret.txt", "secret");
+    stdfs::create_directory_symlink (outside, stateDir / "cur" / "escape");
+
+    REQUIRE (toAbsolute (stateDir, "escape/secret.txt").empty());
+    REQUIRE (toAbsolute (stateDir, "escape/deeper/secret.txt").empty());
+}
+
+TEST_CASE ("LV2 state paths: abstract paths follow lilv's copy and link stores",
+           "[lv2][state][regression][issue-392]")
+{
+    // lilv keeps one copy of a file the plugin wrote under <dir>/copy and
+    // symlinks each generation at it. A file the plugin only referenced is
+    // linked from <dir>/link straight at the user's original, which lives
+    // outside the session on purpose. Both must still map.
+    TempDirectory temp ("dusk-lv2-state-generation-");
+    const auto stateDir = temp.path() / "state";
+    const auto userSamples = temp.path() / "Music";
+    stdfs::create_directories (stateDir / "cur");
+    stdfs::create_directories (stateDir / "link");
+    writeText (stateDir / "copy" / "bank.sfz", "<region>");
+    writeText (userSamples / "kick.wav", "RIFF");
+    stdfs::create_symlink (stdfs::path ("..") / "copy" / "bank.sfz",
+                           stateDir / "cur" / "bank.sfz");
+    stdfs::create_symlink (userSamples / "kick.wav", stateDir / "link" / "kick.wav");
+    stdfs::create_symlink (stdfs::path ("..") / "link" / "kick.wav",
+                           stateDir / "cur" / "kick.wav");
+
+    REQUIRE (stdfs::path (toAbsolute (stateDir, "bank.sfz"))
+             == stateDir / "cur" / "bank.sfz");
+    REQUIRE (stdfs::path (toAbsolute (stateDir, "kick.wav"))
+             == stateDir / "cur" / "kick.wav");
+    REQUIRE (readText (toAbsolute (stateDir, "kick.wav")) == "RIFF");
+}
+#endif
 
 TEST_CASE ("LV2 state paths: restore makePath stays under cur/", "[lv2][state]")
 {
@@ -116,6 +186,74 @@ TEST_CASE ("LV2 state paths: restore makePath stays under cur/", "[lv2][state]")
     REQUIRE (makeRestorePath (temp.path(), absolute, ec).empty());
     REQUIRE (ec == std::errc::invalid_argument);
 }
+
+#if defined(__linux__) || defined(__APPLE__)
+TEST_CASE ("LV2 state paths: restore makePath refuses a symlinked parent",
+           "[lv2][state][regression][issue-393]")
+{
+    TempDirectory temp ("dusk-lv2-state-generation-");
+    const auto stateDir = temp.path() / "state";
+    const auto outside = temp.path() / "outside";
+    stdfs::create_directories (stateDir / "cur");
+    stdfs::create_directories (outside);
+    stdfs::create_directory_symlink (outside, stateDir / "cur" / "escape");
+
+    std::error_code ec;
+    REQUIRE (makeRestorePath (stateDir, "escape/payload.txt", ec).empty());
+    REQUIRE (ec);
+    REQUIRE_FALSE (stdfs::exists (outside / "payload.txt"));
+
+    // Nested under the symlink is refused on the same descriptor walk.
+    REQUIRE (makeRestorePath (stateDir, "escape/deeper/payload.txt", ec).empty());
+    REQUIRE (ec);
+    REQUIRE_FALSE (stdfs::exists (outside / "deeper"));
+}
+
+TEST_CASE ("LV2 state paths: restore makePath refuses a symlinked cur",
+           "[lv2][state][regression][issue-393]")
+{
+    TempDirectory temp ("dusk-lv2-state-generation-");
+    const auto stateDir = temp.path() / "state";
+    const auto outside = temp.path() / "outside";
+    stdfs::create_directories (stateDir);
+    stdfs::create_directories (outside);
+    stdfs::create_directory_symlink (outside, stateDir / "cur");
+
+    std::error_code ec;
+    REQUIRE (makeRestorePath (stateDir, "payload.txt", ec).empty());
+    REQUIRE (ec);
+    REQUIRE_FALSE (stdfs::exists (outside / "payload.txt"));
+
+    REQUIRE (makeRestorePath (stateDir, "nested/payload.txt", ec).empty());
+    REQUIRE (ec);
+    REQUIRE_FALSE (stdfs::exists (outside / "nested"));
+}
+
+TEST_CASE ("LV2 state paths: restore makePath refuses a symlinked leaf",
+           "[lv2][state][regression][issue-393]")
+{
+    TempDirectory temp ("dusk-lv2-state-generation-");
+    const auto stateDir = temp.path() / "state";
+    const auto outside = temp.path() / "outside";
+    stdfs::create_directories (stateDir / "cur" / "restore");
+    stdfs::create_directories (outside);
+    writeText (outside / "target.txt", "original");
+    stdfs::create_symlink (outside / "target.txt",
+                           stateDir / "cur" / "restore" / "payload.txt");
+
+    std::error_code ec;
+    REQUIRE (makeRestorePath (stateDir, "restore/payload.txt", ec).empty());
+    REQUIRE (ec);
+    REQUIRE (readText (outside / "target.txt") == "original");
+
+    // A real file at the same leaf is a normal rewrite and stays allowed.
+    stdfs::remove (stateDir / "cur" / "restore" / "payload.txt");
+    writeText (stateDir / "cur" / "restore" / "payload.txt", "kept");
+    REQUIRE (makeRestorePath (stateDir, "restore/payload.txt", ec)
+             == stateDir / "cur" / "restore" / "payload.txt");
+    REQUIRE_FALSE (ec);
+}
+#endif
 
 TEST_CASE ("LV2 state paths: abstract<->absolute round-trips under cur/", "[lv2][state]")
 {
