@@ -789,6 +789,21 @@ windows_pin_check = (
 assert windows_pin_check in windows_guide, (
     "BUILDING-WINDOWS.md must fail when the donor revision does not match"
 )
+cmake_source = (source_root / "CMakeLists.txt").read_text(encoding="utf-8")
+assert "DUSKSTUDIO_REQUIRE_ASIO=OFF" not in cmake_source, (
+    "CMake must not offer an ASIO-less Windows build"
+)
+assert "DUSKSTUDIO_REQUIRE_ASIO=OFF" not in windows_guide, (
+    "BUILDING-WINDOWS.md must not document an ASIO opt-out"
+)
+assert "WASAPI is the default" not in windows_guide, (
+    "BUILDING-WINDOWS.md must distinguish the required ASIO SDK from runtime driver fallback"
+)
+assert "This is a build-time\n  requirement." in windows_guide
+assert "falls back to WASAPI when no ASIO driver is available" in windows_guide
+assert "Every Windows build requires the ASIO SDK." in cmake_source
+assert "Windows builds without ASIO are not supported." in cmake_source
+assert "target_compile_definitions(DuskStudio PRIVATE JUCE_ASIO=1)" in cmake_source
 readme = (source_root / "README.md").read_text(encoding="utf-8")
 test_sources = sorted((source_root / "tests").glob("*.cpp"))
 test_case_pattern = re.compile(r"^\s*TEST_CASE\s*\(", re.MULTILINE)

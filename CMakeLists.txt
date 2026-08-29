@@ -883,60 +883,18 @@ endif()
 # driver class; the AudioEngine then registers ASIO ahead of WASAPI so it
 # becomes the default backend (see AudioEngine ctor).
 #
-# ASIO is the only low-latency path JUCE offers on Windows (no WDM-KS), so a
-# shipping build MUST have it — a WASAPI-only Windows binary is what makes
-# pro-audio users walk. DUSKSTUDIO_REQUIRE_ASIO turns a missing SDK into a
-# hard configure error. It auto-enables whenever a release-class build is
-# possible: single-config Ninja/Make Release (CMAKE_BUILD_TYPE), and the
-# Visual Studio multi-config generator whenever Release is among the
-# buildable configs (the common case). A deliberate ASIO-less dev build
-# passes -DDUSKSTUDIO_REQUIRE_ASIO=OFF; without the SDK it then warns and
-# falls back to WASAPI exclusive / shared.
-# Tri-state so an explicit -DDUSKSTUDIO_REQUIRE_ASIO=OFF is distinguishable
-# from the unset default: "" = auto (release-class builds fail closed),
-# ON = always require, OFF = never require (deliberate ASIO-less dev build).
-set(DUSKSTUDIO_REQUIRE_ASIO "" CACHE STRING
-    "Require the ASIO SDK on Windows: ON / OFF / empty=auto (release fails closed)")
-# Validate up front: only "", ON, OFF are meaningful. Without this, a typo
-# like -DDUSKSTUDIO_REQUIRE_ASIO=yes falls through the "NOT ... OFF" branch and
-# is silently treated as "require ASIO". Fail loud instead.
-if(NOT DUSKSTUDIO_REQUIRE_ASIO STREQUAL ""
-   AND NOT DUSKSTUDIO_REQUIRE_ASIO STREQUAL "ON"
-   AND NOT DUSKSTUDIO_REQUIRE_ASIO STREQUAL "OFF")
-    message(FATAL_ERROR
-        "DUSKSTUDIO_REQUIRE_ASIO must be ON, OFF, or empty (auto); got "
-        "'${DUSKSTUDIO_REQUIRE_ASIO}'")
-endif()
+# ASIO is the only low-latency path JUCE offers on Windows (no WDM-KS), so
+# every Windows build requires it. There is deliberately no WASAPI-only build
+# escape hatch: a developer build that cannot exercise the production audio
+# backend is not a valid Dusk Studio build.
 if(WIN32)
-    set(_asio_required ${DUSKSTUDIO_REQUIRE_ASIO})
-    # Decide whether a release-class build is possible with this generator.
-    # Single-config (Ninja/Make): the type is fixed at configure time, so read
-    # CMAKE_BUILD_TYPE. Multi-config (Visual Studio): the type is chosen at
-    # BUILD time and CMAKE_BUILD_TYPE is empty, so a genex like $<CONFIG:Release>
-    # can't drive a configure-time message(FATAL_ERROR). Instead, if Release is
-    # among the buildable configs we fail closed — a VS build must not be able
-    # to silently produce a WASAPI-only shipping binary. An explicit
-    # -DDUSKSTUDIO_REQUIRE_ASIO=OFF opts out (deliberate ASIO-less dev build)
-    # and must win over this auto-detection.
-    if(NOT DUSKSTUDIO_REQUIRE_ASIO STREQUAL "OFF")
-        get_property(_is_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
-        if(_is_multi_config)
-            if("Release"        IN_LIST CMAKE_CONFIGURATION_TYPES
-               OR "RelWithDebInfo" IN_LIST CMAKE_CONFIGURATION_TYPES
-               OR "MinSizeRel"     IN_LIST CMAKE_CONFIGURATION_TYPES)
-                set(_asio_required ON)
-            endif()
-        else()
-            # Normalise to lowercase so a lowercase -DCMAKE_BUILD_TYPE=release
-            # still trips the release-class fail-closed (STREQUAL is
-            # case-sensitive and would otherwise miss it).
-            string(TOLOWER "${CMAKE_BUILD_TYPE}" _build_type_lc)
-            if(_build_type_lc STREQUAL "release"
-               OR _build_type_lc STREQUAL "relwithdebinfo"
-               OR _build_type_lc STREQUAL "minsizerel")
-                set(_asio_required ON)
-            endif()
-        endif()
+    # Give stale scripts and caches a direct explanation instead of silently
+    # ignoring their former opt-out variable.
+    if(DEFINED DUSKSTUDIO_REQUIRE_ASIO
+       AND NOT DUSKSTUDIO_REQUIRE_ASIO STREQUAL "ON")
+        message(FATAL_ERROR
+            "DUSKSTUDIO_REQUIRE_ASIO can no longer disable ASIO. "
+            "Every Windows build requires the ASIO SDK.")
     endif()
 
     set(_asio_candidate "")
@@ -949,21 +907,18 @@ if(WIN32)
     endif()
 
     if(NOT "${_asio_candidate}" STREQUAL "")
+        set(DUSKSTUDIO_RESOLVED_ASIO_SDK_PATH "${_asio_candidate}"
+            CACHE INTERNAL "Resolved ASIO SDK path used by Dusk Studio" FORCE)
         message(STATUS "Dusk Studio: ASIO SDK found at ${_asio_candidate} - enabling JUCE_ASIO")
         target_include_directories(DuskStudio PRIVATE "${_asio_candidate}/common")
         target_compile_definitions(DuskStudio PRIVATE JUCE_ASIO=1)
-    elseif(_asio_required)
+    else()
         message(FATAL_ERROR
             "Dusk Studio: ASIO SDK is required for this build but was not found.\n"
-            "  A Windows release binary without ASIO is not shippable (WASAPI-only latency).\n"
+            "  Windows builds without ASIO are not supported.\n"
             "  Fix one of:\n"
             "    - download Steinberg's ASIO SDK and pass -DASIOSDK_PATH=<dir> (its common/ must hold iasiodrv.h)\n"
-            "    - set the ASIOSDK_PATH environment variable, or place the SDK at ../asiosdk\n"
-            "    - for a deliberate dev build without ASIO, pass -DDUSKSTUDIO_REQUIRE_ASIO=OFF and a non-release CMAKE_BUILD_TYPE")
-    else()
-        message(WARNING
-            "Dusk Studio: ASIO SDK not found - falling back to WASAPI exclusive/shared. "
-            "Fine for dev builds; shipping Windows builds must include ASIO (set -DASIOSDK_PATH=...).")
+            "    - set the ASIOSDK_PATH environment variable, or place the SDK at ../asiosdk")
     endif()
 endif()
 
