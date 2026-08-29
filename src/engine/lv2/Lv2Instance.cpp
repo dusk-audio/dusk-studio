@@ -917,11 +917,12 @@ bool Lv2Instance::saveState (std::vector<uint8_t>& out) const
     // as cur/ below; without a directory, file-writing plugins keep only their
     // in-memory state (the pre-file-state behaviour, fine for effects).
     std::error_code ec;
-    const auto next = statepaths::prepareNextGeneration (impl->stateDir, ec);
+    const auto transaction = statepaths::prepareNextGeneration (impl->stateDir, ec);
     // Never report a successful blob-only save for a slot configured with
     // file-backed state: that would silently stop carrying its external files
     // after a staging or recovery failure.
-    if (next.empty()) return false;
+    if (transaction.next.empty()) return false;
+    const auto& next = transaction.next;
 
     // A restored plugin refers to files in cur/. Lilv must consider that the
     // scratch generation so it preserves their bytes in the stable copy store,
@@ -975,7 +976,7 @@ bool Lv2Instance::saveState (std::vector<uint8_t>& out) const
     // Only now that both the plugin snapshot and Turtle serialization succeeded
     // may the fresh files replace cur/. Until this point a restored plugin's
     // absolute cur/ paths remain valid throughout the save.
-    if (! statepaths::commitNextGeneration (impl->stateDir, ec))
+    if (! statepaths::commitNextGeneration (transaction, ec))
     {
         // commitNextGeneration may have moved cur aside before the publish or
         // rollback failed. Preserve the complete staged generation as recovery
