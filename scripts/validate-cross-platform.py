@@ -372,14 +372,14 @@ def windows_asio_preflight_script(build: str, expected_sdk: str) -> str:
             f"if (-not (Test-Path -LiteralPath {ps_quote(cache)})) {{ throw 'Windows CMake cache is missing' }}",
             f"$cacheText = Get-Content -LiteralPath {ps_quote(cache)} -Raw",
             "if ($cacheText -match '(?m)^DUSKSTUDIO_REQUIRE_ASIO:[^=]+=OFF\\r?$') { throw 'ASIO is explicitly disabled in the Windows CMake cache' }",
-            "$asioMatch = [regex]::Match($cacheText, '(?m)^ASIOSDK_PATH:[^=]+=(.+)\\r?$')",
-            "if (-not $asioMatch.Success) { throw 'ASIOSDK_PATH is absent from the Windows CMake cache' }",
-            "$cachedSdk = [IO.Path]::GetFullPath($asioMatch.Groups[1].Value.Trim()).TrimEnd('\\')",
-            "if ($cachedSdk -ne $expectedSdk) { throw \"CMake uses ASIO SDK '$cachedSdk', expected '$expectedSdk'\" }",
+            "$asioMatch = [regex]::Match($cacheText, '(?m)^DUSKSTUDIO_RESOLVED_ASIO_SDK_PATH:[^=]+=(.+)\\r?$')",
+            "if (-not $asioMatch.Success) { throw 'resolved ASIO SDK path is absent from the Windows CMake cache' }",
+            "$resolvedSdk = [IO.Path]::GetFullPath($asioMatch.Groups[1].Value.Trim()).TrimEnd('\\')",
+            "if ($resolvedSdk -ne $expectedSdk) { throw \"CMake uses ASIO SDK '$resolvedSdk', expected '$expectedSdk'\" }",
             f"if (-not (Test-Path -LiteralPath {ps_quote(project)})) {{ throw 'DuskStudio.vcxproj is missing' }}",
             f"$projectText = Get-Content -LiteralPath {ps_quote(project)} -Raw",
             "if (-not $projectText.Contains('JUCE_ASIO=1')) { throw 'DuskStudio target is missing JUCE_ASIO=1' }",
-            'Write-Output "ASIO enabled: $cachedSdk"',
+            'Write-Output "ASIO enabled: $resolvedSdk"',
         ]
     )
 

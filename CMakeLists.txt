@@ -907,6 +907,8 @@ if(WIN32)
     endif()
 
     if(NOT "${_asio_candidate}" STREQUAL "")
+        set(DUSKSTUDIO_RESOLVED_ASIO_SDK_PATH "${_asio_candidate}"
+            CACHE INTERNAL "Resolved ASIO SDK path used by Dusk Studio" FORCE)
         message(STATUS "Dusk Studio: ASIO SDK found at ${_asio_candidate} - enabling JUCE_ASIO")
         target_include_directories(DuskStudio PRIVATE "${_asio_candidate}/common")
         target_compile_definitions(DuskStudio PRIVATE JUCE_ASIO=1)
