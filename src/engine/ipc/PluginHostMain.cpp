@@ -1,9 +1,12 @@
 // dusk-studio-plugin-host - the child binary that owns one out-of-process VST3
-// (or LV2) instance on behalf of Dusk Studio's main process. Three modes:
+// (or LV2) instance on behalf of Dusk Studio's main process. Supported modes
+// include:
 //
 //   --ipc-stub  : echo input -> output, no JUCE plugin. Exists so the
 //                 IPC self-test can validate shm + sync + spawn plumbing
 //                 without a plugin in the loop.
+//   --ipc-control-reply-stub: deterministic request-correlation and reply-
+//                 validation regression child.
 //   --ipc-host  : full Phase-2 host. Loads a juce::AudioPluginInstance
 //                 via the format manager, runs processBlock on a worker
 //                 thread, services control RPCs on a separate socket-
@@ -91,13 +94,14 @@ std::mutex& channelWriteMutex()
     return m;
 }
 
-bool sendControlReply (ipcp::NativeHandle& ch, std::uint32_t op,
-                          std::uint32_t status, const void* payload,
-                          std::uint32_t payloadLen) noexcept
+bool sendControlReply (ipcp::NativeHandle& ch, const ControlMsgHeader& request,
+                       std::uint32_t status, const void* payload,
+                       std::uint32_t payloadLen) noexcept
 {
     ControlMsgHeader hdr {};
     hdr.totalLen   = (std::uint32_t) sizeof (hdr) + payloadLen;
-    hdr.op         = op;
+    hdr.op         = request.op;
+    hdr.requestId  = request.requestId;
     hdr.status     = status;
     hdr.payloadLen = payloadLen;
     std::lock_guard<std::mutex> lk (channelWriteMutex());
@@ -126,6 +130,7 @@ bool sendControlReply (ipcp::NativeHandle& ch, std::uint32_t op,
     ControlMsgHeader hdr {};
     hdr.totalLen   = (std::uint32_t) sizeof (hdr) + (std::uint32_t) sizeof (p);
     hdr.op         = (std::uint32_t) OpCode::ParamChangedFromChild;
+    hdr.requestId  = 0;
     hdr.status     = 0;
     hdr.payloadLen = (std::uint32_t) sizeof (p);
 
@@ -224,6 +229,87 @@ int runIpcStub (int argc, const char* const* argv, bool suppressReplies) noexcep
     }
 
     return 0;
+}
+
+// Test-only child for control-reply correlation and validation. It withholds
+// reply A until request B arrives, then writes A before B. This guarantees the
+// late-reply ordering without scheduler sleeps: B cannot be sent until A has
+// timed out in the parent, and A cannot be released until B is on the wire.
+int runIpcControlReplyStub (int argc, const char* const* argv) noexcept
+{
+    ipcp::NativeHandle channel = ipcp::locateInheritedChannel (argc, argv);
+    if (! ipcp::isValid (channel)) return 1;
+
+    ipcp::NativeHandle shmHandle;
+    if (! ipcp::recvHandle (channel, shmHandle)) return 1;
+
+    ipcp::InterprocessSignal commandSignal;
+    ipcp::InterprocessSignal replySignal;
+    if (! commandSignal.receiveFromParent (channel)
+        || ! replySignal.receiveFromParent (channel))
+        return 1;
+
+    ipcp::SharedMemory shm;
+    std::string error;
+    if (! shm.mapInheritedHandle (shmHandle, kTotalSize, error)) return 1;
+
+    auto* block = headerOf (shm.data());
+    if (block->magic != kMagic || block->version != kVersion) return 1;
+
+    char ready = 'k';
+    if (! ipcp::writeExact (channel, &ready, 1)) return 1;
+
+    auto readRequest = [&channel] (ControlMsgHeader& request,
+                                    std::vector<std::uint8_t>& payload)
+    {
+        if (! ipcp::readExact (channel, &request, sizeof (request))) return false;
+        if (request.requestId == 0
+            || request.payloadLen > kMaxControlPayload
+            || request.totalLen != (std::uint32_t) sizeof (request) + request.payloadLen)
+            return false;
+        payload.resize (request.payloadLen);
+        return request.payloadLen == 0
+            || ipcp::readExact (channel, payload.data(), request.payloadLen);
+    };
+
+    ControlMsgHeader first {};
+    ControlMsgHeader second {};
+    std::vector<std::uint8_t> payload;
+    if (! readRequest (first, payload) || first.op != (std::uint32_t) OpCode::Ping)
+        return 1;
+    if (! readRequest (second, payload) || second.op != (std::uint32_t) OpCode::Ping)
+        return 1;
+
+    if (! sendControlReply (channel, first, 17, nullptr, 0)
+        || ! sendControlReply (channel, second, 0, nullptr, 0))
+        return 1;
+
+    ControlMsgHeader oversized {};
+    if (! readRequest (oversized, payload)
+        || oversized.op != (std::uint32_t) OpCode::LoadPlugin)
+        return 1;
+    std::vector<std::uint8_t> oversizedReply (sizeof (LoadPluginReply) + 1);
+    if (! sendControlReply (channel, oversized, 0,
+                            oversizedReply.data(),
+                            (std::uint32_t) oversizedReply.size()))
+        return 1;
+
+    ControlMsgHeader wrongOpcode {};
+    if (! readRequest (wrongOpcode, payload)
+        || wrongOpcode.op != (std::uint32_t) OpCode::Ping)
+        return 1;
+    auto wrongOpcodeReply = wrongOpcode;
+    wrongOpcodeReply.op = (std::uint32_t) OpCode::Release;
+    if (! sendControlReply (channel, wrongOpcodeReply, 0, nullptr, 0))
+        return 1;
+
+    ControlMsgHeader wrongPayload {};
+    if (! readRequest (wrongPayload, payload)
+        || wrongPayload.op != (std::uint32_t) OpCode::Ping)
+        return 1;
+    const std::uint8_t unexpectedPayload = 0;
+    return sendControlReply (channel, wrongPayload, 0,
+                             &unexpectedPayload, sizeof (unexpectedPayload)) ? 0 : 1;
 }
 
 // Test-only child shape used by the cross-platform regression suite. It runs
@@ -331,7 +417,7 @@ int runIpcParkTimeoutStub (int argc, const char* const* argv) noexcept
         if (status == kControlStatusWorkerParkTimeout)
             block->state.store (kStateCrashed, std::memory_order_release);
 
-        const bool replySent = sendControlReply (channel, request.op, status, nullptr, 0);
+        const bool replySent = sendControlReply (channel, request, status, nullptr, 0);
 
         if (status == kControlStatusWorkerParkTimeout)
         {
@@ -1016,7 +1102,7 @@ int runIpcHost (int argc, const char* const* argv) noexcept
             }
 
             const bool replySent = sendControlReply (
-                host.channel, hdr.op, status,
+                host.channel, hdr, status,
                 reply.empty() ? nullptr : reply.data(),
                 (std::uint32_t) reply.size());
 
@@ -1198,6 +1284,7 @@ int main (int argc, char** argv)
 
     bool ipcStub = false;
     bool ipcStubTimeout = false;
+    bool ipcControlReplyStub = false;
     bool ipcParkTimeoutStub = false;
     bool ipcHost = false;
     bool scan    = false;
@@ -1205,6 +1292,7 @@ int main (int argc, char** argv)
     {
         if (std::strcmp (args[i], "--ipc-stub") == 0) ipcStub = true;
         if (std::strcmp (args[i], "--ipc-stub-timeout") == 0) ipcStubTimeout = true;
+        if (std::strcmp (args[i], "--ipc-control-reply-stub") == 0) ipcControlReplyStub = true;
         if (std::strcmp (args[i], "--ipc-park-timeout-stub") == 0) ipcParkTimeoutStub = true;
         if (std::strcmp (args[i], "--ipc-host") == 0) ipcHost = true;
         if (std::strcmp (args[i], "--scan")     == 0) scan    = true;
@@ -1215,6 +1303,7 @@ int main (int argc, char** argv)
 
     if (scan)    return runScan (argc, args);
     if (ipcStub || ipcStubTimeout) return runIpcStub (argc, args, ipcStubTimeout);
+    if (ipcControlReplyStub) return runIpcControlReplyStub (argc, args);
     if (ipcParkTimeoutStub) return runIpcParkTimeoutStub (argc, args);
     if (ipcHost) return runIpcHost (argc, args);
 

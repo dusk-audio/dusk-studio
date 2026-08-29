@@ -23,7 +23,7 @@ namespace duskstudio::ipc
 {
 
 constexpr std::uint32_t kMagic     = 0x46434C30;  // 'FCL0'
-constexpr std::uint32_t kVersion   = 2;
+constexpr std::uint32_t kVersion   = 3;
 constexpr int           kMaxBlock  = 1024;        // upper bound on numSamples per block
 constexpr int           kMaxChans  = 2;           // stereo plenty for this host
 constexpr std::size_t   kMidiBytes = 16 * 1024;   // serialised MIDI-block byte cap
@@ -51,11 +51,12 @@ constexpr std::uint32_t kStateTeardown = 2;
 //
 //     [uint32 totalLen]   little-endian, includes the rest of the record
 //     [uint32 op]         OpCode value
+//     [uint32 requestId]  non-zero for request/reply RPCs; zero for pushes
 //     [uint32 status]     reply only - 0 = ok, non-zero = error code
 //     [uint32 payloadLen] length of the variable-size payload that follows
 //     [bytes  payload]    op-specific
 //
-// totalLen = 12 + payloadLen. Both sides drain one record at a time;
+// totalLen = 20 + payloadLen. Both sides drain one record at a time;
 // nothing is interleaved with the audio hot path (which lives entirely
 // in the SHM region). Anything > a few KB (state blobs) goes through the
 // SHM staging area at kStateOffset to avoid pressure on the socket
@@ -110,11 +111,15 @@ struct ParamChangedPayload
 // Wire-record header. Followed on the wire by `payloadLen` bytes.
 struct ControlMsgHeader
 {
-    std::uint32_t totalLen;     // 12 + payloadLen
+    std::uint32_t totalLen;     // sizeof (ControlMsgHeader) + payloadLen
     std::uint32_t op;           // cast from OpCode
+    std::uint32_t requestId;    // echoed by replies; zero for one-shot/push frames
     std::uint32_t status;       // 0 = ok on replies; ignored on requests
     std::uint32_t payloadLen;
 };
+
+static_assert (sizeof (ControlMsgHeader) == 20,
+               "ControlMsgHeader wire layout changed without a protocol update");
 
 // Fixed-size payloads for the simple ops. Variable ones (LoadPlugin XML)
 // are packed by hand at the call site - no need for a struct.

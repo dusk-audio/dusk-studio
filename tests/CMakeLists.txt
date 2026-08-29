@@ -477,7 +477,9 @@ if (_duskstudio_ipc_test_enabled)
     # request never reaches the child (issue #406). Re-enable once that
     # transport moves to overlapped I/O.
     if (NOT WIN32)
-        target_sources(dusk-studio-tests PRIVATE ipc_worker_park.cpp)
+        target_sources(dusk-studio-tests PRIVATE
+            ipc_control_reply.cpp
+            ipc_worker_park.cpp)
     endif()
     target_compile_definitions(dusk-studio-tests PRIVATE
         DUSKSTUDIO_HAS_OOP_PLUGINS=1
