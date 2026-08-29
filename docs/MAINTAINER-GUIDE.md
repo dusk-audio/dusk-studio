@@ -306,7 +306,7 @@ CMake auto-detects four external repos at configure time, on top of three git su
 cd /path/to/dusk-studio
 
 git clone https://github.com/dusk-audio/DAF.git ../DAF
-git -C ../DAF checkout dfc50729f7a7d31dc0e0740c863bf88dee71c7c2
+git -C ../DAF checkout 2f573d68d79218d2f9e048e47d99e424ca7958c6
 git -C ../DAF submodule update --init     # dgl/src/pugl-upstream
 
 git clone https://github.com/dusk-audio/DAF-Widgets.git ../DAF-Widgets
