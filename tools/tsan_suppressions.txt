@@ -50,3 +50,19 @@ deadlock:juce::TimeSliceThread
 # guarantee. Suppress + rely on the IPC self-test for correctness.
 race:juce::AbstractFifo
 race:dusk::SpscIndexFifo
+
+# RemotePluginConnection's control RPC waits for its reply on a
+# std::condition_variable with a steady_clock deadline. libstdc++ routes that
+# through pthread_cond_clockwait, which the Ubuntu 22.04 TSan runtime does not
+# intercept (its libtsan exports interceptors for pthread_cond_wait and
+# pthread_cond_timedwait only). The unlock and relock the wait performs are
+# therefore invisible: TSan still believes the caller owns controlMutex when the
+# reader thread parks a reply, and it never draws the release/acquire edge that
+# hands the parked reply back to the caller. That surfaces as a double lock on
+# controlMutex - the reader does acquire it, which proves no thread held it -
+# and as a race on the reply slot, which only these two functions touch and
+# only under that mutex. Same modelling gap as the dusk::AutoResetEvent entries
+# above. Verified against a local build that stubs out the interceptor: these
+# two entries silence both reports, and no lock-order-inversion report appears.
+mutex:duskstudio::ipc::RemotePluginConnection::readerLoop
+race:duskstudio::ipc::RemotePluginConnection::sendAndAwaitReply

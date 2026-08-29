@@ -35,6 +35,11 @@ constexpr std::size_t   kStateBytes = 4 * 1024 * 1024; // up to 4 MB plugin stat
 // allocation and OOM-kill the process.
 constexpr std::uint32_t kMaxControlPayload = 256 * 1024;
 
+// Terminal control-RPC status: the audio worker did not acknowledge a park
+// before its deadline, so the child sent this reply and then exited without
+// mutating or destroying the processor.
+constexpr std::uint32_t kControlStatusWorkerParkTimeout = 100;
+
 // State values for `BlockHeader::state`.
 constexpr std::uint32_t kStateReady    = 0;
 constexpr std::uint32_t kStateCrashed  = 1;
