@@ -298,7 +298,7 @@ bool RemotePluginConnection::sendAndAwaitReply (OpCode op,
                                                   std::string& errorOut,
                                                   int timeoutMs)
 {
-    std::lock_guard<std::mutex> rpcLifetimeLock (syncRpcMutex);
+    auto rpcLifetime = syncRpcGate.acquire();
 
     if (! platform::isValid (controlChannel)) { errorOut = "not connected"; return false; }
 

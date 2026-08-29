@@ -236,11 +236,50 @@ private:
     bool                    readerStarted { false };
     std::atomic<bool>       readerExited  { false };
 
-    // syncRpcMutex serialises synchronous callers for the full request
-    // lifetime. controlMutex covers outbound write ordering and the shared
-    // reply slot; replyCv releases it while waiting, so it cannot by itself
-    // prevent a second caller from replacing the pending request.
-    std::mutex                  syncRpcMutex;
+    // Serialises synchronous callers without holding the gate's own mutex
+    // while a request owns controlMutex. Lease destruction clears the active
+    // slot after the later-declared control lock has been released, including
+    // on early returns and exceptions.
+    class SyncRpcGate
+    {
+    public:
+        class Lease
+        {
+        public:
+            explicit Lease (SyncRpcGate& ownerIn) noexcept : owner (ownerIn) {}
+            ~Lease() { owner.release(); }
+
+            Lease (const Lease&) = delete;
+            Lease& operator= (const Lease&) = delete;
+
+        private:
+            SyncRpcGate& owner;
+        };
+
+        [[nodiscard]] Lease acquire()
+        {
+            std::unique_lock<std::mutex> lk (mutex);
+            available.wait (lk, [this] { return ! active; });
+            active = true;
+            return Lease (*this);
+        }
+
+    private:
+        void release()
+        {
+            {
+                std::lock_guard<std::mutex> lk (mutex);
+                active = false;
+            }
+            available.notify_one();
+        }
+
+        std::mutex              mutex;
+        std::condition_variable available;
+        bool                    active { false };
+    };
+
+    SyncRpcGate                syncRpcGate;
     mutable std::mutex          controlMutex;
     std::condition_variable     replyCv;
     bool                        replyReady { false };
@@ -275,10 +314,10 @@ private:
     void readerLoop();
 
     // Replaces the old "sendControl + recvControl" pair for every sync
-    // RPC. Holds syncRpcMutex through reply consumption or timeout and uses
-    // controlMutex with replyCv for the reader handoff. The monotonically
-    // increasing request ID keeps a late timed-out reply from completing
-    // the next waiter.
+    // RPC. Holds a SyncRpcGate lease through reply consumption or timeout and
+    // uses controlMutex with replyCv for the reader handoff. The monotonically
+    // increasing request ID keeps a late timed-out reply from completing the
+    // next waiter.
     bool sendAndAwaitReply (OpCode op,
                               const void* payload, std::uint32_t payloadLen,
                               ControlMsgHeader& hdrOut,
