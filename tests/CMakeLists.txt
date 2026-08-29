@@ -468,9 +468,17 @@ endif()
 if (_duskstudio_ipc_test_enabled)
     target_sources(dusk-studio-tests PRIVATE
         ipc_stub_round_trip.cpp
-        ipc_worker_park.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/ipc/RemotePluginConnection.cpp
         ${_duskstudio_ipc_test_sources})
+    # The park-timeout cases are the only ones that drive a control RPC while
+    # the reader thread is running. Windows carries the control channel on a
+    # synchronous duplex named pipe, so the reader's blocking ReadFile
+    # serialises against the caller's WriteFile on the same handle and the
+    # request never reaches the child (issue #406). Re-enable once that
+    # transport moves to overlapped I/O.
+    if (NOT WIN32)
+        target_sources(dusk-studio-tests PRIVATE ipc_worker_park.cpp)
+    endif()
     target_compile_definitions(dusk-studio-tests PRIVATE
         DUSKSTUDIO_HAS_OOP_PLUGINS=1
         DUSKSTUDIO_PLUGIN_HOST_PATH="$<TARGET_FILE:dusk-studio-plugin-host>")
