@@ -1,14 +1,18 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <set>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #if defined(__linux__) || defined(__APPLE__)
@@ -27,6 +31,34 @@ namespace duskstudio::lv2::statepaths
 {
 inline constexpr const char* kReadyMarkerName = ".ready";
 inline constexpr const char* kStateFileName = "state.ttl";
+
+struct SharedStoreEntry
+{
+    std::filesystem::file_type type = std::filesystem::file_type::none;
+    std::uintmax_t size = 0;
+    std::filesystem::file_time_type writeTime {};
+    std::filesystem::path symlinkTarget;
+
+    bool operator== (const SharedStoreEntry& other) const noexcept
+    {
+        return type == other.type && size == other.size
+            && writeTime == other.writeTime && symlinkTarget == other.symlinkTarget;
+    }
+};
+
+struct SharedStoreSnapshot
+{
+    bool rootExisted = false;
+    std::map<std::filesystem::path, SharedStoreEntry> entries;
+};
+
+struct GenerationTransaction
+{
+    std::filesystem::path stateDir;
+    std::filesystem::path next;
+    SharedStoreSnapshot copyBefore;
+    SharedStoreSnapshot linkBefore;
+};
 
 // Resolve symlinked existing prefixes while preserving a state-directory
 // suffix that has not been created yet. On macOS this also normalizes the
@@ -77,6 +109,164 @@ inline void syncTreeBestEffort (const std::filesystem::path& root) noexcept
         it.increment (ec);
     }
     syncPathBestEffort (root);
+}
+
+// Lilv treats copy/ and link/ as immutable shared stores: a changed scratch
+// file gets a new revision name, and a new external path gets a new link. Keep
+// the identities present before a save so commit can make only additions
+// durable instead of opening and fsyncing every older sample on every autosave.
+inline SharedStoreSnapshot snapshotSharedStore (
+    const std::filesystem::path& root)
+{
+    SharedStoreSnapshot snapshot;
+    std::error_code ec;
+    const auto rootStatus = std::filesystem::symlink_status (root, ec);
+    if (ec || rootStatus.type() == std::filesystem::file_type::not_found)
+        return snapshot;
+
+    snapshot.rootExisted = true;
+    if (! std::filesystem::is_directory (rootStatus)) return snapshot;
+
+    std::filesystem::recursive_directory_iterator it (
+        root, std::filesystem::directory_options::skip_permission_denied, ec);
+    const std::filesystem::recursive_directory_iterator end;
+    while (! ec && it != end)
+    {
+        const auto path = it->path();
+        const auto status = it->symlink_status (ec);
+        if (ec) break;
+
+        SharedStoreEntry entry;
+        entry.type = status.type();
+        if (std::filesystem::is_regular_file (status))
+        {
+            entry.size = it->file_size (ec);
+            if (ec) break;
+            entry.writeTime = it->last_write_time (ec);
+            if (ec) break;
+        }
+        else if (std::filesystem::is_symlink (status))
+        {
+            entry.symlinkTarget = std::filesystem::read_symlink (path, ec);
+            if (ec) break;
+        }
+        snapshot.entries.emplace (path.lexically_relative (root), std::move (entry));
+        it.increment (ec);
+    }
+    return snapshot;
+}
+
+struct SharedStoreSyncPlan
+{
+    std::vector<std::filesystem::path> files;
+    std::vector<std::filesystem::path> directories;
+};
+
+inline SharedStoreSyncPlan planSharedStoreSync (
+    const std::filesystem::path& root, const SharedStoreSnapshot& before)
+{
+    SharedStoreSyncPlan plan;
+    std::set<std::filesystem::path> changedDirectories;
+    std::error_code ec;
+    const auto rootStatus = std::filesystem::symlink_status (root, ec);
+    if (ec || rootStatus.type() == std::filesystem::file_type::not_found)
+    {
+        if (before.rootExisted) plan.directories.push_back (root.parent_path());
+        return plan;
+    }
+
+    if (! before.rootExisted)
+    {
+        changedDirectories.insert (root);
+        changedDirectories.insert (root.parent_path());
+    }
+    if (! std::filesystem::is_directory (rootStatus))
+    {
+        plan.directories.assign (changedDirectories.begin(), changedDirectories.end());
+        return plan;
+    }
+
+    const auto rememberParents = [&] (const std::filesystem::path& path)
+    {
+        auto parent = path.parent_path();
+        while (! parent.empty())
+        {
+            changedDirectories.insert (parent);
+            if (parent == root) break;
+            parent = parent.parent_path();
+        }
+    };
+
+    std::set<std::filesystem::path> seen;
+    std::filesystem::recursive_directory_iterator it (
+        root, std::filesystem::directory_options::skip_permission_denied, ec);
+    const std::filesystem::recursive_directory_iterator end;
+    while (! ec && it != end)
+    {
+        const auto path = it->path();
+        const auto relative = path.lexically_relative (root);
+        seen.insert (relative);
+        const auto status = it->symlink_status (ec);
+        if (ec) break;
+
+        SharedStoreEntry current;
+        current.type = status.type();
+        if (std::filesystem::is_regular_file (status))
+        {
+            current.size = it->file_size (ec);
+            if (ec) break;
+            current.writeTime = it->last_write_time (ec);
+            if (ec) break;
+        }
+        else if (std::filesystem::is_symlink (status))
+        {
+            current.symlinkTarget = std::filesystem::read_symlink (path, ec);
+            if (ec) break;
+        }
+
+        const auto previous = before.entries.find (relative);
+        if (previous == before.entries.end() || ! (previous->second == current))
+        {
+            if (std::filesystem::is_regular_file (status))
+                plan.files.push_back (path);
+            else if (std::filesystem::is_directory (status))
+                changedDirectories.insert (path);
+            rememberParents (path);
+        }
+        it.increment (ec);
+    }
+
+    // A removed entry changes its former parent directory even though there is
+    // no surviving path to visit after the transaction.
+    for (const auto& [relative, entry] : before.entries)
+    {
+        (void) entry;
+        if (seen.find (relative) == seen.end()) rememberParents (root / relative);
+    }
+
+    plan.directories.assign (changedDirectories.begin(), changedDirectories.end());
+    const auto depth = [] (const std::filesystem::path& path)
+    {
+        return std::distance (path.begin(), path.end());
+    };
+    std::sort (plan.directories.begin(), plan.directories.end(),
+               [&] (const auto& a, const auto& b)
+               {
+                   const auto aDepth = depth (a);
+                   const auto bDepth = depth (b);
+                   return aDepth != bDepth ? aDepth > bDepth : a < b;
+               });
+    return plan;
+}
+
+inline void syncSharedStoreChangesBestEffort (
+    const std::filesystem::path& root, const SharedStoreSnapshot& before)
+{
+    const auto plan = planSharedStoreSync (root, before);
+    for (const auto& file : plan.files) syncPathBestEffort (file);
+    // Deepest first: persist each new directory's contents before its name in
+    // the parent, then finally persist a newly-created shared-store root.
+    for (const auto& directory : plan.directories) syncPathBestEffort (directory);
 }
 
 inline bool generationIsReady (const std::filesystem::path& generation)
@@ -450,18 +640,24 @@ inline bool recoverGeneration (const std::filesystem::path& stateDir,
 // file-backed plugin can keep absolute paths into cur while lilv copies those
 // files into the fresh generation; rotating cur before asking the plugin for
 // its state makes those paths stale during serialization.
-inline std::filesystem::path prepareNextGeneration (
+inline GenerationTransaction prepareNextGeneration (
     const std::filesystem::path& stateDir, std::error_code& ec)
 {
+    GenerationTransaction transaction;
     ec.clear();
     if (stateDir.empty()) return {};
     if (! recoverGeneration (stateDir, {}, ec)) return {};
+    transaction.stateDir = stateDir;
+    transaction.copyBefore = snapshotSharedStore (stateDir / "copy");
+    transaction.linkBefore = snapshotSharedStore (stateDir / "link");
     const auto next = stateDir / "next";
 
     std::filesystem::remove_all (next, ec);
     if (ec) return {};
     std::filesystem::create_directories (next, ec);
-    return ec ? std::filesystem::path {} : next;
+    if (ec) return {};
+    transaction.next = next;
+    return transaction;
 }
 
 inline void discardNextGeneration (const std::filesystem::path& stateDir) noexcept
@@ -474,13 +670,19 @@ inline void discardNextGeneration (const std::filesystem::path& stateDir) noexce
 // Publish a successfully serialized next/ generation. cur remains the active
 // generation until this commit point. If publishing next fails after cur was
 // moved aside, restore cur before returning so the carried state stays usable.
-inline bool commitNextGeneration (const std::filesystem::path& stateDir,
+inline bool commitNextGeneration (const GenerationTransaction& transaction,
                                   std::error_code& ec)
 {
     ec.clear();
+    const auto& stateDir = transaction.stateDir;
     if (stateDir.empty()) return false;
 
     const auto next = stateDir / "next";
+    if (transaction.next != next)
+    {
+        ec = std::make_error_code (std::errc::invalid_argument);
+        return false;
+    }
     if (! std::filesystem::is_directory (next, ec) || ec)
         return false;
 
@@ -488,8 +690,8 @@ inline bool commitNextGeneration (const std::filesystem::path& stateDir,
     // it. Recovery can then distinguish publish interruption from an incomplete
     // staging write.
     syncTreeBestEffort (next);
-    syncTreeBestEffort (stateDir / "copy");
-    syncTreeBestEffort (stateDir / "link");
+    syncSharedStoreChangesBestEffort (stateDir / "copy", transaction.copyBefore);
+    syncSharedStoreChangesBestEffort (stateDir / "link", transaction.linkBefore);
     {
         std::ofstream marker (next / kReadyMarkerName,
                               std::ios::binary | std::ios::trunc);

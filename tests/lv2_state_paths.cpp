@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
+#include <string>
 
 using namespace duskstudio::lv2::statepaths;
 namespace stdfs = std::filesystem;
@@ -272,7 +273,8 @@ TEST_CASE ("LV2 file-backed save stages before rotating cur",
     writeText (curSample, "generation one");
 
     std::error_code ec;
-    const auto next = prepareNextGeneration (temp.path(), ec);
+    const auto transaction = prepareNextGeneration (temp.path(), ec);
+    const auto& next = transaction.next;
     REQUIRE_FALSE (ec);
     REQUIRE (next == temp.path() / "next");
 
@@ -282,7 +284,7 @@ TEST_CASE ("LV2 file-backed save stages before rotating cur",
     REQUIRE (readText (curSample) == "generation one");
 
     writeText (next / "samples" / "voice.wav", "generation two");
-    REQUIRE (commitNextGeneration (temp.path(), ec));
+    REQUIRE (commitNextGeneration (transaction, ec));
     REQUIRE_FALSE (ec);
     REQUIRE (readText (temp.path() / "cur" / "samples" / "voice.wav")
              == "generation two");
@@ -298,14 +300,53 @@ TEST_CASE ("LV2 file-backed save stages before rotating cur",
     REQUIRE (readText (restored) == "generation two");
 
     // A second successful save retains exactly one fallback generation.
-    const auto third = prepareNextGeneration (temp.path(), ec);
+    const auto thirdTransaction = prepareNextGeneration (temp.path(), ec);
+    const auto& third = thirdTransaction.next;
     REQUIRE_FALSE (ec);
     writeText (third / "samples" / "voice.wav", "generation three");
-    REQUIRE (commitNextGeneration (temp.path(), ec));
+    REQUIRE (commitNextGeneration (thirdTransaction, ec));
     REQUIRE (readText (temp.path() / "cur" / "samples" / "voice.wav")
              == "generation three");
     REQUIRE (readText (temp.path() / "prev" / "samples" / "voice.wav")
              == "generation two");
+}
+
+TEST_CASE ("LV2 shared-store durability ignores pre-existing immutable files",
+           "[lv2][state][regression][issue-395]")
+{
+    TempDirectory temp ("dusk-lv2-state-generation-");
+    const auto copy = temp.path() / "copy";
+    const auto old = copy / "banks";
+    stdfs::create_directories (old);
+
+    // Model a sampler's established shared store with enough entries that
+    // opening and fsyncing each one would dominate an autosave. File contents
+    // stay tiny so the regression itself remains fast and deterministic.
+    constexpr int oldFileCount = 2048;
+    for (int i = 0; i < oldFileCount; ++i)
+        writeText (old / ("sample-" + std::to_string (i) + ".bin"), "old");
+
+    const auto before = snapshotSharedStore (copy);
+    REQUIRE (before.rootExisted);
+    REQUIRE (before.entries.size() == (size_t) oldFileCount + 1);
+
+    const auto fresh = copy / "new-bank" / "manifest.bin";
+    const auto modified = old / "sample-17.bin";
+    writeText (fresh, "new");
+    writeText (modified, "modified-payload");
+    const auto plan = planSharedStoreSync (copy, before);
+
+    // The durability work is proportional to this transaction, not the size
+    // of the shared store. No older sample path may be opened by the sync pass.
+    REQUIRE (plan.files.size() == 2);
+    REQUIRE (std::find (plan.files.begin(), plan.files.end(), fresh) != plan.files.end());
+    REQUIRE (std::find (plan.files.begin(), plan.files.end(), modified) != plan.files.end());
+    REQUIRE (plan.directories.size() == 3);
+    REQUIRE (std::find (plan.directories.begin(), plan.directories.end(),
+                        fresh.parent_path()) != plan.directories.end());
+    REQUIRE (std::find (plan.directories.begin(), plan.directories.end(), old)
+             != plan.directories.end());
+    REQUIRE (plan.directories.back() == copy);
 }
 
 TEST_CASE ("LV2 staging recovers only a complete next generation",
@@ -315,7 +356,8 @@ TEST_CASE ("LV2 staging recovers only a complete next generation",
     writeText (temp.path() / "next" / "state.bin", "incomplete");
 
     std::error_code ec;
-    const auto fresh = prepareNextGeneration (temp.path(), ec);
+    const auto freshTransaction = prepareNextGeneration (temp.path(), ec);
+    const auto& fresh = freshTransaction.next;
     REQUIRE_FALSE (ec);
     REQUIRE (fresh == temp.path() / "next");
     REQUIRE_FALSE (stdfs::exists (fresh / "state.bin"));
@@ -324,7 +366,8 @@ TEST_CASE ("LV2 staging recovers only a complete next generation",
     // could rename next/ to cur/. The next save promotes the complete state.
     writeText (fresh / "state.bin", "recoverable");
     writeText (fresh / kReadyMarkerName, "ready\n");
-    const auto afterRecovery = prepareNextGeneration (temp.path(), ec);
+    const auto recoveryTransaction = prepareNextGeneration (temp.path(), ec);
+    const auto& afterRecovery = recoveryTransaction.next;
     REQUIRE_FALSE (ec);
     REQUIRE (afterRecovery == temp.path() / "next");
     REQUIRE (readText (temp.path() / "cur" / "state.bin") == "recoverable");
@@ -333,7 +376,8 @@ TEST_CASE ("LV2 staging recovers only a complete next generation",
     TempDirectory fallback ("dusk-lv2-state-generation-");
     writeText (fallback.path() / "prev" / "state.bin", "previous");
     writeText (fallback.path() / "next" / "state.bin", "incomplete");
-    const auto afterFallback = prepareNextGeneration (fallback.path(), ec);
+    const auto fallbackTransaction = prepareNextGeneration (fallback.path(), ec);
+    const auto& afterFallback = fallbackTransaction.next;
     REQUIRE_FALSE (ec);
     REQUIRE (readText (fallback.path() / "cur" / "state.bin") == "previous");
     REQUIRE_FALSE (stdfs::exists (afterFallback / "state.bin"));
@@ -361,7 +405,8 @@ TEST_CASE ("LV2 failed file-backed save leaves cur and prev untouched",
     writeText (temp.path() / "prev" / "state.bin", "previous");
 
     std::error_code ec;
-    const auto next = prepareNextGeneration (temp.path(), ec);
+    const auto transaction = prepareNextGeneration (temp.path(), ec);
+    const auto& next = transaction.next;
     REQUIRE_FALSE (ec);
     writeText (next / "state.bin", "incomplete");
 
