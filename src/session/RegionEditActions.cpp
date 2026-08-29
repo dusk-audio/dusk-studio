@@ -3,6 +3,7 @@
 #include "../engine/LegacyStateBase64.h"
 #include "../engine/PlaybackEngine.h"
 #include "../engine/Transport.h"
+#include "../engine/hosting/NativeStateIdentity.h"
 #include "../engine/audiofile/FileReader.h"
 #include "../engine/audiofile/FileWriter.h"
 #include "../foundation/Base64.h"
@@ -504,7 +505,8 @@ std::vector<uint8_t> decodeCarriedState (const juce::String& base64)
 // Live slot first (session.json's fields are only kept fresh during save); fall
 // back to what the track carries so an offline plugin still survives the clone.
 template <typename Slot>
-void captureNativeSlot (const Slot& slot, const juce::String& carriedPath,
+void captureNativeSlot (const char* format, const Slot& slot,
+                        const juce::String& carriedPath,
                         const juce::String& carriedPluginId,
                         const juce::String& carriedState, CloneNativeSnapshot& out)
 {
@@ -512,8 +514,16 @@ void captureNativeSlot (const Slot& slot, const juce::String& carriedPath,
     {
         out.path     = juce::String::fromUTF8 (slot.getPath().c_str());
         out.pluginId = juce::String::fromUTF8 (slot.getPluginId().c_str());
-        if (! slot.saveState (out.state) && carriedState.isNotEmpty())
+        // A plugin that reports success but hands back nothing must not lose the
+        // identity-matched copy either. Mirrors captureNativeState in the engine.
+        if (! slot.saveState (out.state) || out.state.empty())
+        {
             out.state = decodeCarriedState (carriedState);
+            hosting::retainStateForLiveIdentity (
+                { format, carriedPath.toStdString(), carriedPluginId.toStdString() },
+                { format, slot.getPath(), slot.getPluginId() },
+                out.state);
+        }
         return;
     }
     if (carriedPath.isEmpty()) return;
@@ -628,7 +638,7 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     if (strip.isNativeClapLoaded())
     {
-        captureNativeSlot (strip.getNativeClapSlot(), t.nativeClapPath,
+        captureNativeSlot ("CLAP", strip.getNativeClapSlot(), t.nativeClapPath,
                            t.nativeClapPluginId, t.nativeClapStateBase64, s.clap);
         s.nativeKind = CloneNativeKind::Clap;
         liveNativeCaptured = true;
@@ -650,7 +660,7 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
                     .getChildFile ("track" + juce::String (idx + 1).paddedLeft ('0', 2))
                     .getFullPathName().toStdString());
         lv2Slot.setStateDirectory ({});
-        captureNativeSlot (lv2Slot, t.nativeLv2Path, t.nativeLv2PluginId,
+        captureNativeSlot ("LV2", lv2Slot, t.nativeLv2Path, t.nativeLv2PluginId,
                            t.nativeLv2StateBase64, s.lv2);
         lv2Slot.setStateDirectory (stateDir);
         s.nativeKind = CloneNativeKind::Lv2;
@@ -660,7 +670,7 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     if (! liveNativeCaptured && strip.isNativeVst3Loaded())
     {
-        captureNativeSlot (strip.getNativeVst3Slot(), t.nativeVst3Path,
+        captureNativeSlot ("VST3", strip.getNativeVst3Slot(), t.nativeVst3Path,
                            t.nativeVst3PluginId, t.nativeVst3StateBase64, s.vst3);
         s.nativeKind = CloneNativeKind::Vst3;
         liveNativeCaptured = true;
@@ -670,8 +680,14 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
     if (! liveNativeCaptured && auSlot.isLoaded())
     {
         s.auIdentifier = juce::String::fromUTF8 (auSlot.getPluginId().c_str());
-        if (! auSlot.saveState (s.auState) && t.nativeAuStateBase64.isNotEmpty())
+        if (! auSlot.saveState (s.auState) || s.auState.empty())
+        {
             s.auState = decodeCarriedState (t.nativeAuStateBase64);
+            hosting::retainStateForLiveIdentity (
+                { "AU", t.nativeAuIdentifier.toStdString(), {} },
+                { "AU", auSlot.getPluginId(), {} },
+                s.auState);
+        }
         liveNativeCaptured = true;
     }
 #if DUSKSTUDIO_HAS_MULTISAMPLE
@@ -688,7 +704,7 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
         if (t.nativeClapPath.isNotEmpty())
         {
-            captureNativeSlot (strip.getNativeClapSlot(), t.nativeClapPath,
+            captureNativeSlot ("CLAP", strip.getNativeClapSlot(), t.nativeClapPath,
                                t.nativeClapPluginId, t.nativeClapStateBase64, s.clap);
             s.nativeKind = CloneNativeKind::Clap;
             carried = true;
@@ -697,7 +713,7 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
 #if DUSKSTUDIO_HAS_NATIVE_LV2
         if (! carried && t.nativeLv2Path.isNotEmpty())
         {
-            captureNativeSlot (strip.getNativeLv2Slot(), t.nativeLv2Path,
+            captureNativeSlot ("LV2", strip.getNativeLv2Slot(), t.nativeLv2Path,
                                t.nativeLv2PluginId, t.nativeLv2StateBase64, s.lv2);
             s.nativeKind = CloneNativeKind::Lv2;
             carried = true;
@@ -706,7 +722,7 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
 #if DUSKSTUDIO_HAS_NATIVE_VST3
         if (! carried && t.nativeVst3Path.isNotEmpty())
         {
-            captureNativeSlot (strip.getNativeVst3Slot(), t.nativeVst3Path,
+            captureNativeSlot ("VST3", strip.getNativeVst3Slot(), t.nativeVst3Path,
                                t.nativeVst3PluginId, t.nativeVst3StateBase64, s.vst3);
             s.nativeKind = CloneNativeKind::Vst3;
             carried = true;
