@@ -6,10 +6,11 @@
 
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 
-// CreateProcess with bInheritHandles = TRUE. Inheritable handles (the
+// CreateProcessW with bInheritHandles = TRUE. Inheritable handles (the
 // channel child end + the SHM mapping) flow into the child at the same
 // numeric HANDLE value. A Job object with
 // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE wraps the child so it dies if the
@@ -34,6 +35,74 @@ struct WinProcessState
 WinProcessState* impl (std::intptr_t opaque) noexcept
 {
     return reinterpret_cast<WinProcessState*> (opaque);
+}
+
+bool widenUtf8 (const std::string& utf8, std::wstring& wide,
+                const char* description, std::string& errorOut)
+{
+    if (utf8.find ('\0') != std::string::npos
+        || utf8.size() > (std::size_t) std::numeric_limits<int>::max())
+    {
+        errorOut = std::string (description) + " is not a valid Windows argument";
+        return false;
+    }
+
+    if (utf8.empty())
+    {
+        wide.clear();
+        return true;
+    }
+
+    const int sourceLength = (int) utf8.size();
+    const int required = ::MultiByteToWideChar (
+        CP_UTF8, MB_ERR_INVALID_CHARS, utf8.data(), sourceLength, nullptr, 0);
+    if (required <= 0)
+    {
+        errorOut = std::string (description) + " is not valid UTF-8";
+        return false;
+    }
+
+    wide.resize ((std::size_t) required);
+    if (::MultiByteToWideChar (CP_UTF8, MB_ERR_INVALID_CHARS,
+                               utf8.data(), sourceLength,
+                               wide.data(), required) != required)
+    {
+        errorOut = std::string ("failed to convert ") + description + " to UTF-16";
+        return false;
+    }
+    return true;
+}
+
+// Quote one argv element using the escaping rules consumed by
+// CommandLineToArgvW and the Microsoft C runtime. Backslashes are doubled only
+// when they precede a quote or the closing quote; elsewhere they remain literal.
+void appendQuotedArgument (std::wstring& commandLine, const std::wstring& argument)
+{
+    commandLine.push_back (L'"');
+    std::size_t backslashes = 0;
+    for (const wchar_t ch : argument)
+    {
+        if (ch == L'\\')
+        {
+            ++backslashes;
+            continue;
+        }
+
+        if (ch == L'"')
+        {
+            commandLine.append (backslashes * 2 + 1, L'\\');
+            commandLine.push_back (L'"');
+        }
+        else
+        {
+            commandLine.append (backslashes, L'\\');
+            commandLine.push_back (ch);
+        }
+        backslashes = 0;
+    }
+
+    commandLine.append (backslashes * 2, L'\\');
+    commandLine.push_back (L'"');
 }
 } // namespace
 
@@ -81,33 +150,50 @@ bool ChildProcess::spawn (const std::string& executablePath,
         return false;
     }
 
-    std::string cmdline = "\"" + executablePath + "\"";
-    for (const auto& a : args)
-    {
-        cmdline += " \"";
-        cmdline += a;
-        cmdline += "\"";
-    }
+    std::vector<std::string> childArgs = args;
     {
         // Pass the inherited channel HANDLE value on the command line
         // so the child can locate it after CreateProcess(bInheritHandles
         // = TRUE) reproduces the same numeric value in its handle table.
         char buf[64];
-        std::snprintf (buf, sizeof (buf), " --ipc-channel=0x%llx",
+        std::snprintf (buf, sizeof (buf), "--ipc-channel=0x%llx",
                         (unsigned long long) (std::uintptr_t)
                             reinterpret_cast<HANDLE> (childChannelEnd.h));
-        cmdline += buf;
+        childArgs.emplace_back (buf);
     }
-    std::vector<char> cmdBuf (cmdline.begin(), cmdline.end());
-    cmdBuf.push_back (0);
 
-    STARTUPINFOA si {};
+    std::wstring wideExecutable;
+    if (! widenUtf8 (executablePath, wideExecutable, "executable path", errorOut))
+    {
+        ::CloseHandle (state->job);
+        delete state;
+        return false;
+    }
+
+    std::wstring commandLine;
+    appendQuotedArgument (commandLine, wideExecutable);
+    for (const auto& argument : childArgs)
+    {
+        std::wstring wideArgument;
+        if (! widenUtf8 (argument, wideArgument, "process argument", errorOut))
+        {
+            ::CloseHandle (state->job);
+            delete state;
+            return false;
+        }
+        commandLine.push_back (L' ');
+        appendQuotedArgument (commandLine, wideArgument);
+    }
+    std::vector<wchar_t> commandBuffer (commandLine.begin(), commandLine.end());
+    commandBuffer.push_back (L'\0');
+
+    STARTUPINFOW si {};
     si.cb = sizeof (si);
     PROCESS_INFORMATION pi {};
 
-    const BOOL ok = ::CreateProcessA (
-        executablePath.c_str(),
-        cmdBuf.data(),
+    const BOOL ok = ::CreateProcessW (
+        wideExecutable.c_str(),
+        commandBuffer.data(),
         nullptr, nullptr,
         TRUE,                       // bInheritHandles
         CREATE_SUSPENDED | CREATE_NO_WINDOW,
