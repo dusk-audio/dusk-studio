@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <random>
 #include <set>
+#include <stdexcept>
 #include <string>
 
 using namespace dusk;
@@ -31,6 +32,36 @@ std::set<std::string> duskNames (const stdfs::path& dir, const std::string& wild
         out.insert (p.filename().string());
     return out;
 }
+
+class FailingDirectoryIterator
+{
+public:
+    FailingDirectoryIterator() = default;
+    explicit FailingDirectoryIterator (int* incrementsIn) : increments (incrementsIn), atEnd (false) {}
+
+    int operator*() const noexcept { return 42; }
+
+    FailingDirectoryIterator& operator++()
+    {
+        throw std::runtime_error ("throwing increment must not be used");
+    }
+
+    void increment (std::error_code& error)
+    {
+        ++*increments;
+        error = std::make_error_code (std::errc::io_error);
+    }
+
+    friend bool operator!= (const FailingDirectoryIterator& lhs,
+                            const FailingDirectoryIterator& rhs) noexcept
+    {
+        return lhs.atEnd != rhs.atEnd;
+    }
+
+private:
+    int* increments = nullptr;
+    bool atEnd = true;
+};
 } // namespace
 
 TEST_CASE ("dusk::fs matches juce::File", "[foundation][fs]")
@@ -82,4 +113,28 @@ TEST_CASE ("dusk::fs::matchesWildcard", "[foundation][fs]")
     REQUIRE_FALSE (fs::matchesWildcard ("xx.txt", "?.txt"));
     REQUIRE (fs::matchesWildcard ("anything", "*"));
     REQUIRE_FALSE (fs::matchesWildcard ("a.wav", "*.flac"));
+}
+
+TEST_CASE ("directory walks report increment errors without throwing", "[foundation][fs][issue-374]")
+{
+    std::error_code error;
+    int increments = 0;
+    int visits = 0;
+    int visitedValue = 0;
+    bool completed = true;
+
+    REQUIRE_NOTHROW (completed = fs::walkDirectoryEntries (
+                         FailingDirectoryIterator (&increments), error,
+                         [&] (int value)
+                         {
+                             ++visits;
+                             visitedValue = value;
+                             return true;
+                         }));
+
+    REQUIRE_FALSE (completed);
+    REQUIRE (error == std::errc::io_error);
+    REQUIRE (visits == 1);
+    REQUIRE (visitedValue == 42);
+    REQUIRE (increments == 1);
 }
