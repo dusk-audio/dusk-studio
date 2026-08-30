@@ -14,7 +14,7 @@
 // macOS  : posix_spawn() with file actions to remap the channel endpoint
 //          to kChildInheritFd. Parent-death tracking via kqueue NOTE_EXIT
 //          on the child PID; termination via SIGTERM + waitpid.
-// Windows: CreateProcess() with bInheritHandles=TRUE, the child handle
+// Windows: CreateProcessW() with bInheritHandles=TRUE, the child handle
 //          duplicated into the new process and recorded in
 //          STARTUPINFOEX::lpAttributeList. Job object configured with
 //          JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE so the child dies with us;

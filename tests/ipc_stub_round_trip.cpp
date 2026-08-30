@@ -15,12 +15,17 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include "engine/ipc/RemotePluginConnection.h"
+#include "engine/ipc/platform/IpcProcess.h"
+#include "TestTempDirectory.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
 #include <cmath>
 #include <chrono>
+#include <cstdint>
+#include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -29,7 +34,84 @@ constexpr int  kBlockSize  = 256;
 constexpr int  kNumChans   = 2;
 constexpr int  kIterations = 32;
 constexpr long long kTimeoutNs = 100'000'000LL;  // 100 ms
+
+#if defined (_WIN32)
+struct ScopedChannelPair
+{
+    ~ScopedChannelPair()
+    {
+        duskstudio::ipc::platform::closeHandle (value.parentEnd);
+        duskstudio::ipc::platform::closeHandle (value.childEnd);
+    }
+
+    duskstudio::ipc::platform::ChannelPair value;
+};
+#endif
 } // namespace
+
+TEST_CASE ("Windows IPC launcher preserves Unicode paths and arguments",
+           "[ipc][windows][issue-373]")
+{
+#if ! defined (_WIN32)
+    SUCCEED ("Windows-only process launch regression");
+#else
+    namespace ipcp = duskstudio::ipc::platform;
+
+    duskstudio::test::TempDirectory temp ("dusk-ipc-unicode-launch-");
+    const auto unicodeDirectory = temp.path()
+        / std::filesystem::u8path (u8"\u5B89\u88C5 \u8DEF\u5F84");
+    std::error_code filesystemError;
+    REQUIRE (std::filesystem::create_directory (unicodeDirectory, filesystemError));
+    REQUIRE_FALSE (filesystemError);
+
+    const auto sourceHost = std::filesystem::u8path (DUSKSTUDIO_PLUGIN_HOST_PATH);
+    const auto copiedHost = unicodeDirectory / sourceHost.filename();
+    REQUIRE (std::filesystem::copy_file (
+        sourceHost, copiedHost, std::filesystem::copy_options::overwrite_existing,
+        filesystemError));
+    REQUIRE_FALSE (filesystemError);
+
+    const std::vector<std::string> suppliedArguments {
+        "--ipc-argv-stub",
+        u8"\u63D2\u4EF6 \u0430\u0440\u0433\u0443\u043C\u0435\u043D\u0442",
+        R"(C:\folder with spaces\)",
+        R"(say \\"hello" and C:\tail\\)"
+    };
+
+    ScopedChannelPair channels;
+    std::string error;
+    REQUIRE (ipcp::createChannelPair (channels.value, error));
+
+    ipcp::ChildProcess child;
+    const bool spawned = child.spawn (copiedHost.u8string(), suppliedArguments,
+                                      channels.value.childEnd, error);
+    INFO ("spawn error: " << error);
+    REQUIRE (spawned);
+
+    std::uint32_t argumentCount = 0;
+    REQUIRE (ipcp::readExact (channels.value.parentEnd,
+                              &argumentCount, sizeof (argumentCount)));
+    REQUIRE (argumentCount == suppliedArguments.size() + 2);
+
+    std::vector<std::string> receivedArguments;
+    receivedArguments.reserve (argumentCount);
+    for (std::uint32_t i = 0; i < argumentCount; ++i)
+    {
+        std::uint32_t length = 0;
+        REQUIRE (ipcp::readExact (channels.value.parentEnd, &length, sizeof (length)));
+        REQUIRE (length < 4096);
+        std::string argument (length, '\0');
+        if (length > 0)
+            REQUIRE (ipcp::readExact (channels.value.parentEnd, argument.data(), length));
+        receivedArguments.push_back (std::move (argument));
+    }
+
+    REQUIRE (receivedArguments.front() == copiedHost.u8string());
+    for (std::size_t i = 0; i < suppliedArguments.size(); ++i)
+        REQUIRE (receivedArguments[i + 1] == suppliedArguments[i]);
+    REQUIRE (receivedArguments.back().rfind ("--ipc-channel=0x", 0) == 0);
+#endif
+}
 
 TEST_CASE ("ipc-stub: connect, round-trip 32 blocks, byte-exact echo",
             "[ipc]")
