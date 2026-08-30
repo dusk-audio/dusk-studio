@@ -228,23 +228,67 @@ private:
     //   - parks every other opcode in {replyHeader, replyPayload, reply
     //     Ready} as the next sync-RPC reply and signals replyCv.
     //
-    // Started ONLY in --ipc-host mode (extraArg). The --ipc-stub child
-    // never sends a frame after the 'k' handshake; spinning a reader on
-    // it would block forever and burn a thread per slot.
+    // Started for --ipc-host and the control-reply regression stubs. The
+    // audio-only --ipc-stub child never sends a frame after the 'k'
+    // handshake; spinning a reader on it would block forever and burn a
+    // thread per slot.
     std::thread             readerThread;
     bool                    readerStarted { false };
     std::atomic<bool>       readerExited  { false };
 
-    // controlMutex covers both the outbound write ordering AND the
-    // reply state. One mutex is enough because the message thread is
-    // the only caller of sync RPCs (JUCE single-threads it). The reader
-    // thread takes the mutex only briefly to publish a reply / exit
-    // flag, so the contention window is tiny.
+    // Serialises synchronous callers without holding the gate's own mutex
+    // while a request owns controlMutex. Lease destruction clears the active
+    // slot after the later-declared control lock has been released, including
+    // on early returns and exceptions.
+    class SyncRpcGate
+    {
+    public:
+        class Lease
+        {
+        public:
+            explicit Lease (SyncRpcGate& ownerIn) noexcept : owner (ownerIn) {}
+            ~Lease() { owner.release(); }
+
+            Lease (const Lease&) = delete;
+            Lease& operator= (const Lease&) = delete;
+
+        private:
+            SyncRpcGate& owner;
+        };
+
+        [[nodiscard]] Lease acquire()
+        {
+            std::unique_lock<std::mutex> lk (mutex);
+            available.wait (lk, [this] { return ! active; });
+            active = true;
+            return Lease (*this);
+        }
+
+    private:
+        void release()
+        {
+            {
+                std::lock_guard<std::mutex> lk (mutex);
+                active = false;
+            }
+            available.notify_one();
+        }
+
+        std::mutex              mutex;
+        std::condition_variable available;
+        bool                    active { false };
+    };
+
+    SyncRpcGate                syncRpcGate;
     mutable std::mutex          controlMutex;
     std::condition_variable     replyCv;
-    bool                        replyReady { false };
+    // The release/acquire handoff also makes the reply payload visible to
+    // older TSan runtimes that do not intercept pthread_cond_clockwait.
+    std::atomic<bool>           replyReady { false };
     ControlMsgHeader            replyHeader {};
     std::vector<std::uint8_t>   replyPayload;
+    std::uint32_t               nextControlRequestId { 1 };
+    std::uint32_t               pendingControlRequestId { 0 };
 
     // Sink state lives in a separately-allocated shared object so a
     // callAsync lambda queued by the reader thread can outlive the
@@ -272,10 +316,10 @@ private:
     void readerLoop();
 
     // Replaces the old "sendControl + recvControl" pair for every sync
-    // RPC. Holds controlMutex across the write + CV wait so a reply
-    // arriving while we're mid-write can't be lost. timeoutMs caps the
-    // wait; on expiry the function returns false with errorOut set
-    // (the connection is NOT marked crashed - caller decides).
+    // RPC. Holds a SyncRpcGate lease through reply consumption or timeout and
+    // uses controlMutex with replyCv for the reader handoff. The monotonically
+    // increasing request ID keeps a late timed-out reply from completing the
+    // next waiter.
     bool sendAndAwaitReply (OpCode op,
                               const void* payload, std::uint32_t payloadLen,
                               ControlMsgHeader& hdrOut,

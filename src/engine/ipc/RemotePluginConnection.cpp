@@ -61,12 +61,13 @@ void wakeReaderForShutdown (platform::NativeHandle& ch) noexcept
 // Send a control request: [header][payload]. Returns true on success.
 // Caller (sendAndAwaitReply / setRemoteParam) holds controlMutex so
 // concurrent senders can't interleave bytes on the socket.
-bool sendControl (platform::NativeHandle& ch, OpCode op,
+bool sendControl (platform::NativeHandle& ch, OpCode op, std::uint32_t requestId,
                     const void* payload, std::uint32_t payloadLen) noexcept
 {
     ControlMsgHeader hdr {};
     hdr.totalLen   = (std::uint32_t) sizeof (hdr) + payloadLen;
     hdr.op         = (std::uint32_t) op;
+    hdr.requestId  = requestId;
     hdr.status     = 0;
     hdr.payloadLen = payloadLen;
     if (! platform::writeExact (ch, &hdr, sizeof (hdr))) return false;
@@ -150,12 +151,14 @@ bool RemotePluginConnection::connect (const std::string& hostExecutablePath,
     // thread must be able to block indefinitely on an idle socket.
     platform::setReadTimeout (controlChannel, 0);
 
-    // --- ipc-host only: start the demultiplexing reader thread -------
+    // --- Reply-producing modes: start the demultiplexing reader thread ---
     // The --ipc-stub child never writes a control frame after 'k', so
     // a reader thread there would block forever on readExact. The
     // self-test connects with extraArg=="--ipc-stub" and would
     // otherwise leak a permanently-blocked thread per connection.
-    if (extraArg == "--ipc-host" || extraArg == "--ipc-park-timeout-stub")
+    if (extraArg == "--ipc-host"
+        || extraArg == "--ipc-control-reply-stub"
+        || extraArg == "--ipc-park-timeout-stub")
         startReaderThread();
 
     return true;
@@ -295,6 +298,8 @@ bool RemotePluginConnection::sendAndAwaitReply (OpCode op,
                                                   std::string& errorOut,
                                                   int timeoutMs)
 {
+    auto rpcLifetime = syncRpcGate.acquire();
+
     if (! platform::isValid (controlChannel)) { errorOut = "not connected"; return false; }
 
     std::unique_lock<std::mutex> lk (controlMutex);
@@ -305,41 +310,62 @@ bool RemotePluginConnection::sendAndAwaitReply (OpCode op,
         return false;
     }
 
-    // Clear stale slot in case a prior call timed out without consuming
-    // its reply. If a late reply for that previous call lands AFTER we
-    // send, we'd misattribute - but: the message thread is single, so
-    // a timeout means the caller already returned and no other call
-    // can be in flight. Discarding the prior slot is correct.
-    replyReady   = false;
+    // Clear the consumed/empty slot and publish the correlation ID before
+    // writing. The reader drops any reply whose ID does not match this one,
+    // including a late frame from a request that already timed out.
+    replyReady.store (false, std::memory_order_relaxed);
     replyHeader  = {};
     replyPayload.clear();
 
-    if (! sendControl (controlChannel, op, payload, payloadLen))
+    std::uint32_t requestId = nextControlRequestId++;
+    if (requestId == 0)
+        requestId = nextControlRequestId++;
+    pendingControlRequestId = requestId;
+
+    if (! sendControl (controlChannel, op, requestId, payload, payloadLen))
     {
+        pendingControlRequestId = 0;
         errorOut = std::string ("control send failed: ") + std::strerror (errno);
         return false;
     }
 
     const auto deadline = std::chrono::steady_clock::now()
                             + std::chrono::milliseconds (timeoutMs);
-    while (! replyReady && ! readerExited.load (std::memory_order_acquire))
+    while (! replyReady.load (std::memory_order_acquire)
+           && ! readerExited.load (std::memory_order_acquire))
     {
         if (replyCv.wait_until (lk, deadline) == std::cv_status::timeout)
         {
-            errorOut = "reply timeout";
-            return false;
+            if (! replyReady.load (std::memory_order_acquire))
+            {
+                pendingControlRequestId = 0;
+                errorOut = "reply timeout";
+                return false;
+            }
         }
     }
 
-    if (! replyReady)
+    if (! replyReady.load (std::memory_order_acquire))
     {
+        pendingControlRequestId = 0;
         errorOut = "reader thread exited before reply arrived";
         return false;
     }
 
     hdrOut   = replyHeader;
     replyOut = std::move (replyPayload);
-    replyReady = false;
+    replyReady.store (false, std::memory_order_relaxed);
+    pendingControlRequestId = 0;
+    if (hdrOut.requestId != requestId)
+    {
+        errorOut = "reply request ID mismatch";
+        return false;
+    }
+    if (hdrOut.op != (std::uint32_t) op)
+    {
+        errorOut = "reply opcode mismatch";
+        return false;
+    }
     if (hdrOut.status == kControlStatusWorkerParkTimeout)
         crashed.store (true, std::memory_order_release);
     return true;
@@ -352,6 +378,7 @@ bool RemotePluginConnection::ping (int timeoutMs, std::string& errorOut)
     if (! sendAndAwaitReply (OpCode::Ping, nullptr, 0, hdr, reply, errorOut, timeoutMs))
         return false;
     if (hdr.status != 0) { errorOut = "Ping reply status != 0"; return false; }
+    if (! reply.empty()) { errorOut = "Ping reply payload size mismatch"; return false; }
     return true;
 }
 
@@ -387,9 +414,9 @@ bool RemotePluginConnection::loadPlugin (const std::string& pluginDescriptionXml
                                       reply.size());
         return false;
     }
-    if (reply.size() < sizeof (LoadPluginReply))
+    if (reply.size() != sizeof (LoadPluginReply))
     {
-        errorOut = "LoadPlugin reply too small";
+        errorOut = "LoadPlugin reply size mismatch";
         return false;
     }
     LoadPluginReply r {};
@@ -413,6 +440,7 @@ bool RemotePluginConnection::prepareToPlay (double sampleRate, int blockSize,
                                hdr, reply, errorOut, 10000))
         return false;
     if (hdr.status != 0) { errorOut = "PrepareToPlay status != 0"; return false; }
+    if (! reply.empty()) { errorOut = "PrepareToPlay reply payload size mismatch"; return false; }
     return true;
 }
 
@@ -424,6 +452,7 @@ bool RemotePluginConnection::release (std::string& errorOut)
                                hdr, reply, errorOut, 5000))
         return false;
     if (hdr.status != 0) { errorOut = "Release status != 0"; return false; }
+    if (! reply.empty()) { errorOut = "Release reply payload size mismatch"; return false; }
     return true;
 }
 
@@ -466,6 +495,7 @@ bool RemotePluginConnection::setState (const std::uint8_t* data, std::size_t siz
                                hdr, reply, errorOut, 30000))
         return false;
     if (hdr.status != 0) { errorOut = "SetState status != 0"; return false; }
+    if (! reply.empty()) { errorOut = "SetState reply payload size mismatch"; return false; }
     return true;
 }
 
@@ -501,6 +531,7 @@ bool RemotePluginConnection::hideEditor (std::string& errorOut)
                                hdr, reply, errorOut, 5000))
         return false;
     if (hdr.status != 0) { errorOut = "HideEditor status != 0"; return false; }
+    if (! reply.empty()) { errorOut = "HideEditor reply payload size mismatch"; return false; }
     return true;
 }
 
@@ -515,6 +546,7 @@ bool RemotePluginConnection::resizeEditor (int width, int height, std::string& e
                                hdr, reply, errorOut, 5000))
         return false;
     if (hdr.status != 0) { errorOut = "ResizeEditor status != 0"; return false; }
+    if (! reply.empty()) { errorOut = "ResizeEditor reply payload size mismatch"; return false; }
     return true;
 }
 
@@ -533,7 +565,7 @@ bool RemotePluginConnection::setRemoteParam (int paramIndex, float value01) noex
     if (readerExited.load (std::memory_order_acquire)) return false;
     // Fire-and-forget: child suppresses the reply for SetParam (per
     // PluginIpc.h opcode contract), so we do not wait on replyCv.
-    return sendControl (controlChannel, OpCode::SetParam, &p, sizeof (p));
+    return sendControl (controlChannel, OpCode::SetParam, 0, &p, sizeof (p));
 }
 
 void RemotePluginConnection::setParamChangedSink (ParamChangedSink sink)
@@ -631,13 +663,14 @@ void RemotePluginConnection::readerLoop()
             continue;
         }
 
-        // Anything else is a sync-RPC reply. Park it for the waiting
-        // sender. Single in-flight RPC is the invariant (message thread
-        // is JUCE-single-threaded), so overwriting an unconsumed reply
-        // would be a bug - we still publish to avoid deadlocking, and
-        // drop the prior unread slot on the floor with a stderr line.
+        // Anything else is a sync-RPC reply. A timed-out request can reply
+        // after its caller has started a newer RPC, so only publish a frame
+        // carrying the currently pending request ID.
         std::lock_guard<std::mutex> lk (controlMutex);
-        if (replyReady)
+        if (pendingControlRequestId == 0
+            || hdr.requestId != pendingControlRequestId)
+            continue;
+        if (replyReady.load (std::memory_order_relaxed))
             std::fprintf (stderr,
                           "[Dusk Studio/RemotePluginConnection] reader: "
                           "dropping unread reply slot (op=%u) - caller "
@@ -645,7 +678,7 @@ void RemotePluginConnection::readerLoop()
                           (unsigned) replyHeader.op);
         replyHeader = hdr;
         replyPayload = std::move (payload);
-        replyReady = true;
+        replyReady.store (true, std::memory_order_release);
         replyCv.notify_all();
     }
 
