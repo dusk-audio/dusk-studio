@@ -7,7 +7,6 @@
 #include "PlatformWindowing.h"
 #include "X11EditorTeardownError.h"
 
-#include <juce_gui_extra/juce_gui_extra.h>
 #include <X11/Xproto.h>
 
 #include <cstdio>
@@ -132,16 +131,16 @@ bool hasUsableDisplay()
 
 double nativeViewBackingScale (void*) { return 1.0; }
 
-void destroyX11EditorEmbed (std::unique_ptr<juce::XEmbedComponent>& embed,
-                            std::uint64_t editorWindowId)
+void runX11EditorTeardown (std::uint64_t editorWindowId,
+                           const std::function<void()>& teardown)
 {
-    if (embed == nullptr)
+    if (! teardown)
         return;
 
     auto* display = juceDisplay();
     if (display == nullptr || editorWindowId == 0)
     {
-        embed.reset();
+        teardown();
         return;
     }
 
@@ -155,7 +154,7 @@ void destroyX11EditorEmbed (std::unique_ptr<juce::XEmbedComponent>& embed,
     activeEditorTeardownTrap = &trap;
     trap.previous = ::XSetErrorHandler (&editorTeardownXErrorHandler);
 
-    embed.reset();
+    teardown();
     ::XSync (display, False);
 
     ::XSetErrorHandler (trap.previous);

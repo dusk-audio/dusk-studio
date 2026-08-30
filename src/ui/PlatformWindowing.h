@@ -2,6 +2,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <functional>
+
 // Forward-decl in the juce namespace so createInProcessEditorHost's
 // AudioProcessorEditor* parameter (Mac-only) doesn't force every
 // includer to pull juce_audio_processors. Linux + Windows transitively
@@ -12,9 +14,6 @@
 namespace juce
 {
 class AudioProcessorEditor;
-#if JUCE_LINUX
-class XEmbedComponent;
-#endif
 }
 
 namespace duskstudio::platform
@@ -174,13 +173,13 @@ void preferX11ForNextNativeWindow();
 void clearPreferX11ForNativeWindow();
 
 #if JUCE_LINUX
-// Destroy an OOP editor's XEmbed wrapper under a local X error trap. The child
-// may already have freed editorWindowId, so the exact BadWindow responses made
-// by XEmbedComponent's detach sequence are swallowed. Pending errors are drained
-// before the trap, teardown is drained while it is active, and every unrelated
-// error chains to the previously installed handler.
-void destroyX11EditorEmbed (std::unique_ptr<juce::XEmbedComponent>& embed,
-                            std::uint64_t editorWindowId);
+// Run an OOP editor's XEmbed teardown under a local X error trap. The child may
+// already have freed editorWindowId, so the exact BadWindow responses made by
+// the detach sequence are swallowed. Pending errors are drained before the
+// trap, teardown is drained while it is active, and every unrelated error
+// chains to the previously installed handler.
+void runX11EditorTeardown (std::uint64_t editorWindowId,
+                           const std::function<void()>& teardown);
 #endif
 
 // Factory for a Component that adopts a foreign native window handle

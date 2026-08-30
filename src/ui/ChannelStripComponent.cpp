@@ -2937,7 +2937,8 @@ void ChannelStripComponent::closePluginEditor()
 #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
 void ChannelStripComponent::resetRemoteEditorEmbed()
 {
-    duskstudio::platform::destroyX11EditorEmbed (remoteEditorEmbed, remoteEditorWindowId);
+    duskstudio::platform::runX11EditorTeardown (
+        remoteEditorWindowId, [this] { remoteEditorEmbed.reset(); });
     remoteEditorWindowId = 0;
 }
 #endif
