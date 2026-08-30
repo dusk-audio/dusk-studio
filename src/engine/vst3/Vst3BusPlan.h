@@ -2,22 +2,104 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <utility>
+#include <vector>
 
 namespace duskstudio::vst3::detail
 {
 enum class AudioBusDirection { Input, Output };
 
-// Keep the "activate every advertised bus" policy testable without loading a
-// third-party module. Modular plugins may access auxiliary buses even when the
-// mixer only exposes their selected main bus.
-template <typename Activate>
-void activateAllAudioBuses (int numInputs, int numOutputs, Activate&& activate)
+class AudioBusPlan
 {
+public:
+    AudioBusPlan() = default;
+    AudioBusPlan (int numInputs, int numOutputs)
+        : inputs ((std::size_t) std::max (0, numInputs)),
+          outputs ((std::size_t) std::max (0, numOutputs))
+    {
+    }
+
+    void setBus (AudioBusDirection direction, int bus, int channels, bool active)
+    {
+        auto& buses = direction == AudioBusDirection::Input ? inputs : outputs;
+        if (bus >= 0 && bus < (int) buses.size())
+        {
+            auto& entry = buses[(std::size_t) bus];
+            entry.channels = std::max (0, channels);
+            entry.active = active && entry.channels > 0;
+        }
+    }
+
+    int busCount (AudioBusDirection direction) const noexcept
+    {
+        return (int) (direction == AudioBusDirection::Input ? inputs : outputs).size();
+    }
+
+    int channelCount (AudioBusDirection direction, int bus) const noexcept
+    {
+        const auto& buses = direction == AudioBusDirection::Input ? inputs : outputs;
+        return bus >= 0 && bus < (int) buses.size()
+                 ? buses[(std::size_t) bus].channels : 0;
+    }
+
+    bool isActive (AudioBusDirection direction, int bus) const noexcept
+    {
+        const auto& buses = direction == AudioBusDirection::Input ? inputs : outputs;
+        return bus >= 0 && bus < (int) buses.size()
+                 ? buses[(std::size_t) bus].active : false;
+    }
+
+    int processChannelCount (AudioBusDirection direction, int bus) const noexcept
+    {
+        return isActive (direction, bus) ? channelCount (direction, bus) : 0;
+    }
+
+private:
+    struct Entry
+    {
+        int channels = 0;
+        bool active = false;
+    };
+
+    std::vector<Entry> inputs;
+    std::vector<Entry> outputs;
+};
+
+// Apply both activation and deactivation from the same shape used for layout
+// metadata and process buffers. Selected and default-active buses with channels
+// receive scratch; optional and zero-channel buses remain inactive.
+template <typename Activate>
+void applyAudioBusPlan (const AudioBusPlan& plan, Activate&& activate)
+{
+    for (const auto direction : { AudioBusDirection::Input, AudioBusDirection::Output })
+        for (int bus = 0; bus < plan.busCount (direction); ++bus)
+            activate (direction, bus, plan.isActive (direction, bus));
+}
+
+template <typename InputChannels, typename OutputChannels>
+bool matchesAudioBusShape (const AudioBusPlan& plan,
+                           int numInputs, int numOutputs,
+                           InputChannels&& inputChannels,
+                           OutputChannels&& outputChannels)
+{
+    if (numInputs != plan.busCount (AudioBusDirection::Input)
+        || numOutputs != plan.busCount (AudioBusDirection::Output))
+        return false;
+
     for (int bus = 0; bus < numInputs; ++bus)
-        activate (AudioBusDirection::Input, bus);
+        if (inputChannels (bus) != plan.channelCount (AudioBusDirection::Input, bus))
+            return false;
     for (int bus = 0; bus < numOutputs; ++bus)
-        activate (AudioBusDirection::Output, bus);
+        if (outputChannels (bus) != plan.channelCount (AudioBusDirection::Output, bus))
+            return false;
+    return true;
+}
+
+template <typename SetChannels>
+void applyAudioBufferPlan (const AudioBusPlan& plan, SetChannels&& setChannels)
+{
+    for (const auto direction : { AudioBusDirection::Input, AudioBusDirection::Output })
+        for (int bus = 0; bus < plan.busCount (direction); ++bus)
+            setChannels (direction, bus, plan.processChannelCount (direction, bus));
 }
 
 struct ScratchShape
@@ -27,23 +109,19 @@ struct ScratchShape
     int widestBus = 2;
 };
 
-template <typename InputChannels, typename OutputChannels>
-ScratchShape planScratch (int numInputs, int numOutputs,
-                          InputChannels&& inputChannels,
-                          OutputChannels&& outputChannels)
+inline ScratchShape planScratch (const AudioBusPlan& plan)
 {
     ScratchShape result;
-    for (int bus = 0; bus < numInputs; ++bus)
+    for (const auto direction : { AudioBusDirection::Input, AudioBusDirection::Output })
     {
-        const int channels = std::max (0, inputChannels (bus));
-        result.inputChannels += (std::size_t) channels;
-        result.widestBus = std::max (result.widestBus, channels);
-    }
-    for (int bus = 0; bus < numOutputs; ++bus)
-    {
-        const int channels = std::max (0, outputChannels (bus));
-        result.outputChannels += (std::size_t) channels;
-        result.widestBus = std::max (result.widestBus, channels);
+        for (int bus = 0; bus < plan.busCount (direction); ++bus)
+        {
+            const int channels = plan.processChannelCount (direction, bus);
+            auto& total = direction == AudioBusDirection::Input
+                            ? result.inputChannels : result.outputChannels;
+            total += (std::size_t) channels;
+            result.widestBus = std::max (result.widestBus, channels);
+        }
     }
     return result;
 }
