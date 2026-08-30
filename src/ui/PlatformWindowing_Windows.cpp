@@ -121,8 +121,6 @@ void clearXInputFocus() {}                 // X-only; no-op on Windows
 void requestFocusOnMainWaylandSurface() {} // Wayland-only; no-op on Windows
 void preferX11ForNextNativeWindow() {}     // Linux-only; no-op on Windows
 void clearPreferX11ForNativeWindow() {}    // Linux-only; no-op on Windows
-void installNonFatalXErrorHandler() {}     // X-only; no-op on Windows
-
 std::unique_ptr<juce::Component> createForeignNativeWindowEmbed (std::uint64_t nativeHandle)
 {
     auto* hwnd = (HWND) (uintptr_t) nativeHandle;

@@ -2,6 +2,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <functional>
+
 // Forward-decl in the juce namespace so createInProcessEditorHost's
 // AudioProcessorEditor* parameter (Mac-only) doesn't force every
 // includer to pull juce_audio_processors. Linux + Windows transitively
@@ -9,7 +11,10 @@
 // and chokes on the bare juce::AudioProcessorEditor reference. Forward-
 // decl is cheaper than the full include AND keeps this header's
 // dependency surface narrow.
-namespace juce { class AudioProcessorEditor; }
+namespace juce
+{
+class AudioProcessorEditor;
+}
 
 namespace duskstudio::platform
 {
@@ -167,15 +172,15 @@ void requestFocusOnMainWaylandSurface();
 void preferX11ForNextNativeWindow();
 void clearPreferX11ForNativeWindow();
 
-// Install a process-wide X error handler that turns the benign
-// window-lifecycle races inherent to embedding an OUT-OF-PROCESS plugin
-// editor (the child's X11 toplevel can be freed by the server before the
-// parent's pending reparent / query-tree requests reach it) into a logged,
-// swallowed no-op instead of an Xlib-default abort() that core-dumps the host.
-// Non-benign errors chain to whatever handler was installed before (JUCE's, or
-// Xlib's default) so genuine bugs stay loud. Call ONCE, after the main window
-// peer exists (so JUCE's display is up). Linux-only; no-op on Mac/Windows.
-void installNonFatalXErrorHandler();
+#if JUCE_LINUX
+// Run an OOP editor's XEmbed teardown under a local X error trap. The child may
+// already have freed editorWindowId, so the exact BadWindow responses made by
+// the detach sequence are swallowed. Pending errors are drained before the
+// trap, teardown is drained while it is active, and every unrelated error
+// chains to the previously installed handler.
+void runX11EditorTeardown (std::uint64_t editorWindowId,
+                           const std::function<void()>& teardown);
+#endif
 
 // Factory for a Component that adopts a foreign native window handle
 // (HWND on Windows, NSView on macOS, X11 Window on Linux) and embeds

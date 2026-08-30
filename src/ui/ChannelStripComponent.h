@@ -411,6 +411,8 @@ private:
     // OOP: child plugin's X11 Window wrapped in XEmbedComponent fed
     // to PluginEditorWindow as the body. Lifetime matches pluginEditor.
     std::unique_ptr<juce::XEmbedComponent> remoteEditorEmbed;
+    std::uint64_t remoteEditorWindowId = 0;
+    void resetRemoteEditorEmbed();
    #endif
    #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
     // Windows OOP via SetParent. macOS keeps null and falls through to
