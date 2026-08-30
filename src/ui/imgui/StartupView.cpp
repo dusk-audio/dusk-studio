@@ -1,6 +1,7 @@
 #include "StartupView.h"
 #include "DuskTheme.h"
 #include "../../engine/audiofile/FileReader.h"
+#include "../../foundation/Fs.h"
 
 #include <algorithm>
 #include <cmath>
@@ -117,25 +118,27 @@ void inferAudioFormat (const std::filesystem::path& sessionDir, std::string& sam
         return;
 
     std::filesystem::path candidate;
-    for (const auto& entry : std::filesystem::directory_iterator (audioDir, error))
+    auto iterator = std::filesystem::directory_iterator (audioDir, error);
+    const auto scanSucceeded = dusk::fs::walkDirectoryEntries (
+        std::move (iterator), error, [&] (const std::filesystem::directory_entry& entry)
     {
-        if (error)
-            return;
-        if (! entry.is_regular_file (error))
-            continue;
+        std::error_code inspectionError;
+        if (! entry.is_regular_file (inspectionError) || inspectionError)
+            return true;
         auto extension = entry.path().extension().string();
         std::transform (extension.begin(), extension.end(), extension.begin(),
                         [] (unsigned char c) { return static_cast<char> (std::tolower (c)); });
         if (extension == ".wav")
         {
             candidate = entry.path();
-            break;
+            return false;
         }
         if (candidate.empty()
             && (extension == ".flac" || extension == ".aiff" || extension == ".aif"))
             candidate = entry.path();
-    }
-    if (candidate.empty())
+        return true;
+    });
+    if (! scanSucceeded || candidate.empty())
         return;
 
     const auto reader = dusk::audio::FileReader::open (candidate);

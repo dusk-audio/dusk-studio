@@ -69,6 +69,22 @@ inline bool matchesWildcard (std::string_view name, std::string_view pattern)
     return pi == p.size();
 }
 
+// Walk a filesystem iterator without invoking its throwing operator++. Returning
+// false from the visitor stops normally; a false result means construction or
+// increment reported an error through ec.
+template <typename Iterator, typename Visitor>
+inline bool walkDirectoryEntries (Iterator iterator, std::error_code& ec, Visitor&& visitor)
+{
+    const Iterator end;
+    while (! ec && iterator != end)
+    {
+        if (! visitor (*iterator))
+            return true;
+        iterator.increment (ec);
+    }
+    return ! ec;
+}
+
 inline std::vector<std::filesystem::path> findChildFiles (const std::filesystem::path& dir,
                                                           std::string_view wildcard,
                                                           bool recursive)
