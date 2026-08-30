@@ -57,10 +57,12 @@ TEST_CASE ("the X11 CLAP editor maps whatever window the plugin parents into it"
     // A plugin that builds its window off the message thread parents it after
     // embed() returns, so pump() itself must retry rather than merely leaving a
     // second occurrence such as the method definition elsewhere in the file.
-    const auto pump = source.find ("void ClapEditor::pump");
+    const auto pump = source.find ("ClapEditor::pump");
     REQUIRE (pump != std::string::npos);
-    const auto nextMethod = source.find ("\nvoid ClapEditor::", pump + 1);
-    const auto retryMap = source.find ("mapPluginChildren()", pump);
+    const auto pumpBody = source.find ('{', pump);
+    REQUIRE (pumpBody != std::string::npos);
+    const auto nextMethod = source.find ("ClapEditor::", pumpBody + 1);
+    const auto retryMap = source.find ("mapPluginChildren()", pumpBody);
     REQUIRE (nextMethod != std::string::npos);
     REQUIRE (retryMap < nextMethod);
     REQUIRE (source.find ("XMapWindow (dpy, children[i])") != std::string::npos);
