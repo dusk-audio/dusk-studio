@@ -32,4 +32,12 @@ TEST_CASE ("Utf8CommandLine reports nothing for an empty command line", "[ipc][w
     REQUIRE (cmd.argc() == 0);
 }
 
+#else
+
+TEST_CASE ("Windows IPC launcher regression is registered on every platform",
+           "[ipc][windows][issue-373]")
+{
+    SUCCEED ("Windows-only process launch regression");
+}
+
 #endif

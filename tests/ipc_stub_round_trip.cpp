@@ -49,12 +49,10 @@ struct ScopedChannelPair
 #endif
 } // namespace
 
+#if defined (_WIN32)
 TEST_CASE ("Windows IPC launcher preserves Unicode paths and arguments",
            "[ipc][windows][issue-373]")
 {
-#if ! defined (_WIN32)
-    SUCCEED ("Windows-only process launch regression");
-#else
     namespace ipcp = duskstudio::ipc::platform;
 
     duskstudio::test::TempDirectory temp ("dusk-ipc-unicode-launch-");
@@ -110,8 +108,8 @@ TEST_CASE ("Windows IPC launcher preserves Unicode paths and arguments",
     for (std::size_t i = 0; i < suppliedArguments.size(); ++i)
         REQUIRE (receivedArguments[i + 1] == suppliedArguments[i]);
     REQUIRE (receivedArguments.back().rfind ("--ipc-channel=0x", 0) == 0);
-#endif
 }
+#endif
 
 TEST_CASE ("ipc-stub: connect, round-trip 32 blocks, byte-exact echo",
             "[ipc]")
