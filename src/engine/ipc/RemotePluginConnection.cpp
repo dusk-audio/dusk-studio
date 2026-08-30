@@ -313,7 +313,7 @@ bool RemotePluginConnection::sendAndAwaitReply (OpCode op,
     // Clear the consumed/empty slot and publish the correlation ID before
     // writing. The reader drops any reply whose ID does not match this one,
     // including a late frame from a request that already timed out.
-    replyReady   = false;
+    replyReady.store (false, std::memory_order_relaxed);
     replyHeader  = {};
     replyPayload.clear();
 
@@ -331,11 +331,12 @@ bool RemotePluginConnection::sendAndAwaitReply (OpCode op,
 
     const auto deadline = std::chrono::steady_clock::now()
                             + std::chrono::milliseconds (timeoutMs);
-    while (! replyReady && ! readerExited.load (std::memory_order_acquire))
+    while (! replyReady.load (std::memory_order_acquire)
+           && ! readerExited.load (std::memory_order_acquire))
     {
         if (replyCv.wait_until (lk, deadline) == std::cv_status::timeout)
         {
-            if (! replyReady)
+            if (! replyReady.load (std::memory_order_acquire))
             {
                 pendingControlRequestId = 0;
                 errorOut = "reply timeout";
@@ -344,7 +345,7 @@ bool RemotePluginConnection::sendAndAwaitReply (OpCode op,
         }
     }
 
-    if (! replyReady)
+    if (! replyReady.load (std::memory_order_acquire))
     {
         pendingControlRequestId = 0;
         errorOut = "reader thread exited before reply arrived";
@@ -353,7 +354,7 @@ bool RemotePluginConnection::sendAndAwaitReply (OpCode op,
 
     hdrOut   = replyHeader;
     replyOut = std::move (replyPayload);
-    replyReady = false;
+    replyReady.store (false, std::memory_order_relaxed);
     pendingControlRequestId = 0;
     if (hdrOut.requestId != requestId)
     {
@@ -669,7 +670,7 @@ void RemotePluginConnection::readerLoop()
         if (pendingControlRequestId == 0
             || hdr.requestId != pendingControlRequestId)
             continue;
-        if (replyReady)
+        if (replyReady.load (std::memory_order_relaxed))
             std::fprintf (stderr,
                           "[Dusk Studio/RemotePluginConnection] reader: "
                           "dropping unread reply slot (op=%u) - caller "
@@ -677,7 +678,7 @@ void RemotePluginConnection::readerLoop()
                           (unsigned) replyHeader.op);
         replyHeader = hdr;
         replyPayload = std::move (payload);
-        replyReady = true;
+        replyReady.store (true, std::memory_order_release);
         replyCv.notify_all();
     }
 

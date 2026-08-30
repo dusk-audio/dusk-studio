@@ -282,7 +282,9 @@ private:
     SyncRpcGate                syncRpcGate;
     mutable std::mutex          controlMutex;
     std::condition_variable     replyCv;
-    bool                        replyReady { false };
+    // The release/acquire handoff also makes the reply payload visible to
+    // older TSan runtimes that do not intercept pthread_cond_clockwait.
+    std::atomic<bool>           replyReady { false };
     ControlMsgHeader            replyHeader {};
     std::vector<std::uint8_t>   replyPayload;
     std::uint32_t               nextControlRequestId { 1 };
