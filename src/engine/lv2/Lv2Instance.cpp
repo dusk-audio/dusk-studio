@@ -21,6 +21,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -28,6 +29,7 @@
 #include <iterator>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace duskstudio::lv2
@@ -256,9 +258,72 @@ struct Lv2Instance::Impl
     int controlAtomOutPos = -1;
 
     // Plugin -> host property feedback (audio-thread parse of the control atom
-    // output, drained into patchShadow on the message thread).
+    // output, drained into patchShadow on the message thread). Size this once
+    // from the declared float patch surface: one generic patch:Get may return
+    // every property in a single patch:Put, so a fixed queue silently truncates
+    // otherwise-valid large plug-ins.
     struct PatchFeedback { LV2_URID prop; float value; };
-    hosting::SpscRing<PatchFeedback, 128> patchOutRing;
+    class PatchFeedbackRing
+    {
+    public:
+        void configure (size_t itemCapacity)
+        {
+            slots.assign (std::max<size_t> (2, itemCapacity + 1), {});
+            writeIdx.store (0, std::memory_order_relaxed);
+            readIdx.store (0, std::memory_order_relaxed);
+        }
+
+        bool push (const PatchFeedback& value) noexcept
+        {
+            const size_t capacity = slots.size();
+            if (capacity < 2) return false;
+            const size_t write = writeIdx.load (std::memory_order_relaxed);
+            const size_t next = (write + 1) % capacity;
+            if (next == readIdx.load (std::memory_order_acquire)) return false;
+            slots[write] = value;
+            writeIdx.store (next, std::memory_order_release);
+            return true;
+        }
+
+        template <typename Fn>
+        void drain (Fn&& fn) noexcept
+        {
+            const size_t capacity = slots.size();
+            if (capacity < 2) return;
+            size_t read = readIdx.load (std::memory_order_relaxed);
+            const size_t write = writeIdx.load (std::memory_order_acquire);
+            while (read != write)
+            {
+                fn (slots[read]);
+                read = (read + 1) % capacity;
+            }
+            readIdx.store (read, std::memory_order_release);
+        }
+
+    private:
+        std::vector<PatchFeedback> slots;
+        std::atomic<size_t> writeIdx { 0 };
+        std::atomic<size_t> readIdx { 0 };
+    };
+
+    PatchFeedbackRing patchOutRing;
+    std::unordered_set<LV2_URID> patchPropertyUrids;
+    std::atomic<uint32_t> patchFeedbackOverflows { 0 };
+    std::atomic<uint32_t> patchGetQueueFailures { 0 };
+    std::atomic<bool> patchRefreshPending { false };
+
+    void queuePatchFeedback (LV2_URID property, float value) noexcept
+    {
+        // A generic patch:Get may include readable or internal properties that
+        // are not part of the host's declared parameter surface. They cannot
+        // update a parameter and must not consume capacity reserved for one.
+        if (patchPropertyUrids.find (property) == patchPropertyUrids.end()) return;
+        if (! patchOutRing.push ({ property, value }))
+        {
+            patchFeedbackOverflows.fetch_add (1, std::memory_order_relaxed);
+            patchRefreshPending.store (true, std::memory_order_release);
+        }
+    }
 
     // Audio thread. Queue one patch:Set / patch:Put object's float properties.
     void queuePatchObject (const LV2_Atom_Object* obj) noexcept
@@ -271,8 +336,9 @@ struct Lv2Instance::Impl
                                       uridPatchValue,    &valAtom, 0);
             if (propAtom != nullptr && propAtom->type == uridUridType
                 && valAtom != nullptr && valAtom->type == uridFloatType)
-                patchOutRing.push ({ reinterpret_cast<const LV2_Atom_URID*> (propAtom)->body,
-                                     reinterpret_cast<const LV2_Atom_Float*> (valAtom)->body });
+                queuePatchFeedback (
+                    reinterpret_cast<const LV2_Atom_URID*> (propAtom)->body,
+                    reinterpret_cast<const LV2_Atom_Float*> (valAtom)->body);
         }
         else if (obj->body.otype == uridPatchPut)
         {
@@ -282,8 +348,9 @@ struct Lv2Instance::Impl
             const auto* body = reinterpret_cast<const LV2_Atom_Object*> (bodyAtom);
             LV2_ATOM_OBJECT_FOREACH (body, p)
                 if (p->value.type == uridFloatType)
-                    patchOutRing.push ({ p->key,
-                        reinterpret_cast<const LV2_Atom_Float*> (&p->value)->body });
+                    queuePatchFeedback (
+                        p->key,
+                        reinterpret_cast<const LV2_Atom_Float*> (&p->value)->body);
         }
     }
 
@@ -429,6 +496,7 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
     // MIDI Learn). Snapshot name + range + steppedness now so later reads
     // never touch lilv.
     impl->params.clear();
+    impl->patchPropertyUrids.clear();
     impl->lastTouchedParam.store (-1, std::memory_order_relaxed);
     {
         LilvNode* toggledProp  = lilv_new_uri (world, LV2_CORE__toggled);
@@ -554,6 +622,18 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
         lilv_node_free (enumProp);
         lilv_node_free (designation);
     }
+
+    size_t patchPropertyCount = 0;
+    for (const auto& param : impl->params)
+    {
+        if (! param.isPatchProperty) continue;
+        impl->patchPropertyUrids.insert (param.id & ~Impl::kPatchIdFlag);
+        ++patchPropertyCount;
+    }
+    impl->patchOutRing.configure (patchPropertyCount);
+    impl->patchFeedbackOverflows.store (0, std::memory_order_relaxed);
+    impl->patchGetQueueFailures.store (0, std::memory_order_relaxed);
+    impl->patchRefreshPending.store (false, std::memory_order_relaxed);
 
     // Which atom input takes injected patch events: the lv2:control-designated
     // one, else the first.
@@ -1154,6 +1234,22 @@ void Lv2Instance::drainPatchFeedback()
     {
         impl->patchShadow[f.prop] = f.value;
     });
+
+    const auto overflows = impl->patchFeedbackOverflows.exchange (
+        0, std::memory_order_acq_rel);
+    const auto requestFailures = impl->patchGetQueueFailures.exchange (
+        0, std::memory_order_acq_rel);
+    if (overflows != 0)
+        std::fprintf (stderr,
+                      "[lv2] patch feedback overflow dropped %u value(s); requesting a full refresh\n",
+                      overflows);
+    if (requestFailures != 0)
+        std::fprintf (stderr,
+                      "[lv2] patch feedback refresh queue was full %u time(s); retrying\n",
+                      requestFailures);
+
+    if (impl->patchRefreshPending.exchange (false, std::memory_order_acq_rel))
+        requestPatchParameterValuesForUi();
 }
 
 int Lv2Instance::lastTouchedParamIndex() const noexcept
@@ -1207,8 +1303,11 @@ void Lv2Instance::requestPatchParameterValuesForUi() noexcept
 
     Impl::AtomBlob blob;
     blob.size = impl->forgePatchGet (blob.data, sizeof (blob.data));
-    if (blob.size != 0)
-        impl->atomRing.push (blob);
+    if (blob.size != 0 && ! impl->atomRing.push (blob))
+    {
+        impl->patchGetQueueFailures.fetch_add (1, std::memory_order_relaxed);
+        impl->patchRefreshPending.store (true, std::memory_order_release);
+    }
 }
 
 void Lv2Instance::forwardUiAtomEvent (const void* atomData, uint32_t sizeBytes) noexcept

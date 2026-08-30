@@ -340,7 +340,10 @@ endif()
 if(DUSKSTUDIO_NATIVE_LV2)
     set(DUSKSTUDIO_FILE_STATE_LV2_BUNDLE
         "${CMAKE_CURRENT_BINARY_DIR}/file-state-fixture.lv2")
+    set(DUSKSTUDIO_MANY_PATCH_LV2_BUNDLE
+        "${CMAKE_CURRENT_BINARY_DIR}/many-patch-fixture.lv2")
     file(MAKE_DIRECTORY "${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}")
+    file(MAKE_DIRECTORY "${DUSKSTUDIO_MANY_PATCH_LV2_BUNDLE}")
     configure_file(fixtures/file_state_manifest.ttl
         "${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}/manifest.ttl" COPYONLY)
     configure_file(fixtures/file_state_plugin.ttl
@@ -354,9 +357,37 @@ if(DUSKSTUDIO_NATIVE_LV2)
     target_compile_features(dusk-studio-file-state-lv2-fixture PRIVATE cxx_std_17)
     target_link_libraries(dusk-studio-file-state-lv2-fixture PRIVATE PkgConfig::LV2)
 
+    set(DUSKSTUDIO_MANY_PATCH_PROPERTY_DEFINITIONS "")
+    set(DUSKSTUDIO_MANY_PATCH_WRITABLE_PROPERTIES "")
+    foreach(property_index RANGE 0 159)
+        string(APPEND DUSKSTUDIO_MANY_PATCH_PROPERTY_DEFINITIONS
+            "<urn:duskstudio:test:many-patches#p${property_index}>\n"
+            "    a lv2:Parameter ; rdfs:label \"p${property_index}\" ;\n"
+            "    rdfs:range atom:Float ; lv2:minimum 0.0 ;\n"
+            "    lv2:maximum 200.0 ; lv2:default 0.0 .\n\n")
+        if(property_index GREATER 0)
+            string(APPEND DUSKSTUDIO_MANY_PATCH_WRITABLE_PROPERTIES ",\n                   ")
+        endif()
+        string(APPEND DUSKSTUDIO_MANY_PATCH_WRITABLE_PROPERTIES
+            "<urn:duskstudio:test:many-patches#p${property_index}>")
+    endforeach()
+    configure_file(fixtures/many_patch_manifest.ttl
+        "${DUSKSTUDIO_MANY_PATCH_LV2_BUNDLE}/manifest.ttl" COPYONLY)
+    configure_file(fixtures/many_patch_plugin.ttl.in
+        "${DUSKSTUDIO_MANY_PATCH_LV2_BUNDLE}/many_patch_plugin.ttl" @ONLY)
+    add_library(dusk-studio-many-patch-lv2-fixture MODULE
+        fixtures/many_patch_lv2.cpp)
+    set_target_properties(dusk-studio-many-patch-lv2-fixture PROPERTIES
+        PREFIX ""
+        OUTPUT_NAME "many_patch_fixture"
+        LIBRARY_OUTPUT_DIRECTORY "${DUSKSTUDIO_MANY_PATCH_LV2_BUNDLE}")
+    target_compile_features(dusk-studio-many-patch-lv2-fixture PRIVATE cxx_std_17)
+    target_link_libraries(dusk-studio-many-patch-lv2-fixture PRIVATE PkgConfig::LV2)
+
     target_sources(dusk-studio-tests PRIVATE
         lv2_bundle_load.cpp
         lv2_file_state.cpp
+        lv2_patch_feedback.cpp
         lv2_instance_process.cpp
         lv2_native_slot.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Bundle.cpp
@@ -365,8 +396,11 @@ if(DUSKSTUDIO_NATIVE_LV2)
     target_link_libraries(dusk-studio-tests PRIVATE PkgConfig::LILV PkgConfig::SUIL PkgConfig::LV2)
     target_compile_definitions(dusk-studio-tests PRIVATE
         DUSKSTUDIO_HAS_NATIVE_LV2=1
-        DUSKSTUDIO_FILE_STATE_LV2_FIXTURE_PATH="${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}")
-    add_dependencies(dusk-studio-tests dusk-studio-file-state-lv2-fixture)
+        DUSKSTUDIO_FILE_STATE_LV2_FIXTURE_PATH="${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}"
+        DUSKSTUDIO_MANY_PATCH_LV2_FIXTURE_PATH="${DUSKSTUDIO_MANY_PATCH_LV2_BUNDLE}")
+    add_dependencies(dusk-studio-tests
+        dusk-studio-file-state-lv2-fixture
+        dusk-studio-many-patch-lv2-fixture)
 endif()
 
 if(DUSKSTUDIO_NATIVE_CLAP OR DUSKSTUDIO_NATIVE_LV2 OR DUSKSTUDIO_NATIVE_VST3)

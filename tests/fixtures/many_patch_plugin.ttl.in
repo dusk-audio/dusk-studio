@@ -1,0 +1,31 @@
+@prefix atom:  <http://lv2plug.in/ns/ext/atom#> .
+@prefix patch: <http://lv2plug.in/ns/ext/patch#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix doap:  <http://usefulinc.com/ns/doap#> .
+@prefix lv2:   <http://lv2plug.in/ns/lv2core#> .
+@prefix urid:  <http://lv2plug.in/ns/ext/urid#> .
+
+@DUSKSTUDIO_MANY_PATCH_PROPERTY_DEFINITIONS@
+
+<urn:duskstudio:test:many-patches>
+    a lv2:Plugin ;
+    doap:name "Dusk many-patch fixture" ;
+    lv2:requiredFeature urid:map ;
+    patch:writable @DUSKSTUDIO_MANY_PATCH_WRITABLE_PROPERTIES@ ;
+    lv2:port
+        [ a lv2:InputPort, lv2:AudioPort ;
+          lv2:index 0 ; lv2:symbol "in_l" ; lv2:name "Input L" ],
+        [ a lv2:InputPort, lv2:AudioPort ;
+          lv2:index 1 ; lv2:symbol "in_r" ; lv2:name "Input R" ],
+        [ a lv2:OutputPort, lv2:AudioPort ;
+          lv2:index 2 ; lv2:symbol "out_l" ; lv2:name "Output L" ],
+        [ a lv2:OutputPort, lv2:AudioPort ;
+          lv2:index 3 ; lv2:symbol "out_r" ; lv2:name "Output R" ],
+        [ a lv2:InputPort, atom:AtomPort ;
+          lv2:index 4 ; lv2:symbol "control_in" ; lv2:name "Control In" ;
+          lv2:designation lv2:control ;
+          atom:bufferType atom:Sequence ; atom:supports patch:Message ],
+        [ a lv2:OutputPort, atom:AtomPort ;
+          lv2:index 5 ; lv2:symbol "control_out" ; lv2:name "Control Out" ;
+          lv2:designation lv2:control ;
+          atom:bufferType atom:Sequence ; atom:supports patch:Message ] .
