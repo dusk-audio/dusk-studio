@@ -93,9 +93,9 @@ jobs:
           archive="${RUNNER_TEMP}/libsodium-${SODIUM_VERSION}.tar.gz"
           source_dir="${RUNNER_TEMP}/libsodium-source"
           prefix="${RUNNER_TEMP}/libsodium"
-          curl --fail --location --retry 3 \
+          curl --fail --location --retry 3 --retry-all-errors \
             --output "${archive}" \
-            "https://download.libsodium.org/libsodium/releases/libsodium-${SODIUM_VERSION}.tar.gz"
+            "https://github.com/jedisct1/libsodium/releases/download/${SODIUM_VERSION}-RELEASE/libsodium-${SODIUM_VERSION}.tar.gz"
           echo "${SODIUM_SHA256}  ${archive}" | shasum -a 256 --check
           mkdir -p "${source_dir}"
           tar -xzf "${archive}" -C "${source_dir}" --strip-components=1
