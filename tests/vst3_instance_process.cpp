@@ -18,34 +18,68 @@
 #include <cmath>
 #include <cstdlib>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
-TEST_CASE ("VST3 modular bus plan activates every bus with independent scratch",
-           "[vst3][bus][regression][issue-361]")
+TEST_CASE ("VST3 audio bus plan keeps activation and scratch shape consistent",
+           "[vst3][bus][regression][issue-361][issue-390]")
 {
     using namespace duskstudio::vst3::detail;
 
-    std::vector<std::pair<AudioBusDirection, int>> activated;
-    activateAllAudioBuses (3, 4, [&] (AudioBusDirection direction, int bus)
+    AudioBusPlan plan (3, 4);
+    plan.setBus (AudioBusDirection::Input, 0, 2, true);    // main
+    plan.setBus (AudioBusDirection::Input, 1, 2, false);   // inactive optional
+    plan.setBus (AudioBusDirection::Input, 2, 1, true);    // sidechain
+    plan.setBus (AudioBusDirection::Output, 0, 2, true);   // main
+    plan.setBus (AudioBusDirection::Output, 1, 0, true);   // zero-channel optional
+    plan.setBus (AudioBusDirection::Output, 2, 8, true);   // modular aux
+    plan.setBus (AudioBusDirection::Output, 3, 4, false);  // inactive optional
+
+    std::vector<std::tuple<AudioBusDirection, int, bool>> activation;
+    applyAudioBusPlan (plan, [&] (AudioBusDirection direction, int bus, bool active)
     {
-        activated.emplace_back (direction, bus);
+        activation.emplace_back (direction, bus, active);
     });
-    REQUIRE (activated == std::vector<std::pair<AudioBusDirection, int>> {
-        { AudioBusDirection::Input, 0 }, { AudioBusDirection::Input, 1 },
-        { AudioBusDirection::Input, 2 }, { AudioBusDirection::Output, 0 },
-        { AudioBusDirection::Output, 1 }, { AudioBusDirection::Output, 2 },
-        { AudioBusDirection::Output, 3 }
+    REQUIRE (activation == std::vector<std::tuple<AudioBusDirection, int, bool>> {
+        { AudioBusDirection::Input, 0, true },
+        { AudioBusDirection::Input, 1, false },
+        { AudioBusDirection::Input, 2, true },
+        { AudioBusDirection::Output, 0, true },
+        { AudioBusDirection::Output, 1, false },
+        { AudioBusDirection::Output, 2, true },
+        { AudioBusDirection::Output, 3, false }
     });
 
-    const int inputChannels[] = { 2, 1, 8 };
-    const int outputChannels[] = { 2, 8, 1, 4 };
-    const auto shape = planScratch (
-        3, 4,
+    const int inputChannels[] = { 2, 2, 1 };
+    const int outputChannels[] = { 2, 0, 8, 4 };
+    REQUIRE (matchesAudioBusShape (
+        plan, 3, 4,
         [&] (int bus) { return inputChannels[bus]; },
-        [&] (int bus) { return outputChannels[bus]; });
-    REQUIRE (shape.inputChannels == 11);
-    REQUIRE (shape.outputChannels == 15);
+        [&] (int bus) { return outputChannels[bus]; }));
+    REQUIRE_FALSE (matchesAudioBusShape (
+        plan, 3, 4,
+        [] (int bus) { return bus == 1 ? 0 : (bus == 2 ? 1 : 2); },
+        [&] (int bus) { return outputChannels[bus]; }));
+
+    std::vector<std::tuple<AudioBusDirection, int, int>> processChannels;
+    applyAudioBufferPlan (plan, [&] (AudioBusDirection direction, int bus, int channels)
+    {
+        processChannels.emplace_back (direction, bus, channels);
+    });
+    REQUIRE (processChannels == std::vector<std::tuple<AudioBusDirection, int, int>> {
+        { AudioBusDirection::Input, 0, 2 },
+        { AudioBusDirection::Input, 1, 0 },
+        { AudioBusDirection::Input, 2, 1 },
+        { AudioBusDirection::Output, 0, 2 },
+        { AudioBusDirection::Output, 1, 0 },
+        { AudioBusDirection::Output, 2, 8 },
+        { AudioBusDirection::Output, 3, 0 }
+    });
+
+    const auto shape = planScratch (plan);
+    REQUIRE (shape.inputChannels == 3);
+    REQUIRE (shape.outputChannels == 10);
     REQUIRE (shape.widestBus == 8);
 
     constexpr int frames = 64;

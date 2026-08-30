@@ -42,6 +42,7 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
     IPtr<Vst::ConnectionProxy> componentCP, controllerCP;
 
     hosting::PortLayout layout;
+    detail::AudioBusPlan audioBuses;
     int  mainInBus = -1, mainOutBus = -1, sidechainBus = -1;
     bool hasEventIn = false;
 
@@ -177,6 +178,7 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
 
         host.setCallbacks (nullptr);
         params.clear();
+        audioBuses = {};
         resizeViewFn = nullptr;
         if (controller && ! controllerIsComponent)
             controller->terminate();
@@ -348,15 +350,9 @@ bool Vst3Instance::create (const Vst3Bundle& bundle, const std::string& classId,
     impl->layout = {};
     impl->mainInBus = impl->mainOutBus = impl->sidechainBus = -1;
 
-    const auto busChannels = [this] (Vst::BusDirection dir, int32 index) -> int
-    {
-        Vst::SpeakerArrangement arr = 0;
-        if (impl->processor->getBusArrangement (dir, index, arr) == kResultOk)
-            return (int) Vst::SpeakerArr::getChannelCount (arr);
-        return 0;
-    };
-
     const int32 numIn = impl->component->getBusCount (Vst::kAudio, Vst::kInput);
+    const int32 numOut = impl->component->getBusCount (Vst::kAudio, Vst::kOutput);
+    impl->audioBuses = detail::AudioBusPlan ((int) numIn, (int) numOut);
     for (int32 i = 0; i < numIn; ++i)
     {
         Vst::BusInfo info {};
@@ -365,24 +361,31 @@ bool Vst3Instance::create (const Vst3Bundle& bundle, const std::string& classId,
         hosting::BusInfo b;
         b.kind = hosting::BusInfo::Kind::Audio;
         b.dir  = hosting::BusInfo::Direction::Input;
-        b.channelCount = busChannels (Vst::kInput, i);
-        b.active = b.channelCount > 0;
+        bool hostConnected = false;
         if (info.busType == Vst::kMain && impl->mainInBus < 0)
         {
             b.role = hosting::BusInfo::Role::Main;
+            hostConnected = true;
             impl->mainInBus = (int) i;
             impl->layout.mainInIndex = (int) impl->layout.inputs.size();
         }
         else if (info.busType == Vst::kAux && impl->sidechainBus < 0)
         {
             b.role = hosting::BusInfo::Role::Sidechain;
+            hostConnected = true;
             impl->sidechainBus = (int) i;
             impl->layout.sidechainInIndex = (int) impl->layout.inputs.size();
         }
+        impl->audioBuses.setBus (
+            detail::AudioBusDirection::Input, (int) i, (int) info.channelCount,
+            hostConnected || (info.flags & Vst::BusInfo::kDefaultActive) != 0);
+        b.channelCount = impl->audioBuses.channelCount (
+            detail::AudioBusDirection::Input, (int) i);
+        b.active = impl->audioBuses.isActive (
+            detail::AudioBusDirection::Input, (int) i);
         impl->layout.inputs.push_back (b);
     }
 
-    const int32 numOut = impl->component->getBusCount (Vst::kAudio, Vst::kOutput);
     for (int32 i = 0; i < numOut; ++i)
     {
         Vst::BusInfo info {};
@@ -391,14 +394,21 @@ bool Vst3Instance::create (const Vst3Bundle& bundle, const std::string& classId,
         hosting::BusInfo b;
         b.kind = hosting::BusInfo::Kind::Audio;
         b.dir  = hosting::BusInfo::Direction::Output;
-        b.channelCount = busChannels (Vst::kOutput, i);
-        b.active = b.channelCount > 0;
+        bool hostConnected = false;
         if (info.busType == Vst::kMain && impl->mainOutBus < 0)
         {
             b.role = hosting::BusInfo::Role::Main;
+            hostConnected = true;
             impl->mainOutBus = (int) i;
             impl->layout.mainOutIndex = (int) impl->layout.outputs.size();
         }
+        impl->audioBuses.setBus (
+            detail::AudioBusDirection::Output, (int) i, (int) info.channelCount,
+            hostConnected || (info.flags & Vst::BusInfo::kDefaultActive) != 0);
+        b.channelCount = impl->audioBuses.channelCount (
+            detail::AudioBusDirection::Output, (int) i);
+        b.active = impl->audioBuses.isActive (
+            detail::AudioBusDirection::Output, (int) i);
         impl->layout.outputs.push_back (b);
     }
 
@@ -419,18 +429,18 @@ bool Vst3Instance::create (const Vst3Bundle& bundle, const std::string& classId,
     if (impl->mainOutBus < 0)
     { errorOut = "plugin has no main audio output bus"; impl->destroy(); return false; }
 
-    // Activate every advertised audio bus. Modular plugins such as VCV Rack
-    // expose many main/aux buses and may still touch their complete bus array
-    // while monitored. processBlock supplies silence/sinks for buses the mixer
-    // does not expose, so no active bus is ever handed null channel pointers.
-    detail::activateAllAudioBuses (
-        numIn, numOut, [this] (detail::AudioBusDirection direction, int bus)
+    // Modular plugins may touch every non-empty bus while monitored, so keep
+    // those active and supply independent silence/sinks below. A zero-channel
+    // bus stays inactive and is represented as such everywhere.
+    detail::applyAudioBusPlan (
+        impl->audioBuses,
+        [this] (detail::AudioBusDirection direction, int bus, bool active)
         {
             impl->component->activateBus (
                 Vst::kAudio,
                 direction == detail::AudioBusDirection::Input
                     ? Vst::kInput : Vst::kOutput,
-                bus, true);
+                bus, active);
         });
     if (impl->hasEventIn)
         impl->component->activateBus (Vst::kEvent, Vst::kInput, 0, true);
@@ -460,6 +470,24 @@ bool Vst3Instance::activate (double sampleRate, int maxBlockFrames, std::string&
     // at ours - the plugin would process the SDK's private (silent) scratch.
     if (! impl->processData.prepare (*impl->component, 0, Vst::kSample32))
     { errorOut = "process-data prepare failed"; return false; }
+    if (! detail::matchesAudioBusShape (
+            impl->audioBuses,
+            (int) impl->processData.numInputs, (int) impl->processData.numOutputs,
+            [this] (int bus) { return (int) impl->processData.inputs[bus].numChannels; },
+            [this] (int bus) { return (int) impl->processData.outputs[bus].numChannels; }))
+    {
+        impl->processData.unprepare();
+        errorOut = "process-data bus shape changed after discovery";
+        return false;
+    }
+    detail::applyAudioBufferPlan (
+        impl->audioBuses,
+        [this] (detail::AudioBusDirection direction, int bus, int channels)
+        {
+            auto* buffers = direction == detail::AudioBusDirection::Input
+                              ? impl->processData.inputs : impl->processData.outputs;
+            buffers[bus].numChannels = channels;
+        });
     impl->processData.inputParameterChanges  = &impl->inParams;
     impl->processData.outputParameterChanges = &impl->outParams;
     // Pre-warm the queue pool; per-queue point storage keeps its capacity across
@@ -474,10 +502,7 @@ bool Vst3Instance::activate (double sampleRate, int maxBlockFrames, std::string&
     // Give every channel independent scratch. VST3 buffers are writable and
     // may be processed in place, so aliasing unused buses lets one bus corrupt
     // another. Pointer scratch is sized to the widest bus.
-    const auto scratch = detail::planScratch (
-        impl->processData.numInputs, impl->processData.numOutputs,
-        [this] (int bus) { return (int) impl->processData.inputs[bus].numChannels; },
-        [this] (int bus) { return (int) impl->processData.outputs[bus].numChannels; });
+    const auto scratch = detail::planScratch (impl->audioBuses);
     impl->silence.assign (scratch.inputChannels * (size_t) impl->maxFrames, 0.0f);
     impl->sink.assign (scratch.outputChannels * (size_t) impl->maxFrames, 0.0f);
     impl->scratchPtrs.assign ((size_t) scratch.widestBus, nullptr);
@@ -528,12 +553,14 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
         return;
     }
 
-    // Connect every advertised input bus. The mixer-facing main and sidechain
-    // buses receive caller data; all other buses receive valid silence.
+    // Connect every planned input bus. The mixer-facing main and sidechain buses
+    // receive caller data; all other active buses receive valid silence.
     size_t inputScratchChannel = 0;
-    for (int32 bus = 0; bus < impl->processData.numInputs; ++bus)
+    for (int bus = 0;
+         bus < impl->audioBuses.busCount (detail::AudioBusDirection::Input); ++bus)
     {
-        const int busCh = impl->processData.inputs[bus].numChannels;
+        const int busCh = impl->audioBuses.processChannelCount (
+            detail::AudioBusDirection::Input, bus);
         for (int c = 0; c < busCh; ++c)
         {
             float* channel = impl->silence.data()
@@ -558,9 +585,11 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
     // Likewise, connect every output. Only the selected main bus reaches the
     // mixer; auxiliary outputs are safely discarded into independent sinks.
     size_t outputScratchChannel = 0;
-    for (int32 bus = 0; bus < impl->processData.numOutputs; ++bus)
+    for (int bus = 0;
+         bus < impl->audioBuses.busCount (detail::AudioBusDirection::Output); ++bus)
     {
-        const int busCh = impl->processData.outputs[bus].numChannels;
+        const int busCh = impl->audioBuses.processChannelCount (
+            detail::AudioBusDirection::Output, bus);
         for (int c = 0; c < busCh; ++c)
         {
             impl->scratchPtrs[(size_t) c] =
