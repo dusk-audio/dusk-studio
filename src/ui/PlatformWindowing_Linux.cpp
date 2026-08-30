@@ -5,9 +5,14 @@
 #define JUCE_GUI_BASICS_INCLUDE_XHEADERS 1
 
 #include "PlatformWindowing.h"
+#include "X11EditorTeardownError.h"
+
+#include <juce_gui_extra/juce_gui_extra.h>
+#include <X11/Xproto.h>
 
 #include <cstdio>
 #include <cstdlib>
+#include <mutex>
 
 namespace duskstudio::platform
 {
@@ -45,45 +50,51 @@ bool isWaylandSession()
     return cached;
 }
 
-::XErrorHandler previousXErrorHandler = nullptr;
-bool xErrorHandlerInstalled = false;
+static_assert (BadWindow == x11::kBadWindow);
+static_assert (X_ChangeWindowAttributes == x11::kChangeWindowAttributes);
+static_assert (X_ReparentWindow == x11::kReparentWindow);
+static_assert (X_UnmapWindow == x11::kUnmapWindow);
 
-int nonFatalXErrorHandler (::Display* d, ::XErrorEvent* e)
+struct EditorTeardownErrorTrap
 {
-    // OOP plugin editors are X11 toplevels owned by a SEPARATE process. When
-    // one dies (crash / timeout-kill) the parent's already-queued reparent /
-    // query-tree / configure requests reference a window the server has freed.
-    // Xlib's default handler abort()s on the resulting BadWindow etc. - turning
-    // a plugin's death into a host core-dump. Swallow those benign races and
-    // log them; defer anything else to the prior handler so real bugs stay loud.
-    if (e != nullptr)
+    ::Display* display = nullptr;
+    std::uint64_t editorWindowId = 0;
+    ::XErrorHandler previous = nullptr;
+};
+
+EditorTeardownErrorTrap* activeEditorTeardownTrap = nullptr;
+std::mutex editorTeardownTrapMutex;
+
+int editorTeardownXErrorHandler (::Display* display, ::XErrorEvent* error)
+{
+    auto* trap = activeEditorTeardownTrap;
+    if (trap != nullptr && error != nullptr && display == trap->display
+        && x11::shouldSuppressEditorTeardownError (
+            error->error_code, error->request_code,
+            static_cast<std::uint64_t> (error->resourceid), trap->editorWindowId))
     {
-        switch (e->error_code)
-        {
-            case BadWindow:
-            case BadDrawable:
-            case BadMatch:
-            case BadValue:
-            {
-                char buf[128] = {};
-                if (d != nullptr)
-                    ::XGetErrorText (d, e->error_code, buf, (int) sizeof (buf) - 1);
-                std::fprintf (stderr,
-                              "[Dusk Studio/X] swallowed non-fatal X error: %s "
-                              "(request %u, resource 0x%lx) - likely a plugin "
-                              "editor window race\n",
-                              buf, (unsigned) e->request_code,
-                              (unsigned long) e->resourceid);
-                std::fflush (stderr);
-                return 0;
-            }
-            default:
-                break;
-        }
+        std::fprintf (stderr,
+                      "[Dusk Studio/X] ignored stale editor window 0x%lx "
+                      "during teardown request %u\n",
+                      static_cast<unsigned long> (error->resourceid),
+                      static_cast<unsigned int> (error->request_code));
+        std::fflush (stderr);
+        return 0;
     }
-    if (previousXErrorHandler != nullptr)
-        return previousXErrorHandler (d, e);
-    return 0;
+
+    if (trap != nullptr && trap->previous != nullptr)
+        return trap->previous (display, error);
+
+    // A null previous handler means Xlib's fatal default was active. Preserve
+    // that contract rather than silently accepting an unrelated protocol bug.
+    std::fprintf (stderr,
+                  "[Dusk Studio/X] unexpected X error during editor teardown "
+                  "(error %u, request %u, resource 0x%lx)\n",
+                  error != nullptr ? static_cast<unsigned int> (error->error_code) : 0u,
+                  error != nullptr ? static_cast<unsigned int> (error->request_code) : 0u,
+                  error != nullptr ? static_cast<unsigned long> (error->resourceid) : 0ul);
+    std::fflush (stderr);
+    std::abort();
 }
 
 juce::ComponentPeer* pickSiblingFocusTargetPeer (juce::Component& departing)
@@ -121,15 +132,34 @@ bool hasUsableDisplay()
 
 double nativeViewBackingScale (void*) { return 1.0; }
 
-void installNonFatalXErrorHandler()
+void destroyX11EditorEmbed (std::unique_ptr<juce::XEmbedComponent>& embed,
+                            std::uint64_t editorWindowId)
 {
-    // Install once. XSetErrorHandler returns the previously-installed handler
-    // (JUCE's, if it set one during peer creation - call this AFTER the main
-    // window exists - otherwise Xlib's default), which we chain to for any
-    // error we don't recognise as a benign plugin-window race.
-    if (xErrorHandlerInstalled) return;
-    xErrorHandlerInstalled = true;
-    previousXErrorHandler = ::XSetErrorHandler (&nonFatalXErrorHandler);
+    if (embed == nullptr)
+        return;
+
+    auto* display = juceDisplay();
+    if (display == nullptr || editorWindowId == 0)
+    {
+        embed.reset();
+        return;
+    }
+
+    const std::lock_guard<std::mutex> lock (editorTeardownTrapMutex);
+
+    // Deliver every older error to the normal handler before narrowing the
+    // policy. XEmbedComponent's destructor also syncs; the final sync covers
+    // any request it queues after its internal round-trip.
+    ::XSync (display, False);
+    EditorTeardownErrorTrap trap { display, editorWindowId, nullptr };
+    activeEditorTeardownTrap = &trap;
+    trap.previous = ::XSetErrorHandler (&editorTeardownXErrorHandler);
+
+    embed.reset();
+    ::XSync (display, False);
+
+    ::XSetErrorHandler (trap.previous);
+    activeEditorTeardownTrap = nullptr;
 }
 
 void setNativeCursorVisibleOnPeer (juce::ComponentPeer& peer, bool visible)

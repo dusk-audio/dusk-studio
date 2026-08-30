@@ -2694,6 +2694,7 @@ void ChannelStripComponent::openPluginEditor()
                 (unsigned long) windowId,
                 /*wantsKeyboardFocus*/ true,
                 /*allowForeignWidgetToResizeComponent*/ false);
+            remoteEditorWindowId = windowId;
             remoteEditorEmbed->setSize (std::max (200, w),
                                           std::max (200, h));
             // Tag so EmbeddedModal hides this XEmbed window for the
@@ -2933,6 +2934,14 @@ void ChannelStripComponent::closePluginEditor()
    #endif
 }
 
+#if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
+void ChannelStripComponent::resetRemoteEditorEmbed()
+{
+    duskstudio::platform::destroyX11EditorEmbed (remoteEditorEmbed, remoteEditorWindowId);
+    remoteEditorWindowId = 0;
+}
+#endif
+
 void ChannelStripComponent::dropPluginEditor (NativeEditorTeardown teardown)
 {
     closePluginEditor();
@@ -2999,7 +3008,7 @@ void ChannelStripComponent::dropPluginEditor (NativeEditorTeardown teardown)
     // been told to hide the editor by closePluginEditor above (or by
     // unloadPluginSlot which calls dropPluginEditor before
     // pluginSlot.unload). Either way the X client is safe to release.
-    remoteEditorEmbed.reset();
+    resetRemoteEditorEmbed();
    #endif
    #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
     // Windows: ~ForeignHwndEmbed (in PlatformWindowing_Windows.cpp)
@@ -3057,7 +3066,7 @@ void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile
     // CLAP would otherwise leave the foreign X11 / HWND wrapper behind (mirrors
     // dropPluginEditor's teardown).
    #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
-    remoteEditorEmbed.reset();
+    resetRemoteEditorEmbed();
    #endif
    #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
     remoteForeignEmbed.reset();
@@ -3139,7 +3148,7 @@ void ChannelStripComponent::loadNativeLv2ForChannel (const juce::File& bundleDir
     pluginEditor.reset();
     pluginEditorOwner = nullptr;
    #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
-    remoteEditorEmbed.reset();
+    resetRemoteEditorEmbed();
    #endif
    #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
     remoteForeignEmbed.reset();
@@ -3215,7 +3224,7 @@ void ChannelStripComponent::loadNativeVst3ForChannel (const juce::File& vst3File
     pluginEditor.reset();
     pluginEditorOwner = nullptr;
    #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
-    remoteEditorEmbed.reset();
+    resetRemoteEditorEmbed();
    #endif
    #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
     remoteForeignEmbed.reset();
@@ -3288,7 +3297,7 @@ void ChannelStripComponent::loadNativeAuForChannel (const juce::String& componen
     pluginEditor.reset();
     pluginEditorOwner = nullptr;
    #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
-    remoteEditorEmbed.reset();
+    resetRemoteEditorEmbed();
    #endif
    #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
     remoteForeignEmbed.reset();
@@ -3421,7 +3430,7 @@ void ChannelStripComponent::loadNativeMultisampleForChannel (const juce::File& s
     pluginEditor.reset();
     pluginEditorOwner = nullptr;
    #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
-    remoteEditorEmbed.reset();
+    resetRemoteEditorEmbed();
    #endif
    #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
     remoteForeignEmbed.reset();

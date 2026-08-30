@@ -147,10 +147,6 @@ public:
         addToDesktop (getDesktopWindowStyleFlags());
        #if defined(__linux__)
         duskstudio::platform::clearPreferX11ForNativeWindow();
-        // The peer now exists (JUCE's X display is up), so a non-fatal X error
-        // handler installed here captures JUCE's handler as its chain target.
-        // Stops a dying OOP plugin editor window from core-dumping the host.
-        duskstudio::platform::installNonFatalXErrorHandler();
        #endif
         refreshResizeLimits();
 
@@ -2184,10 +2180,8 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         clapEditorTestWindow->centreWithSize (w, h);
         clapEditorTestWindow->setVisible (true);   // creates the peer -> consumes the X11 latch
         // Match MainWindow's native-window setup: release the X11 latch now the peer
-        // exists, and install the non-fatal X error handler so a dying CLAP editor
-        // window can't core-dump this harness.
+        // exists.
         duskstudio::platform::clearPreferX11ForNativeWindow();
-        duskstudio::platform::installNonFatalXErrorHandler();
         return;   // standalone - skip the normal engine + main-window startup
     }
 #endif // DUSKSTUDIO_HAS_NATIVE_CLAP
@@ -2233,7 +2227,6 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         lv2EditorTest->window->centreWithSize (w, h);
         lv2EditorTest->window->setVisible (true);   // creates the peer -> consumes the X11 latch
         duskstudio::platform::clearPreferX11ForNativeWindow();
-        duskstudio::platform::installNonFatalXErrorHandler();
         return;
     }
 #endif // DUSKSTUDIO_HAS_NATIVE_LV2
@@ -2291,7 +2284,6 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         vst3EditorTest->window->centreWithSize (w, h);
         vst3EditorTest->window->setVisible (true);   // creates the peer -> consumes the X11 latch
         duskstudio::platform::clearPreferX11ForNativeWindow();
-        duskstudio::platform::installNonFatalXErrorHandler();
         return;
     }
 #endif // DUSKSTUDIO_HAS_NATIVE_VST3

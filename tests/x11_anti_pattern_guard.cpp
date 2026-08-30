@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "ui/X11EditorTeardownError.h"
+
 #include <fstream>
 #include <optional>
 #include <string>
@@ -88,4 +90,27 @@ TEST_CASE ("XOpenDisplay(nullptr) is confined to PlatformWindowing impls",
         REQUIRE_FALSE (contents->empty());
         REQUIRE_FALSE (containsXOpenDisplayNull (*contents));
     }
+}
+
+TEST_CASE ("X11 editor teardown suppression is request and resource scoped",
+           "[x11][issue-375]")
+{
+    using namespace duskstudio::platform::x11;
+    constexpr std::uint64_t editorWindow = 0x1234;
+
+    REQUIRE (shouldSuppressEditorTeardownError (
+        kBadWindow, kChangeWindowAttributes, editorWindow, editorWindow));
+    REQUIRE (shouldSuppressEditorTeardownError (
+        kBadWindow, kReparentWindow, editorWindow, editorWindow));
+    REQUIRE (shouldSuppressEditorTeardownError (
+        kBadWindow, kUnmapWindow, editorWindow, editorWindow));
+
+    REQUIRE_FALSE (shouldSuppressEditorTeardownError (
+        kBadWindow, kUnmapWindow, 0x5678, editorWindow));
+    REQUIRE_FALSE (shouldSuppressEditorTeardownError (
+        kBadWindow, 42, editorWindow, editorWindow));
+    REQUIRE_FALSE (shouldSuppressEditorTeardownError (
+        2, kUnmapWindow, editorWindow, editorWindow)); // BadValue
+    REQUIRE_FALSE (shouldSuppressEditorTeardownError (
+        8, kUnmapWindow, editorWindow, editorWindow)); // BadMatch
 }
