@@ -144,6 +144,29 @@ TEST_CASE ("Vst3HostContext run loop dispatches fds and timers", "[vst3][hostcon
         FdHandler handler;
         REQUIRE (runLoop->unregisterEventHandler (&handler) == kResultFalse);
     }
+
+    SECTION ("context destruction releases registered handlers")
+    {
+        int fds[2] {};
+        REQUIRE (::pipe (fds) == 0);
+
+        FdHandler fdHandler;
+        TimerHandler timerHandler;
+        {
+            duskstudio::vst3::Vst3HostContext scopedContext;
+            auto* scopedRunLoop = static_cast<Linux::IRunLoop*> (scopedContext.runLoop());
+            REQUIRE (scopedRunLoop != nullptr);
+            REQUIRE (scopedRunLoop->registerEventHandler (&fdHandler, fds[0]) == kResultOk);
+            REQUIRE (scopedRunLoop->registerTimer (&timerHandler, 50) == kResultOk);
+            REQUIRE (fdHandler.refs == 2);
+            REQUIRE (timerHandler.refs == 2);
+        }
+
+        REQUIRE (fdHandler.refs == 1);
+        REQUIRE (timerHandler.refs == 1);
+        ::close (fds[0]);
+        ::close (fds[1]);
+    }
 }
 
 #endif

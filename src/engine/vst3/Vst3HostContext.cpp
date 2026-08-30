@@ -18,8 +18,8 @@ namespace
 using namespace Steinberg;
 
 // One COM object exposing every host facet. Lifetime is the owning
-// Vst3HostContext (plugins addRef/release freely against the SDK's FUnknown
-// refcount from HostApplication, which never reaches zero while we hold ours).
+// Vst3HostContext. The SDK HostApplication's addRef/release are non-owning
+// no-ops, so the context must destroy this object explicitly.
 // Steinberg::Linux::IRunLoop is a Linux-only facet of the VST3 API: off Linux the
 // host object exposes only the portable host-application / component-handler /
 // plug-frame facets and keeps no fd or timer registry.
@@ -232,17 +232,18 @@ private:
 struct Vst3HostContext::Impl
 {
     Callbacks* callbacks = nullptr;
-    Steinberg::IPtr<HostObject> host;
+    std::unique_ptr<HostObject> host;
 };
 
 Vst3HostContext::Vst3HostContext() : impl (std::make_unique<Impl>())
 {
-    impl->host = Steinberg::owned (new HostObject (impl->callbacks));
+    impl->host = std::make_unique<HostObject> (impl->callbacks);
 }
 
 Vst3HostContext::~Vst3HostContext()
 {
     impl->host->teardown();
+    impl->host.reset();
 }
 
 void Vst3HostContext::setCallbacks (Callbacks* cb) noexcept { impl->callbacks = cb; }

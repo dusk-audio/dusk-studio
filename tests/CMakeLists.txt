@@ -378,6 +378,7 @@ endif()
 if(DUSKSTUDIO_NATIVE_VST3)
     target_sources(dusk-studio-tests PRIVATE
         vst3_bundle_load.cpp
+        vst3_hostcontext_lifetime.cpp
         vst3_instance_process.cpp
         vst3_native_slot.cpp
         vst3_scanner.cpp
