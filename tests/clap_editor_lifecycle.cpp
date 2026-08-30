@@ -43,7 +43,7 @@ TEST_CASE ("CLAP editors size the GUI before parenting it",
 }
 
 TEST_CASE ("the X11 CLAP editor maps whatever window the plugin parents into it",
-           "[clap][editor][regression][issue-361]")
+           "[clap][editor][regression][issue-361][issue-397]")
 {
     const auto source = readSource ("src/engine/clap/ClapEditor.cpp");
 
@@ -55,8 +55,14 @@ TEST_CASE ("the X11 CLAP editor maps whatever window the plugin parents into it"
     REQUIRE (mapChildren != std::string::npos);
 
     // A plugin that builds its window off the message thread parents it after
-    // embed() returns, so the one map at embed time is not enough.
-    REQUIRE (source.find ("mapPluginChildren", mapChildren + 1) != std::string::npos);
+    // embed() returns, so pump() itself must retry rather than merely leaving a
+    // second occurrence such as the method definition elsewhere in the file.
+    const auto pump = source.find ("void ClapEditor::pump");
+    REQUIRE (pump != std::string::npos);
+    const auto nextMethod = source.find ("\nvoid ClapEditor::", pump + 1);
+    const auto retryMap = source.find ("mapPluginChildren()", pump);
+    REQUIRE (nextMethod != std::string::npos);
+    REQUIRE (retryMap < nextMethod);
     REQUIRE (source.find ("XMapWindow (dpy, children[i])") != std::string::npos);
 }
 

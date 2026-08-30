@@ -114,23 +114,18 @@ TEST_CASE ("NativeClapSlot loads, processes, and unloads cleanly", "[clap][slot]
     }
 }
 
-TEST_CASE ("NativeClapSlot reactivate keeps the same instance (no destroy)", "[clap][slot][reactivate]")
+TEST_CASE ("NativeClapSlot reactivate keeps the same instance and signal path",
+           "[clap][slot][reactivate][regression][issue-397]")
 {
     // Regression: changing the global oversampling factor (or device rate) re-prepares
     // the strip. The old code did a full reload, destroying the instance the editor's
     // GUI was attached to — plugin->destroy with a live GUI aborts u-he plugins
     // ("host forgot to destroy the gui" → terminate). reactivate must re-activate the
     // SAME instance so the GUI and parameter state survive.
-    const char* path = std::getenv ("DUSKSTUDIO_TEST_CLAP");
-    if (path == nullptr || *path == '\0')
-    {
-        SUCCEED ("DUSKSTUDIO_TEST_CLAP not set — skipping live CLAP-reactivate test");
-        return;
-    }
-
     duskstudio::clap::NativeClapSlot slot;
     std::string err;
-    REQUIRE (slot.load (std::filesystem::u8path (path), 48000.0, 512, err));
+    REQUIRE (slot.load (std::filesystem::u8path (DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH),
+                        48000.0, 512, err));
     auto* before = slot.getInstance();
     REQUIRE (before != nullptr);
 
@@ -146,6 +141,8 @@ TEST_CASE ("NativeClapSlot reactivate keeps the same instance (no destroy)", "[c
     double phase = 0.0;
     constexpr double kPi = 3.14159265358979323846;
     const double dw = 2.0 * kPi * 1000.0 / 96000.0;
+    float peakOut = 0.0f;
+    float maxError = 0.0f;
     for (int b = 0; b < 40; ++b)
     {
         for (int i = 0; i < kBlock; ++i) { const float s = 0.25f * (float) std::sin (phase); phase += dw; inL[(size_t) i] = inR[(size_t) i] = s; }
@@ -154,8 +151,15 @@ TEST_CASE ("NativeClapSlot reactivate keeps the same instance (no destroy)", "[c
         {
             REQUIRE (std::isfinite (outL[(size_t) i]));
             REQUIRE (std::isfinite (outR[(size_t) i]));
+            peakOut = std::max ({ peakOut, std::abs (outL[(size_t) i]),
+                                  std::abs (outR[(size_t) i]) });
+            maxError = std::max ({ maxError,
+                                   std::abs (outL[(size_t) i] - inL[(size_t) i]),
+                                   std::abs (outR[(size_t) i] - inR[(size_t) i]) });
         }
     }
+    REQUIRE (peakOut > 0.2f);
+    REQUIRE (maxError < 1.0e-7f);
 }
 
 TEST_CASE ("NativeClapSlot state round-trips into a fresh slot",
