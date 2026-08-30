@@ -35,6 +35,7 @@
 #include "../engine/AudioEngine.h"
 #include "../engine/PluginSlot.h"
 #include "../engine/PluginManager.h"
+#include "../engine/hosting/NativeRestorePolicy.h"
 #include "PlatformWindowing.h"
 #include "../session/ParamEditAction.h"
 #include "../session/RegionEditActions.h"
@@ -52,6 +53,30 @@ constexpr const char* kPeerBoundStandardVst3EditorTag =
 // clamp with jlimit's argument order (lo, hi, value).
 template <typename T>
 inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
+
+template <typename Editor, typename Instance>
+bool attachNativePluginEditor (Editor& editor,
+                               Instance& instance,
+                               juce::Component& alertParent,
+                               hosting::NativeEditorFormat format,
+                               const std::string& pluginName)
+{
+    juce::String error;
+    const bool attached = editor.attach (instance, error);
+    return hosting::enforceNativeEditorAttachPolicy (
+        attached, format, pluginName, std::string (error.toRawUTF8()),
+        [] (const std::string& line)
+        {
+            std::fputs (line.c_str(), stderr);
+            std::fputc ('\n', stderr);
+        },
+        [&alertParent] (const std::string& title, const std::string& message)
+        {
+            showDuskAlert (alertParent,
+                           juce::String::fromUTF8 (title.c_str()),
+                           juce::String::fromUTF8 (message.c_str()));
+        });
+}
 
 struct BandSpec
 {
@@ -2572,22 +2597,20 @@ void ChannelStripComponent::openPluginEditor()
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     if (engine.getChannelStrip (trackIndex).isNativeClapLoaded())
     {
-        auto* inst = engine.getChannelStrip (trackIndex).getNativeClapSlot().getInstance();
+        auto& slot = engine.getChannelStrip (trackIndex).getNativeClapSlot();
+        auto* inst = slot.getInstance();
         if (inst == nullptr) return;
         if (clapEditor == nullptr)
         {
             clapEditor = std::make_unique<ClapPluginEditorComponent>();
-            juce::String err;
-            if (! clapEditor->attach (*inst, err))
+            if (! attachNativePluginEditor (
+                    *clapEditor, *inst, *this, hosting::NativeEditorFormat::Clap,
+                    hosting::nativePluginName (slot.getPath(), slot.getPluginId())))
             {
-                std::fprintf (stderr, "[chan clap] %s\n", err.toRawUTF8());
                 clapEditor.reset();
-                // Nothing gets shown on this path, so without this the click on the
-                // slot looks like it did nothing at all.
-                showDuskAlert (*this, "Couldn't open CLAP editor", err);
                 return;
             }
-            clapEditor->bindOwner (engine.getChannelStrip (trackIndex).getNativeClapSlot());
+            clapEditor->bindOwner (slot);
         }
         pluginEditorModal.showBorrowed (*parent, *clapEditor, onClose);
         return;
@@ -2596,19 +2619,20 @@ void ChannelStripComponent::openPluginEditor()
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     if (engine.getChannelStrip (trackIndex).isNativeLv2Loaded())
     {
-        auto* inst = engine.getChannelStrip (trackIndex).getNativeLv2Slot().getInstance();
+        auto& slot = engine.getChannelStrip (trackIndex).getNativeLv2Slot();
+        auto* inst = slot.getInstance();
         if (inst == nullptr) return;
         if (lv2Editor == nullptr)
         {
             lv2Editor = std::make_unique<Lv2PluginEditorComponent>();
-            juce::String err;
-            if (! lv2Editor->attach (*inst, err))
+            if (! attachNativePluginEditor (
+                    *lv2Editor, *inst, *this, hosting::NativeEditorFormat::Lv2,
+                    hosting::nativePluginName (slot.getPath(), slot.getPluginId())))
             {
-                std::fprintf (stderr, "[chan lv2] %s\n", err.toRawUTF8());
                 lv2Editor.reset();
                 return;
             }
-            lv2Editor->bindOwner (engine.getChannelStrip (trackIndex).getNativeLv2Slot());
+            lv2Editor->bindOwner (slot);
         }
         pluginEditorModal.showBorrowed (*parent, *lv2Editor, onClose);
         return;
@@ -2617,19 +2641,20 @@ void ChannelStripComponent::openPluginEditor()
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     if (engine.getChannelStrip (trackIndex).isNativeVst3Loaded())
     {
-        auto* inst = engine.getChannelStrip (trackIndex).getNativeVst3Slot().getInstance();
+        auto& slot = engine.getChannelStrip (trackIndex).getNativeVst3Slot();
+        auto* inst = slot.getInstance();
         if (inst == nullptr) return;
         if (vst3Editor == nullptr)
         {
             vst3Editor = std::make_unique<Vst3PluginEditorComponent>();
-            juce::String err;
-            if (! vst3Editor->attach (*inst, err))
+            if (! attachNativePluginEditor (
+                    *vst3Editor, *inst, *this, hosting::NativeEditorFormat::Vst3,
+                    hosting::nativePluginName (slot.getPath(), slot.getPluginId())))
             {
-                std::fprintf (stderr, "[chan vst3] %s\n", err.toRawUTF8());
                 vst3Editor.reset();
                 return;
             }
-            vst3Editor->bindOwner (engine.getChannelStrip (trackIndex).getNativeVst3Slot());
+            vst3Editor->bindOwner (slot);
         }
         pluginEditorModal.showBorrowed (*parent, *vst3Editor, onClose);
         return;
@@ -2638,19 +2663,23 @@ void ChannelStripComponent::openPluginEditor()
 #if DUSKSTUDIO_HAS_NATIVE_AU
     if (engine.getChannelStrip (trackIndex).isNativeAuLoaded())
     {
-        auto* inst = engine.getChannelStrip (trackIndex).getNativeAuSlot().getInstance();
+        auto& slot = engine.getChannelStrip (trackIndex).getNativeAuSlot();
+        auto* inst = slot.getInstance();
         if (inst == nullptr) return;
         if (auEditor == nullptr)
         {
             auEditor = std::make_unique<AuPluginEditorComponent>();
-            juce::String err;
-            if (! auEditor->attach (*inst, err))
+            auto pluginName = slot.displayName();
+            if (pluginName.empty())
+                pluginName = hosting::nativePluginName (slot.getPath(), slot.getPluginId());
+            if (! attachNativePluginEditor (
+                    *auEditor, *inst, *this, hosting::NativeEditorFormat::AudioUnit,
+                    pluginName))
             {
-                std::fprintf (stderr, "[chan au] %s\n", err.toRawUTF8());
                 auEditor.reset();
                 return;
             }
-            auEditor->bindOwner (engine.getChannelStrip (trackIndex).getNativeAuSlot());
+            auEditor->bindOwner (slot);
         }
         pluginEditorModal.showBorrowed (*parent, *auEditor, onClose);
         return;
