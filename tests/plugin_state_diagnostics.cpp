@@ -62,6 +62,45 @@ TEST_CASE ("native restore policy keeps healthy slots saveable and reports load 
              == "http://example.test/plugins/reverb");
 }
 
+TEST_CASE ("native editor attach failures always log and alert with format identity",
+           "[ui][native][regression][issue-396]")
+{
+    using Format = duskstudio::hosting::NativeEditorFormat;
+    for (const auto format : { Format::Clap, Format::Lv2, Format::Vst3,
+                               Format::AudioUnit })
+    {
+        const auto formatName = duskstudio::hosting::nativeEditorFormatName (format);
+        INFO (formatName);
+
+        std::string logged;
+        std::string alertTitle;
+        std::string alertMessage;
+        REQUIRE_FALSE (duskstudio::hosting::enforceNativeEditorAttachPolicy (
+            false, format, "Space Echo", "view attachment rejected",
+            [&] (const std::string& line) { logged = line; },
+            [&] (const std::string& title, const std::string& message)
+            {
+                alertTitle = title;
+                alertMessage = message;
+            }));
+
+        REQUIRE (logged.find (formatName) != std::string::npos);
+        REQUIRE (logged.find ("Space Echo") != std::string::npos);
+        REQUIRE (logged.find ("view attachment rejected") != std::string::npos);
+        REQUIRE (alertTitle.find (formatName) != std::string::npos);
+        REQUIRE (alertMessage.find (formatName) != std::string::npos);
+        REQUIRE (alertMessage.find ("Space Echo") != std::string::npos);
+        REQUIRE (alertMessage.find ("view attachment rejected") != std::string::npos);
+    }
+
+    int callbacks = 0;
+    REQUIRE (duskstudio::hosting::enforceNativeEditorAttachPolicy (
+        true, Format::Clap, "Space Echo", {},
+        [&] (const std::string&) { ++callbacks; },
+        [&] (const std::string&, const std::string&) { ++callbacks; }));
+    REQUIRE (callbacks == 0);
+}
+
 TEST_CASE ("native reactivation failure quarantines rather than unloads",
            "[session][native][regression][issue-386]")
 {

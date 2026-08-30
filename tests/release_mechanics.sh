@@ -767,6 +767,46 @@ assert set(donor_pins) == expected_donor_workflows, (
 assert all(pins == [pinned_donor.group(1)] for pins in donor_pins.values()), (
     f"DONOR_REV drift across workflows: {donor_pins}"
 )
+
+# Source-built libsodium must come from the release asset hosted alongside the
+# upstream repository. download.libsodium.org has repeatedly failed DNS lookup
+# on GitHub's macOS runners. Keep all static-build workflows on one audited
+# version/hash pair, and prevent the unreliable host from being reintroduced.
+sodium_pins = {}
+expected_sodium_workflows = {
+    "linux-release.yml",
+    "macos-build.yml",
+    "macos-release.yml",
+}
+github_sodium_asset = (
+    '"https://github.com/jedisct1/libsodium/releases/download/'
+    '${SODIUM_VERSION}-RELEASE/libsodium-${SODIUM_VERSION}.tar.gz"'
+)
+for workflow_path in (source_root / ".github" / "workflows").glob("*.yml"):
+    workflow_text = workflow_path.read_text(encoding="utf-8")
+    assert "download.libsodium.org" not in workflow_text, (
+        f"{workflow_path.name} must not depend on the unreliable libsodium host"
+    )
+    versions = re.findall(
+        r"^\s*SODIUM_VERSION:\s*([^\s#]+)$", workflow_text, re.MULTILINE
+    )
+    hashes = re.findall(
+        r"^\s*SODIUM_SHA256:\s*([0-9a-f]{64})$", workflow_text, re.MULTILINE
+    )
+    if versions or hashes:
+        assert len(versions) == 1 and len(hashes) == 1, (
+            f"{workflow_path.name} must carry exactly one libsodium version/hash pair"
+        )
+        assert github_sodium_asset in workflow_text, (
+            f"{workflow_path.name} must fetch the official GitHub release asset"
+        )
+        sodium_pins[workflow_path.name] = (versions[0], hashes[0])
+assert set(sodium_pins) == expected_sodium_workflows, (
+    f"unexpected source-built libsodium workflow set: {sodium_pins.keys()}"
+)
+assert len(set(sodium_pins.values())) == 1, (
+    f"libsodium version/hash drift across workflows: {sodium_pins}"
+)
 for guide_name in ("BUILDING-LINUX.md", "BUILDING-WINDOWS.md"):
     guide = (source_root / guide_name).read_text(encoding="utf-8")
     assert (

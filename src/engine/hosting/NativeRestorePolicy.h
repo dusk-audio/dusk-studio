@@ -16,6 +16,71 @@ struct NativeRestoreFailure
     int slotIndex = -1;
 };
 
+enum class NativeEditorFormat
+{
+    Clap,
+    Lv2,
+    Vst3,
+    AudioUnit,
+};
+
+struct NativeEditorAttachFailure
+{
+    std::string logLine;
+    std::string title;
+    std::string message;
+};
+
+inline std::string_view nativeEditorFormatName (NativeEditorFormat format) noexcept
+{
+    switch (format)
+    {
+        case NativeEditorFormat::Clap:      return "CLAP";
+        case NativeEditorFormat::Lv2:       return "LV2";
+        case NativeEditorFormat::Vst3:      return "VST3";
+        case NativeEditorFormat::AudioUnit: return "Audio Unit";
+    }
+    return "native plug-in";
+}
+
+inline NativeEditorAttachFailure describeNativeEditorAttachFailure (
+    NativeEditorFormat format,
+    std::string_view pluginName,
+    std::string_view error)
+{
+    const std::string formatName (nativeEditorFormatName (format));
+    const std::string name = pluginName.empty() ? "Unknown plug-in"
+                                                 : std::string (pluginName);
+    const std::string reason = error.empty() ? "The plug-in did not report a reason."
+                                              : std::string (error);
+    return {
+        "[Dusk Studio/native editor] " + name + " [" + formatName + "]: " + reason,
+        "Couldn't open " + formatName + " editor",
+        name + " [" + formatName + "]:\n" + reason,
+    };
+}
+
+// One decision point for every native format: a failed attach is both logged
+// for diagnostics and surfaced to the user. Callers provide the presentation
+// callbacks so this policy remains JUCE-free and directly testable.
+template <typename LogFn, typename AlertFn>
+bool enforceNativeEditorAttachPolicy (bool attached,
+                                      NativeEditorFormat format,
+                                      std::string_view pluginName,
+                                      std::string_view error,
+                                      LogFn&& log,
+                                      AlertFn&& alert)
+{
+    if (attached)
+        return true;
+
+    const auto failure = describeNativeEditorAttachFailure (
+        format, pluginName, error);
+    std::forward<LogFn> (log) (failure.logLine);
+    std::forward<AlertFn> (alert) (failure.title, failure.message);
+    return false;
+}
+
 inline std::string nativePluginName (const std::string& path,
                                      const std::string& pluginId = {})
 {
