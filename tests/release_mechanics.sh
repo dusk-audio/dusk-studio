@@ -768,6 +768,20 @@ assert all(pins == [pinned_donor.group(1)] for pins in donor_pins.values()), (
     f"DONOR_REV drift across workflows: {donor_pins}"
 )
 
+windows_pr_workflow = (
+    source_root / ".github" / "workflows" / "windows-tests.yml"
+).read_text(encoding="utf-8")
+windows_pr_build = re.search(
+    r"(?ms)^      - name: Build app and test binary\n(?P<body>.*?)(?=^      - name: |\Z)",
+    windows_pr_workflow,
+)
+assert windows_pr_build, "windows-tests.yml lost its app + test build step"
+assert re.search(
+    r"cmake --build build-tests --config Release --target "
+    r"DuskStudio dusk-studio-tests -j4",
+    windows_pr_build.group("body"),
+), "Windows PR CI must compile both the app and test targets"
+
 file_importer_tests = (
     "FileImporter: transient file locks retry but remain bounded",
     "FileImporter: 44.1k mono -> 48k session preserves length",

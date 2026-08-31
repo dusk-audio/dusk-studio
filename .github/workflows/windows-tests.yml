@@ -1,12 +1,12 @@
 name: Windows tests
 
-# Runs the Catch2 test binary on Windows so the cross-platform IPC stub
-# round-trip + (future) other Windows-relevant tests are exercised on
-# every PR. Distinct from windows-build.yml, which only fires on v*
-# tag push and exists to package + publish the signed MSI to the
-# private releases repo. Bundling tests into the release-packaging
-# workflow would mean tests run once per ship, not per PR — which
-# defeats the regression-net purpose.
+# Builds the app and runs the Catch2 test binary on Windows so Windows-only
+# app sources plus the cross-platform IPC stub round-trip and other
+# Windows-relevant tests are exercised on every PR. Distinct from
+# windows-build.yml, which only fires on v* tag push and exists to package +
+# publish the signed MSI to the private releases repo. Bundling tests into the
+# release-packaging workflow would mean tests run once per ship, not per PR —
+# which defeats the regression-net purpose.
 
 on:
   push:
@@ -78,11 +78,8 @@ jobs:
         uses: ./.github/actions/clone-daf-stack
 
       - name: Fetch Steinberg ASIO SDK
-        # Test binary itself doesn't use ASIO, but the top-level CMake
-        # configure pass evaluates the main DuskStudio target which
-        # references ASIOSDK_PATH on Windows. Same fetch as
-        # windows-build.yml so the configure step succeeds; we never
-        # build the DuskStudio target in this workflow.
+        # The app target requires ASIO on Windows. Use the same fetch as
+        # windows-build.yml so PR CI compiles the release audio-device path.
         shell: bash
         run: |
           curl -sSL -o "${RUNNER_TEMP}/asiosdk.zip" https://download.steinberg.net/sdk_downloads/asiosdk_2.3.3_2019-06-14.zip
@@ -139,24 +136,13 @@ jobs:
               echo "::error::${option} was not enabled in the test configure" >&2; exit 1; }
           done
 
-      - name: Build test binary
-        # Build only the test target. The Catch2 binary depends on
-        # dusk-studio-plugin-host via add_dependencies in
-        # tests/CMakeLists.txt, so the host binary is built transitively
-        # and ends up next to the test exe (RUNTIME_OUTPUT_DIRECTORY in
-        # the top-level CMakeLists). DUSKSTUDIO_PLUGIN_HOST_PATH is
-        # baked in via a generator expression at configure time so the
-        # test resolves the host path without any runtime hunting.
+      - name: Build app and test binary
+        # Building DuskStudio covers Windows-only app sources such as the
+        # native CLAP/VST3 editors and pulls dusk_native_ui transitively. The
+        # Catch2 target also depends on dusk-studio-plugin-host and resolves
+        # that child beside the test executable through its configured path.
         shell: bash
-        run: cmake --build build-tests --config Release --target dusk-studio-tests -j4
-
-      - name: Build the native notepad UI
-        # The Catch2 target does not reach the DAF/DGL + Dear ImGui notepad, so
-        # nothing on a push ever compiled it on MSVC - the ImGui OpenGL3 backend
-        # failing to build here only surfaced in windows-build.yml, which runs on
-        # a release tag. Compiling the one target keeps that off tag day.
-        shell: bash
-        run: cmake --build build-tests --config Release --target dusk_native_ui -j4
+        run: cmake --build build-tests --config Release --target DuskStudio dusk-studio-tests -j4
 
       - name: Run tests
         # Full Catch2 suite on MSVC. FileImporter fixtures close their writers
