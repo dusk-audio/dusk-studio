@@ -35,6 +35,9 @@ namespace testing
 {
 using Dispatcher = std::function<bool (std::function<void()>)>;
 void setDispatcher (Dispatcher dispatcher);
+#if defined (_WIN32)
+void dropNextAcknowledgement();
+#endif
 }
 #endif
 } // namespace duskstudio::single_instance

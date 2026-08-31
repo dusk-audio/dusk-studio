@@ -185,6 +185,13 @@ TEST_CASE ("single-instance handoff preserves quoted Unicode and empty payloads"
     REQUIRE_FALSE (duskstudio::single_instance::acquire ("", noPayload));
     REQUIRE (delivered.waitFor (2));
     REQUIRE (delivered.copy() == std::vector<std::string> { session, "" });
+
+#if defined (_WIN32)
+    duskstudio::single_instance::testing::dropNextAcknowledgement();
+    REQUIRE_FALSE (duskstudio::single_instance::acquire ("lost-ack", noPayload));
+    REQUIRE (delivered.waitFor (3));
+    REQUIRE (delivered.copy() == std::vector<std::string> { session, "", "lost-ack" });
+#endif
 }
 
 TEST_CASE ("simultaneous single-instance launches elect exactly one owner",

@@ -38,6 +38,9 @@ namespace
 {
 #if defined (DUSKSTUDIO_SINGLE_INSTANCE_TESTING)
 testing::Dispatcher testDispatcher;
+#if defined (_WIN32)
+std::atomic<bool> dropNextAcknowledgement { false };
+#endif
 #endif
 
 bool dispatch (std::function<void()> fn)
@@ -482,7 +485,12 @@ bool acquire (const std::string& payload, std::function<void (std::string)> onCo
         }
         const int bindErr = errno;
         ::close (fd);
-        if (bindErr != EADDRINUSE) return true;
+        if (bindErr != EADDRINUSE
+#if defined (__APPLE__)
+            && bindErr != EEXIST
+#endif
+            )
+            return true;
 
         int handoffErrno = 0;
         const Handoff outcome = handOver (addr, len, payload, handoffErrno);
@@ -782,6 +790,9 @@ void serveConnection (Listener& l)
 
     auto fn = l.onCommandLine;
     unsigned char accepted = dispatch ([fn, payload] { fn (payload); }) ? 1u : 0u;
+#if defined (DUSKSTUDIO_SINGLE_INSTANCE_TESTING)
+    if (accepted != 0 && dropNextAcknowledgement.exchange (false)) return;
+#endif
     transferExact (l.pipe, &accepted, sizeof accepted, true,
                    l.stopEvent, deadline);
 }
@@ -819,7 +830,7 @@ bool startListener (std::unique_ptr<Listener> candidate,
     return true;
 }
 
-enum class Handoff { Delivered, Failed };
+enum class Handoff { Delivered, Submitted, Failed };
 
 Handoff handOver (const std::wstring& pipeName, const std::string& payload,
                   DWORD& failureError)
@@ -857,30 +868,33 @@ Handoff handOver (const std::wstring& pipeName, const std::string& payload,
         delivered = transferExact (pipe, const_cast<char*> (payload.data()), payload.size(),
                                    true, nullptr, deadline);
 
+    const bool submitted = delivered;
     unsigned char accepted = 0;
-    if (delivered)
-        delivered = transferExact (pipe, &accepted, sizeof accepted, false, nullptr, deadline)
-                 && accepted == 1u;
+    if (submitted)
+        delivered = transferExact (pipe, &accepted, sizeof accepted, false, nullptr, deadline);
 
     if (! delivered) failureError = ::GetLastError();
     ::CloseHandle (pipe);
-    return delivered ? Handoff::Delivered : Handoff::Failed;
+    if (delivered) return accepted == 1u ? Handoff::Delivered : Handoff::Failed;
+    return submitted ? Handoff::Submitted : Handoff::Failed;
 }
 } // namespace
 
 bool acquire (const std::string& payload, std::function<void (std::string)> onCommandLine)
 {
+    bool submitted = false;
+    DWORD handoffError = ERROR_SUCCESS;
     for (int attempt = 0; attempt < 2; ++attempt)
     {
         auto candidate = std::make_unique<Listener>();
-        if (! candidate->security.initialise()) return true;
+        if (! candidate->security.initialise()) return submitted ? false : true;
 
         std::wstring mutexName;
         makeNames (candidate->security.userSid, mutexName, candidate->pipeName);
         ::SetLastError (ERROR_SUCCESS);
         candidate->slotMutex = ::CreateMutexW (
             &candidate->security.attributes, FALSE, mutexName.c_str());
-        if (candidate->slotMutex == nullptr) return true;
+        if (candidate->slotMutex == nullptr) return submitted ? false : true;
 
         if (::GetLastError() != ERROR_ALREADY_EXISTS)
         {
@@ -889,23 +903,30 @@ bool acquire (const std::string& payload, std::function<void (std::string)> onCo
             return true;
         }
 
-        DWORD handoffError = ERROR_SUCCESS;
+        if (attempt != 0)
+        {
+            ::CloseHandle (candidate->slotMutex);
+            candidate->slotMutex = nullptr;
+            if (submitted) return false;
+
+            std::fprintf (stderr,
+                          "[Dusk Studio/SingleInstance] could not reach the running instance "
+                          "(Windows error %lu) - starting without the single-instance slot; "
+                          "this window will not receive sessions opened from the desktop\n",
+                          (unsigned long) handoffError);
+            return true;
+        }
+
         const Handoff outcome = handOver (candidate->pipeName, payload, handoffError);
         ::CloseHandle (candidate->slotMutex);
         candidate->slotMutex = nullptr;
         if (outcome == Handoff::Delivered) return false;
+        submitted = outcome == Handoff::Submitted;
 
         // Closing our handle lets the kernel remove a slot whose primary died
         // during handoff. A second CreateMutex distinguishes that stale owner
-        // from a live but unreachable primary without stealing the live slot.
-        if (attempt == 0) continue;
-
-        std::fprintf (stderr,
-                      "[Dusk Studio/SingleInstance] could not reach the running instance "
-                      "(Windows error %lu) - starting without the single-instance slot; "
-                      "this window will not receive sessions opened from the desktop\n",
-                      (unsigned long) handoffError);
-        return true;
+        // from a live but unreachable primary without replaying a request
+        // whose acknowledgement may have been lost after dispatch.
     }
     return true;
 }
@@ -934,5 +955,12 @@ void testing::setDispatcher (Dispatcher dispatcher)
 {
     testDispatcher = std::move (dispatcher);
 }
+
+#if defined (_WIN32)
+void testing::dropNextAcknowledgement()
+{
+    dropNextAcknowledgement.store (true);
+}
+#endif
 #endif
 } // namespace duskstudio::single_instance
