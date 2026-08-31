@@ -5,12 +5,10 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <functional>
-#include <mutex>
 #include <string>
 #include <system_error>
 #include <thread>
@@ -111,27 +109,23 @@ struct Deliveries
 {
     void accept (std::string payload)
     {
-        std::lock_guard<std::mutex> lock (mutex);
         payloads.push_back (std::move (payload));
-        changed.notify_all();
+        published.store (payloads.size(), std::memory_order_release);
     }
 
     bool waitFor (std::size_t count)
     {
-        std::unique_lock<std::mutex> lock (mutex);
-        return changed.wait_for (lock, std::chrono::seconds (5),
-                                 [&] { return payloads.size() >= count; });
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds (5);
+        while (published.load (std::memory_order_acquire) < count
+               && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for (std::chrono::milliseconds (1));
+        return published.load (std::memory_order_acquire) >= count;
     }
 
-    std::vector<std::string> copy()
-    {
-        std::lock_guard<std::mutex> lock (mutex);
-        return payloads;
-    }
+    const std::vector<std::string>& copy() const noexcept { return payloads; }
 
-    std::mutex mutex;
-    std::condition_variable changed;
     std::vector<std::string> payloads;
+    std::atomic<std::size_t> published { 0 };
 };
 
 void noPayload (std::string) {}
@@ -184,12 +178,15 @@ TEST_CASE ("single-instance handoff preserves quoted Unicode and empty payloads"
     REQUIRE_FALSE (duskstudio::single_instance::acquire (session, noPayload));
     REQUIRE_FALSE (duskstudio::single_instance::acquire ("", noPayload));
     REQUIRE (delivered.waitFor (2));
+    duskstudio::single_instance::release();
     REQUIRE (delivered.copy() == std::vector<std::string> { session, "" });
 
 #if defined (_WIN32)
+    REQUIRE (duskstudio::single_instance::acquire ("", receive));
     duskstudio::single_instance::testing::dropNextAcknowledgement();
     REQUIRE_FALSE (duskstudio::single_instance::acquire ("lost-ack", noPayload));
     REQUIRE (delivered.waitFor (3));
+    duskstudio::single_instance::release();
     REQUIRE (delivered.copy() == std::vector<std::string> { session, "", "lost-ack" });
 #endif
 }
@@ -223,6 +220,7 @@ TEST_CASE ("simultaneous single-instance launches elect exactly one owner",
 
     REQUIRE (std::count (primary.begin(), primary.end(), 1) == 1);
     REQUIRE (delivered.waitFor (launchCount - 1));
+    duskstudio::single_instance::release();
     auto received = delivered.copy();
     REQUIRE (received.size() == launchCount - 1);
 
