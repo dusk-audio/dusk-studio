@@ -622,8 +622,8 @@ manual checks that the script cannot cover:
   that file alongside its license text.
 
 The release is accepted only when the asset/body check, checksum verification,
-PDF inspection, private-Xvfb smoke tests, payload inspection, and license checks
-all pass.
+PDF inspection, private-Xvfb smoke tests, payload inspection, macOS and Windows
+window-activation smoke tests, and license checks all pass.
 
 ---
 
