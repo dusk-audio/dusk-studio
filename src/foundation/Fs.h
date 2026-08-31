@@ -3,8 +3,10 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -15,6 +17,7 @@
   #define NOMINMAX
  #endif
  #include <windows.h>
+ #include <shlobj.h>
 #else
  #include <pwd.h>
  #include <unistd.h>
@@ -176,14 +179,70 @@ inline std::string replaceAll (std::string s, const std::string& from, const std
         s.replace (pos, from.size(), to);
     return s;
 }
+
+#if defined(_WIN32)
+struct CoTaskMemDeleter
+{
+    void operator() (wchar_t* value) const noexcept { ::CoTaskMemFree (value); }
+};
+
+inline std::filesystem::path knownFolderPath (REFKNOWNFOLDERID folderId)
+{
+    wchar_t* value = nullptr;
+    if (FAILED (::SHGetKnownFolderPath (folderId, KF_FLAG_DEFAULT, nullptr, &value)))
+        return {};
+
+    const std::unique_ptr<wchar_t, CoTaskMemDeleter> owned (value);
+    return std::filesystem::path (owned.get());
+}
+#endif
+
+inline std::filesystem::path testSpecialLocation (const char* child)
+{
+ #if defined(DUSKSTUDIO_TESTS)
+   #if defined(_WIN32)
+    // Test-only UTF-16 override: Windows never consults the narrow CRT
+    // environment for paths. Shipping builds compile this branch out.
+    if (const wchar_t* root = ::_wgetenv (L"DUSKSTUDIO_TEST_SPECIAL_LOCATIONS_ROOT"))
+        if (*root != L'\0')
+            return std::filesystem::path (root) / std::filesystem::u8path (child);
+   #else
+    // The Dusk-named test flag has an explicit UTF-8 contract on POSIX.
+    if (const char* root = std::getenv ("DUSKSTUDIO_TEST_SPECIAL_LOCATIONS_ROOT"))
+        if (*root != '\0')
+            return std::filesystem::u8path (root) / child;
+   #endif
+ #else
+    (void) child;
+ #endif
+    return {};
+}
+
+#if defined(_WIN32)
+inline std::filesystem::path windowsTempPath()
+{
+    std::vector<wchar_t> buffer (MAX_PATH + 1);
+    for (;;)
+    {
+        const DWORD length = ::GetTempPathW ((DWORD) buffer.size(), buffer.data());
+        if (length == 0) return {};
+        if ((std::size_t) length < buffer.size())
+        {
+            const std::filesystem::path result (std::wstring (buffer.data(), length));
+            return result.has_filename() ? result : result.parent_path();
+        }
+        buffer.resize ((std::size_t) length + 1);
+    }
+}
+#endif
 } // namespace detail
 
 inline std::filesystem::path userHomeDir()
 {
+    if (const auto testPath = detail::testSpecialLocation ("Home"); ! testPath.empty())
+        return testPath;
 #if defined(_WIN32)
-    if (const char* profile = std::getenv ("USERPROFILE"))
-        return std::filesystem::path (profile);
-    return {};
+    return detail::knownFolderPath (FOLDERID_Profile);
 #else
     if (const char* home = std::getenv ("HOME"))
         return std::filesystem::path (home);
@@ -227,10 +286,10 @@ inline std::filesystem::path resolveXdgFolder (const std::string& key,
 // JUCE File::userApplicationDataDirectory.
 inline std::filesystem::path userConfigDir()
 {
+    if (const auto testPath = detail::testSpecialLocation ("Config"); ! testPath.empty())
+        return testPath;
 #if defined(_WIN32)
-    if (const char* appdata = std::getenv ("APPDATA"))
-        return std::filesystem::path (appdata);   // %APPDATA%, matches CSIDL_APPDATA
-    return {};
+    return detail::knownFolderPath (FOLDERID_RoamingAppData);
 #else
     const auto home = userHomeDir();
     if (home.empty()) return {};   // never build a CWD-relative config path
@@ -245,10 +304,10 @@ inline std::filesystem::path userConfigDir()
 // JUCE File::userMusicDirectory.
 inline std::filesystem::path userMusicDir()
 {
+    if (const auto testPath = detail::testSpecialLocation ("Music"); ! testPath.empty())
+        return testPath;
 #if defined(_WIN32)
-    if (const char* profile = std::getenv ("USERPROFILE"))
-        return std::filesystem::path (profile) / "Music";
-    return {};
+    return detail::knownFolderPath (FOLDERID_Music);
 #else
     const auto home = userHomeDir();
     if (home.empty()) return {};   // never build a CWD-relative music path
@@ -263,10 +322,10 @@ inline std::filesystem::path userMusicDir()
 // JUCE File::tempDirectory.
 inline std::filesystem::path tempDir()
 {
+    if (const auto testPath = detail::testSpecialLocation ("Temp"); ! testPath.empty())
+        return testPath;
 #if defined(_WIN32)
-    if (const char* t = std::getenv ("TEMP")) return std::filesystem::path (t);
-    if (const char* t = std::getenv ("TMP"))  return std::filesystem::path (t);
-    return std::filesystem::path ("C:\\Windows\\Temp");
+    return detail::windowsTempPath();
 #else
     if (const char* t = std::getenv ("TMPDIR")) return std::filesystem::path (t);
     return std::filesystem::path ("/tmp");

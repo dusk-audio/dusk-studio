@@ -179,9 +179,9 @@ target_include_directories(dusk-studio-tests PRIVATE
 target_include_directories(dusk-studio-tests SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/external/json)
 
 if(WIN32)
-    # shell32: CommandLineToArgvW, exercised by plugin_host_command_line.cpp
-    # against the same header the plugin host uses.
-    target_link_libraries(dusk-studio-tests PRIVATE shell32)
+    # shell32: CommandLineToArgvW plus SHGetKnownFolderPath; ole32:
+    # CoTaskMemFree for the returned known-folder path.
+    target_link_libraries(dusk-studio-tests PRIVATE shell32 ole32)
 endif()
 
 # pffft backend for dusk::audio::Fft, plus its A/B parity suite. The pffft
@@ -199,6 +199,7 @@ target_sources(dusk-studio-tests PRIVATE
     foundation_vector_ops.cpp
     foundation_fs.cpp
     foundation_special_locations.cpp
+    ${CMAKE_SOURCE_DIR}/src/session/RecentSessions.cpp
     foundation_json.cpp
     foundation_audio_math.cpp
     foundation_int_delay_line.cpp
