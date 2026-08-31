@@ -411,13 +411,13 @@ struct Lv2Instance::Impl
         return it != portIndexBySymbol.end() ? (int) it->second : -1;
     }
 
-    bool normalizeRestoredControlValue (size_t index, float& value) const noexcept
+    bool normalizeRestoredControlValue (size_t index, double& value) const noexcept
     {
         if (index >= controlRestoreInfo.size() || ! std::isfinite (value)) return false;
         const auto& info = controlRestoreInfo[index];
         if (! info.hasUsableRange) return false;
 
-        value = std::clamp (value, info.minValue, info.maxValue);
+        value = std::clamp (value, (double) info.minValue, (double) info.maxValue);
         if (info.toggled)
         {
             if (info.minValue > 0.0f || info.maxValue < 1.0f) return false;
@@ -433,8 +433,8 @@ struct Lv2Instance::Impl
         }
         else if (info.integer)
         {
-            const float integerMin = std::ceil (info.minValue);
-            const float integerMax = std::floor (info.maxValue);
+            const double integerMin = std::ceil ((double) info.minValue);
+            const double integerMax = std::floor ((double) info.maxValue);
             if (integerMin > integerMax) return false;
             value = std::clamp (std::round (value), integerMin, integerMax);
         }
@@ -468,18 +468,19 @@ struct Lv2Instance::Impl
             return;
 
         // States written by other hosts may carry any numeric atom type.
-        float v = 0.0f;
-        if      (type == self->uridFloat  && size >= sizeof (float))   v = *static_cast<const float*> (value);
-        else if (type == self->uridDouble && size >= sizeof (double))  v = (float) *static_cast<const double*> (value);
-        else if (type == self->uridInt    && size >= sizeof (int32_t)) v = (float) *static_cast<const int32_t*> (value);
-        else if (type == self->uridLong   && size >= sizeof (int64_t)) v = (float) *static_cast<const int64_t*> (value);
+        double v = 0.0;
+        if      (type == self->uridFloat  && size >= sizeof (float))   v = (double) *static_cast<const float*> (value);
+        else if (type == self->uridDouble && size >= sizeof (double))  v = *static_cast<const double*> (value);
+        else if (type == self->uridInt    && size >= sizeof (int32_t)) v = (double) *static_cast<const int32_t*> (value);
+        else if (type == self->uridLong   && size >= sizeof (int64_t)) v = (double) *static_cast<const int64_t*> (value);
         else return;
         if (! self->normalizeRestoredControlValue ((size_t) idx, v)) return;
-        self->portValues[(size_t) idx] = v;
+        const auto restoredValue = (float) v;
+        self->portValues[(size_t) idx] = restoredValue;
         // A restore supersedes any staged UI value for this port.
         if ((size_t) idx < self->uiDirty.size())
         {
-            self->uiShadow[(size_t) idx] = v;
+            self->uiShadow[(size_t) idx] = restoredValue;
             self->uiDirty [(size_t) idx] = 0;
         }
     }

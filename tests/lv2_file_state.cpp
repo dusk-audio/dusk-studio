@@ -299,7 +299,7 @@ TEST_CASE ("LV2 control-state restore rejects or normalizes corrupt values",
     SECTION ("finite values clamp and discrete ports normalize")
     {
         auto corruptState = cleanState;
-        REQUIRE (replacePortValue (corruptState, { "gain", "\"1e38\"^^xsd:double" }));
+        REQUIRE (replacePortValue (corruptState, { "gain", "\"1e100\"^^xsd:double" }));
         REQUIRE (replacePortValue (corruptState, { "toggle", "\"0.25\"^^xsd:float" }));
         REQUIRE (replacePortValue (corruptState, { "integer", "\"3.6\"^^xsd:float" }));
         REQUIRE (replacePortValue (corruptState, { "enumeration", "\"3.6\"^^xsd:float" }));
