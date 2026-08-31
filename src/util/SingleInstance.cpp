@@ -39,7 +39,7 @@ namespace
 #if defined (DUSKSTUDIO_SINGLE_INSTANCE_TESTING)
 testing::Dispatcher testDispatcher;
 #if defined (_WIN32)
-std::atomic<bool> dropNextAcknowledgement { false };
+std::atomic<bool> dropNextAcknowledgementForTest { false };
 #endif
 #endif
 
@@ -791,7 +791,7 @@ void serveConnection (Listener& l)
     auto fn = l.onCommandLine;
     unsigned char accepted = dispatch ([fn, payload] { fn (payload); }) ? 1u : 0u;
 #if defined (DUSKSTUDIO_SINGLE_INSTANCE_TESTING)
-    if (accepted != 0 && dropNextAcknowledgement.exchange (false)) return;
+    if (accepted != 0 && dropNextAcknowledgementForTest.exchange (false)) return;
 #endif
     transferExact (l.pipe, &accepted, sizeof accepted, true,
                    l.stopEvent, deadline);
@@ -959,7 +959,7 @@ void testing::setDispatcher (Dispatcher dispatcher)
 #if defined (_WIN32)
 void testing::dropNextAcknowledgement()
 {
-    dropNextAcknowledgement.store (true);
+    dropNextAcknowledgementForTest.store (true);
 }
 #endif
 #endif
