@@ -3,6 +3,7 @@
 #import <AppKit/AppKit.h>
 
 #include <algorithm>
+#include <cstdio>
 
 namespace duskstudio::clap
 {
@@ -72,10 +73,15 @@ bool ClapEditor::embed (void* parentHandle, int x, int y, int w, int h,
     if (gui->set_parent == nullptr || ! gui->set_parent (plugin, &win))
     { errorOut = "gui set_parent() failed"; close(); return false; }
 
-    if (gui->show != nullptr && ! gui->show (plugin))
-    { errorOut = "gui show() failed"; close(); return false; }
+    // Match the other platform hosts: a false return is diagnostic only. Some
+    // plugins still draw after reporting failure, so tearing down a successfully
+    // parented GUI here would leave the editor view blank.
+    const bool shown = gui->show != nullptr && gui->show (plugin);
 
     embedded = true;
+    std::fputs (shown ? "[clap editor] embed: Cocoa show=1\n"
+                      : "[clap editor] embed: Cocoa show=0\n",
+                stderr);
     return true;
 }
 
