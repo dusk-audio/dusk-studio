@@ -47,7 +47,7 @@ void requireRestoredAudio (duskstudio::lv2::Lv2Instance& instance)
 }
 
 TEST_CASE ("LV2 file-backed state survives consecutive save and restore generations",
-           "[lv2][state][integration][regression][issue-357]")
+           "[lv2][state][integration][regression][issue-357][issue-388]")
 {
     TempDirectory temp ("dusk-lv2-file-state-integration-");
     const auto stateDir = temp.path() / "state";

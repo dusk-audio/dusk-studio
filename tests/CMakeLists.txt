@@ -353,7 +353,9 @@ if(DUSKSTUDIO_NATIVE_LV2)
     set_target_properties(dusk-studio-file-state-lv2-fixture PROPERTIES
         PREFIX ""
         OUTPUT_NAME "file_state_fixture"
-        LIBRARY_OUTPUT_DIRECTORY "${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}")
+        # A generator expression prevents multi-config generators from appending
+        # /<Config>, which would put the module somewhere manifest.ttl cannot find.
+        LIBRARY_OUTPUT_DIRECTORY "$<1:${DUSKSTUDIO_FILE_STATE_LV2_BUNDLE}>")
     target_compile_features(dusk-studio-file-state-lv2-fixture PRIVATE cxx_std_17)
     target_link_libraries(dusk-studio-file-state-lv2-fixture PRIVATE PkgConfig::LV2)
 
@@ -380,7 +382,7 @@ if(DUSKSTUDIO_NATIVE_LV2)
     set_target_properties(dusk-studio-many-patch-lv2-fixture PROPERTIES
         PREFIX ""
         OUTPUT_NAME "many_patch_fixture"
-        LIBRARY_OUTPUT_DIRECTORY "${DUSKSTUDIO_MANY_PATCH_LV2_BUNDLE}")
+        LIBRARY_OUTPUT_DIRECTORY "$<1:${DUSKSTUDIO_MANY_PATCH_LV2_BUNDLE}>")
     target_compile_features(dusk-studio-many-patch-lv2-fixture PRIVATE cxx_std_17)
     target_link_libraries(dusk-studio-many-patch-lv2-fixture PRIVATE PkgConfig::LV2)
 
