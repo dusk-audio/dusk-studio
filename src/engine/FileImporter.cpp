@@ -8,9 +8,11 @@
 #include "../foundation/WindowedSincInterpolator.h"
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -18,6 +20,13 @@ namespace duskstudio::fileimport
 {
 namespace
 {
+using namespace std::chrono_literals;
+
+void waitForTransientFileLock()
+{
+    std::this_thread::sleep_for (20ms);
+}
+
 template <typename FileType>
 std::filesystem::path toStdPath (const FileType& file)
 {
@@ -109,13 +118,9 @@ AudioImportResult importAudio (const AudioImportRequest& req)
     // transiently locked by the indexer or AV real-time scan, so the first open
     // returns null even though the file is valid. Retry briefly before treating
     // it as unreadable; genuine unsupported files just exhaust the attempts.
-    std::unique_ptr<dusk::audio::FileReader> reader;
-    for (int attempt = 0; attempt < 5 && reader == nullptr; ++attempt)
-    {
-        reader = dusk::audio::FileReader::open (toStdPath (req.source));
-        if (reader == nullptr && attempt < 4)
-            juce::Thread::sleep (20);
-    }
+    auto reader = detail::retryTransientFileOperation (
+        [&] { return dusk::audio::FileReader::open (toStdPath (req.source)); },
+        waitForTransientFileLock);
     if (reader == nullptr)
     {
         result.errorMessage = ("Unsupported or unreadable audio file: "
@@ -161,13 +166,9 @@ AudioImportResult importAudio (const AudioImportRequest& req)
             outFile = req.audioDir.getNonexistentChildFile (
                 outFile.getFileNameWithoutExtension(), ext);
 
-        bool copied = false;
-        for (int attempt = 0; attempt < 5 && ! copied; ++attempt)
-        {
-            copied = req.source.copyFileTo (outFile);
-            if (! copied && attempt < 4)
-                juce::Thread::sleep (20);
-        }
+        const bool copied = detail::retryTransientFileOperation (
+            [&] { return req.source.copyFileTo (outFile); },
+            waitForTransientFileLock);
         if (! copied)
         {
             outFile.deleteFile();   // drop any partial copy (matches the slow path)
@@ -216,15 +217,9 @@ AudioImportResult importAudio (const AudioImportRequest& req)
     writeSpec.numChannels   = req.targetChannels;
     writeSpec.bitsPerSample = 24;
     writeSpec.format        = dusk::audio::WriteSpec::Format::Wav;
-    std::unique_ptr<dusk::audio::FileWriter> writer;
-    for (int attempt = 0; attempt < 5; ++attempt)
-    {
-        writer = dusk::audio::FileWriter::create (toStdPath (outFile), writeSpec);
-        if (writer != nullptr)
-            break;
-        if (attempt < 4)
-            juce::Thread::sleep (20);
-    }
+    auto writer = detail::retryTransientFileOperation (
+        [&] { return dusk::audio::FileWriter::create (toStdPath (outFile), writeSpec); },
+        waitForTransientFileLock);
     if (writer == nullptr)
     {
         result.errorMessage = ("Could not open output file for writing: "

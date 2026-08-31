@@ -159,15 +159,9 @@ jobs:
         run: cmake --build build-tests --config Release --target dusk_native_ui -j4
 
       - name: Run tests
-        # Full Catch2 suite on MSVC, minus the FileImporter cases. Those write
-        # a temp WAV and immediately re-open it; on the GitHub windows-latest
-        # runner the Defender real-time scan + slow CI disk intermittently lock
-        # the just-written file, so the open races and the import reports
-        # failure (the timing differs run-to-run, so it's non-deterministic).
-        # importAudio retries both opens to harden real imports, but a release
-        # gate must be deterministic, so these filesystem-timing tests don't
-        # gate Windows here; they still gate on Linux/macOS where they're
-        # stable. Drop the -E to run them locally.
+        # Full Catch2 suite on MSVC. FileImporter fixtures close their writers
+        # before import/readback, while a deterministic unit covers the bounded
+        # retry used for transient Defender/indexer locks.
         #
         # Loopback / firewall: the Windows IPC layer uses named pipes
         # (\\.\pipe\dusk-studio-ipc-*) + CreateFileMapping + kernel events.
@@ -189,4 +183,18 @@ jobs:
               exit 1
             }
           done
-          ctest --test-dir build-tests --output-on-failure -C Release -E "FileImporter"
+          for required in \
+            "FileImporter: transient file locks retry but remain bounded" \
+            "FileImporter: 44.1k mono -> 48k session preserves length" \
+            "FileImporter: 44.1k -> 48k upsample fills the tail with audio, not a held sample" \
+            "FileImporter: 96k mono -> 48k session preserves length" \
+            "FileImporter: stereo -> mono sums L+R at 0.5 each" \
+            "FileImporter: mono -> stereo duplicates to L and R" \
+            "FileImporter: matching rate and channels copies the source verbatim" \
+            "FileImporter: a matching 32-bit source is not truncated to 24-bit"; do
+            grep -Fq "$required" <<< "$inventory" || {
+              echo "::error::required Windows FileImporter regression missing from CTest: $required" >&2
+              exit 1
+            }
+          done
+          ctest --test-dir build-tests --output-on-failure -C Release

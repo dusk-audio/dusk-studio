@@ -6,6 +6,26 @@
 
 namespace duskstudio::fileimport
 {
+namespace detail
+{
+// Windows indexers and antivirus scanners can briefly deny access to a newly
+// created file. Keep the retry policy in one testable place so every importer
+// file operation remains bounded and waits only between failed attempts.
+inline constexpr int kTransientFileAttempts = 5;
+
+template <typename Operation, typename Wait>
+auto retryTransientFileOperation (Operation&& operation, Wait&& wait)
+{
+    auto result = operation();
+    for (int attempt = 1; ! result && attempt < kTransientFileAttempts; ++attempt)
+    {
+        wait();
+        result = operation();
+    }
+    return result;
+}
+} // namespace detail
+
 // Message-thread orchestrator for bringing user-supplied audio / MIDI
 // files into a Dusk Studio session, always copying into the session's
 // audio directory so the session stays self-contained.
