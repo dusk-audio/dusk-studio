@@ -138,7 +138,12 @@ bool RemotePluginConnection::connect (const std::string& hostExecutablePath,
         return false;
     }
 
-    platform::setReadTimeout (controlChannel, 5000);
+    if (! platform::setReadTimeout (controlChannel, 5000))
+    {
+        errorOut = "failed to configure child handshake timeout";
+        disconnect();
+        return false;
+    }
     char ack = 0;
     if (! platform::readExact (controlChannel, &ack, 1) || ack != 'k')
     {
@@ -149,7 +154,12 @@ bool RemotePluginConnection::connect (const std::string& hostExecutablePath,
     // Disable the kernel-level timeout now that the handshake is past.
     // Sync RPCs use replyCv.wait_until for per-call timeouts; reader
     // thread must be able to block indefinitely on an idle socket.
-    platform::setReadTimeout (controlChannel, 0);
+    if (! platform::setReadTimeout (controlChannel, 0))
+    {
+        errorOut = "failed to clear child handshake timeout";
+        disconnect();
+        return false;
+    }
 
     // --- Reply-producing modes: start the demultiplexing reader thread ---
     // The --ipc-stub child never writes a control frame after 'k', so

@@ -35,7 +35,6 @@ constexpr int  kNumChans   = 2;
 constexpr int  kIterations = 32;
 constexpr long long kTimeoutNs = 100'000'000LL;  // 100 ms
 
-#if defined (_WIN32)
 struct ScopedChannelPair
 {
     ~ScopedChannelPair()
@@ -46,7 +45,6 @@ struct ScopedChannelPair
 
     duskstudio::ipc::platform::ChannelPair value;
 };
-#endif
 } // namespace
 
 #if defined (_WIN32)
@@ -110,6 +108,46 @@ TEST_CASE ("Windows IPC launcher preserves Unicode paths and arguments",
     REQUIRE (receivedArguments.back().rfind ("--ipc-channel=0x", 0) == 0);
 }
 #endif
+
+TEST_CASE ("Plugin-host handshake read timeout bounds a silent live child",
+           "[ipc][issue-364]")
+{
+    namespace ipcp = duskstudio::ipc::platform;
+    using namespace std::chrono_literals;
+
+    ipcp::NativeHandle invalid;
+    REQUIRE_FALSE (ipcp::setReadTimeout (invalid, 75));
+
+    ScopedChannelPair channels;
+    std::string error;
+    REQUIRE (ipcp::createChannelPair (channels.value, error));
+
+    ipcp::ChildProcess child;
+    REQUIRE (child.spawn (DUSKSTUDIO_PLUGIN_HOST_PATH,
+                          { "--ipc-silent-handshake-stub" },
+                          channels.value.childEnd, error));
+    REQUIRE (child.isAlive());
+    REQUIRE (ipcp::setReadTimeout (channels.value.parentEnd, 75));
+
+    char ready = 0;
+    const auto readStarted = std::chrono::steady_clock::now();
+    REQUIRE_FALSE (ipcp::readExact (channels.value.parentEnd, &ready, sizeof (ready)));
+    const auto readElapsed = std::chrono::steady_clock::now() - readStarted;
+
+    // A premature EOF would make this test pass instantly, so require evidence
+    // that the live child held the pipe open until the configured deadline.
+    REQUIRE (readElapsed >= 25ms);
+    REQUIRE (readElapsed < 2s);
+    REQUIRE (child.isAlive());
+
+    // Releasing the parent end wakes the silent child's blocking read. The
+    // normal process teardown then reaps it without leaving a wedged child.
+    ipcp::closeHandle (channels.value.parentEnd);
+    const auto teardownStarted = std::chrono::steady_clock::now();
+    child.terminate (1000);
+    REQUIRE_FALSE (child.isAlive());
+    REQUIRE (std::chrono::steady_clock::now() - teardownStarted < 2s);
+}
 
 TEST_CASE ("ipc-stub: connect, round-trip 32 blocks, byte-exact echo",
             "[ipc]")

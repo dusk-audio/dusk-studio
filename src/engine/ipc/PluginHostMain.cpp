@@ -7,6 +7,8 @@
 //                 without a plugin in the loop.
 //   --ipc-argv-stub: return the UTF-8 argv vector over the inherited channel.
 //                 Used to validate Windows UTF-16 launch and quoting.
+//   --ipc-silent-handshake-stub: keep the inherited channel open without
+//                 acknowledging readiness, for the bounded-read regression.
 //   --ipc-control-reply-stub: deterministic request-correlation and reply-
 //                 validation regression child.
 //   --ipc-host  : full Phase-2 host. Loads a juce::AudioPluginInstance
@@ -156,6 +158,19 @@ int runIpcArgvStub (int argc, const char* const* argv) noexcept
             || (length > 0 && ! ipcp::writeExact (channel, argv[i], length)))
             return 1;
     }
+    return 0;
+}
+
+int runIpcSilentHandshakeStub (int argc, const char* const* argv) noexcept
+{
+    ipcp::NativeHandle channel = ipcp::locateInheritedChannel (argc, argv);
+    if (! ipcp::isValid (channel)) return 1;
+
+    // Stay alive and keep the channel open without writing the ready byte.
+    // Closing the parent end after its deadline releases this read so the
+    // child can tear down normally rather than needing a forced kill.
+    char ignored = 0;
+    (void) ipcp::readExact (channel, &ignored, sizeof (ignored));
     return 0;
 }
 
@@ -1304,6 +1319,7 @@ int main (int argc, char** argv)
     bool ipcStub = false;
     bool ipcStubTimeout = false;
     bool ipcArgvStub = false;
+    bool ipcSilentHandshakeStub = false;
     bool ipcControlReplyStub = false;
     bool ipcParkTimeoutStub = false;
     bool ipcHost = false;
@@ -1313,6 +1329,8 @@ int main (int argc, char** argv)
         if (std::strcmp (args[i], "--ipc-stub") == 0) ipcStub = true;
         if (std::strcmp (args[i], "--ipc-stub-timeout") == 0) ipcStubTimeout = true;
         if (std::strcmp (args[i], "--ipc-argv-stub") == 0) ipcArgvStub = true;
+        if (std::strcmp (args[i], "--ipc-silent-handshake-stub") == 0)
+            ipcSilentHandshakeStub = true;
         if (std::strcmp (args[i], "--ipc-control-reply-stub") == 0) ipcControlReplyStub = true;
         if (std::strcmp (args[i], "--ipc-park-timeout-stub") == 0) ipcParkTimeoutStub = true;
         if (std::strcmp (args[i], "--ipc-host") == 0) ipcHost = true;
@@ -1324,6 +1342,7 @@ int main (int argc, char** argv)
 
     if (scan)    return runScan (argc, args);
     if (ipcArgvStub) return runIpcArgvStub (argc, args);
+    if (ipcSilentHandshakeStub) return runIpcSilentHandshakeStub (argc, args);
     if (ipcStub || ipcStubTimeout) return runIpcStub (argc, args, ipcStubTimeout);
     if (ipcControlReplyStub) return runIpcControlReplyStub (argc, args);
     if (ipcParkTimeoutStub) return runIpcParkTimeoutStub (argc, args);

@@ -31,6 +31,11 @@ struct NativeHandle
 {
    #if defined(_WIN32)
     void* h { nullptr };
+    // The parent pipe endpoint is opened for overlapped I/O so a pending read
+    // never serialises control writes on the same duplex handle. Child and
+    // non-channel handles remain synchronous.
+    bool overlapped { false };
+    int readTimeoutMs { 0 };
    #else
     int fd { -1 };
    #endif
@@ -86,7 +91,8 @@ bool readExact  (NativeHandle& h, void* buf, std::size_t n) noexcept;
 bool writeExact (NativeHandle& h, const void* buf, std::size_t n) noexcept;
 
 // Set the receive timeout on a channel endpoint. ms = 0 disables.
-// Linux: SO_RCVTIMEO. Used by control-plane RPCs that need a deadline.
+// Linux/macOS: SO_RCVTIMEO. Windows: an absolute deadline applied by the
+// overlapped read path. Used by control-plane RPCs that need a deadline.
 bool setReadTimeout (NativeHandle& h, int ms) noexcept;
 
 // Send a single NativeHandle to the peer over a connected channel.
