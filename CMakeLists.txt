@@ -1567,10 +1567,8 @@ endif()
 # AddressSanitizer + UBSan. Off by default; opt-in via
 # -DDUSKSTUDIO_ENABLE_ASAN=ON. Applied build-wide (directory-level options)
 # because sanitizer-instrumented code can't link against
-# non-instrumented code without symbol-resolution drama. Local-only: the
-# sanitizer workflow in CI runs TSan, so an ASAN pass over the test binary
-# (heap corruption / use-after-free / undefined behaviour) is something you
-# run by hand before a release.
+# non-instrumented code without symbol-resolution drama. CI runs this in a
+# separate job from TSan over the Catch2 inventory.
 # Not for production builds — overhead is ~2× CPU and ~3× memory.
 option(DUSKSTUDIO_ENABLE_ASAN "Enable AddressSanitizer + UBSan" OFF)
 

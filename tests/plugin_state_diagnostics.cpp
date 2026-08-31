@@ -157,7 +157,7 @@ TEST_CASE ("aux replacement fallback requires the exact native state owner",
 
     duskstudio::Session session;
     auto& lane = session.auxLane (1);
-    constexpr size_t slot = 2;
+    constexpr size_t slot = 0;
     lane.nativeVst3Path[slot] = "/plugins/Delay.vst3";
     lane.nativeVst3PluginId[slot] = "com.dusk.delay";
 

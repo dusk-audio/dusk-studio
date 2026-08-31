@@ -768,6 +768,61 @@ assert all(pins == [pinned_donor.group(1)] for pins in donor_pins.values()), (
     f"DONOR_REV drift across workflows: {donor_pins}"
 )
 
+sanitizer_workflow = (
+    source_root / ".github" / "workflows" / "linux-sanitizer.yml"
+).read_text(encoding="utf-8")
+asan_job_match = re.search(
+    r"(?ms)^  asan-ubsan-tests:\n(?P<body>.*?)(?=^  [a-z0-9-]+:\n|\Z)",
+    sanitizer_workflow,
+)
+assert asan_job_match, "linux-sanitizer.yml lost its asan-ubsan-tests job"
+asan_job = asan_job_match.group("body")
+intentional_leak_tests = (
+    "NativeInsertSlot bumps its generation on every identity change",
+    "AlsaAudioIODevice: wedged I/O thread leaks the device, never frees it",
+    "TapeMachineDSP nulls against the JUCE donor at 1x",
+    "TapeMachineDSP tracks the JUCE donor within tolerance at 2x and 4x",
+    "TapeMachineDSP latency is stable per oversampling factor",
+)
+for required in (
+    "DUSKSTUDIO_ENABLE_ASAN=ON",
+    "ASAN_SYMBOLIZER_PATH: /usr/bin/llvm-symbolizer",
+    "halt_on_error=1:abort_on_error=1:detect_leaks=1:symbolize=1",
+    "halt_on_error=1:abort_on_error=1:print_stacktrace=1",
+):
+    assert required in asan_job, (
+        f"linux-sanitizer.yml ASan/UBSan job lost coverage: {required}"
+    )
+intentional_leak_filter = f"'^({'|'.join(intentional_leak_tests)})$'"
+
+def workflow_step(job, name):
+    match = re.search(
+        rf"(?ms)^      - name: {re.escape(name)}\n(?P<body>.*?)(?=^      - name: |\Z)",
+        job,
+    )
+    assert match, f"linux-sanitizer.yml lost step: {name}"
+    return match.group("body")
+
+leak_enabled_step = workflow_step(
+    asan_job, "Run suite with LeakSanitizer enabled"
+)
+assert f"-E {intentional_leak_filter}" in leak_enabled_step, (
+    "LeakSanitizer-enabled CTest must exclude exactly the five documented tests"
+)
+assert "detect_leaks=0" not in leak_enabled_step, (
+    "LeakSanitizer-enabled CTest must not disable leak detection"
+)
+
+intentional_leak_step = workflow_step(
+    asan_job, "Run leak-for-safety tests under ASan + UBSan"
+)
+assert "detect_leaks=0" in intentional_leak_step, (
+    "the intentional-leak rerun must disable LeakSanitizer"
+)
+assert f"-R {intentional_leak_filter}" in intentional_leak_step, (
+    "the leak-disabled CTest must rerun exactly the five documented tests"
+)
+
 # Source-built libsodium must come from the release asset hosted alongside the
 # upstream repository. download.libsodium.org has repeatedly failed DNS lookup
 # on GitHub's macOS runners. Keep all static-build workflows on one audited
