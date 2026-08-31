@@ -1535,8 +1535,9 @@ target_link_libraries(DuskStudio PRIVATE
     juce::juce_recommended_warning_flags)
 
 if(WIN32)
-    # Wide special-folder resolution in foundation/Fs.h.
-    target_link_libraries(DuskStudio PRIVATE shell32 ole32)
+    # Wide special-folder resolution in foundation/Fs.h plus the per-user ACL
+    # and token checks used by the single-instance named pipe.
+    target_link_libraries(DuskStudio PRIVATE shell32 ole32 advapi32)
 endif()
 
 # LTO is on by default for release builds (5-10% smaller binary, slight perf

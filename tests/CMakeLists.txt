@@ -181,8 +181,9 @@ target_include_directories(dusk-studio-tests SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/
 
 if(WIN32)
     # shell32: CommandLineToArgvW plus SHGetKnownFolderPath; ole32:
-    # CoTaskMemFree for the returned known-folder path.
-    target_link_libraries(dusk-studio-tests PRIVATE shell32 ole32)
+    # CoTaskMemFree for the returned known-folder path; advapi32: per-user
+    # security descriptors and token checks for the single-instance pipe.
+    target_link_libraries(dusk-studio-tests PRIVATE shell32 ole32 advapi32)
 endif()
 
 # pffft backend for dusk::audio::Fft, plus its A/B parity suite. The pffft
@@ -468,12 +469,15 @@ if(TARGET sfizz_static)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_MULTISAMPLE=1)
 endif()
 
-# Single-instance socket lifecycle. Linux only: everywhere else acquire() is
-# the no-op that always reports primary, so there is no socket to test.
-if (UNIX AND NOT APPLE)
+# Cross-platform single-instance ownership and handoff. The test-only
+# dispatcher exercises transport delivery without depending on a GUI event
+# loop on the headless macOS runner.
+if (UNIX OR WIN32)
     target_sources(dusk-studio-tests PRIVATE
         single_instance_socket_lifecycle.cpp
         ${CMAKE_SOURCE_DIR}/src/util/SingleInstance.cpp)
+    target_compile_definitions(dusk-studio-tests PRIVATE
+        DUSKSTUDIO_SINGLE_INSTANCE_TESTING=1)
 endif()
 
 # IPC round-trip regression — Linux + Windows + macOS 14.4+. The test
