@@ -5,3 +5,8 @@
     a lv2:Plugin ;
     lv2:binary <file_state_fixture.so> ;
     rdfs:seeAlso <file_state_plugin.ttl> .
+
+<urn:duskstudio:test:control-state>
+    a lv2:Plugin ;
+    lv2:binary <file_state_fixture.so> ;
+    rdfs:seeAlso <file_state_plugin.ttl> .

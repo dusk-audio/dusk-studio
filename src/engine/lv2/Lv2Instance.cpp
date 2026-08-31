@@ -183,6 +183,17 @@ struct Lv2Instance::Impl
     std::vector<uint32_t> otherPorts;   // CV / unclassified - LV2 requires every port connected
     int latencyPortIndex = -1;
 
+    struct ControlRestoreInfo
+    {
+        float minValue = 0.0f, maxValue = 0.0f;
+        bool hasUsableRange = false;
+        bool toggled = false, integer = false, enumeration = false;
+        std::vector<float> scalePoints;
+    };
+    // Snapshotted for every input control port, including designated/hidden
+    // ports that are deliberately absent from the user parameter surface.
+    std::vector<ControlRestoreInfo> controlRestoreInfo;
+
     // Per-port scratch backing otherPorts: maxFrames floats each, so an audio-rate
     // CV port can safely read silence or sink its output.
     std::vector<std::vector<float>> otherScratch;
@@ -400,6 +411,37 @@ struct Lv2Instance::Impl
         return it != portIndexBySymbol.end() ? (int) it->second : -1;
     }
 
+    bool normalizeRestoredControlValue (size_t index, double& value) const noexcept
+    {
+        if (index >= controlRestoreInfo.size() || ! std::isfinite (value)) return false;
+        const auto& info = controlRestoreInfo[index];
+        if (! info.hasUsableRange)
+            return ! info.toggled && ! info.integer && ! info.enumeration;
+
+        value = std::clamp (value, (double) info.minValue, (double) info.maxValue);
+        if (info.toggled)
+        {
+            if (info.minValue > 0.0f || info.maxValue < 1.0f) return false;
+            value = value > 0.0f ? 1.0f : 0.0f;
+        }
+        else if (info.enumeration)
+        {
+            if (info.scalePoints.empty()) return false;
+            value = *std::min_element (
+                info.scalePoints.begin(), info.scalePoints.end(),
+                [value] (float a, float b)
+                { return std::abs (a - value) < std::abs (b - value); });
+        }
+        else if (info.integer)
+        {
+            const double integerMin = std::ceil ((double) info.minValue);
+            const double integerMax = std::floor ((double) info.maxValue);
+            if (integerMin > integerMax) return false;
+            value = std::clamp (std::round (value), integerMin, integerMax);
+        }
+        return true;
+    }
+
     // lilv state callbacks (message thread; save/restore are fenced by the caller
     // when the instance is live, same contract as activate/deactivate).
     static const void* getPortValue (const char* symbol, void* userData,
@@ -427,18 +469,20 @@ struct Lv2Instance::Impl
             return;
 
         // States written by other hosts may carry any numeric atom type.
-        float v = 0.0f;
-        if      (type == self->uridFloat  && size >= sizeof (float))   v = *static_cast<const float*> (value);
-        else if (type == self->uridDouble && size >= sizeof (double))  v = (float) *static_cast<const double*> (value);
-        else if (type == self->uridInt    && size >= sizeof (int32_t)) v = (float) *static_cast<const int32_t*> (value);
-        else if (type == self->uridLong   && size >= sizeof (int64_t)) v = (float) *static_cast<const int64_t*> (value);
+        double v = 0.0;
+        if      (type == self->uridFloat  && size >= sizeof (float))   v = (double) *static_cast<const float*> (value);
+        else if (type == self->uridDouble && size >= sizeof (double))  v = *static_cast<const double*> (value);
+        else if (type == self->uridInt    && size >= sizeof (int32_t)) v = (double) *static_cast<const int32_t*> (value);
+        else if (type == self->uridLong   && size >= sizeof (int64_t)) v = (double) *static_cast<const int64_t*> (value);
         else return;
-        if (! std::isfinite (v)) return;
-        self->portValues[(size_t) idx] = v;
+        if (! self->normalizeRestoredControlValue ((size_t) idx, v)) return;
+        const auto restoredValue = (float) v;
+        if (! std::isfinite (restoredValue)) return;
+        self->portValues[(size_t) idx] = restoredValue;
         // A restore supersedes any staged UI value for this port.
         if ((size_t) idx < self->uiDirty.size())
         {
-            self->uiShadow[(size_t) idx] = v;
+            self->uiShadow[(size_t) idx] = restoredValue;
             self->uiDirty [(size_t) idx] = 0;
         }
     }
@@ -465,16 +509,17 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
     LilvNode* inputClass   = lilv_new_uri (world, LV2_CORE__InputPort);
     LilvNode* atomClass    = lilv_new_uri (world, LV2_ATOM__AtomPort);
     LilvNode* latencyDesig = lilv_new_uri (world, LV2_CORE__latency);
+    const uint32_t numPorts = lilv_plugin_get_num_ports (impl->plugin);
 
     impl->audioInPorts.clear();  impl->audioOutPorts.clear();
     impl->controlPorts.clear();  impl->atomInPorts.clear(); impl->atomOutPorts.clear();
     impl->otherPorts.clear();
     impl->portIndexBySymbol.clear();
+    impl->controlRestoreInfo.assign ((size_t) numPorts, {});
     impl->uiShadow.clear();
     impl->uiDirty.clear();
     impl->latencyPortIndex = -1;
 
-    const uint32_t numPorts = lilv_plugin_get_num_ports (impl->plugin);
     for (uint32_t i = 0; i < numPorts; ++i)
     {
         const LilvPort* port = lilv_plugin_get_port_by_index (impl->plugin, i);
@@ -509,6 +554,41 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
             const LilvPort* port = lilv_plugin_get_port_by_index (impl->plugin, i);
             if (! lilv_port_is_a (impl->plugin, port, inputClass))
                 continue;   // output control ports (meters, lv2:latency) aren't parameters
+
+            auto& restore = impl->controlRestoreInfo[(size_t) i];
+            float defaultValue = 0.0f;
+            LilvNode* def = nullptr; LilvNode* mn = nullptr; LilvNode* mx = nullptr;
+            lilv_port_get_range (impl->plugin, port, &def, &mn, &mx);
+            if (mn  != nullptr) { restore.minValue = lilv_node_as_float (mn); lilv_node_free (mn); }
+            if (mx  != nullptr) { restore.maxValue = lilv_node_as_float (mx); lilv_node_free (mx); }
+            if (def != nullptr) { defaultValue = lilv_node_as_float (def);    lilv_node_free (def); }
+            restore.hasUsableRange = std::isfinite (restore.minValue)
+                                  && std::isfinite (restore.maxValue)
+                                  && restore.minValue < restore.maxValue;
+            restore.toggled = lilv_port_has_property (impl->plugin, port, toggledProp);
+            restore.integer = lilv_port_has_property (impl->plugin, port, integerProp);
+            restore.enumeration = lilv_port_has_property (impl->plugin, port, enumProp);
+            if (restore.enumeration)
+            {
+                if (LilvScalePoints* points = lilv_port_get_scale_points (impl->plugin, port))
+                {
+                    LILV_FOREACH (scale_points, point, points)
+                    {
+                        const auto* scalePoint = lilv_scale_points_get (points, point);
+                        const float v = lilv_node_as_float (
+                            lilv_scale_point_get_value (scalePoint));
+                        if (std::isfinite (v) && restore.hasUsableRange
+                            && v >= restore.minValue && v <= restore.maxValue)
+                            restore.scalePoints.push_back (v);
+                    }
+                    lilv_scale_points_free (points);
+                    std::sort (restore.scalePoints.begin(), restore.scalePoints.end());
+                    restore.scalePoints.erase (
+                        std::unique (restore.scalePoints.begin(), restore.scalePoints.end()),
+                        restore.scalePoints.end());
+                }
+            }
+
             // Designated ports (lv2:enabled, lv2:freeWheeling, time/transport
             // feeds) are host-managed, not user parameters; notOnGUI ports are
             // hidden by the plugin's own request. JUCE-wrapped LV2s expose ONLY
@@ -529,15 +609,11 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
                 p.name = lilv_node_as_string (nm);
                 lilv_node_free (nm);
             }
-            LilvNode* def = nullptr; LilvNode* mn = nullptr; LilvNode* mx = nullptr;
-            lilv_port_get_range (impl->plugin, port, &def, &mn, &mx);
-            if (mn  != nullptr) { p.minValue     = lilv_node_as_float (mn);  lilv_node_free (mn); }
-            if (mx  != nullptr) { p.maxValue     = lilv_node_as_float (mx);  lilv_node_free (mx); }
-            if (def != nullptr) { p.defaultValue = lilv_node_as_float (def); lilv_node_free (def); }
+            p.minValue = restore.minValue;
+            p.maxValue = restore.maxValue;
+            p.defaultValue = defaultValue;
             if (! (p.minValue < p.maxValue)) { p.minValue = 0.0f; p.maxValue = 1.0f; }
-            p.stepped = lilv_port_has_property (impl->plugin, port, toggledProp)
-                     || lilv_port_has_property (impl->plugin, port, integerProp)
-                     || lilv_port_has_property (impl->plugin, port, enumProp);
+            p.stepped = restore.toggled || restore.integer || restore.enumeration;
             impl->params.push_back (std::move (p));
         }
         lilv_node_free (notOnGuiProp);

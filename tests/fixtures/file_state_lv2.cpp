@@ -13,6 +13,7 @@
 namespace
 {
 constexpr const char* kPluginUri = "urn:duskstudio:test:file-state";
+constexpr const char* kControlPluginUri = "urn:duskstudio:test:control-state";
 constexpr const char* kPathKey = "urn:duskstudio:test:file-state#path";
 constexpr const char* kPayload = "dusk-lv2-file-state-v1";
 constexpr const char* kRestorePayload = "dusk-lv2-restore-make-path-v1";
@@ -67,6 +68,13 @@ void connectPort (LV2_Handle instance, uint32_t port, void* data)
         case 6: self.controlOut = static_cast<LV2_Atom_Sequence*> (data); break;
         default: break;
     }
+}
+
+void connectControlPort (LV2_Handle instance, uint32_t port, void* data)
+{
+    // The control-state descriptor shares the audio and gain ports only. Its
+    // ports 5-8 are controls, not the Atom ports used by the file-state plugin.
+    if (port <= 4) connectPort (instance, port, data);
 }
 
 void run (LV2_Handle instance, uint32_t frames)
@@ -182,14 +190,21 @@ const void* extensionData (const char* uri)
     return std::strcmp (uri, LV2_STATE__interface) == 0 ? &stateInterface : nullptr;
 }
 
-const LV2_Descriptor descriptor {
+const LV2_Descriptor fileStateDescriptor {
     kPluginUri, &instantiate, &connectPort, nullptr, &run, nullptr, &cleanup,
     &extensionData
+};
+
+const LV2_Descriptor controlStateDescriptor {
+    kControlPluginUri, &instantiate, &connectControlPort, nullptr, &run, nullptr, &cleanup,
+    nullptr
 };
 }
 
 extern "C" LV2_SYMBOL_EXPORT
 const LV2_Descriptor* lv2_descriptor (uint32_t index)
 {
-    return index == 0 ? &descriptor : nullptr;
+    if (index == 0) return &fileStateDescriptor;
+    if (index == 1) return &controlStateDescriptor;
+    return nullptr;
 }
