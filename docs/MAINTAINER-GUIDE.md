@@ -613,6 +613,9 @@ manual checks that the script cannot cover:
 - Inspect the tarball, DMG, and MSI payloads. Each must be Dusk-only, with no
   `JUCE-*` paths, and each must contain the complete
   [LICENSES.txt](../LICENSES.txt), not merely a file by that name.
+- On macOS and Windows, run the
+  [window-activation smoke test](../tests/window_activation_smoke_test.md) for
+  initial launch, session open, minimized restore, and second-process handoff.
 - In every bundled `LICENSES.txt`, confirm the full-text section is present and
   the JUCE-bundled entries cover HarfBuzz, SheenBidi, libjpeg, libpng, zlib,
   FLAC, and Ogg/Vorbis. If a future SheenBidi source adds a NOTICE file, ship

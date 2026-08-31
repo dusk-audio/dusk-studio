@@ -49,6 +49,7 @@ add_executable(dusk-studio-tests
     embedded_modal_close_safety.cpp
     native_editor_owner.cpp
     x11_anti_pattern_guard.cpp
+    platform_window_activation.cpp
     clap_editor_lifecycle.cpp
     plugin_state_diagnostics.cpp
     channel_strip_context_rename.cpp

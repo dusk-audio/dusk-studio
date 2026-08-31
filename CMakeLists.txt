@@ -861,10 +861,7 @@ endif()
 
 # Cross-platform window-management primitives. One implementation per
 # platform; callsites #include only PlatformWindowing.h and stay
-# platform-agnostic. Mac and Windows impls are stubs today (see
-# PlatformWindowing.h for the eventual per-platform mechanisms) but
-# the files exist so the fix slot is obvious when the equivalent bugs
-# surface there.
+# platform-agnostic.
 if(APPLE)
     target_sources(DuskStudio PRIVATE src/ui/PlatformWindowing_Mac.mm)
 elseif(WIN32)

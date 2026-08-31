@@ -168,8 +168,7 @@ public:
 
         // Combined async tick: setVisible(true) creates the peer at the
         // already-finalised bounds, then bringWindowToFront promotes
-        // focus once the peer exists. bringWindowToFront is a no-op on
-        // non-Linux builds.
+        // focus once the peer exists.
         juce::Component::SafePointer<MainWindow> safeThis (this);
         dusk::callAsync ([safeThis]
         {
