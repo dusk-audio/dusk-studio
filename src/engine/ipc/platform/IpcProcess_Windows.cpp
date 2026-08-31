@@ -4,15 +4,17 @@
 #define NOMINMAX
 #include <windows.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <limits>
 #include <string>
 #include <vector>
 
-// CreateProcessW with bInheritHandles = TRUE. Inheritable handles (the
-// channel child end + the SHM mapping) flow into the child at the same
-// numeric HANDLE value. A Job object with
+// CreateProcessW with bInheritHandles = TRUE and an explicit
+// PROC_THREAD_ATTRIBUTE_HANDLE_LIST. Only the channel child end and the
+// caller-approved IPC handles flow into the child, at the same numeric HANDLE
+// values. A Job object with
 // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE wraps the child so it dies if the
 // parent crashes or exits, mirroring Linux's prctl(PR_SET_PDEATHSIG).
 //
@@ -123,8 +125,47 @@ ChildProcess::~ChildProcess()
 bool ChildProcess::spawn (const std::string& executablePath,
                               const std::vector<std::string>& args,
                               NativeHandle& childChannelEnd,
+                              const std::vector<NativeHandle>& additionalInheritedHandles,
                               std::string& errorOut) noexcept
 {
+    std::vector<HANDLE> inheritedHandles;
+    inheritedHandles.reserve (additionalInheritedHandles.size() + 1);
+    const auto addInheritedHandle = [&] (const NativeHandle& native)
+    {
+        const auto handle = reinterpret_cast<HANDLE> (native.h);
+        if (handle == nullptr || handle == INVALID_HANDLE_VALUE)
+            return false;
+        if (std::find (inheritedHandles.begin(), inheritedHandles.end(), handle)
+            == inheritedHandles.end())
+            inheritedHandles.push_back (handle);
+        return true;
+    };
+
+    if (! addInheritedHandle (childChannelEnd))
+    {
+        errorOut = "child channel handle is invalid";
+        return false;
+    }
+    for (const auto& handle : additionalInheritedHandles)
+    {
+        if (! addInheritedHandle (handle))
+        {
+            errorOut = "additional child handle is invalid";
+            return false;
+        }
+    }
+
+    for (const auto handle : inheritedHandles)
+    {
+        DWORD flags = 0;
+        if (! ::GetHandleInformation (handle, &flags)
+            || (flags & HANDLE_FLAG_INHERIT) == 0)
+        {
+            errorOut = "child handle is not inheritable";
+            return false;
+        }
+    }
+
     auto* state = new WinProcessState;
 
     state->job = ::CreateJobObjectA (nullptr, nullptr);
@@ -152,9 +193,8 @@ bool ChildProcess::spawn (const std::string& executablePath,
 
     std::vector<std::string> childArgs = args;
     {
-        // Pass the inherited channel HANDLE value on the command line
-        // so the child can locate it after CreateProcess(bInheritHandles
-        // = TRUE) reproduces the same numeric value in its handle table.
+        // Pass the allowlisted channel HANDLE value on the command line so the
+        // child can locate it at the numeric value preserved by inheritance.
         char buf[64];
         std::snprintf (buf, sizeof (buf), "--ipc-channel=0x%llx",
                         (unsigned long long) (std::uintptr_t)
@@ -187,8 +227,50 @@ bool ChildProcess::spawn (const std::string& executablePath,
     std::vector<wchar_t> commandBuffer (commandLine.begin(), commandLine.end());
     commandBuffer.push_back (L'\0');
 
-    STARTUPINFOW si {};
-    si.cb = sizeof (si);
+    SIZE_T attributeBytes = 0;
+    (void) ::InitializeProcThreadAttributeList (nullptr, 1, 0, &attributeBytes);
+    if (attributeBytes == 0)
+    {
+        char buf[128]; std::snprintf (buf, sizeof (buf),
+            "InitializeProcThreadAttributeList sizing failed: %lu",
+            (unsigned long) ::GetLastError());
+        errorOut = buf;
+        ::CloseHandle (state->job);
+        delete state;
+        return false;
+    }
+
+    std::vector<unsigned char> attributeStorage (attributeBytes);
+    auto* attributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST> (
+        attributeStorage.data());
+    if (! ::InitializeProcThreadAttributeList (attributeList, 1, 0, &attributeBytes))
+    {
+        char buf[128]; std::snprintf (buf, sizeof (buf),
+            "InitializeProcThreadAttributeList failed: %lu",
+            (unsigned long) ::GetLastError());
+        errorOut = buf;
+        ::CloseHandle (state->job);
+        delete state;
+        return false;
+    }
+
+    if (! ::UpdateProcThreadAttribute (
+            attributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+            inheritedHandles.data(), inheritedHandles.size() * sizeof (HANDLE),
+            nullptr, nullptr))
+    {
+        char buf[128]; std::snprintf (buf, sizeof (buf),
+            "UpdateProcThreadAttribute failed: %lu", (unsigned long) ::GetLastError());
+        errorOut = buf;
+        ::DeleteProcThreadAttributeList (attributeList);
+        ::CloseHandle (state->job);
+        delete state;
+        return false;
+    }
+
+    STARTUPINFOEXW si {};
+    si.StartupInfo.cb = sizeof (si);
+    si.lpAttributeList = attributeList;
     PROCESS_INFORMATION pi {};
 
     const BOOL ok = ::CreateProcessW (
@@ -196,15 +278,39 @@ bool ChildProcess::spawn (const std::string& executablePath,
         commandBuffer.data(),
         nullptr, nullptr,
         TRUE,                       // bInheritHandles
-        CREATE_SUSPENDED | CREATE_NO_WINDOW,
+        CREATE_SUSPENDED | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT,
         nullptr, nullptr,
-        &si, &pi);
+        &si.StartupInfo, &pi);
+    const DWORD createError = ok ? ERROR_SUCCESS : ::GetLastError();
+    ::DeleteProcThreadAttributeList (attributeList);
+
+    DWORD clearInheritError = ERROR_SUCCESS;
+    for (const auto handle : inheritedHandles)
+    {
+        if (! ::SetHandleInformation (handle, HANDLE_FLAG_INHERIT, 0)
+            && clearInheritError == ERROR_SUCCESS)
+            clearInheritError = ::GetLastError();
+    }
 
     if (! ok)
     {
         char buf[128]; std::snprintf (buf, sizeof (buf),
-            "CreateProcess failed: %lu", (unsigned long) ::GetLastError());
+            "CreateProcess failed: %lu", (unsigned long) createError);
         errorOut = buf;
+        ::CloseHandle (state->job);
+        delete state;
+        return false;
+    }
+
+    if (clearInheritError != ERROR_SUCCESS)
+    {
+        char buf[128]; std::snprintf (buf, sizeof (buf),
+            "failed to clear child handle inheritance: %lu",
+            (unsigned long) clearInheritError);
+        errorOut = buf;
+        ::TerminateProcess (pi.hProcess, 1);
+        ::CloseHandle (pi.hProcess);
+        ::CloseHandle (pi.hThread);
         ::CloseHandle (state->job);
         delete state;
         return false;

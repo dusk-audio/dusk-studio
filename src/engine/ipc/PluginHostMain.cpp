@@ -9,6 +9,8 @@
 //                 Used to validate Windows UTF-16 launch and quoting.
 //   --ipc-silent-handshake-stub: keep the inherited channel open without
 //                 acknowledging readiness, for the bounded-read regression.
+//   --ipc-handle-probe-stub: report which Windows mapping handles reached the
+//                 child, for the explicit inheritance-allowlist regression.
 //   --ipc-control-reply-stub: deterministic request-correlation and reply-
 //                 validation regression child.
 //   --ipc-host  : full Phase-2 host. Loads a juce::AudioPluginInstance
@@ -61,11 +63,22 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
+
+#if defined (_WIN32)
+ #ifndef WIN32_LEAN_AND_MEAN
+  #define WIN32_LEAN_AND_MEAN
+ #endif
+ #ifndef NOMINMAX
+  #define NOMINMAX
+ #endif
+ #include <windows.h>
+#endif
 
 #if defined (DUSKSTUDIO_USE_WINDOWS_SOFTWARE_OPENGL)
 namespace
@@ -173,6 +186,62 @@ int runIpcSilentHandshakeStub (int argc, const char* const* argv) noexcept
     (void) ipcp::readExact (channel, &ignored, sizeof (ignored));
     return 0;
 }
+
+#if defined (_WIN32)
+bool findHandleArgument (int argc, const char* const* argv,
+                         const char* prefix, HANDLE& handleOut) noexcept
+{
+    const auto prefixLength = std::strlen (prefix);
+    for (int i = 1; i < argc; ++i)
+    {
+        if (argv[i] == nullptr || std::strncmp (argv[i], prefix, prefixLength) != 0)
+            continue;
+
+        const char* const valueText = argv[i] + prefixLength;
+        char* end = nullptr;
+        errno = 0;
+        const auto value = std::strtoull (valueText, &end, 0);
+        if (errno != 0 || end == valueText || *end != '\0'
+            || value == 0
+            || value > (unsigned long long) std::numeric_limits<std::uintptr_t>::max())
+            return false;
+        handleOut = reinterpret_cast<HANDLE> ((std::uintptr_t) value);
+        return true;
+    }
+    return false;
+}
+
+std::uint8_t readMappingMarker (HANDLE handle) noexcept
+{
+    const void* const view = ::MapViewOfFile (handle, FILE_MAP_READ, 0, 0, 1);
+    if (view == nullptr) return 0;
+    const auto marker = *static_cast<const std::uint8_t*> (view);
+    (void) ::UnmapViewOfFile (view);
+    return marker;
+}
+
+int runIpcHandleProbeStub (int argc, const char* const* argv) noexcept
+{
+    ipcp::NativeHandle channel = ipcp::locateInheritedChannel (argc, argv);
+    if (! ipcp::isValid (channel)) return 1;
+
+    HANDLE mappingA = nullptr;
+    HANDLE mappingB = nullptr;
+    if (! findHandleArgument (argc, argv, "--ipc-probe-a=", mappingA)
+        || ! findHandleArgument (argc, argv, "--ipc-probe-b=", mappingB))
+        return 1;
+
+    const std::uint8_t markers[2] {
+        readMappingMarker (mappingA), readMappingMarker (mappingB)
+    };
+    if (! ipcp::writeExact (channel, markers, sizeof (markers))) return 1;
+
+    // Keep the inherited mapping alive until the owning connection closes.
+    char ignored = 0;
+    (void) ipcp::readExact (channel, &ignored, sizeof (ignored));
+    return 0;
+}
+#endif
 
 // --- Phase 1 echo mode (kept for the IPC self-test) ----------------------
 int runIpcStub (int argc, const char* const* argv, bool suppressReplies) noexcept
@@ -1320,6 +1389,9 @@ int main (int argc, char** argv)
     bool ipcStubTimeout = false;
     bool ipcArgvStub = false;
     bool ipcSilentHandshakeStub = false;
+   #if defined (_WIN32)
+    bool ipcHandleProbeStub = false;
+   #endif
     bool ipcControlReplyStub = false;
     bool ipcParkTimeoutStub = false;
     bool ipcHost = false;
@@ -1331,6 +1403,10 @@ int main (int argc, char** argv)
         if (std::strcmp (args[i], "--ipc-argv-stub") == 0) ipcArgvStub = true;
         if (std::strcmp (args[i], "--ipc-silent-handshake-stub") == 0)
             ipcSilentHandshakeStub = true;
+       #if defined (_WIN32)
+        if (std::strcmp (args[i], "--ipc-handle-probe-stub") == 0)
+            ipcHandleProbeStub = true;
+       #endif
         if (std::strcmp (args[i], "--ipc-control-reply-stub") == 0) ipcControlReplyStub = true;
         if (std::strcmp (args[i], "--ipc-park-timeout-stub") == 0) ipcParkTimeoutStub = true;
         if (std::strcmp (args[i], "--ipc-host") == 0) ipcHost = true;
@@ -1343,6 +1419,9 @@ int main (int argc, char** argv)
     if (scan)    return runScan (argc, args);
     if (ipcArgvStub) return runIpcArgvStub (argc, args);
     if (ipcSilentHandshakeStub) return runIpcSilentHandshakeStub (argc, args);
+   #if defined (_WIN32)
+    if (ipcHandleProbeStub) return runIpcHandleProbeStub (argc, args);
+   #endif
     if (ipcStub || ipcStubTimeout) return runIpcStub (argc, args, ipcStubTimeout);
     if (ipcControlReplyStub) return runIpcControlReplyStub (argc, args);
     if (ipcParkTimeoutStub) return runIpcParkTimeoutStub (argc, args);

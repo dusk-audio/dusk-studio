@@ -21,12 +21,24 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 
 #include <cmath>
+#include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstdint>
 #include <filesystem>
 #include <string>
 #include <utility>
 #include <vector>
+
+#if defined (_WIN32)
+ #ifndef WIN32_LEAN_AND_MEAN
+  #define WIN32_LEAN_AND_MEAN
+ #endif
+ #ifndef NOMINMAX
+  #define NOMINMAX
+ #endif
+ #include <windows.h>
+#endif
 
 namespace
 {
@@ -48,6 +60,117 @@ struct ScopedChannelPair
 } // namespace
 
 #if defined (_WIN32)
+TEST_CASE ("Windows IPC children inherit only their own shared-memory handles",
+           "[ipc][windows][issue-365]")
+{
+    namespace ipcp = duskstudio::ipc::platform;
+
+    static std::atomic<std::uint64_t> mappingSequence { 0 };
+    const auto makeMappingName = [&]
+    {
+        return std::string ("Local\\dusk-studio-ipc-inherit-test-")
+            + std::to_string ((unsigned long) ::GetCurrentProcessId()) + "-"
+            + std::to_string (mappingSequence.fetch_add (1, std::memory_order_relaxed));
+    };
+    const auto mappingAName = makeMappingName();
+    const auto mappingBName = makeMappingName();
+
+    SECURITY_ATTRIBUTES attributes {};
+    attributes.nLength = sizeof (attributes);
+    attributes.bInheritHandle = TRUE;
+
+    ipcp::NativeHandle mappingA;
+    ipcp::NativeHandle mappingB;
+    mappingA.h = ::CreateFileMappingA (INVALID_HANDLE_VALUE, &attributes,
+                                       PAGE_READWRITE, 0, 4096, mappingAName.c_str());
+    mappingB.h = ::CreateFileMappingA (INVALID_HANDLE_VALUE, &attributes,
+                                       PAGE_READWRITE, 0, 4096, mappingBName.c_str());
+    REQUIRE (ipcp::isValid (mappingA));
+    REQUIRE (ipcp::isValid (mappingB));
+
+    const auto writeMarker = [] (const ipcp::NativeHandle& mapping,
+                                 std::uint8_t marker)
+    {
+        void* const view = ::MapViewOfFile (reinterpret_cast<HANDLE> (mapping.h),
+                                            FILE_MAP_WRITE, 0, 0, 1);
+        REQUIRE (view != nullptr);
+        *static_cast<std::uint8_t*> (view) = marker;
+        REQUIRE (::UnmapViewOfFile (view));
+    };
+    constexpr std::uint8_t markerA = 0xa5;
+    constexpr std::uint8_t markerB = 0x5a;
+    writeMarker (mappingA, markerA);
+    writeMarker (mappingB, markerB);
+
+    const auto handleArgument = [] (const char* prefix,
+                                    const ipcp::NativeHandle& mapping)
+    {
+        char buffer[96];
+        std::snprintf (buffer, sizeof (buffer), "%s0x%llx", prefix,
+                       (unsigned long long) (std::uintptr_t) mapping.h);
+        return std::string (buffer);
+    };
+    const std::vector<std::string> probeArguments {
+        "--ipc-handle-probe-stub",
+        handleArgument ("--ipc-probe-a=", mappingA),
+        handleArgument ("--ipc-probe-b=", mappingB)
+    };
+
+    ScopedChannelPair channelsA;
+    ScopedChannelPair channelsB;
+    std::string error;
+    REQUIRE (ipcp::createChannelPair (channelsA.value, error));
+    REQUIRE (ipcp::createChannelPair (channelsB.value, error));
+
+    ipcp::ChildProcess childA;
+    ipcp::ChildProcess childB;
+    REQUIRE (childA.spawn (DUSKSTUDIO_PLUGIN_HOST_PATH, probeArguments,
+                           channelsA.value.childEnd, { mappingA }, error));
+    REQUIRE (childB.spawn (DUSKSTUDIO_PLUGIN_HOST_PATH, probeArguments,
+                           channelsB.value.childEnd, { mappingB }, error));
+
+    std::uint8_t childAMarkers[2] {};
+    std::uint8_t childBMarkers[2] {};
+    REQUIRE (ipcp::readExact (channelsA.value.parentEnd,
+                              childAMarkers, sizeof (childAMarkers)));
+    REQUIRE (ipcp::readExact (channelsB.value.parentEnd,
+                              childBMarkers, sizeof (childBMarkers)));
+    REQUIRE (childAMarkers[0] == markerA);
+    REQUIRE (childAMarkers[1] == 0);
+    REQUIRE (childBMarkers[0] == 0);
+    REQUIRE (childBMarkers[1] == markerB);
+
+    DWORD mappingAFlags = 0;
+    DWORD mappingBFlags = 0;
+    REQUIRE (::GetHandleInformation (reinterpret_cast<HANDLE> (mappingA.h),
+                                     &mappingAFlags));
+    REQUIRE (::GetHandleInformation (reinterpret_cast<HANDLE> (mappingB.h),
+                                     &mappingBFlags));
+    REQUIRE ((mappingAFlags & HANDLE_FLAG_INHERIT) == 0);
+    REQUIRE ((mappingBFlags & HANDLE_FLAG_INHERIT) == 0);
+
+    ipcp::closeHandle (mappingA);
+    ipcp::closeHandle (mappingB);
+    const auto mappingExists = [] (const std::string& name)
+    {
+        HANDLE mapping = ::OpenFileMappingA (FILE_MAP_READ, FALSE, name.c_str());
+        if (mapping == nullptr) return false;
+        ::CloseHandle (mapping);
+        return true;
+    };
+    REQUIRE (mappingExists (mappingAName));
+    REQUIRE (mappingExists (mappingBName));
+
+    ipcp::closeHandle (channelsA.value.parentEnd);
+    childA.terminate (1000);
+    REQUIRE_FALSE (mappingExists (mappingAName));
+    REQUIRE (mappingExists (mappingBName));
+
+    ipcp::closeHandle (channelsB.value.parentEnd);
+    childB.terminate (1000);
+    REQUIRE_FALSE (mappingExists (mappingBName));
+}
+
 TEST_CASE ("Windows IPC launcher preserves Unicode paths and arguments",
            "[ipc][windows][issue-373]")
 {
@@ -80,7 +203,7 @@ TEST_CASE ("Windows IPC launcher preserves Unicode paths and arguments",
 
     ipcp::ChildProcess child;
     const bool spawned = child.spawn (copiedHost.u8string(), suppliedArguments,
-                                      channels.value.childEnd, error);
+                                      channels.value.childEnd, {}, error);
     INFO ("spawn error: " << error);
     REQUIRE (spawned);
 
@@ -125,7 +248,7 @@ TEST_CASE ("Plugin-host handshake read timeout bounds a silent live child",
     ipcp::ChildProcess child;
     REQUIRE (child.spawn (DUSKSTUDIO_PLUGIN_HOST_PATH,
                           { "--ipc-silent-handshake-stub" },
-                          channels.value.childEnd, error));
+                          channels.value.childEnd, {}, error));
     REQUIRE (child.isAlive());
     REQUIRE (ipcp::setReadTimeout (channels.value.parentEnd, 75));
 

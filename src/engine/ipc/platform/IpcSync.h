@@ -69,6 +69,10 @@ public:
     bool receiveFromParent (NativeHandle& channel) noexcept;
     void close() noexcept;
 
+    // Parent-side kernel object passed through ChildProcess's Windows handle
+    // allowlist. Invalid/no-op on platforms whose signal lives in shared memory.
+    const NativeHandle& handle() const noexcept { return nativeHandle; }
+
     // Block while `addr` still equals `expected`, up to `deadline`. The
     // sequence atom makes missed/coalesced event wakes harmless: every caller
     // re-checks it after this returns.
