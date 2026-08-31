@@ -296,14 +296,13 @@ TEST_CASE ("LV2 control-state restore rejects or normalizes corrupt values",
     std::vector<uint8_t> cleanState;
     REQUIRE (source.saveState (cleanState));
 
-    SECTION ("finite values clamp and discrete ports normalize")
+    SECTION ("finite bounded values clamp and discrete ports normalize")
     {
         auto corruptState = cleanState;
         REQUIRE (replacePortValue (corruptState, { "gain", "\"1e100\"^^xsd:double" }));
         REQUIRE (replacePortValue (corruptState, { "toggle", "\"0.25\"^^xsd:float" }));
         REQUIRE (replacePortValue (corruptState, { "integer", "\"3.6\"^^xsd:float" }));
         REQUIRE (replacePortValue (corruptState, { "enumeration", "\"3.6\"^^xsd:float" }));
-        REQUIRE (replacePortValue (corruptState, { "unbounded", "\"1e38\"^^xsd:double" }));
 
         duskstudio::lv2::Lv2Instance restored;
         REQUIRE (restored.create (bundle, kControlPluginUri, error));
@@ -317,10 +316,22 @@ TEST_CASE ("LV2 control-state restore rejects or normalizes corrupt values",
                     Catch::Matchers::WithinAbs (4.0, 1.0e-7));
         CHECK_THAT (paramValue (restored, "Enumeration"),
                     Catch::Matchers::WithinAbs (4.0, 1.0e-7));
-        // With no advertised min/max there is no safe basis for clamping, so
-        // the callback rejects the state value and preserves the port default.
+    }
+
+    SECTION ("finite unbounded values survive save and restore")
+    {
+        const auto* unbounded = findParam (source, "Unbounded");
+        REQUIRE (unbounded != nullptr);
+        source.setParamValue (unbounded->id, 0.75);
+        std::vector<uint8_t> unboundedState;
+        REQUIRE (source.saveState (unboundedState));
+
+        duskstudio::lv2::Lv2Instance restored;
+        REQUIRE (restored.create (bundle, kControlPluginUri, error));
+        REQUIRE (restored.activate (48000.0, 32, error));
+        REQUIRE (restored.loadState (unboundedState));
         CHECK_THAT (paramValue (restored, "Unbounded"),
-                    Catch::Matchers::WithinAbs (0.25, 1.0e-7));
+                    Catch::Matchers::WithinAbs (0.75, 1.0e-7));
     }
 
     SECTION ("NaN and infinity cannot publish a non-finite or out-of-range value")

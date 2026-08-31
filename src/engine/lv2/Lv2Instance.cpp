@@ -415,7 +415,8 @@ struct Lv2Instance::Impl
     {
         if (index >= controlRestoreInfo.size() || ! std::isfinite (value)) return false;
         const auto& info = controlRestoreInfo[index];
-        if (! info.hasUsableRange) return false;
+        if (! info.hasUsableRange)
+            return ! info.toggled && ! info.integer && ! info.enumeration;
 
         value = std::clamp (value, (double) info.minValue, (double) info.maxValue);
         if (info.toggled)
@@ -476,6 +477,7 @@ struct Lv2Instance::Impl
         else return;
         if (! self->normalizeRestoredControlValue ((size_t) idx, v)) return;
         const auto restoredValue = (float) v;
+        if (! std::isfinite (restoredValue)) return;
         self->portValues[(size_t) idx] = restoredValue;
         // A restore supersedes any staged UI value for this port.
         if ((size_t) idx < self->uiDirty.size())

@@ -70,6 +70,13 @@ void connectPort (LV2_Handle instance, uint32_t port, void* data)
     }
 }
 
+void connectControlPort (LV2_Handle instance, uint32_t port, void* data)
+{
+    // The control-state descriptor shares the audio and gain ports only. Its
+    // ports 5-8 are controls, not the Atom ports used by the file-state plugin.
+    if (port <= 4) connectPort (instance, port, data);
+}
+
 void run (LV2_Handle instance, uint32_t frames)
 {
     auto& self = *static_cast<Instance*> (instance);
@@ -189,7 +196,7 @@ const LV2_Descriptor fileStateDescriptor {
 };
 
 const LV2_Descriptor controlStateDescriptor {
-    kControlPluginUri, &instantiate, &connectPort, nullptr, &run, nullptr, &cleanup,
+    kControlPluginUri, &instantiate, &connectControlPort, nullptr, &run, nullptr, &cleanup,
     nullptr
 };
 }
