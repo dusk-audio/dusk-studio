@@ -783,7 +783,10 @@ for workflow_name in ("windows-tests.yml", "windows-build.yml"):
         source_root / ".github" / "workflows" / workflow_name
     ).read_text(encoding="utf-8")
     folded_workflow = re.sub(r"\\\n\s*", " ", workflow_text)
-    assert not re.search(r"ctest[^\n]*-E[^\n]*FileImporter", folded_workflow), (
+    assert not re.search(
+        r"ctest[^\n]*(?:-E|--exclude-regex)[^\n]*FileImporter",
+        folded_workflow,
+    ), (
         f"{workflow_name} must not exclude the FileImporter suite"
     )
     for test_name in file_importer_tests:
