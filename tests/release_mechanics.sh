@@ -768,6 +768,29 @@ assert all(pins == [pinned_donor.group(1)] for pins in donor_pins.values()), (
     f"DONOR_REV drift across workflows: {donor_pins}"
 )
 
+file_importer_tests = (
+    "FileImporter: transient file locks retry but remain bounded",
+    "FileImporter: 44.1k mono -> 48k session preserves length",
+    "FileImporter: 44.1k -> 48k upsample fills the tail with audio, not a held sample",
+    "FileImporter: 96k mono -> 48k session preserves length",
+    "FileImporter: stereo -> mono sums L+R at 0.5 each",
+    "FileImporter: mono -> stereo duplicates to L and R",
+    "FileImporter: matching rate and channels copies the source verbatim",
+    "FileImporter: a matching 32-bit source is not truncated to 24-bit",
+)
+for workflow_name in ("windows-tests.yml", "windows-build.yml"):
+    workflow_text = (
+        source_root / ".github" / "workflows" / workflow_name
+    ).read_text(encoding="utf-8")
+    folded_workflow = re.sub(r"\\\n\s*", " ", workflow_text)
+    assert not re.search(r"ctest[^\n]*-E[^\n]*FileImporter", folded_workflow), (
+        f"{workflow_name} must not exclude the FileImporter suite"
+    )
+    for test_name in file_importer_tests:
+        assert test_name in workflow_text, (
+            f"{workflow_name} lost required FileImporter inventory: {test_name}"
+        )
+
 sanitizer_workflow = (
     source_root / ".github" / "workflows" / "linux-sanitizer.yml"
 ).read_text(encoding="utf-8")

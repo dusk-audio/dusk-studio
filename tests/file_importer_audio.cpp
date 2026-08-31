@@ -101,7 +101,46 @@ struct TempScope
 };
 }
 
-TEST_CASE ("FileImporter: 44.1k mono -> 48k session preserves length", "[FileImporter]")
+TEST_CASE ("FileImporter: transient file locks retry but remain bounded",
+           "[FileImporter][issue-377]")
+{
+    SECTION ("a later attempt succeeds")
+    {
+        int attempts = 0;
+        int waits = 0;
+        const bool opened = duskstudio::fileimport::detail::retryTransientFileOperation (
+            [&]
+            {
+                ++attempts;
+                return attempts == 3;
+            },
+            [&] { ++waits; });
+
+        REQUIRE (opened);
+        REQUIRE (attempts == 3);
+        REQUIRE (waits == 2);
+    }
+
+    SECTION ("a persistent lock exhausts the fixed attempt budget")
+    {
+        int attempts = 0;
+        int waits = 0;
+        const bool opened = duskstudio::fileimport::detail::retryTransientFileOperation (
+            [&]
+            {
+                ++attempts;
+                return false;
+            },
+            [&] { ++waits; });
+
+        REQUIRE_FALSE (opened);
+        REQUIRE (attempts == duskstudio::fileimport::detail::kTransientFileAttempts);
+        REQUIRE (waits == attempts - 1);
+    }
+}
+
+TEST_CASE ("FileImporter: 44.1k mono -> 48k session preserves length",
+           "[FileImporter][issue-377]")
 {
     TempScope tmp;
     const auto src = tmp.dir.getChildFile ("source.wav");
@@ -134,7 +173,8 @@ TEST_CASE ("FileImporter: 44.1k mono -> 48k session preserves length", "[FileImp
     REQUIRE (res.region.numChannels == 1);
 }
 
-TEST_CASE ("FileImporter: 44.1k -> 48k upsample fills the tail with audio, not a held sample", "[FileImporter]")
+TEST_CASE ("FileImporter: 44.1k -> 48k upsample fills the tail with audio, not a held sample",
+           "[FileImporter][issue-377]")
 {
     // Regression: importAudio mistook CatmullRomInterpolator::process()'s return
     // (number of INPUT samples consumed, ~= srcLength) for the produced-output
@@ -180,7 +220,8 @@ TEST_CASE ("FileImporter: 44.1k -> 48k upsample fills the tail with audio, not a
     REQUIRE ((hi - lo) > 0.5f);
 }
 
-TEST_CASE ("FileImporter: 96k mono -> 48k session preserves length", "[FileImporter]")
+TEST_CASE ("FileImporter: 96k mono -> 48k session preserves length",
+           "[FileImporter][issue-377]")
 {
     TempScope tmp;
     const auto src = tmp.dir.getChildFile ("source.wav");
@@ -206,7 +247,8 @@ TEST_CASE ("FileImporter: 96k mono -> 48k session preserves length", "[FileImpor
     REQUIRE (std::abs (rb.lengthInSamples - 48000) <= 64);
 }
 
-TEST_CASE ("FileImporter: stereo -> mono sums L+R at 0.5 each", "[FileImporter]")
+TEST_CASE ("FileImporter: stereo -> mono sums L+R at 0.5 each",
+           "[FileImporter][issue-377]")
 {
     TempScope tmp;
     const auto src = tmp.dir.getChildFile ("source.wav");
@@ -233,7 +275,8 @@ TEST_CASE ("FileImporter: stereo -> mono sums L+R at 0.5 each", "[FileImporter]"
     REQUIRE_THAT (bufferPeak (rb.buffer, 0), WithinAbs (0.0f, 1.0e-3f));
 }
 
-TEST_CASE ("FileImporter: mono -> stereo duplicates to L and R", "[FileImporter]")
+TEST_CASE ("FileImporter: mono -> stereo duplicates to L and R",
+           "[FileImporter][issue-377]")
 {
     TempScope tmp;
     const auto src = tmp.dir.getChildFile ("source.wav");
@@ -258,7 +301,8 @@ TEST_CASE ("FileImporter: mono -> stereo duplicates to L and R", "[FileImporter]
     REQUIRE_THAT (bufferPeak (rb.buffer, 1), WithinAbs (kAmp, 1.0e-4f));
 }
 
-TEST_CASE ("FileImporter: matching rate and channels copies the source verbatim", "[FileImporter]")
+TEST_CASE ("FileImporter: matching rate and channels copies the source verbatim",
+           "[FileImporter][issue-377]")
 {
     // When the source already matches the session rate AND the requested
     // channel layout, the importer must copy it byte-for-byte — no decode,
@@ -301,7 +345,8 @@ TEST_CASE ("FileImporter: matching rate and channels copies the source verbatim"
     REQUIRE (res.region.timelineStart   == 7);
 }
 
-TEST_CASE ("FileImporter: a matching 32-bit source is not truncated to 24-bit", "[FileImporter]")
+TEST_CASE ("FileImporter: a matching 32-bit source is not truncated to 24-bit",
+           "[FileImporter][issue-377]")
 {
     // The old path decoded to float and always re-wrote 24-bit, silently
     // truncating a >24-bit source. The verbatim copy preserves the original
