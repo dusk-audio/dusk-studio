@@ -8,7 +8,7 @@ TEST_CASE ("Generated MIDI structural reset releases its reserved capacity",
            "[audio-engine][midi][budget]")
 {
     constexpr int eventBytes = 9;
-    constexpr int resetBytes = 32 * eventBytes;
+    constexpr int resetBytes = 48 * eventBytes;
     GeneratedMidiBudget budget (resetBytes + 2 * eventBytes);
 
     REQUIRE (budget.reserveStructural (resetBytes));
@@ -28,7 +28,7 @@ TEST_CASE ("Generated MIDI structural reset consumption is all or nothing",
            "[audio-engine][midi][budget]")
 {
     constexpr int eventBytes = 9;
-    constexpr int resetBytes = 32 * eventBytes;
+    constexpr int resetBytes = 48 * eventBytes;
     GeneratedMidiBudget budget (resetBytes - eventBytes);
 
     CHECK_FALSE (budget.reserveStructural (resetBytes));

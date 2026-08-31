@@ -470,9 +470,26 @@ void ClapInstance::appendMidiEvents (const dusk::MidiBuffer& midi) noexcept
         const bool noteOn  = status == 0x90 && meta.numBytes >= 3 && d[2] > 0;
         const bool noteOff = meta.numBytes >= 3
                              && (status == 0x80 || (status == 0x90 && d[2] == 0));
+        const bool allSoundOff = status == 0xB0 && meta.numBytes >= 3 && d[1] == 120;
 
         auto& slot = eventScratch[(size_t) eventCount];
-        if (noteDialectClap && (noteOn || noteOff))
+        if (noteDialectClap && allSoundOff)
+        {
+            // CLAP-only note ports cannot receive the raw MIDI panic emitted
+            // when transport stops. NOTE_CHOKE is CLAP's hard-stop event; the
+            // wildcard key targets every voice on this MIDI channel.
+            auto& ev = slot.note;
+            ev.header = { (uint32_t) sizeof (clap_event_note_t),
+                          (uint32_t) meta.samplePosition, CLAP_CORE_EVENT_SPACE_ID,
+                          CLAP_EVENT_NOTE_CHOKE, 0 };
+            ev.note_id    = -1;
+            ev.port_index = 0;
+            ev.channel    = channel;
+            ev.key        = -1;
+            ev.velocity   = 0.0;
+            ++eventCount;
+        }
+        else if (noteDialectClap && (noteOn || noteOff))
         {
             auto& ev = slot.note;
             ev.header = { (uint32_t) sizeof (clap_event_note_t),

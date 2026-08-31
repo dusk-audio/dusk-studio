@@ -4672,7 +4672,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
     });
 
     // Hanging-note protection. Detect two events that warrant a per-MIDI-
-    // track "All Notes Off" flush this block:
+    // track hanging-note panic this block:
     //   - Transport rolling -> stopped (held notes won't get their Note
     //     Off from the region or input stream).
     //   - Playhead discontinuity while still rolling (loop wrap, scrub).
@@ -4963,7 +4963,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         // MIDI input filter - pull events from the track's selected input
         // Hanging-note flush. Emitted FIRST (sample 0) so the synth
         // releases any held voices before we add this block's new events
-        // on top. CC 64 = sustain pedal off, CC 123 = all notes off.
+        // on top. CC 64 = sustain pedal off, CC 123 = all notes off,
+        // CC 120 = all sound off (the hard-stop fallback).
         // We hit all 16 channels because we don't track which channels
         // had active notes - cheap brute-force is fine, the synth ignores
         // the redundant channels in the same processBlock pass.
@@ -4987,7 +4988,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         constexpr int kGeneratedEventBytes = 6 + 3;
         constexpr int kGeneratedMidiBudget = 2 * (int) dusk::kMidiBlockBytes;
         constexpr int kMidiScheduleScanBudget = 32768;
-        constexpr int kHangingResetMessageCount = 16 * 2;
+        constexpr int kHangingResetMessageCount = 16 * 3;
         constexpr int kHangingResetBytes = kHangingResetMessageCount
                                          * kGeneratedEventBytes;
         static_assert (kGeneratedMidiBudget
@@ -5030,7 +5031,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         };
         auto emitHangingMidiReset = [&] (int sampleOffset) noexcept
         {
-            // A reset is structural: either all 32 three-byte messages fit or
+            // A reset is structural: either all 48 three-byte messages fit or
             // none are emitted. Discretionary scheduling reserves this exact
             // capacity before it can consume the shared generated-event budget.
             if (! generatedMidiBudget.consumeStructural (kHangingResetBytes))
@@ -5041,10 +5042,14 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                     (std::uint8_t) (0xB0 | (ch - 1)), 64, 0 };
                 const std::array<std::uint8_t, 3> allNotesOff {
                     (std::uint8_t) (0xB0 | (ch - 1)), 123, 0 };
+                const std::array<std::uint8_t, 3> allSoundOff {
+                    (std::uint8_t) (0xB0 | (ch - 1)), 120, 0 };
                 if (! perTrackMidi[(size_t) t].addEvent (
                         sustainOff.data(), (int) sustainOff.size(), sampleOffset)
                     || ! perTrackMidi[(size_t) t].addEvent (
-                        allNotesOff.data(), (int) allNotesOff.size(), sampleOffset))
+                        allNotesOff.data(), (int) allNotesOff.size(), sampleOffset)
+                    || ! perTrackMidi[(size_t) t].addEvent (
+                        allSoundOff.data(), (int) allSoundOff.size(), sampleOffset))
                     return false;
             }
             return true;
@@ -5063,7 +5068,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
         //     and apply the per-track channel filter.
         // The strip's instrument plugin then sees one unified buffer.
         // Note: scratch already cleared above by the flush block, plus any
-        // emitted All Notes Off events. Both source paths add to those.
+        // emitted panic events. Both source paths add to those.
         // Live-input MIDI pull. Shared by the stopped/record live-monitor
         // branch and the play-along overlay in the disk-playback branch:
         // applies the per-track channel filter, mirrors the dusk->juce raw-byte
