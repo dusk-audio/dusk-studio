@@ -25,8 +25,8 @@ namespace duskstudio::platform
 // Why a dedicated module rather than scattered #if guards: every
 // "Linux fix" we've needed (focus-stealing-prevention defeat, X server
 // flush before window destruction) has a Mac and Windows analogue
-// (NSApp activate, AllowSetForegroundWindow / SetForegroundWindow on
-// Win, RunLoop drain on Mac). Keeping the contract uniform makes the
+// (NSApp activation, foreground activation / taskbar notice on Win,
+// RunLoop drain on Mac). Keeping the contract uniform makes the
 // fix slot obvious when the equivalent bug surfaces on the other
 // platforms - and the user develops on macOS but only smoke-tests on
 // Linux, so the platform asymmetry of past bug reports does NOT mean
@@ -60,8 +60,9 @@ double nativeViewBackingScale (void* nativeViewHandle);
 // Linux: _NET_WM_USER_TIME = max-int + WM_CHANGE_STATE NormalState +
 //        _NET_ACTIVE_WINDOW (source = pager) - the ICCCM/EWMH dance
 //        that defeats Mutter's focus-stealing-prevention policy.
-// macOS: [NSApp activateIgnoringOtherApps:YES] then makeKeyAndOrderFront.
-// Win:   AllowSetForegroundWindow + SetForegroundWindow.
+// macOS: activate NSApp, restore if minimized, then makeKeyAndOrderFront.
+// Win:   restore if minimized, request foreground focus, and flash the
+//        taskbar if Windows' focus policy denies activation.
 //
 // Must be called on the message thread, AFTER the peer exists (i.e.
 // after addToDesktop / setVisible(true)). No-op if peer is null.

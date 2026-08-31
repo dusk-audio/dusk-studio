@@ -4,10 +4,9 @@
 #define NOMINMAX
 #include <windows.h>
 
-// Stubs for now. Win32 equivalents (eventual implementations):
-//   bringWindowToFront     -> AllowSetForegroundWindow(GetCurrentProcessId())
-//                              + SetForegroundWindow(hwnd) on the
-//                              peer's HWND (peer.getNativeHandle()).
+// Native counterparts to the Linux windowing operations. A peer's native
+// handle is its HWND; Win32 owns restoration, activation and taskbar notice.
+// The remaining operations are intentionally small platform hooks:
 //   flushWindowOperations  -> while (PeekMessage(&msg, ...)) DispatchMessage.
 //   prepareNativePeer...   -> no-op (Win32 SetParent is synchronous).
 
@@ -95,7 +94,33 @@ private:
 };
 } // namespace
 
-void bringWindowToFront (juce::ComponentPeer&)             {}
+void bringWindowToFront (juce::ComponentPeer& peer)
+{
+    auto* const hwnd = static_cast<HWND> (peer.getNativeHandle());
+    if (hwnd == nullptr || ! ::IsWindow (hwnd)) return;
+
+    if (::IsIconic (hwnd))
+        ::ShowWindow (hwnd, SW_RESTORE);
+    else if (! ::IsWindowVisible (hwnd))
+        ::ShowWindow (hwnd, SW_SHOW);
+
+    // Windows may refuse foreground activation when this process did not
+    // receive the user's most recent input. Ask through the documented path,
+    // then respect that policy and flash the taskbar instead of attaching
+    // input queues or otherwise forcing focus.
+    ::AllowSetForegroundWindow (::GetCurrentProcessId());
+    if (::SetForegroundWindow (hwnd) == FALSE)
+    {
+        auto info = FLASHWINFO {
+            sizeof (FLASHWINFO),
+            hwnd,
+            FLASHW_TRAY | FLASHW_TIMERNOFG,
+            3,
+            0
+        };
+        ::FlashWindowEx (&info);
+    }
+}
 void flushWindowOperations()                                {}
 void prepareNativePeerForChildAttach (juce::ComponentPeer&) {}
 

@@ -2,16 +2,9 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #import <AppKit/AppKit.h>   // NSCursor (hide/unhide) - not pulled in transitively
 
-// Stubs for now. The Mac/Win equivalents of the Linux fixes haven't
-// surfaced yet because the user smoke-tests on Linux only - but the
-// fix slots need to exist so when (not if) the bugs appear, the
-// scope of the change is one platform-impl file rather than a
-// cross-cutting refactor. See PlatformWindowing.h for the eventual
-// per-platform implementations:
-//   bringWindowToFront     -> [NSApp activateIgnoringOtherApps:YES]
-//                              + makeKeyAndOrderFront on the peer's
-//                              NSWindow (peer.getNativeHandle() returns
-//                              the NSView; .window pulls the window).
+// Native counterparts to the Linux windowing operations. A peer's native
+// handle is its NSView; the containing NSWindow owns activation and ordering.
+// The remaining operations are intentionally small platform hooks:
 //   flushWindowOperations  -> drain a single NSRunLoop iteration with
 //                              dateLimit = +1 ms.
 //   prepareNativePeer...   -> no-op (NSView reparenting is
@@ -113,7 +106,24 @@ double nativeViewBackingScale (void* nativeViewHandle)
                                        : [[NSScreen mainScreen] backingScaleFactor];
     return scale > 0.0 ? scale : 1.0;
 }
-void bringWindowToFront (juce::ComponentPeer&)             {}
+void bringWindowToFront (juce::ComponentPeer& peer)
+{
+    auto* const view = static_cast<NSView*> (peer.getNativeHandle());
+    auto* const window = view != nil ? [view window] : nil;
+    if (window == nil) return;
+
+    // NSApplication::activate is the supported API on macOS 14+, while the
+    // deployment target remains macOS 11. Keep the older API only as the
+    // availability fallback for systems where activate does not exist.
+    if (@available(macOS 14.0, *))
+        [NSApp activate];
+    else
+        [NSApp activateIgnoringOtherApps:YES];
+
+    if ([window isMiniaturized])
+        [window deminiaturize:nil];
+    [window makeKeyAndOrderFront:nil];
+}
 void flushWindowOperations()                                {}
 void prepareNativePeerForChildAttach (juce::ComponentPeer&) {}
 
