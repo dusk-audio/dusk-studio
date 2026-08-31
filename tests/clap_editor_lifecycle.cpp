@@ -143,18 +143,33 @@ TEST_CASE ("the X11 empty-container check ignores pixels outside the visual dept
 }
 
 TEST_CASE ("a CLAP gui show() that reports failure keeps the editor",
-           "[clap][editor][regression][issue-361]")
+           "[clap][editor][regression][issue-361][issue-391]")
 {
-    const auto source = readSource ("src/engine/clap/ClapEditor.cpp");
-    const auto embed = source.find ("bool ClapEditor::embed");
-    const auto show = source.find ("gui->show", embed);
-    REQUIRE (show != std::string::npos);
+    for (const char* path : { "src/engine/clap/ClapEditor.cpp",
+                              "src/engine/clap/ClapEditor_Win.cpp",
+                              "src/engine/clap/ClapEditor_Mac.mm" })
+    {
+        const auto source = readSource (path);
+        const auto embed = source.find ("bool ClapEditor::embed");
+        const auto body = source.find ('{', embed);
+        const auto nextMethod = source.find ("ClapEditor::", body + 1);
+        const auto show = source.find ("gui->show", body);
+        const auto result = source.find ("const bool shown", body);
+        const auto castDiagnostic = source.find ("(int) shown", show);
+        const auto branchDiagnostic = source.find ("shown ?", show);
 
-    // Everything from the show call to the end of embed(): a close() there would
-    // destroy a GUI that may well be about to draw, leaving a blank editor.
-    const auto embedEnd = source.find ("\n}", show);
-    REQUIRE (embedEnd != std::string::npos);
-    REQUIRE (source.find ("close()", show) > embedEnd);
+        INFO (path);
+        REQUIRE (embed != std::string::npos);
+        REQUIRE (body != std::string::npos);
+        REQUIRE (nextMethod != std::string::npos);
+        REQUIRE (show < nextMethod);
+        REQUIRE (result < show);
+        REQUIRE ((castDiagnostic < nextMethod || branchDiagnostic < nextMethod));
+
+        // Tearing down after show() would destroy a GUI that may still draw.
+        REQUIRE (source.substr (show, nextMethod - show).find ("close()")
+                 == std::string::npos);
+    }
 }
 
 TEST_CASE ("a failed CLAP embed repaints its error",
