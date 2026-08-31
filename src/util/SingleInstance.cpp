@@ -58,6 +58,7 @@ namespace
 constexpr std::size_t kMaxPayloadBytes = 64 * 1024;
 constexpr int kReadBudgetMs = 2000;
 constexpr int kDeliveryBudgetMs = 2000;
+constexpr int kRefusalRetryMs = 250;
 using Deadline = std::chrono::steady_clock::time_point;
 
 struct Listener
@@ -138,6 +139,7 @@ void makeAddress (const std::string& path, sockaddr_un& addr, socklen_t& len)
     len = (socklen_t) (offsetof (sockaddr_un, sun_path) + path.size() + 1);
 }
 
+#if defined (__APPLE__)
 bool configureFd (int fd, bool nonBlocking)
 {
     const int descriptorFlags = ::fcntl (fd, F_GETFD);
@@ -152,9 +154,15 @@ bool configureFd (int fd, bool nonBlocking)
     }
     return true;
 }
+#endif
 
 int openSocket (bool nonBlocking)
 {
+#if defined (__linux__)
+    int type = SOCK_STREAM | SOCK_CLOEXEC;
+    if (nonBlocking) type |= SOCK_NONBLOCK;
+    return ::socket (AF_UNIX, type, 0);
+#else
     const int fd = ::socket (AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) return -1;
     if (! configureFd (fd, nonBlocking))
@@ -162,34 +170,41 @@ int openSocket (bool nonBlocking)
         ::close (fd);
         return -1;
     }
-#if defined (__APPLE__)
     const int noSigPipe = 1;
     if (::setsockopt (fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, sizeof noSigPipe) != 0)
     {
         ::close (fd);
         return -1;
     }
-#endif
     return fd;
+#endif
 }
 
 bool makeWakePipe (int (&fds)[2])
 {
+#if defined (__linux__)
+    return ::pipe2 (fds, O_CLOEXEC) == 0;
+#else
     if (::pipe (fds) != 0) return false;
     if (configureFd (fds[0], false) && configureFd (fds[1], false)) return true;
     ::close (fds[0]);
     ::close (fds[1]);
     fds[0] = fds[1] = -1;
     return false;
+#endif
 }
 
 int acceptPeer (int fd)
 {
+#if defined (__linux__)
+    return ::accept4 (fd, nullptr, nullptr, SOCK_CLOEXEC | SOCK_NONBLOCK);
+#else
     const int peer = ::accept (fd, nullptr, nullptr);
     if (peer < 0) return -1;
     if (configureFd (peer, true)) return peer;
     ::close (peer);
     return -1;
+#endif
 }
 
 // Closing the listening fd is what makes a later launch fall back to acting as
@@ -404,6 +419,8 @@ Handoff handOver (const sockaddr_un& addr, socklen_t len, const std::string& pay
     failureErrno = 0;
     const auto deadline = std::chrono::steady_clock::now()
                         + std::chrono::milliseconds (kDeliveryBudgetMs);
+    const auto refusalDeadline = std::chrono::steady_clock::now()
+                               + std::chrono::milliseconds (kRefusalRetryMs);
     for (;;)
     {
         const int fd = openSocket (true);
@@ -451,9 +468,9 @@ Handoff handOver (const sockaddr_un& addr, socklen_t len, const std::string& pay
         }
 
         // A simultaneous primary may have bound but not reached listen() yet.
-        // Retry refusals for the bounded delivery window before classifying
-        // the socket as one a dead process left behind.
-        if (std::chrono::steady_clock::now() >= deadline) break;
+        // Retry refusals only long enough to cover the bind-to-listen race.
+        // A dead primary should not add the full delivery timeout to startup.
+        if (std::chrono::steady_clock::now() >= refusalDeadline) break;
         std::this_thread::sleep_for (std::chrono::milliseconds (25));
     }
     return Handoff::Refused;
@@ -793,7 +810,15 @@ void serveConnection (Listener& l)
 #if defined (DUSKSTUDIO_SINGLE_INSTANCE_TESTING)
     if (accepted != 0 && dropNextAcknowledgementForTest.exchange (false)) return;
 #endif
-    transferExact (l.pipe, &accepted, sizeof accepted, true,
+    if (! transferExact (l.pipe, &accepted, sizeof accepted, true,
+                         l.stopEvent, deadline))
+        return;
+
+    // Wait for the client to consume the acknowledgement before disconnecting;
+    // DisconnectNamedPipe discards unread buffered data. This read shares the
+    // handoff deadline and is cancelled by release(), so it cannot block join.
+    unsigned char confirmed = 0;
+    transferExact (l.pipe, &confirmed, sizeof confirmed, false,
                    l.stopEvent, deadline);
 }
 
@@ -872,6 +897,12 @@ Handoff handOver (const std::wstring& pipeName, const std::string& payload,
     unsigned char accepted = 0;
     if (submitted)
         delivered = transferExact (pipe, &accepted, sizeof accepted, false, nullptr, deadline);
+
+    if (delivered)
+    {
+        unsigned char confirmed = 1;
+        transferExact (pipe, &confirmed, sizeof confirmed, true, nullptr, deadline);
+    }
 
     if (! delivered) failureError = ::GetLastError();
     ::CloseHandle (pipe);

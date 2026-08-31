@@ -276,7 +276,9 @@ TEST_CASE ("a refused handoff reclaims a dead primary socket",
     const auto staleInode = inodeOf (sock);
     REQUIRE (staleInode != 0);
 
+    const auto reclaimStarted = std::chrono::steady_clock::now();
     REQUIRE (duskstudio::single_instance::acquire ("", noPayload));
+    REQUIRE (std::chrono::steady_clock::now() - reclaimStarted < std::chrono::seconds (1));
     const auto reclaimedInode = inodeOf (sock);
     ::close (staleFd);
     REQUIRE (reclaimedInode != 0);
