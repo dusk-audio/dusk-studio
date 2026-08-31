@@ -1,10 +1,16 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "foundation/Fs.h"
+#include "session/RecentSessions.h"
 
 #include <juce_core/juce_core.h>
 
+#include <chrono>
+#include <cstdlib>
 #include <filesystem>
+#include <stdexcept>
+#include <string>
+#include <vector>
 
 using namespace dusk;
 namespace stdfs = std::filesystem;
@@ -17,6 +23,90 @@ stdfs::path jucePath (juce::File::SpecialLocationType type)
     // would use the active code page on Windows).
     return stdfs::u8path (juce::File::getSpecialLocation (type).getFullPathName().toStdString());
 }
+
+class ScopedTestSpecialLocations
+{
+public:
+    explicit ScopedTestSpecialLocations (const stdfs::path& value)
+    {
+       #if defined(_WIN32)
+        if (const wchar_t* existing = ::_wgetenv (kWideName))
+        {
+            hadPrevious = true;
+            previous = existing;
+        }
+        if (::_wputenv_s (kWideName, value.c_str()) != 0)
+            throw std::runtime_error ("could not set the special-location test override");
+       #else
+        if (const char* existing = std::getenv (kName))
+        {
+            hadPrevious = true;
+            previous = existing;
+        }
+        const auto encoded = value.u8string();
+        if (::setenv (kName, encoded.c_str(), 1) != 0)
+            throw std::runtime_error ("could not set the special-location test override");
+       #endif
+    }
+
+    ~ScopedTestSpecialLocations()
+    {
+       #if defined(_WIN32)
+        ::_wputenv_s (kWideName, hadPrevious ? previous.c_str() : L"");
+       #else
+        if (hadPrevious) ::setenv (kName, previous.c_str(), 1);
+        else             ::unsetenv (kName);
+       #endif
+    }
+
+    ScopedTestSpecialLocations (const ScopedTestSpecialLocations&) = delete;
+    ScopedTestSpecialLocations& operator= (const ScopedTestSpecialLocations&) = delete;
+    ScopedTestSpecialLocations (ScopedTestSpecialLocations&&) = delete;
+    ScopedTestSpecialLocations& operator= (ScopedTestSpecialLocations&&) = delete;
+
+private:
+    static constexpr const char* kName = "DUSKSTUDIO_TEST_SPECIAL_LOCATIONS_ROOT";
+   #if defined(_WIN32)
+    static constexpr const wchar_t* kWideName = L"DUSKSTUDIO_TEST_SPECIAL_LOCATIONS_ROOT";
+    std::wstring previous {};
+   #else
+    std::string previous {};
+   #endif
+    bool hadPrevious = false;
+};
+
+#if defined(_WIN32)
+class ScopedWideEnvironment
+{
+public:
+    ScopedWideEnvironment (const wchar_t* nameIn, const stdfs::path& value)
+        : name (nameIn)
+    {
+        if (const wchar_t* existing = ::_wgetenv (name.c_str()))
+        {
+            hadPrevious = true;
+            previous = existing;
+        }
+        if (::_wputenv_s (name.c_str(), value.c_str()) != 0)
+            throw std::runtime_error ("could not set a wide environment override");
+    }
+
+    ~ScopedWideEnvironment()
+    {
+        ::_wputenv_s (name.c_str(), hadPrevious ? previous.c_str() : L"");
+    }
+
+    ScopedWideEnvironment (const ScopedWideEnvironment&) = delete;
+    ScopedWideEnvironment& operator= (const ScopedWideEnvironment&) = delete;
+    ScopedWideEnvironment (ScopedWideEnvironment&&) = delete;
+    ScopedWideEnvironment& operator= (ScopedWideEnvironment&&) = delete;
+
+private:
+    std::wstring name;
+    std::wstring previous {};
+    bool hadPrevious = false;
+};
+#endif
 } // namespace
 
 TEST_CASE ("dusk::fs special locations match juce::File", "[foundation][fs]")
@@ -38,13 +128,11 @@ TEST_CASE ("dusk::fs special locations match juce::File", "[foundation][fs]")
 
     SECTION ("tempDir")
     {
-#if defined(__linux__)
+#if defined(__linux__) || defined(_WIN32)
         REQUIRE (fs::tempDir() == jucePath (juce::File::tempDirectory));
 #else
-        // JUCE's macOS/Windows tempDirectory has bespoke semantics
-        // (~/Library/Caches/<exe>, GetTempPath); dusk::fs::tempDir deliberately
-        // follows the POSIX $TMPDIR/TMP convention. Temp files are ephemeral, so
-        // this divergence is intentional — assert only that it is usable.
+        // JUCE's macOS tempDirectory has bespoke ~/Library/Caches/<exe>
+        // semantics; dusk::fs deliberately follows $TMPDIR there.
         REQUIRE (std::filesystem::is_directory (fs::tempDir()));
 #endif
     }
@@ -77,4 +165,60 @@ TEST_CASE ("dusk::fs special locations match juce::File", "[foundation][fs]")
         REQUIRE_FALSE (ec2);
         REQUIRE (dusk == juce);
     }
+}
+
+
+TEST_CASE ("Special locations preserve Unicode paths end to end",
+           "[foundation][fs][windows][issue-379]")
+{
+    const auto root = stdfs::temp_directory_path()
+                    / stdfs::u8path (u8"dusk-locations-\u97f3\u58f0")
+                    / std::to_string ((long long) std::chrono::steady_clock::now()
+                                           .time_since_epoch().count());
+    std::error_code ec;
+    stdfs::remove_all (root, ec);
+    ec.clear();
+    for (const auto* child : { "Home", "Config", "Music", "Temp" })
+    {
+        REQUIRE (stdfs::create_directories (root / child, ec));
+        REQUIRE_FALSE (ec);
+    }
+
+   #if defined(_WIN32)
+    REQUIRE (stdfs::create_directories (root / L"ApiTemp", ec));
+    REQUIRE_FALSE (ec);
+    {
+        const ScopedWideEnvironment temp (L"TEMP", root / L"ApiTemp");
+        const ScopedWideEnvironment tmp (L"TMP", root / L"ApiTemp");
+        REQUIRE (fs::tempDir() == root / L"ApiTemp");
+    }
+   #endif
+
+    {
+        const ScopedTestSpecialLocations locations (root);
+        REQUIRE (fs::userHomeDir() == root / "Home");
+        REQUIRE (fs::userConfigDir() == root / "Config");
+        REQUIRE (fs::userMusicDir() == root / "Music");
+        REQUIRE (fs::tempDir() == root / "Temp");
+
+        const auto session = root / "Home" / stdfs::u8path (u8"session-\u66f8\u304d\u51fa\u3057");
+        REQUIRE (stdfs::create_directories (session, ec));
+        REQUIRE_FALSE (ec);
+        duskstudio::RecentSessions::add (session);
+        REQUIRE (duskstudio::RecentSessions::load() == std::vector<stdfs::path> { session });
+        REQUIRE (stdfs::is_regular_file (root / "Config" / "Dusk Studio" / "recent.txt"));
+
+        const auto work = fs::createUniqueTempDirectory ("dusk-unicode-");
+        REQUIRE_FALSE (work.empty());
+        REQUIRE (work.parent_path() == root / "Temp");
+        REQUIRE (fs::writeStringToFile (work / stdfs::u8path (u8"state-\u72b6\u614b.bin"), "state"));
+        REQUIRE (fs::writeStringToFile (work / stdfs::u8path (u8"import-\u97f3\u58f0.wav"), "audio"));
+        REQUIRE (fs::loadFileAsString (work / stdfs::u8path (u8"state-\u72b6\u614b.bin")) == "state");
+        REQUIRE (fs::loadFileAsString (work / stdfs::u8path (u8"import-\u97f3\u58f0.wav")) == "audio");
+
+        duskstudio::RecentSessions::clear();
+    }
+
+    stdfs::remove_all (root, ec);
+    REQUIRE_FALSE (ec);
 }

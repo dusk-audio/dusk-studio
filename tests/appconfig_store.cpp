@@ -12,26 +12,13 @@ namespace
 {
 namespace stdfs = std::filesystem;
 
-// The store is located from the environment, so a test can point it at a
-// scratch directory instead of the developer's real configuration.
-const char* storeEnvVar()
-{
-   #if defined(_WIN32)
-    return "APPDATA";
-   #else
-    return "HOME";
-   #endif
-}
-
+#if ! defined(_WIN32)
 void setEnv (const char* name, const char* value)
 {
-   #if defined(_WIN32)
-    _putenv_s (name, value != nullptr ? value : "");
-   #else
     if (value != nullptr) ::setenv (name, value, 1);
     else                  ::unsetenv (name);
-   #endif
 }
+#endif
 
 // Redirects the store into a scratch directory and puts the environment back
 // afterwards. XDG_CONFIG_HOME is redirected too: left alone it outranks HOME on
@@ -41,23 +28,36 @@ class ScopedStore
 public:
     explicit ScopedStore (const char* name)
     {
-        if (const char* existing = std::getenv (storeEnvVar()))
+       #if defined(_WIN32)
+        if (const wchar_t* existing = ::_wgetenv (kStoreEnvVar))
+            previousStore = existing;
+       #else
+        if (const char* existing = std::getenv ("HOME"))
             previousStore = existing;
         if (const char* existing = std::getenv ("XDG_CONFIG_HOME"))
             previousXdg = existing;
+       #endif
 
         root = stdfs::temp_directory_path() / "dusk-appconfig" / name;
         std::error_code ec;
         stdfs::remove_all (root, ec);
         stdfs::create_directories (root, ec);
-        setEnv (storeEnvVar(), root.string().c_str());
+       #if defined(_WIN32)
+        ::_wputenv_s (kStoreEnvVar, root.c_str());
+       #else
+        setEnv ("HOME", root.string().c_str());
         setEnv ("XDG_CONFIG_HOME", (root / ".config").string().c_str());
+       #endif
     }
 
     ~ScopedStore()
     {
-        setEnv (storeEnvVar(), previousStore.empty() ? nullptr : previousStore.c_str());
+       #if defined(_WIN32)
+        ::_wputenv_s (kStoreEnvVar, previousStore.c_str());
+       #else
+        setEnv ("HOME", previousStore.empty() ? nullptr : previousStore.c_str());
         setEnv ("XDG_CONFIG_HOME", previousXdg.empty() ? nullptr : previousXdg.c_str());
+       #endif
     }
 
     // Located rather than constructed: the directory layout under the
@@ -89,8 +89,13 @@ public:
 
 private:
     stdfs::path root;
+   #if defined(_WIN32)
+    static constexpr const wchar_t* kStoreEnvVar = L"DUSKSTUDIO_TEST_SPECIAL_LOCATIONS_ROOT";
+    std::wstring previousStore;
+   #else
     std::string previousStore;
     std::string previousXdg;
+   #endif
 };
 } // namespace
 

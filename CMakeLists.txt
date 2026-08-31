@@ -1537,6 +1537,11 @@ target_link_libraries(DuskStudio PRIVATE
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
 
+if(WIN32)
+    # Wide special-folder resolution in foundation/Fs.h.
+    target_link_libraries(DuskStudio PRIVATE shell32 ole32)
+endif()
+
 # LTO is on by default for release builds (5-10% smaller binary, slight perf
 # win) but it serializes the GCC link stage — lto-wrapper runs LTRANS jobs
 # one at a time, idling 127 of your 128 cores for 2-4 minutes per build.
