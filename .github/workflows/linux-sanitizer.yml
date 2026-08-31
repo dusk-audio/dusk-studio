@@ -1,10 +1,10 @@
-name: Linux sanitizer (TSan)
+name: Linux sanitizers
 
-# Validates the lock-free atomic / SPSC FIFO / message-thread-only
-# discipline in the engine (CLAUDE.md "Audio thread rules") by running
-# the Catch2 test binary under ThreadSanitizer. Runs on every PR + push
-# to main so a regression in the engine's RT-safety contract trips CI
-# rather than landing silently.
+# Runs the Catch2 inventory under complementary sanitizer runtimes:
+# ThreadSanitizer covers the engine's lock-free and message-thread rules,
+# while AddressSanitizer + UndefinedBehaviorSanitizer cover lifetime, bounds,
+# and invalid-value defects. They use separate jobs because their shadow-memory
+# runtimes cannot coexist in one process.
 
 on:
   push:
@@ -20,6 +20,10 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Both sanitizer jobs must compile the same donor snapshot.
+  DONOR_REV: 0a1b17f8e9dbecd26bf78dd45704c6c149e4b2ea
 
 jobs:
   tsan-tests:
@@ -116,7 +120,6 @@ jobs:
         # clone breaks configure. Bump every workflow's DONOR_REV together.
         env:
           DONOR_REPO: https://github.com/dusk-audio/dusk-audio-plugins.git
-          DONOR_REV: 0a1b17f8e9dbecd26bf78dd45704c6c149e4b2ea
         run: |
           set -euo pipefail
           git init -q "${RUNNER_TEMP}/plugins-main"
@@ -163,6 +166,125 @@ jobs:
         run: |
           ctest --test-dir build-tsan --output-on-failure \
                 -E "VCA detector mode toggle is a no-op|FET has no GR-driven sub-bass HPF"
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s
+
+  asan-ubsan-tests:
+    name: Catch2 tests (ASan + UBSan, Ubuntu 22.04)
+    runs-on: ubuntu-22.04
+
+    env:
+      # LeakSanitizer stays enabled for the general suite. The five tests that
+      # deliberately park live allocations for shutdown safety are rerun in a
+      # separate step with leak detection disabled only for those processes.
+      ASAN_OPTIONS: "halt_on_error=1:abort_on_error=1:detect_leaks=1:symbolize=1"
+      UBSAN_OPTIONS: "halt_on_error=1:abort_on_error=1:print_stacktrace=1"
+      ASAN_SYMBOLIZER_PATH: /usr/bin/llvm-symbolizer
+
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 500M
+
+    steps:
+      - name: Checkout Dusk Studio
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install Linux build deps
+        uses: ./.github/actions/apt-deps
+        with:
+          packages: >-
+            build-essential cmake ninja-build pkg-config ccache
+            llvm
+            libasound2-dev libjack-jackd2-dev libmp3lame-dev libsndfile1-dev libsodium-dev
+            libpipewire-0.3-dev
+            liblilv-dev libsuil-dev lv2-dev
+            ladspa-sdk
+            libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev
+            libxinerama-dev libxrandr-dev libxrender-dev libxss-dev
+            libwebkit2gtk-4.0-dev libgl1-mesa-dev libglu1-mesa-dev xvfb
+            libwayland-dev libxkbcommon-dev libdecor-0-dev
+
+      - name: Cache ccache objects
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-linux-asan-ubsan-${{ github.sha }}
+          restore-keys: |
+            ccache-linux-asan-ubsan-
+
+      - name: Clone JUCE (Dusk-owned Wayland mirror, pinned)
+        env:
+          JUCE_MIRROR: https://github.com/dusk-audio/JUCE-wayland.git
+          JUCE_TAG: dusk-wayland-v2
+          JUCE_REV: 4d85afa175a45e0b5da11f9211de3ba88705588e
+        run: |
+          set -euo pipefail
+          git init -q "${RUNNER_TEMP}/JUCE-wayland"
+          cd "${RUNNER_TEMP}/JUCE-wayland"
+          git remote add origin "${JUCE_MIRROR}"
+          git fetch --depth 1 origin "refs/tags/${JUCE_TAG}"
+          git checkout -q FETCH_HEAD
+          [[ "$(git rev-parse HEAD)" == "${JUCE_REV}" ]] || {
+            echo "ERROR: JUCE checkout $(git rev-parse HEAD) != pinned ${JUCE_REV}" >&2; exit 1; }
+          grep -q "SIMDNativeOps<long long>" \
+            modules/juce_dsp/native/juce_SIMDNativeOps_sse.h || {
+            echo "ERROR: pinned JUCE missing the SIMDNativeOps<long long> alias." >&2; exit 1; }
+
+      - name: Clone Dusk plugins (donor DSP, pinned)
+        env:
+          DONOR_REPO: https://github.com/dusk-audio/dusk-audio-plugins.git
+        run: |
+          set -euo pipefail
+          git init -q "${RUNNER_TEMP}/plugins-main"
+          cd "${RUNNER_TEMP}/plugins-main"
+          git remote add origin "${DONOR_REPO}"
+          git fetch --depth 1 origin "${DONOR_REV}"
+          git checkout -q "${DONOR_REV}"
+          [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
+            echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
+
+      - name: Clone DAF stack (dusk-audio forks, pinned)
+        uses: ./.github/actions/clone-daf-stack
+
+      - name: Configure tests (ASan + UBSan, RelWithDebInfo)
+        run: |
+          cmake -S . -B build-asan -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DDUSKSTUDIO_BUILD_TESTS=ON \
+            -DDUSKSTUDIO_ENABLE_ASAN=ON \
+            -DDUSKSTUDIO_SKIP_FORK_CHECK=ON \
+            -DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON \
+            -DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
+            -DDAF_PATH="${RUNNER_TEMP}/DAF" \
+            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets"
+
+      - name: Build tests (ASan + UBSan)
+        run: cmake --build build-asan --target dusk-studio-tests -j6
+
+      - name: Run suite with LeakSanitizer enabled
+        # These are the only tests whose contract intentionally retains a live
+        # allocation after exit: NativeInsertSlot parks an instance whose
+        # shutdown cannot be trusted, ALSA parks a device still referenced by a
+        # detached formerly wedged I/O thread, and the three TapeMachine donor
+        # parity cases keep JUCE's message-loop initialiser alive so its timer
+        # cannot race teardown. Every other test runs with leak detection on.
+        run: |
+          ctest --test-dir build-asan --output-on-failure \
+            -E '^(NativeInsertSlot bumps its generation on every identity change|AlsaAudioIODevice: wedged I/O thread leaks the device, never frees it|TapeMachineDSP nulls against the JUCE donor at 1x|TapeMachineDSP tracks the JUCE donor within tolerance at 2x and 4x|TapeMachineDSP latency is stable per oversampling factor)$'
+
+      - name: Run leak-for-safety tests under ASan + UBSan
+        env:
+          ASAN_OPTIONS: "halt_on_error=1:abort_on_error=1:detect_leaks=0:symbolize=1"
+        run: |
+          ctest --test-dir build-asan --output-on-failure \
+            -R '^(NativeInsertSlot bumps its generation on every identity change|AlsaAudioIODevice: wedged I/O thread leaks the device, never frees it|TapeMachineDSP nulls against the JUCE donor at 1x|TapeMachineDSP tracks the JUCE donor within tolerance at 2x and 4x|TapeMachineDSP latency is stable per oversampling factor)$'
 
       - name: ccache stats
         if: always()
