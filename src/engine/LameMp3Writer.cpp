@@ -19,6 +19,16 @@ int mp3BufferCapacity (int numFrames) noexcept
 // Deinterleave + encode this many frames per LAME call, so writeInterleaved
 // stays allocation-free for any ring-chunk size the drain hands it.
 constexpr int kEncodeChunkFrames = 1 << 14;
+
+std::FILE* openOutputFile (const std::filesystem::path& path) noexcept
+{
+#if defined (_WIN32)
+    std::FILE* output = nullptr;
+    return ::_wfopen_s (&output, path.c_str(), L"wb") == 0 ? output : nullptr;
+#else
+    return std::fopen (path.c_str(), "wb");
+#endif
+}
 } // namespace
 
 LameMp3Writer::LameMp3Writer (const std::filesystem::path& path, double sampleRate,
@@ -26,7 +36,7 @@ LameMp3Writer::LameMp3Writer (const std::filesystem::path& path, double sampleRa
     : channels (std::clamp (numChannels, 1, 2)),
       bitrate (bitrateKbps)
 {
-    file = std::fopen (path.string().c_str(), "wb");
+    file = openOutputFile (path);
     if (file == nullptr)
         return;
 #if DUSKSTUDIO_HAS_LAME

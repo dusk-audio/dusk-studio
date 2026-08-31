@@ -629,13 +629,14 @@ if(DUSK_PLUGINS_PATH)
         JucePlugin_ProducesMidiOutput=0)
 endif()
 
-# MP3 bounce writer — only when libmp3lame is available (mirrors the app build).
+# The native path-opening regression runs even without LAME; encoding coverage
+# is enabled when libmp3lame is available (mirrors the app build).
+target_sources(dusk-studio-tests PRIVATE
+    lame_mp3_writer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/engine/LameMp3Writer.cpp)
 find_path(LAME_INCLUDE_DIR NAMES lame/lame.h)
 find_library(LAME_LIBRARY NAMES mp3lame lame)
 if(LAME_INCLUDE_DIR AND LAME_LIBRARY)
-    target_sources(dusk-studio-tests PRIVATE
-        lame_mp3_writer.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../src/engine/LameMp3Writer.cpp)
     target_include_directories(dusk-studio-tests PRIVATE "${LAME_INCLUDE_DIR}")
     target_link_libraries(dusk-studio-tests PRIVATE "${LAME_LIBRARY}")
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_LAME=1)

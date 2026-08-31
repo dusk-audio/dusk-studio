@@ -1,15 +1,20 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "../src/engine/LameMp3Writer.h"
+#include "TestTempDirectory.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
+#include <array>
 #include <cmath>
+#include <fstream>
+#include <system_error>
 #include <vector>
 
 using namespace duskstudio;
 
 namespace
 {
+#if DUSKSTUDIO_HAS_LAME
 // Encode `src` to a fresh temp .mp3 via LameMp3Writer and return the file.
 juce::File encodeToMp3 (const juce::AudioBuffer<float>& src, double sr, int bitrate)
 {
@@ -26,8 +31,10 @@ juce::File encodeToMp3 (const juce::AudioBuffer<float>& src, double sr, int bitr
     REQUIRE (writer.writeInterleaved (interleaved.data(), n));
     return mp3;   // writer destructor (end of scope) flushes + closes
 }
+#endif
 }
 
+#if DUSKSTUDIO_HAS_LAME
 // JUCE bundles no MP3 *decoder* by default, so verify the bytes structurally:
 // a valid MPEG-1 Layer III frame header at the chosen rate/bitrate, a file size
 // consistent with CBR, and — the part that proves the audio actually reached the
@@ -99,4 +106,38 @@ TEST_CASE ("LameMp3Writer emits a valid 48k/320k MP3 carrying the signal", "[mp3
 
     sineMp3.deleteFile();
     silenceMp3.deleteFile();
+}
+#endif
+
+TEST_CASE ("LameMp3Writer writes and reopens a Unicode path", "[mp3][issue-381]")
+{
+    duskstudio::test::TempDirectory temp ("dusk-mp3-unicode");
+    const auto unicodeDir = temp.path() / std::filesystem::u8path (u8"audio-\u97f3\u58f0");
+    const auto mp3 = unicodeDir / std::filesystem::u8path (u8"bounce-\u66f8\u304d\u51fa\u3057.mp3");
+
+    std::error_code ec;
+    REQUIRE (std::filesystem::create_directory (unicodeDir, ec));
+    REQUIRE_FALSE (ec);
+
+    {
+        LameMp3Writer writer (mp3, 48000.0, 2, 320);
+        REQUIRE (writer.fileOpened());
+
+#if DUSKSTUDIO_HAS_LAME
+        REQUIRE (writer.isOk());
+        std::array<float, 2304> silence {};
+        REQUIRE (writer.writeInterleaved (silence.data(), (std::int64_t) silence.size() / 2));
+        REQUIRE (writer.flush());
+#endif
+    }
+
+    std::ifstream input (mp3, std::ios::binary);
+    REQUIRE (input.is_open());
+#if DUSKSTUDIO_HAS_LAME
+    CHECK (input.peek() != std::ifstream::traits_type::eof());
+#endif
+
+    const auto missingParent = unicodeDir / "missing" / std::filesystem::u8path (u8"bounce-\u97f3\u58f0.mp3");
+    LameMp3Writer missingWriter (missingParent, 48000.0, 2, 320);
+    CHECK_FALSE (missingWriter.fileOpened());
 }
