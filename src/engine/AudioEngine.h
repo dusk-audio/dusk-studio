@@ -994,7 +994,7 @@ private:
     bool deviceFallbackHold_ = false;
 
     // Audio-thread-only. Together these let us detect two events that
-    // require a per-block "All Notes Off" flush:
+    // require a per-block hanging-note panic:
     //   - rolling -> stopped: held notes from playback or live input
     //     would otherwise sustain forever.
     //   - playhead discontinuity (loop wrap, scrub): notes whose Note

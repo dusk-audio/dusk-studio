@@ -18,6 +18,7 @@ constexpr const char* kFeatures[] = { CLAP_PLUGIN_FEATURE_AUDIO_EFFECT,
 struct PluginData
 {
     std::uint32_t processCount = 0;
+    bool voiceActive = false;
 };
 
 const clap_plugin_descriptor_t kDescriptor {
@@ -54,6 +55,27 @@ bool CLAP_ABI audioPortGet (const clap_plugin_t*, uint32_t index, bool isInput,
 }
 
 const clap_plugin_audio_ports_t kAudioPorts { audioPortCount, audioPortGet };
+
+uint32_t CLAP_ABI notePortCount (const clap_plugin_t*, bool isInput)
+{
+    return isInput ? 1u : 0u;
+}
+
+bool CLAP_ABI notePortGet (const clap_plugin_t*, uint32_t index, bool isInput,
+                           clap_note_port_info_t* info)
+{
+    if (! isInput || index != 0 || info == nullptr) return false;
+    *info = {};
+    info->id = 0;
+    std::snprintf (info->name, sizeof (info->name), "Note input");
+    // Deliberately CLAP-only: raw MIDI controllers are unavailable, so the
+    // host must translate its transport panic into a CLAP note event.
+    info->supported_dialects = CLAP_NOTE_DIALECT_CLAP;
+    info->preferred_dialect = CLAP_NOTE_DIALECT_CLAP;
+    return true;
+}
+
+const clap_plugin_note_ports_t kNotePorts { notePortCount, notePortGet };
 
 bool writeAll (const clap_ostream_t* stream, const void* data, std::uint64_t size)
 {
@@ -125,7 +147,10 @@ bool CLAP_ABI pluginActivate (const clap_plugin_t*, double, uint32_t, uint32_t) 
 void CLAP_ABI pluginDeactivate (const clap_plugin_t*) {}
 bool CLAP_ABI pluginStart (const clap_plugin_t*) { return true; }
 void CLAP_ABI pluginStop (const clap_plugin_t*) {}
-void CLAP_ABI pluginReset (const clap_plugin_t*) {}
+void CLAP_ABI pluginReset (const clap_plugin_t* plugin)
+{
+    static_cast<PluginData*> (plugin->plugin_data)->voiceActive = false;
+}
 
 clap_process_status CLAP_ABI pluginProcess (const clap_plugin_t* plugin,
                                             const clap_process_t* process)
@@ -133,6 +158,23 @@ clap_process_status CLAP_ABI pluginProcess (const clap_plugin_t* plugin,
     if (process == nullptr || process->audio_inputs_count != 2
         || process->audio_outputs_count != 2)
         return CLAP_PROCESS_ERROR;
+
+    auto* data = static_cast<PluginData*> (plugin->plugin_data);
+    if (process->in_events != nullptr)
+    {
+        const auto count = process->in_events->size (process->in_events);
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            const auto* event = process->in_events->get (process->in_events, i);
+            if (event == nullptr || event->space_id != CLAP_CORE_EVENT_SPACE_ID)
+                continue;
+            if (event->type == CLAP_EVENT_NOTE_ON)
+                data->voiceActive = true;
+            else if (event->type == CLAP_EVENT_NOTE_OFF
+                     || event->type == CLAP_EVENT_NOTE_CHOKE)
+                data->voiceActive = false;
+        }
+    }
 
     for (uint32_t port = 0; port < 2; ++port)
     {
@@ -152,18 +194,20 @@ clap_process_status CLAP_ABI pluginProcess (const clap_plugin_t* plugin,
         for (uint32_t channel = 0; channel < 2; ++channel)
         {
             process->audio_outputs[0].data32[channel][frame]
-                = process->audio_inputs[0].data32[channel][frame];
+                = process->audio_inputs[0].data32[channel][frame]
+                    + (data->voiceActive ? 0.25f : 0.0f);
             process->audio_outputs[1].data32[channel][frame]
                 = process->audio_inputs[1].data32[channel][frame];
         }
     }
-    ++static_cast<PluginData*> (plugin->plugin_data)->processCount;
+    ++data->processCount;
     return CLAP_PROCESS_CONTINUE;
 }
 
 const void* CLAP_ABI pluginExtension (const clap_plugin_t*, const char* id)
 {
     if (std::strcmp (id, CLAP_EXT_AUDIO_PORTS) == 0) return &kAudioPorts;
+    if (std::strcmp (id, CLAP_EXT_NOTE_PORTS) == 0) return &kNotePorts;
     if (std::strcmp (id, CLAP_EXT_STATE) == 0) return &kState;
     return nullptr;
 }

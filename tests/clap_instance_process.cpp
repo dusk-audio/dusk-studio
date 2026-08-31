@@ -11,7 +11,9 @@
 #include "engine/hosting/InsertAdapter.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -27,10 +29,11 @@ TEST_CASE ("ClapInstance connects every advertised bus and tolerates duplicate m
 
     duskstudio::clap::ClapInstance inst;
     REQUIRE (inst.create (bundle, bundle.plugins().front().id, err));
-    REQUIRE (inst.portLayout().inputs.size() == 2);
+    REQUIRE (inst.portLayout().inputs.size() == 3);
     REQUIRE (inst.portLayout().outputs.size() == 2);
     REQUIRE (inst.portLayout().mainInIndex == 0);
     REQUIRE (inst.portLayout().mainOutIndex == 0);
+    REQUIRE (inst.portLayout().eventInIndex == 2);
     REQUIRE (inst.activate (48000.0, 64, err));
 
     duskstudio::hosting::InsertAdapter adapter;
@@ -50,6 +53,56 @@ TEST_CASE ("ClapInstance connects every advertised bus and tolerates duplicate m
         REQUIRE_THAT (left[i], Catch::Matchers::WithinAbs (expectedLeft[i], 1.0e-7f));
         REQUIRE_THAT (right[i], Catch::Matchers::WithinAbs (expectedRight[i], 1.0e-7f));
     }
+}
+
+TEST_CASE ("ClapInstance chokes CLAP-only voices on the transport panic",
+           "[clap][instance][midi][regression][issue-402]")
+{
+    duskstudio::clap::ClapBundle bundle;
+    std::string err;
+    REQUIRE (bundle.load (DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH, err));
+    REQUIRE (bundle.plugins().size() == 1);
+
+    duskstudio::clap::ClapInstance inst;
+    REQUIRE (inst.create (bundle, bundle.plugins().front().id, err));
+    REQUIRE (inst.activate (48000.0, 64, err));
+
+    std::array<float, 64> inL {}, inR {}, outL {}, outR {};
+    float* inputs[] = { inL.data(), inR.data() };
+    float* outputs[] = { outL.data(), outR.data() };
+    duskstudio::hosting::PortBuffers io;
+    io.mainIn = inputs;
+    io.mainInChannels = 2;
+    io.mainOut = outputs;
+    io.mainOutChannels = 2;
+    io.numFrames = 64;
+
+    dusk::MidiBuffer noteOn;
+    const std::array<std::uint8_t, 3> note { 0x90, 60, 100 };
+    REQUIRE (noteOn.addEvent (note.data(), (int) note.size(), 0));
+    io.midiIn = &noteOn;
+    inst.processBlock (io);
+    REQUIRE_THAT (outL[0], Catch::Matchers::WithinAbs (0.25f, 1.0e-7f));
+
+    // This is the engine's transport-stop sequence. The fixture advertises
+    // only CLAP note events, so raw CCs cannot reach it; CC 120 must become a
+    // wildcard CLAP NOTE_CHOKE and silence the latched voice.
+    dusk::MidiBuffer panic;
+    for (int channel = 0; channel < 16; ++channel)
+    {
+        for (const std::uint8_t controller : { std::uint8_t { 64 },
+                                               std::uint8_t { 123 },
+                                               std::uint8_t { 120 } })
+        {
+            const std::array<std::uint8_t, 3> cc {
+                (std::uint8_t) (0xB0 | channel), controller, 0 };
+            REQUIRE (panic.addEvent (cc.data(), (int) cc.size(), 0));
+        }
+    }
+    io.midiIn = &panic;
+    inst.processBlock (io);
+    REQUIRE_THAT (outL[0], Catch::Matchers::WithinAbs (0.0f, 1.0e-7f));
+    REQUIRE_THAT (outR[0], Catch::Matchers::WithinAbs (0.0f, 1.0e-7f));
 }
 
 TEST_CASE ("ClapInstance loads + processes a real CLAP plugin", "[clap][instance]")
