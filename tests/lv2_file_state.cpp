@@ -10,6 +10,7 @@
 
 #include <filesystem>
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -21,6 +22,7 @@ namespace
 {
 namespace fs = std::filesystem;
 constexpr const char* kPluginUri = "urn:duskstudio:test:file-state";
+constexpr const char* kControlPluginUri = "urn:duskstudio:test:control-state";
 constexpr const char* kPayload = "dusk-lv2-file-state-v1";
 constexpr const char* kRestorePayload = "dusk-lv2-restore-make-path-v1";
 
@@ -31,6 +33,58 @@ std::string readFile (const fs::path& path)
     std::ifstream input (path, std::ios::binary);
     return { std::istreambuf_iterator<char> (input),
              std::istreambuf_iterator<char>() };
+}
+
+struct PortValueMutation
+{
+    std::string symbol;
+    std::string replacement;
+};
+
+bool replacePortValue (std::vector<uint8_t>& blob, const PortValueMutation& mutation)
+{
+    std::string state (blob.begin(), blob.end());
+    std::string symbolMarker = "lv2:symbol \"";
+    symbolMarker.append (mutation.symbol).append ("\"");
+    const auto symbolPos = state.find (symbolMarker);
+    if (symbolPos == std::string::npos) return false;
+    const std::string valueMarker = "pset:value ";
+    const auto markerPos = state.find (valueMarker, symbolPos);
+    if (markerPos == std::string::npos) return false;
+    const auto valueBegin = markerPos + valueMarker.size();
+    const auto valueEnd = state.find_first_of (" \t\r\n;]", valueBegin);
+    if (valueEnd == std::string::npos) return false;
+    state.replace (valueBegin, valueEnd - valueBegin, mutation.replacement);
+    blob.assign (state.begin(), state.end());
+    return true;
+}
+
+const duskstudio::lv2::Lv2Instance::ParamInfo* findParam (
+    const duskstudio::lv2::Lv2Instance& instance, const std::string& name)
+{
+    for (int i = 0; i < instance.paramCount(); ++i)
+        if (const auto* param = instance.paramInfo (i);
+            param != nullptr && param->name == name)
+            return param;
+    return nullptr;
+}
+
+double paramValue (const duskstudio::lv2::Lv2Instance& instance,
+                   const std::string& name)
+{
+    const auto* param = findParam (instance, name);
+    if (param == nullptr)
+    {
+        std::string message = "missing LV2 parameter: ";
+        throw std::runtime_error (message.append (name));
+    }
+    double value = 0.0;
+    if (! instance.getParamValue (param->id, value))
+    {
+        std::string message = "unreadable LV2 parameter: ";
+        throw std::runtime_error (message.append (name));
+    }
+    return value;
 }
 
 void requireRestoredAudio (duskstudio::lv2::Lv2Instance& instance)
@@ -227,6 +281,73 @@ TEST_CASE ("LV2 patch parameters are exposed in a stable order",
     std::sort (sorted.begin(), sorted.end());
     REQUIRE (names.size() == 12);
     REQUIRE (names == sorted);
+}
+
+TEST_CASE ("LV2 control-state restore rejects or normalizes corrupt values",
+           "[lv2][state][regression][issue-387]")
+{
+    duskstudio::lv2::Lv2Bundle bundle;
+    std::string error;
+    REQUIRE (bundle.load (DUSKSTUDIO_FILE_STATE_LV2_FIXTURE_PATH, error));
+
+    duskstudio::lv2::Lv2Instance source;
+    REQUIRE (source.create (bundle, kControlPluginUri, error));
+    REQUIRE (source.activate (48000.0, 32, error));
+    std::vector<uint8_t> cleanState;
+    REQUIRE (source.saveState (cleanState));
+
+    SECTION ("finite values clamp and discrete ports normalize")
+    {
+        auto corruptState = cleanState;
+        REQUIRE (replacePortValue (corruptState, { "gain", "\"1e38\"^^xsd:double" }));
+        REQUIRE (replacePortValue (corruptState, { "toggle", "\"0.25\"^^xsd:float" }));
+        REQUIRE (replacePortValue (corruptState, { "integer", "\"3.6\"^^xsd:float" }));
+        REQUIRE (replacePortValue (corruptState, { "enumeration", "\"3.6\"^^xsd:float" }));
+        REQUIRE (replacePortValue (corruptState, { "unbounded", "\"1e38\"^^xsd:double" }));
+
+        duskstudio::lv2::Lv2Instance restored;
+        REQUIRE (restored.create (bundle, kControlPluginUri, error));
+        REQUIRE (restored.activate (48000.0, 32, error));
+        REQUIRE (restored.loadState (corruptState));
+        CHECK_THAT (paramValue (restored, "Gain"),
+                    Catch::Matchers::WithinAbs (1.0, 1.0e-7));
+        CHECK_THAT (paramValue (restored, "Toggle"),
+                    Catch::Matchers::WithinAbs (1.0, 1.0e-7));
+        CHECK_THAT (paramValue (restored, "Integer"),
+                    Catch::Matchers::WithinAbs (4.0, 1.0e-7));
+        CHECK_THAT (paramValue (restored, "Enumeration"),
+                    Catch::Matchers::WithinAbs (4.0, 1.0e-7));
+        // With no advertised min/max there is no safe basis for clamping, so
+        // the callback rejects the state value and preserves the port default.
+        CHECK_THAT (paramValue (restored, "Unbounded"),
+                    Catch::Matchers::WithinAbs (0.25, 1.0e-7));
+    }
+
+    SECTION ("NaN and infinity cannot publish a non-finite or out-of-range value")
+    {
+        duskstudio::lv2::Lv2Instance restored;
+        REQUIRE (restored.create (bundle, kControlPluginUri, error));
+        REQUIRE (restored.activate (48000.0, 32, error));
+        const auto* gain = findParam (restored, "Gain");
+        REQUIRE (gain != nullptr);
+        restored.setParamValue (gain->id, 0.75);
+
+        auto nanState = cleanState;
+        REQUIRE (replacePortValue (nanState, { "gain", "\"NaN\"^^xsd:float" }));
+        REQUIRE (restored.loadState (nanState));
+        const double afterNan = paramValue (restored, "Gain");
+        CHECK (std::isfinite (afterNan));
+        CHECK (afterNan >= 0.0);
+        CHECK (afterNan <= 1.0);
+
+        auto infinityState = cleanState;
+        REQUIRE (replacePortValue (infinityState, { "gain", "\"INF\"^^xsd:float" }));
+        REQUIRE (restored.loadState (infinityState));
+        const double afterInfinity = paramValue (restored, "Gain");
+        CHECK (std::isfinite (afterInfinity));
+        CHECK (afterInfinity >= 0.0);
+        CHECK (afterInfinity <= 1.0);
+    }
 }
 
 TEST_CASE ("LV2 editor events carry current control and patch values",
