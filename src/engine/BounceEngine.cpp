@@ -136,7 +136,11 @@ std::unique_ptr<dusk::audio::IFileWriteSink>
 BounceEngine::makeWriter (const juce::File& outFile, std::string& errOut) const
 {
     constexpr int kNumChannels = 2;   // bounce is always stereo
-    const auto path = outFile.getFullPathName().toStdString();
+#if defined (_WIN32)
+    const auto path = std::filesystem::path (outFile.getFullPathName().toWideCharPointer());
+#else
+    const auto path = std::filesystem::u8path (outFile.getFullPathName().toStdString());
+#endif
 
     if (renderFormat == Format::Mp3)
     {
