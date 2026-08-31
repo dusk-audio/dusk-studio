@@ -771,17 +771,20 @@ assert all(pins == [pinned_donor.group(1)] for pins in donor_pins.values()), (
 sanitizer_workflow = (
     source_root / ".github" / "workflows" / "linux-sanitizer.yml"
 ).read_text(encoding="utf-8")
+intentional_leak_tests = (
+    "NativeInsertSlot bumps its generation on every identity change",
+    "AlsaAudioIODevice: wedged I/O thread leaks the device, never frees it",
+    "TapeMachineDSP nulls against the JUCE donor at 1x",
+    "TapeMachineDSP tracks the JUCE donor within tolerance at 2x and 4x",
+    "TapeMachineDSP latency is stable per oversampling factor",
+)
 for required in (
     "asan-ubsan-tests:",
     "DUSKSTUDIO_ENABLE_ASAN=ON",
     "ASAN_SYMBOLIZER_PATH: /usr/bin/llvm-symbolizer",
     "halt_on_error=1:abort_on_error=1:detect_leaks=1:symbolize=1",
     "halt_on_error=1:abort_on_error=1:print_stacktrace=1",
-    "NativeInsertSlot bumps its generation on every identity change",
-    "AlsaAudioIODevice: wedged I/O thread leaks the device, never frees it",
-    "TapeMachineDSP nulls against the JUCE donor at 1x",
-    "TapeMachineDSP tracks the JUCE donor within tolerance at 2x and 4x",
-    "TapeMachineDSP latency is stable per oversampling factor",
+    *intentional_leak_tests,
     "detect_leaks=0",
 ):
     assert required in sanitizer_workflow, (
@@ -789,6 +792,11 @@ for required in (
     )
 assert sanitizer_workflow.count("detect_leaks=0") == 1, (
     "LeakSanitizer may be disabled only for the dedicated leak-for-safety rerun"
+)
+intentional_leak_filter = f"'^({'|'.join(intentional_leak_tests)})$'"
+assert sanitizer_workflow.count(intentional_leak_filter) == 2, (
+    "LeakSanitizer's exclude and rerun filters must contain exactly the five "
+    "documented intentional-leak tests"
 )
 
 # Source-built libsodium must come from the release asset hosted alongside the
