@@ -5,9 +5,11 @@
 #include <windows.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 
 // Windows uses a duplex named pipe instead of a Unix-domain socketpair.
 // The pipe name is unique per pair (process id + atomic counter) so
@@ -41,6 +43,71 @@ inline bool handleIsValid (HANDLE h) noexcept
 {
     return h != nullptr && h != INVALID_HANDLE_VALUE;
 }
+
+DWORD timeoutUntil (std::chrono::steady_clock::time_point deadline) noexcept
+{
+    using namespace std::chrono;
+    const auto now = steady_clock::now();
+    if (deadline <= now) return 0;
+    const auto remaining = deadline - now;
+    const auto ms = duration_cast<milliseconds> (remaining + nanoseconds (999999)).count();
+    return ms > (long long) std::numeric_limits<DWORD>::max()
+             ? std::numeric_limits<DWORD>::max()
+             : (DWORD) ms;
+}
+
+bool finishOverlapped (HANDLE handle, OVERLAPPED& operation,
+                       DWORD timeoutMs, DWORD& transferred) noexcept
+{
+    const DWORD waitResult = ::WaitForSingleObject (operation.hEvent, timeoutMs);
+    if (waitResult == WAIT_OBJECT_0)
+        return ::GetOverlappedResult (handle, &operation, &transferred, FALSE) != FALSE;
+
+    // OVERLAPPED and its event must stay alive until cancellation has
+    // completed, including the race where the operation finishes just before
+    // CancelIoEx observes it. Apply the same cleanup to WAIT_FAILED.
+    (void) ::CancelIoEx (handle, &operation);
+    (void) ::WaitForSingleObject (operation.hEvent, INFINITE);
+    DWORD ignored = 0;
+    (void) ::GetOverlappedResult (handle, &operation, &ignored, FALSE);
+    return false;
+}
+
+bool readOverlapped (HANDLE handle, void* buffer, DWORD size,
+                     DWORD timeoutMs, DWORD& transferred) noexcept
+{
+    OVERLAPPED operation {};
+    operation.hEvent = ::CreateEventW (nullptr, TRUE, FALSE, nullptr);
+    if (operation.hEvent == nullptr) return false;
+
+    const BOOL started = ::ReadFile (handle, buffer, size, nullptr, &operation);
+    bool ok = false;
+    if (started != FALSE)
+        ok = ::GetOverlappedResult (handle, &operation, &transferred, FALSE) != FALSE;
+    else if (::GetLastError() == ERROR_IO_PENDING)
+        ok = finishOverlapped (handle, operation, timeoutMs, transferred);
+
+    ::CloseHandle (operation.hEvent);
+    return ok;
+}
+
+bool writeOverlapped (HANDLE handle, const void* buffer, DWORD size,
+                      DWORD& transferred) noexcept
+{
+    OVERLAPPED operation {};
+    operation.hEvent = ::CreateEventW (nullptr, TRUE, FALSE, nullptr);
+    if (operation.hEvent == nullptr) return false;
+
+    const BOOL started = ::WriteFile (handle, buffer, size, nullptr, &operation);
+    bool ok = false;
+    if (started != FALSE)
+        ok = ::GetOverlappedResult (handle, &operation, &transferred, FALSE) != FALSE;
+    else if (::GetLastError() == ERROR_IO_PENDING)
+        ok = finishOverlapped (handle, operation, INFINITE, transferred);
+
+    ::CloseHandle (operation.hEvent);
+    return ok;
+}
 } // namespace
 
 void closeHandle (NativeHandle& h) noexcept
@@ -49,6 +116,8 @@ void closeHandle (NativeHandle& h) noexcept
     if (handleIsValid (w))
         ::CloseHandle (w);
     h.h = nullptr;
+    h.overlapped = false;
+    h.readTimeoutMs = 0;
 }
 
 bool createChannelPair (ChannelPair& out, std::string& errorOut) noexcept
@@ -64,7 +133,7 @@ bool createChannelPair (ChannelPair& out, std::string& errorOut) noexcept
 
     HANDLE server = ::CreateNamedPipeA (
         pipeName,
-        PIPE_ACCESS_DUPLEX,
+        PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
         PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
         1,                  // max instances
         64 * 1024,          // out buffer
@@ -104,6 +173,7 @@ bool createChannelPair (ChannelPair& out, std::string& errorOut) noexcept
     }
 
     storeWinHandle (out.parentEnd, server);
+    out.parentEnd.overlapped = true;
     storeWinHandle (out.childEnd,  client);
     return true;
 }
@@ -149,11 +219,27 @@ bool readExact (NativeHandle& h, void* buf, std::size_t n) noexcept
 {
     auto* p = static_cast<char*> (buf);
     HANDLE w = asWinHandle (h);
+    const auto deadline = h.readTimeoutMs > 0
+                            ? std::chrono::steady_clock::now()
+                                + std::chrono::milliseconds (h.readTimeoutMs)
+                            : std::chrono::steady_clock::time_point::max();
     while (n > 0)
     {
         DWORD got = 0;
-        const BOOL ok = ::ReadFile (w, p, (DWORD) n, &got, nullptr);
-        if (! ok || got == 0) return false;
+        const DWORD chunk = n > (std::size_t) std::numeric_limits<DWORD>::max()
+                              ? std::numeric_limits<DWORD>::max()
+                              : (DWORD) n;
+        if (h.overlapped)
+        {
+            const DWORD timeout = h.readTimeoutMs > 0 ? timeoutUntil (deadline) : INFINITE;
+            if (! readOverlapped (w, p, chunk, timeout, got) || got == 0)
+                return false;
+        }
+        else
+        {
+            const BOOL ok = ::ReadFile (w, p, chunk, &got, nullptr);
+            if (! ok || got == 0) return false;
+        }
         p += got;
         n -= (std::size_t) got;
     }
@@ -167,21 +253,32 @@ bool writeExact (NativeHandle& h, const void* buf, std::size_t n) noexcept
     while (n > 0)
     {
         DWORD wrote = 0;
-        const BOOL ok = ::WriteFile (w, p, (DWORD) n, &wrote, nullptr);
-        if (! ok || wrote == 0) return false;
+        const DWORD chunk = n > (std::size_t) std::numeric_limits<DWORD>::max()
+                              ? std::numeric_limits<DWORD>::max()
+                              : (DWORD) n;
+        if (h.overlapped)
+        {
+            if (! writeOverlapped (w, p, chunk, wrote) || wrote == 0)
+                return false;
+        }
+        else
+        {
+            const BOOL ok = ::WriteFile (w, p, chunk, &wrote, nullptr);
+            if (! ok || wrote == 0) return false;
+        }
         p += wrote;
         n -= (std::size_t) wrote;
     }
     return true;
 }
 
-bool setReadTimeout (NativeHandle& h, int /*ms*/) noexcept
+bool setReadTimeout (NativeHandle& h, int ms) noexcept
 {
-    // Win32 named pipes don't have an SO_RCVTIMEO equivalent for
-    // synchronous I/O. Phase 2 leaves this as a no-op; the parent
-    // relies on the child terminating to unblock a hung read. Future
-    // work: switch to overlapped I/O + WaitForSingleObject(timeout).
-    (void) h;
+    if (! isValid (h) || ms < 0) return false;
+    // A positive timeout can only be honoured on a handle opened with
+    // FILE_FLAG_OVERLAPPED. Refuse false confidence on synchronous handles.
+    if (ms > 0 && ! h.overlapped) return false;
+    h.readTimeoutMs = ms;
     return true;
 }
 
@@ -194,6 +291,8 @@ bool sendHandle (NativeHandle& channel, const NativeHandle& payload) noexcept
 bool recvHandle (NativeHandle& channel, NativeHandle& payloadOut) noexcept
 {
     payloadOut.h = nullptr;
+    payloadOut.overlapped = false;
+    payloadOut.readTimeoutMs = 0;
     std::uint64_t value = 0;
     if (! readExact (channel, &value, sizeof (value))) return false;
     storeWinHandle (payloadOut, (HANDLE) (std::uintptr_t) value);
