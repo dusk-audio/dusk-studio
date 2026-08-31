@@ -14,9 +14,9 @@
 // macOS  : posix_spawn() with file actions to remap the channel endpoint
 //          to kChildInheritFd. Parent-death tracking via kqueue NOTE_EXIT
 //          on the child PID; termination via SIGTERM + waitpid.
-// Windows: CreateProcessW() with bInheritHandles=TRUE, the child handle
-//          duplicated into the new process and recorded in
-//          STARTUPINFOEX::lpAttributeList. Job object configured with
+// Windows: CreateProcessW() with bInheritHandles=TRUE and an explicit
+//          PROC_THREAD_ATTRIBUTE_HANDLE_LIST containing only the channel and
+//          caller-approved IPC handles. Job object configured with
 //          JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE so the child dies with us;
 //          termination via TerminateProcess() + WaitForSingleObject.
 
@@ -34,8 +34,9 @@ public:
 
     // Spawn `executablePath` with `args` (the executable path itself is
     // argv[0]; pass only the trailing flags in `args`). The child end
-    // of `channelToInherit` is duped to kChildInheritFd in the child
-    // process; the parent end stays with the caller.
+    // of `childChannelEnd` is duped to kChildInheritFd in a POSIX child;
+    // Windows inherits it plus `additionalInheritedHandles` through an
+    // explicit handle allowlist. The parent end stays with the caller.
     //
     // On success the child's end of the channel is closed in the parent
     // (the child sees the dup'd copy at kChildInheritFd) and the
@@ -43,6 +44,7 @@ public:
     bool spawn (const std::string& executablePath,
                   const std::vector<std::string>& args,
                   NativeHandle& childChannelEnd,
+                  const std::vector<NativeHandle>& additionalInheritedHandles,
                   std::string& errorOut) noexcept;
 
     // Non-blocking check. Returns true if the child has exited.

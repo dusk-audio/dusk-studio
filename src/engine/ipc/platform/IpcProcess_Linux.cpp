@@ -19,6 +19,7 @@ ChildProcess::~ChildProcess()
 bool ChildProcess::spawn (const std::string& executablePath,
                               const std::vector<std::string>& args,
                               NativeHandle& childChannelEnd,
+                              const std::vector<NativeHandle>&,
                               std::string& errorOut) noexcept
 {
     const pid_t forked = ::fork();
