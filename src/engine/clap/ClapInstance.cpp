@@ -473,7 +473,7 @@ void ClapInstance::appendMidiEvents (const dusk::MidiBuffer& midi) noexcept
         const bool allSoundOff = status == 0xB0 && meta.numBytes >= 3 && d[1] == 120;
 
         auto& slot = eventScratch[(size_t) eventCount];
-        if (noteDialectClap && allSoundOff)
+        if (noteDialectClap && ! noteDialectMidi && allSoundOff)
         {
             // CLAP-only note ports cannot receive the raw MIDI panic emitted
             // when transport stops. NOTE_CHOKE is CLAP's hard-stop event; the
