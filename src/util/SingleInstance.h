@@ -18,17 +18,26 @@ namespace duskstudio::single_instance
 // A failed handshake reports "primary" rather than blocking the launch: a
 // broken socket must not stop the app from starting. Only a refused connection
 // is read as "the primary is gone" and clears the slot; every other handshake
-// failure leaves the existing socket untouched and this launch runs without
+// failure leaves the existing endpoint untouched and this launch runs without
 // owning the slot, because the process behind it may still be alive and two
-// primaries would contend for one audio device. Linux only - the slot
-// lives under XDG_RUNTIME_DIR, whose per-user ownership is half of what keeps
-// a hostile local process out of the handoff, and the .desktop %f double
-// launch it guards against is a Linux problem. Elsewhere this is a no-op that
-// always returns true.
+// primaries would contend for one audio device. Linux and macOS use a private
+// per-user Unix socket and verify the peer uid. Windows uses a local named
+// mutex and an ACL-restricted named pipe keyed by the current user's SID.
 bool acquire (const std::string& payload,
               std::function<void (std::string)> onCommandLine);
 
 // Drop the slot and join the listener. Idempotent; safe if acquire() was
 // never called or returned false.
 void release();
+
+#if defined (DUSKSTUDIO_SINGLE_INSTANCE_TESTING)
+namespace testing
+{
+using Dispatcher = std::function<bool (std::function<void()>)>;
+void setDispatcher (Dispatcher dispatcher);
+#if defined (_WIN32)
+void dropNextAcknowledgement();
+#endif
+}
+#endif
 } // namespace duskstudio::single_instance

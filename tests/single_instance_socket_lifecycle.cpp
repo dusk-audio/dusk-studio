@@ -2,66 +2,135 @@
 
 #include "util/SingleInstance.h"
 
+#include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <system_error>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/un.h>
-#include <unistd.h>
+#include <thread>
+#include <vector>
+
+#if defined (_WIN32)
+ #ifndef NOMINMAX
+  #define NOMINMAX
+ #endif
+ #include <windows.h>
+#else
+ #include <sys/socket.h>
+ #include <sys/stat.h>
+ #include <sys/un.h>
+ #include <unistd.h>
+#endif
 
 namespace
 {
 namespace fs = std::filesystem;
 
-// A private XDG_RUNTIME_DIR per case: the slot lives under it, so a real Dusk
-// Studio on this desktop is neither seen nor disturbed. Restored on the way out
-// (and the listener released) so a thrown REQUIRE still leaves the process as
-// it found it.
-class ScopedRuntimeDir
+class ScopedSlot
 {
 public:
-    ScopedRuntimeDir()
+    ScopedSlot()
     {
-        if (const char* prev = std::getenv ("XDG_RUNTIME_DIR"))
+        duskstudio::single_instance::release();
+        duskstudio::single_instance::testing::setDispatcher (
+            [] (std::function<void()> fn)
+            {
+                fn();
+                return true;
+            });
+
+#if defined (_WIN32)
+        static std::atomic<unsigned long> counter { 0 };
+        slotName = std::to_string ((unsigned long) ::GetCurrentProcessId()) + "-"
+                 + std::to_string (counter.fetch_add (1));
+        _putenv_s ("DUSKSTUDIO_TEST_SINGLE_INSTANCE_SLOT", slotName.c_str());
+#else
+ #if defined (__APPLE__)
+        variable = "TMPDIR";
+ #else
+        variable = "XDG_RUNTIME_DIR";
+ #endif
+        if (const char* prev = std::getenv (variable.c_str()))
         {
             previous = prev;
             hadPrevious = true;
         }
 
-        // Terse name on purpose: the socket path built under here has to fit
-        // sockaddr_un::sun_path, and acquire() quietly gives up when it doesn't,
-        // which would surface as a socket-lifecycle failure rather than as a
-        // too-long TMPDIR. Check the headroom before anything exists to clean up.
+        // Terse name leaves sockaddr_un headroom even under a long system
+        // temporary root. The production path rejects rather than truncates.
         std::string tmpl = (fs::temp_directory_path() / "dusk-si-XXXXXX").string();
-        REQUIRE (tmpl.size() + std::strlen ("/dusk-studio/instance-0123456789abcdef.sock")
+#if defined (__APPLE__)
+        constexpr auto socketSuffix = "/dusk-studio/instance.sock";
+#else
+        constexpr auto socketSuffix = "/dusk-studio/instance-0123456789abcdef.sock";
+#endif
+        REQUIRE (tmpl.size() + std::strlen (socketSuffix)
                    < sizeof (sockaddr_un::sun_path));
         REQUIRE (::mkdtemp (&tmpl[0]) != nullptr);
         dir = tmpl;
-        ::setenv ("XDG_RUNTIME_DIR", dir.c_str(), 1);
+        REQUIRE (::setenv (variable.c_str(), dir.c_str(), 1) == 0);
+#endif
     }
 
-    ~ScopedRuntimeDir()
+    ~ScopedSlot()
     {
         duskstudio::single_instance::release();
-        if (hadPrevious) ::setenv ("XDG_RUNTIME_DIR", previous.c_str(), 1);
-        else             ::unsetenv ("XDG_RUNTIME_DIR");
+        duskstudio::single_instance::testing::setDispatcher ({});
+#if defined (_WIN32)
+        _putenv_s ("DUSKSTUDIO_TEST_SINGLE_INSTANCE_SLOT", "");
+#else
+        if (hadPrevious) ::setenv (variable.c_str(), previous.c_str(), 1);
+        else             ::unsetenv (variable.c_str());
         std::error_code ec;
         fs::remove_all (dir, ec);
+#endif
     }
 
+#if ! defined (_WIN32)
     const fs::path& path() const noexcept { return dir; }
+#endif
 
 private:
+#if defined (_WIN32)
+    std::string slotName;
+#else
     fs::path dir;
+    std::string variable;
     std::string previous;
     bool hadPrevious = false;
+#endif
 };
 
-// acquire() names the socket after a hash of the display, so the tests find the
-// file the primary made rather than recomputing that hash.
+struct Deliveries
+{
+    void accept (std::string payload)
+    {
+        payloads.push_back (std::move (payload));
+        published.store (payloads.size(), std::memory_order_release);
+    }
+
+    bool waitFor (std::size_t count)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds (5);
+        while (published.load (std::memory_order_acquire) < count
+               && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for (std::chrono::milliseconds (1));
+        return published.load (std::memory_order_acquire) >= count;
+    }
+
+    const std::vector<std::string>& copy() const noexcept { return payloads; }
+
+    std::vector<std::string> payloads;
+    std::atomic<std::size_t> published { 0 };
+};
+
+void noPayload (std::string) {}
+
+#if ! defined (_WIN32)
 fs::path soleSocketIn (const fs::path& runtimeDir)
 {
     fs::path found;
@@ -75,7 +144,6 @@ fs::path soleSocketIn (const fs::path& runtimeDir)
     return found;
 }
 
-// 0 when nothing is there, which is what the "was it removed?" assertions want.
 ino_t inodeOf (const fs::path& p)
 {
     struct stat st {};
@@ -84,7 +152,7 @@ ino_t inodeOf (const fs::path& p)
 
 int bindSocketAt (const fs::path& p)
 {
-    const int fd = ::socket (AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    const int fd = ::socket (AF_UNIX, SOCK_STREAM, 0);
     REQUIRE (fd >= 0);
 
     sockaddr_un addr {};
@@ -95,84 +163,210 @@ int bindSocketAt (const fs::path& p)
     REQUIRE (::bind (fd, (const sockaddr*) &addr, sizeof addr) == 0);
     return fd;
 }
-
-void noPayload (std::string) {}
+#endif
 } // namespace
 
-TEST_CASE ("a handoff that fails without a refusal leaves the primary's socket alone",
-           "[single-instance][socket]")
+TEST_CASE ("single-instance handoff preserves quoted Unicode and empty payloads",
+           "[single-instance][issue-368]")
 {
-    ScopedRuntimeDir runtime;
+    ScopedSlot slot;
+    Deliveries delivered;
+    const auto receive = [&] (std::string payload) { delivered.accept (std::move (payload)); };
 
+    REQUIRE (duskstudio::single_instance::acquire ("", receive));
+    const std::string session = "\"C:\\Sessions\\Björk – take 2\\mix.dusksession\"";
+    REQUIRE_FALSE (duskstudio::single_instance::acquire (session, noPayload));
+    REQUIRE_FALSE (duskstudio::single_instance::acquire ("", noPayload));
+    REQUIRE (delivered.waitFor (2));
+    duskstudio::single_instance::release();
+    REQUIRE (delivered.copy() == std::vector<std::string> { session, "" });
+
+#if defined (_WIN32)
+    REQUIRE (duskstudio::single_instance::acquire ("", receive));
+    duskstudio::single_instance::testing::dropNextAcknowledgement();
+    REQUIRE_FALSE (duskstudio::single_instance::acquire ("lost-ack", noPayload));
+    REQUIRE (delivered.waitFor (3));
+    duskstudio::single_instance::release();
+    REQUIRE (delivered.copy() == std::vector<std::string> { session, "", "lost-ack" });
+#endif
+}
+
+TEST_CASE ("simultaneous single-instance launches elect exactly one owner",
+           "[single-instance][issue-368]")
+{
+    ScopedSlot slot;
+    Deliveries delivered;
+    const auto receive = [&] (std::string payload) { delivered.accept (std::move (payload)); };
+    constexpr int launchCount = 8;
+    std::atomic<int> ready { 0 };
+    std::atomic<bool> go { false };
+    std::vector<int> primary (launchCount, 0);
+    std::vector<std::string> payloads;
+    std::vector<std::thread> launches;
+
+    for (std::size_t i = 0; i < (std::size_t) launchCount; ++i)
+        payloads.push_back ("launch-" + std::to_string (i));
+    for (std::size_t i = 0; i < (std::size_t) launchCount; ++i)
+        launches.emplace_back ([&, i]
+        {
+            ready.fetch_add (1);
+            while (! go.load()) std::this_thread::yield();
+            primary[i] = duskstudio::single_instance::acquire (payloads[i], receive) ? 1 : 0;
+        });
+
+    while (ready.load() != launchCount) std::this_thread::yield();
+    go.store (true);
+    for (auto& launch : launches) launch.join();
+
+    REQUIRE (std::count (primary.begin(), primary.end(), 1) == 1);
+    REQUIRE (delivered.waitFor (launchCount - 1));
+    duskstudio::single_instance::release();
+    auto received = delivered.copy();
+    REQUIRE (received.size() == launchCount - 1);
+
+    const auto owner = (std::size_t) std::distance (
+        primary.begin(), std::find (primary.begin(), primary.end(), 1));
+    payloads.erase (payloads.begin() + (std::ptrdiff_t) owner);
+    std::sort (payloads.begin(), payloads.end());
+    std::sort (received.begin(), received.end());
+    REQUIRE (received == payloads);
+}
+
+TEST_CASE ("single-instance release permits clean reacquisition",
+           "[single-instance][issue-368]")
+{
+    ScopedSlot slot;
     REQUIRE (duskstudio::single_instance::acquire ("", noPayload));
-    const auto sock = soleSocketIn (runtime.path());
+    duskstudio::single_instance::release();
+    REQUIRE (duskstudio::single_instance::acquire ("", noPayload));
+}
+
+#if ! defined (_WIN32)
+TEST_CASE ("a handoff failure leaves the live primary socket alone",
+           "[single-instance][socket][issue-368]")
+{
+    ScopedSlot slot;
+    REQUIRE (duskstudio::single_instance::acquire ("", noPayload));
+    const auto sock = soleSocketIn (slot.path());
     REQUIRE_FALSE (sock.empty());
     const auto primaryInode = inodeOf (sock);
     REQUIRE (primaryInode != 0);
 
-    // The primary is listening and healthy; this launch cannot reach it.
-    // Connecting to a mode-000 socket fails with EACCES, which says nothing
-    // about whether the process behind it is still alive.
     REQUIRE (::chmod (sock.c_str(), 0) == 0);
     const bool secondActsAsPrimary =
         duskstudio::single_instance::acquire ("/tmp/elsewhere/session.json", noPayload);
     REQUIRE (::chmod (sock.c_str(), 0755) == 0);
 
-    // A broken handshake must not block the launch...
     REQUIRE (secondActsAsPrimary);
-    // ...but the live primary keeps the slot: clearing it here would put a
-    // second engine on the same audio device.
     REQUIRE (inodeOf (sock) == primaryInode);
 }
 
-TEST_CASE ("a refused handoff still reclaims the socket a dead primary left behind",
-           "[single-instance][socket]")
+TEST_CASE ("a refused handoff reclaims a dead primary socket",
+           "[single-instance][socket][issue-368]")
 {
-    ScopedRuntimeDir runtime;
-
+    ScopedSlot slot;
     REQUIRE (duskstudio::single_instance::acquire ("", noPayload));
-    const auto sock = soleSocketIn (runtime.path());
+    const auto sock = soleSocketIn (slot.path());
     REQUIRE_FALSE (sock.empty());
 
     duskstudio::single_instance::release();
     REQUIRE (inodeOf (sock) == 0);
 
-    // What a primary killed with SIGKILL leaves at that path: a socket file
-    // with nothing accepting on it, so connecting to it is refused. The fd
-    // stays open across the acquire below - a bound socket that never listens
-    // still refuses, and holding it pins the inode so the filesystem cannot
-    // hand the same number back to the socket that replaces it.
     const int staleFd = bindSocketAt (sock);
     const auto staleInode = inodeOf (sock);
     REQUIRE (staleInode != 0);
 
+    const auto reclaimStarted = std::chrono::steady_clock::now();
     REQUIRE (duskstudio::single_instance::acquire ("", noPayload));
+    REQUIRE (std::chrono::steady_clock::now() - reclaimStarted < std::chrono::seconds (1));
     const auto reclaimedInode = inodeOf (sock);
     ::close (staleFd);
     REQUIRE (reclaimedInode != 0);
     REQUIRE (reclaimedInode != staleInode);
 }
 
-TEST_CASE ("release leaves a socket a newer primary bound at the same path",
-           "[single-instance][socket]")
+TEST_CASE ("release leaves a newer primary socket at the same path",
+           "[single-instance][socket][issue-368]")
 {
-    ScopedRuntimeDir runtime;
-
+    ScopedSlot slot;
     REQUIRE (duskstudio::single_instance::acquire ("", noPayload));
-    const auto sock = soleSocketIn (runtime.path());
+    const auto sock = soleSocketIn (slot.path());
     REQUIRE_FALSE (sock.empty());
 
-    // Stand in for a successor that took the slot after this process lost it:
-    // same name, different file.
     ::unlink (sock.c_str());
     const int successorFd = bindSocketAt (sock);
     const auto successorInode = inodeOf (sock);
     REQUIRE (successorInode != 0);
 
     duskstudio::single_instance::release();
-
     REQUIRE (inodeOf (sock) == successorInode);
 
     ::close (successorFd);
     ::unlink (sock.c_str());
 }
+#endif
+
+#if defined (_WIN32)
+TEST_CASE ("single-instance crash owner helper", "[.single-instance-crash-helper]")
+{
+    const char* readyPath = std::getenv ("DUSKSTUDIO_SINGLE_INSTANCE_CRASH_READY");
+    REQUIRE (readyPath != nullptr);
+    duskstudio::single_instance::testing::setDispatcher (
+        [] (std::function<void()> fn) { fn(); return true; });
+    REQUIRE (duskstudio::single_instance::acquire ("", noPayload));
+
+    HANDLE ready = ::CreateFileA (readyPath, GENERIC_WRITE, 0, nullptr,
+                                  CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    REQUIRE (ready != INVALID_HANDLE_VALUE);
+    ::CloseHandle (ready);
+    ::Sleep (INFINITE);
+}
+
+TEST_CASE ("Windows recovers ownership after the primary process crashes",
+           "[single-instance][issue-368]")
+{
+    ScopedSlot slot;
+    char tempPath[MAX_PATH] = {};
+    REQUIRE (::GetTempPathA (MAX_PATH, tempPath) != 0);
+    const std::string readyPath = std::string (tempPath) + "dusk-si-ready-"
+                                + std::to_string ((unsigned long) ::GetCurrentProcessId());
+    ::DeleteFileA (readyPath.c_str());
+    _putenv_s ("DUSKSTUDIO_SINGLE_INSTANCE_CRASH_READY", readyPath.c_str());
+
+    wchar_t executable[MAX_PATH] = {};
+    REQUIRE (::GetModuleFileNameW (nullptr, executable, MAX_PATH) != 0);
+    std::wstring command = L"\"" + std::wstring (executable)
+                         + L"\" \"single-instance crash owner helper\" --reporter compact";
+    std::vector<wchar_t> commandLine (command.begin(), command.end());
+    commandLine.push_back (L'\0');
+
+    STARTUPINFOW startup {};
+    startup.cb = sizeof startup;
+    PROCESS_INFORMATION child {};
+    REQUIRE (::CreateProcessW (nullptr, commandLine.data(), nullptr, nullptr, FALSE,
+                               CREATE_NO_WINDOW, nullptr, nullptr, &startup, &child));
+    ::CloseHandle (child.hThread);
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds (10);
+    while (::GetFileAttributesA (readyPath.c_str()) == INVALID_FILE_ATTRIBUTES
+           && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for (std::chrono::milliseconds (20));
+
+    const bool ready = ::GetFileAttributesA (readyPath.c_str()) != INVALID_FILE_ATTRIBUTES;
+    if (! ready)
+    {
+        ::TerminateProcess (child.hProcess, 1);
+        ::WaitForSingleObject (child.hProcess, 5000);
+        ::CloseHandle (child.hProcess);
+    }
+    REQUIRE (ready);
+
+    REQUIRE (::TerminateProcess (child.hProcess, 3));
+    REQUIRE (::WaitForSingleObject (child.hProcess, 5000) == WAIT_OBJECT_0);
+    ::CloseHandle (child.hProcess);
+    REQUIRE (duskstudio::single_instance::acquire ("", noPayload));
+
+    _putenv_s ("DUSKSTUDIO_SINGLE_INSTANCE_CRASH_READY", "");
+    ::DeleteFileA (readyPath.c_str());
+}
+#endif

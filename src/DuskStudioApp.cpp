@@ -2524,8 +2524,9 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         return;
     }
 
-    // One instance per user + display. The .desktop entry and the session
-    // MIME handler both pass %f, so opening a session from a file manager
+    // One instance per Linux user + display, or per macOS/Windows user. The
+    // desktop entry and session MIME handler both pass a path, so opening a
+    // session from a file manager
     // launches the binary again; without this it would be a second engine
     // contending for the device and a second autosave loop writing the same
     // session directory. A launch that finds an instance already running
