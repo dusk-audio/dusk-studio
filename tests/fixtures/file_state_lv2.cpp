@@ -34,6 +34,10 @@ struct Instance
     float* inR = nullptr;
     float* outL = nullptr;
     float* outR = nullptr;
+    float* gain = nullptr;
+    const LV2_Atom_Sequence* controlIn = nullptr;
+    LV2_Atom_Sequence* controlOut = nullptr;
+    LV2_URID atomSequence = 0;
     std::string restoredPath;
     bool restoredReadable = false;
 };
@@ -45,6 +49,7 @@ LV2_Handle instantiate (const LV2_Descriptor*, double, const char*,
     if (map == nullptr) return nullptr;
     auto* self = new Instance;
     self->map = map;
+    self->atomSequence = map->map (map->handle, LV2_ATOM__Sequence);
     return self;
 }
 
@@ -57,19 +62,32 @@ void connectPort (LV2_Handle instance, uint32_t port, void* data)
         case 1: self.inR = static_cast<float*> (data); break;
         case 2: self.outL = static_cast<float*> (data); break;
         case 3: self.outR = static_cast<float*> (data); break;
+        case 4: self.gain = static_cast<float*> (data); break;
+        case 5: self.controlIn = static_cast<const LV2_Atom_Sequence*> (data); break;
+        case 6: self.controlOut = static_cast<LV2_Atom_Sequence*> (data); break;
         default: break;
     }
 }
 
 void run (LV2_Handle instance, uint32_t frames)
 {
-    const auto& self = *static_cast<Instance*> (instance);
+    auto& self = *static_cast<Instance*> (instance);
     for (uint32_t i = 0; i < frames; ++i)
     {
         if (self.outL != nullptr)
             self.outL[i] = self.restoredReadable && self.inL != nullptr ? self.inL[i] : 0.0f;
         if (self.outR != nullptr)
             self.outR[i] = self.restoredReadable && self.inR != nullptr ? self.inR[i] : 0.0f;
+    }
+
+    // Output Atom ports arrive as capacity-bearing chunks. Each run must turn
+    // that buffer into a valid sequence even when the fixture has no events.
+    if (self.controlOut != nullptr)
+    {
+        self.controlOut->atom.type = self.atomSequence;
+        self.controlOut->atom.size = sizeof (LV2_Atom_Sequence_Body);
+        self.controlOut->body.unit = 0;
+        self.controlOut->body.pad = 0;
     }
 }
 
