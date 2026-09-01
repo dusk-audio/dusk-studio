@@ -1,4 +1,5 @@
 #include "PlatformWindowing.h"
+#include "NativeEditorEmbedScale.h"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -17,7 +18,7 @@ namespace
 // Component that adopts a foreign HWND (cross-process, owned by the
 // dusk-studio-plugin-host child) and reparents it into this JUCE
 // component's peer when first added to the hierarchy. Tracks size /
-// position via SetWindowPos on resized().
+// position via SetWindowPos on moves and resizes.
 class ForeignHwndEmbed final : public juce::Component
 {
 public:
@@ -78,11 +79,19 @@ public:
         layoutChild();
     }
 
+    void moved() override
+    {
+        layoutChild();
+    }
+
 private:
     void layoutChild()
     {
         if (! attached || child == nullptr) return;
-        auto bounds = getBoundsInParent();   // peer-relative
+        auto* const topLevel = getTopLevelComponent();
+        if (topLevel == nullptr) return;
+        const auto logical = topLevel->getLocalArea (this, getLocalBounds());
+        const auto bounds = embedscale::toPhysical (*this, logical);
         ::SetWindowPos (child, nullptr,
                           bounds.getX(), bounds.getY(),
                           bounds.getWidth(), bounds.getHeight(),
