@@ -1,10 +1,7 @@
 #include "IpcProcess.h"
+#include "IpcProcess_Posix.h"
 
-#include <cerrno>
 #include <csignal>
-#include <cstdio>
-#include <cstring>
-#include <sys/prctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -19,38 +16,20 @@ ChildProcess::~ChildProcess()
 bool ChildProcess::spawn (const std::string& executablePath,
                               const std::vector<std::string>& args,
                               NativeHandle& childChannelEnd,
+                              const NativeHandle& parentChannelEnd,
                               const std::vector<NativeHandle>&,
                               std::string& errorOut) noexcept
 {
-    const pid_t forked = ::fork();
-    if (forked < 0)
-    {
-        errorOut = std::string ("fork failed: ") + std::strerror (errno);
+    auto childArgs = args;
+    childArgs.push_back ("--ipc-parent-pid=" + std::to_string ((long long) ::getpid()));
+
+    pid_t spawned = -1;
+    if (! detail::posixSpawn (executablePath, childArgs, childChannelEnd,
+                              parentChannelEnd,
+                              spawned, errorOut))
         return false;
-    }
-    pid = (std::intptr_t) forked;
 
-    if (forked == 0)
-    {
-        if (! moveHandleToFd (childChannelEnd, kChildInheritFd))
-            ::_exit (127);
-
-        // Best-effort: kill the child if the parent dies. Cannot fail
-        // in a way the child can report; ignore the return value.
-        (void) ::prctl (PR_SET_PDEATHSIG, SIGTERM);
-
-        std::vector<const char*> argv;
-        argv.reserve (args.size() + 2);
-        argv.push_back (executablePath.c_str());
-        for (const auto& a : args) argv.push_back (a.c_str());
-        argv.push_back (nullptr);
-
-        ::execv (executablePath.c_str(), const_cast<char* const*> (argv.data()));
-        std::fprintf (stderr, "[dusk-studio-plugin-host] execv failed: %s\n",
-                       std::strerror (errno));
-        ::_exit (127);
-    }
-
+    pid = (std::intptr_t) spawned;
     closeHandle (childChannelEnd);
     alive = true;
     return true;

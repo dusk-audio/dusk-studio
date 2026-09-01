@@ -80,6 +80,11 @@
  #include <windows.h>
 #endif
 
+#if defined (__linux__)
+ #include <sys/prctl.h>
+ #include <unistd.h>
+#endif
+
 #if defined (DUSKSTUDIO_USE_WINDOWS_SOFTWARE_OPENGL)
 namespace
 {
@@ -99,6 +104,36 @@ namespace
 {
 using namespace duskstudio::ipc;
 namespace ipcp = duskstudio::ipc::platform;
+
+#if defined (__linux__)
+bool armParentDeathSignal (int argc, char* const* argv) noexcept
+{
+    constexpr char prefix[] = "--ipc-parent-pid=";
+    for (int i = 1; i < argc; ++i)
+    {
+        if (std::strncmp (argv[i], prefix, sizeof (prefix) - 1) != 0)
+            continue;
+
+        char* end = nullptr;
+        errno = 0;
+        const long long parsed = std::strtoll (argv[i] + sizeof (prefix) - 1,
+                                               &end, 10);
+        if (errno != 0 || end == nullptr || *end != '\0' || parsed <= 1
+            || parsed > (long long) std::numeric_limits<pid_t>::max())
+            return false;
+
+        const auto expectedParent = (pid_t) parsed;
+        if (::prctl (PR_SET_PDEATHSIG, SIGTERM) != 0)
+            return false;
+
+        // The parent can die between posix_spawn() and this prctl(). In that
+        // race the kernel cannot deliver the configured signal retroactively,
+        // so reject a helper that has already been reparented.
+        return ::getppid() == expectedParent;
+    }
+    return true;
+}
+#endif
 
 // Single mutex guards every outbound write on the control socket so the
 // sockThread's sync-RPC replies cannot interleave with the async push
@@ -1371,6 +1406,10 @@ int runScan (int argc, const char* const* argv) noexcept
 
 int main (int argc, char** argv)
 {
+   #if defined (__linux__)
+    if (! armParentDeathSignal (argc, argv)) return 70;
+   #endif
+
    #if ! defined (_WIN32)
     signal (SIGPIPE, SIG_IGN);
    #endif

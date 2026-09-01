@@ -8,12 +8,14 @@
 
 // Spawn + supervise the dusk-studio-plugin-host child binary.
 //
-// Linux  : fork() + dup2(channel, kChildInheritFd) + prctl(PR_SET_PDEATHSIG)
-//          + execv(). Reaping via waitpid(WNOHANG); termination via SIGTERM
-//          then SIGKILL.
+// Linux  : posix_spawn() with file actions to remap the channel endpoint.
+//          The exec'd helper arms prctl(PR_SET_PDEATHSIG) and verifies the
+//          expected parent PID before doing other work. Reaping via
+//          waitpid(WNOHANG); termination via SIGTERM then SIGKILL.
 // macOS  : posix_spawn() with file actions to remap the channel endpoint
-//          to kChildInheritFd. Parent-death tracking via kqueue NOTE_EXIT
-//          on the child PID; termination via SIGTERM + waitpid.
+//          to kChildInheritFd. Normal teardown is parent-supervised; a hard
+//          parent crash can leave an orphan because macOS has no PDEATHSIG.
+//          Termination uses SIGTERM + waitpid, then SIGKILL if needed.
 // Windows: CreateProcessW() with bInheritHandles=TRUE and an explicit
 //          PROC_THREAD_ATTRIBUTE_HANDLE_LIST containing only the channel and
 //          caller-approved IPC handles. Job object configured with
@@ -34,7 +36,8 @@ public:
 
     // Spawn `executablePath` with `args` (the executable path itself is
     // argv[0]; pass only the trailing flags in `args`). The child end
-    // of `childChannelEnd` is duped to kChildInheritFd in a POSIX child;
+    // of the channel is duped to kChildInheritFd by POSIX spawn actions;
+    // the parent end is explicitly closed in the spawned process.
     // Windows inherits it plus `additionalInheritedHandles` through an
     // explicit handle allowlist. The parent end stays with the caller.
     //
@@ -44,6 +47,7 @@ public:
     bool spawn (const std::string& executablePath,
                   const std::vector<std::string>& args,
                   NativeHandle& childChannelEnd,
+                  const NativeHandle& parentChannelEnd,
                   const std::vector<NativeHandle>& additionalInheritedHandles,
                   std::string& errorOut) noexcept;
 

@@ -114,7 +114,7 @@ bool RemotePluginConnection::connect (const std::string& hostExecutablePath,
     }
 
     std::vector<std::string> args { extraArg };
-    if (! child.spawn (hostExecutablePath, args, pair.childEnd,
+    if (! child.spawn (hostExecutablePath, args, pair.childEnd, pair.parentEnd,
                        { shm.handle(), commandSignal.handle(), replySignal.handle() },
                        errorOut))
     {

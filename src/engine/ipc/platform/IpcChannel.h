@@ -73,9 +73,9 @@ bool createChannelPair (ChannelPair& out, std::string& errorOut) noexcept;
 constexpr int kChildInheritFd = 3;
 
 // Move the given handle so its underlying fd is exactly `targetFd`.
-// Linux: dup2() + close-source. Used in the forked child between
-// fork() and execv() so the channel lands at kChildInheritFd. Windows:
-// no-op success (handle inheritance + CLI value used instead).
+// POSIX: dup2() + close-source. Windows: no-op success (handle inheritance
+// + CLI value used instead). Process launch uses posix_spawn file actions;
+// this remains the platform-level primitive for other handle-remap callers.
 bool moveHandleToFd (NativeHandle& h, int targetFd) noexcept;
 
 // Child-side: find the channel endpoint the parent's spawn handed us.
