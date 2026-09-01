@@ -1250,6 +1250,12 @@ if(_duskstudio_oop_enabled)
         # shell32: CommandLineToArgvW, which the child uses to read its own
         # arguments as UTF-16 instead of trusting the ANSI-converted argv.
         target_link_libraries(dusk-studio-plugin-host PRIVATE shell32)
+    elseif(APPLE)
+        find_library(DUSKSTUDIO_OOP_AUDIOUNIT_FRAMEWORK AudioUnit REQUIRED)
+        find_library(DUSKSTUDIO_OOP_COREAUDIOKIT_FRAMEWORK CoreAudioKit REQUIRED)
+        target_link_libraries(dusk-studio-plugin-host PRIVATE
+            ${DUSKSTUDIO_OOP_AUDIOUNIT_FRAMEWORK}
+            ${DUSKSTUDIO_OOP_COREAUDIOKIT_FRAMEWORK})
     endif()
     target_include_directories(dusk-studio-plugin-host PRIVATE src)
     target_include_directories(dusk-studio-plugin-host SYSTEM PRIVATE external/json)

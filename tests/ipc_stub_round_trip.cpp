@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -38,6 +39,8 @@
   #define NOMINMAX
  #endif
  #include <windows.h>
+#else
+ #include <pthread.h>
 #endif
 
 namespace
@@ -57,6 +60,56 @@ struct ScopedChannelPair
 
     duskstudio::ipc::platform::ChannelPair value;
 };
+
+#if ! defined (_WIN32)
+std::atomic<int> forkPrepareCalls { 0 };
+
+void countForkPrepare() noexcept
+{
+    forkPrepareCalls.fetch_add (1, std::memory_order_relaxed);
+}
+
+class AllocatorAndStdioChurn
+{
+public:
+    AllocatorAndStdioChurn()
+        : sink (std::fopen ("/dev/null", "w"))
+    {
+        if (sink == nullptr) return;
+        worker = std::thread ([this]
+        {
+            std::uint64_t sequence = 0;
+            while (! stopping.load (std::memory_order_relaxed))
+            {
+                std::vector<std::string> allocations;
+                allocations.reserve (64);
+                for (int i = 0; i < 64; ++i)
+                    allocations.emplace_back (1024, (char) ('a' + i % 26));
+
+                const auto current = sequence++;
+                std::fprintf (sink, "%llu %zu\n",
+                              (unsigned long long) current,
+                              allocations[(std::size_t) (current % allocations.size())].size());
+                std::fflush (sink);
+            }
+        });
+    }
+
+    ~AllocatorAndStdioChurn()
+    {
+        stopping.store (true, std::memory_order_relaxed);
+        if (worker.joinable()) worker.join();
+        if (sink != nullptr) std::fclose (sink);
+    }
+
+    bool isReady() const noexcept { return sink != nullptr && worker.joinable(); }
+
+private:
+    std::FILE* sink { nullptr };
+    std::atomic<bool> stopping { false };
+    std::thread worker;
+};
+#endif
 } // namespace
 
 #if defined (_WIN32)
@@ -273,8 +326,57 @@ TEST_CASE ("Plugin-host handshake read timeout bounds a silent live child",
 }
 
 TEST_CASE ("ipc-stub: connect, round-trip 32 blocks, byte-exact echo",
-            "[ipc]")
+            "[ipc][issue-366]")
 {
+#if ! defined (_WIN32)
+    namespace ipcp = duskstudio::ipc::platform;
+
+    const int forkCallsBefore = forkPrepareCalls.load (std::memory_order_relaxed);
+    REQUIRE (::pthread_atfork (countForkPrepare, nullptr, nullptr) == 0);
+
+    AllocatorAndStdioChurn churn;
+    REQUIRE (churn.isReady());
+
+    for (int iteration = 0; iteration < 24; ++iteration)
+    {
+        CAPTURE (iteration);
+        ScopedChannelPair channels;
+        std::string spawnError;
+        REQUIRE (ipcp::createChannelPair (channels.value, spawnError));
+
+        ipcp::ChildProcess child;
+        REQUIRE (child.spawn (DUSKSTUDIO_PLUGIN_HOST_PATH,
+                              { "--ipc-argv-stub" },
+                              channels.value.childEnd, {}, spawnError));
+
+        std::uint32_t argumentCount = 0;
+        REQUIRE (ipcp::readExact (channels.value.parentEnd,
+                                  &argumentCount, sizeof (argumentCount)));
+        bool sawArgvStub = false;
+        for (std::uint32_t i = 0; i < argumentCount; ++i)
+        {
+            std::uint32_t length = 0;
+            REQUIRE (ipcp::readExact (channels.value.parentEnd,
+                                      &length, sizeof (length)));
+            REQUIRE (length < 4096);
+            std::string argument (length, '\0');
+            if (length > 0)
+                REQUIRE (ipcp::readExact (channels.value.parentEnd,
+                                          argument.data(), length));
+            if (argument == "--ipc-argv-stub") sawArgvStub = true;
+        }
+        REQUIRE (sawArgvStub);
+        child.terminate (1000);
+        REQUIRE_FALSE (child.isAlive());
+    }
+
+    // pthread_atfork handlers run for a direct fork(), but POSIX does not
+    // invoke them for posix_spawn(). This makes the no-fork contract
+    // deterministic while the churn thread exercises allocator and stdio
+    // activity throughout every launch.
+    REQUIRE (forkPrepareCalls.load (std::memory_order_relaxed) == forkCallsBefore);
+#endif
+
     duskstudio::ipc::RemotePluginConnection conn;
 
     std::string err;

@@ -1,10 +1,7 @@
 #include "IpcProcess.h"
+#include "IpcProcess_Posix.h"
 
-#include <cerrno>
 #include <csignal>
-#include <cstdio>
-#include <cstdint>
-#include <cstring>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -30,31 +27,12 @@ bool ChildProcess::spawn (const std::string& executablePath,
                               const std::vector<NativeHandle>&,
                               std::string& errorOut) noexcept
 {
-    const pid_t forked = ::fork();
-    if (forked < 0)
-    {
-        errorOut = std::string ("fork failed: ") + std::strerror (errno);
+    pid_t spawned = -1;
+    if (! detail::posixSpawn (executablePath, args, childChannelEnd,
+                              spawned, errorOut))
         return false;
-    }
-    pid = (std::intptr_t) forked;
 
-    if (forked == 0)
-    {
-        if (! moveHandleToFd (childChannelEnd, kChildInheritFd))
-            ::_exit (127);
-
-        std::vector<const char*> argv;
-        argv.reserve (args.size() + 2);
-        argv.push_back (executablePath.c_str());
-        for (const auto& a : args) argv.push_back (a.c_str());
-        argv.push_back (nullptr);
-
-        ::execv (executablePath.c_str(), const_cast<char* const*> (argv.data()));
-        std::fprintf (stderr, "[dusk-studio-plugin-host] execv failed: %s\n",
-                       std::strerror (errno));
-        ::_exit (127);
-    }
-
+    pid = (std::intptr_t) spawned;
     closeHandle (childChannelEnd);
     alive = true;
     return true;
