@@ -2703,15 +2703,16 @@ void ChannelStripComponent::openPluginEditor()
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (pluginSlot.isRemote())
     {
-        // OOP path: ask the child to show the editor + report its
-        // native window handle. The child owns the editor's lifecycle;
-        // we either embed the handle (Linux XEmbed) or let it float
-        // as its own top-level window (Mac - cross-process NSView
-        // embedding is a polish item, not a 1.0 blocker).
+        // Linux and Windows ask the child to show its editor and then
+        // embed the reported native handle. macOS first tries the
+        // parent-process shell editor below; only its fallback presents
+        // the child's floating window.
         std::uint64_t windowId = 0;
         int w = 0, h = 0;
+       #if ! JUCE_MAC
         if (! pluginSlot.showRemoteEditor (windowId, w, h)) return;
         if (windowId == 0) return;
+       #endif
 
        #if JUCE_LINUX
         if (remoteEditorEmbed == nullptr)
@@ -2736,12 +2737,19 @@ void ChannelStripComponent::openPluginEditor()
        #elif JUCE_MAC
         // Mac OOP: dual-load shell pattern (3c-2). DSP stays in the
         // child; the editor lives in this process via PluginSlot's
-        // shell instance. windowId from showRemoteEditor is unused on
-        // Mac because the child's native window is NOT what we embed;
-        // the parent's shell-instance editor is. The IPC ShowEditor
-        // call still ran above for symmetry + so future param-mirror
-        // (3c-3) state-sync IPC can piggyback on it.
-        juce::ignoreUnused (windowId);
+        // shell instance. Do not send ShowEditor before trying the shell:
+        // that RPC presents the child-process window, while state sync uses
+        // its own GetState RPC and does not require a visible child editor.
+        if (remoteForeignEmbed != nullptr)
+        {
+            // The shell wrapper is cached when its modal closes. Reuse it
+            // instead of asking createShellEditor() for a second owner. Hide
+            // any child fallback that may still be visible before reopening.
+            if (! pluginSlot.hideRemoteEditor()) return;
+            pluginEditorModal.showBorrowed (*parent, *remoteForeignEmbed, onClose);
+            return;
+        }
+
         std::unique_ptr<juce::Component> embed;
         juce::String shellErr;
         if (pluginSlot.ensureShellInstanceForEditor (shellErr))
@@ -2797,20 +2805,31 @@ void ChannelStripComponent::openPluginEditor()
                           "load failed: %s - falling back to floating child window.\n",
                           shellErr.toRawUTF8());
         }
+
+        // A prior shell attempt may have fallen back to the child window. Do
+        // not present the new shell unless that window is confirmed hidden.
+        if (embed != nullptr && ! pluginSlot.hideRemoteEditor())
+            embed.reset();
+
         if (embed != nullptr)
         {
-            embed->setSize (std::max (200, w), std::max (200, h));
+            embed->setSize (std::max (200, embed->getWidth()),
+                            std::max (200, embed->getHeight()));
             // Tag so a later settings / quit modal hides the shell-editor
             // wrapper too (same reason as the Linux XEmbed + in-process
-            // paths). Defensive today - createInProcessEditorHost is a Mac
-            // stub returning nullptr - but correct once the shell host lands.
+            // paths): its native peer can otherwise cover a JUCE modal.
             embed->getProperties().set (kPluginEditorTag, true);
             pluginEditorModal.showBorrowed (*parent, *embed, onClose);
             remoteForeignEmbed = std::move (embed);
         }
         else
         {
-            // Fallback: child opened its own native-titlebar top-level.
+            // Fallback: only now ask the child to create and present its
+            // native-titlebar top-level. A successful shell path never sends
+            // ShowEditor, so it cannot leave a second visible editor behind.
+            if (! pluginSlot.showRemoteEditor (windowId, w, h)) return;
+            if (windowId == 0) return;
+
             // Subsequent clicks re-fire ShowEditor and the child raises
             // the existing window. NOTE: this floating window lives in the
             // child process and is NOT a child of our parent, so EmbeddedModal
