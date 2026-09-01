@@ -16,6 +16,7 @@ ChildProcess::~ChildProcess()
 bool ChildProcess::spawn (const std::string& executablePath,
                               const std::vector<std::string>& args,
                               NativeHandle& childChannelEnd,
+                              const NativeHandle& parentChannelEnd,
                               const std::vector<NativeHandle>&,
                               std::string& errorOut) noexcept
 {
@@ -24,6 +25,7 @@ bool ChildProcess::spawn (const std::string& executablePath,
 
     pid_t spawned = -1;
     if (! detail::posixSpawn (executablePath, childArgs, childChannelEnd,
+                              parentChannelEnd,
                               spawned, errorOut))
         return false;
 

@@ -91,6 +91,7 @@ public:
                               (unsigned long long) current,
                               allocations[(std::size_t) (current % allocations.size())].size());
                 std::fflush (sink);
+                ready.store (true, std::memory_order_release);
             }
         });
     }
@@ -102,11 +103,21 @@ public:
         if (sink != nullptr) std::fclose (sink);
     }
 
-    bool isReady() const noexcept { return sink != nullptr && worker.joinable(); }
+    bool waitUntilReady() const noexcept
+    {
+        if (sink == nullptr || ! worker.joinable()) return false;
+        const auto deadline = std::chrono::steady_clock::now()
+            + std::chrono::seconds (2);
+        while (! ready.load (std::memory_order_acquire)
+               && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for (std::chrono::milliseconds (1));
+        return ready.load (std::memory_order_acquire);
+    }
 
 private:
     std::FILE* sink { nullptr };
     std::atomic<bool> stopping { false };
+    std::atomic<bool> ready { false };
     std::thread worker;
 };
 #endif
@@ -178,9 +189,11 @@ TEST_CASE ("Windows IPC children inherit only their own shared-memory handles",
     ipcp::ChildProcess childA;
     ipcp::ChildProcess childB;
     REQUIRE (childA.spawn (DUSKSTUDIO_PLUGIN_HOST_PATH, probeArguments,
-                           channelsA.value.childEnd, { mappingA }, error));
+                           channelsA.value.childEnd, channelsA.value.parentEnd,
+                           { mappingA }, error));
     REQUIRE (childB.spawn (DUSKSTUDIO_PLUGIN_HOST_PATH, probeArguments,
-                           channelsB.value.childEnd, { mappingB }, error));
+                           channelsB.value.childEnd, channelsB.value.parentEnd,
+                           { mappingB }, error));
 
     std::uint8_t childAMarkers[2] {};
     std::uint8_t childBMarkers[2] {};
@@ -256,7 +269,8 @@ TEST_CASE ("Windows IPC launcher preserves Unicode paths and arguments",
 
     ipcp::ChildProcess child;
     const bool spawned = child.spawn (copiedHost.u8string(), suppliedArguments,
-                                      channels.value.childEnd, {}, error);
+                                      channels.value.childEnd,
+                                      channels.value.parentEnd, {}, error);
     INFO ("spawn error: " << error);
     REQUIRE (spawned);
 
@@ -286,7 +300,7 @@ TEST_CASE ("Windows IPC launcher preserves Unicode paths and arguments",
 #endif
 
 TEST_CASE ("Plugin-host handshake read timeout bounds a silent live child",
-           "[ipc][issue-364]")
+           "[ipc][issue-364][issue-366]")
 {
     namespace ipcp = duskstudio::ipc::platform;
     using namespace std::chrono_literals;
@@ -301,7 +315,8 @@ TEST_CASE ("Plugin-host handshake read timeout bounds a silent live child",
     ipcp::ChildProcess child;
     REQUIRE (child.spawn (DUSKSTUDIO_PLUGIN_HOST_PATH,
                           { "--ipc-silent-handshake-stub" },
-                          channels.value.childEnd, {}, error));
+                          channels.value.childEnd, channels.value.parentEnd,
+                          {}, error));
     REQUIRE (child.isAlive());
     REQUIRE (ipcp::setReadTimeout (channels.value.parentEnd, 75));
 
@@ -316,11 +331,16 @@ TEST_CASE ("Plugin-host handshake read timeout bounds a silent live child",
     REQUIRE (readElapsed < 2s);
     REQUIRE (child.isAlive());
 
-    // Releasing the parent end wakes the silent child's blocking read. The
-    // normal process teardown then reaps it without leaving a wedged child.
+    // Releasing the parent end must wake the child's blocking read. If the
+    // spawned process retained that endpoint, it would never observe EOF.
     ipcp::closeHandle (channels.value.parentEnd);
     const auto teardownStarted = std::chrono::steady_clock::now();
-    child.terminate (1000);
+    while (child.isAlive()
+           && std::chrono::steady_clock::now() - teardownStarted < 2s)
+    {
+        (void) child.pollExit();
+        std::this_thread::sleep_for (1ms);
+    }
     REQUIRE_FALSE (child.isAlive());
     REQUIRE (std::chrono::steady_clock::now() - teardownStarted < 2s);
 }
@@ -335,7 +355,7 @@ TEST_CASE ("ipc-stub: connect, round-trip 32 blocks, byte-exact echo",
     REQUIRE (::pthread_atfork (countForkPrepare, nullptr, nullptr) == 0);
 
     AllocatorAndStdioChurn churn;
-    REQUIRE (churn.isReady());
+    REQUIRE (churn.waitUntilReady());
 
     for (int iteration = 0; iteration < 24; ++iteration)
     {
@@ -347,7 +367,8 @@ TEST_CASE ("ipc-stub: connect, round-trip 32 blocks, byte-exact echo",
         ipcp::ChildProcess child;
         REQUIRE (child.spawn (DUSKSTUDIO_PLUGIN_HOST_PATH,
                               { "--ipc-argv-stub" },
-                              channels.value.childEnd, {}, spawnError));
+                              channels.value.childEnd, channels.value.parentEnd,
+                              {}, spawnError));
 
         std::uint32_t argumentCount = 0;
         REQUIRE (ipcp::readExact (channels.value.parentEnd,

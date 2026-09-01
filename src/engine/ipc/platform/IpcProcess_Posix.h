@@ -15,12 +15,13 @@ namespace duskstudio::ipc::platform::detail
 inline bool posixSpawn (const std::string& executablePath,
                         const std::vector<std::string>& args,
                         const NativeHandle& childChannelEnd,
+                        const NativeHandle& parentChannelEnd,
                         pid_t& childPidOut,
                         std::string& errorOut) noexcept
 {
-    if (! isValid (childChannelEnd))
+    if (! isValid (childChannelEnd) || ! isValid (parentChannelEnd))
     {
-        errorOut = "posix_spawn received an invalid child channel";
+        errorOut = "posix_spawn received an invalid channel";
         return false;
     }
 
@@ -33,8 +34,10 @@ inline bool posixSpawn (const std::string& executablePath,
         return false;
     }
 
-    result = ::posix_spawn_file_actions_adddup2 (
-        &actions, childChannelEnd.fd, kChildInheritFd);
+    result = ::posix_spawn_file_actions_addclose (&actions, parentChannelEnd.fd);
+    if (result == 0)
+        result = ::posix_spawn_file_actions_adddup2 (
+            &actions, childChannelEnd.fd, kChildInheritFd);
     if (result == 0 && childChannelEnd.fd != kChildInheritFd)
         result = ::posix_spawn_file_actions_addclose (&actions, childChannelEnd.fd);
 

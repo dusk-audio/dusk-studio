@@ -36,7 +36,8 @@ public:
 
     // Spawn `executablePath` with `args` (the executable path itself is
     // argv[0]; pass only the trailing flags in `args`). The child end
-    // of `childChannelEnd` is duped to kChildInheritFd by POSIX spawn actions;
+    // of the channel is duped to kChildInheritFd by POSIX spawn actions;
+    // the parent end is explicitly closed in the spawned process.
     // Windows inherits it plus `additionalInheritedHandles` through an
     // explicit handle allowlist. The parent end stays with the caller.
     //
@@ -46,6 +47,7 @@ public:
     bool spawn (const std::string& executablePath,
                   const std::vector<std::string>& args,
                   NativeHandle& childChannelEnd,
+                  const NativeHandle& parentChannelEnd,
                   const std::vector<NativeHandle>& additionalInheritedHandles,
                   std::string& errorOut) noexcept;
 

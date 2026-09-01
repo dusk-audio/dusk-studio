@@ -125,6 +125,7 @@ ChildProcess::~ChildProcess()
 bool ChildProcess::spawn (const std::string& executablePath,
                               const std::vector<std::string>& args,
                               NativeHandle& childChannelEnd,
+                              const NativeHandle&,
                               const std::vector<NativeHandle>& additionalInheritedHandles,
                               std::string& errorOut) noexcept
 {
