@@ -83,7 +83,7 @@ void requireInOrder (const std::string& source,
 
 TEST_CASE ("native window operations preserve activation and embedded editor geometry",
            "[windowing][linux][macos][windows][wayland][regression]"
-           "[issue-367][issue-369][issue-376]")
+           "[issue-367][issue-369][issue-376][issue-380]")
 {
     using duskstudio::platform::LinuxPeerTeardown;
     using duskstudio::platform::linuxPeerTeardownForMapping;
@@ -159,6 +159,41 @@ TEST_CASE ("native window operations preserve activation and embedded editor geo
     REQUIRE (linuxTeardown.find ("XWithdrawWindow") == std::string::npos);
     REQUIRE (linuxTeardown.find ("requestFocusOnMainWaylandSurface") != std::string::npos);
     REQUIRE (linuxTeardown.find ("XIconifyWindow") != std::string::npos);
+
+    const auto remoteEditor = definitionBody (
+        readSource ("src/ui/ChannelStripComponent.cpp"),
+        "ChannelStripComponent::openPluginEditor");
+    const auto remoteBranch = remoteEditor.find ("if (pluginSlot.isRemote())");
+    const auto nonMacGuard = remoteEditor.find ("#if ! JUCE_MAC", remoteBranch);
+    const auto nonMacShow = remoteEditor.find ("showRemoteEditor", nonMacGuard);
+    const auto macBranch = remoteEditor.find ("#elif JUCE_MAC", nonMacShow);
+    const auto cachedShell = remoteEditor.find ("remoteForeignEmbed != nullptr", macBranch);
+    const auto cachedHide = remoteEditor.find ("hideRemoteEditor", cachedShell);
+    const auto cachedShow = remoteEditor.find ("pluginEditorModal.showBorrowed", cachedHide);
+    const auto shellLoad = remoteEditor.find ("ensureShellInstanceForEditor", macBranch);
+    const auto stateSync = remoteEditor.find ("syncShellStateFromChild", shellLoad);
+    const auto shellHost = remoteEditor.find ("createInProcessEditorHost", stateSync);
+    const auto shellHide = remoteEditor.find ("hideRemoteEditor", shellHost);
+    const auto shellShow = remoteEditor.find ("pluginEditorModal.showBorrowed", shellHide);
+    const auto fallbackShow = remoteEditor.find ("showRemoteEditor", shellShow);
+    const auto nextPlatformBranch = remoteEditor.find ("#else", fallbackShow);
+
+    // On macOS the child window is a fallback, not a prerequisite for the
+    // parent-side shell editor. State arrives through GetState before the shell
+    // is hosted; ShowEditor occurs only after shell hosting has failed.
+    REQUIRE (remoteBranch != std::string::npos);
+    REQUIRE (nonMacGuard < nonMacShow);
+    REQUIRE (nonMacShow < macBranch);
+    REQUIRE (macBranch < cachedShell);
+    REQUIRE (cachedShell < cachedHide);
+    REQUIRE (cachedHide < cachedShow);
+    REQUIRE (cachedShow < shellLoad);
+    REQUIRE (shellLoad < stateSync);
+    REQUIRE (stateSync < shellHost);
+    REQUIRE (shellHost < shellHide);
+    REQUIRE (shellHide < shellShow);
+    REQUIRE (shellShow < fallbackShow);
+    REQUIRE (fallbackShow < nextPlatformBranch);
 
     const auto modal = definitionBody (
         readSource ("src/ui/EmbeddedModal.h"), "componentMovedOrResized");
