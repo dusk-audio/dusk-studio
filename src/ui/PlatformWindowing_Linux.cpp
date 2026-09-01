@@ -4,6 +4,7 @@
 // PlatformWindowing.h - so it sits at the very top of this file.
 #define JUCE_GUI_BASICS_INCLUDE_XHEADERS 1
 
+#include "LinuxPeerTeardown.h"
 #include "PlatformWindowing.h"
 #include "X11EditorTeardownError.h"
 
@@ -259,13 +260,14 @@ void prepareForTopLevelDestruction (juce::Component& topLevel)
     juce::Component::unfocusAllComponents();
     topLevel.giveAwayKeyboardFocus();
 
-    bool topLevelUsesWayland = false;
+    auto teardown = LinuxPeerTeardown::x11;
    #if DUSKSTUDIO_JUCE_HAS_WAYLAND
     if (auto* sys = WaylandWindowSystem::getInstanceWithoutCreating())
-        topLevelUsesWayland = sys->getWaylandWindowForPeer (topLevel.getPeer()) != nullptr;
+        teardown = linuxPeerTeardownForMapping (
+            sys->getWaylandWindowForPeer (topLevel.getPeer()) != nullptr);
    #endif
 
-    if (topLevelUsesWayland)
+    if (teardown == LinuxPeerTeardown::wayland)
     {
         // A real Wayland peer has a wl_surface native handle, not an X11
         // Window ID. Yield to the compositor without passing that handle to
