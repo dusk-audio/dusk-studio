@@ -129,7 +129,7 @@ src/ui/NativeEditorEmbedScale.h	14
 src/ui/PianoRollComponent.cpp	381
 src/ui/PianoRollComponent.h	61
 src/ui/PlatformWindowing.h	14
-src/ui/PlatformWindowing_Linux.cpp	16
+src/ui/PlatformWindowing_Linux.cpp	15
 src/ui/PlatformWindowing_Mac.mm	19
 src/ui/PlatformWindowing_Windows.cpp	7
 src/ui/PluginPickerHelpers.cpp	135

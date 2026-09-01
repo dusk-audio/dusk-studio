@@ -80,7 +80,8 @@ void requireInOrder (const std::string& source,
 }
 
 TEST_CASE ("native window operations preserve activation and embedded editor geometry",
-           "[windowing][macos][windows][regression][issue-367][issue-369]")
+           "[windowing][linux][macos][windows][wayland][regression]"
+           "[issue-367][issue-369][issue-376]")
 {
     const auto mac = definitionBody (
         readSource ("src/ui/PlatformWindowing_Mac.mm"), "bringWindowToFront");
@@ -115,6 +116,22 @@ TEST_CASE ("native window operations preserve activation and embedded editor geo
     REQUIRE (moved.find ("layoutChild") != std::string::npos);
     const auto resized = definitionBody (windowsSource, "resized");
     REQUIRE (resized.find ("layoutChild") != std::string::npos);
+
+    const auto linuxTeardown = definitionBody (
+        readSource ("src/ui/PlatformWindowing_Linux.cpp"),
+        "prepareForTopLevelDestruction");
+
+    // Xorg and default XWayland peers both take the X11 branch, regardless of
+    // WAYLAND_DISPLAY. Only an actual Wayland peer (available to the native
+    // development mode) may select the wl_surface roundtrip.
+    REQUIRE (linuxTeardown.find ("getenv") == std::string::npos);
+    REQUIRE (linuxTeardown.find ("getWaylandWindowForPeer") != std::string::npos);
+    requireInOrder (linuxTeardown, "getWaylandWindowForPeer", "if (topLevelUsesWayland)");
+
+    // A wl_surface pointer must never be submitted to Xlib as a Window ID.
+    REQUIRE (linuxTeardown.find ("XWithdrawWindow") == std::string::npos);
+    REQUIRE (linuxTeardown.find ("requestFocusOnMainWaylandSurface") != std::string::npos);
+    REQUIRE (linuxTeardown.find ("XIconifyWindow") != std::string::npos);
 
     const auto modal = definitionBody (
         readSource ("src/ui/EmbeddedModal.h"), "componentMovedOrResized");

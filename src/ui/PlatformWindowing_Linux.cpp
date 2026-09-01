@@ -15,6 +15,11 @@
 
 namespace duskstudio::platform
 {
+#if DUSKSTUDIO_JUCE_HAS_WAYLAND
+using juce::WaylandSymbols;
+using juce::WaylandWindowSystem;
+#endif
+
 namespace
 {
 // JUCE owns a single ::Display* connection to the X server which we
@@ -29,24 +34,6 @@ namespace
 {
     auto* sys = juce::XWindowSystem::getInstanceWithoutCreating();
     return sys != nullptr ? sys->getDisplay() : nullptr;
-}
-
-// True when the process is attached to a Wayland session. The plugin
-// editor toplevels are still X11 (via XWayland) but the main window is
-// a wl_surface, which is what makes the X-side focus dance no-op.
-//
-// Cached on first call: $WAYLAND_DISPLAY is fixed for the lifetime of
-// the session-manager-spawned process, and re-reading per call let the
-// focus logic toggle if the env var were ever cleared mid-flight (which
-// some shells do for child processes).
-bool isWaylandSession()
-{
-    static const bool cached = []
-    {
-        const char* wd = std::getenv ("WAYLAND_DISPLAY");
-        return wd != nullptr && *wd != '\0';
-    }();
-    return cached;
 }
 
 static_assert (BadWindow == x11::kBadWindow);
@@ -272,39 +259,30 @@ void prepareForTopLevelDestruction (juce::Component& topLevel)
     juce::Component::unfocusAllComponents();
     topLevel.giveAwayKeyboardFocus();
 
-    auto* d = juceDisplay();
+    bool topLevelUsesWayland = false;
+   #if DUSKSTUDIO_JUCE_HAS_WAYLAND
+    if (auto* sys = WaylandWindowSystem::getInstanceWithoutCreating())
+        topLevelUsesWayland = sys->getWaylandWindowForPeer (topLevel.getPeer()) != nullptr;
+   #endif
 
-    if (isWaylandSession())
+    if (topLevelUsesWayland)
     {
-        // Wayland-session path: the doomed plugin editor is an X11
-        // toplevel (via XWayland), the main Dusk Studio window is a
-        // wl_surface. Mutter does NOT honour X11 _NET_ACTIVE_WINDOW /
-        // XSetInputFocus / XIconify for focus_window updates on a
-        // Wayland session - the EWMH dance below is therefore a
-        // no-op. What we CAN do is unmap the doomed window cleanly
-        // and then yield to the compositor so it dispatches the
-        // resulting events on its main loop - which retargets
-        // focus_window off the unmapped X11 window.
-        if (d != nullptr)
-        {
-            if (auto* peer = topLevel.getPeer())
-            {
-                const auto win = (::Window) (uintptr_t) peer->getNativeHandle();
-                ::XWithdrawWindow (d, win, DefaultScreen (d));
-            }
-            ::XSync (d, False);
-            std::fprintf (stderr, "[Dusk Studio/Wayland] X11 unmap + roundtrip\n");
-        }
+        // A real Wayland peer has a wl_surface native handle, not an X11
+        // Window ID. Yield to the compositor without passing that handle to
+        // Xlib. The peer query above deliberately ignores WAYLAND_DISPLAY:
+        // forced-XWayland peers on a Wayland desktop must use the X11 path.
         requestFocusOnMainWaylandSurface();
+        std::fputs ("[Dusk Studio/Wayland] focus roundtrip\n", stderr);
         std::fflush (stderr);
         return;
     }
 
-    // Xorg session: the doomed window AND any sibling are both real
-    // X11 toplevels. EWMH _NET_ACTIVE_WINDOW on a sibling is the only
-    // path mutter actually honours for X11 focus_window retargeting;
-    // when no sibling exists, fall back to XIconify which routes
-    // through mutter's WM_CHANGE_STATE handler.
+    auto* d = juceDisplay();
+
+    // X11-peer path, both on Xorg and when forced through XWayland. EWMH
+    // _NET_ACTIVE_WINDOW on a sibling is the only path mutter actually
+    // honours for X11 focus_window retargeting; when no sibling exists,
+    // fall back to XIconify which routes through the WM_CHANGE_STATE handler.
     if (auto* sibling = pickSiblingFocusTargetPeer (topLevel))
     {
         bringWindowToFront (*sibling);
@@ -353,7 +331,7 @@ void clearXInputFocus()
 void preferX11ForNextNativeWindow()
 {
    #if DUSKSTUDIO_JUCE_HAS_WAYLAND
-    juce::WaylandWindowSystem::setSkipForPeerCreation (true);
+    WaylandWindowSystem::setSkipForPeerCreation (true);
    #endif
 }
 
@@ -383,11 +361,11 @@ void requestFocusOnMainWaylandSurface()
     // subsequent X11 destroy lands an additional message-loop tick
     // later, providing extra slack for any compositor work that
     // didn't make it into the same dispatch round.
-    auto* sys = juce::WaylandWindowSystem::getInstanceWithoutCreating();
+    auto* sys = WaylandWindowSystem::getInstanceWithoutCreating();
     if (sys == nullptr) return;
     auto* display = sys->getDisplay();
     if (display == nullptr) return;
-    juce::WaylandSymbols::getInstance()->displayRoundtrip (display);
+    WaylandSymbols::getInstance()->displayRoundtrip (display);
    #endif
 }
 
