@@ -21,12 +21,23 @@ TEST_CASE ("Notepad Cocoa embedding uses the display backing scale",
 }
 
 TEST_CASE ("Native embeds retain the peer platform scale outside Cocoa",
-           "[notepad][scale]")
+           "[notepad][scale][windows][issue-367]")
 {
     CHECK_THAT (duskstudio::embedscale::factorFromSources (1.0, 1.5, 2.0, false),
                 WithinRel (1.5, 1e-12));
     CHECK_THAT (duskstudio::embedscale::factorFromSources (1.25, 1.5, 2.0, false),
                 WithinRel (1.875, 1e-12));
+
+    constexpr int hostX = 91;
+    constexpr int hostY = 47;
+    constexpr int modalX = 22;
+    constexpr int modalY = 18;
+    const auto nested = duskstudio::embedscale::toPhysicalBounds (
+        hostX + modalX, hostY + modalY, 641, 359, 1.5);
+    CHECK (nested.x == 170);
+    CHECK (nested.y == 98);
+    CHECK (nested.width == 961);
+    CHECK (nested.height == 538);
 }
 using duskstudio::notepad::assessGraphicsCompatibility;
 

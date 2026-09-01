@@ -730,23 +730,26 @@ private:
     }
 
     // Borrowed plugin-editor bodies resize themselves when the native
-    // window embeds or the plugin rescales its UI; the host resizes when
-    // the user resizes the main window with the editor open. Re-centre
-    // and re-fit the backdrop either way; moves are ignored (recenterBody
-    // itself moves the body, so reacting to them would recurse).
-    void componentMovedOrResized (juce::Component& c, bool, bool wasResized) override
+    // window embeds or the plugin rescales its UI; the host moves or resizes
+    // when its containing window changes. Re-centre and re-fit the backdrop
+    // either way. Direct body moves are handled by the body itself; after an
+    // ancestor-only move, resized() refreshes any embedded native child.
+    void componentMovedOrResized (juce::Component& c, bool wasMoved, bool wasResized) override
     {
-        if (! wasResized || borrowedBody_ == nullptr) return;
-        if (&c == borrowedBody_ || &c == host.getComponent())
-        {
-            recenterBody();
-            if (dim_ != nullptr && host != nullptr)
-                dim_->setBounds (host->getLocalBounds());
-            if (&c == host.getComponent())
-                if (auto callback = borrowedHostResized)
-                    callback (showGeneration_, ! activeModalStack().empty()
-                                                   && activeModalStack().back() == this);
-        }
+        if (borrowedBody_ == nullptr) return;
+        const bool bodyResized = &c == borrowedBody_ && wasResized;
+        const bool hostChanged = &c == host.getComponent() && (wasMoved || wasResized);
+        if (! bodyResized && ! hostChanged) return;
+
+        recenterBody();
+        if (hostChanged && wasMoved)
+            borrowedBody_->resized();
+        if (dim_ != nullptr && host != nullptr)
+            dim_->setBounds (host->getLocalBounds());
+        if (hostChanged && wasResized)
+            if (auto callback = borrowedHostResized)
+                callback (showGeneration_, ! activeModalStack().empty()
+                                               && activeModalStack().back() == this);
     }
 
     class Backdrop final : public juce::Component

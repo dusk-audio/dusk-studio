@@ -43,14 +43,11 @@ std::string definitionBody (const std::string& source, const std::string& method
         }
         REQUIRE (closeParen < source.size());
 
-        auto afterParameters = source.find_first_not_of (" \t\r\n", closeParen + 1);
-        std::size_t openBrace = std::string::npos;
-        if (afterParameters != std::string::npos && source[afterParameters] == '{')
-            openBrace = afterParameters;
-        else if (afterParameters != std::string::npos && source[afterParameters] == ':')
-            openBrace = source.find ('{', afterParameters + 1); // constructor initializer list
+        const auto openBrace = source.find ('{', closeParen + 1);
+        const auto declarationEnd = source.find (';', closeParen + 1);
 
-        if (openBrace == std::string::npos)
+        if (openBrace == std::string::npos
+            || (declarationEnd != std::string::npos && declarationEnd < openBrace))
         {
             searchFrom = afterName;
             continue;
@@ -82,8 +79,8 @@ void requireInOrder (const std::string& source,
 }
 }
 
-TEST_CASE ("native window activation restores and raises the platform peer",
-           "[windowing][macos][windows][regression][issue-369]")
+TEST_CASE ("native window operations preserve activation and embedded editor geometry",
+           "[windowing][macos][windows][regression][issue-367][issue-369]")
 {
     const auto mac = definitionBody (
         readSource ("src/ui/PlatformWindowing_Mac.mm"), "bringWindowToFront");
@@ -103,6 +100,27 @@ TEST_CASE ("native window activation restores and raises the platform peer",
     REQUIRE (windows.find ("SW_RESTORE") != std::string::npos);
     REQUIRE (windows.find ("AllowSetForegroundWindow") != std::string::npos);
     requireInOrder (windows, "SetForegroundWindow", "FlashWindowEx");
+
+    const auto windowsSource = readSource ("src/ui/PlatformWindowing_Windows.cpp");
+    const auto layout = definitionBody (windowsSource, "layoutChild");
+    REQUIRE (layout.find ("getTopLevelComponent") != std::string::npos);
+    REQUIRE (layout.find ("getLocalArea") != std::string::npos);
+    REQUIRE (layout.find ("getLocalBounds") != std::string::npos);
+    REQUIRE (layout.find ("embedscale::toPhysical") != std::string::npos);
+    REQUIRE (layout.find ("getBoundsInParent") == std::string::npos);
+    requireInOrder (layout, "getLocalArea", "embedscale::toPhysical");
+    requireInOrder (layout, "embedscale::toPhysical", "SetWindowPos");
+
+    const auto moved = definitionBody (windowsSource, "moved");
+    REQUIRE (moved.find ("layoutChild") != std::string::npos);
+    const auto resized = definitionBody (windowsSource, "resized");
+    REQUIRE (resized.find ("layoutChild") != std::string::npos);
+
+    const auto modal = definitionBody (
+        readSource ("src/ui/EmbeddedModal.h"), "componentMovedOrResized");
+    REQUIRE (modal.find ("wasMoved") != std::string::npos);
+    REQUIRE (modal.find ("hostChanged && wasMoved") != std::string::npos);
+    REQUIRE (modal.find ("borrowedBody_->resized") != std::string::npos);
 }
 
 TEST_CASE ("launch session load and instance handoff retain native activation",
