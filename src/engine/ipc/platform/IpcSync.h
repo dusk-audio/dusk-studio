@@ -15,9 +15,8 @@
 // Linux  : futex(SYS_futex, FUTEX_WAIT_BITSET / FUTEX_WAKE) - non-private
 //          so the address is hashed by physical page and works across
 //          two processes mmap'ing the same memfd.
-// macOS  : os_sync_wait_on_address_with_timeout / os_sync_wake_by_address
-//          (macOS 14.4+) - supports OS_SYNC_WAIT_ON_ADDRESS_SHARED for
-//          cross-process. Fallback: POSIX semaphores in shared memory.
+// macOS  : non-blocking pipe + poll. Both descriptors are transferred to
+//          the child over SCM_RIGHTS, so either process can wake its waiter.
 // Windows: an inheritable auto-reset event per signal direction. Win32's
 //          address-wait APIs are process-local even for shared mappings.
 //
@@ -38,7 +37,7 @@ enum class WaitResult
 
 // Absolute monotonic-clock deadline. Each platform converts to its own
 // timeout shape (Linux: struct timespec for FUTEX_WAIT_BITSET, Windows:
-// ms relative for WaitForSingleObject, macOS: ns relative for os_sync_*).
+// ms relative for WaitForSingleObject, macOS: ms relative for poll).
 struct Deadline
 {
     std::int64_t monotonicSec  { 0 };
@@ -60,17 +59,17 @@ public:
     InterprocessSignal (const InterprocessSignal&) = delete;
     InterprocessSignal& operator= (const InterprocessSignal&) = delete;
 
-    // Parent-side setup and control-channel handoff. Linux and macOS need no
-    // separate kernel object, so these are successful no-ops there. Windows
-    // creates an inheritable event before spawn and sends its inherited handle
-    // value to the child after the shared-memory handle.
+    // Parent-side setup and control-channel handoff. Linux needs no separate
+    // kernel object. macOS creates a non-blocking pipe and transfers both ends
+    // after spawn. Windows creates an inheritable event before spawn and sends
+    // its inherited handle value to the child after the shared-memory handle.
     bool create (std::string& errorOut) noexcept;
     bool sendToChild (NativeHandle& channel) const noexcept;
     bool receiveFromParent (NativeHandle& channel) noexcept;
     void close() noexcept;
 
     // Parent-side kernel object passed through ChildProcess's Windows handle
-    // allowlist. Invalid/no-op on platforms whose signal lives in shared memory.
+    // allowlist. Invalid on POSIX; macOS transfers its pipe after spawn.
     const NativeHandle& handle() const noexcept { return nativeHandle; }
 
     // Block while `addr` still equals `expected`, up to `deadline`. The
@@ -80,12 +79,17 @@ public:
                        std::uint32_t expected,
                        const Deadline* deadline) noexcept;
 
-    // Publish one non-blocking wake. `addr` identifies the futex/os_sync word
-    // on Linux/macOS; Windows uses this object's auto-reset event.
+    // Publish one non-blocking wake. Linux uses `addr` as the futex word;
+    // macOS uses this object's pipe and Windows its auto-reset event.
     void wake (std::atomic<std::uint32_t>* addr) noexcept;
 
 private:
     NativeHandle nativeHandle {};
+
+   #if defined(__APPLE__)
+    NativeHandle readHandle {};
+    NativeHandle writeHandle {};
+   #endif
 };
 
 // Polite spin pause for the bounded-spin loop in processBlockSync.

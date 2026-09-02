@@ -7,7 +7,7 @@
 //     SHM offset / channel-stride drift between parent and child.
 //
 // Platforms: Linux (memfd_create + futex), Windows (CreateFileMapping +
-// auto-reset events), macOS 14.4+ (shm_open + os_sync_wait_on_address). The
+// auto-reset events), macOS 11+ (shm_open + non-blocking pipes). The
 // transport differences are hidden behind RemotePluginConnection, so this
 // file uses only platform-agnostic APIs. tests/CMakeLists.txt gates the
 // translation unit on _duskstudio_ipc_test_enabled, which mirrors the
@@ -346,7 +346,7 @@ TEST_CASE ("Plugin-host handshake read timeout bounds a silent live child",
 }
 
 TEST_CASE ("ipc-stub: connect, round-trip 32 blocks, byte-exact echo",
-            "[ipc][issue-366]")
+            "[ipc][issue-325][issue-366]")
 {
 #if ! defined (_WIN32)
     namespace ipcp = duskstudio::ipc::platform;

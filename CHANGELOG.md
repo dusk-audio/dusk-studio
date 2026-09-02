@@ -9,6 +9,12 @@ canonical source.
 
 ### Fixed
 
+- **The macOS release now includes the plugin sandbox.** The disk image kept
+  its macOS 11 deployment target, but the sandbox's shared-address wake API
+  required macOS 14.4, so CMake omitted the plugin-host helper and scans ran
+  inside Dusk Studio. The macOS IPC backend now uses a deadline-aware pipe
+  signal available on Big Sur, and release verification refuses a disk image
+  without the helper.
 - **LV2 plugin windows open with the sound's current settings.** Opening or
   reopening an LV2 editor used to leave its controls at the plugin's factory
   defaults even though the restored audio engine was already using the saved

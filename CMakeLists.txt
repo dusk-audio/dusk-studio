@@ -1157,11 +1157,9 @@ endif()
 # Supported platforms:
 #   Linux   : memfd_create + futex + socketpair + SCM_RIGHTS
 #   Windows : CreateFileMapping + inheritable events + named pipe
-#   macOS   : shm_open + os_sync_wait_on_address + socketpair + SCM_RIGHTS
-#             (requires macOS 14.4 — os_sync_wait_on_address shared
-#             addresses were added in Sonoma 14.4; older systems fall
-#             back to the in-process path because DUSKSTUDIO_HAS_OOP_PLUGINS
-#             stays undefined.)
+#   macOS   : shm_open + non-blocking pipes + socketpair + SCM_RIGHTS
+#             (works at the release's macOS 11 deployment target; the pipes
+#             replace the shared-address API that is available only on 14.4.)
 # DUSKSTUDIO_HAS_OOP_PLUGINS gates every #if branch in PluginSlot that
 # routes through RemotePluginConnection.
 set(_duskstudio_oop_enabled FALSE)
@@ -1187,7 +1185,7 @@ elseif(WIN32)
         src/engine/ipc/platform/IpcChannel_Windows.cpp
         src/engine/ipc/platform/IpcShm_Windows.cpp
         src/engine/ipc/platform/IpcSync_Windows.cpp)
-elseif(APPLE AND CMAKE_OSX_DEPLOYMENT_TARGET VERSION_GREATER_EQUAL 14.4)
+elseif(APPLE)
     set(_duskstudio_oop_enabled TRUE)
     set(_duskstudio_ipc_platform_sources
         src/engine/ipc/platform/IpcChannel_Mac.cpp

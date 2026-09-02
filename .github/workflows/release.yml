@@ -795,6 +795,17 @@ jobs:
         # but keep the limit explicit so generator changes cannot unbound it.
         run: cmake --build build -j5
 
+      - name: Verify macOS 11 sandbox helper
+        run: |
+          set -euo pipefail
+          app="build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS"
+          for binary in "$app/DuskStudio" "$app/dusk-studio-plugin-host"; do
+            [[ -x "$binary" ]] || {
+              echo "::error::missing executable: $binary" >&2; exit 1; }
+            otool -l "$binary" | grep -E 'minos +11\.0' >/dev/null || {
+              echo "::error::$binary does not target macOS 11.0" >&2; exit 1; }
+          done
+
       - name: Build + run tests (release gate)
         # No DMG ships unless the full Catch2 suite passes.
         run: |
@@ -861,6 +872,15 @@ jobs:
               exit 1; }
           trap 'hdiutil detach "$MNT" >/dev/null 2>&1 || true' EXIT
           APP="$MNT/DuskStudio.app"
+          HELPER="$APP/Contents/MacOS/dusk-studio-plugin-host"
+          [[ -x "$HELPER" ]] || {
+            echo "::error::packaged app has no plugin sandbox helper" >&2
+            exit 1
+          }
+          otool -l "$HELPER" | grep -E 'minos +11\.0' >/dev/null || {
+            echo "::error::packaged plugin sandbox does not target macOS 11.0" >&2
+            exit 1
+          }
           codesign --verify --strict --deep --verbose=2 "$APP"
           if otool -L "$APP/Contents/MacOS/DuskStudio" \
               | tail -n +2 | awk '{print $1}' \

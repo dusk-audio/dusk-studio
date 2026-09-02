@@ -25,7 +25,7 @@ GPL source on this repo — build from source and the binary costs you nothing b
 
 ## Status
 
-**Beta.** Built to a production bar; released as Beta. See [CHANGELOG.md](CHANGELOG.md) for what shipped in each release and the [tags](https://github.com/dusk-audio/dusk-studio/tags) for the current version. Feature backlog effectively closed: every spec phase, Tascam DP-24SD parity, MTC + MIDI Clock sync, automatic cross-track plugin delay compensation, broad undo coverage (notes, automation, tempo, renames), portable session folders (relative audio paths, move/copy between machines), an optional out-of-process plugin sandbox with sandboxed plugin scanning (Linux and Windows; the macOS DMG targets macOS 11 and ships without it), a true-peak mastering limiter, a piecewise tempo map (changing tempo within a song), session open-with, an update notice on launch, and the rename to Dusk Studio have shipped. Plugins host in-process by default for the most responsive editors; `DUSKSTUDIO_USE_OOP_PLUGINS=1` opts into the crash-isolating sandbox. All three OSes ship unsigned binaries (Linux tarball + Windows MSI + macOS DMG) to the private releases repo on each tag. Remaining work toward the public 1.0 is release-engineering polish, low-spec/Raspberry-Pi performance, and deeper accessibility.
+**Beta.** Built to a production bar; released as Beta. See [CHANGELOG.md](CHANGELOG.md) for what shipped in each release and the [tags](https://github.com/dusk-audio/dusk-studio/tags) for the current version. Feature backlog effectively closed: every spec phase, Tascam DP-24SD parity, MTC + MIDI Clock sync, automatic cross-track plugin delay compensation, broad undo coverage (notes, automation, tempo, renames), portable session folders (relative audio paths, move/copy between machines), an optional out-of-process plugin sandbox with sandboxed plugin scanning on all three OSes, a true-peak mastering limiter, a piecewise tempo map (changing tempo within a song), session open-with, an update notice on launch, and the rename to Dusk Studio have shipped. Plugins host in-process by default for the most responsive editors; `DUSKSTUDIO_USE_OOP_PLUGINS=1` opts into the crash-isolating sandbox. All three OSes ship unsigned binaries (Linux tarball + Windows MSI + macOS DMG) to the private releases repo on each tag. Remaining work toward the public 1.0 is release-engineering polish, low-spec/Raspberry-Pi performance, and deeper accessibility.
 
 | Stage | Status |
 |---|---|
@@ -35,8 +35,8 @@ GPL source on this repo — build from source and the binary costs you nothing b
 | Plugin hosting (per-channel CLAP / VST3 / LV2 / AU + per-aux return) | Working |
 | Native soundfonts (`.sfz` + `.sf2` via sfizz, no external synth) | Working |
 | Plugin offline-state preservation (missing plugin doesn't wipe save) | Working |
-| Out-of-process plugin sandbox — audio, opt-in (Linux + Windows; macOS needs a 14.4 deployment-target build, which the released DMG is not) | Working |
-| Out-of-process plugin sandbox — editor embed (Linux XEmbed, Windows SetParent, macOS in-process shell on a 14.4 build) | Working |
+| Out-of-process plugin sandbox — audio, opt-in (Linux + macOS + Windows) | Working |
+| Out-of-process plugin sandbox — editor embed (Linux XEmbed, Windows SetParent, macOS in-process shell) | Working |
 | Mastering view (waveform + 5-band EQ + multiband comp + brick-wall limiter + BS.1770) | Working |
 | Offline bounce / mixdown export (master) | Working |
 | Single-pass stem export (tracks + buses + aux returns) | Working |
@@ -98,7 +98,7 @@ Channels 1-24 ───────────────→ 4 Aux Buses ─�
 ```
 
 - **DSP** is extracted from the Dusk Audio plugin suite (4K EQ, Multi-Comp FET/Opto/VCA, Multi-Q, TapeMachine, shared AnalogEmulation) so the mixer and the standalone plugins share a single DSP source of truth.
-- **Plugin host**: CLAP + VST3 + LV2 + AU on every channel strip; aux returns host reverb / delay. In-process by default; the **opt-in** out-of-process sandbox (`DUSKSTUDIO_USE_OOP_PLUGINS=1`) runs each plugin in a child via a per-platform IPC backend (Linux `memfd_create` + `futex`, macOS `shm_open` + `os_sync_wait_on_address`, Windows `CreateFileMapping` + inheritable kernel events) so a crashing plugin can't take the host down. Standard-host plugin *scanning* runs in that child; native CLAP and VST3 bundle scanning uses a child too, on its own gate, and falls back in-process when no child binary is present; native LV2 and AU discovery never loads plugin code. The macOS sandbox needs `os_sync_wait_on_address`, so it compiles in only at deployment target 14.4 or later: the released DMG targets macOS 11 and ships no child binary, so it hosts and scans everything in-process.
+- **Plugin host**: CLAP + VST3 + LV2 + AU on every channel strip; aux returns host reverb / delay. In-process by default; the **opt-in** out-of-process sandbox (`DUSKSTUDIO_USE_OOP_PLUGINS=1`) runs each plugin in a child via a per-platform IPC backend (Linux `memfd_create` + `futex`, macOS `shm_open` + non-blocking pipes, Windows `CreateFileMapping` + inheritable kernel events) so a crashing plugin can't take the host down. Standard-host plugin *scanning* runs in that child; native CLAP and VST3 bundle scanning uses a child too, on its own gate, and falls back in-process when no child binary is present; native LV2 and AU discovery never loads plugin code. The released macOS DMG includes the sandbox helper while retaining its macOS 11 deployment target.
 - **Soundfonts**: `.sfz` and `.sf2` play through the built-in [dusk-fizz](https://github.com/dusk-audio/dusk-fizz) engine, our maintained hard fork of sfizz (SF2 → SFZ on load). No external synth required.
 
 ## Repository

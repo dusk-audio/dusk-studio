@@ -367,7 +367,7 @@ VST3/LV2/AU plugins run **in-process by default**. Out-of-process hosting (a sep
 
 ### How parent and child talk
 
-- **Audio hot path:** a shared-memory region (memfd on Linux, `shm_open` on macOS, `CreateFileMapping` on Windows) holds the audio buffers; the parent and child hand off via a cross-process futex / `WaitOnAddress` / `os_sync_wait_on_address` round-trip — no allocations, RT-safe. See [src/engine/ipc/platform/IpcShm*](../src/engine/ipc/platform/) and `IpcSync*`.
+- **Audio hot path:** a shared-memory region (memfd on Linux, `shm_open` on macOS, `CreateFileMapping` on Windows) holds the audio buffers; the parent and child hand off via a cross-process futex / non-blocking pipe / kernel-event round-trip — no allocations, RT-safe. See [src/engine/ipc/platform/IpcShm*](../src/engine/ipc/platform/) and `IpcSync*`.
 - **Control plane:** load/prepare/setState/release commands go over a socketpair (blocking is fine, it's the message thread). See `RemotePluginConnection` and `IpcChannel*`.
 - **Scanning:** the child runs `--scan <format> <file>`, prints the plugin description wrapped in sentinels (`==DUSK_SCAN_BEGIN==`…`==DUSK_SCAN_END==`), the parent parses it. A crash/timeout blacklists the file. See [src/engine/ipc/PluginScanProtocol.h](../src/engine/ipc/PluginScanProtocol.h) and `OutOfProcessPluginScanner` in [src/engine/PluginManager.cpp](../src/engine/PluginManager.cpp).
 
