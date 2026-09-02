@@ -306,17 +306,16 @@ CMake auto-detects four external repos at configure time, on top of three git su
 cd /path/to/dusk-studio
 
 git clone https://github.com/dusk-audio/DAF.git ../DAF
-git -C ../DAF checkout 2f573d68d79218d2f9e048e47d99e424ca7958c6
+git -C ../DAF checkout 66aa1e0365beef70ee097dcacfda4cfc5a25bcee
 git -C ../DAF submodule update --init     # dgl/src/pugl-upstream
 
 git clone https://github.com/dusk-audio/DAF-Widgets.git ../DAF-Widgets
-git -C ../DAF-Widgets checkout 1c09e1ef29f92ae7feb200bac8febdf814cf5e4a
+git -C ../DAF-Widgets checkout 798154e874eaaa024371f6076249398b51498142
 ```
 
-Clone then check out the SHA rather than cloning a branch: DAF's pin is on a
-feature branch and is not an ancestor of that fork's `main` (DAF-Widgets' pin is
-its `main` tip today, but treat it the same). Do not delete the branch carrying
-the DAF pin upstream, or CI's fetch-by-SHA may stop resolving.
+Clone then check out the SHA rather than cloning a moving branch. Both pins are
+on their forks' `main` histories today, but exact revisions keep local and CI
+builds reproducible as those branches advance.
 
 DAF's Pugl revision is carried by the Pugl branch `dusk-pin-5e2621d`, not that
 fork's `main`. Keep that branch too: DAF submodule initialization and CI require

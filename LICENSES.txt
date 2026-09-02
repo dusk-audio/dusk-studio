@@ -273,7 +273,7 @@ pffft (FFT backend behind dusk::audio::Fft — spectrum analyser, DP alignment)
              top of external/pffft/pffft.h.
 
 DAF / DGL (Dusk Audio Framework graphics layer — backs the native notepad UI)
-  Version  : dusk-audio/DAF rev 92c3d1a75450e8b8eaf963efe875f5742c7a1c84
+  Version  : dusk-audio/DAF rev 66aa1e0365beef70ee097dcacfda4cfc5a25bcee
              (CI pin DAF_REV in .github/actions/clone-daf-stack/action.yml)
   License  : ISC — Copyright (C) 2012-2025 Filipe Coelho <falktx@falktx.com>
              (DAF/LICENSE)
@@ -328,7 +328,7 @@ DAF / DGL (Dusk Audio Framework graphics layer — backs the native notepad UI)
 
 DAF-Widgets (DGL / Dear ImGui bridge — the notepad's immediate-mode UI layer,
              and the Dusk console widget set)
-  Version  : dusk-audio/DAF-Widgets rev 1c09e1ef29f92ae7feb200bac8febdf814cf5e4a
+  Version  : dusk-audio/DAF-Widgets rev 798154e874eaaa024371f6076249398b51498142
              (CI pin DAF_WIDGETS_REV in .github/actions/clone-daf-stack/action.yml)
   License  : ISC — Copyright (C) 2012-2021 Filipe Coelho <falktx@falktx.com>
              and Copyright (C) 2026 Dusk Audio for opengl/DuskWidgets.{hpp,cpp}
@@ -3797,7 +3797,7 @@ SOFTWARE.
 
 --------------------------------------------------------------------------------
 DAF / DGL — ISC
-LICENSE at dusk-audio/DAF rev 92c3d1a75450e8b8eaf963efe875f5742c7a1c84
+LICENSE at dusk-audio/DAF rev 66aa1e0365beef70ee097dcacfda4cfc5a25bcee
 --------------------------------------------------------------------------------
 
 Copyright (C) 2012-2025 Filipe Coelho <falktx@falktx.com>
@@ -3817,7 +3817,7 @@ PERFORMANCE OF THIS SOFTWARE.
 --------------------------------------------------------------------------------
 pugl — ISC
 dgl/src/pugl-upstream/COPYING at dusk-audio/DAF rev
-92c3d1a75450e8b8eaf963efe875f5742c7a1c84, pugl submodule rev
+66aa1e0365beef70ee097dcacfda4cfc5a25bcee, pugl submodule rev
 43d8e349c7ca7c4d76778a8c48b73226105bed14
 --------------------------------------------------------------------------------
 
@@ -3882,7 +3882,7 @@ Copyright 2012-2023 David Robillard <d@drobilla.net>
 --------------------------------------------------------------------------------
 DAF no-X11 Wayland OpenGL3 backend — ISC and MIT notices
 dgl/src/pugl.cpp HAVE_WAYLAND branch at dusk-audio/DAF rev
-92c3d1a75450e8b8eaf963efe875f5742c7a1c84
+66aa1e0365beef70ee097dcacfda4cfc5a25bcee
 --------------------------------------------------------------------------------
 
 daf__add_dgl_opengl3 defines DGL_OPENGL, so a supported Linux build without
@@ -4044,7 +4044,7 @@ DEALINGS IN THE SOFTWARE.
 --------------------------------------------------------------------------------
 NanoVG — zlib license
 dgl/src/nanovg/LICENSE.txt at dusk-audio/DAF rev
-92c3d1a75450e8b8eaf963efe875f5742c7a1c84
+66aa1e0365beef70ee097dcacfda4cfc5a25bcee
 --------------------------------------------------------------------------------
 
 Copyright (c) 2013 Mikko Mononen memon@inside.org
@@ -4068,7 +4068,7 @@ misrepresented as being the original software.
 --------------------------------------------------------------------------------
 fontstash — zlib license
 Notice at the head of dgl/src/nanovg/fontstash.h at dusk-audio/DAF rev
-92c3d1a75450e8b8eaf963efe875f5742c7a1c84
+66aa1e0365beef70ee097dcacfda4cfc5a25bcee
 --------------------------------------------------------------------------------
 
 Copyright (c) 2009-2013 Mikko Mononen memon@inside.org
@@ -4090,7 +4090,7 @@ freely, subject to the following restrictions:
 --------------------------------------------------------------------------------
 fontstash embedded UTF-8 decoder — MIT
 Notice at dgl/src/nanovg/fontstash.h:509-510 at dusk-audio/DAF rev
-92c3d1a75450e8b8eaf963efe875f5742c7a1c84. NanoVG.cpp compiles nanovg.c,
+66aa1e0365beef70ee097dcacfda4cfc5a25bcee. NanoVG.cpp compiles nanovg.c,
 which includes fontstash.h. The compiled 2010 decoder variation carries these
 exact source lines:
 
@@ -4124,7 +4124,7 @@ SOFTWARE.
 --------------------------------------------------------------------------------
 stb_truetype — MIT / public domain dual license
 Notice at the foot of dgl/src/nanovg/stb_truetype.h at dusk-audio/DAF rev
-92c3d1a75450e8b8eaf963efe875f5742c7a1c84
+66aa1e0365beef70ee097dcacfda4cfc5a25bcee
 --------------------------------------------------------------------------------
 
 ------------------------------------------------------------------------------
@@ -4170,7 +4170,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 --------------------------------------------------------------------------------
 stb_image — public-domain dedication and fallback permission
 License notice in dgl/src/nanovg/stb_image.h at dusk-audio/DAF rev
-92c3d1a75450e8b8eaf963efe875f5742c7a1c84
+66aa1e0365beef70ee097dcacfda4cfc5a25bcee
 --------------------------------------------------------------------------------
 
 This software is in the public domain. Where that dedication is not
@@ -4180,7 +4180,7 @@ distribute, and modify this file as you see fit.
 --------------------------------------------------------------------------------
 DejaVu Sans — Bitstream Vera Fonts License and Arev Fonts License
 dgl/src/resources/LICENSE-DejaVuSans.ttf.txt at dusk-audio/DAF rev
-92c3d1a75450e8b8eaf963efe875f5742c7a1c84
+66aa1e0365beef70ee097dcacfda4cfc5a25bcee
 --------------------------------------------------------------------------------
 
 Fonts are (c) Bitstream (see below). DejaVu changes are in public domain.
@@ -4284,7 +4284,7 @@ from Tavmjong Bah. For further information, contact: tavmjong @ free
 --------------------------------------------------------------------------------
 Khronos GL headers — MIT notices
 dgl/src/khronos/GL/glext.h and dgl/src/khronos/KHR/khrplatform.h at
-dusk-audio/DAF rev 92c3d1a75450e8b8eaf963efe875f5742c7a1c84
+dusk-audio/DAF rev 66aa1e0365beef70ee097dcacfda4cfc5a25bcee
 --------------------------------------------------------------------------------
 
 glext.h carries this exact notice:
@@ -4318,7 +4318,7 @@ MATERIALS OR THE USE OR OTHER DEALINGS IN THE MATERIALS.
 --------------------------------------------------------------------------------
 DAF-Widgets — ISC
 LICENSE at dusk-audio/DAF-Widgets rev
-1c09e1ef29f92ae7feb200bac8febdf814cf5e4a
+798154e874eaaa024371f6076249398b51498142
 --------------------------------------------------------------------------------
 
 DISTRHO Plugin Framework (DPF)
@@ -4373,7 +4373,7 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 --------------------------------------------------------------------------------
 Dear ImGui 1.91.9b — MIT
 opengl/DearImGui/LICENSE.txt at dusk-audio/DAF-Widgets rev
-1c09e1ef29f92ae7feb200bac8febdf814cf5e4a
+798154e874eaaa024371f6076249398b51498142
 --------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -4401,7 +4401,7 @@ SOFTWARE.
 --------------------------------------------------------------------------------
 imgui-knobs — MIT
 opengl/DearImGuiKnobs/LICENSE at dusk-audio/DAF-Widgets rev
-1c09e1ef29f92ae7feb200bac8febdf814cf5e4a
+798154e874eaaa024371f6076249398b51498142
 --------------------------------------------------------------------------------
 
 MIT License
@@ -4429,7 +4429,7 @@ SOFTWARE.
 --------------------------------------------------------------------------------
 imgui_toggle — ISC-style permission grant
 opengl/DearImGuiToggle/LICENSE at dusk-audio/DAF-Widgets rev
-1c09e1ef29f92ae7feb200bac8febdf814cf5e4a
+798154e874eaaa024371f6076249398b51498142
 --------------------------------------------------------------------------------
 
 Copyright © 2022 nitz — chris marc dailey https://cmd.wtf
@@ -4452,7 +4452,7 @@ LICENSE at bluescan/proggyfonts rev
 stream expands to 41,208 bytes. Its Adler-32 is 0x48f962f7 and its SHA-256 is
 527d2a443ce051f93f7e77b855609722b8cb220a9f104b4aa037be5c90b71324; all three
 values match that revision's ProggyClean.ttf byte for byte at
-dusk-audio/DAF-Widgets rev 1c09e1ef29f92ae7feb200bac8febdf814cf5e4a.
+dusk-audio/DAF-Widgets rev 798154e874eaaa024371f6076249398b51498142.
 --------------------------------------------------------------------------------
 
 MIT License

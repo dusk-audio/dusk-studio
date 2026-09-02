@@ -66,10 +66,10 @@ The session notepad is a native window built on DAF/DGL plus the Dear ImGui laye
 ```cmd
 cd C:\dev
 git clone https://github.com/dusk-audio/DAF.git
-git -C DAF checkout 92c3d1a75450e8b8eaf963efe875f5742c7a1c84
+git -C DAF checkout 66aa1e0365beef70ee097dcacfda4cfc5a25bcee
 git -C DAF submodule update --init
 git clone https://github.com/dusk-audio/DAF-Widgets.git
-git -C DAF-Widgets checkout 1c09e1ef29f92ae7feb200bac8febdf814cf5e4a
+git -C DAF-Widgets checkout 798154e874eaaa024371f6076249398b51498142
 ```
 
 Clone then check out the SHA rather than building whatever a branch points at today. The submodule step is not optional: DGL pulls the Dusk Pugl fork into `dgl/src/pugl-upstream`. The pins live in [.github/actions/clone-daf-stack/action.yml](.github/actions/clone-daf-stack/action.yml), the single source of truth for every workflow.
