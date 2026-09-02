@@ -50,7 +50,8 @@ jobs:
           probe_tag="duskstudio-token-preflight-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           if ! gh api --method POST \
               "repos/${RELEASES_REPO}/releases/generate-notes" \
-              -f "tag_name=${probe_tag}" >/dev/null 2>"$preflight_error"; then
+              -f "tag_name=${probe_tag}" \
+              -f "target_commitish=main" >/dev/null 2>"$preflight_error"; then
             echo "::error::write-capability preflight for ${RELEASES_REPO} failed. Verify RELEASES_REPO_TOKEN has repository access and contents:write, rotate it if needed, then re-run." >&2
             cat "$preflight_error" >&2
             exit 1
@@ -940,7 +941,7 @@ jobs:
           )
 
       - name: Publish complete asset set to the PRIVATE releases repo
-        if: ${{ github.ref_type == 'tag' }}
+        if: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
         env:
           GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
         run: |

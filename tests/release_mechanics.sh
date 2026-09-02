@@ -1178,7 +1178,8 @@ for required in (
     'probe_tag="duskstudio-token-preflight-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"',
     "if ! gh api --method POST",
     '"repos/${RELEASES_REPO}/releases/generate-notes"',
-    '-f "tag_name=${probe_tag}" >/dev/null 2>"$preflight_error"; then',
+    '-f "tag_name=${probe_tag}"',
+    '-f "target_commitish=main" >/dev/null 2>"$preflight_error"; then',
     "write-capability preflight for ${RELEASES_REPO} failed",
     'cat "$preflight_error" >&2',
     "exit 1",
@@ -1232,7 +1233,7 @@ for required in (
     "SHA256SUMS must contain exactly five entries",
     "sha256sum --check SHA256SUMS",
     "release directory must contain exactly six assets",
-    "if: ${{ github.ref_type == 'tag' }}",
+    "if: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}",
     notes_marker,
     'gh release upload "$TAG" --repo "$RELEASES_REPO" --clobber dist/*',
     'scripts/verify-release-assets.sh "$TAG"',
@@ -1255,7 +1256,7 @@ assert publish_job.count("gh release upload") == 1, (
 assert "SHA256SUMS." not in release_workflow, (
     "per-job checksum fragments must not return"
 )
-assert "workflow_dispatch:\n\npermissions:" in release_workflow, (
-    "manual release dispatch must remain a non-publishing dry run"
+assert "if: ${{ github.ref_type == 'tag' }}" not in publish_job, (
+    "a workflow_dispatch targeting a tag must not publish"
 )
 PY
