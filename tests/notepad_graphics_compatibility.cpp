@@ -58,7 +58,7 @@ TEST_CASE ("Open notepad geometry responds to display scale changes",
 using duskstudio::notepad::assessGraphicsCompatibility;
 
 TEST_CASE ("Notepad rejects graphics stacks known to end the host process",
-           "[notepad][windows]")
+           "[notepad][windows][issue-336]")
 {
     CHECK (assessGraphicsCompatibility ("1.1.0", "GDI Generic")
            == GraphicsCompatibility::noOpenGL3);
