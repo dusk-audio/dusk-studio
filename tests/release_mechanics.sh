@@ -683,14 +683,8 @@ assert paragraph is not None
 assert paragraph.text == expected_notes, (paragraph.text, expected_notes)
 
 workflows = {
-    "manual-pdf.yml": "Manual PDF",
-    "macos-release.yml": "macOS release (unsigned DMG)",
-    "windows-build.yml": "Windows build",
-    "linux-release.yml": "Linux release (tarball)",
+    "release.yml": "Dusk Studio release",
 }
-create_marker = 'if ! create_err=$(gh release create "$TAG"'
-recheck_marker = 'if gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null 2>&1; then'
-upload_line = 'gh release upload "$TAG" --repo "$RELEASES_REPO" --clobber "${ASSETS[@]}"'
 notes_marker = "--notes-file packaging/RELEASE-NOTES.md"
 preflight_marker = "- name: Preflight - releases-repo token is valid (tag builds only)"
 
@@ -734,13 +728,13 @@ for label, path in safe_selftest_callers.items():
         f"{label} must not launch a self-test on the live display"
     )
 maintainer_guide = safe_selftest_callers["maintainer guide"].read_text(encoding="utf-8")
-release_workflow = (source_root / ".github" / "workflows" / "linux-release.yml").read_text(
+release_workflow = (source_root / ".github" / "workflows" / "release.yml").read_text(
     encoding="utf-8"
 )
 pinned_donor = re.search(
     r"^\s*DONOR_REV:\s*([0-9a-f]{40})$", release_workflow, re.MULTILINE
 )
-assert pinned_donor, "linux-release.yml must pin DONOR_REV"
+assert pinned_donor, "release.yml must pin DONOR_REV"
 donor_pins = {}
 for workflow_path in (source_root / ".github" / "workflows").glob("*.yml"):
     pins = re.findall(
@@ -752,19 +746,20 @@ for workflow_path in (source_root / ".github" / "workflows").glob("*.yml"):
         donor_pins[workflow_path.name] = pins
 expected_donor_workflows = {
     "linux-build.yml",
-    "linux-release.yml",
     "linux-sanitizer.yml",
     "macos-build.yml",
-    "macos-release.yml",
     "raspberry-pi-build.yml",
-    "windows-build.yml",
+    "release.yml",
     "windows-tests.yml",
 }
 assert set(donor_pins) == expected_donor_workflows, (
     "exactly the release and test workflows that consume donor source must "
     f"pin DONOR_REV: {donor_pins.keys()}"
 )
-assert all(pins == [pinned_donor.group(1)] for pins in donor_pins.values()), (
+assert all(
+    pins and set(pins) == {pinned_donor.group(1)}
+    for pins in donor_pins.values()
+), (
     f"DONOR_REV drift across workflows: {donor_pins}"
 )
 
@@ -792,7 +787,7 @@ file_importer_tests = (
     "FileImporter: matching rate and channels copies the source verbatim",
     "FileImporter: a matching 32-bit source is not truncated to 24-bit",
 )
-for workflow_name in ("windows-tests.yml", "windows-build.yml"):
+for workflow_name in ("windows-tests.yml", "release.yml"):
     workflow_text = (
         source_root / ".github" / "workflows" / workflow_name
     ).read_text(encoding="utf-8")
@@ -869,9 +864,8 @@ assert f"-R {intentional_leak_filter}" in intentional_leak_step, (
 # version/hash pair, and prevent the unreliable host from being reintroduced.
 sodium_pins = {}
 expected_sodium_workflows = {
-    "linux-release.yml",
     "macos-build.yml",
-    "macos-release.yml",
+    "release.yml",
 }
 github_sodium_asset = (
     '"https://github.com/jedisct1/libsodium/releases/download/'
@@ -889,13 +883,17 @@ for workflow_path in (source_root / ".github" / "workflows").glob("*.yml"):
         r"^\s*SODIUM_SHA256:\s*([0-9a-f]{64})$", workflow_text, re.MULTILINE
     )
     if versions or hashes:
-        assert len(versions) == 1 and len(hashes) == 1, (
-            f"{workflow_path.name} must carry exactly one libsodium version/hash pair"
+        assert versions and len(versions) == len(hashes), (
+            f"{workflow_path.name} must pair every libsodium version with a hash"
+        )
+        pairs = set(zip(versions, hashes))
+        assert len(pairs) == 1, (
+            f"{workflow_path.name} has inconsistent libsodium pins: {pairs}"
         )
         assert github_sodium_asset in workflow_text, (
             f"{workflow_path.name} must fetch the official GitHub release asset"
         )
-        sodium_pins[workflow_path.name] = (versions[0], hashes[0])
+        sodium_pins[workflow_path.name] = next(iter(pairs))
 assert set(sodium_pins) == expected_sodium_workflows, (
     f"unexpected source-built libsodium workflow set: {sodium_pins.keys()}"
 )
@@ -987,7 +985,7 @@ release_section = release_section_match.group("body")
 assert "env -u DUSK_PLUGINS_PATH scripts/update-patrons.py --dry-run" in release_section, (
     "Part 10 must retain the local Patreon freshness check"
 )
-assert ".github/workflows/linux-release.yml" in release_section, (
+assert ".github/workflows/release.yml" in release_section, (
     "Part 10 must read the donor pin from a release workflow"
 )
 assert 'cat-file -e "$DONOR_REV^{commit}"' in release_section, (
@@ -1055,8 +1053,7 @@ assert ".codex/worktrees/*" in handoff_guide, (
     "0.13 handoff must keep the primary-checkout requirement"
 )
 
-# All four workflows race to create the same release, so the body must come
-# from one file in the tagged tree rather than from whichever job wins.
+# The sole publisher takes the body from one file in the tagged tree.
 notes_path = source_root / "packaging" / "RELEASE-NOTES.md"
 assert notes_path.is_file(), "packaging/RELEASE-NOTES.md must exist"
 notes_text = notes_path.read_text(encoding="utf-8")
@@ -1149,64 +1146,116 @@ for local_packager in (
 ):
     assert local_packager not in bump_output
 
-for name, display_name in workflows.items():
-    text = (source_root / ".github" / "workflows" / name).read_text(encoding="utf-8")
-    workflow_name = re.search(r"^name:\s*(.+)$", text, re.MULTILINE)
-    assert workflow_name and workflow_name.group(1).strip() == display_name, (
-        f"{name}: printed checklist name is stale"
+for retired in (
+    "linux-release.yml",
+    "macos-release.yml",
+    "windows-build.yml",
+    "manual-pdf.yml",
+):
+    assert not (source_root / ".github" / "workflows" / retired).exists(), (
+        f"retired independent release publisher still exists: {retired}"
     )
-    assert text.count(preflight_marker) == 1, (
-        f"{name}: release token preflight must appear exactly once"
+
+workflow_name = re.search(r"^name:\s*(.+)$", release_workflow, re.MULTILINE)
+assert workflow_name and workflow_name.group(1).strip() == workflows["release.yml"], (
+    "release.yml display name drifted from the printed release checklist"
+)
+assert release_workflow.count(preflight_marker) == 1, (
+    "release token preflight must appear exactly once"
+)
+preflight_at = release_workflow.index(preflight_marker)
+tag_check_at = release_workflow.index("- name: Verify tag matches VERSION")
+assert preflight_at < tag_check_at, (
+    "token preflight must run before release validation/build work"
+)
+preflight_block = release_workflow[preflight_at:tag_check_at]
+for required in (
+    "set -euo pipefail",
+    "if: ${{ github.ref_type == 'tag' }}",
+    "GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}",
+    "preflight_error=$(mktemp -t duskstudio-preflight.XXXXXX)",
+    "trap 'rm -f \"$preflight_error\"' EXIT",
+    'probe_tag="duskstudio-token-preflight-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"',
+    "if ! gh api --method POST",
+    '"repos/${RELEASES_REPO}/releases/generate-notes"',
+    '-f "tag_name=${probe_tag}" >/dev/null 2>"$preflight_error"; then',
+    "write-capability preflight for ${RELEASES_REPO} failed",
+    'cat "$preflight_error" >&2',
+    "exit 1",
+):
+    assert required in preflight_block, (
+        f"release token preflight lost required check: {required}"
     )
-    preflight_at = text.index(preflight_marker)
-    tag_check_at = text.index("- name: Verify tag matches VERSION")
-    assert preflight_at < tag_check_at, (
-        f"{name}: token preflight must run before release validation/build work"
+
+jobs_text = release_workflow.split("\njobs:\n", 1)[1]
+job_names = re.findall(r"^  ([a-z][a-z0-9-]*):$", jobs_text, re.MULTILINE)
+assert set(job_names) == {"preflight", "linux", "macos", "windows", "manual", "publish"}, (
+    f"release workflow job set drifted: {job_names}"
+)
+
+def release_job(name):
+    match = re.search(
+        rf"(?ms)^  {re.escape(name)}:\n(?P<body>.*?)(?=^  [a-z][a-z0-9-]*:\n|\Z)",
+        jobs_text,
     )
-    preflight_block = text[preflight_at:tag_check_at]
+    assert match, f"release.yml lost the {name} job"
+    return match.group("body")
+
+artifact_contract = {
+    "linux": ("release-linux-${{ matrix.arch }}", "dusk-studio-*-Linux-${{ matrix.arch }}.tar.xz"),
+    "macos": ("release-macos", '"*.dmg"'),
+    "windows": ("release-windows", '"*.msi"'),
+    "manual": ("release-manual", "MANUAL.pdf"),
+}
+for job_name, (artifact_name, artifact_path) in artifact_contract.items():
+    body = release_job(job_name)
+    assert "needs: preflight" in body, f"{job_name} must wait for token/tag preflight"
+    assert body.count("actions/upload-artifact@v7") == 1, (
+        f"{job_name} must stage exactly one release artifact"
+    )
     for required in (
-        "set -euo pipefail",
-        "if: ${{ github.ref_type == 'tag' }}",
-        "GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}",
-        "preflight_error=$(mktemp -t duskstudio-preflight.XXXXXX)",
-        "trap 'rm -f \"$preflight_error\"' EXIT",
-        'probe_tag="duskstudio-token-preflight-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"',
-        "if ! gh api --method POST",
-        '"repos/${RELEASES_REPO}/releases/generate-notes"',
-        '-f "tag_name=${probe_tag}" >/dev/null 2>"$preflight_error"; then',
-        "write-capability preflight for ${RELEASES_REPO} failed",
-        'cat "$preflight_error" >&2',
-        "exit 1",
+        f"name: {artifact_name}",
+        f"path: {artifact_path}",
+        "if-no-files-found: error",
+        "retention-days: 1",
     ):
-        assert required in preflight_block, (
-            f"{name}: token preflight lost required check: {required}"
-        )
-    if name == "windows-build.yml":
-        assert "shell: bash" in preflight_block, (
-            "windows-build.yml: token preflight must override the pwsh default"
-        )
-    assert text.count(create_marker) == 1, f"{name}: missing race-checked create"
-    create_at = text.index(create_marker)
-    create_end = text.index("2>&1); then", create_at)
-    create_block = text[create_at:create_end]
-    assert '"${ASSETS[@]}"' not in create_block, (
-        f"{name}: create must not own asset upload"
-    )
-    assert notes_marker in create_block, (
-        f"{name}: create must publish the canonical release notes file"
-    )
-    # Only the gh release commands are banned from carrying an inline body;
-    # prose and other steps may say "--notes". Backslash continuations are
-    # folded first so a multi-line invocation counts as one line.
-    folded = re.sub(r"\\\n\s*", " ", text)
-    for line in folded.splitlines():
-        assert not ("gh release" in line and '--notes "' in line), (
-            f"{name}: release body must not be composed per workflow"
-        )
-    recheck_at = text.index(recheck_marker, create_end)
-    upload_matches = list(re.finditer(
-        rf"^\s+{re.escape(upload_line)}$", text, re.MULTILINE
-    ))
-    assert len(upload_matches) == 1, f"{name}: upload must be unconditional"
-    assert create_at < recheck_at < upload_matches[0].start()
+        assert required in body, f"{job_name} artifact contract lost: {required}"
+    assert "gh release" not in body, f"{job_name} must never publish independently"
+
+publish_job = release_job("publish")
+for required in (
+    "needs: [linux, macos, windows, manual]",
+    "actions/download-artifact@v7",
+    "pattern: release-*",
+    "merge-multiple: true",
+    "release fan-in must contain exactly the five expected payloads",
+    "SHA256SUMS must contain exactly five entries",
+    "sha256sum --check SHA256SUMS",
+    "release directory must contain exactly six assets",
+    "if: ${{ github.ref_type == 'tag' }}",
+    notes_marker,
+    'gh release upload "$TAG" --repo "$RELEASES_REPO" --clobber dist/*',
+    'scripts/verify-release-assets.sh "$TAG"',
+):
+    assert required in publish_job, f"fan-in publisher lost: {required}"
+for payload_name in (
+    '"dusk-studio-${version}-Linux-x86_64.tar.xz"',
+    '"dusk-studio-${version}-Linux-aarch64.tar.xz"',
+    '"dusk-studio-${version}-macOS-arm64.dmg"',
+    '"dusk-studio-${version}-Windows-x64.msi"',
+    '"MANUAL.pdf"',
+):
+    assert payload_name in publish_job, f"fan-in lost expected payload: {payload_name}"
+assert publish_job.count("gh release create") == 1, (
+    "the fan-in publisher must have one release-creation path"
+)
+assert publish_job.count("gh release upload") == 1, (
+    "the fan-in publisher must upload the complete set in one command"
+)
+assert "SHA256SUMS." not in release_workflow, (
+    "per-job checksum fragments must not return"
+)
+assert "workflow_dispatch:\n\npermissions:" in release_workflow, (
+    "manual release dispatch must remain a non-publishing dry run"
+)
 PY

@@ -657,8 +657,8 @@ catch_discover_tests(dusk-studio-tests
     TEST_SPEC "~[alsa]")
 
 # Exercise the real release-version insertion script against an isolated fixture,
-# and keep the four private-release publishers on the race-safe create/recheck/
-# upload contract. The release script is Unix-only.
+# and pin the private-release fan-in and single-publisher contract. The release
+# script is Unix-only.
 if(UNIX)
     find_program(DUSKSTUDIO_BASH_EXECUTABLE bash)
     find_package(Python3 COMPONENTS Interpreter QUIET)

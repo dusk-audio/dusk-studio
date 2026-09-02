@@ -470,7 +470,7 @@ workflows. Supply the real address before either format is published.
    PY
      DONOR_REV=$(sed -nE \
        's/^[[:space:]]*DONOR_REV:[[:space:]]*([0-9a-f]{40})[[:space:]]*$/\1/p' \
-       .github/workflows/linux-release.yml)
+       .github/workflows/release.yml)
      [[ "$DONOR_REV" =~ ^[0-9a-f]{40}$ ]] \
        || { echo "STOP: release workflow has no valid DONOR_REV" >&2; exit 1; }
      git -C ../plugins cat-file -e "$DONOR_REV^{commit}" 2>/dev/null \
@@ -551,17 +551,15 @@ workflows. Supply the real address before either format is published.
    git push origin "refs/tags/v${RELEASE_VERSION:?set RELEASE_VERSION first}"
    ```
 
-7. A `v*` tag starts all four workflows below. Each rejects a tag that does
-   not equal `v$(cat VERSION)`. Watch them by their exact display names:
+7. A `v*` tag starts [`Dusk Studio release`](../.github/workflows/release.yml).
+   Its preflight rejects a tag that does not equal `v$(cat VERSION)` and proves
+   the private-repository token can write before any platform build starts.
+   Linux, macOS, Windows, and manual jobs then run in parallel. Only after all
+   four succeed does one publisher assemble the assets, create `SHA256SUMS`,
+   and write to `dusk-audio/dusk-studio-releases`.
 
-   - [`Linux release (tarball)`](../.github/workflows/linux-release.yml)
-   - [`macOS release (unsigned DMG)`](../.github/workflows/macos-release.yml)
-   - [`Windows build`](../.github/workflows/windows-build.yml)
-   - [`Manual PDF`](../.github/workflows/manual-pdf.yml)
-
-All four workflows publish to the private
-`dusk-audio/dusk-studio-releases` repository. Do not announce the release when
-the workflows merely turn green; complete the acceptance checks below first.
+Do not announce the release when the workflow merely turns green; complete the
+acceptance checks below first.
 
 ### Tag assets and acceptance
 
@@ -574,13 +572,10 @@ A complete `vX.Y.Z` release has exactly these six assets:
 - `MANUAL.pdf`
 - `SHA256SUMS`
 
-The four tag workflows cannot see each other's outputs, so each still uploads
-its own `SHA256SUMS.<job>` file: `SHA256SUMS.linux-x86_64`,
-`SHA256SUMS.linux-aarch64`, `SHA256SUMS.macos`, `SHA256SUMS.windows` and
-`SHA256SUMS.manual`. Replace those five with one sorted `SHA256SUMS` covering
-all five payloads, and delete them from the release, before the acceptance run
-below. Issue #321 removes this step by merging the workflows into a single
-publish job that fans in.
+The publisher downloads all five payloads into one job and refuses to publish
+unless their exact filenames are present. It writes a sorted, lowercase
+`SHA256SUMS` with five entries and verifies it locally before uploading all six
+assets together.
 
 Before announcement, run
 [`scripts/verify-release-assets.sh`](../scripts/verify-release-assets.sh)

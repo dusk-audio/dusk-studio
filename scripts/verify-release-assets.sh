@@ -5,16 +5,10 @@
 #   scripts/verify-release-assets.sh            # tag v$(cat VERSION)
 #   scripts/verify-release-assets.sh v0.13.0
 #
-# Four workflows publish to the same tag (linux-release once per arch,
-# macos-release, windows-build, manual-pdf). A platform that fails leaves a
-# release that looks finished but is short its assets, so the set is the check:
-# six assets, no more, no fewer, plus a populated release-summary slot. Exits
-# nonzero if anything is missing, duplicated or unexpected.
-#
-# The six-asset shape is the target of issue #321. Until the four workflows are
-# merged into one job that fans in, each job still uploads its own
-# SHA256SUMS.<job> file: consolidate those five into a single SHA256SUMS before
-# running this, as v0.13.0 was.
+# The release workflow fans in five platform payloads, creates one canonical
+# checksum file, and publishes all six assets together. This read-only verifier
+# independently checks that contract plus the populated release-summary slot.
+# It exits nonzero if anything is missing, duplicated, or unexpected.
 
 set -euo pipefail
 

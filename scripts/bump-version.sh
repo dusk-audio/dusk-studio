@@ -86,7 +86,7 @@ elif ! grep -qFx "$EXPECTED_CHANGELOG_HEADING" CHANGELOG.md; then
 fi
 
 # Anti-drift gate: sibling JUCE-wayland dev fork vs the release snapshot.
-# linux-release.yml pins the Linux build to a Dusk-owned mirror snapshot
+# release.yml pins the Linux build to a Dusk-owned mirror snapshot
 # (JUCE_REV under an immutable dusk-wayland-vN tag). If a maintainer keeps a
 # sibling ../JUCE-wayland dev checkout, make sure a release can't be cut from a
 # fork state that no snapshot captures:
@@ -95,7 +95,7 @@ fi
 #   (b) WARN if the fork HEAD tree differs from the snapshot the release pins -
 #       the dev fork has moved on and a new dusk-wayland-vN tag is due.
 JUCE_FORK_DIR="$REPO_DIR/../JUCE-wayland"
-RELEASE_WORKFLOW=".github/workflows/linux-release.yml"
+RELEASE_WORKFLOW=".github/workflows/release.yml"
 if [[ -e "$JUCE_FORK_DIR/.git" ]]; then
     if [[ -n "$(git -C "$JUCE_FORK_DIR" status --porcelain 2>/dev/null)" ]]; then
         echo "error: sibling JUCE fork at $JUCE_FORK_DIR has uncommitted changes." >&2
@@ -383,5 +383,5 @@ echo "     Prove landing:     git merge-base --is-ancestor \"\${RELEASE_COMMIT:?
 echo "     PR squash:         re-record RELEASE_COMMIT as the landed commit, then rerun step 6 (see MAINTAINER-GUIDE Part 10)"
 echo "  7) Tag landed commit: git tag -a v$NEW_VERSION -m \"Dusk Studio $NEW_VERSION\" \"\${RELEASE_COMMIT:?record RELEASE_COMMIT after committing metadata}\""
 echo "  8) Push tag:          git push origin \"refs/tags/v$NEW_VERSION\""
-echo "  9) Wait for CI assets: Linux release (tarball), macOS release (unsigned DMG), Windows build, Manual PDF (all 6 assets)"
+echo "  9) Wait for CI assets: Dusk Studio release (all 6 assets)"
 echo " 10) Verify assets:     scripts/verify-release-assets.sh v$NEW_VERSION"

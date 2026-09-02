@@ -16,8 +16,8 @@ acceptance pass that decides whether it can be announced.
 - **Source of truth for the procedure**: [docs/MAINTAINER-GUIDE.md](../../docs/MAINTAINER-GUIDE.md) Part 10.
 - **Binaries publish to a PRIVATE repo**: `dusk-audio/dusk-studio-releases`.
   `gh release list` against the public repo returns nothing. That is correct, not a fault.
-- **Four workflows fire on a `v*` tag**: Linux release (tarball, once per arch),
-  macOS release (unsigned DMG), Windows build (MSI), Manual PDF.
+- **One workflow fires on a `v*` tag**: `Dusk Studio release`. Its four build
+  jobs fan in to one publisher, so a partial platform set is never published.
 - **A complete release is exactly six assets**: two Linux tarballs, one macOS DMG,
   one Windows MSI, `MANUAL.pdf`, one `SHA256SUMS`.
 
@@ -138,10 +138,10 @@ git tag -a "v$NEW_VERSION" -m "Dusk Studio $NEW_VERSION" "$RELEASE_COMMIT"
 git push origin "refs/tags/v$NEW_VERSION"
 ```
 
-### Step 7: Wait for the four workflows
+### Step 7: Wait for the release workflow
 
-Query by commit, not by eye. The Linux release workflow runs once per architecture,
-so a name appearing at all is not evidence that both of its runs passed.
+Query by commit, not by eye. The workflow is not successful until both Linux
+architectures, macOS, Windows, the manual, and the fan-in publisher pass.
 
 A run that has not registered yet, or is queued or in progress, is pending, not
 failed - a single snapshot taken right after the tag push reads every workflow as
@@ -150,8 +150,7 @@ waiting forever.
 
 ```bash
 set -euo pipefail
-WORKFLOWS=("Linux release (tarball)" "macOS release (unsigned DMG)" \
-           "Windows build" "Manual PDF")
+WORKFLOWS=("Dusk Studio release")
 DEADLINE=$(( $(date +%s) + 3600 ))
 while :; do
   RUNS=$(gh run list --commit "$RELEASE_COMMIT" --limit 50 \
@@ -177,15 +176,9 @@ while :; do
 done
 ```
 
-**A green run does not mean the artifact works**; see Step 10.
+**A green run does not mean the artifact works**; see Step 9.
 
-### Step 8: Consolidate the checksum files
-
-Until issue #321 merges the workflows into one publish job, each uploads its own
-`SHA256SUMS.<job>`. Replace those five with a single sorted `SHA256SUMS` covering
-all five payloads, and delete the per-job files from the release.
-
-### Step 9: Asset and body check
+### Step 8: Asset and body check
 
 ```bash
 scripts/verify-release-assets.sh "v$NEW_VERSION"
@@ -194,7 +187,7 @@ scripts/verify-release-assets.sh "v$NEW_VERSION"
 Must report `PASS: all 6 assets present.` It checks names and the summary slot
 only; it never opens a payload.
 
-### Step 10: Acceptance - the artifacts must actually run
+### Step 9: Acceptance - the artifacts must actually run
 
 Download all six into a clean directory. This step exists because v0.13.0 shipped
 a macOS DMG that passed every CI job and could not launch on any machine: the app
@@ -284,12 +277,12 @@ pdftotext MANUAL.pdf - | grep -qE 'SHA256SUMS\.(linux|macos|windows|manual)' \
 `MANUAL.pdf` also needs a human: confirm the figures render and the sharp and flat
 accidentals display. Report that as checked or not checked; there is no command for it.
 
-### Step 11: Report
+### Step 10: Report
 
 Print old version, new version, tag, the six asset names with their checksum
 results, and the per-platform launch result. State plainly which platforms were
-launch-tested and which were not. The release is announceable only when Steps 9
-and 10 both pass on every platform.
+launch-tested and which were not. The release is announceable only when Steps 8
+and 9 both pass on every platform.
 
 ## Error handling
 
@@ -298,6 +291,7 @@ and 10 both pass on every platform.
   version; do not re-run against a moved tag.
 - **`gh` unreachable**: `git push` can succeed while the API is down. Do the API
   steps from a working shell rather than skipping them.
-- **Verifier reports EXTRA `SHA256SUMS.<job>`**: Step 8 was skipped.
+- **Verifier reports an extra checksum fragment**: the release predates the
+  fan-in publisher or retained a stale asset; do not announce it.
 - **Assets older than the tag push**: a previous run's artifacts are still attached.
   Compare each asset's upload time to the tag push before trusting it.

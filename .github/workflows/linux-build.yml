@@ -80,7 +80,7 @@ jobs:
         # plus the Wayland/XEmbed runtime fixes — so no separate patch step,
         # and CI compiles the exact tree a release ships. To bump JUCE, push
         # a new snapshot tag to the mirror and update JUCE_TAG / JUCE_REV
-        # here + in linux-release.yml. Mac + Windows stay on upstream.
+        # here + in release.yml. Mac + Windows stay on upstream.
         # JuceCompat.h picks the right addDefaultFormats API via the
         # DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS preprocessor define (CMake
         # detects which surface is present at configure time).
@@ -102,7 +102,7 @@ jobs:
             echo "ERROR: pinned JUCE missing the SIMDNativeOps<long long> alias." >&2; exit 1; }
 
       - name: Clone Dusk plugins (donor DSP, pinned)
-        # Pinned donor SHA (mirrors linux-release.yml). main consumes source
+        # Pinned donor SHA (mirrors release.yml). main consumes source
         # files the donor's main HEAD has since relocated, so an unpinned
         # clone breaks configure. Bump every workflow's DONOR_REV together.
         env:
