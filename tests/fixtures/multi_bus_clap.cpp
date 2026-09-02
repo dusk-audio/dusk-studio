@@ -14,11 +14,12 @@ constexpr std::array<std::uint8_t, 8> kStateHeader {
 };
 constexpr const char* kFeatures[] = { CLAP_PLUGIN_FEATURE_AUDIO_EFFECT,
                                       CLAP_PLUGIN_FEATURE_STEREO, nullptr };
+constexpr std::size_t kNotePortCount = 80;
 
 struct PluginData
 {
     std::uint32_t processCount = 0;
-    bool voiceActive = false;
+    std::array<std::array<bool, 16>, kNotePortCount> voiceActive {};
 };
 
 const clap_plugin_descriptor_t kDescriptor {
@@ -58,16 +59,16 @@ const clap_plugin_audio_ports_t kAudioPorts { audioPortCount, audioPortGet };
 
 uint32_t CLAP_ABI notePortCount (const clap_plugin_t*, bool isInput)
 {
-    return isInput ? 1u : 0u;
+    return isInput ? (uint32_t) kNotePortCount : 0u;
 }
 
 bool CLAP_ABI notePortGet (const clap_plugin_t*, uint32_t index, bool isInput,
                            clap_note_port_info_t* info)
 {
-    if (! isInput || index != 0 || info == nullptr) return false;
+    if (! isInput || index >= kNotePortCount || info == nullptr) return false;
     *info = {};
-    info->id = 0;
-    std::snprintf (info->name, sizeof (info->name), "Note input");
+    info->id = index;
+    std::snprintf (info->name, sizeof (info->name), "Note input %u", index + 1);
     // Deliberately CLAP-only: raw MIDI controllers are unavailable, so the
     // host must translate its transport panic into a CLAP note event.
     info->supported_dialects = CLAP_NOTE_DIALECT_CLAP;
@@ -149,7 +150,8 @@ bool CLAP_ABI pluginStart (const clap_plugin_t*) { return true; }
 void CLAP_ABI pluginStop (const clap_plugin_t*) {}
 void CLAP_ABI pluginReset (const clap_plugin_t* plugin)
 {
-    static_cast<PluginData*> (plugin->plugin_data)->voiceActive = false;
+    for (auto& port : static_cast<PluginData*> (plugin->plugin_data)->voiceActive)
+        port.fill (false);
 }
 
 clap_process_status CLAP_ABI pluginProcess (const clap_plugin_t* plugin,
@@ -168,11 +170,26 @@ clap_process_status CLAP_ABI pluginProcess (const clap_plugin_t* plugin,
             const auto* event = process->in_events->get (process->in_events, i);
             if (event == nullptr || event->space_id != CLAP_CORE_EVENT_SPACE_ID)
                 continue;
-            if (event->type == CLAP_EVENT_NOTE_ON)
-                data->voiceActive = true;
-            else if (event->type == CLAP_EVENT_NOTE_OFF
-                     || event->type == CLAP_EVENT_NOTE_CHOKE)
-                data->voiceActive = false;
+            if ((event->type == CLAP_EVENT_NOTE_ON
+                 || event->type == CLAP_EVENT_NOTE_OFF
+                 || event->type == CLAP_EVENT_NOTE_CHOKE)
+                && event->size >= sizeof (clap_event_note_t))
+            {
+                const auto* note = reinterpret_cast<const clap_event_note_t*> (event);
+                if (event->type == CLAP_EVENT_NOTE_ON)
+                {
+                    // Model independently latched voices on every channel of every
+                    // port so a truncated transport panic remains observable.
+                    for (auto& port : data->voiceActive) port.fill (true);
+                }
+                else if (note->port_index >= 0
+                         && note->port_index < (int16_t) kNotePortCount
+                         && note->channel >= 0 && note->channel < 16)
+                {
+                    data->voiceActive[(std::size_t) note->port_index]
+                                     [(std::size_t) note->channel] = false;
+                }
+            }
         }
     }
 
@@ -193,9 +210,13 @@ clap_process_status CLAP_ABI pluginProcess (const clap_plugin_t* plugin,
         // channels too: a host that omits those buffers fails deterministically.
         for (uint32_t channel = 0; channel < 2; ++channel)
         {
+            bool anyVoiceActive = false;
+            for (const auto& port : data->voiceActive)
+                for (const bool active : port)
+                    anyVoiceActive = anyVoiceActive || active;
             process->audio_outputs[0].data32[channel][frame]
                 = process->audio_inputs[0].data32[channel][frame]
-                    + (data->voiceActive ? 0.25f : 0.0f);
+                    + (anyVoiceActive ? 0.25f : 0.0f);
             process->audio_outputs[1].data32[channel][frame]
                 = process->audio_inputs[1].data32[channel][frame];
         }

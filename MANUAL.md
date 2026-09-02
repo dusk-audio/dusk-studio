@@ -532,7 +532,9 @@ Switching into or out of MASTERING force-stops the transport. The mix engine and
 
 From left to right:
 
-- **Stop** (■). Halts playback or recording, returns the playhead to bar 1.
+- **Stop** (■). Halts playback or recording, returns the playhead to bar 1, and
+  silences held notes in hosted instruments even when their tracks are muted or
+  excluded by solo.
 - **Rewind** (◀◀). Brief press jumps to the previous marker; if there is no previous marker, jumps to bar 1. Hold for more than 180 milliseconds to scrub backwards at 10× speed.
 - **Play** (▶). Toggles play. If loop is enabled and the playhead is outside the loop region, the playhead snaps to the loop start before playback begins.
 - **Forward** (▶▶). Brief press jumps to the next marker (no overshoot past the last one). Hold to scrub forward at 10× speed.

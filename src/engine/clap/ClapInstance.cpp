@@ -157,17 +157,27 @@ bool ClapInstance::create (const ClapBundle& bundle, const std::string& pluginId
     noteInPort      = false;
     noteDialectClap = false;
     noteDialectMidi = false;
+    primaryNoteInputPort = 0;
+    clapNoteInputPorts.clear();
     if (const auto* np = static_cast<const clap_plugin_note_ports_t*> (
             plugin->get_extension (plugin, CLAP_EXT_NOTE_PORTS));
         np != nullptr && np->count != nullptr && np->get != nullptr
         && np->count (plugin, true) > 0)
     {
-        clap_note_port_info_t info {};
-        if (np->get (plugin, 0, true, &info))
+        const uint32_t count = std::min<uint32_t> (np->count (plugin, true), 32768u);
+        for (uint32_t index = 0; index < count; ++index)
         {
-            noteInPort      = true;
-            noteDialectClap = (info.supported_dialects & CLAP_NOTE_DIALECT_CLAP) != 0;
-            noteDialectMidi = (info.supported_dialects & CLAP_NOTE_DIALECT_MIDI) != 0;
+            clap_note_port_info_t info {};
+            if (! np->get (plugin, index, true, &info)) continue;
+            if (! noteInPort)
+            {
+                noteInPort = true;
+                primaryNoteInputPort = (int16_t) index;
+                noteDialectClap = (info.supported_dialects & CLAP_NOTE_DIALECT_CLAP) != 0;
+                noteDialectMidi = (info.supported_dialects & CLAP_NOTE_DIALECT_MIDI) != 0;
+            }
+            if ((info.supported_dialects & CLAP_NOTE_DIALECT_CLAP) != 0)
+                clapNoteInputPorts.push_back ((int16_t) index);
         }
     }
 
@@ -265,8 +275,13 @@ bool ClapInstance::activate (double sampleRate, int maxBlock, std::string& error
     inScratchR .assign ((size_t) maxFrames, 0.0f);
     outScratchL.assign ((size_t) maxFrames, 0.0f);
     outScratchR.assign ((size_t) maxFrames, 0.0f);
-    // Params (ring capacity) + a block's worth of notes/MIDI.
-    eventScratch.assign ((size_t) kParamRingCap + 512, AnyEvent {});
+    // Params, a block's ordinary MIDI, and the extra fan-out required when the
+    // transport's 16-channel panic becomes one NOTE_CHOKE per CLAP note port.
+    constexpr size_t kMidiEventCapacity = 512;
+    constexpr size_t kMidiChannelCount = 16;
+    const size_t panicFanOut = kMidiChannelCount * clapNoteInputPorts.size();
+    eventScratch.assign ((size_t) kParamRingCap + kMidiEventCapacity + panicFanOut,
+                         AnyEvent {});
 
     if (plugin->activate == nullptr
         || ! plugin->activate (plugin, sampleRate, 1, (uint32_t) maxFrames))
@@ -472,31 +487,35 @@ void ClapInstance::appendMidiEvents (const dusk::MidiBuffer& midi) noexcept
                              && (status == 0x80 || (status == 0x90 && d[2] == 0));
         const bool allSoundOff = status == 0xB0 && meta.numBytes >= 3 && d[1] == 120;
 
-        auto& slot = eventScratch[(size_t) eventCount];
-        if (noteDialectClap && ! noteDialectMidi && allSoundOff)
+        if (! clapNoteInputPorts.empty() && allSoundOff)
         {
-            // CLAP-only note ports cannot receive the raw MIDI panic emitted
-            // when transport stops. NOTE_CHOKE is CLAP's hard-stop event; the
-            // wildcard key targets every voice on this MIDI channel.
-            auto& ev = slot.note;
-            ev.header = { (uint32_t) sizeof (clap_event_note_t),
-                          (uint32_t) meta.samplePosition, CLAP_CORE_EVENT_SPACE_ID,
-                          CLAP_EVENT_NOTE_CHOKE, 0 };
-            ev.note_id    = -1;
-            ev.port_index = 0;
-            ev.channel    = channel;
-            ev.key        = -1;
-            ev.velocity   = 0.0;
-            ++eventCount;
+            for (const int16_t port : clapNoteInputPorts)
+            {
+                if (eventCount >= cap) break;
+                auto& ev = eventScratch[(size_t) eventCount].note;
+                ev.header = { (uint32_t) sizeof (clap_event_note_t),
+                              (uint32_t) meta.samplePosition, CLAP_CORE_EVENT_SPACE_ID,
+                              CLAP_EVENT_NOTE_CHOKE, 0 };
+                ev.note_id    = -1;
+                ev.port_index = port;
+                ev.channel    = channel;
+                ev.key        = -1;
+                ev.velocity   = 0.0;
+                ++eventCount;
+            }
+            if (! noteDialectMidi) continue;
+            if (eventCount >= cap) break;
         }
-        else if (noteDialectClap && (noteOn || noteOff))
+
+        if (noteDialectClap && (noteOn || noteOff))
         {
+            auto& slot = eventScratch[(size_t) eventCount];
             auto& ev = slot.note;
             ev.header = { (uint32_t) sizeof (clap_event_note_t),
                           (uint32_t) meta.samplePosition, CLAP_CORE_EVENT_SPACE_ID,
                           (uint16_t) (noteOn ? CLAP_EVENT_NOTE_ON : CLAP_EVENT_NOTE_OFF), 0 };
             ev.note_id    = -1;
-            ev.port_index = 0;
+            ev.port_index = primaryNoteInputPort;
             ev.channel    = channel;
             ev.key        = (int16_t) d[1];
             ev.velocity   = (double) d[2] / 127.0;
@@ -504,13 +523,14 @@ void ClapInstance::appendMidiEvents (const dusk::MidiBuffer& midi) noexcept
         }
         else if (noteDialectMidi && meta.numBytes <= 3 && status >= 0x80 && status <= 0xE0)
         {
+            auto& slot = eventScratch[(size_t) eventCount];
             // Everything else (CC, pitch bend, aftertouch - and the notes
             // themselves when the plugin only takes raw MIDI).
             auto& ev = slot.midi;
             ev.header = { (uint32_t) sizeof (clap_event_midi_t),
                           (uint32_t) meta.samplePosition, CLAP_CORE_EVENT_SPACE_ID,
                           CLAP_EVENT_MIDI, 0 };
-            ev.port_index = 0;
+            ev.port_index = (uint16_t) primaryNoteInputPort;
             ev.data[0] = d[0];
             ev.data[1] = (uint8_t) (meta.numBytes > 1 ? d[1] : 0);
             ev.data[2] = (uint8_t) (meta.numBytes > 2 ? d[2] : 0);
