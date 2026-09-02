@@ -142,7 +142,7 @@ jobs:
           for binary in "$app/DuskStudio" "$app/dusk-studio-plugin-host"; do
             [[ -x "$binary" ]] || {
               echo "::error::missing executable: $binary" >&2; exit 1; }
-            otool -l "$binary" | grep -Eq 'minos +11\.0' || {
+            otool -l "$binary" | grep -E 'minos +11\.0' >/dev/null || {
               echo "::error::$binary does not target macOS 11.0" >&2; exit 1; }
           done
 
