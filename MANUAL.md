@@ -1609,6 +1609,7 @@ When you load a session:
 
 - If the plugin is found on the system, it is loaded and the saved state is applied.
 - If the plugin is missing or moved, the slot shows "(plugin name) — offline". The saved description and state are preserved; the next session save round-trips them unmodified, so you do not lose the data by opening a session on a machine without that plugin installed. Reinstall the plugin and reload to restore.
+- If the saved state is unreadable or the plugin rejects it, the slot stays offline. The original plugin reference and state text remain in the session and survive later saves instead of being replaced by the plugin's defaults.
 
 ## Multi-sample instruments
 

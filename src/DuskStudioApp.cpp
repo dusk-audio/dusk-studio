@@ -1408,6 +1408,39 @@ static bool runHeadlessSelfTest()
                            .nativeClapStateBase64[(size_t) auxSlotIndex] == corruptBase64,
                 "prepared aux rejection discarded the saved state");
 
+        const char* const unreadableStateText = "*** not base64 ***";
+        session->track (trackIndex).nativeClapStateBase64 = unreadableStateText;
+        session->auxLane (auxLaneIndex)
+               .nativeClapStateBase64[(size_t) auxSlotIndex] = unreadableStateText;
+
+        engine->consumePluginStateAfterLoad();
+        expect (! trackStrip.isNativeClapLoaded(),
+                "track with unreadable state came online at defaults");
+        expect (! auxStrip.isNativeClapLoaded (auxSlotIndex),
+                "aux with unreadable state came online at defaults");
+        expect (trackStrip.nativeClapReloadFailed(),
+                "track with unreadable state lost its failed-restore reference");
+        expect (auxStrip.nativeClapReloadFailed (auxSlotIndex),
+                "aux with unreadable state lost its failed-restore reference");
+        const auto& unreadableFailures = engine->getLastPluginLoadFailures();
+        expect (unreadableFailures.size() == 2,
+                "unreadable state did not report both track and aux failures");
+        if (unreadableFailures.size() == 2)
+        {
+            expect (unreadableFailures[0].reason.find ("18 bytes") != std::string::npos
+                        && unreadableFailures[0].reason.find ("unreadable") != std::string::npos,
+                    "unreadable track state omitted its encoded size or reason");
+            expect (unreadableFailures[1].reason.find ("18 bytes") != std::string::npos
+                        && unreadableFailures[1].reason.find ("unreadable") != std::string::npos,
+                    "unreadable aux state omitted its encoded size or reason");
+        }
+        engine->publishPluginStateForSave (true);
+        expect (session->track (trackIndex).nativeClapStateBase64 == unreadableStateText,
+                "unreadable track state did not survive publish");
+        expect (session->auxLane (auxLaneIndex)
+                           .nativeClapStateBase64[(size_t) auxSlotIndex] == unreadableStateText,
+                "unreadable aux state did not survive publish");
+
         const juce::File fixtureFile (fixturePath);
         ChannelStrip deferredTrack;
         deferredTrack.setPendingNativeClap (

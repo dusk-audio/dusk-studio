@@ -1,7 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "engine/LegacyStateBase64.h"
+#include "engine/hosting/NativeRestorePolicy.h"
 #include "foundation/Base64.h"
+#include "session/Session.h"
+#include "session/SessionSerializer.h"
 
 #include <juce_core/juce_core.h>
 
@@ -10,6 +13,7 @@
 #include <vector>
 
 using duskstudio::decodeLegacyStateBase64;
+using duskstudio::decodeStoredStateBase64;
 using duskstudio::transcodeLegacyStateBase64;
 
 namespace
@@ -41,19 +45,63 @@ TEST_CASE ("legacy state transcodes onto the native keys", "[session][migration]
              == juce::Base64::toBase64 (original.data(), original.size()).toStdString());
 }
 
-TEST_CASE ("legacy state transcode reports unreadable input", "[session][migration]")
+TEST_CASE ("unreadable stored state is rejected without data loss",
+           "[session][migration][native][regression][issue-454]")
 {
-    std::string migrated { "untouched" };
+    SECTION ("legacy migration leaves the source untouched")
+    {
+        std::string migrated { "untouched" };
 
-    // No '.' byte-count prefix: not the legacy encoding at all. Migrating on a
-    // false return would strand the only copy of the user's settings.
-    REQUIRE_FALSE (transcodeLegacyStateBase64 ("Zm9vYmFy", migrated));
-    REQUIRE_FALSE (transcodeLegacyStateBase64 ("not a blob", migrated));
-    REQUIRE (migrated == "untouched");
+        // No '.' byte-count prefix: not the legacy encoding at all. Migrating on a
+        // false return would strand the only copy of the user's settings.
+        REQUIRE_FALSE (transcodeLegacyStateBase64 ("Zm9vYmFy", migrated));
+        REQUIRE_FALSE (transcodeLegacyStateBase64 ("not a blob", migrated));
+        REQUIRE (migrated == "untouched");
 
-    // An empty legacy slot has nothing to lose and migrates cleanly.
-    REQUIRE (transcodeLegacyStateBase64 ({}, migrated));
-    REQUIRE (migrated.empty());
+        // An empty legacy slot has nothing to lose and migrates cleanly.
+        REQUIRE (transcodeLegacyStateBase64 ({}, migrated));
+        REQUIRE (migrated.empty());
+    }
+
+    SECTION ("native state remains saveable after rejection")
+    {
+        const std::string corruptState = "*** not base64 ***";
+        const auto decoded = decodeStoredStateBase64 (corruptState);
+        REQUIRE (decoded.supplied);
+        REQUIRE (decoded.unreadable);
+        REQUIRE (decoded.bytes.empty());
+        REQUIRE (decoded.encodedBytes == corruptState.size());
+
+        bool unloaded = false;
+        const auto reason = duskstudio::hosting::enforceRestorePolicy (
+            true, decoded.supplied, ! decoded.unreadable, "encoded state is unreadable",
+            decoded.encodedBytes, [&] { unloaded = true; });
+        REQUIRE (unloaded);
+        REQUIRE (reason == "saved state was rejected (18 bytes): encoded state is unreadable; "
+                           "slot left offline to preserve the saved state");
+
+        const auto target = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                .getNonexistentChildFile (
+                                    "dusk-unreadable-native-state", ".json", false);
+        const struct ScopedFile
+        {
+            juce::File file;
+            ~ScopedFile() { file.deleteFile(); }
+        } scopedFile { target };
+
+        duskstudio::Session session;
+        auto& track = session.track (0);
+        track.nativeClapPath = "/plugins/Synth.clap";
+        track.nativeClapPluginId = "studio.dusk.synth";
+        track.nativeClapStateBase64 = corruptState;
+        REQUIRE (duskstudio::SessionSerializer::save (session, target));
+
+        duskstudio::Session restored;
+        REQUIRE (duskstudio::SessionSerializer::load (restored, target));
+        REQUIRE (restored.track (0).nativeClapPath == track.nativeClapPath);
+        REQUIRE (restored.track (0).nativeClapPluginId == track.nativeClapPluginId);
+        REQUIRE (restored.track (0).nativeClapStateBase64.toStdString() == corruptState);
+    }
 }
 
 // A plugin that saved no state at all encodes as "0.". Reading that as a failure
@@ -67,6 +115,11 @@ TEST_CASE ("legacy state transcode accepts an empty saved state", "[session][mig
     std::string migrated { "untouched" };
     REQUIRE (transcodeLegacyStateBase64 (legacy, migrated));
     REQUIRE (migrated.empty());
+
+    const auto decoded = decodeStoredStateBase64 (legacy);
+    REQUIRE (decoded.supplied);
+    REQUIRE_FALSE (decoded.unreadable);
+    REQUIRE (decoded.bytes.empty());
 }
 
 // 0.13.1 copied the legacy string onto the native key instead of transcoding it,
@@ -81,6 +134,10 @@ TEST_CASE ("0.13.1-migrated state still decodes",
 
     REQUIRE (decode (carried).empty());                    // not RFC 4648
     REQUIRE (decodeLegacyStateBase64 (carried) == original);
+    const auto decoded = decodeStoredStateBase64 (carried);
+    REQUIRE (decoded.supplied);
+    REQUIRE_FALSE (decoded.unreadable);
+    REQUIRE (decoded.bytes == original);
 
     // The fallback must not claim RFC 4648 strings: it needs the '.' byte-count
     // prefix, which base64 output never contains.

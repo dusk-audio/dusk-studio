@@ -77,6 +77,33 @@ inline bool decodeLegacyBlob (const std::string& s, std::vector<std::uint8_t>& o
 }
 } // namespace detail
 
+struct DecodedStateBlob
+{
+    std::vector<std::uint8_t> bytes;
+    std::size_t encodedBytes = 0;
+    bool supplied = false;
+    bool unreadable = false;
+};
+
+inline DecodedStateBlob decodeStoredStateBase64 (const std::string& encoded)
+{
+    DecodedStateBlob result;
+    result.encodedBytes = encoded.size();
+    result.supplied = ! encoded.empty();
+    if (! result.supplied)
+        return result;
+
+    result.bytes = dusk::base64::decode (encoded.data(), encoded.size());
+    if (! result.bytes.empty())
+        return result;
+
+    if (detail::decodeLegacyBlob (encoded, result.bytes))
+        return result;
+
+    result.unreadable = true;
+    return result;
+}
+
 // Slots that used to be hosted through the JUCE plugin path stored their state
 // in JUCE's MemoryBlock encoding; the native keys those slots migrate onto are
 // RFC 4648. The two decoders reject each other's output outright, so the string
