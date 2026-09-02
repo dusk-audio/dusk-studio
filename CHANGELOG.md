@@ -12,6 +12,10 @@ canonical source.
 - **Unreadable plugin settings are preserved.** A damaged native plugin state
   blob now leaves the slot offline and remains unchanged in the session instead
   of loading the plugin at its defaults and overwriting the only saved copy.
+- **Stop now silences every hosted instrument reliably.** Transport panic events
+  still reach MIDI tracks while they are muted or excluded by solo, VST3 synths
+  that do not map the standard panic controllers receive note-offs for their
+  sounding notes, and CLAP instruments receive a choke on every note-input port.
 - **The macOS release now includes the plugin sandbox.** The disk image kept
   its macOS 11 deployment target, but the sandbox's shared-address wake API
   required macOS 14.4, so CMake omitted the plugin-host helper and scans ran

@@ -52,6 +52,8 @@ add_executable(dusk-studio-tests
     platform_window_activation.cpp
     clap_editor_lifecycle.cpp
     plugin_state_diagnostics.cpp
+    channel_strip_midi_gate.cpp
+    ${CMAKE_SOURCE_DIR}/src/dsp/ChannelStrip.cpp
     channel_strip_context_rename.cpp
     snap_helpers.cpp
     fade_shapes.cpp

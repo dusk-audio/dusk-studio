@@ -55,8 +55,8 @@ TEST_CASE ("ClapInstance connects every advertised bus and tolerates duplicate m
     }
 }
 
-TEST_CASE ("ClapInstance chokes CLAP-only voices on the transport panic",
-           "[clap][instance][midi][regression][issue-402]")
+TEST_CASE ("ClapInstance chokes every CLAP note-input port on the transport panic",
+           "[clap][instance][midi][regression][issue-402][issue-460]")
 {
     duskstudio::clap::ClapBundle bundle;
     std::string err;
@@ -86,7 +86,9 @@ TEST_CASE ("ClapInstance chokes CLAP-only voices on the transport panic",
 
     // This is the engine's transport-stop sequence. The fixture advertises
     // only CLAP note events, so raw CCs cannot reach it; CC 120 must become a
-    // wildcard CLAP NOTE_CHOKE and silence the latched voice.
+    // wildcard CLAP NOTE_CHOKE on every declared note-input port and channel.
+    // The fixture exposes 80 ports so the full reset exceeds the old fixed
+    // 1,024-event scratch capacity.
     dusk::MidiBuffer panic;
     for (int channel = 0; channel < 16; ++channel)
     {

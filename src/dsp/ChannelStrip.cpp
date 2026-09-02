@@ -962,7 +962,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     const bool pingRequested = (req == kInsertHardware
                                 || activeInsertMode == kInsertHardware)
                             && hardwareSlot.isPingRequested();
-    if (! passByGate && ! needsProcessedMono && ! pingRequested)
+    if (! passByGate && ! isMidi && ! needsProcessedMono && ! pingRequested)
     {
         faderGain.setTargetValue (0.0f);
         for (auto& s : busGain)     s.setTargetValue (0.0f);
