@@ -3,6 +3,7 @@
 
 #include "ui/NotepadGraphicsCompatibility.h"
 #include "ui/NativeEditorEmbedScale.h"
+#include "ui/imgui/DuskImGuiScale.h"
 
 #include <fstream>
 #include <iterator>
@@ -38,6 +39,21 @@ TEST_CASE ("Native embeds retain the peer platform scale outside Cocoa",
     CHECK (nested.y == 98);
     CHECK (nested.width == 961);
     CHECK (nested.height == 538);
+}
+
+TEST_CASE ("Open notepad geometry responds to display scale changes",
+           "[notepad][scale][issue-338]")
+{
+    const auto standard = duskstudio::embedscale::toPhysicalBounds (20, 15, 940, 700, 1.0);
+    const auto retina = duskstudio::embedscale::toPhysicalBounds (20, 15, 940, 700, 2.0);
+
+    CHECK (standard.width == 940);
+    CHECK (standard.height == 700);
+    CHECK (retina.width == 1880);
+    CHECK (retina.height == 1400);
+    CHECK_FALSE (duskstudio::imgui::requiresScaleRecreation (2.0, 2.0));
+    CHECK (duskstudio::imgui::requiresScaleRecreation (1.0, 2.0));
+    CHECK (duskstudio::imgui::requiresScaleRecreation (2.0, 1.0));
 }
 using duskstudio::notepad::assessGraphicsCompatibility;
 

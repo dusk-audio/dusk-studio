@@ -1,5 +1,6 @@
 #include "DuskImGuiHost.h"
 #include "FirstFrameProbe.h"
+#include "DuskImGuiScale.h"
 #include "../../foundation/MessageThread.h"
 
 #if defined (_WIN32)
@@ -158,6 +159,8 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
             }
 
             window->focus();
+            appliedScaleFactor = window->getScaleFactor();
+            embeddedParent = nativeParent;
             probe.arm (renderer);
             armedMarker = true;
         }
@@ -192,8 +195,23 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
 
     void setGeometry (Geometry geometry)
     {
-        if (window == nullptr || geometry.width < 2 || geometry.height < 2)
+        if (window == nullptr || closeRequested
+            || geometry.width < 2 || geometry.height < 2)
             return;
+
+        if (requiresScaleRecreation (appliedScaleFactor, geometry.scaleFactor))
+        {
+            // DGL fixes an embedded window's draw scale at construction. Rebuild
+            // only that graphics shell so the caller's document, undo history and
+            // in-progress editor state survive the display-scale change.
+            const auto parent = embeddedParent;
+            probe.disarm();
+            armedMarker = false;
+            if (! open (parent, geometry) && callbacks.closed)
+                callbacks.closed();
+            return;
+        }
+
         window->setSize (geometry.width, geometry.height);
         window->setEmbeddedOffset (geometry.x, geometry.y);
     }
@@ -311,6 +329,8 @@ struct DuskImGuiHost::Impl final : private dusk::Timer
     std::string lastFailure;
     std::unique_ptr<DGL::Window> window;
     std::unique_ptr<DGL::TopLevelWidget> widget;
+    std::uintptr_t embeddedParent = 0;
+    double appliedScaleFactor = 1.0;
     bool firstFrameConfirmed = false;
     bool graphicsFailed = false;
     bool armedMarker = false;
