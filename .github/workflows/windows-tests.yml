@@ -3,7 +3,7 @@ name: Windows tests
 # Builds the app and runs the Catch2 test binary on Windows so Windows-only
 # app sources plus the cross-platform IPC stub round-trip and other
 # Windows-relevant tests are exercised on every PR. Distinct from
-# windows-build.yml, which only fires on v* tag push and exists to package +
+# release.yml, whose Windows job packages +
 # publish the signed MSI to the private releases repo. Bundling tests into the
 # release-packaging workflow would mean tests run once per ship, not per PR —
 # which defeats the regression-net purpose.
@@ -56,7 +56,7 @@ jobs:
             "${RUNNER_TEMP}/JUCE"
 
       - name: Clone Dusk plugins (donor DSP, pinned)
-        # Pinned donor SHA (mirrors linux-release.yml). main consumes source
+        # Pinned donor SHA (mirrors release.yml). main consumes source
         # files the donor's main HEAD has since relocated, so an unpinned
         # clone breaks configure. Bump every workflow's DONOR_REV together.
         shell: bash
@@ -79,7 +79,7 @@ jobs:
 
       - name: Fetch Steinberg ASIO SDK
         # The app target requires ASIO on Windows. Use the same fetch as
-        # windows-build.yml so PR CI compiles the release audio-device path.
+        # release.yml so PR CI compiles the release audio-device path.
         shell: bash
         run: |
           curl -sSL -o "${RUNNER_TEMP}/asiosdk.zip" https://download.steinberg.net/sdk_downloads/asiosdk_2.3.3_2019-06-14.zip

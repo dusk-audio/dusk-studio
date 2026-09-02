@@ -4,7 +4,7 @@ name: macOS build
 # signing, no secrets, NO artifact upload — same no-free-binaries policy
 # as the Linux job. Its job is to catch macOS build/test breakage on
 # every push so a release tag isn't the first time the code compiles on
-# Mac. Signed/notarized builds are produced by macos-release.yml.
+# Mac. Unsigned release builds are produced by release.yml.
 
 on:
   push:
@@ -89,7 +89,7 @@ jobs:
             "${RUNNER_TEMP}/JUCE"
 
       - name: Clone Dusk plugins (donor DSP, pinned)
-        # Pinned donor SHA (mirrors linux-release.yml). main consumes source
+        # Pinned donor SHA (mirrors release.yml). main consumes source
         # files the donor's main HEAD has since relocated, so an unpinned
         # clone breaks configure. Bump every workflow's DONOR_REV together.
         env:

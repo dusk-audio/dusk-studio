@@ -1,0 +1,982 @@
+name: Dusk Studio release
+
+# Builds every release payload in parallel, then publishes one complete asset
+# set to the PRIVATE releases repository. A manual dispatch exercises the same
+# build, test, package, artifact, and fan-in validation path without publishing.
+#
+# Required repository secret:
+#   RELEASES_REPO_TOKEN  PAT with contents:write on
+#                        dusk-audio/dusk-studio-releases.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: true
+
+env:
+  RELEASES_REPO: dusk-audio/dusk-studio-releases
+  DONOR_REV: 0a1b17f8e9dbecd26bf78dd45704c6c149e4b2ea
+  SODIUM_VERSION: 1.0.22
+  SODIUM_SHA256: adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349
+
+jobs:
+  preflight:
+    name: Validate release request
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout release metadata
+        uses: actions/checkout@v7
+        with:
+          submodules: false
+          persist-credentials: false
+
+      - name: Preflight - releases-repo token is valid (tag builds only)
+        # Fail before any platform build when the publishing credential cannot
+        # write. The endpoint creates no release but requires contents:write.
+        if: ${{ github.ref_type == 'tag' }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          preflight_error=$(mktemp -t duskstudio-preflight.XXXXXX)
+          trap 'rm -f "$preflight_error"' EXIT
+          probe_tag="duskstudio-token-preflight-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if ! gh api --method POST \
+              "repos/${RELEASES_REPO}/releases/generate-notes" \
+              -f "tag_name=${probe_tag}" \
+              -f "target_commitish=main" >/dev/null 2>"$preflight_error"; then
+            echo "::error::write-capability preflight for ${RELEASES_REPO} failed. Verify RELEASES_REPO_TOKEN has repository access and contents:write, rotate it if needed, then re-run." >&2
+            cat "$preflight_error" >&2
+            exit 1
+          fi
+
+      - name: Verify tag matches VERSION
+        if: ${{ github.ref_type == 'tag' }}
+        run: |
+          set -euo pipefail
+          [[ "v$(tr -d '[:space:]' < VERSION)" == "${GITHUB_REF_NAME}" ]] || {
+            echo "Tag ${GITHUB_REF_NAME} != VERSION v$(tr -d '[:space:]' < VERSION)" >&2
+            exit 1
+          }
+
+  linux:
+    needs: preflight
+    name: Build + package tarball (${{ matrix.label }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # Let both architectures finish so one failure does not hide the other's
+      # result. The fan-in publisher still requires both.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+            label: GCC Release, Ubuntu 22.04, amd64
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+            label: GCC Release, Ubuntu 22.04, arm64 (Raspberry Pi)
+    steps:
+      - name: Checkout Dusk Studio
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Swap the aarch64 apt mirror
+        # The aarch64 arm pulls from ports.ubuntu.com, which is often unreachable
+        # from GitHub's ARM runners on both IPv6 and IPv4; swap it for the MIT
+        # mirror and force IPv4 (arm only, so the amd64 arm keeps its stock apt
+        # sources and network behavior). Mirrors raspberry-pi-build.yml.
+        if: matrix.arch == 'aarch64'
+        run: |
+          sudo find /etc/apt/ -type f \( -name "*.list" -o -name "*.sources" \) \
+            -exec sed -i 's|ports.ubuntu.com|mirrors.mit.edu|g' {} +
+          echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4 >/dev/null
+
+      - name: Install Linux build deps + packaging tools
+        uses: ./.github/actions/apt-deps
+        with:
+          packages: >-
+            build-essential cmake ninja-build pkg-config
+            libasound2-dev libjack-jackd2-dev libmp3lame-dev libsndfile1-dev libsodium-dev
+            libpipewire-0.3-dev
+            liblilv-dev libsuil-dev lv2-dev
+            ladspa-sdk
+            libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev
+            libxinerama-dev libxrandr-dev libxrender-dev libxss-dev
+            libwebkit2gtk-4.0-dev libgl1-mesa-dev libglu1-mesa-dev
+            libwayland-dev libxkbcommon-dev libdecor-0-dev
+            xz-utils
+
+      - name: Clone JUCE (Dusk-owned Wayland mirror, pinned)
+        # Linux ships against the Wayland fork, NOT upstream: it carries the
+        # XEmbed mapping / X11-on-Wayland / peer-creation-latch commits that
+        # plugin-editor hosting on Wayland depends on, plus the
+        # SIMDNativeOps<long long> alias GCC needs for int64 SIMD (present on
+        # the SSE header, so x86_64 needs no patch; the aarch64 leg patches the
+        # NEON header — see below).
+        #
+        # Pinned to a Dusk-OWNED mirror (dusk-audio/JUCE-wayland), NOT the
+        # upstream plugdata-team fork: that fork rebased + GC'd the exact commit
+        # we pinned (b970a99), which broke the release. The mirror is a tree-only
+        # snapshot of that known-good state under an immutable tag, so releases
+        # can't be broken by a third-party fork's history rewrite. To bump JUCE,
+        # push a new snapshot tag to the mirror and update JUCE_TAG / JUCE_REV.
+        # Mac + Windows stay on upstream.
+        #
+        # The snapshot carries the SIMDNativeOps<long long> alias on the SSE
+        # header (x86_64) but NOT the NEON one, so the aarch64 matrix leg patches
+        # the NEON header when the alias is absent (same rationale as
+        # raspberry-pi-build.yml). Applied conditionally, so it is a no-op on
+        # x86_64 (NEON header not compiled) and on any future snapshot that
+        # already ships the alias — double-defining it would fail to compile.
+        env:
+          JUCE_MIRROR: https://github.com/dusk-audio/JUCE-wayland.git
+          JUCE_TAG: dusk-wayland-v2
+          JUCE_REV: 4d85afa175a45e0b5da11f9211de3ba88705588e
+        run: |
+          set -euo pipefail
+          git init -q "${RUNNER_TEMP}/JUCE-wayland"
+          cd "${RUNNER_TEMP}/JUCE-wayland"
+          git remote add origin "${JUCE_MIRROR}"
+          git fetch --depth 1 origin "refs/tags/${JUCE_TAG}"
+          git checkout -q FETCH_HEAD
+          [[ "$(git rev-parse HEAD)" == "${JUCE_REV}" ]] || {
+            echo "ERROR: JUCE checkout $(git rev-parse HEAD) != pinned ${JUCE_REV}" >&2; exit 1; }
+          grep -q "SIMDNativeOps<long long>" \
+            modules/juce_dsp/native/juce_SIMDNativeOps_sse.h || {
+            echo "ERROR: pinned JUCE missing the SIMDNativeOps<long long> alias (SSE)." >&2; exit 1; }
+          neon="modules/juce_dsp/native/juce_SIMDNativeOps_neon.h"
+          if ! grep -q "SIMDNativeOps<long long>" "$neon"; then
+            awk '
+              /^}[[:space:]]*\/\/.*juce.*dsp/ && !done {
+                print "#if defined (__GNUC__) && defined (__SIZEOF_LONG__) && __SIZEOF_LONG__ == 8 && !defined (_WIN32)"
+                print "template <> struct SIMDNativeOps<long long> : SIMDNativeOps<int64_t> {};"
+                print "template <> struct SIMDNativeOps<unsigned long long> : SIMDNativeOps<uint64_t> {};"
+                print "#endif"
+                done = 1
+              }
+              { print }
+            ' "$neon" > "$neon.new" && mv "$neon.new" "$neon"
+            grep -q "SIMDNativeOps<long long>" "$neon" || {
+              echo "ERROR: NEON SIMDNativeOps<long long> alias still missing after patch (awk anchor no longer matches the mirror header)." >&2; exit 1; }
+          fi
+
+      - name: Clone Dusk plugins (donor DSP, pinned)
+        # Pinned to a specific donor SHA, mirroring the JUCE pin above. An
+        # unpinned `git clone` of main HEAD makes old tags non-reproducible:
+        # a later donor commit would silently change the DSP a past release
+        # was built from. To move the donor forward, bump DONOR_REV.
+        env:
+          DONOR_REPO: https://github.com/dusk-audio/dusk-audio-plugins.git
+        run: |
+          set -euo pipefail
+          git init -q "${RUNNER_TEMP}/plugins-main"
+          cd "${RUNNER_TEMP}/plugins-main"
+          git remote add origin "${DONOR_REPO}"
+          git fetch --depth 1 origin "${DONOR_REV}"
+          git checkout -q "${DONOR_REV}"
+          [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
+            echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
+
+      - name: Clone DAF stack (dusk-audio forks, pinned)
+        # Pins + rationale live in .github/actions/clone-daf-stack.
+        uses: ./.github/actions/clone-daf-stack
+
+      - name: Refresh Patreon supporters
+        # Bakes the live supporters list into the release binary via
+        # PatreonBackers.h (rewritten in the freshly-cloned plugins checkout
+        # before configure). Missing secrets ship the committed list; with all
+        # secrets configured, a refresh failure blocks the build. The refresh
+        # token must be reusable; rotate the secret if invalidated.
+        shell: bash
+        env:
+          PATREON_ACCESS_TOKEN: ${{ secrets.PATREON_ACCESS_TOKEN }}
+          PATREON_REFRESH_TOKEN: ${{ secrets.PATREON_REFRESH_TOKEN }}
+          PATREON_CLIENT_ID: ${{ secrets.PATREON_CLIENT_ID }}
+          PATREON_CLIENT_SECRET: ${{ secrets.PATREON_CLIENT_SECRET }}
+          DUSK_PLUGINS_PATH: ${{ runner.temp }}/plugins-main
+        run: |
+          if [ -z "${PATREON_REFRESH_TOKEN}" ] || [ -z "${PATREON_ACCESS_TOKEN}" ] \
+             || [ -z "${PATREON_CLIENT_ID}" ] || [ -z "${PATREON_CLIENT_SECRET}" ]; then
+            echo "::warning::Patreon secrets not configured - shipping the committed supporters list (may be stale)."
+            exit 0
+          fi
+          umask 077
+          mkdir -p "${HOME}/.config/dusk-audio"
+          cfg="${HOME}/.config/dusk-audio/patreon.json"
+          # Always remove the credential file on exit, even if a step below fails.
+          trap 'rm -f "${cfg}"' EXIT
+          # json.dump escapes any special characters in the secrets; a raw heredoc
+          # would corrupt the JSON on a quote/backslash in a token.
+          python3 -c 'import json, os, sys; json.dump({"access_token": os.environ["PATREON_ACCESS_TOKEN"], "refresh_token": os.environ["PATREON_REFRESH_TOKEN"], "client_id": os.environ["PATREON_CLIENT_ID"], "client_secret": os.environ["PATREON_CLIENT_SECRET"]}, open(sys.argv[1], "w"))' "${cfg}"
+          # Secrets are configured, so this release must ship the live list.
+          # Fail loud instead of falling back to the committed (possibly stale)
+          # list. A blocked release beats a silently wrong one.
+          if ! python3 scripts/update-patrons.py; then
+            echo "::error::Patreon refresh failed despite configured secrets - refusing to ship a stale supporters list. Check the token/API and re-run."
+            exit 1
+          fi
+
+      - name: Build static libsodium (pinned)
+        # The distro package is the right dependency for a distro build, but
+        # its soname is the distro's: jammy carries libsodium.so.23 and any
+        # distro on 1.0.19+ carries .so.26, so a tarball linked against the
+        # apt library fails in the loader everywhere but Ubuntu. Link the
+        # audited source instead, matching what Windows and macOS already do.
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/libsodium-${SODIUM_VERSION}.tar.gz"
+          source_dir="${RUNNER_TEMP}/libsodium-source"
+          prefix="${RUNNER_TEMP}/libsodium"
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output "${archive}" \
+            "https://github.com/jedisct1/libsodium/releases/download/${SODIUM_VERSION}-RELEASE/libsodium-${SODIUM_VERSION}.tar.gz"
+          echo "${SODIUM_SHA256}  ${archive}" | sha256sum --check
+          mkdir -p "${source_dir}"
+          tar -xzf "${archive}" -C "${source_dir}" --strip-components=1
+          cd "${source_dir}"
+          # Position-independent, because it is linked into a PIE executable.
+          ./configure \
+            --prefix="${prefix}" --disable-shared --enable-static --with-pic
+          # Keep this small autotools build aligned with the three-core runner.
+          make -j3 check
+          make install
+
+      - name: Configure (Release)
+        run: |
+          cmake -S . -B build-linux -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSKSTUDIO_SKIP_FORK_CHECK=ON \
+            -DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON \
+            -DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON \
+            -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
+            -DDAF_PATH="${RUNNER_TEMP}/DAF" \
+            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets"
+
+      - name: Verify the static libsodium archive was selected
+        run: |
+          grep -Eq '^DUSKSTUDIO_SODIUM_STATIC_LIBRARY:FILEPATH=.*/libsodium\.a$' \
+            build-linux/CMakeCache.txt || {
+            echo "::error::Linux release configure did not select static libsodium" >&2
+            exit 1; }
+
+      - name: Build (Release)
+        run: cmake --build build-linux -j6
+
+      - name: Verify libsodium is not a runtime dependency
+        # libsodium-dev is installed, so a regression in the CMake selection
+        # would silently link the shared library and produce a tarball that
+        # only starts on Ubuntu.
+        run: |
+          set -euo pipefail
+          # Both guards below exist because every failure mode of this check is
+          # a silent pass: no readelf and no scanned files each leave the
+          # counter at zero, which reads as success.
+          command -v readelf >/dev/null || {
+            echo "::error::readelf is unavailable, so runtime linkage cannot be verified" >&2
+            exit 1; }
+          scanned=0
+          linked=0
+          while IFS= read -r -d '' bin; do
+            scanned=$((scanned + 1))
+            if readelf -d "$bin" 2>/dev/null | grep -qE '\(NEEDED\).*libsodium'; then
+              echo "::error::${bin} links libsodium at runtime; the tarball would not start off Ubuntu" >&2
+              linked=1
+            fi
+          done < <(find build-linux/DuskStudio_artefacts -type f -executable -print0)
+          [ "$scanned" -gt 0 ] || {
+            echo "::error::no executables under build-linux/DuskStudio_artefacts to verify" >&2
+            exit 1; }
+          [ "$linked" -eq 0 ]
+
+      - name: Build + run tests (release gate)
+        # No artifact ships unless the full Catch2 suite passes.
+        run: |
+          cmake -S . -B build-tests -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSKSTUDIO_BUILD_TESTS=ON \
+            -DDUSKSTUDIO_SKIP_FORK_CHECK=ON \
+            -DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON \
+            -DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON \
+            -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
+            -DDAF_PATH="${RUNNER_TEMP}/DAF" \
+            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets"
+          cmake --build build-tests --target dusk-studio-tests -j6
+          ctest --test-dir build-tests --output-on-failure
+
+      - name: Package portable tarball
+        # scripts/package-tarball.sh emits dusk-studio-<version>-Linux-<arch>.tar.xz
+        # at the repo root (arch from uname -m, so the arm runner produces the
+        # aarch64 tarball): a portable program directory (run ./DuskStudio/DuskStudio
+        # in place) plus install.sh for optional menu / PATH / session-file-type
+        # integration.
+        run: BUILD_DIR=build-linux scripts/package-tarball.sh
+
+
+      - name: Stage Linux payload
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-linux-${{ matrix.arch }}
+          path: dusk-studio-*-Linux-${{ matrix.arch }}.tar.xz
+          if-no-files-found: error
+          retention-days: 1
+
+  manual:
+    needs: preflight
+    name: Render MANUAL.pdf
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Dusk Studio
+        uses: actions/checkout@v7
+        with:
+          # No submodules needed: the manual is pure docs (MANUAL.md +
+          # docs/images/*), none of the C++/sfizz tree is touched.
+          submodules: false
+          # The publisher uses RELEASES_REPO_TOKEN; this build needs no
+          # persisted source-repository credential.
+          persist-credentials: false
+
+      - name: Install pandoc + xelatex
+        # texlive-xetex provides xelatex; the -recommended sets cover the
+        # pandoc default template (geometry, hyperref/xcolor for colorlinks,
+        # fancyvrb, booktabs). fonts-dejavu supplies the "DejaVu Sans Mono"
+        # monofont build-pdf.sh requests. perl is preinstalled on the runner
+        # (build-pdf.sh uses it to strip em dashes).
+        uses: ./.github/actions/apt-deps
+        with:
+          packages: >-
+            pandoc
+            texlive-xetex
+            texlive-fonts-recommended
+            texlive-latex-recommended
+            texlive-latex-extra
+            lmodern
+            fonts-dejavu
+
+      - name: Render MANUAL.pdf
+        run: |
+          bash docs/build-pdf.sh
+          test -f MANUAL.pdf || { echo "::error::build-pdf.sh produced no MANUAL.pdf" >&2; exit 1; }
+
+
+      - name: Stage manual payload
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-manual
+          path: MANUAL.pdf
+          if-no-files-found: error
+          retention-days: 1
+
+  windows:
+    needs: preflight
+    name: Build + package (MSVC x64 Release, ASIO enabled)
+    # Pinned to windows-2022: windows-latest migrated to windows-2025, whose
+    # image no longer resolves the "Visual Studio 17 2022" CMake generator.
+    runs-on: windows-2022
+    steps:
+      - name: Checkout Dusk Studio
+        uses: actions/checkout@v7
+        with:
+          # external/sfizz is a submodule; without recursive checkout
+          # the CMake configure step fails ("external/sfizz/src/sfizz.h
+          # not found"). Nested sfizz deps (abseil, st_audiofile, etc)
+          # also need to be present for the static link to succeed.
+          submodules: recursive
+          # The publisher uses RELEASES_REPO_TOKEN; this build needs no
+          # persisted source-repository credential.
+          persist-credentials: false
+
+      - name: Clone JUCE 8.0.4
+        shell: bash
+        run: |
+          git clone --depth 1 --branch 8.0.4 \
+            https://github.com/juce-framework/JUCE.git \
+            "${RUNNER_TEMP}/JUCE"
+
+      - name: Clone Dusk plugins (donor DSP, pinned)
+        # Pinned to the same donor SHA the Linux job uses. An unpinned
+        # clone of main HEAD makes old tags non-reproducible and breaks the
+        # build outright once the donor relocates a consumed source file.
+        # To move the donor forward, bump DONOR_REV here and in the other
+        # release workflows together.
+        shell: bash
+        env:
+          DONOR_REPO: https://github.com/dusk-audio/dusk-audio-plugins.git
+        run: |
+          set -euo pipefail
+          git init -q "${RUNNER_TEMP}/plugins"
+          cd "${RUNNER_TEMP}/plugins"
+          git remote add origin "${DONOR_REPO}"
+          git fetch --depth 1 origin "${DONOR_REV}"
+          git checkout -q "${DONOR_REV}"
+          [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
+            echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
+
+      - name: Clone DAF stack (dusk-audio forks, pinned)
+        # Pins + rationale live in .github/actions/clone-daf-stack.
+        uses: ./.github/actions/clone-daf-stack
+
+      - name: Refresh Patreon supporters
+        # See the Linux job for the rationale. Bakes the live list into the
+        # MSI. Missing secrets ship the committed list; a configured refresh
+        # failure blocks the build.
+        shell: bash
+        env:
+          PATREON_ACCESS_TOKEN: ${{ secrets.PATREON_ACCESS_TOKEN }}
+          PATREON_REFRESH_TOKEN: ${{ secrets.PATREON_REFRESH_TOKEN }}
+          PATREON_CLIENT_ID: ${{ secrets.PATREON_CLIENT_ID }}
+          PATREON_CLIENT_SECRET: ${{ secrets.PATREON_CLIENT_SECRET }}
+          DUSK_PLUGINS_PATH: ${{ runner.temp }}/plugins
+        run: |
+          if [ -z "${PATREON_REFRESH_TOKEN}" ] || [ -z "${PATREON_ACCESS_TOKEN}" ] \
+             || [ -z "${PATREON_CLIENT_ID}" ] || [ -z "${PATREON_CLIENT_SECRET}" ]; then
+            echo "::warning::Patreon secrets not configured - shipping the committed supporters list (may be stale)."
+            exit 0
+          fi
+          umask 077
+          mkdir -p "${HOME}/.config/dusk-audio"
+          cfg="${HOME}/.config/dusk-audio/patreon.json"
+          # Always remove the credential file on exit, even if a step below fails.
+          trap 'rm -f "${cfg}"' EXIT
+          # json.dump escapes any special characters in the secrets; a raw heredoc
+          # would corrupt the JSON on a quote/backslash in a token.
+          python3 -c 'import json, os, sys; json.dump({"access_token": os.environ["PATREON_ACCESS_TOKEN"], "refresh_token": os.environ["PATREON_REFRESH_TOKEN"], "client_id": os.environ["PATREON_CLIENT_ID"], "client_secret": os.environ["PATREON_CLIENT_SECRET"]}, open(sys.argv[1], "w"))' "${cfg}"
+          # Secrets are configured, so this release must ship the live list.
+          # Fail loud instead of falling back to the committed (possibly stale)
+          # list. A blocked release beats a silently wrong one.
+          if ! python3 scripts/update-patrons.py; then
+            echo "::error::Patreon refresh failed despite configured secrets - refusing to ship a stale supporters list. Check the token/API and re-run."
+            exit 1
+          fi
+
+      - name: Fetch Steinberg ASIO SDK
+        shell: bash
+        run: |
+          # Steinberg distributes the ASIO SDK as a ZIP on a stable URL.
+          # CMake looks at $ASIOSDK_PATH so we extract + export. The
+          # vendor occasionally bumps version - if the URL 404s, update
+          # the path here AND in the README. -f makes curl fail on an HTTP
+          # error instead of saving the error page into the .zip.
+          curl -fsSL -o "${RUNNER_TEMP}/asiosdk.zip" https://download.steinberg.net/sdk_downloads/asiosdk_2.3.3_2019-06-14.zip
+          7z x -y "${RUNNER_TEMP}/asiosdk.zip" -o"${RUNNER_TEMP}/asiosdk-extract" > /dev/null
+          # ZIP wraps everything under asiosdk_2.3.3_2019-06-14/; explicitly
+          # resolve the single inner directory and fail loud if zero or
+          # multiple matches (otherwise a stale extract or a vendor
+          # repackage would silently break ${ASIOSDK_PATH}/common).
+          inner_dirs=("${RUNNER_TEMP}"/asiosdk-extract/asiosdk_*/)
+          if (( ${#inner_dirs[@]} != 1 )) || [ ! -d "${inner_dirs[0]}" ]; then
+              echo "ASIO SDK extract: expected exactly one asiosdk_* directory, got ${#inner_dirs[@]}" >&2
+              ls -la "${RUNNER_TEMP}/asiosdk-extract" >&2 || true
+              exit 1
+          fi
+          mv "${inner_dirs[0]}"/* "${RUNNER_TEMP}/asiosdk-extract/"
+          rmdir "${inner_dirs[0]}" || true
+          if [ ! -f "${RUNNER_TEMP}/asiosdk-extract/common/iasiodrv.h" ]; then
+              echo "ASIO SDK extract: missing common/iasiodrv.h after move" >&2
+              exit 1
+          fi
+          echo "ASIOSDK_PATH=${RUNNER_TEMP}/asiosdk-extract" >> "$GITHUB_ENV"
+
+      - name: Install libmp3lame + libsndfile (vcpkg)
+        shell: bash
+        # mp3lame: MP3 bounce/export. libsndfile: the audio file I/O layer,
+        # required on every platform. x64-windows-static = static libs + /MT
+        # static CRT, matching the whole tree's CMAKE_MSVC_RUNTIME_LIBRARY
+        # (sfizz forces /MT). The -md triplet (/MD) would LNK2038 against the
+        # /MT objects. These vcpkg libraries link into the binary, so they add
+        # no runtime DLLs to the MSI.
+        # CMake's find_library/find_path pick them up via CMAKE_PREFIX_PATH
+        # (forward-slashed so cmake parses the path cleanly).
+        # Manifest mode: versions come from vcpkg.json's builtin-baseline and
+        # install under <manifest-root>/vcpkg_installed, not the image's vcpkg
+        # tree. That baseline tracks the runner image's own vcpkg clone commit:
+        # vcpkg cannot fetch a baseline it does not already have, so never bump
+        # it past what the current windows-2022 image ships.
+        run: |
+          vcpkg install --triplet x64-windows-static
+          echo "VCPKG_PREFIX=${GITHUB_WORKSPACE//\\//}/vcpkg_installed/x64-windows-static" >> "$GITHUB_ENV"
+
+      - name: Fetch pinned Mesa llvmpipe fallback for the notepad
+        shell: pwsh
+        run: |
+          $destination = Join-Path $env:RUNNER_TEMP "dusk-mesa-softgl"
+          .\scripts\fetch-windows-software-opengl.ps1 -Destination $destination
+          $cmakePath = $destination.Replace('\', '/')
+          "MESA_SOFTGL_PATH=$cmakePath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Configure (CMake / Visual Studio 17 2022 / x64)
+        shell: bash
+        run: |
+          # Forward slashes for DAF's cmake - see windows-tests.yml.
+          RT_UNIX="${RUNNER_TEMP//\\//}"
+          cmake -S . -B build \
+            -G "Visual Studio 17 2022" -A x64 \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
+            -DDAF_PATH="${RT_UNIX}/DAF" \
+            -DDAF_WIDGETS_PATH="${RT_UNIX}/DAF-Widgets" \
+            -DASIOSDK_PATH="${ASIOSDK_PATH}" \
+            -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}" \
+            -DDUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR="${MESA_SOFTGL_PATH}" \
+            -DDUSKSTUDIO_ENABLE_LTO=ON \
+            -DDUSKSTUDIO_NATIVE_CLAP=ON \
+            -DDUSKSTUDIO_NATIVE_VST3=ON
+          for option in DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_VST3; do
+            grep -q "^${option}:BOOL=ON$" build/CMakeCache.txt || {
+              echo "::error::${option} was not enabled in the app configure" >&2; exit 1; }
+          done
+
+      - name: Build (Release)
+        shell: bash
+        run: cmake --build build --config Release -j4
+
+      - name: Verify packaged Mesa selects llvmpipe
+        shell: pwsh
+        run: |
+          $probes = @(Get-ChildItem build -Recurse -File `
+              -Filter "dusk-windows-software-opengl-probe.exe")
+          if ($probes.Count -ne 1) {
+              throw "expected one Windows software OpenGL probe, found $($probes.Count)"
+          }
+          & $probes[0].FullName
+          if ($LASTEXITCODE -ne 0) {
+              throw "Windows software OpenGL probe failed (exit $LASTEXITCODE)"
+          }
+
+      - name: Build + run tests (release gate)
+        # No MSI ships unless the full suite passes on MSVC. Keep an explicit
+        # FileImporter inventory so conversion and bounded-lock coverage cannot
+        # silently disappear from the release gate.
+        shell: bash
+        run: |
+          # Forward slashes for DAF's cmake - see windows-tests.yml.
+          RT_UNIX="${RUNNER_TEMP//\\//}"
+          cmake -S . -B build-tests \
+            -G "Visual Studio 17 2022" -A x64 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSKSTUDIO_BUILD_TESTS=ON \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
+            -DDAF_PATH="${RT_UNIX}/DAF" \
+            -DDAF_WIDGETS_PATH="${RT_UNIX}/DAF-Widgets" \
+            -DASIOSDK_PATH="${ASIOSDK_PATH}" \
+            -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}" \
+            -DDUSKSTUDIO_NATIVE_CLAP=ON \
+            -DDUSKSTUDIO_NATIVE_VST3=ON
+          for option in DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_VST3; do
+            grep -q "^${option}:BOOL=ON$" build-tests/CMakeCache.txt || {
+              echo "::error::${option} was not enabled in the test configure" >&2; exit 1; }
+          done
+          cmake --build build-tests --config Release --target dusk-studio-tests -j4
+          inventory="$(ctest --test-dir build-tests -N -C Release)"
+          printf '%s\n' "$inventory"
+          for required in \
+            "FileImporter: transient file locks retry but remain bounded" \
+            "FileImporter: 44.1k mono -> 48k session preserves length" \
+            "FileImporter: 44.1k -> 48k upsample fills the tail with audio, not a held sample" \
+            "FileImporter: 96k mono -> 48k session preserves length" \
+            "FileImporter: stereo -> mono sums L+R at 0.5 each" \
+            "FileImporter: mono -> stereo duplicates to L and R" \
+            "FileImporter: matching rate and channels copies the source verbatim" \
+            "FileImporter: a matching 32-bit source is not truncated to 24-bit"; do
+            grep -Fq "$required" <<< "$inventory" || {
+              echo "::error::required release FileImporter regression missing from CTest: $required" >&2
+              exit 1
+            }
+          done
+          ctest --test-dir build-tests --output-on-failure -C Release
+
+      - name: Set up WiX Toolset v3 (CPack -G WIX needs candle/light)
+        # GitHub's windows runner image migration (windows-latest ->
+        # windows-2025) dropped the pre-installed WiX 3 toolset that CPack's
+        # WIX generator relies on. Without candle.exe / light.exe, cpack -G WIX
+        # exits 0 but emits no .msi, and the SHA256 step then throws
+        # "No MSI produced by cpack". Install WiX 3.x (the `wixtoolset` choco
+        # package is the 3.x line; WiX 4+ ships as a separate dotnet tool and
+        # is not compatible with CPack's WIX generator) and expose it to the
+        # packaging step via the WIX env var (CPACK_WIX_ROOT defaults to it)
+        # plus PATH.
+        shell: pwsh
+        run: |
+          choco install wixtoolset -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "WiX install failed (exit $LASTEXITCODE)" }
+          $wixRoot = Get-ChildItem "C:\Program Files (x86)" -Directory -Filter "WiX Toolset v3.*" |
+                     Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $wixRoot) { throw "WiX Toolset v3 not found after install" }
+          $wixBin = Join-Path $wixRoot.FullName "bin"
+          if (-not (Test-Path (Join-Path $wixBin "candle.exe"))) {
+              throw "candle.exe missing in $wixBin"
+          }
+          if (-not (Test-Path (Join-Path $wixBin "light.exe"))) {
+              throw "light.exe missing in $wixBin"
+          }
+          # WIX env var must end in a backslash: CPack reads it as
+          # CPACK_WIX_ROOT and appends "bin\candle.exe".
+          "WIX=$($wixRoot.FullName)\" | Out-File -FilePath $env:GITHUB_ENV  -Append -Encoding utf8
+          $wixBin                     | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          Write-Host "WiX ready: $wixBin"
+
+      - name: Package MSI via CPack WIX (unsigned)
+        shell: pwsh
+        # Delegates the cpack run to the cross-platform packaging script.
+        # No signing args: the MSI ships unsigned by design.
+        run: |
+          .\scripts\package-windows.ps1 -BuildDir build
+          if ($LASTEXITCODE -ne 0) { throw "package-windows.ps1 failed" }
+          Get-ChildItem build\*.msi
+          Get-ChildItem *.msi -ErrorAction SilentlyContinue
+
+
+      - name: Stage Windows payload
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-windows
+          path: "*.msi"
+          if-no-files-found: error
+          retention-days: 1
+
+  macos:
+    needs: preflight
+    name: Build + package unsigned DMG (macOS arm64 Release)
+    runs-on: macos-14
+    env:
+      # ccache obj cache (auto-detected by CMakeLists.txt). Stable dir for
+      # the actions/cache key below — release builds reuse the same cache.
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+
+    steps:
+      - name: Checkout Dusk Studio (with sfizz submodule)
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          # The publisher uses RELEASES_REPO_TOKEN; this build needs no
+          # persisted source-repository credential.
+          persist-credentials: false
+
+      - name: Install build dependencies
+        # lame: libmp3lame for MP3 bounce/export (CMake auto-detects it).
+        run: brew install ninja ccache lame libsndfile lilv suil lv2
+
+      - name: Build static libsodium (pinned)
+        # Homebrew's bottle is built for the runner OS, newer than the app's
+        # macOS 11 deployment target. Build the audited source at that target
+        # instead, and keep the DMG free of a Homebrew dylib dependency.
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/libsodium-${SODIUM_VERSION}.tar.gz"
+          source_dir="${RUNNER_TEMP}/libsodium-source"
+          prefix="${RUNNER_TEMP}/libsodium"
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output "${archive}" \
+            "https://github.com/jedisct1/libsodium/releases/download/${SODIUM_VERSION}-RELEASE/libsodium-${SODIUM_VERSION}.tar.gz"
+          echo "${SODIUM_SHA256}  ${archive}" | shasum -a 256 --check
+          mkdir -p "${source_dir}"
+          tar -xzf "${archive}" -C "${source_dir}" --strip-components=1
+          cd "${source_dir}"
+          export MACOSX_DEPLOYMENT_TARGET=11.0
+          ./configure \
+            --prefix="${prefix}" --disable-shared --enable-static
+          # Keep this small autotools build aligned with the three-core runner.
+          make -j3 check
+          make install
+
+      - name: Cache ccache objects
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-macos-release-${{ github.sha }}
+          restore-keys: |
+            ccache-macos-release-
+
+      - name: Clone JUCE 8.0.4 (upstream)
+        # Same upstream JUCE the Linux CI uses. No SIMD<long long> patch
+        # needed here: that bug is x86_64-GCC-specific (SSE header); this
+        # runner is arm64 / clang (NEON header) and compiles clean.
+        run: |
+          git clone --depth 1 --branch 8.0.4 \
+            https://github.com/juce-framework/JUCE.git \
+            "${RUNNER_TEMP}/JUCE"
+
+      - name: Clone Dusk plugins (donor DSP, pinned)
+        # Pinned to the same donor SHA the Linux job uses. An unpinned
+        # clone of main HEAD makes old tags non-reproducible and breaks the
+        # build outright once the donor relocates a consumed source file.
+        # To move the donor forward, bump DONOR_REV here and in the other
+        # release workflows together.
+        env:
+          DONOR_REPO: https://github.com/dusk-audio/dusk-audio-plugins.git
+        run: |
+          set -euo pipefail
+          git init -q "${RUNNER_TEMP}/plugins-main"
+          cd "${RUNNER_TEMP}/plugins-main"
+          git remote add origin "${DONOR_REPO}"
+          git fetch --depth 1 origin "${DONOR_REV}"
+          git checkout -q "${DONOR_REV}"
+          [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
+            echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
+
+      - name: Clone DAF stack (dusk-audio forks, pinned)
+        # Pins + rationale live in .github/actions/clone-daf-stack.
+        uses: ./.github/actions/clone-daf-stack
+
+      - name: Refresh Patreon supporters
+        # See the Linux job for the rationale. Bakes the live list into the
+        # DMG. Missing secrets ship the committed list; a configured refresh
+        # failure blocks the build.
+        shell: bash
+        env:
+          PATREON_ACCESS_TOKEN: ${{ secrets.PATREON_ACCESS_TOKEN }}
+          PATREON_REFRESH_TOKEN: ${{ secrets.PATREON_REFRESH_TOKEN }}
+          PATREON_CLIENT_ID: ${{ secrets.PATREON_CLIENT_ID }}
+          PATREON_CLIENT_SECRET: ${{ secrets.PATREON_CLIENT_SECRET }}
+          DUSK_PLUGINS_PATH: ${{ runner.temp }}/plugins-main
+        run: |
+          if [ -z "${PATREON_REFRESH_TOKEN}" ] || [ -z "${PATREON_ACCESS_TOKEN}" ] \
+             || [ -z "${PATREON_CLIENT_ID}" ] || [ -z "${PATREON_CLIENT_SECRET}" ]; then
+            echo "::warning::Patreon secrets not configured - shipping the committed supporters list (may be stale)."
+            exit 0
+          fi
+          umask 077
+          mkdir -p "${HOME}/.config/dusk-audio"
+          cfg="${HOME}/.config/dusk-audio/patreon.json"
+          # Always remove the credential file on exit, even if a step below fails.
+          trap 'rm -f "${cfg}"' EXIT
+          # json.dump escapes any special characters in the secrets; a raw heredoc
+          # would corrupt the JSON on a quote/backslash in a token.
+          python3 -c 'import json, os, sys; json.dump({"access_token": os.environ["PATREON_ACCESS_TOKEN"], "refresh_token": os.environ["PATREON_REFRESH_TOKEN"], "client_id": os.environ["PATREON_CLIENT_ID"], "client_secret": os.environ["PATREON_CLIENT_SECRET"]}, open(sys.argv[1], "w"))' "${cfg}"
+          # Secrets are configured, so this release must ship the live list.
+          # Fail loud instead of falling back to the committed (possibly stale)
+          # list. A blocked release beats a silently wrong one.
+          if ! python3 scripts/update-patrons.py; then
+            echo "::error::Patreon refresh failed despite configured secrets - refusing to ship a stale supporters list. Check the token/API and re-run."
+            exit 1
+          fi
+
+      - name: Configure (Release)
+        run: |
+          set -euo pipefail
+          # Ad-hoc codesign identity "-" — free, and required for the .app
+          # (plus the bundled dusk-studio-plugin-host helper) to launch on
+          # Apple Silicon. No Developer ID, no Hardened Runtime, no notary.
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
+            -DDAF_PATH="${RUNNER_TEMP}/DAF" \
+            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets" \
+            -DDUSKSTUDIO_CODESIGN_IDENTITY="-" \
+            -DDUSKSTUDIO_NATIVE_CLAP=ON \
+            -DDUSKSTUDIO_NATIVE_LV2=ON \
+            -DDUSKSTUDIO_NATIVE_VST3=ON
+          for option in DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_LV2 DUSKSTUDIO_NATIVE_VST3; do
+            grep -q "^${option}:BOOL=ON$" build/CMakeCache.txt || {
+              echo "::error::${option} was not enabled in the app configure" >&2; exit 1; }
+          done
+          grep -Eq '^DUSKSTUDIO_SODIUM_STATIC_LIBRARY:FILEPATH=.*/libsodium\.a$' build/CMakeCache.txt || {
+            echo "::error::macOS release configure did not select static libsodium" >&2; exit 1; }
+
+      - name: Build (Release)
+        # Preserve Ninja's five-worker default on this three-core runner,
+        # but keep the limit explicit so generator changes cannot unbound it.
+        run: cmake --build build -j5
+
+      - name: Build + run tests (release gate)
+        # No DMG ships unless the full Catch2 suite passes.
+        run: |
+          set -euo pipefail
+          cmake -S . -B build-tests -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
+            -DDUSKSTUDIO_BUILD_TESTS=ON \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
+            -DDAF_PATH="${RUNNER_TEMP}/DAF" \
+            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets" \
+            -DDUSKSTUDIO_NATIVE_CLAP=ON \
+            -DDUSKSTUDIO_NATIVE_LV2=ON \
+            -DDUSKSTUDIO_NATIVE_VST3=ON
+          for option in DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_LV2 DUSKSTUDIO_NATIVE_VST3; do
+            grep -q "^${option}:BOOL=ON$" build-tests/CMakeCache.txt || {
+              echo "::error::${option} was not enabled in the test configure" >&2; exit 1; }
+          done
+          grep -Eq '^DUSKSTUDIO_SODIUM_STATIC_LIBRARY:FILEPATH=.*/libsodium\.a$' build-tests/CMakeCache.txt || {
+            echo "::error::macOS release tests did not select static libsodium" >&2; exit 1; }
+          cmake --build build-tests --target dusk-studio-tests -j5
+          ctest --test-dir build-tests --output-on-failure
+
+      - name: Package unsigned DMG
+        # CMake already ad-hoc-signed the .app via identity "-"; just wrap
+        # it in a DMG. Not notarized, so users right-click -> Open once.
+        run: |
+          set -euo pipefail
+          ( cd build && cpack -G DragNDrop -C Release )
+          shopt -s nullglob
+          dmgs=(build/*.dmg)
+          DMG="${dmgs[0]:-}"
+          [[ -n "$DMG" ]] || { echo "::error::cpack produced no .dmg" >&2; exit 1; }
+          base="$(basename "$DMG" .dmg)"
+          mv "$DMG" "./${base}.dmg"
+          echo "Unsigned DMG: ${base}.dmg"
+
+      - name: Verify the packaged app launches
+        # The build and the test suite both run against the Homebrew prefix,
+        # so they pass whether or not the .app carries its dependencies. Only
+        # launching the packaged bundle proves it: mount the DMG the user
+        # downloads, scrub the environment so no build-machine path can
+        # satisfy a missing dylib, and require a clean exit.
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          dmgs=(*.dmg)
+          DMG="${dmgs[0]}"
+          MNT="$(mktemp -d)"
+          # The DMG carries a license agreement, so hdiutil blocks for an
+          # acceptance it will never get on a runner and reports "attach
+          # canceled". Feeding it yes leaves yes to die of SIGPIPE once
+          # hdiutil closes stdin, so read hdiutil's own status rather than
+          # the pipeline's, which pipefail would otherwise take from yes.
+          set +o pipefail
+          yes | hdiutil attach -nobrowse -readonly -noverify -noautoopen \
+                  -mountpoint "$MNT" "$DMG" >/dev/null
+          mount_rc=${PIPESTATUS[1]}
+          set -o pipefail
+          [[ $mount_rc -eq 0 ]] || {
+              echo "::error::could not mount $DMG for verification" >&2
+              exit 1; }
+          trap 'hdiutil detach "$MNT" >/dev/null 2>&1 || true' EXIT
+          APP="$MNT/DuskStudio.app"
+          codesign --verify --strict --deep --verbose=2 "$APP"
+          if otool -L "$APP/Contents/MacOS/DuskStudio" \
+              | tail -n +2 | awk '{print $1}' \
+              | grep -vE '^/usr/lib/|^/System/|^@executable_path/\.\./Frameworks/|^@loader_path/'; then
+            echo "::error::packaged app links a path outside the bundle" >&2
+            exit 1
+          fi
+          env -i HOME="$HOME" "$APP/Contents/MacOS/DuskStudio" --version
+
+
+      - name: Stage macOS payload
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-macos
+          path: "*.dmg"
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Assemble + publish six release assets
+    needs: [linux, macos, windows, manual]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout release metadata
+        uses: actions/checkout@v7
+        with:
+          submodules: false
+          persist-credentials: false
+
+      - name: Download every platform payload
+        uses: actions/download-artifact@v7
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Validate payloads and build canonical checksum file
+        run: |
+          set -euo pipefail
+          version=$(tr -d '[:space:]' < VERSION)
+          expected=(
+            "dusk-studio-${version}-Linux-x86_64.tar.xz"
+            "dusk-studio-${version}-Linux-aarch64.tar.xz"
+            "dusk-studio-${version}-macOS-arm64.dmg"
+            "dusk-studio-${version}-Windows-x64.msi"
+            "MANUAL.pdf"
+          )
+
+          mapfile -t actual < <(
+            find dist -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort
+          )
+          mapfile -t wanted < <(printf '%s\n' "${expected[@]}" | LC_ALL=C sort)
+          if [[ ${#actual[@]} -ne 5 ]] || ! diff -u \
+              <(printf '%s\n' "${wanted[@]}") \
+              <(printf '%s\n' "${actual[@]}"); then
+            echo "::error::release fan-in must contain exactly the five expected payloads" >&2
+            exit 1
+          fi
+
+          (
+            cd dist
+            while IFS= read -r asset; do
+              sha256sum "$asset"
+            done < <(printf '%s\n' "${wanted[@]}") > SHA256SUMS
+            [[ $(wc -l < SHA256SUMS) -eq 5 ]] || {
+              echo "::error::SHA256SUMS must contain exactly five entries" >&2
+              exit 1
+            }
+            if grep -Ev '^[0-9a-f]{64}  [^/]+$' SHA256SUMS; then
+              echo "::error::SHA256SUMS is not lowercase sha256sum format" >&2
+              exit 1
+            fi
+            sha256sum --check SHA256SUMS
+            [[ $(find . -maxdepth 1 -type f | wc -l) -eq 6 ]] || {
+              echo "::error::release directory must contain exactly six assets" >&2
+              exit 1
+            }
+          )
+
+      - name: Publish complete asset set to the PRIVATE releases repo
+        if: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+
+          if gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$RELEASES_REPO" \
+              --title "Dusk Studio $TAG" \
+              --notes-file packaging/RELEASE-NOTES.md
+          else
+            gh release create "$TAG" --repo "$RELEASES_REPO" \
+              --title "Dusk Studio $TAG" \
+              --notes-file packaging/RELEASE-NOTES.md
+          fi
+
+          gh release upload "$TAG" --repo "$RELEASES_REPO" --clobber dist/*
+
+          # A retry may encounter checksum fragments from the retired racing
+          # workflows. The release contract is exactly the six fan-in assets.
+          mapfile -t expected_assets < <(find dist -maxdepth 1 -type f -printf '%f\n')
+          gh release view "$TAG" --repo "$RELEASES_REPO" \
+            --json assets --jq '.assets[].name' \
+          | while IFS= read -r remote_asset; do
+              keep=0
+              for expected_asset in "${expected_assets[@]}"; do
+                if [[ "$remote_asset" == "$expected_asset" ]]; then
+                  keep=1
+                  break
+                fi
+              done
+              if [[ $keep -eq 0 ]]; then
+                gh release delete-asset "$TAG" "$remote_asset" \
+                  --repo "$RELEASES_REPO" --yes
+              fi
+            done
+
+          scripts/verify-release-assets.sh "$TAG"
