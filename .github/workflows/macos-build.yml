@@ -135,6 +135,17 @@ jobs:
         # but keep the limit explicit so generator changes cannot unbound it.
         run: cmake --build build -j5
 
+      - name: Verify macOS 11 sandbox helper
+        run: |
+          set -euo pipefail
+          app="build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS"
+          for binary in "$app/DuskStudio" "$app/dusk-studio-plugin-host"; do
+            [[ -x "$binary" ]] || {
+              echo "::error::missing executable: $binary" >&2; exit 1; }
+            otool -l "$binary" | grep -Eq 'minos +11\.0' || {
+              echo "::error::$binary does not target macOS 11.0" >&2; exit 1; }
+          done
+
       - name: Smoke launch (--version)
         run: build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio --version
 

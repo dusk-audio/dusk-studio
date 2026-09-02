@@ -480,7 +480,7 @@ if (UNIX OR WIN32)
         DUSKSTUDIO_SINGLE_INSTANCE_TESTING=1)
 endif()
 
-# IPC round-trip regression — Linux + Windows + macOS 14.4+. The test
+# IPC round-trip regression — Linux + Windows + macOS 11+. The test
 # spawns the dusk-studio-plugin-host child in --ipc-stub mode, so we
 # hard-depend on that target being built first. DUSKSTUDIO_PLUGIN_HOST_PATH
 # is resolved via a generator expression so it points to wherever CMake
@@ -500,7 +500,7 @@ elseif (WIN32)
         ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcProcess_Windows.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcShm_Windows.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcSync_Windows.cpp)
-elseif (APPLE AND CMAKE_OSX_DEPLOYMENT_TARGET VERSION_GREATER_EQUAL 14.4)
+elseif (APPLE)
     set(_duskstudio_ipc_test_enabled TRUE)
     set(_duskstudio_ipc_test_sources
         ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcChannel_Mac.cpp

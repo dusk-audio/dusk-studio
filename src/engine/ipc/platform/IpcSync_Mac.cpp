@@ -1,21 +1,21 @@
 #include "IpcSync.h"
 
-#include <chrono>
+#include <cerrno>
 #include <cstdint>
+#include <cstring>
 #include <ctime>
-#include <errno.h>
-#include <os/os_sync_wait_on_address.h>
+#include <fcntl.h>
+#include <limits>
+#include <poll.h>
 #include <thread>
+#include <unistd.h>
 
-// macOS 14.4+ provides os_sync_wait_on_address - equivalent to
-// Linux's FUTEX_WAIT_BITSET, and supports cross-process wait/wake when
-// the address is in a shared mapping
-// via the OS_SYNC_WAIT_ON_ADDRESS_SHARED flag.
-//
-// Older macOS would need a fallback (named sem_open + sem_wait, or
-// the private __ulock_wait/__ulock_wake APIs); for now Dusk Studio's
-// OOP host requires macOS 14.4 and the in-process fallback handles
-// older systems via DUSKSTUDIO_HAS_OOP_PLUGINS being undefined.
+// macOS gained a public shared-address wait only in 14.4. Use a pipe instead
+// so the release can retain its macOS 11 deployment target. Both processes own
+// duplicates of both descriptors: wake() is a non-blocking write, and wait()
+// polls the read end up to the same monotonic deadline used by the other
+// platforms. The shared sequence word remains the predicate, so stale or
+// coalesced pipe bytes are harmless.
 
 namespace duskstudio::ipc::platform
 {
@@ -45,6 +45,28 @@ std::uint64_t remainingNs (const Deadline& d) noexcept
     if (total <= 0) return 0;
     return (std::uint64_t) total;
 }
+
+bool configurePipeDescriptor (int fd) noexcept
+{
+    const int descriptorFlags = ::fcntl (fd, F_GETFD);
+    if (descriptorFlags < 0
+        || ::fcntl (fd, F_SETFD, descriptorFlags | FD_CLOEXEC) < 0)
+        return false;
+
+    const int statusFlags = ::fcntl (fd, F_GETFL);
+    return statusFlags >= 0
+        && ::fcntl (fd, F_SETFL, statusFlags | O_NONBLOCK) == 0;
+}
+
+int deadlineToTimeoutMs (const Deadline& deadline) noexcept
+{
+    const std::uint64_t ns = remainingNs (deadline);
+    if (ns == 0) return 0;
+
+    const std::uint64_t ms = ns / 1000000ULL + (ns % 1000000ULL != 0 ? 1ULL : 0ULL);
+    const auto max = (std::uint64_t) std::numeric_limits<int>::max();
+    return (int) (ms < max ? ms : max);
+}
 } // namespace
 
 InterprocessSignal::~InterprocessSignal()
@@ -52,44 +74,109 @@ InterprocessSignal::~InterprocessSignal()
     close();
 }
 
-bool InterprocessSignal::create (std::string&) noexcept { return true; }
-bool InterprocessSignal::sendToChild (NativeHandle&) const noexcept { return true; }
-bool InterprocessSignal::receiveFromParent (NativeHandle&) noexcept { return true; }
-void InterprocessSignal::close() noexcept {}
+bool InterprocessSignal::create (std::string& errorOut) noexcept
+{
+    close();
+
+    int descriptors[2] { -1, -1 };
+    if (::pipe (descriptors) != 0)
+    {
+        errorOut = std::string ("pipe failed: ") + std::strerror (errno);
+        return false;
+    }
+
+    readHandle.fd  = descriptors[0];
+    writeHandle.fd = descriptors[1];
+    if (configurePipeDescriptor (readHandle.fd)
+        && configurePipeDescriptor (writeHandle.fd))
+        return true;
+
+    const int error = errno;
+    close();
+    errorOut = std::string ("pipe setup failed: ") + std::strerror (error);
+    return false;
+}
+
+bool InterprocessSignal::sendToChild (NativeHandle& channel) const noexcept
+{
+    return isValid (readHandle) && isValid (writeHandle)
+        && sendHandle (channel, readHandle)
+        && sendHandle (channel, writeHandle);
+}
+
+bool InterprocessSignal::receiveFromParent (NativeHandle& channel) noexcept
+{
+    close();
+    if (! recvHandle (channel, readHandle)
+        || ! recvHandle (channel, writeHandle)
+        || ! configurePipeDescriptor (readHandle.fd)
+        || ! configurePipeDescriptor (writeHandle.fd))
+    {
+        close();
+        return false;
+    }
+    return true;
+}
+
+void InterprocessSignal::close() noexcept
+{
+    closeHandle (readHandle);
+    closeHandle (writeHandle);
+}
 
 WaitResult InterprocessSignal::wait (std::atomic<std::uint32_t>* addr,
                                       std::uint32_t expected,
                                       const Deadline* deadline) noexcept
 {
-    constexpr os_sync_wait_on_address_flags_t flags = OS_SYNC_WAIT_ON_ADDRESS_SHARED;
+    if (! isValid (readHandle)) return WaitResult::Error;
+    if (addr->load (std::memory_order_acquire) != expected)
+        return WaitResult::ValueChanged;
 
-    int r;
-    if (deadline == nullptr)
+    struct pollfd descriptor { readHandle.fd, POLLIN, 0 };
+    const int timeoutMs = deadline != nullptr ? deadlineToTimeoutMs (*deadline) : -1;
+    const int result = ::poll (&descriptor, 1, timeoutMs);
+    if (result == 0) return WaitResult::Timeout;
+    if (result < 0)
     {
-        r = ::os_sync_wait_on_address (addr, (uint64_t) expected,
-                                          sizeof (expected), flags);
-    }
-    else
-    {
-        const std::uint64_t ns = remainingNs (*deadline);
-        r = ::os_sync_wait_on_address_with_timeout (
-                addr, (uint64_t) expected, sizeof (expected), flags,
-                OS_CLOCK_MACH_ABSOLUTE_TIME, ns);
+        return errno == EINTR ? WaitResult::Interrupted : WaitResult::Error;
     }
 
-    if (r >= 0) return WaitResult::Awoken;
-    switch (errno)
+    if ((descriptor.revents & POLLIN) != 0)
     {
-        case ETIMEDOUT: return WaitResult::Timeout;
-        case EINTR:     return WaitResult::Interrupted;
-        default:        return WaitResult::Error;
+        // Fast producer/consumer pairs often observe the sequence during the
+        // spin phase and never enter wait(), leaving old wake bytes queued.
+        // Drain them together so the first later wait cannot spend one syscall
+        // per completed audio block. A concurrent new wake either lands in
+        // this drain (the sequence re-check observes it) or remains readable.
+        std::uint8_t bytes[256];
+        for (;;)
+        {
+            const ssize_t count = ::read (readHandle.fd, bytes, sizeof (bytes));
+            if (count > 0) continue;
+            if (count < 0 && errno == EINTR) continue;
+            if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+                return WaitResult::Awoken;
+            return WaitResult::Error;
+        }
     }
+
+    return WaitResult::Error;
 }
 
-void InterprocessSignal::wake (std::atomic<std::uint32_t>* addr) noexcept
+void InterprocessSignal::wake (std::atomic<std::uint32_t>*) noexcept
 {
-    (void) ::os_sync_wake_by_address_any (addr, sizeof (std::uint32_t),
-                                             OS_SYNC_WAKE_BY_ADDRESS_SHARED);
+    if (! isValid (writeHandle)) return;
+
+    const std::uint8_t byte = 1;
+    for (;;)
+    {
+        if (::write (writeHandle.fd, &byte, sizeof (byte)) == (ssize_t) sizeof (byte))
+            return;
+        if (errno == EINTR) continue;
+        // EAGAIN means at least one wake is already pending. The sequence word
+        // carries the actual state, so another byte is unnecessary.
+        return;
+    }
 }
 
 void cpuRelax() noexcept
