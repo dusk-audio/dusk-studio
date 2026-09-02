@@ -13,7 +13,7 @@ runs:
       shell: bash
       env:
         DAF_REPO: https://github.com/dusk-audio/DAF.git
-        DAF_REV: 66aa1e0365beef70ee097dcacfda4cfc5a25bcee
+        DAF_REV: 50ad8c22a2f05b85be4b40e473d830d2dc91c2c2
         PUGL_REV: 43d8e349c7ca7c4d76778a8c48b73226105bed14
         DAF_WIDGETS_REPO: https://github.com/dusk-audio/DAF-Widgets.git
         DAF_WIDGETS_REV: 798154e874eaaa024371f6076249398b51498142

@@ -66,7 +66,7 @@ The session notepad is a native window built on DAF/DGL plus the Dear ImGui laye
 ```cmd
 cd C:\dev
 git clone https://github.com/dusk-audio/DAF.git
-git -C DAF checkout 66aa1e0365beef70ee097dcacfda4cfc5a25bcee
+git -C DAF checkout 50ad8c22a2f05b85be4b40e473d830d2dc91c2c2
 git -C DAF submodule update --init
 git clone https://github.com/dusk-audio/DAF-Widgets.git
 git -C DAF-Widgets checkout 798154e874eaaa024371f6076249398b51498142
