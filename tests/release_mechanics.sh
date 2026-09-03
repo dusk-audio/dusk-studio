@@ -647,6 +647,7 @@ fi
     "$FIXTURE/packaging/RELEASE-NOTES.md" "$BUMP_OUTPUT" <<'PY'
 from pathlib import Path
 import re
+import subprocess
 import sys
 import xml.etree.ElementTree as ET
 
@@ -661,6 +662,47 @@ bump_output_path = Path(sys.argv[5])
 
 SUMMARY_START = "<!-- summary-start -->"
 SUMMARY_END = "<!-- summary-end -->"
+
+sfizz_tree = subprocess.run(
+    ["git", "-C", str(source_root), "ls-tree", "HEAD", "external/sfizz"],
+    check=True,
+    capture_output=True,
+    text=True,
+).stdout.strip()
+sfizz_tree_entry = re.fullmatch(
+    r"160000 commit ([0-9a-f]{40})\texternal/sfizz", sfizz_tree
+)
+assert sfizz_tree_entry, "external/sfizz must be a pinned git submodule"
+sfizz_revision = sfizz_tree_entry.group(1)
+
+licenses = (source_root / "LICENSES.txt").read_text(encoding="utf-8")
+sfizz_header_revision = re.search(
+    r"dusk-fizz \(SFZ.*?Version\s+:.*?submodule rev\s+([0-9a-f]{40})",
+    licenses,
+    re.DOTALL,
+)
+sfizz_license_revision = re.search(
+    r"external/sfizz/LICENSE,\s+submodule rev\s+([0-9a-f]{40})",
+    licenses,
+)
+assert sfizz_header_revision and sfizz_license_revision, (
+    "LICENSES.txt must record the dusk-fizz and sfizz license revisions"
+)
+recorded_sfizz_revisions = [
+    sfizz_header_revision.group(1),
+    sfizz_license_revision.group(1),
+    *re.findall(
+        r"\bsfizz(?:\s+submodule)?\s+rev\s+([0-9a-f]{40})", licenses
+    ),
+]
+assert len(recorded_sfizz_revisions) == 15, (
+    "LICENSES.txt sfizz revision inventory changed without updating the "
+    "release contract"
+)
+assert set(recorded_sfizz_revisions) == {sfizz_revision}, (
+    "LICENSES.txt sfizz revisions must match the external/sfizz gitlink: "
+    f"expected {sfizz_revision}, found {sorted(set(recorded_sfizz_revisions))}"
+)
 
 
 def summary_slot(text):
