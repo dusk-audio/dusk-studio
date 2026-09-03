@@ -45,42 +45,6 @@ static void copyDuskMidiToJuce (const dusk::MidiBuffer& source,
         destination.addEvent (meta.data, meta.numBytes, meta.samplePosition);
 }
 
-static void copyDuskMidiSorted (const dusk::MidiBuffer& source,
-                                dusk::MidiBuffer& destination) noexcept
-{
-    destination.clear();
-    bool havePreviousPosition = false;
-    int previousPosition = 0;
-    for (;;)
-    {
-        bool found = false;
-        int nextPosition = 0;
-        for (const auto meta : source)
-        {
-            if ((! havePreviousPosition || meta.samplePosition > previousPosition)
-                && (! found || meta.samplePosition < nextPosition))
-            {
-                nextPosition = meta.samplePosition;
-                found = true;
-            }
-        }
-        if (! found) break;
-        for (const auto meta : source)
-        {
-            if (meta.samplePosition != nextPosition) continue;
-            if (destination.addEvent (meta.data, meta.numBytes, meta.samplePosition))
-                continue;
-            if (destination.fitsWhenEmpty (meta.numBytes))
-            {
-                destination.clear();
-                return;
-            }
-        }
-        previousPosition = nextPosition;
-        havePreviousPosition = true;
-    }
-}
-
 // Log-span of the HPF sweep band, precomputed once. The MIDI-CC HPF map runs
 // on the audio thread per controller event; without this it would recompute
 // std::log(max/min) on every CC message.
@@ -3006,11 +2970,11 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     // Live input, scheduled events, and loop-seam reset/chase messages share
     // this routing buffer. Four input-block ceilings cover two live sources
     // plus the worst 8192-frame/128-sample seam-reset burst off the RT path.
-    for (auto& m : perTrackMidi)        m.reserveBytes (4 * dusk::kMidiBlockBytes);
-    for (auto& m : perTrackMidiScratch) m.ensureSize (4 * dusk::kMidiBlockBytes);
+    for (auto& m : perTrackMidi)        m.reserveBytes (dusk::kMidiRoutingBlockBytes);
+    for (auto& m : perTrackMidiScratch) m.ensureSize ((int) dusk::kMidiRoutingBlockBytes);
     liveRecordMidiScratch.reserveBytes (2 * dusk::kMidiBlockBytes);
     midiClockOutScratch.reserveBytes (dusk::kMidiBlockBytes);
-    midiOutTrackScratch.reserveBytes (dusk::kMidiBlockBytes);
+    midiOutTrackScratch.reserveBytes (dusk::kMidiRoutingBlockBytes);
     silentInputScratch.assign ((size_t) bs, 0.0f);
 
     for (auto& a : laneAccum)
@@ -5482,7 +5446,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 // nothing, since a partial copy on cap overflow could split
                 // paired events (note on/off); empty means the block was
                 // dropped and there is nothing to send.
-                copyDuskMidiSorted (perTrackMidi[(size_t) t], midiOutTrackScratch);
+                midi::copyMidiSorted (perTrackMidi[(size_t) t], midiOutTrackScratch,
+                                      midiOutSortScratch);
                 if (! midiOutTrackScratch.isEmpty())
                     midiOut.queueRt (outIdx, midiOutTrackScratch,
                                      currentSampleRate.load (std::memory_order_relaxed));
