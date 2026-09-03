@@ -2,6 +2,7 @@
 
 #include "../PluginDescriptor.h"
 
+#include <atomic>
 #include <vector>
 
 namespace duskstudio::au
@@ -11,6 +12,6 @@ namespace duskstudio::au
 class AuScanner
 {
 public:
-    static std::vector<PluginDescriptor> scan();
+    static std::vector<PluginDescriptor> scan (const std::atomic<bool>* abort = nullptr);
 };
 } // namespace duskstudio::au
