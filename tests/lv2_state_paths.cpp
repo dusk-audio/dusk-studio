@@ -112,15 +112,17 @@ TEST_CASE ("LV2 state paths: refuse escaping abstract paths",
     const auto external = (stdfs::current_path() / "shared" / "ir.wav").u8string();
     REQUIRE (toAbsolute (dir, external) == external);
 
-    // Backslashes are a separator on Windows and an ordinary filename character
-    // elsewhere, so assert the invariant that holds on both: whatever comes
-    // back is either a refusal or a path under cur/.
+#if defined(_WIN32)
+    REQUIRE (toAbsolute (dir, "..\\..\\secret.wav").empty());
+    REQUIRE (toAbsolute (dir, "samples\\..\\..\\secret.wav").empty());
+    REQUIRE (stdfs::path (toAbsolute (dir, "samples\\kick.wav"))
+             == cur / "samples" / "kick.wav");
+#else
+    // Backslashes are ordinary filename characters on POSIX.
     for (const auto* mixed : { "..\\..\\secret.wav", "samples\\..\\..\\secret.wav",
                                "samples\\kick.wav" })
-    {
-        const auto mapped = toAbsolute (dir, mixed);
-        if (! mapped.empty()) REQUIRE (isWithin (cur, stdfs::path (mapped)));
-    }
+        REQUIRE (isWithin (cur, stdfs::path (toAbsolute (dir, mixed))));
+#endif
 }
 
 #if defined(__linux__) || defined(__APPLE__)

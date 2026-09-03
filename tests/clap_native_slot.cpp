@@ -1,6 +1,6 @@
-// Increment 3 foundation: the aux NativeClapSlot load → process → unload
-// lifecycle. Gated on DUSKSTUDIO_TEST_CLAP=/path/to.clap (e.g. ~/.clap/DuskVerb.clap)
-// so CI without a CLAP plugin stays green. See docs/native-clap-host-plan.md.
+// Increment 3 foundation: the aux NativeClapSlot load -> process -> unload
+// lifecycle. DUSKSTUDIO_TEST_CLAP selects a local plugin for the broad smoke
+// test; the state regression below defaults to the bundled fixture.
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -34,6 +34,20 @@ bool nearestGateIncludes (const std::string& source, const char* marker,
     return source.substr (gatePos, markerPos - gatePos).find (requiredMacro)
         != std::string::npos;
 }
+
+struct TestClapBundle
+{
+    std::filesystem::path path;
+    bool isBundledFixture = false;
+};
+
+TestClapBundle testClapBundle()
+{
+    const char* overridePath = std::getenv ("DUSKSTUDIO_TEST_CLAP");
+    if (overridePath != nullptr && *overridePath != '\0')
+        return { std::filesystem::u8path (overridePath), false };
+    return { std::filesystem::u8path (DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH), true };
+}
 } // namespace
 
 TEST_CASE ("NativeClapSlot loads, processes, and unloads cleanly", "[clap][slot]")
@@ -41,7 +55,7 @@ TEST_CASE ("NativeClapSlot loads, processes, and unloads cleanly", "[clap][slot]
     const char* path = std::getenv ("DUSKSTUDIO_TEST_CLAP");
     if (path == nullptr || *path == '\0')
     {
-        SUCCEED ("DUSKSTUDIO_TEST_CLAP not set — skipping live CLAP-slot test");
+        SUCCEED ("DUSKSTUDIO_TEST_CLAP not set - skipping live CLAP-slot test");
         return;
     }
 
@@ -187,19 +201,12 @@ TEST_CASE ("NativeClapSlot reactivate keeps the same instance and signal path",
 TEST_CASE ("NativeClapSlot state round-trips into a fresh slot",
            "[clap][slot][state][regression][issue-355]")
 {
-    const char* path = std::getenv ("DUSKSTUDIO_TEST_CLAP");
-    if (path == nullptr || *path == '\0')
-    {
-        SUCCEED ("DUSKSTUDIO_TEST_CLAP not set — skipping live CLAP-state test");
-        return;
-    }
-
+    const auto testBundle = testClapBundle();
     constexpr int kBlock = 512;
-    const std::filesystem::path bundle = std::filesystem::u8path (path);
 
     duskstudio::clap::NativeClapSlot a;
     std::string err;
-    REQUIRE (a.load (bundle, 48000.0, kBlock, err));
+    REQUIRE (a.load (testBundle.path, 48000.0, kBlock, err));
 
     int targetIdx = -1;
     double changedValue = 0.0;
@@ -218,21 +225,27 @@ TEST_CASE ("NativeClapSlot state round-trips into a fresh slot",
             break;
         }
     }
-    if (targetIdx < 0)
+    if (targetIdx < 0 && ! testBundle.isBundledFixture)
     {
-        SUCCEED ("plugin exposes no writable ranged parameter — skipping state round-trip");
+        SUCCEED ("plugin exposes no writable ranged parameter - skipping state round-trip");
         return;
     }
 
     std::vector<float> inL ((size_t) kBlock), inR ((size_t) kBlock),
                        outL ((size_t) kBlock), outR ((size_t) kBlock);
+    std::fill (inL.begin(), inL.end(), 0.1f);
+    std::fill (inR.begin(), inR.end(), 0.1f);
     a.processStereo (inL.data(), inR.data(), outL.data(), outR.data(), kBlock);
-    const auto* target = a.paramInfo (targetIdx);
-    REQUIRE (target != nullptr);
+
+    const auto* target = targetIdx >= 0 ? a.paramInfo (targetIdx) : nullptr;
     double savedValue = 0.0;
-    REQUIRE (a.getParamValue (target->id, savedValue));
-    const double tolerance = 1.0e-5 * (target->maxValue - target->minValue) + 1.0e-9;
-    REQUIRE_THAT (savedValue, Catch::Matchers::WithinAbs (changedValue, tolerance));
+    double tolerance = 0.0;
+    if (target != nullptr)
+    {
+        REQUIRE (a.getParamValue (target->id, savedValue));
+        tolerance = 1.0e-5 * (target->maxValue - target->minValue) + 1.0e-9;
+        REQUIRE_THAT (savedValue, Catch::Matchers::WithinAbs (changedValue, tolerance));
+    }
 
     std::vector<uint8_t> blob;
     if (! a.saveState (blob))
@@ -244,15 +257,23 @@ TEST_CASE ("NativeClapSlot state round-trips into a fresh slot",
 
     // Restore into a fresh slot and confirm it loads + processes finite audio.
     duskstudio::clap::NativeClapSlot b;
-    REQUIRE (b.load (bundle, 48000.0, kBlock, err));
+    REQUIRE (b.load (testBundle.path, 48000.0, kBlock, err));
     REQUIRE (b.loadState (blob));
 
-    double restoredValue = 0.0;
-    REQUIRE (b.getParamValue (target->id, restoredValue));
-    REQUIRE_THAT (restoredValue, Catch::Matchers::WithinAbs (savedValue, tolerance));
+    if (target != nullptr)
+    {
+        double restoredValue = 0.0;
+        REQUIRE (b.getParamValue (target->id, restoredValue));
+        REQUIRE_THAT (restoredValue, Catch::Matchers::WithinAbs (savedValue, tolerance));
+    }
 
-    std::fill (inL.begin(), inL.end(), 0.1f);
-    std::fill (inR.begin(), inR.end(), 0.1f);
+    if (testBundle.isBundledFixture)
+    {
+        std::vector<uint8_t> restoredState;
+        REQUIRE (b.saveState (restoredState));
+        REQUIRE (restoredState == blob);
+    }
+
     for (int blk = 0; blk < 8; ++blk)
         b.processStereo (inL.data(), inR.data(), outL.data(), outR.data(), kBlock);
     for (int i = 0; i < kBlock; ++i)

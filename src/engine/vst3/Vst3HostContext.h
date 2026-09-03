@@ -37,6 +37,16 @@ public:
     Vst3HostContext (const Vst3HostContext&)            = delete;
     Vst3HostContext& operator= (const Vst3HostContext&) = delete;
 
+#if defined(DUSKSTUDIO_TESTS)
+    struct HostObjectLifetimeCounts
+    {
+        int constructed = 0;
+        int destroyed = 0;
+    };
+    static HostObjectLifetimeCounts hostObjectLifetimeCounts() noexcept;
+    static void resetHostObjectLifetimeCounts() noexcept;
+#endif
+
     void setCallbacks (Callbacks* cb) noexcept;
 
     // Opaque Steinberg interface pointers (all facets of one COM object whose
