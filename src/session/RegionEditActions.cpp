@@ -384,9 +384,8 @@ bool DeleteMidiRegionAction::undo()
 
 namespace
 {
-#if DUSKSTUDIO_HAS_NATIVE_AU \
-    && (DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 \
-        || DUSKSTUDIO_HAS_NATIVE_VST3)
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 \
+    || DUSKSTUDIO_HAS_NATIVE_VST3
 // A bundle-path native insert (CLAP / LV2 / VST3): identity plus the opaque
 // state blob. Empty path means "no plugin on this rung". Like the Audio Unit
 // pair below, the persisted reference is kept when the plugin is offline so
@@ -454,18 +453,17 @@ struct CloneTrackAction::Impl
     std::vector<uint8_t> multisampleState;
 #endif
 
-#if DUSKSTUDIO_HAS_NATIVE_AU && DUSKSTUDIO_HAS_NATIVE_CLAP
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
     CloneNativeSnapshot clap;
 #endif
-#if DUSKSTUDIO_HAS_NATIVE_AU && DUSKSTUDIO_HAS_NATIVE_LV2
+#if DUSKSTUDIO_HAS_NATIVE_LV2
     CloneNativeSnapshot lv2;
 #endif
-#if DUSKSTUDIO_HAS_NATIVE_AU && DUSKSTUDIO_HAS_NATIVE_VST3
+#if DUSKSTUDIO_HAS_NATIVE_VST3
     CloneNativeSnapshot vst3;
 #endif
-#if DUSKSTUDIO_HAS_NATIVE_AU \
-    && (DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 \
-        || DUSKSTUDIO_HAS_NATIVE_VST3)
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 \
+    || DUSKSTUDIO_HAS_NATIVE_VST3
     CloneNativeKind nativeKind = CloneNativeKind::None;
 #endif
 
@@ -484,7 +482,8 @@ struct CloneTrackAction::Impl
 
 namespace
 {
-#if DUSKSTUDIO_HAS_NATIVE_AU
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 \
+    || DUSKSTUDIO_HAS_NATIVE_VST3 || DUSKSTUDIO_HAS_NATIVE_AU
 std::vector<uint8_t> decodeCarriedState (const juce::String& base64)
 {
     auto blob = dusk::base64::decode (base64.toRawUTF8(), base64.getNumBytesAsUTF8());
@@ -499,9 +498,8 @@ std::vector<uint8_t> decodeCarriedState (const juce::String& base64)
 }
 #endif
 
-#if DUSKSTUDIO_HAS_NATIVE_AU \
-    && (DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 \
-        || DUSKSTUDIO_HAS_NATIVE_VST3)
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 \
+    || DUSKSTUDIO_HAS_NATIVE_VST3
 // Live slot first (session.json's fields are only kept fresh during save); fall
 // back to what the track carries so an offline plugin still survives the clone.
 template <typename Slot>
@@ -632,7 +630,8 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
     s.plugin.legacyDescriptionXml = slot.getLegacyDescriptionXmlForSave();
     s.plugin.stateBase64 = slot.getStateBase64ForSave();
 
-#if DUSKSTUDIO_HAS_NATIVE_AU
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 \
+    || DUSKSTUDIO_HAS_NATIVE_VST3 || DUSKSTUDIO_HAS_NATIVE_AU
     auto& strip = engine.getStrip (idx);
     bool liveNativeCaptured = false;
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
@@ -676,6 +675,7 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
         liveNativeCaptured = true;
     }
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
     auto& auSlot = strip.getNativeAuSlot();
     if (! liveNativeCaptured && auSlot.isLoaded())
     {
@@ -690,6 +690,7 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
         }
         liveNativeCaptured = true;
     }
+#endif
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     if (strip.isNativeMultisampleLoaded())
         liveNativeCaptured = true;
@@ -728,11 +729,13 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
             carried = true;
         }
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
         if (! carried && t.nativeAuIdentifier.isNotEmpty())
         {
             s.auIdentifier = t.nativeAuIdentifier;
             s.auState = decodeCarriedState (t.nativeAuStateBase64);
         }
+#endif
     }
 #endif
 
@@ -844,11 +847,11 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
     // a single track we mirror by hand.
     s.plugin.publishTo (t);
 
-#if DUSKSTUDIO_HAS_NATIVE_AU
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 \
+    || DUSKSTUDIO_HAS_NATIVE_VST3 || DUSKSTUDIO_HAS_NATIVE_AU
     // Replay exactly one native owner after the standard slot, matching session
-    // restore precedence. This is macOS-only (the AU gate), so Linux clone
-    // behaviour remains byte-for-byte unchanged while AU clone/undo can safely
-    // cross an existing CLAP/LV2/VST3 destination.
+    // restore precedence so clone/undo can safely cross an existing native
+    // destination on every platform.
     {
         auto& strip = engine.getStrip (idx);
         bool nativeSelected = false;
@@ -913,6 +916,7 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
         }
 #endif
 
+#if DUSKSTUDIO_HAS_NATIVE_AU
         t.nativeAuIdentifier.clear();
         t.nativeAuStateBase64.clear();
         if (! nativeSelected && s.auIdentifier.isNotEmpty())
@@ -935,6 +939,7 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
                 : juce::Base64::toBase64 (s.auState.data(), s.auState.size());
             nativeSelected = true;
         }
+#endif
 
         if (nativeSelected)
         {
@@ -946,15 +951,32 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
         }
         else
         {
-            const bool anyLoaded = strip.isNativeClapLoaded()
-                                || strip.isNativeLv2Loaded()
-                                || strip.isNativeVst3Loaded()
-                                || strip.isNativeAuLoaded();
+            bool anyLoaded = false;
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+            anyLoaded = anyLoaded || strip.isNativeClapLoaded();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+            anyLoaded = anyLoaded || strip.isNativeLv2Loaded();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+            anyLoaded = anyLoaded || strip.isNativeVst3Loaded();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+            anyLoaded = anyLoaded || strip.isNativeAuLoaded();
+#endif
             if (anyLoaded) engine.suspendProcessing();
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
             strip.unloadNativeClap();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
             strip.unloadNativeLv2();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
             strip.unloadNativeVst3();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
             strip.unloadNativeAu();
+#endif
             if (anyLoaded) engine.resumeProcessing();
         }
     }
@@ -979,8 +1001,10 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
 
             engine.suspendProcessing();
             bool msLoaded = false;
-            if (primed) msLoaded = strip.commitNativeMultisample (std::move (primed));
-            else        strip.unloadNativeMultisample();
+            if (primed && msStateRestored)
+                msLoaded = strip.commitNativeMultisample (std::move (primed));
+            else
+                strip.unloadNativeMultisample();
             engine.resumeProcessing();
 
             if ((! msLoaded || ! msStateRestored) && s.multisamplePath.isNotEmpty())
