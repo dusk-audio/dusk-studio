@@ -680,9 +680,9 @@ int PluginManager::scanInstalledPlugins (
     const auto cancelled = [abort] { return abort != nullptr && abort->load (std::memory_order_relaxed); };
 
     if (! aborting && ! cancelled()) scanClapPlugins (abort);        // CLAP isn't a juce format - scan it alongside the JUCE pass
-    if (! aborting && ! cancelled()) scanLv2Plugins();               // native-LV2 rows are separate from JUCE's LV2 format
+    if (! aborting && ! cancelled()) scanLv2Plugins (abort);         // native-LV2 rows are separate from JUCE's LV2 format
     if (! aborting && ! cancelled()) scanVst3NativePlugins (abort);  // native-VST3 rows are separate from JUCE's VST3 format
-    if (! aborting && ! cancelled()) scanAuPlugins();                // native-AU rows come from the macOS component registry
+    if (! aborting && ! cancelled()) scanAuPlugins (abort);          // native-AU rows come from the macOS component registry
     return added;
 }
 
@@ -884,32 +884,41 @@ std::vector<PluginDescriptor> PluginManager::getClapInstrumentDescriptions() con
     return filterByInstrumentFlag (clapDescriptions, true);
 }
 
-void PluginManager::scanLv2Plugins()
+void PluginManager::scanLv2Plugins (const std::atomic<bool>* abort)
 {
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-    const auto scanned = lv2::Lv2Scanner::scan();   // manifest parse outside the lock
+    const auto scanned = lv2::Lv2Scanner::scan (abort);   // manifest parse outside the lock
+    if (abort != nullptr && abort->load (std::memory_order_relaxed)) return;
+
+    std::vector<PluginDescriptor> fresh;
+    fresh.reserve (scanned.size());
+    for (const auto& s : scanned)
+    {
+        if (abort != nullptr && abort->load (std::memory_order_relaxed)) return;
+
+        // Audio effects (audio in + out) and instruments (atom/MIDI in,
+        // audio out, no audio in - classified by Lv2Bundle::describePlugin).
+        // MIDI-only utilities stay with the JUCE LV2 format.
+        const bool effect = s.desc.audioInputs > 0 && s.desc.audioOutputs > 0;
+        if (! effect && ! s.desc.isInstrument)
+            continue;
+        PluginDescriptor descriptor;
+        descriptor.name = s.desc.name;
+        descriptor.formatName = "LV2";
+        descriptor.backend = PluginBackend::Native;
+        descriptor.location = s.bundlePath;
+        descriptor.pluginId = s.desc.uri;
+        descriptor.isInstrument = s.desc.isInstrument;
+        fresh.push_back (std::move (descriptor));
+    }
+
     {
         const juce::ScopedLock sl (nativeDescriptionsLock);
-        lv2Descriptions.clear();
-        for (const auto& s : scanned)
-        {
-            // Audio effects (audio in + out) and instruments (atom/MIDI in,
-            // audio out, no audio in - classified by Lv2Bundle::describePlugin).
-            // MIDI-only utilities stay with the JUCE LV2 format.
-            const bool effect = s.desc.audioInputs > 0 && s.desc.audioOutputs > 0;
-            if (! effect && ! s.desc.isInstrument)
-                continue;
-            PluginDescriptor descriptor;
-            descriptor.name = s.desc.name;
-            descriptor.formatName = "LV2";
-            descriptor.backend = PluginBackend::Native;
-            descriptor.location = s.bundlePath;
-            descriptor.pluginId = s.desc.uri;
-            descriptor.isInstrument = s.desc.isInstrument;
-            lv2Descriptions.push_back (std::move (descriptor));
-        }
+        lv2Descriptions.swap (fresh);
     }
     saveNativeCache (lv2Descriptions, "lv2-native-cache.json");
+#else
+    (void) abort;
 #endif
 }
 
@@ -962,15 +971,18 @@ std::vector<PluginDescriptor> PluginManager::getVst3NativeInstrumentDescriptions
     return filterByInstrumentFlag (vst3NativeDescriptions, true);
 }
 
-void PluginManager::scanAuPlugins()
+void PluginManager::scanAuPlugins (const std::atomic<bool>* abort)
 {
 #if DUSKSTUDIO_HAS_NATIVE_AU
-    auto fresh = au::AuScanner::scan();
+    auto fresh = au::AuScanner::scan (abort);
+    if (abort != nullptr && abort->load (std::memory_order_relaxed)) return;
     {
         const juce::ScopedLock sl (nativeDescriptionsLock);
         auDescriptions.swap (fresh);
     }
     saveNativeCache (auDescriptions, "au-native-cache.json");
+#else
+    (void) abort;
 #endif
 }
 

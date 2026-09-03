@@ -209,7 +209,7 @@ bool AuBundle::exists (const std::string& identifier) noexcept
     return AudioComponentFindNext (nullptr, &query) != nullptr;
 }
 
-std::vector<PluginDesc> AuBundle::enumerate()
+std::vector<PluginDesc> AuBundle::enumerate (const std::atomic<bool>* abort)
 {
     std::vector<PluginDesc> found;
     constexpr std::array<OSType, 3> types {
@@ -217,11 +217,13 @@ std::vector<PluginDesc> AuBundle::enumerate()
     };
     for (const auto type : types)
     {
+        if (abort != nullptr && abort->load (std::memory_order_relaxed)) break;
         AudioComponentDescription query {};
         query.componentType = type;
         AudioComponent component = nullptr;
         while ((component = AudioComponentFindNext (component, &query)) != nullptr)
         {
+            if (abort != nullptr && abort->load (std::memory_order_relaxed)) break;
             PluginDesc description;
             if (describe (component, description))
                 found.push_back (std::move (description));

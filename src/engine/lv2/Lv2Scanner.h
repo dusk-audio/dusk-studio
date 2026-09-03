@@ -2,6 +2,7 @@
 
 #include "Lv2Bundle.h"
 
+#include <atomic>
 #include <string>
 #include <vector>
 
@@ -24,6 +25,6 @@ struct ScannedLv2
 class Lv2Scanner
 {
 public:
-    static std::vector<ScannedLv2> scan();
+    static std::vector<ScannedLv2> scan (const std::atomic<bool>* abort = nullptr);
 };
 } // namespace duskstudio::lv2

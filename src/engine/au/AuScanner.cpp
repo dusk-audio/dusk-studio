@@ -4,11 +4,12 @@
 
 namespace duskstudio::au
 {
-std::vector<PluginDescriptor> AuScanner::scan()
+std::vector<PluginDescriptor> AuScanner::scan (const std::atomic<bool>* abort)
 {
     std::vector<PluginDescriptor> rows;
-    for (const auto& plugin : AuBundle::enumerate())
+    for (const auto& plugin : AuBundle::enumerate (abort))
     {
+        if (abort != nullptr && abort->load (std::memory_order_relaxed)) break;
         PluginDescriptor descriptor;
         descriptor.name = plugin.name;
         descriptor.descriptiveName = plugin.name;

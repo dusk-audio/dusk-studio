@@ -7,6 +7,7 @@
 #include "engine/au/NativeAuSlot.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <filesystem>
 #include <string>
@@ -58,12 +59,16 @@ TEST_CASE ("Audio Unit identifiers round-trip and classify", "[au][identifier]")
     CHECK_FALSE (AuBundle::isInstrumentType (fourcc ("aufx")));
 }
 
-TEST_CASE ("Audio Unit scanner emits stable native descriptor rows", "[au][scanner]")
+TEST_CASE ("Audio Unit scanner cancels and emits stable native descriptor rows",
+           "[au][scanner][regression][issue-466]")
 {
     using duskstudio::PluginBackend;
     using duskstudio::au::AuBundle;
     using duskstudio::au::AuScanner;
     using duskstudio::au::ComponentId;
+
+    std::atomic<bool> abort { true };
+    CHECK (AuScanner::scan (&abort).empty());
 
     const auto rows = AuScanner::scan();
     REQUIRE_FALSE (rows.empty());

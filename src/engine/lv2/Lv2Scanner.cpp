@@ -4,9 +4,11 @@
 
 namespace duskstudio::lv2
 {
-std::vector<ScannedLv2> Lv2Scanner::scan()
+std::vector<ScannedLv2> Lv2Scanner::scan (const std::atomic<bool>* abort)
 {
     std::vector<ScannedLv2> found;
+    if (abort != nullptr && abort->load (std::memory_order_relaxed)) return found;
+
     LilvWorld* world = lilv_world_new();
     if (world == nullptr) return found;
     lilv_world_load_all (world);   // $LV2_PATH, else the spec default directories
@@ -14,6 +16,7 @@ std::vector<ScannedLv2> Lv2Scanner::scan()
     const LilvPlugins* all = lilv_world_get_all_plugins (world);
     LILV_FOREACH (plugins, it, all)
     {
+        if (abort != nullptr && abort->load (std::memory_order_relaxed)) break;
         const LilvPlugin* p = lilv_plugins_get (all, it);
 
         // The bundle directory is what NativeLv2Slot::load takes. A malformed
