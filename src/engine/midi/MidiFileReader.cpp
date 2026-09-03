@@ -45,6 +45,13 @@ std::uint16_t bigEndian16 (const std::uint8_t* d) noexcept
 
 int numDataBytes (std::uint8_t status) noexcept
 {
+    if (status >= 0xf0)
+    {
+        if (status == 0xf1 || status == 0xf3) return 1;
+        if (status == 0xf2) return 2;
+        return 0;
+    }
+
     const int kind = status & 0xf0;
     return (kind == 0xc0 || kind == 0xd0) ? 1 : 2;
 }
@@ -107,7 +114,8 @@ std::vector<MidiFileEvent> parseTrack (const std::uint8_t* data, std::size_t siz
             MidiFileEvent ev;
             ev.tick   = tick;
             ev.status = status;
-            ev.data1  = data[pos];
+            if (wanted > 0)
+                ev.data1 = data[pos];
             if (wanted > 1)
                 ev.data2 = data[pos + 1];
             pos += (std::size_t) wanted;
@@ -141,7 +149,11 @@ void reorderGroup (std::vector<MidiFileEvent>& events, std::size_t begin, std::s
             if (events[k - 1].isNoteOff() && events[k - 1].channel() == channel
                 && events[k - 1].noteNumber() == note)
             { lastNoteOff = k - 1; break; }
-        if (lastNoteOff == end) return;
+        if (lastNoteOff == end)
+        {
+            i = firstNoteOn + 1;
+            continue;
+        }
 
         std::swap (events[firstNoteOn], events[lastNoteOff]);
         i = firstNoteOn + 1;
@@ -258,7 +270,7 @@ bool MidiFileReader::readData (const std::uint8_t* data, std::size_t size)
     if (fileType == 0 && numTracks != 1) return false;
 
     trackEvents.reserve (numTracks);
-    for (std::uint16_t t = 0; t < numTracks; ++t)
+    while (trackEvents.size() < numTracks)
     {
         if (pos + 8 > size) return false;
 
