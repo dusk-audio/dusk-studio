@@ -289,9 +289,9 @@ TEST_CASE ("MidiOutputBank RT queue delivers through the pump, bounded by its de
     // keyed off the shared ceiling so raising that cannot quietly turn this into
     // a block that fits.
     dusk::MidiBuffer big;
-    big.reserveBytes (dusk::kMidiBlockBytes * 2);
+    big.reserveBytes (dusk::kMidiRoutingBlockBytes * 2);
     dusk::MidiBuffer slotSized;
-    slotSized.reserveBytes (dusk::kMidiBlockBytes);
+    slotSized.reserveBytes (dusk::kMidiRoutingBlockBytes);
     const std::uint8_t filler[3] { 0x90, 0x7f, 100 };
     int n = 0;
     for (; slotSized.addEvent (filler, 3, n); ++n)

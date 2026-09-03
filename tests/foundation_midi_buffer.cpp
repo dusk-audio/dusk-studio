@@ -1,10 +1,14 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "foundation/MidiBuffer.h"
+#include "engine/midi/MidiSort.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
 #include <cstdint>
+#include <fstream>
+#include <iterator>
+#include <string>
 #include <vector>
 
 // dusk::MidiBuffer must iterate events in the same order and expose the same
@@ -187,5 +191,92 @@ TEST_CASE ("dusk::copyEventsWhole delivers a block whole or not at all",
             ++n;
         }
         REQUIRE (n == 2);
+    }
+}
+
+TEST_CASE ("AudioEngine MIDI output scratch matches the per-track capacity",
+           "[foundation][midi][regression][issue-465]")
+{
+    const auto readSource = [] (const char* relativePath)
+    {
+        const auto path = std::string (DUSKSTUDIO_SOURCE_DIR) + "/" + relativePath;
+        std::ifstream input (path);
+        return std::string { std::istreambuf_iterator<char> (input),
+                             std::istreambuf_iterator<char>() };
+    };
+
+    const auto engineSource = readSource ("src/engine/AudioEngine.cpp");
+    const auto devicesSource = readSource ("src/engine/midi/MidiDevices.cpp");
+
+    REQUIRE_FALSE (engineSource.empty());
+    REQUIRE_FALSE (devicesSource.empty());
+    REQUIRE (engineSource.find (
+        "midiOutTrackScratch.reserveBytes (dusk::kMidiRoutingBlockBytes)")
+        != std::string::npos);
+    REQUIRE (devicesSource.find (
+        "slot.events.reserveBytes (dusk::kMidiRoutingBlockBytes)")
+        != std::string::npos);
+}
+
+TEST_CASE ("MIDI output sorted copy keeps a dense block whole and ordered",
+           "[foundation][midi][regression][issue-465]")
+{
+    SECTION ("a block larger than the old output cap is delivered whole")
+    {
+        dusk::MidiBuffer source;
+        dusk::MidiBuffer destination;
+        source.reserveBytes (dusk::kMidiRoutingBlockBytes);
+        destination.reserveBytes (dusk::kMidiRoutingBlockBytes);
+
+        std::uint8_t note[3] { 0x90, 0, 100 };
+        int inserted = 0;
+        while (true)
+        {
+            note[1] = (std::uint8_t) (inserted % 128);
+            if (! source.addEvent (note, 3, 100000 - inserted))
+                break;
+            ++inserted;
+        }
+        REQUIRE (inserted > (int) (dusk::kMidiBlockBytes / 11));
+
+        duskstudio::midi::MidiSortScratch scratch;
+        duskstudio::midi::copyMidiSorted (source, destination, scratch);
+
+        int count = 0;
+        int previousPosition = -1;
+        for (const auto meta : destination)
+        {
+            REQUIRE (meta.samplePosition >= previousPosition);
+            previousPosition = meta.samplePosition;
+            ++count;
+        }
+        REQUIRE (count == inserted);
+    }
+
+    SECTION ("equal-position events keep their source order")
+    {
+        dusk::MidiBuffer source;
+        dusk::MidiBuffer destination;
+        source.reserveBytes (64);
+        destination.reserveBytes (64);
+        const std::uint8_t first[3]  { 0x90, 60, 100 };
+        const std::uint8_t earlier[3] { 0x90, 61, 100 };
+        const std::uint8_t second[3] { 0x90, 62, 100 };
+        REQUIRE (source.addEvent (first, 3, 5));
+        REQUIRE (source.addEvent (earlier, 3, 2));
+        REQUIRE (source.addEvent (second, 3, 5));
+
+        duskstudio::midi::MidiSortScratch scratch;
+        duskstudio::midi::copyMidiSorted (source, destination, scratch);
+
+        const std::uint8_t expectedNotes[] { 61, 60, 62 };
+        int i = 0;
+        for (const auto meta : destination)
+        {
+            REQUIRE (i < 3);
+            REQUIRE (meta.data[1] == expectedNotes[i]);
+            ++i;
+        }
+        REQUIRE (i == 3);
     }
 }
