@@ -7,6 +7,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,18 @@ using Catch::Matchers::WithinAbs;
 
 namespace
 {
+std::vector<std::uint8_t> loadHexFixture (const char* name)
+{
+    const auto path = std::string (DUSKSTUDIO_SOURCE_DIR)
+                    + "/tests/fixtures/midi/" + name;
+    std::ifstream input (path);
+    std::vector<std::uint8_t> bytes;
+    std::string token;
+    while (input >> token)
+        bytes.push_back ((std::uint8_t) std::stoul (token, nullptr, 16));
+    return bytes;
+}
+
 struct SmfWriter
 {
     std::vector<std::uint8_t> bytes;
@@ -370,4 +383,61 @@ TEST_CASE ("MidiFileReader drops an event truncated by the end of its track", "[
     REQUIRE (reader.readData (f.bytes.data(), f.bytes.size()));
     REQUIRE (reader.tracks().size() == 1);
     REQUIRE (reader.tracks()[0].size() == 1);
+}
+
+TEST_CASE ("MidiFileReader skips vendor chunks without consuming the track count",
+           "[midi][import][regression][issue-463]")
+{
+    const auto file = loadHexFixture ("vendor-chunk.mid.hex");
+    REQUIRE_FALSE (file.empty());
+
+    MidiFileReader reader;
+    REQUIRE (reader.readData (file.data(), file.size()));
+    REQUIRE (reader.tracks().size() == 2);
+    REQUIRE (reader.tracks()[0].size() == 2);
+    REQUIRE (reader.tracks()[1].size() == 2);
+    REQUIRE (reader.tracks()[0][0].noteNumber() == 60);
+    REQUIRE (reader.tracks()[1][0].noteNumber() == 64);
+}
+
+TEST_CASE ("MidiFileReader keeps parsing after an in-track realtime message",
+           "[midi][import][regression][issue-463]")
+{
+    const auto file = loadHexFixture ("realtime-message.mid.hex");
+    REQUIRE_FALSE (file.empty());
+
+    MidiFileReader reader;
+    REQUIRE (reader.readData (file.data(), file.size()));
+    REQUIRE (reader.tracks().size() == 1);
+
+    const auto& events = reader.tracks()[0];
+    REQUIRE (events.size() == 4);
+    REQUIRE (events[1].status == 0xf8);
+    REQUIRE (events[1].tick == 10);
+    REQUIRE (events[1].data1 == 0);
+    REQUIRE (events[2].isNoteOff());
+    REQUIRE (events[2].tick == 20);
+}
+
+TEST_CASE ("MidiFileReader continues reordering after an unmatched same-tick note-on",
+           "[midi][import][regression][issue-463]")
+{
+    const auto file = loadHexFixture ("same-tick-retrigger.mid.hex");
+    REQUIRE_FALSE (file.empty());
+
+    MidiFileReader reader;
+    REQUIRE (reader.readData (file.data(), file.size()));
+    REQUIRE (reader.tracks().size() == 1);
+
+    const auto& events = reader.tracks()[0];
+    REQUIRE (events.size() == 7);
+    REQUIRE (events[1].tick == 100);
+    REQUIRE (events[1].isNoteOn());
+    REQUIRE (events[1].noteNumber() == 60);
+    REQUIRE (events[2].tick == 100);
+    REQUIRE (events[2].isNoteOff());
+    REQUIRE (events[2].noteNumber() == 64);
+    REQUIRE (events[3].tick == 100);
+    REQUIRE (events[3].isNoteOn());
+    REQUIRE (events[3].noteNumber() == 64);
 }
