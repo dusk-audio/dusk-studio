@@ -19,12 +19,13 @@
 #include <atomic>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace duskstudio::device
@@ -70,12 +71,15 @@ bool sameSetup (const DeviceSetup& a, const DeviceSetup& b) noexcept
 // The single IODeviceCallback handed to IODevice::start. Fans the device's RT
 // blocks out to the registered engine callbacks (list size 1 in practice; the
 // N-callback path is retained but uses pre-sized scratch, never resizing in the
-// callback). The lock is JUCE's audioCallbackLock discipline: uncontended per
-// block, contended only during message-thread add/remove.
+// callback).
 class CallbackFanout final : public IODeviceCallback
 {
 public:
-    explicit CallbackFanout (std::atomic<bool>* pending) noexcept : deviceChangePending (pending) {}
+    explicit CallbackFanout (std::atomic<bool>* pending) : deviceChangePending (pending)
+    {
+        activeCallbacks = std::make_unique<CallbackSnapshot>();
+        publishedCallbacks.store (activeCallbacks.get(), std::memory_order_seq_cst);
+    }
 
     void audioDeviceIOCallback (const float* const* in, int numIn,
                                 float* const* out, int numOut, int numSamples,
@@ -84,7 +88,8 @@ public:
         const dusk::audio::ScopedNoDenormals noDenormals;
         if (numSamples == 0) return;
 
-        std::lock_guard<std::mutex> lock (callbackListLock);
+        const SnapshotLease lease (*this);
+        const auto& callbacks = lease->callbacks;
 
         if (callbacks.empty())
         {
@@ -126,31 +131,106 @@ public:
         // otherwise leave the flag set with no live device to clear it.
         deviceChangePending->store (false, std::memory_order_release);
 
-        std::lock_guard<std::mutex> lock (callbackListLock);
         const int outCh = std::max (0, (int) device->getOutputChannelNames().size());
         const int bufSz = std::max (0, device->getCurrentBufferSizeSamples());
         scratch.assign ((std::size_t) outCh * (std::size_t) bufSz, 0.0f);
         scratchPtrs.assign ((std::size_t) outCh, nullptr);
 
-        for (auto* cb : callbacks) cb->audioDeviceAboutToStart (device);
+        const SnapshotLease lease (*this);
+        for (auto* cb : lease->callbacks) cb->audioDeviceAboutToStart (device);
     }
 
     void audioDeviceStopped() override
     {
-        std::lock_guard<std::mutex> lock (callbackListLock);
-        for (auto* cb : callbacks) cb->audioDeviceStopped();
+        const SnapshotLease lease (*this);
+        for (auto* cb : lease->callbacks) cb->audioDeviceStopped();
     }
 
     void audioDeviceError (const std::string& message) override
     {
-        std::lock_guard<std::mutex> lock (callbackListLock);
-        for (auto* cb : callbacks) cb->audioDeviceError (message);
+        const SnapshotLease lease (*this);
+        for (auto* cb : lease->callbacks) cb->audioDeviceError (message);
     }
 
-    std::mutex callbackListLock;
-    std::vector<IODeviceCallback*> callbacks;
+    bool contains (IODeviceCallback* callback) const
+    {
+        const auto& callbacks = activeCallbacks->callbacks;
+        return std::find (callbacks.begin(), callbacks.end(), callback) != callbacks.end();
+    }
+
+    bool add (IODeviceCallback* callback)
+    {
+        if (contains (callback)) return false;
+        auto callbacks = activeCallbacks->callbacks;
+        callbacks.push_back (callback);
+        publish (std::make_unique<CallbackSnapshot> (std::move (callbacks)));
+        return true;
+    }
+
+    bool remove (IODeviceCallback* callback)
+    {
+        auto callbacks = activeCallbacks->callbacks;
+        const auto it = std::find (callbacks.begin(), callbacks.end(), callback);
+        if (it == callbacks.end()) return false;
+        callbacks.erase (it);
+        publish (std::make_unique<CallbackSnapshot> (std::move (callbacks)));
+        return true;
+    }
 
 private:
+    struct CallbackSnapshot
+    {
+        CallbackSnapshot() = default;
+        explicit CallbackSnapshot (std::vector<IODeviceCallback*> value)
+            : callbacks (std::move (value)) {}
+
+        std::vector<IODeviceCallback*> callbacks;
+        std::atomic<std::uint32_t> readers { 0 };
+    };
+
+    class SnapshotLease
+    {
+    public:
+        explicit SnapshotLease (CallbackFanout& owner) noexcept
+        {
+            owner.acquiringReaders.fetch_add (1, std::memory_order_seq_cst);
+            snapshot = owner.publishedCallbacks.load (std::memory_order_seq_cst);
+            snapshot->readers.fetch_add (1, std::memory_order_seq_cst);
+            owner.acquiringReaders.fetch_sub (1, std::memory_order_seq_cst);
+        }
+
+        ~SnapshotLease()
+        {
+            snapshot->readers.fetch_sub (1, std::memory_order_seq_cst);
+        }
+
+        SnapshotLease (const SnapshotLease&) = delete;
+        SnapshotLease& operator= (const SnapshotLease&) = delete;
+
+        CallbackSnapshot* operator->() const noexcept { return snapshot; }
+
+    private:
+        CallbackSnapshot* snapshot = nullptr;
+    };
+
+    void publish (std::unique_ptr<CallbackSnapshot> callbacks)
+    {
+        auto retired = std::move (activeCallbacks);
+        activeCallbacks = std::move (callbacks);
+        publishedCallbacks.store (activeCallbacks.get(), std::memory_order_seq_cst);
+
+        while (acquiringReaders.load (std::memory_order_seq_cst) != 0)
+            std::this_thread::yield();
+        while (retired->readers.load (std::memory_order_seq_cst) != 0)
+            std::this_thread::yield();
+    }
+
+    static_assert (std::atomic<CallbackSnapshot*>::is_always_lock_free);
+    static_assert (std::atomic<std::uint32_t>::is_always_lock_free);
+
+    std::unique_ptr<CallbackSnapshot> activeCallbacks;
+    std::atomic<CallbackSnapshot*> publishedCallbacks { nullptr };
+    std::atomic<std::uint32_t> acquiringReaders { 0 };
     std::atomic<bool>* deviceChangePending;
     std::vector<float>  scratch;     // planar, numOutputChannels x bufferSize
     std::vector<float*> scratchPtrs; // one entry per output channel
@@ -358,19 +438,13 @@ struct DeviceManager::Impl
     void addCallback (IODeviceCallback* cb)
     {
         if (cb == nullptr) return;
-        {
-            std::lock_guard<std::mutex> lock (fanout.callbackListLock);
-            if (std::find (fanout.callbacks.begin(), fanout.callbacks.end(), cb) != fanout.callbacks.end())
-                return;   // idempotent
-        }
+        if (fanout.contains (cb)) return;
         // Prime the newcomer BEFORE inserting (JUCE's order): a first block must
         // not hit an engine that hasn't seen aboutToStart.
         if (currentDevice != nullptr && currentDevice->isPlaying())
             cb->audioDeviceAboutToStart (currentDevice.get());
 
-        std::lock_guard<std::mutex> lock (fanout.callbackListLock);
-        if (std::find (fanout.callbacks.begin(), fanout.callbacks.end(), cb) == fanout.callbacks.end())
-            fanout.callbacks.push_back (cb);
+        fanout.add (cb);
     }
 
     void removeCallback (IODeviceCallback* cb)
@@ -379,13 +453,10 @@ struct DeviceManager::Impl
         // Symmetric with addCallback's prime gate: only a callback that saw
         // aboutToStart (device live AND playing) gets a matching stopped, so a
         // self-stopped device is never stopped a second time on removal.
-        bool needsStop = currentDevice != nullptr && currentDevice->isPlaying();
-        {
-            std::lock_guard<std::mutex> lock (fanout.callbackListLock);
-            auto it = std::find (fanout.callbacks.begin(), fanout.callbacks.end(), cb);
-            needsStop = needsStop && (it != fanout.callbacks.end());
-            if (it != fanout.callbacks.end()) fanout.callbacks.erase (it);
-        }
+        const bool wasRegistered = fanout.remove (cb);
+        const bool needsStop = wasRegistered
+                            && currentDevice != nullptr
+                            && currentDevice->isPlaying();
         if (needsStop) cb->audioDeviceStopped();
     }
 };
