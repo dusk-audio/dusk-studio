@@ -30,46 +30,56 @@ inline int legacySextet (char c) noexcept
     return reverse[(unsigned char) c];
 }
 
-// Decode of the MemoryBlock form, mirroring JUCE's MemoryBlock fromBase64Encoding
-// bit for bit: a decimal byte count, a '.', then 6-bit groups laid down LSB-first
-// into a zero-filled buffer of exactly that count. Characters outside the
-// alphabet are skipped without advancing the bit cursor, bits past the declared
-// size are dropped, and a shorter-than-declared payload leaves the tail zeroed,
-// all exactly as the JUCE reader behaved. False only when there is no '.' at
-// all (not this encoding), or when the declared count is beyond what the
-// payload could ever have carried, which the real encoder cannot produce.
+// Decode of the MemoryBlock form, mirroring JUCE's MemoryBlock encoder bit for
+// bit: a decimal byte count, a '.', then 6-bit groups laid down LSB-first into a
+// zero-filled buffer of exactly that count. The encoder always writes a decimal
+// count and exactly ceil(count * 8 / 6) payload characters drawn from the
+// alphabet above, so anything else - a non-decimal count, a short or over-long
+// payload, an off-alphabet character, a set padding bit - is a corrupt string.
+// False for all of them: the caller must see corruption as unreadable rather
+// than restore a slot from a partly zeroed buffer and save that back over the
+// last good copy.
 inline bool decodeLegacyBlob (const std::string& s, std::vector<std::uint8_t>& out)
 {
     out.clear();
 
     const std::size_t dot = s.find ('.');
-    if (dot == std::string::npos) return false;
+    if (dot == std::string::npos || dot == 0) return false;
 
     std::size_t numBytes = 0;
     for (std::size_t i = 0; i < dot; ++i)
     {
         const char c = s[i];
-        if (c < '0' || c > '9') break;          // getIntValue semantics: digits, then stop
-        numBytes = numBytes * 10 + (std::size_t) (c - '0');
-        if (numBytes > (std::size_t) 1 << 30) return false;
+        if (c < '0' || c > '9') return false;
+        const auto digit = (std::size_t) (c - '0');
+        constexpr std::size_t kMaxDecodedBytes = (std::size_t) 1 << 30;
+        if (numBytes > (kMaxDecodedBytes - digit) / 10) return false;
+        numBytes = numBytes * 10 + digit;
     }
 
-    // The encoder writes ceil(bytes * 8 / 6) payload characters, so a count the
-    // payload cannot fill is corruption, not a state to allocate.
-    const std::size_t dataChars = s.size() - dot - 1;
-    if (numBytes > (dataChars * 6) / 8 + 8) return false;
+    if (s.size() - dot - 1 != (numBytes * 8 + 5) / 6) return false;
 
     out.assign (numBytes, 0);
     std::size_t pos = 0;
     for (std::size_t i = dot + 1; i < s.size(); ++i)
     {
         const int v = legacySextet (s[i]);
-        if (v < 0) continue;
+        if (v < 0) { out.clear(); return false; }
         for (int k = 0; k < 6; ++k)
         {
             const std::size_t bit = pos + (std::size_t) k;
-            if ((bit >> 3) >= out.size()) break;
-            out[bit >> 3] = (std::uint8_t) (out[bit >> 3] | (((v >> k) & 1) << (bit & 7)));
+            const int b = (v >> k) & 1;
+
+            // The final sextet carries up to five bits past the declared count.
+            // The encoder reads those from beyond its buffer, where it sees
+            // zeros, so a set one marks a string it could not have written.
+            if ((bit >> 3) >= out.size())
+            {
+                if (b) { out.clear(); return false; }
+                continue;
+            }
+
+            out[bit >> 3] = (std::uint8_t) (out[bit >> 3] | (b << (bit & 7)));
         }
         pos += 6;
     }

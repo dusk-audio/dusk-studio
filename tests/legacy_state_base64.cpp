@@ -167,3 +167,52 @@ TEST_CASE ("legacy decode matches juce::MemoryBlock across lengths", "[session][
         REQUIRE (decodeLegacyStateBase64 (legacy) == original);
     }
 }
+
+// A count that is not decimal, a payload that stops short of the declared byte
+// count, a character outside the alphabet, or a final sextet whose bits past the
+// declared count are set all mean the string is corrupt.
+// Decoding them anyway hands the slot a partly zeroed state that the next save
+// writes back over the last good copy, so each must read as unreadable.
+TEST_CASE ("malformed legacy state reads as unreadable",
+           "[session][migration][regression][issue-454]")
+{
+    const std::vector<std::uint8_t> original { 0x11, 0x22, 0x33, 0x44, 0x55, 0x66 };
+    const auto legacy = juce::MemoryBlock (original.data(), original.size())
+                            .toBase64Encoding().toStdString();
+    REQUIRE (decodeLegacyStateBase64 (legacy) == original);
+
+    const std::string malformed[] {
+        "x.",                                        // count is not a number
+        ".ABCDEFGH",                                 // no count at all
+        "9999999999999999999999999999999999999999.", // count overflows size_t
+        "6.",                                        // count with no payload
+        legacy.substr (0, legacy.size() - 1),        // payload one character short
+        legacy + "A",                                // payload one character long
+        legacy.substr (0, legacy.size() - 1) + "*",  // character outside the alphabet
+    };
+
+    for (const auto& s : malformed)
+    {
+        CAPTURE (s);
+        REQUIRE (decodeLegacyStateBase64 (s).empty());
+
+        const auto decoded = decodeStoredStateBase64 (s);
+        REQUIRE (decoded.supplied);
+        REQUIRE (decoded.unreadable);
+        REQUIRE (decoded.bytes.empty());
+
+        std::string migrated { "untouched" };
+        REQUIRE_FALSE (transcodeLegacyStateBase64 (s, migrated));
+        REQUIRE (migrated == "untouched");
+    }
+
+    // The last character of a one-byte blob carries two data bits and four that
+    // the encoder always writes as zero, because it reads them from past the end
+    // of its own buffer. Setting one produces a string the encoder could not
+    // have written, so it must be rejected rather than silently decoded.
+    const std::vector<std::uint8_t> oneByte { 0xff };
+    REQUIRE (juce::MemoryBlock (oneByte.data(), 1).toBase64Encoding().toStdString() == "1.+C");
+    REQUIRE (decodeLegacyStateBase64 ("1.+C") == oneByte);
+    REQUIRE (decodeLegacyStateBase64 ("1.+G").empty());
+    REQUIRE (decodeStoredStateBase64 ("1.+G").unreadable);
+}
