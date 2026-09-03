@@ -154,6 +154,18 @@ public:
     void setBypassed (bool b) noexcept { bypassed.store (b, std::memory_order_relaxed); }
     bool isBypassed()   const noexcept { return bypassed.load (std::memory_order_relaxed); }
 
+    // The effective latency of the audio path. Bypassed and quarantined slots
+    // pass dry audio without delay, so PDC must treat them as zero-latency.
+    int getLatencySamples() const noexcept
+    {
+        if (! ready.load (std::memory_order_acquire)
+            || ! processingOnline.load (std::memory_order_acquire)
+            || bypassed.load (std::memory_order_relaxed)
+            || instance == nullptr)
+            return 0;
+        return instance->getLatencySamples();
+    }
+
     // Message thread: serialise / restore the loaded plugin's state for session
     // persistence. No-op (false) when nothing is loaded.
     bool saveState (std::vector<uint8_t>& out) const

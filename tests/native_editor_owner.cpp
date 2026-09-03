@@ -108,7 +108,7 @@ struct FakeSlotInstance final : public duskstudio::hosting::INativeInstance
     }
     bool saveState (std::vector<uint8_t>&) const override { return true; }
     bool loadState (const std::vector<uint8_t>&) override { return true; }
-    int getLatencySamples() const noexcept override { return 0; }
+    int getLatencySamples() const noexcept override { return 2048; }
 
     duskstudio::hosting::PortLayout layout;
     bool active = false;
@@ -231,6 +231,28 @@ TEST_CASE ("failed reactivation can be quarantined without destroying a live edi
     REQUIRE (slot.reactivate (48000.0, 8, error));
     REQUIRE (slot.isProcessingOnline());
     REQUIRE (slot.getInstance() == instance);
+}
+
+TEST_CASE ("NativeInsertSlot reports zero effective latency while passing dry audio",
+           "[hosting][slot][pdc][regression][issue-461]")
+{
+    duskstudio::hosting::NativeInsertSlot<FakeTraits> slot;
+    std::string error;
+    REQUIRE (slot.load ("fake.bundle", 48000.0, 8, error));
+    REQUIRE (slot.getLatencySamples() == 2048);
+
+    slot.setBypassed (true);
+    REQUIRE (slot.getLatencySamples() == 0);
+    slot.setBypassed (false);
+    REQUIRE (slot.getLatencySamples() == 2048);
+
+    REQUIRE_FALSE (slot.reactivate (192000.0, 32, error));
+    slot.quarantineAfterFailedReactivation();
+    REQUIRE (slot.getLatencySamples() == 0);
+
+    slot.getInstance()->failReactivation = false;
+    REQUIRE (slot.reactivate (48000.0, 8, error));
+    REQUIRE (slot.getLatencySamples() == 2048);
 }
 
 TEST_CASE ("AbandonInstance quiesces only while the plugin is live")
