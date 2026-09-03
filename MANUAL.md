@@ -59,7 +59,7 @@ This chapter walks an empty session all the way to a finished bounce. If you hav
 
 Install per your platform. On first launch, Dusk Studio opens a blank session called `Untitled` and the **Startup** dialog asks whether you want to create a new session in a chosen folder or open a recent one. Pick **New**, name your session, and click through.
 
-You can also open an existing session directly: pass its `session.json` (or the session folder) on the command line — `DuskStudio path/to/session.json` — or double-click a `session.json` in your file manager (Linux file-type association is installed with the app). On Linux, if Dusk Studio is already running, the session opens in the existing window rather than in a second copy of the app. The window comes forward, playback stops and any take in progress is committed to the session you were working on, and if that session then has unsaved changes you get the same **Save / Don't Save / Cancel** prompt as **File > Open**. **Cancel** leaves the other session unopened and keeps you in the one you were in — with the transport stopped and the finished take in place, so save it if you want to keep it. A switch is refused outright while a bounce is running or another prompt is open; the status bar says which.
+You can also open an existing session directly: pass its `session.json` (or the session folder) on the command line — `DuskStudio path/to/session.json` — or double-click a `session.json` in your file manager (Linux file-type association is installed with the app). On Linux, macOS, and Windows, if Dusk Studio is already running, the session opens in the existing window rather than in a second copy of the app. The window comes forward, playback stops and any take in progress is committed to the session you were working on, and if that session then has unsaved changes you get the same **Save / Don't Save / Cancel** prompt as **File > Open**. **Cancel** leaves the other session unopened and keeps you in the one you were in — with the transport stopped and the finished take in place, so save it if you want to keep it. A switch is refused outright while a bounce is running or another prompt is open; the status bar says which.
 
 The Startup dialog also performs a quick update check against the public repository: if a release newer than your build exists, a flashing **Update available** banner with the new version number appears above the Recent Sessions list. The check is silent when you're up to date or offline, and nothing is sent beyond the request itself.
 
@@ -399,6 +399,8 @@ Windows SmartScreen blocks unsigned MSIs by default. The bypass is one click but
 6. Launch Dusk Studio from the **Start menu** (under *Dusk Studio*) or the **desktop shortcut** the installer creates.
 
 Windows SmartScreen treats every new MSI hash as untrusted on first download; reputation builds up across installations over time but reset on every new release. The MORE INFO → RUN ANYWAY two-click bypass is consistent across builds.
+
+Non-ASCII Windows paths are supported throughout these workflows. Dusk Studio and its plugin-host helper can run from a custom install folder containing Unicode characters; profile, configuration, and temporary folders are resolved without narrowing their names; and MP3 bounces can be written to Unicode directories and filenames.
 
 ### Verifying your download
 
@@ -1569,6 +1571,7 @@ In practice the differences are small:
 
 - Rows tagged **CLAP**, **LV2-Native**, **VST3-Native**, or **AudioUnit** in the picker load through the native hosts; everything else about picking, replacing, and removing is identical.
 - Editors open the same way (centred modal on channel slots, inline on aux lanes) and their settings persist in the session like any other plugin.
+- Each time an **LV2-Native** editor opens or reopens, its controls are seeded from the running plugin's live parameter values. Host-side changes, including MIDI Learn, continue to update the open editor.
 - Native-hosted plugins always run in-process; the OOP sandbox does not apply to them. Native LV2 and Audio Unit discovery do not instantiate plugin code; CLAP and native VST3 discovery load each module to read its factory, like any host's VST3 scan.
 - Insert latency reported by a native-hosted plugin feeds plugin delay compensation like any other insert.
 - A slot holds one plugin regardless of host: loading a CLAP, an LV2-Native, a VST3-Native, an AudioUnit, or a standard-host plugin into the same slot replaces whatever was there.
@@ -1605,11 +1608,13 @@ Plugins have a CPU time budget: 60% of the buffer time when in-process, 85% when
 
 When you save a session, each loaded plugin's identity (description XML — UID, format, file path) and full state blob (the plugin's `getStateInformation` bytes, base64-encoded) are written to `session.json`.
 
+If a native plugin returns no state during a save, the save still completes and the terminal identifies the slot with a line such as `[Dusk Studio/session] track VST3 1 saved no state; keeping the matching stored copy`. An earlier state is retained only when it belongs to that same plugin; otherwise the line ends with `no matching stored copy retained`.
+
 When you load a session:
 
 - If the plugin is found on the system, it is loaded and the saved state is applied.
 - If the plugin is missing or moved, the slot shows "(plugin name) — offline". The saved description and state are preserved; the next session save round-trips them unmodified, so you do not lose the data by opening a session on a machine without that plugin installed. Reinstall the plugin and reload to restore.
-- If the saved state is unreadable or the plugin rejects it, the slot stays offline. The original plugin reference and state text remain in the session and survive later saves instead of being replaced by the plugin's defaults.
+- If the saved state is unreadable or the plugin rejects it, Dusk Studio unloads the plugin and leaves the slot offline. A rejection writes a terminal line such as `[Dusk Studio/session] track VST3 1 rejected its saved state (4096 bytes); slot left offline to preserve the saved state`, and the **Plug-in unavailable** alert lists the track or aux slot, plugin name, format, and exact reason. The original plugin reference and state text remain in the session and survive later saves instead of being replaced by the plugin's defaults.
 
 ## Multi-sample instruments
 

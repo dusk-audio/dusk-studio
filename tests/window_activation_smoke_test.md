@@ -17,6 +17,5 @@ must not force focus by joining another process's input queue.
 | Minimized | Minimize Dusk Studio, then open a session through the OS file association. | The existing window leaves the Dock and comes to the front. | The existing window is restored; it receives focus or its taskbar button flashes. |
 | Second-process handoff | With an unsaved edit open, double-click the second session so the running instance receives the request. | The existing window and save prompt come to the front; no second main window remains. | The existing window is restored and the save prompt is visible; focus is granted or the taskbar flashes, and no second main window remains. |
 
-Second-process enforcement on macOS and Windows is implemented separately by
-issue #368. Run the handoff rows after that milestone item has landed; keep this
-checklist as the release regression check for both changes.
+All rows are required release checks on both platforms, including the
+second-process handoff through the installed file association.
