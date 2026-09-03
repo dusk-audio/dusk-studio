@@ -124,7 +124,12 @@ void bringWindowToFront (juce::ComponentPeer& peer)
         [window deminiaturize:nil];
     [window makeKeyAndOrderFront:nil];
 }
-void flushWindowOperations()                                {}
+void flushWindowOperations()
+{
+    [[NSRunLoop currentRunLoop]
+        runMode:NSDefaultRunLoopMode
+        beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.001]];
+}
 void prepareNativePeerForChildAttach (juce::ComponentPeer&) {}
 
 // macOS: no-op. JUCE's setMouseCursor(NoCursor) on the component under the

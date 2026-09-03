@@ -886,6 +886,11 @@ Handoff handOver (const std::wstring& pipeName, const std::string& payload,
     }
     if (pipe == INVALID_HANDLE_VALUE) return Handoff::Failed;
 
+    ULONG primaryProcessId = 0;
+    if (::GetNamedPipeServerProcessId (pipe, &primaryProcessId)
+        && primaryProcessId != 0)
+        ::AllowSetForegroundWindow (primaryProcessId);
+
     std::uint32_t payloadSize = (std::uint32_t) payload.size();
     bool delivered = transferExact (pipe, &payloadSize,
                                     sizeof payloadSize, true, nullptr, deadline);

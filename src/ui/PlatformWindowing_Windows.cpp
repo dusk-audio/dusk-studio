@@ -113,11 +113,9 @@ void bringWindowToFront (juce::ComponentPeer& peer)
     else if (! ::IsWindowVisible (hwnd))
         ::ShowWindow (hwnd, SW_SHOW);
 
-    // Windows may refuse foreground activation when this process did not
-    // receive the user's most recent input. Ask through the documented path,
-    // then respect that policy and flash the taskbar instead of attaching
-    // input queues or otherwise forcing focus.
-    ::AllowSetForegroundWindow (::GetCurrentProcessId());
+    // A second-instance launch grants this process foreground rights before
+    // handing over its payload. Respect any later refusal and flash the
+    // taskbar instead of attaching input queues or otherwise forcing focus.
     if (::SetForegroundWindow (hwnd) == FALSE)
     {
         auto info = FLASHWINFO {
@@ -130,7 +128,20 @@ void bringWindowToFront (juce::ComponentPeer& peer)
         ::FlashWindowEx (&info);
     }
 }
-void flushWindowOperations()                                {}
+void flushWindowOperations()
+{
+    MSG message {};
+    while (::PeekMessageW (&message, nullptr, 0, 0, PM_REMOVE))
+    {
+        if (message.message == WM_QUIT)
+        {
+            ::PostQuitMessage ((int) message.wParam);
+            break;
+        }
+        ::TranslateMessage (&message);
+        ::DispatchMessageW (&message);
+    }
+}
 void prepareNativePeerForChildAttach (juce::ComponentPeer&) {}
 
 // Windows: no-op. JUCE's setMouseCursor(NoCursor) on the component under the
