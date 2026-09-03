@@ -11,8 +11,30 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
+
+namespace
+{
+std::string readSourceFile (const char* relativePath)
+{
+    std::ifstream input (std::string (DUSKSTUDIO_SOURCE_DIR) + "/" + relativePath);
+    return { std::istreambuf_iterator<char> (input), std::istreambuf_iterator<char>() };
+}
+
+bool nearestGateIncludes (const std::string& source, const char* marker,
+                          const char* requiredMacro)
+{
+    const auto markerPos = source.find (marker);
+    if (markerPos == std::string::npos) return false;
+    const auto gatePos = source.rfind ("#if", markerPos);
+    if (gatePos == std::string::npos) return false;
+    return source.substr (gatePos, markerPos - gatePos).find (requiredMacro)
+        != std::string::npos;
+}
+} // namespace
 
 TEST_CASE ("NativeClapSlot loads, processes, and unloads cleanly", "[clap][slot]")
 {
@@ -238,4 +260,53 @@ TEST_CASE ("NativeClapSlot state round-trips into a fresh slot",
         REQUIRE (std::isfinite (outL[(size_t) i]));
         REQUIRE (std::isfinite (outR[(size_t) i]));
     }
+}
+
+TEST_CASE ("Linux track clone keeps native CLAP identity and state",
+           "[clap][slot][state][regression][issue-462]")
+{
+    const auto cloneSource = readSourceFile ("src/session/RegionEditActions.cpp");
+    REQUIRE_FALSE (cloneSource.empty());
+    REQUIRE (nearestGateIncludes (cloneSource, "bool liveNativeCaptured",
+                                  "DUSKSTUDIO_HAS_NATIVE_CLAP"));
+    REQUIRE (nearestGateIncludes (cloneSource,
+                                  "Replay exactly one native owner",
+                                  "DUSKSTUDIO_HAS_NATIVE_CLAP"));
+    REQUIRE (cloneSource.find ("if (primed && msStateRestored)")
+             != std::string::npos);
+
+    constexpr int kBlock = 64;
+    const auto bundle = std::filesystem::u8path (
+        DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH);
+    duskstudio::clap::NativeClapSlot source;
+    std::string error;
+    REQUIRE (source.load (bundle, 48000.0, kBlock, error));
+
+    std::vector<float> left ((size_t) kBlock, 0.0f);
+    std::vector<float> right ((size_t) kBlock, 0.0f);
+    for (int block = 0; block < 3; ++block)
+        source.processStereo (left.data(), right.data(), left.data(), right.data(), kBlock);
+
+    const auto capturedPath = source.getPath();
+    const auto capturedId = source.getPluginId();
+    std::vector<uint8_t> capturedState;
+    REQUIRE (source.saveState (capturedState));
+    REQUIRE_FALSE (capturedState.empty());
+
+    duskstudio::clap::NativeClapSlot destination;
+    REQUIRE (destination.load (bundle, 48000.0, kBlock, error));
+    destination.processStereo (left.data(), right.data(), left.data(), right.data(), kBlock);
+    std::vector<uint8_t> staleState;
+    REQUIRE (destination.saveState (staleState));
+    REQUIRE (staleState != capturedState);
+
+    REQUIRE (destination.load (std::filesystem::u8path (capturedPath), 48000.0,
+                               kBlock, error, capturedId));
+    REQUIRE (destination.loadState (capturedState));
+    REQUIRE (destination.getPath() == capturedPath);
+    REQUIRE (destination.getPluginId() == capturedId);
+
+    std::vector<uint8_t> replayedState;
+    REQUIRE (destination.saveState (replayedState));
+    REQUIRE (replayedState == capturedState);
 }
