@@ -1010,28 +1010,24 @@ void AudioEngine::recomputePdc() noexcept
             {
                 lat = strip.getPluginSlot().getLatencySamples();
                 // A native insert replaces the JUCE slot (which then reports 0),
-                // so its latency must feed PDC instead. Skip it while bypassed -
-                // bypass passes audio through at zero delay, matching the JUCE
-                // slot's getLatencySamples() returning 0 when bypassed.
+                // so its effective latency must feed PDC instead. Native slots
+                // report zero while bypassed or quarantined because both paths
+                // pass dry audio without delay.
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-                if (strip.isNativeClapLoaded() && ! strip.getNativeClapSlot().isBypassed())
-                    if (auto* inst = strip.getNativeClapSlot().getInstance())
-                        lat = inst->getLatencySamples();
+                if (strip.isNativeClapLoaded())
+                    lat = strip.getNativeClapSlot().getLatencySamples();
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-                if (strip.isNativeLv2Loaded() && ! strip.getNativeLv2Slot().isBypassed())
-                    if (auto* inst = strip.getNativeLv2Slot().getInstance())
-                        lat = inst->getLatencySamples();
+                if (strip.isNativeLv2Loaded())
+                    lat = strip.getNativeLv2Slot().getLatencySamples();
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-                if (strip.isNativeVst3Loaded() && ! strip.getNativeVst3Slot().isBypassed())
-                    if (auto* inst = strip.getNativeVst3Slot().getInstance())
-                        lat = inst->getLatencySamples();
+                if (strip.isNativeVst3Loaded())
+                    lat = strip.getNativeVst3Slot().getLatencySamples();
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_AU
-                if (strip.isNativeAuLoaded() && ! strip.getNativeAuSlot().isBypassed())
-                    if (auto* inst = strip.getNativeAuSlot().getInstance())
-                        lat = inst->getLatencySamples();
+                if (strip.isNativeAuLoaded())
+                    lat = strip.getNativeAuSlot().getLatencySamples();
 #endif
             }
         }
@@ -1062,24 +1058,20 @@ void AudioEngine::recomputePdc() noexcept
             {
                 int slotLat = lane.getPluginSlot (p).getLatencySamples();
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-                if (lane.isNativeClapLoaded (p) && ! lane.getNativeClapSlot (p).isBypassed())
-                    if (auto* inst = lane.getNativeClapSlot (p).getInstance())
-                        slotLat = inst->getLatencySamples();
+                if (lane.isNativeClapLoaded (p))
+                    slotLat = lane.getNativeClapSlot (p).getLatencySamples();
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-                if (lane.isNativeLv2Loaded (p) && ! lane.getNativeLv2Slot (p).isBypassed())
-                    if (auto* inst = lane.getNativeLv2Slot (p).getInstance())
-                        slotLat = inst->getLatencySamples();
+                if (lane.isNativeLv2Loaded (p))
+                    slotLat = lane.getNativeLv2Slot (p).getLatencySamples();
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-                if (lane.isNativeVst3Loaded (p) && ! lane.getNativeVst3Slot (p).isBypassed())
-                    if (auto* inst = lane.getNativeVst3Slot (p).getInstance())
-                        slotLat = inst->getLatencySamples();
+                if (lane.isNativeVst3Loaded (p))
+                    slotLat = lane.getNativeVst3Slot (p).getLatencySamples();
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_AU
-                if (lane.isNativeAuLoaded (p) && ! lane.getNativeAuSlot (p).isBypassed())
-                    if (auto* inst = lane.getNativeAuSlot (p).getInstance())
-                        slotLat = inst->getLatencySamples();
+                if (lane.isNativeAuLoaded (p))
+                    slotLat = lane.getNativeAuSlot (p).getLatencySamples();
 #endif
                 laneLat += std::max (0, slotLat);
             }
