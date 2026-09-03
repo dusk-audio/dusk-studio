@@ -49,6 +49,13 @@ deadlock:juce::TimeSliceThread
 # and TSan's happens-before model doesn't recognise the algorithmic
 # guarantee. Suppress + rely on the IPC self-test for correctness.
 race:juce::AbstractFifo
+
+# dusk::SpscIndexFifo uses the same single-producer/single-consumer ownership
+# contract, but publishes each completed span with release stores and observes
+# the other thread's index with acquire loads. TSan can still report the ring
+# storage access because it does not infer ownership from the separate atomic
+# index. The 100,000-item concurrent FIFO stress test verifies ordering and
+# wraparound while the sanitizer build remains fully instrumented.
 race:dusk::SpscIndexFifo
 
 # RemotePluginConnection's control RPC waits for its reply on a

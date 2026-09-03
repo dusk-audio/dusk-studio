@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout release metadata
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: false
           persist-credentials: false
@@ -84,7 +84,7 @@ jobs:
             label: GCC Release, Ubuntu 22.04, arm64 (Raspberry Pi)
     steps:
       - name: Checkout Dusk Studio
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: recursive
           persist-credentials: false
@@ -256,6 +256,7 @@ jobs:
           cmake -S . -B build-linux -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DDUSKSTUDIO_SKIP_FORK_CHECK=ON \
+            -DDUSKSTUDIO_ENABLE_NATIVE_UI=ON \
             -DDUSKSTUDIO_REQUIRE_NATIVE_LV2=ON \
             -DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON \
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
@@ -263,6 +264,10 @@ jobs:
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
             -DDAF_PATH="${RUNNER_TEMP}/DAF" \
             -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets"
+          for option in DUSKSTUDIO_ENABLE_NATIVE_UI DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_LV2 DUSKSTUDIO_NATIVE_VST3; do
+            grep -q "^${option}:BOOL=ON$" build-linux/CMakeCache.txt || {
+              echo "::error::${option} was not enabled in the app configure" >&2; exit 1; }
+          done
 
       - name: Verify the static libsodium archive was selected
         run: |
@@ -327,7 +332,7 @@ jobs:
 
 
       - name: Stage Linux payload
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: release-linux-${{ matrix.arch }}
           path: dusk-studio-*-Linux-${{ matrix.arch }}.tar.xz
@@ -340,7 +345,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout Dusk Studio
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # No submodules needed: the manual is pure docs (MANUAL.md +
           # docs/images/*), none of the C++/sfizz tree is touched.
@@ -365,15 +370,22 @@ jobs:
             texlive-latex-extra
             lmodern
             fonts-dejavu
+            poppler-utils
 
       - name: Render MANUAL.pdf
         run: |
           bash docs/build-pdf.sh
           test -f MANUAL.pdf || { echo "::error::build-pdf.sh produced no MANUAL.pdf" >&2; exit 1; }
+          version=$(tr -d '[:space:]' < VERSION)
+          subject=$(LC_ALL=C pdfinfo MANUAL.pdf | sed -n 's/^Subject:[[:space:]]*//p')
+          [[ "$subject" == "Dusk Studio ${version} User Manual" ]] || {
+            echo "::error::MANUAL.pdf metadata is for '${subject}', expected version ${version}" >&2
+            exit 1
+          }
 
 
       - name: Stage manual payload
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: release-manual
           path: MANUAL.pdf
@@ -388,7 +400,7 @@ jobs:
     runs-on: windows-2022
     steps:
       - name: Checkout Dusk Studio
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # external/sfizz is a submodule; without recursive checkout
           # the CMake configure step fails ("external/sfizz/src/sfizz.h
@@ -532,9 +544,10 @@ jobs:
             -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}" \
             -DDUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR="${MESA_SOFTGL_PATH}" \
             -DDUSKSTUDIO_ENABLE_LTO=ON \
+            -DDUSKSTUDIO_ENABLE_NATIVE_UI=ON \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
             -DDUSKSTUDIO_NATIVE_VST3=ON
-          for option in DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_VST3; do
+          for option in DUSKSTUDIO_ENABLE_NATIVE_UI DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_VST3; do
             grep -q "^${option}:BOOL=ON$" build/CMakeCache.txt || {
               echo "::error::${option} was not enabled in the app configure" >&2; exit 1; }
           done
@@ -641,7 +654,7 @@ jobs:
 
 
       - name: Stage Windows payload
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: release-windows
           path: "*.msi"
@@ -659,7 +672,7 @@ jobs:
 
     steps:
       - name: Checkout Dusk Studio (with sfizz submodule)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: recursive
           # The publisher uses RELEASES_REPO_TOKEN; this build needs no
@@ -694,7 +707,7 @@ jobs:
           make install
 
       - name: Cache ccache objects
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-macos-release-${{ github.sha }}
@@ -780,10 +793,11 @@ jobs:
             -DDAF_PATH="${RUNNER_TEMP}/DAF" \
             -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets" \
             -DDUSKSTUDIO_CODESIGN_IDENTITY="-" \
+            -DDUSKSTUDIO_ENABLE_NATIVE_UI=ON \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
             -DDUSKSTUDIO_NATIVE_LV2=ON \
             -DDUSKSTUDIO_NATIVE_VST3=ON
-          for option in DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_LV2 DUSKSTUDIO_NATIVE_VST3; do
+          for option in DUSKSTUDIO_ENABLE_NATIVE_UI DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_LV2 DUSKSTUDIO_NATIVE_VST3; do
             grep -q "^${option}:BOOL=ON$" build/CMakeCache.txt || {
               echo "::error::${option} was not enabled in the app configure" >&2; exit 1; }
           done
@@ -882,17 +896,29 @@ jobs:
             exit 1
           }
           codesign --verify --strict --deep --verbose=2 "$APP"
-          if otool -L "$APP/Contents/MacOS/DuskStudio" \
-              | tail -n +2 | awk '{print $1}' \
-              | grep -vE '^/usr/lib/|^/System/|^@executable_path/\.\./Frameworks/|^@loader_path/'; then
-            echo "::error::packaged app links a path outside the bundle" >&2
+          for binary in "$APP/Contents/MacOS/DuskStudio" "$HELPER"; do
+            if otool -L "$binary" \
+                | tail -n +2 | awk '{print $1}' \
+                | grep -vE '^/usr/lib/|^/System/|^@executable_path/\.\./Frameworks/|^@loader_path/'; then
+              echo "::error::$binary links a path outside the bundle" >&2
+              exit 1
+            fi
+          done
+          env -i HOME="$HOME" "$APP/Contents/MacOS/DuskStudio" --version
+          set +e
+          helper_output=$(env -i HOME="$HOME" "$HELPER" 2>&1)
+          helper_rc=$?
+          set -e
+          if [[ $helper_rc -ne 64 ]] \
+              || ! grep -qF 'pass --ipc-stub, --ipc-host or --scan' <<<"$helper_output"; then
+            echo "::error::packaged plugin sandbox helper did not execute cleanly" >&2
+            printf '%s\n' "$helper_output" >&2
             exit 1
           fi
-          env -i HOME="$HOME" "$APP/Contents/MacOS/DuskStudio" --version
 
 
       - name: Stage macOS payload
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: release-macos
           path: "*.dmg"
@@ -905,13 +931,13 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout release metadata
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: false
           persist-credentials: false
 
       - name: Download every platform payload
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           pattern: release-*
           path: dist
@@ -971,11 +997,13 @@ jobs:
           if gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null 2>&1; then
             gh release edit "$TAG" --repo "$RELEASES_REPO" \
               --title "Dusk Studio $TAG" \
-              --notes-file packaging/RELEASE-NOTES.md
+              --notes-file packaging/RELEASE-NOTES.md \
+              --draft
           else
             gh release create "$TAG" --repo "$RELEASES_REPO" \
               --title "Dusk Studio $TAG" \
-              --notes-file packaging/RELEASE-NOTES.md
+              --notes-file packaging/RELEASE-NOTES.md \
+              --draft
           fi
 
           gh release upload "$TAG" --repo "$RELEASES_REPO" --clobber dist/*
@@ -1000,3 +1028,4 @@ jobs:
             done
 
           scripts/verify-release-assets.sh "$TAG"
+          gh release edit "$TAG" --repo "$RELEASES_REPO" --draft=false
