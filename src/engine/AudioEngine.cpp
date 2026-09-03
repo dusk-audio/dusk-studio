@@ -16,6 +16,7 @@
 #include "LegacyStateBase64.h"
 #include "../foundation/Base64.h"
 #include "../foundation/MessageThread.h"
+#include "../foundation/Text.h"
 #if DUSKSTUDIO_HAS_NATIVE_AU
  #include "au/AuBundle.h"
 #endif
@@ -256,30 +257,18 @@ static std::filesystem::path lv2StateDirFor (Session& session, const juce::Strin
 
 #if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3 \
     || DUSKSTUDIO_HAS_NATIVE_AU || DUSKSTUDIO_HAS_MULTISAMPLE
-// Session-carried native plugin state blob (base64) -> bytes. Empty on any
-// decode failure - callers treat "no state" and "bad state" the same, so an
-// unreadable blob is otherwise indistinguishable from a plugin that saved
-// nothing. Say so once, or a corrupted session restores defaults with no trace.
-static std::vector<uint8_t> decodeBase64Blob (const juce::String& s, const char* slotKind)
+static DecodedStateBlob decodeBase64Blob (const juce::String& s, const char* slotKind)
 {
-    if (s.isEmpty()) return {};
-
-    auto blob = dusk::base64::decode (s.toRawUTF8(), s.getNumBytesAsUTF8());
-
-    // 0.13.1 migrated Audio Unit and soundfont slots onto their native keys
-    // without transcoding, so a session it converted holds the JUCE form here.
-    if (blob.empty())
-        blob = decodeLegacyStateBase64 (s.toStdString());
-
-    if (blob.empty())
+    auto decoded = decodeStoredStateBase64 (s.toStdString());
+    if (decoded.unreadable)
     {
         std::fprintf (stderr,
                       "[Dusk Studio/session] %s state is unreadable (%d chars); "
-                      "restoring the slot at its defaults\n",
+                      "leaving the slot offline to preserve it\n",
                       slotKind, s.length());
         std::fflush (stderr);
     }
-    return blob;
+    return decoded;
 }
 
 // Snapshot a loaded native slot's state into its session string. A plugin that
@@ -2187,6 +2176,76 @@ void AudioEngine::consumePluginStateAfterLoad()
     };
 #endif
 
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3 \
+    || DUSKSTUDIO_HAS_NATIVE_AU || DUSKSTUDIO_HAS_MULTISAMPLE
+    auto rejectUnreadableTrackState = [&] (
+        const DecodedStateBlob& state, ChannelStrip& strip,
+        auto&& markRestoreFailed, const std::string& location,
+        const auto& name, const char* format)
+    {
+        if (! state.unreadable)
+            return false;
+
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+        strip.getNativeMultisampleSlot().drainPendingLoads();
+#endif
+        const bool prepared = strip.isPrepared();
+        if (prepared) suspendProcessing();
+        const auto reason = hosting::enforceRestorePolicy (
+            true, state.supplied, false, "encoded state is unreadable",
+            state.encodedBytes, [&]
+            {
+                strip.unloadNativeClap();
+                strip.unloadNativeLv2();
+                strip.unloadNativeVst3();
+                strip.unloadNativeAu();
+                strip.unloadNativeMultisample();
+            });
+        if (prepared) resumeProcessing();
+        markRestoreFailed();
+        PluginLoadFailure failure;
+        failure.location = location.c_str();
+        failure.pluginName = name;
+        failure.format = format;
+        failure.reason = reason;
+        lastPluginLoadFailures.push_back (std::move (failure));
+        return true;
+    };
+
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 \
+    || DUSKSTUDIO_HAS_NATIVE_VST3 || DUSKSTUDIO_HAS_NATIVE_AU
+    auto rejectUnreadableAuxState = [&] (
+        const DecodedStateBlob& state, AuxLaneStrip& strip, int slotIndex,
+        auto&& markRestoreFailed, const std::string& location,
+        const auto& name, const char* format)
+    {
+        if (! state.unreadable)
+            return false;
+
+        const bool prepared = strip.isPrepared();
+        if (prepared) suspendProcessing();
+        const auto reason = hosting::enforceRestorePolicy (
+            true, state.supplied, false, "encoded state is unreadable",
+            state.encodedBytes, [&]
+            {
+                strip.unloadNativeClap (slotIndex);
+                strip.unloadNativeLv2 (slotIndex);
+                strip.unloadNativeVst3 (slotIndex);
+                strip.unloadNativeAu (slotIndex);
+            });
+        if (prepared) resumeProcessing();
+        markRestoreFailed();
+        PluginLoadFailure failure;
+        failure.location = location.c_str();
+        failure.pluginName = name;
+        failure.format = format;
+        failure.reason = reason;
+        lastPluginLoadFailures.push_back (std::move (failure));
+        return true;
+    };
+#endif
+#endif
+
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto& track = session.track (t);
@@ -2213,9 +2272,14 @@ void AudioEngine::consumePluginStateAfterLoad()
             slot.unload();
             strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
 
-            auto blob = decodeBase64Blob (track.nativeClapStateBase64, "track CLAP");
-
+            auto decoded = decodeBase64Blob (track.nativeClapStateBase64, "track CLAP");
             const juce::File clapFile (track.nativeClapPath);
+            if (rejectUnreadableTrackState (
+                    decoded, strip, [&] { strip.markNativeClapRestoreFailed(); },
+                    dusk::text::format ("Track %d", t + 1),
+                    clapFile.getFileNameWithoutExtension(), "CLAP"))
+                continue;
+            auto& blob = decoded.bytes;
             if (strip.isPrepared())
             {
                 suspendProcessing();
@@ -2262,9 +2326,14 @@ void AudioEngine::consumePluginStateAfterLoad()
             slot.unload();
             strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
 
-            auto blob = decodeBase64Blob (track.nativeLv2StateBase64, "track LV2");
-
+            auto decoded = decodeBase64Blob (track.nativeLv2StateBase64, "track LV2");
             const juce::File lv2File (track.nativeLv2Path);
+            if (rejectUnreadableTrackState (
+                    decoded, strip, [&] { strip.markNativeLv2RestoreFailed(); },
+                    dusk::text::format ("Track %d", t + 1),
+                    lv2File.getFileNameWithoutExtension(), "LV2"))
+                continue;
+            auto& blob = decoded.bytes;
             if (strip.isPrepared())
             {
                 suspendProcessing();
@@ -2311,9 +2380,14 @@ void AudioEngine::consumePluginStateAfterLoad()
             slot.unload();
             strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
 
-            auto blob = decodeBase64Blob (track.nativeVst3StateBase64, "track VST3");
-
+            auto decoded = decodeBase64Blob (track.nativeVst3StateBase64, "track VST3");
             const juce::File vst3File (track.nativeVst3Path);
+            if (rejectUnreadableTrackState (
+                    decoded, strip, [&] { strip.markNativeVst3RestoreFailed(); },
+                    dusk::text::format ("Track %d", t + 1),
+                    vst3File.getFileNameWithoutExtension(), "VST3"))
+                continue;
+            auto& blob = decoded.bytes;
             if (strip.isPrepared())
             {
                 suspendProcessing();
@@ -2355,7 +2429,13 @@ void AudioEngine::consumePluginStateAfterLoad()
         {
             slot.unload();
             strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
-            auto blob = decodeBase64Blob (track.nativeAuStateBase64, "track Audio Unit");
+            auto decoded = decodeBase64Blob (track.nativeAuStateBase64, "track Audio Unit");
+            if (rejectUnreadableTrackState (
+                    decoded, strip, [&] { strip.markNativeAuRestoreFailed(); },
+                    dusk::text::format ("Track %d", t + 1),
+                    auName (track.nativeAuIdentifier), "AU"))
+                continue;
+            auto& blob = decoded.bytes;
             if (strip.isPrepared())
             {
                 suspendProcessing();
@@ -2398,9 +2478,16 @@ void AudioEngine::consumePluginStateAfterLoad()
             slot.unload();
             strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
 
-            auto blob = decodeBase64Blob (track.nativeMultisampleStateBase64, "track multisample");
-
+            auto decoded = decodeBase64Blob (
+                track.nativeMultisampleStateBase64, "track multisample");
             const juce::File soundfont (track.nativeMultisamplePath);
+            if (rejectUnreadableTrackState (
+                    decoded, strip,
+                    [&] { strip.markNativeMultisampleRestoreFailed(); },
+                    dusk::text::format ("Track %d", t + 1),
+                    soundfont.getFileNameWithoutExtension(), "multisample"))
+                continue;
+            auto& blob = decoded.bytes;
             if (strip.isPrepared())
             {
                 // Two-phase: the soundfont parse + state restore run with the
@@ -2541,9 +2628,16 @@ void AudioEngine::consumePluginStateAfterLoad()
                 slot.unload();   // ensure no JUCE plugin lingers in this slot
                 strip.insertMode[(size_t) s].store (AuxLaneStrip::kInsertPlugin, std::memory_order_release);
 
-                auto blob = decodeBase64Blob (lane.nativeClapStateBase64[(size_t) s], "aux CLAP");
-
+                auto decoded = decodeBase64Blob (
+                    lane.nativeClapStateBase64[(size_t) s], "aux CLAP");
                 const juce::File clapFile (lane.nativeClapPath[(size_t) s]);
+                if (rejectUnreadableAuxState (
+                        decoded, strip, s,
+                        [&] { strip.markNativeClapRestoreFailed (s); },
+                        dusk::text::format ("Aux %d slot %d", a + 1, s + 1),
+                        clapFile.getFileNameWithoutExtension(), "CLAP"))
+                    continue;
+                auto& blob = decoded.bytes;
                 if (strip.isPrepared())
                 {
                     suspendProcessing();   // load is not RT-safe; fence the audio thread
@@ -2588,9 +2682,16 @@ void AudioEngine::consumePluginStateAfterLoad()
                 slot.unload();
                 strip.insertMode[(size_t) s].store (AuxLaneStrip::kInsertPlugin, std::memory_order_release);
 
-                auto blob = decodeBase64Blob (lane.nativeLv2StateBase64[(size_t) s], "aux LV2");
-
+                auto decoded = decodeBase64Blob (
+                    lane.nativeLv2StateBase64[(size_t) s], "aux LV2");
                 const juce::File lv2File (lane.nativeLv2Path[(size_t) s]);
+                if (rejectUnreadableAuxState (
+                        decoded, strip, s,
+                        [&] { strip.markNativeLv2RestoreFailed (s); },
+                        dusk::text::format ("Aux %d slot %d", a + 1, s + 1),
+                        lv2File.getFileNameWithoutExtension(), "LV2"))
+                    continue;
+                auto& blob = decoded.bytes;
                 if (strip.isPrepared())
                 {
                     suspendProcessing();   // load is not RT-safe; fence the audio thread
@@ -2640,9 +2741,16 @@ void AudioEngine::consumePluginStateAfterLoad()
                 slot.unload();
                 strip.insertMode[(size_t) s].store (AuxLaneStrip::kInsertPlugin, std::memory_order_release);
 
-                auto blob = decodeBase64Blob (lane.nativeVst3StateBase64[(size_t) s], "aux VST3");
-
+                auto decoded = decodeBase64Blob (
+                    lane.nativeVst3StateBase64[(size_t) s], "aux VST3");
                 const juce::File vst3File (lane.nativeVst3Path[(size_t) s]);
+                if (rejectUnreadableAuxState (
+                        decoded, strip, s,
+                        [&] { strip.markNativeVst3RestoreFailed (s); },
+                        dusk::text::format ("Aux %d slot %d", a + 1, s + 1),
+                        vst3File.getFileNameWithoutExtension(), "VST3"))
+                    continue;
+                auto& blob = decoded.bytes;
                 if (strip.isPrepared())
                 {
                     suspendProcessing();   // load is not RT-safe; fence the audio thread
@@ -2686,8 +2794,16 @@ void AudioEngine::consumePluginStateAfterLoad()
                 slot.unload();
                 strip.insertMode[(size_t) s].store (
                     AuxLaneStrip::kInsertPlugin, std::memory_order_release);
-                auto blob = decodeBase64Blob (lane.nativeAuStateBase64[(size_t) s], "aux Audio Unit");
+                auto decoded = decodeBase64Blob (
+                    lane.nativeAuStateBase64[(size_t) s], "aux Audio Unit");
                 const auto identifier = lane.nativeAuIdentifier[(size_t) s];
+                if (rejectUnreadableAuxState (
+                        decoded, strip, s,
+                        [&] { strip.markNativeAuRestoreFailed (s); },
+                        dusk::text::format ("Aux %d slot %d", a + 1, s + 1),
+                        auName (identifier), "AU"))
+                    continue;
+                auto& blob = decoded.bytes;
                 if (strip.isPrepared())
                 {
                     suspendProcessing();
