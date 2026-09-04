@@ -417,6 +417,34 @@ endif()
 # Native VST3 host — SDK hosting subset (see the dusk-vst3-hosting target in the
 # top-level CMakeLists), ON when the external/vst3sdk submodule is initialized.
 if(DUSKSTUDIO_NATIVE_VST3)
+    set(DUSKSTUDIO_VST3SDK_DIR "${CMAKE_SOURCE_DIR}/external/vst3sdk")
+    set(public_sdk_SOURCE_DIR "${DUSKSTUDIO_VST3SDK_DIR}/public.sdk")
+    list(APPEND CMAKE_MODULE_PATH "${DUSKSTUDIO_VST3SDK_DIR}/cmake/modules")
+    set(SMTG_CREATE_PLUGIN_LINK OFF CACHE BOOL "" FORCE)
+    set(SMTG_CREATE_MODULE_INFO OFF CACHE BOOL "" FORCE)
+    set(SMTG_RUN_VST_VALIDATOR OFF CACHE BOOL "" FORCE)
+    include(SMTG_DetectPlatform)
+    smtg_detect_platform()
+    include(SMTG_AddVST3Library)
+
+    set_target_properties(dusk-vst3-hosting PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    smtg_add_vst3plugin(dusk-studio-runtime-relayout-vst3-fixture
+        fixtures/runtime_relayout_vst3.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/common/pluginview.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/main/moduleinit.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/main/pluginfactory.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstbus.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstcomponentbase.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vsteditcontroller.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstparameters.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstsinglecomponenteffect.cpp)
+    target_link_libraries(dusk-studio-runtime-relayout-vst3-fixture
+        PRIVATE dusk-vst3-hosting)
+    target_compile_definitions(dusk-studio-runtime-relayout-vst3-fixture
+        PRIVATE PROJECT_INCLUDES_VSTEDITCONTROLLER=1)
+    get_target_property(DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_BUNDLE
+        dusk-studio-runtime-relayout-vst3-fixture SMTG_PLUGIN_PACKAGE_PATH)
+
     target_sources(dusk-studio-tests PRIVATE
         vst3_bundle_load.cpp
         vst3_hostcontext_lifetime.cpp
@@ -428,7 +456,10 @@ if(DUSKSTUDIO_NATIVE_VST3)
         ${CMAKE_SOURCE_DIR}/src/engine/vst3/Vst3Instance.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/vst3/Vst3Scanner.cpp)
     target_link_libraries(dusk-studio-tests PRIVATE dusk-vst3-hosting)
-    target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_VST3=1)
+    target_compile_definitions(dusk-studio-tests PRIVATE
+        DUSKSTUDIO_HAS_NATIVE_VST3=1
+        DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_FIXTURE_PATH="${DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_BUNDLE}")
+    add_dependencies(dusk-studio-tests dusk-studio-runtime-relayout-vst3-fixture)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_sources(dusk-studio-tests PRIVATE vst3_hostcontext_runloop.cpp)
     endif()

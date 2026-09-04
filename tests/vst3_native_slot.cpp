@@ -156,3 +156,53 @@ TEST_CASE ("NativeVst3Slot loads, processes, and unloads cleanly", "[vst3][slot]
         REQUIRE_THAT (v, WithinAbs (0.75, 1.0e-6));
     }
 }
+
+TEST_CASE ("NativeVst3Slot rebuilds a runtime output-bus layout",
+           "[vst3][slot][regression][issue-455]")
+{
+    using Catch::Matchers::WithinAbs;
+    duskstudio::vst3::NativeVst3Slot slot;
+    std::string err;
+    constexpr int kBlock = 64;
+
+    const bool loaded = slot.load (
+        std::filesystem::u8path (DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_FIXTURE_PATH),
+        48000.0, kBlock, err);
+    INFO ("fixture load error: " << err);
+    REQUIRE (loaded);
+    auto* instance = slot.getInstance();
+    REQUIRE (instance != nullptr);
+    REQUIRE (instance->portLayout().outputs.size() == 2);
+    REQUIRE (instance->portLayout().outputs[1].active);
+
+    std::vector<float> L ((size_t) kBlock, 0.25f);
+    std::vector<float> R ((size_t) kBlock, -0.25f);
+    slot.processStereo (L.data(), R.data(), L.data(), R.data(), kBlock);
+    REQUIRE_THAT (L.front(), WithinAbs (0.25, 1.0e-9));
+    REQUIRE_THAT (R.front(), WithinAbs (-0.25, 1.0e-9));
+
+    REQUIRE (slot.paramCount() == 1);
+    const auto* expand = slot.paramInfo (0);
+    REQUIRE (expand != nullptr);
+    REQUIRE (expand->name == "Expand Outputs");
+    slot.setParamValue (expand->id, 1.0);
+    REQUIRE (instance->ioChangePending());
+
+    std::fill (L.begin(), L.end(), 0.5f);
+    std::fill (R.begin(), R.end(), -0.5f);
+    slot.processStereo (L.data(), R.data(), L.data(), R.data(), kBlock);
+    REQUIRE_THAT (L.front(), WithinAbs (0.0, 1.0e-9));
+    REQUIRE_THAT (R.front(), WithinAbs (0.0, 1.0e-9));
+
+    REQUIRE (instance->consumeIoChanged());
+    REQUIRE (slot.reactivate (48000.0, kBlock, err));
+    REQUIRE (instance->portLayout().outputs.size() == 3);
+    REQUIRE (instance->portLayout().outputs[1].active);
+    REQUIRE (instance->portLayout().outputs[2].active);
+
+    std::fill (L.begin(), L.end(), 0.75f);
+    std::fill (R.begin(), R.end(), -0.75f);
+    slot.processStereo (L.data(), R.data(), L.data(), R.data(), kBlock);
+    REQUIRE_THAT (L.front(), WithinAbs (0.75, 1.0e-9));
+    REQUIRE_THAT (R.front(), WithinAbs (-0.75, 1.0e-9));
+}
