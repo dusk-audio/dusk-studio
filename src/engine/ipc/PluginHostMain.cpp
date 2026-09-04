@@ -327,7 +327,7 @@ int runIpcPosixLaunchProbeStub (int argc, const char* const* argv) noexcept
     const std::uint8_t state[4] {
         (std::uint8_t) (::fcntl (siblingChannelFd, F_GETFD) >= 0),
         (std::uint8_t) (::fcntl (siblingShmFd, F_GETFD) >= 0),
-        (std::uint8_t) (::sigismember (&mask, SIGTERM) == 1),
+        (std::uint8_t) (sigismember (&mask, SIGTERM) == 1),
         (std::uint8_t) (userSignalAction.sa_handler == SIG_DFL)
     };
     return ipcp::writeExact (channel, state, sizeof (state)) ? 0 : 1;

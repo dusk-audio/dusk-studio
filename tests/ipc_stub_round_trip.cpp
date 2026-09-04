@@ -134,14 +134,14 @@ public:
 
         struct sigaction ignoredAction {};
         ignoredAction.sa_handler = SIG_IGN;
-        ::sigemptyset (&ignoredAction.sa_mask);
+        sigemptyset (&ignoredAction.sa_mask);
         if (::sigaction (SIGUSR1, &ignoredAction, nullptr) != 0)
             return false;
         userSignalChanged = true;
 
         sigset_t blockedSignal;
-        ::sigemptyset (&blockedSignal);
-        ::sigaddset (&blockedSignal, SIGTERM);
+        sigemptyset (&blockedSignal);
+        sigaddset (&blockedSignal, SIGTERM);
         if (::pthread_sigmask (SIG_BLOCK, &blockedSignal, &previousMask) != 0)
             return false;
         maskChanged = true;

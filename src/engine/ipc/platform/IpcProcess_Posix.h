@@ -62,10 +62,10 @@ inline bool posixSpawn (const std::string& executablePath,
 
     sigset_t emptyMask;
     sigset_t defaultSignals;
-    (void) ::sigemptyset (&emptyMask);
-    (void) ::sigfillset (&defaultSignals);
-    (void) ::sigdelset (&defaultSignals, SIGKILL);
-    (void) ::sigdelset (&defaultSignals, SIGSTOP);
+    (void) sigemptyset (&emptyMask);
+    (void) sigfillset (&defaultSignals);
+    (void) sigdelset (&defaultSignals, SIGKILL);
+    (void) sigdelset (&defaultSignals, SIGSTOP);
 
     result = ::posix_spawnattr_setsigmask (&attributes, &emptyMask);
     if (result == 0)
