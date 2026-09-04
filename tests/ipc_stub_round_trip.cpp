@@ -16,6 +16,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "engine/ipc/RemotePluginConnection.h"
 #include "engine/ipc/platform/IpcProcess.h"
+#include "engine/ipc/platform/IpcShm.h"
 #include "TestTempDirectory.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -40,6 +41,7 @@
  #endif
  #include <windows.h>
 #else
+#include <fcntl.h>
  #include <pthread.h>
 #endif
 
@@ -300,7 +302,7 @@ TEST_CASE ("Windows IPC launcher preserves Unicode paths and arguments",
 #endif
 
 TEST_CASE ("Plugin-host handshake read timeout bounds a silent live child",
-           "[ipc][issue-364][issue-366]")
+           "[ipc][issue-364][issue-366][issue-468]")
 {
     namespace ipcp = duskstudio::ipc::platform;
     using namespace std::chrono_literals;
@@ -311,6 +313,21 @@ TEST_CASE ("Plugin-host handshake read timeout bounds a silent live child",
     ScopedChannelPair channels;
     std::string error;
     REQUIRE (ipcp::createChannelPair (channels.value, error));
+
+#if ! defined (_WIN32)
+    ipcp::SharedMemory sharedMemory;
+    REQUIRE (sharedMemory.createAnonymous ("cloexec-test", 4096, error));
+
+    const int parentFlags = ::fcntl (channels.value.parentEnd.fd, F_GETFD);
+    const int childFlags = ::fcntl (channels.value.childEnd.fd, F_GETFD);
+    const int sharedMemoryFlags = ::fcntl (sharedMemory.handle().fd, F_GETFD);
+    REQUIRE (parentFlags >= 0);
+    REQUIRE (childFlags >= 0);
+    REQUIRE (sharedMemoryFlags >= 0);
+    REQUIRE ((parentFlags & FD_CLOEXEC) != 0);
+    REQUIRE ((childFlags & FD_CLOEXEC) != 0);
+    REQUIRE ((sharedMemoryFlags & FD_CLOEXEC) != 0);
+#endif
 
     ipcp::ChildProcess child;
     REQUIRE (child.spawn (DUSKSTUDIO_PLUGIN_HOST_PATH,

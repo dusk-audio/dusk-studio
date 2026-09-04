@@ -2,6 +2,7 @@
 
 #include <cerrno>
 #include <cstring>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -31,6 +32,20 @@ bool createChannelPair (ChannelPair& out, std::string& errorOut) noexcept
         errorOut = std::string ("socketpair failed: ") + std::strerror (errno);
         return false;
     }
+
+    for (const int fd : sv)
+    {
+        const int flags = ::fcntl (fd, F_GETFD);
+        if (flags >= 0 && ::fcntl (fd, F_SETFD, flags | FD_CLOEXEC) >= 0)
+            continue;
+
+        errorOut = std::string ("fcntl(FD_CLOEXEC) failed: ")
+            + std::strerror (errno);
+        ::close (sv[0]);
+        ::close (sv[1]);
+        return false;
+    }
+
     out.parentEnd.fd = sv[0];
     out.childEnd.fd  = sv[1];
     return true;
