@@ -192,10 +192,11 @@ TEST_CASE ("NativeVst3Slot rebuilds a runtime output-bus layout",
     REQUIRE_THAT (L.front(), WithinAbs (0.25, 1.0e-9));
     REQUIRE_THAT (R.front(), WithinAbs (-0.25, 1.0e-9));
 
-    REQUIRE (slot.paramCount() == 1);
-    const auto* expand = slot.paramInfo (0);
+    const duskstudio::vst3::Vst3Instance::ParamInfo* expand = nullptr;
+    for (int i = 0; i < slot.paramCount(); ++i)
+        if (slot.paramInfo (i)->name == "Expand Outputs")
+            expand = slot.paramInfo (i);
     REQUIRE (expand != nullptr);
-    REQUIRE (expand->name == "Expand Outputs");
     slot.setParamValue (expand->id, 1.0);
     REQUIRE (instance->ioChangePending());
 
@@ -216,6 +217,40 @@ TEST_CASE ("NativeVst3Slot rebuilds a runtime output-bus layout",
     slot.processStereo (L.data(), R.data(), L.data(), R.data(), kBlock);
     REQUIRE_THAT (L.front(), WithinAbs (0.75, 1.0e-9));
     REQUIRE_THAT (R.front(), WithinAbs (-0.75, 1.0e-9));
+}
+
+TEST_CASE ("NativeVst3Slot refreshes latency after restoring state",
+           "[vst3][slot][regression][issue-456]")
+{
+    duskstudio::vst3::NativeVst3Slot slot;
+    std::string err;
+    constexpr int kBlock = 64;
+
+    const bool loaded = slot.load (
+        std::filesystem::u8path (DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_FIXTURE_PATH),
+        48000.0, kBlock, err);
+    INFO ("fixture load error: " << err);
+    REQUIRE (loaded);
+    REQUIRE (slot.getLatencySamples() == 0);
+
+    const duskstudio::vst3::Vst3Instance::ParamInfo* latencyMode = nullptr;
+    for (int i = 0; i < slot.paramCount(); ++i)
+        if (slot.paramInfo (i)->name == "Latency Mode")
+            latencyMode = slot.paramInfo (i);
+    REQUIRE (latencyMode != nullptr);
+
+    slot.setParamValue (latencyMode->id, 1.0);
+    std::vector<uint8_t> highLatencyState;
+    REQUIRE (slot.saveState (highLatencyState));
+    REQUIRE_FALSE (highLatencyState.empty());
+
+    slot.setParamValue (latencyMode->id, 0.0);
+    REQUIRE_FALSE (slot.consumeLatencyChanged());
+    REQUIRE (slot.loadState (highLatencyState));
+    REQUIRE (slot.consumeLatencyChanged());
+
+    REQUIRE (slot.reactivate (48000.0, kBlock, err));
+    REQUIRE (slot.getLatencySamples() == 64);
 }
 
 TEST_CASE ("Vst3Instance detaches host interfaces before plugin termination",

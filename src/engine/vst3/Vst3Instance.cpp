@@ -549,8 +549,11 @@ bool Vst3Instance::activate (double sampleRate, int maxBlockFrames, std::string&
     impl->processData.inputParameterChanges  = &impl->inParams;
     impl->processData.outputParameterChanges = &impl->outParams;
     // Pre-warm the queue pool; per-queue point storage keeps its capacity across
-    // clearQueue, so the drain below is allocation-free at steady state.
-    impl->inParams.setMaxParameters ((int32) impl->params.size());
+    // clearQueue. Keep one queue for controller-less plugins that still emit a
+    // parameter change from process().
+    const auto parameterQueueCount = std::max<int32> (1, (int32) impl->params.size());
+    impl->inParams.setMaxParameters (parameterQueueCount);
+    impl->outParams.setMaxParameters (parameterQueueCount);
     impl->processData.inputEvents  = &impl->inEvents;
     impl->processData.outputEvents = &impl->outEvents;
     impl->processData.processContext = &impl->processContext;
@@ -866,6 +869,8 @@ bool Vst3Instance::loadState (const std::vector<uint8_t>& in)
             impl->controller->setState (&ctrlStream);
         }
     }
+    if (componentOk)
+        impl->latencyChanged.store (true, std::memory_order_relaxed);
     return componentOk;
 }
 } // namespace duskstudio::vst3

@@ -1,6 +1,7 @@
 #include "public.sdk/source/main/pluginfactory.h"
 #include "public.sdk/source/common/pluginview.h"
 #include "public.sdk/source/vst/vstsinglecomponenteffect.h"
+#include "pluginterfaces/base/ibstream.h"
 
 #include <algorithm>
 
@@ -9,6 +10,7 @@ namespace Steinberg::Vst
 namespace
 {
 constexpr ParamID kExpandOutputs = 100;
+constexpr ParamID kLatencyMode = 101;
 bool handlerDetachedBeforeTerminate = false;
 
 class LifecycleProbeView final : public CPluginView
@@ -50,6 +52,8 @@ public:
 
         parameters.addParameter (STR16 ("Expand Outputs"), nullptr, 1, 0.0,
                                  ParameterInfo::kCanAutomate, kExpandOutputs);
+        parameters.addParameter (STR16 ("Latency Mode"), nullptr, 1, 0.0,
+                                 ParameterInfo::kCanAutomate, kLatencyMode);
         handlerDetachedBeforeTerminate = false;
         rebuildBusses();
         return kResultOk;
@@ -69,7 +73,15 @@ public:
     tresult PLUGIN_API setParamNormalized (ParamID id, ParamValue value) override
     {
         const auto result = SingleComponentEffect::setParamNormalized (id, value);
-        if (result != kResultOk || id != kExpandOutputs)
+        if (result != kResultOk)
+            return result;
+
+        if (id == kLatencyMode)
+        {
+            highLatency = value >= 0.5;
+            return result;
+        }
+        if (id != kExpandOutputs)
             return result;
 
         const bool shouldExpand = value >= 0.5;
@@ -81,6 +93,40 @@ public:
                 componentHandler->restartComponent (RestartFlags::kIoChanged);
         }
         return result;
+    }
+
+    tresult PLUGIN_API setState (IBStream* state) override
+    {
+        if (state == nullptr)
+            return kInvalidArgument;
+
+        uint8 latencyMode = 0;
+        int32 bytesRead = 0;
+        if (state->read (&latencyMode, sizeof (latencyMode), &bytesRead) != kResultOk
+            || bytesRead != sizeof (latencyMode))
+            return kResultFalse;
+
+        highLatency = latencyMode != 0;
+        SingleComponentEffect::setParamNormalized (kLatencyMode, highLatency ? 1.0 : 0.0);
+        return kResultOk;
+    }
+
+    tresult PLUGIN_API getState (IBStream* state) override
+    {
+        if (state == nullptr)
+            return kInvalidArgument;
+
+        uint8 latencyMode = highLatency ? 1 : 0;
+        int32 bytesWritten = 0;
+        if (state->write (&latencyMode, sizeof (latencyMode), &bytesWritten) != kResultOk
+            || bytesWritten != sizeof (latencyMode))
+            return kResultFalse;
+        return kResultOk;
+    }
+
+    uint32 PLUGIN_API getLatencySamples() override
+    {
+        return highLatency ? 64u : 0u;
     }
 
     tresult PLUGIN_API activateBus (MediaType type, BusDirection direction,
@@ -139,6 +185,7 @@ private:
     }
 
     bool expanded = false;
+    bool highLatency = false;
 };
 } // namespace
 } // namespace Steinberg::Vst
