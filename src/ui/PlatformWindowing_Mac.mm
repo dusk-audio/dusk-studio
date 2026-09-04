@@ -5,8 +5,7 @@
 // Native counterparts to the Linux windowing operations. A peer's native
 // handle is its NSView; the containing NSWindow owns activation and ordering.
 // The remaining operations are intentionally small platform hooks:
-//   flushWindowOperations  -> drain a single NSRunLoop iteration with
-//                              dateLimit = +1 ms.
+//   flushWindowOperations  -> bounded drain of queued NSRunLoop work.
 //   prepareNativePeer...   -> no-op (NSView reparenting is
 //                              synchronous, no race window).
 
@@ -126,9 +125,11 @@ void bringWindowToFront (juce::ComponentPeer& peer)
 }
 void flushWindowOperations()
 {
-    [[NSRunLoop currentRunLoop]
-        runMode:NSDefaultRunLoopMode
-        beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.001]];
+    auto* const runLoop = [NSRunLoop currentRunLoop];
+    constexpr int kMaxDrainIterations = 256;
+    for (int i = 0; i < kMaxDrainIterations; ++i)
+        if (! [runLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate date]])
+            break;
 }
 void prepareNativePeerForChildAttach (juce::ComponentPeer&) {}
 

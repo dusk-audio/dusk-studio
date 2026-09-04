@@ -118,6 +118,8 @@ TEST_CASE ("native window operations preserve activation and embedded editor geo
     REQUIRE (macFlush.find ("NSRunLoop") != std::string::npos);
     REQUIRE (macFlush.find ("runMode") != std::string::npos);
     REQUIRE (macFlush.find ("beforeDate") != std::string::npos);
+    REQUIRE (macFlush.find ("kMaxDrainIterations") != std::string::npos);
+    REQUIRE (macFlush.find ("for (") != std::string::npos);
 
     const auto singleInstance = readSource ("src/util/SingleInstance.cpp");
     const auto windowsBranch = singleInstance.rfind ("#elif defined (_WIN32)");

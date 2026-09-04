@@ -94,7 +94,7 @@ void setNativeCursorVisibleOnPeer (juce::ComponentPeer& peer, bool visible);
 // taken the GNOME session with it.
 //
 // Linux: XSync on JUCE's display.
-// macOS: drain a single NSRunLoop iteration.
+// macOS: bounded drain of queued NSRunLoop work.
 // Win:   PeekMessage pump.
 //
 // Returns when the operation completes; deterministic, not time-based.

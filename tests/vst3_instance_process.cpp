@@ -29,8 +29,10 @@ TEST_CASE ("VST3 panic releases every sounding note when its CC is unmapped",
     duskstudio::vst3::detail::MidiNoteTracker tracker;
     tracker.noteOn (2, 48);
     tracker.noteOn (2, 72);
+    tracker.noteOn (2, 72);
     tracker.noteOn (3, 60);
     tracker.noteOff (2, 48);
+    tracker.noteOff (2, 72);
 
     std::vector<int> released;
     tracker.releaseChannel (2, [&] (int key)
