@@ -78,8 +78,18 @@ public:
         ::SetWindowLongPtr (child, GWL_STYLE, style);
         if (! setWindowParent (child, nextParent))
         {
+            // The host shows its editor window before handing over the handle,
+            // so declining to host it has to put it away too. Otherwise the
+            // reparent failure leaves a titlebarred plugin window loose on the
+            // desktop that nothing positions and the user can still drive.
             if (::IsWindow (child))
+            {
                 ::SetWindowLongPtr (child, GWL_STYLE, originalStyle);
+                ::SetWindowPos (child, nullptr, 0, 0, 0, 0,
+                                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER
+                                    | SWP_NOACTIVATE | SWP_FRAMECHANGED
+                                    | SWP_HIDEWINDOW);
+            }
             return;
         }
         attachedParent = nextParent;

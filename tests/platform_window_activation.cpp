@@ -153,6 +153,15 @@ TEST_CASE ("native window operations preserve activation and embedded editor geo
     REQUIRE (parentChanged.find ("setWindowParent") != std::string::npos);
     REQUIRE (parentChanged.find ("WS_VISIBLE") == std::string::npos);
 
+    // The host shows its editor window before handing the handle over, so a
+    // reparent that fails has to restore the original style AND hide the
+    // window; leaving it mapped strands a titlebarred plugin window on the
+    // desktop. The hide belongs to the failure branch, ahead of the success
+    // path's attachedParent publish.
+    requireInOrder (parentChanged, "! setWindowParent", "originalStyle");
+    requireInOrder (parentChanged, "originalStyle", "SWP_HIDEWINDOW");
+    requireInOrder (parentChanged, "SWP_HIDEWINDOW", "attachedParent = nextParent");
+
     const auto detachChild = definitionBody (windowsSource, "detachChild");
     REQUIRE (detachChild.find ("IsWindow") != std::string::npos);
     REQUIRE (detachChild.find ("setWindowParent") != std::string::npos);
@@ -164,6 +173,10 @@ TEST_CASE ("native window operations preserve activation and embedded editor geo
     REQUIRE (visibility.find ("ShowWindow") != std::string::npos);
     REQUIRE (visibility.find ("SW_HIDE") != std::string::npos);
     REQUIRE (visibility.find ("SW_SHOWNA") != std::string::npos);
+    // Visibility only follows a child this component actually holds: an
+    // unattached window is top-level and owned by the plugin host, and showing
+    // it from here floats it loose over the desktop.
+    requireInOrder (visibility, "attachedParent", "ShowWindow");
 
     const auto moved = definitionBody (windowsSource, "moved");
     REQUIRE (moved.find ("layoutChild") != std::string::npos);
