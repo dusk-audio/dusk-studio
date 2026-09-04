@@ -64,6 +64,12 @@ closes release-metadata gaps found during the pre-tag audit.
 - **Sandboxed plugin windows stay responsive on Windows and macOS.** Window
   creation, visibility changes, resizing, and teardown now run on the child
   process's pumping message thread instead of its blocking control thread.
+- **A sandboxed plugin whose process is killed drops out for a few buffers, not
+  a tenth of a second.** No operating system wait the audio thread uses carries
+  news of the child's death, so a killed plugin host used to hold the audio
+  thread for the whole hundred-millisecond block timeout before the strip was
+  bypassed. The wait is now split into short slices that re-check whether the
+  child's connection has closed.
 - **Switching sandboxed plugins in quick succession no longer risks a dropout
   or a crash.** Retiring an out-of-process connection now waits for the audio
   thread to leave the plugin's processing call before the connection's shared

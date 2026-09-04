@@ -609,6 +609,28 @@ TEST_CASE ("ipc-stub: timeout is bounded and marks the connection crashed", "[ip
     conn.disconnect();
 }
 
+TEST_CASE ("ipc-stub: a child that dies mid-block is detected in a few buffers", "[ipc]")
+{
+    duskstudio::ipc::RemotePluginConnection conn;
+
+    std::string err;
+    REQUIRE (conn.connect (DUSKSTUDIO_PLUGIN_HOST_PATH, "--ipc-stub-sudden-death", err));
+
+    std::vector<float> input ((std::size_t) kBlockSize, 0.25f);
+    const float* in[1] { input.data() };
+    dusk::MidiBuffer midi;
+
+    // The child exits without publishing kStateCrashed, and no platform wait
+    // carries peer death, so the block call has to notice through the closed
+    // control channel rather than sitting out the whole deadline.
+    const auto started = std::chrono::steady_clock::now();
+    REQUIRE_FALSE (conn.processBlockSync (in, 1, 1, kBlockSize, midi, 100'000'000LL));
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+
+    REQUIRE (conn.isCrashed());
+    REQUIRE (elapsed < std::chrono::milliseconds (50));
+}
+
 TEST_CASE ("ipc-stub: repeated connect, block, and teardown", "[ipc]")
 {
     for (int run = 0; run < 4; ++run)

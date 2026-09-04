@@ -2,6 +2,8 @@
 // (or LV2) instance on behalf of Dusk Studio's main process. Supported modes
 // include:
 //
+//   --ipc-stub-sudden-death: echo stub that exits without publishing a crash
+//                 state on the first block command, modelling a SIGKILLed child.
 //   --ipc-stub  : echo input -> output, no JUCE plugin. Exists so the
 //                 IPC self-test can validate shm + sync + spawn plumbing
 //                 without a plugin in the loop.
@@ -336,7 +338,12 @@ int runIpcPosixLaunchProbeStub (int argc, const char* const* argv) noexcept
 #endif
 
 // --- Phase 1 echo mode (kept for the IPC self-test) ----------------------
-int runIpcStub (int argc, const char* const* argv, bool suppressReplies) noexcept
+// How the echo stub answers a block command. SuddenDeath models a SIGKILLed
+// child: the process disappears without publishing kStateCrashed, so the
+// parent has only its closed control channel to notice by.
+enum class StubReplyMode { Normal, Suppress, SuddenDeath };
+
+int runIpcStub (int argc, const char* const* argv, StubReplyMode replyMode) noexcept
 {
     ipcp::NativeHandle channel = ipcp::locateInheritedChannel (argc, argv);
     if (! ipcp::isValid (channel))
@@ -417,7 +424,9 @@ int runIpcStub (int argc, const char* const* argv, bool suppressReplies) noexcep
             std::memcpy (midiOut (shm.data()), midiIn (shm.data()), midiInBytes);
 
         lastSeq = cmd;
-        if (suppressReplies)
+        if (replyMode == StubReplyMode::SuddenDeath)
+            std::_Exit (EXIT_FAILURE);
+        if (replyMode == StubReplyMode::Suppress)
             continue;
         hdr->replySeq.store (cmd, std::memory_order_release);
         replySignal.wake (&hdr->replySeq);
@@ -1551,6 +1560,7 @@ int main (int argc, char** argv)
 
     bool ipcStub = false;
     bool ipcStubTimeout = false;
+    bool ipcStubSuddenDeath = false;
     bool ipcArgvStub = false;
     bool ipcSilentHandshakeStub = false;
    #if defined (_WIN32)
@@ -1566,6 +1576,8 @@ int main (int argc, char** argv)
     {
         if (std::strcmp (args[i], "--ipc-stub") == 0) ipcStub = true;
         if (std::strcmp (args[i], "--ipc-stub-timeout") == 0) ipcStubTimeout = true;
+        if (std::strcmp (args[i], "--ipc-stub-sudden-death") == 0)
+            ipcStubSuddenDeath = true;
         if (std::strcmp (args[i], "--ipc-argv-stub") == 0) ipcArgvStub = true;
         if (std::strcmp (args[i], "--ipc-silent-handshake-stub") == 0)
             ipcSilentHandshakeStub = true;
@@ -1593,7 +1605,11 @@ int main (int argc, char** argv)
    #else
     if (ipcPosixLaunchProbeStub) return runIpcPosixLaunchProbeStub (argc, args);
    #endif
-    if (ipcStub || ipcStubTimeout) return runIpcStub (argc, args, ipcStubTimeout);
+    if (ipcStub || ipcStubTimeout || ipcStubSuddenDeath)
+        return runIpcStub (argc, args,
+                           ipcStubSuddenDeath ? StubReplyMode::SuddenDeath
+                           : ipcStubTimeout   ? StubReplyMode::Suppress
+                                              : StubReplyMode::Normal);
     if (ipcControlReplyStub) return runIpcControlReplyStub (argc, args);
     if (ipcParkTimeoutStub) return runIpcParkTimeoutStub (argc, args);
     if (ipcHost) return runIpcHost (argc, args);
