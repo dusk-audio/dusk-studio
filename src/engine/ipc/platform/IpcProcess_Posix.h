@@ -3,6 +3,7 @@
 #include "IpcChannel.h"
 
 #include <cstring>
+#include <signal.h>
 #include <spawn.h>
 #include <string>
 #include <vector>
@@ -49,6 +50,41 @@ inline bool posixSpawn (const std::string& executablePath,
         return false;
     }
 
+    posix_spawnattr_t attributes;
+    result = ::posix_spawnattr_init (&attributes);
+    if (result != 0)
+    {
+        ::posix_spawn_file_actions_destroy (&actions);
+        errorOut = std::string ("posix_spawn attributes init failed: ")
+            + std::strerror (result);
+        return false;
+    }
+
+    sigset_t emptyMask;
+    sigset_t defaultSignals;
+    (void) ::sigemptyset (&emptyMask);
+    (void) ::sigfillset (&defaultSignals);
+    (void) ::sigdelset (&defaultSignals, SIGKILL);
+    (void) ::sigdelset (&defaultSignals, SIGSTOP);
+
+    result = ::posix_spawnattr_setsigmask (&attributes, &emptyMask);
+    if (result == 0)
+        result = ::posix_spawnattr_setsigdefault (&attributes, &defaultSignals);
+    if (result == 0)
+    {
+        constexpr short flags = POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF;
+        result = ::posix_spawnattr_setflags (&attributes, flags);
+    }
+
+    if (result != 0)
+    {
+        ::posix_spawnattr_destroy (&attributes);
+        ::posix_spawn_file_actions_destroy (&actions);
+        errorOut = std::string ("posix_spawn attribute setup failed: ")
+            + std::strerror (result);
+        return false;
+    }
+
     std::vector<char*> argv;
     argv.reserve (args.size() + 2);
     argv.push_back (const_cast<char*> (executablePath.c_str()));
@@ -57,7 +93,8 @@ inline bool posixSpawn (const std::string& executablePath,
     argv.push_back (nullptr);
 
     result = ::posix_spawn (&childPidOut, executablePath.c_str(), &actions,
-                            nullptr, argv.data(), environ);
+                            &attributes, argv.data(), environ);
+    ::posix_spawnattr_destroy (&attributes);
     ::posix_spawn_file_actions_destroy (&actions);
     if (result != 0)
     {

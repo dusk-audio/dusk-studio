@@ -11,6 +11,8 @@
 //                 acknowledging readiness, for the bounded-read regression.
 //   --ipc-handle-probe-stub: report which Windows mapping handles reached the
 //                 child, for the explicit inheritance-allowlist regression.
+//   --ipc-posix-launch-probe-stub: report descriptor and signal inheritance
+//                 state, for the POSIX child-isolation regression.
 //   --ipc-control-reply-stub: deterministic request-correlation and reply-
 //                 validation regression child.
 //   --ipc-host  : full Phase-2 host. Loads a juce::AudioPluginInstance
@@ -83,6 +85,10 @@
 #if defined (__linux__)
  #include <sys/prctl.h>
  #include <unistd.h>
+#endif
+
+#if ! defined (_WIN32)
+ #include <fcntl.h>
 #endif
 
 #if defined (DUSKSTUDIO_USE_WINDOWS_SOFTWARE_OPENGL)
@@ -275,6 +281,56 @@ int runIpcHandleProbeStub (int argc, const char* const* argv) noexcept
     char ignored = 0;
     (void) ipcp::readExact (channel, &ignored, sizeof (ignored));
     return 0;
+}
+#endif
+
+#if ! defined (_WIN32)
+bool findFdArgument (int argc, const char* const* argv,
+                     const char* prefix, int& fdOut) noexcept
+{
+    const auto prefixLength = std::strlen (prefix);
+    for (int i = 1; i < argc; ++i)
+    {
+        if (argv[i] == nullptr || std::strncmp (argv[i], prefix, prefixLength) != 0)
+            continue;
+
+        const char* const valueText = argv[i] + prefixLength;
+        char* end = nullptr;
+        errno = 0;
+        const long value = std::strtol (valueText, &end, 10);
+        if (errno != 0 || end == valueText || *end != '\0'
+            || value < 0 || value > std::numeric_limits<int>::max())
+            return false;
+        fdOut = (int) value;
+        return true;
+    }
+    return false;
+}
+
+int runIpcPosixLaunchProbeStub (int argc, const char* const* argv) noexcept
+{
+    ipcp::NativeHandle channel = ipcp::locateInheritedChannel (argc, argv);
+    if (! ipcp::isValid (channel)) return 1;
+
+    int siblingChannelFd = -1;
+    int siblingShmFd = -1;
+    if (! findFdArgument (argc, argv, "--ipc-probe-channel-fd=", siblingChannelFd)
+        || ! findFdArgument (argc, argv, "--ipc-probe-shm-fd=", siblingShmFd))
+        return 1;
+
+    sigset_t mask;
+    struct sigaction userSignalAction {};
+    if (::sigprocmask (SIG_SETMASK, nullptr, &mask) != 0
+        || ::sigaction (SIGUSR1, nullptr, &userSignalAction) != 0)
+        return 1;
+
+    const std::uint8_t state[4] {
+        (std::uint8_t) (::fcntl (siblingChannelFd, F_GETFD) >= 0),
+        (std::uint8_t) (::fcntl (siblingShmFd, F_GETFD) >= 0),
+        (std::uint8_t) (::sigismember (&mask, SIGTERM) == 1),
+        (std::uint8_t) (userSignalAction.sa_handler == SIG_DFL)
+    };
+    return ipcp::writeExact (channel, state, sizeof (state)) ? 0 : 1;
 }
 #endif
 
@@ -1430,6 +1486,8 @@ int main (int argc, char** argv)
     bool ipcSilentHandshakeStub = false;
    #if defined (_WIN32)
     bool ipcHandleProbeStub = false;
+   #else
+    bool ipcPosixLaunchProbeStub = false;
    #endif
     bool ipcControlReplyStub = false;
     bool ipcParkTimeoutStub = false;
@@ -1445,6 +1503,9 @@ int main (int argc, char** argv)
        #if defined (_WIN32)
         if (std::strcmp (args[i], "--ipc-handle-probe-stub") == 0)
             ipcHandleProbeStub = true;
+       #else
+        if (std::strcmp (args[i], "--ipc-posix-launch-probe-stub") == 0)
+            ipcPosixLaunchProbeStub = true;
        #endif
         if (std::strcmp (args[i], "--ipc-control-reply-stub") == 0) ipcControlReplyStub = true;
         if (std::strcmp (args[i], "--ipc-park-timeout-stub") == 0) ipcParkTimeoutStub = true;
@@ -1460,6 +1521,8 @@ int main (int argc, char** argv)
     if (ipcSilentHandshakeStub) return runIpcSilentHandshakeStub (argc, args);
    #if defined (_WIN32)
     if (ipcHandleProbeStub) return runIpcHandleProbeStub (argc, args);
+   #else
+    if (ipcPosixLaunchProbeStub) return runIpcPosixLaunchProbeStub (argc, args);
    #endif
     if (ipcStub || ipcStubTimeout) return runIpcStub (argc, args, ipcStubTimeout);
     if (ipcControlReplyStub) return runIpcControlReplyStub (argc, args);

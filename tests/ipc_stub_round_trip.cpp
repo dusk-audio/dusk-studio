@@ -41,8 +41,9 @@
  #endif
  #include <windows.h>
 #else
-#include <fcntl.h>
+ #include <fcntl.h>
  #include <pthread.h>
+ #include <signal.h>
 #endif
 
 namespace
@@ -122,8 +123,99 @@ private:
     std::atomic<bool> ready { false };
     std::thread worker;
 };
+
+class ScopedHostileSignalState
+{
+public:
+    bool configure() noexcept
+    {
+        if (::sigaction (SIGUSR1, nullptr, &previousUserSignalAction) != 0)
+            return false;
+
+        struct sigaction ignoredAction {};
+        ignoredAction.sa_handler = SIG_IGN;
+        ::sigemptyset (&ignoredAction.sa_mask);
+        if (::sigaction (SIGUSR1, &ignoredAction, nullptr) != 0)
+            return false;
+        userSignalChanged = true;
+
+        sigset_t blockedSignal;
+        ::sigemptyset (&blockedSignal);
+        ::sigaddset (&blockedSignal, SIGTERM);
+        if (::pthread_sigmask (SIG_BLOCK, &blockedSignal, &previousMask) != 0)
+            return false;
+        maskChanged = true;
+        return true;
+    }
+
+    ~ScopedHostileSignalState()
+    {
+        if (maskChanged)
+            (void) ::pthread_sigmask (SIG_SETMASK, &previousMask, nullptr);
+        if (userSignalChanged)
+            (void) ::sigaction (SIGUSR1, &previousUserSignalAction, nullptr);
+    }
+
+private:
+    struct sigaction previousUserSignalAction {};
+    sigset_t previousMask {};
+    bool userSignalChanged { false };
+    bool maskChanged { false };
+};
 #endif
 } // namespace
+
+#if ! defined (_WIN32)
+TEST_CASE ("POSIX plugin-host children isolate sibling descriptors and signal state",
+           "[ipc][issue-468]")
+{
+    namespace ipcp = duskstudio::ipc::platform;
+
+    ScopedHostileSignalState hostileSignals;
+    REQUIRE (hostileSignals.configure());
+
+    std::string error;
+    ScopedChannelPair descriptorGuard;
+    REQUIRE (ipcp::createChannelPair (descriptorGuard.value, error));
+
+    ipcp::SharedMemory siblingMemory;
+    REQUIRE (siblingMemory.createAnonymous ("sibling-isolation-test", 4096, error));
+
+    ScopedChannelPair siblingChannels;
+    REQUIRE (ipcp::createChannelPair (siblingChannels.value, error));
+    REQUIRE (siblingChannels.value.parentEnd.fd != ipcp::kChildInheritFd);
+    REQUIRE (siblingMemory.handle().fd != ipcp::kChildInheritFd);
+
+    ipcp::ChildProcess siblingChild;
+    REQUIRE (siblingChild.spawn (DUSKSTUDIO_PLUGIN_HOST_PATH,
+                                 { "--ipc-silent-handshake-stub" },
+                                 siblingChannels.value.childEnd,
+                                 siblingChannels.value.parentEnd, {}, error));
+    REQUIRE (siblingChild.isAlive());
+
+    ScopedChannelPair probeChannels;
+    REQUIRE (ipcp::createChannelPair (probeChannels.value, error));
+    const std::vector<std::string> probeArguments {
+        "--ipc-posix-launch-probe-stub",
+        "--ipc-probe-channel-fd="
+            + std::to_string (siblingChannels.value.parentEnd.fd),
+        "--ipc-probe-shm-fd=" + std::to_string (siblingMemory.handle().fd)
+    };
+
+    ipcp::ChildProcess probeChild;
+    REQUIRE (probeChild.spawn (DUSKSTUDIO_PLUGIN_HOST_PATH, probeArguments,
+                               probeChannels.value.childEnd,
+                               probeChannels.value.parentEnd, {}, error));
+
+    std::uint8_t state[4] {};
+    REQUIRE (ipcp::readExact (probeChannels.value.parentEnd,
+                              state, sizeof (state)));
+    REQUIRE (state[0] == 0);
+    REQUIRE (state[1] == 0);
+    REQUIRE (state[2] == 0);
+    REQUIRE (state[3] == 1);
+}
+#endif
 
 #if defined (_WIN32)
 TEST_CASE ("Windows IPC children inherit only their own shared-memory handles",
