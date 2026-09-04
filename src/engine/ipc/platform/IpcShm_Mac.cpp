@@ -12,8 +12,8 @@
 
 // macOS has no memfd_create. We use shm_open with a unique name +
 // immediate shm_unlink so the named region is reachable only through
-// the still-open fd. The fd inherits across fork (and is sent to the
-// child via SCM_RIGHTS over the IPC channel the same way Linux does).
+// the still-open fd. The fd is sent to the child via SCM_RIGHTS over
+// the IPC channel the same way Linux does.
 
 namespace duskstudio::ipc::platform
 {
@@ -50,6 +50,17 @@ bool SharedMemory::createAnonymous (const char* debugName,
     // Unlink immediately; the fd keeps the mapping alive for the
     // process(es) that have it open. The name itself never escapes.
     (void) ::shm_unlink (name);
+
+    const int descriptorFlags = ::fcntl (nativeHandle.fd, F_GETFD);
+    if (descriptorFlags < 0
+        || ::fcntl (nativeHandle.fd, F_SETFD,
+                    descriptorFlags | FD_CLOEXEC) < 0)
+    {
+        errorOut = std::string ("fcntl(FD_CLOEXEC) failed: ")
+            + std::strerror (errno);
+        close();
+        return false;
+    }
 
     if (::ftruncate (nativeHandle.fd, (off_t) size) < 0)
     {

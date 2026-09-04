@@ -6,6 +6,17 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "engine/vst3/NativeVst3Slot.h"
+#include "engine/vst3/Vst3HostContext.h"
+
+#if defined(__GNUC__)
+ #pragma GCC diagnostic push
+ #pragma GCC diagnostic ignored "-Wshadow"
+#endif
+#include <pluginterfaces/gui/iplugview.h>
+#include <pluginterfaces/vst/ivsteditcontroller.h>
+#if defined(__GNUC__)
+ #pragma GCC diagnostic pop
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -155,4 +166,125 @@ TEST_CASE ("NativeVst3Slot loads, processes, and unloads cleanly", "[vst3][slot]
         REQUIRE (slot.getParamValue (id, v));
         REQUIRE_THAT (v, WithinAbs (0.75, 1.0e-6));
     }
+}
+
+TEST_CASE ("NativeVst3Slot rebuilds a runtime output-bus layout",
+           "[vst3][slot][regression][issue-455]")
+{
+    using Catch::Matchers::WithinAbs;
+    duskstudio::vst3::NativeVst3Slot slot;
+    std::string err;
+    constexpr int kBlock = 64;
+
+    const bool loaded = slot.load (
+        std::filesystem::u8path (DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_FIXTURE_PATH),
+        48000.0, kBlock, err);
+    INFO ("fixture load error: " << err);
+    REQUIRE (loaded);
+    auto* instance = slot.getInstance();
+    REQUIRE (instance != nullptr);
+    REQUIRE (instance->portLayout().outputs.size() == 2);
+    REQUIRE (instance->portLayout().outputs[1].active);
+
+    std::vector<float> L ((size_t) kBlock, 0.25f);
+    std::vector<float> R ((size_t) kBlock, -0.25f);
+    slot.processStereo (L.data(), R.data(), L.data(), R.data(), kBlock);
+    REQUIRE_THAT (L.front(), WithinAbs (0.25, 1.0e-9));
+    REQUIRE_THAT (R.front(), WithinAbs (-0.25, 1.0e-9));
+
+    const duskstudio::vst3::Vst3Instance::ParamInfo* expand = nullptr;
+    for (int i = 0; i < slot.paramCount(); ++i)
+        if (slot.paramInfo (i)->name == "Expand Outputs")
+            expand = slot.paramInfo (i);
+    REQUIRE (expand != nullptr);
+    slot.setParamValue (expand->id, 1.0);
+    REQUIRE (instance->ioChangePending());
+
+    std::fill (L.begin(), L.end(), 0.5f);
+    std::fill (R.begin(), R.end(), -0.5f);
+    slot.processStereo (L.data(), R.data(), L.data(), R.data(), kBlock);
+    REQUIRE_THAT (L.front(), WithinAbs (0.0, 1.0e-9));
+    REQUIRE_THAT (R.front(), WithinAbs (0.0, 1.0e-9));
+
+    REQUIRE (instance->consumeIoChanged());
+    REQUIRE (slot.reactivate (48000.0, kBlock, err));
+    REQUIRE (instance->portLayout().outputs.size() == 3);
+    REQUIRE (instance->portLayout().outputs[1].active);
+    REQUIRE (instance->portLayout().outputs[2].active);
+
+    std::fill (L.begin(), L.end(), 0.75f);
+    std::fill (R.begin(), R.end(), -0.75f);
+    slot.processStereo (L.data(), R.data(), L.data(), R.data(), kBlock);
+    REQUIRE_THAT (L.front(), WithinAbs (0.75, 1.0e-9));
+    REQUIRE_THAT (R.front(), WithinAbs (-0.75, 1.0e-9));
+}
+
+TEST_CASE ("NativeVst3Slot refreshes latency after restoring state",
+           "[vst3][slot][regression][issue-456]")
+{
+    duskstudio::vst3::NativeVst3Slot slot;
+    std::string err;
+    constexpr int kBlock = 64;
+
+    const bool loaded = slot.load (
+        std::filesystem::u8path (DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_FIXTURE_PATH),
+        48000.0, kBlock, err);
+    INFO ("fixture load error: " << err);
+    REQUIRE (loaded);
+    REQUIRE (slot.getLatencySamples() == 0);
+
+    const duskstudio::vst3::Vst3Instance::ParamInfo* latencyMode = nullptr;
+    for (int i = 0; i < slot.paramCount(); ++i)
+        if (slot.paramInfo (i)->name == "Latency Mode")
+            latencyMode = slot.paramInfo (i);
+    REQUIRE (latencyMode != nullptr);
+
+    slot.setParamValue (latencyMode->id, 1.0);
+    std::vector<uint8_t> highLatencyState;
+    REQUIRE (slot.saveState (highLatencyState));
+    REQUIRE_FALSE (highLatencyState.empty());
+
+    slot.setParamValue (latencyMode->id, 0.0);
+    REQUIRE_FALSE (slot.consumeLatencyChanged());
+    REQUIRE (slot.loadState (highLatencyState));
+    REQUIRE (slot.consumeLatencyChanged());
+
+    REQUIRE (slot.reactivate (48000.0, kBlock, err));
+    REQUIRE (slot.getLatencySamples() == 64);
+}
+
+TEST_CASE ("Vst3Instance detaches host interfaces before plugin termination",
+           "[vst3][instance][regression][issue-455][issue-457]")
+{
+    {
+        duskstudio::vst3::Vst3Instance neverCreated;
+        std::string reactivateError;
+        REQUIRE_FALSE (neverCreated.reactivate (48000.0, 64, reactivateError));
+        REQUIRE (reactivateError == "not created");
+    }
+
+    duskstudio::vst3::Vst3Bundle bundle;
+    std::string err;
+    REQUIRE (bundle.load (DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_FIXTURE_PATH, err));
+    REQUIRE (bundle.plugins().size() == 1);
+
+    Steinberg::IPtr<Steinberg::IPlugView> view { nullptr };
+    {
+        duskstudio::vst3::Vst3Instance instance;
+        REQUIRE (instance.create (bundle, bundle.plugins().front().id, err));
+        auto* controller = static_cast<Steinberg::Vst::IEditController*> (
+            instance.editController());
+        REQUIRE (controller != nullptr);
+        view = Steinberg::owned (
+            controller->createView (Steinberg::Vst::ViewType::kEditor));
+        REQUIRE (view != nullptr);
+        REQUIRE (view->setFrame (static_cast<Steinberg::IPlugFrame*> (
+                     instance.getHost().plugFrame())) == Steinberg::kResultTrue);
+        instance.setActiveEditorView (view.get());
+    }
+
+    Steinberg::ViewRect teardownState;
+    REQUIRE (view->getSize (&teardownState) == Steinberg::kResultTrue);
+    REQUIRE (teardownState.getWidth() == 1);
+    REQUIRE (teardownState.getHeight() == 1);
 }

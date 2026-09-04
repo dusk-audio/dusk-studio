@@ -163,14 +163,16 @@ bool RemotePluginConnection::connect (const std::string& hostExecutablePath,
         return false;
     }
 
-    // --- Reply-producing modes: start the demultiplexing reader thread ---
-    // The --ipc-stub child never writes a control frame after 'k', so
-    // a reader thread there would block forever on readExact. The
-    // self-test connects with extraArg=="--ipc-stub" and would
-    // otherwise leak a permanently-blocked thread per connection.
+    // --- Modes that need the demultiplexing reader thread ---
+    // It carries control replies and, just as importantly, peer death: its
+    // read returns EOF the moment the child's end of the channel closes, which
+    // is the only channel processBlockSync has for noticing a killed child.
+    // Plain --ipc-stub never writes a control frame after 'k' and the self-test
+    // connects to it per block, so it stays without one.
     if (extraArg == "--ipc-host"
         || extraArg == "--ipc-control-reply-stub"
-        || extraArg == "--ipc-park-timeout-stub")
+        || extraArg == "--ipc-park-timeout-stub"
+        || extraArg == "--ipc-stub-sudden-death")
         startReaderThread();
 
     return true;
@@ -262,7 +264,18 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
         platform::cpuRelax();
     }
 
-    const auto deadline = platform::deadlineFromNow (timeoutNs);
+    // No platform wait carries peer death: the Linux futex and the Windows
+    // event have no such channel, and on macOS the parent holds its own write
+    // end of the wake pipe. A child killed outright therefore never trips the
+    // kStateCrashed check below, and a single wait for the whole timeout would
+    // hold the audio thread for ~70 buffers at 64 frames / 48 kHz before
+    // falling through to bypass. Waiting in slices bounds that to one slice,
+    // after which readerExited - published as soon as the child's end of the
+    // control channel closes - is re-read.
+    constexpr long long kLivenessSliceNs = 2'000'000LL;
+
+    const auto budgetEnd = std::chrono::steady_clock::now()
+                             + std::chrono::nanoseconds (timeoutNs);
     for (;;)
     {
         const auto seen = hdr->replySeq.load (std::memory_order_acquire);
@@ -271,11 +284,24 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
         // when its handler trips before getting a chance to bump
         // replySeq. Without this check the parent would wait the
         // full futex deadline before noticing.
-        if (hdr->state.load (std::memory_order_acquire) == kStateCrashed)
+        if (hdr->state.load (std::memory_order_acquire) == kStateCrashed
+            || readerExited.load (std::memory_order_acquire))
         {
             crashed.store (true, std::memory_order_release);
             return false;
         }
+
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= budgetEnd)
+        {
+            crashed.store (true, std::memory_order_release);
+            return false;
+        }
+        const auto remainingNs = std::chrono::duration_cast<std::chrono::nanoseconds> (
+                                     budgetEnd - now).count();
+        const auto sliceDeadline = platform::deadlineFromNow (
+            remainingNs < kLivenessSliceNs ? (long long) remainingNs : kLivenessSliceNs);
+
         // Pass the CURRENT replySeq as the "expected" value for the
         // signal wait. After a prior call's timeout, replySeq can be stuck
         // at an older value (e.g. mySeq-2); a hardcoded `mySeq-1`
@@ -283,18 +309,15 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
         // ValueChanged until the deadline. Reading the live value
         // makes the wait correctly block until the child actually
         // bumps replySeq.
-        const auto r = replySignal.wait (&hdr->replySeq, seen, &deadline);
-        if (r == platform::WaitResult::Timeout)
-        {
-            crashed.store (true, std::memory_order_release);
-            return false;
-        }
+        const auto r = replySignal.wait (&hdr->replySeq, seen, &sliceDeadline);
         if (r == platform::WaitResult::Error)
         {
             crashed.store (true, std::memory_order_release);
             return false;
         }
-        // Awoken / ValueChanged / Interrupted: re-loop and re-check.
+        // Timeout ends this slice only; the budget check at the top of the
+        // loop owns the overall deadline. Awoken / ValueChanged /
+        // Interrupted: re-loop and re-check.
     }
 
     deserialiseMidiOut();

@@ -2745,7 +2745,7 @@ void ChannelStripComponent::openPluginEditor()
             // The shell wrapper is cached when its modal closes. Reuse it
             // instead of asking createShellEditor() for a second owner. Hide
             // any child fallback that may still be visible before reopening.
-            if (! pluginSlot.hideRemoteEditor()) return;
+            (void) pluginSlot.hideRemoteEditor();
             pluginEditorModal.showBorrowed (*parent, *remoteForeignEmbed, onClose);
             return;
         }
@@ -2806,10 +2806,10 @@ void ChannelStripComponent::openPluginEditor()
                           shellErr.toRawUTF8());
         }
 
-        // A prior shell attempt may have fallen back to the child window. Do
-        // not present the new shell unless that window is confirmed hidden.
-        if (embed != nullptr && ! pluginSlot.hideRemoteEditor())
-            embed.reset();
+        // A prior shell attempt may have fallen back to the child window. The
+        // shell remains usable even when that child no longer answers HideEditor.
+        if (embed != nullptr)
+            (void) pluginSlot.hideRemoteEditor();
 
         if (embed != nullptr)
         {
@@ -2969,7 +2969,14 @@ void ChannelStripComponent::closePluginEditor()
     pluginEditorModal.close();
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
-    if (pluginSlot.isRemote())
+   #if JUCE_LINUX
+    const bool hasRemoteEditorEmbed = remoteEditorEmbed != nullptr;
+   #elif JUCE_WINDOWS
+    const bool hasRemoteEditorEmbed = remoteForeignEmbed != nullptr;
+   #else
+    constexpr bool hasRemoteEditorEmbed = false;
+   #endif
+    if (pluginSlot.isRemote() || hasRemoteEditorEmbed)
     {
         // Tell the child to dismiss the editor before our embed
         // (XEmbedComponent on Linux / ForeignHwndEmbed on Windows)
@@ -2979,6 +2986,14 @@ void ChannelStripComponent::closePluginEditor()
         // tells the OOP host to hide the window.
         pluginSlot.hideRemoteEditor();
     }
+
+   #if JUCE_LINUX
+    if (pluginSlot.wasCrashed() && hasRemoteEditorEmbed)
+        resetRemoteEditorEmbed();
+   #elif JUCE_WINDOWS
+    if (pluginSlot.wasCrashed() && hasRemoteEditorEmbed)
+        remoteForeignEmbed.reset();
+   #endif
    #endif
 }
 
@@ -4296,6 +4311,16 @@ void ChannelStripComponent::refreshFaderValueLabel()
 
 void ChannelStripComponent::timerCallback()
 {
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_MAC
+   #if JUCE_LINUX
+    const bool hasRemoteEditorEmbed = remoteEditorEmbed != nullptr;
+   #else
+    const bool hasRemoteEditorEmbed = remoteForeignEmbed != nullptr;
+   #endif
+    if (hasRemoteEditorEmbed && pluginSlot.wasCrashed())
+        closePluginEditor();
+   #endif
+
     // Plugin-slot button reflects the slot's current load state. Cheap -
     // just an atomic-pointer read + string compare against the cached name.
     refreshPluginSlotButton();

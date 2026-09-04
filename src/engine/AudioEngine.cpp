@@ -482,37 +482,39 @@ public:
         }
 
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-        // A plugin that signalled kLatencyChanged only reports the new value
-        // across a setActive cycle: reactivate the flagged slots under one
-        // engine fence, then let PDC re-align the mixer. Aux slots join the
-        // sweep for their instances' sake even though aux latency doesn't
-        // feed PDC.
-        bool anyLatencyChanged = false;
+        // Latency and bus-layout changes both require a setActive cycle. Keep
+        // every flagged instance under one engine fence while it rebuilds its
+        // process arrays and the slot rebuilds its adapter.
+        bool anyReactivated = false;
         const double sr    = engine.getCurrentSampleRate();
         const int    block = engine.getCurrentBlockSize();
         // Deferred while an offline bounce drives the callback: the
         // suspendProcessing below would gate the render into silent blocks.
-        // consumeLatencyChanged flags stay set, so the cycle runs on the
-        // first tick after the render ends.
+        // The flags stay set, so the cycle runs on the first tick after the
+        // render ends.
         if (sr > 0.0 && block > 0
             && ! engine.offlineRenderActive.load (std::memory_order_acquire))
         {
             auto cycle = [&] (auto& slot)
             {
-                if (auto* inst = slot.getInstance())
-                    inst->refreshParamInfoIfChanged();
-                if (! slot.consumeLatencyChanged() || ! slot.isLoaded()) return;
-                if (! anyLatencyChanged) engine.suspendProcessing();
-                anyLatencyChanged = true;
+                auto* inst = slot.getInstance();
+                if (inst == nullptr) return;
+                inst->refreshParamInfoIfChanged();
+                const bool latencyChanged = slot.consumeLatencyChanged();
+                if (! latencyChanged && ! inst->ioChangePending()) return;
+                if (! anyReactivated) engine.suspendProcessing();
+                anyReactivated = true;
+                inst->consumeIoChanged();
                 std::string err;
-                slot.reactivate (sr, block, err);
+                if (! slot.reactivate (sr, block, err))
+                    slot.quarantineAfterFailedReactivation();
             };
             for (int t = 0; t < Session::kNumTracks; ++t)
                 cycle (engine.getChannelStrip (t).getNativeVst3Slot());
             for (int a = 0; a < Session::kNumAuxLanes; ++a)
                 for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
                     cycle (engine.getAuxLaneStrip (a).getNativeVst3Slot (s));
-            if (anyLatencyChanged)
+            if (anyReactivated)
             {
                 engine.resumeProcessing();
                 engine.recomputePdc();

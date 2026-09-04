@@ -16,6 +16,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "engine/ipc/RemotePluginConnection.h"
 #include "engine/ipc/platform/IpcProcess.h"
+#include "engine/ipc/platform/IpcShm.h"
 #include "TestTempDirectory.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -40,7 +41,9 @@
  #endif
  #include <windows.h>
 #else
+ #include <fcntl.h>
  #include <pthread.h>
+ #include <signal.h>
 #endif
 
 namespace
@@ -120,8 +123,99 @@ private:
     std::atomic<bool> ready { false };
     std::thread worker;
 };
+
+class ScopedHostileSignalState
+{
+public:
+    bool configure() noexcept
+    {
+        if (::sigaction (SIGUSR1, nullptr, &previousUserSignalAction) != 0)
+            return false;
+
+        struct sigaction ignoredAction {};
+        ignoredAction.sa_handler = SIG_IGN;
+        sigemptyset (&ignoredAction.sa_mask);
+        if (::sigaction (SIGUSR1, &ignoredAction, nullptr) != 0)
+            return false;
+        userSignalChanged = true;
+
+        sigset_t blockedSignal;
+        sigemptyset (&blockedSignal);
+        sigaddset (&blockedSignal, SIGTERM);
+        if (::pthread_sigmask (SIG_BLOCK, &blockedSignal, &previousMask) != 0)
+            return false;
+        maskChanged = true;
+        return true;
+    }
+
+    ~ScopedHostileSignalState()
+    {
+        if (maskChanged)
+            (void) ::pthread_sigmask (SIG_SETMASK, &previousMask, nullptr);
+        if (userSignalChanged)
+            (void) ::sigaction (SIGUSR1, &previousUserSignalAction, nullptr);
+    }
+
+private:
+    struct sigaction previousUserSignalAction {};
+    sigset_t previousMask {};
+    bool userSignalChanged { false };
+    bool maskChanged { false };
+};
 #endif
 } // namespace
+
+#if ! defined (_WIN32)
+TEST_CASE ("POSIX plugin-host children isolate sibling descriptors and signal state",
+           "[ipc][issue-468]")
+{
+    namespace ipcp = duskstudio::ipc::platform;
+
+    ScopedHostileSignalState hostileSignals;
+    REQUIRE (hostileSignals.configure());
+
+    std::string error;
+    ScopedChannelPair descriptorGuard;
+    REQUIRE (ipcp::createChannelPair (descriptorGuard.value, error));
+
+    ipcp::SharedMemory siblingMemory;
+    REQUIRE (siblingMemory.createAnonymous ("sibling-isolation-test", 4096, error));
+
+    ScopedChannelPair siblingChannels;
+    REQUIRE (ipcp::createChannelPair (siblingChannels.value, error));
+    REQUIRE (siblingChannels.value.parentEnd.fd != ipcp::kChildInheritFd);
+    REQUIRE (siblingMemory.handle().fd != ipcp::kChildInheritFd);
+
+    ipcp::ChildProcess siblingChild;
+    REQUIRE (siblingChild.spawn (DUSKSTUDIO_PLUGIN_HOST_PATH,
+                                 { "--ipc-silent-handshake-stub" },
+                                 siblingChannels.value.childEnd,
+                                 siblingChannels.value.parentEnd, {}, error));
+    REQUIRE (siblingChild.isAlive());
+
+    ScopedChannelPair probeChannels;
+    REQUIRE (ipcp::createChannelPair (probeChannels.value, error));
+    const std::vector<std::string> probeArguments {
+        "--ipc-posix-launch-probe-stub",
+        "--ipc-probe-channel-fd="
+            + std::to_string (siblingChannels.value.parentEnd.fd),
+        "--ipc-probe-shm-fd=" + std::to_string (siblingMemory.handle().fd)
+    };
+
+    ipcp::ChildProcess probeChild;
+    REQUIRE (probeChild.spawn (DUSKSTUDIO_PLUGIN_HOST_PATH, probeArguments,
+                               probeChannels.value.childEnd,
+                               probeChannels.value.parentEnd, {}, error));
+
+    std::uint8_t state[4] {};
+    REQUIRE (ipcp::readExact (probeChannels.value.parentEnd,
+                              state, sizeof (state)));
+    REQUIRE (state[0] == 0);
+    REQUIRE (state[1] == 0);
+    REQUIRE (state[2] == 0);
+    REQUIRE (state[3] == 1);
+}
+#endif
 
 #if defined (_WIN32)
 TEST_CASE ("Windows IPC children inherit only their own shared-memory handles",
@@ -300,7 +394,7 @@ TEST_CASE ("Windows IPC launcher preserves Unicode paths and arguments",
 #endif
 
 TEST_CASE ("Plugin-host handshake read timeout bounds a silent live child",
-           "[ipc][issue-364][issue-366]")
+           "[ipc][issue-364][issue-366][issue-468]")
 {
     namespace ipcp = duskstudio::ipc::platform;
     using namespace std::chrono_literals;
@@ -311,6 +405,21 @@ TEST_CASE ("Plugin-host handshake read timeout bounds a silent live child",
     ScopedChannelPair channels;
     std::string error;
     REQUIRE (ipcp::createChannelPair (channels.value, error));
+
+#if ! defined (_WIN32)
+    ipcp::SharedMemory sharedMemory;
+    REQUIRE (sharedMemory.createAnonymous ("cloexec-test", 4096, error));
+
+    const int parentFlags = ::fcntl (channels.value.parentEnd.fd, F_GETFD);
+    const int childFlags = ::fcntl (channels.value.childEnd.fd, F_GETFD);
+    const int sharedMemoryFlags = ::fcntl (sharedMemory.handle().fd, F_GETFD);
+    REQUIRE (parentFlags >= 0);
+    REQUIRE (childFlags >= 0);
+    REQUIRE (sharedMemoryFlags >= 0);
+    REQUIRE ((parentFlags & FD_CLOEXEC) != 0);
+    REQUIRE ((childFlags & FD_CLOEXEC) != 0);
+    REQUIRE ((sharedMemoryFlags & FD_CLOEXEC) != 0);
+#endif
 
     ipcp::ChildProcess child;
     REQUIRE (child.spawn (DUSKSTUDIO_PLUGIN_HOST_PATH,
@@ -498,6 +607,28 @@ TEST_CASE ("ipc-stub: timeout is bounded and marks the connection crashed", "[ip
     // idempotent; the destructor calls it once more after this scope.
     conn.disconnect();
     conn.disconnect();
+}
+
+TEST_CASE ("ipc-stub: a child that dies mid-block is detected in a few buffers", "[ipc]")
+{
+    duskstudio::ipc::RemotePluginConnection conn;
+
+    std::string err;
+    REQUIRE (conn.connect (DUSKSTUDIO_PLUGIN_HOST_PATH, "--ipc-stub-sudden-death", err));
+
+    std::vector<float> input ((std::size_t) kBlockSize, 0.25f);
+    const float* in[1] { input.data() };
+    dusk::MidiBuffer midi;
+
+    // The child exits without publishing kStateCrashed, and no platform wait
+    // carries peer death, so the block call has to notice through the closed
+    // control channel rather than sitting out the whole deadline.
+    const auto started = std::chrono::steady_clock::now();
+    REQUIRE_FALSE (conn.processBlockSync (in, 1, 1, kBlockSize, midi, 100'000'000LL));
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+
+    REQUIRE (conn.isCrashed());
+    REQUIRE (elapsed < std::chrono::milliseconds (50));
 }
 
 TEST_CASE ("ipc-stub: repeated connect, block, and teardown", "[ipc]")

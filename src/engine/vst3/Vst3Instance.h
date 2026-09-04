@@ -76,6 +76,10 @@ public:
     // Vst3Editor installs a handler returning whether the host honoured it.
     void setResizeViewHandler (std::function<bool (int, int)> fn);
 
+    // Borrow the editor's IPlugView while it is open so teardown can clear its
+    // host frame before the controller and host context are destroyed.
+    void setActiveEditorView (void* view) noexcept;
+
     // MIDI Learn: index (into paramInfo order) of the parameter the user last
     // moved in the plugin's editor (performEdit). -1 when nothing has been
     // touched. Message thread.
@@ -85,6 +89,11 @@ public:
     // The caller reactivates the instance under the engine gate and recomputes
     // PDC - VST3 only re-reads latency across a setActive cycle.
     bool consumeLatencyChanged() noexcept;
+
+    // kIoChanged blocks processBlock until the engine has fenced the audio
+    // thread, consumed the flag, and rebuilt the component's bus arrays.
+    bool ioChangePending() const noexcept;
+    bool consumeIoChanged() noexcept;
 
     // Message thread: re-snapshot the parameter surface / MIDI-CC map if the
     // plugin signalled kParamTitlesChanged / kMidiCCAssignmentChanged. Called

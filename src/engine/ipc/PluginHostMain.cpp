@@ -2,6 +2,8 @@
 // (or LV2) instance on behalf of Dusk Studio's main process. Supported modes
 // include:
 //
+//   --ipc-stub-sudden-death: echo stub that exits without publishing a crash
+//                 state on the first block command, modelling a SIGKILLed child.
 //   --ipc-stub  : echo input -> output, no JUCE plugin. Exists so the
 //                 IPC self-test can validate shm + sync + spawn plumbing
 //                 without a plugin in the loop.
@@ -11,6 +13,8 @@
 //                 acknowledging readiness, for the bounded-read regression.
 //   --ipc-handle-probe-stub: report which Windows mapping handles reached the
 //                 child, for the explicit inheritance-allowlist regression.
+//   --ipc-posix-launch-probe-stub: report descriptor and signal inheritance
+//                 state, for the POSIX child-isolation regression.
 //   --ipc-control-reply-stub: deterministic request-correlation and reply-
 //                 validation regression child.
 //   --ipc-host  : full Phase-2 host. Loads a juce::AudioPluginInstance
@@ -46,6 +50,7 @@
 #if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
  #include "../NativeScanRows.h"
 #endif
+#include "../../foundation/AutoResetEvent.h"
 #include "../../foundation/MessageThread.h"
 #include "../JuceCompat.h"
 #include "platform/IpcChannel.h"
@@ -83,6 +88,10 @@
 #if defined (__linux__)
  #include <sys/prctl.h>
  #include <unistd.h>
+#endif
+
+#if ! defined (_WIN32)
+ #include <fcntl.h>
 #endif
 
 #if defined (DUSKSTUDIO_USE_WINDOWS_SOFTWARE_OPENGL)
@@ -278,8 +287,63 @@ int runIpcHandleProbeStub (int argc, const char* const* argv) noexcept
 }
 #endif
 
+#if ! defined (_WIN32)
+bool findFdArgument (int argc, const char* const* argv,
+                     const char* prefix, int& fdOut) noexcept
+{
+    const auto prefixLength = std::strlen (prefix);
+    for (int i = 1; i < argc; ++i)
+    {
+        if (argv[i] == nullptr || std::strncmp (argv[i], prefix, prefixLength) != 0)
+            continue;
+
+        const char* const valueText = argv[i] + prefixLength;
+        char* end = nullptr;
+        errno = 0;
+        const long value = std::strtol (valueText, &end, 10);
+        if (errno != 0 || end == valueText || *end != '\0'
+            || value < 0 || value > std::numeric_limits<int>::max())
+            return false;
+        fdOut = (int) value;
+        return true;
+    }
+    return false;
+}
+
+int runIpcPosixLaunchProbeStub (int argc, const char* const* argv) noexcept
+{
+    ipcp::NativeHandle channel = ipcp::locateInheritedChannel (argc, argv);
+    if (! ipcp::isValid (channel)) return 1;
+
+    int siblingChannelFd = -1;
+    int siblingShmFd = -1;
+    if (! findFdArgument (argc, argv, "--ipc-probe-channel-fd=", siblingChannelFd)
+        || ! findFdArgument (argc, argv, "--ipc-probe-shm-fd=", siblingShmFd))
+        return 1;
+
+    sigset_t mask;
+    struct sigaction userSignalAction {};
+    if (::sigprocmask (SIG_SETMASK, nullptr, &mask) != 0
+        || ::sigaction (SIGUSR1, nullptr, &userSignalAction) != 0)
+        return 1;
+
+    const std::uint8_t state[4] {
+        (std::uint8_t) (::fcntl (siblingChannelFd, F_GETFD) >= 0),
+        (std::uint8_t) (::fcntl (siblingShmFd, F_GETFD) >= 0),
+        (std::uint8_t) (sigismember (&mask, SIGTERM) == 1),
+        (std::uint8_t) (userSignalAction.sa_handler == SIG_DFL)
+    };
+    return ipcp::writeExact (channel, state, sizeof (state)) ? 0 : 1;
+}
+#endif
+
 // --- Phase 1 echo mode (kept for the IPC self-test) ----------------------
-int runIpcStub (int argc, const char* const* argv, bool suppressReplies) noexcept
+// How the echo stub answers a block command. SuddenDeath models a SIGKILLed
+// child: the process disappears without publishing kStateCrashed, so the
+// parent has only its closed control channel to notice by.
+enum class StubReplyMode { Normal, Suppress, SuddenDeath };
+
+int runIpcStub (int argc, const char* const* argv, StubReplyMode replyMode) noexcept
 {
     ipcp::NativeHandle channel = ipcp::locateInheritedChannel (argc, argv);
     if (! ipcp::isValid (channel))
@@ -360,7 +424,9 @@ int runIpcStub (int argc, const char* const* argv, bool suppressReplies) noexcep
             std::memcpy (midiOut (shm.data()), midiIn (shm.data()), midiInBytes);
 
         lastSeq = cmd;
-        if (suppressReplies)
+        if (replyMode == StubReplyMode::SuddenDeath)
+            std::_Exit (EXIT_FAILURE);
+        if (replyMode == StubReplyMode::Suppress)
             continue;
         hdr->replySeq.store (cmd, std::memory_order_release);
         replySignal.wake (&hdr->replySeq);
@@ -623,11 +689,34 @@ struct HostState
     // handleShowEditor for the per-platform chrome choice). editorWindow
     // wraps the plugin's AudioProcessorEditor so it has its own native
     // peer; editor is a non-owning pointer (the wrapper window owns the
-    // Component). Both are message-thread-only; the socket-reader thread
-    // acquires MessageManagerLock before touching them.
+    // Component). Both are message-thread-only; control handlers dispatch
+    // their window work there before replying.
     std::unique_ptr<juce::DocumentWindow>     editorWindow;
     juce::AudioProcessorEditor*               editor { nullptr };
 };
+
+template <typename Fn>
+bool runOnHostMessageThreadAndWait (Fn&& fn)
+{
+    dusk::AutoResetEvent completion;
+    bool succeeded = false;
+    const bool posted = dusk::callAsync ([&]
+    {
+        try
+        {
+            fn();
+            succeeded = true;
+        }
+        catch (...)
+        {
+            // A plugin exception must still release the waiting socket thread.
+        }
+        completion.signal();
+    });
+    if (! posted) return false;
+    completion.wait();
+    return succeeded;
+}
 
 #if JUCE_MAC
 // Listener installed on every parameter of the loaded DSP instance.
@@ -766,8 +855,10 @@ std::uint32_t handleLoadPlugin (HostState& host,
         return 2;
     }
 
-    host.currentInstance.store (nullptr, std::memory_order_release);
-
+    // Build the replacement before disturbing the live instance: a creation
+    // failure then leaves the slot exactly as it was rather than parked on a
+    // null pointer with an orphaned ownedInstance, which silences the slot
+    // until some later RPC happens to republish it.
     juce::String errorMsg;
     auto fresh = host.formatManager.createPluginInstance (
         desc, hdr.sampleRate, hdr.blockSize, errorMsg);
@@ -791,14 +882,41 @@ std::uint32_t handleLoadPlugin (HostState& host,
     juce::PluginDescription loadedDescription;
     fresh->fillInPluginDescription (loadedDescription);
     reply.isInstrument = loadedDescription.isInstrument ? 1u : 0u;
+
+    // Swap under the park. Nulling currentInstance alone does not stop a
+    // worker that has already loaded the pointer, so destroying the deposed
+    // instance outside the park frees an AudioPluginInstance under
+    // processBlock. The deposed instance is destroyed after the park ends -
+    // the worker can only reach the republished pointer by then.
+    std::unique_ptr<juce::AudioPluginInstance> deposed;
+    const auto parkStatus = withParkedHostWorker (host, [&]
+    {
+       #if JUCE_MAC
+        if (host.ownedInstance != nullptr && host.paramListener != nullptr)
+            for (auto* p : host.ownedInstance->getParameters())
+                if (p != nullptr) p->removeListener (host.paramListener.get());
+        host.paramListener.reset();
+       #endif
+        deposed = std::move (host.ownedInstance);
+        host.ownedInstance = std::move (fresh);
+        host.currentSampleRate = hdr.sampleRate;
+        host.currentBlockSize  = hdr.blockSize;
+    });
+    if (parkStatus != 0)
+    {
+        const char* err = "worker park timed out during LoadPlugin";
+        replyOut.assign (err, err + std::strlen (err));
+        return parkStatus;
+    }
+
     replyOut.resize (sizeof (reply));
     std::memcpy (replyOut.data(), &reply, sizeof (reply));
 
-    host.ownedInstance = std::move (fresh);
-    host.currentSampleRate = hdr.sampleRate;
-    host.currentBlockSize  = hdr.blockSize;
-    host.currentInstance.store (host.ownedInstance.get(),
-                                  std::memory_order_release);
+    if (deposed != nullptr)
+    {
+        deposed->releaseResources();
+        deposed.reset();
+    }
 
    #if JUCE_MAC
     // Mac-only: install the mirror listener on every parameter so any
@@ -811,11 +929,11 @@ std::uint32_t handleLoadPlugin (HostState& host,
     //
     // Listener gets a fresh state vector sized to this plugin's
     // parameter count so the 3c-4 rate-limit dedup tracks each
-    // param independently. A subsequent LoadPlugin (slot replace)
-    // reaches handleRelease first -> detach + reset listener -> fresh
-    // sizing on the next load. Plugins with thousands of params
-    // (Diva, Massive X) pay ~12 bytes per param of tracking state -
-    // bounded + bounded-lifetime.
+    // param independently. The swap above detaches and drops the
+    // previous listener under the park, so this is always a fresh
+    // sizing. Plugins with thousands of params (Diva, Massive X) pay
+    // ~12 bytes per param of tracking state - bounded +
+    // bounded-lifetime.
     const int paramCount = host.ownedInstance->getParameters().size();
     host.paramListener = std::make_unique<ChildParamListener> (host, paramCount);
     for (auto* p : host.ownedInstance->getParameters())
@@ -904,14 +1022,19 @@ std::uint32_t handleShowEditor (HostState& host,
 {
     if (host.ownedInstance == nullptr) return 1;
 
-    ShowEditorReply reply {};
+    std::uint32_t status = 4;
+    if (! runOnHostMessageThreadAndWait ([&]
     {
-        const juce::MessageManagerLock mml;
+        ShowEditorReply reply {};
 
         if (host.editor == nullptr)
         {
             host.editor = host.ownedInstance->createEditorIfNeeded();
-            if (host.editor == nullptr) return 2;
+            if (host.editor == nullptr)
+            {
+                status = 2;
+                return;
+            }
         }
 
         if (host.editorWindow == nullptr)
@@ -963,24 +1086,30 @@ std::uint32_t handleShowEditor (HostState& host,
         reply.width  = host.editorWindow->getWidth();
         reply.height = host.editorWindow->getHeight();
         reply.reserved = 0;
-    }
+        if (reply.windowId == 0)
+        {
+            status = 3;
+            return;
+        }
 
-    if (reply.windowId == 0) return 3;
-
-    replyOut.resize (sizeof (reply));
-    std::memcpy (replyOut.data(), &reply, sizeof (reply));
-    return 0;
+        replyOut.resize (sizeof (reply));
+        std::memcpy (replyOut.data(), &reply, sizeof (reply));
+        status = 0;
+    }))
+        return 4;
+    return status;
 }
 
 std::uint32_t handleHideEditor (HostState& host)
 {
-    const juce::MessageManagerLock mml;
-    if (host.editorWindow != nullptr)
+    return runOnHostMessageThreadAndWait ([&]
     {
-        host.editorWindow->clearContentComponent();
-        host.editorWindow.reset();
-    }
-    return 0;
+        if (host.editorWindow != nullptr)
+        {
+            host.editorWindow->clearContentComponent();
+            host.editorWindow.reset();
+        }
+    }) ? 0u : 1u;
 }
 
 std::uint32_t handleResizeEditor (HostState& host,
@@ -989,11 +1118,16 @@ std::uint32_t handleResizeEditor (HostState& host,
     if (payload.size() != sizeof (ResizeEditorPayload)) return 1;
     ResizeEditorPayload p {};
     std::memcpy (&p, payload.data(), sizeof (p));
-    const juce::MessageManagerLock mml;
-    if (host.editorWindow == nullptr) return 2;
-    host.editorWindow->setSize (std::max (1, (int) p.width),
-                                  std::max (1, (int) p.height));
-    return 0;
+    std::uint32_t status = 2;
+    if (! runOnHostMessageThreadAndWait ([&]
+    {
+        if (host.editorWindow == nullptr) return;
+        host.editorWindow->setSize (std::max (1, (int) p.width),
+                                    std::max (1, (int) p.height));
+        status = 0;
+    }))
+        return 3;
+    return status;
 }
 
 // Inbound SetParam from parent (3c-3a). Marshals onto the JUCE message
@@ -1426,10 +1560,13 @@ int main (int argc, char** argv)
 
     bool ipcStub = false;
     bool ipcStubTimeout = false;
+    bool ipcStubSuddenDeath = false;
     bool ipcArgvStub = false;
     bool ipcSilentHandshakeStub = false;
    #if defined (_WIN32)
     bool ipcHandleProbeStub = false;
+   #else
+    bool ipcPosixLaunchProbeStub = false;
    #endif
     bool ipcControlReplyStub = false;
     bool ipcParkTimeoutStub = false;
@@ -1439,12 +1576,17 @@ int main (int argc, char** argv)
     {
         if (std::strcmp (args[i], "--ipc-stub") == 0) ipcStub = true;
         if (std::strcmp (args[i], "--ipc-stub-timeout") == 0) ipcStubTimeout = true;
+        if (std::strcmp (args[i], "--ipc-stub-sudden-death") == 0)
+            ipcStubSuddenDeath = true;
         if (std::strcmp (args[i], "--ipc-argv-stub") == 0) ipcArgvStub = true;
         if (std::strcmp (args[i], "--ipc-silent-handshake-stub") == 0)
             ipcSilentHandshakeStub = true;
        #if defined (_WIN32)
         if (std::strcmp (args[i], "--ipc-handle-probe-stub") == 0)
             ipcHandleProbeStub = true;
+       #else
+        if (std::strcmp (args[i], "--ipc-posix-launch-probe-stub") == 0)
+            ipcPosixLaunchProbeStub = true;
        #endif
         if (std::strcmp (args[i], "--ipc-control-reply-stub") == 0) ipcControlReplyStub = true;
         if (std::strcmp (args[i], "--ipc-park-timeout-stub") == 0) ipcParkTimeoutStub = true;
@@ -1460,8 +1602,14 @@ int main (int argc, char** argv)
     if (ipcSilentHandshakeStub) return runIpcSilentHandshakeStub (argc, args);
    #if defined (_WIN32)
     if (ipcHandleProbeStub) return runIpcHandleProbeStub (argc, args);
+   #else
+    if (ipcPosixLaunchProbeStub) return runIpcPosixLaunchProbeStub (argc, args);
    #endif
-    if (ipcStub || ipcStubTimeout) return runIpcStub (argc, args, ipcStubTimeout);
+    if (ipcStub || ipcStubTimeout || ipcStubSuddenDeath)
+        return runIpcStub (argc, args,
+                           ipcStubSuddenDeath ? StubReplyMode::SuddenDeath
+                           : ipcStubTimeout   ? StubReplyMode::Suppress
+                                              : StubReplyMode::Normal);
     if (ipcControlReplyStub) return runIpcControlReplyStub (argc, args);
     if (ipcParkTimeoutStub) return runIpcParkTimeoutStub (argc, args);
     if (ipcHost) return runIpcHost (argc, args);

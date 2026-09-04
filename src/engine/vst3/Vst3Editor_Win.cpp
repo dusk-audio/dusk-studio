@@ -121,6 +121,7 @@ bool Vst3Editor::open (Vst3Instance& inst, std::string& errorOut)
     inst.setResizeViewHandler ([self = impl.get()] (int w, int h)
                                { return self->onResizeView (w, h); });
     impl->view->setFrame (static_cast<IPlugFrame*> (impl->host->plugFrame()));
+    inst.setActiveEditorView (impl->view.get());
 
     ViewRect size {};
     if (impl->view->getSize (&size) == kResultOk)
@@ -235,17 +236,18 @@ void Vst3Editor::abandonPluginAndContainer() noexcept
 
 void Vst3Editor::close()
 {
+    if (impl->instance != nullptr)
+    {
+        impl->instance->setActiveEditorView (nullptr);
+        impl->instance->setResizeViewHandler (nullptr);
+        impl->instance = nullptr;
+    }
     if (impl->view)
     {
         if (impl->embedded)
             impl->view->removed();
         impl->view->setFrame (nullptr);
         impl->view = nullptr;
-    }
-    if (impl->instance != nullptr)
-    {
-        impl->instance->setResizeViewHandler (nullptr);
-        impl->instance = nullptr;
     }
     impl->host = nullptr;
 

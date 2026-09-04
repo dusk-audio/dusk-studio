@@ -28,7 +28,8 @@ bool SharedMemory::createAnonymous (const char* debugName,
 {
     close();
 
-    nativeHandle.fd = memfdCreate (debugName != nullptr ? debugName : "duskstudio-shm", 0);
+    nativeHandle.fd = memfdCreate (
+        debugName != nullptr ? debugName : "duskstudio-shm", MFD_CLOEXEC);
     if (nativeHandle.fd < 0)
     {
         errorOut = std::string ("memfd_create failed: ") + std::strerror (errno);

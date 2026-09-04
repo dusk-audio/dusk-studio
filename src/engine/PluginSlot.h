@@ -362,6 +362,15 @@ private:
     };
     ReaperTimer reaperTimer { *this };
     void pollRemoteReaper();
+
+    // Stop the reaper, unpublish the live connection and shift it into the
+    // deferred-destruction ring. Nulling currentRemote is not enough on its
+    // own: the audio thread can already hold the raw pointer and stay inside
+    // processBlockSync for the whole OOP block timeout, reading the child's
+    // shared memory. The pointer moves therefore happen with processLock held,
+    // and the connection evicted from the far slot is destroyed only after the
+    // lock is dropped so a child teardown never locks the audio path out.
+    void retireRemoteConnection();
    #endif
 
     // Stashed when restoreFromSavedState fails so a subsequent save

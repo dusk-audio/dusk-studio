@@ -54,9 +54,29 @@ closes release-metadata gaps found during the pre-tag audit.
 - **macOS no longer opens two windows for one out-of-process plugin editor.** A
   working in-process shell editor is reused without first showing the child
   process fallback window.
+- **Sandboxed plugin editor failures no longer strand their window.** On macOS,
+  an available shell editor opens even if the child cannot hide its fallback
+  window. Linux and Windows release stale embedded windows after a child crash.
 - **Windows out-of-process plugin editors stay aligned with their host panel.**
   Embedded child coordinates now account for the top-level window origin and
-  display scale after moves and resizes.
+  display scale after moves and resizes. They also hide beneath application
+  dialogs and reattach safely after the parent window is recreated.
+- **Sandboxed plugin windows stay responsive on Windows and macOS.** Window
+  creation, visibility changes, resizing, and teardown now run on the child
+  process's pumping message thread instead of its blocking control thread.
+- **A sandboxed plugin whose process is killed drops out for a few buffers, not
+  a tenth of a second.** No operating system wait the audio thread uses carries
+  news of the child's death, so a killed plugin host used to hold the audio
+  thread for the whole hundred-millisecond block timeout before the strip was
+  bypassed. The wait is now split into short slices that re-check whether the
+  child's connection has closed.
+- **Switching sandboxed plugins in quick succession no longer risks a dropout
+  or a crash.** Retiring an out-of-process connection now waits for the audio
+  thread to leave the plugin's processing call before the connection's shared
+  memory is torn down, so several loads, unloads, or re-enables inside one
+  block cannot pull the buffer out from under playback. The child process also
+  parks its audio worker before swapping a plugin, and a load that fails leaves
+  the previously loaded plugin playing instead of silencing the strip.
 - **A damaged recent session no longer breaks the startup screen.** Errors while
   scanning its audio directory now leave the format summary unavailable instead
   of escaping through the recent-session list.

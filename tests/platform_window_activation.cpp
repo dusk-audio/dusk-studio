@@ -83,7 +83,8 @@ void requireInOrder (const std::string& source,
 
 TEST_CASE ("native window operations preserve activation and embedded editor geometry",
            "[windowing][linux][macos][windows][wayland][regression]"
-           "[issue-367][issue-369][issue-376][issue-380][issue-449]")
+           "[issue-367][issue-369][issue-376][issue-380][issue-448][issue-449]"
+           "[issue-453]")
 {
     using duskstudio::platform::LinuxPeerTeardown;
     using duskstudio::platform::linuxPeerTeardownForMapping;
@@ -136,8 +137,33 @@ TEST_CASE ("native window operations preserve activation and embedded editor geo
     REQUIRE (layout.find ("getLocalBounds") != std::string::npos);
     REQUIRE (layout.find ("embedscale::toPhysical") != std::string::npos);
     REQUIRE (layout.find ("getBoundsInParent") == std::string::npos);
+    REQUIRE (layout.find ("IsWindow") != std::string::npos);
+    REQUIRE (layout.find ("SWP_SHOWWINDOW") == std::string::npos);
     requireInOrder (layout, "getLocalArea", "embedscale::toPhysical");
     requireInOrder (layout, "embedscale::toPhysical", "SetWindowPos");
+
+    const auto setWindowParent = definitionBody (windowsSource, "setWindowParent");
+    REQUIRE (setWindowParent.find ("IsWindow") != std::string::npos);
+    REQUIRE (setWindowParent.find ("SetLastError") != std::string::npos);
+    REQUIRE (setWindowParent.find ("SetParent") != std::string::npos);
+    REQUIRE (setWindowParent.find ("GetLastError") != std::string::npos);
+
+    const auto parentChanged = definitionBody (windowsSource, "parentHierarchyChanged");
+    REQUIRE (parentChanged.find ("attachedParent") != std::string::npos);
+    REQUIRE (parentChanged.find ("setWindowParent") != std::string::npos);
+    REQUIRE (parentChanged.find ("WS_VISIBLE") == std::string::npos);
+
+    const auto detachChild = definitionBody (windowsSource, "detachChild");
+    REQUIRE (detachChild.find ("IsWindow") != std::string::npos);
+    REQUIRE (detachChild.find ("setWindowParent") != std::string::npos);
+    REQUIRE (detachChild.find ("SetWindowLongPtr") != std::string::npos);
+    REQUIRE (detachChild.find ("SetWindowPos") != std::string::npos);
+
+    const auto visibility = definitionBody (windowsSource, "visibilityChanged");
+    REQUIRE (visibility.find ("IsWindow") != std::string::npos);
+    REQUIRE (visibility.find ("ShowWindow") != std::string::npos);
+    REQUIRE (visibility.find ("SW_HIDE") != std::string::npos);
+    REQUIRE (visibility.find ("SW_SHOWNA") != std::string::npos);
 
     const auto moved = definitionBody (windowsSource, "moved");
     REQUIRE (moved.find ("layoutChild") != std::string::npos);
@@ -209,13 +235,34 @@ TEST_CASE ("native window operations preserve activation and embedded editor geo
     REQUIRE (macBranch < cachedShell);
     REQUIRE (cachedShell < cachedHide);
     REQUIRE (cachedHide < cachedShow);
+    REQUIRE (remoteEditor.substr (cachedHide, cachedShow - cachedHide)
+                 .find ("return") == std::string::npos);
     REQUIRE (cachedShow < shellLoad);
     REQUIRE (shellLoad < stateSync);
     REQUIRE (stateSync < shellHost);
     REQUIRE (shellHost < shellHide);
     REQUIRE (shellHide < shellShow);
+    REQUIRE (remoteEditor.substr (shellHide, shellShow - shellHide)
+                 .find ("embed.reset") == std::string::npos);
     REQUIRE (shellShow < fallbackShow);
     REQUIRE (fallbackShow < nextPlatformBranch);
+
+    const auto closeEditor = definitionBody (
+        readSource ("src/ui/ChannelStripComponent.cpp"),
+        "ChannelStripComponent::closePluginEditor");
+    REQUIRE (closeEditor.find ("hasRemoteEditorEmbed") != std::string::npos);
+    REQUIRE (closeEditor.find ("pluginSlot.isRemote() || hasRemoteEditorEmbed")
+             != std::string::npos);
+
+    const auto stripTimer = definitionBody (
+        readSource ("src/ui/ChannelStripComponent.cpp"),
+        "ChannelStripComponent::timerCallback");
+    const auto crashCleanup = stripTimer.find ("pluginSlot.wasCrashed()");
+    const auto closeStaleEditor = stripTimer.find ("closePluginEditor", crashCleanup);
+    const auto refreshSlot = stripTimer.find ("refreshPluginSlotButton");
+    REQUIRE (crashCleanup != std::string::npos);
+    REQUIRE (crashCleanup < closeStaleEditor);
+    REQUIRE (closeStaleEditor < refreshSlot);
 
     const auto modal = definitionBody (
         readSource ("src/ui/EmbeddedModal.h"), "componentMovedOrResized");
@@ -238,4 +285,23 @@ TEST_CASE ("launch session load and instance handoff retain native activation",
     const auto sessionLoad = definitionBody (
         readSource ("src/ui/MainComponent.cpp"), "finishLoadingSessionFrom");
     REQUIRE (sessionLoad.find ("bringWindowToFront") != std::string::npos);
+}
+
+TEST_CASE ("OOP editor window RPCs dispatch through the child message thread",
+           "[windowing][macos][windows][regression][issue-447]")
+{
+    const auto hostSource = readSource ("src/engine/ipc/PluginHostMain.cpp");
+    const auto dispatch = definitionBody (hostSource, "runOnHostMessageThreadAndWait");
+    REQUIRE (dispatch.find ("dusk::callAsync") != std::string::npos);
+    REQUIRE (dispatch.find ("dusk::AutoResetEvent") != std::string::npos);
+    REQUIRE (dispatch.find ("completion.wait") != std::string::npos);
+
+    for (const auto* handler : { "handleShowEditor", "handleHideEditor",
+                                 "handleResizeEditor" })
+    {
+        INFO ("handler: " << handler);
+        const auto body = definitionBody (hostSource, handler);
+        REQUIRE (body.find ("runOnHostMessageThreadAndWait") != std::string::npos);
+        REQUIRE (body.find ("MessageManagerLock") == std::string::npos);
+    }
 }
