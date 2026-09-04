@@ -81,6 +81,9 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
     // kLatencyChanged arrived; the engine's drain timer consumes it and cycles
     // the instance (VST3 latency only re-reads across a setActive cycle).
     std::atomic<bool> latencyChanged { false };
+    // Keep the audio path offline until the message thread has rebuilt every
+    // bus array and its scratch storage for the component's new shape.
+    std::atomic<bool> ioChanged { false };
     // kParamTitlesChanged arrived; the drain timer re-snapshots on the message
     // thread (misbehaving plugins fire restartComponent off-thread, and the
     // snapshot allocates).
@@ -132,6 +135,131 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
         }
     }
 
+    bool discoverBuses (std::string& errorOut)
+    {
+        struct BusSnapshot
+        {
+            Vst::BusInfo info {};
+            bool valid = false;
+        };
+
+        layout = {};
+        mainInBus = mainOutBus = sidechainBus = -1;
+
+        const int numIn = std::max<int32> (
+            0, component->getBusCount (Vst::kAudio, Vst::kInput));
+        const int numOut = std::max<int32> (
+            0, component->getBusCount (Vst::kAudio, Vst::kOutput));
+        std::vector<BusSnapshot> inputs ((size_t) numIn);
+        std::vector<BusSnapshot> outputs ((size_t) numOut);
+        for (int i = 0; i < numIn; ++i)
+            inputs[(size_t) i].valid = component->getBusInfo (
+                Vst::kAudio, Vst::kInput, i, inputs[(size_t) i].info) == kResultOk;
+        for (int i = 0; i < numOut; ++i)
+            outputs[(size_t) i].valid = component->getBusInfo (
+                Vst::kAudio, Vst::kOutput, i, outputs[(size_t) i].info) == kResultOk;
+
+        audioBuses = detail::AudioBusPlan (numIn, numOut);
+        for (int i = 0; i < numIn; ++i)
+        {
+            if (! inputs[(size_t) i].valid) continue;
+            const auto& info = inputs[(size_t) i].info;
+            bool hostConnected = false;
+            if (info.busType == Vst::kMain && mainInBus < 0)
+            {
+                mainInBus = i;
+                hostConnected = true;
+            }
+            else if (info.busType == Vst::kAux && sidechainBus < 0)
+            {
+                sidechainBus = i;
+                hostConnected = true;
+            }
+            audioBuses.setBus (
+                detail::AudioBusDirection::Input, i, (int) info.channelCount,
+                hostConnected || (info.flags & Vst::BusInfo::kDefaultActive) != 0);
+        }
+        for (int i = 0; i < numOut; ++i)
+        {
+            if (! outputs[(size_t) i].valid) continue;
+            const auto& info = outputs[(size_t) i].info;
+            const bool hostConnected = info.busType == Vst::kMain && mainOutBus < 0;
+            if (hostConnected) mainOutBus = i;
+            audioBuses.setBus (
+                detail::AudioBusDirection::Output, i, (int) info.channelCount,
+                hostConnected || (info.flags & Vst::BusInfo::kDefaultActive) != 0);
+        }
+
+        if (mainOutBus < 0)
+        {
+            errorOut = "plugin has no main audio output bus";
+            return false;
+        }
+
+        detail::applyAudioBusPlan (
+            audioBuses,
+            [this] (detail::AudioBusDirection direction, int bus, bool shouldActivate)
+            {
+                return component->activateBus (
+                    Vst::kAudio,
+                    direction == detail::AudioBusDirection::Input
+                        ? Vst::kInput : Vst::kOutput,
+                    bus, shouldActivate) == kResultOk;
+            });
+
+        for (int i = 0; i < numIn; ++i)
+        {
+            if (! inputs[(size_t) i].valid) continue;
+            hosting::BusInfo bus;
+            bus.kind = hosting::BusInfo::Kind::Audio;
+            bus.dir = hosting::BusInfo::Direction::Input;
+            bus.role = hosting::BusInfo::Role::Aux;
+            if (i == mainInBus)
+            {
+                bus.role = hosting::BusInfo::Role::Main;
+                layout.mainInIndex = (int) layout.inputs.size();
+            }
+            else if (i == sidechainBus)
+            {
+                bus.role = hosting::BusInfo::Role::Sidechain;
+                layout.sidechainInIndex = (int) layout.inputs.size();
+            }
+            bus.channelCount = audioBuses.channelCount (detail::AudioBusDirection::Input, i);
+            bus.active = audioBuses.isActive (detail::AudioBusDirection::Input, i);
+            layout.inputs.push_back (bus);
+        }
+        for (int i = 0; i < numOut; ++i)
+        {
+            if (! outputs[(size_t) i].valid) continue;
+            hosting::BusInfo bus;
+            bus.kind = hosting::BusInfo::Kind::Audio;
+            bus.dir = hosting::BusInfo::Direction::Output;
+            bus.role = i == mainOutBus
+                         ? hosting::BusInfo::Role::Main : hosting::BusInfo::Role::Aux;
+            if (i == mainOutBus)
+                layout.mainOutIndex = (int) layout.outputs.size();
+            bus.channelCount = audioBuses.channelCount (detail::AudioBusDirection::Output, i);
+            bus.active = audioBuses.isActive (detail::AudioBusDirection::Output, i);
+            layout.outputs.push_back (bus);
+        }
+
+        hasEventIn = component->getBusCount (Vst::kEvent, Vst::kInput) > 0;
+        if (hasEventIn)
+        {
+            hosting::BusInfo eventBus;
+            eventBus.kind = hosting::BusInfo::Kind::Event;
+            eventBus.dir = hosting::BusInfo::Direction::Input;
+            eventBus.carriesMidi = true;
+            eventBus.active = true;
+            eventBus.name = "Events";
+            layout.eventInIndex = (int) layout.inputs.size();
+            layout.inputs.push_back (eventBus);
+            component->activateBus (Vst::kEvent, Vst::kInput, 0, true);
+        }
+        layout.isInstrument = mainInBus < 0 && hasEventIn && mainOutBus >= 0;
+        return true;
+    }
+
     // Vst3HostContext::Callbacks (message thread)
     void onPerformEdit (uint32_t paramId, double normalised) override
     {
@@ -146,18 +274,16 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
     }
     void onRestartComponent (int32_t flags) override
     {
-        // Flag-only: values need no action (nothing caches them), param-info and
-        // latency changes are consumed by the engine's message-thread drain
-        // timer (the snapshot allocates and the latency pickup needs a fenced
-        // setActive cycle - and misbehaving plugins call this off-thread).
-        // kIoChanged (a live bus re-layout) stays unhandled: the PortLayout is
-        // fixed at create() and no hosted effect exercises it yet.
+        // Flag-only: all work that can allocate or call back into the component
+        // is deferred to the engine's message-thread drain timer.
         if ((flags & Vst::RestartFlags::kParamTitlesChanged) != 0)
             paramInfoChanged.store (true, std::memory_order_relaxed);
         if ((flags & Vst::RestartFlags::kMidiCCAssignmentChanged) != 0)
             ccMapChanged.store (true, std::memory_order_relaxed);
         if ((flags & Vst::RestartFlags::kLatencyChanged) != 0)
             latencyChanged.store (true, std::memory_order_relaxed);
+        if ((flags & Vst::RestartFlags::kIoChanged) != 0)
+            ioChanged.store (true, std::memory_order_release);
     }
 
     void destroy()
@@ -181,6 +307,7 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
         host.setCallbacks (nullptr);
         params.clear();
         audioBuses = {};
+        ioChanged.store (false, std::memory_order_relaxed);
         resizeViewFn = nullptr;
         if (controller && ! controllerIsComponent)
             controller->terminate();
@@ -252,6 +379,16 @@ void Vst3Instance::setResizeViewHandler (std::function<bool (int, int)> fn)
 bool Vst3Instance::consumeLatencyChanged() noexcept
 {
     return impl->latencyChanged.exchange (false, std::memory_order_relaxed);
+}
+
+bool Vst3Instance::ioChangePending() const noexcept
+{
+    return impl->ioChanged.load (std::memory_order_acquire);
+}
+
+bool Vst3Instance::consumeIoChanged() noexcept
+{
+    return impl->ioChanged.exchange (false, std::memory_order_acq_rel);
 }
 
 void Vst3Instance::refreshParamInfoIfChanged()
@@ -346,107 +483,11 @@ bool Vst3Instance::create (const Vst3Bundle& bundle, const std::string& classId,
     }
     impl->host.setCallbacks (impl.get());
 
-    // Bus discovery -> PortLayout. The InsertAdapter folds whatever the plugin
-    // really has onto the stereo insert, so we take the default arrangements
-    // as-is instead of forcing stereo.
-    impl->layout = {};
-    impl->mainInBus = impl->mainOutBus = impl->sidechainBus = -1;
-
-    const int32 numIn = impl->component->getBusCount (Vst::kAudio, Vst::kInput);
-    const int32 numOut = impl->component->getBusCount (Vst::kAudio, Vst::kOutput);
-    impl->audioBuses = detail::AudioBusPlan ((int) numIn, (int) numOut);
-    for (int32 i = 0; i < numIn; ++i)
+    if (! impl->discoverBuses (errorOut))
     {
-        Vst::BusInfo info {};
-        if (impl->component->getBusInfo (Vst::kAudio, Vst::kInput, i, info) != kResultOk)
-            continue;
-        hosting::BusInfo b;
-        b.kind = hosting::BusInfo::Kind::Audio;
-        b.dir  = hosting::BusInfo::Direction::Input;
-        bool hostConnected = false;
-        if (info.busType == Vst::kMain && impl->mainInBus < 0)
-        {
-            b.role = hosting::BusInfo::Role::Main;
-            hostConnected = true;
-            impl->mainInBus = (int) i;
-            impl->layout.mainInIndex = (int) impl->layout.inputs.size();
-        }
-        else if (info.busType == Vst::kAux && impl->sidechainBus < 0)
-        {
-            b.role = hosting::BusInfo::Role::Sidechain;
-            hostConnected = true;
-            impl->sidechainBus = (int) i;
-            impl->layout.sidechainInIndex = (int) impl->layout.inputs.size();
-        }
-        impl->audioBuses.setBus (
-            detail::AudioBusDirection::Input, (int) i, (int) info.channelCount,
-            hostConnected || (info.flags & Vst::BusInfo::kDefaultActive) != 0);
-        b.channelCount = impl->audioBuses.channelCount (
-            detail::AudioBusDirection::Input, (int) i);
-        b.active = impl->audioBuses.isActive (
-            detail::AudioBusDirection::Input, (int) i);
-        impl->layout.inputs.push_back (b);
+        impl->destroy();
+        return false;
     }
-
-    for (int32 i = 0; i < numOut; ++i)
-    {
-        Vst::BusInfo info {};
-        if (impl->component->getBusInfo (Vst::kAudio, Vst::kOutput, i, info) != kResultOk)
-            continue;
-        hosting::BusInfo b;
-        b.kind = hosting::BusInfo::Kind::Audio;
-        b.dir  = hosting::BusInfo::Direction::Output;
-        bool hostConnected = false;
-        if (info.busType == Vst::kMain && impl->mainOutBus < 0)
-        {
-            b.role = hosting::BusInfo::Role::Main;
-            hostConnected = true;
-            impl->mainOutBus = (int) i;
-            impl->layout.mainOutIndex = (int) impl->layout.outputs.size();
-        }
-        impl->audioBuses.setBus (
-            detail::AudioBusDirection::Output, (int) i, (int) info.channelCount,
-            hostConnected || (info.flags & Vst::BusInfo::kDefaultActive) != 0);
-        b.channelCount = impl->audioBuses.channelCount (
-            detail::AudioBusDirection::Output, (int) i);
-        b.active = impl->audioBuses.isActive (
-            detail::AudioBusDirection::Output, (int) i);
-        impl->layout.outputs.push_back (b);
-    }
-
-    impl->hasEventIn = impl->component->getBusCount (Vst::kEvent, Vst::kInput) > 0;
-    if (impl->hasEventIn)
-    {
-        hosting::BusInfo ev;
-        ev.kind = hosting::BusInfo::Kind::Event;
-        ev.dir  = hosting::BusInfo::Direction::Input;
-        ev.carriesMidi = true;
-        ev.active = true;
-        ev.name = "Events";
-        impl->layout.eventInIndex = (int) impl->layout.inputs.size();
-        impl->layout.inputs.push_back (ev);
-    }
-    impl->layout.isInstrument = impl->mainInBus < 0 && impl->hasEventIn && impl->mainOutBus >= 0;
-
-    if (impl->mainOutBus < 0)
-    { errorOut = "plugin has no main audio output bus"; impl->destroy(); return false; }
-
-    // Modular plugins may touch every non-empty bus while monitored, so keep
-    // those active and supply independent silence/sinks below. A zero-channel
-    // bus stays inactive and is represented as such everywhere.
-    detail::applyAudioBusPlan (
-        impl->audioBuses,
-        [this] (detail::AudioBusDirection direction, int bus, bool active)
-        {
-            impl->component->activateBus (
-                Vst::kAudio,
-                direction == detail::AudioBusDirection::Input
-                    ? Vst::kInput : Vst::kOutput,
-                bus, active);
-        });
-    if (impl->hasEventIn)
-        impl->component->activateBus (Vst::kEvent, Vst::kInput, 0, true);
-
     return true;
 }
 
@@ -533,6 +574,8 @@ bool Vst3Instance::reactivate (double sampleRate, int maxBlockFrames, std::strin
     // VST3 renegotiates rate/block through setupProcessing on the SAME instance,
     // so state and any open editor survive without a re-instantiate.
     deactivate();
+    if (! impl->discoverBuses (errorOut))
+        return false;
     return activate (sampleRate, maxBlockFrames, errorOut);
 }
 
@@ -549,6 +592,7 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
     };
 
     if (! impl->active || ! impl->processing
+        || impl->ioChanged.load (std::memory_order_acquire)
         || numFrames <= 0 || numFrames > impl->maxFrames
         || io.mainOut == nullptr || io.mainOutChannels <= 0)
     {

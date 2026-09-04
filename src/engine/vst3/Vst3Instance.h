@@ -86,6 +86,11 @@ public:
     // PDC - VST3 only re-reads latency across a setActive cycle.
     bool consumeLatencyChanged() noexcept;
 
+    // kIoChanged blocks processBlock until the engine has fenced the audio
+    // thread, consumed the flag, and rebuilt the component's bus arrays.
+    bool ioChangePending() const noexcept;
+    bool consumeIoChanged() noexcept;
+
     // Message thread: re-snapshot the parameter surface / MIDI-CC map if the
     // plugin signalled kParamTitlesChanged / kMidiCCAssignmentChanged. Called
     // from the engine's drain timer.

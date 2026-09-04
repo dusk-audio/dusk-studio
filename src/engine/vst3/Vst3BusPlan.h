@@ -65,14 +65,19 @@ private:
 };
 
 // Apply both activation and deactivation from the same shape used for layout
-// metadata and process buffers. Selected and default-active buses with channels
-// receive scratch; optional and zero-channel buses remain inactive.
+// metadata and process buffers. A plugin may reject deactivation while keeping
+// a bus live; retain buffers for that bus so it never receives a null channel
+// array.
 template <typename Activate>
-void applyAudioBusPlan (const AudioBusPlan& plan, Activate&& activate)
+void applyAudioBusPlan (AudioBusPlan& plan, Activate&& activate)
 {
     for (const auto direction : { AudioBusDirection::Input, AudioBusDirection::Output })
         for (int bus = 0; bus < plan.busCount (direction); ++bus)
-            activate (direction, bus, plan.isActive (direction, bus));
+        {
+            const bool active = plan.isActive (direction, bus);
+            if (! activate (direction, bus, active) && ! active)
+                plan.setBus (direction, bus, plan.channelCount (direction, bus), true);
+        }
 }
 
 template <typename InputChannels, typename OutputChannels>

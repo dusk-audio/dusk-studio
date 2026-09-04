@@ -47,7 +47,7 @@ TEST_CASE ("VST3 panic releases every sounding note when its CC is unmapped",
 }
 
 TEST_CASE ("VST3 audio bus plan keeps activation and scratch shape consistent",
-           "[vst3][bus][regression][issue-361][issue-390]")
+           "[vst3][bus][regression][issue-361][issue-390][issue-455]")
 {
     using namespace duskstudio::vst3::detail;
 
@@ -64,6 +64,7 @@ TEST_CASE ("VST3 audio bus plan keeps activation and scratch shape consistent",
     applyAudioBusPlan (plan, [&] (AudioBusDirection direction, int bus, bool active)
     {
         activation.emplace_back (direction, bus, active);
+        return ! (direction == AudioBusDirection::Output && bus == 3 && ! active);
     });
     REQUIRE (activation == std::vector<std::tuple<AudioBusDirection, int, bool>> {
         { AudioBusDirection::Input, 0, true },
@@ -98,12 +99,12 @@ TEST_CASE ("VST3 audio bus plan keeps activation and scratch shape consistent",
         { AudioBusDirection::Output, 0, 2 },
         { AudioBusDirection::Output, 1, 0 },
         { AudioBusDirection::Output, 2, 8 },
-        { AudioBusDirection::Output, 3, 0 }
+        { AudioBusDirection::Output, 3, 4 }
     });
 
     const auto shape = planScratch (plan);
     REQUIRE (shape.inputChannels == 3);
-    REQUIRE (shape.outputChannels == 10);
+    REQUIRE (shape.outputChannels == 14);
     REQUIRE (shape.widestBus == 8);
 
     constexpr int frames = 64;
@@ -272,6 +273,12 @@ TEST_CASE ("Vst3Instance instantiates + processes a VST3 effect via InsertAdapte
         handler->restartComponent (Steinberg::Vst::RestartFlags::kLatencyChanged);
         REQUIRE (inst.consumeLatencyChanged());
         REQUIRE_FALSE (inst.consumeLatencyChanged());
+
+        REQUIRE_FALSE (inst.ioChangePending());
+        handler->restartComponent (Steinberg::Vst::RestartFlags::kIoChanged);
+        REQUIRE (inst.ioChangePending());
+        REQUIRE (inst.consumeIoChanged());
+        REQUIRE_FALSE (inst.ioChangePending());
 
         const int before = inst.paramCount();
         REQUIRE (before > 0);
