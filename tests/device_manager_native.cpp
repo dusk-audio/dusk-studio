@@ -12,7 +12,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <set>
 #include <string>
@@ -599,6 +601,25 @@ TEST_CASE ("DeviceManager fan-out: prime, remove-stop, summing, zero, error", "[
         dm.removeCallback (&cb0);
         dm.removeCallback (&cb1);
     }
+}
+
+TEST_CASE ("DeviceManager fan-out publishes callbacks without an audio-thread mutex",
+           "[audio][device][regression][issue-464]")
+{
+    const auto path = std::string (DUSKSTUDIO_SOURCE_DIR)
+                    + "/src/engine/device/DeviceManager.cpp";
+    std::ifstream input (path);
+    const std::string source { std::istreambuf_iterator<char> (input),
+                               std::istreambuf_iterator<char>() };
+    const auto begin = source.find ("class CallbackFanout");
+    const auto end = source.find ("} // namespace", begin);
+    REQUIRE (begin != std::string::npos);
+    REQUIRE (end != std::string::npos);
+
+    const auto fanout = source.substr (begin, end - begin);
+    REQUIRE (fanout.find ("std::mutex") == std::string::npos);
+    REQUIRE (fanout.find ("callbackListLock") == std::string::npos);
+    REQUIRE (fanout.find ("publishedCallbacks.load") != std::string::npos);
 }
 
 TEST_CASE ("DeviceManager listeners: owner removed mid-fire is skipped", "[audio][device]")

@@ -83,13 +83,13 @@ void requireInOrder (const std::string& source,
 
 TEST_CASE ("native window operations preserve activation and embedded editor geometry",
            "[windowing][linux][macos][windows][wayland][regression]"
-           "[issue-367][issue-369][issue-376][issue-380]")
+           "[issue-367][issue-369][issue-376][issue-380][issue-449]")
 {
     using duskstudio::platform::LinuxPeerTeardown;
     using duskstudio::platform::linuxPeerTeardownForMapping;
 
-    const auto mac = definitionBody (
-        readSource ("src/ui/PlatformWindowing_Mac.mm"), "bringWindowToFront");
+    const auto macSource = readSource ("src/ui/PlatformWindowing_Mac.mm");
+    const auto mac = definitionBody (macSource, "bringWindowToFront");
     REQUIRE (mac.find ("getNativeHandle") != std::string::npos);
     REQUIRE (mac.find ("@available(macOS 14.0") != std::string::npos);
     REQUIRE (mac.find ("[NSApp activate]") != std::string::npos);
@@ -104,10 +104,32 @@ TEST_CASE ("native window operations preserve activation and embedded editor geo
     REQUIRE (windows.find ("IsWindow") != std::string::npos);
     REQUIRE (windows.find ("IsIconic") != std::string::npos);
     REQUIRE (windows.find ("SW_RESTORE") != std::string::npos);
-    REQUIRE (windows.find ("AllowSetForegroundWindow") != std::string::npos);
+    REQUIRE (windows.find ("AllowSetForegroundWindow") == std::string::npos);
     requireInOrder (windows, "SetForegroundWindow", "FlashWindowEx");
 
     const auto windowsSource = readSource ("src/ui/PlatformWindowing_Windows.cpp");
+    const auto windowsFlush = definitionBody (windowsSource, "flushWindowOperations");
+    REQUIRE (windowsFlush.find ("PeekMessageW") != std::string::npos);
+    REQUIRE (windowsFlush.find ("TranslateMessage") != std::string::npos);
+    REQUIRE (windowsFlush.find ("DispatchMessageW") != std::string::npos);
+    REQUIRE (windowsFlush.find ("PostQuitMessage") != std::string::npos);
+
+    const auto macFlush = definitionBody (macSource, "flushWindowOperations");
+    REQUIRE (macFlush.find ("NSRunLoop") != std::string::npos);
+    REQUIRE (macFlush.find ("runMode") != std::string::npos);
+    REQUIRE (macFlush.find ("beforeDate") != std::string::npos);
+    REQUIRE (macFlush.find ("kMaxDrainIterations") != std::string::npos);
+    REQUIRE (macFlush.find ("for (") != std::string::npos);
+
+    const auto singleInstance = readSource ("src/util/SingleInstance.cpp");
+    const auto windowsBranch = singleInstance.rfind ("#elif defined (_WIN32)");
+    REQUIRE (windowsBranch != std::string::npos);
+    const auto handOver = definitionBody (
+        singleInstance.substr (windowsBranch), "handOver");
+    requireInOrder (handOver, "GetNamedPipeServerProcessId",
+                    "AllowSetForegroundWindow");
+    requireInOrder (handOver, "AllowSetForegroundWindow", "transferExact");
+
     const auto layout = definitionBody (windowsSource, "layoutChild");
     REQUIRE (layout.find ("getTopLevelComponent") != std::string::npos);
     REQUIRE (layout.find ("getLocalArea") != std::string::npos);

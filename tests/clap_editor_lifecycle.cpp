@@ -49,10 +49,13 @@ TEST_CASE ("the X11 CLAP editor maps whatever window the plugin parents into it"
 
     const auto embed = source.find ("bool ClapEditor::embed");
     const auto setParent = source.find ("gui->set_parent", embed);
-    const auto mapChildren = source.find ("mapPluginChildren", setParent);
+    const auto mapDefinition = source.find ("void ClapEditor::mapPluginChildren", setParent);
+    const auto mapChildren = source.find ("mapPluginChildren()", setParent);
     REQUIRE (embed != std::string::npos);
     REQUIRE (setParent != std::string::npos);
+    REQUIRE (mapDefinition != std::string::npos);
     REQUIRE (mapChildren != std::string::npos);
+    REQUIRE (mapChildren < mapDefinition);
 
     // A plugin that builds its window off the message thread parents it after
     // embed() returns, so pump() itself must retry rather than merely leaving a

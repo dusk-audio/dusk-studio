@@ -45,7 +45,7 @@ public:
 
     std::vector<PluginDescriptor> getLv2EffectDescriptions() const;
     std::vector<PluginDescriptor> getLv2InstrumentDescriptions() const;
-    void scanLv2Plugins();
+    void scanLv2Plugins (const std::atomic<bool>* abort = nullptr);
 
     std::vector<PluginDescriptor> getVst3NativeEffectDescriptions() const;
     std::vector<PluginDescriptor> getVst3NativeInstrumentDescriptions() const;
@@ -53,7 +53,7 @@ public:
 
     std::vector<PluginDescriptor> getAuEffectDescriptions() const;
     std::vector<PluginDescriptor> getAuInstrumentDescriptions() const;
-    void scanAuPlugins();
+    void scanAuPlugins (const std::atomic<bool>* abort = nullptr);
 
     std::unique_ptr<juce::AudioPluginInstance>
     createPluginInstance (const juce::File& pluginFile,

@@ -647,6 +647,7 @@ fi
     "$FIXTURE/packaging/RELEASE-NOTES.md" "$BUMP_OUTPUT" <<'PY'
 from pathlib import Path
 import re
+import subprocess
 import sys
 import xml.etree.ElementTree as ET
 
@@ -661,6 +662,47 @@ bump_output_path = Path(sys.argv[5])
 
 SUMMARY_START = "<!-- summary-start -->"
 SUMMARY_END = "<!-- summary-end -->"
+
+sfizz_tree = subprocess.run(
+    ["git", "-C", str(source_root), "ls-tree", "HEAD", "external/sfizz"],
+    check=True,
+    capture_output=True,
+    text=True,
+).stdout.strip()
+sfizz_tree_entry = re.fullmatch(
+    r"160000 commit ([0-9a-f]{40})\texternal/sfizz", sfizz_tree
+)
+assert sfizz_tree_entry, "external/sfizz must be a pinned git submodule"
+sfizz_revision = sfizz_tree_entry.group(1)
+
+licenses = (source_root / "LICENSES.txt").read_text(encoding="utf-8")
+sfizz_header_revision = re.search(
+    r"dusk-fizz \(SFZ.*?Version\s+:.*?submodule rev\s+([0-9a-f]{40})",
+    licenses,
+    re.DOTALL,
+)
+sfizz_license_revision = re.search(
+    r"external/sfizz/LICENSE,\s+submodule rev\s+([0-9a-f]{40})",
+    licenses,
+)
+assert sfizz_header_revision and sfizz_license_revision, (
+    "LICENSES.txt must record the dusk-fizz and sfizz license revisions"
+)
+recorded_sfizz_revisions = [
+    sfizz_header_revision.group(1),
+    sfizz_license_revision.group(1),
+    *re.findall(
+        r"\bsfizz(?:\s+submodule)?\s+rev\s+([0-9a-f]{40})", licenses
+    ),
+]
+assert len(recorded_sfizz_revisions) == 15, (
+    "LICENSES.txt sfizz revision inventory changed without updating the "
+    "release contract"
+)
+assert set(recorded_sfizz_revisions) == {sfizz_revision}, (
+    "LICENSES.txt sfizz revisions must match the external/sfizz gitlink: "
+    f"expected {sfizz_revision}, found {sorted(set(recorded_sfizz_revisions))}"
+)
 
 
 def summary_slot(text):
@@ -687,6 +729,12 @@ workflows = {
 }
 notes_marker = "--notes-file packaging/RELEASE-NOTES.md"
 preflight_marker = "- name: Preflight - releases-repo token is valid (tag builds only)"
+action_pins = {
+    "actions/checkout": ("3d3c42e5aac5ba805825da76410c181273ba90b1", 6),
+    "actions/upload-artifact": ("043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 4),
+    "actions/download-artifact": ("37930b1c2abaa49bbe596cd826c3c89aef350131", 1),
+    "actions/cache": ("55cc8345863c7cc4c66a329aec7e433d2d1c52a9", 1),
+}
 
 # The release-day self-test must be isolated from the maintainer's live
 # Wayland session and must fail closed if its private X server cannot start.
@@ -1163,6 +1211,14 @@ assert workflow_name and workflow_name.group(1).strip() == workflows["release.ym
 assert release_workflow.count(preflight_marker) == 1, (
     "release token preflight must appear exactly once"
 )
+for action, (revision, expected_count) in action_pins.items():
+    refs = re.findall(rf"uses:\s*{re.escape(action)}@([^\s#]+)", release_workflow)
+    assert refs == [revision] * expected_count, (
+        f"{action} must use its audited commit SHA {expected_count} times: {refs}"
+    )
+assert not re.search(r"uses:\s*actions/[^@\s]+@v[0-9]+\b", release_workflow), (
+    "release credentials must not be exposed to actions pinned by a floating major"
+)
 preflight_at = release_workflow.index(preflight_marker)
 tag_check_at = release_workflow.index("- name: Verify tag matches VERSION")
 assert preflight_at < tag_check_at, (
@@ -1208,10 +1264,11 @@ artifact_contract = {
     "windows": ("release-windows", '"*.msi"'),
     "manual": ("release-manual", "MANUAL.pdf"),
 }
+upload_artifact_ref = f"actions/upload-artifact@{action_pins['actions/upload-artifact'][0]}"
 for job_name, (artifact_name, artifact_path) in artifact_contract.items():
     body = release_job(job_name)
     assert "needs: preflight" in body, f"{job_name} must wait for token/tag preflight"
-    assert body.count("actions/upload-artifact@v7") == 1, (
+    assert body.count(upload_artifact_ref) == 1, (
         f"{job_name} must stage exactly one release artifact"
     )
     for required in (
@@ -1223,10 +1280,49 @@ for job_name, (artifact_name, artifact_path) in artifact_contract.items():
         assert required in body, f"{job_name} artifact contract lost: {required}"
     assert "gh release" not in body, f"{job_name} must never publish independently"
 
+for job_name in ("linux", "macos", "windows"):
+    body = release_job(job_name)
+    app_configure = body.split("- name: Configure", 1)[1].split("- name: Build", 1)[0]
+    assert "-DDUSKSTUDIO_ENABLE_NATIVE_UI=ON" in app_configure, (
+        f"{job_name} release app must require the native UI"
+    )
+    assert "for option in DUSKSTUDIO_ENABLE_NATIVE_UI" in app_configure, (
+        f"{job_name} release app must verify the native UI cache value"
+    )
+
+manual_job = release_job("manual")
+for required in (
+    "poppler-utils",
+    "subject=$(LC_ALL=C pdfinfo MANUAL.pdf",
+    '"Dusk Studio ${version} User Manual"',
+):
+    assert required in manual_job, f"manual version verification lost: {required}"
+manual_builder = (source_root / "docs" / "build-pdf.sh").read_text(encoding="utf-8")
+assert '--metadata=subject:"Dusk Studio ${VERSION} User Manual"' in manual_builder, (
+    "manual builder must embed VERSION in PDF metadata"
+)
+tsan_suppressions = (source_root / "tools" / "tsan_suppressions.txt").read_text(
+    encoding="utf-8"
+)
+spsc_rationale, separator, _ = tsan_suppressions.partition("race:dusk::SpscIndexFifo")
+assert separator and "release stores" in spsc_rationale.rsplit("\n\n", 1)[-1], (
+    "the SpscIndexFifo TSan suppression must retain its memory-order rationale"
+)
+
+macos_job = release_job("macos")
+for required in (
+    'for binary in "$APP/Contents/MacOS/DuskStudio" "$HELPER"',
+    'otool -L "$binary"',
+    'helper_output=$(env -i HOME="$HOME" "$HELPER" 2>&1)',
+    "[[ $helper_rc -ne 64 ]]",
+    "pass --ipc-stub, --ipc-host or --scan",
+):
+    assert required in macos_job, f"packaged macOS helper verification lost: {required}"
+
 publish_job = release_job("publish")
 for required in (
     "needs: [linux, macos, windows, manual]",
-    "actions/download-artifact@v7",
+    f"actions/download-artifact@{action_pins['actions/download-artifact'][0]}",
     "pattern: release-*",
     "merge-multiple: true",
     "release fan-in must contain exactly the five expected payloads",
@@ -1252,6 +1348,17 @@ assert publish_job.count("gh release create") == 1, (
 )
 assert publish_job.count("gh release upload") == 1, (
     "the fan-in publisher must upload the complete set in one command"
+)
+upload_at = publish_job.index('gh release upload "$TAG"')
+verify_at = publish_job.index('scripts/verify-release-assets.sh "$TAG"')
+publish_at = publish_job.index(
+    'gh release edit "$TAG" --repo "$RELEASES_REPO" --draft=false'
+)
+assert publish_job[:upload_at].count("--draft") == 2, (
+    "both new and retried releases must be drafts before upload"
+)
+assert upload_at < verify_at < publish_at, (
+    "the release must remain draft until the uploaded six-asset set verifies"
 )
 assert "SHA256SUMS." not in release_workflow, (
     "per-job checksum fragments must not return"

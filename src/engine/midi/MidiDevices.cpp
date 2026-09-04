@@ -187,10 +187,10 @@ MidiOutputBank::MidiOutputBank()
 {
     // Pre-size every slot buffer so the audio-thread copy in queueRt never
     // allocates - reserveBytes also caps it, so an over-cap block is dropped by
-    // addEvent rather than reallocated. Sized from the shared ceiling so a burst
-    // that survived the input ring is not thrown away at the last hop out.
+    // addEvent rather than reallocated. The routing ceiling keeps a merged
+    // per-track block intact through the last hop out.
     for (auto& slot : queue)
-        slot.events.reserveBytes (dusk::kMidiBlockBytes);
+        slot.events.reserveBytes (dusk::kMidiRoutingBlockBytes);
 }
 
 MidiOutputBank::~MidiOutputBank()

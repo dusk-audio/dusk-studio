@@ -17,6 +17,11 @@ namespace
 {
 using namespace Steinberg;
 
+#if defined(DUSKSTUDIO_TESTS)
+int hostObjectsConstructed = 0;
+int hostObjectsDestroyed = 0;
+#endif
+
 // One COM object exposing every host facet. Lifetime is the owning
 // Vst3HostContext. The SDK HostApplication's addRef/release are non-owning
 // no-ops, so the context must destroy this object explicitly.
@@ -31,7 +36,19 @@ class HostObject final : public Vst::HostApplication,
 #endif
 {
 public:
-    explicit HostObject (Vst3HostContext::Callbacks*& cb) : callbacks (cb) {}
+    explicit HostObject (Vst3HostContext::Callbacks*& cb) : callbacks (cb)
+    {
+#if defined(DUSKSTUDIO_TESTS)
+        ++hostObjectsConstructed;
+#endif
+    }
+
+    ~HostObject()
+    {
+#if defined(DUSKSTUDIO_TESTS)
+        ++hostObjectsDestroyed;
+#endif
+    }
 
     // FUnknown: extend HostApplication's QI with the extra facets
     tresult PLUGIN_API queryInterface (const TUID iid, void** obj) override
@@ -245,6 +262,20 @@ Vst3HostContext::~Vst3HostContext()
     impl->host->teardown();
     impl->host.reset();
 }
+
+#if defined(DUSKSTUDIO_TESTS)
+Vst3HostContext::HostObjectLifetimeCounts
+Vst3HostContext::hostObjectLifetimeCounts() noexcept
+{
+    return { hostObjectsConstructed, hostObjectsDestroyed };
+}
+
+void Vst3HostContext::resetHostObjectLifetimeCounts() noexcept
+{
+    hostObjectsConstructed = 0;
+    hostObjectsDestroyed = 0;
+}
+#endif
 
 void Vst3HostContext::setCallbacks (Callbacks* cb) noexcept { impl->callbacks = cb; }
 

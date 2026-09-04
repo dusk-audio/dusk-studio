@@ -23,6 +23,7 @@
 #include "MidiClockEmitter.h"
 #include "MidiTimeCodeEmitter.h"
 #include "midi/MidiDevices.h"
+#include "midi/MidiSort.h"
 #include "device/DeviceManager.h"
 #include "device/IODevice.h"
 #include "device/IODeviceCallback.h"
@@ -801,6 +802,7 @@ private:
     dusk::MidiBuffer liveRecordMidiScratch;
     // Dusk MIDI is copied into this before midiOut.queueRt. Pre-reserved.
     dusk::MidiBuffer midiOutTrackScratch;
+    midi::MidiSortScratch midiOutSortScratch;
 
     // SPSC handoff. Producer must not touch testInjectMidi while
     // testInjectReady==true. Single relaxed load + branch per block in

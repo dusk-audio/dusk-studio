@@ -5,8 +5,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "engine/lv2/Lv2Bundle.h"
+#include "engine/lv2/Lv2Scanner.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <string>
 
@@ -21,8 +23,12 @@ TEST_CASE ("Lv2Bundle rejects a non-bundle path cleanly", "[lv2][bundle]")
     REQUIRE (bundle.world() == nullptr);
 }
 
-TEST_CASE ("Lv2Bundle loads + enumerates a real LV2 bundle", "[lv2][bundle]")
+TEST_CASE ("LV2 discovery cancels and loads a real bundle",
+           "[lv2][bundle][scanner][regression][issue-466]")
 {
+    std::atomic<bool> abort { true };
+    CHECK (duskstudio::lv2::Lv2Scanner::scan (&abort).empty());
+
     const char* path = std::getenv ("DUSKSTUDIO_TEST_LV2");
     if (path == nullptr || *path == '\0')
     {

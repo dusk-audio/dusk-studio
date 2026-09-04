@@ -46,42 +46,6 @@ static void copyDuskMidiToJuce (const dusk::MidiBuffer& source,
         destination.addEvent (meta.data, meta.numBytes, meta.samplePosition);
 }
 
-static void copyDuskMidiSorted (const dusk::MidiBuffer& source,
-                                dusk::MidiBuffer& destination) noexcept
-{
-    destination.clear();
-    bool havePreviousPosition = false;
-    int previousPosition = 0;
-    for (;;)
-    {
-        bool found = false;
-        int nextPosition = 0;
-        for (const auto meta : source)
-        {
-            if ((! havePreviousPosition || meta.samplePosition > previousPosition)
-                && (! found || meta.samplePosition < nextPosition))
-            {
-                nextPosition = meta.samplePosition;
-                found = true;
-            }
-        }
-        if (! found) break;
-        for (const auto meta : source)
-        {
-            if (meta.samplePosition != nextPosition) continue;
-            if (destination.addEvent (meta.data, meta.numBytes, meta.samplePosition))
-                continue;
-            if (destination.fitsWhenEmpty (meta.numBytes))
-            {
-                destination.clear();
-                return;
-            }
-        }
-        previousPosition = nextPosition;
-        havePreviousPosition = true;
-    }
-}
-
 // Log-span of the HPF sweep band, precomputed once. The MIDI-CC HPF map runs
 // on the audio thread per controller event; without this it would recompute
 // std::log(max/min) on every CC message.
@@ -1010,28 +974,24 @@ void AudioEngine::recomputePdc() noexcept
             {
                 lat = strip.getPluginSlot().getLatencySamples();
                 // A native insert replaces the JUCE slot (which then reports 0),
-                // so its latency must feed PDC instead. Skip it while bypassed -
-                // bypass passes audio through at zero delay, matching the JUCE
-                // slot's getLatencySamples() returning 0 when bypassed.
+                // so its effective latency must feed PDC instead. Native slots
+                // report zero while bypassed or quarantined because both paths
+                // pass dry audio without delay.
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-                if (strip.isNativeClapLoaded() && ! strip.getNativeClapSlot().isBypassed())
-                    if (auto* inst = strip.getNativeClapSlot().getInstance())
-                        lat = inst->getLatencySamples();
+                if (strip.isNativeClapLoaded())
+                    lat = strip.getNativeClapSlot().getLatencySamples();
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-                if (strip.isNativeLv2Loaded() && ! strip.getNativeLv2Slot().isBypassed())
-                    if (auto* inst = strip.getNativeLv2Slot().getInstance())
-                        lat = inst->getLatencySamples();
+                if (strip.isNativeLv2Loaded())
+                    lat = strip.getNativeLv2Slot().getLatencySamples();
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-                if (strip.isNativeVst3Loaded() && ! strip.getNativeVst3Slot().isBypassed())
-                    if (auto* inst = strip.getNativeVst3Slot().getInstance())
-                        lat = inst->getLatencySamples();
+                if (strip.isNativeVst3Loaded())
+                    lat = strip.getNativeVst3Slot().getLatencySamples();
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_AU
-                if (strip.isNativeAuLoaded() && ! strip.getNativeAuSlot().isBypassed())
-                    if (auto* inst = strip.getNativeAuSlot().getInstance())
-                        lat = inst->getLatencySamples();
+                if (strip.isNativeAuLoaded())
+                    lat = strip.getNativeAuSlot().getLatencySamples();
 #endif
             }
         }
@@ -1062,24 +1022,20 @@ void AudioEngine::recomputePdc() noexcept
             {
                 int slotLat = lane.getPluginSlot (p).getLatencySamples();
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-                if (lane.isNativeClapLoaded (p) && ! lane.getNativeClapSlot (p).isBypassed())
-                    if (auto* inst = lane.getNativeClapSlot (p).getInstance())
-                        slotLat = inst->getLatencySamples();
+                if (lane.isNativeClapLoaded (p))
+                    slotLat = lane.getNativeClapSlot (p).getLatencySamples();
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-                if (lane.isNativeLv2Loaded (p) && ! lane.getNativeLv2Slot (p).isBypassed())
-                    if (auto* inst = lane.getNativeLv2Slot (p).getInstance())
-                        slotLat = inst->getLatencySamples();
+                if (lane.isNativeLv2Loaded (p))
+                    slotLat = lane.getNativeLv2Slot (p).getLatencySamples();
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-                if (lane.isNativeVst3Loaded (p) && ! lane.getNativeVst3Slot (p).isBypassed())
-                    if (auto* inst = lane.getNativeVst3Slot (p).getInstance())
-                        slotLat = inst->getLatencySamples();
+                if (lane.isNativeVst3Loaded (p))
+                    slotLat = lane.getNativeVst3Slot (p).getLatencySamples();
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_AU
-                if (lane.isNativeAuLoaded (p) && ! lane.getNativeAuSlot (p).isBypassed())
-                    if (auto* inst = lane.getNativeAuSlot (p).getInstance())
-                        slotLat = inst->getLatencySamples();
+                if (lane.isNativeAuLoaded (p))
+                    slotLat = lane.getNativeAuSlot (p).getLatencySamples();
 #endif
                 laneLat += std::max (0, slotLat);
             }
@@ -3122,11 +3078,11 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     // Live input, scheduled events, and loop-seam reset/chase messages share
     // this routing buffer. Four input-block ceilings cover two live sources
     // plus the worst 8192-frame/128-sample seam-reset burst off the RT path.
-    for (auto& m : perTrackMidi)        m.reserveBytes (4 * dusk::kMidiBlockBytes);
-    for (auto& m : perTrackMidiScratch) m.ensureSize (4 * dusk::kMidiBlockBytes);
+    for (auto& m : perTrackMidi)        m.reserveBytes (dusk::kMidiRoutingBlockBytes);
+    for (auto& m : perTrackMidiScratch) m.ensureSize ((int) dusk::kMidiRoutingBlockBytes);
     liveRecordMidiScratch.reserveBytes (2 * dusk::kMidiBlockBytes);
     midiClockOutScratch.reserveBytes (dusk::kMidiBlockBytes);
-    midiOutTrackScratch.reserveBytes (dusk::kMidiBlockBytes);
+    midiOutTrackScratch.reserveBytes (dusk::kMidiRoutingBlockBytes);
     silentInputScratch.assign ((size_t) bs, 0.0f);
 
     for (auto& a : laneAccum)
@@ -5598,7 +5554,8 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 // nothing, since a partial copy on cap overflow could split
                 // paired events (note on/off); empty means the block was
                 // dropped and there is nothing to send.
-                copyDuskMidiSorted (perTrackMidi[(size_t) t], midiOutTrackScratch);
+                midi::copyMidiSorted (perTrackMidi[(size_t) t], midiOutTrackScratch,
+                                      midiOutSortScratch);
                 if (! midiOutTrackScratch.isEmpty())
                     midiOut.queueRt (outIdx, midiOutTrackScratch,
                                      currentSampleRate.load (std::memory_order_relaxed));

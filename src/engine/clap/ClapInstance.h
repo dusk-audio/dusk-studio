@@ -185,6 +185,8 @@ private:
 
     // Note-input negotiation (CLAP_EXT_NOTE_PORTS), recorded at create().
     bool noteInPort = false, noteDialectClap = false, noteDialectMidi = false;
+    int16_t primaryNoteInputPort = 0;
+    std::vector<int16_t> clapNoteInputPorts;
 
     // Audio thread. Convert the block's MidiBuffer into note / raw-MIDI events
     // appended after the drained param changes.

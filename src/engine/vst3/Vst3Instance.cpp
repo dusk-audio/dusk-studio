@@ -2,6 +2,7 @@
 #include "Vst3Bundle.h"
 #include "Vst3BusPlan.h"
 #include "Vst3HostContext.h"
+#include "Vst3MidiNoteTracker.h"
 
 #include <public.sdk/source/vst/hosting/connectionproxy.h>
 #include <public.sdk/source/vst/hosting/eventlist.h>
@@ -65,6 +66,7 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
     std::vector<float>       silence;                 // per-channel silent input scratch
     std::vector<float>       sink;                    // per-channel output sink scratch
     std::vector<float*>      scratchPtrs;             // per-channel pointer scratch
+    detail::MidiNoteTracker  midiNotes;
 
     // Parameters: snapshot at create(); UI->RT ring drained into inParams each block.
     std::vector<ParamInfo> params;
@@ -511,6 +513,7 @@ bool Vst3Instance::activate (double sampleRate, int maxBlockFrames, std::string&
     { errorOut = "setActive(true) failed"; return false; }
 
     impl->latencySamples = (int) impl->processor->getLatencySamples();
+    impl->midiNotes.reset();
 
     impl->processor->setProcessing (true);
     impl->processing = true;
@@ -632,13 +635,14 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
             const uint32_t id = impl->ccParamId[(size_t) (channel * Vst::kCountCtrlNumber
                                                           + ctrl)]
                                     .load (std::memory_order_relaxed);
-            if (id == Impl::kNoCcParam) return;
+            if (id == Impl::kNoCcParam) return false;
             int32 queueIndex = 0;
             if (auto* queue = impl->inParams.addParameterData ((Vst::ParamID) id, queueIndex))
             {
                 int32 pointIndex = 0;
                 queue->addPoint (offset, normalized, pointIndex);
             }
+            return true;
         };
 
         for (const auto meta : *io.midiIn)
@@ -667,12 +671,35 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
                     ev.noteOff = { channel, (int16_t) d[1],
                                    (float) d[2] / 127.0f, -1, 0.0f };
                 }
-                impl->inEvents.addEvent (ev);
+                if (impl->inEvents.addEvent (ev) == kResultTrue)
+                {
+                    if (ev.type == Vst::Event::kNoteOnEvent)
+                        impl->midiNotes.noteOn (channel, (int) d[1]);
+                    else
+                        impl->midiNotes.noteOff (channel, (int) d[1]);
+                }
             }
             else if (status == 0xB0 && meta.numBytes >= 3 && d[1] < 128)
             {
-                queueCcParam (channel, (int16_t) d[1],
-                              (double) d[2] / 127.0, meta.samplePosition);
+                const auto controller = (int16_t) d[1];
+                const bool mapped = queueCcParam (channel, controller,
+                                                  (double) d[2] / 127.0,
+                                                  meta.samplePosition);
+                if (! mapped && impl->hasEventIn
+                    && (controller == Vst::kCtrlAllSoundsOff
+                        || controller == Vst::kCtrlAllNotesOff))
+                {
+                    impl->midiNotes.releaseChannel (channel, [&] (int key)
+                    {
+                        Vst::Event ev {};
+                        ev.busIndex     = 0;
+                        ev.sampleOffset = meta.samplePosition;
+                        ev.flags        = Vst::Event::kIsLive;
+                        ev.type         = Vst::Event::kNoteOffEvent;
+                        ev.noteOff      = { channel, (int16_t) key, 0.0f, -1, 0.0f };
+                        return impl->inEvents.addEvent (ev) == kResultTrue;
+                    });
+                }
             }
             else if (status == 0xE0 && meta.numBytes >= 3)
             {

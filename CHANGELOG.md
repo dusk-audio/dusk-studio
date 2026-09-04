@@ -5,13 +5,72 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [Unreleased]
+## [0.13.3] - Unreleased
+
+This release hardens session and plugin recovery, transport MIDI cleanup,
+native plugin hosting, and cross-platform launch and window behaviour. It also
+closes release-metadata gaps found during the pre-tag audit.
 
 ### Fixed
 
-- **Unreadable plugin settings are preserved.** A damaged native plugin state
-  blob now leaves the slot offline and remains unchanged in the session instead
-  of loading the plugin at its defaults and overwriting the only saved copy.
+- **Unreadable or rejected plugin settings are preserved.** A damaged native
+  plugin state blob now leaves the slot offline and remains unchanged in the
+  session. If a plugin rejects saved state, it is unloaded from the strip
+  instead of being left active at its defaults and overwriting the only saved
+  copy.
+- **Transport panic reaches every MIDI routing path.** Panic events still reach
+  MIDI tracks while they are muted or excluded by solo, VST3 synths that do not
+  map the standard panic controllers receive note-offs for their sounding
+  notes, and CLAP instruments receive a choke on every note-input port.
+- **CLAP-only voices stop with the transport.** Instruments whose note port does
+  not accept raw MIDI now receive a native CLAP choke when transport stops,
+  loops, or jumps, including plugins that expose both CLAP and MIDI note ports.
+- **Offline native inserts no longer add delay compensation.** An insert that is
+  quarantined after a failed reactivation contributes zero latency until it
+  successfully returns online, and compensation is recalculated at both
+  transitions.
+- **Clone Track preserves native plugin state on Linux.** CLAP, LV2, VST3, and
+  multisample inserts now clone with their saved settings instead of appearing
+  empty or committing a partially restored sampler.
+- **Irregular Standard MIDI Files import correctly.** Import now skips vendor
+  chunks between tracks, consumes the correct data lengths for system status
+  messages, and keeps same-tick retriggers in their original order.
+- **Dense MIDI output blocks keep every event.** Per-track output scratch space
+  is sized from the source block and stable-sorted without audio-thread
+  allocation, instead of dropping the whole block when fixed scratch capacity
+  was exceeded.
+- **Audio callback registration no longer stalls the audio thread.** Device
+  callback fan-out uses immutable atomic snapshots, so adding or removing a
+  callback cannot contend with real-time processing on a mutex.
+- **Session handoff is cross-platform.** Opening a session while Dusk Studio is
+  already running now reuses and activates the existing window on macOS and
+  Windows as well as Linux.
+- **Windows session handoff can foreground the existing window reliably.** The
+  secondary process grants the primary process foreground permission before
+  sending the request, with a taskbar flash when Windows still refuses focus.
+- **Windows paths remain Unicode end to end.** Plugin-host launch paths, MP3
+  bounce destinations, profile directories, and temporary directories now work
+  when the user name or installation path contains non-ASCII characters.
+- **macOS no longer opens two windows for one out-of-process plugin editor.** A
+  working in-process shell editor is reused without first showing the child
+  process fallback window.
+- **Windows out-of-process plugin editors stay aligned with their host panel.**
+  Embedded child coordinates now account for the top-level window origin and
+  display scale after moves and resizes.
+- **A damaged recent session no longer breaks the startup screen.** Errors while
+  scanning its audio directory now leave the format summary unavailable instead
+  of escaping through the recent-session list.
+- **VST3 bus activation now matches the buffers passed to the plugin.** Optional
+  and zero-channel buses remain inactive, while selected buses keep one
+  consistent shape through setup and processing.
+- **Cancel now stops LV2 and Audio Unit scans too.** Cancellation is checked
+  between native plugin bundles and a stopped pass does not publish a partial
+  cache.
+- **sfizz Rectify no longer reads beyond its SIMD stack input.** The pinned
+  sfizz revision includes the bounds fix with no intended sound change.
+- **The Tape processor no longer starts from an invalid mode sentinel.** The
+  donor DSP pin moves from `69f04318` to `0a1b17f8`, removing first-block
+  undefined behaviour while keeping audio output bit-identical.
 - **The macOS release now includes the plugin sandbox.** The disk image kept
   its macOS 11 deployment target, but the sandbox's shared-address wake API
   required macOS 14.4, so CMake omitted the plugin-host helper and scans ran
@@ -33,10 +92,10 @@ canonical source.
   so a saved binding keeps pointing at the parameter it was learned on. Bindings
   saved by an earlier release may land on the wrong parameter once, and stay put
   after they are re-learned.
-- **A plugin that loses its settings now says so.** When a plugin hands back no
-  settings to save, or refuses the settings a session gives it, the terminal says
-  which track and which format; both cases used to pass in silence and show up
-  only as a plugin that came back at its defaults.
+- **A plugin that loses or refuses its settings now says so.** The terminal and
+  alert identify the track and format. A plugin that rejects restored state is
+  unloaded and left offline so its preserved state cannot be replaced by
+  defaults.
 - **A CLAP plugin whose window does not appear now says so.** Some plugins put
   their window inside the editor area without making it visible, or build it a
   moment after the host asks them to; either way the editor opened as a blank
@@ -46,6 +105,23 @@ canonical source.
   that reports a failure from its own show step but draws anyway keeps its
   editor rather than losing it, and any reason an editor could not open is
   printed to the terminal and shown in the panel.
+
+### Changed
+
+- **The manual and activation checklist now match 0.13.3.** They document
+  all-platform session handoff, Windows Unicode paths, live LV2 editor state,
+  and the offline policy for rejected plugin settings; screenshot references
+  were refreshed at the same time.
+- **The bundled sfizz licence records now match the shipped submodule.** Every
+  sfizz revision recorded there names `0bb8aae364dc648c7c55438d17c7564a5d5eaef5`;
+  the nested dependency submodules sfizz vendors (Abseil, ghc-filesystem, SIMDe,
+  dr_libs and the rest) keep their own recorded revisions. Release-mechanics
+  tests reject future drift.
+- **The de-JUCE ledger now records the real 0.13.3 baseline.** The increases
+  introduced in #398 are disclosed for `AuxLaneComponent.cpp` (168 to 175),
+  `ClapPluginEditorComponent.cpp` (11 to 18), its header (7 to 8), and
+  `MainComponent.cpp` (457 to 459). Five stale ceilings were tightened to their
+  actual counts so later regressions cannot hide in unused allowance.
 
 ## [0.13.2] - 2026-08-26
 

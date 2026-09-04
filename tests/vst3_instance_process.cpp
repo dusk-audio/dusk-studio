@@ -11,6 +11,7 @@
 #include "engine/vst3/Vst3BusPlan.h"
 #include "engine/vst3/Vst3HostContext.h"
 #include "engine/vst3/Vst3Instance.h"
+#include "engine/vst3/Vst3MidiNoteTracker.h"
 
 #include <pluginterfaces/vst/ivsteditcontroller.h>
 
@@ -21,6 +22,29 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+
+TEST_CASE ("VST3 panic releases every sounding note when its CC is unmapped",
+           "[vst3][midi][regression][issue-460]")
+{
+    duskstudio::vst3::detail::MidiNoteTracker tracker;
+    tracker.noteOn (2, 48);
+    tracker.noteOn (2, 72);
+    tracker.noteOn (2, 72);
+    tracker.noteOn (3, 60);
+    tracker.noteOff (2, 48);
+    tracker.noteOff (2, 72);
+
+    std::vector<int> released;
+    tracker.releaseChannel (2, [&] (int key)
+    {
+        released.push_back (key);
+        return true;
+    });
+
+    REQUIRE (released == std::vector<int> { 72 });
+    REQUIRE_FALSE (tracker.isSounding (2, 72));
+    REQUIRE (tracker.isSounding (3, 60));
+}
 
 TEST_CASE ("VST3 audio bus plan keeps activation and scratch shape consistent",
            "[vst3][bus][regression][issue-361][issue-390]")

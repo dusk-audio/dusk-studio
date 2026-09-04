@@ -12,9 +12,21 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="${REPO_ROOT}/MANUAL.md"
 OUT="${REPO_ROOT}/MANUAL.pdf"
+VERSION_FILE="${REPO_ROOT}/VERSION"
 
 if [[ ! -f "${SRC}" ]]; then
   echo "error: ${SRC} not found" >&2
+  exit 1
+fi
+
+if [[ ! -f "${VERSION_FILE}" ]]; then
+  echo "error: ${VERSION_FILE} not found" >&2
+  exit 1
+fi
+
+VERSION="$(tr -d '[:space:]' < "${VERSION_FILE}")"
+if [[ -z "${VERSION}" ]]; then
+  echo "error: ${VERSION_FILE} is empty" >&2
   exit 1
 fi
 
@@ -99,6 +111,7 @@ pandoc "${PROCESSED}" \
   --pdf-engine=xelatex \
   --resource-path="${REPO_ROOT}:${REPO_ROOT}/docs:${REPO_ROOT}/docs/images" \
   --include-in-header="${HEADER}" \
+  --metadata=subject:"Dusk Studio ${VERSION} User Manual" \
   --toc \
   --toc-depth=3 \
   --variable=geometry:margin=1in \

@@ -2,6 +2,7 @@
 
 #include <AudioToolbox/AudioToolbox.h>
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -54,7 +55,7 @@ public:
     static bool isInstrumentType (std::uint32_t type) noexcept;
     static std::string categoryForType (std::uint32_t type);
     static bool describe (AudioComponent component, PluginDesc& out) noexcept;
-    static std::vector<PluginDesc> enumerate();
+    static std::vector<PluginDesc> enumerate (const std::atomic<bool>* abort = nullptr);
 
 private:
     AudioComponent audioComponent = nullptr;

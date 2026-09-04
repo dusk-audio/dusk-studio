@@ -13,23 +13,11 @@
 // the decoders read raw bytes directly.
 namespace dusk
 {
-// One ceiling for the whole MIDI path: the capacity of the input ring AND the
-// reserve of every buffer a whole-block drain lands in. Both come from here
-// because a destination smaller than the ring is a silent bug - a backlog that
-// fits the ring but not the destination arrives as an EMPTY block under
-// whole-block-or-nothing, losing note-offs for notes already sounding.
-//
-// On the ring -> MidiBuffer hop equal sizes make that impossible: a MidiBuffer
-// record carries 8 bytes of header against the ring's 12, so any record set the
-// ring accepted fits a destination of the same size. The later juce -> dusk hops
-// have no such margin - a juce record is 6 bytes of header, and a per-track
-// buffer accumulates from several sources under no cap at all - so they lean on
-// the matched sizing here plus the whole-block escape to stay safe rather than
-// on arithmetic.
-//
-// 16 KB clears a dense controller burst plus a 1 kB-class sysex, so a drop means
-// the audio thread has genuinely stopped draining.
+// 16 KB clears a dense controller burst plus a 1 kB-class sysex. Per-track
+// routing can merge four such sources, so every buffer after that merge shares
+// the larger ceiling through to the hardware-output queue.
 constexpr std::size_t kMidiBlockBytes = 16 * 1024;
+constexpr std::size_t kMidiRoutingBlockBytes = 4 * kMidiBlockBytes;
 
 // Non-owning view of one message's raw bytes (valid while its MidiBuffer lives).
 class MidiMessage
@@ -67,6 +55,11 @@ struct MidiBufferMetadata
 class MidiBuffer
 {
 public:
+    static constexpr std::size_t minimumEventStorageBytes() noexcept
+    {
+        return kHeader + 1;
+    }
+
     void clear()               noexcept { data.clear(); }
     bool isEmpty()       const noexcept { return data.empty(); }
 
