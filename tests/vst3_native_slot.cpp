@@ -6,6 +6,17 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "engine/vst3/NativeVst3Slot.h"
+#include "engine/vst3/Vst3HostContext.h"
+
+#if defined(__GNUC__)
+ #pragma GCC diagnostic push
+ #pragma GCC diagnostic ignored "-Wshadow"
+#endif
+#include <pluginterfaces/gui/iplugview.h>
+#include <pluginterfaces/vst/ivsteditcontroller.h>
+#if defined(__GNUC__)
+ #pragma GCC diagnostic pop
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -205,4 +216,33 @@ TEST_CASE ("NativeVst3Slot rebuilds a runtime output-bus layout",
     slot.processStereo (L.data(), R.data(), L.data(), R.data(), kBlock);
     REQUIRE_THAT (L.front(), WithinAbs (0.75, 1.0e-9));
     REQUIRE_THAT (R.front(), WithinAbs (-0.75, 1.0e-9));
+}
+
+TEST_CASE ("Vst3Instance detaches host interfaces before plugin termination",
+           "[vst3][instance][regression][issue-457]")
+{
+    duskstudio::vst3::Vst3Bundle bundle;
+    std::string err;
+    REQUIRE (bundle.load (DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_FIXTURE_PATH, err));
+    REQUIRE (bundle.plugins().size() == 1);
+
+    Steinberg::IPtr<Steinberg::IPlugView> view { nullptr };
+    {
+        duskstudio::vst3::Vst3Instance instance;
+        REQUIRE (instance.create (bundle, bundle.plugins().front().id, err));
+        auto* controller = static_cast<Steinberg::Vst::IEditController*> (
+            instance.editController());
+        REQUIRE (controller != nullptr);
+        view = Steinberg::owned (
+            controller->createView (Steinberg::Vst::ViewType::kEditor));
+        REQUIRE (view != nullptr);
+        REQUIRE (view->setFrame (static_cast<Steinberg::IPlugFrame*> (
+                     instance.getHost().plugFrame())) == Steinberg::kResultTrue);
+        instance.setActiveEditorView (view.get());
+    }
+
+    Steinberg::ViewRect teardownState;
+    REQUIRE (view->getSize (&teardownState) == Steinberg::kResultTrue);
+    REQUIRE (teardownState.getWidth() == 1);
+    REQUIRE (teardownState.getHeight() == 1);
 }

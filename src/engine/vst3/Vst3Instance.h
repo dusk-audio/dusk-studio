@@ -76,6 +76,10 @@ public:
     // Vst3Editor installs a handler returning whether the host honoured it.
     void setResizeViewHandler (std::function<bool (int, int)> fn);
 
+    // Borrow the editor's IPlugView while it is open so teardown can clear its
+    // host frame before the controller and host context are destroyed.
+    void setActiveEditorView (void* view) noexcept;
+
     // MIDI Learn: index (into paramInfo order) of the parameter the user last
     // moved in the plugin's editor (performEdit). -1 when nothing has been
     // touched. Message thread.

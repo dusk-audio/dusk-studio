@@ -1,4 +1,5 @@
 #include "public.sdk/source/main/pluginfactory.h"
+#include "public.sdk/source/common/pluginview.h"
 #include "public.sdk/source/vst/vstsinglecomponenteffect.h"
 
 #include <algorithm>
@@ -8,6 +9,30 @@ namespace Steinberg::Vst
 namespace
 {
 constexpr ParamID kExpandOutputs = 100;
+bool handlerDetachedBeforeTerminate = false;
+
+class LifecycleProbeView final : public CPluginView
+{
+public:
+    tresult PLUGIN_API setFrame (IPlugFrame* frame) override
+    {
+        observedFrame = frame;
+        return kResultTrue;
+    }
+
+    tresult PLUGIN_API getSize (ViewRect* size) override
+    {
+        if (size == nullptr)
+            return kInvalidArgument;
+        *size = ViewRect (0, 0,
+                          observedFrame == nullptr ? 1 : 0,
+                          handlerDetachedBeforeTerminate ? 1 : 0);
+        return kResultTrue;
+    }
+
+private:
+    IPlugFrame* observedFrame = nullptr;
+};
 
 class RuntimeRelayoutEffect final : public SingleComponentEffect
 {
@@ -25,8 +50,20 @@ public:
 
         parameters.addParameter (STR16 ("Expand Outputs"), nullptr, 1, 0.0,
                                  ParameterInfo::kCanAutomate, kExpandOutputs);
+        handlerDetachedBeforeTerminate = false;
         rebuildBusses();
         return kResultOk;
+    }
+
+    tresult PLUGIN_API terminate() override
+    {
+        handlerDetachedBeforeTerminate = componentHandler == nullptr;
+        return SingleComponentEffect::terminate();
+    }
+
+    IPlugView* PLUGIN_API createView (FIDString) override
+    {
+        return new LifecycleProbeView;
     }
 
     tresult PLUGIN_API setParamNormalized (ParamID id, ParamValue value) override

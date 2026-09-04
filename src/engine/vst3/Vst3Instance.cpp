@@ -13,6 +13,7 @@
 #include <public.sdk/source/common/memorystream.h>
 
 #include "../hosting/SpscRing.h"
+#include <pluginterfaces/gui/iplugview.h>
 #include <pluginterfaces/vst/ivstaudioprocessor.h>
 #include <pluginterfaces/vst/ivstcomponent.h>
 #include <pluginterfaces/vst/ivsteditcontroller.h>
@@ -38,6 +39,7 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
     IPtr<Vst::IAudioProcessor> processor;
     IPtr<Vst::IEditController> controller;
     bool controllerIsComponent = false;   // single-component plugin
+    IPlugView* editorView = nullptr;
 
     // Keeps component<->controller messaging alive (presets, custom UIs).
     IPtr<Vst::ConnectionProxy> componentCP, controllerCP;
@@ -293,6 +295,14 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
         processing = false;
         active = false;
 
+        if (editorView != nullptr)
+        {
+            editorView->setFrame (nullptr);
+            editorView = nullptr;
+        }
+        if (controller)
+            controller->setComponentHandler (nullptr);
+
         // No-arg disconnect(), same as the SDK's PlugProvider teardown: it
         // disconnects the destination AND clears srcConnection. The
         // IConnectionPoint overload treats nullptr as kInvalidArgument and
@@ -374,6 +384,11 @@ void Vst3Instance::setParamValue (uint32_t id, double value) noexcept
 void Vst3Instance::setResizeViewHandler (std::function<bool (int, int)> fn)
 {
     impl->resizeViewFn = std::move (fn);
+}
+
+void Vst3Instance::setActiveEditorView (void* view) noexcept
+{
+    impl->editorView = static_cast<IPlugView*> (view);
 }
 
 bool Vst3Instance::consumeLatencyChanged() noexcept
