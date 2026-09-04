@@ -586,6 +586,8 @@ void Vst3Instance::deactivate()
 
 bool Vst3Instance::reactivate (double sampleRate, int maxBlockFrames, std::string& errorOut)
 {
+    if (! impl->created) { errorOut = "not created"; return false; }
+
     // VST3 renegotiates rate/block through setupProcessing on the SAME instance,
     // so state and any open editor survive without a re-instantiate.
     deactivate();

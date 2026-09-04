@@ -219,8 +219,15 @@ TEST_CASE ("NativeVst3Slot rebuilds a runtime output-bus layout",
 }
 
 TEST_CASE ("Vst3Instance detaches host interfaces before plugin termination",
-           "[vst3][instance][regression][issue-457]")
+           "[vst3][instance][regression][issue-455][issue-457]")
 {
+    {
+        duskstudio::vst3::Vst3Instance neverCreated;
+        std::string reactivateError;
+        REQUIRE_FALSE (neverCreated.reactivate (48000.0, 64, reactivateError));
+        REQUIRE (reactivateError == "not created");
+    }
+
     duskstudio::vst3::Vst3Bundle bundle;
     std::string err;
     REQUIRE (bundle.load (DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_FIXTURE_PATH, err));
