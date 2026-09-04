@@ -81,9 +81,10 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     // MIDI output runs past it still grows the buffer on the audio thread.
     pluginMidiScratch.ensureSize (4096);
     // The native bridge is a hard cap instead, and the refill through it is
-    // whole-block-or-nothing, so it takes the shared MIDI ceiling: below that, a
-    // burst the input ring delivered whole would arrive here as nothing at all.
-    nativeMidiScratch.reserveBytes (dusk::kMidiBlockBytes);
+    // whole-block-or-nothing, so it takes the routed ceiling its source carries:
+    // per-track routing merges four inputs, and a block that fits there but not
+    // here would arrive at the plugin as nothing at all rather than truncated.
+    nativeMidiScratch.reserveBytes (dusk::kMidiRoutingBlockBytes);
 
     // Plugin slot - prepared at the same SR/BS so the audio thread never
     // sees an unprepared instance. If the slot has no plugin loaded, this

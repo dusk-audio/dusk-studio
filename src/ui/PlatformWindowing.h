@@ -86,19 +86,27 @@ void bringWindowToFront (juce::ComponentPeer& peer);
 // Must be called on the message thread.
 void setNativeCursorVisibleOnPeer (juce::ComponentPeer& peer, bool visible);
 
-// Block until the windowing system has finished processing every
-// queued operation from this process. Used to space out window-
+// Let the windowing system work through what this process has queued,
+// as far as the platform allows. Used to space out window-
 // destruction events during shutdown so the compositor isn't asked to
 // process N native-window destroys + the main window destroy back to
 // back - which on Mutter+XWayland has crashed the compositor and
 // taken the GNOME session with it.
 //
-// Linux: XSync on JUCE's display.
-// macOS: bounded drain of queued NSRunLoop work.
-// Win:   PeekMessage pump.
+// Linux: XSync on JUCE's display - a true fence, everything queued has
+//        been processed when it returns.
+// Win:   PeekMessage pump, drained until the queue is empty.
+// macOS: drain of queued NSRunLoop work, bounded at a fixed iteration
+//        count. AppKit has no fence, and an unbounded drain would spin
+//        forever on a source that re-arms itself - which during shutdown
+//        is a hang, not a delay. So this one is best-effort: it can
+//        return with work still queued.
 //
-// Returns when the operation completes; deterministic, not time-based.
-// Cheap on a clean compositor (microseconds).
+// Deterministic, not time-based, and cheap on a clean compositor
+// (microseconds). Callers use it to space out window destruction, never
+// for correctness: a partial macOS drain means less spacing, and the
+// shutdown phases that follow are already deferred across message-loop
+// ticks of their own.
 void flushWindowOperations();
 
 // Linux/XEmbed-only today. JUCE's VST3 editor on Linux uses

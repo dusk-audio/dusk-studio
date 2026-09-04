@@ -113,8 +113,10 @@ closes release-metadata gaps found during the pre-tag audit.
   and the offline policy for rejected plugin settings; screenshot references
   were refreshed at the same time.
 - **The bundled sfizz licence records now match the shipped submodule.** Every
-  recorded revision names `0bb8aae364dc648c7c55438d17c7564a5d5eaef5`, and
-  release-mechanics tests reject future drift.
+  sfizz revision recorded there names `0bb8aae364dc648c7c55438d17c7564a5d5eaef5`;
+  the nested dependency submodules sfizz vendors (Abseil, ghc-filesystem, SIMDe,
+  dr_libs and the rest) keep their own recorded revisions. Release-mechanics
+  tests reject future drift.
 - **The de-JUCE ledger now records the real 0.13.3 baseline.** The increases
   introduced in #398 are disclosed for `AuxLaneComponent.cpp` (168 to 175),
   `ClapPluginEditorComponent.cpp` (11 to 18), its header (7 to 8), and

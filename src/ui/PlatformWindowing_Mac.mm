@@ -5,7 +5,7 @@
 // Native counterparts to the Linux windowing operations. A peer's native
 // handle is its NSView; the containing NSWindow owns activation and ordering.
 // The remaining operations are intentionally small platform hooks:
-//   flushWindowOperations  -> bounded drain of queued NSRunLoop work.
+//   flushWindowOperations  -> bounded, best-effort drain of queued NSRunLoop work.
 //   prepareNativePeer...   -> no-op (NSView reparenting is
 //                              synchronous, no race window).
 
@@ -125,6 +125,10 @@ void bringWindowToFront (juce::ComponentPeer& peer)
 }
 void flushWindowOperations()
 {
+    // Bounded on purpose: a run-loop source that re-arms itself would keep an
+    // unbounded drain here forever, and the shutdown path that calls this has
+    // no way out of that. See the contract in PlatformWindowing.h - callers
+    // treat a partial drain as less spacing, never as a failure.
     auto* const runLoop = [NSRunLoop currentRunLoop];
     constexpr int kMaxDrainIterations = 256;
     for (int i = 0; i < kMaxDrainIterations; ++i)

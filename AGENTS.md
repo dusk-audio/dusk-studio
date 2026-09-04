@@ -1,0 +1,245 @@
+# Dusk Studio — instructions for Codex
+
+Dusk Studio is a portastudio-style DAW for Linux, C++17. It is being actively de-JUCE'd (see **De-JUCE — no new JUCE** below; read it before writing any new code). The authoritative spec is [DuskStudio.md](DuskStudio.md). Read it before changing anything non-trivial.
+
+## Architecture cheat-sheet
+
+- **Audio backend**: native `dusk` PipeWire backend ([src/engine/pipewire/](src/engine/pipewire/)), primary; native ALSA fallback. (The old JUCE-JACK shim is deleted — don't reintroduce a JUCE audio-device path.)
+- **DSP**: extracted from the user's existing Dusk Audio plugins at `/home/marc/projects/plugins/`. Shared headers live (or will live) at `plugins/plugins/shared/dsp-cores/` so both Dusk Studio and the Dusk plugins are single-source-of-truth consumers. Resolved via `-DDUSK_PLUGINS_PATH=/path/to/plugins` or sibling `../plugins` (mirror of the JUCE pattern). Header-only cores: edit a file in the plugins repo, next Dusk Studio build picks it up — no copy step, no submodule bump.
+- **JUCE**: 8.x, resolved via `-DJUCE_PATH` or sibling `../JUCE` (same scheme as the Dusk plugins repo).
+- **Native plugin hosts** (Linux): CLAP (`src/engine/clap/`), LV2 (`src/engine/lv2/`, lilv/suil via pkg-config), VST3 (`src/engine/vst3/`, Steinberg SDK hosting subset via the `external/vst3sdk` submodule — Dusk-owned mirror `dusk-audio/vst3sdk`, tag `dusk-vst3sdk-v1`, GPL-3.0 arm). All implement `src/engine/hosting/INativeInstance`; compile gates `DUSKSTUDIO_HAS_NATIVE_{CLAP,LV2,VST3}` with `#else` stubs so other platforms build. GPL invariant: never bundle any third-party plugin in a distribution (see LICENSES.txt).
+- **Topology**: 24 channel strips (phase invert → insert → HPF → 4-band EQ → LPF → compressor (Opto/FET/VCA) → pan → fader; mute/solo/IN gate the accumulation and the master / bus 1-4 / aux-send branching happens at the strip output, not inline) → 4 aux buses (EQ + comp + fader) → master (Pultec EQ + bus comp + tape sat + fader). Three banks of 8 select which 8 strips the control surface drives at a time; the full 24 are visible on screen.
+
+## De-JUCE — no new JUCE (READ FIRST)
+
+Dusk Studio is being re-platformed to remove **all** JUCE by 1.0, incrementally, tower by tower (campaign map + tower order in [docs/dejuce-campaign.md](docs/dejuce-campaign.md); live state in the [de-JUCE roadmap memory](../../.Codex/projects/-home-marc-projects-DuskStudio/memory/project_dejuce_roadmap.md)). Much of the code documented below still uses `juce::` — that is the *migration surface*, not a pattern to copy. **New code must not add JUCE.** Reach for the JUCE-free seam first; fall back to `juce::` only inside a file that is already coupled and has no seam yet.
+
+**The gate.** [tools/juce-gate.sh](tools/juce-gate.sh) (CI, via `linux-build.yml`) is a ratchet over `src/`, enforcing three one-way rules against `tools/juce-allowlist.txt` (`path<TAB>count`, one line per coupled file):
+- A *clean* file that gains `juce::`/`<juce_` and isn't listed **fails the build**.
+- A listed file that carries **more** occurrences than its recorded count **fails the build**. Most feature work lands in already-coupled files (AudioEngine, Session, `src/ui/*`), which is where new JUCE actually accumulates — the count is what stops it. Use the seam instead.
+- A listed file that is now JUCE-free must be deleted from the list. Files leave and never rejoin.
+
+`tools/juce-gate.sh --update` re-records the list after migration work, and is itself a ratchet: it **refuses** to add a path or raise a count, so the command everyone runs after a migration can't launder a regression into the baseline. An addition that is genuinely unavoidable is a hand edit to the allowlist, which then shows up in review as its own line and needs justifying in the PR body. The allowlist must hold exactly one `path<TAB>count` record per file, counts decimal with no leading zero — anything else fails closed rather than silently skipping that file's ceiling.
+
+Two things the gate still can't catch — you must:
+- **Never write the literal `juce::` token in a comment** — the gate greps text, so `// mirrors juce::Foo` trips it. Write "JUCE's Foo" by name instead.
+- The gate scans `src/` only. `tests/` may reference JUCE (the A/B-vs-JUCE parity tests need it); `tools/` and `packaging/` should not gain it.
+
+**Prefer the `src/foundation/` (and sibling) seams for new code:**
+
+| Instead of | Use | Header |
+|---|---|---|
+| `juce::String`, text ops | `dusk::text` | [Text.h](src/foundation/Text.h) |
+| `juce::File`, paths | `dusk::fs` | [Fs.h](src/foundation/Fs.h) |
+| `juce::var` / JSON | `dusk::json` (nlohmann) | [Json.h](src/foundation/Json.h) |
+| `juce::jmax/jmin/jlimit` | `std::max`/`std::min`/`std::clamp` | — |
+| `juce::SmoothedValue` | `dusk::audio::SmoothedValue` | [SmoothedValue.h](src/foundation/SmoothedValue.h) |
+| `juce::Decibels` | `dusk::audio` decibel helpers | [Decibels.h](src/foundation/Decibels.h) |
+| `juce::ScopedNoDenormals` | `dusk::audio::ScopedNoDenormals` | [ScopedNoDenormals.h](src/foundation/ScopedNoDenormals.h) |
+| `juce::dsp::Oversampling` | `dusk::audio::StereoOversampler` | [StereoOversampler.h](src/foundation/StereoOversampler.h) |
+| `juce::dsp::DelayLine` | `dusk::audio::IntDelayLine` | [IntDelayLine.h](src/foundation/IntDelayLine.h) |
+| `juce::dsp::IIR::Filter` | `duskaudio::Biquad` (donor DuskFilters) | donor shared DSP directory, auto-discovered by the `FourKEQDSP.hpp` + `DuskOversampler.hpp` API markers |
+| `juce::MidiBuffer` / `MidiMessage` | `dusk::MidiBuffer` | [MidiBuffer.h](src/foundation/MidiBuffer.h) |
+| `juce::MidiInput` / `MidiOutput` / `MidiMessageCollector` | `duskstudio::midi` seam + native backend | [src/engine/midi/](src/engine/midi/) (`JuceMidiBackend.cpp` is the mac/win fallback and the ONLY place these are still allowed) |
+| `juce::Timer`, `MessageManager::callAsync` | `dusk::Timer`, `dusk::callAsync` | [MessageThread.h](src/foundation/MessageThread.h) |
+| `juce::WaitableEvent` | `dusk::AutoResetEvent` | [AutoResetEvent.h](src/foundation/AutoResetEvent.h) |
+| `juce::AudioPlayHead::PositionInfo` | `dusk::TransportPosition` | [TransportPosition.h](src/foundation/TransportPosition.h) |
+| `juce::AudioFormatReader/Writer` | libsndfile wrappers | [src/engine/audiofile/](src/engine/audiofile/) |
+| `juce::AudioIODevice(Type)`, `AudioDeviceManager`, `BigInteger` masks | `dusk::audio` device interfaces | [src/engine/device/](src/engine/device/) (seam; native backend in progress) |
+
+**No seam yet (still JUCE — don't spread it to clean files):** the GUI tower (`juce::Component/Graphics/Colour/Font/Slider/Label/Button` — a bespoke Wayland toolkit is the finale), plugin-hosting `juce::AudioProcessor`/`AudioPluginInstance`, donor `juce::AudioProcessorValueTreeState` (being ported JUCE→DAF in the plugins repo), and `juce::AbstractFifo`. Editing these inside their already-coupled files is fine; do not pull them into a currently-clean file. For new UI use `DuskComboBox` / `duskstudio::showContextMenu`, never raw `juce::ComboBox` / `PopupMenu::showMenuAsync` / `juce::FileChooser`.
+
+## Build
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j6
+./build/DuskStudio_artefacts/Release/DuskStudio
+```
+
+**On the 16 GB Linux dev box, use `-j6`, never bare `-j`.** Translation units
+in this project peak at 350–500 MB in `cc1plus`. An unbounded Unix Makefiles
+build launched about 35 concurrent compilers during the 2026-08-14 freeze and
+collapsed the machine's page cache. `scripts/dev.sh` and the screenshot helper
+accept `DUSK_JOBS=N` when a host can safely run more workers. Keep repository
+examples and automation explicitly bounded; do not replace the limit with bare
+`-j` or a host-wide CPU count. Current CI caps are six for Linux/Ninja, five
+for macOS/Ninja, three for the disabled macOS/Xcode jobs and the libsodium
+autotools build, and four for Windows/MSBuild.
+
+JUCE and the Dusk plugins repo are auto-discovered from sibling directories. Pass `-DJUCE_PATH=...` or `-DDUSK_PLUGINS_PATH=...` to override either.
+
+### Cross-OS dev (macOS authoring, Linux testing)
+
+Single canonical build dir on both OSes: `build/` (app) and `build-tests/` (Catch2 tests). The sibling repos and JUCE source differ per OS, but the build directory does not — switching machines does not require a new build dir.
+
+| OS    | App build | Tests build      | JUCE source                              | Plugins source                 |
+|-------|-----------|------------------|------------------------------------------|--------------------------------|
+| macOS | `build/`  | `build-tests/`   | `../JUCE` (upstream)                     | `../plugins` (`DONOR_REV` pin) |
+| Linux | `build/`  | `build-tests/`   | `../JUCE-wayland` (plugdata-team fork)   | `../plugins` (`DONOR_REV` pin) |
+
+CMake auto-detects:
+- **JUCE** — on Linux it prefers `../JUCE-wayland` if present, falls back to `../JUCE`. The wayland fork has 5 local commits Dusk Studio depends on (XEmbed mapping, X11-on-Wayland fix, peer-creation latch — see [memory](<../../.Codex/projects/-home-marc-projects-Dusk Studio/memory/linux_juce_wayland_pin.md>)) and a divergent `addDefaultFormatsToManager` free function.
+- **Plugins** — the donor is a single checkout at `../plugins`. Release-compatible builds use the `DONOR_REV` shared by the build and release workflows because donor `main` does not contain the required framework-free compressor core. Auto-detected from the sibling `../plugins` directory; override with `-DDUSK_PLUGINS_PATH=/path/to/plugins`. If `../plugins` is on another revision when you build, you build against *that* revision's DSP and layout. Follow the platform build guide to fetch and detach at the pin. (The former `../plugins-main` worktree was removed; the repo is consolidated to one directory. Do NOT add a second donor worktree for routine builds.)
+
+The upstream-vs-fork `addDefaultFormats` API split is hidden behind [src/engine/JuceCompat.h](src/engine/JuceCompat.h) — call `duskstudio::juce_compat::addDefaultFormats(fm)` and the `#if defined(__linux__)` lives in one place. Don't sprinkle new platform `#ifdef`s into call sites.
+
+## Phase plan
+
+Phases 1a → 5 of [DuskStudio.md](DuskStudio.md) have all shipped, so there is no phase to work toward: the live mixer, multitrack recording with atomic JSON save/load and autosave, send-bus plugin hosting, take history and loop-record take stacking, markers, console automation (Write / Read / Touch) with breakpoint editing, punch and loop, and MTC + MIDI Clock sync are working features - check the feature table in [README.md](README.md) and the relevant chapter of [MANUAL.md](MANUAL.md) before assuming something is unbuilt. Current focus is 0.13.3 release hardening: the defects, release metadata and CI work in the milestone, not new phase features.
+
+## Audio thread rules (MANDATORY)
+
+The audio thread (`AudioEngine::audioDeviceIOCallback` and any `process*` it calls) is **real-time**. Violating these rules causes glitches, clicks, dropouts, or crashes:
+
+> **De-JUCE:** the `juce::` names in this section describe *current* code. For new code use the seams from the De-JUCE section above — `dusk::audio::ScopedNoDenormals`, `dusk::text` (not `juce::String`), `dusk::Timer`. `juce::AbstractFifo` has no seam yet; keep it only where already used.
+
+- **NEVER allocate memory** — no `new`, `make_unique`, `push_back`, `resize`, `std::string`, or `juce::String`. Pre-size all buffers in `prepare`/`audioDeviceAboutToStart`.
+- **NEVER lock a mutex** — cross-thread state is `std::atomic<T>` or `juce::AbstractFifo`. For rare swap-load patterns (see PluginSlot), use a lock-free atomic instance pointer; the audio thread reads via `acquire`, the message thread mutates via `release` and only releases the old object after the swap completes.
+- **NEVER do I/O** — no file reads, no logging, no `DBG()`, no network. Disk I/O for recording goes through `juce::AudioFormatWriter::ThreadedWriter` + `juce::TimeSliceThread`; the audio thread only `write()`s to a queue.
+- **NEVER call message-thread APIs** — no `sendChangeMessage()`, no `Component` methods, no `MessageManager`. Cross-thread signalling for UI metering uses `std::atomic<float>` polled by a `juce::Timer`.
+- **Use `dusk::audio::ScopedNoDenormals`** at the top of any audio-callback function that runs DSP — prevents CPU spikes from subnormal floats. (`juce::ScopedNoDenormals` survives only where an already-coupled file still uses it; new code never adds it.)
+- **Cache atomic pointers in `prepare`/`bind`**, never on the audio thread. See `ChannelStrip::bindCompParams()` for the canonical pattern (caches `getRawParameterValue()` pointers from `UniversalCompressor`'s APVTS).
+- **Memory ordering**: metering atomics use `std::memory_order_relaxed`; state flags that gate audio reads (e.g. plugin instance pointer, RT counters in Session) use `release` on the writer side and `acquire` on the audio-thread reader.
+- **Check `numSamples == 0`** — early return, JUCE/JACK can send empty blocks during transitions.
+- **Check `mixL.size() < numSamples`** — host-driven oversized blocks are real (see the existing guard in the callback). Either bail with cleared output, or chunk the work.
+- **Smoothers don't tick during skipped passes** — when an aux/track is silent and we skip its DSP, smoothers stay frozen and pick up correctly when audio resumes. Don't "advance" smoothers manually.
+
+## DSP lifecycle
+
+Dusk Studio's DSP classes (`ChannelStrip`, `AuxBusStrip`, `MasterBus`, `MasteringChain`, `PluginSlot`) follow a consistent shape:
+
+> **De-JUCE:** new DSP uses `dusk::audio::SmoothedValue`, `dusk::audio::StereoOversampler` / `IntDelayLine`, and `duskaudio::Biquad` — not `juce::SmoothedValue` / `juce::dsp::*`. Prefer raw `float*`/`float**` buffers over `juce::AudioBuffer` at new boundaries.
+
+- **`prepare(sampleRate, blockSize, ...)`** — cache `sampleRate`, `.prepare(spec)` every `juce::dsp::*` member, `.reset(sampleRate, rampSeconds)` every `SmoothedValue`, size every per-block scratch buffer. Called from `AudioEngine::prepareForSelfTest` (and indirectly from `audioDeviceAboutToStart`). May be called multiple times — must be idempotent.
+- **`bind(params)`** — stash a reference to the matching `ChannelStripParams` / `AuxBusParams` / `MasterBusParams` so the audio thread can read live values via the cached atom addresses. Called once at `AudioEngine` construction.
+- **`processInPlace(L, R, numSamples)`** or **`processAndAccumulate(...)`** — the audio-thread entry point. Updates smoother targets at the top, runs DSP, updates `mutable` meter atomics at the bottom.
+- **Latency** — set via `setLatencySamples()` in `prepareToPlay` for plugins; clear to 0 when bypassed, restore on un-bypass. Dusk Studio's hosted plugin slots inherit latency from the loaded instance.
+- **Smoothing** — smooth every control that changes: `.reset()` in `prepare`, `.setTargetValue()` from the param-update step at the top of each block, `.getNextValue()` per sample inside the DSP loop. New DSP uses `dusk::audio::SmoothedValue`; the `juce::SmoothedValue<float>` still in the older classes is migration surface, not the pattern to copy.
+- **Buffer processing** — raw pointer loops (`getWritePointer`) for sample-level DSP; wrap as `juce::AudioBuffer<float>` over existing storage (NOT a copy) when handing off to a JUCE DSP module like `BritishEQProcessor::process`.
+
+## Parameter conventions
+
+Dusk Studio has two parameter sources, both following the same "cache-the-atomic-pointer-once, read-lock-free-on-the-audio-thread" rule:
+
+> **De-JUCE:** source 1 (session `std::atomic<T>`) is already JUCE-free — new audio params go there. Source 2's APVTS is donor DSP being ported JUCE→DAF; don't add a *new* APVTS-backed processor.
+
+1. **Session-level atomics** — `ChannelStripParams::faderDb`, `AuxBusParams::eqLfGainDb`, etc. are plain `std::atomic<T>` members of structs in [src/session/Session.h](src/session/Session.h). The UI mutates via `.store(v, std::memory_order_relaxed)` on `onValueChange`; the audio thread reads via `.load(std::memory_order_relaxed)`. New audio params go here.
+2. **APVTS atoms in vendored DSP** — `UniversalCompressor`, `BritishEQProcessor`, `TubeEQProcessor` etc. expose their parameters via `juce::AudioProcessorValueTreeState::getRawParameterValue("name")`. Cache the returned pointer ONCE in a `bindCompParams()`-style function called from `prepare`. The audio thread writes via `storeAtom(p, v)` at the top of each block (lock-free, notification-free path) and the donor's `processBlock` reads it.
+
+Never call `getRawParameterValue()` on the audio thread — it's a string lookup. The pattern in [src/dsp/ChannelStrip.cpp](src/dsp/ChannelStrip.cpp) `bindCompParams()` is the reference; copy it for any new vendored DSP.
+
+For metering, use `mutable std::atomic<float>` with `relaxed` ordering on the params struct so DSP code holding a `const Params*` can still update meters.
+
+## Async resource loading
+
+For plugin instances, audio file readers, or any heavy resource — never block the audio thread or `prepareToPlay` on construction:
+
+- **Plugin slots** — see [src/engine/PluginSlot.cpp](src/engine/PluginSlot.cpp). Message-thread `loadFromFile`/`loadFromDescription` constructs the new plugin off-thread, primes it via `prepareToPlay`, then atomically swaps `currentInstance` (a `std::atomic<juce::AudioPluginInstance*>`). The audio thread reads via `.load(acquire)`. The previous instance is released AFTER the swap completes — its destructor isn't RT-safe.
+- **Recording** — `RecordManager` owns one `juce::AudioFormatWriter::ThreadedWriter` per active track. The audio thread only calls `writer->write()` (lock-free push to a JUCE-managed queue); `juce::TimeSliceThread` drains it.
+- **Autosave / session save** — message thread only. Atomic temp-file + rename in `SessionSerializer::save` so a crash mid-save never produces a half-written `session.json`.
+
+## Common DSP patterns
+
+> **De-JUCE:** filters → `duskaudio::Biquad`; oversampling → `dusk::audio::StereoOversampler`; smoothing → `dusk::audio::SmoothedValue`; metering timer → `dusk::Timer`. `juce::FloatVectorOperations` has no seam yet — plain loops or `std::` for new SIMD-friendly work.
+
+- **Oversampling** — All oversampling (donor plugins and otherwise) is controlled globally by the **Effect Oversampling** dropdown in the Audio Device settings panel. Individual DSP units must NOT enable internal oversampling on their own; the engine drives the chosen factor through to every processor that supports it. Don't call `setInternalOversamplingEnabled` (or equivalent) at the DSP-class level — wire new processors to read the engine-wide setting instead. **One deliberate exception**: the mastering [BrickwallLimiter](src/dsp/BrickwallLimiter.h) owns a fixed 4× oversampler. True-peak limiting is impossible without it, and the limiter is the terminal output stage (no donor saturation downstream to double-oversample), so it stays independent of the global setting.
+- **Filters** — `juce::dsp::IIR::Filter` and `BritishEQProcessor` (vendored). Always `.prepare(spec)` in `prepare`. **No EQ cramping ever** — IIR filters near Nyquist need oversampling; pre-warping alone is insufficient. The vendored EQs handle this.
+- **Metering** — `std::atomic<float>` with `relaxed`, written from the audio thread, polled by the UI at 30 Hz via `dusk::Timer` (the `juce::Timer` subclasses still doing this are legacy, and die with the events/GUI tower). SIMD-friendly peak detection via `juce::FloatVectorOperations::findMinAndMax` — no seam yet, so plain loops or `std::` for new work.
+- **Smoothing** — a 20 ms ramp is the default for any continuous control (faders, pans, gains), via `dusk::audio::SmoothedValue`. Bus toggles smooth 0..1 over 20 ms to avoid clicks on assign/unassign. Existing `juce::SmoothedValue` users are legacy implementation detail, not the default to reach for.
+- **Saturation / tubes / transformers** — use the `AnalogEmulation` library at `../plugins/plugins/shared/AnalogEmulation/`. Don't roll your own.
+- **Lock-free skip optimisation** — see the aux DSP-skip in [src/engine/AudioEngine.cpp](src/engine/AudioEngine.cpp). Cheap `findMinAndMax` peak check before the expensive EQ+comp pass; skips when the bus is silent. Smoothers freeze across the skip and resume cleanly.
+
+## Testing
+
+Dusk Studio has Catch2 v3 unit tests in [tests/](tests/), gated behind `-DDUSKSTUDIO_BUILD_TESTS=ON` so the default app build is unaffected. The convention is **narrow-link tests**: each test binary compiles only the `src/...` translation units it actually exercises, plus the JUCE modules those need. No GUI, no Dusk DSP, no full `Dusk Studio` target. This keeps the test build fast and isolates failures to the unit under test.
+
+### Build + run
+
+```bash
+cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON
+cmake --build build-tests --target dusk-studio-tests -j6
+ctest --test-dir build-tests --output-on-failure
+```
+
+Use `build-tests/` (separate from `build/`) so the two configurations don't fight over CMake cache state.
+
+### When to add a test
+
+- **Any non-trivial DSP change** — new processor, algorithm tweak, or a bug fix where the failure can be expressed as an audio-buffer assertion (silence-in/silence-out, peak ≤ ceiling, gain at unity, latency report matches actual delay, etc.).
+- **Any pure logic change** in `src/session/`, `src/engine/`, or `src/dsp/` that doesn't require a live audio device or Dusk DSP — region edit math, marker math, parameter range conversions, smoother behaviour.
+- **Regression tests for fixed bugs** — write the failing test first, then the fix.
+
+Don't write tests for: UI components (no JUCE message-loop / Component test harness yet), code that requires a real audio device, or anything that would need to spin up the full `AudioEngine` + Dusk DSP chain. Those are integration scope and currently belong in `DUSKSTUDIO_RUN_SELFTEST=1`.
+
+### How to add a test
+
+1. Drop a new `tests/<unit>_<aspect>.cpp` following the [tests/smoke_brickwall_limiter.cpp](tests/smoke_brickwall_limiter.cpp) pattern (`#include <catch2/...>`, `TEST_CASE(...)`, `REQUIRE(...)` / `REQUIRE_THAT(..., WithinAbs(...))`).
+2. In [tests/CMakeLists.txt](tests/CMakeLists.txt), add the new `.cpp` AND every additional `src/...` source file it pulls in (header-only deps don't need listing). Keep the source list minimal — only what's transitively reachable from the test.
+3. If the unit needs a JUCE module not yet linked (e.g. `juce_dsp` for an oversampler test), add it to `target_link_libraries(dusk-studio-tests PRIVATE ...)`.
+4. Build + run the commands above. `catch_discover_tests` registers each `TEST_CASE` with ctest automatically — no manual wiring per test.
+
+### Test style
+
+- **Float comparisons go through `WithinAbs` / `WithinRel`**, never `==`. Pick a tolerance that reflects the math (1e-6 for arithmetic, 1e-4 for accumulated DSP, larger for filters near Nyquist).
+- **Drive DSP through several blocks before measuring** when the unit has lookahead, smoothing, or filter state. Measuring the first block gives misleading results because envelopes / smoothers / delay lines haven't reached steady state.
+- **One concept per `TEST_CASE`.** Use `SECTION` for variations on the same setup, separate `TEST_CASE`s for unrelated scenarios.
+- **No sleeps, no threads, no real audio device.** Tests run in milliseconds and on every build.
+
+### Forced verification (extends rule 4 in Agent directives)
+
+For DSP / engine / session changes, "task complete" now requires the test build + ctest pass in addition to the main build:
+
+```bash
+cmake --build build-tests --target dusk-studio-tests -j6 && ctest --test-dir build-tests --output-on-failure
+```
+
+If a change touches a unit that has tests, those tests must pass. If it touches a unit that *doesn't* have tests but easily could, add at least one.
+
+## Code style
+
+- **C++17.** No `concepts`, no `std::format`, no `std::ranges` outside of trivially-replaceable uses.
+- **Naming** — `camelCase` methods/locals/members, `PascalCase` classes/structs, `kPascalCase` constants, `SCREAMING_SNAKE` only for macros.
+- **Headers** — `#pragma once`. Include order: JUCE → project-local (`../session/Session.h`, etc.) → STL.
+- **Comments** — default to none. Only write a comment when the *why* is non-obvious: a hidden invariant, a workaround for a specific bug, behaviour that would surprise a reader. Don't restate what the code does. Don't reference task numbers, PR descriptions, or the conversation that produced the change.
+- **No backwards-compat shims** — when something's gone, delete it. Don't leave `// removed`, don't keep dead `_var` parameters, don't rename variables to suppress unused warnings (compile flag handles those properly).
+- **No abstractions on spec** — three similar lines is better than a premature class. Add the abstraction the third time you'd actually use it, not the first.
+- **DSP separates from UI** — `src/dsp/`, `src/engine/`, and `src/session/` never include `src/ui/`. The other direction is fine. New cross-cutting helpers go in `src/ui/` if UI-only (see [src/ui/PluginPickerHelpers.h](src/ui/PluginPickerHelpers.h)) or in `src/engine/` if shared.
+
+## Git
+
+- Never add a `Co-Authored-By: Codex` (or any Codex/Anthropic) trailer to commits. Commits are authored by the user only.
+- Commits should be small and reviewable. Phase boundaries are natural commit boundaries.
+- Don't `git push` without explicit instruction. Don't force-push to `main` ever.
+
+## Agent directives — mechanical overrides
+
+Operating within a constrained context window. Adhere to these regardless of any default behaviour:
+
+### Pre-work
+1. **Step 0 — clean before refactoring.** Dead code accelerates context compaction. Before any structural refactor of a file >300 LOC, first remove unused includes, dead functions, commented-out blocks, and debug logging in a separate commit.
+2. **Phased execution.** Never attempt large multi-file refactors in a single response. Break work into explicit phases of max 5 files. Verify and pause for explicit approval between phases.
+
+### Code quality
+3. **Senior dev override.** Ignore the "simplest approach first / don't refactor beyond the ask" defaults when the architecture is genuinely flawed, state is duplicated, or patterns diverge. Ask: "What would a senior dev reject in code review?" Fix the structural issues, not just the surface symptom. (This is in tension with "no abstractions on spec" — the difference is: existing duplication that's already a problem is fair game; speculative future flexibility is not.)
+4. **Forced verification.** Don't claim a task is complete until you have run:
+   - `cmake --build build -j6` — must succeed with zero new warnings
+   - For audio-path changes: run `scripts/run-selftest-xvfb.sh` if practical, or at minimum confirm the binary launches without immediate crash
+   If verification isn't possible in the current environment, say so explicitly. "Builds locally" ≠ "works."
+
+### Context management
+5. **Sub-agent strategy.** For research tasks touching >5 independent files, spawn parallel `Explore` agents (each gets its own clean context) rather than serially loading every file into the main context. We did this earlier in this session — works well.
+6. **Context decay awareness.** After ~10 messages or any focus shift, re-read the files you're about to edit. Don't trust prior memory — auto-compaction may have altered it. The conversation summary is lossy.
+7. **File read budget.** `Read` is hard-capped at ~25k tokens (~2000 lines for typical source). For files over that limit (notably [DuskStudio.md](DuskStudio.md), ~30k tokens), read in offset/limit chunks or delegate to an Explore agent. Never assume a single read covered the whole file.
+8. **Tool result blindness.** Large tool outputs may be silently truncated. If a `grep` or `find` returns suspiciously few results, re-run with narrower scope and explicitly say in the summary that earlier output may have been truncated.
+
+### Edit safety
+9. **Edit integrity.** Re-read the target file before every edit. After editing, the harness confirms success or errors — trust that, but if you're making >3 sequential edits to the same file, re-read once mid-stream to confirm the cumulative state matches your mental model.
+10. **No semantic search.** Only `grep` is available — no AST awareness. When renaming a function/type/variable or changing a signature, search separately for:
+    - Direct calls and references (`grep -rn 'name\b'`)
+    - Type-level references (templates, typedefs, forward declarations)
+    - String literals containing the name (look in JSON serialisers, alert text)
+    - Header includes and forward declarations
+    - The vendored DSP at `../plugins/plugins/` if the symbol is shared
+    - `CMakeLists.txt` if files moved
+    Don't assume one grep caught everything.

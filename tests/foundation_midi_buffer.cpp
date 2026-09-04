@@ -207,14 +207,25 @@ TEST_CASE ("AudioEngine MIDI output scratch matches the per-track capacity",
 
     const auto engineSource = readSource ("src/engine/AudioEngine.cpp");
     const auto devicesSource = readSource ("src/engine/midi/MidiDevices.cpp");
+    const auto stripSource = readSource ("src/dsp/ChannelStrip.cpp");
 
     REQUIRE_FALSE (engineSource.empty());
     REQUIRE_FALSE (devicesSource.empty());
+    REQUIRE_FALSE (stripSource.empty());
     REQUIRE (engineSource.find (
         "midiOutTrackScratch.reserveBytes (dusk::kMidiRoutingBlockBytes)")
         != std::string::npos);
     REQUIRE (devicesSource.find (
         "slot.events.reserveBytes (dusk::kMidiRoutingBlockBytes)")
+        != std::string::npos);
+
+    // The strip feeds its hosted plugin from perTrackMidi, which carries the
+    // routed ceiling. A smaller cap here drops the whole block, not its tail.
+    REQUIRE (engineSource.find (
+        "for (auto& m : perTrackMidi)        m.reserveBytes (dusk::kMidiRoutingBlockBytes)")
+        != std::string::npos);
+    REQUIRE (stripSource.find (
+        "nativeMidiScratch.reserveBytes (dusk::kMidiRoutingBlockBytes)")
         != std::string::npos);
 }
 
