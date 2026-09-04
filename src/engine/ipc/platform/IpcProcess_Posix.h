@@ -2,10 +2,12 @@
 
 #include "IpcChannel.h"
 
+#include <cerrno>
 #include <cstring>
 #include <signal.h>
 #include <spawn.h>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 extern "C" char** environ;
@@ -35,16 +37,47 @@ inline bool posixSpawn (const std::string& executablePath,
         return false;
     }
 
+    // The channel is created CLOEXEC, so the descriptor the child inherits has
+    // to be one the dup2 action re-creates. A dup2 action whose source already
+    // equals its target is specified to clear FD_CLOEXEC in place, but Darwin
+    // has not always honoured that, and the child would then exec with no
+    // channel at all. Duplicating first (dup never carries FD_CLOEXEC over)
+    // keeps the source and target distinct on every platform.
+    int inheritSource = childChannelEnd.fd;
+    int duplicatedSource = -1;
+    if (inheritSource == kChildInheritFd)
+    {
+        duplicatedSource = ::dup (inheritSource);
+        if (duplicatedSource < 0)
+        {
+            ::posix_spawn_file_actions_destroy (&actions);
+            errorOut = std::string ("could not duplicate the child channel: ")
+                + std::strerror (errno);
+            return false;
+        }
+        inheritSource = duplicatedSource;
+    }
+
+    const auto closeDuplicatedSource = [&duplicatedSource]
+    {
+        if (duplicatedSource >= 0)
+        {
+            ::close (duplicatedSource);
+            duplicatedSource = -1;
+        }
+    };
+
     result = ::posix_spawn_file_actions_addclose (&actions, parentChannelEnd.fd);
     if (result == 0)
         result = ::posix_spawn_file_actions_adddup2 (
-            &actions, childChannelEnd.fd, kChildInheritFd);
-    if (result == 0 && childChannelEnd.fd != kChildInheritFd)
-        result = ::posix_spawn_file_actions_addclose (&actions, childChannelEnd.fd);
+            &actions, inheritSource, kChildInheritFd);
+    if (result == 0 && inheritSource != kChildInheritFd)
+        result = ::posix_spawn_file_actions_addclose (&actions, inheritSource);
 
     if (result != 0)
     {
         ::posix_spawn_file_actions_destroy (&actions);
+        closeDuplicatedSource();
         errorOut = std::string ("posix_spawn file action failed: ")
             + std::strerror (result);
         return false;
@@ -80,6 +113,7 @@ inline bool posixSpawn (const std::string& executablePath,
     {
         ::posix_spawnattr_destroy (&attributes);
         ::posix_spawn_file_actions_destroy (&actions);
+        closeDuplicatedSource();
         errorOut = std::string ("posix_spawn attribute setup failed: ")
             + std::strerror (result);
         return false;
@@ -96,6 +130,7 @@ inline bool posixSpawn (const std::string& executablePath,
                             &attributes, argv.data(), environ);
     ::posix_spawnattr_destroy (&attributes);
     ::posix_spawn_file_actions_destroy (&actions);
+    closeDuplicatedSource();
     if (result != 0)
     {
         errorOut = std::string ("posix_spawn failed: ") + std::strerror (result);

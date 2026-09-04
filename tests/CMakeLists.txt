@@ -427,6 +427,20 @@ if(DUSKSTUDIO_NATIVE_VST3)
     smtg_detect_platform()
     include(SMTG_AddVST3Library)
 
+    # smtg_add_vst3plugin's Linux branch builds both LIBRARY_OUTPUT_DIRECTORY and
+    # SMTG_PLUGIN_PACKAGE_PATH from CMAKE_BUILD_TYPE, which a multi-config
+    # generator leaves empty. The package path then loses its configuration
+    # segment while CMake appends the configuration to the output directory
+    # itself, so the fixture's .so lands one level below where its bundle says
+    # it is and every test that loads it fails at dlopen. Fail here instead,
+    # where the cause is visible.
+    get_property(_dusk_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND _dusk_multi_config)
+        message(FATAL_ERROR
+            "The Linux test build needs a single-configuration generator for the "
+            "VST3 fixture bundle. Configure with -G Ninja -DCMAKE_BUILD_TYPE=Release.")
+    endif()
+
     set_target_properties(dusk-vst3-hosting PROPERTIES POSITION_INDEPENDENT_CODE ON)
     smtg_add_vst3plugin(dusk-studio-runtime-relayout-vst3-fixture
         fixtures/runtime_relayout_vst3.cpp
