@@ -54,6 +54,9 @@ closes release-metadata gaps found during the pre-tag audit.
 - **macOS no longer opens two windows for one out-of-process plugin editor.** A
   working in-process shell editor is reused without first showing the child
   process fallback window.
+- **Sandboxed plugin editor failures no longer strand their window.** On macOS,
+  an available shell editor opens even if the child cannot hide its fallback
+  window. Linux and Windows release stale embedded windows after a child crash.
 - **Windows out-of-process plugin editors stay aligned with their host panel.**
   Embedded child coordinates now account for the top-level window origin and
   display scale after moves and resizes. They also hide beneath application

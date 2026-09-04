@@ -83,7 +83,8 @@ void requireInOrder (const std::string& source,
 
 TEST_CASE ("native window operations preserve activation and embedded editor geometry",
            "[windowing][linux][macos][windows][wayland][regression]"
-           "[issue-367][issue-369][issue-376][issue-380][issue-448][issue-449]")
+           "[issue-367][issue-369][issue-376][issue-380][issue-448][issue-449]"
+           "[issue-453]")
 {
     using duskstudio::platform::LinuxPeerTeardown;
     using duskstudio::platform::linuxPeerTeardownForMapping;
@@ -234,13 +235,34 @@ TEST_CASE ("native window operations preserve activation and embedded editor geo
     REQUIRE (macBranch < cachedShell);
     REQUIRE (cachedShell < cachedHide);
     REQUIRE (cachedHide < cachedShow);
+    REQUIRE (remoteEditor.substr (cachedHide, cachedShow - cachedHide)
+                 .find ("return") == std::string::npos);
     REQUIRE (cachedShow < shellLoad);
     REQUIRE (shellLoad < stateSync);
     REQUIRE (stateSync < shellHost);
     REQUIRE (shellHost < shellHide);
     REQUIRE (shellHide < shellShow);
+    REQUIRE (remoteEditor.substr (shellHide, shellShow - shellHide)
+                 .find ("embed.reset") == std::string::npos);
     REQUIRE (shellShow < fallbackShow);
     REQUIRE (fallbackShow < nextPlatformBranch);
+
+    const auto closeEditor = definitionBody (
+        readSource ("src/ui/ChannelStripComponent.cpp"),
+        "ChannelStripComponent::closePluginEditor");
+    REQUIRE (closeEditor.find ("hasRemoteEditorEmbed") != std::string::npos);
+    REQUIRE (closeEditor.find ("pluginSlot.isRemote() || hasRemoteEditorEmbed")
+             != std::string::npos);
+
+    const auto stripTimer = definitionBody (
+        readSource ("src/ui/ChannelStripComponent.cpp"),
+        "ChannelStripComponent::timerCallback");
+    const auto crashCleanup = stripTimer.find ("pluginSlot.wasCrashed()");
+    const auto closeStaleEditor = stripTimer.find ("closePluginEditor", crashCleanup);
+    const auto refreshSlot = stripTimer.find ("refreshPluginSlotButton");
+    REQUIRE (crashCleanup != std::string::npos);
+    REQUIRE (crashCleanup < closeStaleEditor);
+    REQUIRE (closeStaleEditor < refreshSlot);
 
     const auto modal = definitionBody (
         readSource ("src/ui/EmbeddedModal.h"), "componentMovedOrResized");
