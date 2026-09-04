@@ -56,7 +56,8 @@ closes release-metadata gaps found during the pre-tag audit.
   process fallback window.
 - **Windows out-of-process plugin editors stay aligned with their host panel.**
   Embedded child coordinates now account for the top-level window origin and
-  display scale after moves and resizes.
+  display scale after moves and resizes. They also hide beneath application
+  dialogs and reattach safely after the parent window is recreated.
 - **Sandboxed plugin windows stay responsive on Windows and macOS.** Window
   creation, visibility changes, resizing, and teardown now run on the child
   process's pumping message thread instead of its blocking control thread.

@@ -83,7 +83,7 @@ void requireInOrder (const std::string& source,
 
 TEST_CASE ("native window operations preserve activation and embedded editor geometry",
            "[windowing][linux][macos][windows][wayland][regression]"
-           "[issue-367][issue-369][issue-376][issue-380][issue-449]")
+           "[issue-367][issue-369][issue-376][issue-380][issue-448][issue-449]")
 {
     using duskstudio::platform::LinuxPeerTeardown;
     using duskstudio::platform::linuxPeerTeardownForMapping;
@@ -136,8 +136,33 @@ TEST_CASE ("native window operations preserve activation and embedded editor geo
     REQUIRE (layout.find ("getLocalBounds") != std::string::npos);
     REQUIRE (layout.find ("embedscale::toPhysical") != std::string::npos);
     REQUIRE (layout.find ("getBoundsInParent") == std::string::npos);
+    REQUIRE (layout.find ("IsWindow") != std::string::npos);
+    REQUIRE (layout.find ("SWP_SHOWWINDOW") == std::string::npos);
     requireInOrder (layout, "getLocalArea", "embedscale::toPhysical");
     requireInOrder (layout, "embedscale::toPhysical", "SetWindowPos");
+
+    const auto setWindowParent = definitionBody (windowsSource, "setWindowParent");
+    REQUIRE (setWindowParent.find ("IsWindow") != std::string::npos);
+    REQUIRE (setWindowParent.find ("SetLastError") != std::string::npos);
+    REQUIRE (setWindowParent.find ("SetParent") != std::string::npos);
+    REQUIRE (setWindowParent.find ("GetLastError") != std::string::npos);
+
+    const auto parentChanged = definitionBody (windowsSource, "parentHierarchyChanged");
+    REQUIRE (parentChanged.find ("attachedParent") != std::string::npos);
+    REQUIRE (parentChanged.find ("setWindowParent") != std::string::npos);
+    REQUIRE (parentChanged.find ("WS_VISIBLE") == std::string::npos);
+
+    const auto detachChild = definitionBody (windowsSource, "detachChild");
+    REQUIRE (detachChild.find ("IsWindow") != std::string::npos);
+    REQUIRE (detachChild.find ("setWindowParent") != std::string::npos);
+    REQUIRE (detachChild.find ("SetWindowLongPtr") != std::string::npos);
+    REQUIRE (detachChild.find ("SetWindowPos") != std::string::npos);
+
+    const auto visibility = definitionBody (windowsSource, "visibilityChanged");
+    REQUIRE (visibility.find ("IsWindow") != std::string::npos);
+    REQUIRE (visibility.find ("ShowWindow") != std::string::npos);
+    REQUIRE (visibility.find ("SW_HIDE") != std::string::npos);
+    REQUIRE (visibility.find ("SW_SHOWNA") != std::string::npos);
 
     const auto moved = definitionBody (windowsSource, "moved");
     REQUIRE (moved.find ("layoutChild") != std::string::npos);
