@@ -64,6 +64,12 @@ closes release-metadata gaps found during the pre-tag audit.
 - **Sandboxed plugin windows stay responsive on Windows and macOS.** Window
   creation, visibility changes, resizing, and teardown now run on the child
   process's pumping message thread instead of its blocking control thread.
+- **Loading a sandboxed plugin no longer freezes the window.** Starting the
+  plugin host and asking it to load waits up to five and thirty seconds
+  respectively, and both waits used to happen on the thread that draws the
+  application, so a plugin that stalled on startup in its own process could
+  lock the interface for over half a minute. Both now happen away from it, and
+  a load that fails still falls back to loading the plugin in-process.
 - **A sandboxed plugin whose process is killed drops out for a few buffers, not
   a tenth of a second.** No operating system wait the audio thread uses carries
   news of the child's death, so a killed plugin host used to hold the audio

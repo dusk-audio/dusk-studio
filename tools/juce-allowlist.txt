@@ -24,7 +24,7 @@ src/engine/PlaybackEngine.cpp	3
 src/engine/PlaybackEngine.h	2
 src/engine/PluginManager.cpp	106
 src/engine/PluginManager.h	29
-src/engine/PluginSlot.cpp	71
+src/engine/PluginSlot.cpp	70
 src/engine/PluginSlot.h	40
 src/engine/RecordManager.cpp	3
 src/engine/RecordManager.h	2
