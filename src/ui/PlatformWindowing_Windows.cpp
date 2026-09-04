@@ -90,6 +90,11 @@ public:
     void visibilityChanged() override
     {
         if (child == nullptr || ! ::IsWindow (child)) return;
+        // Only a child we actually hold drives its own visibility. A failed
+        // attach, or a detach that already put the window back on the desktop,
+        // leaves it top-level and owned by the plugin host; showing it from
+        // here would float the plugin's window loose over the desktop.
+        if (attachedParent == nullptr || ! ::IsWindow (attachedParent)) return;
         ::ShowWindow (child, isShowing() ? SW_SHOWNA : SW_HIDE);
     }
 

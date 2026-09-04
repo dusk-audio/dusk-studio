@@ -88,6 +88,7 @@ inline bool posixSpawn (const std::string& executablePath,
     if (result != 0)
     {
         ::posix_spawn_file_actions_destroy (&actions);
+        closeDuplicatedSource();
         errorOut = std::string ("posix_spawn attributes init failed: ")
             + std::strerror (result);
         return false;
