@@ -64,6 +64,13 @@ closes release-metadata gaps found during the pre-tag audit.
 - **Sandboxed plugin windows stay responsive on Windows and macOS.** Window
   creation, visibility changes, resizing, and teardown now run on the child
   process's pumping message thread instead of its blocking control thread.
+- **Switching sandboxed plugins in quick succession no longer risks a dropout
+  or a crash.** Retiring an out-of-process connection now waits for the audio
+  thread to leave the plugin's processing call before the connection's shared
+  memory is torn down, so several loads, unloads, or re-enables inside one
+  block cannot pull the buffer out from under playback. The child process also
+  parks its audio worker before swapping a plugin, and a load that fails leaves
+  the previously loaded plugin playing instead of silencing the strip.
 - **A damaged recent session no longer breaks the startup screen.** Errors while
   scanning its audio directory now leave the format summary unavailable instead
   of escaping through the recent-session list.

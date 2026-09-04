@@ -249,6 +249,21 @@ void PluginSlot::pollRemoteReaper()
         reaperTimer.stopTimer();
     }
 }
+
+void PluginSlot::retireRemoteConnection()
+{
+    reaperTimer.stopTimer();
+
+    std::unique_ptr<duskstudio::ipc::RemotePluginConnection> retired;
+    {
+        const juce::SpinLock::ScopedLockType processGuard (processLock);
+        currentRemote.store (nullptr, std::memory_order_release);
+        retired = std::move (previousRemotes[1]);
+        previousRemotes[1] = std::move (previousRemotes[0]);
+        previousRemotes[0] = std::move (ownedRemote);
+    }
+    retired.reset();
+}
 #endif
 
 void PluginSlot::clearAutoBypass() noexcept
@@ -257,16 +272,10 @@ void PluginSlot::clearAutoBypass() noexcept
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     // Clearing crashed state too: if the user explicitly asks to
     // re-enable a crashed slot, drop the dead connection so the next
-    // load (or processBlock attempt) doesn't see a stale carcass. Use the
-    // same deferred-destruction shape as the swap paths: hand off
-    // into previousRemote so any audio block
-    // that's still holding a freshly-null'd currentRemote pointer
-    // can complete safely.
+    // load (or processBlock attempt) doesn't see a stale carcass.
     if (remoteCrashed.load (std::memory_order_relaxed))
     {
-        previousRemotes[1].reset();
-        previousRemotes[1] = std::move (previousRemotes[0]);
-        previousRemotes[0] = std::move (ownedRemote);
+        retireRemoteConnection();
         remoteCrashed.store (false, std::memory_order_relaxed);
     }
    #endif
@@ -327,7 +336,8 @@ bool PluginSlot::resizeRemoteEditor (int width, int height)
     }
     return true;
    #else
-    juce::ignoreUnused (width, height);
+    (void) width;
+    (void) height;
     return false;
    #endif
 }
@@ -692,17 +702,7 @@ bool PluginSlot::loadFromDescriptor (const PluginDescriptor& descriptor,
     // Tear down any prior OOP slot before deciding which path the new
     // load takes. Mode is per-load: we may end up in-process this time
     // even if the previous load was OOP (and vice versa).
-    //
-    // Two-deep deferred-destruction via previousRemotes ring (see
-    // declaration). Slot [0] holds the just-deposed connection; slot
-    // [1] holds the one-before-that. A third rapid swap evicts [1] and
-    // destroys it, by which point any audio block that captured the
-    // ring's contents has had two block-worths of time to drain.
-    reaperTimer.stopTimer();
-    currentRemote.store (nullptr, std::memory_order_release);
-    previousRemotes[1].reset();
-    previousRemotes[1] = std::move (previousRemotes[0]);
-    previousRemotes[0] = std::move (ownedRemote);
+    retireRemoteConnection();
     remoteCrashed.store (false, std::memory_order_relaxed);
 
     const bool tryOop = manager->isOopEnabled()
@@ -906,13 +906,8 @@ void PluginSlot::loadFromDescriptorAsync (const PluginDescriptor& descriptor,
     // A prior load may have been OOP (mode is per-load). Mirror the sync path's
     // remote teardown so processBlock stops routing to the remote before the
     // in-process instance becomes the active processor - without this the slot
-    // keeps playing the OOP plugin after currentInstance is nulled. Two-deep
-    // deferred-destruction ring, same as descriptor load / unload.
-    reaperTimer.stopTimer();
-    currentRemote.store (nullptr, std::memory_order_release);
-    previousRemotes[1].reset();
-    previousRemotes[1] = std::move (previousRemotes[0]);
-    previousRemotes[0] = std::move (ownedRemote);
+    // keeps playing the OOP plugin after currentInstance is nulled.
+    retireRemoteConnection();
     remoteCrashed.store (false, std::memory_order_relaxed);
    #endif
 
@@ -980,13 +975,7 @@ void PluginSlot::unload()
     ownedInstance.reset();
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
-    // Two-deep deferred-destruction via previousRemotes ring; see
-    // descriptor load for the rationale.
-    reaperTimer.stopTimer();
-    currentRemote.store (nullptr, std::memory_order_release);
-    previousRemotes[1].reset();
-    previousRemotes[1] = std::move (previousRemotes[0]);
-    previousRemotes[0] = std::move (ownedRemote);
+    retireRemoteConnection();
     remoteNumIn .store (0, std::memory_order_relaxed);
     remoteNumOut.store (0, std::memory_order_relaxed);
     remoteIsInstrument.store (false, std::memory_order_relaxed);
@@ -1002,7 +991,7 @@ void PluginSlot::unload()
 
 std::optional<PluginDescriptor> PluginSlot::getDescriptorForSave (int parkSleepMs)
 {
-    juce::ignoreUnused (parkSleepMs);
+    (void) parkSleepMs;
     if (loadedDescriptor.has_value())
         return loadedDescriptor;
     if (offlineCapturePlaceholder)
@@ -1052,7 +1041,7 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs)
             : juce::MemoryBlock (blob.data(), blob.size()).toBase64Encoding();
         return lastKnownStateBase64;
     }
-    juce::ignoreUnused (parkSleepMs);
+    (void) parkSleepMs;
 
     if (ownedRemote != nullptr && loadedDescriptor.has_value())
         return lastKnownStateBase64;

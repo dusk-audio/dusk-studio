@@ -846,8 +846,10 @@ std::uint32_t handleLoadPlugin (HostState& host,
         return 2;
     }
 
-    host.currentInstance.store (nullptr, std::memory_order_release);
-
+    // Build the replacement before disturbing the live instance: a creation
+    // failure then leaves the slot exactly as it was rather than parked on a
+    // null pointer with an orphaned ownedInstance, which silences the slot
+    // until some later RPC happens to republish it.
     juce::String errorMsg;
     auto fresh = host.formatManager.createPluginInstance (
         desc, hdr.sampleRate, hdr.blockSize, errorMsg);
@@ -871,14 +873,41 @@ std::uint32_t handleLoadPlugin (HostState& host,
     juce::PluginDescription loadedDescription;
     fresh->fillInPluginDescription (loadedDescription);
     reply.isInstrument = loadedDescription.isInstrument ? 1u : 0u;
+
+    // Swap under the park. Nulling currentInstance alone does not stop a
+    // worker that has already loaded the pointer, so destroying the deposed
+    // instance outside the park frees an AudioPluginInstance under
+    // processBlock. The deposed instance is destroyed after the park ends -
+    // the worker can only reach the republished pointer by then.
+    std::unique_ptr<juce::AudioPluginInstance> deposed;
+    const auto parkStatus = withParkedHostWorker (host, [&]
+    {
+       #if JUCE_MAC
+        if (host.ownedInstance != nullptr && host.paramListener != nullptr)
+            for (auto* p : host.ownedInstance->getParameters())
+                if (p != nullptr) p->removeListener (host.paramListener.get());
+        host.paramListener.reset();
+       #endif
+        deposed = std::move (host.ownedInstance);
+        host.ownedInstance = std::move (fresh);
+        host.currentSampleRate = hdr.sampleRate;
+        host.currentBlockSize  = hdr.blockSize;
+    });
+    if (parkStatus != 0)
+    {
+        const char* err = "worker park timed out during LoadPlugin";
+        replyOut.assign (err, err + std::strlen (err));
+        return parkStatus;
+    }
+
     replyOut.resize (sizeof (reply));
     std::memcpy (replyOut.data(), &reply, sizeof (reply));
 
-    host.ownedInstance = std::move (fresh);
-    host.currentSampleRate = hdr.sampleRate;
-    host.currentBlockSize  = hdr.blockSize;
-    host.currentInstance.store (host.ownedInstance.get(),
-                                  std::memory_order_release);
+    if (deposed != nullptr)
+    {
+        deposed->releaseResources();
+        deposed.reset();
+    }
 
    #if JUCE_MAC
     // Mac-only: install the mirror listener on every parameter so any
@@ -891,11 +920,11 @@ std::uint32_t handleLoadPlugin (HostState& host,
     //
     // Listener gets a fresh state vector sized to this plugin's
     // parameter count so the 3c-4 rate-limit dedup tracks each
-    // param independently. A subsequent LoadPlugin (slot replace)
-    // reaches handleRelease first -> detach + reset listener -> fresh
-    // sizing on the next load. Plugins with thousands of params
-    // (Diva, Massive X) pay ~12 bytes per param of tracking state -
-    // bounded + bounded-lifetime.
+    // param independently. The swap above detaches and drops the
+    // previous listener under the park, so this is always a fresh
+    // sizing. Plugins with thousands of params (Diva, Massive X) pay
+    // ~12 bytes per param of tracking state - bounded +
+    // bounded-lifetime.
     const int paramCount = host.ownedInstance->getParameters().size();
     host.paramListener = std::make_unique<ChildParamListener> (host, paramCount);
     for (auto* p : host.ownedInstance->getParameters())

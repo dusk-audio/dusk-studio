@@ -3,6 +3,10 @@
 #include "engine/PluginManager.h"
 #include "engine/PluginSlot.h"
 
+#include <atomic>
+#include <chrono>
+#include <thread>
+
 using namespace duskstudio;
 
 namespace
@@ -81,3 +85,41 @@ TEST_CASE ("PluginSlot republishes an in-process instance after release and prep
     CHECK (lifecycle->prepareCalls == 2);
     CHECK (lifecycle->processCalls == 1);
 }
+
+#if DUSKSTUDIO_HAS_OOP_PLUGINS
+// The audio thread try-locks processLock and then stays inside
+// RemotePluginConnection::processBlockSync for up to the OOP block timeout,
+// reading the child's shared memory the whole time. Every message-thread path
+// that rotates the deferred-destruction ring destroys the connection evicted
+// from the far slot, which unmaps that shared memory - so the rotation has to
+// happen with the lock held, not merely after currentRemote has been nulled.
+TEST_CASE ("PluginSlot rotates the remote ring under the process lock")
+{
+    using namespace std::chrono_literals;
+
+    PluginManager manager;
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+
+    std::atomic<bool> holdingLock { false };
+    std::atomic<bool> holdComplete { false };
+
+    std::thread audioThread ([&]
+    {
+        const juce::SpinLock::ScopedLockType processGuard (slot.getProcessLock());
+        holdingLock.store (true, std::memory_order_release);
+        std::this_thread::sleep_for (150ms);
+        holdComplete.store (true, std::memory_order_release);
+    });
+
+    while (! holdingLock.load (std::memory_order_acquire))
+        std::this_thread::yield();
+
+    slot.unload();
+    const bool waitedForAudioThread = holdComplete.load (std::memory_order_acquire);
+
+    audioThread.join();
+    CHECK (waitedForAudioThread);
+}
+#endif
