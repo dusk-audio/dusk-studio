@@ -48,6 +48,7 @@
 #if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
  #include "../NativeScanRows.h"
 #endif
+#include "../../foundation/AutoResetEvent.h"
 #include "../../foundation/MessageThread.h"
 #include "../JuceCompat.h"
 #include "platform/IpcChannel.h"
@@ -679,11 +680,34 @@ struct HostState
     // handleShowEditor for the per-platform chrome choice). editorWindow
     // wraps the plugin's AudioProcessorEditor so it has its own native
     // peer; editor is a non-owning pointer (the wrapper window owns the
-    // Component). Both are message-thread-only; the socket-reader thread
-    // acquires MessageManagerLock before touching them.
+    // Component). Both are message-thread-only; control handlers dispatch
+    // their window work there before replying.
     std::unique_ptr<juce::DocumentWindow>     editorWindow;
     juce::AudioProcessorEditor*               editor { nullptr };
 };
+
+template <typename Fn>
+bool runOnHostMessageThreadAndWait (Fn&& fn)
+{
+    dusk::AutoResetEvent completion;
+    bool succeeded = false;
+    const bool posted = dusk::callAsync ([&]
+    {
+        try
+        {
+            fn();
+            succeeded = true;
+        }
+        catch (...)
+        {
+            // A plugin exception must still release the waiting socket thread.
+        }
+        completion.signal();
+    });
+    if (! posted) return false;
+    completion.wait();
+    return succeeded;
+}
 
 #if JUCE_MAC
 // Listener installed on every parameter of the loaded DSP instance.
@@ -960,14 +984,19 @@ std::uint32_t handleShowEditor (HostState& host,
 {
     if (host.ownedInstance == nullptr) return 1;
 
-    ShowEditorReply reply {};
+    std::uint32_t status = 4;
+    if (! runOnHostMessageThreadAndWait ([&]
     {
-        const juce::MessageManagerLock mml;
+        ShowEditorReply reply {};
 
         if (host.editor == nullptr)
         {
             host.editor = host.ownedInstance->createEditorIfNeeded();
-            if (host.editor == nullptr) return 2;
+            if (host.editor == nullptr)
+            {
+                status = 2;
+                return;
+            }
         }
 
         if (host.editorWindow == nullptr)
@@ -1019,24 +1048,30 @@ std::uint32_t handleShowEditor (HostState& host,
         reply.width  = host.editorWindow->getWidth();
         reply.height = host.editorWindow->getHeight();
         reply.reserved = 0;
-    }
+        if (reply.windowId == 0)
+        {
+            status = 3;
+            return;
+        }
 
-    if (reply.windowId == 0) return 3;
-
-    replyOut.resize (sizeof (reply));
-    std::memcpy (replyOut.data(), &reply, sizeof (reply));
-    return 0;
+        replyOut.resize (sizeof (reply));
+        std::memcpy (replyOut.data(), &reply, sizeof (reply));
+        status = 0;
+    }))
+        return 4;
+    return status;
 }
 
 std::uint32_t handleHideEditor (HostState& host)
 {
-    const juce::MessageManagerLock mml;
-    if (host.editorWindow != nullptr)
+    return runOnHostMessageThreadAndWait ([&]
     {
-        host.editorWindow->clearContentComponent();
-        host.editorWindow.reset();
-    }
-    return 0;
+        if (host.editorWindow != nullptr)
+        {
+            host.editorWindow->clearContentComponent();
+            host.editorWindow.reset();
+        }
+    }) ? 0u : 1u;
 }
 
 std::uint32_t handleResizeEditor (HostState& host,
@@ -1045,11 +1080,16 @@ std::uint32_t handleResizeEditor (HostState& host,
     if (payload.size() != sizeof (ResizeEditorPayload)) return 1;
     ResizeEditorPayload p {};
     std::memcpy (&p, payload.data(), sizeof (p));
-    const juce::MessageManagerLock mml;
-    if (host.editorWindow == nullptr) return 2;
-    host.editorWindow->setSize (std::max (1, (int) p.width),
-                                  std::max (1, (int) p.height));
-    return 0;
+    std::uint32_t status = 2;
+    if (! runOnHostMessageThreadAndWait ([&]
+    {
+        if (host.editorWindow == nullptr) return;
+        host.editorWindow->setSize (std::max (1, (int) p.width),
+                                    std::max (1, (int) p.height));
+        status = 0;
+    }))
+        return 3;
+    return status;
 }
 
 // Inbound SetParam from parent (3c-3a). Marshals onto the JUCE message

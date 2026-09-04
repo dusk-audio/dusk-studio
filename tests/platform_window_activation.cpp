@@ -239,3 +239,22 @@ TEST_CASE ("launch session load and instance handoff retain native activation",
         readSource ("src/ui/MainComponent.cpp"), "finishLoadingSessionFrom");
     REQUIRE (sessionLoad.find ("bringWindowToFront") != std::string::npos);
 }
+
+TEST_CASE ("OOP editor window RPCs dispatch through the child message thread",
+           "[windowing][macos][windows][regression][issue-447]")
+{
+    const auto hostSource = readSource ("src/engine/ipc/PluginHostMain.cpp");
+    const auto dispatch = definitionBody (hostSource, "runOnHostMessageThreadAndWait");
+    REQUIRE (dispatch.find ("dusk::callAsync") != std::string::npos);
+    REQUIRE (dispatch.find ("dusk::AutoResetEvent") != std::string::npos);
+    REQUIRE (dispatch.find ("completion.wait") != std::string::npos);
+
+    for (const auto* handler : { "handleShowEditor", "handleHideEditor",
+                                 "handleResizeEditor" })
+    {
+        INFO ("handler: " << handler);
+        const auto body = definitionBody (hostSource, handler);
+        REQUIRE (body.find ("runOnHostMessageThreadAndWait") != std::string::npos);
+        REQUIRE (body.find ("MessageManagerLock") == std::string::npos);
+    }
+}

@@ -57,6 +57,9 @@ closes release-metadata gaps found during the pre-tag audit.
 - **Windows out-of-process plugin editors stay aligned with their host panel.**
   Embedded child coordinates now account for the top-level window origin and
   display scale after moves and resizes.
+- **Sandboxed plugin windows stay responsive on Windows and macOS.** Window
+  creation, visibility changes, resizing, and teardown now run on the child
+  process's pumping message thread instead of its blocking control thread.
 - **A damaged recent session no longer breaks the startup screen.** Errors while
   scanning its audio directory now leave the format summary unavailable instead
   of escaping through the recent-session list.
