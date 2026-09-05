@@ -20,6 +20,7 @@
  #include <cerrno>
  #include <fcntl.h>
  #include <poll.h>
+ #include <sys/file.h>
  #include <sys/socket.h>
  #include <sys/stat.h>
  #include <sys/un.h>
@@ -59,6 +60,8 @@ constexpr std::size_t kMaxPayloadBytes = 64 * 1024;
 constexpr int kReadBudgetMs = 2000;
 constexpr int kDeliveryBudgetMs = 2000;
 constexpr int kRefusalRetryMs = 250;
+constexpr int kSlotLockBudgetMs = 250;
+constexpr int kProbeBudgetMs = 250;
 using Deadline = std::chrono::steady_clock::time_point;
 
 struct Listener
@@ -94,28 +97,51 @@ std::uint64_t hashOf (const char* s) noexcept
 #endif
 
 // Linux uses one slot per display under XDG_RUNTIME_DIR. macOS uses one slot
-// per login user under its private TMPDIR. In both cases the containing 0700
+// per login user under its private temporary directory. In both cases the 0700
 // directory is the permission boundary an abstract socket would lack: without
 // it another uid could bind the name first or feed the running instance a
 // session of its choosing, whose plugin references would then be loaded.
-bool makeSocketPath (std::string& out)
+// Returns nullptr once out holds the slot path, or why the gate cannot be
+// keyed, which the caller reports rather than starting a silent second copy.
+const char* makeSocketPath (std::string& out)
 {
+    std::string runtimeDir;
 #if defined (__linux__)
-    const char* runtimeDir = std::getenv ("XDG_RUNTIME_DIR");
+    const char* fromEnvironment = std::getenv ("XDG_RUNTIME_DIR");
+    if (fromEnvironment == nullptr || *fromEnvironment != '/')
+        return "XDG_RUNTIME_DIR is unset or not an absolute path";
+    runtimeDir = fromEnvironment;
 #else
-    const char* runtimeDir = std::getenv ("TMPDIR");
+    // TMPDIR is per-process and mutable, so a Finder launch and a shell launch
+    // of the same user can carry different values and claim different slots.
+    // The confstr directory is the one private per-user path both agree on.
+ #if defined (DUSKSTUDIO_SINGLE_INSTANCE_TESTING)
+    if (const char* fromEnvironment = std::getenv ("TMPDIR");
+        fromEnvironment != nullptr && *fromEnvironment == '/')
+        runtimeDir = fromEnvironment;
+ #endif
+    if (runtimeDir.empty())
+    {
+        char buffer[1024] = {};
+        const std::size_t size = ::confstr (_CS_DARWIN_USER_TEMP_DIR, buffer, sizeof buffer);
+        if (size == 0 || size > sizeof buffer || buffer[0] != '/')
+            return "the per-user temporary directory is unavailable";
+        runtimeDir = buffer;
+    }
+    while (runtimeDir.size() > 1 && runtimeDir.back() == '/') runtimeDir.pop_back();
 #endif
-    if (runtimeDir == nullptr || *runtimeDir != '/') return false;
 
-    const std::string dir = std::string (runtimeDir) + "/dusk-studio";
-    if (::mkdir (dir.c_str(), 0700) != 0 && errno != EEXIST) return false;
+    const std::string dir = runtimeDir + "/dusk-studio";
+    if (::mkdir (dir.c_str(), 0700) != 0 && errno != EEXIST)
+        return "the runtime directory could not be created";
 
     struct stat st {};
-    if (::lstat (dir.c_str(), &st) != 0) return false;
+    if (::lstat (dir.c_str(), &st) != 0)
+        return "the runtime directory could not be inspected";
     if (! S_ISDIR (st.st_mode)
         || st.st_uid != ::getuid()
         || (st.st_mode & (S_IRWXG | S_IRWXO)) != 0)
-        return false;
+        return "the runtime directory is not a private directory owned by this user";
 
     char name[40] = {};
 #if defined (__linux__)
@@ -128,7 +154,9 @@ bool makeSocketPath (std::string& out)
     std::snprintf (name, sizeof name, "/instance.sock");
 #endif
     out = dir + name;
-    return out.size() < sizeof (sockaddr_un::sun_path);
+    if (out.size() >= sizeof (sockaddr_un::sun_path))
+        return "the runtime directory path is too long for a Unix socket";
+    return nullptr;
 }
 
 void makeAddress (const std::string& path, sockaddr_un& addr, socklen_t& len)
@@ -207,6 +235,51 @@ int acceptPeer (int fd)
 #endif
 }
 
+// The invariant every launch relies on: the directory entry at the slot path is
+// created, made listenable, and removed only under this lock. A stat before the
+// unlink cannot stand in for it, because the entry can be replaced between the
+// stat and the unlink - two launches racing after a crash would then each drop
+// what the other just bound, and both would run as primary over one session
+// directory. Holding it across bind and listen is what lets a refusal seen
+// under the lock be read as "the owner is gone" rather than "not listening
+// yet". Failing to take it is never fatal: the caller leaves the entry alone.
+class SlotLock
+{
+public:
+    explicit SlotLock (const std::string& socketPath)
+    {
+        fd = ::open ((socketPath + ".lock").c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+        if (fd < 0) return;
+
+        const auto deadline = std::chrono::steady_clock::now()
+                            + std::chrono::milliseconds (kSlotLockBudgetMs);
+        for (;;)
+        {
+            if (::flock (fd, LOCK_EX | LOCK_NB) == 0) return;
+            if (errno != EWOULDBLOCK && errno != EINTR) break;
+            if (std::chrono::steady_clock::now() >= deadline) break;
+            std::this_thread::sleep_for (std::chrono::milliseconds (5));
+        }
+        ::close (fd);
+        fd = -1;
+    }
+
+    ~SlotLock()
+    {
+        if (fd < 0) return;
+        ::flock (fd, LOCK_UN);
+        ::close (fd);
+    }
+
+    SlotLock (const SlotLock&) = delete;
+    SlotLock& operator= (const SlotLock&) = delete;
+
+    bool isHeld() const noexcept { return fd >= 0; }
+
+private:
+    int fd = -1;
+};
+
 // Closing the listening fd is what makes a later launch fall back to acting as
 // primary; leaving it bound but unserviced would strand every launch after it.
 // Both exchanges keep this safe to call from the listener thread and from
@@ -216,6 +289,9 @@ void teardown (Listener& l)
     const int fd = l.listenFd.exchange (-1);
     if (fd >= 0) ::close (fd);
     if (l.unlinked.exchange (true) || ! l.socketIdentified) return;
+
+    const SlotLock lock (l.socketPath);
+    if (! lock.isHeld()) return;
 
     // Remove only the file this process bound. A newer primary may already have
     // created its own socket at the same name, and unlinking that one would
@@ -286,19 +362,20 @@ bool writeAll (int fd, const std::string& payload, const Deadline deadline)
     return true;
 }
 
+enum class Receive { Complete, Dropped, Stopping };
+
 // One deadline for the whole exchange, not per read: a peer dribbling a byte
 // at a time under a per-read timeout would hold the listener open forever, and
 // release() waits on this thread.
-bool readPayload (int fd, int wakeFd, std::string& payload)
+Receive readExactly (int fd, int wakeFd, void* bytes, std::size_t size, const Deadline deadline)
 {
-    const auto deadline = std::chrono::steady_clock::now()
-                            + std::chrono::milliseconds (kReadBudgetMs);
-    char buf[1024];
+    auto* cursor = static_cast<unsigned char*> (bytes);
+    std::size_t received = 0;
 
-    while (payload.size() < kMaxPayloadBytes)
+    while (received < size)
     {
         const auto now = std::chrono::steady_clock::now();
-        if (now >= deadline) break;
+        if (now >= deadline) return Receive::Dropped;
         const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds> (deadline - now);
 
         pollfd fds[2] {};
@@ -310,18 +387,38 @@ bool readPayload (int fd, int wakeFd, std::string& payload)
         if (ready < 0)
         {
             if (errno == EINTR) continue;
-            break;
+            return Receive::Dropped;
         }
-        if (ready == 0) break;
-        if (fds[1].revents != 0) return false;
+        if (ready == 0) return Receive::Dropped;
+        if (fds[1].revents != 0) return Receive::Stopping;
         if (fds[0].revents == 0) continue;
 
-        const ssize_t got = ::read (fd, buf, sizeof buf);
-        if (got > 0) { payload.append (buf, (std::size_t) got); continue; }
+        const ssize_t got = ::read (fd, cursor + received, size - received);
+        if (got > 0) { received += (std::size_t) got; continue; }
         if (got < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
-        break;
+        return Receive::Dropped;
     }
-    return true;
+    return Receive::Complete;
+}
+
+// The length prefix mirrors the Windows pipe framing. Without it a sender that
+// stalls or dies mid-path delivers a prefix of an absolute path, which can
+// still name a directory the primary would then open as a session.
+Receive readPayload (int fd, int wakeFd, std::string& payload)
+{
+    const auto deadline = std::chrono::steady_clock::now()
+                            + std::chrono::milliseconds (kReadBudgetMs);
+
+    std::uint32_t payloadSize = 0;
+    const Receive header = readExactly (fd, wakeFd, &payloadSize, sizeof payloadSize, deadline);
+    if (header != Receive::Complete) return header;
+    if (payloadSize > kMaxPayloadBytes) return Receive::Dropped;
+    if (payloadSize == 0) return Receive::Complete;
+
+    payload.assign (payloadSize, '\0');
+    const Receive body = readExactly (fd, wakeFd, &payload[0], payload.size(), deadline);
+    if (body != Receive::Complete) payload.clear();
+    return body;
 }
 
 void listenLoop (Listener* l)
@@ -365,11 +462,14 @@ void listenLoop (Listener* l)
         if (peerIsThisUser (peer))
         {
             std::string payload;
-            const bool completed = readPayload (peer, l->wakeFds[0], payload);
+            const Receive outcome = readPayload (peer, l->wakeFds[0], payload);
             ::close (peer);
-            if (! completed) return;
-            auto fn = l->onCommandLine;
-            dispatch ([fn, payload] { fn (payload); });
+            if (outcome == Receive::Stopping) return;
+            if (outcome == Receive::Complete)
+            {
+                auto fn = l->onCommandLine;
+                dispatch ([fn, payload] { fn (payload); });
+            }
         }
         else
         {
@@ -404,6 +504,55 @@ bool startListener (int fd, const std::string& path,
     return true;
 }
 
+// What the slot path holds, as seen from inside the lock, where the answer
+// cannot change under us: Orphaned is the only state that permits an unlink.
+enum class Slot { Vacant, Live, Orphaned, Unknown };
+
+Slot probeSlot (const sockaddr_un& addr, socklen_t len)
+{
+    const int fd = openSocket (true);
+    if (fd < 0) return Slot::Unknown;
+
+    int result = 0;
+    if (::connect (fd, (const sockaddr*) &addr, len) != 0)
+    {
+        result = errno;
+        if (result == EINPROGRESS || result == EALREADY || result == EINTR
+            || result == EAGAIN || result == EWOULDBLOCK)
+        {
+            const auto deadline = std::chrono::steady_clock::now()
+                                + std::chrono::milliseconds (kProbeBudgetMs);
+            const int revents = pollUntil (fd, POLLOUT, deadline);
+            result = ETIMEDOUT;
+            if ((revents & POLLNVAL) == 0 && revents != 0)
+            {
+                socklen_t errorLen = sizeof result;
+                if (::getsockopt (fd, SOL_SOCKET, SO_ERROR, &result, &errorLen) != 0)
+                    result = errno;
+            }
+        }
+    }
+    ::close (fd);
+
+    if (result == 0) return Slot::Live;
+    if (result == ECONNREFUSED) return Slot::Orphaned;
+    if (result == ENOENT) return Slot::Vacant;
+    return Slot::Unknown;
+}
+
+// An unattached instance is otherwise indistinguishable from a normal launch
+// until a session opened from the desktop lands in a window that is not the one
+// in front of the user, so every path that gives up the slot says why.
+constexpr char kUnattachedTail[] =
+    " - starting without the single-instance slot; this window will not receive "
+    "sessions opened from the desktop\n";
+
+void reportUnattached (const char* what, int failure)
+{
+    std::fprintf (stderr, "[Dusk Studio/SingleInstance] %s (%s)%s",
+                  what, std::strerror (failure), kUnattachedTail);
+}
+
 // Refused is the only outcome that says the socket file outlived the process
 // that made it. Failed covers a peer we could not reach for any other reason -
 // no permission, a wedged primary, a backlog with no room - all of which leave
@@ -417,6 +566,17 @@ Handoff handOver (const sockaddr_un& addr, socklen_t len, const std::string& pay
                   int& failureErrno)
 {
     failureErrno = 0;
+    if (payload.size() > kMaxPayloadBytes)
+    {
+        failureErrno = EMSGSIZE;
+        return Handoff::Failed;
+    }
+
+    const std::uint32_t payloadSize = (std::uint32_t) payload.size();
+    std::string framed (sizeof payloadSize + payload.size(), '\0');
+    std::memcpy (&framed[0], &payloadSize, sizeof payloadSize);
+    std::memcpy (&framed[sizeof payloadSize], payload.data(), payload.size());
+
     const auto deadline = std::chrono::steady_clock::now()
                         + std::chrono::milliseconds (kDeliveryBudgetMs);
     const auto refusalDeadline = std::chrono::steady_clock::now()
@@ -454,7 +614,7 @@ Handoff handOver (const sockaddr_un& addr, socklen_t len, const std::string& pay
 
         if (connected)
         {
-            const bool sent = writeAll (fd, payload, deadline);
+            const bool sent = writeAll (fd, framed, deadline);
             if (sent) ::shutdown (fd, SHUT_WR);
             else      failureErrno = errno;   // before close(), which clobbers it
             ::close (fd);
@@ -480,57 +640,71 @@ Handoff handOver (const sockaddr_un& addr, socklen_t len, const std::string& pay
 bool acquire (const std::string& payload, std::function<void (std::string)> onCommandLine)
 {
     std::string path;
-    if (! makeSocketPath (path)) return true;
+    if (const char* reason = makeSocketPath (path))
+    {
+        std::fprintf (stderr, "[Dusk Studio/SingleInstance] %s%s", reason, kUnattachedTail);
+        return true;
+    }
 
     sockaddr_un addr {};
     socklen_t len = 0;
     makeAddress (path, addr, len);
 
+    int handoffErrno = 0;
     for (int attempt = 0; attempt < 2; ++attempt)
     {
-        const int fd = openSocket (false);
-        if (fd < 0) return true;
-
-        if (::bind (fd, (const sockaddr*) &addr, len) == 0)
         {
-            if (! startListener (fd, path, std::move (onCommandLine)))
+            const SlotLock lock (path);
+            if (lock.isHeld())
             {
-                ::close (fd);
-                ::unlink (path.c_str());
-            }
-            return true;
-        }
-        const int bindErr = errno;
-        ::close (fd);
-        if (bindErr != EADDRINUSE
-#if defined (__APPLE__)
-            && bindErr != EEXIST
-#endif
-            )
-            return true;
+                // A refusal seen here is final: a live primary completed
+                // listen() before it released the lock, and nothing can create
+                // or remove the entry while we hold it.
+                const Slot state = probeSlot (addr, len);
+                if (state == Slot::Orphaned && ::unlink (path.c_str()) != 0 && errno != ENOENT)
+                {
+                    reportUnattached ("the socket a crashed instance left behind could not "
+                                      "be removed", errno);
+                    return true;
+                }
 
-        int handoffErrno = 0;
+                if (state != Slot::Live)
+                {
+                    const int fd = openSocket (false);
+                    if (fd < 0)
+                    {
+                        reportUnattached ("a Unix socket could not be created", errno);
+                        return true;
+                    }
+
+                    if (::bind (fd, (const sockaddr*) &addr, len) == 0)
+                    {
+                        if (! startListener (fd, path, std::move (onCommandLine)))
+                        {
+                            const int failure = errno;
+                            ::close (fd);
+                            ::unlink (path.c_str());
+                            reportUnattached ("the single-instance listener could not start",
+                                              failure);
+                        }
+                        return true;
+                    }
+                    ::close (fd);
+                }
+            }
+        }
+
         const Handoff outcome = handOver (addr, len, payload, handoffErrno);
         if (outcome == Handoff::Delivered) return false;
         // Anything short of a refusal may be a primary we could not talk to.
         // Run unattached rather than clear its slot: unlinking here promotes
         // this launch to a second primary, and two of those contend for one
-        // audio device and one session directory. Say so - an unattached
-        // instance is otherwise indistinguishable from a normal launch.
-        if (outcome != Handoff::Refused)
-        {
-            std::fprintf (stderr,
-                          "[Dusk Studio/SingleInstance] could not reach the running instance "
-                          "(%s) - starting without the single-instance slot; this window will "
-                          "not receive sessions opened from the desktop\n",
-                          std::strerror (handoffErrno));
-            return true;
-        }
-
-        // Nothing is listening: a primary died without cleaning up. Drop the
-        // file and take the slot on the next pass.
-        if (::unlink (path.c_str()) != 0 && errno != ENOENT) return true;
+        // audio device and one session directory.
+        if (outcome != Handoff::Refused) break;
+        handoffErrno = ECONNREFUSED;
     }
+
+    reportUnattached ("could not reach the running instance", handoffErrno);
     return true;
 }
 
@@ -626,16 +800,28 @@ std::uint64_t hashBytes (const void* bytes, std::size_t size,
     return h;
 }
 
-void makeNames (PSID sid, std::wstring& mutexName, std::wstring& pipeName)
+// The mutex lives in the per-session Local namespace and a named pipe has only
+// the machine-global one, so the shared key carries the Terminal Services
+// session that scopes both. Keyed differently, a second RDP or fast-user-switch
+// session finds the mutex free, fails to create a pipe the first session
+// already owns, and runs as a primary no launch can reach.
+constexpr wchar_t kSlotNamespace[] = L"Local\\";
+
+bool makeNames (PSID sid, std::wstring& mutexName, std::wstring& pipeName)
 {
+    DWORD sessionId = 0;
+    if (! ::ProcessIdToSessionId (::GetCurrentProcessId(), &sessionId)) return false;
+
     std::uint64_t hash = hashBytes (sid, ::GetLengthSid (sid));
+    hash = hashBytes (&sessionId, sizeof sessionId, hash);
 #if defined (DUSKSTUDIO_SINGLE_INSTANCE_TESTING)
     if (const char* suffix = std::getenv ("DUSKSTUDIO_TEST_SINGLE_INSTANCE_SLOT"))
         hash = hashBytes (suffix, std::strlen (suffix), hash);
 #endif
     const std::wstring key = std::to_wstring ((unsigned long long) hash);
-    mutexName = L"Local\\DuskStudio.SingleInstance." + key;
+    mutexName = kSlotNamespace + std::wstring (L"DuskStudio.SingleInstance.") + key;
     pipeName = L"\\\\.\\pipe\\DuskStudio.SingleInstance." + key;
+    return true;
 }
 
 struct Listener
@@ -714,11 +900,8 @@ bool transferExact (HANDLE pipe, void* bytes, std::size_t size, bool writing,
     return true;
 }
 
-bool clientIsThisUser (HANDLE pipe, PSID expectedSid)
+bool processIsThisUser (ULONG processId, PSID expectedSid)
 {
-    ULONG processId = 0;
-    if (! ::GetNamedPipeClientProcessId (pipe, &processId)) return false;
-
     HANDLE process = ::OpenProcess (PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
     if (process == nullptr) return false;
     HANDLE token = nullptr;
@@ -736,6 +919,24 @@ bool clientIsThisUser (HANDLE pipe, PSID expectedSid)
 
     const auto sid = reinterpret_cast<TOKEN_USER*> (tokenUser.data())->User.Sid;
     return ::IsValidSid (sid) && ::EqualSid (expectedSid, sid) != FALSE;
+}
+
+bool clientIsThisUser (HANDLE pipe, PSID expectedSid)
+{
+    ULONG processId = 0;
+    return ::GetNamedPipeClientProcessId (pipe, &processId) != FALSE
+        && processIsThisUser (processId, expectedSid);
+}
+
+// The pipe name is a SID hash in the machine-global namespace, so another local
+// account can create it first and collect the absolute session path of every
+// launch this user makes. Nothing goes out until the process on the other end
+// is this user; SECURITY_IDENTIFICATION only stops it impersonating us back.
+bool serverIsThisUser (HANDLE pipe, PSID expectedSid, ULONG& serverProcessId)
+{
+    serverProcessId = 0;
+    return ::GetNamedPipeServerProcessId (pipe, &serverProcessId) != FALSE
+        && processIsThisUser (serverProcessId, expectedSid);
 }
 
 HANDLE createPipe (Listener& l)
@@ -837,28 +1038,41 @@ void listenLoop (Listener* l)
 }
 
 bool startListener (std::unique_ptr<Listener> candidate,
-                    std::function<void (std::string)> onCommandLine)
+                    std::function<void (std::string)> onCommandLine,
+                    DWORD& failureError)
 {
     candidate->stopEvent = ::CreateEventW (nullptr, TRUE, FALSE, nullptr);
-    if (candidate->stopEvent == nullptr) return false;
-    candidate->pipe = createPipe (*candidate);
-    if (candidate->pipe == INVALID_HANDLE_VALUE)
+    if (candidate->stopEvent != nullptr)
     {
+        candidate->pipe = createPipe (*candidate);
+        if (candidate->pipe != INVALID_HANDLE_VALUE)
+        {
+            candidate->onCommandLine = std::move (onCommandLine);
+            listener = candidate.release();
+            listener->thread = std::thread (listenLoop, listener);
+            return true;
+        }
+        failureError = ::GetLastError();
         ::CloseHandle (candidate->stopEvent);
         candidate->stopEvent = nullptr;
-        return false;
+    }
+    else
+    {
+        failureError = ::GetLastError();
     }
 
-    candidate->onCommandLine = std::move (onCommandLine);
+    // Keep the mutex even though nothing is listening, so release() is what
+    // finally drops it. Handing it back here would let the next launch in this
+    // session repeat the same failure and call itself primary too, and windows
+    // no handoff can reach would pile up without a word.
     listener = candidate.release();
-    listener->thread = std::thread (listenLoop, listener);
-    return true;
+    return false;
 }
 
-enum class Handoff { Delivered, Submitted, Failed };
+enum class Handoff { Delivered, Submitted, Foreign, Failed };
 
-Handoff handOver (const std::wstring& pipeName, const std::string& payload,
-                  DWORD& failureError)
+Handoff handOver (const std::wstring& pipeName, PSID expectedSid,
+                  const std::string& payload, DWORD& failureError)
 {
     failureError = ERROR_SUCCESS;
     if (payload.size() > kMaxPayloadBytes)
@@ -887,9 +1101,12 @@ Handoff handOver (const std::wstring& pipeName, const std::string& payload,
     if (pipe == INVALID_HANDLE_VALUE) return Handoff::Failed;
 
     ULONG primaryProcessId = 0;
-    if (::GetNamedPipeServerProcessId (pipe, &primaryProcessId)
-        && primaryProcessId != 0)
-        ::AllowSetForegroundWindow (primaryProcessId);
+    if (! serverIsThisUser (pipe, expectedSid, primaryProcessId))
+    {
+        ::CloseHandle (pipe);
+        return Handoff::Foreign;
+    }
+    if (primaryProcessId != 0) ::AllowSetForegroundWindow (primaryProcessId);
 
     std::uint32_t payloadSize = (std::uint32_t) payload.size();
     bool delivered = transferExact (pipe, &payloadSize,
@@ -926,7 +1143,9 @@ bool acquire (const std::string& payload, std::function<void (std::string)> onCo
         if (! candidate->security.initialise()) return submitted ? false : true;
 
         std::wstring mutexName;
-        makeNames (candidate->security.userSid, mutexName, candidate->pipeName);
+        if (! makeNames (candidate->security.userSid, mutexName, candidate->pipeName))
+            return submitted ? false : true;
+
         ::SetLastError (ERROR_SUCCESS);
         candidate->slotMutex = ::CreateMutexW (
             &candidate->security.attributes, FALSE, mutexName.c_str());
@@ -934,8 +1153,13 @@ bool acquire (const std::string& payload, std::function<void (std::string)> onCo
 
         if (::GetLastError() != ERROR_ALREADY_EXISTS)
         {
-            if (! startListener (std::move (candidate), std::move (onCommandLine)))
-                return true;
+            DWORD listenerError = ERROR_SUCCESS;
+            if (! startListener (std::move (candidate), std::move (onCommandLine), listenerError))
+                std::fprintf (stderr,
+                              "[Dusk Studio/SingleInstance] the single-instance listener could "
+                              "not start (Windows error %lu); this window will not receive "
+                              "sessions opened from the desktop\n",
+                              (unsigned long) listenerError);
             return true;
         }
 
@@ -953,10 +1177,24 @@ bool acquire (const std::string& payload, std::function<void (std::string)> onCo
             return true;
         }
 
-        const Handoff outcome = handOver (candidate->pipeName, payload, handoffError);
+        const Handoff outcome = handOver (candidate->pipeName, candidate->security.userSid,
+                                          payload, handoffError);
         ::CloseHandle (candidate->slotMutex);
         candidate->slotMutex = nullptr;
         if (outcome == Handoff::Delivered) return false;
+
+        // The name is held by a process that is not this user. Sending it the
+        // session path is what the check exists to prevent, and quitting would
+        // hand a stranger the power to close every launch, so this one runs
+        // unattached instead.
+        if (outcome == Handoff::Foreign)
+        {
+            std::fprintf (stderr,
+                          "[Dusk Studio/SingleInstance] the single-instance pipe belongs to "
+                          "another user's process - starting without the single-instance slot; "
+                          "this window will not receive sessions opened from the desktop\n");
+            return true;
+        }
         submitted = outcome == Handoff::Submitted;
 
         // Closing our handle lets the kernel remove a slot whose primary died

@@ -48,6 +48,25 @@ closes release-metadata gaps found during the pre-tag audit.
 - **Windows session handoff can foreground the existing window reliably.** The
   secondary process grants the primary process foreground permission before
   sending the request, with a taskbar flash when Windows still refuses focus.
+- **Two launches after a crash no longer both become the running instance.** On
+  Linux and macOS, reclaiming the slot a killed instance left behind is now
+  serialised, so one launch cannot delete the socket the other just took and
+  end up with two engines and two autosave loops on one session directory.
+- **A session path interrupted in transit is discarded.** The Linux and macOS
+  handoff is length-framed like the Windows one, so a sender that stalls or
+  dies part-way through cannot deliver half of a path for the running instance
+  to open as a session.
+- **A launch that cannot use the single-instance slot says so.** Missing or
+  unusable runtime directories are reported on stderr instead of silently
+  starting a second copy, and macOS keys the slot on its own per-user
+  temporary directory rather than an inherited `TMPDIR`.
+- **Windows checks who is listening before handing over a session.** The
+  launching process verifies that the single-instance pipe belongs to the same
+  user before sending the session path, and starts unattached if it does not.
+- **A second Windows desktop session gets its own instance.** The
+  single-instance mutex and pipe are keyed to the same user and desktop
+  session, and a listener that fails to start now keeps the slot and reports
+  it instead of leaving every later launch to repeat the failure in silence.
 - **Windows paths remain Unicode end to end.** Plugin-host launch paths, MP3
   bounce destinations, profile directories, and temporary directories now work
   when the user name or installation path contains non-ASCII characters.

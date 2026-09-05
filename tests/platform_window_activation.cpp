@@ -127,8 +127,7 @@ TEST_CASE ("native window operations preserve activation and embedded editor geo
     REQUIRE (windowsBranch != std::string::npos);
     const auto handOver = definitionBody (
         singleInstance.substr (windowsBranch), "handOver");
-    requireInOrder (handOver, "GetNamedPipeServerProcessId",
-                    "AllowSetForegroundWindow");
+    requireInOrder (handOver, "serverIsThisUser", "AllowSetForegroundWindow");
     requireInOrder (handOver, "AllowSetForegroundWindow", "transferExact");
 
     const auto layout = definitionBody (windowsSource, "layoutChild");
