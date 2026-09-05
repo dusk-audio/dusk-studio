@@ -197,6 +197,12 @@ closes release-metadata gaps found during the pre-tag audit.
   that reports a failure from its own show step but draws anyway keeps its
   editor rather than losing it, and any reason an editor could not open is
   printed to the terminal and shown in the panel.
+- **A plugin editor that fails to open on an aux lane now says so.** When a
+  CLAP, LV2, VST3, or Audio Unit insert on an aux lane cannot attach its
+  editor, the lane reports the format, the plugin name, and the plugin's own
+  reason, exactly as a channel insert does; previously the failure went only to
+  the terminal and the lane stayed empty. The report is raised once per loaded
+  plugin.
 - **Closing a plugin editor on Linux no longer risks a crash.** While an editor
   is torn down, Dusk Studio narrows how X server errors are handled so a stale
   editor window cannot abort the application. That narrowing is now lifted on

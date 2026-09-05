@@ -178,6 +178,9 @@ private:
         std::unique_ptr<class AuPluginEditorComponent> auEditor;
 #endif
         juce::String displayedName;
+
+        // Native instance whose editor-attach failure has already been reported.
+        const void* reportedAttachFailure = nullptr;
     };
     std::array<SlotUI, AuxLaneParams::kMaxLanePlugins> slots;
 };
