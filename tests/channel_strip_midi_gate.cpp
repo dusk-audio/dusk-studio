@@ -80,8 +80,10 @@ TEST_CASE ("muted MIDI strips still process transport panic events",
    #else
     StripHarness h { duskstudio::ChannelStrip::kInsertPlugin };
 
-    // The gate keys on a loaded instrument, not the insert mode, so the strip
-    // needs one; the CLAP fixture stands in for it.
+    // The gate keys on a loaded plugin, not the insert mode. The fixture is an
+    // effect on purpose: an effect on a MIDI track still receives the block's
+    // MIDI and can hold notes, so it must keep getting panic events while the
+    // track is muted.
     std::string error;
     REQUIRE (h.strip.getNativeClapSlot().load (
         std::filesystem::u8path (DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH),

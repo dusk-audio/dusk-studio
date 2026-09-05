@@ -319,7 +319,7 @@ public:
     }
 
 private:
-    bool hasLoadedInstrument() const noexcept;
+    bool hasLoadedMidiConsumer() const noexcept;
 
     const ChannelStripParams* paramsRef = nullptr;
     dusk::audio::SmoothedValue<float> faderGain  { 0.0f };

@@ -936,7 +936,7 @@ bool PluginSlot::loadFromDescriptor (const PluginDescriptor& descriptor,
         {
             auto remote = std::make_unique<duskstudio::ipc::RemotePluginConnection>();
             std::string err;
-            if (! remote->connect (hostPath.toStdString(), "--ipc-host", err))
+            if (! remote->connect (hostPath.toStdString(), manager->getHostModeArg(), err))
             {
                 std::fprintf (stderr,
                               "[Dusk Studio/PluginSlot] OOP connect failed (%s); "

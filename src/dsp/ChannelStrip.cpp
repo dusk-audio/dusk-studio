@@ -853,9 +853,13 @@ void ChannelStrip::drainPdcForSkip() noexcept
     }
 }
 
-// The MIDI dispatch below feeds whichever slot is loaded, in this precedence,
-// and the plugin slot last; the insert mode plays no part in it.
-bool ChannelStrip::hasLoadedInstrument() const noexcept
+// The MIDI dispatch below hands the block's MIDI to whichever slot is loaded,
+// in this precedence, effects included: a plugin whose port layout says
+// "effect" can still be a sampler with a sidechain input, holding notes that
+// only a delivered panic releases. So the muted-track gate asks whether
+// anything is loaded, not whether it is an instrument; the insert mode plays
+// no part in it.
+bool ChannelStrip::hasLoadedMidiConsumer() const noexcept
 {
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     if (nativeClapSlot.isLoaded()) return true;
@@ -987,10 +991,11 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     const bool pingRequested = (req == kInsertHardware
                                 || activeInsertMode == kInsertHardware)
                             && hardwareSlot.isPingRequested();
-    // A muted or soloed-out MIDI track stays on the full pass only while an
-    // instrument is loaded: the instrument is the only thing that can flush a
-    // panic's note-offs. A MIDI track with nothing loaded has nothing to pump.
-    if (! passByGate && ! (isMidi && hasLoadedInstrument())
+    // A muted or soloed-out MIDI track stays on the full pass only while a
+    // plugin is loaded to receive the block's MIDI: that is the only thing a
+    // panic's note-offs can flush. A MIDI track with nothing loaded has
+    // nothing to pump.
+    if (! passByGate && ! (isMidi && hasLoadedMidiConsumer())
         && ! needsProcessedMono && ! pingRequested)
     {
         faderGain.setTargetValue (0.0f);
@@ -1025,12 +1030,12 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     // freeze-smoothers / reset-meter pattern). Constraints:
     //   - Tracks with an insert excluded (plugin tail / latency
     //     compensation would suffer from skipped blocks). A MIDI track's
-    //     instrument is the only audio source it has, so its test is
+    //     loaded plugin is the only audio source it has, so its test is
     //     whether one is loaded rather than the insert mode, which sits
     //     at kInsertPlugin before anything is loaded.
     //   - `needsProcessedMono` (recorder-print path) already handled
     //     above; tracks armed-with-print stay on the full pass.
-    if (isMidi ? ! hasLoadedInstrument() : activeInsertMode == kInsertEmpty)
+    if (isMidi ? ! hasLoadedMidiConsumer() : activeInsertMode == kInsertEmpty)
     {
         const auto peakAbs = [] (const float* buf, int n) -> float
         {
