@@ -4,7 +4,9 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../foundation/MessageThread.h"
 #include <array>
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include "../session/Session.h"
 #include "DuskComboBox.h"
 #include "NativeEditorOwner.h"
@@ -179,8 +181,8 @@ private:
 #endif
         juce::String displayedName;
 
-        // Native instance whose editor-attach failure has already been reported.
-        const void* reportedAttachFailure = nullptr;
+        // Slot generation whose editor-attach failure has already been reported.
+        std::optional<std::uint64_t> reportedAttachFailure;
     };
     std::array<SlotUI, AuxLaneParams::kMaxLanePlugins> slots;
 };

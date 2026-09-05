@@ -28,7 +28,9 @@
 #include "../session/ParamEditAction.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
+#include <optional>
 #include <string>
 
 namespace duskstudio
@@ -38,14 +40,17 @@ namespace
 // Same log-and-alert decision the channel strip uses, plus a per-slot latch:
 // rebuildSlots re-runs the attach on construction, on reload and when an
 // async load completes, so a plug-in whose editor never attaches would raise
-// the modal on every pass. Keyed on the instance so a reload re-arms it.
+// the modal on every pass. Keyed on the slot generation, which every load and
+// unload bumps, so a reload re-arms it even when the new instance lands at the
+// old address.
 template <typename Editor, typename Instance>
 bool attachNativePluginEditor (Editor& editor,
                                Instance& instance,
                                juce::Component& alertParent,
                                hosting::NativeEditorFormat format,
                                const std::string& pluginName,
-                               const void*& reportedFor)
+                               std::uint64_t generation,
+                               std::optional<std::uint64_t>& reportedFor)
 {
     juce::String error;
     const bool attached = editor.attach (instance, error);
@@ -58,9 +63,8 @@ bool attachNativePluginEditor (Editor& editor,
         },
         [&] (const std::string& title, const std::string& message)
         {
-            const auto* forInstance = static_cast<const void*> (&instance);
-            if (reportedFor == forInstance) return;
-            reportedFor = forInstance;
+            if (reportedFor == generation) return;
+            reportedFor = generation;
             showDuskAlert (alertParent,
                            juce::String::fromUTF8 (title.c_str()),
                            juce::String::fromUTF8 (message.c_str()));
@@ -1692,7 +1696,7 @@ void AuxLaneComponent::rebuildSlots()
                     if (attachNativePluginEditor (
                             *ed, *clapInst, *this, hosting::NativeEditorFormat::Clap,
                             hosting::nativePluginName (slot.getPath(), slot.getPluginId()),
-                            ui.reportedAttachFailure))
+                            slot.generation(), ui.reportedAttachFailure))
                     {
                         ui.clapEditor = std::move (ed);
                         ui.clapEditor->bindOwner (slot);
@@ -1720,7 +1724,7 @@ void AuxLaneComponent::rebuildSlots()
                     if (attachNativePluginEditor (
                             *ed, *lv2Inst, *this, hosting::NativeEditorFormat::Lv2,
                             hosting::nativePluginName (slot.getPath(), slot.getPluginId()),
-                            ui.reportedAttachFailure))
+                            slot.generation(), ui.reportedAttachFailure))
                     {
                         ui.lv2Editor = std::move (ed);
                         ui.lv2Editor->bindOwner (slot);
@@ -1748,7 +1752,7 @@ void AuxLaneComponent::rebuildSlots()
                     if (attachNativePluginEditor (
                             *ed, *vst3Inst, *this, hosting::NativeEditorFormat::Vst3,
                             hosting::nativePluginName (slot.getPath(), slot.getPluginId()),
-                            ui.reportedAttachFailure))
+                            slot.generation(), ui.reportedAttachFailure))
                     {
                         ui.vst3Editor = std::move (ed);
                         ui.vst3Editor->bindOwner (slot);
@@ -1778,7 +1782,7 @@ void AuxLaneComponent::rebuildSlots()
                     auto ed = std::make_unique<AuPluginEditorComponent>();
                     if (attachNativePluginEditor (
                             *ed, *auInst, *this, hosting::NativeEditorFormat::AudioUnit,
-                            pluginName, ui.reportedAttachFailure))
+                            pluginName, slot.generation(), ui.reportedAttachFailure))
                     {
                         ui.auEditor = std::move (ed);
                         ui.auEditor->bindOwner (slot);
