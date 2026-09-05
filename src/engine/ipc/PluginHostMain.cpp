@@ -17,6 +17,10 @@
 //                 state, for the POSIX child-isolation regression.
 //   --ipc-control-reply-stub: deterministic request-correlation and reply-
 //                 validation regression child.
+//   --ipc-load-reply-stub: answers LoadPlugin with a fixed stereo layout so the
+//                 parent's sandboxed load path can be driven without a plugin.
+//   --ipc-mute-handshake-stub: the same child with the ready byte withheld,
+//                 leaving the parent inside its handshake wait.
 //   --ipc-host  : full Phase-2 host. Loads a juce::AudioPluginInstance
 //                 via the format manager, runs processBlock on a worker
 //                 thread, services control RPCs on a separate socket-
@@ -513,6 +517,77 @@ int runIpcControlReplyStub (int argc, const char* const* argv) noexcept
     const std::uint8_t unexpectedPayload = 0;
     return sendControlReply (channel, wrongPayload, 0,
                              &unexpectedPayload, sizeof (unexpectedPayload)) ? 0 : 1;
+}
+
+// Test-only child for the parent's out-of-process load path. It answers
+// LoadPlugin with a fixed stereo layout and every other request with an empty
+// success, which is all a PluginSlot needs to publish a connection without a
+// plugin in the loop. With ackHandshake false the ready byte is withheld
+// instead, leaving the parent inside its handshake wait - the shape a load
+// cancelled from the slot's destructor has to unwind from.
+int runIpcLoadStub (int argc, const char* const* argv, bool ackHandshake) noexcept
+{
+    ipcp::NativeHandle channel = ipcp::locateInheritedChannel (argc, argv);
+    if (! ipcp::isValid (channel)) return 1;
+
+    ipcp::NativeHandle shmHandle;
+    if (! ipcp::recvHandle (channel, shmHandle)) return 1;
+
+    ipcp::InterprocessSignal commandSignal;
+    ipcp::InterprocessSignal replySignal;
+    if (! commandSignal.receiveFromParent (channel)
+        || ! replySignal.receiveFromParent (channel))
+        return 1;
+
+    ipcp::SharedMemory shm;
+    std::string error;
+    if (! shm.mapInheritedHandle (shmHandle, kTotalSize, error)) return 1;
+
+    auto* block = headerOf (shm.data());
+    if (block->magic != kMagic || block->version != kVersion) return 1;
+
+    if (! ackHandshake)
+    {
+        // Nothing follows the handles on the wire, so this parks until the
+        // parent closes its end or terminates us.
+        char ignored = 0;
+        (void) ipcp::readExact (channel, &ignored, sizeof (ignored));
+        return 0;
+    }
+
+    char ready = 'k';
+    if (! ipcp::writeExact (channel, &ready, 1)) return 1;
+
+    for (;;)
+    {
+        ControlMsgHeader request {};
+        if (! ipcp::readExact (channel, &request, sizeof (request))) break;
+        if (request.payloadLen > kMaxControlPayload
+            || request.totalLen != (std::uint32_t) sizeof (request) + request.payloadLen)
+            break;
+
+        std::vector<std::uint8_t> payload (request.payloadLen);
+        if (request.payloadLen > 0
+            && ! ipcp::readExact (channel, payload.data(), request.payloadLen))
+            break;
+
+        if (request.requestId == 0) continue;   // one-shot push, no reply owed
+
+        if ((OpCode) request.op == OpCode::LoadPlugin)
+        {
+            LoadPluginReply reply {};
+            reply.numInChans  = 2;
+            reply.numOutChans = 2;
+            if (! sendControlReply (channel, request, 0, &reply, sizeof (reply)))
+                break;
+        }
+        else if (! sendControlReply (channel, request, 0, nullptr, 0))
+        {
+            break;
+        }
+    }
+
+    return 0;
 }
 
 // Test-only child shape used by the cross-platform regression suite. It runs
@@ -1749,6 +1824,8 @@ int main (int argc, char** argv)
    #endif
     bool ipcControlReplyStub = false;
     bool ipcParkTimeoutStub = false;
+    bool ipcLoadReplyStub = false;
+    bool ipcMuteHandshakeStub = false;
     bool ipcHost = false;
     bool scan    = false;
     for (int i = 1; i < argc; ++i)
@@ -1769,6 +1846,9 @@ int main (int argc, char** argv)
        #endif
         if (std::strcmp (args[i], "--ipc-control-reply-stub") == 0) ipcControlReplyStub = true;
         if (std::strcmp (args[i], "--ipc-park-timeout-stub") == 0) ipcParkTimeoutStub = true;
+        if (std::strcmp (args[i], "--ipc-load-reply-stub") == 0) ipcLoadReplyStub = true;
+        if (std::strcmp (args[i], "--ipc-mute-handshake-stub") == 0)
+            ipcMuteHandshakeStub = true;
         if (std::strcmp (args[i], "--ipc-host") == 0) ipcHost = true;
         if (std::strcmp (args[i], "--scan")     == 0) scan    = true;
 #if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
@@ -1791,6 +1871,8 @@ int main (int argc, char** argv)
                                               : StubReplyMode::Normal);
     if (ipcControlReplyStub) return runIpcControlReplyStub (argc, args);
     if (ipcParkTimeoutStub) return runIpcParkTimeoutStub (argc, args);
+    if (ipcLoadReplyStub || ipcMuteHandshakeStub)
+        return runIpcLoadStub (argc, args, ipcLoadReplyStub);
     if (ipcHost) return runIpcHost (argc, args);
 
     std::fprintf (stderr,

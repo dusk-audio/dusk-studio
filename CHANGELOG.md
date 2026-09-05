@@ -141,6 +141,16 @@ closes release-metadata gaps found during the pre-tag audit.
   application, so a plugin that stalled on startup in its own process could
   lock the interface for over half a minute. Both now happen away from it, and
   a load that fails still falls back to loading the plugin in-process.
+- **Quitting while a sandboxed plugin is loading no longer hangs.** Moving the
+  load off the drawing thread left the wait at shutdown: closing Dusk Studio
+  while a plugin stalled in its own process held the application for up to
+  thirty-five seconds per slot, waiting out a load whose result was already
+  being thrown away. Those loads are now cancelled and their child processes
+  shut down, so quitting costs a fraction of a second, and a load that has
+  finished is cleaned up on its own instead of waiting for the next one to start.
+  Closing the editor of a plugin that has stopped answering also gives up after a
+  fraction of a second instead of five, and a plugin whose own interface stalls
+  is no longer mistaken for one that has crashed.
 - **A sandboxed plugin whose process is killed drops out for a few buffers, not
   a tenth of a second.** No operating system wait the audio thread uses carries
   news of the child's death, so a killed plugin host used to hold the audio

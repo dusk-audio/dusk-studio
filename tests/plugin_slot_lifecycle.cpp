@@ -3,6 +3,8 @@
 #include "engine/PluginManager.h"
 #include "engine/PluginSlot.h"
 
+#include <juce_gui_basics/juce_gui_basics.h>
+
 #include <atomic>
 #include <chrono>
 #include <thread>
@@ -87,31 +89,125 @@ TEST_CASE ("PluginSlot republishes an in-process instance after release and prep
 }
 
 #if DUSKSTUDIO_HAS_OOP_PLUGINS
+namespace
+{
+PluginDescriptor sandboxTestDescriptor()
+{
+    PluginDescriptor descriptor;
+    descriptor.name = "sandbox stub";
+    descriptor.formatName = "VST3";
+    descriptor.location = "/nonexistent/sandbox-stub.vst3";
+    return descriptor;
+}
+
+// The child is normally resolved beside the running executable; under ctest that
+// is the Catch2 binary, so the sandboxed branch is unreachable without pointing
+// the slot at the built child and one of its stub modes.
+void useSandboxStub (PluginManager& manager, const char* modeArg)
+{
+    manager.setOopEnabled (true);
+    manager.setHostExecutableForTest (DUSKSTUDIO_PLUGIN_HOST_PATH, modeArg);
+}
+
+#if ! defined (__APPLE__)
+// Breaks out of runDispatchLoop after a bounded window - this JUCE build has no
+// runDispatchLoopUntil.
+struct LoopStopper final : dusk::Timer
+{
+    void timerCallback() override
+    {
+        stopTimer();
+        juce::MessageManager::getInstance()->stopDispatchLoop();
+    }
+};
+
+void pumpFor (int ms)
+{
+    LoopStopper stopper;
+    stopper.startTimer (ms);
+    juce::MessageManager::getInstance()->runDispatchLoop();
+}
+#endif
+} // namespace
+
 // Connecting to the plugin host waits up to 5 s for the handshake and its
 // LoadPlugin RPC up to 30 s, so running either on the message thread hands a
 // plugin that stalls in the child the power to freeze the editor for over half
 // a minute - the failure the sandbox exists to contain. The load has to be
 // handed off, which shows up here as the completion never arriving inside the
-// call.
-TEST_CASE ("PluginSlot does not complete an out-of-process load inline")
+// call and the slot only going remote once the message loop runs again.
+#if ! defined (__APPLE__)
+TEST_CASE ("PluginSlot completes an out-of-process load off the message thread")
 {
+    juce::ScopedJuceInitialiser_GUI juceInit;
+
     PluginManager manager;
-    manager.setOopEnabled (true);
+    useSandboxStub (manager, "--ipc-load-reply-stub");
 
     PluginSlot slot;
     slot.setManager (manager);
     slot.prepareToPlay (48000.0, 64);
 
-    PluginDescriptor descriptor;
-    descriptor.name = "missing";
-    descriptor.formatName = "VST3";
-    descriptor.location = "/nonexistent/missing.vst3";
-
     bool completed = false;
-    slot.loadFromDescriptorAsync (descriptor,
-                                  [&] (bool, juce::String) { completed = true; });
+    bool succeeded = false;
+    slot.loadFromDescriptorAsync (sandboxTestDescriptor(),
+                                  [&] (bool ok, juce::String)
+    {
+        completed = true;
+        succeeded = ok;
+    });
 
     CHECK_FALSE (completed);
+    CHECK_FALSE (slot.isRemote());
+
+    for (int i = 0; i < 40 && ! completed; ++i)
+        pumpFor (50);
+
+    CHECK (completed);
+    CHECK (succeeded);
+    CHECK (slot.isRemote());
+}
+#endif
+
+// Quitting while a child stalls used to cost the destructor the whole handshake
+// budget plus the whole LoadPlugin deadline, per slot, on the message thread.
+// The worker is cancellable now, so both stalls unwind in about one poll slice
+// plus the child teardown.
+TEST_CASE ("PluginSlot destruction cancels a stalled out-of-process load")
+{
+    using namespace std::chrono_literals;
+
+    // Enough for the fork/exec and, where the child acks, the handshake - so
+    // the worker really is parked in the wait this covers.
+    constexpr auto kSettleTime = 200ms;
+    constexpr auto kBound      = 1000ms;
+
+    const char* modeArg = nullptr;
+    SECTION ("stalled in the LoadPlugin reply wait") { modeArg = "--ipc-stub"; }
+    SECTION ("stalled in the ready handshake")       { modeArg = "--ipc-mute-handshake-stub"; }
+
+    PluginManager manager;
+    useSandboxStub (manager, modeArg);
+
+    std::chrono::steady_clock::duration elapsed {};
+    {
+        auto slot = std::make_unique<PluginSlot>();
+        slot->setManager (manager);
+        slot->prepareToPlay (48000.0, 64);
+        slot->loadFromDescriptorAsync (sandboxTestDescriptor(),
+                                       [] (bool, juce::String) {});
+
+        std::this_thread::sleep_for (kSettleTime);
+
+        const auto start = std::chrono::steady_clock::now();
+        slot.reset();
+        elapsed = std::chrono::steady_clock::now() - start;
+    }
+
+    INFO ("destructor took "
+          << std::chrono::duration_cast<std::chrono::milliseconds> (elapsed).count()
+          << " ms");
+    CHECK (elapsed < kBound);
 }
 
 // The audio thread try-locks processLock and then stays inside

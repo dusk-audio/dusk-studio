@@ -384,18 +384,25 @@ private:
     // Workers are kept rather than joined at the next load: a second load
     // arriving while the first child is still stalled must not inherit that
     // wait, which is the freeze this whole path exists to avoid. Each worker
-    // raises its own flag on the way out and only flagged ones are joined,
-    // so the message thread never blocks on a live one. The slot's destructor
-    // joins whatever is left, bounded by the RPC timeouts and concurrent
-    // across workers.
+    // raises its own flag on the way out; finished ones are joined from the
+    // reaper tick and at the next load, so the message thread never blocks on
+    // a live one.
+    //
+    // The destructor cancels before it joins, so quitting mid-load costs a
+    // fraction of a second rather than the sum of the deadlines: every worker's
+    // flag goes up first, each blocking wait inside the connection observes it
+    // within one 100 ms slice, and the child teardown that follows is SIGTERM
+    // plus a 500 ms grace polled every 10 ms. The joins overlap, so the bound
+    // does not grow with the number of workers.
     struct RemoteLoad
     {
         std::thread worker;
         std::shared_ptr<std::atomic<bool>> finished;
+        std::shared_ptr<std::atomic<bool>> cancel;
     };
     std::vector<RemoteLoad> remoteLoads;
     void reapFinishedRemoteLoads() noexcept;
-    void joinRemoteLoads() noexcept;
+    void cancelAndJoinRemoteLoads() noexcept;
     void beginRemoteLoad (PluginDescriptor descriptor,
                           std::uint32_t epoch,
                           std::string hostPath,

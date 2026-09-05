@@ -2,6 +2,7 @@
 
 #include "platform/IpcSync.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <cstdio>
@@ -140,14 +141,39 @@ bool RemotePluginConnection::connect (const std::string& hostExecutablePath,
         return false;
     }
 
-    if (! platform::setReadTimeout (controlChannel, 5000))
+    // Sliced rather than one 5 s read so a cancel raised by the owner is seen
+    // within a slice.
+    constexpr int kHandshakeSliceMs  = 100;
+    constexpr int kHandshakeBudgetMs = 5000;
+    if (! platform::setReadTimeout (controlChannel, kHandshakeSliceMs))
     {
         errorOut = "failed to configure child handshake timeout";
         disconnect();
         return false;
     }
     char ack = 0;
-    if (! platform::readExact (controlChannel, &ack, 1) || ack != 'k')
+    bool acked = false;
+    const auto handshakeEnd = std::chrono::steady_clock::now()
+                                + std::chrono::milliseconds (kHandshakeBudgetMs);
+    for (;;)
+    {
+        if (isCancelRequested())
+        {
+            errorOut = "cancelled while waiting for the child handshake";
+            disconnect();
+            return false;
+        }
+        const auto sliceStart = std::chrono::steady_clock::now();
+        if (platform::readExact (controlChannel, &ack, 1)) { acked = true; break; }
+        // The platform read cannot say whether it timed out or hit a dead peer,
+        // but the socket option guarantees a timeout consumes its whole slice.
+        // Anything quicker is a broken channel, and retrying it would spin.
+        const auto sliceEnd = std::chrono::steady_clock::now();
+        if (sliceEnd - sliceStart < std::chrono::milliseconds (kHandshakeSliceMs / 2))
+            break;
+        if (sliceEnd >= handshakeEnd) break;
+    }
+    if (! acked || ack != 'k')
     {
         errorOut = "child did not send ready handshake";
         disconnect();
@@ -172,6 +198,7 @@ bool RemotePluginConnection::connect (const std::string& hostExecutablePath,
     if (extraArg == "--ipc-host"
         || extraArg == "--ipc-control-reply-stub"
         || extraArg == "--ipc-park-timeout-stub"
+        || extraArg == "--ipc-load-reply-stub"
         || extraArg == "--ipc-stub-sudden-death")
         startReaderThread();
 
@@ -364,14 +391,31 @@ bool RemotePluginConnection::sendAndAwaitReply (OpCode op,
         return false;
     }
 
+    // A cancellable caller waits in slices so it observes the flag without the
+    // canceller having to touch this connection; everyone else keeps the single
+    // wait to the deadline and pays no extra wakeups.
+    constexpr auto kCancelPollSlice = std::chrono::milliseconds (100);
+    const bool cancellable = cancelFlag != nullptr;
+
     const auto deadline = std::chrono::steady_clock::now()
                             + std::chrono::milliseconds (timeoutMs);
     while (! replyReady.load (std::memory_order_acquire)
            && ! readerExited.load (std::memory_order_acquire))
     {
-        if (replyCv.wait_until (lk, deadline) == std::cv_status::timeout)
+        if (cancellable && isCancelRequested())
         {
-            if (! replyReady.load (std::memory_order_acquire))
+            pendingControlRequestId = 0;
+            errorOut = "cancelled while waiting for a reply";
+            return false;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        const auto sliceEnd = cancellable
+                                ? std::min (deadline, now + kCancelPollSlice)
+                                : deadline;
+        if (replyCv.wait_until (lk, sliceEnd) == std::cv_status::timeout)
+        {
+            if (! replyReady.load (std::memory_order_acquire)
+                && std::chrono::steady_clock::now() >= deadline)
             {
                 pendingControlRequestId = 0;
                 errorOut = "reply timeout";
@@ -401,8 +445,16 @@ bool RemotePluginConnection::sendAndAwaitReply (OpCode op,
         errorOut = "reply opcode mismatch";
         return false;
     }
+    // The park timeout is terminal - the child answered and then exited. The
+    // message-thread timeout is not: the child is alive and still processing
+    // audio, so it only latches the wedged flag, which the next clean reply
+    // clears.
     if (hdrOut.status == kControlStatusWorkerParkTimeout)
         crashed.store (true, std::memory_order_release);
+    else if (hdrOut.status == kControlStatusMessageThreadTimeout)
+        messageThreadWedged.store (true, std::memory_order_release);
+    else if (hdrOut.status == 0)
+        messageThreadWedged.store (false, std::memory_order_release);
     return true;
 }
 
@@ -558,12 +610,12 @@ bool RemotePluginConnection::showEditor (std::uint64_t& windowIdOut,
     return true;
 }
 
-bool RemotePluginConnection::hideEditor (std::string& errorOut)
+bool RemotePluginConnection::hideEditor (std::string& errorOut, int timeoutMs)
 {
     ControlMsgHeader hdr {};
     std::vector<std::uint8_t> reply;
     if (! sendAndAwaitReply (OpCode::HideEditor, nullptr, 0,
-                               hdr, reply, errorOut, 5000))
+                               hdr, reply, errorOut, timeoutMs))
         return false;
     if (hdr.status != 0) { errorOut = "HideEditor status != 0"; return false; }
     if (! reply.empty()) { errorOut = "HideEditor reply payload size mismatch"; return false; }

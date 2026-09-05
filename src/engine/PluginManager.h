@@ -36,6 +36,27 @@ public:
 
     juce::String getHostExecutablePath() const;
 
+    // The mode the sandbox child is launched in. Only the tests ever move it,
+    // and only so they can drive the real child in one of its stub modes.
+    std::string getHostModeArg() const
+    {
+       #if defined(DUSKSTUDIO_TESTS)
+        if (! hostModeArgOverride.empty()) return hostModeArgOverride;
+       #endif
+        return "--ipc-host";
+    }
+
+   #if defined(DUSKSTUDIO_TESTS)
+    // The child is resolved beside the running executable, which is the app in
+    // production and the Catch2 binary under ctest - where no child sits, so the
+    // sandboxed load path is unreachable without this.
+    void setHostExecutableForTest (std::string path, std::string modeArg)
+    {
+        hostExecutableOverride = std::move (path);
+        hostModeArgOverride    = std::move (modeArg);
+    }
+   #endif
+
     std::vector<PluginDescriptor> getInstrumentDescriptions() const;
     std::vector<PluginDescriptor> getEffectDescriptions() const;
 
@@ -108,6 +129,11 @@ private:
     bool oopEnabled { false };
     std::atomic<int> lastScanSandboxSkips { 0 };
 
+   #if defined(DUSKSTUDIO_TESTS)
+    std::string hostExecutableOverride;
+    std::string hostModeArgOverride;
+   #endif
+
     std::vector<PluginDescriptor> filterByInstrumentFlag (
         const std::vector<PluginDescriptor>& source, bool wantInstrument) const;
 
@@ -139,6 +165,9 @@ private:
 inline juce::String PluginManager::getHostExecutablePath() const
 {
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
+   #if defined(DUSKSTUDIO_TESTS)
+    if (! hostExecutableOverride.empty()) return hostExecutableOverride;
+   #endif
     auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
    #if JUCE_WINDOWS
     const char* const childName = "dusk-studio-plugin-host.exe";
