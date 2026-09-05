@@ -64,6 +64,15 @@ closes release-metadata gaps found during the pre-tag audit.
 - **Sandboxed plugin windows stay responsive on Windows and macOS.** Window
   creation, visibility changes, resizing, and teardown now run on the child
   process's pumping message thread instead of its blocking control thread.
+- **macOS sandbox connections no longer collide on one shared-memory name.**
+  The name carried a prefix long enough to crowd out the process id and counter
+  that made it unique, so two plugins loading at once could fail to connect, and
+  a name left behind by a crash kept every later connection failing until the
+  machine was restarted.
+- **A macOS sandbox wake backlog no longer lands in one audio callback.** The
+  parent usually picks up a finished block without waiting, which leaves the
+  child's wake bytes queued; clearing the whole backlog is now spread across
+  waits rather than paid for by whichever block happened to arrive late.
 - **Loading a sandboxed plugin no longer freezes the window.** Starting the
   plugin host and asking it to load waits up to five and thirty seconds
   respectively, and both waits used to happen on the thread that draws the

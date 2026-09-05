@@ -144,20 +144,27 @@ WaitResult InterprocessSignal::wait (std::atomic<std::uint32_t>* addr,
     if ((descriptor.revents & POLLIN) != 0)
     {
         // Fast producer/consumer pairs often observe the sequence during the
-        // spin phase and never enter wait(), leaving old wake bytes queued.
-        // Drain them together so the first later wait cannot spend one syscall
-        // per completed audio block. A concurrent new wake either lands in
-        // this drain (the sequence re-check observes it) or remains readable.
-        std::uint8_t bytes[256];
-        for (;;)
+        // spin phase and never enter wait(), leaving old wake bytes queued. The
+        // drain therefore has to clear a backlog rather than a single byte, but
+        // it runs inside the audio callback, so it reads in chunks and stops
+        // after a fixed number of them. The chunk size times the cap covers a
+        // full pipe, so one pass clears the worst case; anything still readable
+        // only costs an immediate return from the next wait, and every caller
+        // re-checks the sequence word after a wake anyway.
+        constexpr int kDrainChunkBytes = 4096;
+        constexpr int kMaxDrainReads   = 16;
+
+        std::uint8_t bytes[kDrainChunkBytes];
+        for (int read = 0; read < kMaxDrainReads;)
         {
             const ssize_t count = ::read (readHandle.fd, bytes, sizeof (bytes));
-            if (count > 0) continue;
+            if (count > 0) { ++read; continue; }
             if (count < 0 && errno == EINTR) continue;
             if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
                 return WaitResult::Awoken;
             return WaitResult::Error;
         }
+        return WaitResult::Awoken;
     }
 
     return WaitResult::Error;

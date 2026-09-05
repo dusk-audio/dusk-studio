@@ -50,6 +50,7 @@ add_executable(dusk-studio-tests
     native_editor_owner.cpp
     x11_anti_pattern_guard.cpp
     platform_window_activation.cpp
+    ipc_mac_backend_contract.cpp
     clap_editor_lifecycle.cpp
     plugin_state_diagnostics.cpp
     channel_strip_midi_gate.cpp
