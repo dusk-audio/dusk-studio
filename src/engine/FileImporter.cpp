@@ -247,15 +247,27 @@ AudioImportResult importAudio (const AudioImportRequest& req)
     // froze the message thread on the allocation; this loop peaks at a few
     // hundred KB regardless of source length.
     constexpr int kGrain = 65536;
+    // A refused chunk allocation discards the part-written file the same way a
+    // failed read or write does, but reports its own reason.
+    const auto failAllocation = [&]
+    {
+        writer.reset();
+        outFile.deleteFile();
+        result.errorMessage = "Could not allocate the import buffers";
+        return result;
+    };
+
     dusk::audio::PlanarBuffer srcChunk, outChunk;
-    srcChunk.setSize (srcChannels,        kGrain);
-    outChunk.setSize (req.targetChannels, kGrain);
+    if (! srcChunk.setSize (srcChannels,        kGrain)
+        || ! outChunk.setSize (req.targetChannels, kGrain))
+        return failAllocation();
     bool wrote = true;
 
     if (! needsResample)
     {
         dusk::audio::PlanarBuffer confChunk;
-        confChunk.setSize (req.targetChannels, kGrain);
+        if (! confChunk.setSize (req.targetChannels, kGrain))
+            return failAllocation();
         std::int64_t pos = 0;
         while (pos < srcLength && wrote)
         {
@@ -282,8 +294,9 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         const int needIn   = (int) std::ceil ((double) kGrain * ratio)
                                + (int) dusk::audio::WindowedSincInterpolator::getBaseLatency() + 8;
         dusk::audio::PlanarBuffer confChunk, carry;
-        confChunk.setSize (req.targetChannels, kGrain);
-        carry.setSize     (req.targetChannels, needIn + kGrain);
+        if (! confChunk.setSize (req.targetChannels, kGrain)
+            || ! carry.setSize (req.targetChannels, needIn + kGrain))
+            return failAllocation();
         std::array<dusk::audio::WindowedSincInterpolator, 2> interp;
         for (auto& i : interp) i.reset();
 

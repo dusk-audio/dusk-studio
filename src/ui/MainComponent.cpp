@@ -4502,9 +4502,11 @@ juce::File makeStereoTempWav (const juce::File& left, const juce::File& right)
     // whole file up front.
     constexpr int kChunk = 1 << 16;   // 64k samples per pass
     dusk::audio::PlanarBuffer lbuf, rbuf, out;
-    lbuf.setSize (1, kChunk);
-    rbuf.setSize (1, kChunk);
-    out.setSize  (2, kChunk);
+    if (! lbuf.setSize (1, kChunk) || ! rbuf.setSize (1, kChunk)
+        || ! out.setSize (2, kChunk))
+    {
+        writer.reset(); tmp.deleteFile(); return {};
+    }
     for (std::int64_t pos = 0; pos < len; pos += kChunk)
     {
         const int n = (int) std::min ((std::int64_t) kChunk, len - pos);

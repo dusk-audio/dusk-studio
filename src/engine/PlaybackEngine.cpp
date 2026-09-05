@@ -43,7 +43,12 @@ void PlaybackEngine::prepare (int maxBlockSize)
     // Pre-allocate the stereo scratch buffer once. Channel 1 is unused for
     // mono regions but allocated so the audio-thread read path never has to
     // grow on a stereo region.
-    readScratch.setSize (2, std::max (1, maxBlockSize));
+    if (! readScratch.setSize (2, std::max (1, maxBlockSize)))
+        std::fprintf (stderr,
+                      "[Dusk Studio/PlaybackEngine] prepare: could not allocate a "
+                      "%d-sample read scratch; region playback stays silent until "
+                      "the next prepare.\n",
+                      std::max (1, maxBlockSize));
 }
 
 void PlaybackEngine::refreshLiveRegionParams()
@@ -245,7 +250,7 @@ void PlaybackEngine::primeLoopCaches (std::int64_t loopStart, std::int64_t loopE
             // of silencing the right side.
             const bool stereo = (rs.numChannels == 2) && fillReader->info().numChannels >= 2;
             dusk::audio::PlanarBuffer tmp;
-            tmp.setSize (2, len);
+            if (! tmp.setSize (2, len)) continue;
             fillReader->read (tmp.data(), stereo ? 2 : 1,
                                rs.sourceOffset + (cacheStart - rs.timelineStart), len);
 

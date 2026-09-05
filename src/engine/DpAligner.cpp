@@ -40,7 +40,7 @@ std::vector<float> decodeMono (const juce::File& f, double& sampleRateOut)
     // unexpected file with more than two channels.
     const int usedCh = std::min (ch, 2);
     dusk::audio::PlanarBuffer buf;
-    buf.setSize (usedCh, (int) len);
+    if (! buf.setSize (usedCh, (int) len)) return out;
     if (reader->read (buf.data(), usedCh, 0, len) != len) return out;
 
     out.resize ((size_t) len);

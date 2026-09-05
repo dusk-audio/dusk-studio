@@ -94,7 +94,7 @@ juce::File writeDemoWav (const juce::File& dir, double sampleRate)
     const int numCh     = 2;
     const int numFrames = (int) (sampleRate * 1.8);
     dusk::audio::PlanarBuffer buf;
-    buf.setSize (numCh, numFrames);
+    if (! buf.setSize (numCh, numFrames)) return {};
     for (int n = 0; n < numFrames; ++n)
     {
         const double t   = (double) n / sampleRate;

@@ -1428,7 +1428,12 @@ bool ReverseRegionAction::perform()
         // write aborts + discards the partial file instead of committing garbage.
         constexpr int kChunk = 1 << 16;   // 64k frames per chunk
         dusk::audio::PlanarBuffer chunk;
-        chunk.setSize (chs, kChunk);
+        if (! chunk.setSize (chs, kChunk))
+        {
+            writer.reset();
+            outFile.deleteFile();
+            return false;
+        }
         std::int64_t remaining = len;
         bool ioOk = true;
         while (remaining > 0)

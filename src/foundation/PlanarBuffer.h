@@ -44,7 +44,9 @@ public:
         return (channels > 0 ? (std::int64_t) channels : 0) * strideFor (samples);
     }
 
-    bool setSize (int newNumChannels, int newNumSamples)
+    // Refusal is not an exception: it leaves the buffer empty, so ignoring the
+    // result means writing through a channel array that has no channels.
+    [[nodiscard]] bool setSize (int newNumChannels, int newNumSamples)
     {
         const int newChannels = std::max (0, newNumChannels);
         const int newSamples  = std::max (0, newNumSamples);

@@ -240,7 +240,11 @@ closes release-metadata gaps found during the pre-tag audit.
 - **Joining regions that span more than 12 hours no longer crashes.** The join
   render sizes its mix buffer with 64-bit arithmetic and refuses a span it
   cannot hold, leaving the regions untouched, instead of overflowing the buffer
-  length and aborting the app from inside an undoable edit.
+  length and aborting the app from inside an undoable edit. Every other place
+  that sizes an audio buffer now handles that same refusal: an import or a
+  reverse render reports the failure and discards its part-written file, and a
+  scan or playback scratch that cannot be allocated leaves silence and a line on
+  the terminal instead of writing through a buffer that is not there.
 - **The real-time peak scan checks for NaN once per buffer** rather than once
   every four samples, trimming roughly 8-12 percent off a scan that runs 56
   times per audio block.

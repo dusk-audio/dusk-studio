@@ -47,7 +47,9 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     for (auto& b : auxSendPre) b = false;
 
     tempMono.assign ((size_t) std::max (1, blockSize), 0.0f);
-    tempStereoBuffer.setSize (2, std::max (1, blockSize));
+    // A refused allocation leaves numSamples() at 0, which the block-size guard
+    // in processAndAccumulate reads as "bail with silence".
+    (void) tempStereoBuffer.setSize (2, std::max (1, blockSize));
 
     // Hardware insert + the plugin <-> hardware crossfade gate. Same
     // 20 ms ramp as the rest of the strip so the transition feels in
