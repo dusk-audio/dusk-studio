@@ -5,6 +5,43 @@
 #include "engine/hosting/NativeRestorePolicy.h"
 #include "session/Session.h"
 
+#include <fstream>
+#include <iterator>
+#include <string>
+
+#ifndef DUSKSTUDIO_SOURCE_DIR
+#define DUSKSTUDIO_SOURCE_DIR "."
+#endif
+
+namespace
+{
+std::string readSource (const char* relativePath)
+{
+    std::ifstream input (std::string (DUSKSTUDIO_SOURCE_DIR) + "/" + relativePath);
+    REQUIRE (input.good());
+    return { std::istreambuf_iterator<char> (input),
+             std::istreambuf_iterator<char>() };
+}
+
+std::string functionBody (const std::string& source, const std::string& signature)
+{
+    const auto start = source.find (signature);
+    REQUIRE (start != std::string::npos);
+    const auto openBrace = source.find ('{', start + signature.size());
+    REQUIRE (openBrace != std::string::npos);
+
+    int depth = 1;
+    for (auto cursor = openBrace + 1; cursor < source.size(); ++cursor)
+    {
+        if (source[cursor] == '{') ++depth;
+        if (source[cursor] == '}' && --depth == 0)
+            return source.substr (openBrace + 1, cursor - openBrace - 1);
+    }
+    FAIL ("unterminated body for " + signature);
+    return {};
+}
+} // namespace
+
 TEST_CASE ("aux native-state rejection diagnostics identify lane and slot",
            "[session][native][diagnostics]")
 {
@@ -99,6 +136,16 @@ TEST_CASE ("native editor attach failures always log and alert with format ident
         [&] (const std::string&) { ++callbacks; },
         [&] (const std::string&, const std::string&) { ++callbacks; }));
     REQUIRE (callbacks == 0);
+}
+
+TEST_CASE ("aux lane editor attach never raises a modal",
+           "[ui][native][regression][issue-459][issue-491]")
+{
+    const auto body = functionBody (readSource ("src/ui/AuxLaneComponent.cpp"),
+                                    "bool attachNativePluginEditor (Editor& editor,");
+    REQUIRE (body.find ("enforceNativeEditorAttachPolicy") != std::string::npos);
+    REQUIRE (body.find ("stderr") != std::string::npos);
+    REQUIRE (body.find ("showDuskAlert") == std::string::npos);
 }
 
 TEST_CASE ("native reactivation failure quarantines rather than unloads",
