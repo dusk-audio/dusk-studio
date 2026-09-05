@@ -87,6 +87,33 @@ TEST_CASE ("PluginSlot republishes an in-process instance after release and prep
 }
 
 #if DUSKSTUDIO_HAS_OOP_PLUGINS
+// Connecting to the plugin host waits up to 5 s for the handshake and its
+// LoadPlugin RPC up to 30 s, so running either on the message thread hands a
+// plugin that stalls in the child the power to freeze the editor for over half
+// a minute - the failure the sandbox exists to contain. The load has to be
+// handed off, which shows up here as the completion never arriving inside the
+// call.
+TEST_CASE ("PluginSlot does not complete an out-of-process load inline")
+{
+    PluginManager manager;
+    manager.setOopEnabled (true);
+
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+
+    PluginDescriptor descriptor;
+    descriptor.name = "missing";
+    descriptor.formatName = "VST3";
+    descriptor.location = "/nonexistent/missing.vst3";
+
+    bool completed = false;
+    slot.loadFromDescriptorAsync (descriptor,
+                                  [&] (bool, juce::String) { completed = true; });
+
+    CHECK_FALSE (completed);
+}
+
 // The audio thread try-locks processLock and then stays inside
 // RemotePluginConnection::processBlockSync for up to the OOP block timeout,
 // reading the child's shared memory the whole time. Every message-thread path

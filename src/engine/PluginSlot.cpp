@@ -2,6 +2,7 @@
 #include "AtomicPark.h"
 #include "PluginManager.h"
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -177,6 +178,12 @@ PluginSlot::~PluginSlot()
     }
    #endif
 
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
+    // An in-flight off-thread load still posts its completion; joining before
+    // the members below go away keeps those workers from outliving the slot.
+    joinRemoteLoads();
+   #endif
+
     // Audio thread should already be detached by the time this runs (the
     // owning ChannelStrip destructs after its AudioEngine has released the
     // device callback). Belt-and-suspenders: clear the atomic first so
@@ -248,6 +255,159 @@ void PluginSlot::pollRemoteReaper()
         // Stop polling - child has been reaped, nothing more to watch.
         reaperTimer.stopTimer();
     }
+}
+
+void PluginSlot::publishRemoteConnection (
+    std::unique_ptr<duskstudio::ipc::RemotePluginConnection> connection,
+    PluginDescriptor descriptor,
+    int numIn, int numOut, int latency, bool isInstrument)
+{
+    ownedRemote = std::move (connection);
+    {
+        // Same drain-then-reset-and-publish as loadFromFile.
+        const juce::SpinLock::ScopedLockType processGuard (processLock);
+        remoteNumIn .store (numIn,  std::memory_order_relaxed);
+        remoteNumOut.store (numOut, std::memory_order_relaxed);
+        remoteIsInstrument.store (isInstrument, std::memory_order_relaxed);
+        cachedLatencySamples.store (latency, std::memory_order_relaxed);
+        blocksSinceLoad     = 0;
+        consecutiveOverruns = 0;
+        autoBypassed .store (false, std::memory_order_relaxed);
+        remoteCrashed.store (false, std::memory_order_relaxed);
+        currentRemote.store (ownedRemote.get(), std::memory_order_release);
+    }
+    reaperTimer.startTimer (kReaperPeriodMs);
+    descriptor.isInstrument = isInstrument;
+    descriptor.numInputChannels = numIn;
+    descriptor.numOutputChannels = numOut;
+    loadedDescriptor = std::move (descriptor);
+    offlineDescriptor.reset();
+    offlineLegacyDescriptionXml.clear();
+    offlineStateBase64.clear();
+    offlineCapturePlaceholder = false;
+    lastKnownStateBase64.clear();
+}
+
+void PluginSlot::reapFinishedRemoteLoads() noexcept
+{
+    for (auto entry = remoteLoads.begin(); entry != remoteLoads.end();)
+    {
+        if (entry->finished->load (std::memory_order_acquire))
+        {
+            if (entry->worker.joinable()) entry->worker.join();
+            entry = remoteLoads.erase (entry);
+        }
+        else
+        {
+            ++entry;
+        }
+    }
+}
+
+void PluginSlot::joinRemoteLoads() noexcept
+{
+    for (auto& entry : remoteLoads)
+        if (entry.worker.joinable()) entry.worker.join();
+    remoteLoads.clear();
+}
+
+void PluginSlot::beginRemoteLoad (PluginDescriptor descriptor,
+                                  std::uint32_t epoch,
+                                  std::string hostPath,
+                                  LoadCompletion onDone)
+{
+    reapFinishedRemoteLoads();
+
+    struct Outcome
+    {
+        std::unique_ptr<duskstudio::ipc::RemotePluginConnection> connection;
+        int  numIn { 0 };
+        int  numOut { 0 };
+        int  latency { 0 };
+        bool isInstrument { false };
+        std::string error;
+    };
+
+    // Everything the worker touches is copied across: it must not read the slot,
+    // whose completion is the only part that runs back on the message thread.
+    const auto descriptionXml = manager->descriptorToLegacyXml (descriptor).toStdString();
+    const auto sampleRate = preparedSampleRate;
+    const auto blockSize  = preparedBlockSize;
+    std::weak_ptr<char> life = lifeToken;
+    auto finished = std::make_shared<std::atomic<bool>> (false);
+
+    std::thread worker (
+        [this, life, epoch, onDone, descriptor, hostPath, descriptionXml,
+         sampleRate, blockSize, finished]
+    {
+        auto outcome = std::make_shared<Outcome>();
+        auto remote = std::make_unique<duskstudio::ipc::RemotePluginConnection>();
+
+        if (! remote->connect (hostPath, "--ipc-host", outcome->error))
+            remote.reset();
+        else if (! remote->loadPlugin (descriptionXml, sampleRate, blockSize,
+                                        outcome->numIn, outcome->numOut,
+                                        outcome->latency, outcome->isInstrument,
+                                        outcome->error))
+            remote.reset();
+        else
+            outcome->connection = std::move (remote);
+
+        // A queue that has gone away (shutdown) drops the lambda, and the
+        // connection dies with it - killing the child, which is what we want.
+        (void) dusk::callAsync ([this, life, epoch, onDone, descriptor, outcome,
+                                 sampleRate, blockSize]
+        {
+            if (! life.lock()) return;
+            if (currentLoadEpoch.load (std::memory_order_relaxed) != epoch)
+            {
+                if (onDone) onDone (false, "load superseded");
+                return;
+            }
+            if (outcome->connection == nullptr)
+            {
+                std::fprintf (stderr,
+                              "[Dusk Studio/PluginSlot] OOP load failed (%s); "
+                              "falling back to in-process.\n",
+                              outcome->error.c_str());
+                beginInProcessLoad (descriptor, epoch, onDone);
+                return;
+            }
+            // A device change while the load was in flight leaves the child on
+            // the configuration the load captured. prepareToPlay only reaches a
+            // published connection, and this one is not published yet, so the
+            // re-prepare has to happen here or the child would process its first
+            // block at the wrong rate and block size.
+            const bool configurationMoved =
+                preparedBlockSize != blockSize
+                || std::abs (preparedSampleRate - sampleRate) > 0.0;
+            if (configurationMoved)
+            {
+                std::string prepareError;
+                if (preparedBlockSize > duskstudio::ipc::kMaxBlock
+                    || ! outcome->connection->prepareToPlay (preparedSampleRate,
+                                                              preparedBlockSize,
+                                                              prepareError))
+                {
+                    std::fprintf (stderr,
+                                  "[Dusk Studio/PluginSlot] OOP re-prepare after a device "
+                                  "change failed (%s); falling back to in-process.\n",
+                                  prepareError.c_str());
+                    beginInProcessLoad (descriptor, epoch, onDone);
+                    return;
+                }
+            }
+
+            publishRemoteConnection (std::move (outcome->connection), descriptor,
+                                      outcome->numIn, outcome->numOut,
+                                      outcome->latency, outcome->isInstrument);
+            if (onDone) onDone (true, {});
+        });
+
+        finished->store (true, std::memory_order_release);
+    });
+
+    remoteLoads.push_back ({ std::move (worker), std::move (finished) });
 }
 
 void PluginSlot::retireRemoteConnection()
@@ -747,32 +907,9 @@ bool PluginSlot::loadFromDescriptor (const PluginDescriptor& descriptor,
                 }
                 else
                 {
-                    ownedRemote = std::move (remote);
-                    {
-                        // Same drain-then-reset-and-publish as loadFromFile above.
-                        const juce::SpinLock::ScopedLockType processGuard (processLock);
-                        remoteNumIn .store (numIn,  std::memory_order_relaxed);
-                        remoteNumOut.store (numOut, std::memory_order_relaxed);
-                        remoteIsInstrument.store (isInstrument,
-                                                    std::memory_order_relaxed);
-                        cachedLatencySamples.store (latency, std::memory_order_relaxed);
-                        blocksSinceLoad     = 0;
-                        consecutiveOverruns = 0;
-                        autoBypassed .store (false, std::memory_order_relaxed);
-                        remoteCrashed.store (false, std::memory_order_relaxed);
-                        currentRemote.store (ownedRemote.get(),
-                                                std::memory_order_release);
-                    }
-                    reaperTimer.startTimer (kReaperPeriodMs);
-                    fixedDescriptor.isInstrument = isInstrument;
-                    fixedDescriptor.numInputChannels = numIn;
-                    fixedDescriptor.numOutputChannels = numOut;
-                    loadedDescriptor = fixedDescriptor;
-                    offlineDescriptor.reset();
-                    offlineLegacyDescriptionXml.clear();
-                    offlineStateBase64.clear();
-                    offlineCapturePlaceholder = false;
-                    lastKnownStateBase64.clear();
+                    publishRemoteConnection (std::move (remote),
+                                              std::move (fixedDescriptor),
+                                              numIn, numOut, latency, isInstrument);
                     return true;
                 }
             }
@@ -848,26 +985,13 @@ bool PluginSlot::installInProcessInstance (std::unique_ptr<juce::AudioPluginInst
 }
 
 void PluginSlot::loadFromDescriptorAsync (const PluginDescriptor& descriptor,
-                                          std::function<void (bool, juce::String)> onDone)
+                                          LoadCompletion onDone)
 {
     if (manager == nullptr)
     {
         if (onDone) onDone (false, "PluginSlot has no PluginManager bound");
         return;
     }
-
-   #if DUSKSTUDIO_HAS_OOP_PLUGINS
-    // OOP load is already bounded by the IPC connect/load timeouts, so keep it
-    // synchronous; the off-thread path is the in-process win (slow sample
-    // decode). When OOP is enabled, fall back to the proven sync load.
-    if (manager->isOopEnabled())
-    {
-        juce::String err;
-        const bool ok = loadFromDescriptor (descriptor, err);
-        if (onDone) onDone (ok, err);
-        return;
-    }
-   #endif
 
     // Bump the load epoch first: a stale async completion compares epochs and
     // bails if a newer load / unload superseded it.
@@ -909,14 +1033,38 @@ void PluginSlot::loadFromDescriptorAsync (const PluginDescriptor& descriptor,
     // keeps playing the OOP plugin after currentInstance is nulled.
     retireRemoteConnection();
     remoteCrashed.store (false, std::memory_order_relaxed);
+
+    if (manager->isOopEnabled()
+        && preparedBlockSize > 0
+        && preparedBlockSize <= duskstudio::ipc::kMaxBlock)
+    {
+        const auto hostPath = manager->getHostExecutablePath();
+        if (hostPath.isNotEmpty() && juce::File (hostPath).existsAsFile())
+        {
+            beginRemoteLoad (std::move (fixedDescriptor), epoch,
+                              hostPath.toStdString(), std::move (onDone));
+            return;
+        }
+        std::fprintf (stderr,
+                      "[Dusk Studio/PluginSlot] OOP requested but host binary not found "
+                      "at \"%s\"; falling back to in-process.\n",
+                      hostPath.toRawUTF8());
+    }
    #endif
 
+    beginInProcessLoad (std::move (fixedDescriptor), epoch, std::move (onDone));
+}
+
+void PluginSlot::beginInProcessLoad (PluginDescriptor descriptor,
+                                     std::uint32_t epoch,
+                                     LoadCompletion onDone)
+{
     // Off-thread create; the completion fires on the MESSAGE thread. weak_ptr
     // to lifeToken guards against the slot being destroyed mid-load (token dies
     // with the slot -> weak_ptr expires -> bail before touching `this`).
     std::weak_ptr<char> life = lifeToken;
-    manager->createPluginInstanceAsync (fixedDescriptor, preparedSampleRate, preparedBlockSize,
-        [this, life, epoch, onDone, fixedDescriptor]
+    manager->createPluginInstanceAsync (descriptor, preparedSampleRate, preparedBlockSize,
+        [this, life, epoch, onDone, descriptor]
         (std::unique_ptr<juce::AudioPluginInstance> inst, juce::String err)
     {
         if (! life.lock()) return;                      // slot destroyed mid-load
@@ -931,7 +1079,7 @@ void PluginSlot::loadFromDescriptorAsync (const PluginDescriptor& descriptor,
                                                         : juce::String ("plugin creation failed"));
             return;
         }
-        const bool ok = installInProcessInstance (std::move (inst), fixedDescriptor);
+        const bool ok = installInProcessInstance (std::move (inst), descriptor);
         if (onDone) onDone (ok, ok ? juce::String() : juce::String ("install failed"));
     });
 }

@@ -16,6 +16,9 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
+#include <thread>
+#include <vector>
 
 namespace duskstudio
 {
@@ -35,6 +38,8 @@ class PluginManager;
 class PluginSlot : private dusk::Timer
 {
     using PluginInstancePtr = std::unique_ptr<juce::AudioPluginInstance>;
+    // Delivered on the message thread when an off-thread load settles.
+    using LoadCompletion = std::function<void (bool success, juce::String error)>;
 
 public:
     PluginSlot();
@@ -73,14 +78,15 @@ public:
     bool loadFromDescriptor (const PluginDescriptor& descriptor,
                              juce::String& errorMessage);
 
-    // Off-thread load (in-process only - OOP falls back to the sync path).
-    // Creates the instance on a background thread so a slow sample decode never
-    // freezes the UI, then swaps it in + fires onDone(success, error) ON THE
-    // MESSAGE THREAD. Safe against the slot being destroyed or a newer
-    // load/unload arriving mid-load (weak-token + load-epoch guards).
-    void loadFromDescriptorAsync (
-        const PluginDescriptor& descriptor,
-        std::function<void (bool success, juce::String error)> onDone);
+    // Off-thread load. Builds the instance away from the message thread - a
+    // background thread for the in-process create, the plugin host's own
+    // process for an out-of-process one - so neither a slow sample decode nor
+    // a child that stalls its handshake freezes the UI. Swaps the result in and
+    // fires onDone(success, error) ON THE MESSAGE THREAD. Safe against the slot
+    // being destroyed or a newer load/unload arriving mid-load (weak-token +
+    // load-epoch guards).
+    void loadFromDescriptorAsync (const PluginDescriptor& descriptor,
+                                  LoadCompletion onDone);
 
     void unload();
 
@@ -258,6 +264,14 @@ public:
    #endif
 
 private:
+    // Message-thread tail of an off-thread load: hands the descriptor to the
+    // plugin-instance builder and installs the result. Split out so the
+    // out-of-process path can fall back to it after a failed connect or
+    // LoadPlugin without re-rotating the keep-alive rings.
+    void beginInProcessLoad (PluginDescriptor descriptor,
+                             std::uint32_t epoch,
+                             LoadCompletion onDone);
+
     // Message-thread install tail shared by descriptor-based sync and async
     // loads. Primes + atomically swaps in the
     // already-built instance; caller has already rotated the keep-alive ring.
@@ -362,6 +376,37 @@ private:
     };
     ReaperTimer reaperTimer { *this };
     void pollRemoteReaper();
+
+    // Connect + LoadPlugin run here rather than on the message thread: the
+    // handshake alone waits 5 s and the RPC 30 s, so a plugin that stalls in
+    // the child would otherwise freeze the editor for the sum of the two.
+    //
+    // Workers are kept rather than joined at the next load: a second load
+    // arriving while the first child is still stalled must not inherit that
+    // wait, which is the freeze this whole path exists to avoid. Each worker
+    // raises its own flag on the way out and only flagged ones are joined,
+    // so the message thread never blocks on a live one. The slot's destructor
+    // joins whatever is left, bounded by the RPC timeouts and concurrent
+    // across workers.
+    struct RemoteLoad
+    {
+        std::thread worker;
+        std::shared_ptr<std::atomic<bool>> finished;
+    };
+    std::vector<RemoteLoad> remoteLoads;
+    void reapFinishedRemoteLoads() noexcept;
+    void joinRemoteLoads() noexcept;
+    void beginRemoteLoad (PluginDescriptor descriptor,
+                          std::uint32_t epoch,
+                          std::string hostPath,
+                          LoadCompletion onDone);
+
+    // Hand a connected child to the audio path. Shared by the synchronous and
+    // off-thread descriptor loads so the publish ordering lives in one place.
+    void publishRemoteConnection (
+        std::unique_ptr<duskstudio::ipc::RemotePluginConnection> connection,
+        PluginDescriptor descriptor,
+        int numIn, int numOut, int latency, bool isInstrument);
 
     // Stop the reaper, unpublish the live connection and shift it into the
     // deferred-destruction ring. Nulling currentRemote is not enough on its
