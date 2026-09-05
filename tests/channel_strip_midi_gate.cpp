@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "dsp/ChannelStrip.h"
@@ -7,6 +8,8 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
+#include <string>
 
 using Catch::Matchers::WithinAbs;
 
@@ -72,19 +75,35 @@ struct StripHarness
 TEST_CASE ("muted MIDI strips still process transport panic events",
            "[channel-strip][midi][regression][issue-460]")
 {
+   #if ! DUSKSTUDIO_HAS_NATIVE_CLAP
+    SKIP ("needs the native CLAP host to load an instrument into the strip");
+   #else
     StripHarness h { duskstudio::ChannelStrip::kInsertPlugin };
+
+    // The gate keys on a loaded instrument, not the insert mode, so the strip
+    // needs one; the CLAP fixture stands in for it.
+    std::string error;
+    REQUIRE (h.strip.getNativeClapSlot().load (
+        std::filesystem::u8path (DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH),
+        48000.0, kBlock, error));
 
     juce::MidiBuffer panic;
     panic.addEvent (juce::MidiMessage::controllerEvent (1, 123, 0), 0);
     h.runMidiBlock (panic, false);
 
     REQUIRE (h.strip.getLastProcessedSamples() == kBlock);
+   #endif
 }
 
 TEST_CASE ("MIDI strips with no instrument skip the chain",
            "[channel-strip][midi][regression][issue-492]")
 {
-    StripHarness h { duskstudio::ChannelStrip::kInsertEmpty };
+    // Every insert mode, including the kInsertPlugin a fresh strip starts in:
+    // none of them loads an instrument by itself.
+    const int mode = GENERATE (duskstudio::ChannelStrip::kInsertEmpty,
+                               duskstudio::ChannelStrip::kInsertPlugin,
+                               duskstudio::ChannelStrip::kInsertHardware);
+    StripHarness h { mode };
     juce::MidiBuffer notes;
     notes.addEvent (juce::MidiMessage::noteOn (1, 60, (std::uint8_t) 100), 0);
 
