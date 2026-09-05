@@ -94,6 +94,14 @@ closes release-metadata gaps found during the pre-tag audit.
 - **Sandboxed plugin windows stay responsive on Windows and macOS.** Window
   creation, visibility changes, resizing, and teardown now run on the child
   process's pumping message thread instead of its blocking control thread.
+- **A sandboxed plugin's editor closes before the plugin itself.** Releasing or
+  replacing an out-of-process plugin dropped it while its editor window was
+  still open and repainting, which could crash the child process during
+  shutdown or a plugin change. Both paths now close the editor first and free
+  the plugin on the thread that owns it. Requests that need that thread also
+  give up after a few seconds instead of waiting forever, so a plugin that
+  stops responding no longer blocks every later request or drops its settings
+  from a saved session.
 - **macOS sandbox connections no longer collide on one shared-memory name.**
   The name carried a prefix long enough to crowd out the process id and counter
   that made it unique, so two plugins loading at once could fail to connect, and
