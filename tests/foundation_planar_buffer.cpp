@@ -3,6 +3,7 @@
 
 #include "foundation/PlanarBuffer.h"
 
+#include <limits>
 #include <vector>
 
 using Catch::Matchers::WithinAbs;
@@ -77,4 +78,36 @@ TEST_CASE ("dusk::audio::PlanarBuffer resize republishes its channel pointers",
     REQUIRE (buffer.numChannels() == 0);
     REQUIRE (buffer.numSamples() == 0);
     buffer.clear();
+}
+
+TEST_CASE ("dusk::audio::PlanarBuffer stride arithmetic holds at huge sample counts",
+           "[foundation][audio]")
+{
+    using Buffer = dusk::audio::PlanarBuffer;
+    REQUIRE (Buffer::strideFor (0) == 0);
+    REQUIRE (Buffer::strideFor (-5) == 0);
+    REQUIRE (Buffer::strideFor (1) == 16);
+    REQUIRE (Buffer::strideFor (16) == 16);
+    REQUIRE (Buffer::strideFor (17) == 32);
+
+    constexpr int intMax = std::numeric_limits<int>::max();
+    REQUIRE (Buffer::strideFor (intMax) == 2147483648LL);
+    REQUIRE (Buffer::storageFor (2, intMax) == 4294967296LL);
+    REQUIRE (Buffer::storageFor (2, intMax) > Buffer::kMaxTotalSamples);
+}
+
+TEST_CASE ("dusk::audio::PlanarBuffer refuses a size it cannot hold", "[foundation][audio]")
+{
+    dusk::audio::PlanarBuffer buffer;
+    REQUIRE (buffer.setSize (2, 64));
+    REQUIRE (buffer.numSamples() == 64);
+
+    REQUIRE_FALSE (buffer.setSize (2, std::numeric_limits<int>::max()));
+    REQUIRE (buffer.numChannels() == 0);
+    REQUIRE (buffer.numSamples() == 0);
+    buffer.clear();
+
+    REQUIRE (buffer.setSize (1, 32));
+    REQUIRE (buffer.numChannels() == 1);
+    REQUIRE (buffer.numSamples() == 32);
 }

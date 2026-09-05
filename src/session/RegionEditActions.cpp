@@ -1224,7 +1224,8 @@ bool JoinRegionsAction::perform()
     const auto totalSamples = (int) std::clamp<std::int64_t> (
         totalLen, 1, std::numeric_limits<int>::max());
     dusk::audio::PlanarBuffer mixBuf;
-    mixBuf.setSize (chs, totalSamples);
+    if (! mixBuf.setSize (chs, totalSamples))
+        return false;   // join spans more audio than one buffer can hold
 
     for (const auto& reg : beforeRegions)
     {
@@ -1235,7 +1236,8 @@ bool JoinRegionsAction::perform()
             reg.lengthInSamples, 0, std::numeric_limits<int>::max());
         if (regSamples == 0) continue;
         dusk::audio::PlanarBuffer tmp;
-        tmp.setSize (chs, regSamples);
+        if (! tmp.setSize (chs, regSamples))
+            return false;
         if (rdr->read (tmp.data(), chs, reg.sourceOffset, regSamples) != regSamples)
             return false;   // unreadable region body - abort the join, leave regions unchanged
                             // (no output file created yet, nothing to clean up)

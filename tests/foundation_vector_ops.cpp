@@ -5,9 +5,36 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <limits>
 #include <vector>
 
 using Catch::Matchers::WithinAbs;
+
+namespace
+{
+dusk::audio::FloatMinMax referenceMinMax (const float* data, int count)
+{
+    if (count <= 0) return { 0.0f, 0.0f };
+    float minValue = data[0];
+    float maxValue = data[0];
+    for (int i = 1; i < count; ++i)
+    {
+        minValue = std::min (minValue, data[i]);
+        maxValue = std::max (maxValue, data[i]);
+    }
+    return { minValue, maxValue };
+}
+
+void requireSameMinMax (dusk::audio::FloatMinMax actual, dusk::audio::FloatMinMax expected)
+{
+    if (std::isnan (expected.min)) REQUIRE (std::isnan (actual.min));
+    else                           REQUIRE_THAT (actual.min, WithinAbs (expected.min, 0.0f));
+
+    if (std::isnan (expected.max)) REQUIRE (std::isnan (actual.max));
+    else                           REQUIRE_THAT (actual.max, WithinAbs (expected.max, 0.0f));
+}
+} // namespace
 
 TEST_CASE ("dusk::audio vector operations match scalar references", "[foundation][audio]")
 {
@@ -70,5 +97,42 @@ TEST_CASE ("dusk::audio findSignedMinMax matches std::minmax_element", "[foundat
         const auto actual = dusk::audio::findSignedMinMax (values.data(), count);
         REQUIRE_THAT (actual.min, WithinAbs (*expected.first, 0.0f));
         REQUIRE_THAT (actual.max, WithinAbs (*expected.second, 0.0f));
+    }
+}
+
+TEST_CASE ("dusk::audio findSignedMinMax reports an empty range as zero", "[foundation][audio]")
+{
+    const auto empty = dusk::audio::findSignedMinMax (nullptr, 0);
+    REQUIRE_THAT (empty.min, WithinAbs (0.0f, 0.0f));
+    REQUIRE_THAT (empty.max, WithinAbs (0.0f, 0.0f));
+
+    const auto negative = dusk::audio::findSignedMinMax (nullptr, -4);
+    REQUIRE_THAT (negative.min, WithinAbs (0.0f, 0.0f));
+    REQUIRE_THAT (negative.max, WithinAbs (0.0f, 0.0f));
+}
+
+TEST_CASE ("dusk::audio findSignedMinMax sees a NaN in any lane or tail slot",
+           "[foundation][audio]")
+{
+    for (const int count : { 8, 9, 11, 16, 33, 64 })
+    {
+        for (int nanAt = 0; nanAt < count; ++nanAt)
+        {
+            std::vector<float> values ((size_t) count);
+            for (int i = 0; i < count; ++i)
+                values[(size_t) i] = 0.25f * (float) ((i * 13) % 7 - 3);
+
+            // The extreme shares a SIMD lane with the NaN and lands after it,
+            // so a vector pass that let the NaN stick in that lane's
+            // accumulator would miss it.
+            const int sameLane = nanAt + 4 < count ? nanAt + 4 : nanAt - 4;
+            values[(size_t) sameLane] = -9.5f;
+            values[(size_t) ((nanAt + 2) % count)] = 9.5f;
+            values[(size_t) nanAt] = std::numeric_limits<float>::quiet_NaN();
+
+            INFO ("count " << count << " nan at " << nanAt);
+            requireSameMinMax (dusk::audio::findSignedMinMax (values.data(), count),
+                               referenceMinMax (values.data(), count));
+        }
     }
 }

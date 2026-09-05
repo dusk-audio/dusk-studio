@@ -3,6 +3,8 @@
 #include "VectorOps.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <vector>
 
 // Owning planar float buffer: one allocation holding every channel, each
@@ -22,16 +24,46 @@ public:
     PlanarBuffer (const PlanarBuffer&) = delete;
     PlanarBuffer& operator= (const PlanarBuffer&) = delete;
 
-    void setSize (int newNumChannels, int newNumSamples)
-    {
-        channelCount = std::max (0, newNumChannels);
-        sampleCount  = std::max (0, newNumSamples);
-        stride       = ((sampleCount + kSamplesPerLine - 1) / kSamplesPerLine) * kSamplesPerLine;
+    // setSize refuses more than this many floats of padded storage (4 GiB), so
+    // a length derived from session data - a join spanning hours, a corrupt
+    // region length - comes back false instead of throwing bad_alloc out of an
+    // undo action.
+    static constexpr std::int64_t kMaxTotalSamples = 1LL << 30;
 
-        storage.assign ((std::size_t) channelCount * (std::size_t) stride, 0.0f);
+    static constexpr std::int64_t strideFor (int samples) noexcept
+    {
+        const std::int64_t n = samples > 0 ? (std::int64_t) samples : 0;
+        return ((n + kSamplesPerLine - 1) / kSamplesPerLine) * kSamplesPerLine;
+    }
+
+    static constexpr std::int64_t storageFor (int channels, int samples) noexcept
+    {
+        return (channels > 0 ? (std::int64_t) channels : 0) * strideFor (samples);
+    }
+
+    bool setSize (int newNumChannels, int newNumSamples)
+    {
+        const int newChannels = std::max (0, newNumChannels);
+        const int newSamples  = std::max (0, newNumSamples);
+        const std::int64_t total = storageFor (newChannels, newSamples);
+        if (total > kMaxTotalSamples)
+        {
+            channelCount = 0;
+            sampleCount  = 0;
+            storage.clear();
+            pointers.clear();
+            return false;
+        }
+
+        channelCount = newChannels;
+        sampleCount  = newSamples;
+        const std::int64_t stride = strideFor (sampleCount);
+
+        storage.assign ((std::size_t) total, 0.0f);
         pointers.resize ((std::size_t) channelCount);
         for (int c = 0; c < channelCount; ++c)
             pointers[(std::size_t) c] = storage.data() + (std::size_t) c * (std::size_t) stride;
+        return true;
     }
 
     int numChannels() const noexcept { return channelCount; }
@@ -52,12 +84,11 @@ public:
     }
 
 private:
-    static constexpr int kSamplesPerLine = 16;   // 64 bytes
+    static constexpr std::int64_t kSamplesPerLine = 16;   // 64 bytes
 
     std::vector<float>  storage;
     std::vector<float*> pointers;
     int channelCount = 0;
     int sampleCount  = 0;
-    int stride       = 0;
 };
 } // namespace dusk::audio

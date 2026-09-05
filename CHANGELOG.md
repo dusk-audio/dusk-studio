@@ -226,6 +226,13 @@ closes release-metadata gaps found during the pre-tag audit.
   `ClapPluginEditorComponent.cpp` (11 to 18), its header (7 to 8), and
   `MainComponent.cpp` (457 to 459). Five stale ceilings were tightened to their
   actual counts so later regressions cannot hide in unused allowance.
+- **Joining regions that span more than 12 hours no longer crashes.** The join
+  render sizes its mix buffer with 64-bit arithmetic and refuses a span it
+  cannot hold, leaving the regions untouched, instead of overflowing the buffer
+  length and aborting the app from inside an undoable edit.
+- **The real-time peak scan checks for NaN once per buffer** rather than once
+  every four samples, trimming roughly 8-12 percent off a scan that runs 56
+  times per audio block.
 
 ## [0.13.2] - 2026-08-26
 
