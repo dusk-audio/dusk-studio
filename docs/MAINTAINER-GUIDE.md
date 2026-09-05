@@ -428,6 +428,168 @@ General approach: reproduce in a test if at all possible (the suite runs in mill
 
 ---
 
+## Part 9b - Regression run across platforms
+
+After a fix wave, `scripts/regress.sh` re-verifies the tree on all three target
+platforms from the Linux box. Each platform runs a list of *legs*; every leg
+prints one `PASS` / `FAIL` / `WARN` / `SKIP` line, the run ends with a summary
+table, and the script exits non-zero if any leg failed. Re-running is safe: no
+leg prompts, and each one either recreates its inputs or checks them.
+
+```bash
+scripts/regress.sh                       # linux (the default target)
+scripts/regress.sh linux --perf          # plus the headless engine perf suite
+scripts/regress.sh linux --vst3 ~/.vst3/Multi-Q.vst3
+scripts/regress.sh mac
+scripts/regress.sh windows --msi /path/to/dusk-studio-X.Y.Z-Windows-x64.msi
+scripts/regress.sh windows --release-run 1234567890
+scripts/regress.sh all --msi /path/to/installer.msi
+```
+
+Layout: `scripts/regress.sh` only dispatches. The work is in
+`scripts/regress/{linux,mac,windows}.sh` over the shared leg bookkeeping in
+`scripts/regress/common.sh`, plus the guest-side helpers in
+`scripts/regress/windows/`.
+
+### Linux
+
+Prerequisites: `build/` and `build-tests/` already configured, `Xvfb`, GNU
+`timeout`, `flock`, and the pinned donor checkout at `../dusk-donor-pin`.
+
+| Leg | What it proves |
+|---|---|
+| `configure-check` | both build dirs point `DUSK_PLUGINS_PATH` at `../dusk-donor-pin`. A drifted `../plugins` changes the DSP under test, and the failure then reads as a Dusk Studio regression. A mismatch aborts the run before anything is built. |
+| `build-app` / `build-tests` | both targets compile at `-j6`. |
+| `ctest` | the Catch2 suite in `build-tests/`. |
+| `juce-gate` | `tools/juce-gate.sh`: no file gained JUCE and no listed file gained occurrences. |
+| `selftest-xvfb` | `scripts/run-selftest-xvfb.sh` - the headless audio self-test on a private X display. |
+| `ipc-selftest` | `DUSKSTUDIO_RUN_IPC_SELFTEST=1`: the shm + futex round-trip against the `dusk-studio-plugin-host` stub. |
+| `ipc-host-test` | `DUSKSTUDIO_IPC_HOST_TEST=<plugin>`: a real plugin loaded out-of-process, 1000 stereo blocks, signal asserted modified. Uses `--vst3`, else the first `~/.vst3/*.vst3`; `SKIP` when there is none. |
+| `perf-suite` | `DUSKSTUDIO_RUN_PERF_TEST=1` across the (rate, buffer, load) matrix. Off unless `--perf`. |
+
+Everything from `selftest-xvfb` down runs on a private Xvfb display with
+`WAYLAND_DISPLAY` unset - the binary aborts against a live Wayland session, so
+no leg may ever launch it on the desktop.
+
+`DUSK_REGRESS_BUILD_LOCK=/path/to/lockfile` wraps the two compile legs in
+`flock` when something else may be building the same tree.
+
+### macOS
+
+The M3 Air (`marc@macbook-air.local`) is a headless build node: key auth, no
+sudo ever, toolchain in `~/bin` and `~/tools`, and no GNU `timeout` - remote
+deadlines are a poll loop over a completion marker.
+
+Prerequisites: an ssh key on the node, a clean `~/src/dusk-studio` working tree
+(submodule pointers may drift; tracked files may not), `~/mac-configure.sh`
+(takes the build dir as `$1` and passes `-DDAF_PATH` / `-DDAF_WIDGETS_PATH`),
+and the sibling checkouts `~/src/plugins-main`, `~/src/DPF`, `~/src/DPF-Widgets`.
+
+The commit under test never goes through GitHub: it is pushed straight over ssh
+to `refs/heads/regress-<short sha>` in the node's checkout. The node's previous
+branch and submodule commits are recorded at the start and restored on exit,
+including when a leg fails.
+
+| Leg | What it proves |
+|---|---|
+| `mac-preflight` | node reachable, review model unloaded from ollama (it pins several GB and a `-j6` build would swap against it), working tree clean. |
+| `push-head` / `mac-checkout` | the node builds this exact commit. `WARN` when a submodule cannot be synced to the recorded pin. |
+| `donor-pin` | `~/src/plugins-main` detached at the `DONOR_REV` in `.github/workflows/release.yml`. |
+| `daf-pins` | `~/src/DPF`, `~/src/DPF-Widgets` and the Pugl submodule moved to the revisions in `.github/actions/clone-daf-stack/action.yml`. Best effort: an unfetchable revision is a `WARN`, not a failure. The DAF checkouts are left at the pin, not put back. |
+| `configure-app` / `configure-tests` / `build-app` / `build-tests` / `ctest` | the same build and test surface as CI's macOS job. |
+| `selftest` | `DUSKSTUDIO_RUN_SELFTEST=1` against the built `.app`, behind a marker-file deadline. |
+
+What it cannot prove: **anything with a window**. Launching the GUI from an ssh
+session aborts in the main window constructor on that node, and it does so on
+`main` too, so it is the environment and not the build. Those legs report `SKIP`
+rather than a false failure; run them by hand from a console session on the Air:
+
+```bash
+cd ~/src/dusk-studio && ./build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio
+```
+
+The IPC self-test is Linux-only code and is skipped for that reason, not this one.
+
+### Windows
+
+The libvirt domain `win11` on this box has no qemu-guest-agent and no SSH. The
+channel is: `virsh send-key` types into a guest PowerShell console, an HTTP
+server on `192.168.122.1:8000` serves the phase scripts and the payload, a
+collector on `:9000` receives each phase's POSTed report, and `virsh screenshot`
+shows what the guest is actually doing. Both servers are stopped on exit with
+self-excluding `pkill` patterns.
+
+Prerequisites: libvirt access to `win11` without sudo (`qemu:///system`), the
+guest running, `7z`, `zip`, `python3` (Pillow for the PNG screenshots), `gh`
+authenticated for `--release-run`, and **at least one entry in the guest's
+Recent Sessions list** - phase 3 opens a session by clicking `Open` in the
+startup picker, and an empty list makes that click a no-op.
+
+The payload is built on the host: the MSI is unpacked with `7z`, the flattened
+`CM_FP_bin.*` names are put back into `bin/`, the plugin host is renamed to
+`dusk-studio-plugin-host.exe` (the app looks for it beside itself under that
+name), and the result is zipped. The guest unpacks it to
+`%LOCALAPPDATA%\DuskStudio-regress`, which needs no elevation - installing into
+`C:\Program Files` would need UAC, which must not be auto-accepted.
+
+| Leg | What it proves |
+|---|---|
+| `payload` | the installer unpacks to a runnable `bin/` tree with both executables. |
+| `host-servers` | the script and report channels are listening on `192.168.122.1`. |
+| `guest-wake` | the domain is running and its display is not blanked. Screenshot in the run directory. |
+| `console-probe` | a fresh PowerShell console is up and accepting typed input, before any phase is typed into it. |
+| `phase1-selftest` | headless `DUSKSTUDIO_RUN_SELFTEST=1` with stdout and stderr captured through `ProcessStartInfo` redirection: exit code 0, at least one `[PASS]`, no `[FAIL]`. |
+| `phase2-handoff` | GUI launch, then a second launch carrying a session path hands over and exits 0 within 30 s while the first instance stays alive. |
+| `phase3-session-close` | a session is opened from the picker, `WM_CLOSE` produces exit 0 within 50 s, and stderr carries the `[Dusk Studio/shutdown] phase` markers. A missing session-load marker is reported as a likely empty Recent Sessions list. |
+| `ipc-selftest` | `SKIP`. `DUSKSTUDIO_RUN_IPC_SELFTEST` never returns on Windows (issue #504), so the out-of-process transport is only compile- and contract-verified there. Remove the skip when #504 closes. |
+
+Every phase opens its own console from the Start menu: a phase that calls
+`SetForegroundWindow` steals focus, so the next `send-key` would land in the
+wrong window. Constraints the guest-side scripts have to respect, all of them
+things that have already gone wrong here:
+
+- `$host` is a read-only PowerShell automatic variable; a script assigning it
+  dies before its POST.
+- `iex` runs in the console's session scope, so variables survive between
+  phases. Every script assigns its own before reading them.
+- A P/Invoke with a PowerShell scriptblock delegate (`EnumWindows`) throws under
+  `iex`. The P/Invoke surface stays limited to direct calls.
+- `WM_CLOSE` on a fresh launch is swallowed while the startup picker is open,
+  which is why phase 3 opens a session before closing the window.
+- The window is pinned with `MoveWindow(hwnd, 0, 0, 1068, 660)` so the picker's
+  `Open` button is at a fixed coordinate.
+
+Screenshots, the raw report and the served payload all stay in the run
+directory printed at the end (`/tmp/dusk-regress-windows-<timestamp>/`). If a
+phase times out, read its screenshot before re-running: something else driving
+the VM has been the cause before.
+
+Overrides: `DUSK_REGRESS_VM`, `DUSK_REGRESS_LIBVIRT_URI`, `DUSK_REGRESS_HOST_IP`.
+
+### Adding a leg
+
+1. Write the check as a shell function in the platform's script that returns 0
+   for pass, non-zero for fail, and prints its own detail.
+2. Register it with `regress_leg "<name>" <function>` in leg order, or
+   `regress_leg_soft` when a `warn:` line in its output should downgrade it to
+   `WARN` instead of failing the run, or `regress_skip "<name>" "<reason>"` when
+   the environment cannot run it. A `SKIP` needs a reason that says what to run
+   by hand instead.
+3. For a Windows leg, add a `.ps1` under `scripts/regress/windows/`, map it to a
+   short served name in `install_scripts` (the name is typed one keystroke at a
+   time), and end it with the two contract lines the runner waits for:
+
+   ```
+   REGRESS-PHASE <name> RESULT PASS|FAIL
+   REGRESS-PHASE <name> END
+   ```
+
+   The host substitutes `@@HOSTIP@@`, `@@ROOT@@` and `@@ZIP@@` when serving, so
+   those values are not duplicated per script.
+4. `bash -n` and `shellcheck` every script you touched.
+
+---
+
 ## Part 10 - Release
 
 ### Release order
