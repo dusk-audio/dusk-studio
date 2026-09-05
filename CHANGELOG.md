@@ -73,6 +73,13 @@ closes release-metadata gaps found during the pre-tag audit.
   parent usually picks up a finished block without waiting, which leaves the
   child's wake bytes queued; clearing the whole backlog is now spread across
   waits rather than paid for by whichever block happened to arrive late.
+- **A macOS sandbox plugin that automates its own parameters no longer bypasses
+  itself.** Parameter changes reported by the plugin are handed to the child
+  process's message thread instead of being sent to Dusk Studio from whichever
+  thread the plugin used, which for a plugin automating every block was the
+  thread rendering its audio. Sending from there stalled rendering long enough
+  for Dusk Studio to give up on the block and leave the plugin bypassed until
+  it was reloaded.
 - **A Windows sandbox connection cannot be taken by another local process.**
   The control pipe's name was predictable, so any process on the machine could
   create it first and make Dusk Studio's own attempt fail, which silently
