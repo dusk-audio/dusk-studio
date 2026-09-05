@@ -12,9 +12,8 @@
 
 #include <algorithm>
 #include <atomic>
-#include <fstream>
+#include <cmath>
 #include <functional>
-#include <iterator>
 #include <memory>
 #include <set>
 #include <string>
@@ -603,23 +602,73 @@ TEST_CASE ("DeviceManager fan-out: prime, remove-stop, summing, zero, error", "[
     }
 }
 
-TEST_CASE ("DeviceManager fan-out publishes callbacks without an audio-thread mutex",
-           "[audio][device][regression][issue-464]")
+TEST_CASE ("DeviceManager fan-out drops summed clients rather than resize on the audio thread",
+           "[audio][device]")
 {
-    const auto path = std::string (DUSKSTUDIO_SOURCE_DIR)
-                    + "/src/engine/device/DeviceManager.cpp";
-    std::ifstream input (path);
-    const std::string source { std::istreambuf_iterator<char> (input),
-                               std::istreambuf_iterator<char>() };
-    const auto begin = source.find ("class CallbackFanout");
-    const auto end = source.find ("} // namespace", begin);
-    REQUIRE (begin != std::string::npos);
-    REQUIRE (end != std::string::npos);
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    Harness h;
+    DeviceManager dm;
+    dm.setDeviceTypesForTest (h.build());
+    REQUIRE (dm.initialise (16, 2, "", true).empty());
 
-    const auto fanout = source.substr (begin, end - begin);
-    REQUIRE (fanout.find ("std::mutex") == std::string::npos);
-    REQUIRE (fanout.find ("callbackListLock") == std::string::npos);
-    REQUIRE (fanout.find ("publishedCallbacks.load") != std::string::npos);
+    // The summing scratch is sized once, in audioDeviceAboutToStart, from the
+    // device's channel count and quantum. A block past either bound cannot be
+    // summed into it, and growing it here would allocate on the audio thread, so
+    // the first client - which writes the device buffers directly - still runs
+    // and the summed extras are skipped.
+    auto* dev = h.pw->created.back();
+    const int quantum = dev->getCurrentBufferSizeSamples();
+    const int preparedChannels = (int) dev->getOutputChannelNames().size();
+    REQUIRE (quantum > 0);
+    REQUIRE (preparedChannels == 2);
+
+    SECTION ("a block past the prepared quantum")
+    {
+        MockCallback first (&h.log, "first", 0.5f);
+        MockCallback second (&h.log, "second", 0.25f);
+        dm.addCallback (&first);
+        dm.addCallback (&second);
+
+        const int numSamples = quantum + 1;
+        std::vector<float> ch0 ((size_t) numSamples), ch1 ((size_t) numSamples);
+        float* outPtrs[2] = { ch0.data(), ch1.data() };
+        dev->deliverBlock (nullptr, 0, outPtrs, preparedChannels, numSamples);
+
+        REQUIRE (first.blocks == 1);
+        REQUIRE (second.blocks == 0);
+        float worst = 0.0f;
+        for (int s = 0; s < numSamples; ++s)
+            worst = std::max (worst, std::abs (ch0[(size_t) s] - 0.5f));
+        REQUIRE_THAT (worst, Catch::Matchers::WithinAbs (0.0f, 1e-9));
+
+        dm.removeCallback (&first);
+        dm.removeCallback (&second);
+    }
+
+    SECTION ("a block past the prepared channel count")
+    {
+        MockCallback first (&h.log, "first", 0.5f);
+        MockCallback second (&h.log, "second", 0.25f);
+        dm.addCallback (&first);
+        dm.addCallback (&second);
+
+        constexpr int numSamples = 8;
+        const int numOut = preparedChannels + 1;
+        std::vector<std::vector<float>> channels ((size_t) numOut,
+                                                  std::vector<float> ((size_t) numSamples));
+        std::vector<float*> outPtrs ((size_t) numOut);
+        for (int ch = 0; ch < numOut; ++ch)
+            outPtrs[(size_t) ch] = channels[(size_t) ch].data();
+        dev->deliverBlock (nullptr, 0, outPtrs.data(), numOut, numSamples);
+
+        REQUIRE (first.blocks == 1);
+        REQUIRE (second.blocks == 0);
+        for (int ch = 0; ch < numOut; ++ch)
+            REQUIRE_THAT (channels[(size_t) ch][0], Catch::Matchers::WithinAbs (0.5f, 1e-9));
+
+        dm.removeCallback (&first);
+        dm.removeCallback (&second);
+    }
 }
 
 TEST_CASE ("DeviceManager listeners: owner removed mid-fire is skipped", "[audio][device]")
