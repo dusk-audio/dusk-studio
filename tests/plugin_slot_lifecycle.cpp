@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <thread>
 
 using namespace duskstudio;
@@ -110,21 +111,29 @@ void useSandboxStub (PluginManager& manager, const char* modeArg)
 }
 
 #if ! defined (__APPLE__)
-// Breaks out of runDispatchLoop after a bounded window - this JUCE build has no
-// runDispatchLoopUntil.
+// Runs the dispatch loop until `done` holds or the deadline passes. This JUCE
+// build has no runDispatchLoopUntil, and stopDispatchLoop latches the quit flag
+// for the life of the MessageManager, so a test gets exactly one pump: a loop
+// of short pumps would dispatch nothing after the first.
 struct LoopStopper final : dusk::Timer
 {
+    std::function<bool()> done;
+    std::chrono::steady_clock::time_point deadline;
+
     void timerCallback() override
     {
+        if (! done() && std::chrono::steady_clock::now() < deadline) return;
         stopTimer();
         juce::MessageManager::getInstance()->stopDispatchLoop();
     }
 };
 
-void pumpFor (int ms)
+void pumpUntil (std::function<bool()> done, std::chrono::milliseconds timeout)
 {
     LoopStopper stopper;
-    stopper.startTimer (ms);
+    stopper.done = std::move (done);
+    stopper.deadline = std::chrono::steady_clock::now() + timeout;
+    stopper.startTimer (10);
     juce::MessageManager::getInstance()->runDispatchLoop();
 }
 #endif
@@ -160,8 +169,9 @@ TEST_CASE ("PluginSlot completes an out-of-process load off the message thread")
     CHECK_FALSE (completed);
     CHECK_FALSE (slot.isRemote());
 
-    for (int i = 0; i < 40 && ! completed; ++i)
-        pumpFor (50);
+    // Generous: a sanitizer build spawns the child slowly, and the loop stops
+    // as soon as the completion lands.
+    pumpUntil ([&] { return completed; }, std::chrono::seconds (15));
 
     CHECK (completed);
     CHECK (succeeded);
