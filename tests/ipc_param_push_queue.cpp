@@ -98,37 +98,35 @@ TEST_CASE ("ParamPushQueue never lets a second producer into a slot still being 
 {
     ParamPushQueue queue;
     ParamPushRecord out {};
+    constexpr auto capacity = (std::uint32_t) ParamPushQueue::kCapacity;
 
     std::uint64_t paused = 0;
     REQUIRE (queue.claim (paused));
     REQUIRE (paused == 0);
 
-    for (std::uint32_t i = 1; i < (std::uint32_t) ParamPushQueue::kCapacity; ++i)
+    for (std::uint32_t i = 1; i < capacity; ++i)
         REQUIRE (queue.push (entry (i)));
 
     // A full lap later the same slot comes round while its first producer is
-    // still inside it: the push is dropped rather than written on top.
-    REQUIRE_FALSE (queue.push (entry ((std::uint32_t) ParamPushQueue::kCapacity)));
+    // still inside it: the push is dropped without reserving a ticket.
+    REQUIRE_FALSE (queue.push (entry (capacity)));
 
-    // The reader delivers everything around the held slot and does not wait on
-    // it, because its ticket has already been overtaken.
-    for (std::uint32_t i = 1; i < (std::uint32_t) ParamPushQueue::kCapacity; ++i)
+    // The reader holds at the reserved ticket instead of skipping past it.
+    REQUIRE_FALSE (queue.pop (out));
+
+    queue.commit (paused, entry (0));
+    for (std::uint32_t i = 0; i < capacity; ++i)
     {
         REQUIRE (queue.pop (out));
         REQUIRE (out.payload.paramIndex == i);
     }
     REQUIRE_FALSE (queue.pop (out));
 
-    // The late publish lands in a slot the reader has passed and is never read
-    // as if it were the newer ticket.
-    queue.commit (paused, entry (0));
-    REQUIRE_FALSE (queue.pop (out));
-
-    // Once published, the slot is ordinary again: the next lap overwrites it.
-    const auto resume = (std::uint32_t) ParamPushQueue::kCapacity + 1;
-    for (std::uint32_t i = resume; i <= 2 * (std::uint32_t) ParamPushQueue::kCapacity; ++i)
+    // Once published the slot is ordinary again: a whole further lap goes
+    // through, and the lap after that overwrites it.
+    for (std::uint32_t i = capacity; i <= 2 * capacity; ++i)
         REQUIRE (queue.push (entry (i)));
-    for (std::uint32_t i = resume; i <= 2 * (std::uint32_t) ParamPushQueue::kCapacity; ++i)
+    for (std::uint32_t i = capacity + 1; i <= 2 * capacity; ++i)
     {
         REQUIRE (queue.pop (out));
         REQUIRE (out.payload.paramIndex == i);
