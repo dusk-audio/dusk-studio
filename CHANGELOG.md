@@ -48,6 +48,25 @@ closes release-metadata gaps found during the pre-tag audit.
 - **Windows session handoff can foreground the existing window reliably.** The
   secondary process grants the primary process foreground permission before
   sending the request, with a taskbar flash when Windows still refuses focus.
+- **Two launches after a crash no longer both become the running instance.** On
+  Linux and macOS, reclaiming the slot a killed instance left behind is now
+  serialised, so one launch cannot delete the socket the other just took and
+  end up with two engines and two autosave loops on one session directory.
+- **A session path interrupted in transit is discarded.** The Linux and macOS
+  handoff is length-framed like the Windows one, so a sender that stalls or
+  dies part-way through cannot deliver half of a path for the running instance
+  to open as a session.
+- **A launch that cannot use the single-instance slot says so.** Missing or
+  unusable runtime directories are reported on stderr instead of silently
+  starting a second copy, and macOS keys the slot on its own per-user
+  temporary directory rather than an inherited `TMPDIR`.
+- **Windows checks who is listening before handing over a session.** The
+  launching process verifies that the single-instance pipe belongs to the same
+  user before sending the session path, and starts unattached if it does not.
+- **A second Windows desktop session gets its own instance.** The
+  single-instance mutex and pipe are keyed to the same user and desktop
+  session, and a listener that fails to start now keeps the slot and reports
+  it instead of leaving every later launch to repeat the failure in silence.
 - **Windows paths remain Unicode end to end.** Plugin-host launch paths, MP3
   bounce destinations, profile directories, and temporary directories now work
   when the user name or installation path contains non-ASCII characters.
@@ -64,6 +83,39 @@ closes release-metadata gaps found during the pre-tag audit.
 - **Sandboxed plugin windows stay responsive on Windows and macOS.** Window
   creation, visibility changes, resizing, and teardown now run on the child
   process's pumping message thread instead of its blocking control thread.
+- **macOS sandbox connections no longer collide on one shared-memory name.**
+  The name carried a prefix long enough to crowd out the process id and counter
+  that made it unique, so two plugins loading at once could fail to connect, and
+  a name left behind by a crash kept every later connection failing until the
+  machine was restarted.
+- **A macOS sandbox wake backlog no longer lands in one audio callback.** The
+  parent usually picks up a finished block without waiting, which leaves the
+  child's wake bytes queued; clearing the whole backlog is now spread across
+  waits rather than paid for by whichever block happened to arrive late.
+- **A macOS sandbox plugin that automates its own parameters no longer bypasses
+  itself.** Parameter changes reported by the plugin are handed to the child
+  process's message thread instead of being sent to Dusk Studio from whichever
+  thread the plugin used, which for a plugin automating every block was the
+  thread rendering its audio. Sending from there stalled rendering long enough
+  for Dusk Studio to give up on the block and leave the plugin bypassed until
+  it was reloaded.
+- **A Windows sandbox connection cannot be taken by another local process.**
+  The control pipe's name was predictable, so any process on the machine could
+  create it first and make Dusk Studio's own attempt fail, which silently
+  dropped the plugin back into the main process. The name now carries random
+  bits, and the pipe refuses to open a name somebody else already serves.
+- **A stalled Windows sandbox link drops instead of desynchronising.** A control
+  transfer that stops part-way through a message now marks the connection dead
+  rather than resuming in the middle of one, and a control write carries a
+  deadline instead of blocking the interface for as long as the child leaves
+  the pipe unread.
+- **The Windows sandbox child's diagnostics reach Dusk Studio's console.** The
+  child was started with no output handles of its own, so everything it
+  reported about a failed startup was discarded; start Dusk Studio from a
+  console to read it.
+- **A Windows sandbox child's exit is handled once.** The child's exit stayed
+  readable after it had been collected, so a caller polling for it could run
+  crash recovery again on every check.
 - **Loading a sandboxed plugin no longer freezes the window.** Starting the
   plugin host and asking it to load waits up to five and thirty seconds
   respectively, and both waits used to happen on the thread that draws the
@@ -118,6 +170,20 @@ closes release-metadata gaps found during the pre-tag audit.
   so a saved binding keeps pointing at the parameter it was learned on. Bindings
   saved by an earlier release may land on the wrong parameter once, and stay put
   after they are re-learned.
+- **LV2 file state loads only from the session's own state folder.** A damaged
+  or hand-edited session could hand a plugin a file path the host had already
+  rejected, or hand it nothing at all, which some plugins read straight into a
+  crash. A rejected path now comes back as a path inside the session's state
+  folder that does not exist, and the restore is reported as failed. Sessions
+  written before Dusk Studio managed LV2 state generations are now read from
+  that folder as well, rather than relative to wherever the app was launched.
+- **Saving a session with a large LV2 sampler is no longer slow.** Every save
+  swept the whole LV2 file store, so a multi-gigabyte sample bank made each save
+  take longer the more files it held, even when nothing had changed. The sweep
+  now runs when a save actually writes a new copy of a file, and once when the
+  session opens. A file rewritten in place inside a single timestamp tick is
+  also flushed to disk now, so a power cut cannot leave the current state
+  pointing at half-written bytes.
 - **A plugin that loses or refuses its settings now says so.** The terminal and
   alert identify the track and format. A plugin that rejects restored state is
   unloaded and left offline so its preserved state cannot be replaced by
@@ -131,6 +197,18 @@ closes release-metadata gaps found during the pre-tag audit.
   that reports a failure from its own show step but draws anyway keeps its
   editor rather than losing it, and any reason an editor could not open is
   printed to the terminal and shown in the panel.
+- **A plugin editor that fails to open on an aux lane now says so.** When a
+  CLAP, LV2, VST3, or Audio Unit insert on an aux lane cannot attach its
+  editor, the lane reports the format, the plugin name, and the plugin's own
+  reason, exactly as a channel insert does; previously the failure went only to
+  the terminal and the lane stayed empty. The report is raised once per loaded
+  plugin.
+- **Closing a plugin editor on Linux no longer risks a crash.** While an editor
+  is torn down, Dusk Studio narrows how X server errors are handled so a stale
+  editor window cannot abort the application. That narrowing is now lifted on
+  every exit path, including a teardown that fails part-way, so a later
+  unrelated X error can no longer bring Dusk Studio down. Closing a window also
+  only ever hands focus to another X11 window.
 
 ### Changed
 
@@ -148,6 +226,13 @@ closes release-metadata gaps found during the pre-tag audit.
   `ClapPluginEditorComponent.cpp` (11 to 18), its header (7 to 8), and
   `MainComponent.cpp` (457 to 459). Five stale ceilings were tightened to their
   actual counts so later regressions cannot hide in unused allowance.
+- **Joining regions that span more than 12 hours no longer crashes.** The join
+  render sizes its mix buffer with 64-bit arithmetic and refuses a span it
+  cannot hold, leaving the regions untouched, instead of overflowing the buffer
+  length and aborting the app from inside an undoable edit.
+- **The real-time peak scan checks for NaN once per buffer** rather than once
+  every four samples, trimming roughly 8-12 percent off a scan that runs 56
+  times per audio block.
 
 ## [0.13.2] - 2026-08-26
 

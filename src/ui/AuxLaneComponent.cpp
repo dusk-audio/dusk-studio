@@ -23,15 +23,54 @@
 #include "../engine/AudioEngine.h"
 #include "../engine/PluginSlot.h"
 #include "../engine/Transport.h"
+#include "../engine/hosting/NativeRestorePolicy.h"
 #include "../session/MidiBindings.h"
 #include "../session/ParamEditAction.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <cstdio>
+#include <optional>
+#include <string>
 
 namespace duskstudio
 {
 namespace
 {
+// Same log-and-alert decision the channel strip uses, plus a per-slot latch:
+// rebuildSlots re-runs the attach on construction, on reload and when an
+// async load completes, so a plug-in whose editor never attaches would raise
+// the modal on every pass. Keyed on the slot generation, which every load and
+// unload bumps, so a reload re-arms it even when the new instance lands at the
+// old address.
+template <typename Editor, typename Instance>
+bool attachNativePluginEditor (Editor& editor,
+                               Instance& instance,
+                               juce::Component& alertParent,
+                               hosting::NativeEditorFormat format,
+                               const std::string& pluginName,
+                               std::uint64_t generation,
+                               std::optional<std::uint64_t>& reportedFor)
+{
+    juce::String error;
+    const bool attached = editor.attach (instance, error);
+    return hosting::enforceNativeEditorAttachPolicy (
+        attached, format, pluginName, std::string (error.toRawUTF8()),
+        [] (const std::string& line)
+        {
+            std::fputs (line.c_str(), stderr);
+            std::fputc ('\n', stderr);
+        },
+        [&] (const std::string& title, const std::string& message)
+        {
+            if (reportedFor == generation) return;
+            reportedFor = generation;
+            showDuskAlert (alertParent,
+                           juce::String::fromUTF8 (title.c_str()),
+                           juce::String::fromUTF8 (message.c_str()));
+        });
+}
+
 constexpr float kMeterMinDb = -60.0f;
 constexpr float kMeterMaxDb =   6.0f;
 
@@ -1649,20 +1688,21 @@ void AuxLaneComponent::rebuildSlots()
             if (strip.isNativeClapLoaded (i))
             {
                 if (ui.editor != nullptr) detachEditorForSlot (i);   // can't coexist
-                auto* clapInst = strip.getNativeClapSlot (i).getInstance();
+                auto& slot = strip.getNativeClapSlot (i);
+                auto* clapInst = slot.getInstance();
                 if (ui.clapEditor == nullptr && clapInst != nullptr)
                 {
                     auto ed = std::make_unique<ClapPluginEditorComponent>();
-                    juce::String err;
-                    if (ed->attach (*clapInst, err))
+                    if (attachNativePluginEditor (
+                            *ed, *clapInst, *this, hosting::NativeEditorFormat::Clap,
+                            hosting::nativePluginName (slot.getPath(), slot.getPluginId()),
+                            slot.generation(), ui.reportedAttachFailure))
                     {
                         ui.clapEditor = std::move (ed);
-                        ui.clapEditor->bindOwner (strip.getNativeClapSlot (i));
+                        ui.clapEditor->bindOwner (slot);
                         addAndMakeVisible (*ui.clapEditor);
                         layoutEditorForSlot (i);
                     }
-                    else
-                        std::fprintf (stderr, "[aux clap] editor attach failed: %s\n", err.toRawUTF8());
                 }
                 else if (ui.clapEditor != nullptr)
                 {
@@ -1676,20 +1716,21 @@ void AuxLaneComponent::rebuildSlots()
             if (strip.isNativeLv2Loaded (i))
             {
                 if (ui.editor != nullptr) detachEditorForSlot (i);   // can't coexist
-                auto* lv2Inst = strip.getNativeLv2Slot (i).getInstance();
+                auto& slot = strip.getNativeLv2Slot (i);
+                auto* lv2Inst = slot.getInstance();
                 if (ui.lv2Editor == nullptr && lv2Inst != nullptr)
                 {
                     auto ed = std::make_unique<Lv2PluginEditorComponent>();
-                    juce::String err;
-                    if (ed->attach (*lv2Inst, err))
+                    if (attachNativePluginEditor (
+                            *ed, *lv2Inst, *this, hosting::NativeEditorFormat::Lv2,
+                            hosting::nativePluginName (slot.getPath(), slot.getPluginId()),
+                            slot.generation(), ui.reportedAttachFailure))
                     {
                         ui.lv2Editor = std::move (ed);
-                        ui.lv2Editor->bindOwner (strip.getNativeLv2Slot (i));
+                        ui.lv2Editor->bindOwner (slot);
                         addAndMakeVisible (*ui.lv2Editor);
                         layoutEditorForSlot (i);
                     }
-                    else
-                        std::fprintf (stderr, "[aux lv2] editor attach failed: %s\n", err.toRawUTF8());
                 }
                 else if (ui.lv2Editor != nullptr)
                 {
@@ -1703,20 +1744,21 @@ void AuxLaneComponent::rebuildSlots()
             if (strip.isNativeVst3Loaded (i))
             {
                 if (ui.editor != nullptr) detachEditorForSlot (i);   // can't coexist
-                auto* vst3Inst = strip.getNativeVst3Slot (i).getInstance();
+                auto& slot = strip.getNativeVst3Slot (i);
+                auto* vst3Inst = slot.getInstance();
                 if (ui.vst3Editor == nullptr && vst3Inst != nullptr)
                 {
                     auto ed = std::make_unique<Vst3PluginEditorComponent>();
-                    juce::String err;
-                    if (ed->attach (*vst3Inst, err))
+                    if (attachNativePluginEditor (
+                            *ed, *vst3Inst, *this, hosting::NativeEditorFormat::Vst3,
+                            hosting::nativePluginName (slot.getPath(), slot.getPluginId()),
+                            slot.generation(), ui.reportedAttachFailure))
                     {
                         ui.vst3Editor = std::move (ed);
-                        ui.vst3Editor->bindOwner (strip.getNativeVst3Slot (i));
+                        ui.vst3Editor->bindOwner (slot);
                         addAndMakeVisible (*ui.vst3Editor);
                         layoutEditorForSlot (i);
                     }
-                    else
-                        std::fprintf (stderr, "[aux vst3] editor attach failed: %s\n", err.toRawUTF8());
                 }
                 else if (ui.vst3Editor != nullptr)
                 {
@@ -1730,20 +1772,23 @@ void AuxLaneComponent::rebuildSlots()
             if (strip.isNativeAuLoaded (i))
             {
                 if (ui.editor != nullptr) detachEditorForSlot (i);
-                auto* auInst = strip.getNativeAuSlot (i).getInstance();
+                auto& slot = strip.getNativeAuSlot (i);
+                auto* auInst = slot.getInstance();
                 if (ui.auEditor == nullptr && auInst != nullptr)
                 {
+                    auto pluginName = slot.displayName();
+                    if (pluginName.empty())
+                        pluginName = hosting::nativePluginName (slot.getPath(), slot.getPluginId());
                     auto ed = std::make_unique<AuPluginEditorComponent>();
-                    juce::String err;
-                    if (ed->attach (*auInst, err))
+                    if (attachNativePluginEditor (
+                            *ed, *auInst, *this, hosting::NativeEditorFormat::AudioUnit,
+                            pluginName, slot.generation(), ui.reportedAttachFailure))
                     {
                         ui.auEditor = std::move (ed);
-                        ui.auEditor->bindOwner (strip.getNativeAuSlot (i));
+                        ui.auEditor->bindOwner (slot);
                         addAndMakeVisible (*ui.auEditor);
                         layoutEditorForSlot (i);
                     }
-                    else
-                        std::fprintf (stderr, "[aux au] editor attach failed: %s\n", err.toRawUTF8());
                 }
                 else if (ui.auEditor != nullptr)
                 {

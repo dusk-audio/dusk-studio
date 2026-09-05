@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <string>
+#include <atomic>
 
 // Platform-abstracted IPC channel primitives. The "channel" is a pair of
 // connected endpoints used for control-plane request/reply between the
@@ -36,6 +37,24 @@ struct NativeHandle
     // non-channel handles remain synchronous.
     bool overlapped { false };
     int readTimeoutMs { 0 };
+    // Latched, never cleared: a transfer stopped after moving part of a frame,
+    // so the stream can no longer be framed and every later transfer on this
+    // endpoint has to fail. The reader and writer threads both check and set
+    // it. Copyable so NativeHandle can still be passed by value; a handle is
+    // only copied when it is created, before anything can latch it.
+    struct PoisonLatch
+    {
+        PoisonLatch() = default;
+        PoisonLatch (const PoisonLatch& other) noexcept
+            : set (other.set.load (std::memory_order_relaxed)) {}
+        PoisonLatch& operator= (const PoisonLatch& other) noexcept
+        {
+            set.store (other.set.load (std::memory_order_relaxed), std::memory_order_relaxed);
+            return *this;
+        }
+        std::atomic<bool> set { false };
+    };
+    PoisonLatch poisoned;
    #else
     int fd { -1 };
    #endif
@@ -87,6 +106,11 @@ NativeHandle locateInheritedChannel (int argc, const char* const* argv) noexcept
 // Blocking I/O. Retries on EINTR. Returns true only on a full transfer
 // of n bytes; returns false on EOF, peer-close, error, or short write.
 // `h` must be valid (isValid(h) == true).
+//
+// Windows: a transfer that stops mid-frame - a deadline expiring across a
+// multi-chunk frame, or an overlapped operation cancelled after it consumed
+// bytes - poisons the endpoint, so the caller drops the link instead of
+// resuming inside a frame.
 bool readExact  (NativeHandle& h, void* buf, std::size_t n) noexcept;
 bool writeExact (NativeHandle& h, const void* buf, std::size_t n) noexcept;
 

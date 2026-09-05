@@ -75,6 +75,25 @@ bool widenUtf8 (const std::string& utf8, std::wstring& wide,
     return true;
 }
 
+// A handle only reaches the child if the attribute list names it, and the
+// attribute list only accepts handles already marked inheritable. Anything
+// that fails either test is dropped rather than refused: a GUI-subsystem
+// parent has no std handles at all, and a legacy console handle is not a real
+// kernel object, so neither case may block the spawn.
+HANDLE inheritableStdHandle (DWORD which) noexcept
+{
+    const HANDLE handle = ::GetStdHandle (which);
+    if (handle == nullptr || handle == INVALID_HANDLE_VALUE)
+        return nullptr;
+
+    DWORD flags = 0;
+    if (! ::GetHandleInformation (handle, &flags)
+        || (flags & HANDLE_FLAG_INHERIT) == 0)
+        return nullptr;
+
+    return handle;
+}
+
 // Quote one argv element using the escaping rules consumed by
 // CommandLineToArgvW and the Microsoft C runtime. Backslashes are doubled only
 // when they precede a quote or the closing quote; elsewhere they remain literal.
@@ -167,6 +186,22 @@ bool ChildProcess::spawn (const std::string& executablePath,
         }
     }
 
+    // Without these the child's stderr goes nowhere and a failed handshake
+    // leaves no evidence at all on Windows.
+    const HANDLE childStdOut = inheritableStdHandle (STD_OUTPUT_HANDLE);
+    const HANDLE childStdErr = inheritableStdHandle (STD_ERROR_HANDLE);
+
+    // Inheritance is cleared after the spawn for our own handles only; the std
+    // handles belong to this process and keep the flags they arrived with.
+    std::vector<HANDLE> attributeHandles = inheritedHandles;
+    for (const HANDLE stdHandle : { childStdOut, childStdErr })
+    {
+        if (stdHandle != nullptr
+            && std::find (attributeHandles.begin(), attributeHandles.end(), stdHandle)
+                 == attributeHandles.end())
+            attributeHandles.push_back (stdHandle);
+    }
+
     auto* state = new WinProcessState;
 
     state->job = ::CreateJobObjectA (nullptr, nullptr);
@@ -257,7 +292,7 @@ bool ChildProcess::spawn (const std::string& executablePath,
 
     if (! ::UpdateProcThreadAttribute (
             attributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-            inheritedHandles.data(), inheritedHandles.size() * sizeof (HANDLE),
+            attributeHandles.data(), attributeHandles.size() * sizeof (HANDLE),
             nullptr, nullptr))
     {
         char buf[128]; std::snprintf (buf, sizeof (buf),
@@ -272,6 +307,13 @@ bool ChildProcess::spawn (const std::string& executablePath,
     STARTUPINFOEXW si {};
     si.StartupInfo.cb = sizeof (si);
     si.lpAttributeList = attributeList;
+    if (childStdOut != nullptr || childStdErr != nullptr)
+    {
+        si.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
+        si.StartupInfo.hStdInput  = nullptr;
+        si.StartupInfo.hStdOutput = childStdOut;
+        si.StartupInfo.hStdError  = childStdErr;
+    }
     PROCESS_INFORMATION pi {};
 
     const BOOL ok = ::CreateProcessW (
@@ -347,13 +389,20 @@ bool ChildProcess::pollExit() noexcept
     auto* state = impl (pid);
     if (state == nullptr || state->process == nullptr) return false;
 
-    const DWORD r = ::WaitForSingleObject (state->process, 0);
-    if (r == WAIT_OBJECT_0)
+    if (::WaitForSingleObject (state->process, 0) != WAIT_OBJECT_0)
+        return false;
+
+    // Reaping is one-shot, as on POSIX: clearing the process handle is what
+    // makes the next poll return false instead of re-reporting the exit.
+    ::CloseHandle (state->process);
+    state->process = nullptr;
+    if (state->thread != nullptr)
     {
-        alive = false;
-        return true;
+        ::CloseHandle (state->thread);
+        state->thread = nullptr;
     }
-    return false;
+    alive = false;
+    return true;
 }
 
 void ChildProcess::terminate (int graceMs) noexcept

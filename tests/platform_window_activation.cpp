@@ -127,8 +127,7 @@ TEST_CASE ("native window operations preserve activation and embedded editor geo
     REQUIRE (windowsBranch != std::string::npos);
     const auto handOver = definitionBody (
         singleInstance.substr (windowsBranch), "handOver");
-    requireInOrder (handOver, "GetNamedPipeServerProcessId",
-                    "AllowSetForegroundWindow");
+    requireInOrder (handOver, "serverIsThisUser", "AllowSetForegroundWindow");
     requireInOrder (handOver, "AllowSetForegroundWindow", "transferExact");
 
     const auto layout = definitionBody (windowsSource, "layoutChild");
@@ -317,4 +316,49 @@ TEST_CASE ("OOP editor window RPCs dispatch through the child message thread",
         REQUIRE (body.find ("runOnHostMessageThreadAndWait") != std::string::npos);
         REQUIRE (body.find ("MessageManagerLock") == std::string::npos);
     }
+}
+
+TEST_CASE ("X11 editor teardown trap is unwind safe, lock free and backend checked",
+           "[windowing][linux][x11][wayland][regression][issue-375][issue-376]"
+           "[issue-452]")
+{
+    const auto linuxSource = readSource ("src/ui/PlatformWindowing_Linux.cpp");
+
+    // The Xlib error handler is process-global while the trap it reads lives on
+    // the teardown stack frame, so install and restore have to be tied to a
+    // scope rather than to straight-line code that an exception can skip.
+    REQUIRE (linuxSource.find ("struct ScopedEditorTeardownTrap") != std::string::npos);
+
+    const auto guardCtor = definitionBody (linuxSource, "ScopedEditorTeardownTrap");
+    requireInOrder (guardCtor, "XSetErrorHandler", "activeEditorTeardownTrap.store");
+
+    const auto guardDtor = definitionBody (linuxSource, "~ScopedEditorTeardownTrap");
+    requireInOrder (guardDtor, "XSync", "XSetErrorHandler");
+    requireInOrder (guardDtor, "XSetErrorHandler", "activeEditorTeardownTrap.store");
+    REQUIRE (guardDtor.find ("store (nullptr") != std::string::npos);
+
+    const auto teardownRun = definitionBody (linuxSource, "runX11EditorTeardown");
+    const auto lockAt = teardownRun.find ("editorTeardownTrapMutex");
+    const auto guardAt = teardownRun.find ("ScopedEditorTeardownTrap");
+    const auto teardownAt = teardownRun.find ("teardown();", guardAt);
+    REQUIRE (lockAt != std::string::npos);
+    REQUIRE (guardAt != std::string::npos);
+    REQUIRE (teardownAt != std::string::npos);
+    REQUIRE (lockAt < guardAt);
+    REQUIRE (teardownRun.find ("XSetErrorHandler") == std::string::npos);
+    REQUIRE (teardownRun.find ("activeEditorTeardownTrap") == std::string::npos);
+
+    // The handler runs on whichever thread made the failing Xlib call, and the
+    // installer holds the mutex across teardown(), so the pointer cannot be
+    // read under that same mutex without deadlocking.
+    REQUIRE (linuxSource.find ("std::atomic<EditorTeardownErrorTrap*> activeEditorTeardownTrap")
+             != std::string::npos);
+    const auto handler = definitionBody (linuxSource, "editorTeardownXErrorHandler");
+    REQUIRE (handler.find ("activeEditorTeardownTrap.load") != std::string::npos);
+
+    // bringWindowToFront casts the chosen peer's handle to an X11 Window, so a
+    // real wl_surface peer must never be offered as the focus target.
+    const auto sibling = definitionBody (linuxSource, "pickSiblingFocusTargetPeer");
+    REQUIRE (sibling.find ("DUSKSTUDIO_JUCE_HAS_WAYLAND") != std::string::npos);
+    requireInOrder (sibling, "getWaylandWindowForPeer", "return peer");
 }

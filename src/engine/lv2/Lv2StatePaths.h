@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -49,8 +50,16 @@ struct SharedStoreEntry
 struct SharedStoreSnapshot
 {
     bool rootExisted = false;
+    std::filesystem::file_time_type takenAt {};
     std::map<std::filesystem::path, SharedStoreEntry> entries;
 };
+
+// Coarsest timestamp step a session directory can land on: ext4 and XFS stamp
+// nanoseconds, but ext3, HFS+ and most NFS servers stamp whole seconds and
+// FAT/exFAT stamps two-second steps. A file rewritten in place at an identical
+// size inside one step keeps an identical (size, mtime) pair, so anything
+// stamped this close to the snapshot has to be treated as changed.
+inline constexpr std::chrono::seconds kSharedStoreMtimeGranularity { 2 };
 
 struct GenerationTransaction
 {
@@ -119,6 +128,7 @@ inline SharedStoreSnapshot snapshotSharedStore (
     const std::filesystem::path& root)
 {
     SharedStoreSnapshot snapshot;
+    snapshot.takenAt = std::filesystem::file_time_type::clock::now();
     std::error_code ec;
     const auto rootStatus = std::filesystem::symlink_status (root, ec);
     if (ec || rootStatus.type() == std::filesystem::file_type::not_found)
@@ -160,6 +170,8 @@ struct SharedStoreSyncPlan
 {
     std::vector<std::filesystem::path> files;
     std::vector<std::filesystem::path> directories;
+
+    bool empty() const noexcept { return files.empty() && directories.empty(); }
 };
 
 inline SharedStoreSyncPlan planSharedStoreSync (
@@ -233,6 +245,15 @@ inline SharedStoreSyncPlan planSharedStoreSync (
                 changedDirectories.insert (path);
             rememberParents (path);
         }
+        else if (std::filesystem::is_regular_file (status)
+                 && current.writeTime > before.takenAt - kSharedStoreMtimeGranularity)
+        {
+            // Same bytes as far as (size, mtime) can tell, but too recent for
+            // that pair to distinguish a rewrite in place from the file it
+            // replaced. Only the file itself is at risk - its directory entry
+            // is unchanged - so the parents stay out of the plan.
+            plan.files.push_back (path);
+        }
         it.increment (ec);
     }
 
@@ -259,10 +280,8 @@ inline SharedStoreSyncPlan planSharedStoreSync (
     return plan;
 }
 
-inline void syncSharedStoreChangesBestEffort (
-    const std::filesystem::path& root, const SharedStoreSnapshot& before)
+inline void applySharedStoreSyncPlan (const SharedStoreSyncPlan& plan) noexcept
 {
-    const auto plan = planSharedStoreSync (root, before);
     for (const auto& file : plan.files) syncPathBestEffort (file);
     // Deepest first: persist each new directory's contents before its name in
     // the parent, then finally persist a newly-created shared-store root.
@@ -336,6 +355,8 @@ inline bool isWithin (const std::filesystem::path& root,
 // Lilv uses symlinks from each saved generation into stable copy/link stores so
 // unchanged banks are not duplicated. Retain only entries referenced by cur or
 // prev; older revisions otherwise accumulate for the lifetime of the session.
+// This walks the whole store, so callers run it only when a rotation can
+// actually have dropped the last reference to something.
 inline void pruneUnreferencedSharedFiles (const std::filesystem::path& stateDir) noexcept
 {
     std::error_code ec;
@@ -457,7 +478,6 @@ inline bool publishReadyNext (const std::filesystem::path& stateDir,
         std::filesystem::remove (cur / kReadyMarkerName, ignored);
         syncPathBestEffort (cur);
         syncPathBestEffort (stateDir);
-        pruneUnreferencedSharedFiles (stateDir);
         return true;
     }
 
@@ -503,7 +523,6 @@ inline bool publishReadyNext (const std::filesystem::path& stateDir,
     std::filesystem::remove_all (older, ignored);
     syncPathBestEffort (cur);
     syncPathBestEffort (stateDir);
-    pruneUnreferencedSharedFiles (stateDir);
     return true;
 }
 
@@ -539,6 +558,9 @@ inline bool recoverGeneration (const std::filesystem::path& stateDir,
 
     enum class Choice { None, Cur, Prev, Next, Older };
     Choice choice = Choice::None;
+    // Counts the generations this reconcile deletes, which is the only way it
+    // can leave a shared-store entry without a referring symlink.
+    std::uintmax_t dropped = 0;
     if (! serializedState.empty())
     {
         if (hasCur && generationMatches (cur, serializedState)) choice = Choice::Cur;
@@ -621,7 +643,7 @@ inline bool recoverGeneration (const std::filesystem::path& stateDir,
         }
         else
         {
-            std::filesystem::remove_all (older, ec);
+            dropped += std::filesystem::remove_all (older, ec);
             if (ec) return false;
         }
     }
@@ -629,10 +651,15 @@ inline bool recoverGeneration (const std::filesystem::path& stateDir,
     // Any staging generation not selected above was never committed by the
     // persisted session. It must not later overwrite the matching cur/.
     std::error_code ignored;
-    if (choice != Choice::Next) std::filesystem::remove_all (next, ignored);
-    std::filesystem::remove_all (rejected, ignored);
+    if (choice != Choice::Next)
+        dropped += std::filesystem::remove_all (next, ignored);
+    dropped += std::filesystem::remove_all (rejected, ignored);
     std::filesystem::remove (cur / kReadyMarkerName, ignored);
-    pruneUnreferencedSharedFiles (stateDir);
+    // Settling on the generation already in cur/ without deleting another one
+    // removes no referrer, which is the case the per-save call hits. Anything
+    // that discarded or promoted a generation gets the sweep.
+    if (dropped > 0 || choice != Choice::Cur)
+        pruneUnreferencedSharedFiles (stateDir);
     return true;
 }
 
@@ -690,8 +717,10 @@ inline bool commitNextGeneration (const GenerationTransaction& transaction,
     // it. Recovery can then distinguish publish interruption from an incomplete
     // staging write.
     syncTreeBestEffort (next);
-    syncSharedStoreChangesBestEffort (stateDir / "copy", transaction.copyBefore);
-    syncSharedStoreChangesBestEffort (stateDir / "link", transaction.linkBefore);
+    const auto copyPlan = planSharedStoreSync (stateDir / "copy", transaction.copyBefore);
+    const auto linkPlan = planSharedStoreSync (stateDir / "link", transaction.linkBefore);
+    applySharedStoreSyncPlan (copyPlan);
+    applySharedStoreSyncPlan (linkPlan);
     {
         std::ofstream marker (next / kReadyMarkerName,
                               std::ios::binary | std::ios::trunc);
@@ -706,7 +735,15 @@ inline bool commitNextGeneration (const GenerationTransaction& transaction,
     syncPathBestEffort (next / kReadyMarkerName);
     syncPathBestEffort (next);
 
-    return publishReadyNext (stateDir, ec);
+    if (! publishReadyNext (stateDir, ec)) return false;
+
+    // Sweeping unconditionally is what made every save cost time proportional to
+    // the store's file count. A save that added nothing to either store can at
+    // worst defer an orphan to the next save that does add something, or to the
+    // sweep on session load; an orphan costs disk space, not correctness.
+    if (! copyPlan.empty() || ! linkPlan.empty())
+        pruneUnreferencedSharedFiles (stateDir);
+    return true;
 }
 
 // How far down the resolved path canonical containment may be enforced. A

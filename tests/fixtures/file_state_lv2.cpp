@@ -14,6 +14,8 @@ namespace
 {
 constexpr const char* kPluginUri = "urn:duskstudio:test:file-state";
 constexpr const char* kControlPluginUri = "urn:duskstudio:test:control-state";
+constexpr const char* kRefusedPathPluginUri = "urn:duskstudio:test:refused-paths";
+constexpr const char* kRefusalReportName = "probe/refusals.txt";
 constexpr const char* kPathKey = "urn:duskstudio:test:file-state#path";
 constexpr const char* kPayload = "dusk-lv2-file-state-v1";
 constexpr const char* kRestorePayload = "dusk-lv2-restore-make-path-v1";
@@ -183,11 +185,59 @@ LV2_State_Status restore (LV2_Handle instance, LV2_State_Retrieve_Function retri
     return wroteRestorePayload ? LV2_STATE_SUCCESS : LV2_STATE_ERR_UNKNOWN;
 }
 
+// Probes what the host hands back for state paths it refuses. Real plugins pass
+// these straight to fopen, so the answer has to be a path rather than NULL. It
+// lives on its own descriptor because a refusal fails the whole restore, and it
+// reports the strings through a file so the test can check them against a state
+// root the plugin never learns.
+LV2_State_Status restoreRefusals (LV2_Handle, LV2_State_Retrieve_Function,
+                                  LV2_State_Handle, uint32_t,
+                                  const LV2_Feature* const* features)
+{
+    const auto* mapPath = feature<LV2_State_Map_Path> (features, LV2_STATE__mapPath);
+    const auto* makePath = feature<LV2_State_Make_Path> (features, LV2_STATE__makePath);
+    const auto* freePath = feature<LV2_State_Free_Path> (features, LV2_STATE__freePath);
+    if (mapPath == nullptr || makePath == nullptr || freePath == nullptr)
+        return LV2_STATE_ERR_NO_FEATURE;
+
+    char* report = makePath->path (makePath->handle, kRefusalReportName);
+    if (report == nullptr) return LV2_STATE_ERR_UNKNOWN;
+    std::ofstream out (report, std::ios::binary | std::ios::trunc);
+    freePath->free_path (freePath->handle, report);
+
+    const char* const refusals[] = { "../outside.bin", "" };
+    for (const char* refusal : refusals)
+    {
+        char* mapped = mapPath->absolute_path (mapPath->handle, refusal);
+        out << (mapped != nullptr ? mapped : "<null>") << '\n';
+        if (mapped != nullptr) freePath->free_path (freePath->handle, mapped);
+    }
+    for (const char* refusal : refusals)
+    {
+        char* made = makePath->path (makePath->handle, refusal);
+        out << (made != nullptr ? made : "<null>") << '\n';
+        if (made != nullptr) freePath->free_path (freePath->handle, made);
+    }
+    return out ? LV2_STATE_SUCCESS : LV2_STATE_ERR_UNKNOWN;
+}
+
+LV2_State_Status saveNothing (LV2_Handle, LV2_State_Store_Function, LV2_State_Handle,
+                              uint32_t, const LV2_Feature* const*)
+{
+    return LV2_STATE_SUCCESS;
+}
+
 const LV2_State_Interface stateInterface { &save, &restore };
+const LV2_State_Interface refusalInterface { &saveNothing, &restoreRefusals };
 
 const void* extensionData (const char* uri)
 {
     return std::strcmp (uri, LV2_STATE__interface) == 0 ? &stateInterface : nullptr;
+}
+
+const void* refusalExtensionData (const char* uri)
+{
+    return std::strcmp (uri, LV2_STATE__interface) == 0 ? &refusalInterface : nullptr;
 }
 
 const LV2_Descriptor fileStateDescriptor {
@@ -199,6 +249,11 @@ const LV2_Descriptor controlStateDescriptor {
     kControlPluginUri, &instantiate, &connectControlPort, nullptr, &run, nullptr, &cleanup,
     nullptr
 };
+
+const LV2_Descriptor refusedPathDescriptor {
+    kRefusedPathPluginUri, &instantiate, &connectControlPort, nullptr, &run, nullptr,
+    &cleanup, &refusalExtensionData
+};
 }
 
 extern "C" LV2_SYMBOL_EXPORT
@@ -206,5 +261,6 @@ const LV2_Descriptor* lv2_descriptor (uint32_t index)
 {
     if (index == 0) return &fileStateDescriptor;
     if (index == 1) return &controlStateDescriptor;
+    if (index == 2) return &refusedPathDescriptor;
     return nullptr;
 }

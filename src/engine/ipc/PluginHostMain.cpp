@@ -44,6 +44,7 @@
 //                          atomic instance pointer so the parent's audio
 //                          thread isn't gated on control-plane traffic.
 
+#include "ParamPushQueue.h"
 #include "PluginIpc.h"
 #include "PluginScanProtocol.h"
 #include "WorkerPark.h"
@@ -145,10 +146,10 @@ bool armParentDeathSignal (int argc, char* const* argv) noexcept
 #endif
 
 // Single mutex guards every outbound write on the control socket so the
-// sockThread's sync-RPC replies cannot interleave with the async push
-// path (pushParamChangedFromChild - called from a JUCE parameter listener
-// that may fire on any thread, including the audio worker via the
-// plugin's own callbacks).
+// sockThread's sync-RPC replies cannot interleave with the message thread's
+// mirror pushes (writeParamChangedLocked). Both callers are off the audio
+// path: the plugin threads that originate a mirror push hand their value to
+// ParamPushQueue and never reach this mutex.
 std::mutex& channelWriteMutex()
 {
     static std::mutex m;
@@ -172,21 +173,20 @@ bool sendControlReply (ipcp::NativeHandle& ch, const ControlMsgHeader& request,
     return true;
 }
 
-// One-shot outbound push. Stubbed entry point - 3c-3b installs the
-// parameter listener on the child's DSP instance and calls this when
-// the plugin changes a value (host automation, MIDI-mapped controller,
-// preset reload). Wire format matches duskstudio::ipc::ParamChangedPayload.
-// Returns false on socket write failure (peer closed); 3c-3b will
-// surface this as a recoverable-by-relink condition.
-[[maybe_unused]] bool pushParamChangedFromChild (ipcp::NativeHandle& ch,
-                                                    int paramIndex, float value01,
-                                                    std::uint32_t sequenceNumber) noexcept
+// One-shot outbound push, emitted when the plugin changes a value of its own
+// (host automation, MIDI-mapped controller, preset reload). Wire format matches
+// duskstudio::ipc::ParamChangedPayload. Returns false on socket write failure
+// (peer closed), which the caller treats as recoverable-by-relink.
+//
+// The caller holds channelWriteMutex, so it can decide whether the value is
+// still worth sending in the same critical section as the send. That ordering
+// is what keeps a value queued by a retired plugin from landing after the
+// LoadPlugin reply that replaced it.
+[[maybe_unused]] bool writeParamChangedLocked (ipcp::NativeHandle& ch,
+                                                  const ParamChangedPayload& in) noexcept
 {
-    if (paramIndex < 0) return false;
-    ParamChangedPayload p {};
-    p.paramIndex     = (std::uint32_t) paramIndex;
-    p.value          = std::min (1.0f, std::max (0.0f, value01));
-    p.sequenceNumber = sequenceNumber;
+    ParamChangedPayload p = in;
+    p.value = std::min (1.0f, std::max (0.0f, in.value));
 
     ControlMsgHeader hdr {};
     hdr.totalLen   = (std::uint32_t) sizeof (hdr) + (std::uint32_t) sizeof (p);
@@ -195,7 +195,6 @@ bool sendControlReply (ipcp::NativeHandle& ch, const ControlMsgHeader& request,
     hdr.status     = 0;
     hdr.payloadLen = (std::uint32_t) sizeof (p);
 
-    std::lock_guard<std::mutex> lk (channelWriteMutex());
     if (! ipcp::writeExact (ch, &hdr, sizeof (hdr))) return false;
     if (! ipcp::writeExact (ch, &p, sizeof (p)))    return false;
     return true;
@@ -676,10 +675,19 @@ struct HostState
     //
     // outboundParamSeq: monotonic counter stamped into every push.
     // Parent doesn't yet use it (loop-breaker is the flag); allocated
-    // for future inflight-tracking. Increment + read under no lock -
-    // listener fires sequentially per plugin contract.
+    // for future inflight-tracking. Stamped by the listener, which can
+    // fire on several threads at once, hence the atomic increment.
+    //
+    // paramPushQueue: hand-off from those listener threads to the
+    // message thread, which owns the socket write. See ParamPushQueue.h.
+    //
+    // mirrorGeneration: bumped whenever the loaded instance is detached,
+    // so the drain can discard values a retired plugin queued rather than
+    // apply them to the same parameter index on its replacement.
     std::atomic<bool>         applyingFromMirror { false };
     std::atomic<std::uint32_t> outboundParamSeq  { 0 };
+    std::atomic<std::uint32_t> mirrorGeneration  { 0 };
+    ParamPushQueue            paramPushQueue;
     std::unique_ptr<ChildParamListener> paramListener;
    #endif
 
@@ -719,13 +727,25 @@ bool runOnHostMessageThreadAndWait (Fn&& fn)
 }
 
 #if JUCE_MAC
+// Drain cadence for the mirror queue. Matches the listener's per-param
+// min-interval below, so moving the socket write onto the message thread
+// costs at most one extra tick of mirror latency.
+constexpr int kParamMirrorDrainHz = 200;
+
 // Listener installed on every parameter of the loaded DSP instance.
-// Fires on whichever thread the plugin chose to call setValueNotifying
-// Host on - host automation lanes (audio worker), preset-load
-// callbacks (message thread), MIDI-mapped controllers (sockThread via
-// our SetParam -> callAsync path). pushParamChangedFromChild takes
-// channelWriteMutex internally so concurrent writes can't byte-
-// interleave with the sockThread's reply traffic.
+// Fires on whichever thread the plugin chose to call setValueNotifyingHost
+// on - host automation lanes (the audio worker, from inside processBlock),
+// preset-load callbacks (message thread), MIDI-mapped controllers
+// (sockThread via our SetParam -> callAsync path) - and JUCE promises
+// nothing about which, or about only one at a time.
+//
+// So this callback must not take channelWriteMutex or touch the socket.
+// Doing either stalled the audio worker of any plugin that emits automation
+// every block - on a mutex, then on a write() - while the parent's audio
+// thread sat parked on replySeq, which the parent timed out and latched as a
+// sticky auto-bypass. The callback stamps a sequence number and hands the
+// value to ParamPushQueue; ParamMirrorDrain writes it from the message
+// thread.
 //
 // applyingFromMirror is checked first so a parent -> child SetParam
 // doesn't echo back as a push (handleSetParamAsync sets the flag
@@ -742,10 +762,11 @@ bool runOnHostMessageThreadAndWait (Fn&& fn)
 class ChildParamListener final : public juce::AudioProcessorParameter::Listener
 {
 public:
-    explicit ChildParamListener (HostState& h, int numParams)
+    ChildParamListener (HostState& h, int numParams, std::uint32_t mirrorGeneration)
         : host (h),
           lastSentValue ((std::size_t) std::max (0, numParams)),
-          lastSentTimeNs ((std::size_t) std::max (0, numParams))
+          lastSentTimeNs ((std::size_t) std::max (0, numParams)),
+          generation (mirrorGeneration)
     {
         // Seed both vectors to "never sent" sentinels. atomic<float>
         // has no value-init for non-trivial init, hence the explicit
@@ -792,7 +813,8 @@ public:
             .store (nowNs, std::memory_order_relaxed);
 
         const auto seq = host.outboundParamSeq.fetch_add (1, std::memory_order_acq_rel) + 1;
-        (void) pushParamChangedFromChild (host.channel, paramIndex, newValue, seq);
+        host.paramPushQueue.push ({ { (std::uint32_t) paramIndex, newValue, seq },
+                                    generation });
     }
     void parameterGestureChanged (int, bool) override {}
 
@@ -800,6 +822,38 @@ private:
     HostState& host;
     std::vector<std::atomic<float>>        lastSentValue;
     std::vector<std::atomic<std::int64_t>> lastSentTimeNs;
+    const std::uint32_t                    generation;
+};
+
+// Consumer side of the mirror. Lives on the child's message thread for the
+// life of the host, so a plugin swap never has to stop or restart it.
+class ParamMirrorDrain final : public dusk::Timer
+{
+public:
+    explicit ParamMirrorDrain (HostState& h) noexcept : host (h) {}
+
+private:
+    void timerCallback() override
+    {
+        ParamPushRecord queued {};
+        for (std::size_t i = 0; i < ParamPushQueue::kCapacity; ++i)
+        {
+            if (! host.paramPushQueue.pop (queued)) break;
+
+            // Both the generation bump and the LoadPlugin reply happen on the
+            // sockThread, bump first, and the reply takes this same mutex. So
+            // a value the retired plugin queued either goes out before that
+            // reply - where it still describes the plugin the parent has - or
+            // is seen here as stale and dropped.
+            std::lock_guard<std::mutex> lk (channelWriteMutex());
+            if (queued.generation != host.mirrorGeneration.load (std::memory_order_acquire))
+                continue;
+            if (! writeParamChangedLocked (host.channel, queued.payload))
+                break;
+        }
+    }
+
+    HostState& host;
 };
 #endif
 
@@ -896,6 +950,7 @@ std::uint32_t handleLoadPlugin (HostState& host,
             for (auto* p : host.ownedInstance->getParameters())
                 if (p != nullptr) p->removeListener (host.paramListener.get());
         host.paramListener.reset();
+        host.mirrorGeneration.fetch_add (1, std::memory_order_release);
        #endif
         deposed = std::move (host.ownedInstance);
         host.ownedInstance = std::move (fresh);
@@ -935,7 +990,8 @@ std::uint32_t handleLoadPlugin (HostState& host,
     // ~12 bytes per param of tracking state - bounded +
     // bounded-lifetime.
     const int paramCount = host.ownedInstance->getParameters().size();
-    host.paramListener = std::make_unique<ChildParamListener> (host, paramCount);
+    host.paramListener = std::make_unique<ChildParamListener> (
+        host, paramCount, host.mirrorGeneration.load (std::memory_order_acquire));
     for (auto* p : host.ownedInstance->getParameters())
         if (p != nullptr) p->addListener (host.paramListener.get());
    #endif
@@ -973,6 +1029,7 @@ std::uint32_t handleRelease (HostState& host)
             if (host.paramListener != nullptr)
                 for (auto* p : host.ownedInstance->getParameters())
                     if (p != nullptr) p->removeListener (host.paramListener.get());
+            host.mirrorGeneration.fetch_add (1, std::memory_order_release);
            #endif
             host.ownedInstance->releaseResources();
             host.ownedInstance.reset();
@@ -1390,6 +1447,11 @@ int runIpcHost (int argc, const char* const* argv) noexcept
         host.commandSignal.wake (&host.hdr->cmdSeq);
         juce::MessageManager::getInstance()->stopDispatchLoop();
     });
+
+   #if JUCE_MAC
+    ParamMirrorDrain paramDrain (host);
+    paramDrain.startTimerHz (kParamMirrorDrainHz);
+   #endif
 
     juce::MessageManager::getInstance()->runDispatchLoop();
 

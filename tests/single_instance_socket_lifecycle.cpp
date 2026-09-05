@@ -5,10 +5,14 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <string>
 #include <system_error>
 #include <thread>
@@ -20,6 +24,9 @@
  #endif
  #include <windows.h>
 #else
+ #include <cerrno>
+ #include <fcntl.h>
+ #include <sys/file.h>
  #include <sys/socket.h>
  #include <sys/stat.h>
  #include <sys/un.h>
@@ -163,6 +170,83 @@ int bindSocketAt (const fs::path& p)
     REQUIRE (::bind (fd, (const sockaddr*) &addr, sizeof addr) == 0);
     return fd;
 }
+
+int connectTo (const fs::path& p)
+{
+    const int fd = ::socket (AF_UNIX, SOCK_STREAM, 0);
+    REQUIRE (fd >= 0);
+
+    sockaddr_un addr {};
+    addr.sun_family = AF_UNIX;
+    const auto name = p.string();
+    REQUIRE (name.size() < sizeof addr.sun_path);
+    std::memcpy (addr.sun_path, name.c_str(), name.size());
+    REQUIRE (::connect (fd, (const sockaddr*) &addr, sizeof addr) == 0);
+    return fd;
+}
+
+void sendAll (int fd, const void* bytes, std::size_t size)
+{
+    const auto* cursor = static_cast<const unsigned char*> (bytes);
+    std::size_t sent = 0;
+    while (sent < size)
+    {
+        const ssize_t n = ::write (fd, cursor + sent, size - sent);
+        if (n < 0 && errno == EINTR) continue;
+        REQUIRE (n > 0);
+        sent += (std::size_t) n;
+    }
+}
+
+void sendFrame (int fd, std::uint32_t declaredSize, const std::string& body)
+{
+    sendAll (fd, &declaredSize, sizeof declaredSize);
+    if (! body.empty()) sendAll (fd, body.data(), body.size());
+}
+
+// The lock the production code takes around every mutation of the slot entry.
+int holdSlotLock (const fs::path& socketPath)
+{
+    const int fd = ::open ((socketPath.string() + ".lock").c_str(),
+                           O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    REQUIRE (fd >= 0);
+    REQUIRE (::flock (fd, LOCK_EX | LOCK_NB) == 0);
+    return fd;
+}
+
+void releaseSlotLock (int fd)
+{
+    ::flock (fd, LOCK_UN);
+    ::close (fd);
+}
+
+#if defined (__linux__)
+std::string captureStderr (const std::function<void()>& fn)
+{
+    const auto sinkPath = fs::temp_directory_path()
+                        / ("dusk-si-stderr-" + std::to_string ((long) ::getpid()));
+    const int saved = ::dup (STDERR_FILENO);
+    REQUIRE (saved >= 0);
+    const int sink = ::open (sinkPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    REQUIRE (sink >= 0);
+
+    std::fflush (stderr);
+    REQUIRE (::dup2 (sink, STDERR_FILENO) >= 0);
+    ::close (sink);
+    fn();
+    std::fflush (stderr);
+    REQUIRE (::dup2 (saved, STDERR_FILENO) >= 0);
+    ::close (saved);
+
+    std::ifstream input (sinkPath.string());
+    std::string text { std::istreambuf_iterator<char> (input),
+                       std::istreambuf_iterator<char>() };
+    input.close();
+    std::error_code ec;
+    fs::remove (sinkPath, ec);
+    return text;
+}
+#endif
 #endif
 } // namespace
 
@@ -304,6 +388,116 @@ TEST_CASE ("release leaves a newer primary socket at the same path",
     ::close (successorFd);
     ::unlink (sock.c_str());
 }
+
+TEST_CASE ("a stale socket is reclaimed only under the slot lock",
+           "[single-instance][socket][issue-450]")
+{
+    ScopedSlot slot;
+    REQUIRE (duskstudio::single_instance::acquire ("", noPayload));
+    const auto sock = soleSocketIn (slot.path());
+    REQUIRE_FALSE (sock.empty());
+    duskstudio::single_instance::release();
+
+    const int staleFd = bindSocketAt (sock);
+    const auto staleInode = inodeOf (sock);
+    REQUIRE (staleInode != 0);
+
+    // Another launch is mid-reclaim. Unlinking here is what puts two primaries
+    // on one session directory: the entry can be replaced between the refusal
+    // and the unlink, so a refusal settles nothing outside the lock.
+    const int lockFd = holdSlotLock (sock);
+    REQUIRE (duskstudio::single_instance::acquire ("", noPayload));
+    REQUIRE (inodeOf (sock) == staleInode);
+    releaseSlotLock (lockFd);
+
+    REQUIRE (duskstudio::single_instance::acquire ("", noPayload));
+    const auto reclaimedInode = inodeOf (sock);
+    ::close (staleFd);
+    REQUIRE (reclaimedInode != 0);
+    REQUIRE (reclaimedInode != staleInode);
+}
+
+TEST_CASE ("release keeps the socket when the slot lock is held elsewhere",
+           "[single-instance][socket][issue-450]")
+{
+    ScopedSlot slot;
+    REQUIRE (duskstudio::single_instance::acquire ("", noPayload));
+    const auto sock = soleSocketIn (slot.path());
+    REQUIRE_FALSE (sock.empty());
+    const auto ownedInode = inodeOf (sock);
+    REQUIRE (ownedInode != 0);
+
+    const int lockFd = holdSlotLock (sock);
+    duskstudio::single_instance::release();
+    REQUIRE (inodeOf (sock) == ownedInode);
+
+    releaseSlotLock (lockFd);
+    ::unlink (sock.c_str());
+}
+
+TEST_CASE ("a length-framed handoff arrives whole", "[single-instance][socket][issue-450]")
+{
+    ScopedSlot slot;
+    Deliveries delivered;
+    const auto receive = [&] (std::string payload) { delivered.accept (std::move (payload)); };
+
+    REQUIRE (duskstudio::single_instance::acquire ("", receive));
+    const auto sock = soleSocketIn (slot.path());
+    REQUIRE_FALSE (sock.empty());
+
+    const std::string session = "\"/sessions/framed take/session.json\"";
+    const int fd = connectTo (sock);
+    sendFrame (fd, (std::uint32_t) session.size(), session);
+    ::close (fd);
+
+    REQUIRE (delivered.waitFor (1));
+    duskstudio::single_instance::release();
+    REQUIRE (delivered.copy() == std::vector<std::string> { session });
+}
+
+TEST_CASE ("a short or oversized handoff frame is dropped",
+           "[single-instance][socket][issue-450]")
+{
+    ScopedSlot slot;
+    Deliveries delivered;
+    const auto receive = [&] (std::string payload) { delivered.accept (std::move (payload)); };
+
+    REQUIRE (duskstudio::single_instance::acquire ("", receive));
+    const auto sock = soleSocketIn (slot.path());
+    REQUIRE_FALSE (sock.empty());
+
+    // A sender that dies mid-path. Half of an absolute path can still name a
+    // directory, so the prefix must not reach the primary at all.
+    const std::string prefix = "\"/sessions/only-a-pre";
+    const int truncated = connectTo (sock);
+    sendFrame (truncated, (std::uint32_t) prefix.size() + 32, prefix);
+    ::close (truncated);
+
+    const int oversized = connectTo (sock);
+    sendFrame (oversized, 64u * 1024u + 1u, {});
+    ::close (oversized);
+
+    const std::string session = "\"/sessions/whole/session.json\"";
+    REQUIRE_FALSE (duskstudio::single_instance::acquire (session, noPayload));
+    REQUIRE (delivered.waitFor (1));
+    duskstudio::single_instance::release();
+    REQUIRE (delivered.copy() == std::vector<std::string> { session });
+}
+
+#if defined (__linux__)
+TEST_CASE ("a launch with no usable runtime directory reports the skipped slot",
+           "[single-instance][socket][issue-450]")
+{
+    ScopedSlot slot;
+    REQUIRE (::setenv ("XDG_RUNTIME_DIR", "relative/runtime", 1) == 0);
+
+    const auto complaint = captureStderr (
+        [] { REQUIRE (duskstudio::single_instance::acquire ("", noPayload)); });
+
+    REQUIRE (complaint.find ("XDG_RUNTIME_DIR") != std::string::npos);
+    REQUIRE (complaint.find ("single-instance slot") != std::string::npos);
+}
+#endif
 #endif
 
 #if defined (_WIN32)

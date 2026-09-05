@@ -21,8 +21,9 @@ namespace duskstudio::single_instance
 // failure leaves the existing endpoint untouched and this launch runs without
 // owning the slot, because the process behind it may still be alive and two
 // primaries would contend for one audio device. Linux and macOS use a private
-// per-user Unix socket and verify the peer uid. Windows uses a local named
-// mutex and an ACL-restricted named pipe keyed by the current user's SID.
+// per-user Unix socket and verify the peer uid. Windows uses a named mutex and
+// an ACL-restricted named pipe keyed by the current user's SID and desktop
+// session, and each end verifies the other's SID before anything is sent.
 bool acquire (const std::string& payload,
               std::function<void (std::string)> onCommandLine);
 

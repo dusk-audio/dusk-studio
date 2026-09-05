@@ -50,6 +50,10 @@ add_executable(dusk-studio-tests
     native_editor_owner.cpp
     x11_anti_pattern_guard.cpp
     platform_window_activation.cpp
+    ipc_mac_backend_contract.cpp
+    ipc_param_push_queue.cpp
+    ipc_windows_backend_contract.cpp
+    single_instance_windows_contract.cpp
     clap_editor_lifecycle.cpp
     plugin_state_diagnostics.cpp
     channel_strip_midi_gate.cpp
@@ -184,8 +188,9 @@ target_include_directories(dusk-studio-tests SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/
 if(WIN32)
     # shell32: CommandLineToArgvW plus SHGetKnownFolderPath; ole32:
     # CoTaskMemFree for the returned known-folder path; advapi32: per-user
-    # security descriptors and token checks for the single-instance pipe.
-    target_link_libraries(dusk-studio-tests PRIVATE shell32 ole32 advapi32)
+    # security descriptors and token checks for the single-instance pipe;
+    # bcrypt: BCryptGenRandom in the IPC channel backend compiled in below.
+    target_link_libraries(dusk-studio-tests PRIVATE shell32 ole32 advapi32 bcrypt)
 endif()
 
 # pffft backend for dusk::audio::Fft, plus its A/B parity suite. The pffft

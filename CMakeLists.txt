@@ -1247,7 +1247,8 @@ if(_duskstudio_oop_enabled)
     if(WIN32)
         # shell32: CommandLineToArgvW, which the child uses to read its own
         # arguments as UTF-16 instead of trusting the ANSI-converted argv.
-        target_link_libraries(dusk-studio-plugin-host PRIVATE shell32)
+        # bcrypt: BCryptGenRandom, referenced by the shared IPC channel source.
+        target_link_libraries(dusk-studio-plugin-host PRIVATE shell32 bcrypt)
     elseif(APPLE)
         find_library(DUSKSTUDIO_OOP_AUDIOUNIT_FRAMEWORK AudioUnit REQUIRED)
         find_library(DUSKSTUDIO_OOP_COREAUDIOKIT_FRAMEWORK CoreAudioKit REQUIRED)
@@ -1540,8 +1541,9 @@ target_link_libraries(DuskStudio PRIVATE
 
 if(WIN32)
     # Wide special-folder resolution in foundation/Fs.h plus the per-user ACL
-    # and token checks used by the single-instance named pipe.
-    target_link_libraries(DuskStudio PRIVATE shell32 ole32 advapi32)
+    # and token checks used by the single-instance named pipe; bcrypt:
+    # BCryptGenRandom for the unguessable IPC pipe name.
+    target_link_libraries(DuskStudio PRIVATE shell32 ole32 advapi32 bcrypt)
 endif()
 
 # LTO is on by default for release builds (5-10% smaller binary, slight perf

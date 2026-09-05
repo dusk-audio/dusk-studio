@@ -29,22 +29,45 @@ bool SharedMemory::createAnonymous (const char* debugName,
 {
     close();
 
+    // shm_open honours only the leading 31 characters, and the name has to stay
+    // unique inside them: a fixed prefix long enough to crowd out the pid and
+    // counter makes every connection ask for the same name, so O_EXCL fails a
+    // second concurrent load and keeps failing for good against a name a crash
+    // left behind. debugName is deliberately not part of it - the name is
+    // unlinked immediately and never escapes this function.
+    (void) debugName;
     static std::atomic<std::uint64_t> counter { 0 };
-    const auto seq = counter.fetch_add (1, std::memory_order_relaxed);
 
-    char name[64];
-    std::snprintf (name, sizeof (name), "/duskstudio.%s.%lu.%llu",
-                    debugName != nullptr ? debugName : "shm",
-                    (unsigned long) ::getpid(),
-                    (unsigned long long) seq);
-    // shm_open on macOS only honours the leading 31 chars of the name;
-    // truncate to be safe.
-    name[31] = '\0';
+    char name[32];
+    constexpr int kMaxCreateAttempts = 8;
 
-    nativeHandle.fd = ::shm_open (name, O_CREAT | O_RDWR | O_EXCL, 0600);
+    // A stale name from a crashed run with this pid is the one case O_EXCL
+    // cannot distinguish from a live peer, so a fresh counter value is tried
+    // rather than failing the connection outright.
+    for (int attempt = 0; attempt < kMaxCreateAttempts; ++attempt)
+    {
+        const auto seq = counter.fetch_add (1, std::memory_order_relaxed);
+        const int written = std::snprintf (name, sizeof (name), "/ds.%lu.%llx",
+                                            (unsigned long) ::getpid(),
+                                            (unsigned long long) (seq & 0xffffffull));
+        if (written < 0 || written >= (int) sizeof (name))
+        {
+            errorOut = "shared memory name did not fit";
+            return false;
+        }
+
+        nativeHandle.fd = ::shm_open (name, O_CREAT | O_RDWR | O_EXCL, 0600);
+        if (nativeHandle.fd >= 0) break;
+        if (errno != EEXIST)
+        {
+            errorOut = std::string ("shm_open failed: ") + std::strerror (errno);
+            return false;
+        }
+    }
+
     if (nativeHandle.fd < 0)
     {
-        errorOut = std::string ("shm_open failed: ") + std::strerror (errno);
+        errorOut = "shm_open failed: no free shared memory name";
         return false;
     }
     // Unlink immediately; the fd keeps the mapping alive for the
