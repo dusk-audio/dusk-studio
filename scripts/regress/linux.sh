@@ -34,7 +34,17 @@ done
 regress_require cmake ctest Xvfb timeout flock
 cd "$REPO_ROOT"
 
-APP_BIN="${REPO_ROOT}/build/DuskStudio_artefacts/Release/DuskStudio"
+# JUCE places the app under DuskStudio_artefacts/<CMAKE_BUILD_TYPE>/, so a
+# Debug or RelWithDebInfo tree is only found by reading the type back out of
+# the cache. Resolved after configure-check, which proves the cache exists.
+APP_BIN=""
+resolve_app_bin() {
+    local build_type
+    build_type="$(sed -n 's/^CMAKE_BUILD_TYPE:[^=]*=//p' "${REPO_ROOT}/build/CMakeCache.txt" | head -1)"
+    build_type="${build_type:-Release}"
+    APP_BIN="${REPO_ROOT}/build/DuskStudio_artefacts/${build_type}/DuskStudio"
+    regress_note "build type ${build_type}: ${APP_BIN}"
+}
 
 run_build() {
     if [[ -n "${DUSK_REGRESS_BUILD_LOCK:-}" ]]; then
@@ -145,6 +155,7 @@ if [[ "${REGRESS_LEG_STATUS[0]}" == FAIL ]]; then
     regress_summary "regress linux" || true
     exit 1
 fi
+resolve_app_bin
 
 regress_leg "build-app" run_build cmake --build build -j"${JOBS}"
 regress_leg "build-tests" run_build cmake --build build-tests --target dusk-studio-tests -j"${JOBS}"

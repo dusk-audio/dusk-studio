@@ -13,6 +13,18 @@ function Invoke-RegressPost($text) {
     Invoke-RestMethod -Uri "http://${rgIp}:9000/" -Method POST -Body $text | Out-Null
 }
 
+# The plugin host inherits the app's redirected handles, so a pipe can stay
+# open after the app itself has exited; a bounded wait keeps that from hanging
+# the phase. Stop-RegressChildren closes the usual holder first.
+function Stop-RegressChildren {
+    Get-Process dusk-studio-plugin-host -ErrorAction SilentlyContinue |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+}
+function Read-RegressTask($task, $ms) {
+    if ($task.Wait($ms)) { return $task.Result }
+    return "<read timed out after ${ms} ms; output withheld by an open inherited handle>"
+}
+
 # Redirected stdio, not Start-Process: the self-test reports through stdout and
 # stderr and there is no other way to read them back out of the guest.
 function Invoke-RegressApp($name, $envs, $appArgs, $timeoutSec) {
@@ -30,12 +42,14 @@ function Invoke-RegressApp($name, $envs, $appArgs, $timeoutSec) {
     $finished = $p.WaitForExit($timeoutSec * 1000)
     if (-not $finished) {
         try { $p.Kill() } catch { }
+        $p.WaitForExit(10000) | Out-Null
         $code = 'TIMEOUT'
     } else {
         $code = $p.ExitCode
     }
+    Stop-RegressChildren
     Set-Content -Path "$rgRoot\$name.log" `
-        -Value ($outTask.Result + "`n---stderr---`n" + $errTask.Result)
+        -Value ((Read-RegressTask $outTask 10000) + "`n---stderr---`n" + (Read-RegressTask $errTask 10000))
     return $code
 }
 

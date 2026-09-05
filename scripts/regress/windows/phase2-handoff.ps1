@@ -12,6 +12,18 @@ function Invoke-RegressPost($text) {
     Invoke-RestMethod -Uri "http://${rgIp}:9000/" -Method POST -Body $text | Out-Null
 }
 
+# The plugin host inherits the app's redirected handles, so a pipe can stay
+# open after the app itself has exited; a bounded wait keeps that from hanging
+# the phase. Stop-RegressChildren closes the usual holder first.
+function Stop-RegressChildren {
+    Get-Process dusk-studio-plugin-host -ErrorAction SilentlyContinue |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+}
+function Read-RegressTask($task, $ms) {
+    if ($task.Wait($ms)) { return $task.Result }
+    return "<read timed out after ${ms} ms; output withheld by an open inherited handle>"
+}
+
 function Start-RegressApp($appArgs) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $rgExe
@@ -60,9 +72,11 @@ try {
     # phase 3's job; here the instance is only torn down.
     try { $rgFirst.Kill() } catch { }
     $rgFirst.WaitForExit(20000) | Out-Null
+    Stop-RegressChildren
+    $rgFirstErr = Read-RegressTask $rgFirst.RgErr 10000
     Set-Content -Path "$rgRoot\phase2-A.log" `
-        -Value ($rgFirst.RgOut.Result + "`n---stderr---`n" + $rgFirst.RgErr.Result)
-    $rgLog += (($rgFirst.RgErr.Result -split "`n" |
+        -Value ((Read-RegressTask $rgFirst.RgOut 10000) + "`n---stderr---`n" + $rgFirstErr)
+    $rgLog += (($rgFirstErr -split "`n" |
         Select-String -Pattern 'SingleInstance|handoff|anotherInstance|Assert|exception|fault' |
         Select-Object -Last 8 | ForEach-Object { '  ' + $_.Line.Trim() }) -join "`n") + "`n"
 } catch {

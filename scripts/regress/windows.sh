@@ -190,7 +190,11 @@ leg_wake() {
         mean="$(screen_mean "$shot")"
     fi
     echo "screenshot: ${shot} (mean=${mean:-unknown})"
-    [[ -n "$mean" ]] && (($(printf '%.0f' "$mean") >= 3))
+    if [[ -z "$mean" ]]; then
+        echo "note: brightness not measurable (python3-pillow missing); wake key sent, continuing"
+        return 0
+    fi
+    (($(printf '%.0f' "$mean") >= 3))
 }
 
 # Focus is unreliable after a phase that called SetForegroundWindow, so every

@@ -38,6 +38,7 @@ HEAD_SHA="$(git rev-parse HEAD)"
 HEAD_SHORT="$(git rev-parse --short HEAD)"
 REMOTE_BRANCH="regress-${HEAD_SHORT}"
 MAC_PREV_BRANCH=""
+MAC_PREV_COMMIT=""
 MAC_PREV_SUBMODULES=""
 MAC_HOME=""
 
@@ -61,11 +62,15 @@ mac_run() {
 
 restore_branch() {
     [[ -n "$MAC_PREV_BRANCH" ]] || return 0
-    printf '\n--- restoring %s to %s ---\n' "$MAC_HOST" "$MAC_PREV_BRANCH"
-    mac_run 600 <<REMOTE || echo "warning: could not restore ${MAC_PREV_BRANCH}" >&2
+    local target="$MAC_PREV_BRANCH"
+    # abbrev-ref reports HEAD for a detached checkout; that one goes back by
+    # commit, not by name.
+    [[ "$MAC_PREV_BRANCH" == HEAD ]] && target="--detach ${MAC_PREV_COMMIT}"
+    printf '\n--- restoring %s to %s ---\n' "$MAC_HOST" "$target"
+    mac_run 600 <<REMOTE || echo "warning: could not restore ${target}" >&2
 set -euo pipefail
 cd "\$HOME/${MAC_REPO}"
-git checkout -q "${MAC_PREV_BRANCH}"
+git checkout -q ${target}
 git branch -q -D "${REMOTE_BRANCH}" 2>/dev/null || true
 while read -r path sha; do
     [[ -n "\$path" ]] || continue
@@ -94,14 +99,21 @@ fi
 echo "macOS \$(sw_vers -productVersion), \$(uname -m)"
 cd "\$HOME/${MAC_REPO}"
 # Submodule pointers are handled separately (they get synced to the pushed
-# commit and put back afterwards), so they must not count as local dirt.
+# commit and put back afterwards), so they must not count as local dirt. Edits
+# inside a submodule's own worktree would be lost by that sync, so they do.
 if [[ -n "\$(git status --porcelain --ignore-submodules=all)" ]]; then
     echo "error: ${MAC_HOST}:${MAC_REPO} has local modifications; commit or clean it first" >&2
     git status --short --ignore-submodules=all >&2
     exit 1
 fi
+if [[ -n "\$(git submodule foreach --recursive --quiet 'git status --porcelain' 2>/dev/null)" ]]; then
+    echo "error: ${MAC_HOST}:${MAC_REPO} has modified submodule worktrees; commit or clean them first" >&2
+    git submodule foreach --recursive --quiet 'git status --short | sed "s|^|  \$path: |"' >&2
+    exit 1
+fi
 echo "regress:home \$HOME"
 echo "regress:branch \$(git rev-parse --abbrev-ref HEAD)"
+echo "regress:commit \$(git rev-parse HEAD)"
 git submodule status | awk '{ gsub(/^[-+U]/, "", \$1); print "regress:submodule", \$2, \$1 }'
 REMOTE
 }
@@ -118,7 +130,7 @@ cd "\$HOME/${MAC_REPO}"
 git checkout -q "${REMOTE_BRANCH}"
 [[ "\$(git rev-parse HEAD)" == "${HEAD_SHA}" ]] || {
     echo "error: mac checkout \$(git rev-parse HEAD) != pushed ${HEAD_SHA}" >&2; exit 1; }
-git submodule update --init --recursive || echo "warn: submodule update failed"
+git submodule update --init --recursive
 git log --oneline -1
 git submodule status
 REMOTE
@@ -219,23 +231,30 @@ BIN="\$HOME/${MAC_REPO}/build/DuskStudio_artefacts/Release/DuskStudio.app/Conten
 [[ -x "\$BIN" ]] || { echo "error: self-test binary missing: \$BIN" >&2; exit 1; }
 RC_FILE="\$(mktemp -t duskstudio-selftest-rc)"
 LOG_FILE="\$(mktemp -t duskstudio-selftest-log)"
+PID_FILE="\$(mktemp -t duskstudio-selftest-pid)"
 rm -f "\$RC_FILE"
-( DUSKSTUDIO_RUN_SELFTEST=1 "\$BIN" >"\$LOG_FILE" 2>&1; echo \$? >"\$RC_FILE" ) &
+# The subshell records the app's own pid: killing the subshell alone would
+# orphan a hung DuskStudio.
+( DUSKSTUDIO_RUN_SELFTEST=1 "\$BIN" >"\$LOG_FILE" 2>&1 & APP=\$!; echo "\$APP" >"\$PID_FILE"; wait "\$APP"; echo \$? >"\$RC_FILE" ) &
 CHILD=\$!
 WAITED=0
 while [[ ! -f "\$RC_FILE" ]]; do
     if (( WAITED >= 420 )); then
-        kill -9 "\$CHILD" 2>/dev/null || true
+        APP_PID="\$(cat "\$PID_FILE" 2>/dev/null || true)"
+        [[ -n "\$APP_PID" ]] && kill -9 "\$APP_PID" 2>/dev/null || true
+        wait "\$CHILD" 2>/dev/null || true
         echo "error: self-test still running after 420 s" >&2
         sed 's/^/  /' "\$LOG_FILE" >&2
+        rm -f "\$RC_FILE" "\$LOG_FILE" "\$PID_FILE"
         exit 124
     fi
     sleep 2
     WAITED=\$(( WAITED + 2 ))
 done
+wait "\$CHILD" 2>/dev/null || true
 RC="\$(cat "\$RC_FILE")"
 grep -E '^\[(PASS|FAIL|SKIP)\]|^Total' "\$LOG_FILE" || sed 's/^/  /' "\$LOG_FILE"
-rm -f "\$RC_FILE" "\$LOG_FILE"
+rm -f "\$RC_FILE" "\$LOG_FILE" "\$PID_FILE"
 exit "\$RC"
 REMOTE
 }
@@ -255,9 +274,10 @@ printf '%s\n' "$preflight_out"
 if ((preflight_rc == 0)); then
     MAC_HOME="$(sed -n 's/^regress:home //p' <<<"$preflight_out" | head -1)"
     MAC_PREV_BRANCH="$(sed -n 's/^regress:branch //p' <<<"$preflight_out" | head -1)"
+    MAC_PREV_COMMIT="$(sed -n 's/^regress:commit //p' <<<"$preflight_out" | head -1)"
     MAC_PREV_SUBMODULES="$(sed -n 's/^regress:submodule //p' <<<"$preflight_out")"
-    [[ -n "$MAC_HOME" && -n "$MAC_PREV_BRANCH" ]] \
-        || regress_die "preflight did not report the node's home directory and branch"
+    [[ -n "$MAC_HOME" && -n "$MAC_PREV_BRANCH" && -n "$MAC_PREV_COMMIT" ]] \
+        || regress_die "preflight did not report the node's home directory, branch and commit"
     regress_record "mac-preflight" "PASS" "$((SECONDS - preflight_start))" \
         "was on ${MAC_PREV_BRANCH}"
 else
@@ -268,7 +288,7 @@ else
 fi
 
 regress_leg "push-head" leg_push
-regress_leg_soft "mac-checkout" leg_checkout
+regress_leg "mac-checkout" leg_checkout
 regress_leg "donor-pin" leg_donor
 regress_leg_soft "daf-pins" leg_daf
 

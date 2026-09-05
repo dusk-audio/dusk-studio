@@ -12,6 +12,18 @@ function Invoke-RegressPost($text) {
     Invoke-RestMethod -Uri "http://${rgIp}:9000/" -Method POST -Body $text | Out-Null
 }
 
+# The plugin host inherits the app's redirected handles, so a pipe can stay
+# open after the app itself has exited; a bounded wait keeps that from hanging
+# the phase. Stop-RegressChildren closes the usual holder first.
+function Stop-RegressChildren {
+    Get-Process dusk-studio-plugin-host -ErrorAction SilentlyContinue |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+}
+function Read-RegressTask($task, $ms) {
+    if ($task.Wait($ms)) { return $task.Result }
+    return "<read timed out after ${ms} ms; output withheld by an open inherited handle>"
+}
+
 # A scriptblock delegate (EnumWindows and friends) throws under iex, so the
 # P/Invoke surface stays limited to these direct calls.
 if (-not ('Regress.User32' -as [type])) {
@@ -70,10 +82,12 @@ try {
     } else {
         $rgLog += "still running 50 s after WM_CLOSE`n"
         try { $rgApp.Kill() } catch { }
+        $rgApp.WaitForExit(10000) | Out-Null
     }
 
-    $rgStderr = $rgErr.Result
-    Set-Content -Path "$rgRoot\phase3.log" -Value ($rgOut.Result + "`n---stderr---`n" + $rgStderr)
+    Stop-RegressChildren
+    $rgStderr = Read-RegressTask $rgErr 10000
+    Set-Content -Path "$rgRoot\phase3.log" -Value ((Read-RegressTask $rgOut 10000) + "`n---stderr---`n" + $rgStderr)
     $rgMarkers = $rgStderr -split "`n" | Select-String -Pattern '\[Dusk Studio/(shutdown|Load)\]'
     $rgLog += (($rgMarkers | ForEach-Object { '  ' + $_.Line.Trim() }) -join "`n") + "`n"
 
