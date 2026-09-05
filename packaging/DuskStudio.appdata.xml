@@ -30,6 +30,11 @@
   <content_rating type="oars-1.1"/>
   <releases>
     <!-- scripts/bump-version.sh prepends new <release> entries here. -->
+    <release version="0.13.3" date="2026-09-05">
+      <description>
+        <p>Hardened session and plugin recovery, sandboxed plugin hosting on all three platforms, transport MIDI cleanup, cross-platform launch and window fixes, and the release metadata found missing in the pre-tag audit.</p>
+      </description>
+    </release>
     <release version="0.13.2" date="2026-08-26">
       <description>
         <p>Restores hosted plugin settings when reopening sessions, prevents hung plugin scans from wedging, and adds scan cancellation.</p>
