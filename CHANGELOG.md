@@ -240,6 +240,11 @@ closes release-metadata gaps found during the pre-tag audit.
   the nested dependency submodules sfizz vendors (Abseil, ghc-filesystem, SIMDe,
   dr_libs and the rest) keep their own recorded revisions. Release-mechanics
   tests reject future drift.
+- **The pinned JUCE snapshot is checked for drift too.** Every workflow that
+  builds against the Dusk-owned JUCE mirror must agree on `JUCE_TAG` and
+  `JUCE_REV`, and both must match the tag and revision `LICENSES.txt` records,
+  so a partial bump can no longer ship a Linux build against a JUCE the
+  licence records do not name.
 - **The de-JUCE ledger now records the real 0.13.3 baseline.** The increases
   introduced in #398 are disclosed for `AuxLaneComponent.cpp` (168 to 175),
   `ClapPluginEditorComponent.cpp` (11 to 18), its header (7 to 8), and

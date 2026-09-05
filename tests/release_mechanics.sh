@@ -811,6 +811,66 @@ assert all(
     f"DONOR_REV drift across workflows: {donor_pins}"
 )
 
+# The Linux and Raspberry Pi legs build against the Dusk-owned JUCE mirror by
+# immutable tag; macOS and Windows clone upstream JUCE by branch and carry no
+# pin. A partial bump would ship a Linux tarball built against a JUCE that
+# LICENSES.txt does not name, so every pinned site and LICENSES.txt must agree.
+juce_pinned_tag = re.search(
+    r"^\s*JUCE_TAG:\s*(\S+)$", release_workflow, re.MULTILINE
+)
+juce_pinned_rev = re.search(
+    r"^\s*JUCE_REV:\s*([0-9a-f]{40})$", release_workflow, re.MULTILINE
+)
+assert juce_pinned_tag and juce_pinned_rev, (
+    "release.yml must pin JUCE_TAG and JUCE_REV"
+)
+juce_pins = {}
+for workflow_path in (source_root / ".github" / "workflows").glob("*.yml"):
+    workflow_text = workflow_path.read_text(encoding="utf-8")
+    tags = re.findall(r"^\s*JUCE_TAG:\s*(\S+)$", workflow_text, re.MULTILINE)
+    revs = re.findall(
+        r"^\s*JUCE_REV:\s*([0-9a-f]{40})$", workflow_text, re.MULTILINE
+    )
+    if tags or revs:
+        juce_pins[workflow_path.name] = (tags, revs)
+expected_juce_workflows = {
+    "linux-build.yml",
+    "linux-sanitizer.yml",
+    "raspberry-pi-build.yml",
+    "release.yml",
+}
+assert set(juce_pins) == expected_juce_workflows, (
+    "exactly the workflows that build against the Dusk-owned JUCE mirror must "
+    f"pin JUCE_TAG / JUCE_REV: {sorted(juce_pins)}"
+)
+for workflow_name, (tags, revs) in sorted(juce_pins.items()):
+    assert len(tags) == len(revs), (
+        f"{workflow_name} must pin JUCE_TAG and JUCE_REV together: "
+        f"{tags} vs {revs}"
+    )
+    assert set(tags) == {juce_pinned_tag.group(1)}, (
+        f"JUCE_TAG drift in {workflow_name}: {tags} != "
+        f"{juce_pinned_tag.group(1)}"
+    )
+    assert set(revs) == {juce_pinned_rev.group(1)}, (
+        f"JUCE_REV drift in {workflow_name}: {revs} != "
+        f"{juce_pinned_rev.group(1)}"
+    )
+recorded_juce = re.search(
+    r"JUCE-wayland tag\s+([^\s,]+),\s+rev\s+([0-9a-f]{40})", licenses
+)
+assert recorded_juce, (
+    "LICENSES.txt must record the pinned JUCE mirror tag and revision"
+)
+assert recorded_juce.group(1) == juce_pinned_tag.group(1), (
+    f"LICENSES.txt names JUCE tag {recorded_juce.group(1)}, the workflows pin "
+    f"{juce_pinned_tag.group(1)}"
+)
+assert recorded_juce.group(2) == juce_pinned_rev.group(1), (
+    f"LICENSES.txt names JUCE rev {recorded_juce.group(2)}, the workflows pin "
+    f"{juce_pinned_rev.group(1)}"
+)
+
 windows_pr_workflow = (
     source_root / ".github" / "workflows" / "windows-tests.yml"
 ).read_text(encoding="utf-8")
