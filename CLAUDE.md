@@ -71,7 +71,7 @@ JUCE is auto-discovered from a sibling directory; pass `-DJUCE_PATH=...` to over
 
 ### Cross-OS dev (macOS authoring, Linux testing)
 
-Single canonical build dir on both OSes: `build/` (app) and `build-tests/` (Catch2 tests). The sibling repos and JUCE source differ per OS, but the build directory does not — switching machines does not require a new build dir.
+Same build directory names on both OSes: `build/` (app) and `build-tests/` (Catch2 tests), so commands and scripts are identical on either host. Each host owns its own trees: a CMake cache records host paths and the compiler, so a tree configured on one OS is not reusable on the other. If a checkout moves between hosts (shared or synced filesystem), delete `build/` and `build-tests/` and reconfigure on the new host.
 
 | OS    | App build | Tests build      | JUCE source                              | Plugins source                    |
 |-------|-----------|------------------|------------------------------------------|-----------------------------------|
