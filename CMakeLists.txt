@@ -18,6 +18,9 @@ endif()
 # version literal here.
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" DUSKSTUDIO_VERSION_RAW)
 string(STRIP "${DUSKSTUDIO_VERSION_RAW}" DUSKSTUDIO_VERSION)
+# A bump must re-run configure, or an incremental build keeps the old version
+# string in the binary and the AppStream/CPack metadata.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS VERSION)
 project(DuskStudio VERSION ${DUSKSTUDIO_VERSION} LANGUAGES C CXX)
 
 if(APPLE)
