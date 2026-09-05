@@ -17,4 +17,7 @@ try {
 
 $rgLog += "REGRESS-PHASE probe RESULT $rgResult`nREGRESS-PHASE probe END`n"
 Invoke-RestMethod -Uri "http://${rgIp}:9000/" -Method POST -Body $rgLog | Out-Null
-exit
+
+# iex runs the script in a child scope, so plain "exit" leaves the console
+# open and repeat runs stack up windows in the guest.
+[Environment]::Exit(0)

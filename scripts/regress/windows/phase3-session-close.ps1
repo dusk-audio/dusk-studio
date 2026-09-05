@@ -92,4 +92,7 @@ try {
 
 $rgLog += "REGRESS-PHASE phase3 RESULT $rgResult`nREGRESS-PHASE phase3 END`n"
 Invoke-RegressPost $rgLog
-exit
+
+# iex runs the script in a child scope, so plain "exit" leaves the console
+# open and repeat runs stack up windows in the guest.
+[Environment]::Exit(0)

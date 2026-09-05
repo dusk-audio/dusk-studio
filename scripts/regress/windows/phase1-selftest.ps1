@@ -78,4 +78,7 @@ try {
 $rgLog += "ipc-selftest SKIPPED (#504: hangs on Windows)`n"
 $rgLog += "REGRESS-PHASE phase1 RESULT $rgResult`nREGRESS-PHASE phase1 END`n"
 Invoke-RegressPost $rgLog
-exit
+
+# iex runs the script in a child scope, so plain "exit" leaves the console
+# open and repeat runs stack up windows in the guest.
+[Environment]::Exit(0)

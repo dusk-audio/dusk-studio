@@ -36,6 +36,11 @@ usage: scripts/regress.sh [linux|mac|windows|all] [options]
 EOF
 }
 
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    usage
+    exit 0
+fi
+
 TARGET="linux"
 if [[ $# -gt 0 && "$1" != -* ]]; then
     TARGET="$1"
@@ -43,10 +48,6 @@ if [[ $# -gt 0 && "$1" != -* ]]; then
 fi
 
 case "$TARGET" in
-    -h | --help)
-        usage
-        exit 0
-        ;;
     linux | mac | windows | all) ;;
     *)
         usage >&2
