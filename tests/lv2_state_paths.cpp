@@ -7,6 +7,8 @@
 #include "TestTempDirectory.h"
 #include "engine/lv2/Lv2StatePaths.h"
 
+#include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
@@ -31,6 +33,15 @@ std::string readText (const stdfs::path& path)
 {
     std::ifstream in (path);
     return { std::istreambuf_iterator<char> (in), std::istreambuf_iterator<char>() };
+}
+
+// Establish a store the way a real session has one: written by earlier saves,
+// not seconds ago. Timestamps that recent are deliberately treated as unusable
+// for change detection.
+void backdate (const stdfs::path& path)
+{
+    stdfs::last_write_time (
+        path, stdfs::file_time_type::clock::now() - std::chrono::hours (24));
 }
 } // namespace
 
@@ -326,7 +337,11 @@ TEST_CASE ("LV2 shared-store durability ignores pre-existing immutable files",
     // stay tiny so the regression itself remains fast and deterministic.
     constexpr int oldFileCount = 2048;
     for (int i = 0; i < oldFileCount; ++i)
-        writeText (old / ("sample-" + std::to_string (i) + ".bin"), "old");
+    {
+        const auto sample = old / ("sample-" + std::to_string (i) + ".bin");
+        writeText (sample, "old");
+        backdate (sample);
+    }
 
     const auto before = snapshotSharedStore (copy);
     REQUIRE (before.rootExisted);
@@ -518,4 +533,65 @@ TEST_CASE ("LV2 restore makePath does not poison a blob-only session on reopen",
     REQUIRE (recoverGeneration (session.path(), state, ec));
     REQUIRE_FALSE (ec);
     REQUIRE (readText (derived) == "derived on first open");
+}
+
+TEST_CASE ("LV2 shared-store durability syncs entries stamped inside one timestamp tick",
+           "[lv2][state][regression][issue-458]")
+{
+    TempDirectory temp ("dusk-lv2-state-generation-");
+    const auto copy = temp.path() / "copy";
+    const auto settled = copy / "settled.bin";
+    const auto rewritten = copy / "rewritten.bin";
+    writeText (settled, "aaaa");
+    writeText (rewritten, "aaaa");
+    backdate (settled);
+
+    const auto before = snapshotSharedStore (copy);
+    REQUIRE (before.rootExisted);
+    const auto stamp = stdfs::last_write_time (rewritten);
+
+    // Same size, same mtime: the pair the plan compares cannot tell this apart
+    // from the bytes it replaced, so its recency has to be what forces the sync.
+    writeText (rewritten, "bbbb");
+    stdfs::last_write_time (rewritten, stamp);
+
+    const auto plan = planSharedStoreSync (copy, before);
+    REQUIRE (plan.files.size() == 1);
+    REQUIRE (plan.files.front() == rewritten);
+    REQUIRE (plan.directories.empty());
+}
+
+TEST_CASE ("LV2 save sweeps the shared store only when it wrote a new revision",
+           "[lv2][state][regression][issue-458]")
+{
+    TempDirectory temp ("dusk-lv2-state-generation-");
+    std::error_code ec;
+
+    const auto commitGeneration = [&] (const char* contents)
+    {
+        const auto transaction = prepareNextGeneration (temp.path(), ec);
+        REQUIRE_FALSE (ec);
+        REQUIRE_FALSE (transaction.next.empty());
+        writeText (transaction.next / "state.bin", contents);
+        return transaction;
+    };
+
+    REQUIRE (commitNextGeneration (commitGeneration ("generation zero"), ec));
+
+    const auto orphan = temp.path() / "copy" / "orphan.bin";
+    writeText (orphan, "left by an older revision");
+    backdate (orphan);
+
+    // Nothing in copy/ or link/ moved, so no generation can have lost its last
+    // reference and the store must not be walked.
+    REQUIRE (commitNextGeneration (commitGeneration ("generation one"), ec));
+    REQUIRE (stdfs::exists (orphan));
+
+    const auto transaction = commitGeneration ("generation two");
+    const auto revision = temp.path() / "copy" / "bank-1.bin";
+    writeText (revision, "new revision");
+    stdfs::create_symlink (revision, transaction.next / "bank.bin");
+    REQUIRE (commitNextGeneration (transaction, ec));
+    REQUIRE (stdfs::exists (revision));
+    REQUIRE_FALSE (stdfs::exists (orphan));
 }

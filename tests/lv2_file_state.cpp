@@ -23,6 +23,7 @@ namespace
 namespace fs = std::filesystem;
 constexpr const char* kPluginUri = "urn:duskstudio:test:file-state";
 constexpr const char* kControlPluginUri = "urn:duskstudio:test:control-state";
+constexpr const char* kRefusedPathPluginUri = "urn:duskstudio:test:refused-paths";
 constexpr const char* kPayload = "dusk-lv2-file-state-v1";
 constexpr const char* kRestorePayload = "dusk-lv2-restore-make-path-v1";
 
@@ -425,4 +426,85 @@ TEST_CASE ("LV2 editor events carry current control and patch values",
     sync.sendCurrentValues (instance, false, capture);
     REQUIRE (sent.size() == 1);
     REQUIRE (sent.front().protocol == instance.uiEventTransferUrid());
+}
+
+TEST_CASE ("LV2 refused state paths stay inside the state root and fail the restore",
+           "[lv2][state][integration][regression][issue-458]")
+{
+    TempDirectory temp ("dusk-lv2-file-state-integration-");
+    const auto stateDir = temp.path() / "state";
+    const auto canonicalState =
+        duskstudio::lv2::statepaths::normalizeStateDirectory (stateDir);
+
+    duskstudio::lv2::Lv2Bundle bundle;
+    std::string error;
+    REQUIRE (bundle.load (DUSKSTUDIO_FILE_STATE_LV2_FIXTURE_PATH, error));
+
+    duskstudio::lv2::Lv2Instance source;
+    source.setStateDirectory (stateDir);
+    REQUIRE (source.create (bundle, kRefusedPathPluginUri, error));
+    REQUIRE (source.activate (48000.0, 32, error));
+    std::vector<uint8_t> blob;
+    REQUIRE (source.saveState (blob));
+
+    duskstudio::lv2::Lv2Instance restored;
+    restored.setStateDirectory (stateDir);
+    REQUIRE (restored.create (bundle, kRefusedPathPluginUri, error));
+    REQUIRE (restored.activate (48000.0, 32, error));
+    REQUIRE_FALSE (restored.loadState (blob));
+
+    std::ifstream report (stateDir / "cur" / "probe" / "refusals.txt");
+    std::vector<std::string> refused;
+    for (std::string line; std::getline (report, line);) refused.push_back (line);
+    REQUIRE (refused.size() == 4);
+    for (const auto& path : refused)
+    {
+        INFO ("refused path: " << path);
+        REQUIRE (fs::path (path).is_absolute());
+        REQUIRE (duskstudio::lv2::statepaths::isWithin (canonicalState, fs::path (path)));
+        REQUIRE_FALSE (fs::exists (fs::path (path)));
+    }
+
+    // A refused restore left the instance at its defaults, so it must not be
+    // able to publish those over the generation the session still carries.
+    std::vector<uint8_t> replacement { 1, 2, 3 };
+    REQUIRE_FALSE (restored.saveState (replacement));
+}
+
+TEST_CASE ("LV2 blob-only restore resolves file paths inside cur",
+           "[lv2][state][integration][regression][issue-458]")
+{
+    TempDirectory temp ("dusk-lv2-file-state-integration-");
+    const auto stateDir = temp.path() / "state";
+
+    duskstudio::lv2::Lv2Bundle bundle;
+    std::string error;
+    REQUIRE (bundle.load (DUSKSTUDIO_FILE_STATE_LV2_FIXTURE_PATH, error));
+
+    duskstudio::lv2::Lv2Instance source;
+    source.setStateDirectory (stateDir);
+    REQUIRE (source.create (bundle, kPluginUri, error));
+    REQUIRE (source.activate (48000.0, 32, error));
+    std::vector<uint8_t> blob;
+    REQUIRE (source.saveState (blob));
+    source.deactivate();
+
+    // A session from before generation management: the plugin's files sit in
+    // cur/, the blob is the only manifest and no generation matches its bytes.
+    const auto legacyDir = temp.path() / "legacy";
+    fs::create_directories (legacyDir / "cur");
+    fs::copy_file (stateDir / "cur" / "payload.txt", legacyDir / "cur" / "payload.txt");
+
+    duskstudio::lv2::Lv2Instance restored;
+    restored.setStateDirectory (legacyDir);
+    REQUIRE (restored.create (bundle, kPluginUri, error));
+    REQUIRE (restored.activate (48000.0, 32, error));
+    REQUIRE (restored.loadState (blob));
+
+    // Adopted into cur/, so lilv parses it with a state directory of its own and
+    // the blob's relative paths cannot resolve anywhere else.
+    REQUIRE (readFile (legacyDir / "cur" / duskstudio::lv2::statepaths::kStateFileName)
+             == std::string (blob.begin(), blob.end()));
+    REQUIRE (readFile (legacyDir / "cur" / "restore" / "payload.txt") == kRestorePayload);
+    requireRestoredAudio (restored);
 }

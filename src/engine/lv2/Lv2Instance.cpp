@@ -25,8 +25,10 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
@@ -114,16 +116,38 @@ struct Lv2Instance::Impl
     // from that instance so an ignored restore error cannot rotate away the
     // carried file-backed generations with a default-state save.
     bool stateRestoreFailed = false;
+    unsigned refusedPathSerial = 0;
+
+    // lv2/state.h documents no NULL return from the path callbacks, and plugins
+    // fopen what they get back unchecked, so a refusal has to hand over a path
+    // anyway. Nothing ever creates the reserved directory this name sits in, so
+    // it cannot be opened for reading or created for writing, and it stays
+    // inside the slot's state root.
+    char* refusedStatePath()
+    {
+        stateRestoreFailed = true;
+        auto root = stateDir;
+        if (root.empty())
+        {
+            std::error_code ec;
+            root = std::filesystem::temp_directory_path (ec);
+            if (ec) root = std::filesystem::path ("/");
+        }
+        const auto refused = root / ".dusk-refused"
+                                  / std::to_string (++refusedPathSerial);
+        return ::strdup (refused.u8string().c_str());
+    }
 
     static char* absolutePathCb (LV2_State_Map_Path_Handle handle, const char* abstractPath)
     {
-        if (abstractPath == nullptr) return nullptr;
         auto* self = static_cast<Impl*> (handle);
+        if (abstractPath == nullptr) return self->refusedStatePath();
         const auto absolute = statepaths::toAbsolute (self->stateDir, abstractPath);
         // A refused blob value must not fall through as the relative string it
         // came in as: the plugin would resolve it against the process working
         // directory and read a file outside the session entirely.
-        return absolute.empty() ? nullptr : ::strdup (absolute.c_str());
+        return absolute.empty() ? self->refusedStatePath()
+                                : ::strdup (absolute.c_str());
     }
     static char* abstractPathCb (LV2_State_Map_Path_Handle handle, const char* absolutePath)
     {
@@ -133,12 +157,12 @@ struct Lv2Instance::Impl
     }
     static char* makePathCb (LV2_State_Make_Path_Handle handle, const char* requestedPath)
     {
-        if (requestedPath == nullptr) return nullptr;
         auto* self = static_cast<Impl*> (handle);
+        if (requestedPath == nullptr) return self->refusedStatePath();
         std::error_code ec;
         const auto path = statepaths::makeRestorePath (
             self->stateDir, requestedPath, ec);
-        return ec ? nullptr : ::strdup (path.u8string().c_str());
+        return ec ? self->refusedStatePath() : ::strdup (path.u8string().c_str());
     }
     static void freePathCb (LV2_State_Free_Path_Handle, char* path) { ::free (path); }
 
@@ -1168,22 +1192,65 @@ bool Lv2Instance::loadStateInternal (const std::vector<uint8_t>& in,
             return false;
         }
 
-        const auto stateFile = impl->stateDir / "cur" / "state.ttl";
+        // Reconciliation has just settled which generations survive, so this is
+        // the one moment a full shared-store sweep is worth its walk. Saves
+        // sweep only when they wrote a replacement revision.
+        statepaths::pruneUnreferencedSharedFiles (impl->stateDir);
+
+        const auto cur = impl->stateDir / "cur";
+        const auto stateFile = cur / statepaths::kStateFileName;
         std::ifstream input (stateFile, std::ios::binary);
         const std::vector<uint8_t> saved {
             std::istreambuf_iterator<char> (input), std::istreambuf_iterator<char>() };
-        if (saved == in)
+        input.close();
+
+        // A blob predating generation management matches no generation. Adopt
+        // it into cur/ rather than leaving it to the string parser, whose state
+        // carries no directory: any resolver reached without the host's mapPath,
+        // lilv's own included, then resolves the blob's relative paths against
+        // the process working directory. recoverGeneration has already refused
+        // every case where cur/ holds a state.ttl these bytes do not match, so
+        // this cannot overwrite a live generation.
+        bool adopted = false;
+        if (saved.empty())
+        {
+            std::error_code ec;
+            std::filesystem::create_directories (cur, ec);
+            if (! ec)
+            {
+                std::ofstream output (stateFile, std::ios::binary | std::ios::trunc);
+                output.write (reinterpret_cast<const char*> (in.data()),
+                              (std::streamsize) in.size());
+                output.close();
+                adopted = static_cast<bool> (output);
+            }
+            if (adopted)
+            {
+                statepaths::syncPathBestEffort (stateFile);
+                statepaths::syncPathBestEffort (cur);
+            }
+        }
+
+        if (adopted || saved == in)
         {
             LilvNode* subject = lilv_new_uri (impl->world, "urn:duskstudio:lv2state");
             state = lilv_state_new_from_file (
                 impl->world, &impl->mapFeature, subject, stateFile.c_str());
             lilv_node_free (subject);
         }
+
+        // An adopted blob lilv cannot parse from disk would otherwise stay as a
+        // managed generation no future blob can ever match.
+        if (state == nullptr && adopted)
+        {
+            std::error_code ignored;
+            std::filesystem::remove (stateFile, ignored);
+        }
     }
 
-    // Blob-only snapshots and states written by older versions contain no
-    // relative file URIs, so the filesystem-independent parser remains the
-    // compatible fallback.
+    // A blob carried across reactivation holds absolute paths and no state
+    // directory is involved, so the filesystem-independent parser remains the
+    // fallback for it and for genuinely blob-only slots.
     if (state == nullptr)
     {
         const std::string ttl (in.begin(), in.end());
@@ -1215,11 +1282,13 @@ bool Lv2Instance::loadStateInternal (const std::vector<uint8_t>& in,
     feats.push_back (&freePathFeat);
     feats.push_back (nullptr);
 
+    // Cleared up front so a path the callbacks refuse during the restore is
+    // still the answer this call reports.
+    impl->stateRestoreFailed = false;
     lilv_state_restore (state, impl->instance, &Impl::setPortValue, impl.get(),
                         0, feats.data());
     lilv_state_free (state);
-    impl->stateRestoreFailed = false;
-    return true;
+    return ! impl->stateRestoreFailed;
 }
 
 void*       Lv2Instance::lilvWorld()        const noexcept { return impl->world; }

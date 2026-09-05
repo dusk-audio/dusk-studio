@@ -151,6 +151,20 @@ closes release-metadata gaps found during the pre-tag audit.
   so a saved binding keeps pointing at the parameter it was learned on. Bindings
   saved by an earlier release may land on the wrong parameter once, and stay put
   after they are re-learned.
+- **LV2 file state loads only from the session's own state folder.** A damaged
+  or hand-edited session could hand a plugin a file path the host had already
+  rejected, or hand it nothing at all, which some plugins read straight into a
+  crash. A rejected path now comes back as a path inside the session's state
+  folder that does not exist, and the restore is reported as failed. Sessions
+  written before Dusk Studio managed LV2 state generations are now read from
+  that folder as well, rather than relative to wherever the app was launched.
+- **Saving a session with a large LV2 sampler is no longer slow.** Every save
+  swept the whole LV2 file store, so a multi-gigabyte sample bank made each save
+  take longer the more files it held, even when nothing had changed. The sweep
+  now runs when a save actually writes a new copy of a file, and once when the
+  session opens. A file rewritten in place inside a single timestamp tick is
+  also flushed to disk now, so a power cut cannot leave the current state
+  pointing at half-written bytes.
 - **A plugin that loses or refuses its settings now says so.** The terminal and
   alert identify the track and format. A plugin that rejects restored state is
   unloaded and left offline so its preserved state cannot be replaced by
