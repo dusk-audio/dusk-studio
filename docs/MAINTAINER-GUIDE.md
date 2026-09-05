@@ -432,14 +432,16 @@ General approach: reproduce in a test if at all possible (the suite runs in mill
 
 ### Release order
 
+Releases ship from `main`, which is where 0.13.3 and later are tagged.
+`release/0.12` and `release/0.13` are historical: they carry the `v0.12.6` and
+`v0.13.2` tags and receive no further work.
+
 The order is load-bearing. Replace `X.Y.Z` with the release version throughout.
 Set `RELEASE_VERSION=X.Y.Z` in the shell used for the guarded commands.
 
-The reserved address in
-[`CPACK_PACKAGE_CONTACT`](../CMakeLists.txt) feeds only DEB/RPM package
-metadata. Those formats are not among the six assets published by the current
-tag workflows, so the placeholder does not block releases made by those
-workflows. Supply the real address before either format is published.
+[`CPACK_PACKAGE_CONTACT`](../CMakeLists.txt) holds the maintainer address and
+feeds only DEB/RPM package metadata. Neither format is among the six assets the
+current tag workflows publish, so nothing a tagged release produces uses it.
 
 1. Finish the `## [X.Y.Z] - Unreleased` section in
    [CHANGELOG.md](../CHANGELOG.md), then run

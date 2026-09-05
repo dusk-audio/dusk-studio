@@ -80,7 +80,6 @@ public:
     void commit (std::uint64_t ticket, const ParamPushRecord& in) noexcept
     {
         auto& slot = slots[(std::size_t) (ticket & kMask)];
-        std::atomic_thread_fence (std::memory_order_release);
         slot.value = in;
         slot.stamp.store (publishedStamp (ticket), std::memory_order_release);
     }
