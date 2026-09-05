@@ -963,7 +963,11 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     const bool pingRequested = (req == kInsertHardware
                                 || activeInsertMode == kInsertHardware)
                             && hardwareSlot.isPingRequested();
-    if (! passByGate && ! isMidi && ! needsProcessedMono && ! pingRequested)
+    // A muted or soloed-out MIDI track stays on the full pass only while an
+    // instrument is loaded: the instrument is the only thing that can flush a
+    // panic's note-offs. An empty MIDI track has nothing to pump.
+    if (! passByGate && ! (isMidi && activeInsertMode != kInsertEmpty)
+        && ! needsProcessedMono && ! pingRequested)
     {
         faderGain.setTargetValue (0.0f);
         for (auto& s : busGain)     s.setTargetValue (0.0f);
@@ -995,13 +999,13 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     // it. Mirrors the aux-lane silent skip in
     // AudioEngine.cpp:audioDeviceIOCallbackWithContext (the canonical
     // freeze-smoothers / reset-meter pattern). Constraints:
-    //   - MIDI tracks excluded (instrument plugin generates audio
-    //     from MIDI even with no audio input).
-    //   - Tracks with an insert plugin excluded (plugin tail / latency
-    //     compensation would suffer from skipped blocks).
+    //   - Tracks with an insert excluded (plugin tail / latency
+    //     compensation would suffer from skipped blocks). That also
+    //     covers a MIDI track's instrument, the only audio source such
+    //     a track has - an empty MIDI track generates nothing.
     //   - `needsProcessedMono` (recorder-print path) already handled
     //     above; tracks armed-with-print stay on the full pass.
-    if (! isMidi && activeInsertMode == kInsertEmpty)
+    if (activeInsertMode == kInsertEmpty)
     {
         const auto peakAbs = [] (const float* buf, int n) -> float
         {

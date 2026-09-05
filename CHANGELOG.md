@@ -22,6 +22,12 @@ closes release-metadata gaps found during the pre-tag audit.
   MIDI tracks while they are muted or excluded by solo, VST3 synths that do not
   map the standard panic controllers receive note-offs for their sounding
   notes, and CLAP instruments receive a choke on every note-input port.
+- **Muted MIDI tracks with no instrument no longer burn CPU.** Keeping panic
+  events flowing to muted MIDI tracks also kept the full high-pass, EQ and
+  compressor chain running on MIDI tracks with no instrument loaded, which have
+  nothing to make a sound with. Those tracks skip the chain again; a MIDI track
+  that does have an instrument still runs while muted or soloed out so its
+  notes can be stopped.
 - **CLAP-only voices stop with the transport.** Instruments whose note port does
   not accept raw MIDI now receive a native CLAP choke when transport stops,
   loops, or jumps, including plugins that expose both CLAP and MIDI note ports.
