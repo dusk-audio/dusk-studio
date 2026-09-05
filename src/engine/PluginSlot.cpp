@@ -181,7 +181,7 @@ PluginSlot::~PluginSlot()
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     // An in-flight off-thread load still posts its completion; joining before
     // the members below go away keeps those workers from outliving the slot.
-    joinRemoteLoads();
+    cancelAndJoinRemoteLoads();
    #endif
 
     // Audio thread should already be detached by the time this runs (the
@@ -236,10 +236,12 @@ void PluginSlot::leakInstanceForShutdown()
 #if DUSKSTUDIO_HAS_OOP_PLUGINS
 void PluginSlot::pollRemoteReaper()
 {
-    auto* r = ownedRemote.get();
-    if (r == nullptr) { reaperTimer.stopTimer(); return; }
+    // Without this the only reaper is the next load, so a finished worker sits
+    // in the vector until then and the destructor always has one to join.
+    reapFinishedRemoteLoads();
 
-    if (r->pollReaper())
+    auto* r = ownedRemote.get();
+    if (r != nullptr && r->pollReaper())
     {
         // Child has exited. Park the audio path immediately (defense in
         // depth - the audio thread will set autoBypassed itself on the
@@ -252,9 +254,13 @@ void PluginSlot::pollRemoteReaper()
         std::fprintf (stderr,
                       "[Dusk Studio/PluginSlot] OOP child process exited; slot "
                       "auto-bypassed. Reload the plugin to recover.\n");
-        // Stop polling - child has been reaped, nothing more to watch.
-        reaperTimer.stopTimer();
     }
+
+    // Stop once there is no live child left to watch and no load still running.
+    const bool watchingChild = r != nullptr
+                                 && ! remoteCrashed.load (std::memory_order_relaxed);
+    if (! watchingChild && remoteLoads.empty())
+        reaperTimer.stopTimer();
 }
 
 void PluginSlot::publishRemoteConnection (
@@ -304,8 +310,13 @@ void PluginSlot::reapFinishedRemoteLoads() noexcept
     }
 }
 
-void PluginSlot::joinRemoteLoads() noexcept
+void PluginSlot::cancelAndJoinRemoteLoads() noexcept
 {
+    // Every flag goes up before the first join so the workers unwind in
+    // parallel; joining one at a time after its own cancel would serialise the
+    // child teardowns.
+    for (auto& entry : remoteLoads)
+        entry.cancel->store (true, std::memory_order_release);
     for (auto& entry : remoteLoads)
         if (entry.worker.joinable()) entry.worker.join();
     remoteLoads.clear();
@@ -331,19 +342,22 @@ void PluginSlot::beginRemoteLoad (PluginDescriptor descriptor,
     // Everything the worker touches is copied across: it must not read the slot,
     // whose completion is the only part that runs back on the message thread.
     const auto descriptionXml = manager->descriptorToLegacyXml (descriptor).toStdString();
+    const auto modeArg = manager->getHostModeArg();
     const auto sampleRate = preparedSampleRate;
     const auto blockSize  = preparedBlockSize;
     std::weak_ptr<char> life = lifeToken;
     auto finished = std::make_shared<std::atomic<bool>> (false);
+    auto cancel   = std::make_shared<std::atomic<bool>> (false);
 
     std::thread worker (
-        [this, life, epoch, onDone, descriptor, hostPath, descriptionXml,
-         sampleRate, blockSize, finished]
+        [this, life, epoch, onDone, descriptor, hostPath, modeArg, descriptionXml,
+         sampleRate, blockSize, finished, cancel]
     {
         auto outcome = std::make_shared<Outcome>();
         auto remote = std::make_unique<duskstudio::ipc::RemotePluginConnection>();
+        remote->setCancelFlag (cancel);
 
-        if (! remote->connect (hostPath, "--ipc-host", outcome->error))
+        if (! remote->connect (hostPath, modeArg, outcome->error))
             remote.reset();
         else if (! remote->loadPlugin (descriptionXml, sampleRate, blockSize,
                                         outcome->numIn, outcome->numOut,
@@ -352,6 +366,20 @@ void PluginSlot::beginRemoteLoad (PluginDescriptor descriptor,
             remote.reset();
         else
             outcome->connection = std::move (remote);
+
+        if (cancel->load (std::memory_order_acquire))
+        {
+            // The slot is going away. Drop the child here rather than posting a
+            // completion the slot could not receive anyway - the destructor is
+            // waiting on this thread, so the teardown belongs on it.
+            outcome->connection.reset();
+            finished->store (true, std::memory_order_release);
+            return;
+        }
+        // Cancellation covers the load only. Past this point the slot owns the
+        // connection and disconnect() is what tears it down.
+        if (outcome->connection != nullptr)
+            outcome->connection->setCancelFlag (nullptr);
 
         // A queue that has gone away (shutdown) drops the lambda, and the
         // connection dies with it - killing the child, which is what we want.
@@ -407,7 +435,11 @@ void PluginSlot::beginRemoteLoad (PluginDescriptor descriptor,
         finished->store (true, std::memory_order_release);
     });
 
-    remoteLoads.push_back ({ std::move (worker), std::move (finished) });
+    remoteLoads.push_back ({ std::move (worker), std::move (finished),
+                             std::move (cancel) });
+    // The reaper tick is the only thing that joins a finished worker while the
+    // slot sits idle between loads.
+    reaperTimer.startTimer (kReaperPeriodMs);
 }
 
 void PluginSlot::retireRemoteConnection()
@@ -467,8 +499,20 @@ bool PluginSlot::hideRemoteEditor()
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     auto* r = ownedRemote.get();
     if (r == nullptr) return false;
+    // A crashed or wedged child gets a short deadline: that close is driven by
+    // the 30 Hz strip timer rather than by the user, and a child that already
+    // missed a 100 ms block or reported its message thread stalled is not about
+    // to answer inside five seconds either. Replies are correlated by request
+    // ID, so one that lands after the short deadline is dropped rather than
+    // desyncing the reader.
+    constexpr int kHideEditorTimeoutMs             = 5000;
+    constexpr int kUnresponsiveHideEditorTimeoutMs = 300;
+    const bool unresponsive = remoteCrashed.load (std::memory_order_relaxed)
+                                || r->isCrashed()
+                                || r->isMessageThreadWedged();
     std::string err;
-    if (! r->hideEditor (err))
+    if (! r->hideEditor (err, unresponsive ? kUnresponsiveHideEditorTimeoutMs
+                                            : kHideEditorTimeoutMs))
     {
         std::fprintf (stderr,
                       "[Dusk Studio/PluginSlot] OOP hideEditor failed: %s\n",
@@ -597,20 +641,29 @@ void PluginSlot::prepareToPlay (double sampleRate, int blockSize)
 
 void PluginSlot::releaseResources()
 {
-    const juce::SpinLock::ScopedLockType processGuard (processLock);
-
-    currentInstance.store (nullptr, std::memory_order_release);
-    if (ownedInstance != nullptr)
     {
-        ownedInstance->releaseResources();
-        juce::MemoryBlock state;
-        ownedInstance->getStateInformation (state);
-        lastKnownStateBase64 = state.toBase64Encoding();
+        const juce::SpinLock::ScopedLockType processGuard (processLock);
+
+        currentInstance.store (nullptr, std::memory_order_release);
+        if (ownedInstance != nullptr)
+        {
+            ownedInstance->releaseResources();
+            juce::MemoryBlock state;
+            ownedInstance->getStateInformation (state);
+            lastKnownStateBase64 = state.toBase64Encoding();
+        }
+
+       #if DUSKSTUDIO_HAS_OOP_PLUGINS
+        reaperTimer.stopTimer();
+        currentRemote.store (nullptr, std::memory_order_release);
+       #endif
     }
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
-    reaperTimer.stopTimer();
-    currentRemote.store (nullptr, std::memory_order_release);
+    // Outside the lock: these two RPCs cost seconds against a slow child, and
+    // the audio thread takes the lock before it reads currentRemote, so a block
+    // that starts after the store above already skips this slot and one that
+    // started before it has finished by the time the store happened.
     if (ownedRemote != nullptr)
     {
         std::string err;
@@ -883,7 +936,7 @@ bool PluginSlot::loadFromDescriptor (const PluginDescriptor& descriptor,
         {
             auto remote = std::make_unique<duskstudio::ipc::RemotePluginConnection>();
             std::string err;
-            if (! remote->connect (hostPath.toStdString(), "--ipc-host", err))
+            if (! remote->connect (hostPath.toStdString(), manager->getHostModeArg(), err))
             {
                 std::fprintf (stderr,
                               "[Dusk Studio/PluginSlot] OOP connect failed (%s); "

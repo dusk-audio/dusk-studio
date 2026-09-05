@@ -108,19 +108,34 @@ TEST_CASE ("native window operations preserve activation and embedded editor geo
     REQUIRE (windows.find ("AllowSetForegroundWindow") == std::string::npos);
     requireInOrder (windows, "SetForegroundWindow", "FlashWindowEx");
 
+    // flushWindowOperations must never dispatch this process's queued work.
+    // Its callers run inside beginSafeShutdown, past the phase that dropped
+    // every plugin editor, so pumping there runs timer ticks and queued
+    // callbacks - a stale-editor tick over a blocking cross-process call, or a
+    // queued quit re-entering the shutdown sequence - against a torn-down tree.
     const auto windowsSource = readSource ("src/ui/PlatformWindowing_Windows.cpp");
     const auto windowsFlush = definitionBody (windowsSource, "flushWindowOperations");
-    REQUIRE (windowsFlush.find ("PeekMessageW") != std::string::npos);
-    REQUIRE (windowsFlush.find ("TranslateMessage") != std::string::npos);
-    REQUIRE (windowsFlush.find ("DispatchMessageW") != std::string::npos);
-    REQUIRE (windowsFlush.find ("PostQuitMessage") != std::string::npos);
+    REQUIRE (windowsFlush.find ("PeekMessage") == std::string::npos);
+    REQUIRE (windowsFlush.find ("GetMessage") == std::string::npos);
+    REQUIRE (windowsFlush.find ("TranslateMessage") == std::string::npos);
+    REQUIRE (windowsFlush.find ("DispatchMessage") == std::string::npos);
+    REQUIRE (windowsFlush.find ("PostQuitMessage") == std::string::npos);
 
     const auto macFlush = definitionBody (macSource, "flushWindowOperations");
-    REQUIRE (macFlush.find ("NSRunLoop") != std::string::npos);
-    REQUIRE (macFlush.find ("runMode") != std::string::npos);
-    REQUIRE (macFlush.find ("beforeDate") != std::string::npos);
-    REQUIRE (macFlush.find ("kMaxDrainIterations") != std::string::npos);
-    REQUIRE (macFlush.find ("for (") != std::string::npos);
+    REQUIRE (macFlush.find ("NSRunLoop") == std::string::npos);
+    REQUIRE (macFlush.find ("runMode") == std::string::npos);
+    REQUIRE (macFlush.find ("beforeDate") == std::string::npos);
+    REQUIRE (macFlush.find ("nextEventMatchingMask") == std::string::npos);
+    REQUIRE (macFlush.find ("kMaxDrainIterations") == std::string::npos);
+
+    // A second quit reaching beginSafeShutdown while the first is still
+    // walking its phases is refused before phase 1, and says so on stderr.
+    const auto safeShutdown = definitionBody (
+        readSource ("src/ui/MainComponent.cpp"), "MainComponent::beginSafeShutdown");
+    REQUIRE (safeShutdown.find ("re-entry ignored") != std::string::npos);
+    requireInOrder (safeShutdown, "if (shutdownInProgress)", "return;");
+    requireInOrder (safeShutdown, "shutdownInProgress = true",
+                    "phase 1: stop autosave timer");
 
     const auto singleInstance = readSource ("src/util/SingleInstance.cpp");
     const auto windowsBranch = singleInstance.rfind ("#elif defined (_WIN32)");
@@ -300,22 +315,72 @@ TEST_CASE ("launch session load and instance handoff retain native activation",
 }
 
 TEST_CASE ("OOP editor window RPCs dispatch through the child message thread",
-           "[windowing][macos][windows][regression][issue-447]")
+           "[windowing][macos][windows][regression][issue-447][issue-494]")
 {
     const auto hostSource = readSource ("src/engine/ipc/PluginHostMain.cpp");
     const auto dispatch = definitionBody (hostSource, "runOnHostMessageThreadAndWait");
     REQUIRE (dispatch.find ("dusk::callAsync") != std::string::npos);
     REQUIRE (dispatch.find ("dusk::AutoResetEvent") != std::string::npos);
-    REQUIRE (dispatch.find ("completion.wait") != std::string::npos);
 
-    for (const auto* handler : { "handleShowEditor", "handleHideEditor",
-                                 "handleResizeEditor" })
+    // The wait is bounded and its state is shared with the posted work: the
+    // socket thread is the child's only control reader, so an untimed wait on a
+    // message thread that stopped dispatching parks every later RPC, and the
+    // work may still run after the waiter has walked away.
+    REQUIRE (dispatch.find ("completion.wait (timeoutMs)") != std::string::npos);
+    REQUIRE (dispatch.find ("completion.wait ()") == std::string::npos);
+    REQUIRE (dispatch.find ("std::make_shared") != std::string::npos);
+    REQUIRE (dispatch.find ("HostDispatchResult::TimedOut") != std::string::npos);
+
+    for (const auto* handler : { "handleShowEditor", "handleResizeEditor" })
     {
         INFO ("handler: " << handler);
         const auto body = definitionBody (hostSource, handler);
         REQUIRE (body.find ("runOnHostMessageThreadAndWait") != std::string::npos);
         REQUIRE (body.find ("MessageManagerLock") == std::string::npos);
+        // Timed-out work can still run later, so its outputs live in shared
+        // state rather than on the socket thread's frame.
+        REQUIRE (body.find ("std::make_shared<EditorCallResult>") != std::string::npos);
+        REQUIRE (body.find ("kControlStatusMessageThreadTimeout") != std::string::npos);
     }
+
+    // A late ShowEditor must find the instance gone and do nothing rather than
+    // build an editor over a processor a Release has already dropped.
+    const auto showEditor = definitionBody (hostSource, "handleShowEditor");
+    requireInOrder (showEditor, "runOnHostMessageThreadAndWait",
+                    "host.ownedInstance == nullptr");
+
+    const auto hideEditor = definitionBody (hostSource, "handleHideEditor");
+    REQUIRE (hideEditor.find ("destroyEditorFromSocketThread") != std::string::npos);
+    REQUIRE (hideEditor.find ("MessageManagerLock") == std::string::npos);
+
+    const auto editorTeardown = definitionBody (hostSource, "destroyEditorFromSocketThread");
+    REQUIRE (editorTeardown.find ("runOnHostMessageThreadAndWait") != std::string::npos);
+
+    // Shutdown phase 3b sends Release while the parent still embeds the child's
+    // editor window, so the editor has to go first: dropping the instance under
+    // a live editor leaves it painting into a freed processor.
+    const auto teardown = definitionBody (hostSource, "destroyEditorOnMessageThread");
+    requireInOrder (teardown, "editorWindow.reset", "editor.reset");
+
+    const auto release = definitionBody (hostSource, "handleRelease");
+    requireInOrder (release, "destroyEditorFromSocketThread", "host.ownedInstance");
+    requireInOrder (release, "std::move (host.ownedInstance)",
+                    "destroyInstanceFromSocketThread");
+    REQUIRE (release.find ("host.ownedInstance.reset") == std::string::npos);
+    REQUIRE (release.find ("host.ownedInstance->releaseResources") == std::string::npos);
+
+    // LoadPlugin: editor first, then the swap under the park, then the deposed
+    // instance - never destroyed on the socket thread.
+    const auto load = definitionBody (hostSource, "handleLoadPlugin");
+    requireInOrder (load, "destroyEditorFromSocketThread", "withParkedHostWorker");
+    requireInOrder (load, "withParkedHostWorker", "destroyInstanceFromSocketThread");
+    REQUIRE (load.find ("deposed->releaseResources") == std::string::npos);
+    REQUIRE (load.find ("deposed.reset") == std::string::npos);
+
+    // Process exit: the dispatch loop has already returned, so the teardown
+    // runs inline on that same thread, in the same order.
+    const auto runHost = definitionBody (hostSource, "runIpcHost");
+    requireInOrder (runHost, "destroyEditorOnMessageThread", "destroyInstanceOnMessageThread");
 }
 
 TEST_CASE ("X11 editor teardown trap is unwind safe, lock free and backend checked",

@@ -32,7 +32,7 @@ src/engine/device/DeviceManager.h	3
 src/engine/device/DeviceManagerJuce.cpp	44
 src/engine/hosting/NativePluginId.h	8
 src/engine/ipc/IpcSelfTest.cpp	5
-src/engine/ipc/PluginHostMain.cpp	50
+src/engine/ipc/PluginHostMain.cpp	48
 src/engine/midi/JuceMidiBackend.cpp	14
 src/engine/midi/JuceMidiBackend.h	3
 src/engine/multisample/AriaBank.cpp	12
@@ -59,7 +59,7 @@ src/ui/AnalogVuMeter.cpp	113
 src/ui/AnalogVuMeter.h	7
 src/ui/AudioRegionEditor.cpp	336
 src/ui/AudioRegionEditor.h	86
-src/ui/AuxLaneComponent.cpp	175
+src/ui/AuxLaneComponent.cpp	172
 src/ui/AuxLaneComponent.h	28
 src/ui/AuxView.cpp	60
 src/ui/AuxView.h	5

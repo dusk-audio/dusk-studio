@@ -22,6 +22,12 @@ closes release-metadata gaps found during the pre-tag audit.
   MIDI tracks while they are muted or excluded by solo, VST3 synths that do not
   map the standard panic controllers receive note-offs for their sounding
   notes, and CLAP instruments receive a choke on every note-input port.
+- **Muted MIDI tracks with no instrument no longer burn CPU.** Keeping panic
+  events flowing to muted MIDI tracks also kept the full high-pass, EQ and
+  compressor chain running on MIDI tracks with no instrument loaded, which have
+  nothing to make a sound with. Those tracks skip the chain again; a MIDI track
+  that does have an instrument still runs while muted or soloed out so its
+  notes can be stopped.
 - **CLAP-only voices stop with the transport.** Instruments whose note port does
   not accept raw MIDI now receive a native CLAP choke when transport stops,
   loops, or jumps, including plugins that expose both CLAP and MIDI note ports.
@@ -48,6 +54,11 @@ closes release-metadata gaps found during the pre-tag audit.
 - **Windows session handoff can foreground the existing window reliably.** The
   secondary process grants the primary process foreground permission before
   sending the request, with a taskbar flash when Windows still refuses focus.
+- **Quitting on Windows and macOS no longer runs queued work mid-teardown.**
+  The shutdown sequence no longer dispatches pending window messages on those
+  platforms, so timers and queued callbacks cannot fire against a partly torn
+  down window, and a second quit arriving mid-sequence is ignored instead of
+  restarting it.
 - **Two launches after a crash no longer both become the running instance.** On
   Linux and macOS, reclaiming the slot a killed instance left behind is now
   serialised, so one launch cannot delete the socket the other just took and
@@ -83,6 +94,14 @@ closes release-metadata gaps found during the pre-tag audit.
 - **Sandboxed plugin windows stay responsive on Windows and macOS.** Window
   creation, visibility changes, resizing, and teardown now run on the child
   process's pumping message thread instead of its blocking control thread.
+- **A sandboxed plugin's editor closes before the plugin itself.** Releasing or
+  replacing an out-of-process plugin dropped it while its editor window was
+  still open and repainting, which could crash the child process during
+  shutdown or a plugin change. Both paths now close the editor first and free
+  the plugin on the thread that owns it. Requests that need that thread also
+  give up after a few seconds instead of waiting forever, so a plugin that
+  stops responding no longer blocks every later request or drops its settings
+  from a saved session.
 - **macOS sandbox connections no longer collide on one shared-memory name.**
   The name carried a prefix long enough to crowd out the process id and counter
   that made it unique, so two plugins loading at once could fail to connect, and
@@ -122,6 +141,16 @@ closes release-metadata gaps found during the pre-tag audit.
   application, so a plugin that stalled on startup in its own process could
   lock the interface for over half a minute. Both now happen away from it, and
   a load that fails still falls back to loading the plugin in-process.
+- **Quitting while a sandboxed plugin is loading no longer hangs.** Moving the
+  load off the drawing thread left the wait at shutdown: closing Dusk Studio
+  while a plugin stalled in its own process held the application for up to
+  thirty-five seconds per slot, waiting out a load whose result was already
+  being thrown away. Those loads are now cancelled and their child processes
+  shut down, so quitting costs a fraction of a second, and a load that has
+  finished is cleaned up on its own instead of waiting for the next one to start.
+  Closing the editor of a plugin that has stopped answering also gives up after a
+  fraction of a second instead of five, and a plugin whose own interface stalls
+  is no longer mistaken for one that has crashed.
 - **A sandboxed plugin whose process is killed drops out for a few buffers, not
   a tenth of a second.** No operating system wait the audio thread uses carries
   news of the child's death, so a killed plugin host used to hold the audio
@@ -197,12 +226,12 @@ closes release-metadata gaps found during the pre-tag audit.
   that reports a failure from its own show step but draws anyway keeps its
   editor rather than losing it, and any reason an editor could not open is
   printed to the terminal and shown in the panel.
-- **A plugin editor that fails to open on an aux lane now says so.** When a
-  CLAP, LV2, VST3, or Audio Unit insert on an aux lane cannot attach its
-  editor, the lane reports the format, the plugin name, and the plugin's own
-  reason, exactly as a channel insert does; previously the failure went only to
-  the terminal and the lane stayed empty. The report is raised once per loaded
-  plugin.
+- **An aux-lane plugin editor that cannot open now reports why.** When a CLAP,
+  LV2, VST3, or Audio Unit insert on an aux lane cannot attach its editor, the
+  format, the plugin name, and the plugin's own reason are printed to the
+  terminal. The lane raises no dialog: it attaches editors while the mixer is
+  being built, including for lanes that are not on screen, and a DSP-only
+  plugin with no interface at all is an ordinary case on Linux.
 - **Closing a plugin editor on Linux no longer risks a crash.** While an editor
   is torn down, Dusk Studio narrows how X server errors are handled so a stale
   editor window cannot abort the application. That narrowing is now lifted on
@@ -221,6 +250,11 @@ closes release-metadata gaps found during the pre-tag audit.
   the nested dependency submodules sfizz vendors (Abseil, ghc-filesystem, SIMDe,
   dr_libs and the rest) keep their own recorded revisions. Release-mechanics
   tests reject future drift.
+- **The pinned JUCE snapshot is checked for drift too.** Every workflow that
+  builds against the Dusk-owned JUCE mirror must agree on `JUCE_TAG` and
+  `JUCE_REV`, and both must match the tag and revision `LICENSES.txt` records,
+  so a partial bump can no longer ship a Linux build against a JUCE the
+  licence records do not name.
 - **The de-JUCE ledger now records the real 0.13.3 baseline.** The increases
   introduced in #398 are disclosed for `AuxLaneComponent.cpp` (168 to 175),
   `ClapPluginEditorComponent.cpp` (11 to 18), its header (7 to 8), and
@@ -229,7 +263,11 @@ closes release-metadata gaps found during the pre-tag audit.
 - **Joining regions that span more than 12 hours no longer crashes.** The join
   render sizes its mix buffer with 64-bit arithmetic and refuses a span it
   cannot hold, leaving the regions untouched, instead of overflowing the buffer
-  length and aborting the app from inside an undoable edit.
+  length and aborting the app from inside an undoable edit. Every other place
+  that sizes an audio buffer now handles that same refusal: an import or a
+  reverse render reports the failure and discards its part-written file, and a
+  scan or playback scratch that cannot be allocated leaves silence and a line on
+  the terminal instead of writing through a buffer that is not there.
 - **The real-time peak scan checks for NaN once per buffer** rather than once
   every four samples, trimming roughly 8-12 percent off a scan that runs 56
   times per audio block.

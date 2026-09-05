@@ -6,9 +6,6 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 
 #include <cstdint>
-#include <fstream>
-#include <iterator>
-#include <string>
 #include <vector>
 
 // dusk::MidiBuffer must iterate events in the same order and expose the same
@@ -194,39 +191,77 @@ TEST_CASE ("dusk::copyEventsWhole delivers a block whole or not at all",
     }
 }
 
-TEST_CASE ("AudioEngine MIDI output scratch matches the per-track capacity",
+TEST_CASE ("MIDI routing ceiling carries a merged block to the hardware output",
            "[foundation][midi][regression][issue-465]")
 {
-    const auto readSource = [] (const char* relativePath)
+    // Per-track routing merges several input-ceiling sources, and every hop past
+    // that merge - the strip's instrument bridge, the engine's sort scratch, the
+    // output bank's queue slots - reserves kMidiRoutingBlockBytes. Under
+    // whole-block-or-nothing a hop reserved an input block short does not lose
+    // the block's tail, it loses the block, note-offs included.
+    const std::uint8_t note[3] { 0x90, 60, 100 };
+
+    dusk::MidiBuffer inputBlock;
+    inputBlock.reserveBytes (dusk::kMidiBlockBytes);
+    int perInputBlock = 0;
+    while (inputBlock.addEvent (note, 3, perInputBlock)) ++perInputBlock;
+    REQUIRE (perInputBlock > 0);
+
+    SECTION ("the routing ceiling holds four input blocks merged")
     {
-        const auto path = std::string (DUSKSTUDIO_SOURCE_DIR) + "/" + relativePath;
-        std::ifstream input (path);
-        return std::string { std::istreambuf_iterator<char> (input),
-                             std::istreambuf_iterator<char>() };
-    };
+        dusk::MidiBuffer merged;
+        merged.reserveBytes (dusk::kMidiRoutingBlockBytes);
+        bool allAccepted = true;
+        for (int i = 0; i < 4 * perInputBlock; ++i)
+            allAccepted = merged.addEvent (note, 3, i) && allAccepted;
+        REQUIRE (allAccepted);
+    }
 
-    const auto engineSource = readSource ("src/engine/AudioEngine.cpp");
-    const auto devicesSource = readSource ("src/engine/midi/MidiDevices.cpp");
-    const auto stripSource = readSource ("src/dsp/ChannelStrip.cpp");
+    SECTION ("the sort scratch holds the densest block the ceiling can carry")
+    {
+        // A one-byte realtime message is the smallest record the buffer stores,
+        // so a routing-ceiling buffer full of them is exactly the event count
+        // MidiSortScratch is dimensioned for. Descending positions make the sort
+        // move every one of them.
+        const std::uint8_t clock[1] { 0xf8 };
+        dusk::MidiBuffer source;
+        source.reserveBytes (dusk::kMidiRoutingBlockBytes);
+        int inserted = 0;
+        while (source.addEvent (clock, 1, 100000 - inserted)) ++inserted;
+        REQUIRE (inserted > 4 * perInputBlock);
 
-    REQUIRE_FALSE (engineSource.empty());
-    REQUIRE_FALSE (devicesSource.empty());
-    REQUIRE_FALSE (stripSource.empty());
-    REQUIRE (engineSource.find (
-        "midiOutTrackScratch.reserveBytes (dusk::kMidiRoutingBlockBytes)")
-        != std::string::npos);
-    REQUIRE (devicesSource.find (
-        "slot.events.reserveBytes (dusk::kMidiRoutingBlockBytes)")
-        != std::string::npos);
+        dusk::MidiBuffer destination;
+        destination.reserveBytes (dusk::kMidiRoutingBlockBytes);
+        duskstudio::midi::MidiSortScratch scratch;
+        duskstudio::midi::copyMidiSorted (source, destination, scratch);
 
-    // The strip feeds its hosted plugin from perTrackMidi, which carries the
-    // routed ceiling. A smaller cap here drops the whole block, not its tail.
-    REQUIRE (engineSource.find (
-        "for (auto& m : perTrackMidi)        m.reserveBytes (dusk::kMidiRoutingBlockBytes)")
-        != std::string::npos);
-    REQUIRE (stripSource.find (
-        "nativeMidiScratch.reserveBytes (dusk::kMidiRoutingBlockBytes)")
-        != std::string::npos);
+        int count = 0;
+        int previousPosition = -1;
+        bool ascending = true;
+        for (const auto meta : destination)
+        {
+            ascending = ascending && meta.samplePosition >= previousPosition;
+            previousPosition = meta.samplePosition;
+            ++count;
+        }
+        REQUIRE (ascending);
+        REQUIRE (count == inserted);
+    }
+
+    SECTION ("a hop reserved at the input ceiling drops the whole routed block")
+    {
+        dusk::MidiBuffer routed;
+        routed.reserveBytes (dusk::kMidiRoutingBlockBytes);
+        int inserted = 0;
+        while (routed.addEvent (note, 3, inserted)) ++inserted;
+        REQUIRE (inserted > perInputBlock);
+
+        dusk::MidiBuffer undersized;
+        undersized.reserveBytes (dusk::kMidiBlockBytes);
+        duskstudio::midi::MidiSortScratch scratch;
+        duskstudio::midi::copyMidiSorted (routed, undersized, scratch);
+        REQUIRE (undersized.isEmpty());
+    }
 }
 
 TEST_CASE ("MIDI output sorted copy keeps a dense block whole and ordered",

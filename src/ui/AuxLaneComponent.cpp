@@ -28,29 +28,22 @@
 #include "../session/ParamEditAction.h"
 
 #include <algorithm>
-#include <cstdint>
 #include <cstdio>
-#include <optional>
 #include <string>
 
 namespace duskstudio
 {
 namespace
 {
-// Same log-and-alert decision the channel strip uses, plus a per-slot latch:
-// rebuildSlots re-runs the attach on construction, on reload and when an
-// async load completes, so a plug-in whose editor never attaches would raise
-// the modal on every pass. Keyed on the slot generation, which every load and
-// unload bumps, so a reload re-arms it even when the new instance lands at the
-// old address.
+// Aux lanes attach from rebuildSlots, which runs from the constructor for the
+// hidden lanes too, so a failure here has no user-initiated open to answer and
+// no on-screen parent: log only. Alerting would push an invisible entry onto
+// the modal stack, which gates native-editor reopen everywhere else.
 template <typename Editor, typename Instance>
 bool attachNativePluginEditor (Editor& editor,
                                Instance& instance,
-                               juce::Component& alertParent,
                                hosting::NativeEditorFormat format,
-                               const std::string& pluginName,
-                               std::uint64_t generation,
-                               std::optional<std::uint64_t>& reportedFor)
+                               const std::string& pluginName)
 {
     juce::String error;
     const bool attached = editor.attach (instance, error);
@@ -61,14 +54,7 @@ bool attachNativePluginEditor (Editor& editor,
             std::fputs (line.c_str(), stderr);
             std::fputc ('\n', stderr);
         },
-        [&] (const std::string& title, const std::string& message)
-        {
-            if (reportedFor == generation) return;
-            reportedFor = generation;
-            showDuskAlert (alertParent,
-                           juce::String::fromUTF8 (title.c_str()),
-                           juce::String::fromUTF8 (message.c_str()));
-        });
+        [] (const std::string&, const std::string&) {});
 }
 
 constexpr float kMeterMinDb = -60.0f;
@@ -1694,9 +1680,8 @@ void AuxLaneComponent::rebuildSlots()
                 {
                     auto ed = std::make_unique<ClapPluginEditorComponent>();
                     if (attachNativePluginEditor (
-                            *ed, *clapInst, *this, hosting::NativeEditorFormat::Clap,
-                            hosting::nativePluginName (slot.getPath(), slot.getPluginId()),
-                            slot.generation(), ui.reportedAttachFailure))
+                            *ed, *clapInst, hosting::NativeEditorFormat::Clap,
+                            hosting::nativePluginName (slot.getPath(), slot.getPluginId())))
                     {
                         ui.clapEditor = std::move (ed);
                         ui.clapEditor->bindOwner (slot);
@@ -1722,9 +1707,8 @@ void AuxLaneComponent::rebuildSlots()
                 {
                     auto ed = std::make_unique<Lv2PluginEditorComponent>();
                     if (attachNativePluginEditor (
-                            *ed, *lv2Inst, *this, hosting::NativeEditorFormat::Lv2,
-                            hosting::nativePluginName (slot.getPath(), slot.getPluginId()),
-                            slot.generation(), ui.reportedAttachFailure))
+                            *ed, *lv2Inst, hosting::NativeEditorFormat::Lv2,
+                            hosting::nativePluginName (slot.getPath(), slot.getPluginId())))
                     {
                         ui.lv2Editor = std::move (ed);
                         ui.lv2Editor->bindOwner (slot);
@@ -1750,9 +1734,8 @@ void AuxLaneComponent::rebuildSlots()
                 {
                     auto ed = std::make_unique<Vst3PluginEditorComponent>();
                     if (attachNativePluginEditor (
-                            *ed, *vst3Inst, *this, hosting::NativeEditorFormat::Vst3,
-                            hosting::nativePluginName (slot.getPath(), slot.getPluginId()),
-                            slot.generation(), ui.reportedAttachFailure))
+                            *ed, *vst3Inst, hosting::NativeEditorFormat::Vst3,
+                            hosting::nativePluginName (slot.getPath(), slot.getPluginId())))
                     {
                         ui.vst3Editor = std::move (ed);
                         ui.vst3Editor->bindOwner (slot);
@@ -1781,8 +1764,8 @@ void AuxLaneComponent::rebuildSlots()
                         pluginName = hosting::nativePluginName (slot.getPath(), slot.getPluginId());
                     auto ed = std::make_unique<AuPluginEditorComponent>();
                     if (attachNativePluginEditor (
-                            *ed, *auInst, *this, hosting::NativeEditorFormat::AudioUnit,
-                            pluginName, slot.generation(), ui.reportedAttachFailure))
+                            *ed, *auInst, hosting::NativeEditorFormat::AudioUnit,
+                            pluginName))
                     {
                         ui.auEditor = std::move (ed);
                         ui.auEditor->bindOwner (slot);

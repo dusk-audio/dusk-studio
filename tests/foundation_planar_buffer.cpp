@@ -14,7 +14,7 @@ TEST_CASE ("dusk::audio::PlanarBuffer sizes and zeroes its channels", "[foundati
     REQUIRE (buffer.numChannels() == 0);
     REQUIRE (buffer.numSamples() == 0);
 
-    buffer.setSize (3, 517);
+    REQUIRE (buffer.setSize (3, 517));
     REQUIRE (buffer.numChannels() == 3);
     REQUIRE (buffer.numSamples() == 517);
 
@@ -29,7 +29,7 @@ TEST_CASE ("dusk::audio::PlanarBuffer sizes and zeroes its channels", "[foundati
 TEST_CASE ("dusk::audio::PlanarBuffer keeps channels independent", "[foundation][audio]")
 {
     dusk::audio::PlanarBuffer buffer;
-    buffer.setSize (2, 100);
+    REQUIRE (buffer.setSize (2, 100));
 
     for (int i = 0; i < 100; ++i)
     {
@@ -56,10 +56,10 @@ TEST_CASE ("dusk::audio::PlanarBuffer resize republishes its channel pointers",
            "[foundation][audio]")
 {
     dusk::audio::PlanarBuffer buffer;
-    buffer.setSize (2, 64);
+    REQUIRE (buffer.setSize (2, 64));
     buffer.channel (0)[0] = 1.0f;
 
-    buffer.setSize (4, 4096);
+    REQUIRE (buffer.setSize (4, 4096));
     REQUIRE (buffer.numChannels() == 4);
     REQUIRE (buffer.numSamples() == 4096);
 
@@ -74,7 +74,7 @@ TEST_CASE ("dusk::audio::PlanarBuffer resize republishes its channel pointers",
         REQUIRE_THAT (buffer.channel (c)[4095], WithinAbs ((float) (c + 1), 0.0f));
     }
 
-    buffer.setSize (0, 0);
+    REQUIRE (buffer.setSize (0, 0));
     REQUIRE (buffer.numChannels() == 0);
     REQUIRE (buffer.numSamples() == 0);
     buffer.clear();
@@ -110,4 +110,17 @@ TEST_CASE ("dusk::audio::PlanarBuffer refuses a size it cannot hold", "[foundati
     REQUIRE (buffer.setSize (1, 32));
     REQUIRE (buffer.numChannels() == 1);
     REQUIRE (buffer.numSamples() == 32);
+}
+
+TEST_CASE ("dusk::audio::PlanarBuffer exposes no channels after refusing",
+           "[foundation][audio][regression][issue-493]")
+{
+    dusk::audio::PlanarBuffer buffer;
+    REQUIRE_FALSE (buffer.setSize (2, std::numeric_limits<int>::max()));
+    REQUIRE (buffer.numChannels() == 0);
+    REQUIRE (buffer.numSamples() == 0);
+    // The contract every caller's failure path rests on: a caller that ignored
+    // the false and reached for the channel array finds nothing to write to.
+    REQUIRE (buffer.data() == nullptr);
+    buffer.clear();
 }

@@ -3531,7 +3531,7 @@ void AudioRegionEditor::normalizeRegion()
     const int channels = std::max (1, reader->info().numChannels);
     constexpr int kChunkSamples = 1 << 16;   // 64k frames per chunk
     dusk::audio::PlanarBuffer buf;
-    buf.setSize (channels, kChunkSamples);
+    if (! buf.setSize (channels, kChunkSamples)) return;
 
     float peak = 0.0f;
     std::int64_t done = 0;

@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -102,7 +103,9 @@ public:
 
     // hideEditor: tell the child to drop the editor toplevel (and its
     // peer). Idempotent; calling on a hidden editor is a no-op success.
-    bool hideEditor (std::string& errorOut);
+    // A caller that already knows the child is not answering passes a short
+    // timeout rather than parking the message thread for the default deadline.
+    bool hideEditor (std::string& errorOut, int timeoutMs = 5000);
 
     // resizeEditor: parent's embedding window changed size; resize the
     // child's editor wrapper to match so the plugin sees a resized()
@@ -183,6 +186,28 @@ public:
     // explicit disconnect). Sticky for the life of the connection.
     bool isCrashed() const noexcept { return crashed.load (std::memory_order_acquire); }
 
+    // True while the child's last answered RPC reported that its message thread
+    // did not run the work in time. Unlike isCrashed this is not terminal - the
+    // child is alive and still processing audio - so the connection stays
+    // usable; callers only stop spending long deadlines on it. Cleared by the
+    // next RPC the child answers cleanly.
+    bool isMessageThreadWedged() const noexcept
+    {
+        return messageThreadWedged.load (std::memory_order_acquire);
+    }
+
+    // Cooperative cancellation for the blocking calls a background loader makes.
+    // The ready handshake and every sync-RPC reply wait poll this flag in slices,
+    // so an owner that raises it gets the call back within one slice instead of
+    // its full deadline. The flag is the only thing shared with the canceller:
+    // the pointer itself is set by the calling thread before connect() and
+    // cleared once the connection is handed on, so no connection state is
+    // mutated from outside.
+    void setCancelFlag (std::shared_ptr<std::atomic<bool>> flag) noexcept
+    {
+        cancelFlag = std::move (flag);
+    }
+
     // Non-blocking child-exit check. Calls waitpid(childPid, &status,
     // WNOHANG); if the child has exited, sets `crashed` and returns
     // true. Returns false if the child is still alive or the connection
@@ -219,6 +244,15 @@ private:
     std::uint32_t   localSeq { 0 };
     std::atomic<std::uint64_t> roundTrips { 0 };
     std::atomic<bool> crashed { false };
+    std::atomic<bool> messageThreadWedged { false };
+
+    std::shared_ptr<std::atomic<bool>> cancelFlag;
+
+    bool isCancelRequested() const noexcept
+    {
+        const auto* flag = cancelFlag.get();
+        return flag != nullptr && flag->load (std::memory_order_acquire);
+    }
 
     // --- 3c-3a control-plane demuxer state -------------------------------
     // The reader thread blocks on readExact(controlChannel, ...), peels

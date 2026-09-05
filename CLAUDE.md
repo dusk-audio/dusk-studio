@@ -52,7 +52,7 @@ Two things the gate still can't catch — you must:
 ## Build
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDUSK_PLUGINS_PATH=../dusk-donor-pin
 cmake --build build -j6
 ./build/DuskStudio_artefacts/Release/DuskStudio
 ```
@@ -67,20 +67,20 @@ examples and automation explicitly bounded; do not replace the limit with bare
 for macOS/Ninja, three for the disabled macOS/Xcode jobs and the libsodium
 autotools build, and four for Windows/MSBuild.
 
-JUCE and the Dusk plugins repo are auto-discovered from sibling directories. Pass `-DJUCE_PATH=...` or `-DDUSK_PLUGINS_PATH=...` to override either.
+JUCE is auto-discovered from a sibling directory; pass `-DJUCE_PATH=...` to override. The donor plugins repo is auto-discovered too, but `-DDUSK_PLUGINS_PATH=../dusk-donor-pin` is required because the sibling `../plugins` has drifted past the pin (see Cross-OS dev below).
 
 ### Cross-OS dev (macOS authoring, Linux testing)
 
-Single canonical build dir on both OSes: `build/` (app) and `build-tests/` (Catch2 tests). The sibling repos and JUCE source differ per OS, but the build directory does not — switching machines does not require a new build dir.
+Same build directory names on both OSes: `build/` (app) and `build-tests/` (Catch2 tests), so commands and scripts are identical on either host. Each host owns its own trees: a CMake cache records host paths and the compiler, so a tree configured on one OS is not reusable on the other. If a checkout moves between hosts (shared or synced filesystem), delete `build/` and `build-tests/` and reconfigure on the new host.
 
-| OS    | App build | Tests build      | JUCE source                              | Plugins source                 |
-|-------|-----------|------------------|------------------------------------------|--------------------------------|
-| macOS | `build/`  | `build-tests/`   | `../JUCE` (upstream)                     | `../plugins` (`DONOR_REV` pin) |
-| Linux | `build/`  | `build-tests/`   | `../JUCE-wayland` (plugdata-team fork)   | `../plugins` (`DONOR_REV` pin) |
+| OS    | App build | Tests build      | JUCE source                              | Plugins source                    |
+|-------|-----------|------------------|------------------------------------------|-----------------------------------|
+| macOS | `build/`  | `build-tests/`   | `../JUCE` (upstream)                     | `../dusk-donor-pin` (`DONOR_REV`) |
+| Linux | `build/`  | `build-tests/`   | `../JUCE-wayland` (plugdata-team fork)   | `../dusk-donor-pin` (`DONOR_REV`) |
 
 CMake auto-detects:
 - **JUCE** — on Linux it prefers `../JUCE-wayland` if present, falls back to `../JUCE`. The wayland fork has 5 local commits Dusk Studio depends on (XEmbed mapping, X11-on-Wayland fix, peer-creation latch — see [memory](../../.claude/projects/-home-marc-projects-Dusk Studio/memory/linux_juce_wayland_pin.md)) and a divergent `addDefaultFormatsToManager` free function.
-- **Plugins** — the donor is a single checkout at `../plugins`. Release-compatible builds use the `DONOR_REV` shared by the build and release workflows because donor `main` does not contain the required framework-free compressor core. Auto-detected from the sibling `../plugins` directory; override with `-DDUSK_PLUGINS_PATH=/path/to/plugins`. If `../plugins` is on another revision when you build, you build against *that* revision's DSP and layout. Follow the platform build guide to fetch and detach at the pin. (The former `../plugins-main` worktree was removed; the repo is consolidated to one directory. Do NOT add a second donor worktree for routine builds.)
+- **Plugins** — the donor repo is a single checkout at `../plugins`, and `../dusk-donor-pin` is the one persistent detached worktree of it, parked at the `DONOR_REV` the build and release workflows share. Both routine and release-compatible builds configure with `-DDUSK_PLUGINS_PATH=../dusk-donor-pin`: `../plugins` HEAD has drifted past that revision, and donor `main` does not contain the required framework-free compressor core. Sibling auto-detection finds `../plugins`, so building without the override builds against *that* revision's DSP and layout. Follow the platform build guide to recreate the pin worktree if it is missing. (Do NOT add any further donor worktrees.)
 
 The upstream-vs-fork `addDefaultFormats` API split is hidden behind [src/engine/JuceCompat.h](src/engine/JuceCompat.h) — call `duskstudio::juce_compat::addDefaultFormats(fm)` and the `#if defined(__linux__)` lives in one place. Don't sprinkle new platform `#ifdef`s into call sites.
 
@@ -157,7 +157,7 @@ Dusk Studio has Catch2 v3 unit tests in [tests/](tests/), gated behind `-DDUSKST
 ### Build + run
 
 ```bash
-cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON
+cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON -DDUSK_PLUGINS_PATH=../dusk-donor-pin
 cmake --build build-tests --target dusk-studio-tests -j6
 ctest --test-dir build-tests --output-on-failure
 ```

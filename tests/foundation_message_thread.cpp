@@ -5,6 +5,8 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <atomic>
+#include <chrono>
+#include <functional>
 
 // The event seam is a thin wrapper over the platform message loop.
 // ScopedJuceInitialiser_GUI brings the loop up and tears it down when the scope
@@ -23,21 +25,30 @@ struct CountingTimer final : dusk::Timer
 };
 
 #if ! defined (__APPLE__)
-// Breaks out of runDispatchLoop after a bounded window (this JUCE build has no
-// runDispatchLoopUntil). Itself a dusk::Timer, so it also exercises the seam.
+// Runs the dispatch loop until `done` holds or the deadline passes. This JUCE
+// build has no runDispatchLoopUntil, and stopDispatchLoop latches the quit flag
+// for the life of the MessageManager, so each test case gets exactly one pump;
+// a second call in the same case would dispatch nothing. Itself a dusk::Timer,
+// so it also exercises the seam.
 struct LoopStopper final : dusk::Timer
 {
+    std::function<bool()> done;
+    std::chrono::steady_clock::time_point deadline;
+
     void timerCallback() override
     {
+        if (! done() && std::chrono::steady_clock::now() < deadline) return;
         stopTimer();
         juce::MessageManager::getInstance()->stopDispatchLoop();
     }
 };
 
-void pumpFor (int ms)
+void pumpUntil (std::function<bool()> done, std::chrono::milliseconds timeout)
 {
     LoopStopper stopper;
-    stopper.startTimer (ms);
+    stopper.done = std::move (done);
+    stopper.deadline = std::chrono::steady_clock::now() + timeout;
+    stopper.startTimer (10);
     juce::MessageManager::getInstance()->runDispatchLoop();
 }
 #endif
@@ -54,19 +65,27 @@ TEST_CASE ("dusk::Timer starts, stops, and fires on the message thread", "[found
     REQUIRE (timer.isTimerRunning());
 
 #if ! defined (__APPLE__)
-    pumpFor (150);
+    pumpUntil ([&] { return timer.ticks.load() > 0; }, std::chrono::seconds (5));
     REQUIRE (timer.ticks.load() > 0);
 #endif
 
     timer.stopTimer();
     REQUIRE_FALSE (timer.isTimerRunning());
+}
+
+TEST_CASE ("a stopped dusk::Timer does not fire", "[foundation][events]")
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;
+
+    CountingTimer timer;
+    timer.startTimerHz (200);
+    timer.stopTimer();
+    REQUIRE_FALSE (timer.isTimerRunning());
 
 #if ! defined (__APPLE__)
-    // Nothing new should arrive once stopped.
-    const int afterStop = timer.ticks.load();
-    pumpFor (60);
-    REQUIRE (timer.ticks.load() == afterStop);
+    pumpUntil ([] { return false; }, std::chrono::milliseconds (60));
 #endif
+    REQUIRE (timer.ticks.load() == 0);
 }
 
 TEST_CASE ("dusk::callAsync defers and dispatches on the message thread", "[foundation][events]")
@@ -79,7 +98,7 @@ TEST_CASE ("dusk::callAsync defers and dispatches on the message thread", "[foun
     REQUIRE_FALSE (ran.load());   // deferred, not run inline
 
 #if ! defined (__APPLE__)
-    pumpFor (50);
+    pumpUntil ([&ran] { return ran.load(); }, std::chrono::seconds (5));
     REQUIRE (ran.load());
 #endif
 }

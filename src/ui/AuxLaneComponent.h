@@ -4,9 +4,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../foundation/MessageThread.h"
 #include <array>
-#include <cstdint>
 #include <memory>
-#include <optional>
 #include "../session/Session.h"
 #include "DuskComboBox.h"
 #include "NativeEditorOwner.h"
@@ -180,9 +178,6 @@ private:
         std::unique_ptr<class AuPluginEditorComponent> auEditor;
 #endif
         juce::String displayedName;
-
-        // Slot generation whose editor-attach failure has already been reported.
-        std::optional<std::uint64_t> reportedAttachFailure;
     };
     std::array<SlotUI, AuxLaneParams::kMaxLanePlugins> slots;
 };

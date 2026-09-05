@@ -47,7 +47,9 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     for (auto& b : auxSendPre) b = false;
 
     tempMono.assign ((size_t) std::max (1, blockSize), 0.0f);
-    tempStereoBuffer.setSize (2, std::max (1, blockSize));
+    // A refused allocation leaves numSamples() at 0, which the block-size guard
+    // in processAndAccumulate reads as "bail with silence".
+    (void) tempStereoBuffer.setSize (2, std::max (1, blockSize));
 
     // Hardware insert + the plugin <-> hardware crossfade gate. Same
     // 20 ms ramp as the rest of the strip so the transition feels in
@@ -851,6 +853,32 @@ void ChannelStrip::drainPdcForSkip() noexcept
     }
 }
 
+// The MIDI dispatch below hands the block's MIDI to whichever slot is loaded,
+// in this precedence, effects included: a plugin whose port layout says
+// "effect" can still be a sampler with a sidechain input, holding notes that
+// only a delivered panic releases. So the muted-track gate asks whether
+// anything is loaded, not whether it is an instrument; the insert mode plays
+// no part in it.
+bool ChannelStrip::hasLoadedMidiConsumer() const noexcept
+{
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    if (nativeClapSlot.isLoaded()) return true;
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    if (nativeLv2Slot.isLoaded()) return true;
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    if (nativeVst3Slot.isLoaded()) return true;
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    if (nativeAuSlot.isLoaded()) return true;
+#endif
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    if (nativeMultisampleSlot.isLoaded()) return true;
+#endif
+    return pluginSlot.isLoaded();
+}
+
 void ChannelStrip::processAndAccumulate (const float* inL,
                                          const float* inR,
                                          juce::MidiBuffer& trackMidi,
@@ -963,7 +991,12 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     const bool pingRequested = (req == kInsertHardware
                                 || activeInsertMode == kInsertHardware)
                             && hardwareSlot.isPingRequested();
-    if (! passByGate && ! isMidi && ! needsProcessedMono && ! pingRequested)
+    // A muted or soloed-out MIDI track stays on the full pass only while a
+    // plugin is loaded to receive the block's MIDI: that is the only thing a
+    // panic's note-offs can flush. A MIDI track with nothing loaded has
+    // nothing to pump.
+    if (! passByGate && ! (isMidi && hasLoadedMidiConsumer())
+        && ! needsProcessedMono && ! pingRequested)
     {
         faderGain.setTargetValue (0.0f);
         for (auto& s : busGain)     s.setTargetValue (0.0f);
@@ -995,13 +1028,14 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     // it. Mirrors the aux-lane silent skip in
     // AudioEngine.cpp:audioDeviceIOCallbackWithContext (the canonical
     // freeze-smoothers / reset-meter pattern). Constraints:
-    //   - MIDI tracks excluded (instrument plugin generates audio
-    //     from MIDI even with no audio input).
-    //   - Tracks with an insert plugin excluded (plugin tail / latency
-    //     compensation would suffer from skipped blocks).
+    //   - Tracks with an insert excluded (plugin tail / latency
+    //     compensation would suffer from skipped blocks). A MIDI track's
+    //     loaded plugin is the only audio source it has, so its test is
+    //     whether one is loaded rather than the insert mode, which sits
+    //     at kInsertPlugin before anything is loaded.
     //   - `needsProcessedMono` (recorder-print path) already handled
     //     above; tracks armed-with-print stay on the full pass.
-    if (! isMidi && activeInsertMode == kInsertEmpty)
+    if (isMidi ? ! hasLoadedMidiConsumer() : activeInsertMode == kInsertEmpty)
     {
         const auto peakAbs = [] (const float* buf, int n) -> float
         {

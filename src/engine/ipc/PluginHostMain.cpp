@@ -17,6 +17,10 @@
 //                 state, for the POSIX child-isolation regression.
 //   --ipc-control-reply-stub: deterministic request-correlation and reply-
 //                 validation regression child.
+//   --ipc-load-reply-stub: answers LoadPlugin with a fixed stereo layout so the
+//                 parent's sandboxed load path can be driven without a plugin.
+//   --ipc-mute-handshake-stub: the same child with the ready byte withheld,
+//                 leaving the parent inside its handshake wait.
 //   --ipc-host  : full Phase-2 host. Loads a juce::AudioPluginInstance
 //                 via the format manager, runs processBlock on a worker
 //                 thread, services control RPCs on a separate socket-
@@ -515,6 +519,77 @@ int runIpcControlReplyStub (int argc, const char* const* argv) noexcept
                              &unexpectedPayload, sizeof (unexpectedPayload)) ? 0 : 1;
 }
 
+// Test-only child for the parent's out-of-process load path. It answers
+// LoadPlugin with a fixed stereo layout and every other request with an empty
+// success, which is all a PluginSlot needs to publish a connection without a
+// plugin in the loop. With ackHandshake false the ready byte is withheld
+// instead, leaving the parent inside its handshake wait - the shape a load
+// cancelled from the slot's destructor has to unwind from.
+int runIpcLoadStub (int argc, const char* const* argv, bool ackHandshake) noexcept
+{
+    ipcp::NativeHandle channel = ipcp::locateInheritedChannel (argc, argv);
+    if (! ipcp::isValid (channel)) return 1;
+
+    ipcp::NativeHandle shmHandle;
+    if (! ipcp::recvHandle (channel, shmHandle)) return 1;
+
+    ipcp::InterprocessSignal commandSignal;
+    ipcp::InterprocessSignal replySignal;
+    if (! commandSignal.receiveFromParent (channel)
+        || ! replySignal.receiveFromParent (channel))
+        return 1;
+
+    ipcp::SharedMemory shm;
+    std::string error;
+    if (! shm.mapInheritedHandle (shmHandle, kTotalSize, error)) return 1;
+
+    auto* block = headerOf (shm.data());
+    if (block->magic != kMagic || block->version != kVersion) return 1;
+
+    if (! ackHandshake)
+    {
+        // Nothing follows the handles on the wire, so this parks until the
+        // parent closes its end or terminates us.
+        char ignored = 0;
+        (void) ipcp::readExact (channel, &ignored, sizeof (ignored));
+        return 0;
+    }
+
+    char ready = 'k';
+    if (! ipcp::writeExact (channel, &ready, 1)) return 1;
+
+    for (;;)
+    {
+        ControlMsgHeader request {};
+        if (! ipcp::readExact (channel, &request, sizeof (request))) break;
+        if (request.payloadLen > kMaxControlPayload
+            || request.totalLen != (std::uint32_t) sizeof (request) + request.payloadLen)
+            break;
+
+        std::vector<std::uint8_t> payload (request.payloadLen);
+        if (request.payloadLen > 0
+            && ! ipcp::readExact (channel, payload.data(), request.payloadLen))
+            break;
+
+        if (request.requestId == 0) continue;   // one-shot push, no reply owed
+
+        if ((OpCode) request.op == OpCode::LoadPlugin)
+        {
+            LoadPluginReply reply {};
+            reply.numInChans  = 2;
+            reply.numOutChans = 2;
+            if (! sendControlReply (channel, request, 0, &reply, sizeof (reply)))
+                break;
+        }
+        else if (! sendControlReply (channel, request, 0, nullptr, 0))
+        {
+            break;
+        }
+    }
+
+    return 0;
+}
+
 // Test-only child shape used by the cross-platform regression suite. It runs
 // the real shared-memory worker/control topology with a processor that remains
 // inside processBlock longer than the production park deadline. The mutation
@@ -643,6 +718,8 @@ int runIpcParkTimeoutStub (int argc, const char* const* argv) noexcept
 class ChildParamListener;  // forward - defined below HostState
 #endif
 
+using PluginInstancePtr = std::unique_ptr<juce::AudioPluginInstance>;
+
 struct HostState
 {
     ipcp::SharedMemory shm;
@@ -654,7 +731,7 @@ struct HostState
     juce::AudioPluginFormatManager formatManager;
     juce::KnownPluginList knownList;
 
-    std::unique_ptr<juce::AudioPluginInstance> ownedInstance;
+    PluginInstancePtr ownedInstance;
     std::atomic<juce::AudioPluginInstance*> currentInstance { nullptr };
 
     juce::AudioBuffer<float> workBuffer { kMaxChans, kMaxBlock };
@@ -696,34 +773,112 @@ struct HostState
     // or lets it float as a native-titlebar toplevel (Win/Mac - see
     // handleShowEditor for the per-platform chrome choice). editorWindow
     // wraps the plugin's AudioProcessorEditor so it has its own native
-    // peer; editor is a non-owning pointer (the wrapper window owns the
-    // Component). Both are message-thread-only; control handlers dispatch
+    // peer, holding it via setContentNonOwned - so this pointer is the
+    // owner, and the editor must outlive the window but never the
+    // processor (~AudioProcessor asserts on an editor that is still
+    // attached). Both are message-thread-only; control handlers dispatch
     // their window work there before replying.
-    std::unique_ptr<juce::DocumentWindow>     editorWindow;
-    juce::AudioProcessorEditor*               editor { nullptr };
+    std::unique_ptr<juce::DocumentWindow>       editorWindow;
+    std::unique_ptr<juce::AudioProcessorEditor> editor;
+};
+
+// Ceiling on one socket-thread to message-thread round trip. Every RPC that
+// makes one has a parent-side deadline of at least 5 s, and Release makes two
+// back to back, so 2 s each keeps the handler inside that budget with a second
+// left for the reply to travel. Unbounded, a message thread that stopped
+// dispatching - an editor spinning a nested modal loop, or a post that landed
+// after stopDispatchLoop - parks the child's only control reader for good, and
+// every later RPC then burns its own timeout instead.
+constexpr int kHostMessageThreadWaitMs = 2000;
+
+// ShowEditor is the one hop whose work is legitimately slow: a large plugin
+// builds its whole GUI inside createEditorIfNeeded. Its parent deadline is
+// 10 s, so it gets a longer ceiling of its own.
+constexpr int kHostEditorCreateWaitMs = 8000;
+
+enum class HostDispatchResult
+{
+    Done,      // the work ran to completion on the message thread
+    Failed,    // the post was refused, or the work threw
+    TimedOut   // nothing came back before the ceiling - the child is wedged
 };
 
 template <typename Fn>
-bool runOnHostMessageThreadAndWait (Fn&& fn)
+HostDispatchResult runOnHostMessageThreadAndWait (
+    Fn&& fn, int timeoutMs = kHostMessageThreadWaitMs)
 {
-    dusk::AutoResetEvent completion;
-    bool succeeded = false;
-    const bool posted = dusk::callAsync ([&]
+    // Shared with the posted work rather than held on this frame: a timed-out
+    // call returns while the message thread may still run that work later, and
+    // it must not signal an event the socket thread has already destroyed.
+    struct Shared
     {
-        try
+        dusk::AutoResetEvent completion;
+        bool                 succeeded = false;
+    };
+    auto shared = std::make_shared<Shared>();
+
+    const bool posted = dusk::callAsync (
+        [shared, work = std::forward<Fn> (fn)]() mutable
         {
-            fn();
-            succeeded = true;
-        }
-        catch (...)
-        {
-            // A plugin exception must still release the waiting socket thread.
-        }
-        completion.signal();
-    });
-    if (! posted) return false;
-    completion.wait();
-    return succeeded;
+            try
+            {
+                work();
+                shared->succeeded = true;
+            }
+            catch (...)
+            {
+                // A plugin exception must still release the waiting socket thread.
+            }
+            shared->completion.signal();
+        });
+    if (! posted) return HostDispatchResult::Failed;
+    if (! shared->completion.wait (timeoutMs)) return HostDispatchResult::TimedOut;
+    return shared->succeeded ? HostDispatchResult::Done : HostDispatchResult::Failed;
+}
+
+// Message thread only. The wrapper window goes first so no peer is left
+// dispatching paint or mouse events into the editor, then the editor itself -
+// deleting it is what clears the processor's active editor.
+void destroyEditorOnMessageThread (HostState& host)
+{
+    if (host.editorWindow != nullptr)
+    {
+        host.editorWindow->clearContentComponent();
+        host.editorWindow.reset();
+    }
+    host.editor.reset();
+}
+
+// Message thread only: releaseResources, then the destructor at scope exit.
+void destroyInstanceOnMessageThread (PluginInstancePtr victim)
+{
+    if (victim != nullptr)
+        victim->releaseResources();
+}
+
+// Socket-thread entry points for the two teardowns above. Every path that drops
+// an instance goes through both, in this order: shutdown phase 3b sends Release
+// while the parent still embeds the child's editor window, so an editor left
+// alive would keep painting into a freed processor. Waiting for the editor
+// teardown also flushes any editor work the message thread still has queued -
+// including a ShowEditor that timed out - so the instance can only be mutated
+// once nothing on the message thread is still using it.
+HostDispatchResult destroyEditorFromSocketThread (HostState& host)
+{
+    return runOnHostMessageThreadAndWait ([&host] { destroyEditorOnMessageThread (host); });
+}
+
+HostDispatchResult destroyInstanceFromSocketThread (PluginInstancePtr victim)
+{
+    if (victim == nullptr) return HostDispatchResult::Done;
+
+    // The posted work owns the instance outright: after a timeout this call
+    // returns while the message thread may still run later, so the pointer
+    // cannot stay tied to the socket thread's frame. shared_ptr because
+    // callAsync's std::function needs a copyable callable.
+    auto owned = std::make_shared<PluginInstancePtr> (std::move (victim));
+    return runOnHostMessageThreadAndWait (
+        [owned] { destroyInstanceOnMessageThread (std::move (*owned)); });
 }
 
 #if JUCE_MAC
@@ -937,12 +1092,23 @@ std::uint32_t handleLoadPlugin (HostState& host,
     fresh->fillInPluginDescription (loadedDescription);
     reply.isInstrument = loadedDescription.isInstrument ? 1u : 0u;
 
+    // The editor belongs to the instance about to be deposed, so it goes
+    // before the swap - and before anything touches ownedInstance.
+    if (host.ownedInstance != nullptr
+        && destroyEditorFromSocketThread (host) == HostDispatchResult::TimedOut)
+    {
+        const char* err = "child message thread wedged during LoadPlugin";
+        replyOut.assign (err, err + std::strlen (err));
+        (void) destroyInstanceFromSocketThread (std::move (fresh));
+        return kControlStatusMessageThreadTimeout;
+    }
+
     // Swap under the park. Nulling currentInstance alone does not stop a
     // worker that has already loaded the pointer, so destroying the deposed
     // instance outside the park frees an AudioPluginInstance under
     // processBlock. The deposed instance is destroyed after the park ends -
     // the worker can only reach the republished pointer by then.
-    std::unique_ptr<juce::AudioPluginInstance> deposed;
+    PluginInstancePtr deposed;
     const auto parkStatus = withParkedHostWorker (host, [&]
     {
        #if JUCE_MAC
@@ -961,17 +1127,17 @@ std::uint32_t handleLoadPlugin (HostState& host,
     {
         const char* err = "worker park timed out during LoadPlugin";
         replyOut.assign (err, err + std::strlen (err));
+        (void) destroyInstanceFromSocketThread (std::move (fresh));
         return parkStatus;
     }
 
     replyOut.resize (sizeof (reply));
     std::memcpy (replyOut.data(), &reply, sizeof (reply));
 
-    if (deposed != nullptr)
-    {
-        deposed->releaseResources();
-        deposed.reset();
-    }
+    // A wedged message thread here does not undo the load: the swap happened
+    // and the reply describes the live instance, so the deposed one rides the
+    // message queue and the RPC still reports success.
+    (void) destroyInstanceFromSocketThread (std::move (deposed));
 
    #if JUCE_MAC
     // Mac-only: install the mirror listener on every parameter so any
@@ -1016,13 +1182,17 @@ std::uint32_t handlePrepareToPlay (HostState& host,
 
 std::uint32_t handleRelease (HostState& host)
 {
-    return withParkedHostWorker (host, [&]
+    if (destroyEditorFromSocketThread (host) == HostDispatchResult::TimedOut)
+        return kControlStatusMessageThreadTimeout;
+
+    PluginInstancePtr deposed;
+    const auto parkStatus = withParkedHostWorker (host, [&]
     {
         if (host.ownedInstance != nullptr)
         {
            #if JUCE_MAC
-            // Detach the mirror listener BEFORE releaseResources +
-            // instance reset. JUCE stores listeners on the parameter
+            // Detach the mirror listener BEFORE the instance leaves
+            // ownedInstance. JUCE stores listeners on the parameter
             // objects (which live inside the AudioProcessor); not
             // removing here would dangle the listener pointer if
             // anything else still referenced the parameter list.
@@ -1031,10 +1201,14 @@ std::uint32_t handleRelease (HostState& host)
                     if (p != nullptr) p->removeListener (host.paramListener.get());
             host.mirrorGeneration.fetch_add (1, std::memory_order_release);
            #endif
-            host.ownedInstance->releaseResources();
-            host.ownedInstance.reset();
+            deposed = std::move (host.ownedInstance);
         }
     });
+    if (parkStatus != 0) return parkStatus;
+
+    if (destroyInstanceFromSocketThread (std::move (deposed)) == HostDispatchResult::TimedOut)
+        return kControlStatusMessageThreadTimeout;
+    return 0;
 }
 
 std::uint32_t handleGetState (HostState& host,
@@ -1074,37 +1248,50 @@ std::uint32_t handleSetState (HostState& host,
     return parkStatus;
 }
 
+// Reply state for an editor RPC. Shared with the posted work instead of living
+// on the socket thread's frame: a timed-out call returns, and the message
+// thread may still run that work afterwards.
+struct EditorCallResult
+{
+    std::uint32_t             status = 0;
+    std::vector<std::uint8_t> reply;
+};
+
 std::uint32_t handleShowEditor (HostState& host,
                                   std::vector<std::uint8_t>& replyOut)
 {
     if (host.ownedInstance == nullptr) return 1;
 
-    std::uint32_t status = 4;
-    if (! runOnHostMessageThreadAndWait ([&]
+    auto result = std::make_shared<EditorCallResult>();
+    const auto dispatched = runOnHostMessageThreadAndWait ([&host, result]
     {
+        // A Release can land between the post and the run, so the instance is
+        // re-checked here rather than trusted from the socket thread.
+        if (host.ownedInstance == nullptr)
+        {
+            result->status = 1;
+            return;
+        }
+
         ShowEditorReply reply {};
 
         if (host.editor == nullptr)
         {
-            host.editor = host.ownedInstance->createEditorIfNeeded();
+            host.editor.reset (host.ownedInstance->createEditorIfNeeded());
             if (host.editor == nullptr)
             {
-                status = 2;
+                result->status = 2;
                 return;
             }
         }
 
         if (host.editorWindow == nullptr)
         {
-            // The plugin's name (best-effort) labels the floating window
-            // on Win/Mac so the user can tell it apart from other windows
-            // when the OOP editor isn't embedded.
-            juce::String title = "dusk-studio-plugin-host";
-            if (host.ownedInstance != nullptr)
-                title = host.ownedInstance->getName();
-
+            // The plugin's name labels the floating window on Win/Mac so the
+            // user can tell it apart from other windows when the OOP editor
+            // isn't embedded.
             auto win = std::make_unique<juce::DocumentWindow> (
-                title,
+                host.ownedInstance->getName(),
                 juce::Colours::black,
                 juce::DocumentWindow::closeButton);
            #if JUCE_LINUX
@@ -1122,7 +1309,7 @@ std::uint32_t handleShowEditor (HostState& host,
             win->setUsingNativeTitleBar (true);
            #endif
             win->setOpaque (true);
-            win->setContentNonOwned (host.editor, true);
+            win->setContentNonOwned (host.editor.get(), true);
             const int w = host.editor->getWidth()  > 0 ? host.editor->getWidth()  : 480;
             const int h = host.editor->getHeight() > 0 ? host.editor->getHeight() : 360;
             win->centreWithSize (w, h);
@@ -1145,28 +1332,28 @@ std::uint32_t handleShowEditor (HostState& host,
         reply.reserved = 0;
         if (reply.windowId == 0)
         {
-            status = 3;
+            result->status = 3;
             return;
         }
 
-        replyOut.resize (sizeof (reply));
-        std::memcpy (replyOut.data(), &reply, sizeof (reply));
-        status = 0;
-    }))
-        return 4;
-    return status;
+        result->reply.resize (sizeof (reply));
+        std::memcpy (result->reply.data(), &reply, sizeof (reply));
+        result->status = 0;
+    }, kHostEditorCreateWaitMs);
+
+    if (dispatched == HostDispatchResult::TimedOut)
+        return kControlStatusMessageThreadTimeout;
+    if (dispatched == HostDispatchResult::Failed) return 4;
+    replyOut = std::move (result->reply);
+    return result->status;
 }
 
 std::uint32_t handleHideEditor (HostState& host)
 {
-    return runOnHostMessageThreadAndWait ([&]
-    {
-        if (host.editorWindow != nullptr)
-        {
-            host.editorWindow->clearContentComponent();
-            host.editorWindow.reset();
-        }
-    }) ? 0u : 1u;
+    const auto dispatched = destroyEditorFromSocketThread (host);
+    if (dispatched == HostDispatchResult::TimedOut)
+        return kControlStatusMessageThreadTimeout;
+    return dispatched == HostDispatchResult::Done ? 0u : 1u;
 }
 
 std::uint32_t handleResizeEditor (HostState& host,
@@ -1175,16 +1362,21 @@ std::uint32_t handleResizeEditor (HostState& host,
     if (payload.size() != sizeof (ResizeEditorPayload)) return 1;
     ResizeEditorPayload p {};
     std::memcpy (&p, payload.data(), sizeof (p));
-    std::uint32_t status = 2;
-    if (! runOnHostMessageThreadAndWait ([&]
+
+    auto result = std::make_shared<EditorCallResult>();
+    result->status = 2;
+    const auto dispatched = runOnHostMessageThreadAndWait ([&host, p, result]
     {
         if (host.editorWindow == nullptr) return;
         host.editorWindow->setSize (std::max (1, (int) p.width),
                                     std::max (1, (int) p.height));
-        status = 0;
-    }))
-        return 3;
-    return status;
+        result->status = 0;
+    });
+
+    if (dispatched == HostDispatchResult::TimedOut)
+        return kControlStatusMessageThreadTimeout;
+    if (dispatched == HostDispatchResult::Failed) return 3;
+    return result->status;
 }
 
 // Inbound SetParam from parent (3c-3a). Marshals onto the JUCE message
@@ -1458,11 +1650,11 @@ int runIpcHost (int argc, const char* const* argv) noexcept
     sockThread.join();
     worker.join();
 
-    if (host.ownedInstance != nullptr)
-    {
-        host.ownedInstance->releaseResources();
-        host.ownedInstance.reset();
-    }
+    // The dispatch loop has returned, so this thread is the message thread and
+    // a post would queue work nothing will ever run: tear down directly, editor
+    // first, exactly as the socket-thread paths do.
+    destroyEditorOnMessageThread (host);
+    destroyInstanceOnMessageThread (std::move (host.ownedInstance));
 
     return 0;
 }
@@ -1632,6 +1824,8 @@ int main (int argc, char** argv)
    #endif
     bool ipcControlReplyStub = false;
     bool ipcParkTimeoutStub = false;
+    bool ipcLoadReplyStub = false;
+    bool ipcMuteHandshakeStub = false;
     bool ipcHost = false;
     bool scan    = false;
     for (int i = 1; i < argc; ++i)
@@ -1652,6 +1846,9 @@ int main (int argc, char** argv)
        #endif
         if (std::strcmp (args[i], "--ipc-control-reply-stub") == 0) ipcControlReplyStub = true;
         if (std::strcmp (args[i], "--ipc-park-timeout-stub") == 0) ipcParkTimeoutStub = true;
+        if (std::strcmp (args[i], "--ipc-load-reply-stub") == 0) ipcLoadReplyStub = true;
+        if (std::strcmp (args[i], "--ipc-mute-handshake-stub") == 0)
+            ipcMuteHandshakeStub = true;
         if (std::strcmp (args[i], "--ipc-host") == 0) ipcHost = true;
         if (std::strcmp (args[i], "--scan")     == 0) scan    = true;
 #if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
@@ -1674,6 +1871,8 @@ int main (int argc, char** argv)
                                               : StubReplyMode::Normal);
     if (ipcControlReplyStub) return runIpcControlReplyStub (argc, args);
     if (ipcParkTimeoutStub) return runIpcParkTimeoutStub (argc, args);
+    if (ipcLoadReplyStub || ipcMuteHandshakeStub)
+        return runIpcLoadStub (argc, args, ipcLoadReplyStub);
     if (ipcHost) return runIpcHost (argc, args);
 
     std::fprintf (stderr,

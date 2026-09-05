@@ -59,7 +59,7 @@ so its figure is the panel scrolled to the top, which is what opening it shows.
 | `np-06-master-strip.png`            | L235   | ✅   | Master strip top-to-bottom.                                 |
 | `np-07-aux-view.png`                | L250   | ✅   | One aux lane shown full-width.                              |
 | `np-08-mastering-view.png`          | L263   | ✅   | Mastering chain.                                            |
-| `np-09-tape-strip.png`              | L278, L1179 | ✅ | Tape strip with regions, a marker, and a loop bracket. (Reused at both lines.) |
+| `np-09-tape-strip.png`              | L278, L1181 | ✅ | Tape strip with regions, a marker, and a loop bracket. (Reused at both lines.) |
 | `np-10-region-editor.png`           | L293   | ✅   | Audio region editor modal.                                  |
 | `np-11-piano-roll.png`              | L305   | ✅   | Piano roll modal.                                           |
 | `np-12-notepad.png`                 | pulled | ❌   | Notepad chart: title, section markers, chords over syllables. |
@@ -68,20 +68,20 @@ so its figure is the panel scrolled to the top, which is what opening it shows.
 
 | Filename                        | Manual | Auto | What to capture                                            |
 | ------------------------------- | ------ | ---- | --------------------------------------------------------- |
-| `rec-01-arm-multiple.png`       | L1070  | ✅   | Eight tracks armed simultaneously, RECORDING stage.       |
-| `ed-04-region-editor-modal.png` | L1296  | ✅   | Region editor modal over a region with fade-in/out.       |
-| `ed-05-piano-roll-full.png`     | L1348  | ✅   | Piano roll with notes, a CC ramp, scale highlight.        |
-| `fx-01-eq.png`                  | L733   | ✅   | Channel EQ editor — HPF/LPF + 4 bands, curve-shaped.      |
-| `fx-02-comp.png`                | L755   | ✅   | Channel compressor editor (VCA mode). Native panel: the app reads its own frame back and the script converts it. |
-| `vkb-01-virtual-keyboard.png`   | L565   | ✅   | Virtual MIDI keyboard. Native panel, same route as `fx-02-comp.png`. |
-| `fx-03-tape.png`                | L912   | ✅   | Master tape-machine editor. JUCE panel, taken through the snapshot route. |
-| `mm-01-automation-modes.png`    | L1436  | ✅   | A fader's automation-mode label (READ / WRITE / TOUCH).   |
-| `mm-02-mastering-chain.png`     | L993   | ✅   | Mastering chain with EQ, comp, and limiter engaged.       |
-| `pl-01-plugin-picker.png`       | L1510  | ✅   | Plugin picker panel populated.                            |
-| `pl-04-hw-insert.png`           | L1637  | ✅   | Hardware insert editor with I/O pickers and Ping button.  |
-| `sync-01-mcu-bindings.png`      | L1753  | ✅   | MIDI Bindings panel populated with a few learned bindings.|
-| `bnc-01-bounce-dialog.png`      | L1882  | ✅   | Bounce dialog (file picker + progress). (No format options — see note.) |
-| `ts-02-plugin-offline.png`      | L2138  | ✅   | A plugin slot in the `⚠ (offline)` state (the harness stages a synthetic one). |
+| `rec-01-arm-multiple.png`       | L1072  | ✅   | Eight tracks armed simultaneously, RECORDING stage.       |
+| `ed-04-region-editor-modal.png` | L1298  | ✅   | Region editor modal over a region with fade-in/out.       |
+| `ed-05-piano-roll-full.png`     | L1350  | ✅   | Piano roll with notes, a CC ramp, scale highlight.        |
+| `fx-01-eq.png`                  | L735   | ✅   | Channel EQ editor — HPF/LPF + 4 bands, curve-shaped.      |
+| `fx-02-comp.png`                | L757   | ✅   | Channel compressor editor (VCA mode). Native panel: the app reads its own frame back and the script converts it. |
+| `vkb-01-virtual-keyboard.png`   | L567   | ✅   | Virtual MIDI keyboard. Native panel, same route as `fx-02-comp.png`. |
+| `fx-03-tape.png`                | L914   | ✅   | Master tape-machine editor. JUCE panel, taken through the snapshot route. |
+| `mm-01-automation-modes.png`    | L1438  | ✅   | A fader's automation-mode label (READ / WRITE / TOUCH).   |
+| `mm-02-mastering-chain.png`     | L995   | ✅   | Mastering chain with EQ, comp, and limiter engaged.       |
+| `pl-01-plugin-picker.png`       | L1512  | ✅   | Plugin picker panel populated.                            |
+| `pl-04-hw-insert.png`           | L1639  | ✅   | Hardware insert editor with I/O pickers and Ping button.  |
+| `sync-01-mcu-bindings.png`      | L1755  | ✅   | MIDI Bindings panel populated with a few learned bindings.|
+| `bnc-01-bounce-dialog.png`      | L1884  | ✅   | Bounce dialog (file picker + progress). (No format options — see note.) |
+| `ts-02-plugin-offline.png`      | L2140  | ✅   | A plugin slot in the `⚠ (offline)` state (the harness stages a synthetic one). |
 
 ## Compact-mode strips (captured, not yet referenced by `MANUAL.md`)
 

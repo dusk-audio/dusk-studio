@@ -47,8 +47,12 @@ bool MasteringPlayer::parkAndWaitForAudio()
 void MasteringPlayer::prepare (int maxBlockSize, double deviceSampleRate)
 {
     const bool drained = parkAndWaitForAudio();
-    if (drained)
-        readScratch.setSize (2, std::max (1, maxBlockSize));
+    if (drained && ! readScratch.setSize (2, std::max (1, maxBlockSize)))
+        std::fprintf (stderr,
+                      "[Dusk Studio/MasteringPlayer] prepare: could not allocate a "
+                      "%d-sample read scratch; playback stays silent until the next "
+                      "prepare.\n",
+                      std::max (1, maxBlockSize));
     preparedBlockSize  = std::max (1, maxBlockSize);
     preparedDeviceRate = deviceSampleRate;
     if (drained)
@@ -66,7 +70,12 @@ void MasteringPlayer::updateResampleState()
     // interpolator's history margin.
     const int inNeeded = (int) std::ceil ((double) preparedBlockSize
                                            * std::max (1.0, ratio)) + 8;
-    inScratch.setSize (2, std::max (1, inNeeded));
+    if (! inScratch.setSize (2, std::max (1, inNeeded)))
+        std::fprintf (stderr,
+                      "[Dusk Studio/MasteringPlayer] updateResampleState: could not "
+                      "allocate a %d-sample resample scratch; playback stays silent "
+                      "until the next prepare.\n",
+                      std::max (1, inNeeded));
     interpL.reset();
     interpR.reset();
     speedRatio.store (ratio, std::memory_order_release);

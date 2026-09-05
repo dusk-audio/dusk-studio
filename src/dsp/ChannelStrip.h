@@ -319,6 +319,8 @@ public:
     }
 
 private:
+    bool hasLoadedMidiConsumer() const noexcept;
+
     const ChannelStripParams* paramsRef = nullptr;
     dusk::audio::SmoothedValue<float> faderGain  { 0.0f };
     dusk::audio::SmoothedValue<float> panGainL   { 0.7071f };

@@ -40,6 +40,13 @@ constexpr std::uint32_t kMaxControlPayload = 256 * 1024;
 // mutating or destroying the processor.
 constexpr std::uint32_t kControlStatusWorkerParkTimeout = 100;
 
+// Non-terminal control-RPC status: the child's message thread did not run the
+// handler's editor / instance work before the child's own ceiling, so the child
+// answered rather than parking its only control reader on an untimed wait. The
+// child stays alive and keeps processing audio; the parent sees a failure well
+// inside its own RPC deadline instead of burning it.
+constexpr std::uint32_t kControlStatusMessageThreadTimeout = 101;
+
 // State values for `BlockHeader::state`.
 constexpr std::uint32_t kStateReady    = 0;
 constexpr std::uint32_t kStateCrashed  = 1;

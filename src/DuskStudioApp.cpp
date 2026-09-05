@@ -1610,7 +1610,7 @@ private:
         const int numCh = 2;
         const int numFrames = (int) (sr * kContentSeconds);
         dusk::audio::PlanarBuffer buf;
-        buf.setSize (numCh, numFrames);
+        if (! buf.setSize (numCh, numFrames)) return {};
         for (int n = 0; n < numFrames; ++n)
         {
             const double t   = (double) n / sr;
@@ -1755,7 +1755,11 @@ private:
             return false;
         }
         dusk::audio::PlanarBuffer buf;
-        buf.setSize (std::max (1, readerChannels), n);
+        if (! buf.setSize (std::max (1, readerChannels), n))
+        {
+            std::fprintf (stdout, "[FAIL] %s: could not allocate the readback buffer\n", label);
+            return false;
+        }
         if (reader->read (buf.data(), buf.numChannels(), 0, n) != n)
         {
             std::fprintf (stdout, "[FAIL] %s: short read from output WAV\n", label);

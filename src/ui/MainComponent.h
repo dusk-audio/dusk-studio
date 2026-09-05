@@ -373,6 +373,12 @@ private:
     bool engineDetached = false;
     bool tearingDown = false;
 
+    // Latched on entry to beginSafeShutdown. The sequence spans message-loop
+    // ticks and any of them can deliver a second quit (titlebar X, a queued
+    // callback, systemRequestedQuit); re-running the phases over a tree that
+    // is already half torn down is a crash, not a second shutdown.
+    bool shutdownInProgress = false;
+
     // One-shot latch so the session-vs-device sample-rate warning fires once
     // per mismatch, not on every autosave tick. Reset on load and when the
     // rates come back into agreement.
