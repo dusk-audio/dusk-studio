@@ -3,6 +3,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <bcrypt.h>
 
 #include <atomic>
 #include <chrono>
@@ -12,9 +13,11 @@
 #include <limits>
 
 // Windows uses a duplex named pipe instead of a Unix-domain socketpair.
-// The pipe name is unique per pair (process id + atomic counter) so
-// concurrent ChannelPairs never collide; the name is only used for the
-// CreateFile/CreateNamedPipe handshake and never escapes this file.
+// The pipe name is unique per pair (process id + atomic counter) and carries
+// 64 random bits so another local process cannot predict it and squat the
+// name; the name is only used for the CreateFile/CreateNamedPipe handshake
+// inside this function and never escapes this file - the child is handed the
+// inherited HANDLE value, not the name.
 //
 // Handle passing: on Windows, a handle is "sent" to the peer by writing
 // its 64-bit HANDLE value down the same pipe. The handle has to be
@@ -44,6 +47,38 @@ inline bool handleIsValid (HANDLE h) noexcept
     return h != nullptr && h != INVALID_HANDLE_VALUE;
 }
 
+// Bound on one overlapped write. A control write only stalls when the child
+// has stopped draining the pipe, and the longest handler it can legitimately
+// be inside (plugin load) is itself capped at 30 s, so a write still blocked
+// at this point means a wedged child rather than a slow one.
+constexpr DWORD kWriteTimeoutMs = 30000;
+
+// The bytes a stopped transfer already moved cannot be pushed back, so the
+// peer's framing is no longer knowable. Fail every later transfer on this
+// endpoint and let the caller drop the link instead of resynchronising on the
+// middle of a frame.
+void poisonChannel (NativeHandle& h) noexcept
+{
+    h.poisoned = true;
+}
+
+bool randomHexSuffix (char (&out)[17]) noexcept
+{
+    unsigned char bytes[8] {};
+    if (! BCRYPT_SUCCESS (::BCryptGenRandom (nullptr, bytes, (ULONG) sizeof (bytes),
+                                             BCRYPT_USE_SYSTEM_PREFERRED_RNG)))
+        return false;
+
+    static const char digits[] = "0123456789abcdef";
+    for (std::size_t i = 0; i < sizeof (bytes); ++i)
+    {
+        out[i * 2]     = digits[bytes[i] >> 4];
+        out[i * 2 + 1] = digits[bytes[i] & 0x0f];
+    }
+    out[16] = '\0';
+    return true;
+}
+
 DWORD timeoutUntil (std::chrono::steady_clock::time_point deadline) noexcept
 {
     using namespace std::chrono;
@@ -56,6 +91,11 @@ DWORD timeoutUntil (std::chrono::steady_clock::time_point deadline) noexcept
              : (DWORD) ms;
 }
 
+// `transferred` is reported on both paths. The cancellation path can still
+// succeed - the operation finished just before CancelIoEx observed it, and
+// discarding that data would be the desync the deadline is meant to avoid -
+// and when it does fail the byte count tells the caller whether the endpoint
+// has to be poisoned.
 bool finishOverlapped (HANDLE handle, OVERLAPPED& operation,
                        DWORD timeoutMs, DWORD& transferred) noexcept
 {
@@ -68,9 +108,7 @@ bool finishOverlapped (HANDLE handle, OVERLAPPED& operation,
     // CancelIoEx observes it. Apply the same cleanup to WAIT_FAILED.
     (void) ::CancelIoEx (handle, &operation);
     (void) ::WaitForSingleObject (operation.hEvent, INFINITE);
-    DWORD ignored = 0;
-    (void) ::GetOverlappedResult (handle, &operation, &ignored, FALSE);
-    return false;
+    return ::GetOverlappedResult (handle, &operation, &transferred, FALSE) != FALSE;
 }
 
 bool readOverlapped (HANDLE handle, void* buffer, DWORD size,
@@ -92,7 +130,7 @@ bool readOverlapped (HANDLE handle, void* buffer, DWORD size,
 }
 
 bool writeOverlapped (HANDLE handle, const void* buffer, DWORD size,
-                      DWORD& transferred) noexcept
+                      DWORD timeoutMs, DWORD& transferred) noexcept
 {
     OVERLAPPED operation {};
     operation.hEvent = ::CreateEventW (nullptr, TRUE, FALSE, nullptr);
@@ -103,7 +141,7 @@ bool writeOverlapped (HANDLE handle, const void* buffer, DWORD size,
     if (started != FALSE)
         ok = ::GetOverlappedResult (handle, &operation, &transferred, FALSE) != FALSE;
     else if (::GetLastError() == ERROR_IO_PENDING)
-        ok = finishOverlapped (handle, operation, INFINITE, transferred);
+        ok = finishOverlapped (handle, operation, timeoutMs, transferred);
 
     ::CloseHandle (operation.hEvent);
     return ok;
@@ -118,6 +156,7 @@ void closeHandle (NativeHandle& h) noexcept
     h.h = nullptr;
     h.overlapped = false;
     h.readTimeoutMs = 0;
+    h.poisoned = false;
 }
 
 bool createChannelPair (ChannelPair& out, std::string& errorOut) noexcept
@@ -125,15 +164,27 @@ bool createChannelPair (ChannelPair& out, std::string& errorOut) noexcept
     static std::atomic<std::uint64_t> counter { 0 };
     const auto seq = counter.fetch_add (1, std::memory_order_relaxed);
 
+    // Without the random part the name is guessable, and a local process that
+    // pre-creates it takes the only instance: CreateNamedPipe then fails and
+    // the host silently drops back to in-process. FILE_FLAG_FIRST_PIPE_INSTANCE
+    // additionally refuses to open a name somebody else already serves.
+    char suffix[17];
+    if (! randomHexSuffix (suffix))
+    {
+        errorOut = "BCryptGenRandom failed while naming the IPC pipe";
+        return false;
+    }
+
     char pipeName[128];
     std::snprintf (pipeName, sizeof (pipeName),
-                    R"(\\.\pipe\dusk-studio-ipc-%lu-%llu)",
+                    R"(\\.\pipe\dusk-studio-ipc-%lu-%llu-%s)",
                     (unsigned long) ::GetCurrentProcessId(),
-                    (unsigned long long) seq);
+                    (unsigned long long) seq,
+                    suffix);
 
     HANDLE server = ::CreateNamedPipeA (
         pipeName,
-        PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+        PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
         PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
         1,                  // max instances
         64 * 1024,          // out buffer
@@ -217,8 +268,11 @@ NativeHandle locateInheritedChannel (int argc, const char* const* argv) noexcept
 
 bool readExact (NativeHandle& h, void* buf, std::size_t n) noexcept
 {
+    if (h.poisoned) return false;
+
     auto* p = static_cast<char*> (buf);
     HANDLE w = asWinHandle (h);
+    const std::size_t requested = n;
     const auto deadline = h.readTimeoutMs > 0
                             ? std::chrono::steady_clock::now()
                                 + std::chrono::milliseconds (h.readTimeoutMs)
@@ -233,12 +287,22 @@ bool readExact (NativeHandle& h, void* buf, std::size_t n) noexcept
         {
             const DWORD timeout = h.readTimeoutMs > 0 ? timeoutUntil (deadline) : INFINITE;
             if (! readOverlapped (w, p, chunk, timeout, got) || got == 0)
+            {
+                // The deadline can expire between chunks of one frame, and a
+                // cancelled read can still have taken bytes off the pipe. Both
+                // leave the stream unframed.
+                if (n < requested || got > 0) poisonChannel (h);
                 return false;
+            }
         }
         else
         {
             const BOOL ok = ::ReadFile (w, p, chunk, &got, nullptr);
-            if (! ok || got == 0) return false;
+            if (! ok || got == 0)
+            {
+                if (n < requested) poisonChannel (h);
+                return false;
+            }
         }
         p += got;
         n -= (std::size_t) got;
@@ -248,8 +312,13 @@ bool readExact (NativeHandle& h, void* buf, std::size_t n) noexcept
 
 bool writeExact (NativeHandle& h, const void* buf, std::size_t n) noexcept
 {
+    if (h.poisoned) return false;
+
     auto* p = static_cast<const char*> (buf);
     HANDLE w = asWinHandle (h);
+    const std::size_t requested = n;
+    const auto deadline = std::chrono::steady_clock::now()
+                            + std::chrono::milliseconds (kWriteTimeoutMs);
     while (n > 0)
     {
         DWORD wrote = 0;
@@ -258,13 +327,21 @@ bool writeExact (NativeHandle& h, const void* buf, std::size_t n) noexcept
                               : (DWORD) n;
         if (h.overlapped)
         {
-            if (! writeOverlapped (w, p, chunk, wrote) || wrote == 0)
+            if (! writeOverlapped (w, p, chunk, timeoutUntil (deadline), wrote)
+                || wrote == 0)
+            {
+                if (n < requested || wrote > 0) poisonChannel (h);
                 return false;
+            }
         }
         else
         {
             const BOOL ok = ::WriteFile (w, p, chunk, &wrote, nullptr);
-            if (! ok || wrote == 0) return false;
+            if (! ok || wrote == 0)
+            {
+                if (n < requested) poisonChannel (h);
+                return false;
+            }
         }
         p += wrote;
         n -= (std::size_t) wrote;
@@ -293,6 +370,7 @@ bool recvHandle (NativeHandle& channel, NativeHandle& payloadOut) noexcept
     payloadOut.h = nullptr;
     payloadOut.overlapped = false;
     payloadOut.readTimeoutMs = 0;
+    payloadOut.poisoned = false;
     std::uint64_t value = 0;
     if (! readExact (channel, &value, sizeof (value))) return false;
     storeWinHandle (payloadOut, (HANDLE) (std::uintptr_t) value);

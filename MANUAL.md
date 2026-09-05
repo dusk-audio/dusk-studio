@@ -2146,6 +2146,7 @@ A plugin running in the OOP sandbox has exited. The slot is auto-bypassed and th
 - Right-click the slot and choose **Reload** to relaunch the plugin with its saved state.
 - If the plugin keeps crashing on a specific session, try loading it without OOP (launch Dusk Studio without `DUSKSTUDIO_USE_OOP_PLUGINS=1`) to see if the in-process path is more stable.
 - Some plugins are not RT-safe and may misbehave; replace with a different plugin if reloading does not help.
+- On Windows, start Dusk Studio from a console (or redirect its output to a file) to capture the child's own diagnostics — the sandbox child writes to the console it inherits from Dusk Studio.
 
 ## "(plugin name) — offline"
 

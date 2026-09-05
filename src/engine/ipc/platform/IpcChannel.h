@@ -36,6 +36,12 @@ struct NativeHandle
     // non-channel handles remain synchronous.
     bool overlapped { false };
     int readTimeoutMs { 0 };
+    // Latched, never cleared: a transfer stopped after moving part of a frame,
+    // so the stream can no longer be framed and every later transfer on this
+    // endpoint has to fail. Reader and writer can both latch it and both only
+    // ever store true, so a read that misses the store costs one more failed
+    // transfer rather than reviving the link.
+    bool poisoned { false };
    #else
     int fd { -1 };
    #endif
@@ -87,6 +93,11 @@ NativeHandle locateInheritedChannel (int argc, const char* const* argv) noexcept
 // Blocking I/O. Retries on EINTR. Returns true only on a full transfer
 // of n bytes; returns false on EOF, peer-close, error, or short write.
 // `h` must be valid (isValid(h) == true).
+//
+// Windows: a transfer that stops mid-frame - a deadline expiring across a
+// multi-chunk frame, or an overlapped operation cancelled after it consumed
+// bytes - poisons the endpoint, so the caller drops the link instead of
+// resuming inside a frame.
 bool readExact  (NativeHandle& h, void* buf, std::size_t n) noexcept;
 bool writeExact (NativeHandle& h, const void* buf, std::size_t n) noexcept;
 

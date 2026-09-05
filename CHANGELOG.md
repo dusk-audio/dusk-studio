@@ -73,6 +73,23 @@ closes release-metadata gaps found during the pre-tag audit.
   parent usually picks up a finished block without waiting, which leaves the
   child's wake bytes queued; clearing the whole backlog is now spread across
   waits rather than paid for by whichever block happened to arrive late.
+- **A Windows sandbox connection cannot be taken by another local process.**
+  The control pipe's name was predictable, so any process on the machine could
+  create it first and make Dusk Studio's own attempt fail, which silently
+  dropped the plugin back into the main process. The name now carries random
+  bits, and the pipe refuses to open a name somebody else already serves.
+- **A stalled Windows sandbox link drops instead of desynchronising.** A control
+  transfer that stops part-way through a message now marks the connection dead
+  rather than resuming in the middle of one, and a control write carries a
+  deadline instead of blocking the interface for as long as the child leaves
+  the pipe unread.
+- **The Windows sandbox child's diagnostics reach Dusk Studio's console.** The
+  child was started with no output handles of its own, so everything it
+  reported about a failed startup was discarded; start Dusk Studio from a
+  console to read it.
+- **A Windows sandbox child's exit is handled once.** The child's exit stayed
+  readable after it had been collected, so a caller polling for it could run
+  crash recovery again on every check.
 - **Loading a sandboxed plugin no longer freezes the window.** Starting the
   plugin host and asking it to load waits up to five and thirty seconds
   respectively, and both waits used to happen on the thread that draws the
