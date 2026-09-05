@@ -36,7 +36,8 @@ TEST_CASE ("Windows IPC channel bounds both directions and poisons a half-moved 
     // that cannot be put back, so the endpoint has to fail every later
     // transfer instead of resuming inside a frame.
     REQUIRE (channel.find ("poisonChannel") != std::string::npos);
-    REQUIRE (channel.find ("if (h.poisoned) return false;") != std::string::npos);
+    REQUIRE (channel.find ("if (h.poisoned.set.load (std::memory_order_acquire)) return false;")
+             != std::string::npos);
 
     // An unbounded write blocks the message thread with the control mutex held
     // for as long as the child leaves the pipe undrained.
@@ -50,7 +51,7 @@ TEST_CASE ("Windows IPC channel bounds both directions and poisons a half-moved 
     REQUIRE (channel.find ("FILE_FLAG_FIRST_PIPE_INSTANCE") != std::string::npos);
 
     const auto header = readSource ("src/engine/ipc/platform/IpcChannel.h");
-    REQUIRE (header.find ("poisoned") != std::string::npos);
+    REQUIRE (header.find ("std::atomic<bool> set") != std::string::npos);
 }
 
 TEST_CASE ("Windows IPC spawn gives the child stderr and reaps its exit once",

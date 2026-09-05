@@ -59,7 +59,7 @@ constexpr DWORD kWriteTimeoutMs = 30000;
 // middle of a frame.
 void poisonChannel (NativeHandle& h) noexcept
 {
-    h.poisoned = true;
+    h.poisoned.set.store (true, std::memory_order_release);
 }
 
 bool randomHexSuffix (char (&out)[17]) noexcept
@@ -156,7 +156,7 @@ void closeHandle (NativeHandle& h) noexcept
     h.h = nullptr;
     h.overlapped = false;
     h.readTimeoutMs = 0;
-    h.poisoned = false;
+    h.poisoned.set.store (false, std::memory_order_relaxed);
 }
 
 bool createChannelPair (ChannelPair& out, std::string& errorOut) noexcept
@@ -268,7 +268,7 @@ NativeHandle locateInheritedChannel (int argc, const char* const* argv) noexcept
 
 bool readExact (NativeHandle& h, void* buf, std::size_t n) noexcept
 {
-    if (h.poisoned) return false;
+    if (h.poisoned.set.load (std::memory_order_acquire)) return false;
 
     auto* p = static_cast<char*> (buf);
     HANDLE w = asWinHandle (h);
@@ -312,7 +312,7 @@ bool readExact (NativeHandle& h, void* buf, std::size_t n) noexcept
 
 bool writeExact (NativeHandle& h, const void* buf, std::size_t n) noexcept
 {
-    if (h.poisoned) return false;
+    if (h.poisoned.set.load (std::memory_order_acquire)) return false;
 
     auto* p = static_cast<const char*> (buf);
     HANDLE w = asWinHandle (h);
@@ -370,7 +370,7 @@ bool recvHandle (NativeHandle& channel, NativeHandle& payloadOut) noexcept
     payloadOut.h = nullptr;
     payloadOut.overlapped = false;
     payloadOut.readTimeoutMs = 0;
-    payloadOut.poisoned = false;
+    payloadOut.poisoned.set.store (false, std::memory_order_relaxed);
     std::uint64_t value = 0;
     if (! readExact (channel, &value, sizeof (value))) return false;
     storeWinHandle (payloadOut, (HANDLE) (std::uintptr_t) value);

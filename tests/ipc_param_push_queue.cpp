@@ -93,3 +93,67 @@ TEST_CASE ("ParamPushQueue carries the producer's plugin generation", "[ipc]")
     REQUIRE (queue.pop (out));
     REQUIRE (out.generation == 8);
 }
+
+TEST_CASE ("ParamPushQueue never lets a second producer into a slot still being written", "[ipc]")
+{
+    ParamPushQueue queue;
+    ParamPushRecord out {};
+
+    std::uint64_t paused = 0;
+    REQUIRE (queue.claim (paused));
+    REQUIRE (paused == 0);
+
+    for (std::uint32_t i = 1; i < (std::uint32_t) ParamPushQueue::kCapacity; ++i)
+        REQUIRE (queue.push (entry (i)));
+
+    // A full lap later the same slot comes round while its first producer is
+    // still inside it: the push is dropped rather than written on top.
+    REQUIRE_FALSE (queue.push (entry ((std::uint32_t) ParamPushQueue::kCapacity)));
+
+    // The reader delivers everything around the held slot and does not wait on
+    // it, because its ticket has already been overtaken.
+    for (std::uint32_t i = 1; i < (std::uint32_t) ParamPushQueue::kCapacity; ++i)
+    {
+        REQUIRE (queue.pop (out));
+        REQUIRE (out.payload.paramIndex == i);
+    }
+    REQUIRE_FALSE (queue.pop (out));
+
+    // The late publish lands in a slot the reader has passed and is never read
+    // as if it were the newer ticket.
+    queue.commit (paused, entry (0));
+    REQUIRE_FALSE (queue.pop (out));
+
+    // Once published, the slot is ordinary again: the next lap overwrites it.
+    const auto resume = (std::uint32_t) ParamPushQueue::kCapacity + 1;
+    for (std::uint32_t i = resume; i <= 2 * (std::uint32_t) ParamPushQueue::kCapacity; ++i)
+        REQUIRE (queue.push (entry (i)));
+    for (std::uint32_t i = resume; i <= 2 * (std::uint32_t) ParamPushQueue::kCapacity; ++i)
+    {
+        REQUIRE (queue.pop (out));
+        REQUIRE (out.payload.paramIndex == i);
+    }
+    REQUIRE_FALSE (queue.pop (out));
+}
+
+TEST_CASE ("ParamPushQueue reader waits on a slot whose producer is mid-write", "[ipc]")
+{
+    ParamPushQueue queue;
+    ParamPushRecord out {};
+
+    REQUIRE (queue.push (entry (0)));
+    std::uint64_t inFlight = 0;
+    REQUIRE (queue.claim (inFlight));
+    REQUIRE (queue.push (entry (2)));
+
+    REQUIRE (queue.pop (out));
+    REQUIRE (out.payload.paramIndex == 0);
+    REQUIRE_FALSE (queue.pop (out));
+
+    queue.commit (inFlight, entry (1));
+    REQUIRE (queue.pop (out));
+    REQUIRE (out.payload.paramIndex == 1);
+    REQUIRE (queue.pop (out));
+    REQUIRE (out.payload.paramIndex == 2);
+    REQUIRE_FALSE (queue.pop (out));
+}

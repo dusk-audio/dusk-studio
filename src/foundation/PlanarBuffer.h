@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <new>
+#include <stdexcept>
 #include <vector>
 
 // Owning planar float buffer: one allocation holding every channel, each
@@ -26,8 +28,9 @@ public:
 
     // setSize refuses more than this many floats of padded storage (4 GiB), so
     // a length derived from session data - a join spanning hours, a corrupt
-    // region length - comes back false instead of throwing bad_alloc out of an
-    // undo action.
+    // region length - comes back false instead of throwing out of an undo
+    // action. An allocation the machine refuses under that ceiling comes back
+    // false the same way.
     static constexpr std::int64_t kMaxTotalSamples = 1LL << 30;
 
     static constexpr std::int64_t strideFor (int samples) noexcept
@@ -46,21 +49,19 @@ public:
         const int newChannels = std::max (0, newNumChannels);
         const int newSamples  = std::max (0, newNumSamples);
         const std::int64_t total = storageFor (newChannels, newSamples);
-        if (total > kMaxTotalSamples)
+        if (total > kMaxTotalSamples) return refuse();
+
+        try
         {
-            channelCount = 0;
-            sampleCount  = 0;
-            storage.clear();
-            pointers.clear();
-            return false;
+            storage.assign ((std::size_t) total, 0.0f);
+            pointers.resize ((std::size_t) newChannels);
         }
+        catch (const std::bad_alloc&)    { return refuse(); }
+        catch (const std::length_error&) { return refuse(); }
 
         channelCount = newChannels;
         sampleCount  = newSamples;
         const std::int64_t stride = strideFor (sampleCount);
-
-        storage.assign ((std::size_t) total, 0.0f);
-        pointers.resize ((std::size_t) channelCount);
         for (int c = 0; c < channelCount; ++c)
             pointers[(std::size_t) c] = storage.data() + (std::size_t) c * (std::size_t) stride;
         return true;
@@ -85,6 +86,15 @@ public:
 
 private:
     static constexpr std::int64_t kSamplesPerLine = 16;   // 64 bytes
+
+    bool refuse() noexcept
+    {
+        channelCount = 0;
+        sampleCount  = 0;
+        storage.clear();
+        pointers.clear();
+        return false;
+    }
 
     std::vector<float>  storage;
     std::vector<float*> pointers;

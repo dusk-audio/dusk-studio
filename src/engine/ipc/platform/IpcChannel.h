@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <string>
+#include <atomic>
 
 // Platform-abstracted IPC channel primitives. The "channel" is a pair of
 // connected endpoints used for control-plane request/reply between the
@@ -38,10 +39,22 @@ struct NativeHandle
     int readTimeoutMs { 0 };
     // Latched, never cleared: a transfer stopped after moving part of a frame,
     // so the stream can no longer be framed and every later transfer on this
-    // endpoint has to fail. Reader and writer can both latch it and both only
-    // ever store true, so a read that misses the store costs one more failed
-    // transfer rather than reviving the link.
-    bool poisoned { false };
+    // endpoint has to fail. The reader and writer threads both check and set
+    // it. Copyable so NativeHandle can still be passed by value; a handle is
+    // only copied when it is created, before anything can latch it.
+    struct PoisonLatch
+    {
+        PoisonLatch() = default;
+        PoisonLatch (const PoisonLatch& other) noexcept
+            : set (other.set.load (std::memory_order_relaxed)) {}
+        PoisonLatch& operator= (const PoisonLatch& other) noexcept
+        {
+            set.store (other.set.load (std::memory_order_relaxed), std::memory_order_relaxed);
+            return *this;
+        }
+        std::atomic<bool> set { false };
+    };
+    PoisonLatch poisoned;
    #else
     int fd { -1 };
    #endif

@@ -26,29 +26,56 @@ struct ParamPushRecord
 // Producers are the plugin's own threads. A parameter listener may be called
 // from any thread, including the child's audio worker while it is inside
 // processBlock, and from more than one at a time, so push() must not lock,
-// allocate or make a syscall: the parent's audio thread is parked on replySeq
-// with a 100 ms deadline for the duration of that block, and a producer that
-// stalls there costs the parent a sticky auto-bypass. The single consumer is
-// the child's message thread, where the socket write and its mutex are free to
-// be slow.
+// allocate, wait or make a syscall: the parent's audio thread is parked on
+// replySeq with a 100 ms deadline for the duration of that block, and a
+// producer that stalls there costs the parent a sticky auto-bypass. The single
+// consumer is the child's message thread, where the socket write and its mutex
+// are free to be slow.
 //
-// A full queue overwrites its oldest entry instead of refusing the newest: the
-// parent mirrors a control's current position, so the freshest value is the one
-// worth keeping. Each slot carries a seqlock stamp - odd while a producer is
-// filling it, even once published - so the consumer can tell a half-written or
-// already-recycled slot from a complete one and skip it.
+// Each slot carries a seqlock stamp: odd while a producer is writing it, even
+// once published. A producer takes a slot by compare-exchange, so a slot whose
+// previous producer is still writing, however long it has been preempted, is
+// never entered by a second one; the push that lands on it is dropped instead,
+// which is the only way to keep it from blocking on the audio path. A full
+// queue otherwise overwrites its oldest entry rather than refusing the newest:
+// the parent mirrors a control's current position, so the freshest value is
+// the one worth keeping.
 
 class ParamPushQueue
 {
 public:
     static constexpr std::size_t kCapacity = 512;
 
-    void push (const ParamPushRecord& in) noexcept
+    // Returns false when the record was dropped.
+    bool push (const ParamPushRecord& in) noexcept
     {
-        const auto ticket = writeTicket.fetch_add (1, std::memory_order_relaxed);
+        std::uint64_t ticket = 0;
+        if (! claim (ticket)) return false;
+        commit (ticket, in);
+        return true;
+    }
+
+    // push() in two halves, so a test can hold a slot in the written-but-not-
+    // published state a preempted producer leaves it in.
+    bool claim (std::uint64_t& ticket) noexcept
+    {
+        ticket = writeTicket.fetch_add (1, std::memory_order_relaxed);
         auto& slot = slots[(std::size_t) (ticket & kMask)];
 
-        slot.stamp.store (claimedStamp (ticket), std::memory_order_relaxed);
+        auto expected = slot.stamp.load (std::memory_order_relaxed);
+        // Odd: the previous producer is still inside the slot. Beyond our own
+        // stamp: this producer was preempted between taking the ticket and
+        // getting here for a whole lap, and the slot already holds a newer
+        // record than the one we would write.
+        if ((expected & 1u) != 0 || expected >= claimedStamp (ticket)) return false;
+        return slot.stamp.compare_exchange_strong (expected, claimedStamp (ticket),
+                                                   std::memory_order_acq_rel,
+                                                   std::memory_order_relaxed);
+    }
+
+    void commit (std::uint64_t ticket, const ParamPushRecord& in) noexcept
+    {
+        auto& slot = slots[(std::size_t) (ticket & kMask)];
         std::atomic_thread_fence (std::memory_order_release);
         slot.value = in;
         slot.stamp.store (publishedStamp (ticket), std::memory_order_release);
@@ -68,12 +95,13 @@ public:
             const auto published = publishedStamp (readTicket);
             const auto before = slot.stamp.load (std::memory_order_acquire);
 
-            // Claimed but not published yet: the producer is a handful of
-            // instructions from finishing, so leave the entry for the next
-            // drain rather than dropping it out of order.
-            if (before < published) return false;
-
-            if (before > published)
+            // Claimed but not published yet: the producer is normally a handful
+            // of instructions from finishing, so leave the entry for the next
+            // drain rather than dropping it out of order. Anything else here
+            // was dropped at claim time, or the slot has already been recycled
+            // by a later lap; either way this ticket holds nothing to deliver.
+            if (before == claimedStamp (readTicket)) return false;
+            if (before != published)
             {
                 ++readTicket;
                 continue;
