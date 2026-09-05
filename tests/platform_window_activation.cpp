@@ -108,19 +108,34 @@ TEST_CASE ("native window operations preserve activation and embedded editor geo
     REQUIRE (windows.find ("AllowSetForegroundWindow") == std::string::npos);
     requireInOrder (windows, "SetForegroundWindow", "FlashWindowEx");
 
+    // flushWindowOperations must never dispatch this process's queued work.
+    // Its callers run inside beginSafeShutdown, past the phase that dropped
+    // every plugin editor, so pumping there runs timer ticks and queued
+    // callbacks - a stale-editor tick over a blocking cross-process call, or a
+    // queued quit re-entering the shutdown sequence - against a torn-down tree.
     const auto windowsSource = readSource ("src/ui/PlatformWindowing_Windows.cpp");
     const auto windowsFlush = definitionBody (windowsSource, "flushWindowOperations");
-    REQUIRE (windowsFlush.find ("PeekMessageW") != std::string::npos);
-    REQUIRE (windowsFlush.find ("TranslateMessage") != std::string::npos);
-    REQUIRE (windowsFlush.find ("DispatchMessageW") != std::string::npos);
-    REQUIRE (windowsFlush.find ("PostQuitMessage") != std::string::npos);
+    REQUIRE (windowsFlush.find ("PeekMessage") == std::string::npos);
+    REQUIRE (windowsFlush.find ("GetMessage") == std::string::npos);
+    REQUIRE (windowsFlush.find ("TranslateMessage") == std::string::npos);
+    REQUIRE (windowsFlush.find ("DispatchMessage") == std::string::npos);
+    REQUIRE (windowsFlush.find ("PostQuitMessage") == std::string::npos);
 
     const auto macFlush = definitionBody (macSource, "flushWindowOperations");
-    REQUIRE (macFlush.find ("NSRunLoop") != std::string::npos);
-    REQUIRE (macFlush.find ("runMode") != std::string::npos);
-    REQUIRE (macFlush.find ("beforeDate") != std::string::npos);
-    REQUIRE (macFlush.find ("kMaxDrainIterations") != std::string::npos);
-    REQUIRE (macFlush.find ("for (") != std::string::npos);
+    REQUIRE (macFlush.find ("NSRunLoop") == std::string::npos);
+    REQUIRE (macFlush.find ("runMode") == std::string::npos);
+    REQUIRE (macFlush.find ("beforeDate") == std::string::npos);
+    REQUIRE (macFlush.find ("nextEventMatchingMask") == std::string::npos);
+    REQUIRE (macFlush.find ("kMaxDrainIterations") == std::string::npos);
+
+    // A second quit reaching beginSafeShutdown while the first is still
+    // walking its phases is refused before phase 1, and says so on stderr.
+    const auto safeShutdown = definitionBody (
+        readSource ("src/ui/MainComponent.cpp"), "MainComponent::beginSafeShutdown");
+    REQUIRE (safeShutdown.find ("re-entry ignored") != std::string::npos);
+    requireInOrder (safeShutdown, "if (shutdownInProgress)", "return;");
+    requireInOrder (safeShutdown, "shutdownInProgress = true",
+                    "phase 1: stop autosave timer");
 
     const auto singleInstance = readSource ("src/util/SingleInstance.cpp");
     const auto windowsBranch = singleInstance.rfind ("#elif defined (_WIN32)");

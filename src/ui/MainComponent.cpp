@@ -3464,12 +3464,21 @@ void MainComponent::beginSafeShutdown()
     // Idempotent on the autosave timer + audio callback removal so
     // the quit-save path can detach those up front (to make the
     // intervening save fast) and still call beginSafeShutdown() to
-    // finish the teardown.
+    // finish the teardown. That stays a single entry into the sequence:
+    // the phases below span message-loop ticks, and a second entry would
+    // re-run them over a tree the first one has already dismantled.
     auto markPhase = [] (const char* msg)
     {
         std::fprintf (stderr, "[Dusk Studio/shutdown] %s\n", msg);
         std::fflush (stderr);
     };
+
+    if (shutdownInProgress)
+    {
+        markPhase ("re-entry ignored: shutdown already in progress");
+        return;
+    }
+    shutdownInProgress = true;
 
     markPhase ("phase 1: stop autosave timer");
     stopTimer();

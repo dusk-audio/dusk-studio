@@ -48,6 +48,11 @@ closes release-metadata gaps found during the pre-tag audit.
 - **Windows session handoff can foreground the existing window reliably.** The
   secondary process grants the primary process foreground permission before
   sending the request, with a taskbar flash when Windows still refuses focus.
+- **Quitting on Windows and macOS no longer runs queued work mid-teardown.**
+  The shutdown sequence no longer dispatches pending window messages on those
+  platforms, so timers and queued callbacks cannot fire against a partly torn
+  down window, and a second quit arriving mid-sequence is ignored instead of
+  restarting it.
 - **Two launches after a crash no longer both become the running instance.** On
   Linux and macOS, reclaiming the slot a killed instance left behind is now
   serialised, so one launch cannot delete the socket the other just took and

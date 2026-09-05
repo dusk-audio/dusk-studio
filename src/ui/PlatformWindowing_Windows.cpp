@@ -8,7 +8,7 @@
 // Native counterparts to the Linux windowing operations. A peer's native
 // handle is its HWND; Win32 owns restoration, activation and taskbar notice.
 // The remaining operations are intentionally small platform hooks:
-//   flushWindowOperations  -> while (PeekMessage(&msg, ...)) DispatchMessage.
+//   flushWindowOperations  -> no-op (Win32 has no dispatch-free queue fence).
 //   prepareNativePeer...   -> no-op (Win32 SetParent is synchronous).
 
 namespace duskstudio::platform
@@ -194,20 +194,8 @@ void bringWindowToFront (juce::ComponentPeer& peer)
         ::FlashWindowEx (&info);
     }
 }
-void flushWindowOperations()
-{
-    MSG message {};
-    while (::PeekMessageW (&message, nullptr, 0, 0, PM_REMOVE))
-    {
-        if (message.message == WM_QUIT)
-        {
-            ::PostQuitMessage ((int) message.wParam);
-            break;
-        }
-        ::TranslateMessage (&message);
-        ::DispatchMessageW (&message);
-    }
-}
+// No-op by contract: see flushWindowOperations in PlatformWindowing.h.
+void flushWindowOperations() {}
 void prepareNativePeerForChildAttach (juce::ComponentPeer&) {}
 
 // Windows: no-op. JUCE's setMouseCursor(NoCursor) on the component under the

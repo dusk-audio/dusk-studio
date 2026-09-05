@@ -5,7 +5,7 @@
 // Native counterparts to the Linux windowing operations. A peer's native
 // handle is its NSView; the containing NSWindow owns activation and ordering.
 // The remaining operations are intentionally small platform hooks:
-//   flushWindowOperations  -> bounded, best-effort drain of queued NSRunLoop work.
+//   flushWindowOperations  -> no-op (AppKit has no dispatch-free fence).
 //   prepareNativePeer...   -> no-op (NSView reparenting is
 //                              synchronous, no race window).
 
@@ -123,18 +123,8 @@ void bringWindowToFront (juce::ComponentPeer& peer)
         [window deminiaturize:nil];
     [window makeKeyAndOrderFront:nil];
 }
-void flushWindowOperations()
-{
-    // Bounded on purpose: a run-loop source that re-arms itself would keep an
-    // unbounded drain here forever, and the shutdown path that calls this has
-    // no way out of that. See the contract in PlatformWindowing.h - callers
-    // treat a partial drain as less spacing, never as a failure.
-    auto* const runLoop = [NSRunLoop currentRunLoop];
-    constexpr int kMaxDrainIterations = 256;
-    for (int i = 0; i < kMaxDrainIterations; ++i)
-        if (! [runLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate date]])
-            break;
-}
+// No-op by contract: see flushWindowOperations in PlatformWindowing.h.
+void flushWindowOperations() {}
 void prepareNativePeerForChildAttach (juce::ComponentPeer&) {}
 
 // macOS: no-op. JUCE's setMouseCursor(NoCursor) on the component under the

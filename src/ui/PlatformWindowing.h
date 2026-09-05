@@ -86,27 +86,31 @@ void bringWindowToFront (juce::ComponentPeer& peer);
 // Must be called on the message thread.
 void setNativeCursorVisibleOnPeer (juce::ComponentPeer& peer, bool visible);
 
-// Let the windowing system work through what this process has queued,
-// as far as the platform allows. Used to space out window-
-// destruction events during shutdown so the compositor isn't asked to
-// process N native-window destroys + the main window destroy back to
-// back - which on Mutter+XWayland has crashed the compositor and
-// taken the GNOME session with it.
+// Let the windowing system finish the window operations this process has
+// already queued, on the platforms that have a fence for it. Used to space
+// out window-destruction events during shutdown so the compositor isn't asked
+// to process N native-window destroys + the main window destroy back to back -
+// which on Mutter+XWayland has crashed the compositor and taken the GNOME
+// session with it.
 //
-// Linux: XSync on JUCE's display - a true fence, everything queued has
-//        been processed when it returns.
-// Win:   PeekMessage pump, drained until the queue is empty.
-// macOS: drain of queued NSRunLoop work, bounded at a fixed iteration
-//        count. AppKit has no fence, and an unbounded drain would spin
-//        forever on a source that re-arms itself - which during shutdown
-//        is a hang, not a delay. So this one is best-effort: it can
-//        return with work still queued.
+// Never a dispatch, on any platform: a fence where the platform has one,
+// nothing at all where it doesn't, but never the application's own queued
+// work. The callers sit inside MainComponent::beginSafeShutdown, past the
+// phase that dropped every plugin editor, so dispatching here runs timer ticks
+// and async callbacks in the middle of teardown - a stale-editor timer tick
+// closing an editor over a blocking cross-process call, or a queued quit
+// re-entering the shutdown sequence. A caller that genuinely needs pending
+// messages processed pumps on its own path, not through this one.
+//
+// Linux: XSync on JUCE's display - a true fence: it waits for the server to
+//        finish what we sent and runs none of our queued work.
+// Win:   no-op. Win32 has no queue fence that isn't also a dispatch.
+// macOS: no-op. AppKit has none either - draining the run loop is a dispatch.
 //
 // Deterministic, not time-based, and cheap on a clean compositor
-// (microseconds). Callers use it to space out window destruction, never
-// for correctness: a partial macOS drain means less spacing, and the
-// shutdown phases that follow are already deferred across message-loop
-// ticks of their own.
+// (microseconds). Callers use it to space out window destruction, never for
+// correctness: where it is a no-op the shutdown phases that follow are already
+// deferred across message-loop ticks of their own.
 void flushWindowOperations();
 
 // Linux/XEmbed-only today. JUCE's VST3 editor on Linux uses
