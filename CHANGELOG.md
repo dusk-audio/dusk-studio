@@ -164,6 +164,12 @@ closes release-metadata gaps found during the pre-tag audit.
   that reports a failure from its own show step but draws anyway keeps its
   editor rather than losing it, and any reason an editor could not open is
   printed to the terminal and shown in the panel.
+- **Closing a plugin editor on Linux no longer risks a crash.** While an editor
+  is torn down, Dusk Studio narrows how X server errors are handled so a stale
+  editor window cannot abort the application. That narrowing is now lifted on
+  every exit path, including a teardown that fails part-way, so a later
+  unrelated X error can no longer bring Dusk Studio down. Closing a window also
+  only ever hands focus to another X11 window.
 
 ### Changed
 

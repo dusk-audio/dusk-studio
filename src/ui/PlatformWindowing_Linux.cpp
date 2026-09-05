@@ -10,6 +10,7 @@
 
 #include <X11/Xproto.h>
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
@@ -49,12 +50,12 @@ struct EditorTeardownErrorTrap
     ::XErrorHandler previous = nullptr;
 };
 
-EditorTeardownErrorTrap* activeEditorTeardownTrap = nullptr;
+std::atomic<EditorTeardownErrorTrap*> activeEditorTeardownTrap { nullptr };
 std::mutex editorTeardownTrapMutex;
 
 int editorTeardownXErrorHandler (::Display* display, ::XErrorEvent* error)
 {
-    auto* trap = activeEditorTeardownTrap;
+    auto* trap = activeEditorTeardownTrap.load (std::memory_order_acquire);
     if (trap != nullptr && error != nullptr && display == trap->display
         && x11::shouldSuppressEditorTeardownError (
             error->error_code, error->request_code,
@@ -84,6 +85,35 @@ int editorTeardownXErrorHandler (::Display* display, ::XErrorEvent* error)
     std::abort();
 }
 
+// The handler is process-global but the trap it reads is a stack frame, so an
+// exception out of teardown() must not be able to leave the two mismatched.
+// The trap is fully populated before publication and never mutated while
+// published, so the handler only ever observes a complete one.
+struct ScopedEditorTeardownTrap
+{
+    ScopedEditorTeardownTrap (::Display* display, std::uint64_t editorWindowId)
+    {
+        trap.display = display;
+        trap.editorWindowId = editorWindowId;
+        trap.previous = ::XSetErrorHandler (&editorTeardownXErrorHandler);
+        activeEditorTeardownTrap.store (&trap, std::memory_order_release);
+    }
+
+    ~ScopedEditorTeardownTrap()
+    {
+        // Still under the narrowed policy: this is what delivers the errors
+        // from whatever teardown() left queued after its own internal syncs.
+        ::XSync (trap.display, False);
+        ::XSetErrorHandler (trap.previous);
+        activeEditorTeardownTrap.store (nullptr, std::memory_order_release);
+    }
+
+    ScopedEditorTeardownTrap (const ScopedEditorTeardownTrap&) = delete;
+    ScopedEditorTeardownTrap& operator= (const ScopedEditorTeardownTrap&) = delete;
+
+    EditorTeardownErrorTrap trap;
+};
+
 juce::ComponentPeer* pickSiblingFocusTargetPeer (juce::Component& departing)
 {
     auto* departingPeer = departing.getPeer();
@@ -96,6 +126,12 @@ juce::ComponentPeer* pickSiblingFocusTargetPeer (juce::Component& departing)
         if (tlw == nullptr || ! tlw->isVisible()) continue;
         auto* peer = tlw->getPeer();
         if (peer == nullptr || peer == departingPeer) continue;
+       #if DUSKSTUDIO_JUCE_HAS_WAYLAND
+        // The caller hands this peer's native handle to Xlib as a Window ID,
+        // which a real wl_surface peer would not survive.
+        if (auto* sys = WaylandWindowSystem::getInstanceWithoutCreating())
+            if (sys->getWaylandWindowForPeer (peer) != nullptr) continue;
+       #endif
         return peer;
     }
     return nullptr;
@@ -135,18 +171,11 @@ void runX11EditorTeardown (std::uint64_t editorWindowId,
     const std::lock_guard<std::mutex> lock (editorTeardownTrapMutex);
 
     // Deliver every older error to the normal handler before narrowing the
-    // policy. XEmbedComponent's destructor also syncs; the final sync covers
-    // any request it queues after its internal round-trip.
+    // policy.
     ::XSync (display, False);
-    EditorTeardownErrorTrap trap { display, editorWindowId, nullptr };
-    activeEditorTeardownTrap = &trap;
-    trap.previous = ::XSetErrorHandler (&editorTeardownXErrorHandler);
 
+    const ScopedEditorTeardownTrap trapScope (display, editorWindowId);
     teardown();
-    ::XSync (display, False);
-
-    ::XSetErrorHandler (trap.previous);
-    activeEditorTeardownTrap = nullptr;
 }
 
 void setNativeCursorVisibleOnPeer (juce::ComponentPeer& peer, bool visible)
