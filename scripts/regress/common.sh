@@ -44,6 +44,28 @@ regress_leg() {
     return 0
 }
 
+# Like regress_leg, but a "warn:" line in the leg's output downgrades it to
+# WARN. Used for best-effort steps (pin syncs) that should be visible in the
+# table without failing the run.
+regress_leg_soft() {
+    local name="$1"
+    shift
+    printf '\n--- %s ---\n' "$name"
+    local start=$SECONDS out rc=0
+    out="$("$@" 2>&1)" || rc=$?
+    printf '%s\n' "$out"
+    local status=PASS note=""
+    if ((rc != 0)); then
+        status=FAIL
+        note="exit $rc"
+    elif grep -q '^warn:' <<<"$out"; then
+        status=WARN
+        note="$(grep -m1 '^warn:' <<<"$out")"
+    fi
+    regress_record "$name" "$status" "$((SECONDS - start))" "$note"
+    return 0
+}
+
 regress_skip() {
     local name="$1" reason="$2"
     regress_record "$name" "SKIP" "0" "$reason"
