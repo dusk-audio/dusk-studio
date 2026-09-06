@@ -400,6 +400,54 @@ TEST_CASE ("MidiFileReader skips vendor chunks without consuming the track count
     REQUIRE (reader.tracks()[1][0].noteNumber() == 64);
 }
 
+TEST_CASE ("MidiFileReader keeps the tracks it read when the header over-counts",
+           "[midi][import][regression][issue-502]")
+{
+    MidiFileReader reader;
+
+    SECTION ("a vendor chunk counted in the header")
+    {
+        const auto file = loadHexFixture ("vendor-chunk-counted.mid.hex");
+        REQUIRE_FALSE (file.empty());
+
+        REQUIRE (reader.readData (file.data(), file.size()));
+        REQUIRE (reader.tracks().size() == 2);
+        REQUIRE (reader.tracks()[0][0].noteNumber() == 60);
+        REQUIRE (reader.tracks()[1][0].noteNumber() == 64);
+    }
+
+    SECTION ("a track the header promises and the file lacks")
+    {
+        TrackWriter t;
+        t.event (0, 0x90, 60, 100);
+        t.event (10, 0x80, 60, 0);
+
+        SmfWriter f;
+        f.header (1, 2, 96);
+        f.track (t.bytes);
+
+        REQUIRE (reader.readData (f.bytes.data(), f.bytes.size()));
+        REQUIRE (reader.tracks().size() == 1);
+        REQUIRE (reader.tracks()[0].size() == 2);
+    }
+
+    SECTION ("a second track cut off mid-chunk")
+    {
+        TrackWriter t;
+        t.event (0, 0x90, 60, 100);
+        t.event (10, 0x80, 60, 0);
+
+        SmfWriter f;
+        f.header (1, 2, 96);
+        f.track (t.bytes);
+        f.track (t.bytes);
+        f.bytes.resize (f.bytes.size() - 3);
+
+        REQUIRE (reader.readData (f.bytes.data(), f.bytes.size()));
+        REQUIRE (reader.tracks().size() == 1);
+    }
+}
+
 TEST_CASE ("MidiFileReader keeps parsing after an in-track realtime message",
            "[midi][import][regression][issue-463]")
 {

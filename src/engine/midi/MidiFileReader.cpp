@@ -270,14 +270,17 @@ bool MidiFileReader::readData (const std::uint8_t* data, std::size_t size)
     if (fileType == 0 && numTracks != 1) return false;
 
     trackEvents.reserve (numTracks);
+    // The header's count may include chunks that are not tracks, or promise
+    // tracks a truncated file no longer has. Whatever parsed before the first
+    // absent or short chunk is the file's usable content.
     while (trackEvents.size() < numTracks)
     {
-        if (pos + 8 > size) return false;
+        if (pos + 8 > size) break;
 
         const bool isTrackChunk = (std::memcmp (data + pos, "MTrk", 4) == 0);
         const std::uint32_t chunkLength = bigEndian32 (data + pos + 4);
         pos += 8;
-        if (chunkLength > size - pos) return false;
+        if (chunkLength > size - pos) break;
 
         if (isTrackChunk)
         {
@@ -289,7 +292,7 @@ bool MidiFileReader::readData (const std::uint8_t* data, std::size_t size)
         pos += chunkLength;
     }
 
-    return true;
+    return ! trackEvents.empty();
 }
 
 double MidiFileReader::smpteTicksPerSecond() const noexcept
