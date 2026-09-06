@@ -47,35 +47,25 @@ void driveBlocks (SwitchingState& state, int blocks)
 
 void finish (ScenarioContext& ctx, const std::shared_ptr<SwitchingState>& state)
 {
-    std::string failure;
-    auto expect = [&ctx, &failure] (bool condition, std::string message)
-    {
-        if (! condition)
-        {
-            if (failure.empty()) failure = message;
-            ctx.note (message);
-        }
-    };
-
-    expect (state->finalLoadOk, "the load after the switching burst failed: " + state->finalLoadError);
-    expect (state->slot->isLoaded(), "the slot did not come back loaded");
-    expect (state->slot->isRemote(), "the slot did not come back out of process");
-    expect (! state->slot->wasCrashed(), "a child was reported crashed after the burst");
+    ctx.expect (state->finalLoadOk, "the load after the switching burst failed: " + state->finalLoadError);
+    ctx.expect (state->slot->isLoaded(), "the slot did not come back loaded");
+    ctx.expect (state->slot->isRemote(), "the slot did not come back out of process");
+    ctx.expect (! state->slot->wasCrashed(), "a child was reported crashed after the burst");
 
     driveBlocks (*state, 2);
-    expect (state->left.front() > 0.2f && state->right.front() < -0.4f,
+    ctx.expect (state->left.front() > 0.2f && state->right.front() < -0.4f,
             "audio through the recovered slot was not the dry signal");
 
     ctx.note ("cycles run: " + std::to_string (state->cycle)
               + ", out of process when unloaded: "
               + std::to_string (state->cyclesRemoteAtUnload));
-    expect (state->cyclesRemoteAtUnload >= kCycles / 4,
+    ctx.expect (state->cyclesRemoteAtUnload >= kCycles / 4,
             "too few cycles in the burst reached the sandboxed path");
 
     state->slot.reset();
     state->manager.reset();
 
-    ctx.complete (failure.empty() ? ScenarioResult::pass() : ScenarioResult::fail (failure));
+    ctx.complete (ctx.verdict());
 }
 
 void step (ScenarioContext& ctx, std::shared_ptr<SwitchingState> state)

@@ -7,7 +7,6 @@
 
 #include <array>
 #include <string>
-#include <utility>
 
 namespace duskstudio::scenario
 {
@@ -17,27 +16,11 @@ namespace
 constexpr int kSourceTrack = 2;
 constexpr int kCloneTrack  = 5;
 
-struct Recorder
-{
-    ScenarioContext& ctx;
-    std::string firstFailure;
-
-    bool expect (bool condition, std::string message)
-    {
-        if (! condition)
-        {
-            if (firstFailure.empty()) firstFailure = message;
-            ctx.note (std::move (message));
-        }
-        return condition;
-    }
-};
-
 // One format's leg of the check. The three session strings a native insert
 // persists are passed as pointers-to-member so the CLAP / LV2 / VST3 legs share
 // this body; `load` puts the plugin on a track and moves it off its defaults.
 template <typename StringMember, typename LoadFn, typename LoadedFn>
-void runFormat (ScenarioContext& ctx, Recorder& rec, const char* format,
+void runFormat (ScenarioContext& ctx, const char* format,
                 StringMember pathMember, StringMember idMember, StringMember stateMember,
                 LoadFn&& load, LoadedFn&& isLoaded)
 {
@@ -45,27 +28,27 @@ void runFormat (ScenarioContext& ctx, Recorder& rec, const char* format,
     auto& engine = ctx.engine();
     const std::string prefix = std::string (format) + ": ";
 
-    if (! rec.expect (load (kSourceTrack), prefix + "could not load the fixture on the source track"))
+    if (! ctx.expect (load (kSourceTrack), prefix + "could not load the fixture on the source track"))
         return;
 
     engine.publishPluginStateForSave (true);
     const auto sourceId    = session.track (kSourceTrack).*idMember;
     const auto sourceState = session.track (kSourceTrack).*stateMember;
-    if (! rec.expect (sourceState.isNotEmpty(), prefix + "the source published no state"))
+    if (! ctx.expect (sourceState.isNotEmpty(), prefix + "the source published no state"))
         return;
 
     auto& undo = engine.getUndoManager();
     undo.clearUndoHistory();
     undo.beginNewTransaction();
-    if (! rec.expect (undo.perform (new CloneTrackAction (session, engine,
+    if (! ctx.expect (undo.perform (new CloneTrackAction (session, engine,
                                                           kSourceTrack, kCloneTrack)),
                       prefix + "the clone action refused to run"))
         return;
 
-    rec.expect (isLoaded (kCloneTrack), prefix + "the clone left the destination slot empty");
-    rec.expect (session.track (kCloneTrack).*idMember == sourceId,
+    ctx.expect (isLoaded (kCloneTrack), prefix + "the clone left the destination slot empty");
+    ctx.expect (session.track (kCloneTrack).*idMember == sourceId,
                 prefix + "the clone loaded a different plugin");
-    rec.expect ((session.track (kCloneTrack).*stateMember).isNotEmpty(),
+    ctx.expect ((session.track (kCloneTrack).*stateMember).isNotEmpty(),
                 prefix + "the clone persisted no state");
 
     // A save straight after the clone has to see the same bytes on both tracks:
@@ -75,23 +58,23 @@ void runFormat (ScenarioContext& ctx, Recorder& rec, const char* format,
     // file-state directory, so a blob captured by the action and one captured by
     // the save path are not comparable byte for byte.
     engine.publishPluginStateForSave (true);
-    rec.expect (session.track (kCloneTrack).*stateMember == session.track (kSourceTrack).*stateMember,
+    ctx.expect (session.track (kCloneTrack).*stateMember == session.track (kSourceTrack).*stateMember,
                 prefix + "the cloned plugin published different state from the source");
-    rec.expect (session.track (kSourceTrack).*stateMember == sourceState,
+    ctx.expect (session.track (kSourceTrack).*stateMember == sourceState,
                 prefix + "the source's own state changed across the clone");
 
-    rec.expect (undo.undo(), prefix + "undo refused");
-    rec.expect (! isLoaded (kCloneTrack), prefix + "undo left the clone loaded");
-    rec.expect ((session.track (kCloneTrack).*pathMember).isEmpty(),
+    ctx.expect (undo.undo(), prefix + "undo refused");
+    ctx.expect (! isLoaded (kCloneTrack), prefix + "undo left the clone loaded");
+    ctx.expect ((session.track (kCloneTrack).*pathMember).isEmpty(),
                 prefix + "undo left the clone's persisted path behind");
-    rec.expect ((session.track (kCloneTrack).*stateMember).isEmpty(),
+    ctx.expect ((session.track (kCloneTrack).*stateMember).isEmpty(),
                 prefix + "undo left the clone's persisted state behind");
-    rec.expect (isLoaded (kSourceTrack), prefix + "undo also unloaded the source");
+    ctx.expect (isLoaded (kSourceTrack), prefix + "undo also unloaded the source");
 
-    rec.expect (undo.redo(), prefix + "redo refused");
-    rec.expect (isLoaded (kCloneTrack), prefix + "redo left the destination slot empty");
+    ctx.expect (undo.redo(), prefix + "redo refused");
+    ctx.expect (isLoaded (kCloneTrack), prefix + "redo left the destination slot empty");
     engine.publishPluginStateForSave (true);
-    rec.expect (session.track (kCloneTrack).*stateMember == session.track (kSourceTrack).*stateMember,
+    ctx.expect (session.track (kCloneTrack).*stateMember == session.track (kSourceTrack).*stateMember,
                 prefix + "redo restored different state");
 
     undo.clearUndoHistory();
@@ -122,25 +105,14 @@ void clearTracks (ScenarioContext& ctx)
 
 ScenarioResult runClone (ScenarioContext& ctx)
 {
-    Recorder rec { ctx, {} };
     auto& engine = ctx.engine();
     int formatsRun = 0;
-
-    // A native insert's file-backed state is keyed off the session directory, so
-    // give the run one of its own rather than inheriting whatever the previous
-    // scenario left behind. Session owns a framework file object; naming its type
-    // through the getter keeps this file free of the framework header.
-    using SessionFile = decltype (ctx.session().getSessionDirectory());
-    const auto sessionDir = ctx.tempDir() / "session";
-    if (sessionDir.empty())
-        return ScenarioResult::fail ("could not create the temporary session directory");
-    ctx.session().setSessionDirectory (SessionFile (sessionDir.u8string().c_str()));
 
    #if DUSKSTUDIO_HAS_NATIVE_CLAP
     if (const auto fixture = ctx.fixture ("multi_bus.clap"))
     {
         ++formatsRun;
-        runFormat (ctx, rec, "CLAP",
+        runFormat (ctx, "CLAP",
                    &Track::nativeClapPath, &Track::nativeClapPluginId,
                    &Track::nativeClapStateBase64,
                    [&] (int track)
@@ -175,7 +147,7 @@ ScenarioResult runClone (ScenarioContext& ctx)
     if (const auto fixture = ctx.fixture ("file_state.lv2"))
     {
         ++formatsRun;
-        runFormat (ctx, rec, "LV2",
+        runFormat (ctx, "LV2",
                    &Track::nativeLv2Path, &Track::nativeLv2PluginId,
                    &Track::nativeLv2StateBase64,
                    [&] (int track)
@@ -208,7 +180,7 @@ ScenarioResult runClone (ScenarioContext& ctx)
     if (const auto fixture = ctx.fixture ("relayout.vst3"))
     {
         ++formatsRun;
-        runFormat (ctx, rec, "VST3",
+        runFormat (ctx, "VST3",
                    &Track::nativeVst3Path, &Track::nativeVst3PluginId,
                    &Track::nativeVst3StateBase64,
                    [&] (int track)
@@ -236,8 +208,9 @@ ScenarioResult runClone (ScenarioContext& ctx)
     }
    #endif
 
-    if (! rec.firstFailure.empty())
-        return ScenarioResult::fail (rec.firstFailure);
+    const auto verdict = ctx.verdict();
+    if (verdict.status == ScenarioStatus::Fail)
+        return verdict;
     if (formatsRun == 0)
         return ScenarioResult::skip ("no native plugin fixture resolved");
     ctx.note ("formats covered: " + std::to_string (formatsRun));

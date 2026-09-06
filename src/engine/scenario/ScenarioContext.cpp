@@ -13,6 +13,22 @@
 
 namespace duskstudio::scenario
 {
+namespace
+{
+using SessionFile = decltype (std::declval<const Session&>().getSessionDirectory());
+} // namespace
+
+void applySessionDirectory (Session& session, const std::filesystem::path& dir)
+{
+    session.setSessionDirectory (SessionFile (dir.u8string().c_str()));
+}
+
+std::filesystem::path currentSessionDirectory (const Session& session)
+{
+    return std::filesystem::u8path (
+        session.getSessionDirectory().getFullPathName().toStdString());
+}
+
 ScenarioContext::ScenarioContext (Session& s, AudioEngine& e,
                                   std::function<void (ScenarioResult)> onComplete)
     : sessionRef (s), engineRef (e), onCompleteFn (std::move (onComplete)),
@@ -86,6 +102,12 @@ const std::filesystem::path& ScenarioContext::tempDir()
     return scratchDir;
 }
 
+void ScenarioContext::setSessionDirectory (const std::filesystem::path& dir)
+{
+    scenarioSessionDir = dir;
+    applySessionDirectory (sessionRef, dir);
+}
+
 void ScenarioContext::later (int ms, std::function<void()> fn)
 {
     std::weak_ptr<char> guard = aliveToken;
@@ -133,6 +155,22 @@ void ScenarioContext::complete (ScenarioResult result)
     if (completed) return;
     completed = true;
     if (onCompleteFn) onCompleteFn (std::move (result));
+}
+
+bool ScenarioContext::expect (bool condition, std::string message)
+{
+    if (! condition)
+    {
+        if (firstFailure.empty()) firstFailure = message;
+        note (std::move (message));
+    }
+    return condition;
+}
+
+ScenarioResult ScenarioContext::verdict() const
+{
+    return firstFailure.empty() ? ScenarioResult::pass()
+                                : ScenarioResult::fail (firstFailure);
 }
 
 void ScenarioContext::note (std::string line)

@@ -37,21 +37,20 @@ void finish (ScenarioContext& ctx, const std::shared_ptr<KillState>& state)
                               std::chrono::steady_clock::now() - state->killedAt).count();
     ctx.note ("the killed child was noticed after " + std::to_string (noticeMs) + " ms");
 
-    std::string failure;
     state->left.fill (0.25f);
     state->right.fill (-0.5f);
     for (int b = 0; b < 4; ++b)
         state->slot->processStereoBlock (state->left.data(), state->right.data(),
                                          ScenarioContext::kBlockSize, state->midi);
 
-    if (! (state->left.front() > 0.2f && state->right.front() < -0.4f))
-        failure = "the bypassed slot did not pass the dry signal through";
-    else if (state->slot->isRemote())
-        failure = "the slot still reports a live child after the kill";
+    ctx.expect (state->left.front() > 0.2f && state->right.front() < -0.4f,
+                "the bypassed slot did not pass the dry signal through");
+    ctx.expect (! state->slot->isRemote(),
+                "the slot still reports a live child after the kill");
 
     state->slot.reset();
     state->manager.reset();
-    ctx.complete (failure.empty() ? ScenarioResult::pass() : ScenarioResult::fail (failure));
+    ctx.complete (ctx.verdict());
 }
 
 void afterLoad (ScenarioContext& ctx, const std::shared_ptr<KillState>& state)

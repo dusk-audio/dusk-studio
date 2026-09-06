@@ -4,7 +4,6 @@
 #include "../../../dsp/ChannelStrip.h"
 
 #include <string>
-#include <utility>
 #include <vector>
 
 namespace duskstudio::scenario
@@ -19,17 +18,6 @@ ScenarioResult runNumbering (ScenarioContext& ctx)
 {
     const auto fixture = *ctx.fixture ("many_patch.lv2");
     auto& slot = ctx.engine().getChannelStrip (kTrackIndex).getNativeLv2Slot();
-
-    std::string firstFailure;
-    auto expect = [&ctx, &firstFailure] (bool condition, std::string message)
-    {
-        if (! condition)
-        {
-            if (firstFailure.empty()) firstFailure = message;
-            ctx.note (std::move (message));
-        }
-        return condition;
-    };
 
     auto capture = [&] (std::vector<std::string>& into)
     {
@@ -51,20 +39,20 @@ ScenarioResult runNumbering (ScenarioContext& ctx)
     };
 
     std::vector<std::string> first;
-    if (! expect (capture (first), "the first load failed"))
-        return ScenarioResult::fail (firstFailure);
+    if (! ctx.expect (capture (first), "the first load failed"))
+        return ctx.verdict();
     ctx.note ("parameters advertised: " + std::to_string (first.size()));
-    expect (! first.empty(), "the fixture advertised no parameters");
+    ctx.expect (! first.empty(), "the fixture advertised no parameters");
 
     slot.unload();
 
     std::vector<std::string> second;
-    if (! expect (capture (second), "the reload failed"))
-        return ScenarioResult::fail (firstFailure);
+    if (! ctx.expect (capture (second), "the reload failed"))
+        return ctx.verdict();
 
-    if (expect (first.size() == second.size(), "the reload advertised a different parameter count"))
+    if (ctx.expect (first.size() == second.size(), "the reload advertised a different parameter count"))
         for (std::size_t i = 0; i < first.size(); ++i)
-            if (! expect (first[i] == second[i],
+            if (! ctx.expect (first[i] == second[i],
                           "parameter " + std::to_string (i) + " changed identity across a reload: "
                               + first[i] + " -> " + second[i]))
                 break;
@@ -74,15 +62,14 @@ ScenarioResult runNumbering (ScenarioContext& ctx)
     // persists meaningful. These labels are the URI's own suffix, so the sorted
     // order is visible in the names.
     for (std::size_t i = 1; i < first.size(); ++i)
-        if (! expect (first[i - 1] < first[i],
+        if (! ctx.expect (first[i - 1] < first[i],
                       "parameters are not in ascending property order at index "
                           + std::to_string (i) + ": " + first[i - 1] + " then " + first[i]))
             break;
 
     slot.unload();
 
-    return firstFailure.empty() ? ScenarioResult::pass()
-                                : ScenarioResult::fail (firstFailure);
+    return ctx.verdict();
 }
 #endif
 

@@ -47,8 +47,8 @@ std::optional<ScenarioResult> runMint (ScenarioContext& ctx)
     auto& engine = ctx.engine();
     auto& manager = engine.getPluginManager();
 
-    // Session owns framework file and string types; naming them through its own
-    // getters keeps this file free of the framework header.
+    // The plugin loader takes framework file and string types; naming them
+    // through Session's own getter keeps this file free of the framework header.
     using SessionFile   = std::decay_t<decltype (session.getSessionDirectory())>;
     using SessionString = std::decay_t<decltype (session.getSessionDirectory().getFullPathName())>;
 
@@ -66,7 +66,7 @@ std::optional<ScenarioResult> runMint (ScenarioContext& ctx)
     track.pluginStateBase64.clear();
     instance.reset();
 
-    session.setSessionDirectory (SessionFile (sessionDir.u8string().c_str()));
+    ctx.setSessionDirectory (sessionDir);
     if (! SessionSerializer::save (session, target))
         return ScenarioResult::fail ("could not write " + target.u8string());
     if (! std::filesystem::is_regular_file (target, error))

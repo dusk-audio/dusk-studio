@@ -6,13 +6,59 @@
 #include "../../dsp/ChannelStrip.h"
 #include "../../session/Session.h"
 
+#include <cstddef>
 #include <vector>
 
 namespace duskstudio::scenario
 {
+namespace
+{
+// Every persisted insert identity, so a plugin one scenario saved cannot be
+// restored into the next one's strips.
+void clearPluginState (Track& track)
+{
+    track.pluginDescriptor.reset();
+    track.pluginLegacyDescriptionXml.clear();
+    track.pluginStateBase64.clear();
+    track.nativeClapPath.clear();
+    track.nativeClapPluginId.clear();
+    track.nativeClapStateBase64.clear();
+    track.nativeLv2Path.clear();
+    track.nativeLv2PluginId.clear();
+    track.nativeLv2StateBase64.clear();
+    track.nativeVst3Path.clear();
+    track.nativeVst3PluginId.clear();
+    track.nativeVst3StateBase64.clear();
+    track.nativeAuIdentifier.clear();
+    track.nativeAuStateBase64.clear();
+    track.nativeMultisamplePath.clear();
+    track.nativeMultisampleStateBase64.clear();
+}
+
+void clearPluginState (AuxLane& lane, int slot)
+{
+    const auto s = (std::size_t) slot;
+    lane.pluginDescriptor[s].reset();
+    lane.pluginLegacyDescriptionXml[s].clear();
+    lane.pluginStateBase64[s].clear();
+    lane.nativeClapPath[s].clear();
+    lane.nativeClapPluginId[s].clear();
+    lane.nativeClapStateBase64[s].clear();
+    lane.nativeLv2Path[s].clear();
+    lane.nativeLv2PluginId[s].clear();
+    lane.nativeLv2StateBase64[s].clear();
+    lane.nativeVst3Path[s].clear();
+    lane.nativeVst3PluginId[s].clear();
+    lane.nativeVst3StateBase64[s].clear();
+    lane.nativeAuIdentifier[s].clear();
+    lane.nativeAuStateBase64[s].clear();
+}
+} // namespace
+
 ScenarioWorld::ScenarioWorld()
     : sessionPtr (std::make_unique<Session>()),
-      enginePtr (std::make_unique<AudioEngine> (*sessionPtr))
+      enginePtr (std::make_unique<AudioEngine> (*sessionPtr)),
+      bootstrapSessionDir (currentSessionDirectory (*sessionPtr))
 {
     prepareOffline();
 }
@@ -54,6 +100,10 @@ void ScenarioWorld::reset()
         track.frozen.store (false, std::memory_order_relaxed);
         strip.mute.store (false, std::memory_order_relaxed);
         strip.solo.store (false, std::memory_order_relaxed);
+        // The routed twins the audio thread actually gates on. They only catch
+        // up on the next block, and the solo gate is sampled before that.
+        strip.liveMute.store (false, std::memory_order_relaxed);
+        strip.liveSolo.store (false, std::memory_order_relaxed);
 
         // Routing leaks are as poisonous to the next scenario as a stuck solo:
         // a track left assigned to a bus never reaches master directly again.
@@ -63,12 +113,26 @@ void ScenarioWorld::reset()
         track.regions.clear();
         track.midiRegions.publish (std::make_unique<std::vector<MidiRegion>>());
 
+        track.midiInputIndex.store (-1, std::memory_order_relaxed);
+        track.midiOutputIndex.store (-1, std::memory_order_relaxed);
+        track.midiChannel.store (0, std::memory_order_relaxed);
+        track.midiActivity.store (false, std::memory_order_relaxed);
+
         auto& channelStrip = engineRef.getChannelStrip (t);
         channelStrip.unloadNativeClap();
         channelStrip.unloadNativeLv2();
         channelStrip.unloadNativeVst3();
         channelStrip.unloadNativeAu();
         channelStrip.unloadNativeMultisample();
+        channelStrip.getPluginSlot().unload();
+
+        // A restore reconstructs the mode from what the session holds, so a
+        // scenario that loaded a session leaves plugin-less strips routing
+        // around their insert. Back to the as-constructed default, or the next
+        // scenario's insert is live but starved.
+        channelStrip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
+
+        clearPluginState (track);
     }
 
     for (int b = 0; b < Session::kNumBuses; ++b)
@@ -80,14 +144,26 @@ void ScenarioWorld::reset()
     for (int lane = 0; lane < Session::kNumAuxLanes; ++lane)
     {
         auto& auxStrip = engineRef.getAuxLaneStrip (lane);
+        auto& auxParams = sessionRef.auxLane (lane);
         for (int slot = 0; slot < AuxLaneStrip::kMaxPlugins; ++slot)
         {
             auxStrip.unloadNativeClap (slot);
             auxStrip.unloadNativeLv2 (slot);
             auxStrip.unloadNativeVst3 (slot);
             auxStrip.unloadNativeAu (slot);
+            auxStrip.getPluginSlot (slot).unload();
+            auxStrip.insertMode[(std::size_t) slot].store (AuxLaneStrip::kInsertEmpty,
+                                                           std::memory_order_release);
+            clearPluginState (auxParams, slot);
         }
     }
+
+    // A scenario that mints or loads a session leaves the directory pointing at
+    // its own scratch, which is gone by the time the next one runs. An empty
+    // bootstrap is left alone: setting one resolves the audio subdirectory
+    // against the working directory and creates it there.
+    if (! bootstrapSessionDir.empty())
+        applySessionDirectory (sessionRef, bootstrapSessionDir);
 
     // The bulk stores above bypassed the counter-aware setters.
     sessionRef.recomputeRtCounters();

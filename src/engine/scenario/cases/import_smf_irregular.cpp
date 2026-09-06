@@ -8,7 +8,6 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
-#include <utility>
 #include <vector>
 
 namespace duskstudio::scenario
@@ -29,22 +28,6 @@ std::vector<std::uint8_t> decodeHex (const std::filesystem::path& source)
 
 ScenarioResult runImport (ScenarioContext& ctx)
 {
-    std::string firstFailure;
-    auto expect = [&ctx, &firstFailure] (bool condition, std::string message)
-    {
-        if (! condition)
-        {
-            if (firstFailure.empty()) firstFailure = message;
-            ctx.note (std::move (message));
-        }
-        return condition;
-    };
-    auto verdict = [&firstFailure]
-    {
-        return firstFailure.empty() ? ScenarioResult::pass()
-                                    : ScenarioResult::fail (firstFailure);
-    };
-
     const auto scratch = ctx.tempDir();
     if (scratch.empty())
         return ScenarioResult::fail ("could not create the temporary directory");
@@ -86,20 +69,20 @@ ScenarioResult runImport (ScenarioContext& ctx)
     {
         const auto file = materialise ("smf.vendor_chunk", "vendor-chunk.mid");
         midi::MidiFileReader reader;
-        if (expect (reader.readFile (file), "the vendor-chunk file did not parse"))
+        if (ctx.expect (reader.readFile (file), "the vendor-chunk file did not parse"))
         {
-            if (expect (reader.tracks().size() == 2,
+            if (ctx.expect (reader.tracks().size() == 2,
                         "a vendor chunk was counted as a track"))
             {
-                expect (reader.tracks()[0].size() == 2, "the first track lost events");
-                expect (reader.tracks()[1].size() == 2, "the second track lost events");
-                expect (reader.tracks()[0][0].noteNumber() == 60, "the first track's note changed");
-                expect (reader.tracks()[1][0].noteNumber() == 64, "the second track's note changed");
+                ctx.expect (reader.tracks()[0].size() == 2, "the first track lost events");
+                ctx.expect (reader.tracks()[1].size() == 2, "the second track lost events");
+                ctx.expect (reader.tracks()[0][0].noteNumber() == 60, "the first track's note changed");
+                ctx.expect (reader.tracks()[1][0].noteNumber() == 64, "the second track's note changed");
             }
 
             int imported = 0;
-            expect (importNotes (file, imported), "importing the vendor-chunk file failed");
-            expect (imported == countNoteOns (reader),
+            ctx.expect (importNotes (file, imported), "importing the vendor-chunk file failed");
+            ctx.expect (imported == countNoteOns (reader),
                     "the import dropped notes the reader found: " + std::to_string (imported)
                         + " of " + std::to_string (countNoteOns (reader)));
         }
@@ -108,34 +91,34 @@ ScenarioResult runImport (ScenarioContext& ctx)
     {
         const auto file = materialise ("smf.same_tick", "same-tick-retrigger.mid");
         midi::MidiFileReader reader;
-        if (expect (reader.readFile (file), "the same-tick file did not parse"))
+        if (ctx.expect (reader.readFile (file), "the same-tick file did not parse"))
         {
-            if (expect (reader.tracks().size() == 1, "the same-tick file grew a track"))
+            if (ctx.expect (reader.tracks().size() == 1, "the same-tick file grew a track"))
             {
                 const auto& events = reader.tracks()[0];
-                if (expect (events.size() == 7, "the same-tick file lost events"))
+                if (ctx.expect (events.size() == 7, "the same-tick file lost events"))
                 {
-                    expect (events[1].tick == 100 && events[1].isNoteOn()
+                    ctx.expect (events[1].tick == 100 && events[1].isNoteOn()
                                 && events[1].noteNumber() == 60,
                             "the unmatched same-tick note-on moved");
-                    expect (events[2].tick == 100 && events[2].isNoteOff()
+                    ctx.expect (events[2].tick == 100 && events[2].isNoteOff()
                                 && events[2].noteNumber() == 64,
                             "reordering stopped after the unmatched note-on");
-                    expect (events[3].tick == 100 && events[3].isNoteOn()
+                    ctx.expect (events[3].tick == 100 && events[3].isNoteOn()
                                 && events[3].noteNumber() == 64,
                             "the retriggered note lost its ordering");
                 }
             }
 
             int imported = 0;
-            expect (importNotes (file, imported), "importing the same-tick file failed");
-            expect (imported == countNoteOns (reader),
+            ctx.expect (importNotes (file, imported), "importing the same-tick file failed");
+            ctx.expect (imported == countNoteOns (reader),
                     "the import dropped notes the reader found: " + std::to_string (imported)
                         + " of " + std::to_string (countNoteOns (reader)));
         }
     }
 
-    return verdict();
+    return ctx.verdict();
 }
 
 const ScenarioRegistrar registrar { Scenario {

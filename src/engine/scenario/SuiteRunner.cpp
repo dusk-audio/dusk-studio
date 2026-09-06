@@ -182,6 +182,11 @@ void SuiteRunner::beginCurrent()
         world->session(), world->engine(),
         [this] (ScenarioResult result) { finishCurrent (std::move (result)); });
 
+    // A scratch session of its own for every scenario: plugin file state, saved
+    // sessions and recorded audio all key off this directory, and it goes away
+    // with the context.
+    context->setSessionDirectory (context->tempDir() / "session");
+
     const unsigned armed = generation;
     const int timeoutMs = scenario.timeoutMs > 0 ? scenario.timeoutMs : 30000;
     std::weak_ptr<char> guard = aliveToken;

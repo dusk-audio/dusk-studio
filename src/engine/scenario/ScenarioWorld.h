@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <memory>
 
 namespace duskstudio
@@ -33,6 +34,8 @@ private:
     // the GUI path tears down in.
     std::unique_ptr<Session> sessionPtr;
     std::unique_ptr<AudioEngine> enginePtr;
+
+    std::filesystem::path bootstrapSessionDir;
 
     ScenarioWorld (const ScenarioWorld&) = delete;
     ScenarioWorld& operator= (const ScenarioWorld&) = delete;

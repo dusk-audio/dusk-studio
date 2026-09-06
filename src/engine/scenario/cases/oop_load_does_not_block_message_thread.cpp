@@ -26,19 +26,18 @@ struct ProbeState
 
 void finish (ScenarioContext& ctx, const std::shared_ptr<ProbeState>& state)
 {
-    std::string failure;
     ctx.note ("message-thread ticks during the stalled load: " + std::to_string (state->ticks)
               + " of " + std::to_string (kTicks));
 
-    if (state->loadCompleted)
-        failure = "the stalling child answered, so the load was never outstanding";
-    else if (state->ticks < kMinTicks)
-        failure = "the message thread only ran " + std::to_string (state->ticks)
-                + " times while a load was outstanding";
+    ctx.expect (! state->loadCompleted,
+                "the stalling child answered, so the load was never outstanding");
+    ctx.expect (state->ticks >= kMinTicks,
+                "the message thread only ran " + std::to_string (state->ticks)
+                    + " times while a load was outstanding");
 
     state->slot.reset();
     state->manager.reset();
-    ctx.complete (failure.empty() ? ScenarioResult::pass() : ScenarioResult::fail (failure));
+    ctx.complete (ctx.verdict());
 }
 
 void tick (ScenarioContext& ctx, std::shared_ptr<ProbeState> state)

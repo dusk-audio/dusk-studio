@@ -9,7 +9,6 @@
 #include <array>
 #include <cstdint>
 #include <string>
-#include <utility>
 #include <vector>
 
 namespace duskstudio::scenario
@@ -28,41 +27,23 @@ ScenarioResult runRoundTrip (ScenarioContext& ctx)
     auto& session = ctx.session();
     auto& engine = ctx.engine();
 
-    // Every assertion is recorded, not fatal: one broken expectation should not
-    // hide the shape of the rest of the round trip.
-    std::string firstFailure;
-    auto expect = [&ctx, &firstFailure] (bool condition, std::string message)
-    {
-        if (! condition)
-        {
-            if (firstFailure.empty()) firstFailure = message;
-            ctx.note (std::move (message));
-        }
-        return condition;
-    };
-    auto verdict = [&firstFailure]
-    {
-        return firstFailure.empty() ? ScenarioResult::pass()
-                                    : ScenarioResult::fail (firstFailure);
-    };
-
     auto& trackStrip = engine.getChannelStrip (kTrackIndex);
     auto& auxStrip = engine.getAuxLaneStrip (kAuxLaneIndex);
 
     std::string error;
     const bool trackLoaded = trackStrip.getNativeClapSlot().load (
         fixture, ScenarioContext::kSampleRate, ScenarioContext::kBlockSize, error, kPluginId);
-    if (! expect (trackLoaded, "could not load the track fixture"))
+    if (! ctx.expect (trackLoaded, "could not load the track fixture"))
         ctx.note ("track load error: " + error);
 
     error.clear();
     const bool auxLoaded = auxStrip.getNativeClapSlot (kAuxSlotIndex).load (
         fixture, ScenarioContext::kSampleRate, ScenarioContext::kBlockSize, error, kPluginId);
-    if (! expect (auxLoaded, "could not load the aux fixture"))
+    if (! ctx.expect (auxLoaded, "could not load the aux fixture"))
         ctx.note ("aux load error: " + error);
 
     if (! trackLoaded || ! auxLoaded)
-        return verdict();
+        return ctx.verdict();
 
     // Different block counts on the two instances so their states diverge.
     std::array<float, ScenarioContext::kBlockSize> left {};
@@ -81,32 +62,32 @@ ScenarioResult runRoundTrip (ScenarioContext& ctx)
     const auto auxId = session.auxLane (kAuxLaneIndex).nativeClapPluginId[(std::size_t) kAuxSlotIndex];
     const auto auxState = session.auxLane (kAuxLaneIndex).nativeClapStateBase64[(std::size_t) kAuxSlotIndex];
 
-    expect (trackPath.toStdString() == fixture.u8string(), "track path was not published");
-    expect (auxPath.toStdString() == fixture.u8string(), "aux path was not published");
-    expect (trackId == kPluginId, "track plugin ID was not published");
-    expect (auxId == kPluginId, "aux plugin ID was not published");
-    expect (trackState.isNotEmpty(), "track state was empty");
-    expect (auxState.isNotEmpty(), "aux state was empty");
-    expect (trackState != auxState, "track and aux state did not diverge");
+    ctx.expect (trackPath.toStdString() == fixture.u8string(), "track path was not published");
+    ctx.expect (auxPath.toStdString() == fixture.u8string(), "aux path was not published");
+    ctx.expect (trackId == kPluginId, "track plugin ID was not published");
+    ctx.expect (auxId == kPluginId, "aux plugin ID was not published");
+    ctx.expect (trackState.isNotEmpty(), "track state was empty");
+    ctx.expect (auxState.isNotEmpty(), "aux state was empty");
+    ctx.expect (trackState != auxState, "track and aux state did not diverge");
 
     const auto& sessionDir = ctx.tempDir();
     if (sessionDir.empty())
         return ScenarioResult::fail ("could not create the temporary session directory");
     const auto sessionFile = sessionDir / "session.json";
-    expect (SessionSerializer::save (session, sessionFile), "session JSON save failed");
-    expect (SessionSerializer::load (session, sessionFile), "session JSON load failed");
+    ctx.expect (SessionSerializer::save (session, sessionFile), "session JSON save failed");
+    ctx.expect (SessionSerializer::load (session, sessionFile), "session JSON load failed");
 
-    expect (session.track (kTrackIndex).nativeClapStateBase64 == trackState,
+    ctx.expect (session.track (kTrackIndex).nativeClapStateBase64 == trackState,
             "track state changed in session JSON");
-    expect (session.auxLane (kAuxLaneIndex).nativeClapStateBase64[(std::size_t) kAuxSlotIndex] == auxState,
+    ctx.expect (session.auxLane (kAuxLaneIndex).nativeClapStateBase64[(std::size_t) kAuxSlotIndex] == auxState,
             "aux state changed in session JSON");
 
     engine.consumePluginStateAfterLoad();
-    expect (engine.getLastPluginLoadFailures().empty(), "restore reported a plugin load failure");
+    ctx.expect (engine.getLastPluginLoadFailures().empty(), "restore reported a plugin load failure");
     engine.publishPluginStateForSave (true);
-    expect (session.track (kTrackIndex).nativeClapStateBase64 == trackState,
+    ctx.expect (session.track (kTrackIndex).nativeClapStateBase64 == trackState,
             "track state changed after restore");
-    expect (session.auxLane (kAuxLaneIndex).nativeClapStateBase64[(std::size_t) kAuxSlotIndex] == auxState,
+    ctx.expect (session.auxLane (kAuxLaneIndex).nativeClapStateBase64[(std::size_t) kAuxSlotIndex] == auxState,
             "aux state changed after restore");
 
     // A plug-in that rejects a saved blob must not remain audible at defaults
@@ -119,31 +100,31 @@ ScenarioResult runRoundTrip (ScenarioContext& ctx)
     session.auxLane (kAuxLaneIndex).nativeClapStateBase64[(std::size_t) kAuxSlotIndex] = corruptBase64;
 
     engine.consumePluginStateAfterLoad();
-    expect (! trackStrip.isNativeClapLoaded(),
+    ctx.expect (! trackStrip.isNativeClapLoaded(),
             "prepared track stayed online after rejecting saved state");
-    expect (! auxStrip.isNativeClapLoaded (kAuxSlotIndex),
+    ctx.expect (! auxStrip.isNativeClapLoaded (kAuxSlotIndex),
             "prepared aux stayed online after rejecting saved state");
-    expect (trackStrip.nativeClapReloadFailed(),
+    ctx.expect (trackStrip.nativeClapReloadFailed(),
             "prepared track did not preserve its failed-restore reference");
-    expect (auxStrip.nativeClapReloadFailed (kAuxSlotIndex),
+    ctx.expect (auxStrip.nativeClapReloadFailed (kAuxSlotIndex),
             "prepared aux did not preserve its failed-restore reference");
     const auto& preparedFailures = engine.getLastPluginLoadFailures();
-    if (expect (preparedFailures.size() == 2,
+    if (ctx.expect (preparedFailures.size() == 2,
                 "prepared rejection did not report both track and aux failures"))
     {
-        expect (preparedFailures[0].format == "CLAP"
+        ctx.expect (preparedFailures[0].format == "CLAP"
                     && preparedFailures[0].reason.find ("3 bytes") != std::string::npos
                     && preparedFailures[0].reason.find ("offline") != std::string::npos,
                 "prepared track rejection omitted format or reason");
-        expect (preparedFailures[1].format == "CLAP"
+        ctx.expect (preparedFailures[1].format == "CLAP"
                     && preparedFailures[1].reason.find ("3 bytes") != std::string::npos
                     && preparedFailures[1].reason.find ("offline") != std::string::npos,
                 "prepared aux rejection omitted format or reason");
     }
     engine.publishPluginStateForSave (true);
-    expect (session.track (kTrackIndex).nativeClapStateBase64 == corruptBase64,
+    ctx.expect (session.track (kTrackIndex).nativeClapStateBase64 == corruptBase64,
             "prepared track rejection discarded the saved state");
-    expect (session.auxLane (kAuxLaneIndex).nativeClapStateBase64[(std::size_t) kAuxSlotIndex] == corruptBase64,
+    ctx.expect (session.auxLane (kAuxLaneIndex).nativeClapStateBase64[(std::size_t) kAuxSlotIndex] == corruptBase64,
             "prepared aux rejection discarded the saved state");
 
     const char* const unreadableStateText = "*** not base64 ***";
@@ -151,29 +132,29 @@ ScenarioResult runRoundTrip (ScenarioContext& ctx)
     session.auxLane (kAuxLaneIndex).nativeClapStateBase64[(std::size_t) kAuxSlotIndex] = unreadableStateText;
 
     engine.consumePluginStateAfterLoad();
-    expect (! trackStrip.isNativeClapLoaded(),
+    ctx.expect (! trackStrip.isNativeClapLoaded(),
             "track with unreadable state came online at defaults");
-    expect (! auxStrip.isNativeClapLoaded (kAuxSlotIndex),
+    ctx.expect (! auxStrip.isNativeClapLoaded (kAuxSlotIndex),
             "aux with unreadable state came online at defaults");
-    expect (trackStrip.nativeClapReloadFailed(),
+    ctx.expect (trackStrip.nativeClapReloadFailed(),
             "track with unreadable state lost its failed-restore reference");
-    expect (auxStrip.nativeClapReloadFailed (kAuxSlotIndex),
+    ctx.expect (auxStrip.nativeClapReloadFailed (kAuxSlotIndex),
             "aux with unreadable state lost its failed-restore reference");
     const auto& unreadableFailures = engine.getLastPluginLoadFailures();
-    if (expect (unreadableFailures.size() == 2,
+    if (ctx.expect (unreadableFailures.size() == 2,
                 "unreadable state did not report both track and aux failures"))
     {
-        expect (unreadableFailures[0].reason.find ("18 bytes") != std::string::npos
+        ctx.expect (unreadableFailures[0].reason.find ("18 bytes") != std::string::npos
                     && unreadableFailures[0].reason.find ("unreadable") != std::string::npos,
                 "unreadable track state omitted its encoded size or reason");
-        expect (unreadableFailures[1].reason.find ("18 bytes") != std::string::npos
+        ctx.expect (unreadableFailures[1].reason.find ("18 bytes") != std::string::npos
                     && unreadableFailures[1].reason.find ("unreadable") != std::string::npos,
                 "unreadable aux state omitted its encoded size or reason");
     }
     engine.publishPluginStateForSave (true);
-    expect (session.track (kTrackIndex).nativeClapStateBase64 == unreadableStateText,
+    ctx.expect (session.track (kTrackIndex).nativeClapStateBase64 == unreadableStateText,
             "unreadable track state did not survive publish");
-    expect (session.auxLane (kAuxLaneIndex).nativeClapStateBase64[(std::size_t) kAuxSlotIndex] == unreadableStateText,
+    ctx.expect (session.auxLane (kAuxLaneIndex).nativeClapStateBase64[(std::size_t) kAuxSlotIndex] == unreadableStateText,
             "unreadable aux state did not survive publish");
 
     const std::vector<std::uint8_t> corruptBlob (corruptState.begin(), corruptState.end());
@@ -183,12 +164,12 @@ ScenarioResult runRoundTrip (ScenarioContext& ctx)
     ChannelStrip deferredTrack;
     deferredTrack.setPendingNativeClap (trackPath, corruptBlob, kPluginId);
     deferredTrack.prepare (ScenarioContext::kSampleRate, ScenarioContext::kBlockSize);
-    expect (! deferredTrack.isNativeClapLoaded(),
+    ctx.expect (! deferredTrack.isNativeClapLoaded(),
             "deferred track stayed online after rejecting saved state");
-    expect (deferredTrack.nativeClapReloadFailed(),
+    ctx.expect (deferredTrack.nativeClapReloadFailed(),
             "deferred track did not preserve its failed-restore reference");
     const auto deferredTrackFailures = deferredTrack.takeNativeRestoreFailures();
-    expect (deferredTrackFailures.size() == 1
+    ctx.expect (deferredTrackFailures.size() == 1
                 && deferredTrackFailures[0].format == "CLAP"
                 && deferredTrackFailures[0].reason.find ("3 bytes") != std::string::npos,
             "deferred track rejection omitted format or reason");
@@ -196,18 +177,18 @@ ScenarioResult runRoundTrip (ScenarioContext& ctx)
     AuxLaneStrip deferredAux;
     deferredAux.setPendingNativeClap (kAuxSlotIndex, auxPath, corruptBlob, kPluginId);
     deferredAux.prepare (ScenarioContext::kSampleRate, ScenarioContext::kBlockSize);
-    expect (! deferredAux.isNativeClapLoaded (kAuxSlotIndex),
+    ctx.expect (! deferredAux.isNativeClapLoaded (kAuxSlotIndex),
             "deferred aux stayed online after rejecting saved state");
-    expect (deferredAux.nativeClapReloadFailed (kAuxSlotIndex),
+    ctx.expect (deferredAux.nativeClapReloadFailed (kAuxSlotIndex),
             "deferred aux did not preserve its failed-restore reference");
     const auto deferredAuxFailures = deferredAux.takeNativeRestoreFailures();
-    expect (deferredAuxFailures.size() == 1
+    ctx.expect (deferredAuxFailures.size() == 1
                 && deferredAuxFailures[0].slotIndex == kAuxSlotIndex
                 && deferredAuxFailures[0].format == "CLAP"
                 && deferredAuxFailures[0].reason.find ("3 bytes") != std::string::npos,
             "deferred aux rejection omitted slot, format, or reason");
 
-    return verdict();
+    return ctx.verdict();
 }
 #endif
 

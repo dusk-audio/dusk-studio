@@ -35,14 +35,7 @@ ScenarioResult runTimingBound (ScenarioContext& ctx)
     auto& session = ctx.session();
     auto& engine = ctx.engine();
 
-    const auto sessionDir = ctx.tempDir() / "session";
-    if (sessionDir.empty())
-        return ScenarioResult::fail ("could not create the temporary session directory");
-
-    // Session owns a framework file object; naming its type through the getter
-    // keeps this file free of the framework header.
-    using SessionFile = decltype (session.getSessionDirectory());
-    session.setSessionDirectory (SessionFile (sessionDir.u8string().c_str()));
+    const auto& sessionDir = ctx.sessionDir();
 
     const int slots = std::min (kSlots, Session::kNumTracks);
     for (int t = 0; t < slots; ++t)
