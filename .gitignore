@@ -24,6 +24,7 @@ __pycache__/
 
 # Local session test data
 sessions/
+!scripts/regress/sessions/
 *.wav
 *.flac
 !resources/**/*.wav

@@ -11,12 +11,17 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "${REPO_ROOT}/scripts/regress/common.sh"
 # shellcheck source=scripts/regress/xvfb.sh
 source "${REPO_ROOT}/scripts/regress/xvfb.sh"
+# shellcheck source=scripts/regress/scenarios.sh
+source "${REPO_ROOT}/scripts/regress/scenarios.sh"
 
 JOBS="${DUSK_JOBS:-6}"
 DONOR_DIR_NAME="dusk-donor-pin"
 SELFTEST_TIMEOUT="${DUSK_REGRESS_SELFTEST_TIMEOUT:-180}"
 VST3_PATH=""
 RUN_PERF=0
+RUN_SCENARIOS=1
+GUI_SCENARIOS=0
+SCENARIOS_ONLY=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -29,11 +34,29 @@ while [[ $# -gt 0 ]]; do
             VST3_PATH="$2"
             shift 2
             ;;
+        --scenarios)
+            RUN_SCENARIOS=1
+            shift
+            ;;
+        --no-scenarios)
+            RUN_SCENARIOS=0
+            shift
+            ;;
+        --gui-scenarios)
+            GUI_SCENARIOS=1
+            shift
+            ;;
+        --scenarios-only)
+            SCENARIOS_ONLY=1
+            shift
+            ;;
         *) regress_die "unknown option '$1' for the linux target" ;;
     esac
 done
 
-regress_require cmake ctest Xvfb timeout flock
+if ((SCENARIOS_ONLY)); then RUN_SCENARIOS=1; fi
+
+regress_require cmake ctest Xvfb timeout flock pgrep
 cd "$REPO_ROOT"
 
 # JUCE places the app under DuskStudio_artefacts/<CMAKE_BUILD_TYPE>/, so a
@@ -41,8 +64,10 @@ cd "$REPO_ROOT"
 # the cache. Resolved after configure-check, which proves the cache exists.
 APP_BIN=""
 resolve_app_bin() {
-    local build_type
-    build_type="$(sed -n 's/^CMAKE_BUILD_TYPE:[^=]*=//p' "${REPO_ROOT}/build/CMakeCache.txt" | head -1)"
+    local build_type=""
+    if [[ -f "${REPO_ROOT}/build/CMakeCache.txt" ]]; then
+        build_type="$(sed -n 's/^CMAKE_BUILD_TYPE:[^=]*=//p' "${REPO_ROOT}/build/CMakeCache.txt" | head -1)"
+    fi
     build_type="${build_type:-Release}"
     APP_BIN="${REPO_ROOT}/build/DuskStudio_artefacts/${build_type}/DuskStudio"
     regress_note "build type ${build_type}: ${APP_BIN}"
@@ -114,43 +139,75 @@ echo "repo   $REPO_ROOT"
 echo "commit $(git -C "$REPO_ROOT" rev-parse --short HEAD) ($(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD))"
 echo "jobs   -j${JOBS}"
 
-regress_leg "configure-check" check_configure
-if [[ "${REGRESS_LEG_STATUS[0]}" == FAIL ]]; then
-    regress_summary "regress linux" || true
-    exit 1
+# --scenarios-only runs against whatever binary is already in build/, so the
+# compile legs are skipped rather than dropped: leg 0 stays configure-check and
+# the table still says what was not run.
+if ((SCENARIOS_ONLY)); then
+    regress_skip "configure-check" "not run (--scenarios-only)"
+else
+    regress_leg "configure-check" check_configure
+    if [[ "${REGRESS_LEG_STATUS[0]}" == FAIL ]]; then
+        regress_summary "regress linux" || true
+        exit 1
+    fi
 fi
 resolve_app_bin
 
-regress_leg "build-app" run_build cmake --build build -j"${JOBS}"
-regress_leg "build-tests" run_build cmake --build build-tests --target dusk-studio-tests -j"${JOBS}"
-regress_leg "ctest" ctest --test-dir build-tests --output-on-failure
-regress_leg "juce-gate" bash tools/juce-gate.sh
+if ((SCENARIOS_ONLY)); then
+    for leg in build-app build-tests ctest juce-gate; do
+        regress_skip "$leg" "not run (--scenarios-only)"
+    done
+else
+    regress_leg "build-app" run_build cmake --build build -j"${JOBS}"
+    regress_leg "build-tests" run_build cmake --build build-tests --target dusk-studio-tests -j"${JOBS}"
+    regress_leg "ctest" ctest --test-dir build-tests --output-on-failure
+    regress_leg "juce-gate" bash tools/juce-gate.sh
+fi
 
 if [[ -x "$APP_BIN" ]]; then
-    regress_leg "selftest-xvfb" bash scripts/run-selftest-xvfb.sh "$APP_BIN"
-    regress_leg "ipc-selftest" leg_ipc_selftest
-
-    if [[ -z "$VST3_PATH" ]]; then
-        for candidate in "${HOME}"/.vst3/*.vst3; do
-            [[ -e "$candidate" ]] || continue
-            VST3_PATH="$candidate"
-            break
+    if ((SCENARIOS_ONLY)); then
+        for leg in selftest-xvfb ipc-selftest ipc-host-test perf-suite; do
+            regress_skip "$leg" "not run (--scenarios-only)"
         done
-    fi
-    if [[ -n "$VST3_PATH" && -e "$VST3_PATH" ]]; then
-        regress_note "plugin: ${VST3_PATH}"
-        regress_leg "ipc-host-test" leg_ipc_host_test
     else
-        regress_skip "ipc-host-test" "no VST3 found (pass --vst3 <path>)"
+        regress_leg "selftest-xvfb" bash scripts/run-selftest-xvfb.sh "$APP_BIN"
+        regress_leg "ipc-selftest" leg_ipc_selftest
+
+        if [[ -z "$VST3_PATH" ]]; then
+            for candidate in "${HOME}"/.vst3/*.vst3; do
+                [[ -e "$candidate" ]] || continue
+                VST3_PATH="$candidate"
+                break
+            done
+        fi
+        if [[ -n "$VST3_PATH" && -e "$VST3_PATH" ]]; then
+            regress_note "plugin: ${VST3_PATH}"
+            regress_leg "ipc-host-test" leg_ipc_host_test
+        else
+            regress_skip "ipc-host-test" "no VST3 found (pass --vst3 <path>)"
+        fi
+
+        if ((RUN_PERF)); then
+            regress_leg "perf-suite" leg_perf
+        else
+            regress_skip "perf-suite" "not requested (--perf)"
+        fi
     fi
 
-    if ((RUN_PERF)); then
-        regress_leg "perf-suite" leg_perf
-    else
-        regress_skip "perf-suite" "not requested (--perf)"
+    if ((RUN_SCENARIOS)); then
+        if ((GUI_SCENARIOS)); then
+            regress_scenarios_run "$APP_BIN" --gui
+        else
+            regress_scenarios_run "$APP_BIN"
+        fi
     fi
 else
-    for leg in selftest-xvfb ipc-selftest ipc-host-test perf-suite; do
+    missing_legs=(selftest-xvfb ipc-selftest ipc-host-test perf-suite)
+    if ((RUN_SCENARIOS)); then
+        missing_legs+=("${SCENARIO_LEG_NAMES[@]}")
+        if ((GUI_SCENARIOS)); then missing_legs+=(scenarios-gui); fi
+    fi
+    for leg in "${missing_legs[@]}"; do
         regress_skip "$leg" "app binary missing: ${APP_BIN}"
     done
 fi

@@ -6,6 +6,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <nlohmann/json.hpp>
+
 #include <cctype>
 #include <fstream>
 #include <iterator>
@@ -98,9 +100,13 @@ std::string joinAdjacentLiterals (const std::string& source)
 TEST_CASE ("Staged shutdown prints every phase marker the quit legs assert on",
            "[markers][shutdown]")
 {
-    const auto source = joinAdjacentLiterals (readSource ("src/ui/MainComponent.cpp"));
+    // The tag and the phase names live apart: one fprintf in the engine seam,
+    // the names at the call sites that emit them.
+    REQUIRE (joinAdjacentLiterals (readSource ("src/engine/ShutdownPhases.cpp"))
+                 .find ("[Dusk Studio/shutdown] %s")
+             != std::string::npos);
 
-    REQUIRE (source.find ("[Dusk Studio/shutdown] %s") != std::string::npos);
+    const auto source = joinAdjacentLiterals (readSource ("src/ui/MainComponent.cpp"));
 
     for (const char* phase : { "re-entry ignored: shutdown already in progress",
                                "phase 1: stop autosave timer",
@@ -205,4 +211,24 @@ TEST_CASE ("Screenshot capture prints the terminal marker the capture leg waits 
     const auto source = joinAdjacentLiterals (readSource ("src/ui/ScreenshotCapture.cpp"));
 
     REQUIRE (source.find ("[Dusk Studio/capture] done") != std::string::npos);
+}
+
+TEST_CASE ("The regression runner's minimal session stays loadable by this build",
+           "[markers][session]")
+{
+    const auto serializer = readSource ("src/session/SessionSerializer.cpp");
+    const std::string declaration = "constexpr int kFormatVersion = ";
+    const auto at = serializer.find (declaration);
+    REQUIRE (at != std::string::npos);
+    const int formatVersion = std::stoi (serializer.substr (at + declaration.size()));
+
+    const auto session = nlohmann::json::parse (
+        readSource ("scripts/regress/sessions/minimal/session.json"), nullptr, false);
+    REQUIRE (session.is_object());
+    REQUIRE (session.contains ("version"));
+    REQUIRE (session["version"].is_number_integer());
+
+    // The loader refuses anything newer than its own format, so the checked-in
+    // session has to stay at or below it. Older is fine: migrateSession lifts it.
+    REQUIRE (session["version"].get<int>() <= formatVersion);
 }

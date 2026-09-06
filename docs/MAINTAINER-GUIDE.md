@@ -440,15 +440,22 @@ leg prompts, and each one either recreates its inputs or checks them.
 scripts/regress.sh                       # linux (the default target)
 scripts/regress.sh linux --perf          # plus the headless engine perf suite
 scripts/regress.sh linux --vst3 ~/.vst3/Multi-Q.vst3
+scripts/regress.sh linux --scenarios-only
 scripts/regress.sh mac
 scripts/regress.sh windows --msi /path/to/dusk-studio-X.Y.Z-Windows-x64.msi
 scripts/regress.sh windows --release-run 1234567890
-scripts/regress.sh all --msi /path/to/installer.msi
+scripts/regress.sh all --perf --msi /path/to/installer.msi
 ```
 
-Layout: `scripts/regress.sh` only dispatches. The work is in
+`all` routes each option to the platform that owns it, so one command line can
+carry Linux, macOS and Windows options at once. An option no platform claims is
+a usage error rather than a silently ignored word.
+
+Layout: `scripts/regress.sh` only dispatches and routes options. The work is in
 `scripts/regress/{linux,mac,windows}.sh` over the shared leg bookkeeping in
-`scripts/regress/common.sh`, plus the guest-side helpers in
+`scripts/regress/common.sh`, the private-display plumbing in
+`scripts/regress/xvfb.sh` and the scenario legs in
+`scripts/regress/scenarios.sh`, plus the guest-side helpers in
 `scripts/regress/windows/`.
 
 ### Linux
@@ -466,6 +473,16 @@ Prerequisites: `build/` and `build-tests/` already configured, `Xvfb`, GNU
 | `ipc-selftest` | `DUSKSTUDIO_RUN_IPC_SELFTEST=1`: the shm + futex round-trip against the `dusk-studio-plugin-host` stub. |
 | `ipc-host-test` | `DUSKSTUDIO_IPC_HOST_TEST=<plugin>`: a real plugin loaded out-of-process, 1000 stereo blocks, signal asserted modified. Uses `--vst3`, else the first `~/.vst3/*.vst3`; `SKIP` when there is none. |
 | `perf-suite` | `DUSKSTUDIO_RUN_PERF_TEST=1` across the (rate, buffer, load) matrix. Off unless `--perf`. |
+| `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all`: the in-app scenario suite. Passes only on exit 0, no `[FAIL]` line, and the terminal `=== scenarios: ` summary - a crash after the last case must not pass on a lucky exit code. Skipped cases go into the leg's note. |
+| `bb-handoff`, `bb-crash-relaunch`, `bb-no-runtime-dir`, `bb-damaged-recent`, `bb-clean-quit`, `bb-quit-twice`, `bb-oop-child-kill`, `bb-oop-quit-during-load` | the black-box legs: real app processes spawned, killed and read back through their stderr. See "Scenario legs" below. |
+| `scenarios-gui` | `DUSKSTUDIO_RUN_SCENARIOS=gui`: the plugin-editor scenarios that need a window. Off unless `--gui-scenarios` - it is the slowest leg and the most sensitive to GLX under Xvfb. |
+
+`--no-scenarios` leaves the scenario legs out of the run entirely.
+`--scenarios-only` runs nothing but them, against whatever binary is already in
+`build/`; the compile and self-test legs are reported as `SKIP` so the table
+still says what was not run. `build-tests/` has to exist either way: it is half
+of `DUSKSTUDIO_FIXTURE_DIR`, which is how the app binary finds the test
+fixtures.
 
 Everything from `selftest-xvfb` down runs on a private Xvfb display with
 `WAYLAND_DISPLAY` unset - the binary aborts against a live Wayland session, so
@@ -473,6 +490,54 @@ no leg may ever launch it on the desktop.
 
 `DUSK_REGRESS_BUILD_LOCK=/path/to/lockfile` wraps the two compile legs in
 `flock` when something else may be building the same tree.
+
+#### Scenario legs
+
+The `bb-*` legs run several real app processes at once on one shared Xvfb
+display, so each leg gets a throwaway directory and a private environment:
+
+- Private `XDG_RUNTIME_DIR`, mode 0700. `makeSocketPath` in
+  [src/util/SingleInstance.cpp](../src/util/SingleInstance.cpp) keys the
+  single-instance slot on `$XDG_RUNTIME_DIR/dusk-studio/instance-<hash of
+  DISPLAY>.sock`, so a per-leg runtime dir is what stops a leg handing a session
+  to - or stealing one from - the copy of Dusk Studio you have open.
+- Private `HOME` and `XDG_CONFIG_HOME`, mode 0700. `dusk::fs::userConfigDir()`
+  resolves `$HOME/.config` and does **not** read `XDG_CONFIG_HOME`, so only a
+  private `HOME` keeps Recent Sessions, `app-config.properties` and crash logs
+  out of your profile. It also means the legs start with no plugin cache, which
+  is why they start in well under a second.
+- A private copy of `scripts/regress/sessions/minimal/session.json` per leg. The
+  checked-in file is never loaded in place: an autosave tick would write
+  `session.json.autosave` into the working tree.
+- One stdout and one stderr file per process, never merged. Marker order is an
+  assertion in the quit legs, and interleaving two processes destroys it. Every
+  `.err` file is dumped when a leg fails.
+- Every wait carries an explicit budget in seconds, and each leg has an overall
+  deadline that caps the waits inside it.
+- Child processes are found with `pgrep -P <app pid>`. Never a bare `pkill` or
+  `pkill -f`: it would take down the maintainer's own session along with the leg.
+- `DUSK_REGRESS_SCENARIO_KEEP=1` keeps each leg's directory instead of deleting
+  it, and prints the path.
+
+`bb-crash-relaunch` is the one to watch. The POSIX handoff has no
+acknowledgement, so two instances racing for a slot a killed instance left
+behind is the leg most likely to flake. It fails with both processes' stderr and
+is not retried; re-run it ten times before trusting a change to that path.
+
+`bb-damaged-recent` needs the startup picker, and GLX under Xvfb is not
+guaranteed on every host (the same caveat that keeps DAF/DGL windows in the
+hardware pass). The leg accepts either `picker shown` or `picker unavailable on
+this display` - what it will not accept is neither. Set
+`DUSK_REGRESS_REQUIRE_PICKER=1` on a host where GLX does work to demand the
+first.
+
+Legs whose app-side seam is not in the binary report `SKIP` with the name of
+what is missing (`DUSKSTUDIO_QUIT_AFTER_MS`, the `[Dusk Studio/startup]`
+markers, the `session.mint_oop_fixture` scenario) rather than passing on an
+assertion that never ran.
+
+`bash scripts/regress/scenarios.sh` runs just these legs and prints the same
+table; `--app <binary>` points it at a build other than `build/`.
 
 ### macOS
 
@@ -587,6 +652,10 @@ Overrides: `DUSK_REGRESS_VM`, `DUSK_REGRESS_LIBVIRT_URI`, `DUSK_REGRESS_HOST_IP`
    The host substitutes `@@HOSTIP@@`, `@@ROOT@@` and `@@ZIP@@` when serving, so
    those values are not duplicated per script.
 4. `bash -n` and `shellcheck` every script you touched.
+5. If the leg greps a string out of the app's output, pin that string in
+   [tests/stderr_marker_contract.cpp](../tests/stderr_marker_contract.cpp). A
+   reworded marker still compiles and still runs; without the contract case the
+   leg quietly stops asserting anything and keeps passing.
 
 ---
 
