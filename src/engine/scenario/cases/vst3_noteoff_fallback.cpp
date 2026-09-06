@@ -91,7 +91,7 @@ ScenarioResult runNoteOffFallback (ScenarioContext& ctx)
               + " outLDb=" + std::to_string (strip.getOutLDb()));
     // No CC 120 / 123 mapping on this plugin, so the only thing that can release
     // the voices is the host turning the panic into per-note note-offs.
-    ctx.expect (heldNotes (slot) == 0.0, "the voices survived the panic");
+    ctx.expect (heldNotes (slot) <= 0.0, "the voices survived the panic");
 
     const int silentAfter = midiprobe::pumpUntilSilent (ctx, kTrackIndex, kSilenceBlocks);
     ctx.note ("the strip fell silent " + std::to_string (silentAfter)

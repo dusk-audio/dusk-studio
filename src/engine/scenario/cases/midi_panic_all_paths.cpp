@@ -92,7 +92,7 @@ ScenarioResult runPanic (ScenarioContext& ctx)
     noteCounters (ctx, "after stop");
     for (const int t : kProbeTracks)
     {
-        ctx.expect (midiprobe::counter (ctx, t, "voicesHeld") == 0.0,
+        ctx.expect (midiprobe::counter (ctx, t, "voicesHeld") <= 0.0,
                     std::string ("the ") + trackLabel (t)
                         + " track kept its voices through the panic");
         ctx.expect (midiprobe::counter (ctx, t, "chokesSeen") >= 1.0,

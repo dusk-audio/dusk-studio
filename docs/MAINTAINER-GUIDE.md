@@ -584,7 +584,8 @@ peak, `pumpWithMidi(input, buffer)` stages events first), `fixture("name")`
 resolved through `DUSKSTUDIO_FIXTURE_DIR` against the table in
 `ScenarioFixtures.cpp`, `tempDir()` and a scratch session directory already
 set, `expect(condition, message)` and `verdict()` for the assertions, `note()`
-for breadcrumbs that only print on failure, and `later(ms, fn)` /
+for breadcrumbs that only print on failure, `cleanup(fn)` for anything that
+must be released however the case ends, and `later(ms, fn)` /
 `waitUntil(pred, timeoutMs, onReady, message)` for anything asynchronous. A
 case that defers returns `std::nullopt` from `run` and finishes through
 `ctx.complete()`; the runner's watchdog turns a case that never completes into
@@ -684,7 +685,7 @@ be auto-accepted.
 | `guest-wake` | the domain is running and its display is not blanked. Screenshot in the run directory. |
 | `console-probe` | a fresh PowerShell console is up and accepting typed input, before any phase is typed into it. |
 | `phase1-selftest` | headless `DUSKSTUDIO_RUN_SELFTEST=1` with stdout and stderr captured through `ProcessStartInfo` redirection: exit code 0, at least one `[PASS]`, no `[FAIL]`. |
-| `phase2-handoff` | GUI launch, then a second launch carrying a session path hands over and exits 0 within 30 s while the first instance stays alive, and `GetForegroundWindow()` is the first instance's window afterwards - the handoff is supposed to raise it, which the exit code alone cannot see. |
+| `phase2-handoff` | the first instance opens the shipped session through `DUSKSTUDIO_LOAD_SESSION`, then a second launch carrying `handoff.json` hands over and exits 0 within 30 s while the first instance stays alive, `GetForegroundWindow()` is its window afterwards, and its stderr shows `[Dusk Studio/Load] handoff.json` - the handoff is supposed to raise the window and load the path, which the exit code alone cannot see. |
 | `phase3-session-close` | the session the payload ships is loaded through `DUSKSTUDIO_LOAD_SESSION` (waited for by its `[Dusk Studio/Load]` line), then two `WM_CLOSE` messages are posted back to back. Exit 0 within 50 s, at least eight `[Dusk Studio/shutdown] phase` markers, and `re-entry ignored: shutdown already in progress` from the second close landing on the latch. |
 | `ipc-selftest` | `SKIP`. `DUSKSTUDIO_RUN_IPC_SELFTEST` never returns on Windows (issue #504), so the out-of-process transport is only compile- and contract-verified there. Remove the skip when #504 closes. |
 

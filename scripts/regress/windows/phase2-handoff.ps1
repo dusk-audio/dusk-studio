@@ -1,6 +1,7 @@
-# Phase 2: GUI launch plus single-instance handoff. A second launch carrying a
-# session path must hand the path to the running instance and exit at once,
-# leaving the first instance alive.
+# Phase 2: GUI launch plus single-instance handoff. The first instance opens the
+# shipped session; a second launch carrying a different session path must hand
+# it to the running instance and exit at once, leaving the first instance alive,
+# in front, and loading what it was handed.
 $ErrorActionPreference = 'Continue'
 $rgIp = '@@HOSTIP@@'
 $rgRoot = "$env:LOCALAPPDATA\@@ROOT@@"
@@ -32,7 +33,7 @@ if (-not ('Regress.Foreground' -as [type])) {
 '@
 }
 
-function Start-RegressApp($appArgs) {
+function Start-RegressApp($appArgs, $envs) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $rgExe
     $psi.Arguments = $appArgs
@@ -40,6 +41,7 @@ function Start-RegressApp($appArgs) {
     $psi.UseShellExecute = $false
     $psi.RedirectStandardError = $true
     $psi.RedirectStandardOutput = $true
+    if ($envs) { foreach ($k in $envs.Keys) { $psi.EnvironmentVariables[$k] = $envs[$k] } }
     $p = [System.Diagnostics.Process]::Start($psi)
     $p | Add-Member -NotePropertyName RgOut -NotePropertyValue $p.StandardOutput.ReadToEndAsync()
     $p | Add-Member -NotePropertyName RgErr -NotePropertyValue $p.StandardError.ReadToEndAsync()
@@ -53,13 +55,21 @@ try {
         Select-Object -First 1).FullName
     if (-not $rgExe) { throw "DuskStudio.exe not found under $rgRoot (run phase 1 first)" }
 
-    $rgFirst = Start-RegressApp ''
+    $rgSession = "$rgRoot\regress-session\session.json"
+    $rgHandoff = "$rgRoot\regress-session\handoff.json"
+    foreach ($f in @($rgSession, $rgHandoff)) {
+        if (-not (Test-Path $f)) { throw "payload session missing: $f" }
+    }
+
+    # The session arrives through the environment so no picker is up: a handoff
+    # into the picker would be a different test.
+    $rgFirst = Start-RegressApp '' @{ DUSKSTUDIO_LOAD_SESSION = $rgSession }
     Start-Sleep -Seconds 20
     $rgHwnd = $rgFirst.MainWindowHandle
     $rgLog += "A pid=$($rgFirst.Id) alive=$(-not $rgFirst.HasExited) hwnd=$rgHwnd`n"
     if ($rgFirst.HasExited) { throw "first instance exited during startup" }
 
-    $rgSecond = Start-RegressApp ('"' + "$rgRoot\handoff-probe\session.json" + '"')
+    $rgSecond = Start-RegressApp ('"' + $rgHandoff + '"')
     $rgStart = Get-Date
     $rgHandedOff = $rgSecond.WaitForExit(30000)
     $rgElapsed = [int]((Get-Date) - $rgStart).TotalSeconds
@@ -74,14 +84,10 @@ try {
     # half of the check a bare "B exited 0" cannot see.
     $rgForeground = [Regress.Foreground]::GetForegroundWindow()
     $rgLog += "A after handoff: alive=$(-not $rgFirst.HasExited) foreground=$rgForeground wanted=$rgHwnd`n"
+    $rgAlive = -not $rgFirst.HasExited
 
-    if ($rgHandedOff -and $rgSecond.ExitCode -eq 0 -and -not $rgFirst.HasExited `
-            -and $rgHwnd -ne 0 -and $rgForeground -eq $rgHwnd) {
-        $rgResult = 'PASS'
-    }
-
-    # The startup session picker swallows WM_CLOSE, so clean shutdown is
-    # phase 3's job; here the instance is only torn down.
+    # Clean shutdown is phase 3's job; here the instance is only torn down, and
+    # its stderr can only be read in full once its pipe has closed.
     try { $rgFirst.Kill() } catch { }
     $rgFirst.WaitForExit(20000) | Out-Null
     Stop-RegressChildren
@@ -89,8 +95,18 @@ try {
     Set-Content -Path "$rgRoot\phase2-A.log" `
         -Value ((Read-RegressTask $rgFirst.RgOut 10000) + "`n---stderr---`n" + $rgFirstErr)
     $rgLog += (($rgFirstErr -split "`n" |
-        Select-String -Pattern 'SingleInstance|handoff|anotherInstance|Assert|exception|fault' |
+        Select-String -Pattern 'SingleInstance|handoff|anotherInstance|Load\]|Assert|exception|fault' |
         Select-Object -Last 8 | ForEach-Object { '  ' + $_.Line.Trim() }) -join "`n") + "`n"
+
+    # B exiting 0 only proves it gave up its slot; the handed-off path has to
+    # show up as a load in A.
+    $rgHandoffLoaded = ($rgFirstErr -match 'Dusk Studio/Load\] handoff\.json')
+    $rgLog += "A loaded the handed-off session: $rgHandoffLoaded`n"
+
+    if ($rgHandedOff -and $rgSecond.ExitCode -eq 0 -and $rgAlive `
+            -and $rgHwnd -ne 0 -and $rgForeground -eq $rgHwnd -and $rgHandoffLoaded) {
+        $rgResult = 'PASS'
+    }
 } catch {
     $rgLog += "phase2 failed: $_`n"
 }

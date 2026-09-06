@@ -60,8 +60,8 @@ COLLECTOR_PID=""
 # Runs from the EXIT trap, where set -e is still live: every kill has to be
 # tolerant of finding nothing, or a clean teardown exits the script non-zero.
 stop_servers() {
-    [[ -n "$HTTP_PID" ]] && kill "$HTTP_PID" 2>/dev/null
-    [[ -n "$COLLECTOR_PID" ]] && kill "$COLLECTOR_PID" 2>/dev/null
+    [[ -n "$HTTP_PID" ]] && { kill "$HTTP_PID" 2>/dev/null || true; }
+    [[ -n "$COLLECTOR_PID" ]] && { kill "$COLLECTOR_PID" 2>/dev/null || true; }
     # Bracketed first character so the pattern cannot match this pkill's own
     # command line and take the calling shell down with it.
     pkill -f "[c]ollector\.py --bind ${HOST_IP}" 2>/dev/null || true
@@ -121,12 +121,15 @@ leg_payload() {
         && mv "${work}/pkg/bin/dusk_studio_plugin_host.exe" \
             "${work}/pkg/bin/dusk-studio-plugin-host.exe"
 
-    # Phase 3 opens this through DUSKSTUDIO_LOAD_SESSION instead of clicking the
-    # startup picker, so the session ships with the payload rather than
-    # depending on what the guest happens to have in Recent Sessions.
+    # Phases 2 and 3 open this through DUSKSTUDIO_LOAD_SESSION instead of
+    # clicking the startup picker, so the session ships with the payload rather
+    # than depending on what the guest happens to have in Recent Sessions. The
+    # load line names the file, so the copy phase 2 hands over gets its own name.
     mkdir -p "${work}/pkg/regress-session"
     cp "${REPO_ROOT}/scripts/regress/sessions/minimal/session.json" \
         "${work}/pkg/regress-session/session.json"
+    cp "${REPO_ROOT}/scripts/regress/sessions/minimal/session.json" \
+        "${work}/pkg/regress-session/handoff.json"
 
     if [[ ! -f "${work}/pkg/bin/DuskStudio.exe" ]]; then
         echo "error: no bin/DuskStudio.exe after unpacking; extracted:" >&2

@@ -18,7 +18,7 @@ def make_handler(out_path):
             length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(length).decode('utf-8', 'replace')
             stamp = datetime.datetime.now().isoformat(timespec='seconds')
-            with open(out_path, 'a') as f:
+            with open(out_path, 'a', encoding='utf-8') as f:
                 f.write('\n===== {} {}\n{}\n'.format(stamp, self.path, body))
                 f.flush()
             self.send_response(200)

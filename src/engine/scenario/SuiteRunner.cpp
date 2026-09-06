@@ -195,9 +195,9 @@ void SuiteRunner::runNext()
         return;
     }
 
-    if (guiMode && ! scenario.runGui)
+    if (guiMode ? ! scenario.runGui : ! scenario.run)
     {
-        skipCurrent ("no gui entry point");
+        skipCurrent (guiMode ? "no gui entry point" : "no headless entry point");
         return;
     }
 

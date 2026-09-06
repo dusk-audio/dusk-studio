@@ -80,8 +80,9 @@ ScenarioResult runFileState (ScenarioContext& ctx)
             ctx.expect (contents == kPayload, "a stored payload file was not what the plugin wrote");
         }
         if (it->path().extension() != ".ttl") continue;
-        ctx.expect (contents.find (sessionText) == std::string::npos
-                    && contents.find (scratchText) == std::string::npos,
+        const auto bakedIn = [&contents] (const std::string& text)
+        { return ! text.empty() && contents.find (text) != std::string::npos; };
+        ctx.expect (! bakedIn (sessionText) && ! bakedIn (scratchText),
                 "the serialized state baked in an absolute path: " + it->path().u8string());
     }
     ctx.note ("files stored under the session: " + std::to_string (storedFiles));

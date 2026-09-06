@@ -37,6 +37,7 @@ ScenarioContext::ScenarioContext (Session& s, AudioEngine& e,
 
 ScenarioContext::~ScenarioContext()
 {
+    if (! completed) runCleanups();
     if (! scratchDir.empty())
     {
         std::error_code error;
@@ -113,7 +114,7 @@ void ScenarioContext::later (int ms, std::function<void()> fn)
     std::weak_ptr<char> guard = aliveToken;
     dusk::Timer::callAfterDelay (ms, [this, guard, fn = std::move (fn)]
     {
-        if (guard.expired()) return;
+        if (guard.expired() || completed) return;
         fn();
     });
 }
@@ -154,7 +155,21 @@ void ScenarioContext::complete (ScenarioResult result)
 {
     if (completed) return;
     completed = true;
+    runCleanups();
     if (onCompleteFn) onCompleteFn (std::move (result));
+}
+
+void ScenarioContext::cleanup (std::function<void()> fn)
+{
+    cleanups.push_back (std::move (fn));
+}
+
+void ScenarioContext::runCleanups()
+{
+    auto pending = std::move (cleanups);
+    cleanups.clear();
+    for (auto it = pending.rbegin(); it != pending.rend(); ++it)
+        (*it)();
 }
 
 bool ScenarioContext::expect (bool condition, std::string message)

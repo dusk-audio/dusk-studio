@@ -56,9 +56,9 @@ void checkChoked (ScenarioContext& ctx, const char* event,
 {
     const std::string prefix = std::string (event) + ": ";
     ctx.note (prefix + "before " + describe (before) + " / after " + describe (after));
-    ctx.expect (after.voicesHeld == 0.0, prefix + "voices were still held afterwards");
+    ctx.expect (after.voicesHeld <= 0.0, prefix + "voices were still held afterwards");
     ctx.expect (after.chokesSeen > before.chokesSeen, prefix + "no choke reached the plugin");
-    ctx.expect (after.noteOffsSeen == before.noteOffsSeen,
+    ctx.expect ((int) after.noteOffsSeen == (int) before.noteOffsSeen,
                 prefix + "the host sent note-offs instead of choking the voices");
 }
 

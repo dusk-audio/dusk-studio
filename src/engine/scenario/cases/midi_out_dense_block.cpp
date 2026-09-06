@@ -15,7 +15,8 @@ constexpr int kTrackIndex = 0;
 // Two events per sample offset over the whole block: dense enough to exercise
 // the sort + whole-block copy on the way out, and every event distinct so the
 // recorder's order can be checked exactly.
-constexpr int kEventCount = 512;
+constexpr int kEventsPerOffset = 2;
+constexpr int kEventCount = kEventsPerOffset * ScenarioContext::kBlockSize;
 constexpr int kSettleBlocks = 3;
 constexpr int kDrainTimeoutMs = 5000;
 constexpr int kStablePolls = 3;
@@ -30,7 +31,12 @@ struct DrainState
 // index, so a reordered or dropped one is named rather than just counted.
 std::uint8_t controllerFor (int index) { return (std::uint8_t) (index & 0x7F); }
 std::uint8_t valueFor      (int index) { return (std::uint8_t) ((index >> 7) & 0x7F); }
-int          offsetFor     (int index) { return index / 2; }
+int          offsetFor     (int index) { return index / kEventsPerOffset; }
+
+static_assert ((kEventCount - 1) / kEventsPerOffset < ScenarioContext::kBlockSize,
+               "every generated offset has to land inside the one block under test");
+static_assert (kEventCount <= 128 * 128,
+               "controller and value bytes carry the index in fourteen bits");
 
 void finish (ScenarioContext& ctx, RecordingMidiBackend& recorder)
 {

@@ -73,6 +73,11 @@ public:
     void complete (ScenarioResult result);
     bool isComplete() const noexcept { return completed; }
 
+    // Runs once when the scenario completes by any path - verdict, skip or the
+    // watchdog - before the result is reported, so what a deferred case owns
+    // is released even when a wait times out. Latest registered runs first.
+    void cleanup (std::function<void()> fn);
+
     // Records message as a note when condition is false and remembers the
     // first such message, so one broken expectation does not hide the shape of
     // the rest of the run. Returns condition, so a caller can still bail.
@@ -88,6 +93,7 @@ public:
 
 private:
     void ensureBuffers();
+    void runCleanups();
 
     static constexpr int kNumInputs  = 16;
     static constexpr int kNumOutputs = 2;
@@ -100,6 +106,7 @@ private:
     bool completed = false;
     std::vector<std::string> log;
     std::string firstFailure;
+    std::vector<std::function<void()>> cleanups;
 
     std::vector<std::vector<float>> inputs, outputs;
     std::vector<const float*> inputPtrs;

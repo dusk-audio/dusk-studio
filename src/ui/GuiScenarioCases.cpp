@@ -396,9 +396,11 @@ std::optional<ScenarioResult> runLv2EditorReflectsState (GuiHost& host, Scenario
 
 #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! defined (_WIN32)
 // Both sandboxed cases put the app's own plug-in manager into sandbox mode for
-// the length of one scenario, so both have to hand it back exactly as it was.
-void restoreInProcessHosting (ScenarioContext& ctx)
+// the length of one scenario, so both hand it back exactly as it was on every
+// way out, the watchdog's included: the context runs this when the case ends.
+void restoreInProcessHosting (ScenarioContext& ctx, PluginSlot& slot)
 {
+    slot.unload();
     auto& manager = ctx.engine().getPluginManager();
     manager.setOopEnabled (false);
     manager.setHostExecutableOverride ({}, {});
@@ -456,6 +458,7 @@ std::optional<ScenarioResult> runOopEditorClosesBeforeChild (GuiHost& host, Scen
 
     auto state = std::make_shared<SandboxState>();
     oopstub::useStub (manager, *childBinary, "--ipc-host");
+    ctx.cleanup ([&ctx, &slot] { restoreInProcessHosting (ctx, slot); });
 
     slot.loadFromDescriptorAsync (descriptor, [state] (bool ok, auto error)
     {
@@ -469,8 +472,6 @@ std::optional<ScenarioResult> runOopEditorClosesBeforeChild (GuiHost& host, Scen
     {
         if (! state->loadOk || ! slot.isRemote())
         {
-            restoreInProcessHosting (ctx);
-            slot.unload();
             ctx.complete (ScenarioResult::skip (
                 "the slot never went out of process: " + state->loadError));
             return;
@@ -480,8 +481,6 @@ std::optional<ScenarioResult> runOopEditorClosesBeforeChild (GuiHost& host, Scen
         ctx.note ("child pid: " + std::to_string (state->childPid));
         if (state->childPid <= 0)
         {
-            restoreInProcessHosting (ctx);
-            slot.unload();
             ctx.complete (ScenarioResult::fail ("a remote slot reported no child pid"));
             return;
         }
@@ -507,7 +506,6 @@ std::optional<ScenarioResult> runOopEditorClosesBeforeChild (GuiHost& host, Scen
         {
             if (state->childDiedEarly)
             {
-                restoreInProcessHosting (ctx);
                 strip->refreshInsertButton();
                 ctx.complete (ScenarioResult::skip (
                     "the sandbox child exited before the editor was closed, so the "
@@ -525,7 +523,6 @@ std::optional<ScenarioResult> runOopEditorClosesBeforeChild (GuiHost& host, Scen
                 ctx.expect (! slot.isRemote(), "the slot still reports a live child");
                 ctx.expect (! strip->hasOpenEditor(), "the sandboxed editor is still open");
                 ctx.expect (host.modalStackEmpty(), "the run left a modal up");
-                restoreInProcessHosting (ctx);
                 strip->refreshInsertButton();
                 ctx.complete (ctx.verdict());
             },
@@ -554,6 +551,7 @@ std::optional<ScenarioResult> runOopEditorFailureNoStrand (GuiHost& host, Scenar
     // The one stub mode that answers the load and then hands back a reply the
     // editor RPC cannot read, which is the failure this covers.
     oopstub::useStub (engine.getPluginManager(), *childBinary, "--ipc-load-reply-stub");
+    ctx.cleanup ([&ctx, &slot] { restoreInProcessHosting (ctx, slot); });
 
     slot.loadFromDescriptorAsync (oopstub::stubDescriptor(), [state] (bool ok, auto error)
     {
@@ -567,8 +565,6 @@ std::optional<ScenarioResult> runOopEditorFailureNoStrand (GuiHost& host, Scenar
     {
         if (! state->loadOk || ! slot.isRemote())
         {
-            restoreInProcessHosting (ctx);
-            slot.unload();
             ctx.complete (ScenarioResult::skip (
                 "the slot never went out of process: " + state->loadError));
             return;
@@ -587,7 +583,6 @@ std::optional<ScenarioResult> runOopEditorFailureNoStrand (GuiHost& host, Scenar
             ctx.expect (host.modalStackEmpty(), "the refused open left a modal up");
 
             slot.unload();
-            restoreInProcessHosting (ctx);
             strip->refreshInsertButton();
             ctx.complete (ctx.verdict());
         });

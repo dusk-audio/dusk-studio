@@ -54,7 +54,7 @@ struct Scenario
     // A Needs::Gui scenario leaves `run` empty and fills this in instead: only
     // the runner built over a live window can supply the host, so the headless
     // runner skips it.
-    std::function<std::optional<ScenarioResult> (GuiHost&, ScenarioContext&)> runGui;
+    std::function<std::optional<ScenarioResult> (GuiHost&, ScenarioContext&)> runGui {};
 };
 
 namespace detail

@@ -11,7 +11,7 @@ platform's runner), **manual** (with the reason). Run everything with
 
 | # | Item | Bucket | Covered by |
 |---|---|---|---|
-| 1 | Opening a session hands off to the running window | bb | `bb-handoff` |
+| 1 | Opening a session hands off to the running window | bb + windows | `bb-handoff`; `phase2-handoff` (load of the handed-off file required) |
 | 2 | Windows: the handed-off window comes to the foreground | windows | `phase2-handoff` (`GetForegroundWindow` check) |
 | 3 | Two launches after a crash leave exactly one primary | bb | `bb-crash-relaunch` (run ten times before trusting a change to the handoff) |
 | 4 | An unusable runtime dir is reported, app still starts | bb | `bb-no-runtime-dir`; unit twin in `single_instance_socket_lifecycle.cpp` |
@@ -76,5 +76,7 @@ platform's runner), **manual** (with the reason). Run everything with
 | 43 | The DMG carries the sandbox helper | unit | `release.yml` asset check, `scripts/verify-release-assets.sh` |
 | 44 | Donor and sfizz audio unchanged | unit | the `*_ab.cpp` null tests |
 
-Manual items: 7, 10, 17, 34, 35, 36, 38, 40. Every other row runs on every
-`scripts/regress.sh` pass, and the headless scenarios also run in CI.
+Manual items: 7, 10, 17, 34, 35, 36, 38, 40. Every other row runs through
+the runner of the platform that owns it, so `scripts/regress.sh all
+--gui-scenarios --msi <installer>` covers them all; the headless scenarios
+also run in CI.

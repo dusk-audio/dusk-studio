@@ -47,9 +47,6 @@ void finish (ScenarioContext& ctx, const std::shared_ptr<KillState>& state)
                 "the bypassed slot did not pass the dry signal through");
     ctx.expect (! state->slot->isRemote(),
                 "the slot still reports a live child after the kill");
-
-    state->slot.reset();
-    state->manager.reset();
     ctx.complete (ctx.verdict());
 }
 
@@ -91,6 +88,10 @@ std::optional<ScenarioResult> runKilledChild (ScenarioContext& ctx)
         return ScenarioResult::skip ("the sandbox host binary is not beside the app");
 
     auto state = std::make_shared<KillState>();
+    // The slot owns the load callback and that captures state, so nothing frees
+    // the slot, the manager or the child unless the context does it on the way
+    // out - including when a wait below times out.
+    ctx.cleanup ([state] { state->slot.reset(); state->manager.reset(); });
     state->manager = std::make_unique<PluginManager>();
     // The only stub mode that answers the load RPC, so the only one that leaves
     // a slot genuinely out of process with a child to kill.

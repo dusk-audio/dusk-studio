@@ -30,6 +30,7 @@ std::optional<ScenarioResult> runQuitDuringLoad (ScenarioContext& ctx)
         return ScenarioResult::skip ("the sandbox host binary is not beside the app");
 
     auto state = std::make_shared<QuitState>();
+    ctx.cleanup ([state] { state->slot.reset(); state->manager.reset(); });
     state->manager = std::make_unique<PluginManager>();
     // --ipc-stub completes the handshake and then never reads the control
     // channel, so the load RPC sits in its reply wait for its full deadline.
@@ -54,7 +55,6 @@ std::optional<ScenarioResult> runQuitDuringLoad (ScenarioContext& ctx)
         state->slot.reset();
         const auto tookMs = std::chrono::duration_cast<std::chrono::milliseconds> (
                                 std::chrono::steady_clock::now() - start).count();
-        state->manager.reset();
 
         ctx.note ("destroying the slot mid-load took " + std::to_string (tookMs) + " ms");
         if (tookMs >= kDestroyBudgetMs)

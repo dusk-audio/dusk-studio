@@ -62,9 +62,6 @@ void finish (ScenarioContext& ctx, const std::shared_ptr<SwitchingState>& state)
     ctx.expect (state->cyclesRemoteAtUnload >= kCycles / 4,
             "too few cycles in the burst reached the sandboxed path");
 
-    state->slot.reset();
-    state->manager.reset();
-
     ctx.complete (ctx.verdict());
 }
 
@@ -119,6 +116,7 @@ std::optional<ScenarioResult> runRapidSwitching (ScenarioContext& ctx)
         return ScenarioResult::skip ("the sandbox host binary is not beside the app");
 
     auto state = std::make_shared<SwitchingState>();
+    ctx.cleanup ([state] { state->slot.reset(); state->manager.reset(); });
     state->manager = std::make_unique<PluginManager>();
     // --ipc-stub answers audio blocks but never the load RPC, so the only mode
     // that puts a slot out of process is the one that answers control messages.
