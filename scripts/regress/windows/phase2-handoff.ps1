@@ -25,6 +25,22 @@ function Read-RegressTask($task, $ms) {
     return "<read timed out after ${ms} ms; output withheld by an open inherited handle>"
 }
 
+# The first instance's load has to be seen while it is still running, and
+# ReadToEndAsync only returns once the pipe closes. One bounded ReadLineAsync at
+# a time instead, no delegates: a scriptblock callback throws under iex. The
+# first wait paces the caller's poll loop; the rest drain whatever else is
+# already buffered.
+function Read-RegressStderr($state, $ms) {
+    while ($null -ne $state.Task -and $state.Task.Wait($ms)) {
+        $line = $state.Task.Result
+        if ($null -eq $line) { $state.Task = $null; break }
+        [void]$state.Text.AppendLine($line)
+        $state.Task = $state.Reader.ReadLineAsync()
+        $ms = 0
+    }
+    return $state.Text.ToString()
+}
+
 # A scriptblock delegate (EnumWindows and friends) throws under iex, so the
 # P/Invoke surface stays limited to this direct call.
 if (-not ('Regress.Foreground' -as [type])) {
@@ -44,7 +60,11 @@ function Start-RegressApp($appArgs, $envs) {
     if ($envs) { foreach ($k in $envs.Keys) { $psi.EnvironmentVariables[$k] = $envs[$k] } }
     $p = [System.Diagnostics.Process]::Start($psi)
     $p | Add-Member -NotePropertyName RgOut -NotePropertyValue $p.StandardOutput.ReadToEndAsync()
-    $p | Add-Member -NotePropertyName RgErr -NotePropertyValue $p.StandardError.ReadToEndAsync()
+    $p | Add-Member -NotePropertyName RgErr -NotePropertyValue @{
+        Reader = $p.StandardError
+        Text   = New-Object System.Text.StringBuilder
+        Task   = $p.StandardError.ReadLineAsync()
+    }
     return $p
 }
 
@@ -62,12 +82,28 @@ try {
     }
 
     # The session arrives through the environment so no picker is up: a handoff
-    # into the picker would be a different test.
+    # into the picker would be a different test. B is not launched until A has
+    # logged that load, so the handoff lands on a window that is showing it.
     $rgFirst = Start-RegressApp '' @{ DUSKSTUDIO_LOAD_SESSION = $rgSession }
-    Start-Sleep -Seconds 20
-    $rgHwnd = $rgFirst.MainWindowHandle
-    $rgLog += "A pid=$($rgFirst.Id) alive=$(-not $rgFirst.HasExited) hwnd=$rgHwnd`n"
+    $rgSessionLoaded = $false
+    $rgHwnd = [IntPtr]::Zero
+    $rgFirstErr = ''
+    $rgUntil = (Get-Date).AddSeconds(60)
+    while ((Get-Date) -lt $rgUntil -and -not $rgFirst.HasExited) {
+        $rgFirstErr = Read-RegressStderr $rgFirst.RgErr 500
+        if (-not $rgSessionLoaded -and $rgFirstErr -match 'Dusk Studio/Load\] session\.json') {
+            $rgSessionLoaded = $true
+        }
+        if ($rgHwnd -eq [IntPtr]::Zero) {
+            $rgFirst.Refresh()
+            $rgHwnd = $rgFirst.MainWindowHandle
+        }
+        if ($rgSessionLoaded -and $rgHwnd -ne [IntPtr]::Zero) { break }
+    }
+    $rgLog += "A pid=$($rgFirst.Id) alive=$(-not $rgFirst.HasExited) hwnd=$rgHwnd sessionLoaded=$rgSessionLoaded`n"
     if ($rgFirst.HasExited) { throw "first instance exited during startup" }
+    # A short settle so the load's own window work is done before the handoff.
+    Start-Sleep -Seconds 3
 
     $rgSecond = Start-RegressApp ('"' + $rgHandoff + '"')
     $rgStart = Get-Date
@@ -86,25 +122,29 @@ try {
     $rgLog += "A after handoff: alive=$(-not $rgFirst.HasExited) foreground=$rgForeground wanted=$rgHwnd`n"
     $rgAlive = -not $rgFirst.HasExited
 
-    # Clean shutdown is phase 3's job; here the instance is only torn down, and
-    # its stderr can only be read in full once its pipe has closed.
+    # Clean shutdown is phase 3's job; here the instance is only torn down.
     try { $rgFirst.Kill() } catch { }
     $rgFirst.WaitForExit(20000) | Out-Null
     Stop-RegressChildren
-    $rgFirstErr = Read-RegressTask $rgFirst.RgErr 10000
+    $rgFirstErr = Read-RegressStderr $rgFirst.RgErr 2000
+    $rgSecondErr = Read-RegressStderr $rgSecond.RgErr 2000
     Set-Content -Path "$rgRoot\phase2-A.log" `
         -Value ((Read-RegressTask $rgFirst.RgOut 10000) + "`n---stderr---`n" + $rgFirstErr)
+    Set-Content -Path "$rgRoot\phase2-B.log" `
+        -Value ((Read-RegressTask $rgSecond.RgOut 10000) + "`n---stderr---`n" + $rgSecondErr)
     $rgLog += (($rgFirstErr -split "`n" |
         Select-String -Pattern 'SingleInstance|handoff|anotherInstance|Load\]|Assert|exception|fault' |
         Select-Object -Last 8 | ForEach-Object { '  ' + $_.Line.Trim() }) -join "`n") + "`n"
 
     # B exiting 0 only proves it gave up its slot; the handed-off path has to
-    # show up as a load in A.
-    $rgHandoffLoaded = ($rgFirstErr -match 'Dusk Studio/Load\] handoff\.json')
-    $rgLog += "A loaded the handed-off session: $rgHandoffLoaded`n"
+    # show up as a load in A, after the load A was started with.
+    $rgSessionAt = $rgFirstErr.IndexOf('Dusk Studio/Load] session.json')
+    $rgHandoffAt = $rgFirstErr.IndexOf('Dusk Studio/Load] handoff.json')
+    $rgHandoffLoaded = ($rgSessionAt -ge 0 -and $rgHandoffAt -gt $rgSessionAt)
+    $rgLog += "A load markers: session.json at $rgSessionAt, handoff.json at $rgHandoffAt, ordered=$rgHandoffLoaded`n"
 
-    if ($rgHandedOff -and $rgSecond.ExitCode -eq 0 -and $rgAlive `
-            -and $rgHwnd -ne 0 -and $rgForeground -eq $rgHwnd -and $rgHandoffLoaded) {
+    if ($rgSessionLoaded -and $rgHandedOff -and $rgSecond.ExitCode -eq 0 -and $rgAlive `
+            -and $rgHwnd -ne [IntPtr]::Zero -and $rgForeground -eq $rgHwnd -and $rgHandoffLoaded) {
         $rgResult = 'PASS'
     }
 } catch {
