@@ -694,7 +694,15 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/ScenarioWorld.cpp
     src/engine/scenario/SuiteRunner.cpp
     src/engine/scenario/cases/clap_state_roundtrip.cpp
+    src/engine/scenario/cases/clone_track_keeps_native_state.cpp
+    src/engine/scenario/cases/import_smf_irregular.cpp
+    src/engine/scenario/cases/lv2_file_state_inside_session.cpp
+    src/engine/scenario/cases/lv2_large_store_timing_bound.cpp
+    src/engine/scenario/cases/lv2_params_numbering_stable.cpp
+    src/engine/scenario/cases/offline_insert_no_pdc.cpp
     src/engine/scenario/cases/pipeline_selftest.cpp
+    src/engine/scenario/cases/scan_cancel_au.cpp
+    src/engine/scenario/cases/scan_cancel_lv2.cpp
     src/dsp/AuxLaneStrip.cpp
     src/dsp/BusStrip.cpp
     src/dsp/BrickwallLimiter.cpp

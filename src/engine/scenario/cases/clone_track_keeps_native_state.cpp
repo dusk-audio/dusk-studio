@@ -1,0 +1,264 @@
+#include "../Scenario.h"
+#include "../ScenarioContext.h"
+#include "../../AudioEngine.h"
+#include "../../../dsp/ChannelStrip.h"
+#include "../../../session/RegionEditActions.h"
+#include "../../../session/Session.h"
+
+#include <array>
+#include <string>
+#include <utility>
+
+namespace duskstudio::scenario
+{
+namespace
+{
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3
+constexpr int kSourceTrack = 2;
+constexpr int kCloneTrack  = 5;
+
+struct Recorder
+{
+    ScenarioContext& ctx;
+    std::string firstFailure;
+
+    bool expect (bool condition, std::string message)
+    {
+        if (! condition)
+        {
+            if (firstFailure.empty()) firstFailure = message;
+            ctx.note (std::move (message));
+        }
+        return condition;
+    }
+};
+
+// One format's leg of the check. The three session strings a native insert
+// persists are passed as pointers-to-member so the CLAP / LV2 / VST3 legs share
+// this body; `load` puts the plugin on a track and moves it off its defaults.
+template <typename StringMember, typename LoadFn, typename LoadedFn>
+void runFormat (ScenarioContext& ctx, Recorder& rec, const char* format,
+                StringMember pathMember, StringMember idMember, StringMember stateMember,
+                LoadFn&& load, LoadedFn&& isLoaded)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    const std::string prefix = std::string (format) + ": ";
+
+    if (! rec.expect (load (kSourceTrack), prefix + "could not load the fixture on the source track"))
+        return;
+
+    engine.publishPluginStateForSave (true);
+    const auto sourceId    = session.track (kSourceTrack).*idMember;
+    const auto sourceState = session.track (kSourceTrack).*stateMember;
+    if (! rec.expect (sourceState.isNotEmpty(), prefix + "the source published no state"))
+        return;
+
+    auto& undo = engine.getUndoManager();
+    undo.clearUndoHistory();
+    undo.beginNewTransaction();
+    if (! rec.expect (undo.perform (new CloneTrackAction (session, engine,
+                                                          kSourceTrack, kCloneTrack)),
+                      prefix + "the clone action refused to run"))
+        return;
+
+    rec.expect (isLoaded (kCloneTrack), prefix + "the clone left the destination slot empty");
+    rec.expect (session.track (kCloneTrack).*idMember == sourceId,
+                prefix + "the clone loaded a different plugin");
+    rec.expect ((session.track (kCloneTrack).*stateMember).isNotEmpty(),
+                prefix + "the clone persisted no state");
+
+    // A save straight after the clone has to see the same bytes on both tracks:
+    // the destination's live plugin must hold the source's settings, not just
+    // the session string the action wrote. Both are published through the same
+    // path here - the state a slot serialises depends on whether it has a
+    // file-state directory, so a blob captured by the action and one captured by
+    // the save path are not comparable byte for byte.
+    engine.publishPluginStateForSave (true);
+    rec.expect (session.track (kCloneTrack).*stateMember == session.track (kSourceTrack).*stateMember,
+                prefix + "the cloned plugin published different state from the source");
+    rec.expect (session.track (kSourceTrack).*stateMember == sourceState,
+                prefix + "the source's own state changed across the clone");
+
+    rec.expect (undo.undo(), prefix + "undo refused");
+    rec.expect (! isLoaded (kCloneTrack), prefix + "undo left the clone loaded");
+    rec.expect ((session.track (kCloneTrack).*pathMember).isEmpty(),
+                prefix + "undo left the clone's persisted path behind");
+    rec.expect ((session.track (kCloneTrack).*stateMember).isEmpty(),
+                prefix + "undo left the clone's persisted state behind");
+    rec.expect (isLoaded (kSourceTrack), prefix + "undo also unloaded the source");
+
+    rec.expect (undo.redo(), prefix + "redo refused");
+    rec.expect (isLoaded (kCloneTrack), prefix + "redo left the destination slot empty");
+    engine.publishPluginStateForSave (true);
+    rec.expect (session.track (kCloneTrack).*stateMember == session.track (kSourceTrack).*stateMember,
+                prefix + "redo restored different state");
+
+    undo.clearUndoHistory();
+}
+
+void clearTracks (ScenarioContext& ctx)
+{
+    auto& session = ctx.session();
+    auto& engine = ctx.engine();
+    for (const int t : { kSourceTrack, kCloneTrack })
+    {
+        auto& strip = engine.getChannelStrip (t);
+        strip.unloadNativeClap();
+        strip.unloadNativeLv2();
+        strip.unloadNativeVst3();
+        auto& track = session.track (t);
+        track.nativeClapPath.clear();
+        track.nativeClapPluginId.clear();
+        track.nativeClapStateBase64.clear();
+        track.nativeLv2Path.clear();
+        track.nativeLv2PluginId.clear();
+        track.nativeLv2StateBase64.clear();
+        track.nativeVst3Path.clear();
+        track.nativeVst3PluginId.clear();
+        track.nativeVst3StateBase64.clear();
+    }
+}
+
+ScenarioResult runClone (ScenarioContext& ctx)
+{
+    Recorder rec { ctx, {} };
+    auto& engine = ctx.engine();
+    int formatsRun = 0;
+
+    // A native insert's file-backed state is keyed off the session directory, so
+    // give the run one of its own rather than inheriting whatever the previous
+    // scenario left behind. Session owns a framework file object; naming its type
+    // through the getter keeps this file free of the framework header.
+    using SessionFile = decltype (ctx.session().getSessionDirectory());
+    const auto sessionDir = ctx.tempDir() / "session";
+    if (sessionDir.empty())
+        return ScenarioResult::fail ("could not create the temporary session directory");
+    ctx.session().setSessionDirectory (SessionFile (sessionDir.u8string().c_str()));
+
+   #if DUSKSTUDIO_HAS_NATIVE_CLAP
+    if (const auto fixture = ctx.fixture ("multi_bus.clap"))
+    {
+        ++formatsRun;
+        runFormat (ctx, rec, "CLAP",
+                   &Track::nativeClapPath, &Track::nativeClapPluginId,
+                   &Track::nativeClapStateBase64,
+                   [&] (int track)
+                   {
+                       auto& slot = engine.getChannelStrip (track).getNativeClapSlot();
+                       std::string error;
+                       if (! slot.load (*fixture, ScenarioContext::kSampleRate,
+                                        ScenarioContext::kBlockSize, error,
+                                        "studio.dusk.test.multi-bus"))
+                       {
+                           ctx.note ("CLAP load error: " + error);
+                           return false;
+                       }
+                       // The fixture's state is its processed-block count.
+                       std::array<float, ScenarioContext::kBlockSize> left {};
+                       std::array<float, ScenarioContext::kBlockSize> right {};
+                       for (int i = 0; i < 3; ++i)
+                           slot.processStereo (left.data(), right.data(), left.data(),
+                                               right.data(), ScenarioContext::kBlockSize);
+                       return true;
+                   },
+                   [&] (int track) { return engine.getChannelStrip (track).isNativeClapLoaded(); });
+        clearTracks (ctx);
+    }
+    else
+    {
+        ctx.note ("CLAP leg skipped: multi_bus.clap did not resolve");
+    }
+   #endif
+
+   #if DUSKSTUDIO_HAS_NATIVE_LV2
+    if (const auto fixture = ctx.fixture ("file_state.lv2"))
+    {
+        ++formatsRun;
+        runFormat (ctx, rec, "LV2",
+                   &Track::nativeLv2Path, &Track::nativeLv2PluginId,
+                   &Track::nativeLv2StateBase64,
+                   [&] (int track)
+                   {
+                       auto& slot = engine.getChannelStrip (track).getNativeLv2Slot();
+                       std::string error;
+                       if (! slot.load (*fixture, ScenarioContext::kSampleRate,
+                                        ScenarioContext::kBlockSize, error,
+                                        "urn:duskstudio:test:control-state"))
+                       {
+                           ctx.note ("LV2 load error: " + error);
+                           return false;
+                       }
+                       for (int i = 0; i < slot.paramCount(); ++i)
+                           if (const auto* info = slot.paramInfo (i);
+                               info != nullptr && info->name == "Gain")
+                               slot.setParamValue (info->id, 0.75);
+                       return true;
+                   },
+                   [&] (int track) { return engine.getChannelStrip (track).isNativeLv2Loaded(); });
+        clearTracks (ctx);
+    }
+    else
+    {
+        ctx.note ("LV2 leg skipped: file_state.lv2 did not resolve");
+    }
+   #endif
+
+   #if DUSKSTUDIO_HAS_NATIVE_VST3
+    if (const auto fixture = ctx.fixture ("relayout.vst3"))
+    {
+        ++formatsRun;
+        runFormat (ctx, rec, "VST3",
+                   &Track::nativeVst3Path, &Track::nativeVst3PluginId,
+                   &Track::nativeVst3StateBase64,
+                   [&] (int track)
+                   {
+                       auto& slot = engine.getChannelStrip (track).getNativeVst3Slot();
+                       std::string error;
+                       if (! slot.load (*fixture, ScenarioContext::kSampleRate,
+                                        ScenarioContext::kBlockSize, error))
+                       {
+                           ctx.note ("VST3 load error: " + error);
+                           return false;
+                       }
+                       for (int i = 0; i < slot.paramCount(); ++i)
+                           if (const auto* info = slot.paramInfo (i);
+                               info != nullptr && info->name == "Latency Mode")
+                               slot.setParamValue (info->id, 1.0);
+                       return true;
+                   },
+                   [&] (int track) { return engine.getChannelStrip (track).isNativeVst3Loaded(); });
+        clearTracks (ctx);
+    }
+    else
+    {
+        ctx.note ("VST3 leg skipped: relayout.vst3 did not resolve");
+    }
+   #endif
+
+    if (! rec.firstFailure.empty())
+        return ScenarioResult::fail (rec.firstFailure);
+    if (formatsRun == 0)
+        return ScenarioResult::skip ("no native plugin fixture resolved");
+    ctx.note ("formats covered: " + std::to_string (formatsRun));
+    return ScenarioResult::pass();
+}
+#endif
+
+const ScenarioRegistrar registrar { Scenario {
+    "session.clone_track_keeps_native_state",
+    { "session", "clone", "plugin", "state" },
+    Needs::Engine,
+    {},
+    [] (ScenarioContext& ctx) -> std::optional<ScenarioResult>
+    {
+       #if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3
+        return runClone (ctx);
+       #else
+        (void) ctx;
+        return ScenarioResult::skip ("built without any native plugin host");
+       #endif
+    }
+} };
+} // namespace
+} // namespace duskstudio::scenario

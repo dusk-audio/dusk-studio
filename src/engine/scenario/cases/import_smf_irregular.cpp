@@ -1,0 +1,149 @@
+#include "../Scenario.h"
+#include "../ScenarioContext.h"
+#include "../../FileImporter.h"
+#include "../../midi/MidiFileReader.h"
+#include "../../../session/Session.h"
+
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace duskstudio::scenario
+{
+namespace
+{
+// The fixtures ship as whitespace-separated hex so a byte-exact malformed file
+// survives review and version control.
+std::vector<std::uint8_t> decodeHex (const std::filesystem::path& source)
+{
+    std::vector<std::uint8_t> bytes;
+    std::ifstream input (source);
+    std::string token;
+    while (input >> token)
+        bytes.push_back ((std::uint8_t) std::stoul (token, nullptr, 16));
+    return bytes;
+}
+
+ScenarioResult runImport (ScenarioContext& ctx)
+{
+    std::string firstFailure;
+    auto expect = [&ctx, &firstFailure] (bool condition, std::string message)
+    {
+        if (! condition)
+        {
+            if (firstFailure.empty()) firstFailure = message;
+            ctx.note (std::move (message));
+        }
+        return condition;
+    };
+    auto verdict = [&firstFailure]
+    {
+        return firstFailure.empty() ? ScenarioResult::pass()
+                                    : ScenarioResult::fail (firstFailure);
+    };
+
+    const auto scratch = ctx.tempDir();
+    if (scratch.empty())
+        return ScenarioResult::fail ("could not create the temporary directory");
+
+    auto materialise = [&] (const char* logical, const char* name)
+    {
+        const auto bytes = decodeHex (*ctx.fixture (logical));
+        const auto target = scratch / name;
+        std::ofstream out (target, std::ios::binary | std::ios::trunc);
+        out.write ((const char*) bytes.data(), (std::streamsize) bytes.size());
+        out.close();
+        return target;
+    };
+
+    // Session file import goes through the same reader, so the counts and
+    // ordering below are the ones the reader's own tests pin.
+    using SessionFile = decltype (ctx.session().getSessionDirectory());
+    auto importNotes = [&] (const std::filesystem::path& file, int& noteCountOut)
+    {
+        fileimport::MidiImportRequest request;
+        request.source = SessionFile (file.u8string().c_str());
+        request.sessionSampleRate = ScenarioContext::kSampleRate;
+        request.sessionBpm = 120.0f;
+        const auto result = fileimport::importMidi (request);
+        noteCountOut = (int) result.region.notes.size();
+        if (! result.ok) ctx.note ("import error: " + result.errorMessage);
+        return result.ok;
+    };
+
+    auto countNoteOns = [] (const midi::MidiFileReader& reader)
+    {
+        int total = 0;
+        for (const auto& track : reader.tracks())
+            for (const auto& event : track)
+                if (event.isNoteOn()) ++total;
+        return total;
+    };
+
+    {
+        const auto file = materialise ("smf.vendor_chunk", "vendor-chunk.mid");
+        midi::MidiFileReader reader;
+        if (expect (reader.readFile (file), "the vendor-chunk file did not parse"))
+        {
+            if (expect (reader.tracks().size() == 2,
+                        "a vendor chunk was counted as a track"))
+            {
+                expect (reader.tracks()[0].size() == 2, "the first track lost events");
+                expect (reader.tracks()[1].size() == 2, "the second track lost events");
+                expect (reader.tracks()[0][0].noteNumber() == 60, "the first track's note changed");
+                expect (reader.tracks()[1][0].noteNumber() == 64, "the second track's note changed");
+            }
+
+            int imported = 0;
+            expect (importNotes (file, imported), "importing the vendor-chunk file failed");
+            expect (imported == countNoteOns (reader),
+                    "the import dropped notes the reader found: " + std::to_string (imported)
+                        + " of " + std::to_string (countNoteOns (reader)));
+        }
+    }
+
+    {
+        const auto file = materialise ("smf.same_tick", "same-tick-retrigger.mid");
+        midi::MidiFileReader reader;
+        if (expect (reader.readFile (file), "the same-tick file did not parse"))
+        {
+            if (expect (reader.tracks().size() == 1, "the same-tick file grew a track"))
+            {
+                const auto& events = reader.tracks()[0];
+                if (expect (events.size() == 7, "the same-tick file lost events"))
+                {
+                    expect (events[1].tick == 100 && events[1].isNoteOn()
+                                && events[1].noteNumber() == 60,
+                            "the unmatched same-tick note-on moved");
+                    expect (events[2].tick == 100 && events[2].isNoteOff()
+                                && events[2].noteNumber() == 64,
+                            "reordering stopped after the unmatched note-on");
+                    expect (events[3].tick == 100 && events[3].isNoteOn()
+                                && events[3].noteNumber() == 64,
+                            "the retriggered note lost its ordering");
+                }
+            }
+
+            int imported = 0;
+            expect (importNotes (file, imported), "importing the same-tick file failed");
+            expect (imported == countNoteOns (reader),
+                    "the import dropped notes the reader found: " + std::to_string (imported)
+                        + " of " + std::to_string (countNoteOns (reader)));
+        }
+    }
+
+    return verdict();
+}
+
+const ScenarioRegistrar registrar { Scenario {
+    "import.smf_irregular",
+    { "import", "midi" },
+    Needs::Engine,
+    { "smf.vendor_chunk", "smf.same_tick" },
+    [] (ScenarioContext& ctx) -> std::optional<ScenarioResult> { return runImport (ctx); }
+} };
+} // namespace
+} // namespace duskstudio::scenario
