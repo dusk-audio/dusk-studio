@@ -9,6 +9,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=scripts/regress/common.sh
 source "${REPO_ROOT}/scripts/regress/common.sh"
+# shellcheck source=scripts/regress/xvfb.sh
+source "${REPO_ROOT}/scripts/regress/xvfb.sh"
 
 JOBS="${DUSK_JOBS:-6}"
 DONOR_DIR_NAME="dusk-donor-pin"
@@ -92,44 +94,6 @@ check_configure() {
             regress_note "${dir}: DUSK_PLUGINS_PATH=${cached}"
         fi
     done
-    return "$rc"
-}
-
-# Runs a command on a private X display with WAYLAND_DISPLAY unset. The app
-# aborts against the live Wayland session, so every GUI-linked leg goes here.
-xvfb_run() {
-    local timeout_s="$1"
-    shift
-    local display_file log_file xvfb_pid display_number rc=0
-    display_file="$(mktemp "${TMPDIR:-/tmp}/duskstudio-regress-display.XXXXXX")"
-    log_file="$(mktemp "${TMPDIR:-/tmp}/duskstudio-regress-xvfb.XXXXXX")"
-    Xvfb -displayfd 3 -screen 0 1920x1200x24 -nolisten tcp \
-        3>"$display_file" 2>"$log_file" &
-    xvfb_pid=$!
-    local attempt
-    for ((attempt = 0; attempt < 100; ++attempt)); do
-        [[ -s "$display_file" ]] && break
-        if ! kill -0 "$xvfb_pid" 2>/dev/null; then
-            echo "error: Xvfb failed to start:" >&2
-            sed 's/^/  /' "$log_file" >&2
-            rm -f "$display_file" "$log_file"
-            return 1
-        fi
-        sleep 0.1
-    done
-    if ! read -r display_number <"$display_file" \
-        || [[ ! "$display_number" =~ ^[0-9]+$ ]]; then
-        echo "error: Xvfb did not report a ready display:" >&2
-        sed 's/^/  /' "$log_file" >&2
-        kill "$xvfb_pid" 2>/dev/null || true
-        rm -f "$display_file" "$log_file"
-        return 1
-    fi
-    env -u WAYLAND_DISPLAY DISPLAY=":${display_number}" \
-        timeout --kill-after=10 "$timeout_s" "$@" || rc=$?
-    kill "$xvfb_pid" 2>/dev/null || true
-    wait "$xvfb_pid" 2>/dev/null || true
-    rm -f "$display_file" "$log_file"
     return "$rc"
 }
 
