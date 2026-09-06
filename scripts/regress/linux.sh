@@ -22,6 +22,7 @@ RUN_PERF=0
 RUN_SCENARIOS=1
 GUI_SCENARIOS=0
 SCENARIOS_ONLY=0
+RELEASE_CHECKS=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -48,6 +49,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --scenarios-only)
             SCENARIOS_ONLY=1
+            shift
+            ;;
+        --release-checks)
+            RELEASE_CHECKS=1
             shift
             ;;
         *) regress_die "unknown option '$1' for the linux target" ;;
@@ -120,6 +125,74 @@ check_configure() {
         fi
     done
     return "$rc"
+}
+
+REPO_SLUG="dusk-audio/dusk-studio"
+RULESET_ID="${DUSK_REGRESS_RULESET_ID:-17313833}"
+PATREON_CONFIG="${DUSK_REGRESS_PATREON_CONFIG:-$HOME/.config/dusk-audio/patreon.json}"
+
+leg_release_metadata() {
+    scripts/release-metadata-check.sh
+}
+
+# The CI checks a merge to main has to pass. A ruleset that requires fewer
+# lets a red job merge, which is what the WARN names.
+RULESET_REQUIRED=(
+    "Build + tests (GCC Release, Ubuntu 22.04, amd64)"
+    "Build + tests (GCC Release, Ubuntu 22.04, arm64)"
+    "Build + tests (clang Release, macOS arm64)"
+    "Catch2 tests (MSVC x64 Release, Windows)"
+    "Catch2 tests (TSan, Ubuntu 22.04)"
+    "Catch2 tests (ASan + UBSan, Ubuntu 22.04)"
+)
+
+leg_github_ruleset() {
+    local present check missing=""
+    present="$(gh api "repos/${REPO_SLUG}/rulesets/${RULESET_ID}" \
+        --jq '.rules[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context')"
+    echo "ruleset ${RULESET_ID} requires:"
+    while IFS= read -r check; do echo "  $check"; done <<<"$present"
+    for check in "${RULESET_REQUIRED[@]}"; do
+        grep -qxF -- "$check" <<<"$present" || missing="${missing}${missing:+; }${check}"
+    done
+    [[ -z "$missing" ]] || echo "warn: ruleset ${RULESET_ID} does not require: ${missing}"
+    return 0
+}
+
+# Part 10 step 2, as the guide spells it out: no local name overrides, the
+# supporter header at the donor pin the release workflow builds against, and
+# the Patreon dry run. A refreshed token pair is reported, because the Actions
+# secrets have to follow it before the tag.
+leg_patreon_freshness() {
+    local donor_rev out
+    python3 - "$PATREON_CONFIG" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+overrides = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")).get("name_overrides", {})
+if overrides:
+    raise SystemExit("STOP: local Patreon name_overrides are not available to release workflows")
+PY
+    donor_rev="$(sed -nE 's/^[[:space:]]*DONOR_REV:[[:space:]]*([0-9a-f]{40})[[:space:]]*$/\1/p' \
+        .github/workflows/release.yml | head -1)"
+    [[ "$donor_rev" =~ ^[0-9a-f]{40}$ ]] || {
+        echo "error: release workflow has no valid DONOR_REV" >&2
+        return 1
+    }
+    git -C ../plugins cat-file -e "${donor_rev}^{commit}" 2>/dev/null \
+        || git -C ../plugins fetch origin "$donor_rev"
+    echo "supporter header at ${donor_rev}:"
+    git -C ../plugins show "${donor_rev}:plugins/shared/PatreonBackers.h" | sed 's/^/  /'
+    out="$(env -u DUSK_PLUGINS_PATH scripts/update-patrons.py --dry-run 2>&1)" || {
+        printf '%s\n' "$out"
+        return 1
+    }
+    printf '%s\n' "$out"
+    if grep -qF 'Patreon tokens refreshed and saved.' <<<"$out"; then
+        echo "warn: Patreon tokens refreshed; update the PATREON_* Actions secrets before tagging"
+    fi
+    return 0
 }
 
 leg_ipc_selftest() {
@@ -209,6 +282,24 @@ else
     fi
     for leg in "${missing_legs[@]}"; do
         regress_skip "$leg" "app binary missing: ${APP_BIN}"
+    done
+fi
+
+if ((RELEASE_CHECKS)); then
+    regress_leg "release-metadata" leg_release_metadata
+    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+        regress_leg_soft "github-ruleset" leg_github_ruleset
+    else
+        regress_skip "github-ruleset" "gh is not authenticated"
+    fi
+    if [[ -f "$PATREON_CONFIG" && -d ../plugins ]]; then
+        regress_leg_soft "patreon-freshness" leg_patreon_freshness
+    else
+        regress_skip "patreon-freshness" "needs ${PATREON_CONFIG} and a ../plugins checkout"
+    fi
+else
+    for leg in release-metadata github-ruleset patreon-freshness; do
+        regress_skip "$leg" "not requested (--release-checks)"
     done
 fi
 

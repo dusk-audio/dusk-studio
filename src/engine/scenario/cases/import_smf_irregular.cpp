@@ -89,6 +89,29 @@ ScenarioResult runImport (ScenarioContext& ctx)
     }
 
     {
+        // The header counts the vendor chunk as a track. What parsed before the
+        // count runs out has to survive, as it did with the previous reader.
+        const auto file = materialise ("smf.vendor_counted", "vendor-chunk-counted.mid");
+        midi::MidiFileReader reader;
+        if (ctx.expect (reader.readFile (file),
+                        "a header that counts its vendor chunk failed the whole file"))
+        {
+            if (ctx.expect (reader.tracks().size() == 2,
+                            "the over-counted file did not keep both tracks"))
+            {
+                ctx.expect (reader.tracks()[0][0].noteNumber() == 60, "the first track's note changed");
+                ctx.expect (reader.tracks()[1][0].noteNumber() == 64, "the second track's note changed");
+            }
+
+            int imported = 0;
+            ctx.expect (importNotes (file, imported), "importing the over-counted file failed");
+            ctx.expect (imported == countNoteOns (reader),
+                        "the import dropped notes the reader found: " + std::to_string (imported)
+                            + " of " + std::to_string (countNoteOns (reader)));
+        }
+    }
+
+    {
         const auto file = materialise ("smf.same_tick", "same-tick-retrigger.mid");
         midi::MidiFileReader reader;
         if (ctx.expect (reader.readFile (file), "the same-tick file did not parse"))
@@ -125,7 +148,7 @@ const ScenarioRegistrar registrar { Scenario {
     "import.smf_irregular",
     { "import", "midi" },
     Needs::Engine,
-    { "smf.vendor_chunk", "smf.same_tick" },
+    { "smf.vendor_chunk", "smf.same_tick", "smf.vendor_counted" },
     [] (ScenarioContext& ctx) -> std::optional<ScenarioResult> { return runImport (ctx); }
 } };
 } // namespace

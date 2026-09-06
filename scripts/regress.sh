@@ -30,6 +30,8 @@ usage: scripts/regress.sh [linux|mac|windows|all] [options]
              --gui-scenarios     also run the GUI scenario suite
              --scenarios-only    scenario legs only, against the binary
                                  already in build/
+             --release-checks    also the pre-tag legs: release metadata,
+                                 the main ruleset, Patreon freshness
   mac      drive the M3 Air over ssh: push HEAD, configure, build, ctest,
            headless self-test
              --host <user@host>  default marc@macbook-air.local
@@ -79,6 +81,7 @@ declare -A OPTION_OWNER=(
     [--no-scenarios]=linux
     [--gui-scenarios]=linux
     [--scenarios-only]=linux
+    [--release-checks]=linux
     [--host]=mac
     [--msi]=windows
     [--release-run]=windows

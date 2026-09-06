@@ -476,8 +476,13 @@ Prerequisites: `build/` and `build-tests/` already configured, `Xvfb`, GNU
 | `scenarios-headless` | `DUSKSTUDIO_RUN_SCENARIOS=all`: the in-app scenario suite. Passes only on exit 0, no `[FAIL]` line, and the terminal `=== scenarios: ` summary - a crash after the last case must not pass on a lucky exit code. Skipped cases go into the leg's note. |
 | `bb-handoff`, `bb-crash-relaunch`, `bb-no-runtime-dir`, `bb-damaged-recent`, `bb-clean-quit`, `bb-quit-twice`, `bb-oop-child-kill`, `bb-oop-quit-during-load` | the black-box legs: real app processes spawned, killed and read back through their stderr. See "Scenario legs" below. |
 | `scenarios-gui` | `DUSKSTUDIO_RUN_SCENARIOS=gui`: the plugin-editor scenarios that need a window. Off unless `--gui-scenarios` - it is the slowest leg and the most sensitive to GLX under Xvfb. |
+| `release-metadata` | `scripts/release-metadata-check.sh`: `VERSION`, the top changelog heading, the AppStream entry and the release-notes summary agree, in the development or the release-ready state. Off unless `--release-checks`. |
+| `github-ruleset` | the `main` ruleset requires the six CI checks a merge has to pass (Linux amd64 and arm64, macOS, Windows, TSan, ASan+UBSan); `WARN` names the missing ones. Needs an authenticated `gh`. Off unless `--release-checks`. |
+| `patreon-freshness` | Part 10 step 2: no local name overrides, the supporter header at the donor pin, the Patreon dry run. `WARN` when the dry run refreshed tokens, which means the Actions secrets need updating before the tag. Off unless `--release-checks`. |
 
 `--no-scenarios` leaves the scenario legs out of the run entirely.
+`--release-checks` adds the three pre-tag legs; they touch the network and, in
+the Patreon case, the local token pair, so they are not part of a default run.
 `--scenarios-only` runs nothing but them, against whatever binary is already in
 `build/`; the compile and self-test legs are reported as `SKIP` so the table
 still says what was not run. `build-tests/` has to exist either way: it is half
