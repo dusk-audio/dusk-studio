@@ -1,5 +1,5 @@
 <!-- summary-start -->
-Restores hosted plugin settings when reopening sessions, prevents hung plugin scans from wedging, and adds scan cancellation.
+Hardened session and plugin recovery, sandboxed plugin hosting on all three platforms, transport MIDI cleanup, cross-platform launch and window fixes, and the release metadata found missing in the pre-tag audit.
 <!-- summary-end -->
 
 ### Downloads

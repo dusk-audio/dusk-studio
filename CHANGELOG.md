@@ -5,7 +5,7 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [0.13.3] - Unreleased
+## [0.13.3] - 2026-09-05
 
 This release hardens session and plugin recovery, transport MIDI cleanup,
 native plugin hosting, and cross-platform launch and window behaviour. It also
