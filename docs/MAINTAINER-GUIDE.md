@@ -546,7 +546,12 @@ current tag workflows publish, so nothing a tagged release produces uses it.
        "${RELEASE_COMMIT:?record RELEASE_COMMIT after committing metadata}:CHANGELOG.md" \
        | grep -E '^## \[[0-9]+\.[0-9]+\.[0-9]+\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$' \
        | grep -F "## [${RELEASE_VERSION:?set RELEASE_VERSION first}] - "
-     scripts/release-metadata-check.sh \
+     meta="$(mktemp -d)"
+     trap 'rm -rf "$meta"' EXIT
+     git archive \
+       "${RELEASE_COMMIT:?record RELEASE_COMMIT after committing metadata}" \
+       VERSION CHANGELOG.md packaging | tar -x -C "$meta"
+     scripts/release-metadata-check.sh --root "$meta" \
        --tag "v${RELEASE_VERSION:?set RELEASE_VERSION first}" --date "$(date -u +%F)"
    )
    ```

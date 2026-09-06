@@ -1476,6 +1476,9 @@ write_metadata_fixture "$META/app-version" 0.0.2 "0.0.2] - 2026-01-02" 0.0.1 202
 metadata_expect fail "AppStream behind VERSION" --root "$META/app-version"
 write_metadata_fixture "$META/future" 0.0.2 "0.0.2] - 2999-01-01" 0.0.2 2999-01-01
 metadata_expect fail "a heading dated in the future" --root "$META/future"
+write_metadata_fixture "$META/no-summary" 0.0.2 "0.0.2] - 2026-01-02" 0.0.2 2026-01-02
+printf '<!-- summary-start -->\n<!-- summary-end -->\n' > "$META/no-summary/packaging/RELEASE-NOTES.md"
+metadata_expect fail "an empty release-notes summary" --root "$META/no-summary"
 
 "$PYTHON" - "$SOURCE_ROOT" <<'PY'
 import re
@@ -1484,9 +1487,10 @@ from pathlib import Path
 
 source_root = Path(sys.argv[1])
 release_workflow = (source_root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
-assert "scripts/release-metadata-check.sh --tag" in release_workflow, (
-    "the tag workflow must run the release metadata checker against the tag"
-)
+assert re.search(
+    r"scripts/release-metadata-check\.sh --tag \S+ \\\n\s*--commit-date ",
+    release_workflow,
+), "the tag workflow must run the release metadata checker against the tag and its commit date"
 
 # Every single-line configure example in the maintainer guide has to name the
 # donor pin: the sibling ../plugins has drifted past it, and an example without
