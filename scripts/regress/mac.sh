@@ -62,15 +62,23 @@ mac_run() {
 
 restore_branch() {
     [[ -n "$MAC_PREV_BRANCH" ]] || return 0
-    local target="$MAC_PREV_BRANCH"
-    # abbrev-ref reports HEAD for a detached checkout; that one goes back by
-    # commit, not by name.
-    [[ "$MAC_PREV_BRANCH" == HEAD ]] && target="--detach ${MAC_PREV_COMMIT}"
-    printf '\n--- restoring %s to %s ---\n' "$MAC_HOST" "$target"
-    mac_run 600 <<REMOTE || echo "warning: could not restore ${target}" >&2
+    # The name comes from the node's own checkout and is spliced into a script
+    # the remote bash interprets, so it travels as a bash-quoted word (%q): a
+    # ref name may legally contain $, ;, &, | and quotes. abbrev-ref reports
+    # HEAD for a detached checkout; that one goes back by commit, not by name.
+    local checkout_args label
+    if [[ "$MAC_PREV_BRANCH" == HEAD ]]; then
+        checkout_args="--detach $(printf '%q' "$MAC_PREV_COMMIT")"
+        label="detached ${MAC_PREV_COMMIT:0:12}"
+    else
+        checkout_args="$(printf '%q' "$MAC_PREV_BRANCH")"
+        label="$MAC_PREV_BRANCH"
+    fi
+    printf '\n--- restoring %s to %s ---\n' "$MAC_HOST" "$label"
+    mac_run 600 <<REMOTE || echo "warning: could not restore ${label}" >&2
 set -euo pipefail
 cd "\$HOME/${MAC_REPO}"
-git checkout -q ${target}
+git checkout -q ${checkout_args}
 git branch -q -D "${REMOTE_BRANCH}" 2>/dev/null || true
 while read -r path sha; do
     [[ -n "\$path" ]] || continue
