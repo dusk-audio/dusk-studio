@@ -234,6 +234,10 @@ public:
         return roundTrips.load (std::memory_order_relaxed);
     }
 
+    // OS pid of the plugin-host child, or -1 when none is running (always -1 on
+    // Windows, which tracks the child by handle). Message thread.
+    int getChildPid() const noexcept { return child.getPid(); }
+
 private:
     platform::SharedMemory  shm;
     platform::ChildProcess  child;

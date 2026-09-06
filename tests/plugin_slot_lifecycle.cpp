@@ -107,7 +107,7 @@ PluginDescriptor sandboxTestDescriptor()
 void useSandboxStub (PluginManager& manager, const char* modeArg)
 {
     manager.setOopEnabled (true);
-    manager.setHostExecutableForTest (DUSKSTUDIO_PLUGIN_HOST_PATH, modeArg);
+    manager.setHostExecutableOverride (DUSKSTUDIO_PLUGIN_HOST_PATH, modeArg);
 }
 
 #if ! defined (__APPLE__)

@@ -202,6 +202,13 @@ public:
     // Message-thread only.
     bool ensureMidiOutputOpen (int index) { return midiOut.ensureOpen (index); }
 
+    // Test seam: swap the MIDI output backend so a harness sees every block the
+    // bank would deliver. Message-thread only, audio callback detached.
+    void installMidiOutputBackend (std::unique_ptr<duskstudio::midi::IMidiOutputBackend> backend)
+    {
+        midiOut.installBackend (std::move (backend));
+    }
+
     // Open the MIDI output every track is routed to. Called once after
     // SessionSerializer::load resolves identifiers. Message-thread only.
     // Caller MUST have the audio callback detached (startup pre-attach path).

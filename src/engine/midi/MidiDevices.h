@@ -138,6 +138,12 @@ public:
     MidiOutputBank();
     ~MidiOutputBank();
 
+    // Test seam: run the bank over a caller-supplied backend, so what it would
+    // hand to the OS can be observed instead. Message thread, audio callback
+    // DETACHED - it retires the outgoing device order and re-enumerates exactly
+    // as rebuild() does. A null backend is ignored.
+    void installBackend (std::unique_ptr<IMidiOutputBackend> backendIn);
+
     // Message thread, audio callback DETACHED. Discard queued blocks (their port
     // indices were minted against the old device order), close open outputs, and
     // re-enumerate. Does NOT eager-open: opening every port at startup blocks the
