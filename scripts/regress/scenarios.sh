@@ -154,6 +154,20 @@ bb_wait_marker() {
     done
 }
 
+# bb_wait_any_marker <tag> <secs> <literal>...: succeeds when any one appears.
+bb_wait_any_marker() {
+    local tag="$1" secs="$2"
+    shift 2
+    local deadline=$((SECONDS + $(bb_budget "$secs"))) literal
+    while :; do
+        for literal in "$@"; do
+            if grep -qF -- "$literal" "$BB_SDIR/$tag.err" 2>/dev/null; then return 0; fi
+        done
+        ((SECONDS < deadline)) || return 1
+        sleep 0.1
+    done
+}
+
 bb_assert_marker() {
     local tag="$1" literal="$2"
     if grep -qF -- "$literal" "$BB_SDIR/$tag.err" 2>/dev/null; then return 0; fi
@@ -394,10 +408,9 @@ bb_damaged_recent_body() {
     # declines. What it may never do is stay silent about which happened. On a
     # host where GLX does work, DUSK_REGRESS_REQUIRE_PICKER=1 demands the window.
     if [[ "${DUSK_REGRESS_REQUIRE_PICKER:-0}" == 1 ]]; then
-        bb_assert_marker A "[Dusk Studio/startup] picker shown" || return 1
-    elif ! grep -qF -- "[Dusk Studio/startup] picker shown" "$BB_SDIR/A.err" \
-        && ! grep -qF -- "[Dusk Studio/startup] picker unavailable on this display" \
-            "$BB_SDIR/A.err"; then
+        bb_wait_marker A "[Dusk Studio/startup] picker shown" 60 || return 1
+    elif ! bb_wait_any_marker A 60 "[Dusk Studio/startup] picker shown" \
+            "[Dusk Studio/startup] picker unavailable on this display"; then
         bb_fail "the picker neither showed nor explained itself"
         return 1
     fi
@@ -453,7 +466,9 @@ bb_quit_twice_body() {
     local session
     session="$(bb_session quit-twice)" || return 1
 
-    bb_spawn A "DUSKSTUDIO_LOAD_SESSION=$session" "DUSKSTUDIO_QUIT_AFTER_MS=8000,8300" -- \
+    # The first quit reaches systemRequestedQuit within a few milliseconds, so
+    # only a second timer firing on the same tick can meet the latch.
+    bb_spawn A "DUSKSTUDIO_LOAD_SESSION=$session" "DUSKSTUDIO_QUIT_AFTER_MS=8000,8000" -- \
         || return 1
     bb_wait_marker A "[Dusk Studio/Load] session.json" 120 || return 1
     bb_wait_exit A 90 || return 1
