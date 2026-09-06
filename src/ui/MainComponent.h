@@ -41,6 +41,12 @@ public:
     // the last one is written.
     void captureNativePanels (std::string outDir);
 
+    // Scenario harness (DUSKSTUDIO_RUN_SCENARIOS=gui[:<terms>]). Steps the GUI
+    // cases through the live message loop and sets the return value + quits when
+    // the last one reports. Defined in GuiScenarios.cpp; never called on a
+    // normal run.
+    void runGuiScenarios (std::string spec);
+
     // Screenshot-capture harness (DUSKSTUDIO_CAPTURE_DIR). Synthesises a
     // small demo session, drives each documented stage / strip / modal,
     // writes PNGs into outDir, then quits the app. Defined in
@@ -86,6 +92,13 @@ public:
     void toggleNotepad();
 
 private:
+    // The GUI scenarios' view of this window. Nested so GuiScenarios.cpp can
+    // reach the views and the engine without opening either up to the rest of
+    // the app; defined there and nowhere else.
+    struct ScenarioGuiHost;
+    struct ScenarioStripHandle;
+    struct ScenarioAuxLaneHandle;
+
     void openAudioSettings();
     void closeAudioSettings();
    #if DUSKSTUDIO_HAS_NATIVE_UI

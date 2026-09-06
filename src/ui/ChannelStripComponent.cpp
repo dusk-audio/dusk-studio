@@ -2594,6 +2594,15 @@ bool ChannelStripComponent::hasOpenPluginEditorForScenario() const noexcept
     return isPluginEditorOpen();
 }
 
+bool ChannelStripComponent::pluginWindowMissingForScenario() const noexcept
+{
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    return clapEditor != nullptr && clapEditor->pluginWindowMissing();
+#else
+    return false;
+#endif
+}
+
 void ChannelStripComponent::openPluginEditor()
 {
     if (isPluginEditorOpen()) return;

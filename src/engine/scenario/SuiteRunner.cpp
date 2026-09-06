@@ -57,8 +57,22 @@ std::string joinTags (const std::vector<std::string>& tags)
 }
 } // namespace
 
+std::function<void (int)>& guiSuiteExit()
+{
+    static std::function<void (int)> exitFn;
+    return exitFn;
+}
+
 SuiteRunner::SuiteRunner (std::string selector, std::function<void (int)> onFinished)
     : selectorText (std::move (selector)), onFinishedFn (std::move (onFinished)),
+      aliveToken (std::make_shared<char>())
+{}
+
+SuiteRunner::SuiteRunner (std::string selector, GuiHost& host,
+                          Session& session, AudioEngine& engine,
+                          std::function<void (int)> onFinished)
+    : selectorText (std::move (selector)), onFinishedFn (std::move (onFinished)),
+      guiHost (&host), liveSession (&session), liveEngine (&engine),
       aliveToken (std::make_shared<char>())
 {}
 
@@ -87,22 +101,41 @@ void SuiteRunner::start()
         return;
     }
 
-    world = std::make_unique<ScenarioWorld>();
+    if (guiHost == nullptr)
+        world = std::make_unique<ScenarioWorld>();
     runNext();
 }
 
 bool SuiteRunner::select()
 {
     const auto& scenarios = allScenarios();
+    const bool guiMode = guiHost != nullptr;
 
-    for (const auto& term : splitTerms (selectorText))
+    std::string terms = selectorText;
+    if (guiMode)
+    {
+        if (selectorText == "gui") terms = "all";
+        else if (selectorText.rfind ("gui:", 0) == 0) terms = selectorText.substr (4);
+        else
+        {
+            std::fprintf (stderr, "not a gui selector: %s\n", selectorText.c_str());
+            std::fflush (stderr);
+            return false;
+        }
+        if (terms.empty()) terms = "all";
+    }
+
+    for (const auto& term : splitTerms (terms))
     {
         if (term == "all")
         {
             // Helpers exist to set something up for another leg of the suite, so
-            // they are not part of a verdict. Naming one, or its tag, still runs it.
+            // they are not part of a verdict. Naming one, or its tag, still runs
+            // it. A GUI scenario is likewise only ever picked up by the runner
+            // that can actually drive it.
             for (const auto& scenario : scenarios)
-                if (! hasTag (scenario, "helper"))
+                if (! hasTag (scenario, "helper")
+                    && (((scenario.needs & Needs::Gui) != 0) == guiMode))
                     selected.push_back (&scenario);
             continue;
         }
@@ -153,9 +186,18 @@ void SuiteRunner::runNext()
     std::fprintf (stderr, "[RUN] %s\n", scenario.name.c_str());
     std::fflush (stderr);
 
-    if ((scenario.needs & Needs::Gui) != 0)
+    const bool guiMode = guiHost != nullptr;
+    const bool needsGui = (scenario.needs & Needs::Gui) != 0;
+
+    if (needsGui != guiMode)
     {
-        skipCurrent ("needs gui");
+        skipCurrent (needsGui ? "needs gui" : "needs the headless runner");
+        return;
+    }
+
+    if (guiMode && ! scenario.runGui)
+    {
+        skipCurrent ("no gui entry point");
         return;
     }
 
@@ -178,14 +220,25 @@ void SuiteRunner::beginCurrent()
     scenarioStartMs = nowMs();
     ++generation;
 
-    context = std::make_unique<ScenarioContext> (
-        world->session(), world->engine(),
-        [this] (ScenarioResult result) { finishCurrent (std::move (result)); });
+    if (guiHost != nullptr)
+    {
+        // The window owns the session directory a GUI run acts on, so unlike the
+        // headless path this does not repoint it at scratch space.
+        context = std::make_unique<ScenarioContext> (
+            *liveSession, *liveEngine,
+            [this] (ScenarioResult result) { finishCurrent (std::move (result)); });
+    }
+    else
+    {
+        context = std::make_unique<ScenarioContext> (
+            world->session(), world->engine(),
+            [this] (ScenarioResult result) { finishCurrent (std::move (result)); });
 
-    // A scratch session of its own for every scenario: plugin file state, saved
-    // sessions and recorded audio all key off this directory, and it goes away
-    // with the context.
-    context->setSessionDirectory (context->tempDir() / "session");
+        // A scratch session of its own for every scenario: plugin file state,
+        // saved sessions and recorded audio all key off this directory, and it
+        // goes away with the context.
+        context->setSessionDirectory (context->tempDir() / "session");
+    }
 
     const unsigned armed = generation;
     const int timeoutMs = scenario.timeoutMs > 0 ? scenario.timeoutMs : 30000;
@@ -196,7 +249,9 @@ void SuiteRunner::beginCurrent()
         context->complete (ScenarioResult::fail ("timed out after " + std::to_string (timeoutMs) + " ms"));
     });
 
-    if (auto immediate = scenario.run (*context))
+    auto immediate = guiHost != nullptr ? scenario.runGui (*guiHost, *context)
+                                        : scenario.run (*context);
+    if (immediate)
         context->complete (std::move (*immediate));
 }
 
@@ -217,7 +272,7 @@ void SuiteRunner::finishCurrent (ScenarioResult result)
     {
         if (guard.expired()) return;
         context.reset();
-        world->reset();
+        if (world != nullptr) world->reset();
         runNext();
     });
 }

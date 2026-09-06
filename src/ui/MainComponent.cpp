@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>  // std::getenv (DUSKSTUDIO_USE_OOP_PLUGINS)
+#include <cstring>
 #include "AppConfig.h"
 #if __has_include("BinaryData.h")
  #include "BinaryData.h"
@@ -1080,6 +1081,20 @@ MainComponent::MainComponent()
         {
             if (safeThis != nullptr)
                 safeThis->captureScreenshots (juce::File (dirStr));
+        });
+    }
+
+    // The GUI half of the scenario suite. Same shape as the capture hook above:
+    // the app leaves a gui selection alone so the window can come up, and the
+    // run starts once it has. The picker and the startup scan are suppressed for
+    // any DUSKSTUDIO_RUN_SCENARIOS.
+    if (const char* scenarioSpec = std::getenv ("DUSKSTUDIO_RUN_SCENARIOS");
+        scenarioSpec != nullptr && std::strncmp (scenarioSpec, "gui", 3) == 0)
+    {
+        std::string spec (scenarioSpec);
+        dusk::Timer::callAfterDelay (1500, [safeThis, spec]
+        {
+            if (safeThis != nullptr) safeThis->runGuiScenarios (spec);
         });
     }
 

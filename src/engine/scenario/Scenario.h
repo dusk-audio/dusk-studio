@@ -14,6 +14,9 @@
 namespace duskstudio::scenario
 {
 class ScenarioContext;
+// The live window, as a GUI scenario drives it. Declared in src/ui/GuiHost.h;
+// opaque here so the scenario vocabulary stays free of the GUI tower.
+class GuiHost;
 
 enum class ScenarioStatus { Pass, Fail, Skip };
 
@@ -48,6 +51,10 @@ struct Scenario
     // finishes later through ScenarioContext::complete.
     std::function<std::optional<ScenarioResult> (ScenarioContext&)> run;
     int timeoutMs = 30000;
+    // A Needs::Gui scenario leaves `run` empty and fills this in instead: only
+    // the runner built over a live window can supply the host, so the headless
+    // runner skips it.
+    std::function<std::optional<ScenarioResult> (GuiHost&, ScenarioContext&)> runGui;
 };
 
 namespace detail

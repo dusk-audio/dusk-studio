@@ -54,6 +54,8 @@ public:
     bool openPluginEditorForScenario();
     void closePluginEditorForScenario();
     bool hasOpenPluginEditorForScenario() const noexcept;
+    // The open CLAP editor is a container the plug-in never put a window in.
+    bool pluginWindowMissingForScenario() const noexcept;
 
     void paint (juce::Graphics&) override;
     void resized() override;

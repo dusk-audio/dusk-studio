@@ -50,6 +50,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <thread>
 
 #if JUCE_LINUX
@@ -1919,16 +1920,31 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
     // Checked before the self-test: the shared private-Xvfb helper always sets
     // DUSKSTUDIO_RUN_SELFTEST, so a caller naming scenarios through it has to
     // win over the blanket run.
-    if (const char* spec = std::getenv ("DUSKSTUDIO_RUN_SCENARIOS"); spec != nullptr && *spec)
+    const char* const scenarioSpec = std::getenv ("DUSKSTUDIO_RUN_SCENARIOS");
+    // A gui selection needs the main window, so the launch continues and
+    // MainComponent's own hook starts that runner once the window is up. All it
+    // lacks from here is the way out of the process.
+    const bool guiScenarioRun = scenarioSpec != nullptr && *scenarioSpec
+                             && std::strncmp (scenarioSpec, "gui", 3) == 0;
+
+    if (scenarioSpec != nullptr && *scenarioSpec)
     {
-        scenarioRunner = std::make_unique<scenario::SuiteRunner> (
-            std::string (spec),
-            [this] (int exitCode) { setApplicationReturnValue (exitCode); quit(); });
-        scenarioRunner->start();
-        return;
+        if (guiScenarioRun)
+        {
+            scenario::guiSuiteExit() = [this] (int exitCode)
+            { setApplicationReturnValue (exitCode); quit(); };
+        }
+        else
+        {
+            scenarioRunner = std::make_unique<scenario::SuiteRunner> (
+                std::string (scenarioSpec),
+                [this] (int exitCode) { setApplicationReturnValue (exitCode); quit(); });
+            scenarioRunner->start();
+            return;
+        }
     }
 
-    if (envFlagSet ("DUSKSTUDIO_RUN_SELFTEST"))
+    if (! guiScenarioRun && envFlagSet ("DUSKSTUDIO_RUN_SELFTEST"))
     {
         setApplicationReturnValue (runHeadlessSelfTest() ? 0 : 1);
         quit();

@@ -50,6 +50,17 @@ public:
     // needs it because abandoning unbinds the slot.
     bool wasAbandoned() const noexcept { return abandoned; }
 
+    // The plug-in took the container and put no window in it, which is what the
+    // "opened no window" panel says. Detected on Linux only.
+    bool pluginWindowMissing() const noexcept
+    {
+#if defined(__linux__)
+        return editor.pluginWindowMissing();
+#else
+        return false;
+#endif
+    }
+
     // App shutdown: stop pumping + leak the plugin GUI (u-he hangs in gui->destroy).
     void leakForShutdown();
 

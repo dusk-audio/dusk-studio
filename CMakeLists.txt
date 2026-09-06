@@ -756,6 +756,8 @@ target_sources(DuskStudio PRIVATE
     src/ui/DimOverlay.cpp
     src/ui/HardwareInsertEditor.cpp
     src/ui/ImportTargetPicker.cpp
+    src/ui/GuiScenarios.cpp
+    src/ui/GuiScenarioCases.cpp
     src/ui/MainComponent.cpp
     src/ui/ScreenshotCapture.cpp
     src/ui/MultiImportTargetPicker.cpp
