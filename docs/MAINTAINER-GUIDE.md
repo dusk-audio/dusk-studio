@@ -545,6 +545,71 @@ failure there is reported without failing the job. It becomes a required check
 once it has run clean for a week. The `bb-*` legs stay local - they need
 `pgrep -P`, `kill -9` and several app processes running at once.
 
+#### Writing a scenario
+
+The in-app suite lives in [src/engine/scenario/](../src/engine/scenario/):
+one `cases/<name>.cpp` per scenario, registered with a file-static
+`ScenarioRegistrar` and listed in the root `CMakeLists.txt`. Names are
+`area.what_it_checks` (`midi.panic_all_paths`, `oop.killed_child_bypasses`,
+`gui.clap_no_window_message`); the area is what `tag:` and the runner scripts
+group on.
+
+Running it, always on a private display:
+
+```bash
+source scripts/regress/common.sh; source scripts/regress/xvfb.sh
+export HOME=$(mktemp -d) XDG_RUNTIME_DIR=$(mktemp -d)
+FIX="$PWD/build-tests:$PWD/tests/fixtures"
+APP=build/DuskStudio_artefacts/Release/DuskStudio
+xvfb_run 60  env DUSKSTUDIO_RUN_SCENARIOS=list "$APP"
+xvfb_run 600 env DUSKSTUDIO_RUN_SCENARIOS=all DUSKSTUDIO_FIXTURE_DIR="$FIX" "$APP"
+xvfb_run 300 env DUSKSTUDIO_RUN_SCENARIOS=midi.panic_all_paths,tag:lv2 DUSKSTUDIO_FIXTURE_DIR="$FIX" "$APP"
+xvfb_run 300 env DUSKSTUDIO_RUN_SCENARIOS=gui DUSKSTUDIO_FIXTURE_DIR="$FIX" "$APP"
+```
+
+`all` runs every headless scenario except the ones tagged `helper` (set-up
+steps for the black-box legs, run by name or `tag:helper`) and every GUI one;
+`gui` runs the window-driven cases and `gui:<terms>` a subset of them. A name
+that does not exist exits 2 before anything runs. The report is one line per
+scenario, `[PASS] name (ms)` / `[FAIL] name: reason (ms)` / `[SKIP] name:
+reason`, with the notes a failing scenario recorded indented underneath, then
+`=== scenarios: N pass, M fail, K skip ===`; the exit status is 0 only when
+nothing failed. The private `HOME` matters: the app reads Recent Sessions and
+the plug-in cache from `$HOME/.config`, and a scripted run must not touch
+yours.
+
+A headless case gets a `ScenarioContext`: `session()` and `engine()` prepared
+offline (no device; `pump(n)` drives the audio callback itself and returns the
+peak, `pumpWithMidi(input, buffer)` stages events first), `fixture("name")`
+resolved through `DUSKSTUDIO_FIXTURE_DIR` against the table in
+`ScenarioFixtures.cpp`, `tempDir()` and a scratch session directory already
+set, `expect(condition, message)` and `verdict()` for the assertions, `note()`
+for breadcrumbs that only print on failure, and `later(ms, fn)` /
+`waitUntil(pred, timeoutMs, onReady, message)` for anything asynchronous. A
+case that defers returns `std::nullopt` from `run` and finishes through
+`ctx.complete()`; the runner's watchdog turns a case that never completes into
+a FAIL. Never sleep, never block the loop, never touch `src/ui`. Between
+scenarios `ScenarioWorld::reset()` puts the world back: transport, every track
+and bus, every native and JUCE insert on strips and aux lanes, insert modes,
+MIDI routing, persisted plug-in identities and the session directory. List the
+fixtures a case needs in its `Scenario` so it skips with the fixture's name
+when the file is absent, and gate on `DUSKSTUDIO_HAS_NATIVE_*` with a skip on
+the other side.
+
+A GUI case lives in [src/ui/GuiScenarioCases.cpp](../src/ui/GuiScenarioCases.cpp),
+fills `runGui` instead of `run`, and talks to the window only through
+`scenario::GuiHost` ([src/ui/GuiHost.h](../src/ui/GuiHost.h)): strips, aux
+lanes, editors and the modal stack in std types. It cleans up after itself;
+there is no reset between GUI cases. Every file under `src/engine/scenario/`
+and the three GUI files are JUCE-free by construction and the gate keeps them
+that way; the engine members they need that carry framework types are reached
+through `auto`.
+
+[docs/scenario-coverage.md](scenario-coverage.md) maps every release
+checklist item to the scenario, black-box leg or unit test that covers it, or
+says why it stays manual. When a fix lands, land its scenario (or extend one)
+and update that table in the same change.
+
 ### macOS
 
 The M3 Air (`marc@macbook-air.local`) is a headless build node: key auth, no
