@@ -39,6 +39,11 @@ public:
     int  getActiveLane() const noexcept { return activeLaneIndex; }
     void setActiveLane (int index);
 
+    // Scenario-harness only: the realised lane component, so a scenario can
+    // drive one lane's slots directly. nullptr if out of range.
+    AuxLaneComponent* getLaneComponent (int lane) noexcept
+    { return (lane >= 0 && lane < Session::kNumAuxLanes) ? lanes[(size_t) lane].get() : nullptr; }
+
     // Shutdown: close every lane's native editors (CLAP, LV2, VST3 - each owns an
     // X11 Display + host window) while the main peer + message loop are still
     // alive. See MainComponent::beginSafeShutdown phase 4.

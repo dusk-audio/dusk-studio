@@ -1158,6 +1158,30 @@ void AuxLaneComponent::attachEditorForSlot (int slotIdx)
     scheduleEditorRefits (slotIdx);
 }
 
+void AuxLaneComponent::rebuildSlotsForScenario()
+{
+    rebuildSlots();
+}
+
+bool AuxLaneComponent::attachEditorForSlotForScenario (int slotIdx)
+{
+    if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return false;
+    attachEditorForSlot (slotIdx);
+    const auto& ui = slots[(size_t) slotIdx];
+    return ui.editor != nullptr && ui.editor->getParentComponent() == this;
+}
+
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+bool AuxLaneComponent::loadNativeClapForSlotForScenario (int slotIdx,
+                                                         const std::filesystem::path& clapFile,
+                                                         const std::string& pluginId)
+{
+    if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return false;
+    loadNativeClapForSlot (slotIdx, juce::File (clapFile.string()), pluginId);
+    return strip.getNativeClapSlot (slotIdx).isLoaded();
+}
+#endif
+
 void AuxLaneComponent::detachEditorForSlot (int slotIdx)
 {
     auto& ui = slots[(size_t) slotIdx];
@@ -1203,7 +1227,7 @@ void AuxLaneComponent::loadNativeClapForSlot (int slotIdx, const juce::File& cla
     {
         std::fprintf (stderr, "[aux clap] load failed: %s\n", err.c_str());
         showDuskAlert (*this, "Couldn't load CLAP plugin",
-                       clapFile.getFileNameWithoutExtension() + ":\n" + juce::String (err));
+                       clapFile.getFileNameWithoutExtension() + ":\n" + err.c_str());
         // Slot is empty now - drop any persisted refs (incl. a previous plugin's state
         // blob) so a save doesn't carry a stale path/state for a slot the user sees empty.
         lane.nativeClapPath[(size_t) slotIdx].clear();

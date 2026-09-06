@@ -890,14 +890,14 @@ MainComponent::MainComponent()
     // dialog-pending flag isn't set yet that call latches startupScanTriggered
     // and shows the scan modal over the still-blank canvas, defeating the
     // startup-dialog gate. We're pending iff the picker will actually appear:
-    // no DUSKSTUDIO_LOAD_SESSION and no DUSKSTUDIO_SKIP_STARTUP_DIALOG.
-    {
-        const char* loadPathEnv = std::getenv ("DUSKSTUDIO_LOAD_SESSION");
-        const bool willLoadSession = (loadPathEnv != nullptr && *loadPathEnv);
-        startupDialogPending = (! willLoadSession
-                                && std::getenv ("DUSKSTUDIO_SKIP_STARTUP_DIALOG") == nullptr
-                                && std::getenv ("DUSKSTUDIO_CAPTURE_DIR") == nullptr);
-    }
+    // no DUSKSTUDIO_LOAD_SESSION and no DUSKSTUDIO_SKIP_STARTUP_DIALOG, and
+    // neither of the two harnesses whose work the picker would sit on top of.
+    const char* const loadSessionPath = std::getenv ("DUSKSTUDIO_LOAD_SESSION");
+    const bool willLoadSession = (loadSessionPath != nullptr && *loadSessionPath);
+    startupDialogPending = (! willLoadSession
+                            && std::getenv ("DUSKSTUDIO_SKIP_STARTUP_DIALOG") == nullptr
+                            && std::getenv ("DUSKSTUDIO_CAPTURE_DIR") == nullptr
+                            && std::getenv ("DUSKSTUDIO_RUN_SCENARIOS") == nullptr);
 
     setSize (w, h);
 
@@ -1012,25 +1012,52 @@ MainComponent::MainComponent()
     // benchmarking the load path (the [Dusk Studio/Load] timing line ends
     // up in the parent terminal) and for scripted reproductions of
     // user-reported regressions.
-    if (const char* loadPath = std::getenv ("DUSKSTUDIO_LOAD_SESSION");
-        loadPath != nullptr && *loadPath)
+    juce::Component::SafePointer<MainComponent> safeThis (this);
+
+    // DUSKSTUDIO_QUIT_AFTER_MS=<ms>[,<ms>...] asks for a quit through the real
+    // shutdown sequence after each delay, so a scripted run exits the way the
+    // titlebar X does and prints the same phase markers. A second value lands on
+    // the shutdown latch, which is the re-entry path.
+    const auto armScriptedQuit = [safeThis]
     {
-        juce::Component::SafePointer<MainComponent> safeThis (this);
-        juce::String pathStr (loadPath);
-        dusk::callAsync ([safeThis, pathStr]
+        const char* const spec = std::getenv ("DUSKSTUDIO_QUIT_AFTER_MS");
+        if (spec == nullptr) return;
+
+        for (const char* field = spec;;)
         {
-            if (safeThis != nullptr)
-                safeThis->loadSessionFromJson (juce::File (pathStr));
+            char* end = nullptr;
+            const long ms = std::strtol (field, &end, 10);
+            if (end == field) break;      // not a number: stop rather than spin
+            if (ms >= 0)
+                dusk::Timer::callAfterDelay ((int) ms, [safeThis]
+                {
+                    if (safeThis != nullptr) safeThis->requestQuit();
+                });
+            if (*end != ',') break;
+            field = end + 1;
+        }
+    };
+
+    if (willLoadSession)
+    {
+        juce::String pathStr (loadSessionPath);
+        dusk::callAsync ([safeThis, pathStr, armScriptedQuit]
+        {
+            if (safeThis == nullptr) return;
+            safeThis->loadSessionFromJson (juce::File (pathStr));
+            // Armed from here, not the constructor, so a scripted quit that has
+            // to outlast the load is timed against the load.
+            armScriptedQuit();
         });
     }
     else if (std::getenv ("DUSKSTUDIO_SKIP_STARTUP_DIALOG") == nullptr
-             && std::getenv ("DUSKSTUDIO_CAPTURE_DIR") == nullptr)
+             && std::getenv ("DUSKSTUDIO_CAPTURE_DIR") == nullptr
+             && std::getenv ("DUSKSTUDIO_RUN_SCENARIOS") == nullptr)
     {
         // startupDialogPending was already set before setSize() above (so the
         // scan-kicking resized() saw the gate); just queue the dialog here.
-        // Capture mode suppresses the picker too - its modal would overlay
-        // the snapshots (mirrors the CAPTURE_DIR guard in the scan path).
-        juce::Component::SafePointer<MainComponent> safeThis (this);
+        // Capture and scenario runs suppress the picker too - its modal would
+        // overlay their work (mirrors the same guards in the scan path).
         dusk::callAsync ([safeThis]
         {
             if (safeThis != nullptr) safeThis->launchStartupDialog();
@@ -1049,13 +1076,17 @@ MainComponent::MainComponent()
         // the same env var (resized() can fire mid-ctor, so a member flag set
         // here would be too late).
         juce::String dirStr (capDir);
-        juce::Component::SafePointer<MainComponent> safeThis (this);
         dusk::Timer::callAfterDelay (1500, [safeThis, dirStr]
         {
             if (safeThis != nullptr)
                 safeThis->captureScreenshots (juce::File (dirStr));
         });
     }
+
+    // With no session to load there is nothing for the quit to be relative to,
+    // so it counts from here instead.
+    if (! willLoadSession)
+        armScriptedQuit();
 
     // Cross-OS cursor overlay. Mounted last so it sits above every
     // other MainComponent child + paints the Grab / Cut / Draw glyph
@@ -1713,11 +1744,12 @@ void MainComponent::syncBankButtons (int desiredCount)
 
 void MainComponent::maybeStartStartupPluginScan()
 {
-    // Screenshot-capture mode never scans - its progress modal would overlay
-    // the full-window snapshots. Guard on the env var directly because
-    // resized() (which calls us) can fire mid-ctor, before the capture hook
-    // gets a chance to latch any member flag.
-    if (std::getenv ("DUSKSTUDIO_CAPTURE_DIR") != nullptr) return;
+    // Screenshot-capture and scenario runs never scan - the progress modal would
+    // overlay the full-window snapshots and the scenario steps alike. Guard on
+    // the env vars directly because resized() (which calls us) can fire mid-ctor,
+    // before either hook gets a chance to latch any member flag.
+    if (std::getenv ("DUSKSTUDIO_CAPTURE_DIR") != nullptr
+        || std::getenv ("DUSKSTUDIO_RUN_SCENARIOS") != nullptr) return;
 
     if (startupScanTriggered) return;
     // Defer while the startup dialog is up - dismissStartupDialog() re-invokes
@@ -2572,6 +2604,12 @@ std::vector<imgui::RecentSession> demoStartupRecents()
 
 void MainComponent::launchStartupDialog()
 {
+    // Startup markers. A scripted launch cannot see the picker, so it reads which
+    // way this went off stderr; the recents count is what the panel will list.
+    std::fprintf (stderr, "[Dusk Studio/startup] picker requested recents=%d\n",
+                  (int) RecentSessions::load().size());
+    std::fflush (stderr);
+
    #if ! DUSKSTUDIO_HAS_NATIVE_UI
     // Nothing to show and nothing to choose, so the bootstrap default session is
     // what the DAW opens with - the same outcome as skipping the dialog. Kick the
@@ -2579,14 +2617,22 @@ void MainComponent::launchStartupDialog()
     // before the first resized(), so clearing it here leaves nobody to start one.
     // Skipping by environment variable never raises the gate at all, which is why
     // only this path needs the call.
+    std::fprintf (stderr, "[Dusk Studio/startup] picker unavailable on this display\n");
+    std::fflush (stderr);
     startupDialogPending = false;
     maybeStartStartupPluginScan();
    #else
     if (openStartupPanel (false))
+    {
+        std::fprintf (stderr, "[Dusk Studio/startup] picker shown\n");
+        std::fflush (stderr);
         return;
+    }
 
     // A display that cannot carry the panel must not leave the app looking wedged
     // behind a dim overlay, so the launch continues as if the dialog was skipped.
+    std::fprintf (stderr, "[Dusk Studio/startup] picker unavailable on this display\n");
+    std::fflush (stderr);
     startupDialogPending = false;
     setStatusText ("Startup dialog unavailable on this display; opened the default session");
     maybeStartStartupPluginScan();

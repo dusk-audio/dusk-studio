@@ -2578,6 +2578,22 @@ void ChannelStripComponent::parentHierarchyChanged()
     }
 }
 
+bool ChannelStripComponent::openPluginEditorForScenario()
+{
+    openPluginEditor();
+    return isPluginEditorOpen();
+}
+
+void ChannelStripComponent::closePluginEditorForScenario()
+{
+    closePluginEditor();
+}
+
+bool ChannelStripComponent::hasOpenPluginEditorForScenario() const noexcept
+{
+    return isPluginEditorOpen();
+}
+
 void ChannelStripComponent::openPluginEditor()
 {
     if (isPluginEditorOpen()) return;

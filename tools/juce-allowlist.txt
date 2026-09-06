@@ -109,7 +109,7 @@ src/ui/ImportTargetPicker.cpp	97
 src/ui/ImportTargetPicker.h	11
 src/ui/Lv2PluginEditorComponent.cpp	3
 src/ui/Lv2PluginEditorComponent.h	4
-src/ui/MainComponent.cpp	459
+src/ui/MainComponent.cpp	457
 src/ui/MainComponent.h	57
 src/ui/MasterStripComponent.cpp	371
 src/ui/MasterStripComponent.h	59

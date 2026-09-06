@@ -49,6 +49,12 @@ public:
     juce::Component* openIoConfigPopupForCapture (int mode);
     void closeIoConfigPopupForCapture();
 
+    // Scenario-harness only: drive the insert's plugin editor without a mouse.
+    // The open call reports whether an editor is actually up afterwards.
+    bool openPluginEditorForScenario();
+    void closePluginEditorForScenario();
+    bool hasOpenPluginEditorForScenario() const noexcept;
+
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent& e) override;

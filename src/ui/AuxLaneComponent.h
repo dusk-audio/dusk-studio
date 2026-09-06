@@ -4,7 +4,9 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../foundation/MessageThread.h"
 #include <array>
+#include <filesystem>
 #include <memory>
+#include <string>
 #include "../session/Session.h"
 #include "DuskComboBox.h"
 #include "NativeEditorOwner.h"
@@ -51,6 +53,18 @@ public:
     // change here so the active lane (re)builds its inline editors on first
     // show and hides them when the stage goes away.
     void refreshEditorsForShowState();
+
+    // Scenario-harness only: rebuild the lane's slot row, embed a loaded slot's
+    // editor, and load a native CLAP without the picker; the bool returns say
+    // whether the thing is there afterwards. std types, not JUCE ones, so
+    // JUCE-free scenario code can call them.
+    void rebuildSlotsForScenario();
+    bool attachEditorForSlotForScenario (int slotIdx);
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    bool loadNativeClapForSlotForScenario (int slotIdx,
+                                           const std::filesystem::path& clapFile,
+                                           const std::string& pluginId = {});
+#endif
 
     static constexpr int kStripWidth      = 150;
     static constexpr int kSendPanelWidth  = 280;
