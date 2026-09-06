@@ -4,6 +4,8 @@
 
 namespace duskstudio
 {
+namespace scenario { class SuiteRunner; }
+
 class DuskStudioApp final : public juce::JUCEApplication
 {
 public:
@@ -48,5 +50,9 @@ private:
     // outlive initialise(). Set the app return value + quits when done.
     struct BounceTest;
     std::unique_ptr<BounceTest> bounceTest;
+    // DUSKSTUDIO_RUN_SCENARIOS suite. Owns the scenario world and steps through
+    // the selection on the message loop, so it must outlive initialise(). Sets
+    // the app return value + quits when the suite finishes.
+    std::unique_ptr<scenario::SuiteRunner> scenarioRunner;
 };
 } // namespace duskstudio

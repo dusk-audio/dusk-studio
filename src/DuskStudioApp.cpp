@@ -20,6 +20,7 @@
 #include "engine/BounceEngine.h"
 #include "engine/PluginManager.h"
 #include "engine/PluginSlot.h"
+#include "engine/scenario/SuiteRunner.h"
 #if DUSKSTUDIO_HAS_MULTISAMPLE
   #include "engine/multisample/NativeMultisampleSlot.h"
 #endif
@@ -2145,6 +2146,19 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
     {
         setApplicationReturnValue (runHeadlessSelfTest() ? 0 : 1);
         quit();
+        return;
+    }
+
+    // The scenario suite steps through its selection on the message loop (a
+    // scenario may defer and finish from a timer), so it cannot run and wait
+    // here. start() kicks the chain off and we RETURN; the runner sets the
+    // return value + quits when the last scenario reports.
+    if (const char* spec = std::getenv ("DUSKSTUDIO_RUN_SCENARIOS"); spec != nullptr && *spec)
+    {
+        scenarioRunner = std::make_unique<scenario::SuiteRunner> (
+            std::string (spec),
+            [this] (int exitCode) { setApplicationReturnValue (exitCode); quit(); });
+        scenarioRunner->start();
         return;
     }
 
