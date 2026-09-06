@@ -563,9 +563,6 @@ bb_oop_quit_during_load_body() {
 
 # ---------------------------------------------------------------- the suite
 
-# One leg row for the in-app suite. PASS needs the exit status, the absence of
-# any [FAIL] line and the terminal summary line: a crash after the last case
-# would otherwise pass on a lucky status.
 scenarios_headless_leg() {
     local name="$1" spec="$2" budget="$3"
     printf '\n--- %s ---\n' "$name"
@@ -575,27 +572,8 @@ scenarios_headless_leg() {
         "DUSKSTUDIO_FIXTURE_DIR=${REPO_ROOT}/build-tests:${REPO_ROOT}/tests/fixtures" \
         "$APP_BIN" >"$log" 2>&1 || rc=$?
     cat "$log"
-
-    local status=PASS note=""
-    if ((rc != 0)); then
-        status=FAIL
-        note="exit $rc"
-    elif grep -q '^\[FAIL\]' "$log"; then
-        status=FAIL
-        note="$(grep -m1 '^\[FAIL\]' "$log")"
-    elif ! grep -q '^=== scenarios: ' "$log"; then
-        status=FAIL
-        note="no terminal '=== scenarios: ' line"
-    else
-        local skipped skiplist
-        skipped="$(grep -c '^\[SKIP\]' "$log" || true)"
-        if ((skipped > 0)); then
-            skiplist="$(sed -n 's/^\[SKIP\] //p' "$log" | tr '\n' '|' | sed 's/|$//; s/|/; /g')"
-            note="${skipped} skipped: ${skiplist}"
-        fi
-    fi
+    regress_scenario_leg "$name" "$((SECONDS - start))" "$log" "$rc"
     rm -f "$log"
-    regress_record "$name" "$status" "$((SECONDS - start))" "$note"
     return 0
 }
 

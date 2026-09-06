@@ -267,6 +267,59 @@ exit "\$RC"
 REMOTE
 }
 
+# The scenario suite behind the same marker-file deadline as the self-test, and
+# headless for the same reason: this node cannot open a window over ssh. The
+# fixtures come out of the node's build-tests tree, which the tests build has
+# already produced - every fixture target is a dependency of dusk-studio-tests.
+leg_scenarios() {
+    mac_run 900 <<REMOTE
+set -euo pipefail
+REPO="\$HOME/${MAC_REPO}"
+BIN="\$REPO/build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio"
+[[ -x "\$BIN" ]] || { echo "error: scenario binary missing: \$BIN" >&2; exit 1; }
+RC_FILE="\$(mktemp -t duskstudio-scenarios-rc)"
+LOG_FILE="\$(mktemp -t duskstudio-scenarios-log)"
+PID_FILE="\$(mktemp -t duskstudio-scenarios-pid)"
+rm -f "\$RC_FILE"
+( DUSKSTUDIO_RUN_SCENARIOS=all \
+  DUSKSTUDIO_FIXTURE_DIR="\$REPO/build-tests:\$REPO/tests/fixtures" \
+  "\$BIN" >"\$LOG_FILE" 2>&1 & APP=\$!; echo "\$APP" >"\$PID_FILE"; wait "\$APP"; echo \$? >"\$RC_FILE" ) &
+CHILD=\$!
+WAITED=0
+while [[ ! -f "\$RC_FILE" ]]; do
+    if (( WAITED >= 600 )); then
+        APP_PID="\$(cat "\$PID_FILE" 2>/dev/null || true)"
+        [[ -n "\$APP_PID" ]] && kill -9 "\$APP_PID" 2>/dev/null || true
+        wait "\$CHILD" 2>/dev/null || true
+        echo "error: scenario suite still running after 600 s" >&2
+        sed 's/^/  /' "\$LOG_FILE" >&2
+        rm -f "\$RC_FILE" "\$LOG_FILE" "\$PID_FILE"
+        exit 124
+    fi
+    sleep 2
+    WAITED=\$(( WAITED + 2 ))
+done
+wait "\$CHILD" 2>/dev/null || true
+RC="\$(cat "\$RC_FILE")"
+grep -E '^\[(PASS|FAIL|SKIP)\]|^=== scenarios: ' "\$LOG_FILE" || sed 's/^/  /' "\$LOG_FILE"
+rm -f "\$RC_FILE" "\$LOG_FILE" "\$PID_FILE"
+exit "\$RC"
+REMOTE
+}
+
+# Skips carry their reasons into the leg note - several cases need LV2, which
+# this node does not build.
+mac_scenarios_leg() {
+    printf '\n--- scenarios ---\n'
+    local start=$SECONDS log rc=0
+    log="$(mktemp "${TMPDIR:-/tmp}/duskstudio-mac-scenarios.XXXXXX")"
+    leg_scenarios >"$log" 2>&1 || rc=$?
+    cat "$log"
+    regress_scenario_leg "scenarios" "$((SECONDS - start))" "$log" "$rc"
+    rm -f "$log"
+    return 0
+}
+
 echo "Dusk Studio regression - mac"
 echo "node    $MAC_HOST"
 echo "commit  ${HEAD_SHORT} -> ${REMOTE_BRANCH}"
@@ -306,12 +359,14 @@ regress_leg "build-app" leg_build_app
 regress_leg "build-tests" leg_build_tests
 regress_leg "ctest" leg_ctest
 regress_leg "selftest" leg_selftest
+mac_scenarios_leg
 
 # Launching the GUI over ssh aborts in the main window constructor on this node
 # - it reproduces on main, so it is the environment, not the build. Run those
 # two by hand from a console session on the Air:
 #   cd ~/src/dusk-studio && ./build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio
 regress_skip "gui-launch" "ssh session cannot construct the main window; run from a console session"
+regress_skip "scenarios-gui" "ssh session cannot construct the main window; run from a console session on the Air"
 regress_skip "ipc-selftest" "Linux-only code path"
 
 regress_summary "regress mac"

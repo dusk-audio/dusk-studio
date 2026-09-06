@@ -539,6 +539,12 @@ assertion that never ran.
 `bash scripts/regress/scenarios.sh` runs just these legs and prints the same
 table; `--app <binary>` points it at a build other than `build/`.
 
+CI runs only the headless half: `.github/workflows/linux-build.yml` has a
+`Scenario suite (xvfb)` step carrying `continue-on-error: true`, so a scenario
+failure there is reported without failing the job. It becomes a required check
+once it has run clean for a week. The `bb-*` legs stay local - they need
+`pgrep -P`, `kill -9` and several app processes running at once.
+
 ### macOS
 
 The M3 Air (`marc@macbook-air.local`) is a headless build node: key auth, no
@@ -563,14 +569,22 @@ including when a leg fails.
 | `daf-pins` | `~/src/DPF`, `~/src/DPF-Widgets` and the Pugl submodule moved to the revisions in `.github/actions/clone-daf-stack/action.yml`. Best effort: an unfetchable revision is a `WARN`, not a failure. The DAF checkouts are left at the pin, not put back. |
 | `configure-app` / `configure-tests` / `build-app` / `build-tests` / `ctest` | the same build and test surface as CI's macOS job. |
 | `selftest` | `DUSKSTUDIO_RUN_SELFTEST=1` against the built `.app`, behind a marker-file deadline. |
+| `scenarios` | `DUSKSTUDIO_RUN_SCENARIOS=all` against the same `.app`, behind the same marker-file deadline, with `DUSKSTUDIO_FIXTURE_DIR` pointed at the node's `build-tests` tree and `tests/fixtures`. Passes only on exit 0, no `[FAIL]` line, and the terminal `=== scenarios: ` summary. Skipped cases go into the leg's note - this node builds no LV2 host, so the LV2 cases skip there and the AU scan case runs only there. |
 
 What it cannot prove: **anything with a window**. Launching the GUI from an ssh
 session aborts in the main window constructor on that node, and it does so on
-`main` too, so it is the environment and not the build. Those legs report `SKIP`
-rather than a false failure; run them by hand from a console session on the Air:
+`main` too, so it is the environment and not the build. That covers both
+`gui-launch` and `scenarios-gui`, the GUI half of the scenario suite. Those legs
+report `SKIP` rather than a false failure; run them by hand from a console
+session on the Air:
 
 ```bash
-cd ~/src/dusk-studio && ./build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio
+cd ~/src/dusk-studio
+APP=./build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio
+"$APP"                                                    # gui-launch
+DUSKSTUDIO_RUN_SCENARIOS=gui \
+  DUSKSTUDIO_FIXTURE_DIR="$PWD/build-tests:$PWD/tests/fixtures" \
+  "$APP"                                                  # scenarios-gui
 ```
 
 The IPC self-test is Linux-only code and is skipped for that reason, not this one.
@@ -586,16 +600,17 @@ self-excluding `pkill` patterns.
 
 Prerequisites: libvirt access to `win11` without sudo (`qemu:///system`), the
 guest running, `7z`, `zip`, `python3` (Pillow for the PNG screenshots), `gh`
-authenticated for `--release-run`, and **at least one entry in the guest's
-Recent Sessions list** - phase 3 opens a session by clicking `Open` in the
-startup picker, and an empty list makes that click a no-op.
+authenticated for `--release-run`. Nothing has to be set up inside the guest:
+the phases bring their own session, and none of them clicks anything.
 
 The payload is built on the host: the MSI is unpacked with `7z`, the flattened
 `CM_FP_bin.*` names are put back into `bin/`, the plugin host is renamed to
 `dusk-studio-plugin-host.exe` (the app looks for it beside itself under that
-name), and the result is zipped. The guest unpacks it to
-`%LOCALAPPDATA%\DuskStudio-regress`, which needs no elevation - installing into
-`C:\Program Files` would need UAC, which must not be auto-accepted.
+name), `scripts/regress/sessions/minimal/session.json` is copied in as
+`regress-session/session.json` for phase 3 to load, and the result is zipped.
+The guest unpacks it to `%LOCALAPPDATA%\DuskStudio-regress`, which needs no
+elevation - installing into `C:\Program Files` would need UAC, which must not
+be auto-accepted.
 
 | Leg | What it proves |
 |---|---|
@@ -604,8 +619,8 @@ name), and the result is zipped. The guest unpacks it to
 | `guest-wake` | the domain is running and its display is not blanked. Screenshot in the run directory. |
 | `console-probe` | a fresh PowerShell console is up and accepting typed input, before any phase is typed into it. |
 | `phase1-selftest` | headless `DUSKSTUDIO_RUN_SELFTEST=1` with stdout and stderr captured through `ProcessStartInfo` redirection: exit code 0, at least one `[PASS]`, no `[FAIL]`. |
-| `phase2-handoff` | GUI launch, then a second launch carrying a session path hands over and exits 0 within 30 s while the first instance stays alive. |
-| `phase3-session-close` | a session is opened from the picker, `WM_CLOSE` produces exit 0 within 50 s, and stderr carries the `[Dusk Studio/shutdown] phase` markers. A missing session-load marker is reported as a likely empty Recent Sessions list. |
+| `phase2-handoff` | GUI launch, then a second launch carrying a session path hands over and exits 0 within 30 s while the first instance stays alive, and `GetForegroundWindow()` is the first instance's window afterwards - the handoff is supposed to raise it, which the exit code alone cannot see. |
+| `phase3-session-close` | the session the payload ships is loaded through `DUSKSTUDIO_LOAD_SESSION` (waited for by its `[Dusk Studio/Load]` line), then two `WM_CLOSE` messages are posted back to back. Exit 0 within 50 s, at least eight `[Dusk Studio/shutdown] phase` markers, and `re-entry ignored: shutdown already in progress` from the second close landing on the latch. |
 | `ipc-selftest` | `SKIP`. `DUSKSTUDIO_RUN_IPC_SELFTEST` never returns on Windows (issue #504), so the out-of-process transport is only compile- and contract-verified there. Remove the skip when #504 closes. |
 
 Every phase opens its own console from the Start menu: a phase that calls
@@ -619,10 +634,14 @@ things that have already gone wrong here:
   phases. Every script assigns its own before reading them.
 - A P/Invoke with a PowerShell scriptblock delegate (`EnumWindows`) throws under
   `iex`. The P/Invoke surface stays limited to direct calls.
-- `WM_CLOSE` on a fresh launch is swallowed while the startup picker is open,
-  which is why phase 3 opens a session before closing the window.
-- The window is pinned with `MoveWindow(hwnd, 0, 0, 1068, 660)` so the picker's
-  `Open` button is at a fixed coordinate.
+- `WM_CLOSE` on a fresh launch is swallowed while the startup picker is open:
+  `requestQuit` returns with a modal up. That is why phase 3 passes the session
+  in through `DUSKSTUDIO_LOAD_SESSION`, which skips the picker entirely. No
+  phase depends on a screen coordinate or on synthesized mouse input.
+- Redirected stderr cannot be read with `ReadToEndAsync` while the app is still
+  running: that task only completes when the pipe closes. Phase 3 drains it one
+  bounded `ReadLineAsync` at a time, which is how it can wait for a marker mid
+  run.
 
 Screenshots, the raw report and the served payload all stay in the run
 directory printed at the end (`/tmp/dusk-regress-windows-<timestamp>/`). If a

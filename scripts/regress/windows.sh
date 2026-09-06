@@ -121,6 +121,13 @@ leg_payload() {
         && mv "${work}/pkg/bin/dusk_studio_plugin_host.exe" \
             "${work}/pkg/bin/dusk-studio-plugin-host.exe"
 
+    # Phase 3 opens this through DUSKSTUDIO_LOAD_SESSION instead of clicking the
+    # startup picker, so the session ships with the payload rather than
+    # depending on what the guest happens to have in Recent Sessions.
+    mkdir -p "${work}/pkg/regress-session"
+    cp "${REPO_ROOT}/scripts/regress/sessions/minimal/session.json" \
+        "${work}/pkg/regress-session/session.json"
+
     if [[ ! -f "${work}/pkg/bin/DuskStudio.exe" ]]; then
         echo "error: no bin/DuskStudio.exe after unpacking; extracted:" >&2
         find "${work}/x" "${work}/pkg" -maxdepth 2 -type f -printf '  %P\n' >&2

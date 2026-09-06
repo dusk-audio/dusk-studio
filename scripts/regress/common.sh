@@ -71,6 +71,33 @@ regress_skip() {
     regress_record "$name" "SKIP" "0" "$reason"
 }
 
+# regress_scenario_leg <name> <secs> <log> <rc>: records one run of the in-app
+# scenario suite. PASS needs the exit status, the absence of any [FAIL] line and
+# the terminal summary line: a crash after the last case would otherwise pass on
+# a lucky status. Skipped cases carry their reasons into the note.
+regress_scenario_leg() {
+    local name="$1" secs="$2" log="$3" rc="$4"
+    local verdict=PASS note=""
+    if ((rc != 0)); then
+        verdict=FAIL
+        note="exit $rc"
+    elif grep -q '^\[FAIL\]' "$log"; then
+        verdict=FAIL
+        note="$(grep -m1 '^\[FAIL\]' "$log")"
+    elif ! grep -q '^=== scenarios: ' "$log"; then
+        verdict=FAIL
+        note="no terminal '=== scenarios: ' line"
+    else
+        local skipped skiplist
+        skipped="$(grep -c '^\[SKIP\]' "$log" || true)"
+        if ((skipped > 0)); then
+            skiplist="$(sed -n 's/^\[SKIP\] //p' "$log" | tr '\n' '|' | sed 's/|$//; s/|/; /g')"
+            note="${skipped} skipped: ${skiplist}"
+        fi
+    fi
+    regress_record "$name" "$verdict" "$secs" "$note"
+}
+
 regress_failed() {
     local s
     for s in ${REGRESS_LEG_STATUS+"${REGRESS_LEG_STATUS[@]}"}; do

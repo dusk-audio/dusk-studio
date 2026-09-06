@@ -1,7 +1,11 @@
-# Phase 3: open a session from the startup picker, then close the window and
-# require a clean exit. WM_CLOSE sent while the picker is still up is swallowed
-# (requestQuit returns with a modal open), so the session has to be opened
-# first. That needs at least one entry in the guest's Recent Sessions list.
+# Phase 3: load a session, close the window twice, require one clean exit.
+# WM_CLOSE on a fresh launch is swallowed while the startup picker is open
+# (requestQuit returns with a modal up), so the session arrives through
+# DUSKSTUDIO_LOAD_SESSION, which skips the picker. That leaves the phase with
+# no screen coordinates and no dependency on the guest's Recent Sessions list.
+# The second WM_CLOSE is queued behind the first. The first runs the shutdown
+# sequence and then defers the quit itself across further message-loop ticks, so
+# the second is dispatched while the latch is set and prints the re-entry line.
 $ErrorActionPreference = 'Continue'
 $rgIp = '@@HOSTIP@@'
 $rgRoot = "$env:LOCALAPPDATA\@@ROOT@@"
@@ -24,24 +28,28 @@ function Read-RegressTask($task, $ms) {
     return "<read timed out after ${ms} ms; output withheld by an open inherited handle>"
 }
 
+# The load and shutdown markers have to be read while the app is still running,
+# and ReadToEndAsync only returns once the pipe closes. One bounded
+# ReadLineAsync at a time instead, no delegates: a scriptblock callback throws
+# under iex. The first wait paces the caller's poll loop; the rest drain
+# whatever else is already buffered.
+function Read-RegressStderr($state, $ms) {
+    while ($null -ne $state.Task -and $state.Task.Wait($ms)) {
+        $line = $state.Task.Result
+        if ($null -eq $line) { $state.Task = $null; break }
+        [void]$state.Text.AppendLine($line)
+        $state.Task = $state.Reader.ReadLineAsync()
+        $ms = 0
+    }
+    return $state.Text.ToString()
+}
+
 # A scriptblock delegate (EnumWindows and friends) throws under iex, so the
-# P/Invoke surface stays limited to these direct calls.
+# P/Invoke surface stays limited to this direct call.
 if (-not ('Regress.User32' -as [type])) {
     Add-Type -Namespace Regress -Name User32 -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
-[DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int hh, bool r);
-[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
-[DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, UIntPtr e);
-[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
 '@
-}
-
-function Invoke-RegressClick($x, $y) {
-    [Regress.User32]::SetCursorPos($x, $y) | Out-Null
-    Start-Sleep -Milliseconds 150
-    [Regress.User32]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
-    Start-Sleep -Milliseconds 80
-    [Regress.User32]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
 }
 
 try {
@@ -50,6 +58,8 @@ try {
     $rgExe = (Get-ChildItem $rgRoot -Recurse -Filter DuskStudio.exe |
         Select-Object -First 1).FullName
     if (-not $rgExe) { throw "DuskStudio.exe not found under $rgRoot (run phase 1 first)" }
+    $rgSession = "$rgRoot\regress-session\session.json"
+    if (-not (Test-Path $rgSession)) { throw "payload session missing: $rgSession" }
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $rgExe
@@ -57,25 +67,48 @@ try {
     $psi.UseShellExecute = $false
     $psi.RedirectStandardError = $true
     $psi.RedirectStandardOutput = $true
+    $psi.EnvironmentVariables['DUSKSTUDIO_LOAD_SESSION'] = $rgSession
     $rgApp = [System.Diagnostics.Process]::Start($psi)
     $rgOut = $rgApp.StandardOutput.ReadToEndAsync()
-    $rgErr = $rgApp.StandardError.ReadToEndAsync()
-    Start-Sleep -Seconds 20
+    $rgErrState = @{
+        Reader = $rgApp.StandardError
+        Text   = New-Object System.Text.StringBuilder
+        Task   = $rgApp.StandardError.ReadLineAsync()
+    }
+    $rgStderr = ''
 
-    $rgHwnd = $rgApp.MainWindowHandle
+    $rgHwnd = [IntPtr]::Zero
+    $rgUntil = (Get-Date).AddSeconds(40)
+    while ((Get-Date) -lt $rgUntil -and -not $rgApp.HasExited) {
+        $rgApp.Refresh()
+        $rgHwnd = $rgApp.MainWindowHandle
+        if ($rgHwnd -ne [IntPtr]::Zero) { break }
+        Start-Sleep -Milliseconds 500
+    }
     $rgLog += "pid=$($rgApp.Id) hwnd=$rgHwnd alive=$(-not $rgApp.HasExited)`n"
-    if ($rgHwnd -eq 0) { throw "no main window after 20 s" }
+    if ($rgHwnd -eq [IntPtr]::Zero) { throw "no main window after 40 s" }
 
-    # Pinned geometry so the picker's Open button is at a fixed coordinate.
-    [Regress.User32]::SetForegroundWindow($rgHwnd) | Out-Null
-    [Regress.User32]::MoveWindow($rgHwnd, 0, 0, 1068, 660, $true) | Out-Null
-    Start-Sleep -Seconds 2
-    Invoke-RegressClick 755 496
-    Start-Sleep -Seconds 14
+    # Closing before the session is in would be a different test, so the phase
+    # waits for the load line rather than sleeping a guessed interval.
+    $rgLoadSeen = $false
+    $rgUntil = (Get-Date).AddSeconds(60)
+    while ((Get-Date) -lt $rgUntil) {
+        $rgStderr = Read-RegressStderr $rgErrState 500
+        if ($rgStderr -match 'Dusk Studio/Load\]') { $rgLoadSeen = $true; break }
+        if ($rgApp.HasExited) { break }
+    }
+    $rgLog += "loadMarkerSeen=$rgLoadSeen`n"
 
+    # Both posts before any sleep: the second one has to already be in the queue
+    # when the first is dispatched.
+    [Regress.User32]::PostMessage($rgHwnd, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
     [Regress.User32]::PostMessage($rgHwnd, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
     $rgStart = Get-Date
-    $rgClosed = $rgApp.WaitForExit(50000)
+    $rgUntil = $rgStart.AddSeconds(50)
+    while (-not $rgApp.HasExited -and (Get-Date) -lt $rgUntil) {
+        $rgStderr = Read-RegressStderr $rgErrState 500
+    }
+    $rgClosed = $rgApp.HasExited
     $rgElapsed = [int]((Get-Date) - $rgStart).TotalSeconds
     if ($rgClosed) {
         $rgLog += "exit=$($rgApp.ExitCode) after ${rgElapsed}s`n"
@@ -84,20 +117,18 @@ try {
         try { $rgApp.Kill() } catch { }
         $rgApp.WaitForExit(10000) | Out-Null
     }
+    $rgStderr = Read-RegressStderr $rgErrState 2000
 
     Stop-RegressChildren
-    $rgStderr = Read-RegressTask $rgErr 10000
     Set-Content -Path "$rgRoot\phase3.log" -Value ((Read-RegressTask $rgOut 10000) + "`n---stderr---`n" + $rgStderr)
     $rgMarkers = $rgStderr -split "`n" | Select-String -Pattern '\[Dusk Studio/(shutdown|Load)\]'
     $rgLog += (($rgMarkers | ForEach-Object { '  ' + $_.Line.Trim() }) -join "`n") + "`n"
 
     $rgLoaded = ($rgStderr -match 'Dusk Studio/Load\] session\.json')
-    if (-not $rgLoaded) {
-        $rgLog += "no session load marker: the guest's Recent Sessions list may be empty`n"
-    }
     $rgShutdownPhases = ($rgMarkers | Where-Object { $_.Line -match 'shutdown\] phase' }).Count
-    $rgLog += "loaded=$rgLoaded shutdownPhases=$rgShutdownPhases`n"
-    if ($rgClosed -and $rgApp.ExitCode -eq 0 -and $rgLoaded -and $rgShutdownPhases -ge 8) {
+    $rgReentry = ($rgStderr -match 're-entry ignored: shutdown already in progress')
+    $rgLog += "loaded=$rgLoaded shutdownPhases=$rgShutdownPhases reentry=$rgReentry`n"
+    if ($rgClosed -and $rgApp.ExitCode -eq 0 -and $rgLoaded -and $rgShutdownPhases -ge 8 -and $rgReentry) {
         $rgResult = 'PASS'
     }
 } catch {

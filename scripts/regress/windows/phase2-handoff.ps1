@@ -24,6 +24,14 @@ function Read-RegressTask($task, $ms) {
     return "<read timed out after ${ms} ms; output withheld by an open inherited handle>"
 }
 
+# A scriptblock delegate (EnumWindows and friends) throws under iex, so the
+# P/Invoke surface stays limited to this direct call.
+if (-not ('Regress.Foreground' -as [type])) {
+    Add-Type -Namespace Regress -Name Foreground -MemberDefinition @'
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+'@
+}
+
 function Start-RegressApp($appArgs) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $rgExe
@@ -62,9 +70,13 @@ try {
         $rgLog += "B: exit=$($rgSecond.ExitCode) after ${rgElapsed}s`n"
     }
     Start-Sleep -Seconds 3
-    $rgLog += "A after handoff: alive=$(-not $rgFirst.HasExited)`n"
+    # The handoff is supposed to bring the running window forward, which is the
+    # half of the check a bare "B exited 0" cannot see.
+    $rgForeground = [Regress.Foreground]::GetForegroundWindow()
+    $rgLog += "A after handoff: alive=$(-not $rgFirst.HasExited) foreground=$rgForeground wanted=$rgHwnd`n"
 
-    if ($rgHandedOff -and $rgSecond.ExitCode -eq 0 -and -not $rgFirst.HasExited -and $rgHwnd -ne 0) {
+    if ($rgHandedOff -and $rgSecond.ExitCode -eq 0 -and -not $rgFirst.HasExited `
+            -and $rgHwnd -ne 0 -and $rgForeground -eq $rgHwnd) {
         $rgResult = 'PASS'
     }
 
