@@ -50,6 +50,7 @@
 #include "../engine/FileImporter.h"
 #include "../engine/PlaybackEngine.h"
 #include "../engine/PluginStateDiagnostics.h"
+#include "../engine/ShutdownPhases.h"
 #include "ImportTargetPicker.h"
 #include "DpImportDialog.h"
 #include "../engine/DpImporter.h"
@@ -3467,42 +3468,36 @@ void MainComponent::beginSafeShutdown()
     // finish the teardown. That stays a single entry into the sequence:
     // the phases below span message-loop ticks, and a second entry would
     // re-run them over a tree the first one has already dismantled.
-    auto markPhase = [] (const char* msg)
-    {
-        std::fprintf (stderr, "[Dusk Studio/shutdown] %s\n", msg);
-        std::fflush (stderr);
-    };
-
     if (shutdownInProgress)
     {
-        markPhase ("re-entry ignored: shutdown already in progress");
+        shutdown::emitPhase ("re-entry ignored: shutdown already in progress");
         return;
     }
     shutdownInProgress = true;
 
-    markPhase ("phase 1: stop autosave timer");
+    shutdown::emitPhase ("phase 1: stop autosave timer");
     stopTimer();
 
-    markPhase ("phase 1b: close native session notepad");
+    shutdown::emitPhase ("phase 1b: close native session notepad");
     dismissNotepad (true);
 
-    markPhase ("phase 2: stop transport (commits in-flight recording)");
+    shutdown::emitPhase ("phase 2: stop transport (commits in-flight recording)");
     auto& transport = engine.getTransport();
     if (transport.isRecording() || transport.isPlaying())
         engine.stop();
 
     if (! engineDetached)
     {
-        markPhase ("phase 3: detach audio callback");
+        shutdown::emitPhase ("phase 3: detach audio callback");
         engine.detachAudioCallback();
         engineDetached = true;
     }
     else
     {
-        markPhase ("phase 3: audio callback already detached (skipping)");
+        shutdown::emitPhase ("phase 3: audio callback already detached (skipping)");
     }
 
-    markPhase ("phase 3b: release plugin resources (setActive(false) on each)");
+    shutdown::emitPhase ("phase 3b: release plugin resources (setActive(false) on each)");
     // Quiesce every plugin BEFORE editor windows + engine destructors
     // start running. Diva's terminate() (called inside its destructor)
     // tries to talk back to the host's VST3 context; that's only safe
@@ -3511,7 +3506,7 @@ void MainComponent::beginSafeShutdown()
     // __cxa_pure_virtual on session shutdown.
     engine.releaseAllPluginResources();
 
-    markPhase ("phase 4: drop plugin editor windows");
+    shutdown::emitPhase ("phase 4: drop plugin editor windows");
     if (consoleView != nullptr)
         consoleView->dropAllPluginEditors (NativeEditorTeardown::LeakForExit);
     // JUCE AUX plugin editors tear down fine with the normal ~MainWindow -> ~AuxView
@@ -3523,13 +3518,13 @@ void MainComponent::beginSafeShutdown()
     if (auxView != nullptr)
         auxView->dropAllNativeEditors (NativeEditorTeardown::LeakForExit);
 
-    markPhase ("phase 5: flush window operations");
+    shutdown::emitPhase ("phase 5: flush window operations");
     duskstudio::platform::flushWindowOperations();
 
     // Walk every juce::TopLevelWindow so any future window class
     // (mastering popout, file dialog left open) inherits the
     // protection without per-site plumbing.
-    markPhase ("phase 5b: clear keyboard focus from every top-level window");
+    shutdown::emitPhase ("phase 5b: clear keyboard focus from every top-level window");
     for (int i = juce::TopLevelWindow::getNumTopLevelWindows(); --i >= 0;)
         if (auto* w = juce::TopLevelWindow::getTopLevelWindow (i))
             duskstudio::platform::prepareForTopLevelDestruction (*w);
@@ -3545,31 +3540,23 @@ void MainComponent::beginSafeShutdown()
         auto* self = safeThis.getComponent();
         if (self == nullptr) return;
 
-        auto mark = [] (const char* msg)
-        {
-            std::fprintf (stderr, "[Dusk Studio/shutdown] %s\n", msg);
-            std::fflush (stderr);
-        };
-
-        mark ("phase 6: hide main window");
+        shutdown::emitPhase ("phase 6: hide main window");
         if (auto* tlw = self->getTopLevelComponent())
             tlw->setVisible (false);
         duskstudio::platform::flushWindowOperations();
 
         duskstudio::platform::clearXInputFocus();
 
-        mark ("phase 7: defer systemRequestedQuit to next message-loop tick");
+        shutdown::emitPhase ("phase 7: defer systemRequestedQuit to next message-loop tick");
         dusk::callAsync ([]
         {
-            std::fprintf (stderr,
-                          "[Dusk Studio/shutdown] phase 7b: posting systemRequestedQuit\n");
-            std::fflush (stderr);
+            shutdown::emitPhase ("phase 7b: posting systemRequestedQuit");
             if (auto* app = juce::JUCEApplicationBase::getInstance())
                 app->systemRequestedQuit();
         });
     });
 
-    markPhase ("phase 8: beginSafeShutdown returning to message loop (yield to mutter)");
+    shutdown::emitPhase ("phase 8: beginSafeShutdown returning to message loop (yield to mutter)");
 }
 
 void MainComponent::saveSessionAndThen (std::function<void(bool)> onComplete)
