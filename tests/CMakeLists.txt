@@ -56,6 +56,7 @@ add_executable(dusk-studio-tests
     single_instance_windows_contract.cpp
     stderr_marker_contract.cpp
     clap_editor_lifecycle.cpp
+    panic_probe_fixtures.cpp
     plugin_state_diagnostics.cpp
     channel_strip_midi_gate.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/ChannelStrip.cpp
@@ -317,6 +318,30 @@ if(DUSKSTUDIO_NATIVE_CLAP)
         DUSKSTUDIO_MULTI_BUS_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-multi-bus-clap-fixture>")
     add_dependencies(dusk-studio-tests dusk-studio-multi-bus-clap-fixture)
 
+    # These two land beside the multi-bus fixture at the build root rather than
+    # in this subdirectory, so DUSKSTUDIO_FIXTURE_DIR=<build-tests> resolves all
+    # three the same way. The generator expression keeps a multi-config
+    # generator from appending /<Config> to that path.
+    add_library(dusk-studio-panic-probe-clap-fixture MODULE
+        fixtures/panic_probe_clap.cpp)
+    add_library(dusk-studio-no-window-clap-fixture MODULE
+        fixtures/no_window_clap.cpp)
+    foreach(clapFixture
+            dusk-studio-panic-probe-clap-fixture
+            dusk-studio-no-window-clap-fixture)
+        set_target_properties(${clapFixture} PROPERTIES
+            PREFIX ""
+            SUFFIX ".clap"
+            LIBRARY_OUTPUT_DIRECTORY "$<1:${CMAKE_BINARY_DIR}>")
+        target_compile_features(${clapFixture} PRIVATE cxx_std_17)
+        target_include_directories(${clapFixture} PRIVATE
+            ${CMAKE_SOURCE_DIR}/external/clap/include)
+        add_dependencies(dusk-studio-tests ${clapFixture})
+    endforeach()
+    target_compile_definitions(dusk-studio-tests PRIVATE
+        DUSKSTUDIO_PANIC_PROBE_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-panic-probe-clap-fixture>"
+        DUSKSTUDIO_NO_WINDOW_CLAP_FIXTURE_PATH="$<TARGET_FILE:dusk-studio-no-window-clap-fixture>")
+
     if(APPLE)
         # The directory-bundle resolver test needs a valid Mach-O image that
         # dlopen can safely inspect. Copying the running test executable aborts
@@ -465,6 +490,23 @@ if(DUSKSTUDIO_NATIVE_VST3)
     get_target_property(DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_BUNDLE
         dusk-studio-runtime-relayout-vst3-fixture SMTG_PLUGIN_PACKAGE_PATH)
 
+    smtg_add_vst3plugin(dusk-studio-panic-probe-vst3-fixture
+        fixtures/panic_probe_vst3.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/common/pluginview.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/main/moduleinit.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/main/pluginfactory.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstbus.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstcomponentbase.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vsteditcontroller.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstparameters.cpp
+        ${DUSKSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstsinglecomponenteffect.cpp)
+    target_link_libraries(dusk-studio-panic-probe-vst3-fixture
+        PRIVATE dusk-vst3-hosting)
+    target_compile_definitions(dusk-studio-panic-probe-vst3-fixture
+        PRIVATE PROJECT_INCLUDES_VSTEDITCONTROLLER=1)
+    get_target_property(DUSKSTUDIO_PANIC_PROBE_VST3_BUNDLE
+        dusk-studio-panic-probe-vst3-fixture SMTG_PLUGIN_PACKAGE_PATH)
+
     target_sources(dusk-studio-tests PRIVATE
         vst3_bundle_load.cpp
         vst3_hostcontext_lifetime.cpp
@@ -478,8 +520,11 @@ if(DUSKSTUDIO_NATIVE_VST3)
     target_link_libraries(dusk-studio-tests PRIVATE dusk-vst3-hosting)
     target_compile_definitions(dusk-studio-tests PRIVATE
         DUSKSTUDIO_HAS_NATIVE_VST3=1
-        DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_FIXTURE_PATH="${DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_BUNDLE}")
-    add_dependencies(dusk-studio-tests dusk-studio-runtime-relayout-vst3-fixture)
+        DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_FIXTURE_PATH="${DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_BUNDLE}"
+        DUSKSTUDIO_PANIC_PROBE_VST3_FIXTURE_PATH="${DUSKSTUDIO_PANIC_PROBE_VST3_BUNDLE}")
+    add_dependencies(dusk-studio-tests
+        dusk-studio-runtime-relayout-vst3-fixture
+        dusk-studio-panic-probe-vst3-fixture)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_sources(dusk-studio-tests PRIVATE vst3_hostcontext_runloop.cpp)
     endif()

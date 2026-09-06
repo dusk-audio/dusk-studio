@@ -29,7 +29,6 @@ constexpr FixtureCandidate kCandidates[] = {
     { "many_patch.lv2",   "tests/many-patch-fixture.lv2" },
     { "smf.vendor_chunk", "midi/vendor-chunk.mid.hex" },
     { "smf.same_tick",    "midi/same-tick-retrigger.mid.hex" },
-    // Reserved for fixtures that do not exist yet; resolution simply fails.
     { "panic_probe.clap", "dusk-studio-panic-probe-clap-fixture.clap" },
     { "panic_probe.clap", "tests/dusk-studio-panic-probe-clap-fixture.clap" },
     { "panic_probe.vst3", "VST3/Release/dusk-studio-panic-probe-vst3-fixture.vst3" },
