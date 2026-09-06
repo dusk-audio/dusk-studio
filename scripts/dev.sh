@@ -63,8 +63,8 @@ case "${TARGET}" in
     cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release \
       -DDUSKSTUDIO_BUILD_TESTS=ON "${EXTRA_ARGS[@]}"
     cmake --build build-tests --target dusk-studio-multi-bus-clap-fixture -j"${JOBS}"
-    DUSKSTUDIO_CLAP_STATE_TEST_ONLY=1 \
-    DUSKSTUDIO_CLAP_STATE_FIXTURE="${REPO_ROOT}/build-tests/dusk-studio-multi-bus-clap-fixture.clap" \
+    DUSKSTUDIO_RUN_SCENARIOS=clap.state_roundtrip \
+    DUSKSTUDIO_FIXTURE_DIR="${REPO_ROOT}/build-tests:${REPO_ROOT}/tests/fixtures" \
       scripts/run-selftest-xvfb.sh "${REPO_ROOT}/build/DuskStudio_artefacts/Release/DuskStudio"
     ;;
   all)

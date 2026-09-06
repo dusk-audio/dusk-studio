@@ -384,7 +384,7 @@ def windows_asio_preflight_script(build: str, expected_sdk: str) -> str:
     )
 
 
-def native_clap_posix_script(app: str, fixture: str, runner: str = "") -> str:
+def native_clap_posix_script(app: str, fixture_dir: str, runner: str = "") -> str:
     launch = f"{shell_quote(runner)} {shell_quote(app)}" if runner else shell_quote(app)
     return "\n".join(
         [
@@ -394,8 +394,8 @@ def native_clap_posix_script(app: str, fixture: str, runner: str = "") -> str:
             'cleanup() { rm -f "$stdout_file" "$stderr_file"; }',
             "trap cleanup EXIT",
             "status=0",
-            "env DUSKSTUDIO_RUN_SELFTEST=1 DUSKSTUDIO_CLAP_STATE_TEST_ONLY=1 "
-            f"DUSKSTUDIO_CLAP_STATE_FIXTURE={shell_quote(fixture)} {launch} "
+            "env DUSKSTUDIO_RUN_SCENARIOS=clap.state_roundtrip "
+            f"DUSKSTUDIO_FIXTURE_DIR={shell_quote(fixture_dir)} {launch} "
             '>"$stdout_file" 2>"$stderr_file" || status=$?',
             'sed "s/^/[stdout] /" "$stdout_file"',
             'sed "s/^/[stderr] /" "$stderr_file" >&2',
@@ -403,7 +403,7 @@ def native_clap_posix_script(app: str, fixture: str, runner: str = "") -> str:
             '  echo "CLAP state harness exited $status" >&2',
             "  exit 1",
             "fi",
-            "grep -Fq '[PASS] Native CLAP track + aux session state round-trip' \"$stdout_file\"",
+            "grep -Fq '[PASS] clap.state_roundtrip' \"$stdout_file\"",
             "! grep -Fq '[FAIL]' \"$stdout_file\"",
             "grep -Eq 'track CLAP .* rejected its saved state' \"$stderr_file\"",
             "grep -Eq 'aux CLAP .* rejected its saved state' \"$stderr_file\"",
@@ -421,7 +421,7 @@ def run_linux(driver: Driver, commit: str) -> None:
     )
     test = f"{build}/tests/dusk-studio-tests"
     app = f"{build}/DuskStudio_artefacts/Release/DuskStudio"
-    fixture = f"{build}/dusk-studio-multi-bus-clap-fixture.clap"
+    fixture_dir = build
 
     driver.local_bash(
         "Linux: verify checkout",
@@ -441,7 +441,7 @@ def run_linux(driver: Driver, commit: str) -> None:
         driver.command("Linux: focused tests", [test, test_filter])
     if args.native_state:
         script = native_clap_posix_script(
-            app, fixture, f"{source}/scripts/run-selftest-xvfb.sh"
+            app, fixture_dir, f"{source}/scripts/run-selftest-xvfb.sh"
         )
         driver.local_bash("Linux: full-engine CLAP state", script)
     if not args.skip_full:
@@ -458,7 +458,7 @@ def run_macos(driver: Driver, commit: str) -> None:
     app = (
         f"{build}/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio"
     )
-    fixture = f"{build}/dusk-studio-multi-bus-clap-fixture.clap"
+    fixture_dir = build
     cmake = args.mac_cmake
     ctest = str(Path(cmake).with_name("ctest")) if "/" in cmake else "ctest"
 
@@ -491,7 +491,7 @@ def run_macos(driver: Driver, commit: str) -> None:
             f"set -euo pipefail\n{shell_quote(test)} '[au]'",
         )
         driver.mac_bash(
-            "macOS: full-engine CLAP state", native_clap_posix_script(app, fixture)
+            "macOS: full-engine CLAP state", native_clap_posix_script(app, fixture_dir)
         )
     if not args.skip_full:
         driver.mac_bash(
@@ -506,7 +506,7 @@ def run_windows(driver: Driver, commit: str) -> None:
     build = windows_build_path(source, args.windows_build_dir)
     test = ps_join(build, r"tests\Release\dusk-studio-tests.exe")
     app = ps_join(build, r"DuskStudio_artefacts\Release\DuskStudio.exe")
-    fixture = ps_join(build, r"Release\dusk-studio-multi-bus-clap-fixture.clap")
+    fixture_dir = ps_join(build, "Release")
     cmake = args.windows_cmake
     ctest = str(PureWindowsPath(cmake).with_name("ctest.exe"))
 
@@ -563,9 +563,8 @@ def run_windows(driver: Driver, commit: str) -> None:
                 f"$stdoutFile = Join-Path $env:TEMP {ps_quote(f'dusk-clap-{token}-stdout.txt')}",
                 f"$stderrFile = Join-Path $env:TEMP {ps_quote(f'dusk-clap-{token}-stderr.txt')}",
                 "Remove-Item -LiteralPath $stdoutFile,$stderrFile -Force -ErrorAction SilentlyContinue",
-                f"$env:DUSKSTUDIO_CLAP_STATE_FIXTURE = {ps_quote(fixture)}",
-                "$env:DUSKSTUDIO_RUN_SELFTEST = '1'",
-                "$env:DUSKSTUDIO_CLAP_STATE_TEST_ONLY = '1'",
+                f"$env:DUSKSTUDIO_FIXTURE_DIR = {ps_quote(fixture_dir)}",
+                "$env:DUSKSTUDIO_RUN_SCENARIOS = 'clap.state_roundtrip'",
                 f"$proc = Start-Process -FilePath {ps_quote(app)} -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile",
                 "$stdoutText = Get-Content -LiteralPath $stdoutFile -Raw",
                 "$stderrText = Get-Content -LiteralPath $stderrFile -Raw",
@@ -574,7 +573,7 @@ def run_windows(driver: Driver, commit: str) -> None:
                 "Write-Output '[stderr]'",
                 "Write-Output $stderrText",
                 'if ($proc.ExitCode -ne 0) { throw "CLAP state harness exited $($proc.ExitCode)" }',
-                "if (-not $stdoutText.Contains('[PASS] Native CLAP track + aux session state round-trip')) { throw 'CLAP state PASS marker missing' }",
+                "if (-not $stdoutText.Contains('[PASS] clap.state_roundtrip')) { throw 'CLAP state PASS marker missing' }",
                 "if ($stdoutText.Contains('[FAIL]')) { throw 'CLAP state harness printed FAIL' }",
                 "if ($stderrText -notmatch 'track CLAP .* rejected its saved state') { throw 'track CLAP rejection diagnostic missing' }",
                 "if ($stderrText -notmatch 'aux CLAP .* rejected its saved state') { throw 'aux CLAP rejection diagnostic missing' }",

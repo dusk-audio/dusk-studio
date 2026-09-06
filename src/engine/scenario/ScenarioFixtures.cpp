@@ -37,6 +37,14 @@ constexpr FixtureCandidate kCandidates[] = {
     { "no_window.clap",   "tests/dusk-studio-no-window-clap-fixture.clap" },
 };
 
+// Same convention as PATH: a Windows root starts with a drive letter, so it
+// cannot use ':' as the separator.
+#ifdef _WIN32
+constexpr char kRootSeparator = ';';
+#else
+constexpr char kRootSeparator = ':';
+#endif
+
 std::vector<std::filesystem::path> fixtureRoots()
 {
     std::vector<std::filesystem::path> roots;
@@ -47,7 +55,7 @@ std::vector<std::filesystem::path> fixtureRoots()
     std::size_t start = 0;
     while (start <= text.size())
     {
-        const auto end = text.find (':', start);
+        const auto end = text.find (kRootSeparator, start);
         const auto piece = text.substr (start, end == std::string::npos ? std::string::npos
                                                                        : end - start);
         if (! piece.empty()) roots.emplace_back (piece);

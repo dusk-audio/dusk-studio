@@ -1,4 +1,4 @@
-src/DuskStudioApp.cpp	116
+src/DuskStudioApp.cpp	115
 src/DuskStudioApp.h	7
 src/dsp/AuxLaneStrip.cpp	17
 src/dsp/AuxLaneStrip.h	23

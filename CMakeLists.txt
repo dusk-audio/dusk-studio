@@ -692,6 +692,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/ScenarioFixtures.cpp
     src/engine/scenario/ScenarioWorld.cpp
     src/engine/scenario/SuiteRunner.cpp
+    src/engine/scenario/cases/clap_state_roundtrip.cpp
     src/engine/scenario/cases/pipeline_selftest.cpp
     src/dsp/AuxLaneStrip.cpp
     src/dsp/BusStrip.cpp
