@@ -699,7 +699,12 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/cases/lv2_file_state_inside_session.cpp
     src/engine/scenario/cases/lv2_large_store_timing_bound.cpp
     src/engine/scenario/cases/lv2_params_numbering_stable.cpp
+    src/engine/scenario/cases/mint_oop_fixture.cpp
     src/engine/scenario/cases/offline_insert_no_pdc.cpp
+    src/engine/scenario/cases/oop_killed_child_bypasses.cpp
+    src/engine/scenario/cases/oop_load_does_not_block_message_thread.cpp
+    src/engine/scenario/cases/oop_quit_during_load_bounded.cpp
+    src/engine/scenario/cases/oop_rapid_switching_safe.cpp
     src/engine/scenario/cases/pipeline_selftest.cpp
     src/engine/scenario/cases/scan_cancel_au.cpp
     src/engine/scenario/cases/scan_cancel_lv2.cpp

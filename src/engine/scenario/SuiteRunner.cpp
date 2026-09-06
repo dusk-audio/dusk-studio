@@ -99,8 +99,11 @@ bool SuiteRunner::select()
     {
         if (term == "all")
         {
+            // Helpers exist to set something up for another leg of the suite, so
+            // they are not part of a verdict. Naming one, or its tag, still runs it.
             for (const auto& scenario : scenarios)
-                selected.push_back (&scenario);
+                if (! hasTag (scenario, "helper"))
+                    selected.push_back (&scenario);
             continue;
         }
 
