@@ -66,6 +66,12 @@ jobs:
             exit 1
           }
 
+      - name: Verify release metadata matches the tag
+        if: ${{ github.ref_type == 'tag' }}
+        run: |
+          scripts/release-metadata-check.sh --tag "${GITHUB_REF_NAME}" \
+            --commit-date "$(git log -1 --format=%cs)"
+
   linux:
     needs: preflight
     name: Build + package tarball (${{ matrix.label }})

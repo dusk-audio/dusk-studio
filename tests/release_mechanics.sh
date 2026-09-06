@@ -1427,3 +1427,79 @@ assert "if: ${{ github.ref_type == 'tag' }}" not in publish_job, (
     "a workflow_dispatch targeting a tag must not publish"
 )
 PY
+
+# --- release metadata checker ------------------------------------------------
+# The tree itself must satisfy the checker in whichever state it is in, the
+# checker must reject each way the four metadata files can disagree, and the
+# tag workflow must run it against the tagged commit.
+bash -n "$SOURCE_ROOT/scripts/release-metadata-check.sh"
+"$SOURCE_ROOT/scripts/release-metadata-check.sh" --root "$SOURCE_ROOT" >/dev/null \
+    || { echo "FAIL: release-metadata-check.sh rejects the source tree" >&2; exit 1; }
+
+write_metadata_fixture() {
+    local dir="$1" version="$2" heading="$3" app_version="$4" app_date="$5"
+    mkdir -p "$dir/packaging"
+    printf '%s\n' "$version" > "$dir/VERSION"
+    printf '# Changelog\n\n## [%s\n\n- x\n\n## [0.0.1] - 2026-01-01\n\n- y\n' "$heading" \
+        > "$dir/CHANGELOG.md"
+    printf '<component>\n  <releases>\n    <release version="%s" date="%s">\n    </release>\n  </releases>\n</component>\n' \
+        "$app_version" "$app_date" > "$dir/packaging/DuskStudio.appdata.xml"
+    printf '<!-- summary-start -->\nSummary.\n<!-- summary-end -->\n' > "$dir/packaging/RELEASE-NOTES.md"
+}
+
+metadata_expect() {
+    local expect="$1" label="$2"
+    shift 2
+    if "$SOURCE_ROOT/scripts/release-metadata-check.sh" "$@" >/dev/null 2>&1; then
+        [[ "$expect" == pass ]] || { echo "FAIL: metadata checker accepted: $label" >&2; exit 1; }
+    else
+        [[ "$expect" == fail ]] || { echo "FAIL: metadata checker rejected: $label" >&2; exit 1; }
+    fi
+}
+
+META="$SCRATCH/metadata"
+write_metadata_fixture "$META/dev" 0.0.1 "0.0.2] - Unreleased" 0.0.1 2026-01-01
+metadata_expect pass "a development tree" --root "$META/dev"
+metadata_expect fail "a development tree asked for a release date" --root "$META/dev" --date 2026-01-02
+write_metadata_fixture "$META/dev-bumped" 0.0.2 "0.0.2] - Unreleased" 0.0.2 2026-01-01
+metadata_expect fail "VERSION bumped under an unreleased heading" --root "$META/dev-bumped"
+write_metadata_fixture "$META/ready" 0.0.2 "0.0.2] - 2026-01-02" 0.0.2 2026-01-02
+metadata_expect pass "a release-ready tree" --root "$META/ready"
+metadata_expect pass "a release-ready tree on its release day" --root "$META/ready" --tag v0.0.2 --date 2026-01-02
+metadata_expect pass "a tag a day after the heading date" --root "$META/ready" --tag v0.0.2 --commit-date 2026-01-03
+metadata_expect fail "a heading dated days before the tag" --root "$META/ready" --tag v0.0.2 --commit-date 2026-01-05
+metadata_expect fail "a heading dated another day than the release" --root "$META/ready" --date 2026-01-03
+metadata_expect fail "a tag that is not VERSION" --root "$META/ready" --tag v0.0.3
+write_metadata_fixture "$META/app-date" 0.0.2 "0.0.2] - 2026-01-02" 0.0.2 2026-01-01
+metadata_expect fail "AppStream dated differently from the changelog" --root "$META/app-date"
+write_metadata_fixture "$META/app-version" 0.0.2 "0.0.2] - 2026-01-02" 0.0.1 2026-01-02
+metadata_expect fail "AppStream behind VERSION" --root "$META/app-version"
+write_metadata_fixture "$META/future" 0.0.2 "0.0.2] - 2999-01-01" 0.0.2 2999-01-01
+metadata_expect fail "a heading dated in the future" --root "$META/future"
+write_metadata_fixture "$META/no-summary" 0.0.2 "0.0.2] - 2026-01-02" 0.0.2 2026-01-02
+printf '<!-- summary-start -->\n<!-- summary-end -->\n' > "$META/no-summary/packaging/RELEASE-NOTES.md"
+metadata_expect fail "an empty release-notes summary" --root "$META/no-summary"
+
+"$PYTHON" - "$SOURCE_ROOT" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+source_root = Path(sys.argv[1])
+release_workflow = (source_root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+assert re.search(
+    r"scripts/release-metadata-check\.sh --tag \S+ \\\n\s*--commit-date ",
+    release_workflow,
+), "the tag workflow must run the release metadata checker against the tag and its commit date"
+
+# Every single-line configure example in the maintainer guide has to name the
+# donor pin: the sibling ../plugins has drifted past it, and an example without
+# the flag builds against the wrong DSP.
+guide = (source_root / "docs" / "MAINTAINER-GUIDE.md").read_text(encoding="utf-8").splitlines()
+unpinned = [
+    line.strip()
+    for line in guide
+    if re.match(r"^\s*cmake -S \. -B build", line) and "DUSK_PLUGINS_PATH" not in line
+]
+assert not unpinned, f"maintainer guide configure examples without the donor pin: {unpinned}"
+PY

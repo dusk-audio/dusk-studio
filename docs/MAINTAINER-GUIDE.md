@@ -39,7 +39,7 @@ Here is the realistic ramp from zero to maintaining this codebase. Budget a few 
 Before reading any code, build it. You cannot learn a codebase you can't compile.
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDUSK_PLUGINS_PATH=../dusk-donor-pin
 cmake --build build -j6
 ./build/DuskStudio_artefacts/Release/DuskStudio
 ```
@@ -51,7 +51,7 @@ JUCE, the Dusk plugins repo, and the DAF stack behind the native notepad are aut
 ### Step 2 — Run the tests and the self-test (½ day)
 
 ```bash
-cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON
+cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON -DDUSK_PLUGINS_PATH=../dusk-donor-pin
 cmake --build build-tests --target dusk-studio-tests -j6
 ctest --test-dir build-tests --output-on-failure
 ```
@@ -283,11 +283,11 @@ There is **one** oversampling control: the **Effect Oversampling** dropdown in A
 
 ```bash
 # app
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDUSK_PLUGINS_PATH=../dusk-donor-pin
 cmake --build build -j6
 
 # tests
-cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON
+cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON -DDUSK_PLUGINS_PATH=../dusk-donor-pin
 cmake --build build-tests --target dusk-studio-tests -j6
 ctest --test-dir build-tests --output-on-failure
 ```
@@ -343,8 +343,8 @@ To add one: drop `tests/<unit>_<aspect>.cpp` following [tests/smoke_brickwall_li
 ### Sanitizers (your best debugging friends for this kind of code)
 
 ```bash
-cmake -S . -B build-asan -DDUSKSTUDIO_ENABLE_ASAN=ON  -DDUSKSTUDIO_BUILD_TESTS=ON   # use-after-free, overflow
-cmake -S . -B build-tsan -DDUSKSTUDIO_ENABLE_TSAN=ON  -DDUSKSTUDIO_BUILD_TESTS=ON   # data races (mutually exclusive with ASan)
+cmake -S . -B build-asan -DDUSKSTUDIO_ENABLE_ASAN=ON -DDUSKSTUDIO_BUILD_TESTS=ON -DDUSK_PLUGINS_PATH=../dusk-donor-pin   # use-after-free, overflow
+cmake -S . -B build-tsan -DDUSKSTUDIO_ENABLE_TSAN=ON -DDUSKSTUDIO_BUILD_TESTS=ON -DDUSK_PLUGINS_PATH=../dusk-donor-pin   # data races (mutually exclusive with ASan)
 ```
 
 TSan is the one that catches "I forgot this cross-thread field should be atomic" — the most common real bug class here.
@@ -452,9 +452,18 @@ current tag workflows publish, so nothing a tagged release produces uses it.
    [packaging/RELEASE-NOTES.md](../packaging/RELEASE-NOTES.md). It aborts if
    either metadata file or insertion marker is unavailable. Require the diff
    to contain all three expected metadata changes before proceeding.
-2. Replace `Unreleased` in that changelog heading with the release date.
-   Review and verify all release metadata. Then run the Patreon freshness check
-   from the primary checkout, not a `.codex/worktrees/*` issue worktree:
+2. Replace `Unreleased` in that changelog heading with the release date, then
+   prove the four metadata files agree on the day you tag:
+
+   ```bash
+   scripts/release-metadata-check.sh --date "$(date -u +%F)"
+   ```
+
+   It stops on a heading dated any other day, a `VERSION` or AppStream entry
+   that disagrees with it, or an empty release-notes summary; the tag workflow
+   repeats the check against the tagged commit's own date. Review and verify
+   all release metadata. Then run the Patreon freshness check from the primary
+   checkout, not a `.codex/worktrees/*` issue worktree:
 
    ```bash
    (
@@ -537,6 +546,13 @@ current tag workflows publish, so nothing a tagged release produces uses it.
        "${RELEASE_COMMIT:?record RELEASE_COMMIT after committing metadata}:CHANGELOG.md" \
        | grep -E '^## \[[0-9]+\.[0-9]+\.[0-9]+\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$' \
        | grep -F "## [${RELEASE_VERSION:?set RELEASE_VERSION first}] - "
+     meta="$(mktemp -d)"
+     trap 'rm -rf "$meta"' EXIT
+     git archive \
+       "${RELEASE_COMMIT:?record RELEASE_COMMIT after committing metadata}" \
+       VERSION CHANGELOG.md packaging | tar -x -C "$meta"
+     scripts/release-metadata-check.sh --root "$meta" \
+       --tag "v${RELEASE_VERSION:?set RELEASE_VERSION first}" --date "$(date -u +%F)"
    )
    ```
 
@@ -626,10 +642,10 @@ window-activation smoke tests, and license checks all pass.
 ## Quick reference card
 
 ```bash
-BUILD APP        cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j6
+BUILD APP        cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDUSK_PLUGINS_PATH=../dusk-donor-pin && cmake --build build -j6
 RUN              ./build/DuskStudio_artefacts/Release/DuskStudio
 SELF-TEST        scripts/run-selftest-xvfb.sh
-BUILD TESTS      cmake -S . -B build-tests -DDUSKSTUDIO_BUILD_TESTS=ON && cmake --build build-tests --target dusk-studio-tests -j6
+BUILD TESTS      cmake -S . -B build-tests -DDUSKSTUDIO_BUILD_TESTS=ON -DDUSK_PLUGINS_PATH=../dusk-donor-pin && cmake --build build-tests --target dusk-studio-tests -j6
 RUN TESTS        ctest --test-dir build-tests --output-on-failure
 ASAN / TSAN      -DDUSKSTUDIO_ENABLE_ASAN=ON  /  -DDUSKSTUDIO_ENABLE_TSAN=ON
 OVERRIDE DEPS    -DJUCE_PATH=…  -DDUSK_PLUGINS_PATH=…
