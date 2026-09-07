@@ -111,7 +111,7 @@ src/ui/Lv2PluginEditorComponent.cpp	3
 src/ui/Lv2PluginEditorComponent.h	4
 src/ui/MainComponent.cpp	459
 src/ui/MainComponent.h	57
-src/ui/MasterStripComponent.cpp	371
+src/ui/MasterStripComponent.cpp	344
 src/ui/MasterStripComponent.h	59
 src/ui/MasteringView.cpp	154
 src/ui/MasteringView.h	32

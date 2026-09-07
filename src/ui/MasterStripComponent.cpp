@@ -1,5 +1,4 @@
 #include "MasterStripComponent.h"
-#include "CompBypassLed.h"
 #include "DuskContextMenu.h"
 #include "DuskComboBox.h"
 #include "../engine/AudioEngine.h"
@@ -50,15 +49,6 @@ void styleSmallLabel (juce::Label& lbl, const juce::String& text, juce::Colour c
     // narrow column width.
     lbl.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
     lbl.setMinimumHorizontalScale (0.6f);
-}
-
-void styleToggleNS (juce::TextButton& b, juce::Colour onColour)
-{
-    b.setClickingTogglesState (true);
-    b.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
-    b.setColour (juce::TextButton::buttonOnColourId, onColour);
-    b.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xffb0a080));
-    b.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff121214));
 }
 
 // Match ChannelEqEditor / ChannelCompEditor visual grammar so all four
@@ -137,7 +127,6 @@ public:
         const auto pultecGold  = juce::Colour (0xff1a1a1c);   // bakelite black
         const auto pultecCream = juce::Colour (0xfff0e8d0);   // stencil cream
         styleEditorEnableBtn (enableBtn, juce::Colour (0xff7090a0));
-        (void) pultecCream;
         enableBtn.setButtonText ("EQ");
         enableBtn.setToggleState (params.eqEnabled.load (std::memory_order_relaxed),
                                     juce::dontSendNotification);
@@ -277,7 +266,6 @@ public:
         g.drawRect (getLocalBounds(), 1);
     }
 
-    static constexpr int kSectionCaptionH = 18;
     static constexpr int kSubRowGap       = 4;
 
     void resized() override
@@ -286,14 +274,6 @@ public:
         auto header = area.removeFromTop (kEditorHeaderH);
         enableBtn.setBounds (header.removeFromRight (60));
         area.removeFromTop (kEditorHeaderGap);
-
-        // Combo cells: vertically centred 24-px height inside the knob slot.
-        auto centredComboBounds = [] (juce::Rectangle<int> cell)
-        {
-            return cell.withSizeKeepingCentre (std::min (cell.getWidth() - 8, 160), 24);
-        };
-
-        const int bandRowH = kEditorLabelRowH + kEditorKnobBlockH;
 
         // Row 1: LF BOOST | LF ATTEN | LF FREQ (3 equal cells)
         {
@@ -342,8 +322,6 @@ public:
             hfBandwidthLbl.setBounds (knobX, rLbl .getY(), knobW, rLbl .getHeight());
             hfBandwidth   .setBounds (knobX, rKnob.getY(), knobW, rKnob.getHeight());
         }
-
-        (void) bandRowH;   // unused now (no column stacking)
     }
 
 private:
@@ -658,15 +636,6 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     vuMeter->setRichStyle (true);   // warm-cream photoreal face on the master only (bus meters stay plain)
     addAndMakeVisible (*vuMeter);
 
-    auto styleToggle = [] (juce::TextButton& b, juce::Colour onColour)
-    {
-        b.setClickingTogglesState (true);
-        b.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
-        b.setColour (juce::TextButton::buttonOnColourId, onColour);
-        b.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xffb0a080));
-        b.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff121214));
-    };
-
     // EQ + comp section toggles + their parameter knobs. program-EQ EQP-1A
     // hardware grammar: black bakelite knobs against the teal-blue
     // chassis, with cream-stencilled labels. Knobs share `pultecBlack`;
@@ -744,8 +713,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     // step is 1 and JUCE rounds to the nearest integer.
     auto setupStripFreqKnob = [this, armMasterEq, pultecBlack, pultecCream]
                                   (juce::Slider& k, const int* hz, int count,
-                                   std::atomic<float>& atom,
-                                   std::function<juce::String (int)> fmt)
+                                   std::atomic<float>& atom)
     {
         k.setRange (0.0, (double) (count - 1), 1.0);
         k.setColour (juce::Slider::rotarySliderFillColourId,    pultecBlack);
@@ -782,18 +750,13 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
             armMasterEq();
         };
         addAndMakeVisible (k);
-        (void) fmt;   // fmt no longer used - textFromValueFunction owns formatting
     };
     static const int kLfHz[]      = { 20, 30, 60, 100 };
     static const int kHfBoostHz[] = { 3000, 4000, 5000, 8000, 10000, 12000, 16000 };
     static const int kHfAttenHz[] = { 5000, 10000, 20000 };
-    auto fmtLfHz = [] (int hz) { return juce::String (hz) + " Hz"; };
-    auto fmtHfHz = [] (int hz) { return hz >= 1000
-                                          ? juce::String (hz / 1000) + " kHz"
-                                          : juce::String (hz) + " Hz"; };
-    setupStripFreqKnob (eqLfFreqKnob,      kLfHz,      4, params.eqLfFreq,      fmtLfHz);
-    setupStripFreqKnob (eqHfBoostFreqKnob, kHfBoostHz, 7, params.eqHfBoostFreq, fmtHfHz);
-    setupStripFreqKnob (eqHfAttenFreqKnob, kHfAttenHz, 3, params.eqHfAttenFreq, fmtHfHz);
+    setupStripFreqKnob (eqLfFreqKnob,      kLfHz,      4, params.eqLfFreq);
+    setupStripFreqKnob (eqHfBoostFreqKnob, kHfBoostHz, 7, params.eqHfBoostFreq);
+    setupStripFreqKnob (eqHfAttenFreqKnob, kHfAttenHz, 3, params.eqHfAttenFreq);
     eqLfFreqKnob     .setTooltip ("program-EQ LF frequency (20/30/60/100 Hz). Dragging snaps to the hardware-canonical detents.");
     eqHfBoostFreqKnob.setTooltip ("program-EQ HF boost frequency (3/4/5/8/10/12/16 kHz). Detent-snapped.");
     eqHfAttenFreqKnob.setTooltip ("program-EQ HF attenuate frequency (5/10/20 kHz). Detent-snapped.");
@@ -1630,24 +1593,9 @@ void MasterStripComponent::resized()
     }
 
     // 26 px rotary diameter (matches channel strip) + 14 px textbox below.
-    // Block width is 40 - 28 px was too narrow and clipped both the bottom
-    // value readout (e.g. "4.0:1" became "4...." ) and the top label.
     constexpr int kKnobDia    = 26;
     constexpr int kTextBoxH   = 14;
     constexpr int kKnobBlockH = kKnobDia + kTextBoxH + 2;   // 42
-    constexpr int kKnobBlockW = 40;                          // textbox fits "4.0:1", "1100"
-
-    auto layKnobRow = [&] (juce::Rectangle<int>& parent, int n)
-                       -> std::pair<juce::Rectangle<int>, juce::Rectangle<int>>
-    {
-        auto labelRow = parent.removeFromTop (10);
-        auto knobRow  = parent.removeFromTop (kKnobBlockH);
-        const int totalW = n * kKnobBlockW;
-        const int leftPad = std::max (0, (labelRow.getWidth() - totalW) / 2);
-        labelRow.removeFromLeft (leftPad);
-        knobRow .removeFromLeft (leftPad);
-        return { labelRow, knobRow };
-    };
 
     if (compactMode)
     {
@@ -1718,13 +1666,9 @@ void MasterStripComponent::resized()
     }
     area.removeFromTop (4);
 
-    // Comp section: header + meter strip on the LEFT + 2×2 knob grid on
-    // the RIGHT, mirroring channel + bus strips.
     {
         constexpr int kCompKnobLabelH = 10;
         constexpr int kCompKnobRowH   = kCompKnobLabelH + kKnobBlockH;
-        constexpr int kCompMeterW     = 40;
-        constexpr int kCompMeterGap   = 4;
 
         // Single-row COMP body (matches channel + bus strip grammar):
         // 4 knobs (RAT / ATK / REL / MAK) across one row.
@@ -1738,9 +1682,6 @@ void MasterStripComponent::resized()
         s.removeFromTop (2);
 
         auto body = s.removeFromTop (kCompBodyH);
-        // compMeter moved out of the COMP section - now the fader-side GR
-        // LED (placed below). 4-knob row uses the full body width.
-        juce::ignoreUnused (kCompMeterW, kCompMeterGap);
 
         auto layoutCell = [&] (juce::Rectangle<int> cell,
                                  juce::Slider& knob, juce::Label& label)

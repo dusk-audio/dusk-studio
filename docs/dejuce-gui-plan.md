@@ -663,12 +663,22 @@ application reads its own steady frame back as a PPM and
 
 ### G3 — The console
 
+**Preparation in progress; native console not started.** The first cleanup
+removes unused styling, layout and formatter helpers from
+`MasterStripComponent.cpp`, ahead of its structural rewrite. Live controls,
+formatting, layout and polling are unchanged. From the post-G2 base `de3a88e`,
+the gate moves from 164 files / 8,241 uses to 164 / 8,214; no file leaves the
+allowlist and no module unlinks.
+G0, G1 and both G2 passes are already on main (G2 remainder: PR #356).
+The accessibility decision in §3 and G2's outstanding desktop sign-offs remain
+prerequisites for the console port.
+
 The largest and riskiest phase, and the one the spike measured.
 `ChannelStripComponent` (6,340 lines), `MasterStripComponent`, `BusComponent`,
 `AuxLaneComponent`, `ConsoleView`, `AnalogVuMeter`, `CompMeterStrip`,
 `SplitModuleButton` become one embedded framework window covering the console
-area. Do not start it until §2.2's caching work is landed and measured at 24
-strips.
+area. The 24-strip CPU prerequisite is satisfied by G1's baked domes and
+30 Hz idle redraw (§2.2); draw-list caching was not needed for that budget.
 
 Owns: roughly 15 files, ~16,000 lines. Verify: 24-strip CPU under the budget
 agreed in G1; golden images per strip variant including the compact and 8-up
