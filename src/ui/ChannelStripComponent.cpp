@@ -2836,7 +2836,6 @@ void ChannelStripComponent::openPluginEditor()
             // cannot hide it under a settings/quit modal - that needs an
             // explicit IPC HideEditor/ShowEditor round-trip driven by modal
             // open/close, deferred to the tracked NSView-embed work.
-            juce::ignoreUnused (w, h);
         }
        #else
         // Windows: cross-process HWND reparenting via SetParent
@@ -2853,12 +2852,6 @@ void ChannelStripComponent::openPluginEditor()
             embed->getProperties().set (kPluginEditorTag, true);
             pluginEditorModal.showBorrowed (*parent, *embed, onClose);
             remoteForeignEmbed = std::move (embed);
-        }
-        else
-        {
-            // Embed creation failed (HWND no longer valid, etc.) - let
-            // the child's floating window stand in.
-            juce::ignoreUnused (w, h);
         }
        #endif
         return;
@@ -5635,19 +5628,6 @@ void ChannelStripComponent::armCompOnUserEdit()
         track.strip.compEnabled.store (true, std::memory_order_relaxed);
         refreshCompModeButtonState();
     }
-}
-
-static void drawSectionPlaceholder (juce::Graphics& g, juce::Rectangle<int> r,
-                                    const juce::String& label, juce::Colour accent)
-{
-    if (r.isEmpty()) return;
-    g.setColour (juce::Colour (0xff222226));
-    g.fillRoundedRectangle (r.toFloat(), 3.0f);
-    g.setColour (accent.withAlpha (0.45f));
-    g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 3.0f, 0.8f);
-    g.setColour (accent.withAlpha (0.85f));
-    g.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
-    g.drawText (label, r.reduced (4, 2), juce::Justification::centredTop, false);
 }
 
 namespace

@@ -3,7 +3,6 @@
 #include "DuskContextMenu.h"
 #include "DuskLabelEditor.h"
 #include "SteppedKnob.h"
-#include "CompBypassLed.h"
 #include "DuskStudioLookAndFeel.h"  // fourKColors palette
 #include "../session/MidiBindings.h"
 #include "../session/ParamEditAction.h"
@@ -1041,13 +1040,7 @@ void BusComponent::timerCallback()
         maxHold >= -12.0f ? juce::Colour (0xffe0c050) :
                              juce::Colour (0xffd0d0d0));
 
-    // GR is shown by the graphical GR meter; displayedGrDb still feeds it.
-    const float gr = bus.strip.meterGrDb.load (std::memory_order_relaxed);
-    if (gr < displayedGrDb) displayedGrDb = gr;
-    else                    displayedGrDb += (gr - displayedGrDb) * 0.5f;  // ~48 ms recovery (was ~167 ms)
-
     if (! meterArea.isEmpty())   repaint (meterArea);
-    if (! grMeterArea.isEmpty()) repaint (grMeterArea.expanded (2, 10));  // include "GR" caption
 
     // Motor-fader / motor-pan animation + Write/Touch capture - same grammar
     // as ChannelStripComponent. We poll the live* atoms (the engine writes
@@ -1328,48 +1321,10 @@ void BusComponent::paint (juce::Graphics& g)
                      displayedOutputRDb);
     }
 
-    // Bus-comp GR meter - fills DOWN from top as compression bites. Same
-    // colour story as the channel strip's GR bar so the visual language is
-    // consistent across the mixer.
-    if (! grMeterArea.isEmpty())
-    {
-        const auto bar = grMeterArea.toFloat();
-        g.setColour (juce::Colour (0xff0c0c0e));
-        g.fillRoundedRectangle (bar, 1.5f);
-        g.setColour (juce::Colour (0xff2a2a2e));
-        g.drawRoundedRectangle (bar, 1.5f, 0.5f);
-
-        constexpr float kGrFloorDb = 20.0f;
-        const float grAbs = jlimit (0.0f, kGrFloorDb, std::abs (displayedGrDb));
-        if (grAbs > 0.05f)
-        {
-            const float frac = grAbs / kGrFloorDb;
-            const float fillH = (bar.getHeight() - 4.0f) * frac;
-            auto fillRect = juce::Rectangle<float> (bar.getX() + 1.5f,
-                                                      bar.getY() + 2.0f,
-                                                      bar.getWidth() - 3.0f, fillH);
-            juce::ColourGradient grad (juce::Colour (0xffe0c050).brighter (0.2f),
-                                         bar.getX(), bar.getY(),
-                                         juce::Colour (0xffe05050).brighter (0.1f),
-                                         bar.getX(), bar.getBottom(), false);
-            g.setGradientFill (grad);
-            g.fillRoundedRectangle (fillRect, 1.0f);
-        }
-
-        // Tiny "GR" caption above the bar so the user knows what it is.
-        g.setColour (juce::Colour (0xff909094));
-        g.setFont (juce::Font (juce::FontOptions (7.0f, juce::Font::bold)));
-        g.drawText ("GR",
-                     juce::Rectangle<float> (bar.getX() - 2.0f, bar.getY() - 9.0f,
-                                              bar.getWidth() + 4.0f, 8.0f),
-                     juce::Justification::centred, false);
-    }
-
     // Fader dB scale labels - drawn LEFT of the slider's track (track-3
     // grammar). Each label has a short tick line stub extending toward
     // the track; the label glyph sits a few px further left for breathing
-    // room. Skipped when the fader scale column was carved out (legacy
-    // layout fallback).
+    // room.
     {
         const auto& range = faderSlider.getNormalisableRange();
         const auto sliderB = faderSlider.getBounds().toFloat();
@@ -1544,17 +1499,9 @@ void BusComponent::resized()
     }
     area.removeFromTop (3);
 
-    // Comp section. Mirrors the channel strip:
-    //   Header  : CompHeaderButton (full width, 16 px)
-    //   Body    : CompMeterStrip on the LEFT (36 px), 2×2 knob grid on
-    //             the RIGHT (RAT / MAK on top, ATK / REL on bottom).
-    //             Threshold is set via the triangle handle on the meter
-    //             - no dedicated THR knob.
     {
         constexpr int kCompKnobLabelH = 10;
         constexpr int kCompKnobRowH   = kCompKnobLabelH + kKnobBlockH;
-        constexpr int kCompMeterW     = 36;
-        constexpr int kCompMeterGap   = 4;
 
         // Single-row COMP body (matches channel-strip track-3 grammar):
         // 4 knobs (RAT / ATK / REL / MAK) across one row - no 2×2 grid.
@@ -1568,10 +1515,6 @@ void BusComponent::resized()
         s.removeFromTop (2);
 
         auto body = s.removeFromTop (kCompBodyH);
-        // The comp GR indicator is the fader-side GR LED (placed beside the
-        // level meter further below), not inside the COMP section, so the
-        // 4-knob row uses the full body width.
-        juce::ignoreUnused (kCompMeterW, kCompMeterGap);
 
         auto layoutCell = [&] (juce::Rectangle<int> cell,
                                  juce::Slider& knob, juce::Label& label)
@@ -1667,13 +1610,6 @@ void BusComponent::resized()
     constexpr int kFaderColW = 50;
     if (area.getWidth() > kFaderColW)
         area = area.removeFromRight (kFaderColW);
-    // paint() positions the scale labels directly left of the fader track, so
-    // no column is carved out for them here.
-    faderScaleArea = juce::Rectangle<int>();
-    // grMeterArea was the old standalone GR bar; compMeter now owns the
-    // GR display (placed beside the level meter below). Empty rect tells
-    // paint() to skip drawing the legacy bar + caption.
-    grMeterArea = juce::Rectangle<int>();
 
     // Pan knob/label centred on the FADER column X.
     const int faderCentreX = area.getCentreX();

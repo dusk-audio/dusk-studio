@@ -108,11 +108,7 @@ private:
 
     // Stereo output meter (L | R) on the right side of the fader, matching
     // the master strip's layout. Smoothed and peak-hold values per channel.
-    // Plus a slim vertical GR bar (top-down fill, gold->red) so the user
-    // sees compressor activity at a glance, not just as a numeric readout.
     juce::Rectangle<int> meterArea;
-    juce::Rectangle<int> grMeterArea;
-    juce::Rectangle<int> faderScaleArea;
     // Painted background bands for the EQ + COMP sections - same framed
     // look as the channel strip's eqArea / compArea so all strip types
     // share one visual grammar.
@@ -138,7 +134,6 @@ private:
     juce::Label outputPeakLabel;
     float displayedOutputLDb = -100.0f;
     float displayedOutputRDb = -100.0f;
-    float displayedGrDb      = 0.0f;
     float outputPeakHoldLDb  = -100.0f;
     float outputPeakHoldRDb  = -100.0f;
     int   outputPeakHoldFramesL = 0;
