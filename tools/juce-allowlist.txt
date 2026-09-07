@@ -69,8 +69,8 @@ src/ui/BusComponent.cpp	294
 src/ui/BusComponent.h	45
 src/ui/ChannelEqEditor.cpp	93
 src/ui/ChannelEqEditor.h	13
-src/ui/ChannelStripComponent.cpp	740
-src/ui/ChannelStripComponent.h	109
+src/ui/ChannelStripComponent.cpp	691
+src/ui/ChannelStripComponent.h	106
 src/ui/ClapPluginEditorComponent.cpp	18
 src/ui/ClapPluginEditorComponent.h	8
 src/ui/CompBypassLed.h	10

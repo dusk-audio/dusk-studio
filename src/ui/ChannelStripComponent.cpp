@@ -542,7 +542,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     }
     addAndMakeVisible (compMeter.get());
 
-    startTimerHz (30);  // input + GR meter refresh on the main strip
+    startTimerHz (30);
 
     for (size_t i = 0; i < bandSpecs().size(); ++i)
     {
@@ -928,64 +928,10 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     // 1 px border drew on top of the textbox edge, looking like overlap.
     inputPeakLabel.setColour (juce::Label::outlineColourId,    juce::Colours::transparentBlack);
     inputPeakLabel.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(),
-                                                            10.0f, juce::Font::bold)));
-    inputPeakLabel.setMinimumHorizontalScale (1.0f);   // never truncate to "..."
+                                                            11.0f, juce::Font::bold)));
+    inputPeakLabel.setMinimumHorizontalScale (0.40f);
     inputPeakLabel.setText ("-inf", juce::dontSendNotification);
     addAndMakeVisible (inputPeakLabel);
-
-    // GR readout - sits to the right of the input peak. Negative dB when
-    // the comp is pulling the signal down. Uses gold-on-black to read as a
-    // comp-section indicator distinct from the input level.
-    grPeakLabel.setJustificationType (juce::Justification::centred);
-    grPeakLabel.setColour (juce::Label::textColourId,        juce::Colour (0xffe0c050));
-    grPeakLabel.setColour (juce::Label::backgroundColourId,  juce::Colours::transparentBlack);
-    grPeakLabel.setColour (juce::Label::outlineColourId,     juce::Colours::transparentBlack);
-    grPeakLabel.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(),
-                                                          12.0f, juce::Font::bold)));
-    grPeakLabel.setText ("0.0", juce::dontSendNotification);
-    grPeakLabel.setTooltip ("Gain reduction in dB (negative = comp pulling down). "
-                             "Goes inert when the comp is bypassed.");
-    addAndMakeVisible (grPeakLabel);
-
-    // Fader-side GR numeric readout - mirrors grPeakLabel's
-    // styling so it reads as the same UI element, just attached to the
-    // fader-side slim LED instead of the COMP section. Hidden by default;
-    // resized() flips it on when the layout is active.
-    grReadoutLabel.setJustificationType (juce::Justification::centred);
-    grReadoutLabel.setColour (juce::Label::textColourId,        juce::Colour (0xffe0c050));
-    grReadoutLabel.setColour (juce::Label::backgroundColourId,  juce::Colours::transparentBlack);
-    grReadoutLabel.setColour (juce::Label::outlineColourId,     juce::Colours::transparentBlack);
-    grReadoutLabel.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(),
-                                                              12.0f, juce::Font::bold)));
-    grReadoutLabel.setMinimumHorizontalScale (1.0f);
-    grReadoutLabel.setText ("0.0", juce::dontSendNotification);
-    grReadoutLabel.setTooltip ("Gain reduction in dB. Inert while the comp is bypassed.");
-    grReadoutLabel.setVisible (false);
-    addAndMakeVisible (grReadoutLabel);
-
-    // The bottom-row readouts live in a far
-    // narrower column than the default kPeakColumnW slot, so the 12-pt
-    // monospaced font (chosen for the wider default layout) truncates
-    // "-13.5"/"-inf" with an ellipsis. Override AFTER the default setup
-    // so these stick; small font + permissive horizontal scale so JUCE
-    // squishes to fit instead of clipping.
-    {
-        const juce::Font readoutFont (juce::FontOptions (
-            juce::Font::getDefaultMonospacedFontName(), 11.0f, juce::Font::bold));
-        inputPeakLabel.setFont (readoutFont);
-        inputPeakLabel.setMinimumHorizontalScale (0.40f);
-        grReadoutLabel.setFont (readoutFont);
-        grReadoutLabel.setMinimumHorizontalScale (0.40f);
-    }
-
-    // "THR" label sits above CompMeterStrip's drag handle so the engineer
-    // sees what the triangle pointer controls. Same gold tone as the COMP
-    // section labels so it reads as part of the comp UI.
-    threshMeterLabel.setText ("THR", juce::dontSendNotification);
-    threshMeterLabel.setJustificationType (juce::Justification::centred);
-    threshMeterLabel.setColour (juce::Label::textColourId, juce::Colour (0xffb07050));
-    threshMeterLabel.setFont (juce::Font (juce::FontOptions (8.5f, juce::Font::bold)));
-    addAndMakeVisible (threshMeterLabel);
 
     // Input monitor toggle (IN)
     monitorButton.setClickingTogglesState (true);
@@ -1606,13 +1552,7 @@ void ChannelStripComponent::setCompSectionVisible (bool visible)
     vcaAttackKnob   .setVisible (visible);  vcaAttackLabel  .setVisible (visible);
     vcaReleaseKnob  .setVisible (visible);  vcaReleaseLabel .setVisible (visible);
     vcaOutputKnob   .setVisible (visible);  vcaOutputLabel  .setVisible (visible);
-    // compMeter now lives INSIDE the COMP section (next to the per-mode
-    // knobs) so it follows section visibility. In compact mode the popup
-    // owns its own threshold drag so we don't lose access.
     if (compMeter != nullptr) compMeter->setVisible (visible);
-    threshMeterLabel.setVisible (false);   // "THR" header unused; drag lives in the COMP meter strip
-    grPeakLabel    .setVisible (false);    // numeric GR readout retired - the
-                                            // meter bar already shows GR clearly
 
     // Re-apply the per-mode filter so only the active mode's knobs are
     // shown. Without this, flipping out of TIMELINE (or any path that
@@ -4440,14 +4380,6 @@ void ChannelStripComponent::timerCallback()
         }
     }
 
-    const float gr = track.meterGrDb.load (std::memory_order_relaxed);
-    if (gr < displayedGrDb)
-        displayedGrDb = gr;                              // instant attack
-    else
-        // ~48 ms recovery (was 0.18 = ~167 ms, which masked comp release times
-        // faster than the meter's own ballistic). Truer GR readout.
-        displayedGrDb += (gr - displayedGrDb) * 0.5f;
-
     // Input level meter - fast attack on rise, slow decay; with a peak-hold
     // marker that lingers for ~600 ms before falling. Stereo mode also
     // smooths the R channel so the second LED bar can be drawn alongside.
@@ -4520,39 +4452,6 @@ void ChannelStripComponent::timerCallback()
         inputPeakHoldDb >= -3.0f  ? juce::Colour (0xffff5050) :
         inputPeakHoldDb >= -12.0f ? juce::Colour (0xffe0c050) :
                                      juce::Colour (0xffd0d0d0));
-
-    // GR readout: show "-X.X" when the comp is reducing, dim "0.0" otherwise.
-    // displayedGrDb is already smoothed above (asymmetric: fast attack on
-    // rise, slow release on fall), matching the visual GR meter.
-    if (displayedGrDb <= -0.05f)
-    {
-        grPeakLabel.setText (juce::String (displayedGrDb, 1), juce::dontSendNotification);
-        grPeakLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe0c050));
-    }
-    else
-    {
-        grPeakLabel.setText ("0.0", juce::dontSendNotification);
-        grPeakLabel.setColour (juce::Label::textColourId, juce::Colour (0xff606064));
-    }
-
-    // Fader-side GR readout: numeric value sitting below the slim
-    // GR LED. Inert grey when bypassed or no compression; gold when active.
-    {
-        const bool engaged = track.strip.compEnabled.load (std::memory_order_relaxed);
-        if (engaged && displayedGrDb <= -0.05f)
-        {
-            grReadoutLabel.setText (juce::String (displayedGrDb, 1),
-                                      juce::dontSendNotification);
-            grReadoutLabel.setColour (juce::Label::textColourId,
-                                        juce::Colour (0xffe0c050));
-        }
-        else
-        {
-            grReadoutLabel.setText ("0.0", juce::dontSendNotification);
-            grReadoutLabel.setColour (juce::Label::textColourId,
-                                        juce::Colour (0xff606064));
-        }
-    }
 
     // Motor-fader / motor-pan animation: when the audio engine is feeding
     // a live atom from the lane (Read, or Touch when not grabbed), mirror
@@ -6342,9 +6241,6 @@ void ChannelStripComponent::resized()
         }
     }
 
-    grPeakLabel  .setVisible (false);
-    grReadoutLabel.setVisible (false);
-
     // Numeric output-peak readout centred under the meter + GR-LED cluster,
     // matching the bus / master strips (the LED itself is the level scale;
     // the number is the peak hold). The cluster spans the level meter through
@@ -6366,8 +6262,6 @@ void ChannelStripComponent::resized()
     const int bottomTrim = (int) duskstudio::kFaderTrackPad
                            + (compactMode ? kCompactFaderBottomTrim : 0);
     meterColumn = meterColumn.withTrimmedBottom (bottomTrim);
-
-    threshMeterLabel.setVisible (false);
 
     // Pan section pinned to the TOP of the fader column. Knob is centered on
     // the same fixed centreline as the slider thumb's track.

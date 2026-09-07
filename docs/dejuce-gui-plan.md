@@ -663,15 +663,20 @@ application reads its own steady frame back as a PPM and
 
 ### G3 — The console
 
-**Preparation in progress; native console not started.** The master-strip
-cleanup landed in PR #511, taking the gate from 164 files / 8,241 uses to
-164 / 8,214. The next cleanup removes the bus strip's permanently empty legacy
-GR meter, its unused polling and layout state, and the channel strip's unused
-drawing helper and redundant unused-value calls. The visible bus GR meter has
-its own polling and smoothing in `CompMeterStrip`; that path and the compressor
-editor's separate meter are unchanged. Live controls, formatting and layout
-are preserved. This pass takes the gate from 164 / 8,214 to 164 / 8,186;
-no file leaves the allowlist and no module unlinks.
+**Preparation in progress; native console not started.** PRs #511–#513 removed
+unused master/bus metering, channel drawing helpers and obsolete console layout
+branches. The channel fader's conflicting range override was also removed in
+#513 so it uses the parameter domain of -100 to +12 dB, as documented. Together
+these changes took the gate from 164 files / 8,241 uses to 164 / 8,149.
+
+The current cleanup removes the channel strip's unused GR/threshold labels and
+the GR polling/smoothing that fed them, and consolidates the input readout's
+duplicate font setup. The labels never had drawable bounds;
+the visible GR meter owns its state and polling in `CompMeterStrip` and is
+unchanged. The gate falls to 164 / 8,097, with no allowlist departures or module
+unlinks. Remaining preparation includes the aux lane's no-op editor helper;
+the fader's screen-reader mute-label mismatch is a separate behavior fix.
+
 G0, G1 and both G2 passes are already on main (G2 remainder: PR #356).
 The accessibility decision in §3 and G2's outstanding desktop sign-offs remain
 prerequisites for the console port.
