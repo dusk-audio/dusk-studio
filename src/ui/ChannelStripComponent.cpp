@@ -511,11 +511,6 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
 
     // Vertical comp metering with threshold drag-handle (Mixbus-style).
     compMeter = std::make_unique<CompMeterStrip> (track);
-    // Experimental track-3 fader-side layout: hide the IN bar (the main
-    // level meter already shows it) but keep the threshold-drag triangle
-    // handle so the engineer can still set the comp threshold from the
-    // strip. GR bar stays slim - column width sized accordingly below.
-    if (usesFaderThresholdLayout())
     {
         compMeter->setShowInputBar (false);
         compMeter->setHandleVisible (true);   // pure-GR + handle stays
@@ -529,10 +524,6 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         // scale. VCA's +12 "no compression" neutral can still be reached
         // via the COMP editor's threshold rotary if needed.
         compMeter->setRangeDb (-60.0f, 0.0f);
-        // Note: fader-side overrides (NoTextBox + restricted range) are
-        // applied AFTER the default fader setup further down in the
-        // ctor (search for "Track-3 fader overrides") - otherwise the
-        // default block clobbers them.
         // Drop unit suffixes on the single-row FET / VCA comp knobs so
         // the value text ("0.0", "0.20", "400", "4.0") fits in the narrow
         // 4-knob cell width. Units already implied by the RAT/OUT/ATK/REL
@@ -544,10 +535,6 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
             k->updateText();
         }
     }
-    // Track-3 always shows the AUX-sends row beneath COMP, regardless of
-    // mixingMode (which gates aux visibility on other strips). Forced
-    // visible at ctor so the row appears on the first paint.
-    if (usesFaderThresholdLayout())
     {
         for (auto& l : auxIndexLabels) l.setVisible (true);
         for (auto& k : auxKnobs)       if (k != nullptr) k->setVisible (true);
@@ -813,11 +800,10 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     faderSlider.addMouseListener (this, false);
     addAndMakeVisible (faderSlider);
 
-    // Track-3 fader overrides - applied AFTER the default range / textbox
+    // Fader overrides - applied AFTER the default range / textbox
     // setup above so they aren't clobbered. Restricts range to the
     // visible scale (-90 .. +6) and uses the on-fader labels instead of
     // a textbox.
-    if (usesFaderThresholdLayout())
     {
         faderSlider.getProperties().set ("dusk_drawFaderScaleLabels", true);
         // NO textbox inside the slider - at min value the cap (36 px tall)
@@ -970,7 +956,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
                              "Goes inert when the comp is bypassed.");
     addAndMakeVisible (grPeakLabel);
 
-    // Track-3 fader-side GR numeric readout - mirrors grPeakLabel's
+    // Fader-side GR numeric readout - mirrors grPeakLabel's
     // styling so it reads as the same UI element, just attached to the
     // fader-side slim LED instead of the COMP section. Hidden by default;
     // resized() flips it on when the layout is active.
@@ -986,13 +972,12 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     grReadoutLabel.setVisible (false);
     addAndMakeVisible (grReadoutLabel);
 
-    // Track-3 fader-side layout: the bottom-row readouts live in a far
+    // The bottom-row readouts live in a far
     // narrower column than the default kPeakColumnW slot, so the 12-pt
     // monospaced font (chosen for the wider default layout) truncates
     // "-13.5"/"-inf" with an ellipsis. Override AFTER the default setup
     // so these stick; small font + permissive horizontal scale so JUCE
     // squishes to fit instead of clipping.
-    if (usesFaderThresholdLayout())
     {
         const juce::Font readoutFont (juce::FontOptions (
             juce::Font::getDefaultMonospacedFontName(), 11.0f, juce::Font::bold));
@@ -1249,7 +1234,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     addAndMakeVisible (ioConfigButton);
     refreshIoConfigButton();
 
-    // Aux send knobs (Mixing stage only)
+    // Aux send knobs
     // Phase A: knobs + atomics only - audio routing through the aux buses
     // happens in Phase B. The four send levels feed AUX 1..4's plugin chain
     // (reverb / delay / etc.). Default -inf (no send).
@@ -1292,10 +1277,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
             session.auxLane (i).name = txt;
             lblRef.setText (txt, juce::dontSendNotification);
         };
-        if (usesFaderThresholdLayout())
-            addAndMakeVisible (lbl);
-        else
-            addChildComponent (lbl);
+        addAndMakeVisible (lbl);
     }
 
     auto formatAuxSend = [] (float dB, bool preFader)
@@ -1374,10 +1356,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         // Route right-clicks on the aux knob through the strip's mouseDown
         // so MIDI Learn picks up `e.eventComponent == auxKnobs[i].get()`.
         knob->addMouseListener (this, false);
-        if (usesFaderThresholdLayout())
-            addAndMakeVisible (knob.get());
-        else
-            addChildComponent (knob.get());
+        addAndMakeVisible (knob.get());
         auxKnobs[(size_t) i] = std::move (knob);
 
         auxKnobLabels[(size_t) i].setJustificationType (juce::Justification::centred);
@@ -1387,10 +1366,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
                                      .load (std::memory_order_relaxed);
         auxKnobLabels[(size_t) i].setText (formatAuxSend (initial, initialPre),
                                               juce::dontSendNotification);
-        if (usesFaderThresholdLayout())
-            addAndMakeVisible (auxKnobLabels[(size_t) i]);
-        else
-            addChildComponent (auxKnobLabels[(size_t) i]);
+        addAndMakeVisible (auxKnobLabels[(size_t) i]);
     }
 
     // Insert slot button. Empty state shows "Insert"; plugin loaded
@@ -1675,11 +1651,7 @@ void ChannelStripComponent::setCompactMode (bool compact)
     eqCompactButton  .setVisible (compact);
     compCompactButton.setVisible (compact);
 
-    // AUX row only exists when mixingMode is on OR this is track-3's always-
-    // visible fader-side layout. In compact mode the inline knobs collapse
-    // to a single AUX button regardless of which path put them on screen.
-    const bool auxRowAvailable = mixingMode || usesFaderThresholdLayout();
-    if (compact && auxRowAvailable)
+    if (compact)
     {
         setAuxSectionVisible (false);
         auxCompactButton.setVisible (true);
@@ -1687,7 +1659,7 @@ void ChannelStripComponent::setCompactMode (bool compact)
     else
     {
         auxCompactButton.setVisible (false);
-        setAuxSectionVisible (auxRowAvailable);
+        setAuxSectionVisible (true);
     }
 
     resized();
@@ -1717,15 +1689,14 @@ void ChannelStripComponent::setMixingMode (bool mixing)
     // phantom rows when leaving Mixing onto a mono / MIDI strip.)
     refreshInputSelectorVisibility();
 
-    const bool showAux = mixing || usesFaderThresholdLayout();
-    if (showAux && compactMode)
+    if (compactMode)
     {
         setAuxSectionVisible (false);
         auxCompactButton.setVisible (true);
     }
     else
     {
-        setAuxSectionVisible (showAux);
+        setAuxSectionVisible (true);
         auxCompactButton.setVisible (false);
     }
 
@@ -4573,9 +4544,8 @@ void ChannelStripComponent::timerCallback()
         grPeakLabel.setColour (juce::Label::textColourId, juce::Colour (0xff606064));
     }
 
-    // Track-3 fader-side GR readout: numeric value sitting below the slim
+    // Fader-side GR readout: numeric value sitting below the slim
     // GR LED. Inert grey when bypassed or no compression; gold when active.
-    if (usesFaderThresholdLayout())
     {
         const bool engaged = track.strip.compEnabled.load (std::memory_order_relaxed);
         if (engaged && displayedGrDb <= -0.05f)
@@ -5704,7 +5674,7 @@ void ChannelStripComponent::paint (juce::Graphics& g)
         g.drawRoundedRectangle (compArea.toFloat().reduced (0.5f), 3.0f, 0.8f);
     }
 
-    // SEND box (Mixing stage only) - same framed-block shape as EQ/COMP
+    // SEND box - same framed-block shape as EQ/COMP
     // with the AUX purple accent so the row reads as a coherent section
     // instead of floating loose knobs above PAN.
     if (! auxRowArea.isEmpty())
@@ -5717,8 +5687,6 @@ void ChannelStripComponent::paint (juce::Graphics& g)
 
     // Channel input LED (next to the fader). Shows the pre-fader signal
     //    level so the engineer always sees what's hitting the strip.
-    //    Threshold + GR meters live INSIDE the COMP section now, so this is
-    //    just a clean input bar with a peak-hold tick.
     //
     // The LED's dB-to-y mapping uses the fader's NormalisableRange - same
     // skew, same range - so the meter's "0 dB" line sits at exactly the
@@ -5866,7 +5834,6 @@ void ChannelStripComponent::paint (juce::Graphics& g)
     // Fader scale labels are drawn here (not in the LookAndFeel) so they can
     // occupy the reserved gutter between the LEFT-side bus buttons and fader.
     // LookAndFeel only draws the tick stubs for this layout.
-    if (usesFaderThresholdLayout())
     {
         const auto& range = faderSlider.getNormalisableRange();
         const auto sliderB = faderSlider.getBounds().toFloat();
@@ -5930,62 +5897,6 @@ void ChannelStripComponent::paint (juce::Graphics& g)
                                     rounded (baselineY),
                                     juce::Justification::right);
             g.restoreState();
-        }
-    }
-
-    // Fader dB scale - labels in the scale column aligned with the tick
-    // marks the LookAndFeel paints across the fader's track. Same set of
-    // values as kFaderTicks; format matches the screenshot's absolute-
-    // value style ("6", "3", "0", "3", "6", "12", "24", "40", "90").
-    if (! meterScaleArea.isEmpty())
-    {
-        const auto scale = meterScaleArea;
-        const auto& range = faderSlider.getNormalisableRange();
-        // Map scale labels to the METER's dB-to-Y curve (using kFloorDb /
-        // kCeilingDb, same dbToFrac the bar fill uses) instead of the
-        // FADER's skewed slider track. They sit next to the LED bar so the
-        // user reads the scale as the meter's level scale - not the
-        // fader's position scale - and they need to line up with the bar
-        // fill height, not the slider thumb position.
-        const auto meterRect = inputMeterArea.toFloat();
-        if (! meterRect.isEmpty())
-        {
-            // Hardware-fader style: a horizontal tick line on the LEFT
-            // side of the scale column (pointing toward the meter) with
-            // the number right-aligned next to it. "-90 dB" becomes "∞"
-            // (−inf / fully off) at the bottom of the range.
-            for (const auto& t : kFaderTicks)
-            {
-                if (t.db < (float) faderRange.start - 0.01f
-                    || t.db > (float) faderRange.end + 0.01f) continue;
-                const float frac = dbToFrac (t.db);
-                const float y = meterRect.getBottom() - 1.0f
-                                  - frac * (meterRect.getHeight() - 2.0f);
-                if (y - 7.0f > (float) scale.getBottom()) continue;
-
-                const bool isZero    = (std::abs (t.db) < 0.01f);
-                const bool isBottom  = (t.db <= -89.0f);
-                const float tickLen  = isZero ? 10.0f : (isBottom ? 6.0f : 8.0f);
-                const float tickX0   = (float) scale.getX();
-                const float tickX1   = tickX0 + tickLen;
-                const float lineW    = isZero ? 1.2f : 0.7f;
-                g.setColour (isZero ? juce::Colour (0xffe8e8ec)
-                                    : juce::Colour (0xff707078));
-                g.drawLine (tickX0, y, tickX1, y, lineW);
-
-                g.setColour (isZero ? juce::Colour (0xffffffff)
-                                    : juce::Colour (0xffc0c0c8));
-                // ∞ upsized to match the digit height (it renders small at a
-                // given point size); 0 dB bold; the rest plain.
-                g.setFont (juce::Font (juce::FontOptions (
-                    isBottom ? 14.0f : (isZero ? 10.5f : 9.5f),
-                    isZero ? juce::Font::bold : juce::Font::plain)));
-                const auto labelRect = juce::Rectangle<float> (tickX1 + 1.0f, y - 7.0f,
-                                                                 (float) scale.getRight() - (tickX1 + 1.0f),
-                                                                 14.0f);
-                const juce::String label = isBottom ? juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x9e"))   /* ∞ = -inf dB / fully off */ : juce::String (t.label);
-                g.drawText (label, labelRect, juce::Justification::centredLeft, false);
-            }
         }
     }
 }
@@ -6147,13 +6058,6 @@ void ChannelStripComponent::resized()
     }
     area.removeFromTop (3);
 
-    // COMP region:
-    //   Header  : ON button
-    //   Mode    : O / F / V
-    //   Body    : per-mode knob set on the LEFT, threshold/IN/GR meter on
-    //             the RIGHT. Putting the meter inside the comp section
-    //             (rather than next to the fader) keeps all comp UI grouped
-    //             and frees up the fader column for a taller fader.
     // COMP knob diameter matches EQ + AUX (24 px) so every knob down the
     // strip reads as one visual rhythm.
     constexpr int kCompKnobSize     = 24;
@@ -6161,8 +6065,6 @@ void ChannelStripComponent::resized()
     constexpr int kCompKnobLabelH   = 10;
     constexpr int kCompKnobRowH     = kCompKnobLabelH + kCompKnobBlockH;
     constexpr int kCompKnobGap      = 4;
-    constexpr int kCompMeterW       = 36;   // handle + IN bar + dB scale + GR bar
-    constexpr int kCompMeterGap     = 4;
 
     // Body height = standard 2 × knob row + gap, plus a small extra
     // strip kept at 0 - the Fst/Slo hint labels under ATK/REL were
@@ -6172,8 +6074,7 @@ void ChannelStripComponent::resized()
     constexpr int kCompBodyH = 2 * kCompKnobRowH + kCompKnobGap + kCompBodyExtraH;
     // EightUp restores two rows so each FET/VCA control keeps a readable cell
     // at the narrow channel width. Comfortable strips retain the shorter row.
-    const bool oneRowComp = usesFaderThresholdLayout()
-                         && horizontalDensity != consolelayout::HorizontalDensity::EightUp;
+    const bool oneRowComp = horizontalDensity != consolelayout::HorizontalDensity::EightUp;
     const int effectiveCompBodyH = oneRowComp ? kCompKnobRowH : kCompBodyH;
     compArea = area.removeFromTop (16 + 2 + effectiveCompBodyH + 4);
     {
@@ -6187,24 +6088,7 @@ void ChannelStripComponent::resized()
             compModeButton->setBounds (headerRow);
         s.removeFromTop (2);
 
-        // Body: GR meter strip (handle + IN + dB scale + GR) on the
-        // LEFT - matches Mixbus's threshold-fader-on-the-left grammar.
-        // Remaining width on the right holds the mode-specific knob
-        // grid. The "main amount" param (OPTO peak red / FET input /
-        // VCA threshold) is set by dragging the triangle handle on the
-        // meter strip - no dedicated knob or slider for it.
         auto body = s.removeFromTop (effectiveCompBodyH);
-        // Track 3 (experimental): the CompMeterStrip moves to a slim
-        // column next to the fader, so the COMP section's body uses the
-        // full width for the mode-specific knob grid. compMeter's bounds
-        // are set later in the fader-column block.
-        if (! usesFaderThresholdLayout())
-        {
-            auto meterRect = body.removeFromLeft (kCompMeterW);
-            body.removeFromLeft (kCompMeterGap);
-            if (compMeter != nullptr)
-                compMeter->setBounds (meterRect);
-        }
 
         auto layoutKnobCell = [&] (juce::Rectangle<int> cell,
                                     juce::Slider& knob, juce::Label& label)
@@ -6220,7 +6104,7 @@ void ChannelStripComponent::resized()
         {
             if (oneRowComp)
             {
-                // Track-3 OPTO single-row: GAIN cell on the LEFT half,
+                // OPTO single-row: GAIN cell on the LEFT half,
                 // LIMIT toggle vertically centred in the RIGHT half.
                 // Matches the 1-row footprint used by FET/VCA so the
                 // strip's COMP section height is mode-independent.
@@ -6297,16 +6181,16 @@ void ChannelStripComponent::resized()
             }
         }
     }
-    area.removeFromTop (usesFaderThresholdLayout() ? 6 : 3);
+    area.removeFromTop (6);
     }   // end of else (! compactMode)
 
-    // AUX sends (Mixing stage only). Single row of 4 knobs with a slight
+    // AUX sends. Single row of 4 knobs with a slight
     //    vertical zig-zag - even-index knobs sit higher, odd-index sit lower.
     //    Staggering keeps each knob full-size while they share a narrow strip
     //    width that wouldn't allow 4 knobs at the same Y without crowding the
     //    value labels. Sits between COMP and PAN to match signal-flow order:
     //    EQ -> COMP -> SENDS -> PAN -> fader.
-    if ((mixingMode || usesFaderThresholdLayout()) && compactMode)
+    if (compactMode)
     {
         // Match the EQ + COMP compact pill geometry (20h × reduced(4,0))
         // so the three stacked pills read as one cohesive group.
@@ -6314,7 +6198,7 @@ void ChannelStripComponent::resized()
         area.removeFromTop (4);
         auxRowArea = juce::Rectangle<int>();
     }
-    else if (mixingMode || usesFaderThresholdLayout())
+    else
     {
         constexpr int kAuxKnobSize  = 24;
         constexpr int kAuxStaggerY  = 10;     // odd knobs offset down by this much
@@ -6364,15 +6248,6 @@ void ChannelStripComponent::resized()
 
         area.removeFromTop (3);
     }
-    else
-    {
-        // Non-mixing stages don't show the SEND row, so the framed box
-        // disappears with it.
-        auxRowArea = juce::Rectangle<int>();
-    }
-
-    // The horizontal BUSES region used to live here. Bus toggles now sit in
-    // a vertical column to the left of the fader (laid out below).
 
     // Pan section is laid out together with the fader (see below) so
     // the knob can be horizontally centered over the stable fader column,
@@ -6391,19 +6266,12 @@ void ChannelStripComponent::resized()
     autoModeButton.setBounds (autoRow.reduced (1, 0));
     area.removeFromBottom (4);
 
-    // Fader + input meter pinned to the bottom of the strip. To the right of
-    // the fader: a small dB scale column (0/-12/-24/-60) and a vertical LED
-    // input meter. GR + threshold drag moved into the COMP section, so this
-    // column is now slim and the fader gets the reclaimed width.
-    constexpr int kMaxFaderHeight  = 360;  // 280 -> 360: bank row left ConsoleView, freed height goes to faders
     constexpr int kPeakLabelH      = 18;
     // Meter column width is mode-aware: in stereo we draw two bars side by
     // side, so we need extra room. Mono / Midi use a narrower column.
     const bool stereoMode = (track.mode.load (std::memory_order_relaxed)
                               == (int) Track::Mode::Stereo);
     const int kMeterWidth = stereoMode ? 18 : 12;
-    constexpr int kMeterScaleWidth = 16;
-    constexpr int kMeterGap        = 3;
 
     auto faderArea = area;
     // Reserve a row at the very bottom for the numeric output-peak readout,
@@ -6412,11 +6280,6 @@ void ChannelStripComponent::resized()
     // all shorten together and keep the meter's 1:1 scale alignment intact.
     auto peakRow = faderArea.removeFromBottom (kPeakLabelH);
     faderArea.removeFromBottom (2);
-    // Track 3 wants the full remaining vertical real estate for its
-    // fader column - skip the kMaxFaderHeight cap that other strips use.
-    if (! usesFaderThresholdLayout()
-        && faderArea.getHeight() > kMaxFaderHeight + kPeakLabelH + 2)
-        faderArea = faderArea.removeFromBottom (kMaxFaderHeight + kPeakLabelH + 2);
 
     // Vertical bus-assign column. Keep it on the LEFT at every supported
     // strip width, with the level meter and GR control fixed on the RIGHT.
@@ -6427,9 +6290,8 @@ void ChannelStripComponent::resized()
     constexpr int kBusButtonH   = 20;   // fixed height; evenly spaced across the 0->∞ scale
     juce::Rectangle<int> busColumn;
 
-    juce::Rectangle<int> meterColumn, scaleColumn;
+    juce::Rectangle<int> meterColumn;
     juce::Rectangle<int> faderCompMeterCol;
-    if (usesFaderThresholdLayout())
     {
         // Stable layout (left -> right): bus assignments, centred fader,
         // level meter, GR LED. compMeter keeps its handle on the RIGHT
@@ -6454,8 +6316,6 @@ void ChannelStripComponent::resized()
         const bool canCentreWithoutOverlap = fullArea.getWidth()
                                             >= symmetricSideW * 2
                                              + kFaderColMinReserve;
-        scaleColumn = juce::Rectangle<int>();
-        grScaleArea = juce::Rectangle<int>();
         if (canCentreWithoutOverlap)
         {
             const int centredFaderW = std::max (
@@ -6490,19 +6350,7 @@ void ChannelStripComponent::resized()
             faderArea.removeFromRight (kFaderToMeterGap);
         }
     }
-    else
-    {
-        busColumn = faderArea.removeFromLeft (kBusColumnW);
-        faderArea.removeFromLeft (kBusColumnGap);
-        grScaleArea = juce::Rectangle<int>();
-        meterColumn = faderArea.removeFromRight (kMeterWidth);
-        faderArea.removeFromRight (kMeterGap);
-        scaleColumn = faderArea.removeFromRight (kMeterScaleWidth);
-        faderArea.removeFromRight (kMeterGap);
-    }
 
-    // Peak readout beneath the meter column. GR readout retired - the GR bar
-    // inside the COMP section is the canonical readout now.
     grPeakLabel  .setVisible (false);
     grReadoutLabel.setVisible (false);
 
@@ -6524,15 +6372,10 @@ void ChannelStripComponent::resized()
     // track ends kFaderTrackPad above the slider bounds; compact mode also
     // reserves a value-label slot below its shorter slider.
     constexpr int kCompactFaderBottomTrim = 26;
-    const int bottomTrim = usesFaderThresholdLayout()
-                             ? (int) duskstudio::kFaderTrackPad
-                                 + (compactMode ? kCompactFaderBottomTrim : 0)
-                             : (kPeakLabelH + 2);
+    const int bottomTrim = (int) duskstudio::kFaderTrackPad
+                           + (compactMode ? kCompactFaderBottomTrim : 0);
     meterColumn = meterColumn.withTrimmedBottom (bottomTrim);
-    scaleColumn = scaleColumn.withTrimmedBottom (bottomTrim);
 
-    // Hide the "THR" header: threshold drag lives in the COMP section's meter
-    // strip, so a header next to the fader would be misleading.
     threshMeterLabel.setVisible (false);
 
     // Pan section pinned to the TOP of the fader column. Knob is centered on
@@ -6543,7 +6386,7 @@ void ChannelStripComponent::resized()
     constexpr int kPanLabelH   = 11;
     constexpr int kPanBlockW   = 56;
     // Slider geometry relative to faderArea (pre-pan-removal) top:
-    //   sliderTop = panSlice (= kPanLabelH + kPanBlockH) + kPanFaderGap [+ track-3 extra trim]
+    //   sliderTop = panSlice (= kPanLabelH + kPanBlockH) + kPanFaderGap
     //   +6 tick   = sliderTop + kFaderTrackPad (LookAndFeel pads sliderBounds
     //               by kFaderTrackPad top + bottom so the cap fully fits)
     // Meter LED + GR LED tops pin to the +6 tick. kPanFaderGap is the
@@ -6551,13 +6394,10 @@ void ChannelStripComponent::resized()
     // top - small positive value leaves a clean separator without the cap
     // reaching into the pan area.
     constexpr int kPanFaderGap     = 4;
-    constexpr int kTrack3ExtraTrim = 0;    // no additional withTrimmedTop - slider eats reclaimed space
     const int sliderTopRelative = kPanLabelH + kPanBlockH
-                                 + (usesFaderThresholdLayout() ? kTrack3ExtraTrim : 0)
                                  + kPanFaderGap;
     const int topTrim = sliderTopRelative + (int) duskstudio::kFaderTrackPad;
     inputMeterArea = meterColumn.withTrimmedTop (topTrim);
-    meterScaleArea = scaleColumn.withTrimmedTop (topTrim);
 
     auto panSlice = faderArea.removeFromTop (kPanLabelH + kPanBlockH);
     const int faderCentreX = panSlice.getCentreX();      // centre of fader column
@@ -6573,14 +6413,7 @@ void ChannelStripComponent::resized()
     // value has a small clean gap below the pan-knob "C" textbox instead
     // of overlapping it.
     auto sliderBounds = faderArea.withTrimmedTop (kPanFaderGap);
-    if (usesFaderThresholdLayout())
     {
-        // Cap (36 px tall) centres on the value Y. Trim top so cap.top
-        // at max value clears the PAN knob above. In the full-height layout,
-        // the shared peak-readout row already leaves room below the slider,
-        // so use all of the remaining fader height. Compact mode keeps the
-        // shorter geometry because the TIMELINE is consuming that space.
-        sliderBounds = sliderBounds.withTrimmedTop (kTrack3ExtraTrim);
         if (compactMode)
             sliderBounds = sliderBounds.withTrimmedBottom (kCompactFaderBottomTrim);
 
@@ -6598,9 +6431,6 @@ void ChannelStripComponent::resized()
     // Bus buttons (1-4): occupy a slightly tightened, vertically centred stack
     // within the fader's 0-to-off range. This keeps them easy to scan without
     // spreading four small controls over the entire fader height.
-    // faderYForDb gives the exact tick Y for both the normal and threshold fader
-    // layouts; anchoring to the meter column would miss it on strips that reserve
-    // peak-label space below the meter.
     {
         const int zeroY = (int) std::lround (duskstudio::faderYForDb (faderSlider, 0.0f));
         const int offY  = (int) std::lround (duskstudio::faderYForDb (faderSlider, -90.0f));
@@ -6619,11 +6449,7 @@ void ChannelStripComponent::resized()
         }
     }
 
-    // Track 3 (experimental): place the hoisted CompMeterStrip in its
-    // fader-column slot. Vertically constrained to the trimmed meter
-    // column rect so the handle / IN bar / GR bar share the same Y
-    // extent as the main level meter to the right.
-    if (usesFaderThresholdLayout() && compMeter != nullptr
+    if (compMeter != nullptr
         && ! faderCompMeterCol.isEmpty())
     {
         // Anchor the GR LED's bar top (grBarArea.top, which sits 10 px below

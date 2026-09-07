@@ -108,10 +108,6 @@ private:
     std::unique_ptr<AnalogVuMeter> vuMeter;
 
     juce::Rectangle<int> meterArea;
-    // Slim GR bar between fader and L/R output bars - comp's
-    // contribution to the final signal at a glance.
-    juce::Rectangle<int> grMeterArea;
-    juce::Rectangle<int> faderScaleArea;
     juce::Rectangle<int> eqArea;
     juce::Rectangle<int> compArea;
     juce::Rectangle<int> tapeArea;   // framed band behind the TAPE header (regular mode)
@@ -132,7 +128,6 @@ private:
     juce::Label outputPeakLabel;
     float displayedOutputLDb = -100.0f;
     float displayedOutputRDb = -100.0f;
-    float displayedGrDb      = 0.0f;
     float outputPeakHoldLDb  = -100.0f;
     float outputPeakHoldRDb  = -100.0f;
     int   outputPeakHoldFramesL = 0;

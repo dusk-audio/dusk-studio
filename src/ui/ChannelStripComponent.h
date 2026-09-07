@@ -181,11 +181,6 @@ private:
 
     std::unique_ptr<CompMeterStrip> compMeter;
 
-    // CompMeterStrip hoisted into a slim column alongside the fader
-    // (handle + IN bar + GR LED) so the COMP section shows only the
-    // knob grid.
-    bool usesFaderThresholdLayout() const { return true; }
-
     // Refresh the standalone dB readout from the fader slider's current value.
     // Called from faderSlider.onValueChange (user drag) AND from the 30 Hz
     // timer after it pulls an external change (MIDI binding / MCU / automation)
@@ -199,8 +194,6 @@ private:
     juce::Label  panLabel;
     juce::Slider faderSlider { juce::Slider::LinearVertical, juce::Slider::TextBoxBelow };
     juce::Rectangle<int> inputMeterArea;
-    juce::Rectangle<int> meterScaleArea;
-    juce::Rectangle<int> grScaleArea;
     // Fader-group chip drawn in the name row's right edge when grouped.
     // Empty when ungrouped. lastGroupId / lastGroupMaster are cached so the
     // 30 Hz timer only relays out + repaints when membership actually changes

@@ -1121,15 +1121,8 @@ void MasterStripComponent::timerCallback()
         maxHold >= -12.0f ? juce::Colour (0xffe0c050) :
                              juce::Colour (0xffd0d0d0));
 
-    // Bus-comp GR is shown by the graphical GR meter; displayedGrDb feeds it.
-    const float gr = params.meterGrDb.load (std::memory_order_relaxed);
-    if (gr < displayedGrDb) displayedGrDb = gr;
-    else                    displayedGrDb += (gr - displayedGrDb) * 0.5f;  // ~48 ms recovery (was ~167 ms)
-
     if (! meterArea.isEmpty())
         repaint (meterArea);
-    if (! grMeterArea.isEmpty())
-        repaint (grMeterArea.expanded (2, 10));   // include "GR" caption
 
     // Motor-fader animate + Write/Touch capture - mirrors the per-channel
     // and per-aux pattern. Master only has one automatable param.
@@ -1430,42 +1423,6 @@ void MasterStripComponent::paint (juce::Graphics& g)
                      displayedOutputRDb);
     }
 
-    // Master-bus comp GR meter - fills DOWN from the top as compression
-    // bites. Same gold->red colour story as the channel and aux strips.
-    if (! grMeterArea.isEmpty())
-    {
-        const auto bar = grMeterArea.toFloat();
-        g.setColour (juce::Colour (0xff0c0c0e));
-        g.fillRoundedRectangle (bar, 1.5f);
-        g.setColour (juce::Colour (0xff2a2a2e));
-        g.drawRoundedRectangle (bar, 1.5f, 0.5f);
-
-        constexpr float kGrFloorDb = 20.0f;
-        const float grAbs = jlimit (0.0f, kGrFloorDb, std::abs (displayedGrDb));
-        if (grAbs > 0.05f)
-        {
-            const float frac = grAbs / kGrFloorDb;
-            const float fillH = (bar.getHeight() - 4.0f) * frac;
-            auto fillRect = juce::Rectangle<float> (bar.getX() + 1.5f,
-                                                      bar.getY() + 2.0f,
-                                                      bar.getWidth() - 3.0f, fillH);
-            juce::ColourGradient grad (juce::Colour (0xffe0c050).brighter (0.2f),
-                                         bar.getX(), bar.getY(),
-                                         juce::Colour (0xffe05050).brighter (0.1f),
-                                         bar.getX(), bar.getBottom(), false);
-            g.setGradientFill (grad);
-            g.fillRoundedRectangle (fillRect, 1.0f);
-        }
-
-        // "GR" caption above the bar.
-        g.setColour (juce::Colour (0xff909094));
-        g.setFont (juce::Font (juce::FontOptions (7.0f, juce::Font::bold)));
-        g.drawText ("GR",
-                     juce::Rectangle<float> (bar.getX() - 2.0f, bar.getY() - 9.0f,
-                                              bar.getWidth() + 4.0f, 8.0f),
-                     juce::Justification::centred, false);
-    }
-
     // Fader dB scale labels - track-3 grammar, drawn LEFT of the slider's
     // track (no separate carved column). Same kFaderTicks set as channel +
     // bus strips so the entire mixer reads identically.
@@ -1759,9 +1716,6 @@ void MasterStripComponent::resized()
     const int meterTopY = faderColArea.getY() + (int) duskstudio::kFaderTrackPad;
     meterArea = meterArea.withTop (meterTopY)
                           .withTrimmedBottom (kFaderValueH + 8);
-    // Legacy carves cleared - paint() short-circuits on empty rects.
-    faderScaleArea = juce::Rectangle<int>();
-    grMeterArea    = juce::Rectangle<int>();
 
     // Slider bottom trimmed for the standalone value label.
     auto sliderBounds = faderColArea.withTrimmedBottom (kFaderValueH + 8);
