@@ -800,10 +800,6 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     faderSlider.addMouseListener (this, false);
     addAndMakeVisible (faderSlider);
 
-    // Fader overrides - applied AFTER the default range / textbox
-    // setup above so they aren't clobbered. Restricts range to the
-    // visible scale (-90 .. +6) and uses the on-fader labels instead of
-    // a textbox.
     {
         faderSlider.getProperties().set ("dusk_drawFaderScaleLabels", true);
         // NO textbox inside the slider - at min value the cap (36 px tall)
@@ -812,11 +808,6 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         // Use a separate faderValueLabel positioned below the slider in
         // resized(), updated from onValueChange below.
         faderSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-        faderSlider.setRange (-90.0, 6.0, 0.1);
-        faderSlider.setSkewFactorFromMidPoint (-12.0);
-        const float curDb = track.strip.faderDb.load (std::memory_order_relaxed);
-        faderSlider.setValue (jlimit (-90.0, 6.0, (double) curDb),
-                                 juce::dontSendNotification);
 
         // Configure the standalone value readout.
         faderValueLabel.setJustificationType (juce::Justification::centred);
