@@ -69,8 +69,8 @@ src/ui/BusComponent.cpp	294
 src/ui/BusComponent.h	45
 src/ui/ChannelEqEditor.cpp	93
 src/ui/ChannelEqEditor.h	13
-src/ui/ChannelStripComponent.cpp	759
-src/ui/ChannelStripComponent.h	111
+src/ui/ChannelStripComponent.cpp	740
+src/ui/ChannelStripComponent.h	109
 src/ui/ClapPluginEditorComponent.cpp	18
 src/ui/ClapPluginEditorComponent.h	8
 src/ui/CompBypassLed.h	10
@@ -111,8 +111,8 @@ src/ui/Lv2PluginEditorComponent.cpp	3
 src/ui/Lv2PluginEditorComponent.h	4
 src/ui/MainComponent.cpp	459
 src/ui/MainComponent.h	57
-src/ui/MasterStripComponent.cpp	344
-src/ui/MasterStripComponent.h	59
+src/ui/MasterStripComponent.cpp	330
+src/ui/MasterStripComponent.h	57
 src/ui/MasteringView.cpp	154
 src/ui/MasteringView.h	32
 src/ui/MidiBindingsPanel.cpp	49
