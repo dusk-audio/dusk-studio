@@ -65,11 +65,11 @@ src/ui/AuxView.cpp	60
 src/ui/AuxView.h	5
 src/ui/BounceDialog.cpp	45
 src/ui/BounceDialog.h	12
-src/ui/BusComponent.cpp	309
-src/ui/BusComponent.h	47
+src/ui/BusComponent.cpp	294
+src/ui/BusComponent.h	45
 src/ui/ChannelEqEditor.cpp	93
 src/ui/ChannelEqEditor.h	13
-src/ui/ChannelStripComponent.cpp	770
+src/ui/ChannelStripComponent.cpp	759
 src/ui/ChannelStripComponent.h	111
 src/ui/ClapPluginEditorComponent.cpp	18
 src/ui/ClapPluginEditorComponent.h	8

@@ -663,12 +663,15 @@ application reads its own steady frame back as a PPM and
 
 ### G3 — The console
 
-**Preparation in progress; native console not started.** The first cleanup
-removes unused styling, layout and formatter helpers from
-`MasterStripComponent.cpp`, ahead of its structural rewrite. Live controls,
-formatting, layout and polling are unchanged. From the post-G2 base `de3a88e`,
-the gate moves from 164 files / 8,241 uses to 164 / 8,214; no file leaves the
-allowlist and no module unlinks.
+**Preparation in progress; native console not started.** The master-strip
+cleanup landed in PR #511, taking the gate from 164 files / 8,241 uses to
+164 / 8,214. The next cleanup removes the bus strip's permanently empty legacy
+GR meter, its unused polling and layout state, and the channel strip's unused
+drawing helper and redundant unused-value calls. The visible bus GR meter has
+its own polling and smoothing in `CompMeterStrip`; that path and the compressor
+editor's separate meter are unchanged. Live controls, formatting and layout
+are preserved. This pass takes the gate from 164 / 8,214 to 164 / 8,186;
+no file leaves the allowlist and no module unlinks.
 G0, G1 and both G2 passes are already on main (G2 remainder: PR #356).
 The accessibility decision in §3 and G2's outstanding desktop sign-offs remain
 prerequisites for the console port.
