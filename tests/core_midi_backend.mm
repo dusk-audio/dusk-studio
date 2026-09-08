@@ -287,25 +287,46 @@ TEST_CASE ("CoreMIDI migrates signed and connected IDs and rejects ambiguous ali
 
 TEST_CASE ("CoreMIDI reports endpoint hotplug without reporting its own input ports", "[coremidi-native][issue-298]")
 {
+    Sink sink;
     auto input = makeCoreMidiInputBackend();
     std::atomic<int> changes { 0 };
+    input->setReceiver (sink.receiver());
     input->setDeviceChangeHandler ([&] { changes.fetch_add (1); });
     input->start();
     auto fixture = std::make_unique<Fixture>();
     REQUIRE (pumpUntil ([&] { return changes.load() > 0; }));
     CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.05, false);
     const auto beforePort = changes.load();
-    REQUIRE (input->enable (findId (input->enumerate(), fixture->sourceName)));
+    const auto identifier = findId (input->enumerate(), fixture->sourceName);
+    REQUIRE (input->enable (identifier));
     CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.05, false);
     REQUIRE (changes.load() == beforePort);
+    fixture->emit ({ 0x90, 60, 100 });
+    REQUIRE (sink.wait (1));
+    input->disableAll();
+    REQUIRE (input->enable (identifier));
+    fixture->emit ({ 0x80, 60, 0 });
+    REQUIRE (sink.wait (2));
+    input->disableAll();
     const auto beforeRemoval = changes.load();
     fixture.reset();
     REQUIRE (pumpUntil ([&] { return changes.load() > beforeRemoval; }));
     input->stop();
     const auto afterStop = changes.load();
     fixture = std::make_unique<Fixture>();
+    REQUIRE (input->enable (findId (input->enumerate(), fixture->sourceName)));
+    fixture->emit ({ 0x90, 61, 100 });
     CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.05, false);
     REQUIRE (changes.load() == afterStop);
+    {
+        const std::lock_guard<std::mutex> lock (sink.mutex);
+        REQUIRE (sink.events.size() == 2);
+    }
+    input->start();
+    fixture->emit ({ 0x80, 61, 0 });
+    REQUIRE (sink.wait (3));
+    input->stop();
+    REQUIRE (sink.events.size() == 3);
 }
 
 TEST_CASE ("CoreMIDI future output does not delay a different destination", "[coremidi-native][issue-298]")

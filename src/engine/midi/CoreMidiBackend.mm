@@ -330,7 +330,12 @@ public:
         return false;
     }
 
-    void disableAll() override { stop(); enabled.clear(); }
+    void disableAll() override
+    {
+        closeInputGates();
+        disposeInputs();
+        enabled.clear();
+    }
 
     void start() override
     {
@@ -353,16 +358,26 @@ public:
     void stop() override
     {
         if (changes != nullptr) changes->gate.close();
-        for (const auto& entry : ports) entry.second.connection->gate.close();
+        closeInputGates();
         if (changes != nullptr) changes->gate.wait();
-        for (const auto& entry : ports) entry.second.connection->gate.wait();
-        for (const auto& entry : ports) MIDIPortDispose (entry.second.port);
-        ports.clear();
+        disposeInputs();
         changes.reset();
         running = false;
     }
 
 private:
+    void closeInputGates()
+    {
+        for (const auto& entry : ports) entry.second.connection->gate.close();
+    }
+
+    void disposeInputs()
+    {
+        for (const auto& entry : ports) entry.second.connection->gate.wait();
+        for (const auto& entry : ports) MIDIPortDispose (entry.second.port);
+        ports.clear();
+    }
+
     bool connect (const std::string& identifier, MIDIEndpointRef endpoint)
     {
         const auto state = std::make_shared<InputConnection>();
