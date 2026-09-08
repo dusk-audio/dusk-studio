@@ -317,6 +317,8 @@ TEST_CASE ("CoreMIDI reports endpoint hotplug without reporting its own input po
     REQUIRE (input->enable (findId (input->enumerate(), fixture->sourceName)));
     fixture->emit ({ 0x90, 61, 100 });
     CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.05, false);
+    // Retire this connection so delayed packets cannot enter the next start.
+    input->stop();
     REQUIRE (changes.load() == afterStop);
     {
         const std::lock_guard<std::mutex> lock (sink.mutex);
