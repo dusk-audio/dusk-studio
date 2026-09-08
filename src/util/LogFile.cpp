@@ -56,8 +56,13 @@ bool LogFile::prepare()
     std::filesystem::create_directories (parent, error);
     if (error) return false;
 
-    const auto size = std::filesystem::file_size (path, error);
+    const auto fileStatus = std::filesystem::status (path, error);
     if (error) return error == std::errc::no_such_file_or_directory;
+    if (! std::filesystem::exists (fileStatus)) return true;
+    if (! std::filesystem::is_regular_file (fileStatus)) return false;
+
+    const auto size = std::filesystem::file_size (path, error);
+    if (error) return false;
     if (size <= kMaxInitialBytes) return true;
     if (size > static_cast<std::uintmax_t> (std::numeric_limits<std::streamoff>::max())) return false;
 
