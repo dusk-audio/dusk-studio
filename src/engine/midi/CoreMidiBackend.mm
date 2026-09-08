@@ -160,32 +160,39 @@ bool startsWithDeviceName (const std::string& name, const std::string& prefix)
     return result;
 }
 
-BackendDeviceInfo legacyEndpointInfo (MIDIEndpointRef endpoint, bool external)
+struct LegacyInfo
+{
+    BackendDeviceInfo deviceForm;
+    BackendDeviceInfo endpointForm;
+};
+
+LegacyInfo legacyEndpointInfo (MIDIEndpointRef endpoint, bool external)
 {
     auto info = objectInfo (endpoint);
     MIDIEntityRef entity = 0;
     MIDIEndpointGetEntity (endpoint, &entity);
-    if (entity == 0) return info;
+    if (entity == 0) return { info, info };
     if (info.name.empty() && info.identifier.empty()) info = objectInfo (entity);
     MIDIDeviceRef device = 0;
     MIDIEntityGetDevice (entity, &device);
-    if (device == 0) return info;
+    if (device == 0) return { info, info };
     const auto deviceInfo = objectInfo (device);
-    if (deviceInfo.name.empty() && deviceInfo.identifier.empty()) return info;
+    if (deviceInfo.name.empty() && deviceInfo.identifier.empty()) return { info, info };
     if (external && MIDIDeviceGetNumberOfEntities (device) < 2)
-        info.name = deviceInfo.name;
-    else if (! startsWithDeviceName (info.name, deviceInfo.name))
+        return { coremidi::externalEndpointInfo (info, deviceInfo, coremidi::ExternalIdentifier::Device),
+                 coremidi::externalEndpointInfo (info, deviceInfo, coremidi::ExternalIdentifier::Endpoint) };
+    if (! startsWithDeviceName (info.name, deviceInfo.name))
     {
         info.name = deviceInfo.name + " " + info.name;
         while (! info.name.empty() && static_cast<unsigned char> (info.name.back()) <= ' ') info.name.pop_back();
         info.identifier = deviceInfo.identifier + " " + info.identifier;
     }
-    return info;
+    return { info, info };
 }
 
-BackendDeviceInfo connectedEndpointInfo (MIDIEndpointRef endpoint)
+LegacyInfo connectedEndpointInfo (MIDIEndpointRef endpoint)
 {
-    BackendDeviceInfo info;
+    LegacyInfo info;
     CFDataRef connections = nullptr;
     MIDIObjectGetDataProperty (endpoint, kMIDIPropertyConnectionUniqueID, &connections);
     if (connections != nullptr)
@@ -199,24 +206,28 @@ BackendDeviceInfo connectedEndpointInfo (MIDIEndpointRef endpoint)
             MIDIObjectRef object = 0;
             MIDIObjectType type = kMIDIObjectType_Other;
             if (MIDIObjectFindByUniqueID (static_cast<MIDIUniqueID> (id), &object, &type) != noErr) continue;
-            const auto connected = type == kMIDIObjectType_ExternalSource || type == kMIDIObjectType_ExternalDestination
-                                 ? legacyEndpointInfo (static_cast<MIDIEndpointRef> (object), true) : objectInfo (object);
-            if (! connected.name.empty() || ! connected.identifier.empty())
+            LegacyInfo connected;
+            if (type == kMIDIObjectType_ExternalSource || type == kMIDIObjectType_ExternalDestination)
+                connected = legacyEndpointInfo (static_cast<MIDIEndpointRef> (object), true);
+            else
             {
-                info.name += (info.name.empty() ? "" : ", ") + connected.name;
-                info.identifier += (info.identifier.empty() ? "" : ", ") + connected.identifier;
+                const auto objectDetails = objectInfo (object);
+                connected = { objectDetails, objectDetails };
             }
+            coremidi::appendConnectedInfo (info.deviceForm, connected.deviceForm);
+            coremidi::appendConnectedInfo (info.endpointForm, connected.endpointForm);
         }
         CFRelease (connections);
     }
-    return info.name.empty() && info.identifier.empty() ? legacyEndpointInfo (endpoint, false) : info;
+    return info.deviceForm.name.empty() && info.deviceForm.identifier.empty() ? legacyEndpointInfo (endpoint, false) : info;
 }
 
 struct Endpoint
 {
     MIDIEndpointRef endpoint;
     BackendDeviceInfo info;
-    std::string legacyIdentifier;
+    std::string deviceLegacyIdentifier;
+    std::string endpointLegacyIdentifier;
 };
 
 std::vector<Endpoint> endpoints (bool input)
@@ -231,7 +242,8 @@ std::vector<Endpoint> endpoints (bool input)
         if (endpoint == 0 || MIDIObjectGetIntegerProperty (endpoint, kMIDIPropertyUniqueID, &id) != noErr || id == 0) continue;
         if (MIDIObjectGetIntegerProperty (endpoint, kMIDIPropertyOffline, &offline) == noErr && offline != 0) continue;
         const auto legacy = connectedEndpointInfo (endpoint);
-        result.push_back ({ endpoint, { legacy.name, coremidi::identifier (id) }, legacy.identifier });
+        result.push_back ({ endpoint, { legacy.deviceForm.name, coremidi::identifier (id) },
+                            legacy.deviceForm.identifier, legacy.endpointForm.identifier });
     }
     return result;
 }
@@ -243,17 +255,17 @@ std::vector<BackendDeviceInfo> enumerate (bool input)
     return result;
 }
 
+std::vector<coremidi::EndpointIdentity> identitySnapshot (bool input)
+{
+    std::vector<coremidi::EndpointIdentity> result;
+    for (const auto& endpoint : endpoints (input))
+        result.push_back ({ endpoint.info.identifier, endpoint.deviceLegacyIdentifier, endpoint.endpointLegacyIdentifier });
+    return result;
+}
+
 std::string migrate (bool input, const std::string& legacy)
 {
-    if (legacy.empty()) return {};
-    std::string result;
-    for (const auto& endpoint : endpoints (input))
-        if (endpoint.legacyIdentifier == legacy)
-        {
-            if (! result.empty()) return {};
-            result = endpoint.info.identifier;
-        }
-    return result;
+    return coremidi::migrateIdentifier (identitySnapshot (input), legacy);
 }
 
 coremidi::ClockAnchor clockAnchor (double millisecondsPerTick)
@@ -264,16 +276,9 @@ coremidi::ClockAnchor clockAnchor (double millisecondsPerTick)
     return { before + (after - before) / 2, milliseconds, millisecondsPerTick };
 }
 
-std::string legacyIdentifier (bool input, const std::string& identifier)
+std::string legacyIdentifier (bool input, const std::string& identifier, const std::vector<BackendDeviceInfo>& available)
 {
-    if (identifier.rfind ("coremidi:", 0) != 0) return {};
-    const auto ports = endpoints (input);
-    const auto found = std::find_if (ports.begin(), ports.end(), [&] (const auto& port)
-                                   { return port.info.identifier == identifier; });
-    if (found == ports.end() || found->legacyIdentifier.empty()) return {};
-    if (std::count_if (ports.begin(), ports.end(), [&] (const auto& port)
-                      { return port.legacyIdentifier == found->legacyIdentifier; }) != 1) return {};
-    return found->legacyIdentifier;
+    return coremidi::legacyIdentifier (identitySnapshot (input), identifier, available);
 }
 
 double tickDuration()
@@ -538,8 +543,10 @@ private:
 
 std::unique_ptr<IMidiInputBackend> makeCoreMidiInputBackend() { return std::make_unique<CoreMidiInput>(); }
 std::unique_ptr<IMidiOutputBackend> makeCoreMidiOutputBackend() { return std::make_unique<CoreMidiOutput>(); }
-std::string coreMidiLegacyInputIdentifier (const std::string& identifier) { return legacyIdentifier (true, identifier); }
-std::string coreMidiLegacyOutputIdentifier (const std::string& identifier) { return legacyIdentifier (false, identifier); }
+std::string coreMidiLegacyInputIdentifier (const std::string& identifier, const std::vector<BackendDeviceInfo>& available)
+{ return legacyIdentifier (true, identifier, available); }
+std::string coreMidiLegacyOutputIdentifier (const std::string& identifier, const std::vector<BackendDeviceInfo>& available)
+{ return legacyIdentifier (false, identifier, available); }
 } // namespace duskstudio::midi
 
 #pragma clang diagnostic pop

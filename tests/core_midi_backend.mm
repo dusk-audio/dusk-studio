@@ -264,21 +264,25 @@ TEST_CASE ("CoreMIDI migrates signed and connected IDs and rejects ambiguous ali
     const auto secondId = negativeId (second.source);
     auto input = makeCoreMidiInputBackend();
     REQUIRE (input->migrateIdentifier (std::to_string (firstId)) == coremidi::identifier (firstId));
-    REQUIRE (coreMidiLegacyInputIdentifier (coremidi::identifier (firstId)) == std::to_string (firstId));
+    const std::vector<BackendDeviceInfo> inputs { { first.sourceName, std::to_string (firstId) } };
+    REQUIRE (coreMidiLegacyInputIdentifier (coremidi::identifier (firstId), inputs) == std::to_string (firstId));
+    REQUIRE (coreMidiLegacyInputIdentifier (coremidi::identifier (firstId), {}).empty());
     const auto outputId = negativeId (first.destination);
     auto output = makeCoreMidiOutputBackend();
     REQUIRE (output->migrateIdentifier (std::to_string (outputId)) == coremidi::identifier (outputId));
-    REQUIRE (coreMidiLegacyOutputIdentifier (coremidi::identifier (outputId)) == std::to_string (outputId));
+    const std::vector<BackendDeviceInfo> outputs { { first.destinationName, std::to_string (outputId) } };
+    REQUIRE (coreMidiLegacyOutputIdentifier (coremidi::identifier (outputId), outputs) == std::to_string (outputId));
     REQUIRE (input->migrateIdentifier ("missing").empty());
     setConnections (connected.source, { firstId, secondId });
     SInt32 connectedId = 0;
     REQUIRE (MIDIObjectGetIntegerProperty (connected.source, kMIDIPropertyUniqueID, &connectedId) == noErr);
     const auto legacy = std::to_string (firstId) + ", " + std::to_string (secondId);
     REQUIRE (input->migrateIdentifier (legacy) == coremidi::identifier (connectedId));
-    REQUIRE (coreMidiLegacyInputIdentifier (coremidi::identifier (connectedId)) == legacy);
+    const std::vector<BackendDeviceInfo> connectedInputs { { connected.sourceName, legacy } };
+    REQUIRE (coreMidiLegacyInputIdentifier (coremidi::identifier (connectedId), connectedInputs) == legacy);
     setConnections (duplicate.source, { firstId, secondId });
     REQUIRE (input->migrateIdentifier (legacy).empty());
-    REQUIRE (coreMidiLegacyInputIdentifier (coremidi::identifier (connectedId)).empty());
+    REQUIRE (coreMidiLegacyInputIdentifier (coremidi::identifier (connectedId), connectedInputs).empty());
 }
 
 TEST_CASE ("CoreMIDI reports endpoint hotplug without reporting its own input ports", "[coremidi-native][issue-298]")

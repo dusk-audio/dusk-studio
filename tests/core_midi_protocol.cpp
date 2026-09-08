@@ -43,11 +43,36 @@ TEST_CASE ("CoreMIDI clocks retain source timestamps across different epochs", "
     REQUIRE_THAT (afterSleep.toMilliseconds (0), WithinAbs (62001.0, 1e-9));
 }
 
-TEST_CASE ("CoreMIDI endpoint identifiers retain signed unique IDs", "[midi][coremidi][issue-298]")
+TEST_CASE ("CoreMIDI endpoint identities preserve signed and compound legacy routes", "[midi][coremidi][issue-298]")
 {
     REQUIRE (identifier (42) == "coremidi:42");
     REQUIRE (identifier (-42) == "coremidi:-42");
     REQUIRE (identifier (std::numeric_limits<std::int32_t>::min()) == "coremidi:-2147483648");
+
+    const duskstudio::midi::BackendDeviceInfo endpoint { "Port", "-21" }, device { "Interface", "-20" };
+    auto oldInfo = externalEndpointInfo (endpoint, device, ExternalIdentifier::Device);
+    auto newInfo = externalEndpointInfo (endpoint, device, ExternalIdentifier::Endpoint);
+    REQUIRE (oldInfo.name == "Interface");
+    REQUIRE (oldInfo.identifier == "-20");
+    REQUIRE (newInfo.name == "Interface");
+    REQUIRE (newInfo.identifier == "-21");
+    appendConnectedInfo (oldInfo, { "Bridge", "-30 -31" });
+    appendConnectedInfo (newInfo, { "Bridge", "-30 -31" });
+    REQUIRE (oldInfo.identifier == "-20, -30 -31");
+    REQUIRE (newInfo.identifier == "-21, -30 -31");
+
+    std::vector<EndpointIdentity> identities { { "coremidi:1", oldInfo.identifier, newInfo.identifier } };
+    REQUIRE (migrateIdentifier (identities, oldInfo.identifier) == "coremidi:1");
+    REQUIRE (migrateIdentifier (identities, newInfo.identifier) == "coremidi:1");
+    REQUIRE (migrateIdentifier (identities, "missing").empty());
+    REQUIRE (legacyIdentifier (identities, "coremidi:1", { oldInfo }) == oldInfo.identifier);
+    REQUIRE (legacyIdentifier (identities, "coremidi:1", { newInfo }) == newInfo.identifier);
+    REQUIRE (legacyIdentifier (identities, "coremidi:1", { oldInfo, newInfo }).empty());
+    REQUIRE (legacyIdentifier (identities, "coremidi:1", { oldInfo, oldInfo }).empty());
+    identities.push_back ({ "coremidi:2", newInfo.identifier, "2" });
+    REQUIRE (migrateIdentifier (identities, newInfo.identifier).empty());
+    REQUIRE (legacyIdentifier (identities, "coremidi:1", { newInfo }).empty());
+    REQUIRE (migrateIdentifier (identities, oldInfo.identifier) == "coremidi:1");
 }
 
 TEST_CASE ("CoreMIDI packets separate channel and system messages", "[midi][coremidi][issue-298]")
