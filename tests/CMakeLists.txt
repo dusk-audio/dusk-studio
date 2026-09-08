@@ -253,6 +253,7 @@ endif()
 target_sources(dusk-studio-tests PRIVATE
     audiofile_roundtrip.cpp
     waveform_peaks.cpp
+    waveform_details.cpp
     audiofile_ab_null.cpp
     audiofile_buffered_reader.cpp
     audiofile_drain_pool.cpp
