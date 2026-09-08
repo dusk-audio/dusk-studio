@@ -2585,7 +2585,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         return;
     }
 
-    // Install crash handler + FileLogger AFTER every selftest env-gate
+    // Install crash handler + application log AFTER every selftest env-gate
     // above has had its chance to quit. Self-test paths don't want
     // stray daily log files littering the user's data dir (or CI
     // runner $HOME). Normal-user launches fall through to here, so the
@@ -2691,10 +2691,8 @@ void DuskStudioApp::shutdown()
 #endif
     bounceTest.reset();             // headless bounce harness: worker joined, then engine/session
 
-    // Tear down the FileLogger installed by crash_handler::install so
-    // JUCE's leak detector doesn't complain at exit. The crash callback
-    // installed via setApplicationCrashHandler is harmless if it stays
-    // registered - process is exiting either way.
+    // Detach the logger after UI and engine teardown. Its storage is retained
+    // for any logging calls still in progress.
     duskstudio::crash_handler::uninstall();
 }
 

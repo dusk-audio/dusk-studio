@@ -710,6 +710,7 @@ target_sources(DuskStudio PRIVATE
     src/session/SessionSerializer.cpp
     src/session/SessionTemplates.cpp
     src/util/CrashHandler.cpp
+    src/util/LogFile.cpp
     src/util/SingleInstance.cpp
     src/ui/AnalogVuMeter.cpp
     src/ui/AppConfig.cpp
@@ -782,6 +783,7 @@ endif()
 target_sources(DuskStudio PRIVATE
     src/engine/audiofile/BufferedFileReader.cpp
     src/engine/audiofile/FileReader.cpp
+    src/engine/audiofile/WaveformPeaks.cpp
     src/engine/audiofile/FileWriter.cpp
     src/engine/audiofile/ThreadedFileWriter.cpp
     src/engine/audiofile/WriterDrainPool.cpp)

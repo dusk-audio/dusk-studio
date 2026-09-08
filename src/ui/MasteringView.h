@@ -1,12 +1,12 @@
 #pragma once
 
-#include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <memory>
 #include <vector>
 #include "EmbeddedModal.h"
 #include "DuskComboBox.h"
 #include "../engine/AudioEngine.h"
+#include "../engine/audiofile/WaveformPeaks.h"
 #include "../session/Session.h"
 #include "../foundation/MessageThread.h"
 
@@ -42,7 +42,7 @@ private:
 };
 #endif
 
-// Inline AudioThumbnail above the mastering controls + playhead line
+// Inline waveform above the mastering controls + playhead line
 // that follows MasteringPlayer. Click anywhere to seek.
 class WaveformDisplay final : public juce::Component, private dusk::Timer
 {
@@ -58,9 +58,8 @@ private:
     void timerCallback() override;
 
     MasteringPlayer&            player;
-    juce::AudioFormatManager    formatManager;
-    juce::AudioThumbnailCache   thumbnailCache { 4 };
-    juce::AudioThumbnail        thumbnail;
+    dusk::audio::WaveformSource waveformSource;
+    dusk::audio::WaveformSource::Snapshot waveformSnapshot;
     std::int64_t                 lastPlayhead = -1;
 };
 

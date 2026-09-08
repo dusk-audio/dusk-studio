@@ -208,6 +208,8 @@ target_sources(dusk-studio-tests PRIVATE
     foundation_text_format.cpp
     foundation_vector_ops.cpp
     foundation_fs.cpp
+    log_file.cpp
+    ${CMAKE_SOURCE_DIR}/src/util/LogFile.cpp
     foundation_special_locations.cpp
     ${CMAKE_SOURCE_DIR}/src/session/RecentSessions.cpp
     foundation_json.cpp
@@ -248,11 +250,13 @@ endif()
 # CMakeLists (config package where available, plain library search otherwise).
 target_sources(dusk-studio-tests PRIVATE
     audiofile_roundtrip.cpp
+    waveform_peaks.cpp
     audiofile_ab_null.cpp
     audiofile_buffered_reader.cpp
     audiofile_drain_pool.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/BufferedFileReader.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/FileReader.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/audiofile/WaveformPeaks.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/FileWriter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/ThreadedFileWriter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/WriterDrainPool.cpp)

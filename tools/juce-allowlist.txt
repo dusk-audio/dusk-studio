@@ -113,8 +113,8 @@ src/ui/MainComponent.cpp	459
 src/ui/MainComponent.h	57
 src/ui/MasterStripComponent.cpp	330
 src/ui/MasterStripComponent.h	57
-src/ui/MasteringView.cpp	154
-src/ui/MasteringView.h	32
+src/ui/MasteringView.cpp	149
+src/ui/MasteringView.h	28
 src/ui/MidiBindingsPanel.cpp	49
 src/ui/MidiBindingsPanel.h	15
 src/ui/MiniTimelineStrip.cpp	19
@@ -160,5 +160,4 @@ src/ui/multisample/AriaGuiComponent.cpp	90
 src/ui/multisample/AriaGuiComponent.h	17
 src/ui/multisample/DuskMultisampleEditor.cpp	68
 src/ui/multisample/DuskMultisampleEditor.h	21
-src/util/CrashHandler.cpp	32
-src/util/CrashHandler.h	4
+src/util/CrashHandler.cpp	29

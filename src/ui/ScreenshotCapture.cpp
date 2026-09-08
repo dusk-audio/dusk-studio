@@ -492,10 +492,12 @@ void MainComponent::captureNativePanels (std::string outDir)
 
     // The mastering stage's EQ and limiter are framework children inside a JUCE view, so
     // its figure is the JUCE snapshot with each child's own frame pasted back in.
-    steps->push_back ({ 0, [] (MainComponent& self)
+    steps->push_back ({ 0, [dir] (MainComponent& self)
     {
         self.switchToStage (AudioEngine::Stage::Mastering);
         self.resized();
+        if (self.masteringView != nullptr)
+            self.masteringView->loadFile (dir.getChildFile ("_demo").getChildFile ("demo-take.wav"));
     } });
     steps->push_back ({ 900, [masteringCaptures, dir] (MainComponent& self)
     {
