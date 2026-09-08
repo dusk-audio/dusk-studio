@@ -5,7 +5,10 @@
 
 #include <array>
 #include <cstdint>
+#include <cwctype>
+#include <limits>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace duskstudio::midi::coremidi
@@ -16,6 +19,37 @@ inline std::string identifier (std::int32_t uniqueId)
 }
 
 enum class ExternalIdentifier { Device, Endpoint };
+
+// Legacy identifiers depend on this name-prefix test. Match the fallback's
+// per-codepoint, current-locale casing; Unicode folding expands some letters.
+inline bool legacyNameStartsWith (std::u16string_view name, std::u16string_view prefix) noexcept
+{
+    const auto next = [] (std::u16string_view& text)
+    {
+        char32_t value = text.front();
+        text.remove_prefix (1);
+        if (value >= 0xd800 && value <= 0xdbff && ! text.empty()
+            && text.front() >= 0xdc00 && text.front() <= 0xdfff)
+        {
+            value = 0x10000 + ((value - 0xd800) << 10) + (text.front() - 0xdc00);
+            text.remove_prefix (1);
+        }
+        return value;
+    };
+    const auto upper = [] (char32_t value)
+    {
+        if constexpr (sizeof (std::wint_t) < sizeof (char32_t))
+            if (value > std::numeric_limits<std::wint_t>::max()) return value;
+        return static_cast<char32_t> (std::towupper (static_cast<std::wint_t> (value)));
+    };
+    while (! prefix.empty())
+    {
+        if (name.empty()) return false;
+        const auto left = next (name), right = next (prefix);
+        if (left != right && upper (left) != upper (right)) return false;
+    }
+    return true;
+}
 
 inline BackendDeviceInfo externalEndpointInfo (const BackendDeviceInfo& endpoint,
                                                const BackendDeviceInfo& device, ExternalIdentifier form)

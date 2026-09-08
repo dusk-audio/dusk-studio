@@ -152,9 +152,15 @@ bool startsWithDeviceName (const std::string& name, const std::string& prefix)
     if (prefix.empty()) return true;
     const auto value = CFStringCreateWithCString (nullptr, name.c_str(), kCFStringEncodingUTF8);
     const auto start = CFStringCreateWithCString (nullptr, prefix.c_str(), kCFStringEncodingUTF8);
+    const auto characters = [] (CFStringRef text)
+    {
+        std::u16string result (static_cast<std::size_t> (CFStringGetLength (text)), u'\0');
+        for (std::size_t i = 0; i < result.size(); ++i)
+            result[i] = CFStringGetCharacterAtIndex (text, static_cast<CFIndex> (i));
+        return result;
+    };
     const bool result = value != nullptr && start != nullptr
-        && CFStringFindWithOptions (value, start, CFRangeMake (0, CFStringGetLength (value)),
-                                   kCFCompareAnchored | kCFCompareCaseInsensitive, nullptr);
+        && coremidi::legacyNameStartsWith (characters (value), characters (start));
     if (start != nullptr) CFRelease (start);
     if (value != nullptr) CFRelease (value);
     return result;

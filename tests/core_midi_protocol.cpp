@@ -48,6 +48,17 @@ TEST_CASE ("CoreMIDI endpoint identities preserve signed and compound legacy rou
     REQUIRE (identifier (42) == "coremidi:42");
     REQUIRE (identifier (-42) == "coremidi:-42");
     REQUIRE (identifier (std::numeric_limits<std::int32_t>::min()) == "coremidi:-2147483648");
+    REQUIRE (legacyNameStartsWith (u"", u""));
+    REQUIRE (legacyNameStartsWith (u"Device", u""));
+    REQUIRE_FALSE (legacyNameStartsWith (u"", u"Device"));
+    REQUIRE (legacyNameStartsWith (u"abc Port", u"ABC"));
+    REQUIRE_FALSE (legacyNameStartsWith (u"AB", u"ABC"));
+    REQUIRE_FALSE (legacyNameStartsWith (u"Stra\u00dfe", u"STRASSE"));
+    REQUIRE_FALSE (legacyNameStartsWith (u"\u00e9cho", u"e\u0301cho"));
+    REQUIRE (legacyNameStartsWith (u"\U0001f3b9 Port", u"\U0001f3b9"));
+    REQUIRE_FALSE (legacyNameStartsWith (u"\U0001f3b9 A", u"\U0001f3b9 B"));
+    REQUIRE_FALSE (legacyNameStartsWith (u"\U00010400", u"\U00020400"));
+    REQUIRE_FALSE (legacyNameStartsWith (u"\U0001f3b9", u"\xd83c"));
 
     const duskstudio::midi::BackendDeviceInfo endpoint { "Port", "-21" }, device { "Interface", "-20" };
     auto oldInfo = externalEndpointInfo (endpoint, device, ExternalIdentifier::Device);
