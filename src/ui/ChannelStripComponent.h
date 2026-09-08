@@ -94,7 +94,6 @@ private:
     class PluginSlot& pluginSlot;
     AudioEngine& engine;
     std::array<std::uint32_t, ChannelStripParams::kNumBuses> lastBusColours {};
-    float displayedGrDb = 0.0f;
     float displayedInputDb = -100.0f;
     float inputPeakHoldDb = -100.0f;
     int   inputPeakHoldFrames = 0;
@@ -203,12 +202,9 @@ private:
     bool lastGroupMaster = false;
     juce::Colour lastTrackColour;   // cached so the timer repaints on external colour change (undo)
     juce::Label inputPeakLabel;
-    juce::Label grPeakLabel;
-    juce::Label grReadoutLabel;
     // Slider runs NoTextBox so the cap at min value doesn't overlap
     // the textbox area.
     juce::Label faderValueLabel;
-    juce::Label threshMeterLabel;
     juce::TextButton muteButton    { "M" };
     juce::TextButton soloButton    { "S" };
     juce::TextButton phaseButton   { juce::CharPointer_UTF8 ("\xc3\x98") };  // Ø
