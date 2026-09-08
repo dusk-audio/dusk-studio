@@ -99,6 +99,7 @@ add_executable(dusk-studio-tests
     recording_byte_accuracy.cpp
     midi_fifo_overflow.cpp
     midi_device_layer.cpp
+    core_midi_protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/midi/MidiDevices.cpp
     midi_time_code_decode.cpp
     midi_time_code_emit.cpp
