@@ -20,7 +20,7 @@
 #if DUSKSTUDIO_HAS_NATIVE_AU
  #include "au/AuBundle.h"
 #endif
-#if ! defined(__linux__)
+#if ! defined(__linux__) && ! DUSKSTUDIO_HAS_NATIVE_COREMIDI
  #include "midi/JuceMidiBackend.h"
 #endif
 #include "../foundation/Decibels.h"
@@ -753,16 +753,14 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
             opened, savedDevice, liveDevice);
     }
 
-   #if ! defined(__linux__)
+   #if ! defined(__linux__) && ! DUSKSTUDIO_HAS_NATIVE_COREMIDI
     // The JUCE MIDI fallback drives its input enable/callback lifecycle through
-    // the device manager. Linux runs the native ALSA-sequencer backend, which
-    // owns its own connections, and compiles this out entirely.
+    // the device manager. Native MIDI backends own their connections.
     duskstudio::midi::setJuceMidiDeviceManager (deviceManager.juceManager());
    #endif
 
-    // Hot-plug. Set before the backend starts: the handler runs on its MIDI
-    // thread, so it only hops to the message thread and lets that side decide
-    // when a rebuild is safe.
+    // Defer hot-plug handling to a fresh message-thread turn so a backend
+    // notification never re-enters its own stop/rebuild lifecycle.
     midiIn.setDeviceChangeHandler ([this, alive = midiHotplugAlive]
     {
         dusk::callAsync ([this, alive]
