@@ -720,8 +720,19 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     // value matches what's drawn ("-4.2 dB" rather than raw "-4.2").
     faderSlider.textFromValueFunction = [] (double v) -> juce::String
     {
-        if (v <= ChannelStripParams::kFaderMinDb + 0.05) return "-INF dB";
+        if (v <= ChannelStripParams::kFaderInfThreshDb) return "-INF dB";
         return juce::String (v, 1) + " dB";
+    };
+    faderSlider.valueFromTextFunction = [] (const auto& text) -> double
+    {
+        const auto trimmed = text.trim();
+        if (trimmed.equalsIgnoreCase ("-INF") || trimmed.equalsIgnoreCase ("-INF dB"))
+            return ChannelStripParams::kFaderMinDb;
+
+        auto numericText = text.trimStart();
+        while (numericText.startsWithChar ('+'))
+            numericText = numericText.substring (1).trimStart();
+        return numericText.initialSectionContainingOnly ("0123456789.,-").getDoubleValue();
     };
     // No "dB" suffix - strip is narrow enough that "0.0 dB" truncates.
     // The dB scale column to the right of the meter makes the unit obvious.

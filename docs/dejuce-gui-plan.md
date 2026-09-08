@@ -322,7 +322,7 @@ desktop application.
 | 6 | Keyboard focus | Fixed on `dusk/302-app-contract`, lands with the G0 repin | `wayland.c:1555`, `Widget::onFocusChanged` |
 | 7 | Clipboard | Partial (text only, no primary) | `wayland.c:4093`, `:4109` |
 | 8 | Cursors | Hide fixed on `dusk/302-app-contract`, lands with the G0 repin; still no custom image | `wayland.c:2519`, `kMouseCursorNone` |
-| 9 | Accessibility | Absent (nothing in the tree) | — |
+| 9 | Accessibility | Bridge chosen; implementation and parity outstanding | [Accessibility plan](dejuce-accessibility-plan.md) |
 | 10 | Headless automation | Absent in the backend | `wayland.c:2911` |
 | 11 | HiDPI / fractional scaling | Present | `wayland.c:312`, `:355` |
 | 12 | Timers and event loop | Present, real blocking wait with timeout | `wayland.c:3454`, `:3612` |
@@ -366,11 +366,12 @@ Detail on the ones that change the plan:
   application the string the portal wants through
   `Window::getPortalParentHandle()`: `x11:` and a window id, or `wayland:` and
   an xdg-foreign handle, empty where there is none. Verified on both backends.
-- **Accessibility (9).** Nothing exists, in either the framework or ImGui, and
-  `src/ui/` already carries JUCE accessibility labelling that would regress
-  silently. This needs a deliberate decision from Marc before G3, not after:
-  either an AT-SPI bridge fed from the ImGui widget kit, or a written,
-  documented decision to drop screen-reader support in the native UI.
+- **Accessibility (9).** Marc chose a platform accessibility bridge on
+  2026-09-08. Preserve existing JUCE semantics and provide native platform
+  exposure; G3 waits for implementation, parity and desktop checks. The
+  [accessibility plan](dejuce-accessibility-plan.md) records the source inventory,
+  the distinction between current semantics and new Linux AT-SPI support, and
+  the first native control slice. The framework/ImGui bridge is still unbuilt.
 - **Headless automation (10).** The backend hard-fails without a compositor and
   has no screenshot hook. This is workable and already solved twice over: run
   under a private headless `mutter` as this gate did, and let the application
@@ -676,16 +677,19 @@ the visible GR meter owns its state and polling in `CompMeterStrip` and is
 unchanged. The gate fell to 164 / 8,097, with no allowlist departures or module
 unlinks.
 
-The current cleanup removes the aux lane's empty editor-toggle helper and its
+PR #515 removed the aux lane's empty editor-toggle helper and its
 unused PluginSlot forward declaration, plus obsolete bus-layout prose. The
 native-slot tooltip now describes removal instead of promising an editor toggle.
 Loaded slots still keep the picker closed; empty slots still open it. The gate
-stays at 164 / 8,097. The fader's screen-reader mute-label mismatch remains a
-separate behavior fix.
+stays at 164 / 8,097. Issue #305's first phase corrects the fader's accessible
+mute label to use the DSP's existing -90 dB threshold, keeps infinity-text input
+muted, and records the
+[accessibility support floor and bridge plan](dejuce-accessibility-plan.md).
+It does not implement the native bridge or complete #305.
 
 G0, G1 and both G2 passes are already on main (G2 remainder: PR #356).
-The accessibility decision in §3 and G2's outstanding desktop sign-offs remain
-prerequisites for the console port.
+The accessibility bridge's parity and desktop checks in §3 and G2's outstanding
+desktop sign-offs remain prerequisites for the console port.
 
 The largest and riskiest phase, and the one the spike measured.
 `ChannelStripComponent` (6,340 lines), `MasterStripComponent`, `BusComponent`,
@@ -771,7 +775,8 @@ Owed to Marc's bench, and not inferable from this gate:
   elsewhere, and its CMake carries the same MSVC GL 3.x loader the notepad
   needs, but neither has been built. If the shell's portability is in question
   before G5, build `dusk-gui-spike` on both.
-- **The accessibility decision** (§3, row 9), which is Marc's call and gates G3.
+- **Accessibility bridge parity and desktop checks** (§3, row 9). The bridge
+  decision is made; implementation and screen-reader verification still gate G3.
 
 ## 7. Naming
 
