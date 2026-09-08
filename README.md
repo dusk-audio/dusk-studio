@@ -111,7 +111,7 @@ src/
       platform/# Linux / macOS / Windows IPC backends (shm + sync + process)
   session/     # Session model + JSON serialisation
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
-  util/        # CrashHandler (FileLogger + signal-handler reports)
+  util/        # Native log storage + CrashHandler signal reports
 tests/         # 959 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME, macOS bundle — for tarball + DMG builds
 DuskStudio.md  # authoritative product spec

@@ -2585,7 +2585,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         return;
     }
 
-    // Install crash handler + FileLogger AFTER every selftest env-gate
+    // Install crash handler + application log AFTER every selftest env-gate
     // above has had its chance to quit. Self-test paths don't want
     // stray daily log files littering the user's data dir (or CI
     // runner $HOME). Normal-user launches fall through to here, so the
