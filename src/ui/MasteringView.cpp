@@ -13,6 +13,7 @@
  #include "imgui/MasteringLimiterView.h"
 #endif
 #include <algorithm>
+#include <cmath>
 #if DUSKSTUDIO_HAS_DUSK_DSP
   #include "ModernCompressorPanels.h"   // multi-comp - MultibandCompressorPanel
 #endif
@@ -41,10 +42,8 @@ imgui::DuskPanelWindow::Geometry nativePanelGeometry (const juce::Component& vie
 }
 
 WaveformDisplay::WaveformDisplay (MasteringPlayer& p)
-    : player (p),
-      thumbnail (512, formatManager, thumbnailCache)
+    : player (p)
 {
-    formatManager.registerBasicFormats();
     setOpaque (true);
     startTimerHz (20);
 }
@@ -53,15 +52,18 @@ WaveformDisplay::~WaveformDisplay() { stopTimer(); }
 
 void WaveformDisplay::setSource (const juce::File& file)
 {
-    if (file == juce::File()) { thumbnail.setSource (nullptr); repaint(); return; }
-    thumbnail.setSource (new juce::FileInputSource (file));
+    waveformSource.setFile (std::filesystem::u8path (file.getFullPathName().toStdString()));
+    waveformSnapshot = waveformSource.snapshot();
     repaint();
 }
 
 void WaveformDisplay::timerCallback()
 {
     const auto p = player.getPlayhead();
-    if (p == lastPlayhead) return;
+    auto next = waveformSource.snapshot();
+    if (p == lastPlayhead && next.state == waveformSnapshot.state
+        && next.peaks == waveformSnapshot.peaks) return;
+    waveformSnapshot = std::move (next);
     lastPlayhead = p;
     repaint();   // cheap - small region
 }
@@ -72,23 +74,26 @@ void WaveformDisplay::paint (juce::Graphics& g)
     g.setColour (juce::Colour (0xff2a2a32));
     g.drawRect (getLocalBounds(), 1);
 
-    if (thumbnail.getNumChannels() == 0
-        || thumbnail.getTotalLength() <= 0.0)
+    const auto& peaks = waveformSnapshot.peaks;
+    if (! peaks || peaks->info().numFrames == 0)
     {
         g.setColour (juce::Colour (0xff707074));
         g.setFont (juce::Font (juce::FontOptions (13.0f)));
-        g.drawText (juce::CharPointer_UTF8 ("No mix loaded - pick one with Load mix..."),
+        const auto message = waveformSnapshot.state == dusk::audio::WaveformSource::State::Loading
+            ? "Loading waveform..."
+            : waveformSnapshot.state == dusk::audio::WaveformSource::State::Failed
+                ? "Waveform unavailable" : "No mix loaded - pick one with Load mix...";
+        g.drawText (message,
                      getLocalBounds(), juce::Justification::centred, false);
         return;
     }
 
     auto bounds = getLocalBounds().reduced (4);
+    if (bounds.isEmpty()) return;
 
     const double sr      = player.getSourceSampleRate();
-    const double total   = thumbnail.getTotalLength();
+    const double total   = peaks->durationSeconds();
     const double playSecRaw = (sr > 0.0) ? (double) player.getPlayhead() / sr : 0.0;
-    // Clamp to [0, total]: if the playhead runs past EOF, an unclamped playSec
-    // makes the unplayed drawChannels() call's startTime exceed its endTime.
     const double playSec = jlimit (0.0, total, playSecRaw);
     const float  frac    = (total > 0.0) ? (float) (playSec / total) : 0.0f;
     const int    splitX  = bounds.getX() + (int) (frac * bounds.getWidth());
@@ -97,24 +102,28 @@ void WaveformDisplay::paint (juce::Graphics& g)
     g.setColour (juce::Colour (0xff202028));
     g.drawHorizontalLine (bounds.getCentreY(), (float) bounds.getX(), (float) bounds.getRight());
 
-    // Played portion bright, unplayed dim - position reads at a glance.
-    // Both passes draw the FULL time range into the FULL rect and let a clip
-    // region do the split: drawChannels re-derives its time-to-pixel mapping
-    // from the rect it's given, so drawing the two halves into two rects that
-    // resize every frame makes the rendered wave shimmer during playback.
-    if (splitX > bounds.getX())
+    // Keep the time-to-pixel mapping fixed as the played colour boundary moves.
+    const auto frames = peaks->info().numFrames;
+    const int channels = peaks->info().numChannels;
+    for (int channel = 0; channel < channels; ++channel)
     {
-        juce::Graphics::ScopedSaveState ss (g);
-        g.reduceClipRegion (bounds.withRight (splitX));
-        g.setColour (juce::Colour (0xff7ab0ee));
-        thumbnail.drawChannels (g, bounds, 0.0, total, 1.0f);
-    }
-    if (splitX < bounds.getRight())
-    {
-        juce::Graphics::ScopedSaveState ss (g);
-        g.reduceClipRegion (bounds.withLeft (splitX));
-        g.setColour (juce::Colour (0xff3c5c84));
-        thumbnail.drawChannels (g, bounds, 0.0, total, 1.0f);
+        const float top = (float) (bounds.getY() + channel * bounds.getHeight() / channels);
+        const float bottom = (float) (bounds.getY() + (channel + 1) * bounds.getHeight() / channels);
+        const float centre = (top + bottom) * 0.5f;
+        const float scale = (bottom - top) * 0.5f;
+        for (int pixel = 0; pixel < bounds.getWidth(); ++pixel)
+        {
+            const auto firstFrame = (std::int64_t) ((double) pixel * (double) frames / bounds.getWidth());
+            const auto endFrame = std::max (firstFrame + 1,
+                (std::int64_t) std::ceil ((double) (pixel + 1) * (double) frames / bounds.getWidth()));
+            const auto peak = peaks->query (channel, firstFrame, endFrame);
+            if (! peak || (peak->minimum >= 0.0f && peak->maximum <= 0.0f)) continue;
+            const int x = bounds.getX() + pixel;
+            g.setColour (x < splitX ? juce::Colour (0xff7ab0ee) : juce::Colour (0xff3c5c84));
+            const float y1 = std::clamp (centre - std::clamp (peak->maximum, -1.0f, 1.0f) * scale - 0.3f, top, bottom);
+            const float y2 = std::clamp (centre - std::clamp (peak->minimum, -1.0f, 1.0f) * scale + 0.3f, top, bottom);
+            g.drawVerticalLine (x, y1, y2);
+        }
     }
 
     // Time ruler along the bottom - a handful of mm:ss ticks.
@@ -152,14 +161,14 @@ void WaveformDisplay::paint (juce::Graphics& g)
 
 void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
 {
-    const double sr = player.getSourceSampleRate();
-    const double total = thumbnail.getTotalLength();
-    if (sr <= 0.0 || total <= 0.0) return;
+    const auto frames = player.getLengthSamples();
+    if (! player.isLoaded() || frames <= 0
+        || waveformSnapshot.state == dusk::audio::WaveformSource::State::Empty) return;
     auto bounds = getLocalBounds().reduced (4);
     if (bounds.getWidth() <= 0) return;
     const float frac = jlimit (0.0f, 1.0f,
                                        (float) (e.x - bounds.getX()) / (float) bounds.getWidth());
-    const auto target = (std::int64_t) (frac * total * sr);
+    const auto target = (std::int64_t) ((double) frac * (double) frames);
     player.setPlayhead (target);
     repaint();
 }
