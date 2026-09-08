@@ -58,7 +58,6 @@ public:
     juce::ScrollBar horizontalScrollBar { false };
     void scrollBarMoved (juce::ScrollBar* bar, double newRangeStart) override;
     void syncScrollBarRange();
-    static constexpr int kKeyboardWidth = 0;
 
 private:
     Session& session;

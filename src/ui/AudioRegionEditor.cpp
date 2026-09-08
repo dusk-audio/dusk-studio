@@ -320,8 +320,6 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
 AudioRegionEditor::~AudioRegionEditor()
 {
     stopTimer();
-    // ChangeListener removal is handled by AudioThumbnail's destructor
-    // (it removes its listeners on the broadcast list it owns).
     if (thumb != nullptr) thumb->removeChangeListener (this);
 }
 
