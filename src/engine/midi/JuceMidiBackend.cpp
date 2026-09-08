@@ -1,5 +1,9 @@
 #include "JuceMidiBackend.h"
 
+#if defined(__APPLE__)
+ #include "CoreMidiBackend.h"
+#endif
+
 #include <map>
 #include <mutex>
 #include <utility>
@@ -27,9 +31,12 @@ public:
 
     void setReceiver (Receiver r) override { receiver = std::move (r); }
 
-    // JUCE's identifiers are what earlier sessions already hold on the platforms
-    // this backend serves, so there is nothing to migrate.
+   #if defined(__APPLE__)
+    std::string migrateIdentifier (const std::string& identifier) override
+    { return coreMidiLegacyInputIdentifier (identifier, enumerate()); }
+   #else
     std::string migrateIdentifier (const std::string&) override { return {}; }
+   #endif
 
     bool enable (const std::string& identifier) override
     {
@@ -92,7 +99,12 @@ public:
         return out;
     }
 
+   #if defined(__APPLE__)
+    std::string migrateIdentifier (const std::string& identifier) override
+    { return coreMidiLegacyOutputIdentifier (identifier, enumerate()); }
+   #else
     std::string migrateIdentifier (const std::string&) override { return {}; }
+   #endif
 
     bool open (const std::string& identifier) override
     {
