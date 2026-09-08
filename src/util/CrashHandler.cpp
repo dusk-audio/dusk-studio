@@ -1,27 +1,50 @@
 #include "CrashHandler.h"
+#include "LogFile.h"
 
 #include <juce_core/juce_core.h>
 
 #include <algorithm>
 #include <atomic>
 #include <csignal>
+#include <filesystem>
 #include <memory>
 
 namespace duskstudio::crash_handler
 {
 namespace
 {
+class LogAdapter final : public juce::Logger
+{
+public:
+    LogAdapter (const std::filesystem::path& file, const std::string& appVersion)
+        : storage (file)
+    {
+        (void) storage.prepare();
+        const auto timestamp = juce::Time::getCurrentTime().toString (true, true).toStdString();
+        logMessage ("\r\n**********************************************************\r\nDusk Studio "
+                    + appVersion + " - " + timestamp + "\r\nLog started: " + timestamp + "\r\n");
+    }
+
+    void logMessage (const juce::String& message) override
+    {
+       #if JUCE_DEBUG
+        juce::Logger::outputDebugString (message);
+       #endif
+        (void) storage.append (message.toRawUTF8());
+    }
+
+private:
+    diagnostics::LogFile storage;
+};
+
 std::atomic<bool>             installed { false };
 std::string                   cachedAppVersion;
 juce::File                    cachedCrashDir;
 juce::File                    cachedLogFile;
-std::unique_ptr<juce::FileLogger> ownedLogger;
+std::unique_ptr<LogAdapter>    ownedLogger;
 
 juce::File baseDir()
 {
-    // ~/.local/share/Dusk Studio on Linux, ~/Library/Application Support/Dusk Studio
-    // on macOS, %APPDATA%/Dusk Studio on Windows. Same root used by the
-    // Patreon support docs so users know where to look.
     return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
               .getChildFile ("Dusk Studio");
 }
@@ -105,7 +128,7 @@ void install (const std::string& appVersion)
 {
     // Always refresh version - a second install() call from a future
     // hot-reload / test harness updates the crash report header even
-    // though the FileLogger + signal handler stay registered as-is.
+    // though the logger + signal handler stay registered as-is.
     cachedAppVersion = appVersion;
 
     bool expected = false;
@@ -116,13 +139,10 @@ void install (const std::string& appVersion)
     cachedLogFile = makeLogFile();
     cachedLogFile.getParentDirectory().createDirectory();
 
-    // Replace any pre-existing logger (none in normal flow, but tests
-    // may have installed one). FileLogger appends; daily rotation comes
-    // from the date in the filename - next-day startup picks a new file.
-    ownedLogger = std::make_unique<juce::FileLogger> (
-        cachedLogFile,
-        "Dusk Studio " + juce::String (appVersion) + " - "
-            + juce::Time::getCurrentTime().toString (true, true));
+    // The dated path rotates on startup; the native sink preserves the
+    // existing startup trim and appends the new run's banner.
+    ownedLogger = std::make_unique<LogAdapter> (
+        std::filesystem::u8path (cachedLogFile.getFullPathName().toStdString()), appVersion);
     juce::Logger::setCurrentLogger (ownedLogger.get());
 
     cachedCrashDir = baseDir().getChildFile ("crashes");
@@ -136,7 +156,7 @@ void uninstall()
     bool expected = true;
     if (! installed.compare_exchange_strong (expected, false)) return;
     juce::Logger::setCurrentLogger (nullptr);
-    // Intentionally leak the FileLogger. JUCE's logger replacement is
+    // Intentionally leak the adapter and its sink. JUCE's logger replacement is
     // not thread-safe - a background thread that loaded the old
     // pointer just before the null-store could still be inside
     // writeToLog and would dereference a destroyed object after .reset().

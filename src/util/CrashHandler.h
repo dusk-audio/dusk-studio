@@ -4,12 +4,12 @@
 
 namespace duskstudio::crash_handler
 {
-// Install the global JUCE FileLogger + JUCE crash callback. Idempotent.
+// Install the native log sink with a JUCE logger adapter and crash callback. Idempotent.
 // Call once from DuskStudioApp::initialise BEFORE any audio init so the
 // first thing a crashing build does is leave a report in the crashes directory.
 //
 // Layout under ${userApplicationData}/Dusk Studio/:
-//   log/dusk-studio-YYYYMMDD.log   - rotating daily, FileLogger
+//   log/dusk-studio-YYYYMMDD.log   - daily files, trimmed at startup
 //   crashes/crash-<iso>.txt  - one per terminate; backtrace + env summary
 //
 // Patreon support flow: ask user to attach the most recent file from

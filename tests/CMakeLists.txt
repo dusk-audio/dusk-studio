@@ -207,6 +207,8 @@ target_sources(dusk-studio-tests PRIVATE
     foundation_text_format.cpp
     foundation_vector_ops.cpp
     foundation_fs.cpp
+    log_file.cpp
+    ${CMAKE_SOURCE_DIR}/src/util/LogFile.cpp
     foundation_special_locations.cpp
     ${CMAKE_SOURCE_DIR}/src/session/RecentSessions.cpp
     foundation_json.cpp
