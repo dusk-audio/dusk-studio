@@ -496,7 +496,11 @@ public:
         const auto now = backendClockMs();
         bool sent = true;
         while (! pending.empty() && pending.begin()->first <= now)
-            sent = sendFirstPending() && sent;
+        {
+            const auto destination = pending.begin()->second.destination;
+            const bool delivered = sendFirstPending();
+            if (destination == found->second) sent = sent && delivered;
+        }
         wake.notify_all();
         return sent;
     }
