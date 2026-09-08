@@ -14,7 +14,8 @@ struct HostInfo
 };
 
 // Blocking, non-RT probes. Capture and format before installing a crash callback.
-// Empty strings and zero counts mean the platform query was unavailable.
+// Empty strings and zero counts indicate unavailable queries; Windows ARM
+// retains the existing "Unknown Model" fallback for the CPU name.
 HostInfo collectHostInfo();
 std::string formatHostInfo (const HostInfo&);
 } // namespace duskstudio::diagnostics

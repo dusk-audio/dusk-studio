@@ -30,7 +30,7 @@ std::string sysctlString (const char* key)
     char buffer[256] {};
     auto size = sizeof (buffer) - 1;
     if (sysctlbyname (key, buffer, &size, nullptr, 0) != 0) return {};
-    return dusk::text::trim (buffer);
+    return buffer;
 }
 #endif
 }
