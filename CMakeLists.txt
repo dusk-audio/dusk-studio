@@ -710,6 +710,7 @@ target_sources(DuskStudio PRIVATE
     src/session/SessionSerializer.cpp
     src/session/SessionTemplates.cpp
     src/util/CrashHandler.cpp
+    src/util/LogFile.cpp
     src/util/SingleInstance.cpp
     src/ui/AnalogVuMeter.cpp
     src/ui/AppConfig.cpp

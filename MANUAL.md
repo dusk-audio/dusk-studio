@@ -2226,18 +2226,20 @@ Either way, free the device in the other app (or run `pactl suspend-sink <sink-n
 
 Dusk Studio targets functional accessibility for screen reader users. The 24-channel strip is dense; the goal is for a screen reader to identify each control's role and read its current value without the user having to guess.
 
-## What works today
+## Current support
 
-- Every channel-strip rotary (HPF, LPF, EQ band gain / freq / Q, compressor knobs, pan, fader, aux sends) has an accessibility title and reports its formatted value: `-4.2 dB`, `L42`, `OFF`, `4:1`, etc. VoiceOver on macOS and Orca on Linux speak both the role and the value on focus.
-- Bus strips, aux returns, and the master strip follow the same convention.
-- Help text (the long-form description for each control) is wired from the existing tooltip strings, so the screen reader's verbose-mode readout matches what a sighted user sees on hover.
-- Every text-input dialog (region rename, marker rename, MIDI region label) renders inside the main window via the EmbeddedModal framework — no native popups that escape the screen reader's focus tree.
+- Channel faders, pan, HPF/LPF, mute, solo, record arm, input monitor, insert slots and aux sends have track-specific accessible names. Several continuous controls report formatted values such as `-4.2 dB`, `L42`, `OFF` and `4:1`. Channel faders report `-INF dB` throughout the hard-mute range, at or below −90 dB. A screen reader's text-value action can send `-INF` or `-INF dB` to set the fader to its muted minimum; the fader has no editable text box.
+- Aux return faders, aux mute buttons and aux plugin slots have lane-specific names. Transport buttons are named Play, Stop, Record, Rewind and Fast forward. Standard sliders and buttons expose their tooltip text as accessible help.
+- The popup menu exposes its active option and an activation action. Keyboard navigation updates the active-option announcement; this is not a separately navigable accessible item for every painted row.
+- macOS and Windows have platform accessibility support for the existing component controls. Coverage and focus behavior still need hands-on screen-reader verification. Native panels need the accessibility bridge that is currently being developed.
+- Linux screen-reader support through AT-SPI, including Orca, is not yet implemented. The existing control names and values do not by themselves make the Linux application accessible.
 
 ## What's still rough
 
+- Naming and formatted-value coverage is incomplete, particularly in the EQ editors, bus and master strips. Modal keyboard focus handling does not guarantee that a screen reader is confined to the active dialog or returns to the expected control after dismissal.
 - In the **Recording** and **Mixing** stages, **Left / Right arrows** move a gold focus ring across the 24 channel strips, automatically flipping the visible page as you cross a boundary. The focused strip is the target for the **A / S / X** (arm / solo / mute) shortcuts, so you can walk the mixer and toggle states without the mouse. (Clicking a strip moves the ring too.)
 - Region drag-and-drop on the timeline relies on mouse gestures. Region edit actions (split, trim, fade, gain) are all available via the keyboard reference; the drag-to-move case is the gap.
-- Plugin editors are out of Dusk Studio's accessibility control surface. JUCE forwards screen-reader requests to each plugin; vendor accessibility varies.
+- Plugin editors provide their own accessibility support; coverage varies by vendor and plugin format.
 
 ## Filing issues
 

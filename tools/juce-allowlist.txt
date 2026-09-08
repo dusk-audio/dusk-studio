@@ -160,5 +160,4 @@ src/ui/multisample/AriaGuiComponent.cpp	90
 src/ui/multisample/AriaGuiComponent.h	17
 src/ui/multisample/DuskMultisampleEditor.cpp	68
 src/ui/multisample/DuskMultisampleEditor.h	21
-src/util/CrashHandler.cpp	32
-src/util/CrashHandler.h	4
+src/util/CrashHandler.cpp	29
