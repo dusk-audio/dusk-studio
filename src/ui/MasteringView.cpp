@@ -49,7 +49,7 @@ WaveformDisplay::WaveformDisplay (MasteringPlayer& p)
     startTimerHz (20);
 }
 
-WaveformDisplay::~WaveformDisplay() { stopTimer(); thumbnail.setSource (nullptr); }
+WaveformDisplay::~WaveformDisplay() { stopTimer(); }
 
 void WaveformDisplay::setSource (const juce::File& file)
 {
