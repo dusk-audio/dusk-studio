@@ -12,7 +12,9 @@
 #include <array>
 #include <chrono>
 #include <condition_variable>
+#include <functional>
 #include <future>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
