@@ -783,6 +783,7 @@ endif()
 target_sources(DuskStudio PRIVATE
     src/engine/audiofile/BufferedFileReader.cpp
     src/engine/audiofile/FileReader.cpp
+    src/engine/audiofile/WaveformPeaks.cpp
     src/engine/audiofile/FileWriter.cpp
     src/engine/audiofile/ThreadedFileWriter.cpp
     src/engine/audiofile/WriterDrainPool.cpp)
