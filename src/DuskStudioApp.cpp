@@ -2691,10 +2691,8 @@ void DuskStudioApp::shutdown()
 #endif
     bounceTest.reset();             // headless bounce harness: worker joined, then engine/session
 
-    // Tear down the FileLogger installed by crash_handler::install so
-    // JUCE's leak detector doesn't complain at exit. The crash callback
-    // installed via setApplicationCrashHandler is harmless if it stays
-    // registered - process is exiting either way.
+    // Detach the logger after UI and engine teardown. Its storage is retained
+    // for any logging calls still in progress.
     duskstudio::crash_handler::uninstall();
 }
 
