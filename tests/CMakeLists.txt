@@ -47,6 +47,7 @@ add_executable(dusk-studio-tests
     rt_priority.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/AudioWorkerPool.cpp
     embedded_modal_close_safety.cpp
+    general_settings_controls.cpp
     native_editor_owner.cpp
     x11_anti_pattern_guard.cpp
     platform_window_activation.cpp

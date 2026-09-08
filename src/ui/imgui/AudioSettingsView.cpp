@@ -1,6 +1,7 @@
 #include "AudioSettingsView.h"
 #include "AudioDeviceSelector.h"
 #include "DuskTheme.h"
+#include "GeneralSettingsControls.h"
 #include "PanelControls.h"
 #include "../AppConfig.h"
 #include "../../dsp/OutputPairRouting.h"
@@ -16,6 +17,7 @@
 #include <algorithm>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -108,7 +110,20 @@ class AudioSettingsViewImpl final : public DuskPanelView
 public:
     AudioSettingsViewImpl (device::DeviceManager& dm, AudioEngine& e, Session& s,
                            AudioSettingsHost hostCallbacks)
-        : deviceManager (dm), engine (e), session (s), host (std::move (hostCallbacks))
+        : deviceManager (dm), engine (e), session (s), host (std::move (hostCallbacks)),
+          generalSettings (appconfig::getTapeStripExpandedDefault(),
+                           appconfig::getUiScaleOverride(),
+                           { [] (bool value) { appconfig::setTapeStripExpandedDefault (value); },
+                             [this] (float scale)
+                             {
+                                 // Shell layout changes must happen between native frames.
+                                 deferred ([this, scale]
+                                 {
+                                     if (host.previewUiScale)
+                                         host.previewUiScale (scale);
+                                 });
+                             },
+                             [] (float scale) { appconfig::setUiScaleOverride (scale); } })
     {
         selector = std::make_unique<AudioDeviceSelector> (
             dm,
@@ -149,11 +164,9 @@ public:
         emitClock = session.syncOutputEmitClock.load (std::memory_order_relaxed);
         chaseTimeCode = session.externalTimeCodeChasesTransport.load (std::memory_order_relaxed);
         emitTimeCode = session.syncOutputEmitTimeCode.load (std::memory_order_relaxed);
-        tapeStripExpanded = appconfig::getTapeStripExpandedDefault();
         followPlayhead = appconfig::getFollowPlayheadDefault();
         softTakeover = appconfig::getMidiSoftTakeover();
         scanOnStartup = appconfig::getScanPluginsOnStartup();
-        uiScale = appconfig::getUiScaleOverride();
         recordOffset = static_cast<float> (appconfig::getRecordingLatencyOffsetSamples());
 
        #if defined(__linux__)
@@ -190,6 +203,7 @@ public:
 
         const ScopedFormStyle style (ctx);
 
+        generalSettings.reportFocus (std::nullopt);
         ImGui::SetCursorScreenPos (origin);
         if (! ImGui::BeginChild ("##audio-settings-body", size, ImGuiChildFlags_None,
                                  ImGuiWindowFlags_NoBackground))
@@ -205,7 +219,7 @@ public:
         // laid out against it rather than against the panel's own origin.
         const ImVec2 content = ImGui::GetCursorScreenPos();
         const float bodyW = ImGui::GetContentRegionAvail().x;
-        drawSections (ctx, content, bodyW);
+        drawSections (ctx, content, bodyW, generalSettings.takeFocusRequest());
 
         ImGui::SetCursorScreenPos (ImVec2 (content.x, content.y + ctx.s (panelHeight())));
         ImGui::Dummy (ImVec2 (bodyW, 1.0f));
@@ -218,7 +232,8 @@ public:
     }
 
 private:
-    void drawSections (dw::Context& ctx, ImVec2 content, float bodyW)
+    void drawSections (dw::Context& ctx, ImVec2 content, float bodyW,
+                       std::optional<GeneralSettingsControls::Id> wantedFocus)
     {
         const float left = content.x + ctx.s (kInsetX);
         const float innerW = std::max (ctx.s (100.0f), bodyW - ctx.s (kInsetX) * 2.0f);
@@ -412,9 +427,14 @@ private:
         const float generalToggleX = left + ctx.s (kLabelW + kControlInset);
         {
             const float top = takeRow (kRowH);
+            bool expanded = generalSettings.tapeDefault();
+            if (wantedFocus == GeneralSettingsControls::Id::tapeDefault)
+                ImGui::SetKeyboardFocusHere();
             if (toggleAt (top, generalToggleX, "##tape-strip",
-                          "Expand tape strip by default", tapeStripExpanded))
-                appconfig::setTapeStripExpandedDefault (tapeStripExpanded);
+                          GeneralSettingsControls::kTapeDefaultName, expanded))
+                generalSettings.editTapeDefault (expanded);
+            if (ImGui::IsItemFocused())
+                generalSettings.reportFocus (GeneralSettingsControls::Id::tapeDefault);
             formTooltip ("When on, the TIMELINE tape strip starts expanded on every app "
                          "launch. Saved per-machine; takes effect on next launch.");
         }
@@ -473,16 +493,21 @@ private:
         }
         {
             const float top = takeRow (kRowH);
-            labelled (top, "UI scale");
+            labelled (top, GeneralSettingsControls::kUiScaleName);
             const float x = left + ctx.s (kLabelW) + ctx.s (kControlInset);
+            float scale = generalSettings.uiScale();
+            if (wantedFocus == GeneralSettingsControls::Id::uiScale)
+                ImGui::SetKeyboardFocusHere();
             const auto moved = formSlider (
                 ctx, "##ui-scale", ImVec2 (x, top + ctx.s (2.0f)),
                 ImVec2 (x + ctx.s (kSliderW) - ctx.s (kControlInset) * 2.0f,
                         top + ctx.s (kRowH) - ctx.s (2.0f)),
-                uiScale, appconfig::kUiScaleMin, appconfig::kUiScaleMax, "%.2fx");
+                scale, appconfig::kUiScaleMin, appconfig::kUiScaleMax, "%.2fx");
+            if (ImGui::IsItemFocused())
+                generalSettings.reportFocus (GeneralSettingsControls::Id::uiScale);
             formTooltip ("Multiplier applied on top of the OS-reported display DPI. 1.00x "
                          "= follow the OS. Range 0.50x to 2.00x.");
-            applyUiScale (moved);
+            generalSettings.editUiScale (scale, moved.changed, moved.released);
             drawHint (ctx, ImVec2 (x + ctx.s (kSliderW), top),
                       right - (x + ctx.s (kSliderW)),
                       "Previews live; saved per-machine when released.");
@@ -738,28 +763,6 @@ private:
         engine.restartDspWhenIdle();
     }
 
-    void applyUiScale (const FormSliderResult& moved)
-    {
-        if (moved.changed)
-            ++uiScaleFrames;
-
-        // 20 Hz rather than every frame: a preview re-lays out the whole window behind
-        // the panel, and the slider has to stay draggable through it.
-        constexpr int kFramesPerPreview = 3;
-        if (! moved.released && uiScaleFrames < kFramesPerPreview)
-            return;
-        if (! moved.changed && ! moved.released)
-            return;
-
-        uiScaleFrames = 0;
-        // Between frames, not inside one: a preview re-lays out the whole JUCE tree the
-        // panel is floating over, and this is running from the framework's event pump.
-        const float scale = uiScale;
-        deferred ([this, scale] { if (host.previewUiScale) host.previewUiScale (scale); });
-        if (moved.released)
-            appconfig::setUiScaleOverride (uiScale);
-    }
-
     void applySyncSource()
     {
         const auto& devices = engine.getMidiInputDevices();
@@ -887,6 +890,7 @@ private:
     AudioEngine& engine;
     Session& session;
     AudioSettingsHost host;
+    GeneralSettingsControls generalSettings;
     std::unique_ptr<AudioDeviceSelector> selector;
 
     // Handed to every deferred action so one queued behind a panel that closes first
@@ -909,14 +913,11 @@ private:
     bool emitClock = false;
     bool chaseTimeCode = false;
     bool emitTimeCode = false;
-    bool tapeStripExpanded = false;
     bool followPlayhead = false;
     bool softTakeover = false;
     bool scanOnStartup = false;
 
-    float uiScale = 1.0f;
     float recordOffset = 0.0f;
-    int uiScaleFrames = 0;
     bool popupOpen = false;
     bool popupWasOpen = false;
 };
