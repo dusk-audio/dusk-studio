@@ -732,7 +732,7 @@ preflight_marker = "- name: Preflight - releases-repo token is valid (tag builds
 action_pins = {
     "actions/checkout": ("3d3c42e5aac5ba805825da76410c181273ba90b1", 6),
     "actions/upload-artifact": ("043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 4),
-    "actions/download-artifact": ("37930b1c2abaa49bbe596cd826c3c89aef350131", 1),
+    "actions/download-artifact": ("3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c", 1),
     "actions/cache": ("55cc8345863c7cc4c66a329aec7e433d2d1c52a9", 1),
 }
 
