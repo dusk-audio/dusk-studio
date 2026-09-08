@@ -1,5 +1,7 @@
 #include "CrashHandler.h"
 
+#include <juce_core/juce_core.h>
+
 #include <algorithm>
 #include <atomic>
 #include <csignal>
@@ -134,15 +136,12 @@ void uninstall()
     bool expected = true;
     if (! installed.compare_exchange_strong (expected, false)) return;
     juce::Logger::setCurrentLogger (nullptr);
-    // Intentionally leak the FileLogger. juce::Logger::setCurrentLogger
-    // is not thread-safe - a background thread that loaded the old
+    // Intentionally leak the FileLogger. JUCE's logger replacement is
+    // not thread-safe - a background thread that loaded the old
     // pointer just before the null-store could still be inside
     // writeToLog and would dereference a destroyed object after .reset().
     // Process is exiting; the OS reclaims the memory either way.
     (void) ownedLogger.release();
 }
 
-juce::File getLogDir()     { return baseDir().getChildFile ("log"); }
-juce::File getCrashDir()   { return baseDir().getChildFile ("crashes"); }
-juce::File getCurrentLogFile() { return cachedLogFile; }
 } // namespace duskstudio::crash_handler
