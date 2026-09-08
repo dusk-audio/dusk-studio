@@ -101,6 +101,7 @@ add_executable(dusk-studio-tests
     midi_device_layer.cpp
     core_midi_protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/midi/MidiDevices.cpp
+    winmm_midi_protocol.cpp
     midi_time_code_decode.cpp
     midi_time_code_emit.cpp
     midi_clock_drift.cpp
