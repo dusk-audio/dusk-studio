@@ -1,16 +1,69 @@
 #pragma once
 
+#include "MidiBackend.h"
 #include "../../foundation/MidiBuffer.h"
 
 #include <array>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace duskstudio::midi::coremidi
 {
 inline std::string identifier (std::int32_t uniqueId)
 {
     return "coremidi:" + std::to_string (uniqueId);
+}
+
+enum class ExternalIdentifier { Device, Endpoint };
+
+inline BackendDeviceInfo externalEndpointInfo (const BackendDeviceInfo& endpoint,
+                                               const BackendDeviceInfo& device, ExternalIdentifier form)
+{
+    return { device.name, form == ExternalIdentifier::Device ? device.identifier : endpoint.identifier };
+}
+
+inline void appendConnectedInfo (BackendDeviceInfo& result, const BackendDeviceInfo& connected)
+{
+    if (connected.name.empty() && connected.identifier.empty()) return;
+    result.name += (result.name.empty() ? "" : ", ") + connected.name;
+    result.identifier += (result.identifier.empty() ? "" : ", ") + connected.identifier;
+}
+
+// Older macOS backends used the device UID for a single-entity external
+// connection; newer ones retain the endpoint UID. Both forms exist in sessions.
+struct EndpointIdentity
+{
+    std::string identifier;
+    std::string deviceLegacyIdentifier;
+    std::string endpointLegacyIdentifier;
+};
+
+inline std::string migrateIdentifier (const std::vector<EndpointIdentity>& endpoints, const std::string& legacy)
+{
+    if (legacy.empty()) return {};
+    std::string result;
+    for (const auto& endpoint : endpoints)
+        if (endpoint.deviceLegacyIdentifier == legacy || endpoint.endpointLegacyIdentifier == legacy)
+        {
+            if (! result.empty()) return {};
+            result = endpoint.identifier;
+        }
+    return result;
+}
+
+inline std::string legacyIdentifier (const std::vector<EndpointIdentity>& endpoints,
+                                     const std::string& identifier, const std::vector<BackendDeviceInfo>& available)
+{
+    if (identifier.rfind ("coremidi:", 0) != 0) return {};
+    std::string result;
+    for (const auto& device : available)
+        if (migrateIdentifier (endpoints, device.identifier) == identifier)
+        {
+            if (! result.empty()) return {};
+            result = device.identifier;
+        }
+    return result;
 }
 
 // Capture afresh for every input callback: the two clocks may
