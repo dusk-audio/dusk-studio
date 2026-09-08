@@ -574,11 +574,6 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
 
     // Comp section. The split header mirrors the channel-strip COMP and the
     // processor remains a fixed SSL-style glue topology.
-    //   - CompMeterStrip on the LEFT (handle + IN bar + dB scale + GR
-    //     bar). Threshold drag writes bus.strip.compThreshDb (-60..0).
-    //   - Knob grid on the RIGHT: RAT / ATK + REL / MAK across two rows.
-    //     The standalone THR knob is gone - threshold is set via the
-    //     triangle handle on the meter.
     compHeaderBtn = std::make_unique<SplitModuleButton> ("COMP");
     compHeaderBtn->setAccentColour (compGold);
     compHeaderBtn->setCallbacks (

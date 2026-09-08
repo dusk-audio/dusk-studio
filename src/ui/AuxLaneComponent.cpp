@@ -363,14 +363,10 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
             if (slotRef.isLoaded() || strip.isNativeClapLoaded (i) || strip.isNativeLv2Loaded (i)
                 || strip.isNativeVst3Loaded (i) || strip.isNativeAuLoaded (i))
             {
-                // Native CLAP fills the inline editor area when loaded (same as a JUCE
-                // plugin); clicking the name must not re-open the picker over it.
-                toggleEditorForSlot (i);
+                // Keep the picker closed for loaded slots; their editors are inline.
+                return;
             }
-            else
-            {
-                openPickerForSlot (i);
-            }
+            openPickerForSlot (i);
         };
         addAndMakeVisible (s.openOrAddButton);
 
@@ -689,7 +685,7 @@ void AuxLaneComponent::refreshSlotControls (int i)
             ? "This plug-in is offline after a restore or reactivation failure. "
               "Its saved reference and state will be preserved; replace or remove "
               "it to recover this slot."
-            : "Click to toggle the plug-in editor.");
+            : "Use X to remove this plug-in.");
     };
 
     const int mode = strip.insertMode[(size_t) i].load (std::memory_order_relaxed);
@@ -1127,13 +1123,6 @@ void AuxLaneComponent::unloadSlot (int slotIdx)
         self->refreshSlotControls (slotIdx);
         self->rebuildSlots();
     });
-}
-
-void AuxLaneComponent::toggleEditorForSlot (int /*slotIdx*/)
-{
-    // Editor embeds inline whenever the slot is loaded - nothing to
-    // toggle. Clicks on the slot's name button when loaded fall through
-    // to a no-op; users use the X button to unload the slot.
 }
 
 void AuxLaneComponent::attachEditorForSlot (int slotIdx)

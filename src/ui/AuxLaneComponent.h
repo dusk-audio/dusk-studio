@@ -12,7 +12,6 @@
 
 namespace duskstudio
 {
-class PluginSlot;
 class AuxLaneStrip;
 class AudioEngine;
 class HardwareInsertEditor;
@@ -65,7 +64,6 @@ private:
     void openPickerForSlot (int slotIdx);
     void openHardwareInsertEditor (int slotIdx);
     void unloadSlot (int slotIdx);
-    void toggleEditorForSlot (int slotIdx);
     void refreshSlotControls (int slotIdx);
     void attachEditorForSlot (int slotIdx);
     void detachEditorForSlot (int slotIdx);

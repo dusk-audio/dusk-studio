@@ -63,10 +63,6 @@ private:
     juce::Slider     eqHfGain  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Label      eqLfLbl, eqMidLbl, eqHfLbl;
 
-    // Bus compressor controls. Shell mirrors the channel-strip COMP
-    // section visually: a split module button on top, a CompMeterStrip
-    // on the left, and the parameter knob grid on the right. The DSP
-    // underneath is still a fixed SSL-style glue topology - no mode picker.
     std::unique_ptr<SplitModuleButton> compHeaderBtn;
     std::unique_ptr<CompMeterStrip>   compMeter;
     juce::Slider     compRatio   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };

@@ -666,16 +666,22 @@ application reads its own steady frame back as a PPM and
 **Preparation in progress; native console not started.** PRs #511–#513 removed
 unused master/bus metering, channel drawing helpers and obsolete console layout
 branches. The channel fader's conflicting range override was also removed in
-#513 so it uses the parameter domain of -100 to +12 dB, as documented. Together
+PR `#513` so it uses the parameter domain of -100 to +12 dB, as documented. Together
 these changes took the gate from 164 files / 8,241 uses to 164 / 8,149.
 
-The current cleanup removes the channel strip's unused GR/threshold labels and
-the GR polling/smoothing that fed them, and consolidates the input readout's
+PR #514 removed the channel strip's unused GR/threshold labels and
+the GR polling/smoothing that fed them, and consolidated the input readout's
 duplicate font setup. The labels never had drawable bounds;
 the visible GR meter owns its state and polling in `CompMeterStrip` and is
-unchanged. The gate falls to 164 / 8,097, with no allowlist departures or module
-unlinks. Remaining preparation includes the aux lane's no-op editor helper;
-the fader's screen-reader mute-label mismatch is a separate behavior fix.
+unchanged. The gate fell to 164 / 8,097, with no allowlist departures or module
+unlinks.
+
+The current cleanup removes the aux lane's empty editor-toggle helper and its
+unused PluginSlot forward declaration, plus obsolete bus-layout prose. The
+native-slot tooltip now describes removal instead of promising an editor toggle.
+Loaded slots still keep the picker closed; empty slots still open it. The gate
+stays at 164 / 8,097. The fader's screen-reader mute-label mismatch remains a
+separate behavior fix.
 
 G0, G1 and both G2 passes are already on main (G2 remainder: PR #356).
 The accessibility decision in §3 and G2's outstanding desktop sign-offs remain
