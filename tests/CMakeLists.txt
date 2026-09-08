@@ -715,6 +715,20 @@ catch_discover_tests(dusk-studio-tests
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "~[alsa]")
 
+if(APPLE)
+    add_executable(dusk-coremidi-tests core_midi_backend.mm)
+    set_target_properties(dusk-coremidi-tests PROPERTIES OBJCXX_STANDARD 17 OBJCXX_STANDARD_REQUIRED ON)
+    target_compile_options(dusk-coremidi-tests PRIVATE -Wall -Wextra -Wpedantic -fblocks)
+    target_link_libraries(dusk-coremidi-tests PRIVATE dusk-coremidi Catch2::Catch2WithMain)
+    add_dependencies(dusk-studio-tests dusk-coremidi-tests)
+
+    option(DUSKSTUDIO_TEST_COREMIDI_VIRTUAL "Run CoreMIDI tests that create temporary virtual endpoints" OFF)
+    if(DUSKSTUDIO_TEST_COREMIDI_VIRTUAL)
+        add_test(NAME coremidi-virtual-endpoints COMMAND dusk-coremidi-tests)
+        set_tests_properties(coremidi-virtual-endpoints PROPERTIES TIMEOUT 45 RUN_SERIAL TRUE)
+    endif()
+endif()
+
 # Exercise the real release-version insertion script against an isolated fixture,
 # and pin the private-release fan-in and single-publisher contract. The release
 # script is Unix-only.
