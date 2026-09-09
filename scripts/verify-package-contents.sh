@@ -11,6 +11,17 @@
 # Windows is matched by file name rather than path: an MSI is a database and 7z
 # flattens it on extraction, so the layout the contract records cannot be
 # checked there. The other two are checked as literal paths.
+#
+# A real extraction of our MSI produces names like
+#
+#   CM_FP_bin.DuskStudio.exe
+#   CM_FP_bin.dusk_studio_plugin_host.exe
+#   CM_FP_LICENSES.txt
+#
+# so the component name is a suffix of the extracted name, WiX has replaced the
+# hyphens with underscores, and case is not guaranteed. Matching therefore
+# lowercases, folds '-' to '_', and requires the expected name to sit at a '.'
+# or '_' boundary, which keeps LICENSE from matching LICENSES.txt.
 
 set -euo pipefail
 
@@ -20,6 +31,13 @@ CONTRACT="${DUSKSTUDIO_CONTENTS_CONTRACT:-${REPO_ROOT}/packaging/contents.txt}"
 usage() {
     echo "usage: $0 <linux|macos|windows> <package-root>" >&2
     exit 2
+}
+
+# Lowercase and fold the separator WiX rewrites, so a contract path and an
+# extracted MSI name can be compared at all.
+normalise() {
+    local text="${1//-/_}"
+    printf '%s' "${text,,}"
 }
 
 [[ $# -eq 2 ]] || usage
@@ -64,11 +82,17 @@ fi
 missing=()
 for path in "${expected[@]}"; do
     if [[ "$PLATFORM" == "windows" ]]; then
-        # Basename match, anywhere under the extraction.
-        name="${path##*/}"
-        if ! find "$ROOT" -name "$name" -print -quit | grep -q .; then
-            missing+=("$path")
-        fi
+        name="$(normalise "${path##*/}")"
+        found=0
+        while IFS= read -r candidate; do
+            candidate="$(normalise "${candidate##*/}")"
+            if [[ "$candidate" == "$name" || "$candidate" == *".${name}" \
+                  || "$candidate" == *"_${name}" ]]; then
+                found=1
+                break
+            fi
+        done < <(find "$ROOT" -type f)
+        [[ $found -eq 1 ]] || missing+=("$path")
     elif [[ ! -e "$ROOT/$path" ]]; then
         missing+=("$path")
     fi
