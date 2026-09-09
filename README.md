@@ -19,9 +19,20 @@ on Windows. Authoritative spec: [DuskStudio.md](DuskStudio.md). User manual:
 
 ## Get Dusk Studio
 
-GPL source on this repo — build from source and the binary costs you nothing but compile time. If you want a precompiled, supported binary, pick one of the paid tiers below.
+Beta. Paid licences available now. Buy at [duskaudio.com](https://duskaudio.com).
 
-**First-time launch:** binaries are unsigned by design (no Apple Developer ID, no Windows Authenticode — neither is planned). macOS Gatekeeper + Windows SmartScreen will warn on first launch — see [MANUAL.md § Installing Dusk Studio](MANUAL.md#installing-dusk-studio) for the 30-second bypass per OS. The Linux tarball needs no bypass.
+GPL source on this repo, so building it yourself costs you nothing but compile time. What you pay for is a packaged, ready-to-run build plus support access.
+
+| Tier | Price | What you get |
+|------|-------|--------------|
+| Patreon Supporter | $5 / month | Official builds for all three OSes, credits |
+| Patreon Patron | $10 / month | Everything in Supporter, plus early beta access and roadmap votes |
+| One-time licence | $49 | The current major version and all of its updates |
+| Lifetime licence | $89 | Every future major version |
+
+30-day guarantee: finish a track in your first session or full refund. Founder pricing, and it rises at 1.0. Full terms in [PRICING.md](PRICING.md).
+
+**First-time launch:** current beta builds are unsigned, so macOS Gatekeeper and Windows SmartScreen will warn the first time you open one. See [MANUAL.md § Installing Dusk Studio](MANUAL.md#installing-dusk-studio) for the 30-second bypass per OS; the Linux tarball needs no bypass, and signed builds are a 1.0 deliverable.
 
 ## Status
 
@@ -66,7 +77,7 @@ push + PR; Linux ThreadSanitizer runs on every PR + push.
 
 ## Bug reports
 
-[Open an issue on GitHub.](https://github.com/dusk-audio/dusk-studio/issues) Patreon / paid-tier users can also DM via Patreon; one-time + lifetime licence-holders get a direct support email link in their release-repo invite.
+[Open an issue on GitHub.](https://github.com/dusk-audio/dusk-studio/issues) Patreon supporters and patrons can also DM via Patreon; one-time + lifetime licence-holders get a direct support email link in their release-repo invite.
 
 ## Why
 
@@ -120,7 +131,7 @@ MANUAL.md      # end-user manual (Pandoc-buildable to PDF via docs/build-pdf.sh)
 
 ## Builds & contributing
 
-Precompiled (unsigned) binaries delivered via Patreon — Linux tarball + Windows MSI + macOS DMG, all published to the private releases repo on each tag. Self-build is fully supported and equivalent at the source level — no support tier for self-builders.
+Precompiled binaries go to paying users, Linux tarball + Windows MSI + macOS DMG, all published to the private releases repo on each tag. Beta builds are unsigned; signed builds are a 1.0 deliverable. Self-build is fully supported and equivalent at the source level, with no support tier for self-builders. Pricing lives in [PRICING.md](PRICING.md).
 
 Source builds require libsndfile and libsodium; MP3 bounce additionally uses
 LAME. The Linux and Windows guides list the exact package or manifest setup.
@@ -133,7 +144,7 @@ LAME. The Linux and Windows guides list the exact package or manifest setup.
 | Linux tarball packaging | [packaging/README.md](packaging/README.md) |
 | End-user manual / troubleshooting | [MANUAL.md](MANUAL.md) |
 
-After a build, sanity check with `DuskStudio --version` — prints app + JUCE + platform string and exits 0. Useful as a paste-target for Patreon support DMs.
+After a build, sanity check with `DuskStudio --version` — prints app + JUCE + platform string and exits 0. Useful as a paste-target for support DMs.
 
 CI builds and tests on every push to `main` on Linux (Ubuntu 22.04 GCC) and
 macOS (14 Apple Silicon, Ninja + ccache). Windows tests (`windows-tests.yml`)
@@ -152,9 +163,11 @@ Dusk Studio ships under a **dual access model**:
 
 - **Source**: GPL-3.0. Clone, audit, build, modify, redistribute — all
   fine under GPL terms.
-- **Patreon binaries**: precompiled, unsigned Linux tarballs + Windows
-  MSIs + macOS DMGs delivered to supporters. The payment is for
-  packaging + support access — the source remains open. Self-builders
-  get no support, but the code is the same.
-- **Paid licence ($27)**: same source, same GPL. Buys you the prebuilt
-  installer + access to bug triage.
+- **Paid builds**: precompiled Linux tarballs + Windows MSIs + macOS
+  DMGs delivered to paying users. From $5 a month on Patreon, $49
+  one-time, or $89 lifetime. The payment is for packaging and support
+  access, not for the code; the source stays open. Self-builders get no
+  support, but the binary is the same.
+
+Full terms in [PRICING.md](PRICING.md). Buy at
+[duskaudio.com](https://duskaudio.com).
