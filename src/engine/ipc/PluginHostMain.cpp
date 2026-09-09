@@ -19,6 +19,8 @@
 //                 validation regression child.
 //   --ipc-load-reply-stub: answers LoadPlugin with a fixed stereo layout so the
 //                 parent's sandboxed load path can be driven without a plugin.
+//   --ipc-load-audio-stub: the same child plus the worker topology, so it also
+//                 answers block commands and can be driven by a live callback.
 //   --ipc-mute-handshake-stub: the same child with the ready byte withheld,
 //                 leaving the parent inside its handshake wait.
 //   --ipc-host  : full Phase-2 host. Loads a juce::AudioPluginInstance
@@ -525,7 +527,8 @@ int runIpcControlReplyStub (int argc, const char* const* argv) noexcept
 // plugin in the loop. With ackHandshake false the ready byte is withheld
 // instead, leaving the parent inside its handshake wait - the shape a load
 // cancelled from the slot's destructor has to unwind from.
-int runIpcLoadStub (int argc, const char* const* argv, bool ackHandshake) noexcept
+int runIpcLoadStub (int argc, const char* const* argv, bool ackHandshake,
+                    bool withAudioWorker) noexcept
 {
     ipcp::NativeHandle channel = ipcp::locateInheritedChannel (argc, argv);
     if (! ipcp::isValid (channel)) return 1;
@@ -558,6 +561,57 @@ int runIpcLoadStub (int argc, const char* const* argv, bool ackHandshake) noexce
     char ready = 'k';
     if (! ipcp::writeExact (channel, &ready, 1)) return 1;
 
+    // The control-only shape answers no block command, so a parent whose device
+    // callback is running times out every block and bypasses the slot whatever
+    // the child does. Pairing the control loop with the worker topology is what
+    // makes a live-callback test measure the slot rather than the stub.
+    std::atomic<bool> workerQuit { false };
+    std::thread worker;
+    if (withAudioWorker)
+        worker = std::thread ([&]
+        {
+            std::uint32_t lastSeq = 0;
+            while (! workerQuit.load (std::memory_order_acquire))
+            {
+                if (block->state.load (std::memory_order_acquire) == kStateTeardown)
+                    break;
+
+                const auto cmd = block->cmdSeq.load (std::memory_order_acquire);
+                if (cmd == lastSeq)
+                {
+                    (void) commandSignal.wait (&block->cmdSeq, cmd, nullptr);
+                    continue;
+                }
+
+                int n  = (int) block->numSamples;
+                int ci = (int) block->numInChans;
+                int co = (int) block->numOutChans;
+                n  = std::clamp (n,  0, kMaxBlock);
+                ci = std::clamp (ci, 0, kMaxChans);
+                co = std::clamp (co, 0, kMaxChans);
+
+                for (int c = 0; c < co; ++c)
+                {
+                    float* outCh = audioOutChannel (shm.data(), c);
+                    if (c < ci)
+                        std::memcpy (outCh, audioInChannel (shm.data(), c),
+                                     (std::size_t) n * sizeof (float));
+                    else
+                        std::memset (outCh, 0, (std::size_t) n * sizeof (float));
+                }
+
+                const auto midiInBytes = block->midiInBytes <= kMidiBytes
+                                           ? block->midiInBytes : 0u;
+                block->midiOutBytes = midiInBytes;
+                if (midiInBytes > 0)
+                    std::memcpy (midiOut (shm.data()), midiIn (shm.data()), midiInBytes);
+
+                lastSeq = cmd;
+                block->replySeq.store (cmd, std::memory_order_release);
+                replySignal.wake (&block->replySeq);
+            }
+        });
+
     for (;;)
     {
         ControlMsgHeader request {};
@@ -587,6 +641,12 @@ int runIpcLoadStub (int argc, const char* const* argv, bool ackHandshake) noexce
         }
     }
 
+    if (worker.joinable())
+    {
+        workerQuit.store (true, std::memory_order_release);
+        commandSignal.wake (&block->cmdSeq);
+        worker.join();
+    }
     return 0;
 }
 
@@ -1825,6 +1885,7 @@ int main (int argc, char** argv)
     bool ipcControlReplyStub = false;
     bool ipcParkTimeoutStub = false;
     bool ipcLoadReplyStub = false;
+    bool ipcLoadAudioStub = false;
     bool ipcMuteHandshakeStub = false;
     bool ipcHost = false;
     bool scan    = false;
@@ -1847,6 +1908,7 @@ int main (int argc, char** argv)
         if (std::strcmp (args[i], "--ipc-control-reply-stub") == 0) ipcControlReplyStub = true;
         if (std::strcmp (args[i], "--ipc-park-timeout-stub") == 0) ipcParkTimeoutStub = true;
         if (std::strcmp (args[i], "--ipc-load-reply-stub") == 0) ipcLoadReplyStub = true;
+        if (std::strcmp (args[i], "--ipc-load-audio-stub") == 0) ipcLoadAudioStub = true;
         if (std::strcmp (args[i], "--ipc-mute-handshake-stub") == 0)
             ipcMuteHandshakeStub = true;
         if (std::strcmp (args[i], "--ipc-host") == 0) ipcHost = true;
@@ -1871,8 +1933,9 @@ int main (int argc, char** argv)
                                               : StubReplyMode::Normal);
     if (ipcControlReplyStub) return runIpcControlReplyStub (argc, args);
     if (ipcParkTimeoutStub) return runIpcParkTimeoutStub (argc, args);
-    if (ipcLoadReplyStub || ipcMuteHandshakeStub)
-        return runIpcLoadStub (argc, args, ipcLoadReplyStub);
+    if (ipcLoadReplyStub || ipcLoadAudioStub || ipcMuteHandshakeStub)
+        return runIpcLoadStub (argc, args, ipcLoadReplyStub || ipcLoadAudioStub,
+                               ipcLoadAudioStub);
     if (ipcHost) return runIpcHost (argc, args);
 
     std::fprintf (stderr,

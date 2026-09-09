@@ -349,15 +349,29 @@ void PluginSlot::beginRemoteLoad (PluginDescriptor descriptor,
     auto finished = std::make_shared<std::atomic<bool>> (false);
     auto cancel   = std::make_shared<std::atomic<bool>> (false);
 
+    // The spawn stays here, on the message thread, because the child dies with
+    // the thread that spawned it (see RemotePluginConnection::spawnChild). Only
+    // the handshake and the load - the parts that can block for seconds - move
+    // to the worker.
+    auto remote = std::make_unique<duskstudio::ipc::RemotePluginConnection>();
+    remote->setCancelFlag (cancel);
+    std::string spawnError;
+    const bool spawned = remote->spawnChild (hostPath, modeArg, spawnError);
+
     std::thread worker (
-        [this, life, epoch, onDone, descriptor, hostPath, modeArg, descriptionXml,
-         sampleRate, blockSize, finished, cancel]
+        [this, life, epoch, onDone, descriptor, modeArg, descriptionXml,
+         sampleRate, blockSize, finished, cancel, spawned, spawnError,
+         remote = std::move (remote)]
+        () mutable
     {
         auto outcome = std::make_shared<Outcome>();
-        auto remote = std::make_unique<duskstudio::ipc::RemotePluginConnection>();
-        remote->setCancelFlag (cancel);
 
-        if (! remote->connect (hostPath, modeArg, outcome->error))
+        if (! spawned)
+        {
+            outcome->error = spawnError;
+            remote.reset();
+        }
+        else if (! remote->completeConnect (modeArg, outcome->error))
             remote.reset();
         else if (! remote->loadPlugin (descriptionXml, sampleRate, blockSize,
                                         outcome->numIn, outcome->numOut,

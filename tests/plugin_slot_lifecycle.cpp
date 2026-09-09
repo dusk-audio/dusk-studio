@@ -177,6 +177,73 @@ TEST_CASE ("PluginSlot completes an out-of-process load off the message thread")
     CHECK (succeeded);
     CHECK (slot.isRemote());
 }
+
+// The same async load, with the device callback already running across it. A
+// child spawned from the load worker dies with that worker, which the startup
+// restore never sees because it spawns from the message thread. Needs the stub
+// that answers block commands as well as control RPCs; the control-only one
+// cannot keep any slot alive under a live callback.
+TEST_CASE ("PluginSlot keeps its sandbox child when the graph is live across the load")
+{
+    using namespace std::chrono_literals;
+
+    juce::ScopedJuceInitialiser_GUI juceInit;
+
+    PluginManager manager;
+    useSandboxStub (manager, "--ipc-load-audio-stub");
+
+    PluginSlot slot;
+    slot.setManager (manager);
+    slot.prepareToPlay (48000.0, 64);
+
+    std::atomic<bool> stopAudio { false };
+    std::atomic<int>  blocksRun { 0 };
+
+    std::thread audioThread ([&]
+    {
+        float left[64] {};
+        float right[64] {};
+        juce::MidiBuffer midi;
+        while (! stopAudio.load (std::memory_order_acquire))
+        {
+            slot.processStereoBlock (left, right, 64, midi);
+            blocksRun.fetch_add (1, std::memory_order_relaxed);
+            std::this_thread::sleep_for (1333us);
+        }
+    });
+
+    while (blocksRun.load (std::memory_order_relaxed) < 8)
+        std::this_thread::yield();
+
+    std::atomic<bool> completed { false };
+    std::atomic<bool> succeeded { false };
+    slot.loadFromDescriptorAsync (sandboxTestDescriptor(),
+                                  [&] (bool ok, juce::String)
+    {
+        succeeded.store (ok, std::memory_order_release);
+        completed.store (true, std::memory_order_release);
+    });
+
+    // Keeps pumping past the completion: the child is lost about 200 ms after a
+    // load that reported success, so stopping at the completion would pass.
+    std::chrono::steady_clock::time_point settleUntil {};
+    pumpUntil ([&]
+    {
+        if (! completed.load (std::memory_order_acquire)) return false;
+        if (settleUntil.time_since_epoch().count() == 0)
+            settleUntil = std::chrono::steady_clock::now() + 1500ms;
+        return std::chrono::steady_clock::now() >= settleUntil;
+    }, std::chrono::seconds (20));
+
+    stopAudio.store (true, std::memory_order_release);
+    audioThread.join();
+
+    REQUIRE (completed.load (std::memory_order_acquire));
+    REQUIRE (succeeded.load (std::memory_order_acquire));
+    CHECK_FALSE (slot.wasCrashed());
+    CHECK_FALSE (slot.wasAutoBypassed());
+    CHECK (slot.isRemote());
+}
 #endif
 
 // Quitting while a child stalls used to cost the destructor the whole handshake
