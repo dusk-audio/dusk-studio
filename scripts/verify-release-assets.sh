@@ -6,7 +6,7 @@
 #   scripts/verify-release-assets.sh v0.13.0
 #
 # The release workflow fans in five platform payloads, creates one canonical
-# checksum file, and publishes all six assets together. This read-only verifier
+# checksum file, signs it, and publishes all seven assets together. This read-only verifier
 # independently checks that contract plus the populated release-summary slot.
 # It exits nonzero if anything is missing, duplicated, or unexpected.
 
@@ -74,6 +74,7 @@ EXPECTED=(
     "Windows MSI|dusk-studio-${VER}-Windows-x64.msi"
     "User manual|MANUAL.pdf"
     "Checksums|SHA256SUMS"
+    "Checksum signature|SHA256SUMS.asc"
 )
 
 GH_ERROR=$(mktemp "${TMPDIR:-/tmp}/duskstudio-release-verify.XXXXXX")

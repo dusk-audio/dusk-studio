@@ -578,6 +578,192 @@ current tag workflows publish, so nothing a tagged release produces uses it.
 Do not announce the release when the workflow merely turns green; complete the
 acceptance checks below first.
 
+### Windows code signing
+
+An unsigned MSI raises SmartScreen's "Windows protected your PC" on every
+download, and the user has to choose More info and then Run anyway. Most people
+do not.
+
+**The certificate.** Since June 2023 both OV and EV code-signing certificates
+are issued on hardware tokens or through a cloud signing service; a `.pfx` file
+you can hand a hosted runner is no longer something a CA will sell you. That
+leaves two practical routes:
+
+- **Azure Trusted Signing**, roughly 10 USD a month, is the CI-friendly one.
+  Microsoft holds the key and the runner authenticates to it, so there is no
+  token and no secret certificate. This is the recommended route.
+- **A hardware token** with an OV or EV certificate, which a hosted runner
+  cannot reach. It needs a self-hosted Windows runner with the token attached,
+  or signing by hand before upload.
+
+The workflow supports a PFX as well, because an existing certificate, an
+internal CA, or a test certificate is still worth being able to use. It is not
+the route to plan a release around.
+
+**OV against EV.** EV carries SmartScreen reputation immediately. OV starts
+from nothing and accrues reputation as downloads accumulate, so the first users
+of a fresh OV certificate may still see the warning. Azure Trusted Signing
+behaves like OV in this respect.
+
+Uploading the Azure Trusted Signing secrets, after creating the account,
+certificate profile, and an app registration with the Trusted Signing Certificate
+Profile Signer role:
+
+```bash
+gh secret set AZURE_TENANT_ID --repo dusk-audio/dusk-studio
+gh secret set AZURE_CLIENT_ID --repo dusk-audio/dusk-studio
+gh secret set AZURE_CLIENT_SECRET --repo dusk-audio/dusk-studio
+gh secret set TRUSTED_SIGNING_ENDPOINT --repo dusk-audio/dusk-studio   # https://<region>.codesigning.azure.net
+gh secret set TRUSTED_SIGNING_ACCOUNT --repo dusk-audio/dusk-studio
+gh secret set TRUSTED_SIGNING_PROFILE --repo dusk-audio/dusk-studio
+```
+
+Or, for the PFX route:
+
+```bash
+base64 -w0 code-signing.pfx | gh secret set WINDOWS_CERT_PFX_BASE64 --repo dusk-audio/dusk-studio
+gh secret set WINDOWS_CERT_PASSWORD --repo dusk-audio/dusk-studio
+```
+
+The job takes the PFX route when both of those are set, otherwise Azure when
+all six are, and fails a `v*` tag when neither set is complete. A
+`workflow_dispatch` run skips signing with a notice.
+
+Both executables are signed before the MSI is built, then the MSI itself:
+signing only the installer would leave the binaries it lays down unsigned, and
+those are what the user runs. Every signature carries an RFC 3161 timestamp, so
+it outlives the certificate. `signtool verify /pa /v` on all three files, plus a
+check that each carries a countersignature, is the acceptance step.
+
+### macOS signing and notarization
+
+Gatekeeper refuses an unnotarized DMG, and the user is told the app is damaged
+rather than unsigned, so this is not optional for a release people install.
+
+Procuring the credentials, once:
+
+1. **Apple Developer Program membership**, 99 USD a year, for the Dusk Audio
+   entity. Notarization is not available without it.
+2. **A Developer ID Application certificate.** In Xcode, Settings, Accounts,
+   Manage Certificates, then add a Developer ID Application certificate. Export
+   it from Keychain Access as a `.p12` with a password. Developer ID
+   Application is the right type: Mac App Distribution is for the App Store and
+   Gatekeeper will not accept it for a direct download.
+3. **An App Store Connect API key** for notarization, from App Store Connect,
+   Users and Access, Integrations, keys. Give it the Developer role and
+   download the `.p8` once; it cannot be downloaded again. Note the key ID and
+   the issuer ID shown beside it.
+
+An API key is used rather than an Apple ID and app-specific password because
+the key does not expire when a password changes and carries no second factor.
+
+Uploading the six secrets:
+
+```bash
+base64 -i DeveloperID.p12 | gh secret set MACOS_CERT_P12_BASE64 --repo dusk-audio/dusk-studio
+gh secret set MACOS_CERT_PASSWORD --repo dusk-audio/dusk-studio
+gh secret set MACOS_TEAM_ID --repo dusk-audio/dusk-studio          # the 10-character team ID
+gh secret set NOTARY_KEY_ID --repo dusk-audio/dusk-studio          # the API key ID
+gh secret set NOTARY_ISSUER_ID --repo dusk-audio/dusk-studio       # the issuer UUID
+base64 -i AuthKey_XXXXXXXX.p8 | gh secret set NOTARY_KEY_P8_BASE64 --repo dusk-audio/dusk-studio
+```
+
+Keep the `.p12` and the `.p8` somewhere safe offline. The `.p8` in particular
+cannot be re-downloaded.
+
+What the macOS job then does on a `v*` tag: imports the certificate into a
+keychain of its own, signs the plugin host and then the bundle with
+`--options runtime` and a secure timestamp, packages the DMG, signs that,
+submits it to the notary service and waits, staples the ticket, and requires
+`spctl --assess` to report `accepted` with `source=Notarized Developer ID`
+before anything is published. Any missing secret fails the job before
+publication. A `workflow_dispatch` run keeps the ad-hoc signature and says so,
+since it publishes nothing.
+
+### Release signing key
+
+`SHA256SUMS` is signed, and the signature ships as a seventh asset. A checksum
+published next to the artifact proves a download is intact; the signature is
+what a user can check against a key obtained separately.
+
+The key pair is generated once. Do this on a machine you trust, not a runner:
+
+```bash
+gpg --batch --quiet --gen-key <<'EOF'
+%echo generating the Dusk Studio release signing key
+Key-Type: eddsa
+Key-Curve: ed25519
+Key-Usage: sign
+Name-Real: Dusk Audio Release Signing
+Name-Email: releases@duskaudio.com
+Expire-Date: 0
+Passphrase: <a long random passphrase>
+%commit
+EOF
+
+KEY=$(gpg --batch --with-colons --list-secret-keys releases@duskaudio.com \
+        | awk -F: '$1 == "sec" { print $5; exit }')
+gpg --armor --export "$KEY" > packaging/release-signing.pub
+gpg --armor --export-secret-keys "$KEY" | base64 -w0 > release-secret.b64
+```
+
+Commit `packaging/release-signing.pub`, replacing the placeholder text. Until
+that file holds a key the workflow signs but warns that it could not verify the
+signature against a committed key; once it does, a signature the key cannot
+verify fails the release.
+
+Upload the two secrets to the repository, then destroy the exported copy:
+
+```bash
+gh secret set RELEASE_SIGNING_KEY --repo dusk-audio/dusk-studio < release-secret.b64
+gh secret set RELEASE_SIGNING_KEY_PASSWORD --repo dusk-audio/dusk-studio
+shred -u release-secret.b64
+```
+
+Keep an offline backup of the secret key. Losing it means a new key, and every
+user who pinned the old one has to be told.
+
+A `v*` tag fails before publishing anything when either secret is missing, so a
+release cannot go out unsigned. A `workflow_dispatch` run skips signing with a
+notice, since it publishes nothing.
+
+To verify a published release by hand:
+
+```bash
+gpg --import packaging/release-signing.pub
+gpg --verify SHA256SUMS.asc SHA256SUMS
+sha256sum --check SHA256SUMS
+```
+
+### Smoke-testing a published artifact
+
+The workflow proves the artifact builds. It does not prove it runs anywhere
+else. Download each asset and run it through
+[`scripts/release-smoke-test.sh`](../scripts/release-smoke-test.sh) (Linux and
+macOS) or
+[`scripts/release-smoke-test.ps1`](../scripts/release-smoke-test.ps1)
+(Windows):
+
+```bash
+scripts/release-smoke-test.sh linux dusk-studio-X.Y.Z-Linux-x86_64.tar.xz
+scripts/release-smoke-test.sh macos dusk-studio-X.Y.Z-macOS-arm64.dmg
+pwsh -NoProfile -File scripts/release-smoke-test.ps1 dusk-studio-X.Y.Z-Windows-x64.msi
+```
+
+Each unpacks or mounts the artifact into a scratch directory, checks it against
+`packaging/contents.txt`, requires `--version` to report the version in the
+artifact's own file name, and on Linux and macOS runs the headless self-test
+against the packaged binary under a bounded wait, which also proves the plugin
+scan terminates. One PASS or FAIL line per check, and every check runs even
+after one fails, so a single invocation reports the whole picture.
+
+Nothing is installed and no system location is touched. On Linux the app is
+launched under a private Xvfb display; never run this against a live session.
+
+Windows coverage is narrower: the MSI is extracted rather than installed, since
+installing needs elevation, and the self-test leg is omitted while
+`DUSKSTUDIO_RUN_IPC_SELFTEST` hangs there (#504).
+
 ### Package contents
 
 [`packaging/contents.txt`](../packaging/contents.txt) is the contract for what
@@ -596,7 +782,7 @@ there is no file to verify.
 
 ### Tag assets and acceptance
 
-A complete `vX.Y.Z` release has exactly these six assets:
+A complete `vX.Y.Z` release has exactly these seven assets:
 
 - `dusk-studio-X.Y.Z-Linux-x86_64.tar.xz`
 - `dusk-studio-X.Y.Z-Linux-aarch64.tar.xz`
@@ -604,6 +790,7 @@ A complete `vX.Y.Z` release has exactly these six assets:
 - `dusk-studio-X.Y.Z-Windows-x64.msi`
 - `MANUAL.pdf`
 - `SHA256SUMS`
+- `SHA256SUMS.asc`
 
 The publisher downloads all five payloads into one job and refuses to publish
 unless their exact filenames are present. It writes a sorted, lowercase
