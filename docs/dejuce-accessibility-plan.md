@@ -1,3 +1,5 @@
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+
 # GUI accessibility bridge — issue #305
 
 **Decision, 2026-09-08:** preserve screen-reader support with a platform

@@ -1,3 +1,5 @@
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+
 # De-JUCE campaign — map and working agreement
 
 Read this first among the de-JUCE docs in any session doing de-JUCE work. It is

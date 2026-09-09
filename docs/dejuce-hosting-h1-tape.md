@@ -1,3 +1,5 @@
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+
 # Hosting tower H1 — TapeMachine2 swap (executable spec)
 
 Status: **H1a–H1c implemented; H1d pending donor consolidation.** Branch
