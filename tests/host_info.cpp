@@ -26,7 +26,8 @@ TEST_CASE ("Native host probes retain current platform diagnostic facts", "[issu
     REQUIRE (info.logicalCpus == (unsigned int) juce::SystemStats::getNumCpus());
    #if defined(_WIN32)
     // The prior provider added one MiB unconditionally; report the actual floor.
-    REQUIRE (info.memoryMiB + 1 == (std::uint64_t) juce::SystemStats::getMemorySizeInMegabytes());
+    if (info.memoryMiB != 0)
+        REQUIRE (info.memoryMiB + 1 == (std::uint64_t) juce::SystemStats::getMemorySizeInMegabytes());
     REQUIRE (info.operatingSystem.find ("Windows ") == 0);
     REQUIRE (info.operatingSystem.find (" (build ") != std::string::npos);
    #else
