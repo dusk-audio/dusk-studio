@@ -47,6 +47,12 @@ constexpr std::uint32_t kControlStatusWorkerParkTimeout = 100;
 // inside its own RPC deadline instead of burning it.
 constexpr std::uint32_t kControlStatusMessageThreadTimeout = 101;
 
+// Non-terminal control-RPC status: PrepareToPlay arrived with no plug-in
+// loaded. Answering 0 would let the parent republish the connection and route
+// audio to a child that has nothing to process, which is silence the parent
+// cannot tell from a working slot.
+constexpr std::uint32_t kControlStatusNoPluginLoaded = 102;
+
 // State values for `BlockHeader::state`.
 constexpr std::uint32_t kStateReady    = 0;
 constexpr std::uint32_t kStateCrashed  = 1;

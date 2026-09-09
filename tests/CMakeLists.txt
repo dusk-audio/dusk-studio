@@ -571,6 +571,7 @@ endif()
 if (_duskstudio_ipc_test_enabled)
     target_sources(dusk-studio-tests PRIVATE
         ipc_stub_round_trip.cpp
+        ipc_prepare_without_plugin.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/ipc/RemotePluginConnection.cpp
         ${_duskstudio_ipc_test_sources})
     # The parent pipe endpoint uses overlapped I/O on Windows, so the reader's
