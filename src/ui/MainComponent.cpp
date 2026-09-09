@@ -2686,8 +2686,12 @@ bool MainComponent::openStartupPanel (bool demoRecents)
     // The downloads page is Dusk-owned so the destination can change without an app
     // update, and the artifacts behind it are supporter-gated, so no direct URL
     // exists. It is the one banner action that leaves the dialog up.
+    std::vector<std::string> templateNames;
+    for (int i = 0; i < (int) SessionTemplate::kCount; ++i)
+        templateNames.emplace_back (nameForTemplate ((SessionTemplate) i));
+
     auto view = imgui::makeStartupView (
-        std::move (recents),
+        std::move (recents), std::move (templateNames),
         startupBrandRgba.empty() ? nullptr : startupBrandRgba.data(),
         startupBrandWidth, startupBrandHeight,
         [] { juce::URL ("https://builds.duskaudio.com/latest").launchInDefaultBrowser(); });
@@ -2735,6 +2739,7 @@ void MainComponent::runStartupChoice()
     const auto action = startupView != nullptr ? startupView->chosenAction()
                                                : imgui::StartupAction::skip;
     const auto path = startupView != nullptr ? startupView->chosenPath() : std::string();
+    const int tmpl = startupView != nullptr ? startupView->chosenTemplate() : 0;
 
     if (action == imgui::StartupAction::quit)
     {
@@ -2746,7 +2751,7 @@ void MainComponent::runStartupChoice()
     }
 
     juce::Component::SafePointer<MainComponent> safeThis (this);
-    dismissStartupDialog ([safeThis, action, path]
+    dismissStartupDialog ([safeThis, action, path, tmpl]
     {
         auto* const self = safeThis.getComponent();
         if (self == nullptr)
@@ -2760,7 +2765,9 @@ void MainComponent::runStartupChoice()
                 self->loadSessionFromJson (
                     toFile (std::filesystem::u8path (path)).getChildFile ("session.json"));
                 break;
-            case imgui::StartupAction::newSession: self->newSessionPrompt(); break;
+            case imgui::StartupAction::newSession:
+                self->newSessionPrompt ((SessionTemplate) tmpl);
+                break;
             case imgui::StartupAction::openFile:   self->openFromFilePrompt(); break;
             case imgui::StartupAction::skip:
             case imgui::StartupAction::quit:
@@ -2964,17 +2971,17 @@ void MainComponent::guardSessionSwitchThen (const char* title,
     guardUnsavedThen (title, message, std::move (proceed));
 }
 
-void MainComponent::newSessionPrompt()
+void MainComponent::newSessionPrompt (SessionTemplate tmpl)
 {
     // Starting a new session blanks the current one - guard unsaved work first.
     guardSessionSwitchThen (
         "Save changes before starting a new session?",
         "Your current session has unsaved changes. If you don't save, "
         "those changes are discarded when the new session opens.",
-        [this] { promptNewSessionLocation(); });
+        [this, tmpl] { promptNewSessionLocation (tmpl); });
 }
 
-void MainComponent::promptNewSessionLocation()
+void MainComponent::promptNewSessionLocation (SessionTemplate tmpl)
 {
     // Single-dialog "Save As" UX: filename text field + folder browser in
     // one step. The typed name becomes the session folder; the navigated
@@ -2991,16 +2998,16 @@ void MainComponent::promptNewSessionLocation()
         /*warnAboutOverwriting*/   true,
         /*selectDirectories*/      false,
     },
-    [this] (juce::File chosen)
+    [this, tmpl] (juce::File chosen)
     {
         if (chosen == juce::File()) return;
         // The chosen path becomes the new session folder. Start from a clean
         // default state - NOT the current session saved under a new name.
-        createNewSessionAt (chosen);
+        createNewSessionAt (chosen, tmpl);
     });
 }
 
-void MainComponent::createNewSessionAt (const juce::File& dir)
+void MainComponent::createNewSessionAt (const juce::File& dir, SessionTemplate tmpl)
 {
     if (dir == juce::File()) return;
     dir.createDirectory();
@@ -3022,6 +3029,9 @@ void MainComponent::createNewSessionAt (const juce::File& dir)
     }
 
     auto fresh = std::make_unique<Session>();
+    // Stamped before the write, so the session lands on disk as the user asked
+    // for it and the normal load path rebuilds the UI from that.
+    applyTemplate (*fresh, tmpl);
     if (! SessionSerializer::writeAtomic (target, SessionSerializer::serialize (*fresh)))
     {
         setStatusForPath ("Could not create session at", target);

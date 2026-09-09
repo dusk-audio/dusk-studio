@@ -183,7 +183,9 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/MidiTimeCodeEmitter.cpp
     session_arm_input_gate.cpp
     ${CMAKE_SOURCE_DIR}/src/session/Session.cpp
-    ${CMAKE_SOURCE_DIR}/src/session/SessionSerializer.cpp)
+    ${CMAKE_SOURCE_DIR}/src/session/SessionSerializer.cpp
+    session_templates.cpp
+    ${CMAKE_SOURCE_DIR}/src/session/SessionTemplates.cpp)
 
 target_include_directories(dusk-studio-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
