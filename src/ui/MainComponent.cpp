@@ -1011,28 +1011,33 @@ MainComponent::MainComponent()
     // benchmarking the load path (the [Dusk Studio/Load] timing line ends
     // up in the parent terminal) and for scripted reproductions of
     // user-reported regressions.
-    if (const char* loadPath = std::getenv ("DUSKSTUDIO_LOAD_SESSION");
-        loadPath != nullptr && *loadPath)
+    // startupDialogPending was already set before setSize() above (so the
+    // scan-kicking resized() saw the gate); the routing here just decides what
+    // the first tick does. Capture mode suppresses the picker too - its modal
+    // would overlay the snapshots (mirrors the CAPTURE_DIR guard in the scan
+    // path).
+    //
+    // The last branch is not a no-op: only the picker's dismissal hands
+    // keyboard focus to the canvas, so a route that shows no picker leaves the
+    // window with nothing focused, and every shortcut in the manual is dead
+    // until the user happens to click the canvas.
     {
+        const char* loadPath = std::getenv ("DUSKSTUDIO_LOAD_SESSION");
+        const bool loadsSession = loadPath != nullptr && *loadPath;
+        juce::String pathStr (loadsSession ? loadPath : "");
+        const bool wantsPicker = ! loadsSession
+                              && std::getenv ("DUSKSTUDIO_SKIP_STARTUP_DIALOG") == nullptr
+                              && std::getenv ("DUSKSTUDIO_CAPTURE_DIR") == nullptr;
+
         juce::Component::SafePointer<MainComponent> safeThis (this);
-        juce::String pathStr (loadPath);
-        dusk::callAsync ([safeThis, pathStr]
+        dusk::callAsync ([safeThis, pathStr, loadsSession, wantsPicker]
         {
-            if (safeThis != nullptr)
-                safeThis->loadSessionFromJson (juce::File (pathStr));
-        });
-    }
-    else if (std::getenv ("DUSKSTUDIO_SKIP_STARTUP_DIALOG") == nullptr
-             && std::getenv ("DUSKSTUDIO_CAPTURE_DIR") == nullptr)
-    {
-        // startupDialogPending was already set before setSize() above (so the
-        // scan-kicking resized() saw the gate); just queue the dialog here.
-        // Capture mode suppresses the picker too - its modal would overlay
-        // the snapshots (mirrors the CAPTURE_DIR guard in the scan path).
-        juce::Component::SafePointer<MainComponent> safeThis (this);
-        dusk::callAsync ([safeThis]
-        {
-            if (safeThis != nullptr) safeThis->launchStartupDialog();
+            auto* const self = safeThis.getComponent();
+            if (self == nullptr) return;
+
+            if (loadsSession)      self->loadSessionFromJson (juce::File (pathStr));
+            else if (wantsPicker)  self->launchStartupDialog();
+            else                   self->focusMainCanvas();
         });
     }
 
@@ -2579,6 +2584,7 @@ void MainComponent::launchStartupDialog()
     // Skipping by environment variable never raises the gate at all, which is why
     // only this path needs the call.
     startupDialogPending = false;
+    focusMainCanvas();
     maybeStartStartupPluginScan();
    #else
     if (openStartupPanel (false))
@@ -2587,9 +2593,37 @@ void MainComponent::launchStartupDialog()
     // A display that cannot carry the panel must not leave the app looking wedged
     // behind a dim overlay, so the launch continues as if the dialog was skipped.
     startupDialogPending = false;
+    focusMainCanvas();
     setStatusText ("Startup dialog unavailable on this display; opened the default session");
     maybeStartStartupPluginScan();
    #endif
+}
+
+// The canvas is what MainComponent::keyPressed hangs off, so without this the
+// window has nothing focused and JUCE delivers key events to the peer's
+// component instead, which is this one's parent and never routes back down.
+void MainComponent::focusMainCanvas()
+{
+    // The startup routing runs on the first message-loop tick, before the
+    // window is on screen, and a component that is not showing cannot take
+    // focus. Latch the request; parentHierarchyChanged takes it once it can.
+    canvasFocusPending = true;
+    takePendingCanvasFocus();
+}
+
+void MainComponent::takePendingCanvasFocus()
+{
+    if (! canvasFocusPending || ! isShowing())
+        return;
+    canvasFocusPending = false;
+    grabKeyboardFocus();
+}
+
+// Showing the window walks this down every descendant, and it is the first
+// moment the canvas is allowed to hold focus.
+void MainComponent::parentHierarchyChanged()
+{
+    takePendingCanvasFocus();
 }
 
 void MainComponent::openStartupForCapture (const std::string& capturePath)

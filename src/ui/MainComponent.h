@@ -35,6 +35,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
+    void parentHierarchyChanged() override;
 
     // Capture tail for the views that render into a framework child, which the
     // snapshot path cannot reach. Runs from the live message loop and quits when
@@ -144,6 +145,11 @@ private:
     // reading a session that is missing the take still being recorded.
     void guardSessionSwitchThen (const char* title, const char* message,
                                    std::function<void()> proceed);
+    // Give the canvas keyboard focus. Every route that opens without the
+    // startup picker has to call this; the picker's dismissal does it itself.
+    void focusMainCanvas();
+    void takePendingCanvasFocus();
+    bool canvasFocusPending = false;
     void newSessionPrompt();
     // The folder-pick + create half of newSessionPrompt - runs only once any
     // unsaved-changes prompt has been resolved.
