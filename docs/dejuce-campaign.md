@@ -109,8 +109,10 @@ reimplemented.
   `IFileWriteSink` + externally-drained `ThreadedFileWriter` +
   `WriterDrainPool` (one disk thread per subsystem, as before). LameMp3Writer
   is JUCE-free (allowlist −2, gate 182 — the "zero movement" honest-yield
-  prediction missed this). `juce_audio_formats` stays linked only for
-  `juce_audio_utils`/AudioThumbnail; it unlinks globally with the GUI tower.
+  prediction missed this). Mastering and region waveforms now use the native
+  `WaveformSource`; no production AudioThumbnail consumer remains.
+  `juce_audio_formats` and `juce_audio_utils` still link pending a transitive
+  include and cross-platform module-unlink audit.
   Bench debts at spec §Owed. Spec:
   [dejuce-audiofile-plan.md](dejuce-audiofile-plan.md).
 
@@ -124,8 +126,9 @@ reimplemented.
    hosting path (PluginSlot/PluginManager JUCE half/PluginHostMain loop) and
    both remaining in-app JUCE donor processors (TapeMachine -> TapeMachineDSP,
    Multiband UniversalCompressor -> framework-free donor port) are deleted. Unlinks
-   `juce_audio_processors` globally; `juce_audio_utils` and
-   `juce_audio_formats` stay for AudioThumbnail — GUI tower unlinks those.
+   `juce_audio_processors` globally. AudioThumbnail consumers have migrated;
+   the remaining `juce_audio_utils` and `juce_audio_formats` links need their
+   own transitive-dependency audit before removal.
    Multi-PR tower, phases H1-H6 in
    [dejuce-hosting-plan.md](dejuce-hosting-plan.md).
 2. **GUI tower (finale)** — framework decision (Marc, 2026-07-27): build on
