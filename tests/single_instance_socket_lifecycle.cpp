@@ -239,6 +239,18 @@ int acceptWithin (int listenFd, std::chrono::milliseconds budget)
 }
 #endif
 
+// The mark the production code leaves on the slot for as long as it is serving
+// it, which is what separates a dead primary from a live one that is refusing
+// connects.
+int holdOwnerLock (const fs::path& socketPath)
+{
+    const int fd = ::open ((socketPath.string() + ".owner").c_str(),
+                           O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    REQUIRE (fd >= 0);
+    REQUIRE (::flock (fd, LOCK_EX | LOCK_NB) == 0);
+    return fd;
+}
+
 // The lock the production code takes around every mutation of the slot entry.
 int holdSlotLock (const fs::path& socketPath)
 {
@@ -429,6 +441,39 @@ TEST_CASE ("a handoff nobody acknowledges leaves the launch unattached",
     ::close (deafFd);
 
     REQUIRE (runsUnattached);
+}
+
+// A refused connect does not mean the owner is gone. macOS reports a live
+// primary whose listen backlog is full exactly the way it reports a dead one,
+// so reading a refusal as an abandoned slot deleted a running instance's socket
+// and elected a second primary over the same session directory.
+TEST_CASE ("a refusal from an owned slot leaves the socket alone",
+           "[single-instance][socket][issue-573]")
+{
+    ScopedSlot slot;
+    REQUIRE (duskstudio::single_instance::acquire ("", noPayload));
+    const auto sock = soleSocketIn (slot.path());
+    REQUIRE_FALSE (sock.empty());
+    duskstudio::single_instance::release();
+    REQUIRE (inodeOf (sock) == 0);
+
+    // Bound but never listening, so every connect is refused, with the slot
+    // still marked as owned.
+    const int boundFd = bindSocketAt (sock);
+    const auto ownedInode = inodeOf (sock);
+    REQUIRE (ownedInode != 0);
+    const int ownerFd = holdOwnerLock (sock);
+
+    const bool ranUnattached =
+        duskstudio::single_instance::acquire ("/tmp/owned/session.json", noPayload);
+    const auto afterInode = inodeOf (sock);
+
+    ::flock (ownerFd, LOCK_UN);
+    ::close (ownerFd);
+    ::close (boundFd);
+
+    REQUIRE (ranUnattached);
+    REQUIRE (afterInode == ownedInode);
 }
 
 // Linux answers a full Unix-domain backlog with EAGAIN. macOS answers
