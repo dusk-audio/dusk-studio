@@ -3,6 +3,10 @@
 
 #include "util/HostInfo.h"
 
+#if defined(_WIN32)
+ #include <windows.h>
+#endif
+
 using namespace duskstudio::diagnostics;
 
 TEST_CASE ("Host diagnostics preserve supplied values and explicit units", "[issue-313][host-info]")
@@ -23,14 +27,21 @@ TEST_CASE ("Native host probes retain current platform diagnostic facts", "[issu
     INFO (formatHostInfo (info));
     REQUIRE_FALSE (info.operatingSystem.empty());
     REQUIRE (info.cpuModel == juce::SystemStats::getCpuModel().toStdString());
-    REQUIRE (info.logicalCpus == (unsigned int) juce::SystemStats::getNumCpus());
    #if defined(_WIN32)
+    unsigned int logicalCpus = 0;
+    const auto groups = GetActiveProcessorGroupCount();
+    for (WORD group = 0; group < groups; ++group)
+        logicalCpus += GetActiveProcessorCount (group);
+    if (logicalCpus == 0)
+        logicalCpus = (unsigned int) juce::SystemStats::getNumCpus();
+    REQUIRE (info.logicalCpus == logicalCpus);
     // The prior provider added one MiB unconditionally; report the actual floor.
     if (info.memoryMiB != 0)
         REQUIRE (info.memoryMiB + 1 == (std::uint64_t) juce::SystemStats::getMemorySizeInMegabytes());
     REQUIRE (info.operatingSystem.find ("Windows ") == 0);
     REQUIRE (info.operatingSystem.find (" (build ") != std::string::npos);
    #else
+    REQUIRE (info.logicalCpus == (unsigned int) juce::SystemStats::getNumCpus());
     REQUIRE (info.memoryMiB == (std::uint64_t) juce::SystemStats::getMemorySizeInMegabytes());
     REQUIRE (info.operatingSystem == juce::SystemStats::getOperatingSystemName().toStdString());
    #endif

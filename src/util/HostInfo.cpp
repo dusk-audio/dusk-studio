@@ -56,7 +56,9 @@ HostInfo collectHostInfo()
     }
     SYSTEM_INFO system {};
     GetNativeSystemInfo (&system);
-    info.logicalCpus = system.dwNumberOfProcessors;
+    info.logicalCpus = GetActiveProcessorCount (ALL_PROCESSOR_GROUPS);
+    if (info.logicalCpus == 0)
+        info.logicalCpus = system.dwNumberOfProcessors;
     MEMORYSTATUSEX memory {};
     memory.dwLength = sizeof (memory);
     if (GlobalMemoryStatusEx (&memory))
