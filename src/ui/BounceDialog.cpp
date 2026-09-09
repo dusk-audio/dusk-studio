@@ -4,6 +4,23 @@
 
 namespace duskstudio
 {
+namespace
+{
+const juce::Colour kButtonBackground { 0xff202024 };
+
+// The label is one line and the path is routinely longer than it. Tail
+// truncation hides the file name, which is the part the user came for, so keep
+// both ends and drop the middle. The whole path stays reachable through the
+// tooltip and the Copy path button.
+std::string elideMiddle (const std::string& path, std::size_t budget = 64)
+{
+    if (path.size() <= budget) return path;
+    const std::size_t tail = budget * 2 / 3;
+    const std::size_t head = budget - tail - 3;
+    return path.substr (0, head) + "..." + path.substr (path.size() - tail);
+}
+} // namespace
+
 BounceDialog::BounceDialog (AudioEngine& e,
                               Session& s,
                               const juce::File& f,
@@ -33,7 +50,11 @@ BounceDialog::BounceDialog (AudioEngine& e,
 
     statusLabel.setJustificationType (juce::Justification::centredLeft);
     statusLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
-    statusLabel.setText (outputFile.getFullPathName(), juce::dontSendNotification);
+    {
+        const auto full = outputFile.getFullPathName().toStdString();
+        statusLabel.setText (elideMiddle (full), juce::dontSendNotification);
+        statusLabel.setTooltip (full);
+    }
     addAndMakeVisible (statusLabel);
 
     // Offline renders drive the engine detached from the audio device, so an
@@ -66,7 +87,7 @@ BounceDialog::BounceDialog (AudioEngine& e,
 
     auto styleButton = [] (juce::TextButton& b)
     {
-        b.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff202024));
+        b.setColour (juce::TextButton::buttonColourId, kButtonBackground);
         b.setColour (juce::TextButton::textColourOffId, juce::Colour (0xffd0d0d0));
     };
     styleButton (cancelButton);
@@ -74,6 +95,18 @@ BounceDialog::BounceDialog (AudioEngine& e,
     closeButton.setVisible (false);  // shown after the render finishes
     cancelButton.onClick = [this] { closeDialog(); };
     closeButton.onClick  = [this] { closeDialog(); };
+    styleButton (copyPathButton);
+    copyPathButton.setTooltip ("Copy the full path to the clipboard.");
+    copyPathButton.onClick = [this]
+    {
+        const auto full = renderMode == BounceEngine::Mode::Stems
+                            ? outputFile.getParentDirectory().getFullPathName()
+                            : outputFile.getFullPathName();
+        juce::SystemClipboard::copyTextToClipboard (full);
+    };
+    // addChildComponent, not addAndMakeVisible: the latter would show it during
+    // the render, before there is a written file whose path is worth copying.
+    addChildComponent (copyPathButton);
     addAndMakeVisible (cancelButton);
     addAndMakeVisible (closeButton);
 
@@ -119,7 +152,7 @@ BounceDialog::~BounceDialog()
 
 void BounceDialog::paint (juce::Graphics& g)
 {
-    g.fillAll (juce::Colour (0xff202024));
+    g.fillAll (kButtonBackground);
 }
 
 void BounceDialog::resized()
@@ -140,6 +173,8 @@ void BounceDialog::resized()
     auto buttons = area.removeFromBottom (30);
     cancelButton.setBounds (buttons.removeFromRight (90));
     closeButton.setBounds  (cancelButton.getBounds());
+    buttons.removeFromRight (8);
+    copyPathButton.setBounds (buttons.removeFromRight (100));
 }
 
 void BounceDialog::timerCallback()
@@ -187,15 +222,21 @@ void BounceDialog::finalizeIfStopped()
         if (renderMode == BounceEngine::Mode::Stems)
         {
             const int total = bounceEngine->getTotalStemsToRender();
+            const auto dir = outputFile.getParentDirectory().getFullPathName().toStdString();
             statusLabel.setText ("Wrote " + juce::String (total) + " stem"
                                   + juce::String (total == 1 ? "" : "s")
-                                  + " to " + outputFile.getParentDirectory().getFullPathName(),
+                                  + " to " + elideMiddle (dir),
                                   juce::dontSendNotification);
+            statusLabel.setTooltip (dir);
+            copyPathButton.setVisible (true);
         }
         else
         {
-            statusLabel.setText ("Wrote " + outputFile.getFullPathName(),
+            const auto full = outputFile.getFullPathName().toStdString();
+            statusLabel.setText ("Wrote " + elideMiddle (full),
                                   juce::dontSendNotification);
+            statusLabel.setTooltip (full);
+            copyPathButton.setVisible (true);
         }
         progressValue = 1.0;
         progressBar.repaint();
