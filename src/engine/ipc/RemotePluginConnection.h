@@ -56,6 +56,15 @@ public:
                    const std::string& extraArg,
                    std::string& errorOut);
 
+    // connect() split in two so a caller can keep the spawn on a long-lived
+    // thread and move only the waiting off it. spawnChild must run on a thread
+    // that outlives the child (see its definition); completeConnect may run
+    // anywhere. Calling connect() is equivalent to calling both in order.
+    bool spawnChild (const std::string& hostExecutablePath,
+                      const std::string& extraArg,
+                      std::string& errorOut);
+    bool completeConnect (const std::string& extraArg, std::string& errorOut);
+
     // --- Control plane (Phase 2 - message-thread only) -------------------
     // Each of these does a synchronous request/reply over the control
     // socket. Not RT-safe; not callable from the audio thread.
