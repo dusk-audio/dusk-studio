@@ -2,11 +2,13 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "engine/midi/CoreMidiProtocol.h"
+#include "engine/midi/MidiPacketDecoder.h"
 #include "foundation/MidiRing.h"
 
 #include <limits>
 #include <vector>
 
+using duskstudio::midi::PacketDecoder;
 using namespace duskstudio::midi::coremidi;
 using Catch::Matchers::WithinAbs;
 
