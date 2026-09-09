@@ -286,7 +286,8 @@ case " $* " in
                 'dusk-studio-9.9.9-macOS-arm64.dmg' \
                 'dusk-studio-9.9.9-Windows-x64.msi' \
                 'MANUAL.pdf' \
-                'SHA256SUMS'
+                'SHA256SUMS' \
+                'SHA256SUMS.asc'
         fi
         ;;
     *)
@@ -1239,7 +1240,7 @@ assert "--jq '.body // \"\"'" in verifier_text, (
     "verifier must normalize a null release body to empty"
 )
 expected_assets = re.findall(r'^\s+"[^"\n]+\|[^"\n]+"$', verifier_text, re.MULTILINE)
-expected_asset_count = 6
+expected_asset_count = 7   # six payloads plus the SHA256SUMS signature
 assert len(expected_assets) == expected_asset_count, (
     "release verifier asset count changed; update the release contract explicitly"
 )
@@ -1388,7 +1389,8 @@ for required in (
     "release fan-in must contain exactly the five expected payloads",
     "SHA256SUMS must contain exactly five entries",
     "sha256sum --check SHA256SUMS",
-    "release directory must contain exactly six assets",
+    "release directory must hold the six payloads before signing",
+    "dist/SHA256SUMS.asc",
     "if: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}",
     notes_marker,
     'gh release upload "$TAG" --repo "$RELEASES_REPO" --clobber dist/*',
@@ -1420,8 +1422,11 @@ assert publish_job[:upload_at].count("--draft") == 2, (
 assert upload_at < verify_at < publish_at, (
     "the release must remain draft until the uploaded six-asset set verifies"
 )
-assert "SHA256SUMS." not in release_workflow, (
-    "per-job checksum fragments must not return"
+# The guard is against per-job checksum fragments (SHA256SUMS.linux and the
+# like) coming back. The detached signature is the one legitimate suffix.
+_suffixes = {m for m in re.findall(r"SHA256SUMS\.(\w+)", release_workflow)}
+assert _suffixes <= {"asc"}, (
+    f"per-job checksum fragments must not return (found: {sorted(_suffixes)})"
 )
 assert "if: ${{ github.ref_type == 'tag' }}" not in publish_job, (
     "a workflow_dispatch targeting a tag must not publish"
