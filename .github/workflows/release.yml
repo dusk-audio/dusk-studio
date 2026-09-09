@@ -657,15 +657,159 @@ jobs:
           $wixBin                     | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
           Write-Host "WiX ready: $wixBin"
 
-      - name: Package MSI via CPack WIX (unsigned)
+      - name: Decide the Windows signing route
+        # Two credential shapes. A PFX is the simple one and works with any
+        # certificate you hold; Azure Trusted Signing is the CI-friendly one,
+        # because since June 2023 OV and EV certificates are issued on hardware
+        # tokens that a hosted runner cannot reach. Either is enough; neither on
+        # a tag is not.
+        id: winsign
+        shell: bash
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          TRUSTED_SIGNING_ENDPOINT: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
+          TRUSTED_SIGNING_ACCOUNT: ${{ secrets.TRUSTED_SIGNING_ACCOUNT }}
+          TRUSTED_SIGNING_PROFILE: ${{ secrets.TRUSTED_SIGNING_PROFILE }}
+          IS_TAG: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
+        run: |
+          set -euo pipefail
+          route=none
+          if [[ -n "${WINDOWS_CERT_PFX_BASE64:-}" && -n "${WINDOWS_CERT_PASSWORD:-}" ]]; then
+            route=pfx
+          elif [[ -n "${AZURE_TENANT_ID:-}" && -n "${AZURE_CLIENT_ID:-}" \
+               && -n "${AZURE_CLIENT_SECRET:-}" && -n "${TRUSTED_SIGNING_ENDPOINT:-}" \
+               && -n "${TRUSTED_SIGNING_ACCOUNT:-}" && -n "${TRUSTED_SIGNING_PROFILE:-}" ]]; then
+            route=azure
+          fi
+
+          if [[ "$route" == "none" ]]; then
+            if [[ "$IS_TAG" == "true" ]]; then
+              echo "::error::cannot publish a signed Windows build; set either the PFX secrets or the full Azure Trusted Signing set" >&2
+              exit 1
+            fi
+            echo "::notice::Windows signing secrets absent; the MSI stays unsigned (dispatch publishes nothing)"
+          fi
+          echo "route=$route" >> "$GITHUB_OUTPUT"
+
+      - name: Sign the executables (PFX)
+        # Before the MSI is built: signing only the installer would leave the
+        # binaries it lays down unsigned, which is what the user actually runs.
+        if: ${{ steps.winsign.outputs.route == 'pfx' }}
         shell: pwsh
-        # Delegates the cpack run to the cross-platform packaging script.
-        # No signing args: the MSI ships unsigned by design.
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pfx = Join-Path $env:RUNNER_TEMP 'code-signing.pfx'
+          try {
+              [IO.File]::WriteAllBytes($pfx,
+                  [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
+              $targets = Get-ChildItem build -Recurse -File -Include `
+                  'DuskStudio.exe','dusk-studio-plugin-host.exe'
+              if (-not $targets) { throw 'no executables to sign under build' }
+              foreach ($t in $targets) {
+                  # RFC 3161 timestamp: without one every signature expires with
+                  # the certificate and old downloads stop validating.
+                  & signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
+                      /f $pfx /p $env:WINDOWS_CERT_PASSWORD $t.FullName
+                  if ($LASTEXITCODE -ne 0) { throw "signtool failed for $($t.FullName)" }
+              }
+          }
+          finally {
+              if (Test-Path $pfx) { Remove-Item $pfx -Force }
+          }
+
+      - name: Sign the executables (Azure Trusted Signing)
+        if: ${{ steps.winsign.outputs.route == 'azure' }}
+        uses: azure/trusted-signing-action@v0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.TRUSTED_SIGNING_PROFILE }}
+          files-folder: build
+          files-folder-filter: exe
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Package MSI via CPack WIX
+        shell: pwsh
+        # Delegates the cpack run to the cross-platform packaging script. The
+        # executables it packages are already signed on a tag.
         run: |
           .\scripts\package-windows.ps1 -BuildDir build
           if ($LASTEXITCODE -ne 0) { throw "package-windows.ps1 failed" }
           Get-ChildItem build\*.msi
           Get-ChildItem *.msi -ErrorAction SilentlyContinue
+
+      - name: Sign the MSI (PFX)
+        if: ${{ steps.winsign.outputs.route == 'pfx' }}
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pfx = Join-Path $env:RUNNER_TEMP 'code-signing.pfx'
+          try {
+              [IO.File]::WriteAllBytes($pfx,
+                  [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
+              $msi = Get-ChildItem *.msi, build\*.msi -ErrorAction SilentlyContinue |
+                     Select-Object -First 1
+              if (-not $msi) { throw 'no MSI to sign' }
+              & signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
+                  /f $pfx /p $env:WINDOWS_CERT_PASSWORD $msi.FullName
+              if ($LASTEXITCODE -ne 0) { throw 'signtool failed for the MSI' }
+          }
+          finally {
+              if (Test-Path $pfx) { Remove-Item $pfx -Force }
+          }
+
+      - name: Sign the MSI (Azure Trusted Signing)
+        if: ${{ steps.winsign.outputs.route == 'azure' }}
+        uses: azure/trusted-signing-action@v0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.TRUSTED_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}
+          files-folder-filter: msi
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify the Authenticode signatures
+        # The acceptance test: all three files a user ends up with, verified the
+        # way Windows will, including that each carries a countersignature so
+        # the signature outlives the certificate.
+        if: ${{ steps.winsign.outputs.route != 'none' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $msi = Get-ChildItem *.msi, build\*.msi -ErrorAction SilentlyContinue |
+                 Select-Object -First 1
+          $exes = Get-ChildItem build -Recurse -File -Include `
+              'DuskStudio.exe','dusk-studio-plugin-host.exe'
+          foreach ($f in @($msi) + @($exes)) {
+              $out = & signtool verify /pa /v $f.FullName 2>&1 | Out-String
+              Write-Host $out
+              if ($LASTEXITCODE -ne 0) { throw "signtool verify failed for $($f.FullName)" }
+              if ($out -notmatch 'Timestamp') {
+                  throw "no countersignature timestamp on $($f.FullName)"
+              }
+          }
 
       - name: Verify MSI contents
         # 7z flattens an MSI, so the checker matches file names rather than
