@@ -10,13 +10,46 @@
 
 #include <X11/Xproto.h>
 
+#include <sys/wait.h>
+#include <unistd.h>
+
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
+#include <system_error>
 
 namespace duskstudio::platform
 {
+std::filesystem::path executableDirectory()
+{
+    std::error_code ec;
+    const auto exe = std::filesystem::read_symlink ("/proc/self/exe", ec);
+    if (ec) return {};
+    return exe.parent_path();
+}
+
+bool openPathInDefaultApp (const std::filesystem::path& path)
+{
+    // Double fork so the viewer is reparented to init: the app never waits on
+    // it, and a single fork would leave a zombie for the life of the session.
+    const auto outer = ::fork();
+    if (outer < 0) return false;
+
+    if (outer == 0)
+    {
+        if (::fork() == 0)
+        {
+            ::setsid();
+            ::execlp ("xdg-open", "xdg-open", path.c_str(), (char*) nullptr);
+        }
+        ::_exit (0);
+    }
+
+    int status = 0;
+    return ::waitpid (outer, &status, 0) == outer;
+}
+
 #if DUSKSTUDIO_JUCE_HAS_WAYLAND
 using juce::WaylandSymbols;
 using juce::WaylandWindowSystem;

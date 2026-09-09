@@ -530,6 +530,8 @@ Only one stage is visible at a time, but the same engine drives all four. Switch
 - **MASTERING** swaps the console view for the mastering chain, including a file picker for loading a finished mix.
 - **AUX** swaps the console view for the four aux return lanes, with a full-width view of each lane's plugin chain.
 
+**Settings → Quickstart** opens the one-page quickstart that ships with the app, in whatever your system uses for text; it is greyed out and says so when that file is not installed.
+
 Press **Cmd/Ctrl+1 / 2 / 3 / 4** to jump straight to RECORDING / MIXING / MASTERING / AUX. The bank selector has the plain number keys **1 through 8**, so a modified digit changes stage and a plain digit changes the visible page of strips. Hovering any tab or bank button shows its shortcut, and **?** opens a full keyboard-shortcut list (also under **Settings → Keyboard Shortcuts**).
 
 Switching into or out of MASTERING force-stops the transport. The mix engine and the mastering engine cannot run at the same time. Changing stage also closes the notepad, saving it — the two cannot share the window.

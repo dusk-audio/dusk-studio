@@ -4,6 +4,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <shellapi.h>
 
 // Native counterparts to the Linux windowing operations. A peer's native
 // handle is its HWND; Win32 owns restoration, activation and taskbar notice.
@@ -13,6 +14,32 @@
 
 namespace duskstudio::platform
 {
+std::filesystem::path executableDirectory()
+{
+    std::wstring buffer (MAX_PATH, L'\0');
+    for (;;)
+    {
+        const auto written = ::GetModuleFileNameW (nullptr, buffer.data(),
+                                                   (DWORD) buffer.size());
+        if (written == 0) return {};
+        if (written < buffer.size())
+        {
+            buffer.resize (written);
+            return std::filesystem::path (buffer).parent_path();
+        }
+        // Truncated: the documented signal is a full buffer, so grow and retry.
+        buffer.resize (buffer.size() * 2);
+    }
+}
+
+bool openPathInDefaultApp (const std::filesystem::path& path)
+{
+    const auto result = ::ShellExecuteW (nullptr, L"open", path.c_str(),
+                                         nullptr, nullptr, SW_SHOWNORMAL);
+    // ShellExecuteW returns a fake HINSTANCE; anything above 32 is success.
+    return (INT_PTR) result > 32;
+}
+
 namespace
 {
 bool setWindowParent (HWND child, HWND parent) noexcept
