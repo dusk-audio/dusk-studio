@@ -1,3 +1,5 @@
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+
 # Native CoreMIDI — first macOS device phase
 
 Partial work for issue #298. CoreAudio, the JUCE audio-device module, Windows MIDI, and hardware sign-off remain separate work.

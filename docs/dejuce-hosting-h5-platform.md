@@ -1,3 +1,5 @@
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+
 # Hosting tower H5 — native platform ports + AU (executable spec)
 
 Status: **H5a MERGED (PRs #120/#121/#122). H5b MERGED (PR #154). H5c IS OPEN
