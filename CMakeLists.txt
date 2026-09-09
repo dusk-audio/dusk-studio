@@ -691,6 +691,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/PluginManager.cpp
     src/engine/PluginSlot.cpp
     src/engine/sfz/SfzLibrary.cpp
+    src/ui/multisample/SfzLibraryPanel.cpp
     src/engine/RecordManager.cpp
     src/dsp/AuxLaneStrip.cpp
     src/dsp/BusStrip.cpp
