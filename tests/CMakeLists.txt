@@ -38,6 +38,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/NativePluginCache.cpp
     plugin_scan_protocol.cpp
     plugin_backing_check.cpp
+    default_input_choice.cpp
     session_tick_conversion.cpp
     tempo_map_conversion.cpp
     output_pair_routing.cpp
