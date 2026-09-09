@@ -15,6 +15,7 @@
 #include <iterator>
 #include <string>
 #include <system_error>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -114,8 +115,13 @@ private:
 
 struct Deliveries
 {
+    // accept runs on whichever thread delivered the handoff, and the test that
+    // starts eight launches at once gets several at a time. The atomic below
+    // publishes the contents to a waiter but does not serialise two push_backs
+    // against each other, nor one against this object going out of scope.
     void accept (std::string payload)
     {
+        const std::lock_guard<std::mutex> lock (mutex);
         payloads.push_back (std::move (payload));
         published.store (payloads.size(), std::memory_order_release);
     }
@@ -129,8 +135,15 @@ struct Deliveries
         return published.load (std::memory_order_acquire) >= count;
     }
 
-    const std::vector<std::string>& copy() const noexcept { return payloads; }
+    // By value, under the lock: handing back a reference let a caller read the
+    // vector while a delivery was still appending to it.
+    std::vector<std::string> copy() const
+    {
+        const std::lock_guard<std::mutex> lock (mutex);
+        return payloads;
+    }
 
+    mutable std::mutex mutex;
     std::vector<std::string> payloads;
     std::atomic<std::size_t> published { 0 };
 };
