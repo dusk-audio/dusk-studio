@@ -726,7 +726,7 @@ jobs:
 
       - name: Sign the executables (Azure Trusted Signing)
         if: ${{ steps.winsign.outputs.route == 'azure' }}
-        uses: azure/trusted-signing-action@v0
+        uses: azure/trusted-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -776,7 +776,7 @@ jobs:
 
       - name: Sign the MSI (Azure Trusted Signing)
         if: ${{ steps.winsign.outputs.route == 'azure' }}
-        uses: azure/trusted-signing-action@v0
+        uses: azure/trusted-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
