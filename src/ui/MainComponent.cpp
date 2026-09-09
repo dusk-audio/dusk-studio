@@ -3315,8 +3315,23 @@ bool MainComponent::currentSessionDirty()
     // so transient fields don't flip the raw JSON on an otherwise-clean session.
     const auto strippedCurrent = stripVolatileStateForDirtyCompare (SessionSerializer::serialize (session));
     const auto strippedSaved   = stripVolatileStateForDirtyCompare (lastSavedSessionJson);
-    return (! lastSavedSessionJson.isEmpty() && strippedCurrent != strippedSaved)
-         || autosaveIsNewerThan (dir.getChildFile ("session.json"));
+    const bool divergedFromBaseline =
+        ! lastSavedSessionJson.isEmpty() && strippedCurrent != strippedSaved;
+
+    // A session that was never saved has no session.json, only the autosave the
+    // heartbeat wrote from this very state. autosaveIsNewerThan answers "yes"
+    // there because there is nothing for it to be newer than, which on the
+    // bootstrap Untitled session means the first autosave tick makes an
+    // untouched app ask the user to save work they have not done. The baseline
+    // seeded at construction answers the question instead - and if that
+    // baseline is ever missing, the old reading stands rather than reporting an
+    // hour of unsaved work clean.
+    const auto sessionJson = dir.getChildFile ("session.json");
+    if (! sessionJson.existsAsFile())
+        return lastSavedSessionJson.isEmpty() ? autosaveIsNewerThan (sessionJson)
+                                              : divergedFromBaseline;
+
+    return divergedFromBaseline || autosaveIsNewerThan (sessionJson);
 }
 
 void MainComponent::requestQuit()
