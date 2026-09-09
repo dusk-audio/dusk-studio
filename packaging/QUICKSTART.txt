@@ -1,0 +1,7 @@
+Dusk Studio - getting started
+
+The quickstart guide lives at:
+
+    https://github.com/dusk-audio/dusk-studio/blob/main/MANUAL.md#getting-started
+
+The full manual ships with every release as MANUAL.pdf.

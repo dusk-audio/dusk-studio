@@ -336,6 +336,15 @@ jobs:
         # integration.
         run: BUILD_DIR=build-linux scripts/package-tarball.sh
 
+      - name: Verify tarball contents
+        # packaging/contents.txt is the contract; a packager that stops shipping
+        # a file fails here rather than on the user's first launch.
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          tar -xf dusk-studio-*-Linux-${{ matrix.arch }}.tar.xz -C "$work"
+          root="$(find "$work" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          scripts/verify-package-contents.sh linux "$root"
 
       - name: Stage Linux payload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -658,6 +667,17 @@ jobs:
           Get-ChildItem build\*.msi
           Get-ChildItem *.msi -ErrorAction SilentlyContinue
 
+      - name: Verify MSI contents
+        # 7z flattens an MSI, so the checker matches file names rather than
+        # paths on this platform. See packaging/contents.txt.
+        shell: bash
+        run: |
+          set -euo pipefail
+          msi="$(ls *.msi build/*.msi 2>/dev/null | head -1)"
+          [[ -n "$msi" ]] || { echo "::error::no MSI to verify" >&2; exit 1; }
+          work="$(mktemp -d)"
+          7z x -y -o"$work" "$msi" > /dev/null
+          scripts/verify-package-contents.sh windows "$work"
 
       - name: Stage Windows payload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -864,6 +884,18 @@ jobs:
           base="$(basename "$DMG" .dmg)"
           mv "$DMG" "./${base}.dmg"
           echo "Unsigned DMG: ${base}.dmg"
+
+      - name: Verify DMG contents
+        # Mounts the image the user downloads and checks it against
+        # packaging/contents.txt before anything is staged for publication.
+        run: |
+          set -euo pipefail
+          dmg="$(ls *.dmg | head -1)"
+          mnt="$(mktemp -d)"
+          yes | hdiutil attach -nobrowse -readonly -noverify -noautoopen \
+                        -mountpoint "$mnt" "$dmg" > /dev/null
+          trap 'hdiutil detach "$mnt" >/dev/null 2>&1 || true' EXIT
+          scripts/verify-package-contents.sh macos "$mnt"
 
       - name: Verify the packaged app launches
         # The build and the test suite both run against the Homebrew prefix,

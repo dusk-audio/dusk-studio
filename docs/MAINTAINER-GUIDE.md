@@ -578,6 +578,22 @@ current tag workflows publish, so nothing a tagged release produces uses it.
 Do not announce the release when the workflow merely turns green; complete the
 acceptance checks below first.
 
+### Package contents
+
+[`packaging/contents.txt`](../packaging/contents.txt) is the contract for what
+every package must contain: one `<platform><TAB><path>` record per required
+file, relative to that package's own install root. Each of the three packaging
+jobs runs
+[`scripts/verify-package-contents.sh`](../scripts/verify-package-contents.sh)
+against the built artifact before staging it, so a packager that stops shipping
+a file fails the release rather than the user's first launch. Windows is matched
+by file name rather than path, because an MSI is a database and 7z flattens it
+on extraction. Adding a file to one package means adding its record here, and
+the `package-contents-checker` ctest case covers the checker itself. Project
+templates are deliberately absent: they ship as code in
+`src/session/SessionTemplates.h` and reach the user through File -> New, so
+there is no file to verify.
+
 ### Tag assets and acceptance
 
 A complete `vX.Y.Z` release has exactly these six assets:

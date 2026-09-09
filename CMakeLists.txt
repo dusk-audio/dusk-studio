@@ -1703,9 +1703,15 @@ if(UNIX AND NOT APPLE)
             DESTINATION share/doc/dusk-studio)
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/copyright"
             DESTINATION share/doc/dusk-studio)
+    # Reachable before the app is opened, which is the point: a user who cannot
+    # get a device configured has not got as far as the in-app link. The Linux
+    # tarball is not CPack and stages its own copy in package-tarball.sh.
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/QUICKSTART.txt"
+            DESTINATION share/doc/dusk-studio)
 else()
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
                   "${CMAKE_CURRENT_SOURCE_DIR}/LICENSES.txt"
+                  "${CMAKE_CURRENT_SOURCE_DIR}/packaging/QUICKSTART.txt"
             DESTINATION .)
 endif()
 # The hicolor size the .desktop Icon=DuskStudio key resolves. Committed rather

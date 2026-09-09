@@ -1,0 +1,59 @@
+# What a 1.0 package must contain.
+#
+# One record per line: <platform><TAB><path>, where <path> is relative to the
+# package's own install root. Blank lines and lines starting with # are ignored.
+# scripts/verify-package-contents.sh reads this and the three release.yml
+# packaging jobs run it before anything is uploaded, so a packager that stops
+# shipping a file fails the release rather than the user's first launch.
+#
+# Install roots, per platform:
+#   linux    the directory inside the tarball (dusk-studio-<version>-Linux-<arch>)
+#   macos    the mounted DMG
+#   windows  matched by file name, not path: an MSI is a database, and 7z
+#            extraction flattens it, so the paths below are informational and
+#            only the final component is checked.
+#
+# Project templates are NOT here. They ship as code in
+# src/session/SessionTemplates.h and reach the user through File -> New, so
+# there is no file to verify.
+
+# --- Application ---
+linux	DuskStudio/DuskStudio
+macos	DuskStudio.app
+windows	bin/DuskStudio.exe
+
+# --- Out-of-process plugin host ---
+# On macOS the helper lives inside DuskStudio.app/Contents/MacOS because its
+# runtime output is directed beside the app executable, so the bundle carries it.
+linux	DuskStudio/dusk-studio-plugin-host
+macos	DuskStudio.app/Contents/MacOS/dusk-studio-plugin-host
+windows	bin/dusk-studio-plugin-host.exe
+
+# --- Licences (GPL section 4: not optional in a binary distribution) ---
+linux	LICENSE
+linux	LICENSES.txt
+macos	LICENSE
+macos	LICENSES.txt
+windows	LICENSE
+windows	LICENSES.txt
+
+# --- Getting started ---
+linux	QUICKSTART.txt
+macos	QUICKSTART.txt
+windows	QUICKSTART.txt
+
+# --- Linux desktop integration ---
+linux	install.sh
+linux	README-linux.txt
+linux	DuskStudio/share/applications/audio.dusk.studio.desktop
+linux	DuskStudio/share/metainfo/DuskStudio.appdata.xml
+linux	DuskStudio/share/mime/packages/DuskStudio.mime.xml
+linux	DuskStudio/share/icons/hicolor/256x256/apps/DuskStudio.png
+
+# --- Built-in plugin suite (#75) ---
+# Uncomment with the real paths when the suite ships. The slot is here so the
+# contract records that every package is expected to carry it, rather than the
+# omission being discovered on one platform after release.
+#linux	DuskStudio/plugins
+#macos	DuskStudio.app/Contents/Resources/plugins
+#windows	bin/plugins
