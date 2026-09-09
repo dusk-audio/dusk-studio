@@ -529,8 +529,7 @@ Slot probeSlot (const sockaddr_un& addr, socklen_t len)
     if (::connect (fd, (const sockaddr*) &addr, len) != 0)
     {
         result = errno;
-        if (result == EINPROGRESS || result == EALREADY || result == EINTR
-            || result == EAGAIN || result == EWOULDBLOCK)
+        if (result == EINPROGRESS || result == EALREADY || result == EINTR)
         {
             const auto deadline = std::chrono::steady_clock::now()
                                 + std::chrono::milliseconds (kProbeBudgetMs);
@@ -547,6 +546,10 @@ Slot probeSlot (const sockaddr_un& addr, socklen_t len)
     ::close (fd);
 
     if (result == 0) return Slot::Live;
+    // A Unix-domain connect answers EAGAIN when the backlog is full, which only
+    // a listening socket can be, so this is the one refusal-shaped error that
+    // proves the slot is occupied rather than abandoned.
+    if (result == EAGAIN || result == EWOULDBLOCK) return Slot::Live;
     if (result == ECONNREFUSED) return Slot::Orphaned;
     if (result == ENOENT) return Slot::Vacant;
     return Slot::Unknown;
@@ -611,9 +614,14 @@ Handoff handOver (const sockaddr_un& addr, socklen_t len, const std::string& pay
         else
         {
             connectErr = errno;
+            // Only EINPROGRESS and its relatives mean a connect is under way.
+            // EAGAIN from a Unix-domain connect means the backlog is full and
+            // nothing was started: poll() then answers POLLOUT|POLLHUP for a
+            // socket that never connected, SO_ERROR is clear because no error
+            // was ever recorded, and the write that follows fails ENOTCONN -
+            // costing the launch the command line it was carrying.
             if (connectErr == EINPROGRESS || connectErr == EALREADY
-                || connectErr == EINTR || connectErr == EAGAIN
-                || connectErr == EWOULDBLOCK)
+                || connectErr == EINTR)
             {
                 const int revents = pollUntil (fd, POLLOUT, deadline);
                 if ((revents & POLLNVAL) == 0 && revents != 0)
@@ -658,7 +666,8 @@ Handoff handOver (const sockaddr_un& addr, socklen_t len, const std::string& pay
                                           : Handoff::Submitted;
         }
         ::close (fd);
-        if (connectErr != ECONNREFUSED)
+        const bool backlogFull = connectErr == EAGAIN || connectErr == EWOULDBLOCK;
+        if (connectErr != ECONNREFUSED && ! backlogFull)
         {
             failureErrno = connectErr;
             return Handoff::Failed;
@@ -667,8 +676,17 @@ Handoff handOver (const sockaddr_un& addr, socklen_t len, const std::string& pay
         // A simultaneous primary may have bound but not reached listen() yet.
         // Retry refusals only long enough to cover the bind-to-listen race.
         // A dead primary should not add the full delivery timeout to startup.
-        if (std::chrono::steady_clock::now() >= refusalDeadline) break;
-        std::this_thread::sleep_for (std::chrono::milliseconds (25));
+        // A full backlog is the opposite case - it proves someone is listening,
+        // so it is worth the whole delivery budget - and it must never be
+        // reported as a refusal, which is what licenses unlinking the slot.
+        if (std::chrono::steady_clock::now() < (backlogFull ? deadline : refusalDeadline))
+        {
+            std::this_thread::sleep_for (std::chrono::milliseconds (25));
+            continue;
+        }
+        if (! backlogFull) break;
+        failureErrno = connectErr;
+        return Handoff::Failed;
     }
     return Handoff::Refused;
 }

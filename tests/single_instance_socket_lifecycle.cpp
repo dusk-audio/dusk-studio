@@ -217,6 +217,28 @@ void sendFrame (int fd, std::uint32_t declaredSize, const std::string& body)
     if (! body.empty()) sendAll (fd, body.data(), body.size());
 }
 
+#if defined (__linux__)
+constexpr std::uint32_t kMaxTestPayloadBytes = 64 * 1024;
+
+void sendAck (int fd)
+{
+    const char ack = '\1';
+    (void) ::send (fd, &ack, 1, MSG_NOSIGNAL);
+}
+
+int acceptWithin (int listenFd, std::chrono::milliseconds budget)
+{
+    const auto deadline = std::chrono::steady_clock::now() + budget;
+    for (;;)
+    {
+        const int peer = ::accept (listenFd, nullptr, nullptr);
+        if (peer >= 0) return peer;
+        if (std::chrono::steady_clock::now() >= deadline) return -1;
+        std::this_thread::sleep_for (std::chrono::milliseconds (2));
+    }
+}
+#endif
+
 // The lock the production code takes around every mutation of the slot entry.
 int holdSlotLock (const fs::path& socketPath)
 {
@@ -408,6 +430,98 @@ TEST_CASE ("a handoff nobody acknowledges leaves the launch unattached",
 
     REQUIRE (runsUnattached);
 }
+
+// Linux answers a full Unix-domain backlog with EAGAIN. macOS answers
+// ECONNREFUSED, which is indistinguishable from a socket whose owner is gone,
+// so the state this covers cannot be built there.
+#if defined (__linux__)
+// A Unix-domain connect answers EAGAIN, not ECONNREFUSED, while the peer's
+// listen backlog is full. Reading that as a connect in progress leaves a socket
+// that never connected: poll reports it writable, SO_ERROR is clear because no
+// error was ever recorded, and the write fails ENOTCONN, which costs the launch
+// the session it was carrying with a live primary a few milliseconds from
+// having room.
+TEST_CASE ("a handoff waits out a full primary backlog",
+           "[single-instance][socket][issue-567]")
+{
+    ScopedSlot slot;
+    REQUIRE (duskstudio::single_instance::acquire ("", noPayload));
+    const auto sock = soleSocketIn (slot.path());
+    REQUIRE_FALSE (sock.empty());
+    duskstudio::single_instance::release();
+    REQUIRE (inodeOf (sock) == 0);
+
+    const int listenFd = bindSocketAt (sock);
+    REQUIRE (::fcntl (listenFd, F_SETFL, O_NONBLOCK) == 0);
+    REQUIRE (::listen (listenFd, 1) == 0);
+
+    // The kernel is free to round the backlog up, so fill until a connect is
+    // actually turned away rather than trusting the number passed to listen.
+    std::vector<int> fillers;
+    for (int i = 0; i < 64 && fillers.size() == (std::size_t) i; ++i)
+    {
+        const int fd = ::socket (AF_UNIX, SOCK_STREAM, 0);
+        REQUIRE (fd >= 0);
+        REQUIRE (::fcntl (fd, F_SETFL, O_NONBLOCK) == 0);
+        sockaddr_un addr {};
+        addr.sun_family = AF_UNIX;
+        const auto name = sock.string();
+        std::memcpy (addr.sun_path, name.c_str(), name.size());
+        if (::connect (fd, (const sockaddr*) &addr, sizeof addr) == 0)
+        {
+            fillers.push_back (fd);
+            continue;
+        }
+        REQUIRE (errno == EAGAIN);
+        ::close (fd);
+    }
+    REQUIRE_FALSE (fillers.empty());
+    REQUIRE (fillers.size() < 64);
+
+    std::string received;
+    std::thread drain ([&]
+    {
+        std::this_thread::sleep_for (std::chrono::milliseconds (150));
+        std::vector<int> accepted;
+        for (std::size_t i = 0; i < fillers.size(); ++i)
+            accepted.push_back (acceptWithin (listenFd, std::chrono::seconds (2)));
+
+        const int peer = acceptWithin (listenFd, std::chrono::seconds (3));
+        if (peer >= 0)
+        {
+            std::uint32_t size = 0;
+            if (::read (peer, &size, sizeof size) == (ssize_t) sizeof size
+                && size <= kMaxTestPayloadBytes)
+            {
+                std::string body (size, '\0');
+                std::size_t got = 0;
+                bool complete = true;
+                while (got < size)
+                {
+                    const ssize_t n = ::read (peer, &body[got], size - got);
+                    if (n < 0 && errno == EINTR) continue;
+                    if (n <= 0) { complete = false; break; }
+                    got += (std::size_t) n;
+                }
+                if (complete) received = std::move (body);
+            }
+            sendAck (peer);
+            ::close (peer);
+        }
+        for (const int fd : accepted)
+            if (fd >= 0) ::close (fd);
+    });
+
+    const std::string session = "/tmp/backlog/take-1.dusksession";
+    const bool ranUnattached = duskstudio::single_instance::acquire (session, noPayload);
+    drain.join();
+    for (const int fd : fillers) ::close (fd);
+    ::close (listenFd);
+
+    REQUIRE_FALSE (ranUnattached);
+    REQUIRE (received == session);
+}
+#endif
 
 TEST_CASE ("release leaves a newer primary socket at the same path",
            "[single-instance][socket][issue-368]")
