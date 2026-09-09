@@ -23,6 +23,8 @@ add_executable(dusk-studio-tests
     hosting_insert_adapter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/hosting/InsertAdapter.cpp
     sfz_catalog.cpp
+    sfz_library_scan.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzLibrary.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzCatalog.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzCatalogEnvelope.cpp
     # Native CLAP tests + sources are added conditionally below.
