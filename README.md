@@ -15,7 +15,8 @@ JUCE 8 / C++17. Dusk Studio's native audio-device layer talks directly to
 PipeWire (primary when available) or ALSA on Linux, with USB hot-unplug
 recovery, and uses framework adapters for CoreAudio on macOS and WASAPI / ASIO
 on Windows. Authoritative spec: [DuskStudio.md](DuskStudio.md). User manual:
-[MANUAL.md](MANUAL.md).
+[MANUAL.md](MANUAL.md). New here? Start with
+[QUICKSTART.md](QUICKSTART.md): download to mixed-down track in five minutes.
 
 ## Get Dusk Studio
 
