@@ -71,6 +71,10 @@ public:
     // windowing -> hide main window -> sync again -> post quit.
     void beginSafeShutdown();
 
+    // True once beginSafeShutdown has been entered. The sequence posts a quit
+    // of its own at the end, and that must not be mistaken for a new request.
+    bool isShuttingDown() const noexcept { return shutdownInProgress; }
+
     // Process-shutdown only. Drops plugin instance ownership without
     // destructing. See AudioEngine::leakAllPluginInstancesForShutdown.
     void leakAllPluginInstancesForShutdown();

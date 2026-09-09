@@ -2286,7 +2286,7 @@ The format for each entry:
 
 ### Save changes before quitting?
 
-- **When**: You quit with unsaved changes.
+- **When**: You quit with unsaved changes. Logging out, shutting the machine down, or stopping the app from a terminal counts as quitting: the prompt appears then too, and the session waits on your answer.
 - **Text**: "Your session has unsaved changes since the last manual save. If you don't save, the autosave will still be available the next time you open this session."
 - **Buttons**: **Save** / **Don't Save** / **Cancel**.
 - **Action**: Save unless you specifically want to discard. The autosave file remains as a safety net regardless.
