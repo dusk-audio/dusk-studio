@@ -144,3 +144,17 @@ TEST_CASE ("PluginManager falls back from malformed native JSON without erasing 
         CHECK (loaded.empty());
     }
 }
+
+TEST_CASE ("the out-of-process host child name carries the platform suffix", "[plugins][ipc]")
+{
+    // The IPC harnesses used to spell the child themselves and dropped the
+    // Windows suffix, so they waited on a connect to a process that could
+    // never start. Both they and getHostExecutablePath go through this.
+    const std::string childName = pluginHostExecutableName();
+
+#if defined (_WIN32)
+    CHECK (childName == "dusk-studio-plugin-host.exe");
+#else
+    CHECK (childName == "dusk-studio-plugin-host");
+#endif
+}
