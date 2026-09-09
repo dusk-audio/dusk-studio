@@ -1,5 +1,8 @@
 #pragma once
 
+#include <string>
+#include <vector>
+
 namespace duskstudio::appconfig
 {
 // Per-machine preferences. Stored as a key=value text file at
@@ -134,4 +137,11 @@ void setRecordingLatencyOffsetSamples (int samples);
 constexpr int kVkbCentreDefault = 36;
 int  getVkbCentreNote();
 void setVkbCentreNote (int midiNote);
+
+// Extra directories the soundfont library scans, on top of the per-OS defaults
+// in SfzLibrary.cpp. The store holds one key per line, so each root is
+// percent-encoded and the list joined with ':'. That keeps a path containing a
+// separator, or a newline, from splitting into roots that do not exist.
+std::vector<std::string> getSfzLibraryRoots();
+void setSfzLibraryRoots (const std::vector<std::string>& roots);
 } // namespace duskstudio::appconfig
