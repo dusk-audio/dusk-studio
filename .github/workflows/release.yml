@@ -673,8 +673,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          msi="$(ls *.msi build/*.msi 2>/dev/null | head -1)"
-          [[ -n "$msi" ]] || { echo "::error::no MSI to verify" >&2; exit 1; }
+          # The repo root only, and exactly one: that is where the packaging
+          # step leaves the MSI and what the upload path publishes, so checking
+          # a copy under build/ could verify a file nobody ships.
+          shopt -s nullglob
+          msis=(*.msi)
+          (( ${#msis[@]} == 1 )) || {
+            echo "::error::expected exactly one MSI at the repo root, found ${#msis[@]}" >&2
+            exit 1; }
+          msi="${msis[0]}"
           work="$(mktemp -d)"
           7z x -y -o"$work" "$msi" > /dev/null
           scripts/verify-package-contents.sh windows "$work"

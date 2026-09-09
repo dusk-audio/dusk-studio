@@ -68,6 +68,12 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     fi
     recordPlatform="${line%%$'\t'*}"
     recordPath="${line#*$'\t'}"
+    # An empty path would pass vacuously: "$ROOT/" is a directory and so always
+    # exists, which turns a mistyped record into a check that cannot fail.
+    if [[ -z "${recordPath//[[:space:]]/}" ]]; then
+        echo "error: ${CONTRACT}:${lineNo}: record has an empty path" >&2
+        exit 2
+    fi
     case "$recordPlatform" in
         linux|macos|windows) ;;
         *) echo "error: ${CONTRACT}:${lineNo}: unknown platform '$recordPlatform'" >&2; exit 2 ;;

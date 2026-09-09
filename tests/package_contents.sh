@@ -78,6 +78,15 @@ printf 'linux only-one-field\n' > "$WORK/bad.txt"
 DUSKSTUDIO_CONTENTS_CONTRACT="$WORK/bad.txt" "$SCRIPT" linux "$WORK/good" >/dev/null 2>&1 \
     && fail "a malformed contract was accepted"
 
+# An empty path used to pass vacuously: "$ROOT/" always exists.
+printf 'linux\t\n' > "$WORK/emptypath.txt"
+if DUSKSTUDIO_CONTENTS_CONTRACT="$WORK/emptypath.txt" "$SCRIPT" linux "$WORK/good" \
+       >/dev/null 2>"$WORK/err4"; then
+    fail "a record with an empty path was accepted"
+fi
+grep -q "emptypath.txt:1: record has an empty path" "$WORK/err4" \
+    || fail "the empty-path record was not reported with its contract line"
+
 printf 'solaris\tApp\n' > "$WORK/unknown.txt"
 DUSKSTUDIO_CONTENTS_CONTRACT="$WORK/unknown.txt" "$SCRIPT" linux "$WORK/good" >/dev/null 2>&1 \
     && fail "an unknown platform tag was accepted"
