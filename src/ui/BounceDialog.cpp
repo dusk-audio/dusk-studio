@@ -92,7 +92,6 @@ BounceDialog::BounceDialog (AudioEngine& e,
     };
     styleButton (cancelButton);
     styleButton (closeButton);
-    closeButton.setVisible (false);  // shown after the render finishes
     cancelButton.onClick = [this] { closeDialog(); };
     closeButton.onClick  = [this] { closeDialog(); };
     styleButton (copyPathButton);
@@ -108,7 +107,9 @@ BounceDialog::BounceDialog (AudioEngine& e,
     // the render, before there is a written file whose path is worth copying.
     addChildComponent (copyPathButton);
     addAndMakeVisible (cancelButton);
-    addAndMakeVisible (closeButton);
+    // addChildComponent, not addAndMakeVisible: the latter sets visible true and
+    // showed Close over Cancel for the whole render.
+    addChildComponent (closeButton);
 
     bounceEngine = std::make_unique<BounceEngine> (engine, session);
 
