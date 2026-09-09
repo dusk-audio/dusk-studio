@@ -578,6 +578,35 @@ current tag workflows publish, so nothing a tagged release produces uses it.
 Do not announce the release when the workflow merely turns green; complete the
 acceptance checks below first.
 
+### Smoke-testing a published artifact
+
+The workflow proves the artifact builds. It does not prove it runs anywhere
+else. Download each asset and run it through
+[`scripts/release-smoke-test.sh`](../scripts/release-smoke-test.sh) (Linux and
+macOS) or
+[`scripts/release-smoke-test.ps1`](../scripts/release-smoke-test.ps1)
+(Windows):
+
+```bash
+scripts/release-smoke-test.sh linux dusk-studio-X.Y.Z-Linux-x86_64.tar.xz
+scripts/release-smoke-test.sh macos dusk-studio-X.Y.Z-macOS-arm64.dmg
+pwsh -NoProfile -File scripts/release-smoke-test.ps1 dusk-studio-X.Y.Z-Windows-x64.msi
+```
+
+Each unpacks or mounts the artifact into a scratch directory, checks it against
+`packaging/contents.txt`, requires `--version` to report the version in the
+artifact's own file name, and on Linux and macOS runs the headless self-test
+against the packaged binary under a bounded wait, which also proves the plugin
+scan terminates. One PASS or FAIL line per check, and every check runs even
+after one fails, so a single invocation reports the whole picture.
+
+Nothing is installed and no system location is touched. On Linux the app is
+launched under a private Xvfb display; never run this against a live session.
+
+Windows coverage is narrower: the MSI is extracted rather than installed, since
+installing needs elevation, and the self-test leg is omitted while
+`DUSKSTUDIO_RUN_IPC_SELFTEST` hangs there (#504).
+
 ### Package contents
 
 [`packaging/contents.txt`](../packaging/contents.txt) is the contract for what
