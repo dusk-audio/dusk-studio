@@ -1,5 +1,6 @@
 #include "CoreMidiBackend.h"
 #include "CoreMidiProtocol.h"
+#include "MidiPacketDecoder.h"
 
 #include <CoreMIDI/CoreMIDI.h>
 #include <mach/mach_time.h>
@@ -297,7 +298,7 @@ double tickDuration()
 struct InputConnection
 {
     CallbackGate gate;
-    coremidi::PacketDecoder decoder;
+    PacketDecoder decoder;
     IMidiInputBackend::Receiver receiver;
     std::string identifier;
     double millisecondsPerTick = tickDuration();
