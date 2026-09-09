@@ -1,12 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
-#include <juce_audio_formats/juce_audio_formats.h>
-// juce_dsp must precede juce_audio_utils so SIMDNativeOps<int64> is
-// visible before juce_audio_processors (transitively pulled by
-// juce_audio_utils) instantiates SIMDRegister<int64>.
-#include <juce_dsp/juce_dsp.h>
-#include <juce_audio_utils/juce_audio_utils.h>
+#include "../engine/audiofile/WaveformPeaks.h"
 #include "../foundation/MessageThread.h"
 #include <functional>
 #include "../session/Session.h"
@@ -17,14 +12,13 @@ class AudioEngine;
 class EditModeToolbar;
 
 // Modal editor for one AudioRegion. Sister to PianoRollComponent.
-// AudioThumbnail waveform + fade envelopes + edit cursor.
+// Cached waveform + fade envelopes + edit cursor.
 //
 // Owned by MainComponent. Constructed on the message thread; the
 // underlying AudioRegion may be mutated by other UI / RecordManager
 // while open. region() validates indices on every access - a stale
 // view paints nothing rather than crashing.
 class AudioRegionEditor final : public juce::Component,
-                                  private juce::ChangeListener,
                                   private dusk::Timer,
                                   private juce::ScrollBar::Listener
 {
@@ -75,13 +69,10 @@ private:
     void overlapNeighbours (std::int64_t& overlapPrev, std::int64_t& overlapNext,
                              FadeShape& prevOutShape, FadeShape& nextInShape) const;
 
-    juce::AudioFormatManager formatManager;
-    // 8 is plenty - we show one region at a time, but cached entries
-    // keep take cycling snappy.
-    juce::AudioThumbnailCache thumbCache { 8 };
-    std::unique_ptr<juce::AudioThumbnail> thumb;
+    dusk::audio::WaveformSource waveformSource;
+    dusk::audio::WaveformSource::Snapshot waveformSnapshot;
     juce::File loadedFile;
-    // Cached from the AudioFormatReader so the bar/beat grid is
+    // Cached from the source worker so the bar/beat grid is
     // computed in the WAV's own time domain regardless of the device's
     // current SR. Without this, the grid drifts when the user hot-
     // swaps to a different-rate device. 0 = unknown (fall back to
@@ -306,12 +297,12 @@ private:
     void zoomByFactor (float factor);
     void splitAtCursor();
 
-    void rebuildThumbIfNeeded();
-    void changeListenerCallback (juce::ChangeBroadcaster*) override;
+    void refreshWaveform();
 
     void paintRuler         (juce::Graphics&, juce::Rectangle<int> area);
     void paintBarGrid       (juce::Graphics&, juce::Rectangle<int> waveArea);
-    void paintWaveform      (juce::Graphics&, juce::Rectangle<int> area);
+    void paintWaveform      (juce::Graphics&, juce::Rectangle<int> area,
+                             const dusk::audio::WaveformSource::Snapshot&);
     void paintFadeEnvelopes (juce::Graphics&, juce::Rectangle<int> area);
     // Loop (green) + punch (red) brackets over the ruler + waveform, read
     // from the transport. Dimmed when the matching mode is disabled.
