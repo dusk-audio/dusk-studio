@@ -23,6 +23,8 @@ add_executable(dusk-studio-tests
     hosting_insert_adapter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/hosting/InsertAdapter.cpp
     sfz_catalog.cpp
+    sfz_library_scan.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzLibrary.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzCatalog.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzCatalogEnvelope.cpp
     # Native CLAP tests + sources are added conditionally below.
@@ -38,6 +40,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/NativePluginCache.cpp
     plugin_scan_protocol.cpp
     plugin_backing_check.cpp
+    default_input_choice.cpp
     session_tick_conversion.cpp
     tempo_map_conversion.cpp
     output_pair_routing.cpp
@@ -178,8 +181,11 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/ui/NotepadChords.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiTimeCodeReceiver.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiTimeCodeEmitter.cpp
+    session_arm_input_gate.cpp
     ${CMAKE_SOURCE_DIR}/src/session/Session.cpp
-    ${CMAKE_SOURCE_DIR}/src/session/SessionSerializer.cpp)
+    ${CMAKE_SOURCE_DIR}/src/session/SessionSerializer.cpp
+    session_templates.cpp
+    ${CMAKE_SOURCE_DIR}/src/session/SessionTemplates.cpp)
 
 target_include_directories(dusk-studio-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
@@ -571,6 +577,7 @@ endif()
 if (_duskstudio_ipc_test_enabled)
     target_sources(dusk-studio-tests PRIVATE
         ipc_stub_round_trip.cpp
+        ipc_prepare_without_plugin.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/ipc/RemotePluginConnection.cpp
         ${_duskstudio_ipc_test_sources})
     # The parent pipe endpoint uses overlapped I/O on Windows, so the reader's

@@ -43,7 +43,7 @@ for f in "$BINARY" "$HOST"; do
     [[ -x "$f" ]] || { echo "error: $f missing - build $BUILD_DIR (Release) first" >&2; exit 1; }
 done
 [[ -f "$ICON_SRC" ]] || { echo "error: $ICON_SRC missing (256x256 hicolor icon)" >&2; exit 1; }
-for f in LICENSE LICENSES.txt packaging/QUICKSTART.txt; do
+for f in LICENSE LICENSES.txt QUICKSTART.md; do
     [[ -f "$f" ]] || { echo "error: $f missing - GPL section 4 requires it in the tarball" >&2; exit 1; }
 done
 
@@ -74,7 +74,7 @@ install -m 0644 "$ICON_SRC"                         "$APPDIR/share/icons/hicolor
 # them part of any binary distribution.
 install -m 0755 scripts/install-linux.sh "$STAGE/$TOPDIR/install.sh"
 install -m 0644 packaging/README-linux.txt "$STAGE/$TOPDIR/README-linux.txt"
-install -m 0644 packaging/QUICKSTART.txt   "$STAGE/$TOPDIR/QUICKSTART.txt"
+install -m 0644 QUICKSTART.md              "$STAGE/$TOPDIR/QUICKSTART.md"
 install -m 0644 LICENSE                    "$STAGE/$TOPDIR/LICENSE"
 install -m 0644 LICENSES.txt               "$STAGE/$TOPDIR/LICENSES.txt"
 

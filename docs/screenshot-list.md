@@ -53,6 +53,7 @@ so its figure is the panel scrolled to the top, which is what opening it shows.
 | ----------------------------------- | ------ | ---- | ----------------------------------------------------------- |
 | `np-01-main-window.png`             | L142   | ✅   | Full window, six horizontal bands.                          |
 | `np-02-transport-bar.png`           | L155   | ✅   | Transport bar, full width.                                  |
+| `rec-02-no-input-notice.png`        | L1663  | ✅   | Transport bar carrying the no-input-device notice.          |
 | `np-03-channel-strip-mixing.png`    | L182   | ✅   | One full channel strip, MIXING stage (sends visible).       |
 | `np-04-channel-strip-recording.png` | L209   | ✅   | Same strip, RECORDING stage (input block + ARM/IN/PRINT).   |
 | `np-05-bus-strip.png`               | L220   | ✅   | One bus strip top-to-bottom.                                |
@@ -78,6 +79,7 @@ so its figure is the panel scrolled to the top, which is what opening it shows.
 | `mm-01-automation-modes.png`    | L1438  | ✅   | A fader's automation-mode label (READ / WRITE / TOUCH).   |
 | `mm-02-mastering-chain.png`     | L995   | ✅   | Mastering chain with EQ, comp, and limiter engaged.       |
 | `pl-01-plugin-picker.png`       | L1512  | ✅   | Plugin picker panel populated.                            |
+| `ms-02-sfz-library.png`         | L1628  | ✅   | Instrument library listing a fixture tree of soundfonts.  |
 | `pl-04-hw-insert.png`           | L1639  | ✅   | Hardware insert editor with I/O pickers and Ping button.  |
 | `sync-01-mcu-bindings.png`      | L1755  | ✅   | MIDI Bindings panel populated with a few learned bindings.|
 | `bnc-01-bounce-dialog.png`      | L1884  | ✅   | Bounce dialog (file picker + progress). (No format options — see note.) |

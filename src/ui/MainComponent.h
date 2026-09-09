@@ -12,6 +12,7 @@
 #include "../engine/AudioEngine.h"
 #include "../foundation/MessageThread.h"
 #include "../session/Session.h"
+#include "../session/SessionTemplates.h"
 
 namespace duskstudio
 {
@@ -71,6 +72,10 @@ public:
     // audio callback -> drop every plugin editor window -> sync
     // windowing -> hide main window -> sync again -> post quit.
     void beginSafeShutdown();
+
+    // True once beginSafeShutdown has been entered. The sequence posts a quit
+    // of its own at the end, and that must not be mistaken for a new request.
+    bool isShuttingDown() const noexcept { return shutdownInProgress; }
 
     // Process-shutdown only. Drops plugin instance ownership without
     // destructing. See AudioEngine::leakAllPluginInstancesForShutdown.
@@ -150,16 +155,16 @@ private:
     void focusMainCanvas();
     void takePendingCanvasFocus();
     bool canvasFocusPending = false;
-    void newSessionPrompt();
+    void newSessionPrompt (SessionTemplate tmpl = SessionTemplate::Blank);
     // The folder-pick + create half of newSessionPrompt - runs only once any
     // unsaved-changes prompt has been resolved.
-    void promptNewSessionLocation();
+    void promptNewSessionLocation (SessionTemplate tmpl);
     // True if the live session diverges from the last manual save / autosave.
     // Drives the unsaved-changes prompt on quit and on New Session.
     bool currentSessionDirty();
     // Reset to a clean default session in `dir` (NOT the current session saved
     // under a new name) and open it through the normal load path.
-    void createNewSessionAt (const juce::File& dir);
+    void createNewSessionAt (const juce::File& dir, SessionTemplate tmpl);
 
     // FileChooser -> ImportTargetPicker (24 tracks, smart-sort +
     // recommendation) -> FileImporter on commit. Flips track.mode if

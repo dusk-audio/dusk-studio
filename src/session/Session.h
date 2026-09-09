@@ -1520,5 +1520,28 @@ private:
     std::atomic<int> soloTrackCount { 0 };
     std::atomic<int> soloBusCount   { 0 };
     std::atomic<int> armedTrackCount { 0 };
+
+public:
+    // Capture channels the open device offers, published by AudioEngine when a
+    // device starts or changes. Exactly zero means a device is open and offers
+    // nothing to record from, which setTrackArmed refuses rather than letting
+    // ARM light over a recording that writes no file and reports nothing.
+    //
+    // kCaptureWidthUnknown, the initial value, is deliberately distinct from
+    // zero: before any device has started there is no evidence either way, and
+    // refusing to arm then would block a headless or pre-device caller on a
+    // question the engine has not answered yet.
+    static constexpr int kCaptureWidthUnknown = -1;
+    std::atomic<int> deviceCaptureChannels { kCaptureWidthUnknown };
+
+    bool canArmAudioTracks() const noexcept
+    {
+        return deviceCaptureChannels.load (std::memory_order_relaxed) != 0;
+    }
+
+    // Drops the arm on every audio track, for a device change that takes the
+    // capture channels away underneath them. Returns how many were disarmed so
+    // the caller can decide whether to say anything. Message thread only.
+    int disarmAudioTracksWithoutInput() noexcept;
 };
 } // namespace duskstudio

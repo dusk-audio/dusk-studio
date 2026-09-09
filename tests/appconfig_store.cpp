@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -155,4 +156,34 @@ TEST_CASE ("Writing one key preserves the others", "[appconfig]")
     CHECK (duskstudio::appconfig::getNotepadEnabled());
     CHECK (duskstudio::appconfig::getScanPluginsOnStartup());
     CHECK (store.contents().find ("# a comment") != std::string::npos);
+}
+
+TEST_CASE ("Soundfont library roots round-trip", "[appconfig]")
+{
+    const ScopedStore store { "sfz-roots" };
+    CHECK (duskstudio::appconfig::getSfzLibraryRoots().empty());
+
+    const std::vector<std::string> roots {
+        "/home/someone/soundfonts",
+        "/mnt/library/packs with spaces",
+        "/srv/instruments",
+    };
+    duskstudio::appconfig::setSfzLibraryRoots (roots);
+    CHECK (duskstudio::appconfig::getSfzLibraryRoots() == roots);
+
+    duskstudio::appconfig::setSfzLibraryRoots ({});
+    CHECK (duskstudio::appconfig::getSfzLibraryRoots().empty());
+}
+
+TEST_CASE ("A library root carrying a separator still round-trips", "[appconfig]")
+{
+    const ScopedStore store { "sfz-roots-separator" };
+    const std::vector<std::string> awkward {
+        "/good/one",
+        "/has:a:colon",
+        "/has\nnewline",
+        "/has%percent",
+    };
+    duskstudio::appconfig::setSfzLibraryRoots (awkward);
+    CHECK (duskstudio::appconfig::getSfzLibraryRoots() == awkward);
 }
