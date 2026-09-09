@@ -578,6 +578,63 @@ current tag workflows publish, so nothing a tagged release produces uses it.
 Do not announce the release when the workflow merely turns green; complete the
 acceptance checks below first.
 
+### Windows code signing
+
+An unsigned MSI raises SmartScreen's "Windows protected your PC" on every
+download, and the user has to choose More info and then Run anyway. Most people
+do not.
+
+**The certificate.** Since June 2023 both OV and EV code-signing certificates
+are issued on hardware tokens or through a cloud signing service; a `.pfx` file
+you can hand a hosted runner is no longer something a CA will sell you. That
+leaves two practical routes:
+
+- **Azure Trusted Signing**, roughly 10 USD a month, is the CI-friendly one.
+  Microsoft holds the key and the runner authenticates to it, so there is no
+  token and no secret certificate. This is the recommended route.
+- **A hardware token** with an OV or EV certificate, which a hosted runner
+  cannot reach. It needs a self-hosted Windows runner with the token attached,
+  or signing by hand before upload.
+
+The workflow supports a PFX as well, because an existing certificate, an
+internal CA, or a test certificate is still worth being able to use. It is not
+the route to plan a release around.
+
+**OV against EV.** EV carries SmartScreen reputation immediately. OV starts
+from nothing and accrues reputation as downloads accumulate, so the first users
+of a fresh OV certificate may still see the warning. Azure Trusted Signing
+behaves like OV in this respect.
+
+Uploading the Azure Trusted Signing secrets, after creating the account,
+certificate profile, and an app registration with the Trusted Signing Certificate
+Profile Signer role:
+
+```bash
+gh secret set AZURE_TENANT_ID --repo dusk-audio/dusk-studio
+gh secret set AZURE_CLIENT_ID --repo dusk-audio/dusk-studio
+gh secret set AZURE_CLIENT_SECRET --repo dusk-audio/dusk-studio
+gh secret set TRUSTED_SIGNING_ENDPOINT --repo dusk-audio/dusk-studio   # https://<region>.codesigning.azure.net
+gh secret set TRUSTED_SIGNING_ACCOUNT --repo dusk-audio/dusk-studio
+gh secret set TRUSTED_SIGNING_PROFILE --repo dusk-audio/dusk-studio
+```
+
+Or, for the PFX route:
+
+```bash
+base64 -w0 code-signing.pfx | gh secret set WINDOWS_CERT_PFX_BASE64 --repo dusk-audio/dusk-studio
+gh secret set WINDOWS_CERT_PASSWORD --repo dusk-audio/dusk-studio
+```
+
+The job takes the PFX route when both of those are set, otherwise Azure when
+all six are, and fails a `v*` tag when neither set is complete. A
+`workflow_dispatch` run skips signing with a notice.
+
+Both executables are signed before the MSI is built, then the MSI itself:
+signing only the installer would leave the binaries it lays down unsigned, and
+those are what the user runs. Every signature carries an RFC 3161 timestamp, so
+it outlives the certificate. `signtool verify /pa /v` on all three files, plus a
+check that each carries a countersignature, is the acceptance step.
+
 ### macOS signing and notarization
 
 Gatekeeper refuses an unnotarized DMG, and the user is told the app is damaged
