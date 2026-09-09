@@ -892,8 +892,18 @@ jobs:
           set -euo pipefail
           dmg="$(ls *.dmg | head -1)"
           mnt="$(mktemp -d)"
+          # The DMG carries a licence agreement, so hdiutil blocks for an
+          # answer, and it closes stdin once it has one. Read hdiutil's own
+          # status rather than the pipeline's, which pipefail would otherwise
+          # take from the SIGPIPEd yes. Same pattern as the launch check below.
+          set +o pipefail
           yes | hdiutil attach -nobrowse -readonly -noverify -noautoopen \
                         -mountpoint "$mnt" "$dmg" > /dev/null
+          mount_rc=${PIPESTATUS[1]}
+          set -o pipefail
+          [[ $mount_rc -eq 0 ]] || {
+              echo "::error::could not mount $dmg to verify its contents" >&2
+              exit 1; }
           trap 'hdiutil detach "$mnt" >/dev/null 2>&1 || true' EXIT
           scripts/verify-package-contents.sh macos "$mnt"
 
