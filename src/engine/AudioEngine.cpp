@@ -2900,6 +2900,22 @@ void AudioEngine::audioDeviceAboutToStart (device::IODevice* device)
         usableOutputs.store (true, std::memory_order_relaxed);
     }
 
+    // Publish the capture width for the arm gate. Zero inputs is the silent
+    // counterpart of the zero-output case above: recording rolls, writes
+    // nothing, and says nothing. Session refuses to arm an audio track while
+    // this is zero, and any track already armed loses its arm here so ARM
+    // cannot stay lit over a device that can no longer feed it.
+    session.deviceCaptureChannels.store (activeIn, std::memory_order_relaxed);
+    if (activeIn <= 0)
+    {
+        const int disarmed = session.disarmAudioTracksWithoutInput();
+        if (disarmed > 0)
+            std::fprintf (stderr,
+                          "[Dusk Studio/AudioEngine] device \"%s\" has 0 input channels; "
+                          "disarmed %d audio track(s) that could not have recorded.\n",
+                          device->getName().c_str(), disarmed);
+    }
+
     // Reset every MIDI collector with the current sample rate so it can
     // convert the MIDI thread's millisecond timestamps into per-block sample
     // positions. Without this, the first drain would emit garbage timestamps.

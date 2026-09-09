@@ -42,6 +42,11 @@ public:
     explicit TransportBar (AudioEngine& engineRef);
     ~TransportBar() override;
 
+    // Re-reads the device's capture width and repaints if it changed. The
+    // timer calls this; the capture harness calls it directly, because it
+    // sleeps between frames rather than pumping the message loop.
+    void refreshInputNotice();
+
     void paint (juce::Graphics&) override;
     void resized() override;
     // Catches right-clicks routed up from child buttons via
@@ -106,6 +111,12 @@ private:
     void forwardTap();
 
     AudioEngine& engine;
+
+    // Set from the timer when the open device reports no capture channels, so
+    // the bar can say why arming does nothing instead of leaving the user to
+    // discover it by recording silence. Not a modal: it also appears when a
+    // device change takes the inputs away, where there is no click to answer.
+    bool noCaptureInput = false;
     TransportIconButton stopButton   { "Stop",     TransportIconButton::Icon::Stop,
                                         juce::Colour (0xffd0d0d0) };
     TransportIconButton rewButton    { "Rewind",   TransportIconButton::Icon::Rewind,

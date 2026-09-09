@@ -53,6 +53,7 @@ so its figure is the panel scrolled to the top, which is what opening it shows.
 | ----------------------------------- | ------ | ---- | ----------------------------------------------------------- |
 | `np-01-main-window.png`             | L142   | ✅   | Full window, six horizontal bands.                          |
 | `np-02-transport-bar.png`           | L155   | ✅   | Transport bar, full width.                                  |
+| `rec-02-no-input-notice.png`        | L1663  | ✅   | Transport bar carrying the no-input-device notice.          |
 | `np-03-channel-strip-mixing.png`    | L182   | ✅   | One full channel strip, MIXING stage (sends visible).       |
 | `np-04-channel-strip-recording.png` | L209   | ✅   | Same strip, RECORDING stage (input block + ARM/IN/PRINT).   |
 | `np-05-bus-strip.png`               | L220   | ✅   | One bus strip top-to-bottom.                                |
