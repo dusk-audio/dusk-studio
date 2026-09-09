@@ -1626,6 +1626,18 @@ Click a track's **Insert** slot and choose **Soundfont (.sfz / .sf2 / .bank.xml)
 - **Master tune**: −100 to +100 cents.
 - **Polyphony cap**: 1 to 256 voices.
 
+### Instrument library
+
+**Library...** in the soundfont editor's header lists the `.sfz` and `.sf2` already installed on this computer, so loading one does not mean remembering where it lives. **Browse...** is still there for a file the library does not cover.
+
+![Instrument library](docs/images/ms-02-sfz-library.png)
+
+The library looks in a short list of standard locations for your platform, plus any folder you add with **Add folder...**. On Linux that includes the directories distribution packages install into, so a machine with a packaged General MIDI bank shows something the first time it opens. Your added folders are remembered per machine, not per session.
+
+Type in the filter box to narrow the list by instrument or folder name; clearing it brings the whole list back without rescanning. **Rescan** picks up instruments added since the panel opened.
+
+Scanning happens only when you open the panel, press **Rescan**, or add a folder. It never runs at startup or while a session loads, and it never reaches the network: this is a view of your own disk, nothing more. A folder that has gone missing or cannot be read is listed as such at the top rather than silently contributing nothing.
+
 When a `.sf2` holds more than one preset (most GM/GS/XG SoundFonts do), a **preset picker** appears. Click it to open a filterable browser: start typing to filter presets by name or number, or read across the columns. Presets are grouped program-first — an instrument and its bank variations list together, drum kits last — each shown as `program [bank] name`.
 
 The loaded file path and the chosen preset are saved with the session. If that preset can no longer be loaded, Dusk Studio reports the problem and falls back to preset 0 so the slot remains playable.
