@@ -162,6 +162,18 @@ private:
                           const char* jsonFileName) const;
 };
 
+// File name of the out-of-process host child. Windows needs the suffix, and
+// the IPC harnesses in DuskStudioApp resolve the child through here so they
+// cannot drift from the name the loader launches.
+inline const char* pluginHostExecutableName() noexcept
+{
+   #if JUCE_WINDOWS
+    return "dusk-studio-plugin-host.exe";
+   #else
+    return "dusk-studio-plugin-host";
+   #endif
+}
+
 inline juce::String PluginManager::getHostExecutablePath() const
 {
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
@@ -169,12 +181,7 @@ inline juce::String PluginManager::getHostExecutablePath() const
     if (! hostExecutableOverride.empty()) return hostExecutableOverride;
    #endif
     auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
-   #if JUCE_WINDOWS
-    const char* const childName = "dusk-studio-plugin-host.exe";
-   #else
-    const char* const childName = "dusk-studio-plugin-host";
-   #endif
-    return exe.getParentDirectory().getChildFile (childName).getFullPathName();
+    return exe.getParentDirectory().getChildFile (pluginHostExecutableName()).getFullPathName();
    #else
     return {};
    #endif

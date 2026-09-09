@@ -30,7 +30,7 @@
 #include "session/SessionSerializer.h"
 #include "util/CrashHandler.h"
 #include "util/SingleInstance.h"
-#if JUCE_LINUX
+#if DUSKSTUDIO_HAS_OOP_PLUGINS
  #include "engine/ipc/IpcSelfTest.h"
 #endif
 #if defined(__linux__)
@@ -2445,15 +2445,36 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         return;
     }
 
-   #if JUCE_LINUX
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
+    // Both harnesses launch the sibling child. Resolve it under the name the
+    // loader uses, and report a child that is not there: handing the connect a
+    // path that cannot be spawned leaves the harness waiting with no output.
+    const auto resolveIpcHostChild = []
+    {
+        const auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
+        const auto host = exe.getSiblingFile (pluginHostExecutableName());
+        if (! host.existsAsFile())
+        {
+            std::fprintf (stderr, "FAIL: no %s next to the app; build it first\n",
+                          pluginHostExecutableName());
+            std::fflush (stderr);
+        }
+        return host;
+    };
+
     if (envFlagSet ("DUSKSTUDIO_RUN_IPC_SELFTEST"))
     {
         // Out-of-process plugin hosting Phase 1 acceptance gate.
         // Validates the shm + futex round-trip against the
         // dusk-studio-plugin-host stub binary (which lives next to Dusk Studio in
         // the build output).
-        const auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
-        const auto host = exe.getSiblingFile ("dusk-studio-plugin-host");
+        const auto host = resolveIpcHostChild();
+        if (! host.existsAsFile())
+        {
+            setApplicationReturnValue (1);
+            quit();
+            return;
+        }
         const auto rc = duskstudio::ipc::runIpcSelfTest (host.getFullPathName().toStdString());
         std::fflush (stdout);
         setApplicationReturnValue (rc);
@@ -2468,8 +2489,13 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
     // entire JUCE plugin loading + processBlock path through the IPC.
     if (const char* path = std::getenv ("DUSKSTUDIO_IPC_HOST_TEST"); path != nullptr && *path)
     {
-        const auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
-        const auto host = exe.getSiblingFile ("dusk-studio-plugin-host");
+        const auto host = resolveIpcHostChild();
+        if (! host.existsAsFile())
+        {
+            setApplicationReturnValue (1);
+            quit();
+            return;
+        }
         const auto rc = duskstudio::ipc::runIpcHostTest (
             host.getFullPathName().toStdString(), std::string (path));
         std::fflush (stdout);
