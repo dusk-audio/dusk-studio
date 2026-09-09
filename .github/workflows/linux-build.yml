@@ -186,6 +186,23 @@ jobs:
                 DUSKSTUDIO_CLAP_STATE_FIXTURE="$PWD/build-tests/dusk-studio-multi-bus-clap-fixture.clap" \
             build-linux/DuskStudio_artefacts/Release/DuskStudio
 
+      - name: Self-test with the CLAP fixture (xvfb)
+        # The full self-test again, this time with the fixture the previous
+        # step builds, so the clone/undo leg runs instead of skipping. It has
+        # to come after the test build: the fixture does not exist earlier in
+        # the job, which is why the first self-test step cannot cover it.
+        # 90 s for the same reason the plain run gets 60: no audio device, so
+        # the device-readiness wait burns its budget before the synthetic
+        # tests start.
+        run: |
+          timeout 90 xvfb-run --auto-servernum \
+            env DUSKSTUDIO_RUN_SELFTEST=1 \
+                DUSKSTUDIO_CLAP_STATE_FIXTURE="$PWD/build-tests/dusk-studio-multi-bus-clap-fixture.clap" \
+            build-linux/DuskStudio_artefacts/Release/DuskStudio \
+            | tee self-test-clap-fixture.log
+          grep -q '^\[OK\] Clone track native insert' self-test-clap-fixture.log \
+            || { echo "::error::clone/undo leg did not run with the fixture set" >&2; exit 1; }
+
       - name: ccache stats
         if: always()
         run: ccache -s
