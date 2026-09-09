@@ -34,10 +34,11 @@ usage() {
 }
 
 # Lowercase and fold the separator WiX rewrites, so a contract path and an
-# extracted MSI name can be compared at all.
+# extracted MSI name can be compared at all. tr rather than ${x,,}: macOS ships
+# bash 3.2, where that expansion is a syntax error at expansion time, which is
+# why it survived a macOS run that only exercised the literal-path branch.
 normalise() {
-    local text="${1//-/_}"
-    printf '%s' "${text,,}"
+    printf '%s' "$1" | tr '\-' '_' | tr '[:upper:]' '[:lower:]'
 }
 
 [[ $# -eq 2 ]] || usage
