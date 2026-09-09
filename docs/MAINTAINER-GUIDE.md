@@ -578,6 +578,51 @@ current tag workflows publish, so nothing a tagged release produces uses it.
 Do not announce the release when the workflow merely turns green; complete the
 acceptance checks below first.
 
+### macOS signing and notarization
+
+Gatekeeper refuses an unnotarized DMG, and the user is told the app is damaged
+rather than unsigned, so this is not optional for a release people install.
+
+Procuring the credentials, once:
+
+1. **Apple Developer Program membership**, 99 USD a year, for the Dusk Audio
+   entity. Notarization is not available without it.
+2. **A Developer ID Application certificate.** In Xcode, Settings, Accounts,
+   Manage Certificates, then add a Developer ID Application certificate. Export
+   it from Keychain Access as a `.p12` with a password. Developer ID
+   Application is the right type: Mac App Distribution is for the App Store and
+   Gatekeeper will not accept it for a direct download.
+3. **An App Store Connect API key** for notarization, from App Store Connect,
+   Users and Access, Integrations, keys. Give it the Developer role and
+   download the `.p8` once; it cannot be downloaded again. Note the key ID and
+   the issuer ID shown beside it.
+
+An API key is used rather than an Apple ID and app-specific password because
+the key does not expire when a password changes and carries no second factor.
+
+Uploading the six secrets:
+
+```bash
+base64 -i DeveloperID.p12 | gh secret set MACOS_CERT_P12_BASE64 --repo dusk-audio/dusk-studio
+gh secret set MACOS_CERT_PASSWORD --repo dusk-audio/dusk-studio
+gh secret set MACOS_TEAM_ID --repo dusk-audio/dusk-studio          # the 10-character team ID
+gh secret set NOTARY_KEY_ID --repo dusk-audio/dusk-studio          # the API key ID
+gh secret set NOTARY_ISSUER_ID --repo dusk-audio/dusk-studio       # the issuer UUID
+base64 -i AuthKey_XXXXXXXX.p8 | gh secret set NOTARY_KEY_P8_BASE64 --repo dusk-audio/dusk-studio
+```
+
+Keep the `.p12` and the `.p8` somewhere safe offline. The `.p8` in particular
+cannot be re-downloaded.
+
+What the macOS job then does on a `v*` tag: imports the certificate into a
+keychain of its own, signs the plugin host and then the bundle with
+`--options runtime` and a secure timestamp, packages the DMG, signs that,
+submits it to the notary service and waits, staples the ticket, and requires
+`spctl --assess` to report `accepted` with `source=Notarized Developer ID`
+before anything is published. Any missing secret fails the job before
+publication. A `workflow_dispatch` run keeps the ad-hoc signature and says so,
+since it publishes nothing.
+
 ### Release signing key
 
 `SHA256SUMS` is signed, and the signature ships as a seventh asset. A checksum
