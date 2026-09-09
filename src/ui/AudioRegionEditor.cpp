@@ -15,6 +15,7 @@
 #include "../foundation/PlanarBuffer.h"
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <limits>
 
 namespace duskstudio
@@ -24,6 +25,14 @@ namespace
 // clamp with jlimit's argument order (lo, hi, value).
 template <typename T>
 inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, std::max (lo, hi)); }
+
+dusk::audio::WaveformDetails::Window waveformWindow (
+    const AudioRegion& region, int xa, int xb, juce::Rectangle<int> clip)
+{
+    const int first = std::max (xa, clip.getX());
+    return { region.sourceOffset, region.lengthInSamples, xb - xa,
+             first - xa, std::min (xb, clip.getRight()) - first };
+}
 } // namespace
 namespace
 {
@@ -59,7 +68,6 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
 {
     setOpaque (true);
     setWantsKeyboardFocus (true);
-    formatManager.registerBasicFormats();
 
     // Top icon row.
     auto wireIcon = [this] (IconButton& b, const juce::String& tip,
@@ -303,6 +311,8 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
 
     refreshStatusBarReadouts();
 
+    refreshWaveform();
+
     // 30 Hz playhead poll - matches the meter cadence elsewhere. The
     // tick is cheap when transport is stopped (no repaint) so leaving
     // it running unconditionally keeps the start-of-playback latency
@@ -320,9 +330,6 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
 AudioRegionEditor::~AudioRegionEditor()
 {
     stopTimer();
-    // ChangeListener removal is handled by AudioThumbnail's destructor
-    // (it removes its listeners on the broadcast list it owns).
-    if (thumb != nullptr) thumb->removeChangeListener (this);
 }
 
 AudioRegion* AudioRegionEditor::region()
@@ -341,38 +348,60 @@ const AudioRegion* AudioRegionEditor::region() const
     return &v[(size_t) regionIdx];
 }
 
-void AudioRegionEditor::rebuildThumbIfNeeded()
+void AudioRegionEditor::refreshWaveform()
 {
     const auto* r = region();
-    if (r == nullptr) return;
-    if (thumb != nullptr && r->file == loadedFile) return;
-
-    if (thumb != nullptr) thumb->removeChangeListener (this);
-    thumb = std::make_unique<juce::AudioThumbnail> (512, formatManager, thumbCache);
-    if (r->file.existsAsFile())
-        thumb->setSource (new juce::FileInputSource (r->file));
-    else
-        thumb->setSource (nullptr);
-    thumb->addChangeListener (this);
-    loadedFile = r->file;
-
-    // Cache the WAV's native sample rate so the bar grid + thumbnail
-    // time-domain agree. One-shot reader open just to read the metadata
-    // header (no audio data read); destructor closes it before we leave.
-    loadedFileSampleRate = 0.0;
-    if (r->file.existsAsFile())
+    const auto file = r != nullptr ? r->file : juce::File();
+    if (file != loadedFile)
     {
-        std::unique_ptr<juce::AudioFormatReader> reader (
-            formatManager.createReaderFor (r->file));
-        if (reader != nullptr)
-            loadedFileSampleRate = reader->sampleRate;
+        loadedFile = file;
+        loadedFileSampleRate = 0.0;
+        waveformSource.setFile (std::filesystem::u8path (file.getFullPathName().toStdString()));
     }
-}
 
-void AudioRegionEditor::changeListenerCallback (juce::ChangeBroadcaster*)
-{
-    refreshStatusBarReadouts();
-    repaint();
+    auto next = waveformSource.snapshot();
+    std::vector<dusk::audio::WaveformDetails::Window> windows;
+    if (r != nullptr && getWidth() > 8 && pixelsPerSample > 0.0f)
+    {
+        const auto area = juce::Rectangle<int> (0, kIconRowHeight + kRulerHeight, getWidth(),
+            getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
+        const auto inset = area.reduced (4, 4);
+        const auto anchorEnd = anchorTimelineStart + anchorTimelineLength;
+        std::size_t columns = 0;
+        for (const auto& reg : session.track (trackIdx).regions)
+        {
+            if (reg.file != loadedFile || reg.lengthInSamples <= 0) continue;
+            const auto regEnd = reg.timelineStart + reg.lengthInSamples;
+            if (regEnd <= anchorTimelineStart || reg.timelineStart >= anchorEnd) continue;
+            const int xa = xForTimelineSample (reg.timelineStart, area);
+            const int xb = xForTimelineSample (regEnd, area);
+            if (xb <= xa) continue;
+            const auto window = waveformWindow (reg, xa, xb, inset);
+            if (window.numColumns <= 0 || window.sourceLength
+                > (std::int64_t) window.fullWidth * dusk::audio::WaveformPeaks::kMaxFramesPerPeak) continue;
+            if ((std::size_t) window.numColumns > dusk::audio::WaveformDetails::kMaxColumns - columns)
+            {
+                windows.clear();
+                break;
+            }
+            columns += (std::size_t) window.numColumns;
+            windows.push_back (window);
+        }
+    }
+    if (! dusk::audio::WaveformDetails::validRequest (windows, next.info ? next.info->numChannels : 1))
+        windows.clear();
+    waveformSource.setDetailWindows (windows);
+    next = waveformSource.snapshot();
+    const bool changed = next.state != waveformSnapshot.state || next.peaks != waveformSnapshot.peaks
+        || next.info.has_value() != waveformSnapshot.info.has_value()
+        || next.detailState != waveformSnapshot.detailState || next.details != waveformSnapshot.details;
+    loadedFileSampleRate = next.info ? next.info->sampleRate : 0.0;
+    waveformSnapshot = std::move (next);
+    if (changed)
+    {
+        refreshStatusBarReadouts();
+        repaint();
+    }
 }
 
 void AudioRegionEditor::resized()
@@ -391,6 +420,7 @@ void AudioRegionEditor::resized()
         getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
     zoomFitToArea (waveArea);
     syncScrollBarRange();
+    refreshWaveform();
 
     // Re-apply cursor inheritance - covers any child added or relaid out
     // after the ctor (the dynamic IconRow + status-bar widgets all
@@ -418,6 +448,7 @@ void AudioRegionEditor::scrollBarMoved (juce::ScrollBar* bar, double newRangeSta
                                     anchorTimelineLength - viewSamples);
     scrollSamples = jlimit<std::int64_t> (0, maxStart,
                                                   (std::int64_t) newRangeStart);
+    refreshWaveform();
     repaint();
 }
 
@@ -537,8 +568,10 @@ int AudioRegionEditor::regionIndexAtX (int x, juce::Rectangle<int> area) const
 
 void AudioRegionEditor::paint (juce::Graphics& g)
 {
-    rebuildThumbIfNeeded();
-
+    const auto snapshot = waveformSource.snapshot();
+    const auto* focused = region();
+    loadedFileSampleRate = focused != nullptr && focused->file == loadedFile && snapshot.info
+        ? snapshot.info->sampleRate : 0.0;
     g.fillAll (kBgDark);
 
     // Top icon row band - flat fill; icons paint themselves.
@@ -566,7 +599,7 @@ void AudioRegionEditor::paint (juce::Graphics& g)
                             (float) statusArea.getX(), (float) statusArea.getRight());
 
     paintRuler         (g, rulerArea);
-    paintWaveform      (g, waveArea);
+    paintWaveform      (g, waveArea, snapshot);
     paintBarGrid       (g, waveArea);
     paintFadeEnvelopes (g, waveArea);
     paintLoopPunchBrackets (g, rulerArea, waveArea);
@@ -724,10 +757,10 @@ void AudioRegionEditor::paintRuler (juce::Graphics& g, juce::Rectangle<int> area
     // The bar grid + the "time" ruler must speak in the WAV's OWN
     // sample-rate domain - region.timelineStart / lengthInSamples were
     // stored at recording-time SR, and the rendered waveform uses the
-    // WAV file's native SR via the thumbnail. Using engine.getCurrentSampleRate()
+    // WAV file's native SR from the source worker. Using engine.getCurrentSampleRate()
     // here drifts the grid against the audio whenever the user hot-swaps
     // to a device at a different rate. Fall back to engine SR when the
-    // WAV's SR hasn't been cached yet (thumb not loaded).
+    // WAV's SR hasn't been cached yet (source still opening).
     const double sr = std::max (1.0,
         loadedFileSampleRate > 0.0 ? loadedFileSampleRate
                                     : engine.getCurrentSampleRate());
@@ -891,25 +924,18 @@ void AudioRegionEditor::paintBarGrid (juce::Graphics& g, juce::Rectangle<int> ar
     }
 }
 
-void AudioRegionEditor::paintWaveform (juce::Graphics& g, juce::Rectangle<int> area)
+void AudioRegionEditor::paintWaveform (juce::Graphics& g, juce::Rectangle<int> area,
+                                      const dusk::audio::WaveformSource::Snapshot& snapshot)
 {
     const auto* focused = region();
-    if (focused == nullptr || thumb == nullptr) return;
-
-    // Waveform thumbnail expects seconds in the FILE'S native SR domain.
-    // Use the cached WAV SR so a hot-swap of the audio device doesn't
-    // stretch the waveform vs the bar grid above. Fall back to engine
-    // SR before the thumb has loaded its metadata.
-    const double sr = std::max (1.0,
-        loadedFileSampleRate > 0.0 ? loadedFileSampleRate
-                                    : engine.getCurrentSampleRate());
+    if (focused == nullptr) return;
     auto inset = area.reduced (4, 4);
     g.setColour (juce::Colours::black.withAlpha (0.25f));
     g.fillRect (inset);
 
     // Neighborhood view: iterate every region on this track and paint
     // any whose timeline span intersects the anchor range. Slices
-    // sharing the focused file render via the cached thumbnail at
+    // sharing the focused file render via the cached peaks at
     // their own sourceOffset / length. The focused slice gets full
     // brightness; the others are dimmed so the user can still see
     // them but knows what edits apply to.
@@ -947,28 +973,47 @@ void AudioRegionEditor::paintWaveform (juce::Graphics& g, juce::Rectangle<int> a
                                       ? kWaveformFill
                                       : reg.customColour);
 
-        if (reg.file == loadedFile && (thumb->isFullyLoaded() || thumb->getNumChannels() > 0))
+        if (reg.file == focused->file && focused->file == loadedFile && snapshot.info)
         {
-            // Shares the focused region's audio file -> render its slice of the
-            // cached thumbnail at the region's own sourceOffset / length.
             g.setColour (sliceColour.withMultipliedBrightness (isFocused ? 1.05f : 0.55f)
                                       .withAlpha (isFocused ? 1.0f : 0.85f));
-            const double t0 = (double) reg.sourceOffset / sr;
-            const double t1 = t0 + (double) reg.lengthInSamples / sr;
-            // Clip so we only draw inside the slice's x-range even when
-            // it overflows the inset (e.g. region partially outside the
-            // anchor window).
+            const auto window = waveformWindow (reg, xa, xb, inset);
+            std::size_t detailIndex = 0;
+            if (snapshot.details)
+            {
+                const auto& cached = snapshot.details->windows();
+                detailIndex = (std::size_t) std::distance (cached.begin(), std::find (cached.begin(), cached.end(), window));
+            }
             juce::Graphics::ScopedSaveState saved (g);
             g.reduceClipRegion (slice);
-            thumb->drawChannels (g,
-                                  juce::Rectangle<int> (xa, inset.getY(),
-                                                          xb - xa, inset.getHeight()),
-                                  t0, t1, 0.95f);
+            const auto clip = g.getClipBounds();
+            const int firstColumn = std::max (0, clip.getX() - slice.getX());
+            const int endColumn = std::min (window.numColumns, clip.getRight() - slice.getX());
+            const int channels = snapshot.info->numChannels;
+            for (int channel = 0; channel < channels; ++channel)
+            {
+                const float top = (float) (inset.getY() + channel * inset.getHeight() / channels);
+                const float bottom = (float) (inset.getY() + (channel + 1) * inset.getHeight() / channels);
+                const float centre = (top + bottom) * 0.5f;
+                const float scale = (bottom - top) * 0.475f;
+                for (int column = firstColumn; column < endColumn; ++column)
+                {
+                    auto peak = snapshot.details ? snapshot.details->column (detailIndex, channel, column)
+                                                 : std::optional<dusk::audio::WaveformPeaks::Peak>();
+                    if (! peak && snapshot.peaks)
+                        if (const auto range = window.columnRange (column, snapshot.info->numFrames))
+                            peak = snapshot.peaks->query (channel, range->first, range->second);
+                    if (! peak || (peak->minimum >= 0.0f && peak->maximum <= 0.0f)) continue;
+                    const float y1 = std::clamp (centre - std::clamp (peak->maximum, -1.0f, 1.0f) * scale - 0.3f, top, bottom);
+                    const float y2 = std::clamp (centre - std::clamp (peak->minimum, -1.0f, 1.0f) * scale + 0.3f, top, bottom);
+                    g.drawVerticalLine (slice.getX() + column, y1, y2);
+                }
+            }
         }
-        else if (reg.file != loadedFile)
+        else if (reg.file != focused->file)
         {
             // Different audio source than the focused region: the editor caches
-            // one thumbnail, so we can't draw this region's waveform. Paint a
+            // one source, so we can't draw this region's waveform. Paint a
             // flat colour block so it's still visible on the track when zoomed
             // out (double-click it to focus + see its waveform).
             g.setColour (sliceColour.withMultipliedBrightness (0.5f).withAlpha (0.7f));
@@ -3013,6 +3058,7 @@ void AudioRegionEditor::zoomByFactor (float factor)
     scrollSamples += (editCursorSample - anchorSampleAfterRaw);
     scrollSamples = jlimit<std::int64_t> (0,
         std::max<std::int64_t> (0, anchorTimelineLength - 1), scrollSamples);
+    refreshWaveform();
     repaint();
 }
 
@@ -3513,6 +3559,7 @@ void AudioRegionEditor::zoomFit()
                                                    getWidth(),
                                                    getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
     zoomFitToArea (waveArea);
+    refreshWaveform();
     repaint();
 }
 
@@ -3874,6 +3921,7 @@ void AudioRegionEditor::timerCallback()
         }
     }
 
+    refreshWaveform();
     if (x == lastPlayheadX) return;
     // Repaint just the strip the playhead vacated AND the strip it
     // entered - 4 px wide each so the line + a tiny halo redraws

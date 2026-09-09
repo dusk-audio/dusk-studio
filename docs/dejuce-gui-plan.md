@@ -725,9 +725,19 @@ Owns: `MainComponent.{h,cpp}` (6,000 lines), `DuskStudioApp.{h,cpp}`,
 ### G6 — Residue
 
 What is left once no UI is JUCE: `MessageThread.cpp` rewritten on the pugl
-world's timers and event loop, `juce_data_structures`, `AudioThumbnail` off
-`juce_audio_utils`, and the last `juce::String`/`File`/`Colour` holdouts in
+world's timers and event loop, `juce_data_structures`, the remaining
+`juce_audio_utils`/`juce_audio_formats` links, and the last `juce::String`/`File`/`Colour` holdouts in
 `src/session` and `src/engine` that were anchored by UI types.
+
+Mastering and region waveforms already use native `WaveformSource` snapshots.
+The region editor requests bounded, exact visible-column details for sample-level
+zoom and same-file slices; metadata and audio reads run on the source worker.
+Paint uses one immutable snapshot so the waveform and ruler share a native sample
+rate. Until metadata arrives, existing engine-rate fallback behavior applies.
+AudioThumbnail has no production consumers. Module unlink still needs a separate
+audit of transitive includes and all platform builds. Persistent waveform caches
+and broader tape-view waveforms remain separate work; native GUI and accessibility
+gates are unchanged.
 
 Module unlink order, each step its own commit so a bisect lands on one module:
 

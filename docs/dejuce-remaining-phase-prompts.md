@@ -248,9 +248,10 @@ PluginHostMain's JUCE message loop + MessageManagerLock sites (the OOP child
 shrinks to the native scan sandbox — shm/futex layer is already
 tri-platform), JUCE_PLUGINHOST_* defines, and every JUCE-host fallback rung in
 the slot ladders (ladder becomes CLAP > LV2 > VST3 > MS [> AU on mac]).
-Unlink juce_audio_processors from CMake on ALL THREE platforms (module count
-12 → 11 — the campaign's first global unlink; juce_audio_utils and
-juce_audio_formats stay for AudioThumbnail until the GUI tower). Retire
+Unlink juce_audio_processors from CMake on ALL THREE platforms. Recount the
+current links before recording module totals: AudioThumbnail consumers have
+already migrated, while juce_audio_utils and juce_audio_formats still need a
+separate transitive-include and cross-platform unlink audit. Retire
 tools/tsan_suppressions.txt entries tied to deleted primitives in the SAME PR.
 Update tools/juce-allowlist.txt — expect a large ratchet drop; record
 before/after. Sweep per CLAUDE.md rule 10: grep for every deleted symbol
