@@ -29,6 +29,7 @@ constexpr const char* kKeyMulticoreManual    = "multicore_dsp_workers";
 constexpr const char* kKeyMidiSoftTakeover   = "midi_soft_takeover";
 constexpr const char* kKeyAutosaveInterval   = "autosave_interval_sec";
 constexpr const char* kKeyRecordLatencyOffset = "recording_latency_offset_samples";
+constexpr const char* kKeySfzLibraryRoots = "sfz_library_roots";
 
 int numCpus()
 {
@@ -233,6 +234,86 @@ int getRecordingLatencyOffsetSamples()
     if (! looksSignedNumeric (raw)) return kRecordingLatencyOffsetDefault;
     return std::clamp (dusk::text::getIntValue (raw),
                        kRecordingLatencyOffsetMin, kRecordingLatencyOffsetMax);
+}
+
+std::string percentEncodeRoot (const std::string& root)
+{
+    static constexpr char kHex[] = "0123456789ABCDEF";
+    std::string out;
+    out.reserve (root.size());
+    for (const unsigned char c : root)
+    {
+        if (c == '%' || c == ':' || c < 0x20 || c == 0x7f)
+        {
+            out += '%';
+            out += kHex[(c >> 4) & 0x0f];
+            out += kHex[c & 0x0f];
+        }
+        else
+        {
+            out += (char) c;
+        }
+    }
+    return out;
+}
+
+int hexDigit (char c) noexcept
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+std::string percentDecodeRoot (const std::string& text)
+{
+    std::string out;
+    out.reserve (text.size());
+    for (std::size_t i = 0; i < text.size(); ++i)
+    {
+        if (text[i] == '%' && i + 2 < text.size())
+        {
+            const int hi = hexDigit (text[i + 1]);
+            const int lo = hexDigit (text[i + 2]);
+            if (hi >= 0 && lo >= 0)
+            {
+                out += (char) ((hi << 4) | lo);
+                i += 2;
+                continue;
+            }
+        }
+        out += text[i];
+    }
+    return out;
+}
+
+std::vector<std::string> getSfzLibraryRoots()
+{
+    std::vector<std::string> roots;
+    const auto raw = readKey (kKeySfzLibraryRoots);
+    std::size_t start = 0;
+    while (start <= raw.size())
+    {
+        const auto end = raw.find (':', start);
+        const auto field = raw.substr (start, end == std::string::npos ? std::string::npos
+                                                                       : end - start);
+        if (! field.empty()) roots.push_back (percentDecodeRoot (field));
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return roots;
+}
+
+void setSfzLibraryRoots (const std::vector<std::string>& roots)
+{
+    std::string joined;
+    for (const auto& root : roots)
+    {
+        if (root.empty()) continue;
+        if (! joined.empty()) joined += ':';
+        joined += percentEncodeRoot (root);
+    }
+    writeKey (kKeySfzLibraryRoots, joined);
 }
 
 void setRecordingLatencyOffsetSamples (int samples)

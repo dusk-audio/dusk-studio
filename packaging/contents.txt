@@ -38,9 +38,9 @@ windows	LICENSE
 windows	LICENSES.txt
 
 # --- Getting started ---
-linux	QUICKSTART.txt
-macos	QUICKSTART.txt
-windows	QUICKSTART.txt
+linux	QUICKSTART.md
+macos	QUICKSTART.md
+windows	QUICKSTART.md
 
 # --- Linux desktop integration ---
 linux	install.sh

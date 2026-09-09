@@ -122,10 +122,31 @@ void Session::setTrackArmed (int trackIndex, bool armed) noexcept
     // alert + toggle rollback for UI feedback; this is the shared backstop.)
     if (armed && tracks[(size_t) trackIndex].frozen.load (std::memory_order_relaxed))
         return;
+    // Nothing to capture from: arming would light ARM over a recording that
+    // writes no file and reports nothing. MIDI tracks record from a MIDI input
+    // and are not gated by the audio device's capture channels.
+    if (armed && ! canArmAudioTracks()
+        && tracks[(size_t) trackIndex].mode.load (std::memory_order_relaxed)
+             != (int) Track::Mode::Midi)
+        return;
     auto& a = tracks[(size_t) trackIndex].recordArmed;
     const bool prev = a.exchange (armed, std::memory_order_relaxed);
     if (prev != armed)
         armedTrackCount.fetch_add (armed ? 1 : -1, std::memory_order_relaxed);
+}
+
+int Session::disarmAudioTracksWithoutInput() noexcept
+{
+    int disarmed = 0;
+    for (int i = 0; i < kNumTracks; ++i)
+    {
+        auto& t = tracks[(size_t) i];
+        if (t.mode.load (std::memory_order_relaxed) == (int) Track::Mode::Midi) continue;
+        if (! t.recordArmed.load (std::memory_order_relaxed)) continue;
+        setTrackArmed (i, false);
+        ++disarmed;
+    }
+    return disarmed;
 }
 
 void Session::recomputeRtCounters() noexcept

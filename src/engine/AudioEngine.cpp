@@ -5,6 +5,7 @@
 #include "PdcMath.h"
 #include "PluginStateDiagnostics.h"
 #include "RtPriority.h"
+#include "device/DefaultInputChoice.h"
 #include "hosting/NativeStateIdentity.h"
 #include "../dsp/OutputPairRouting.h"
 #include "McuReceiver.h"
@@ -751,6 +752,41 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
         }
         startupDeviceMessage_ = duskstudio::startupDeviceMessage (
             opened, savedDevice, liveDevice);
+    }
+
+    // First launch only. The default pick, and the cross-backend fallback above
+    // (which clears the input name so a busy device cannot block the reopen),
+    // can both settle on an output with no input selected. Recording then rolls
+    // and captures nothing. An existing configuration is never touched: a user
+    // who chose no input keeps it.
+    if (savedDeviceState.empty())
+    {
+        auto setup = deviceManager.getSetup();
+        if (setup.inputDeviceName.empty())
+        {
+            if (auto* type = deviceManager.getCurrentDeviceType())
+            {
+                const auto chosen = device::chooseDefaultInputDevice (
+                    setup.outputDeviceName, type->getDeviceNames (/*wantInputNames*/ true));
+                if (! chosen.empty())
+                {
+                    setup.inputDeviceName = chosen;
+                    setup.useDefaultInputChannels = true;
+                    deviceManager.setSetup (setup, /*treatAsChosen*/ false);
+                    std::fprintf (stderr,
+                                  "[Dusk Studio/AudioEngine] first launch: selected input "
+                                  "device \"%s\" alongside output \"%s\".\n",
+                                  chosen.c_str(), setup.outputDeviceName.c_str());
+                }
+                else
+                {
+                    std::fprintf (stderr,
+                                  "[Dusk Studio/AudioEngine] first launch: backend offers no "
+                                  "capture devices; recording is unavailable until one is "
+                                  "chosen in Settings.\n");
+                }
+            }
+        }
     }
 
    #if ! defined(__linux__) && ! DUSKSTUDIO_HAS_NATIVE_COREMIDI
@@ -2898,6 +2934,22 @@ void AudioEngine::audioDeviceAboutToStart (device::IODevice* device)
     else
     {
         usableOutputs.store (true, std::memory_order_relaxed);
+    }
+
+    // Publish the capture width for the arm gate. Zero inputs is the silent
+    // counterpart of the zero-output case above: recording rolls, writes
+    // nothing, and says nothing. Session refuses to arm an audio track while
+    // this is zero, and any track already armed loses its arm here so ARM
+    // cannot stay lit over a device that can no longer feed it.
+    session.deviceCaptureChannels.store (activeIn, std::memory_order_relaxed);
+    if (activeIn <= 0)
+    {
+        const int disarmed = session.disarmAudioTracksWithoutInput();
+        if (disarmed > 0)
+            std::fprintf (stderr,
+                          "[Dusk Studio/AudioEngine] device \"%s\" has 0 input channels; "
+                          "disarmed %d audio track(s) that could not have recorded.\n",
+                          device->getName().c_str(), disarmed);
     }
 
     // Reset every MIDI collector with the current sample rate so it can

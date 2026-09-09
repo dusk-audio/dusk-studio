@@ -44,6 +44,12 @@
 
 namespace duskstudio
 {
+namespace
+{
+// Stated once rather than ten times: the strip's default control fill.
+const juce::Colour kControlBackground { 0xff202024 };
+} // namespace
+
 
 namespace
 {
@@ -289,7 +295,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     // EQ type chip (E/G) - section-wide mode control beside the EQ header.
     eqTypeChip.setMouseClickGrabsKeyboardFocus (false);
     eqTypeChip.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff5a3a20));   // brown default
-    eqTypeChip.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff202024));   // black when G
+    eqTypeChip.setColour (juce::TextButton::buttonOnColourId, kControlBackground);   // black when G
     eqTypeChip.setColour (juce::TextButton::textColourOffId,  juce::Colours::white);
     eqTypeChip.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
     eqTypeChip.setClickingTogglesState (true);
@@ -657,7 +663,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         lastBusColours[(size_t) i] = busColour.getARGB();
         auto btn = std::make_unique<juce::TextButton> (juce::String (i + 1));
         btn->setClickingTogglesState (true);
-        btn->setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
+        btn->setColour (juce::TextButton::buttonColourId,   kControlBackground);
         btn->setColour (juce::TextButton::buttonOnColourId, busColour);
         btn->setColour (juce::TextButton::textColourOffId,  busColour.brighter (0.15f));
         btn->setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff121214));
@@ -946,7 +952,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
 
     // Input monitor toggle (IN)
     monitorButton.setClickingTogglesState (true);
-    monitorButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
+    monitorButton.setColour (juce::TextButton::buttonColourId,   kControlBackground);
     monitorButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (fourKColors::kPanCyan));
     monitorButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xff708090));
     monitorButton.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff121214));
@@ -962,7 +968,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
 
     // Record arm
     armButton.setClickingTogglesState (true);
-    armButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
+    armButton.setColour (juce::TextButton::buttonColourId,   kControlBackground);
     armButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffd03030));
     armButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xffd06060));
     armButton.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
@@ -982,6 +988,12 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
             return;
         }
         session.setTrackArmed (trackIndex, armButton.getToggleState());
+        // The session refuses to arm an audio track with no capture channels.
+        // Follow it rather than leaving ARM lit over a recording that would
+        // write nothing; the transport bar carries the reason, so this stays
+        // silent instead of stacking a second alert on the same click.
+        armButton.setToggleState (track.recordArmed.load (std::memory_order_relaxed),
+                                  juce::dontSendNotification);
     };
     armButton.addMouseListener (this, false);
     addAndMakeVisible (armButton);
@@ -990,7 +1002,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     // so effects are committed to the WAV. Off (default) = clean input on
     // disk so the engineer can re-EQ / re-comp at mix time.
     printButton.setClickingTogglesState (true);
-    printButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
+    printButton.setColour (juce::TextButton::buttonColourId,   kControlBackground);
     printButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffd09060));
     printButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xff8a7060));
     printButton.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff121214));
@@ -1037,7 +1049,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
 
     auto styleCombo = [] (juce::ComboBox& c)
     {
-        c.setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xff202024));
+        c.setColour (juce::ComboBox::backgroundColourId, kControlBackground);
         c.setColour (juce::ComboBox::textColourId,       juce::Colour (0xffd0d0d0));
         c.setColour (juce::ComboBox::outlineColourId,    juce::Colour (0xff404048));
     };
@@ -1207,7 +1219,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
                           "Renames the aux lane globally so all channel strips show the same name.");
         lbl.setEditable (false, true, false);
         disableLabelEditorPopup (lbl);
-        lbl.setColour (juce::Label::backgroundWhenEditingColourId, juce::Colour (0xff202024));
+        lbl.setColour (juce::Label::backgroundWhenEditingColourId, kControlBackground);
         lbl.setColour (juce::Label::textWhenEditingColourId,       juce::Colours::white);
         lbl.onTextChange = [this, i]
         {
@@ -3698,7 +3710,7 @@ void ChannelStripComponent::refreshPrintButtonForMode()
         printButton.setClickingTogglesState (true);
         printButton.setEnabled (true);
         printButton.setButtonText ("PRINT");
-        printButton.setColour (juce::TextButton::buttonColourId,  juce::Colour (0xff202024));
+        printButton.setColour (juce::TextButton::buttonColourId,  kControlBackground);
         printButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xff8a7060));
         printButton.setToggleState (track.printEffects.load (std::memory_order_relaxed),
                                      juce::dontSendNotification);
@@ -3728,7 +3740,7 @@ void ChannelStripComponent::refreshPrintButtonForMode()
         ? juce::String::charToString ((juce::juce_wchar) 0x2744)   // ❄ snowflake
         : juce::String ("FREEZE"));
     printButton.setColour (juce::TextButton::buttonColourId,
-                            frozen ? juce::Colour (0xff2a5a78) : juce::Colour (0xff202024));
+                            frozen ? juce::Colour (0xff2a5a78) : kControlBackground);
     printButton.setColour (juce::TextButton::textColourOffId,
                             frozen ? juce::Colour (0xffbfe4ff) : juce::Colour (0xff8a7060));
     printButton.setTooltip (frozen
@@ -4055,7 +4067,7 @@ public:
             il.setTooltip ("Double-click to rename this AUX send.");
             il.setEditable (false, true, false);
             disableLabelEditorPopup (il);
-            il.setColour (juce::Label::backgroundWhenEditingColourId, juce::Colour (0xff202024));
+            il.setColour (juce::Label::backgroundWhenEditingColourId, kControlBackground);
             il.setColour (juce::Label::textWhenEditingColourId,       juce::Colours::white);
             il.onTextChange = [this, i]
             {

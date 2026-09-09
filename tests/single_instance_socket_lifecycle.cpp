@@ -382,6 +382,33 @@ TEST_CASE ("a refused handoff reclaims a dead primary socket",
     REQUIRE (reclaimedInode != staleInode);
 }
 
+// A primary killed between accept and read leaves a listening socket whose
+// backlog still completes the connect and swallows the write. Treating a
+// completed write as delivery made the second launch quit and take the session
+// path with it, so the path has to be acknowledged, not just written.
+TEST_CASE ("a handoff nobody acknowledges leaves the launch unattached",
+           "[single-instance][socket][issue-503]")
+{
+    ScopedSlot slot;
+    REQUIRE (duskstudio::single_instance::acquire ("", noPayload));
+    const auto sock = soleSocketIn (slot.path());
+    REQUIRE_FALSE (sock.empty());
+
+    duskstudio::single_instance::release();
+    REQUIRE (inodeOf (sock) == 0);
+
+    // Listening but never accepting: the kernel completes the connect from the
+    // backlog and buffers the payload, and no reader ever answers.
+    const int deafFd = bindSocketAt (sock);
+    REQUIRE (::listen (deafFd, 8) == 0);
+
+    const bool runsUnattached =
+        duskstudio::single_instance::acquire ("/tmp/handoff/session.json", noPayload);
+    ::close (deafFd);
+
+    REQUIRE (runsUnattached);
+}
+
 TEST_CASE ("release leaves a newer primary socket at the same path",
            "[single-instance][socket][issue-368]")
 {

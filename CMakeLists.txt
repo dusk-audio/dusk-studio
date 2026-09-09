@@ -690,6 +690,8 @@ target_sources(DuskStudio PRIVATE
     src/engine/PluginDescriptor.cpp
     src/engine/PluginManager.cpp
     src/engine/PluginSlot.cpp
+    src/engine/sfz/SfzLibrary.cpp
+    src/ui/multisample/SfzLibraryPanel.cpp
     src/engine/RecordManager.cpp
     src/dsp/AuxLaneStrip.cpp
     src/dsp/BusStrip.cpp
@@ -1706,12 +1708,12 @@ if(UNIX AND NOT APPLE)
     # Reachable before the app is opened, which is the point: a user who cannot
     # get a device configured has not got as far as the in-app link. The Linux
     # tarball is not CPack and stages its own copy in package-tarball.sh.
-    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/QUICKSTART.txt"
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/QUICKSTART.md"
             DESTINATION share/doc/dusk-studio)
 else()
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
                   "${CMAKE_CURRENT_SOURCE_DIR}/LICENSES.txt"
-                  "${CMAKE_CURRENT_SOURCE_DIR}/packaging/QUICKSTART.txt"
+                  "${CMAKE_CURRENT_SOURCE_DIR}/QUICKSTART.md"
             DESTINATION .)
 endif()
 # The hicolor size the .desktop Icon=DuskStudio key resolves. Committed rather

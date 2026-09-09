@@ -4,6 +4,7 @@
 #include "../../foundation/Fs.h"
 
 #include <algorithm>
+#include <string>
 #include <cmath>
 #include <cstdio>
 #include <ctime>
@@ -25,6 +26,7 @@ constexpr float kBrandIconH = 80.0f;
 constexpr float kWordmarkH = 14.0f;
 constexpr float kTabH = 36.0f;
 constexpr float kHeadingH = 22.0f;
+constexpr float kTemplateRowH = 34.0f;
 constexpr float kBannerH = 24.0f;
 constexpr float kRowH = 24.0f;
 constexpr float kHeaderRowH = 22.0f;
@@ -152,9 +154,11 @@ void inferAudioFormat (const std::filesystem::path& sessionDir, std::string& sam
 class StartupViewImpl final : public StartupView
 {
 public:
-    StartupViewImpl (std::vector<RecentSession> recentSessions, const unsigned char* brandRgba,
+    StartupViewImpl (std::vector<RecentSession> recentSessions,
+                     std::vector<std::string> templates, const unsigned char* brandRgba,
                      int brandW, int brandH, std::function<void()> downloads)
-        : recents (std::move (recentSessions)), brandPixels (brandRgba),
+        : recents (std::move (recentSessions)), templateNames (std::move (templates)),
+          brandPixels (brandRgba),
           brandWidth (brandW), brandHeight (brandH), openDownloads (std::move (downloads))
     {
         // The newest session is selected on open so Enter or Open works without an
@@ -198,6 +202,7 @@ public:
 
     StartupAction chosenAction() const override { return action; }
     const std::string& chosenPath() const override { return path; }
+    int chosenTemplate() const override { return selectedTemplate; }
 
     void draw (dw::Context& ctx, ImVec2 origin, ImVec2 size) override
     {
@@ -237,15 +242,16 @@ private:
                   rgba (kTextMid), "DUSK STUDIO");
         y += scale * (kWordmarkH + 16.0f);
 
-        // RECENT is the tab this dialog is showing; the other two are the actions
-        // they name, and both dismiss once the host takes over.
-        drawTab (ctx, "##tab-recent", ImVec2 (left, y), width, "RECENT", true);
+        // RECENT and NEW are panels this dialog draws; OPEN is the action it
+        // names and dismisses for.
+        if (drawTab (ctx, "##tab-recent", ImVec2 (left, y), width, "RECENT", ! showTemplates))
+            showTemplates = false;
         y += scale * kTabH;
         if (drawTab (ctx, "##tab-open", ImVec2 (left, y), width, "OPEN", false))
             action = StartupAction::openFile;
         y += scale * kTabH;
-        if (drawTab (ctx, "##tab-new", ImVec2 (left, y), width, "NEW", false))
-            action = StartupAction::newSession;
+        if (drawTab (ctx, "##tab-new", ImVec2 (left, y), width, "NEW", showTemplates))
+            showTemplates = true;
     }
 
     bool drawTab (dw::Context& ctx, const char* id, ImVec2 at, float width,
@@ -315,6 +321,12 @@ private:
             y += scale * (kBannerH + 6.0f);
         }
 
+        if (showTemplates)
+        {
+            drawTemplates (ctx, ImVec2 (left, y), ImVec2 (right, br.y));
+            return;
+        }
+
         dw::text (ctx, ctx.fonts->title, scale * 16.0f, ImVec2 (left, y), right - left,
                   rgba (kTextHi), "Recent Sessions", dw::Align::left);
         y += scale * (kHeadingH + 8.0f);
@@ -328,6 +340,45 @@ private:
         }
 
         drawTable (ctx, ImVec2 (left, y), ImVec2 (right, br.y - scale * 12.0f));
+    }
+
+    // The starting points, at the moment the first session is made. Picking one
+    // dismisses; the host then names the session and stamps the choice onto it.
+    void drawTemplates (dw::Context& ctx, ImVec2 tl, ImVec2 br)
+    {
+        const float scale = ctx.scale;
+        float y = tl.y;
+
+        dw::text (ctx, ctx.fonts->title, scale * 16.0f, ImVec2 (tl.x, y), br.x - tl.x,
+                  rgba (kTextHi), "New Session", dw::Align::left);
+        y += scale * (kHeadingH + 4.0f);
+
+        dw::text (ctx, ctx.fonts->band, scale * 12.0f, ImVec2 (tl.x, y), br.x - tl.x,
+                  rgba (kTextLo), "Start from:", dw::Align::left);
+        y += scale * (kHeadingH + 4.0f);
+
+        for (int i = 0; i < (int) templateNames.size(); ++i)
+        {
+            const ImVec2 rowTl (tl.x, y);
+            const ImVec2 rowBr (br.x, y + scale * kTemplateRowH);
+
+            dw::ButtonStyle style;
+            style.offFill = rgba (kSidebarBg);
+            style.onFill = rgba (0x282830ff);
+            style.offText = rgba (kTextMid);
+            style.onText = rgba (kAccent);
+            style.fontSize = 13.0f * scale;
+            style.rounding = 2.0f * scale;
+
+            if (dw::textButton (ctx, ("##template-" + std::to_string (i)).c_str(),
+                                rowTl, rowBr, templateNames[(size_t) i].c_str(),
+                                false, style).clicked)
+            {
+                selectedTemplate = i;
+                action = StartupAction::newSession;
+            }
+            y += scale * (kTemplateRowH + 6.0f);
+        }
     }
 
     void drawUpdateBanner (dw::Context& ctx, ImVec2 at, float width)
@@ -484,6 +535,9 @@ private:
     }
 
     std::vector<RecentSession> recents;
+    std::vector<std::string> templateNames;
+    bool showTemplates = false;
+    int selectedTemplate = 0;
     const unsigned char* brandPixels = nullptr;
     int brandWidth = 0;
     int brandHeight = 0;
@@ -523,12 +577,13 @@ std::vector<RecentSession> scanRecentSessions (const std::vector<std::filesystem
 }
 
 std::unique_ptr<StartupView> makeStartupView (std::vector<RecentSession> recents,
+                                              std::vector<std::string> templateNames,
                                               const unsigned char* brandRgba,
                                               int brandWidth, int brandHeight,
                                               std::function<void()> openDownloads)
 {
     return std::unique_ptr<StartupView> (
-        new StartupViewImpl (std::move (recents), brandRgba, brandWidth, brandHeight,
-                             std::move (openDownloads)));
+        new StartupViewImpl (std::move (recents), std::move (templateNames), brandRgba,
+                             brandWidth, brandHeight, std::move (openDownloads)));
 }
 } // namespace duskstudio::imgui

@@ -22,6 +22,7 @@
 #include "MidiBindingsPanel.h"
 #include "HardwareInsertEditor.h"
 #include "PluginPickerPanel.h"
+#include "multisample/SfzLibraryPanel.h"
 #include "BounceDialog.h"
 #include "../engine/BounceEngine.h"
 #include "../engine/audiofile/FileWriter.h"
@@ -217,6 +218,16 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
     snapshotComponent (this, outDir, "np-01-main-window.png");
     snapshotComponent (this, outDir, "rec-01-arm-multiple.png");
     snapshotComponent (transportBar.get(), outDir, "np-02-transport-bar.png");
+    {
+        // The no-input notice: staged by publishing a zero capture width, the
+        // same value a device that opened with no inputs publishes.
+        const auto savedCapture = session.deviceCaptureChannels.load (
+            std::memory_order_relaxed);
+        session.deviceCaptureChannels.store (0, std::memory_order_relaxed);
+        transportBar->refreshInputNotice();
+        snapshotComponent (transportBar.get(), outDir, "rec-02-no-input-notice.png", 250);
+        session.deviceCaptureChannels.store (savedCapture, std::memory_order_relaxed);
+    }
     if (consoleView != nullptr)
     {
         snapshotComponent (consoleView->getStripComponent (0), outDir, "np-04-channel-strip-recording.png");
@@ -405,6 +416,29 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         PluginPickerPanel::Callbacks cb;   // all null - display only
         PluginPickerPanel pp (descs, PluginPickerPanel::Kind::Effects, cb);
         modalShot (pp, 480, 560, "pl-01-plugin-picker.png", 300);
+    }
+    {
+        // Soundfont library. Scans a fixture tree rather than the machine's
+        // own roots so the figure is the same everywhere it is regenerated.
+        auto fixture = outDir.getChildFile ("_demo").getChildFile ("library");
+        auto acoustic = fixture.getChildFile ("Acoustic");
+        auto banks = fixture.getChildFile ("Banks");
+        acoustic.createDirectory();
+        banks.createDirectory();
+        for (const auto* name : { "Grand Piano", "Upright Bass", "Rhodes Mk I",
+                                  "Studio Kit", "Nylon Guitar" })
+            acoustic.getChildFile (std::string (name) + ".sfz").replaceWithText ("<region>");
+        for (const auto* name : { "GM Bank", "Orchestral" })
+            banks.getChildFile (std::string (name) + ".sf2").replaceWithText ("RIFF");
+
+        SfzLibraryPanel::Callbacks cb;   // all null - display only
+        SfzLibraryPanel lib (cb, { std::filesystem::path (
+            fixture.getFullPathName().toStdString()) });
+        // settle() sleeps rather than pumping, so the panel's own timer never
+        // runs here; drive the hand-off directly until the scan lands.
+        for (int i = 0; i < 40 && ! lib.applyFinishedScan(); ++i)
+            settle (25);
+        modalShot (lib, 620, 460, "ms-02-sfz-library.png", 200);
     }
     {
         // Bounce dialog (progress UI). Its ctor kicks an offline render to the

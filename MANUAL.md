@@ -57,7 +57,7 @@ This chapter walks an empty session all the way to a finished bounce. If you hav
 
 ## Install and first launch
 
-Install per your platform. On first launch, Dusk Studio opens a blank session called `Untitled` and the **Startup** dialog asks whether you want to create a new session in a chosen folder or open a recent one. Pick **New**, name your session, and click through.
+Install per your platform. On first launch, Dusk Studio opens a blank session called `Untitled` and the **Startup** dialog asks whether you want to create a new session in a chosen folder or open a recent one. Pick **New** and it offers the starting points (**Blank**, **Band**, **Beats**, **Singer-Songwriter**), then name your session and click through. The same templates are on **File > New from template** once a session is open.
 
 You can also open an existing session directly: pass its `session.json` (or the session folder) on the command line — `DuskStudio path/to/session.json` — or double-click a `session.json` in your file manager (Linux file-type association is installed with the app). On Linux, macOS, and Windows, if Dusk Studio is already running, the session opens in the existing window rather than in a second copy of the app. The window comes forward on Linux and macOS; on Windows it comes forward when the operating system's focus policy permits, and otherwise the existing window is restored and its taskbar button flashes for you to click. Either way playback stops and any take in progress is committed to the session you were working on, and if that session then has unsaved changes you get the same **Save / Don't Save / Cancel** prompt as **File > Open**. **Cancel** leaves the other session unopened and keeps you in the one you were in — with the transport stopped and the finished take in place, so save it if you want to keep it. A switch is refused outright while a bounce is running or another prompt is open; the status bar says which.
 
@@ -316,6 +316,10 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 \newpage
 
 # Getting started
+
+If you have just downloaded Dusk Studio and want to be recording rather than
+reading, [QUICKSTART.md](QUICKSTART.md) is the five-minute version of this
+chapter. Everything below is the long form.
 
 ## System requirements
 
@@ -698,6 +702,7 @@ This block is visible in the RECORDING stage, alongside a small **I/O** button t
 ## ARM, IN, PRINT/FREEZE (RECORDING stage)
 
 - **ARM**: light red when on. Marks the track for recording on the next Record press and shows its live pre-fader input level in the Recording stage; it does not make that input audible.
+  - ARM refuses to light on an audio track while the open audio device offers no input channels, because a recording that follows would write nothing. The transport bar says so: **No input device. Choose one in Settings > Audio.** Pick an input there and ARM works again. A device change that takes the inputs away disarms the audio tracks and raises the same message, so ARM is never lit over a device that cannot feed it. MIDI tracks record from a MIDI input and are not affected.
 - **IN**: input monitor. When on, you hear the live input through the channel strip. Useful for tracking with effects.
 - **PRINT** (empty audio track): when on, the channel's EQ, compressor, and insert are committed to the recorded file as you record. When off (the default), they are kept live, so you can tweak them after the take.
 - **FREEZE** (MIDI tracks, and audio tracks once recorded): the same button reads **FREEZE**. Click it to render the track to an audio file and bypass the DSP that produced it, to reclaim CPU — the frozen track plays back from the rendered audio with the fader, pan, and aux sends still live so you can keep mixing. The button turns to a snowflake while frozen; click it again to unfreeze (the rendered file is discarded). Frozen state is saved with the session, and a frozen track is locked — unfreeze first to edit, re-record, or change its mode.
@@ -1626,6 +1631,18 @@ Click a track's **Insert** slot and choose **Soundfont (.sfz / .sf2 / .bank.xml)
 - **Master tune**: −100 to +100 cents.
 - **Polyphony cap**: 1 to 256 voices.
 
+### Instrument library
+
+**Library...** in the soundfont editor's header lists the `.sfz` and `.sf2` already installed on this computer, so loading one does not mean remembering where it lives. **Browse...** is still there for a file the library does not cover.
+
+![Instrument library](docs/images/ms-02-sfz-library.png)
+
+The library looks in a short list of standard locations for your platform, plus any folder you add with **Add folder...**. On Linux that includes the directories distribution packages install into, so a machine with a packaged General MIDI bank shows something the first time it opens. Your added folders are remembered per machine, not per session.
+
+Type in the filter box to narrow the list by instrument or folder name; clearing it brings the whole list back without rescanning. **Rescan** picks up instruments added since the panel opened.
+
+Scanning happens only when you open the panel, press **Rescan**, or add a folder. It never runs at startup or while a session loads, and it never reaches the network: this is a view of your own disk, nothing more. A folder that has gone missing or cannot be read is listed as such at the top rather than silently contributing nothing.
+
 When a `.sf2` holds more than one preset (most GM/GS/XG SoundFonts do), a **preset picker** appears. Click it to open a filterable browser: start typing to filter presets by name or number, or read across the columns. Presets are grouped program-first — an instrument and its bank variations list together, drum kits last — each shown as `program [bank] name`.
 
 The loaded file path and the chosen preset are saved with the session. If that preset can no longer be loaded, Dusk Studio reports the problem and falls back to preset 0 so the slot remains playable.
@@ -2287,7 +2304,7 @@ The format for each entry:
 
 ### Save changes before quitting?
 
-- **When**: You quit with unsaved changes.
+- **When**: You quit with unsaved changes. Logging out, shutting the machine down, or stopping the app from a terminal counts as quitting: the prompt appears then too, and the session waits on your answer.
 - **Text**: "Your session has unsaved changes since the last manual save. If you don't save, the autosave will still be available the next time you open this session."
 - **Buttons**: **Save** / **Don't Save** / **Cancel**.
 - **Action**: Save unless you specifically want to discard. The autosave file remains as a safety net regardless.
