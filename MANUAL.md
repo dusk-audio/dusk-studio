@@ -1890,6 +1890,7 @@ To export your finished mix as a stereo audio file:
 1. From any stage, choose **File → Bounce…** (or **Cmd/Ctrl+B**).
 2. A file browser opens at the session folder; pick or rename the destination WAV and confirm.
 3. A progress dialog renders the project offline. **Cancel** stops the render.
+4. When it finishes the dialog names the file it wrote. Long paths are shortened in the middle so the file name stays readable; hover the line for the whole path, or use **Copy path** to put it on the clipboard.
 
 The output is **stereo 24-bit WAV at the session sample rate** by default (or a 320 kbps MP3 if you name the file `.mp3`), with a fixed 5-second tail so reverb and compression ringouts decay naturally.
 

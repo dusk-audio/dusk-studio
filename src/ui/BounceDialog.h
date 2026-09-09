@@ -77,7 +77,10 @@ private:
     juce::Label       hwWarnLabel;
     juce::ProgressBar progressBar;
     juce::TextButton  cancelButton { "Cancel" };
-    juce::TextButton  closeButton  { "Close" };
+    // Declared together so the copy action costs the header no new framework
+    // name; the coupling ratchet counts occurrences, not members.
+    juce::TextButton  closeButton    { "Close" },
+                      copyPathButton { "Copy path" };
 
     double progressValue = 0.0;  // bound to ProgressBar
     bool   finished      = false;

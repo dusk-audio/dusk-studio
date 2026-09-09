@@ -411,7 +411,13 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         // temp file; snapshot the progress panel immediately, then it cancels
         // on destruction. Done last so the offline-render device detach can't
         // disturb earlier snapshots.
-        auto target = outDir.getChildFile ("_demo").getChildFile ("bounce.wav");
+        // Deliberately deep: the dialog's one-line status is where a long path
+        // used to lose its file name off the right-hand edge.
+        auto target = outDir.getChildFile ("_demo")
+                            .getChildFile ("Recordings")
+                            .getChildFile ("2026 Sessions")
+                            .getChildFile ("Album Takes")
+                            .getChildFile ("bounce.wav");
         BounceDialog bd (engine, session, target,
                          BounceEngine::Mode::MasterMix);
         modalShot (bd, 520, 200, "qg-07-bounce-dialog.png", 200);
