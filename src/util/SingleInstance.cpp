@@ -264,6 +264,12 @@ public:
         fd = -1;
     }
 
+    // The lock file is deliberately never unlinked. Removing it while another
+    // launch holds it open would leave that launch holding flock on an
+    // unlinked inode while a third creates and locks a fresh one at the same
+    // name, so both would believe they own the slot - the double-primary the
+    // lock exists to prevent. It costs one empty file per runtime directory,
+    // which the session clears on logout.
     ~SlotLock()
     {
         if (fd < 0) return;
@@ -463,13 +469,19 @@ void listenLoop (Listener* l)
         {
             std::string payload;
             const Receive outcome = readPayload (peer, l->wakeFds[0], payload);
-            ::close (peer);
-            if (outcome == Receive::Stopping) return;
             if (outcome == Receive::Complete)
             {
                 auto fn = l->onCommandLine;
                 dispatch ([fn, payload] { fn (payload); });
+                // Only once the payload is queued on the message thread: the
+                // sender quits on this byte, so it has to mean the path is
+                // this process's responsibility now.
+                const auto ackDeadline = std::chrono::steady_clock::now()
+                                       + std::chrono::milliseconds (kDeliveryBudgetMs);
+                (void) writeAll (peer, std::string (1, '\1'), ackDeadline);
             }
+            ::close (peer);
+            if (outcome == Receive::Stopping) return;
         }
         else
         {
@@ -557,7 +569,11 @@ void reportUnattached (const char* what, int failure)
 // that made it. Failed covers a peer we could not reach for any other reason -
 // no permission, a wedged primary, a backlog with no room - all of which leave
 // a socket whose owner may still be running.
-enum class Handoff { Delivered, Refused, Failed };
+// Submitted mirrors the Windows shape: the payload reached the socket but the
+// primary never acknowledged taking it. A launch racing a kill -9 gets its
+// connect accepted into the dying backlog and its write completed, so a
+// completed write alone is not proof anyone will act on the path.
+enum class Handoff { Delivered, Submitted, Refused, Failed };
 
 // A fresh socket per attempt: a connect that failed leaves the fd unusable for
 // a second try. failureErrno carries what went wrong on Failed, for the log
@@ -615,10 +631,31 @@ Handoff handOver (const sockaddr_un& addr, socklen_t len, const std::string& pay
         if (connected)
         {
             const bool sent = writeAll (fd, framed, deadline);
-            if (sent) ::shutdown (fd, SHUT_WR);
-            else      failureErrno = errno;   // before close(), which clobbers it
+            if (! sent)
+            {
+                failureErrno = errno;   // before close(), which clobbers it
+                ::close (fd);
+                return Handoff::Failed;
+            }
+            ::shutdown (fd, SHUT_WR);
+
+            unsigned char accepted = 0;
+            const int revents = pollUntil (fd, POLLIN, deadline);
+            bool acked = false;
+            if ((revents & POLLIN) == 0)
+            {
+                failureErrno = ETIMEDOUT;   // no reader answered; errno is stale
+            }
+            else
+            {
+                errno = 0;
+                acked = ::read (fd, &accepted, sizeof accepted)
+                          == (ssize_t) sizeof accepted;
+                if (! acked) failureErrno = errno;
+            }
             ::close (fd);
-            return sent ? Handoff::Delivered : Handoff::Failed;
+            return acked && accepted == 1 ? Handoff::Delivered
+                                          : Handoff::Submitted;
         }
         ::close (fd);
         if (connectErr != ECONNREFUSED)

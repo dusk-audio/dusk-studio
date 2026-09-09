@@ -1231,7 +1231,7 @@ std::uint32_t handlePrepareToPlay (HostState& host,
     if (payload.size() < sizeof (PrepareToPlayPayload)) return 1;
     PrepareToPlayPayload p {};
     std::memcpy (&p, payload.data(), sizeof (p));
-    if (host.ownedInstance == nullptr) return 0;
+    if (host.ownedInstance == nullptr) return kControlStatusNoPluginLoaded;
     return withParkedHostWorker (host, [&]
     {
         host.ownedInstance->prepareToPlay (p.sampleRate, p.blockSize);
