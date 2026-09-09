@@ -949,15 +949,25 @@ if(UNIX AND NOT APPLE)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_ALSA=1)
 endif()
 
-# No native MIDI backend off Linux: the seam falls back to JUCE's MIDI device
-# API, confined to this one TU. This condition is the exact inverse of the
-# __linux__ branch MidiDevices.cpp picks its backend with, so the backend it
-# asks for is always compiled in. (The ALSA block above uses the wider
-# UNIX-AND-NOT-APPLE, so a non-Linux Unix would build AlsaSeqMidi.cpp too - as
-# its own non-Linux stub, unreferenced. Only Linux, macOS and Windows are
-# actually targeted.)
-if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+option(DUSKSTUDIO_NATIVE_COREMIDI "Use the native CoreMIDI device backend on macOS" OFF)
+if(DUSKSTUDIO_NATIVE_COREMIDI AND NOT APPLE)
+    message(FATAL_ERROR "DUSKSTUDIO_NATIVE_COREMIDI requires macOS")
+endif()
+
+if(DUSKSTUDIO_NATIVE_COREMIDI)
+    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_COREMIDI=1)
+elseif(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(DuskStudio PRIVATE src/engine/midi/JuceMidiBackend.cpp)
+endif()
+
+if(APPLE)
+    add_library(dusk-coremidi STATIC src/engine/midi/CoreMidiBackend.mm)
+    target_compile_features(dusk-coremidi PUBLIC cxx_std_17)
+    set_target_properties(dusk-coremidi PROPERTIES OBJCXX_STANDARD 17 OBJCXX_STANDARD_REQUIRED ON)
+    target_include_directories(dusk-coremidi PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_compile_options(dusk-coremidi PRIVATE -Wall -Wextra -Wpedantic -fblocks)
+    target_link_libraries(dusk-coremidi PUBLIC "-framework CoreMIDI" "-framework CoreFoundation")
+    target_link_libraries(DuskStudio PRIVATE dusk-coremidi)
 endif()
 
 # Dusk Studio-owned native PipeWire backend - a dusk device::IODevice +

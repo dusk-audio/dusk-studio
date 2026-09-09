@@ -1,13 +1,15 @@
 # Native ALSA-seq MIDI backend — executable spec (M1 → M3)
 
-**Status: TOWER COMPLETE.** M1 (PR #93) primitives + backend interface, M2
-(PR #94) `AlsaSeqMidi`, M3 (PR #98) the seam flip — all merged to main. Gate
-194, suite 417/417, Xvfb self-test 15/15, ALSA loopback + migration suites
-green on merged main.
+**Linux tower status: COMPLETE.** M1 (PR #93) primitives + backend interface, M2
+(PR #94) `AlsaSeqMidi`, M3 (PR #98) the seam flip — all merged to main. At the
+Linux tower's completion, gate 194, suite 417/417, Xvfb self-test 15/15, and
+ALSA loopback + migration suites passed.
 
 What shipped: the seam runs on `IMidiInput/OutputBackend` (per-input
 `dusk::MidiCollector`, SPSC slot queue + `std::thread` pump, `std::string`
-device info); Linux uses `AlsaSeqMidi`, everything else `JuceMidiBackend`; both
+device info); Linux uses `AlsaSeqMidi`, macOS has an opt-in
+[CoreMIDI backend](dejuce-coremidi-plan.md), and the default macOS/Windows path
+uses `JuceMidiBackend`; both
 device-API leaks outside the seam are routed through it; `juceManager()` is
 compiled out on Linux; legacy JUCE identifiers migrate by re-resolving the old
 `<client>-<port>` address.
@@ -17,16 +19,17 @@ Three things this tower did NOT do, which the next planner must not assume:
 - **`juce_audio_devices` did not unlink.** Dual-gated with Phase-3-audio, so
   the gate stayed flat at 194 and the module count at 12. The metric moving is
   Phase-3-audio's job.
-- **The mac/win `JuceMidiBackend` has never been executed.** It is not compiled
-  on Linux; it was syntax-checked against real JUCE headers and reviewed, and
-  its first genuine run is mac/win CI.
+- **Platform sign-off remains separate.** The macOS CoreMIDI work includes
+  exact-commit builds and virtual-endpoint checks, including migration through
+  the actual JUCE fallback. That does not establish physical-device timing,
+  Windows MIDI coverage, or CoreAudio parity.
 - **Hardware sign-off is still owed**: real-keyboard smoke, and MTC / MIDI-clock
   timing against external gear.
 
-Known follow-on, designed but not built: MIDI hot-plug auto-detect. Nothing
-calls `refreshMidiInputs()` automatically (only the Audio Settings Rescan
-button), which predates this tower. Plan is to subscribe the input port to the
-ALSA System Announce port and refresh when the transport is stopped.
+Native MIDI hot-plug detection now exists: ALSA subscribes to System Announce,
+and the opt-in CoreMIDI backend receives endpoint notifications. The engine
+coalesces changes and defers a bank rebuild until transport/recording state
+allows it. The JUCE fallback retains manual rescan.
 
 The phase-by-phase spec below is kept as the record of what was built and why.
 

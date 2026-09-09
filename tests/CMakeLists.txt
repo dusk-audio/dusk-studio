@@ -99,6 +99,7 @@ add_executable(dusk-studio-tests
     recording_byte_accuracy.cpp
     midi_fifo_overflow.cpp
     midi_device_layer.cpp
+    core_midi_protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/midi/MidiDevices.cpp
     midi_time_code_decode.cpp
     midi_time_code_emit.cpp
@@ -238,11 +239,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         alsa_thread_teardown.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/alsa/AlsaAudioIODevice.cpp)
     target_link_libraries(dusk-studio-tests PRIVATE asound)
+elseif(APPLE AND DUSKSTUDIO_NATIVE_COREMIDI)
+    target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_COREMIDI=1)
 else()
-    # The seam picks its backend on __linux__, so off Linux the JUCE fallback is
-    # what MidiDevices.cpp links against. It is the only remaining user of the
-    # JUCE MIDI device API in the test binary, so the module is linked here
-    # rather than for every platform.
     target_sources(dusk-studio-tests PRIVATE
         ${CMAKE_SOURCE_DIR}/src/engine/midi/JuceMidiBackend.cpp)
     target_link_libraries(dusk-studio-tests PRIVATE juce::juce_audio_devices)
@@ -713,6 +712,21 @@ catch_discover_tests(dusk-studio-tests
     EXTRA_ARGS --allow-running-no-tests)
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "~[alsa]")
+
+if(APPLE)
+    target_link_libraries(dusk-studio-tests PRIVATE dusk-coremidi)
+    add_executable(dusk-coremidi-tests core_midi_backend.mm)
+    set_target_properties(dusk-coremidi-tests PROPERTIES OBJCXX_STANDARD 17 OBJCXX_STANDARD_REQUIRED ON)
+    target_compile_options(dusk-coremidi-tests PRIVATE -Wall -Wextra -Wpedantic -fblocks)
+    target_link_libraries(dusk-coremidi-tests PRIVATE dusk-coremidi Catch2::Catch2WithMain)
+    add_dependencies(dusk-studio-tests dusk-coremidi-tests)
+
+    option(DUSKSTUDIO_TEST_COREMIDI_VIRTUAL "Run CoreMIDI tests that create temporary virtual endpoints" OFF)
+    if(DUSKSTUDIO_TEST_COREMIDI_VIRTUAL)
+        add_test(NAME coremidi-virtual-endpoints COMMAND dusk-coremidi-tests)
+        set_tests_properties(coremidi-virtual-endpoints PROPERTIES TIMEOUT 45 RUN_SERIAL TRUE)
+    endif()
+endif()
 
 # Exercise the real release-version insertion script against an isolated fixture,
 # and pin the private-release fan-in and single-publisher contract. The release
