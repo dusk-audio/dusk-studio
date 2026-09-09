@@ -1,4 +1,5 @@
 #include "CrashHandler.h"
+#include "HostInfo.h"
 #include "LogFile.h"
 
 #include <juce_core/juce_core.h>
@@ -37,11 +38,13 @@ private:
     diagnostics::LogFile storage;
 };
 
-std::atomic<bool>             installed { false };
-std::string                   cachedAppVersion;
-juce::File                    cachedCrashDir;
-juce::File                    cachedLogFile;
-std::unique_ptr<LogAdapter>    ownedLogger;
+std::atomic<bool> installed { false };
+// Every object read by the retained callback must survive static teardown.
+auto& cachedAppVersion = *new std::string;
+auto& cachedCrashDir = *new juce::File;
+auto& cachedLogFile = *new juce::File;
+const std::string* cachedHostInfo = nullptr;
+std::unique_ptr<LogAdapter> ownedLogger;
 
 juce::File baseDir()
 {
@@ -77,10 +80,7 @@ void crashCallback (void* /*platformSpecific*/)
            << "Time:         " << juce::Time::getCurrentTime().toString (true, true) << "\n"
            << "App version:  " << cachedAppVersion.c_str() << "\n"
            << "JUCE version: " << juce::SystemStats::getJUCEVersion() << "\n"
-           << "OS:           " << juce::SystemStats::getOperatingSystemName() << "\n"
-           << "CPU:          " << juce::SystemStats::getCpuModel()
-           << " (" << juce::SystemStats::getNumCpus() << " cores)\n"
-           << "RAM:          " << juce::SystemStats::getMemorySizeInMegabytes() << " MB\n\n"
+           << cachedHostInfo->c_str()
            << "Backtrace\n"
            << "---------\n"
            << juce::SystemStats::getStackBacktrace() << "\n\n";
@@ -147,6 +147,11 @@ void install (const std::string& appVersion)
 
     cachedCrashDir = baseDir().getChildFile ("crashes");
     cachedCrashDir.createDirectory();
+
+    // The callback remains installed after detach and through static teardown.
+    // Keep its immutable startup snapshot alive for the rest of the process.
+    if (cachedHostInfo == nullptr)
+        cachedHostInfo = new const std::string (diagnostics::formatHostInfo (diagnostics::collectHostInfo()));
 
     juce::SystemStats::setApplicationCrashHandler (&crashCallback);
 }
