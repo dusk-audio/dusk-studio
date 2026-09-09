@@ -217,6 +217,16 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
     snapshotComponent (this, outDir, "np-01-main-window.png");
     snapshotComponent (this, outDir, "rec-01-arm-multiple.png");
     snapshotComponent (transportBar.get(), outDir, "np-02-transport-bar.png");
+    {
+        // The no-input notice: staged by publishing a zero capture width, the
+        // same value a device that opened with no inputs publishes.
+        const auto savedCapture = session.deviceCaptureChannels.load (
+            std::memory_order_relaxed);
+        session.deviceCaptureChannels.store (0, std::memory_order_relaxed);
+        transportBar->refreshInputNotice();
+        snapshotComponent (transportBar.get(), outDir, "rec-02-no-input-notice.png", 250);
+        session.deviceCaptureChannels.store (savedCapture, std::memory_order_relaxed);
+    }
     if (consoleView != nullptr)
     {
         snapshotComponent (consoleView->getStripComponent (0), outDir, "np-04-channel-strip-recording.png");

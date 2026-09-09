@@ -178,6 +178,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/ui/NotepadChords.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiTimeCodeReceiver.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiTimeCodeEmitter.cpp
+    session_arm_input_gate.cpp
     ${CMAKE_SOURCE_DIR}/src/session/Session.cpp
     ${CMAKE_SOURCE_DIR}/src/session/SessionSerializer.cpp)
 

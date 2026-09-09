@@ -11,6 +11,18 @@ namespace duskstudio
 {
 namespace
 {
+// Hoisted so the notice costs the file no new framework names, and so the
+// colours it shares with the rest of the bar are stated once.
+const juce::Colour kPanelBackground   { 0xff202024 };
+const juce::Colour kBrightText        { 0xffe0e0e0 };
+const juce::Colour kNoInputBackground { 0xff3a2020 };
+const juce::Colour kNoInputText       { 0xffe0a0a0 };
+const juce::Font   kNoticeFont        { juce::FontOptions (11.5f) };
+constexpr auto     kNoticeJustification = juce::Justification::centred;
+} // namespace
+
+namespace
+{
 // BPM can be fractional (the tempo field accepts e.g. 127.9). Show up to two
 // decimals but trim trailing zeros so whole tempos read "120", not "120.00".
 juce::String formatBpm (double bpm)
@@ -393,7 +405,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     addAndMakeVisible (recordButton);
 
     clockLabel.setJustificationType (juce::Justification::centred);
-    clockLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe0e0e0));
+    clockLabel.setColour (juce::Label::textColourId, kBrightText);
     clockLabel.setColour (juce::Label::backgroundColourId, juce::Colour (0xff121214));
     clockLabel.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(),
                                                         18.0f, juce::Font::bold)));
@@ -503,7 +515,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     auto styleModeToggle = [] (juce::TextButton& b, juce::Colour onColour)
     {
         b.setClickingTogglesState (true);
-        b.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
+        b.setColour (juce::TextButton::buttonColourId,   kPanelBackground);
         b.setColour (juce::TextButton::buttonOnColourId, onColour.darker (0.45f));
         b.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xff909094));
         b.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
@@ -579,7 +591,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     addAndMakeVisible (bpmCaption);
 
     bpmValue.setJustificationType (juce::Justification::centred);
-    bpmValue.setColour (juce::Label::textColourId,        juce::Colour (0xffe0e0e0));
+    bpmValue.setColour (juce::Label::textColourId,        kBrightText);
     bpmValue.setColour (juce::Label::backgroundColourId,  juce::Colour (0xff121214));
     bpmValue.setColour (juce::Label::outlineColourId,     juce::Colour (0xff2a2a32));
     bpmValue.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(),
@@ -597,7 +609,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     bpmValue.addMouseListener (this, false);
     addAndMakeVisible (bpmValue);
 
-    tapButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
+    tapButton.setColour (juce::TextButton::buttonColourId,   kPanelBackground);
     tapButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xffe0c050));
     tapButton.setTooltip ("Tap to set tempo (B). Click in time with the music; "
                           "BPM updates after the second tap and averages "
@@ -606,7 +618,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     tapButton.onClick = [this] { onTap(); };
     addAndMakeVisible (tapButton);
 
-    timeSigButton.setColour (juce::TextButton::buttonColourId,  juce::Colour (0xff202024));
+    timeSigButton.setColour (juce::TextButton::buttonColourId,  kPanelBackground);
     timeSigButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xffd0d0d0));
     timeSigButton.setTooltip ("Time signature (Shift+M). Click to pick a common time "
                               "(3/4, 4/4, 5/4, 6/8, 7/8, 12/8) or open Custom...");
@@ -628,7 +640,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     // Initial text - syncCompactLabels() in resized() rewrites this whenever
     // the transport-bar width crosses the compact breakpoint.
     tapeToggle.setButtonText (juce::CharPointer_UTF8 ("\xe2\x96\xbe TIMELINE")); // "▾ TIMELINE"
-    tapeToggle.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
+    tapeToggle.setColour (juce::TextButton::buttonColourId,   kPanelBackground);
     tapeToggle.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff2a3a48));
     tapeToggle.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xff7090a8));
     tapeToggle.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xffd0e0f0));
@@ -679,8 +691,21 @@ void TransportBar::forwardTap()
         engine.jumpToNextMarker();
 }
 
+void TransportBar::refreshInputNotice()
+{
+    // Exactly zero, not "unknown": before a device has started there is no
+    // evidence either way and the bar should stay quiet.
+    const bool noInput = engine.getSession().deviceCaptureChannels.load (
+                             std::memory_order_relaxed) == 0;
+    if (noInput == noCaptureInput) return;
+    noCaptureInput = noInput;
+    repaint();
+}
+
 void TransportBar::timerCallback()
 {
+    refreshInputNotice();
+
     // 10x scrub. Once a REW / FFWD button has been held past
     // kHoldThresholdMs, advance the playhead by (sr * kScrubMultiplier *
     // tickPeriod) samples per tick. Continues until the button releases.
@@ -769,7 +794,7 @@ void TransportBar::timerCallback()
         }
         else
         {
-            clockLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe0e0e0));
+            clockLabel.setColour (juce::Label::textColourId, kBrightText);
             const auto mode = (TimeDisplayMode) engine.getSession()
                                                    .timeDisplayMode.load (std::memory_order_relaxed);
             const float bpm = engine.getSession().tempoBpm.load (std::memory_order_relaxed);
@@ -1057,6 +1082,20 @@ void TransportBar::paint (juce::Graphics& g)
     g.fillAll (juce::Colour (0xff181820));
     g.setColour (juce::Colour (0xff2a2a32));
     g.drawRect (getLocalBounds(), 1);
+
+    if (! noCaptureInput) return;
+
+    // The bar's own row is full, so the notice takes the gap the transport
+    // leaves in the middle rather than overlapping a control.
+    static constexpr int kNoticeW = 330;
+    auto notice = getLocalBounds().withSizeKeepingCentre (
+        std::min (kNoticeW, getWidth()), std::min (20, getHeight() - 6));
+    g.setColour (kNoInputBackground);
+    g.fillRoundedRectangle (notice.toFloat(), 3.0f);
+    g.setColour (kNoInputText);
+    g.setFont (kNoticeFont);
+    g.drawText ("No input device. Choose one in Settings > Audio.",
+                notice, kNoticeJustification, false);
 }
 
 void TransportBar::resized()
