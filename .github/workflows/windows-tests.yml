@@ -144,6 +144,17 @@ jobs:
         shell: bash
         run: cmake --build build-tests --config Release --target DuskStudio dusk-studio-tests -j4
 
+      - name: Upload the built app
+        # Windows has no other route to a runnable build from a branch: the
+        # MSI is tag-driven. Short retention because this is for walking a
+        # branch on a test machine, not for distribution.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: duskstudio-windows-x64
+          path: build-tests/DuskStudio_artefacts/Release/
+          retention-days: 3
+          if-no-files-found: error
+
       - name: Run tests
         # Full Catch2 suite on MSVC. FileImporter fixtures close their writers
         # before import/readback, while a deterministic unit covers the bounded
