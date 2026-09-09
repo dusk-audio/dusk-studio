@@ -58,6 +58,14 @@ if (-not $ExpectedVersion) {
     exit 2
 }
 
+# Without this the extract below raises CommandNotFoundException, StrictMode
+# turns the $LASTEXITCODE read that follows into a terminating error, and every
+# check is skipped on the way to the success message.
+if (-not (Get-Command 7z -ErrorAction SilentlyContinue)) {
+    Write-Error '7z is required to extract the MSI: install 7-Zip and put it on PATH'
+    exit 2
+}
+
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $contentsCheck = Join-Path $repoRoot 'scripts/verify-package-contents.sh'
 $work = Join-Path ([System.IO.Path]::GetTempPath()) ("dusk-smoke-" + [guid]::NewGuid().ToString('N'))
@@ -105,6 +113,11 @@ try {
             Write-Fail "--version reported `"$reported`", expected $ExpectedVersion"
         }
     }
+}
+catch {
+    # A terminating error inside the try would otherwise skip every check and
+    # fall through to the all-passed message with exit 0.
+    Write-Fail "aborted: $($_.Exception.Message)"
 }
 finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
