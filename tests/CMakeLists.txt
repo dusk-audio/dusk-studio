@@ -192,7 +192,8 @@ if(WIN32)
     # CoTaskMemFree for the returned known-folder path; advapi32: per-user
     # security descriptors and token checks for the single-instance pipe;
     # bcrypt: BCryptGenRandom in the IPC channel backend compiled in below.
-    target_link_libraries(dusk-studio-tests PRIVATE shell32 ole32 advapi32 bcrypt)
+    target_sources(dusk-studio-tests PRIVATE ${CMAKE_SOURCE_DIR}/src/engine/midi/WinMmDeviceQuery.cpp)
+    target_link_libraries(dusk-studio-tests PRIVATE shell32 ole32 advapi32 bcrypt winmm)
 endif()
 
 # pffft backend for dusk::audio::Fft, plus its A/B parity suite. The pffft

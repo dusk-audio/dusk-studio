@@ -5,6 +5,12 @@
 
 #include "engine/midi/WinMmProtocol.h"
 
+#if defined(_WIN32)
+ #include "engine/midi/WinMmDeviceQuery.h"
+ #include <mmddk.h>
+#endif
+
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -118,3 +124,188 @@ TEST_CASE ("WinMM input timestamps unwrap across long runs and delayed completio
     REQUIRE_THAT (clock.toBackendTime (25, 2100.0), WithinAbs (2025.0, 1.0e-6));
     REQUIRE_THAT (clock.toBackendTime (0xffffffffu, 2100.0), WithinAbs (2000.0, 1.0e-6));
 }
+
+#if defined(_WIN32)
+namespace
+{
+namespace winmm = duskstudio::midi::winmm;
+
+struct QueryDevice
+{
+    std::wstring name, identifier;
+    MMRESULT capsResult = MMSYSERR_NOERROR, sizeResult = MMSYSERR_NOERROR, idResult = MMSYSERR_NOERROR;
+    std::optional<ULONG> reportedBytes;
+    bool unterminatedName = false, unterminatedId = false;
+};
+
+struct QueryFixture
+{
+    static inline thread_local QueryFixture* current = nullptr;
+    QueryFixture* previous = current;
+    std::vector<QueryDevice> inputs, outputs;
+    bool invalidCall = false;
+
+    QueryFixture() { current = this; }
+    ~QueryFixture() { current = previous; }
+
+    static UINT WINAPI inputCount() { return static_cast<UINT> (current->inputs.size()); }
+    static UINT WINAPI outputCount() { return static_cast<UINT> (current->outputs.size()); }
+
+    template <class Caps>
+    static MMRESULT caps (const std::vector<QueryDevice>& devices, UINT_PTR index, Caps* result, UINT bytes)
+    {
+        if (index >= devices.size() || result == nullptr || bytes != sizeof (Caps))
+        {
+            current->invalidCall = true;
+            return MMSYSERR_INVALPARAM;
+        }
+        const auto& device = devices[index];
+        *result = {};
+        if (device.unterminatedName)
+            std::fill_n (result->szPname, MAXPNAMELEN, L'X');
+        else
+            std::copy_n (device.name.data(), std::min<std::size_t> (device.name.size(), MAXPNAMELEN - 1),
+                         result->szPname);
+        return device.capsResult;
+    }
+
+    static MMRESULT WINAPI inputCaps (UINT_PTR index, LPMIDIINCAPSW result, UINT bytes)
+    { return caps (current->inputs, index, result, bytes); }
+    static MMRESULT WINAPI outputCaps (UINT_PTR index, LPMIDIOUTCAPSW result, UINT bytes)
+    { return caps (current->outputs, index, result, bytes); }
+
+    static MMRESULT message (const std::vector<QueryDevice>& devices, UINT_PTR index,
+                             UINT command, DWORD_PTR first, DWORD_PTR second)
+    {
+        if (index >= devices.size() || first == 0)
+        {
+            current->invalidCall = true;
+            return MMSYSERR_INVALPARAM;
+        }
+        const auto& device = devices[index];
+        if (command == DRV_QUERYDEVICEINTERFACESIZE && second == 0)
+        {
+            *reinterpret_cast<ULONG*> (first) = device.reportedBytes.value_or (
+                static_cast<ULONG> ((device.identifier.size() + 1) * sizeof (wchar_t)));
+            return device.sizeResult;
+        }
+        if (command == DRV_QUERYDEVICEINTERFACE && second == 512 * sizeof (wchar_t))
+        {
+            auto* destination = reinterpret_cast<wchar_t*> (first);
+            if (device.unterminatedId)
+                std::fill_n (destination, 512, L'X');
+            else
+            {
+                std::fill_n (destination, 512, L'\0');
+                std::copy_n (device.identifier.data(), std::min<std::size_t> (device.identifier.size(), 511),
+                             destination);
+            }
+            return device.idResult;
+        }
+        current->invalidCall = true;
+        return MMSYSERR_INVALPARAM;
+    }
+
+    static MMRESULT WINAPI inputMessage (HMIDIIN index, UINT command, DWORD_PTR first, DWORD_PTR second)
+    { return message (current->inputs, reinterpret_cast<UINT_PTR> (index), command, first, second); }
+    static MMRESULT WINAPI outputMessage (HMIDIOUT index, UINT command, DWORD_PTR first, DWORD_PTR second)
+    { return message (current->outputs, reinterpret_cast<UINT_PTR> (index), command, first, second); }
+
+    winmm::DeviceQueryApi api() const
+    { return { inputCount, outputCount, inputCaps, outputCaps, inputMessage, outputMessage }; }
+};
+}
+
+TEST_CASE ("WinMM native enumeration preserves Windows indices across capability failures", "[midi][winmm][issue-299]")
+{
+    QueryFixture fixture;
+    fixture.inputs = { { L"In 0", L"input-0" }, { L"missing", L"input-1", MMSYSERR_NODRIVER },
+                       { L"In 2", L"input-2" } };
+    fixture.outputs = { { L"Out 0", L"output-0" }, { L"missing", L"output-1", MMSYSERR_BADDEVICEID },
+                        { L"Out 2", L"output-2" } };
+    for (auto direction : { winmm::Direction::Input, winmm::Direction::Output })
+    {
+        const auto devices = winmm::enumerateDevices (direction, fixture.api());
+        REQUIRE (devices.size() == 2);
+        REQUIRE (devices[0].deviceIndex == 0);
+        REQUIRE (devices[1].deviceIndex == 2);
+        REQUIRE (devices[1].info.identifier == (direction == winmm::Direction::Input ? "input-2" : "output-2"));
+        REQUIRE (winmm::deviceIndexForIdentifier (devices, devices[1].info.identifier) == 2);
+    }
+    REQUIRE_FALSE (fixture.invalidCall);
+}
+
+TEST_CASE ("WinMM native enumeration applies fallback identifiers before duplicate decoration", "[midi][winmm][issue-299]")
+{
+    QueryFixture fixture;
+    fixture.inputs = { { L"Keys", L"" }, { L"Keys", L"Keys" }, { L"Keys", L"Keys-2" } };
+    const auto devices = winmm::enumerateDevices (winmm::Direction::Input, fixture.api());
+    REQUIRE (devices.size() == 3);
+    REQUIRE (devices[0].info.identifier == "Keys");
+    REQUIRE (devices[1].info.identifier == "Keys-2");
+    REQUIRE (devices[2].info.identifier == "Keys-2-2");
+    REQUIRE (devices[0].info.name == "Keys");
+    REQUIRE (devices[1].info.name == "Keys-2");
+    REQUIRE (devices[2].info.name == "Keys-3");
+    REQUIRE_FALSE (fixture.invalidCall);
+}
+
+TEST_CASE ("WinMM native queries convert bounded Unicode metadata", "[midi][winmm][issue-299]")
+{
+    QueryFixture fixture;
+    fixture.outputs = { { L"\u00c9cho \U0001f3b9", L"\\\\?\\midi#\u00e9#\U0001f3b9" }, { L"", L"nameless" },
+                        { L"bad", L"bad" } };
+    fixture.outputs[2].unterminatedName = true;
+    const auto devices = winmm::enumerateDevices (winmm::Direction::Output, fixture.api());
+    REQUIRE (devices.size() == 2);
+    REQUIRE (devices[0].info.name == u8"\u00c9cho \U0001f3b9");
+    REQUIRE (devices[0].info.identifier == u8"\\\\?\\midi#\u00e9#\U0001f3b9");
+    REQUIRE (devices[1].info.name.empty());
+    REQUIRE (devices[1].info.identifier == "nameless");
+    REQUIRE_FALSE (fixture.invalidCall);
+}
+
+TEST_CASE ("WinMM native queries bound unavailable or malformed interface metadata", "[midi][winmm][issue-299]")
+{
+    QueryFixture fixture;
+    fixture.inputs = { { L"Keys", L"interface" } };
+    auto& device = fixture.inputs.front();
+    SECTION ("size query fails") { device.sizeResult = MMSYSERR_NOTSUPPORTED; }
+    SECTION ("identifier query fails") { device.idResult = MMSYSERR_NOTSUPPORTED; }
+    SECTION ("no interface") { device.reportedBytes = 0; }
+    SECTION ("incomplete wide character") { device.reportedBytes = 1; }
+    SECTION ("odd byte size") { device.reportedBytes = 3; }
+    SECTION ("legacy size ceiling") { device.reportedBytes = 1024; }
+    SECTION ("oversize metadata") { device.reportedBytes = 0xffffffffu; }
+    SECTION ("missing terminator") { device.unterminatedId = true; }
+    SECTION ("invalid UTF16") { device.identifier.assign (1, static_cast<wchar_t> (0xd800)); }
+    SECTION ("largest accepted interface")
+    {
+        device.identifier.assign (510, L'x');
+        const auto devices = winmm::enumerateDevices (winmm::Direction::Input, fixture.api());
+        REQUIRE (devices.size() == 1);
+        REQUIRE (devices[0].info.identifier == std::string (510, 'x'));
+        REQUIRE_FALSE (fixture.invalidCall);
+        return;
+    }
+    const auto devices = winmm::enumerateDevices (winmm::Direction::Input, fixture.api());
+    REQUIRE (devices.size() == 1);
+    REQUIRE (devices[0].info.identifier == "Keys");
+    REQUIRE_FALSE (fixture.invalidCall);
+}
+
+TEST_CASE ("WinMM device lookup refuses missing or ambiguous identifiers", "[midi][winmm][issue-299]")
+{
+    QueryFixture fixture;
+    REQUIRE (winmm::enumerateDevices (winmm::Direction::Input, fixture.api()).empty());
+    fixture.inputs = { { L"Keys-2", L"" }, { L"Keys", L"" }, { L"Keys", L"" } };
+    const auto devices = winmm::enumerateDevices (winmm::Direction::Input, fixture.api());
+    REQUIRE (devices.size() == 3);
+    REQUIRE (winmm::deviceIndexForIdentifier (devices, "Keys") == 1);
+    REQUIRE_FALSE (winmm::deviceIndexForIdentifier (devices, "Keys-2").has_value());
+    REQUIRE_FALSE (winmm::deviceIndexForIdentifier (devices, "keys").has_value());
+    REQUIRE_FALSE (winmm::deviceIndexForIdentifier (devices, "absent").has_value());
+    REQUIRE_FALSE (winmm::deviceIndexForIdentifier (devices, "").has_value());
+    REQUIRE_FALSE (fixture.invalidCall);
+}
+#endif
