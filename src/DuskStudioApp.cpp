@@ -2606,6 +2606,13 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
 
     mainWindow = std::make_unique<MainWindow> (getApplicationName());
 
+    // A desktop logout, a `systemctl --user stop`, or any supervisor asks for
+    // an exit with SIGTERM. Without a handler the process dies where it stands:
+    // no unsaved-changes prompt, plugin editors torn down after the instances
+    // they belong to, sandbox children left to the reaper.
+    quitSignalHandler = std::make_unique<dusk::QuitSignalHandler> (
+        [this] { systemRequestedQuit(); });
+
     // Open a session passed on the command line (file-manager "open with",
     // `DuskStudio path/to/session.json`, or a session directory). Deferred so
     // it runs after MainComponent's own startup (recovery prompt / scan) has
@@ -2640,6 +2647,8 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
 
 void DuskStudioApp::shutdown()
 {
+    quitSignalHandler.reset();
+
     // Stop the single-instance listener first: a handoff arriving mid-teardown
     // would target a window that is about to go away.
     single_instance::release();
@@ -2698,6 +2707,18 @@ void DuskStudioApp::shutdown()
 
 void DuskStudioApp::systemRequestedQuit()
 {
+    // Three callers: the desktop session's logout, a termination signal, and
+    // phase 7 of the staged shutdown itself. The first two have to run the
+    // same sequence the titlebar X does, unsaved-changes prompt included. The
+    // third is that sequence asking to finish, so it must not re-enter it.
+    if (mainWindow != nullptr)
+        if (auto* main = dynamic_cast<MainComponent*> (mainWindow->getContentComponent()))
+            if (! main->isShuttingDown())
+            {
+                main->requestQuit();
+                return;
+            }
+
     quit();
 }
 
