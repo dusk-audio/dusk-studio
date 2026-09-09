@@ -100,7 +100,7 @@ Every open issue, one bucket each.
 | 342 | Change compressors to use Multi-Comp-2 DSP | post-1.0 | Same. |
 | 442 | ASan+UBSan and Raspberry Pi jobs are not required checks | 1.0 | Two jobs can go red without blocking a merge. A 1.0 tag needs both gating. |
 | 500 | CloneTrackAction native-insert clone and undo has no coverage | 1.0 | A shipped clone and undo path with no automated test. |
-| 501 | Inline non-modal editor status in the aux slot area | 1.0 | A modal alert fires with no user action on every session load for DSP-only plugins. First-run polish. |
+| 501 | Inline non-modal editor status in the aux slot area | post-1.0 | The unprompted modal was already removed by #459; the remaining alerts are click-initiated. What is left is additive inline status, absorbed by the aux GUI port. |
 | 503 | Small residues from the milestone-6 audits | 1.0 | Four small correctness defects in shipped single-instance and hosting code. |
 | 504 | Windows IPC self-test harnesses resolve the child without .exe and hang | 1.0 | Blocks manual Windows validation. Not a CI gate. See the verdict below. |
 | 507 | SIGTERM bypasses the staged shutdown | 1.0-blocker | Logout or a supervisor stop skips the unsaved-changes prompt and leaves plugin children to the reaper. |
@@ -153,7 +153,6 @@ estimate as the real one.
 |---|---|---|---|
 | Walk the path on packaged builds, file the snags | 536 | 6-8 | No code. Produces the follow-up list. |
 | Follow-up fixes from that walk | from 536 | unknown | Sized once 536 is done |
-| Inline non-modal aux editor status | 501 | 4-6 | `src/ui/AuxLaneComponent.*`, `src/ui/AuxView.*`, native instance has-editor query |
 
 536 gates the size of stage 2. Do it early even though it produces no code, so
 the follow-ups are known before the schedule is committed.
@@ -188,7 +187,7 @@ that procurement at the same time as stage 1, because the lead time on a
 hardware-token code-signing certificate is measured in days, not hours.
 
 Total, excluding the unknown follow-ups from 536 and the upper tail on 508:
-roughly 115 to 165 hours.
+roughly 110 to 160 hours.
 
 ## Release checklist
 
