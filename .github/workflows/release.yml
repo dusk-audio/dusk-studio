@@ -981,7 +981,7 @@ jobs:
           retention-days: 1
 
   publish:
-    name: Assemble + publish six release assets
+    name: Assemble + publish the release assets
     needs: [linux, macos, windows, manual]
     runs-on: ubuntu-22.04
     steps:
@@ -1036,10 +1036,67 @@ jobs:
             fi
             sha256sum --check SHA256SUMS
             [[ $(find . -maxdepth 1 -type f | wc -l) -eq 6 ]] || {
-              echo "::error::release directory must contain exactly six assets" >&2
+              echo "::error::release directory must hold the six payloads before signing" >&2
               exit 1
             }
           )
+
+      - name: Sign SHA256SUMS
+        # A checksum published next to the artifact proves the download is
+        # intact, not that it came from us. The signature is what a user can
+        # check against a key they obtained separately.
+        #
+        # A tag must not publish unsigned: fail before anything reaches the
+        # releases repo. A manual dispatch has no secrets to spend and is not
+        # published either, so it says so and carries on.
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          RELEASE_SIGNING_KEY_PASSWORD: ${{ secrets.RELEASE_SIGNING_KEY_PASSWORD }}
+          IS_TAG: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${RELEASE_SIGNING_KEY:-}" || -z "${RELEASE_SIGNING_KEY_PASSWORD:-}" ]]; then
+            if [[ "$IS_TAG" == "true" ]]; then
+              echo "::error::RELEASE_SIGNING_KEY and RELEASE_SIGNING_KEY_PASSWORD are required to publish a tag" >&2
+              exit 1
+            fi
+            echo "::notice::signing secrets absent; skipping the signature (dispatch runs publish nothing)"
+            exit 0
+          fi
+
+          # Private to the job: a keyring under the workspace, removed with it,
+          # never the runner's default home.
+          export GNUPGHOME="${RUNNER_TEMP}/release-gnupg"
+          mkdir -p "$GNUPGHOME"
+          chmod 700 "$GNUPGHOME"
+          printf '%s' "$RELEASE_SIGNING_KEY" | base64 -d | \
+            gpg --batch --quiet --import
+          key="$(gpg --batch --with-colons --list-secret-keys \
+                   | awk -F: '$1 == "sec" { print $5; exit }')"
+          [[ -n "$key" ]] || { echo "::error::no secret key after import" >&2; exit 1; }
+
+          printf '%s' "$RELEASE_SIGNING_KEY_PASSWORD" > "$GNUPGHOME/pass"
+          gpg --batch --yes --pinentry-mode loopback \
+              --passphrase-file "$GNUPGHOME/pass" \
+              --local-user "$key" \
+              --armor --detach-sign --output dist/SHA256SUMS.asc dist/SHA256SUMS
+          shred -u "$GNUPGHOME/pass" 2>/dev/null || rm -f "$GNUPGHOME/pass"
+
+          # Verified here rather than trusted: a signature the committed public
+          # key cannot check is worse than none, because it looks like proof.
+          # Until the real key is committed the file is a placeholder, which
+          # warns rather than blocks; once it holds a key this is a hard check.
+          if grep -q 'BEGIN PGP PUBLIC KEY BLOCK' packaging/release-signing.pub; then
+            verify="${RUNNER_TEMP}/verify-gnupg"
+            mkdir -p "$verify"
+            chmod 700 "$verify"
+            GNUPGHOME="$verify" gpg --batch --quiet --import packaging/release-signing.pub
+            GNUPGHOME="$verify" gpg --batch --verify dist/SHA256SUMS.asc dist/SHA256SUMS
+            echo "signed SHA256SUMS with $key and verified against packaging/release-signing.pub"
+          else
+            echo "::warning::packaging/release-signing.pub holds no key yet, so the signature was not verified against it; see MAINTAINER-GUIDE Part 10"
+            echo "signed SHA256SUMS with $key"
+          fi
 
       - name: Publish complete asset set to the PRIVATE releases repo
         if: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}

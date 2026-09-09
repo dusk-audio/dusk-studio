@@ -578,6 +578,61 @@ current tag workflows publish, so nothing a tagged release produces uses it.
 Do not announce the release when the workflow merely turns green; complete the
 acceptance checks below first.
 
+### Release signing key
+
+`SHA256SUMS` is signed, and the signature ships as a seventh asset. A checksum
+published next to the artifact proves a download is intact; the signature is
+what a user can check against a key obtained separately.
+
+The key pair is generated once. Do this on a machine you trust, not a runner:
+
+```bash
+gpg --batch --quiet --gen-key <<'EOF'
+%echo generating the Dusk Studio release signing key
+Key-Type: eddsa
+Key-Curve: ed25519
+Key-Usage: sign
+Name-Real: Dusk Audio Release Signing
+Name-Email: releases@duskaudio.com
+Expire-Date: 0
+Passphrase: <a long random passphrase>
+%commit
+EOF
+
+KEY=$(gpg --batch --with-colons --list-secret-keys releases@duskaudio.com \
+        | awk -F: '$1 == "sec" { print $5; exit }')
+gpg --armor --export "$KEY" > packaging/release-signing.pub
+gpg --armor --export-secret-keys "$KEY" | base64 -w0 > release-secret.b64
+```
+
+Commit `packaging/release-signing.pub`, replacing the placeholder text. Until
+that file holds a key the workflow signs but warns that it could not verify the
+signature against a committed key; once it does, a signature the key cannot
+verify fails the release.
+
+Upload the two secrets to the repository, then destroy the exported copy:
+
+```bash
+gh secret set RELEASE_SIGNING_KEY --repo dusk-audio/dusk-studio < release-secret.b64
+gh secret set RELEASE_SIGNING_KEY_PASSWORD --repo dusk-audio/dusk-studio
+shred -u release-secret.b64
+```
+
+Keep an offline backup of the secret key. Losing it means a new key, and every
+user who pinned the old one has to be told.
+
+A `v*` tag fails before publishing anything when either secret is missing, so a
+release cannot go out unsigned. A `workflow_dispatch` run skips signing with a
+notice, since it publishes nothing.
+
+To verify a published release by hand:
+
+```bash
+gpg --import packaging/release-signing.pub
+gpg --verify SHA256SUMS.asc SHA256SUMS
+sha256sum --check SHA256SUMS
+```
+
 ### Smoke-testing a published artifact
 
 The workflow proves the artifact builds. It does not prove it runs anywhere
@@ -625,7 +680,7 @@ there is no file to verify.
 
 ### Tag assets and acceptance
 
-A complete `vX.Y.Z` release has exactly these six assets:
+A complete `vX.Y.Z` release has exactly these seven assets:
 
 - `dusk-studio-X.Y.Z-Linux-x86_64.tar.xz`
 - `dusk-studio-X.Y.Z-Linux-aarch64.tar.xz`
@@ -633,6 +688,7 @@ A complete `vX.Y.Z` release has exactly these six assets:
 - `dusk-studio-X.Y.Z-Windows-x64.msi`
 - `MANUAL.pdf`
 - `SHA256SUMS`
+- `SHA256SUMS.asc`
 
 The publisher downloads all five payloads into one job and refuses to publish
 unless their exact filenames are present. It writes a sorted, lowercase

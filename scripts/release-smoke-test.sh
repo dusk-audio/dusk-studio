@@ -107,6 +107,40 @@ else
     fail "package contents: nothing was unpacked"
 fi
 
+# --- Checksum signature -----------------------------------------------------
+# Only when the artifact was downloaded beside its checksum file: the smoke test
+# takes one artifact, so this is skipped rather than failed when the release's
+# SHA256SUMS and signature are not next to it.
+ART_DIR="$(cd "$(dirname "$ARTIFACT")" && pwd)"
+PUBKEY="${REPO_ROOT}/packaging/release-signing.pub"
+if [[ -f "$ART_DIR/SHA256SUMS" && -f "$ART_DIR/SHA256SUMS.asc" ]]; then
+    if ! grep -q 'BEGIN PGP PUBLIC KEY BLOCK' "$PUBKEY" 2>/dev/null; then
+        echo "SKIP  checksum signature: no release key in packaging/release-signing.pub yet"
+    elif ! command -v gpg >/dev/null 2>&1; then
+        echo "SKIP  checksum signature: gpg is not installed"
+    else
+        keyring="$WORK/gnupg"
+        mkdir -p "$keyring"
+        chmod 700 "$keyring"
+        if GNUPGHOME="$keyring" gpg --batch --quiet --import "$PUBKEY" 2>/dev/null \
+           && GNUPGHOME="$keyring" gpg --batch --verify \
+                "$ART_DIR/SHA256SUMS.asc" "$ART_DIR/SHA256SUMS" >/dev/null 2>&1; then
+            pass "checksum signature"
+        else
+            fail "checksum signature does not verify against packaging/release-signing.pub"
+        fi
+        # The signature covers the checksum file; this is what ties the artifact
+        # in hand to it.
+        if ( cd "$ART_DIR" && sha256sum --ignore-missing --check SHA256SUMS >/dev/null 2>&1 ); then
+            pass "checksum matches the artifact"
+        else
+            fail "the artifact's checksum is not the one SHA256SUMS records"
+        fi
+    fi
+else
+    echo "SKIP  checksum signature: SHA256SUMS and SHA256SUMS.asc are not beside the artifact"
+fi
+
 # --- Launch under a private display where one is needed ---------------------
 run_app() {
     if [[ "$PLATFORM" == "linux" ]]; then
