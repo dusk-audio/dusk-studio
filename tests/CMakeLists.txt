@@ -738,6 +738,10 @@ if(UNIX)
     find_program(DUSKSTUDIO_BASH_EXECUTABLE bash)
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(DUSKSTUDIO_BASH_EXECUTABLE AND Python3_Interpreter_FOUND)
+        add_test(NAME package-contents-checker
+            COMMAND "${DUSKSTUDIO_BASH_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/package_contents.sh"
+                    "${CMAKE_SOURCE_DIR}")
         add_test(NAME release-mechanics-contract
             COMMAND "${DUSKSTUDIO_BASH_EXECUTABLE}"
                     "${CMAKE_CURRENT_SOURCE_DIR}/release_mechanics.sh"
