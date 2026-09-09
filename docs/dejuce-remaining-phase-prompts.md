@@ -1,3 +1,5 @@
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+
 # De-JUCE campaign — handoff prompts for remaining phases
 
 One prompt per remaining phase, each written for a fresh context window

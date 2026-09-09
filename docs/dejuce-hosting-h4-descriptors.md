@@ -1,3 +1,5 @@
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+
 # Hosting tower H4 — descriptor/plumbing de-JUCE (executable spec)
 
 Status: **IMPLEMENTED AND VALIDATED 2026-07-29 on

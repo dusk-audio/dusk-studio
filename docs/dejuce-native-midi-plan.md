@@ -1,3 +1,5 @@
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+
 # Native ALSA-seq MIDI backend — executable spec (M1 → M3)
 
 **Linux tower status: COMPLETE.** M1 (PR #93) primitives + backend interface, M2

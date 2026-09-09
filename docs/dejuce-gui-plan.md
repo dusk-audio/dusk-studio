@@ -1,3 +1,5 @@
+> **PARKED until 1.0.** See [docs/decisions/0001-ship-1.0-on-juce.md](decisions/0001-ship-1.0-on-juce.md).
+
 # De-JUCE — GUI tower (campaign plan)
 
 The last tower. It removes `src/ui/` as a JUCE surface and, with it, every
