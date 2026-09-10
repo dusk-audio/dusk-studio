@@ -345,7 +345,11 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
                 [&] { builtinSlot.unload(); });
             builtinRestoreFailed.store (! reason.empty(), std::memory_order_relaxed);
             if (! reason.empty())
-                nativeRestoreFailures.push_back ({ "built-in", unitId, reason });
+            {
+                const auto* info = builtin::findUnit (unitId);
+                nativeRestoreFailures.push_back (
+                    { "built-in", info != nullptr ? info->name : unitId, reason });
+            }
         }
         pendingBuiltinId.clear();
         pendingBuiltinState.clear();

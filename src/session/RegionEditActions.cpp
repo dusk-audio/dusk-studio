@@ -1025,7 +1025,11 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
                 loaded = strip.getBuiltinSlot().loadState (s.builtinState);
             engine.resumeProcessing();
             if (! loaded)
+            {
                 strip.markBuiltinRestoreFailed();
+                DBG ("CloneTrackAction: built-in restore failed on strip " << idx
+                      << " (" << s.builtinUnitId.c_str() << "): " << builtinErr.c_str());
+            }
             t.builtinUnitId = s.builtinUnitId;
             t.builtinStateBase64 = s.builtinState.empty()
                 ? std::string()

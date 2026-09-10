@@ -241,7 +241,11 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
                 builtinRestoreFailed[(size_t) s].store (! reason.empty(),
                                                         std::memory_order_relaxed);
                 if (! reason.empty())
-                    nativeRestoreFailures.push_back ({ "built-in", unitId, reason, s });
+                {
+                    const auto* info = builtin::findUnit (unitId);
+                    nativeRestoreFailures.push_back (
+                        { "built-in", info != nullptr ? info->name : unitId, reason, s });
+                }
             }
             pendingBuiltinId[(size_t) s].clear();
             pendingBuiltinState[(size_t) s].clear();
