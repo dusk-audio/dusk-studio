@@ -1469,6 +1469,8 @@ ChannelStripComponent::~ChannelStripComponent()
     // deferred message-loop tick is involved, so a quit with it open is safe here.
     compEditorWindow.reset();
     compEditorDim.reset();
+    builtinEditorWindow.reset();
+    builtinEditorDim.reset();
    #endif
     ioConfigModal.closeAndDeleteBodyNow();
     // FreezeDialog's destructor cancels a BounceEngine render against the

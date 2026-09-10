@@ -459,6 +459,11 @@ AuxLaneComponent::~AuxLaneComponent()
     // eventually, but base-class destruction runs AFTER member
     // destruction - leaving a window for a UAF.
     stopTimer();
+    // Drop the built-in editor's native child while the dim it sits over and the
+    // hider holding the lane's other editors are still alive, the way the channel
+    // strip tears its own panels down.
+    builtinEditorWindow.reset();
+    builtinEditorDim.reset();
     for (auto& s : slots)
     {
         s.editor.reset();
