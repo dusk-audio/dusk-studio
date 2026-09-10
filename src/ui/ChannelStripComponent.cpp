@@ -155,30 +155,29 @@ void enableValueLabel (juce::Slider& k, const juce::String& suffix, int decimals
 // Format a frequency in Hz, switching to "1.2k" notation above 1 kHz and
 // dropping a trailing ".0" so integer kHz values stay short ("2k", "8k")
 // instead of "2.0k" / "8.0k". Tight-strip-friendly.
-inline juce::String formatFrequency (double hz)
+inline std::string formatFrequency (double hz)
 {
     if (hz >= 1000.0)
     {
         const double khz = hz / 1000.0;
         if (std::abs (khz - std::round (khz)) < 0.05)
-            return juce::String ((int) std::round (khz)) + "k";
-        return juce::String (khz, 1) + "k";
+            return dusk::text::format ("%dk", (int) std::round (khz));
+        return dusk::text::format ("%.1fk", khz);
     }
-    return juce::String ((int) std::round (hz));
+    return dusk::text::format ("%d", (int) std::round (hz));
 }
 
 // Format an EQ band gain in dB, dropping ".0" on integer values so "0" / "-2"
 // / "+12" fit in narrow textboxes instead of "0.0" / "-2.0" / "+12.0".
-inline juce::String formatBandGain (double db)
+inline std::string formatBandGain (double db)
 {
     const double rounded = std::round (db);
     if (std::abs (db - rounded) < 0.05)
     {
         const int idb = (int) rounded;
-        if (idb > 0) return "+" + juce::String (idb);
-        return juce::String (idb);
+        return dusk::text::format (idb > 0 ? "+%d" : "%d", idb);
     }
-    return juce::String (db, 1);
+    return dusk::text::format ("%.1f", db);
 }
 } // namespace
 
@@ -2404,23 +2403,21 @@ void ChannelStripComponent::refreshPluginSlotButton()
         // when both are - and the label falls back to "HW (unrouted)" when
         // neither side has audio routing.
         const auto routing = track.hardwareInsert.routing.current();
-        auto formatPair = [] (int l, int r) -> juce::String
+        auto formatPair = [] (int l, int r) -> std::string
         {
             if (l < 0 && r < 0) return {};
-            if (r < 0)          return juce::String (l + 1);                       // mono
-            if (l < 0)          return juce::String (r + 1);                       // mono on R only
-            if (l == r)         return juce::String (l + 1);                       // same channel both
-            return juce::String (l + 1) + "-" + juce::String (r + 1);              // stereo pair
+            if (r < 0)          return dusk::text::format ("%d", l + 1);   // mono
+            if (l < 0)          return dusk::text::format ("%d", r + 1);   // mono on R only
+            if (l == r)         return dusk::text::format ("%d", l + 1);   // same channel both
+            return dusk::text::format ("%d-%d", l + 1, r + 1);             // stereo pair
         };
         const auto out = formatPair (routing.outputChL, routing.outputChR);
         const auto in  = formatPair (routing.inputChL,  routing.inputChR);
-        if (out.isEmpty() && in.isEmpty())
+        if (out.empty() && in.empty())
             label = "HW (unrouted)";
         else
-            label = juce::String ("HW: out ")
-                  + (out.isNotEmpty() ? out : juce::String ("-"))
-                  + " / in "
-                  + (in .isNotEmpty() ? in  : juce::String ("-"));
+            label = "HW: out " + (out.empty() ? std::string ("-") : out)
+                  + " / in "   + (in.empty()  ? std::string ("-") : in);
     }
     else
     {

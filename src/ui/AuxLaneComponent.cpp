@@ -18,6 +18,7 @@
 #include "HardwareInsertEditor.h"
 #include "PlatformWindowing.h"
 #include "PluginPickerHelpers.h"
+#include "../foundation/Text.h"
 #include "../dsp/AuxLaneStrip.h"
 #include "../dsp/OutputPairRouting.h"
 #include "../engine/AudioEngine.h"
@@ -701,25 +702,23 @@ void AuxLaneComponent::refreshSlotControls (int i)
         // (out / in) is formatted independently so a mono routing
         // doesn't print a misleading "L-0".
         const auto routing = lane.hardwareInserts[(size_t) i].routing.current();
-        auto formatPair = [] (int l, int r) -> juce::String
+        auto formatPair = [] (int l, int r) -> std::string
         {
             if (l < 0 && r < 0) return {};
-            if (r < 0)          return juce::String (l + 1);
-            if (l < 0)          return juce::String (r + 1);
-            if (l == r)         return juce::String (l + 1);
-            return juce::String (l + 1) + "-" + juce::String (r + 1);
+            if (r < 0)          return dusk::text::format ("%d", l + 1);
+            if (l < 0)          return dusk::text::format ("%d", r + 1);
+            if (l == r)         return dusk::text::format ("%d", l + 1);
+            return dusk::text::format ("%d-%d", l + 1, r + 1);
         };
         const auto out = formatPair (routing.outputChL, routing.outputChR);
         const auto in  = formatPair (routing.inputChL,  routing.inputChR);
-        juce::String label;
-        if (out.isEmpty() && in.isEmpty())
+        std::string label;
+        if (out.empty() && in.empty())
             label = "HW (unrouted)";
         else
-            label = juce::String ("HW: out ")
-                  + (out.isNotEmpty() ? out : juce::String ("-"))
-                  + " / in "
-                  + (in .isNotEmpty() ? in  : juce::String ("-"));
-        if (label != ui.displayedName)
+            label = "HW: out " + (out.empty() ? std::string ("-") : out)
+                  + " / in "   + (in.empty()  ? std::string ("-") : in);
+        if (label != ui.displayedName.toStdString())
         {
             ui.displayedName = label;
             ui.openOrAddButton.setButtonText (label);
