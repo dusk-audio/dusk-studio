@@ -9,6 +9,7 @@
 #include "../session/Session.h"
 #include "../engine/PluginSlot.h"
 #include "../engine/hosting/NativeRestorePolicy.h"
+#include "../engine/builtin/NativeBuiltinSlot.h"
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
   #include "../engine/clap/NativeClapSlot.h"   // Linux-only native CLAP host
 #endif
@@ -161,10 +162,28 @@ public:
     bool nativeVst3ReloadFailed (int) const noexcept { return false; }
 #endif
 
+    // Built-in unit rung - same contract as the CLAP block above, with a
+    // registry id in place of a bundle path. Never compile-gated.
+    bool loadBuiltin (int slotIdx, const std::string& unitId, std::string& errorOut);
+    void unloadBuiltin (int slotIdx) noexcept;
+    bool isBuiltinLoaded (int slotIdx) const noexcept
+        { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); return builtinSlots[(size_t) slotIdx].isLoaded(); }
+    builtin::NativeBuiltinSlot& getBuiltinSlot (int idx) noexcept
+        { jassert (idx >= 0 && idx < kMaxPlugins); return builtinSlots[(size_t) idx]; }
+    const builtin::NativeBuiltinSlot& getBuiltinSlot (int idx) const noexcept
+        { jassert (idx >= 0 && idx < kMaxPlugins); return builtinSlots[(size_t) idx]; }
+    void setPendingBuiltin (int slotIdx, std::string unitId,
+                            std::vector<uint8_t> state) noexcept;
+    bool builtinReloadFailed (int slotIdx) const noexcept
+        { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); return builtinRestoreFailed[(size_t) slotIdx].load (std::memory_order_relaxed); }
+    void markBuiltinRestoreFailed (int slotIdx) noexcept
+        { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); builtinRestoreFailed[(size_t) slotIdx].store (true, std::memory_order_relaxed); }
+
     bool nativeInsertRestoreFailed (int slotIdx) const noexcept
     {
         return nativeClapReloadFailed (slotIdx) || nativeLv2ReloadFailed (slotIdx)
-            || nativeVst3ReloadFailed (slotIdx) || nativeAuReloadFailed (slotIdx);
+            || nativeVst3ReloadFailed (slotIdx) || nativeAuReloadFailed (slotIdx)
+            || builtinReloadFailed (slotIdx);
     }
 
     // MIDI Learn: last-touched parameter of whichever host owns the slot
@@ -210,6 +229,10 @@ private:
 
     std::array<PluginSlot, kMaxPlugins> slots;
     std::array<HardwareInsertSlot, kMaxPlugins> hardwareSlots;
+    std::array<builtin::NativeBuiltinSlot, kMaxPlugins> builtinSlots;
+    std::array<std::atomic<bool>,          kMaxPlugins> builtinRestoreFailed {};
+    std::array<std::string,                kMaxPlugins> pendingBuiltinId;
+    std::array<std::vector<uint8_t>,       kMaxPlugins> pendingBuiltinState;
     std::vector<hosting::NativeRestoreFailure> nativeRestoreFailures;
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     std::array<clap::NativeClapSlot, kMaxPlugins> nativeClapSlots;

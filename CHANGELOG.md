@@ -32,6 +32,16 @@ that will carry a signed 1.0.
 - **Releases carry a signed checksum file.** `SHA256SUMS` now ships with a
   detached OpenPGP signature beside it, and the manual documents the verify
   command. A tag cannot publish without it.
+- **Built-in insert units.** Dusk Studio now ships its own insert units, listed
+  in a **Built-In** section pinned to the top of the plugin picker. They are
+  compiled into the application, so they need no scan and are available on a
+  fresh install with no third-party plugins on the machine. A built-in unit
+  loads onto a channel insert or an aux lane slot exactly like a scanned
+  plugin, replaces whatever the slot held, reports its latency to delay
+  compensation, and saves and restores its settings with the session and
+  through Clone Track and its undo. The first unit is **Utility**: gain,
+  polarity invert, stereo width and mono sum, all smoothed over 20 ms and
+  transparent at their defaults. Per-unit editor panels follow.
 
 ### Changed
 

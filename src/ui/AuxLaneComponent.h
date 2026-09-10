@@ -5,6 +5,7 @@
 #include "../foundation/MessageThread.h"
 #include <array>
 #include <memory>
+#include <string>
 #include "../session/Session.h"
 #include "DuskComboBox.h"
 #include "NativeEditorOwner.h"
@@ -84,6 +85,9 @@ private:
 #if DUSKSTUDIO_HAS_NATIVE_AU
     void loadNativeAuForSlot (int slotIdx, const juce::String& componentId);
 #endif
+    // Built-in unit rung. No editor yet, so the slot header and the picker are
+    // the whole UI surface.
+    void loadBuiltinForSlot (int slotIdx, const std::string& unitId);
     // Stubbed (no-op body) off Linux so the many callers don't each need a guard.
     void detachClapEditorForSlot (int slotIdx);
     void detachLv2EditorForSlot (int slotIdx);

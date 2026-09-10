@@ -376,6 +376,9 @@ private:
     std::unique_ptr<class AuPluginEditorComponent> auEditor;
     void loadNativeAuForChannel (const juce::String& componentId);
 #endif
+    // Built-in unit rung. No editor yet, so the slot label and the picker are
+    // the whole UI surface.
+    void loadBuiltinForChannel (const std::string& unitId);
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     // Multisample instrument editor - in-process Dusk UI over the strip's
     // NativeMultisampleSlot instance, same kept-alive/showBorrowed lifecycle.

@@ -681,6 +681,9 @@ target_sources(DuskStudio PRIVATE
     src/engine/McuReceiver.cpp
     src/engine/McuController.cpp
     src/engine/MidiTimeCodeEmitter.cpp
+    src/engine/builtin/BuiltinInstance.cpp
+    src/engine/builtin/BuiltinRegistry.cpp
+    src/engine/builtin/UtilityUnit.cpp
     # DeviceManager: native orchestrator on Linux (DeviceManager.cpp), JUCE-wrapped
     # fallback off Linux (DeviceManagerJuce.cpp). Gated below the target_sources().
     src/engine/midi/MidiDevices.cpp
@@ -986,15 +989,10 @@ if(UNIX AND NOT APPLE AND PIPEWIRE_FOUND)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_PIPEWIRE=1)
 endif()
 
-# Shared native-host layer (format-agnostic) — compiled whenever any native host
-# or the multisample instrument rung is on, so it isn't double-added by the
-# per-format blocks below. The sfizz test mirrors the multisample gate further
-# down: that rung is platform-independent, so mac/win link it too.
-if(DUSKSTUDIO_NATIVE_CLAP OR DUSKSTUDIO_NATIVE_LV2 OR DUSKSTUDIO_NATIVE_VST3
-   OR DUSKSTUDIO_NATIVE_AU
-   OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
-    target_sources(DuskStudio PRIVATE src/engine/hosting/InsertAdapter.cpp)
-endif()
+# Shared native-host layer (format-agnostic). Unconditional: the built-in unit
+# rung is always compiled in, so every platform reaches the insert adapter
+# whether or not a third-party host format is enabled.
+target_sources(DuskStudio PRIVATE src/engine/hosting/InsertAdapter.cpp)
 
 # Native macOS Audio Unit host. Registry discovery is metadata-only (no child
 # scanner needed); instantiation, rendering, state, and Cocoa views use the

@@ -1336,10 +1336,11 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     pluginSlotButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xff9080c0));
     pluginSlotButton.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xffd0c0e0));
     pluginSlotButton.setTooltip (juce::CharPointer_UTF8 (
-        "Empty: click to pick a plugin (VST3 / CLAP / LV2 / AU) or an External "
-        "Hardware Insert. Loaded plugin: click to toggle the editor; "
-        "right-click for Replace / Remove. Hardware insert: click to "
-        "open the routing editor."));
+        "Empty: click to pick a built-in unit or a plugin (VST3 / CLAP / LV2 / AU), "
+        "or an External Hardware Insert. Loaded plugin: click to toggle the "
+        "editor; right-click for Replace / Remove. Loaded built-in unit: no "
+        "editor yet; right-click for Replace / Remove. Hardware insert: click "
+        "to open the routing editor."));
     pluginSlotButton.onClick = [this]
     {
         if (pluginSlot.isLoaded()
@@ -1352,6 +1353,10 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
             togglePluginEditor();
             return;
         }
+        // A built-in unit has no editor yet, so a click on its occupied slot
+        // does nothing rather than reopening the picker over a loaded insert.
+        if (engine.getChannelStrip (trackIndex).isBuiltinLoaded())
+            return;
         // Empty slot may already be in Hardware mode (user picked HW
         // earlier, then clicked the slot again to revisit routing).
         // Route straight to the HW editor instead of showing the
@@ -1734,7 +1739,8 @@ void ChannelStripComponent::openPluginPicker()
                                             || chStrip.isNativeLv2Loaded()
                                             || chStrip.isNativeVst3Loaded()
                                             || chStrip.isNativeAuLoaded()
-                                            || chStrip.isNativeMultisampleLoaded();
+                                            || chStrip.isNativeMultisampleLoaded()
+                                            || chStrip.isBuiltinLoaded();
                                         if (self->pluginSlot.isLoaded()
                                             && (hadLiveNative
                                                 || chStrip.nativeInsertRestoreFailed()))
@@ -1762,6 +1768,7 @@ void ChannelStripComponent::openPluginPicker()
                                             chStrip.unloadNativeVst3();
                                             chStrip.unloadNativeAu();
                                             chStrip.unloadNativeMultisample();
+                                            chStrip.unloadBuiltin();
                                             if (hadLiveNative) self->engine.resumeProcessing();
                                             self->track.nativeClapPath = {};
                                             self->track.nativeClapPluginId = {};
@@ -1776,6 +1783,8 @@ void ChannelStripComponent::openPluginPicker()
                                             self->track.nativeAuStateBase64 = {};
                                             self->track.nativeMultisamplePath = {};
                                             self->track.nativeMultisampleStateBase64 = {};
+                                            self->track.builtinUnitId.clear();
+                                            self->track.builtinStateBase64.clear();
                                         }
 
                                         // Loading an instrument (soundfont or VST/LV2 synth) on a
@@ -1879,6 +1888,12 @@ void ChannelStripComponent::openPluginPicker()
     };
 #endif
 
+    auto onBuiltin = [safe] (const std::string& unitId)
+    {
+        if (auto* self = safe.getComponent())
+            self->loadBuiltinForChannel (unitId);
+    };
+
     pluginpicker::openInsertChooser (pluginSlot,
                                       pluginSlotButton,
                                       std::move (onChange),
@@ -1888,7 +1903,8 @@ void ChannelStripComponent::openPluginPicker()
                                       std::move (onLv2),
                                       std::move (onVst3),
                                       std::move (onSoundfont),
-                                      std::move (onAu));
+                                      std::move (onAu),
+                                      std::move (onBuiltin));
 }
 
 void ChannelStripComponent::openHardwareInsertEditor()
@@ -2040,6 +2056,22 @@ void ChannelStripComponent::unloadPluginSlot()
     }
 #endif
 
+    {
+        auto& builtinStrip = engine.getChannelStrip (trackIndex);
+        if (builtinStrip.isBuiltinLoaded())
+        {
+            engine.suspendProcessing();
+            builtinStrip.unloadBuiltin();
+            builtinStrip.insertMode.store (ChannelStrip::kInsertPlugin,
+                                           std::memory_order_release);
+            engine.resumeProcessing();
+            track.builtinUnitId.clear();
+            track.builtinStateBase64.clear();
+            refreshPluginSlotButton();
+            return;
+        }
+    }
+
     // A failed load can leave only the preserved session reference, with no
     // native instance for the format-specific branches above to match.
     auto& failedStrip = engine.getChannelStrip (trackIndex);
@@ -2050,6 +2082,7 @@ void ChannelStripComponent::unloadPluginSlot()
         failedStrip.unloadNativeVst3();
         failedStrip.unloadNativeAu();
         failedStrip.unloadNativeMultisample();
+        failedStrip.unloadBuiltin();
         track.nativeClapPath = {};
         track.nativeClapPluginId = {};
         track.nativeClapStateBase64 = {};
@@ -2063,6 +2096,8 @@ void ChannelStripComponent::unloadPluginSlot()
         track.nativeAuStateBase64 = {};
         track.nativeMultisamplePath = {};
         track.nativeMultisampleStateBase64 = {};
+        track.builtinUnitId.clear();
+        track.builtinStateBase64.clear();
         refreshPluginSlotButton();
         return;
     }
@@ -2078,14 +2113,19 @@ void ChannelStripComponent::showPluginSlotMenu()
                            || engine.getChannelStrip (trackIndex).isNativeLv2Loaded()
                            || engine.getChannelStrip (trackIndex).isNativeVst3Loaded()
                            || engine.getChannelStrip (trackIndex).isNativeAuLoaded()
-                           || engine.getChannelStrip (trackIndex).isNativeMultisampleLoaded();
+                           || engine.getChannelStrip (trackIndex).isNativeMultisampleLoaded()
+                           || engine.getChannelStrip (trackIndex).isBuiltinLoaded();
     if (pluginSlot.isLoaded() || nativeLoaded)
     {
         // Editor toggle headline so right-click ALSO becomes a way to open
         // the plugin GUI (some users find right-click more discoverable).
-        const bool editorOpen = isPluginEditorOpen();
-        menu.addItem (2001, editorOpen ? "Close editor" : "Open editor");
-        menu.addSeparator();
+        // A built-in unit has no editor, so the item would be inert.
+        if (! engine.getChannelStrip (trackIndex).isBuiltinLoaded())
+        {
+            const bool editorOpen = isPluginEditorOpen();
+            menu.addItem (2001, editorOpen ? "Close editor" : "Open editor");
+            menu.addSeparator();
+        }
         menu.addItem (2002, "Replace insert...");
         menu.addItem (2003, "Remove plugin");
         // Crash/auto-bypass recovery is a JUCE-slot concept (native hosts run
@@ -2177,7 +2217,8 @@ bool ChannelStripComponent::insertSlotOccupied() const
     auto& st = engine.getChannelStrip (trackIndex);
     if (st.isNativeClapLoaded() || st.isNativeLv2Loaded() || st.isNativeVst3Loaded()
         || st.isNativeAuLoaded()
-        || st.isNativeMultisampleLoaded())
+        || st.isNativeMultisampleLoaded()
+        || st.isBuiltinLoaded())
         return true;
     if (pluginSlot.isLoaded())
         return true;
@@ -2294,6 +2335,18 @@ void ChannelStripComponent::refreshPluginSlotButton()
     }
 #endif
 
+    if (engine.getChannelStrip (trackIndex).isBuiltinLoaded())
+    {
+        const auto nm = engine.getChannelStrip (trackIndex).getBuiltinSlot().displayName();
+        const bool offline = engine.getChannelStrip (trackIndex).builtinReloadFailed();
+        const auto label = nativeLabel (nm, offline);
+        setNativeTooltip (offline);
+        if (label == lastSlotName) return;
+        lastSlotName = label;
+        pluginSlotButton.setButtonText (label);
+        return;
+    }
+
     // A failed session restore may have unloaded the instance completely. The
     // saved path/state still belong to this slot, so keep an explicit offline
     // placeholder instead of making it look empty and healthy.
@@ -2320,6 +2373,8 @@ void ChannelStripComponent::refreshPluginSlotButton()
         if (engine.getChannelStrip (trackIndex).nativeMultisampleReloadFailed())
             name = juce::File (track.nativeMultisamplePath).getFileNameWithoutExtension();
 #endif
+        if (engine.getChannelStrip (trackIndex).builtinReloadFailed())
+            name = track.builtinUnitId;
         if (name.isEmpty()) name = "native plug-in";
 
         // A clone / undo replay can empty the JUCE slot while marking the native
@@ -3342,6 +3397,80 @@ void ChannelStripComponent::loadNativeAuForChannel (const juce::String& componen
     openPluginEditor();
 }
 #endif // DUSKSTUDIO_HAS_NATIVE_AU
+
+void ChannelStripComponent::loadBuiltinForChannel (const std::string& unitId)
+{
+    auto& strip = engine.getChannelStrip (trackIndex);
+
+    closePluginEditor();
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    clapEditor.reset();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    lv2Editor.reset();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    vst3Editor.reset();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_AU
+    auEditor.reset();
+#endif
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+    multisampleEditor.reset();
+    multisampleEditorOwner = nullptr;
+    drainMultisampleLoads();
+#endif
+    pluginEditor.reset();
+    pluginEditorOwner = nullptr;
+   #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
+    resetRemoteEditorEmbed();
+   #endif
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
+    remoteForeignEmbed.reset();
+   #endif
+
+    std::string err;
+    engine.suspendProcessing();
+    const bool ok = strip.loadBuiltin (unitId, err);
+    if (ok)
+        strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
+    engine.resumeProcessing();
+
+    // loadBuiltin evicts every other host before it can fail, so a failure
+    // leaves the whole insert empty - drop every persisted reference, not just
+    // the built-in pair (matches loadNativeAuForChannel).
+    track.pluginDescriptor.reset();
+    track.pluginLegacyDescriptionXml.clear();
+    track.pluginStateBase64.clear();
+    track.nativeClapPath = {};
+    track.nativeClapPluginId = {};
+    track.nativeClapStateBase64 = {};
+    track.nativeLv2Path = {};
+    track.nativeLv2PluginId = {};
+    track.nativeLv2StateBase64 = {};
+    track.nativeVst3Path = {};
+    track.nativeVst3PluginId = {};
+    track.nativeVst3StateBase64 = {};
+    track.nativeAuIdentifier = {};
+    track.nativeAuStateBase64 = {};
+    track.nativeMultisamplePath = {};
+    track.nativeMultisampleStateBase64 = {};
+    track.builtinUnitId.clear();
+    track.builtinStateBase64.clear();
+
+    if (! ok)
+    {
+        std::fprintf (stderr, "[chan builtin] load failed: %s\n", err.c_str());
+        showDuskAlert (*this, "Couldn't load built-in unit", unitId + ":\n" + err);
+        refreshPluginSlotButton();
+        return;
+    }
+
+    if (strip.getBuiltinSlot().isLoadedInstrument())
+        adoptInstrumentTrackDefaults();
+    track.builtinUnitId = strip.getBuiltinSlot().getPluginId();
+    refreshPluginSlotButton();
+}
 
 void ChannelStripComponent::syncNativeEditorOwners()
 {
@@ -5193,7 +5322,8 @@ void ChannelStripComponent::onTrackModeChanged()
               || engine.getChannelStrip (trackIndex).isNativeLv2Loaded()
               || engine.getChannelStrip (trackIndex).isNativeVst3Loaded()
               || engine.getChannelStrip (trackIndex).isNativeAuLoaded()
-              || engine.getChannelStrip (trackIndex).isNativeMultisampleLoaded())
+              || engine.getChannelStrip (trackIndex).isNativeMultisampleLoaded()
+              || engine.getChannelStrip (trackIndex).isBuiltinLoaded())
     {
         // Same mode/kind matching as the JUCE slot above: a native EFFECT can't
         // ride a MIDI strip, a native INSTRUMENT can't ride an audio strip.

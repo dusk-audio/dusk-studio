@@ -220,8 +220,6 @@ static std::filesystem::path lv2StateDirFor (Session& session, const juce::Strin
 }
 #endif
 
-#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3 \
-    || DUSKSTUDIO_HAS_NATIVE_AU || DUSKSTUDIO_HAS_MULTISAMPLE
 static DecodedStateBlob decodeBase64Blob (const juce::String& s, const char* slotKind)
 {
     auto decoded = decodeStoredStateBase64 (s.toStdString());
@@ -254,6 +252,34 @@ static void captureNativeState (SlotType& slot, juce::String& stateOut,
                   stateOut.isEmpty() ? "no matching stored copy retained"
                                      : "keeping the matching stored copy");
     std::fflush (stderr);
+}
+
+// Built-in twin of the two helpers above. The session carries a built-in unit's
+// identity and state as std::string, so neither the JUCE-string template nor the
+// JUCE base64 encoder applies.
+static void captureBuiltinState (builtin::NativeBuiltinSlot& slot, std::string& stateOut,
+                                 const char* slotKind, int index)
+{
+    std::vector<uint8_t> blob;
+    if (slot.saveState (blob) && ! blob.empty())
+    {
+        stateOut = dusk::base64::encode (blob.data(), blob.size());
+        return;
+    }
+    std::fprintf (stderr, "[Dusk Studio/session] %s %d saved no state; %s\n",
+                  slotKind, index + 1,
+                  stateOut.empty() ? "no matching stored copy retained"
+                                   : "keeping the matching stored copy");
+    std::fflush (stderr);
+}
+
+static void bindBuiltinStateToLoadedIdentity (std::string& carriedId,
+                                              std::string& carriedState,
+                                              const std::string& liveId)
+{
+    hosting::retainStateForLiveIdentity ({ "builtin", carriedId, {} },
+                                         { "builtin", liveId, {} }, carriedState);
+    carriedId = liveId;
 }
 
 // Publish a live native identity and first invalidate any carried fallback that
@@ -298,7 +324,6 @@ static void noteStateRejected (const char* slotKind, int index, std::size_t byte
     std::fputc ('\n', stderr);
     std::fflush (stderr);
 }
-#endif
 
 #if DUSKSTUDIO_HAS_NATIVE_AU
 // JUCE's AU descriptor already carries the platform-stable component triple.
@@ -1048,6 +1073,8 @@ void AudioEngine::recomputePdc() noexcept
                 if (strip.isNativeAuLoaded())
                     lat = strip.getNativeAuSlot().getLatencySamples();
 #endif
+                if (strip.isBuiltinLoaded())
+                    lat = strip.getBuiltinSlot().getLatencySamples();
             }
         }
         latency[t] = std::clamp (lat, 0, ChannelStrip::kMaxPdcSamples);
@@ -1092,6 +1119,8 @@ void AudioEngine::recomputePdc() noexcept
                 if (lane.isNativeAuLoaded (p))
                     slotLat = lane.getNativeAuSlot (p).getLatencySamples();
 #endif
+                if (lane.isBuiltinLoaded (p))
+                    slotLat = lane.getBuiltinSlot (p).getLatencySamples();
                 laneLat += std::max (0, slotLat);
             }
             else if (mode == AuxLaneStrip::kInsertHardware)
@@ -1954,6 +1983,20 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
             track.nativeMultisampleStateBase64.clear();
         }
 #endif
+        if (strip.isBuiltinLoaded())
+        {
+            auto& builtinSlot = strip.getBuiltinSlot();
+            bindBuiltinStateToLoadedIdentity (
+                track.builtinUnitId, track.builtinStateBase64, builtinSlot.getPluginId());
+            if (! strip.builtinReloadFailed())
+                captureBuiltinState (builtinSlot, track.builtinStateBase64,
+                                     "track built-in", t);
+        }
+        else if (! strip.builtinReloadFailed())
+        {
+            track.builtinUnitId.clear();
+            track.builtinStateBase64.clear();
+        }
     }
     for (int a = 0; a < Session::kNumAuxLanes; ++a)
     {
@@ -2059,6 +2102,23 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
                 lane.nativeAuStateBase64[(size_t) s].clear();
             }
 #endif
+            if (strip.isBuiltinLoaded (s))
+            {
+                auto& builtinSlot = strip.getBuiltinSlot (s);
+                bindBuiltinStateToLoadedIdentity (
+                    lane.builtinUnitId[(size_t) s],
+                    lane.builtinStateBase64[(size_t) s],
+                    builtinSlot.getPluginId());
+                if (! strip.builtinReloadFailed (s))
+                    captureBuiltinState (builtinSlot,
+                                         lane.builtinStateBase64[(size_t) s],
+                                         "aux built-in", s);
+            }
+            else if (! strip.builtinReloadFailed (s))
+            {
+                lane.builtinUnitId[(size_t) s].clear();
+                lane.builtinStateBase64[(size_t) s].clear();
+            }
         }
     }
 }
@@ -2187,8 +2247,12 @@ void AudioEngine::consumePluginStateAfterLoad()
     };
 #endif
 
-#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3 \
-    || DUSKSTUDIO_HAS_NATIVE_AU || DUSKSTUDIO_HAS_MULTISAMPLE
+    auto builtinName = [] (const std::string& unitId)
+    {
+        const auto* unit = builtin::findUnit (unitId);
+        return unit != nullptr ? std::string (unit->name) : unitId;
+    };
+
     auto rejectUnreadableTrackState = [&] (
         const DecodedStateBlob& state, ChannelStrip& strip,
         auto&& markRestoreFailed, const std::string& location,
@@ -2211,6 +2275,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 strip.unloadNativeVst3();
                 strip.unloadNativeAu();
                 strip.unloadNativeMultisample();
+                strip.unloadBuiltin();
             });
         if (prepared) resumeProcessing();
         markRestoreFailed();
@@ -2223,8 +2288,6 @@ void AudioEngine::consumePluginStateAfterLoad()
         return true;
     };
 
-#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 \
-    || DUSKSTUDIO_HAS_NATIVE_VST3 || DUSKSTUDIO_HAS_NATIVE_AU
     auto rejectUnreadableAuxState = [&] (
         const DecodedStateBlob& state, AuxLaneStrip& strip, int slotIndex,
         auto&& markRestoreFailed, const std::string& location,
@@ -2243,6 +2306,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 strip.unloadNativeLv2 (slotIndex);
                 strip.unloadNativeVst3 (slotIndex);
                 strip.unloadNativeAu (slotIndex);
+                strip.unloadBuiltin (slotIndex);
             });
         if (prepared) resumeProcessing();
         markRestoreFailed();
@@ -2254,8 +2318,6 @@ void AudioEngine::consumePluginStateAfterLoad()
         lastPluginLoadFailures.push_back (std::move (failure));
         return true;
     };
-#endif
-#endif
 
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
@@ -2326,6 +2388,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 strip.unloadNativeVst3();
                 strip.unloadNativeAu();
                 strip.unloadNativeMultisample();
+                strip.unloadBuiltin();
                 strip.setPendingNativeClap (clapFile, std::move (blob), track.nativeClapPluginId);
             }
             continue;
@@ -2378,6 +2441,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 strip.unloadNativeVst3();
                 strip.unloadNativeAu();
                 strip.unloadNativeMultisample();
+                strip.unloadBuiltin();
                 strip.setPendingNativeLv2 (lv2File, std::move (blob), track.nativeLv2PluginId,
                                            lv2StateDirFor (session,
                                                "track" + juce::String (t + 1).paddedLeft ('0', 2)));
@@ -2430,6 +2494,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 strip.unloadNativeLv2();
                 strip.unloadNativeAu();
                 strip.unloadNativeMultisample();
+                strip.unloadBuiltin();
                 strip.setPendingNativeVst3 (vst3File, std::move (blob), track.nativeVst3PluginId);
             }
             continue;
@@ -2477,6 +2542,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 strip.unloadNativeLv2();
                 strip.unloadNativeVst3();
                 strip.unloadNativeMultisample();
+                strip.unloadBuiltin();
                 strip.setPendingNativeAu (track.nativeAuIdentifier, std::move (blob));
             }
             continue;
@@ -2541,18 +2607,69 @@ void AudioEngine::consumePluginStateAfterLoad()
                 strip.unloadNativeLv2();
                 strip.unloadNativeVst3();
                 strip.unloadNativeAu();
+                strip.unloadBuiltin();
                 strip.setPendingNativeMultisample (soundfont, std::move (blob));
             }
             continue;
         }
 #endif
 
+        if (! track.builtinUnitId.empty())
+        {
+            slot.unload();
+            strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
+
+            auto decoded = decodeBase64Blob (track.builtinStateBase64, "track built-in");
+            const auto unitId = track.builtinUnitId;
+            if (rejectUnreadableTrackState (
+                    decoded, strip, [&] { strip.markBuiltinRestoreFailed(); },
+                    dusk::text::format ("Track %d", t + 1),
+                    builtinName (unitId), "built-in"))
+                continue;
+            auto& blob = decoded.bytes;
+            if (strip.isPrepared())
+            {
+                suspendProcessing();
+                std::string err;
+                const bool stateWasSupplied = ! blob.empty();
+                const bool loaded = strip.loadBuiltin (unitId, err);
+                bool stateAccepted = ! stateWasSupplied;
+                if (loaded && stateWasSupplied)
+                {
+                    stateAccepted = strip.getBuiltinSlot().loadState (blob);
+                    if (! stateAccepted) noteStateRejected ("track built-in", t, blob.size());
+                }
+                const auto reason = hosting::enforceRestorePolicy (
+                    loaded, stateWasSupplied, stateAccepted, err, blob.size(),
+                    [&] { strip.unloadBuiltin(); });
+                resumeProcessing();
+                if (! reason.empty())
+                {
+                    strip.markBuiltinRestoreFailed();   // keep refs - see the CLAP twin
+                    lastPluginLoadFailures.push_back ({
+                        dusk::text::format ("Track %d", t + 1),
+                        builtinName (unitId), "built-in", reason });
+                }
+            }
+            else
+            {
+                strip.unloadNativeClap();   // see the CLAP pending branch above
+                strip.unloadNativeLv2();
+                strip.unloadNativeVst3();
+                strip.unloadNativeAu();
+                strip.unloadNativeMultisample();
+                strip.setPendingBuiltin (unitId, std::move (blob));
+            }
+            continue;
+        }
+
         // No native host in this session for this strip - tear down any native
         // instance carried over from the previously-loaded session before the JUCE
         // restore below (unload destroys the instance, so fence it when live).
         if (strip.isNativeClapLoaded() || strip.isNativeLv2Loaded() || strip.isNativeVst3Loaded()
             || strip.isNativeAuLoaded()
-            || strip.isNativeMultisampleLoaded())
+            || strip.isNativeMultisampleLoaded()
+            || strip.isBuiltinLoaded())
         {
 #if DUSKSTUDIO_HAS_MULTISAMPLE
             // Join the soundfont loader BEFORE the gate parks the audio thread -
@@ -2565,6 +2682,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             strip.unloadNativeVst3();
             strip.unloadNativeAu();
             strip.unloadNativeMultisample();
+            strip.unloadBuiltin();
             resumeProcessing();
         }
         else
@@ -2574,6 +2692,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             strip.unloadNativeVst3();
             strip.unloadNativeAu();
             strip.unloadNativeMultisample();
+            strip.unloadBuiltin();
         }
 
         if (! track.pluginDescriptor.has_value()
@@ -2681,6 +2800,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                     strip.unloadNativeLv2 (s);
                     strip.unloadNativeVst3 (s);
                     strip.unloadNativeAu (s);
+                    strip.unloadBuiltin (s);
                     strip.setPendingNativeClap (s, clapFile, std::move (blob),
                                                 lane.nativeClapPluginId[(size_t) s]);
                 }
@@ -2737,6 +2857,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                     strip.unloadNativeClap (s);   // see the CLAP pending branch above
                     strip.unloadNativeVst3 (s);
                     strip.unloadNativeAu (s);
+                    strip.unloadBuiltin (s);
                     strip.setPendingNativeLv2 (s, lv2File, std::move (blob),
                                                lane.nativeLv2PluginId[(size_t) s],
                                                lv2StateDirFor (session,
@@ -2793,6 +2914,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                     strip.unloadNativeClap (s);   // see the CLAP pending branch above
                     strip.unloadNativeLv2 (s);
                     strip.unloadNativeAu (s);
+                    strip.unloadBuiltin (s);
                     strip.setPendingNativeVst3 (s, vst3File, std::move (blob),
                                                 lane.nativeVst3PluginId[(size_t) s]);
                 }
@@ -2845,22 +2967,76 @@ void AudioEngine::consumePluginStateAfterLoad()
                     strip.unloadNativeClap (s);
                     strip.unloadNativeLv2 (s);
                     strip.unloadNativeVst3 (s);
+                    strip.unloadBuiltin (s);
                     strip.setPendingNativeAu (s, identifier, std::move (blob));
                 }
                 continue;
             }
 #endif
 
+            if (! lane.builtinUnitId[(size_t) s].empty())
+            {
+                slot.unload();
+                strip.insertMode[(size_t) s].store (
+                    AuxLaneStrip::kInsertPlugin, std::memory_order_release);
+                auto decoded = decodeBase64Blob (
+                    lane.builtinStateBase64[(size_t) s], "aux built-in");
+                const auto unitId = lane.builtinUnitId[(size_t) s];
+                if (rejectUnreadableAuxState (
+                        decoded, strip, s,
+                        [&] { strip.markBuiltinRestoreFailed (s); },
+                        dusk::text::format ("Aux %d slot %d", a + 1, s + 1),
+                        builtinName (unitId), "built-in"))
+                    continue;
+                auto& blob = decoded.bytes;
+                if (strip.isPrepared())
+                {
+                    suspendProcessing();
+                    std::string err;
+                    const bool stateWasSupplied = ! blob.empty();
+                    const bool loaded = strip.loadBuiltin (s, unitId, err);
+                    bool stateAccepted = ! stateWasSupplied;
+                    if (loaded && stateWasSupplied)
+                    {
+                        stateAccepted = strip.getBuiltinSlot (s).loadState (blob);
+                        if (! stateAccepted)
+                            noteStateRejected ("aux built-in", s, blob.size(), a);
+                    }
+                    const auto reason = hosting::enforceRestorePolicy (
+                        loaded, stateWasSupplied, stateAccepted, err, blob.size(),
+                        [&] { strip.unloadBuiltin (s); });
+                    resumeProcessing();
+                    if (! reason.empty())
+                    {
+                        strip.markBuiltinRestoreFailed (s);
+                        lastPluginLoadFailures.push_back ({
+                            dusk::text::format ("Aux %d slot %d", a + 1, s + 1),
+                            builtinName (unitId), "built-in", reason });
+                    }
+                }
+                else
+                {
+                    strip.unloadNativeClap (s);
+                    strip.unloadNativeLv2 (s);
+                    strip.unloadNativeVst3 (s);
+                    strip.unloadNativeAu (s);
+                    strip.setPendingBuiltin (s, unitId, std::move (blob));
+                }
+                continue;
+            }
+
             // No native host for this slot - tear down any instance carried over from
             // the previous session before the JUCE restore (fence when live).
             if (strip.isNativeClapLoaded (s) || strip.isNativeLv2Loaded (s)
-                || strip.isNativeVst3Loaded (s) || strip.isNativeAuLoaded (s))
+                || strip.isNativeVst3Loaded (s) || strip.isNativeAuLoaded (s)
+                || strip.isBuiltinLoaded (s))
             {
                 suspendProcessing();
                 strip.unloadNativeClap (s);
                 strip.unloadNativeLv2 (s);
                 strip.unloadNativeVst3 (s);
                 strip.unloadNativeAu (s);
+                strip.unloadBuiltin (s);
                 resumeProcessing();
             }
             else
@@ -2869,6 +3045,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 strip.unloadNativeLv2 (s);
                 strip.unloadNativeVst3 (s);
                 strip.unloadNativeAu (s);
+                strip.unloadBuiltin (s);
             }
 
             auto& descriptor = lane.pluginDescriptor[(size_t) s];

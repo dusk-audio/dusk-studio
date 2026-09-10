@@ -1564,12 +1564,14 @@ In the **plugin picker** modal:
 
 - Use the filter field at the top to narrow by name.
 - The list is grouped by manufacturer. Click a manufacturer to expand or collapse.
-- Each row shows the plugin name and its format (VST3 / LV2 / AudioUnit / CLAP / LV2-Native / VST3-Native).
+- Each row shows the plugin name and its format (VST3 / LV2 / AudioUnit / CLAP / LV2-Native / VST3-Native / Built-In).
 - Click a row to load and dismiss.
 
 Both the effect and instrument pickers list VST3 plugins as **VST3-Native** rows on every OS, and LV2 plugins as **LV2-Native** rows on Linux and macOS — the same plugins, hosted by Dusk Studio's native hosts instead of the standard one. On macOS, Audio Units appear once as native **AudioUnit** rows. There are no duplicate standard-host rows for these formats.
 
 The picker filters by intent: only effect plugins appear when you're loading onto a channel insert or aux lane; only instruments appear when you're loading onto a MIDI track.
+
+A **Built-In** section sits at the top of the list, above the manufacturer groups, and stays there whichever grouping you pick. Those rows are Dusk Studio's own units. They are compiled into the application, so they need no scan, they are present on a fresh install with nothing else on the machine, and they are identical on Linux, macOS and Windows. See *Built-in insert units* below.
 
 The insert chooser and the bottom of the picker also provide these actions where applicable:
 
@@ -1577,6 +1579,27 @@ The insert chooser and the bottom of the picker also provide these actions where
 - **Soundfont (.sfz / .sf2 / .bank.xml)**: open a soundfont directly. Choosing this on an audio track converts the track to MIDI; see *Multi-sample instruments*.
 - **Browse file…**: load a plugin by file path (useful for plugins not yet in the scan cache).
 - **Scan plugins**: re-scan.
+
+## Built-in insert units
+
+Dusk Studio ships its own insert units. They load into a channel insert slot or an aux lane slot exactly like a scanned plugin: the same picker, the same Replace and Remove actions, the same bypass, and the same delay compensation. Only one insert host runs per slot, so loading a built-in unit replaces whatever the slot held, and loading a plugin replaces the built-in unit.
+
+Settings are saved with the session and restored when you reopen it, and they travel with **Clone Track** and its undo. A built-in unit needs nothing installed and cannot go offline the way a missing plugin does.
+
+### Utility
+
+A clean gain and stereo-image tool. Reach for it to trim a level without touching the fader, to flip an out-of-phase mic, to check a mix in mono, or to narrow a stereo source that is fighting the centre.
+
+| Control | Range | Default | What it does |
+|---|---|---|---|
+| Gain | −60 dB to +24 dB | 0 dB | Output level. At the bottom of the range the unit is silent rather than very quiet. |
+| Polarity | Off / On | Off | Inverts both channels. Useful on a mic that is out of phase with another. |
+| Width | 0% to 200% | 100% | Stereo width. 100% passes left and right through untouched, 0% collapses to the centre, and above 100% pushes the sides wider. |
+| Mono | Off / On | Off | Sums left and right to the centre. Width has no effect once Mono is on, because the sum has already removed the sides. |
+
+The controls are applied in the order polarity, width, mono, gain. Every one of them is smoothed over 20 milliseconds, so moving a control never clicks. At its defaults the unit passes audio through unchanged and adds no latency.
+
+Utility has no editor window yet, so its controls are not adjustable from the interface in this release. It loads, processes, saves and reloads; the panel follows.
 
 ## Opening the editor
 

@@ -14,6 +14,7 @@
 #include "../session/Session.h"
 #include "../engine/PluginSlot.h"
 #include "../engine/hosting/NativeRestorePolicy.h"
+#include "../engine/builtin/NativeBuiltinSlot.h"
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
   #include "../engine/clap/NativeClapSlot.h"   // Linux-only native CLAP host
 #endif
@@ -186,11 +187,25 @@ public:
     bool nativeMultisampleReloadFailed() const noexcept { return false; }
 #endif
 
+    // Built-in unit rung - same contract as the CLAP block above, with a
+    // registry id in place of a bundle path. Never compile-gated: the suite
+    // ships with the app on every platform.
+    bool loadBuiltin (const std::string& unitId, std::string& errorOut);
+    void unloadBuiltin() noexcept;
+    bool isBuiltinLoaded() const noexcept { return builtinSlot.isLoaded(); }
+    builtin::NativeBuiltinSlot&       getBuiltinSlot()       noexcept { return builtinSlot; }
+    const builtin::NativeBuiltinSlot& getBuiltinSlot() const noexcept { return builtinSlot; }
+    void setPendingBuiltin (std::string unitId, std::vector<uint8_t> state) noexcept;
+    bool builtinReloadFailed() const noexcept
+        { return builtinRestoreFailed.load (std::memory_order_relaxed); }
+    void markBuiltinRestoreFailed() noexcept
+        { builtinRestoreFailed.store (true, std::memory_order_relaxed); }
+
     bool nativeInsertRestoreFailed() const noexcept
     {
         return nativeClapReloadFailed() || nativeLv2ReloadFailed()
             || nativeVst3ReloadFailed() || nativeAuReloadFailed()
-            || nativeMultisampleReloadFailed();
+            || nativeMultisampleReloadFailed() || builtinReloadFailed();
     }
 
     // Whether a native host owns the insert with an instrument loaded (no main
@@ -212,6 +227,7 @@ public:
 #if DUSKSTUDIO_HAS_MULTISAMPLE
         if (isNativeMultisampleLoaded()) return nativeMultisampleSlot.isLoadedInstrument();
 #endif
+        if (isBuiltinLoaded()) return builtinSlot.isLoadedInstrument();
         return false;
     }
 
@@ -373,6 +389,8 @@ private:
     NativeMultisampleSlot nativeMultisampleSlot;
     std::atomic<bool>     multisampleReloadFailed { false };
 #endif
+    builtin::NativeBuiltinSlot builtinSlot;
+    std::atomic<bool>          builtinRestoreFailed { false };
     HardwareInsertSlot hardwareSlot;
     std::vector<hosting::NativeRestoreFailure> nativeRestoreFailures;
 
@@ -403,6 +421,8 @@ private:
     juce::String         pendingMultisamplePath;
     std::vector<uint8_t> pendingMultisampleState;
 #endif
+    std::string          pendingBuiltinId;
+    std::vector<uint8_t> pendingBuiltinState;
 
     // activeInsertMode = what we're currently running; insertMode = what
     // the UI wants. Mismatch triggers ramp-out / swap / ramp-in.
