@@ -2388,6 +2388,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 strip.unloadNativeVst3();
                 strip.unloadNativeAu();
                 strip.unloadNativeMultisample();
+                strip.unloadBuiltin();
                 strip.setPendingNativeClap (clapFile, std::move (blob), track.nativeClapPluginId);
             }
             continue;
@@ -2440,6 +2441,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 strip.unloadNativeVst3();
                 strip.unloadNativeAu();
                 strip.unloadNativeMultisample();
+                strip.unloadBuiltin();
                 strip.setPendingNativeLv2 (lv2File, std::move (blob), track.nativeLv2PluginId,
                                            lv2StateDirFor (session,
                                                "track" + juce::String (t + 1).paddedLeft ('0', 2)));
@@ -2492,6 +2494,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 strip.unloadNativeLv2();
                 strip.unloadNativeAu();
                 strip.unloadNativeMultisample();
+                strip.unloadBuiltin();
                 strip.setPendingNativeVst3 (vst3File, std::move (blob), track.nativeVst3PluginId);
             }
             continue;
@@ -2539,6 +2542,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 strip.unloadNativeLv2();
                 strip.unloadNativeVst3();
                 strip.unloadNativeMultisample();
+                strip.unloadBuiltin();
                 strip.setPendingNativeAu (track.nativeAuIdentifier, std::move (blob));
             }
             continue;
@@ -2603,6 +2607,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 strip.unloadNativeLv2();
                 strip.unloadNativeVst3();
                 strip.unloadNativeAu();
+                strip.unloadBuiltin();
                 strip.setPendingNativeMultisample (soundfont, std::move (blob));
             }
             continue;
@@ -2795,6 +2800,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                     strip.unloadNativeLv2 (s);
                     strip.unloadNativeVst3 (s);
                     strip.unloadNativeAu (s);
+                    strip.unloadBuiltin (s);
                     strip.setPendingNativeClap (s, clapFile, std::move (blob),
                                                 lane.nativeClapPluginId[(size_t) s]);
                 }
@@ -2851,6 +2857,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                     strip.unloadNativeClap (s);   // see the CLAP pending branch above
                     strip.unloadNativeVst3 (s);
                     strip.unloadNativeAu (s);
+                    strip.unloadBuiltin (s);
                     strip.setPendingNativeLv2 (s, lv2File, std::move (blob),
                                                lane.nativeLv2PluginId[(size_t) s],
                                                lv2StateDirFor (session,
@@ -2907,6 +2914,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                     strip.unloadNativeClap (s);   // see the CLAP pending branch above
                     strip.unloadNativeLv2 (s);
                     strip.unloadNativeAu (s);
+                    strip.unloadBuiltin (s);
                     strip.setPendingNativeVst3 (s, vst3File, std::move (blob),
                                                 lane.nativeVst3PluginId[(size_t) s]);
                 }
@@ -2959,6 +2967,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                     strip.unloadNativeClap (s);
                     strip.unloadNativeLv2 (s);
                     strip.unloadNativeVst3 (s);
+                    strip.unloadBuiltin (s);
                     strip.setPendingNativeAu (s, identifier, std::move (blob));
                 }
                 continue;
