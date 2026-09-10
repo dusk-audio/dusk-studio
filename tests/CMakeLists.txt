@@ -291,6 +291,33 @@ if(DUSK_PLUGINS_PATH)
     target_include_directories(dusk-studio-tests SYSTEM PRIVATE
         ${DUSK_PLUGINS_PATH}/plugins/multi-q
         ${DUSK_PLUGINS_PATH}/plugins/shared)
+
+    # Built-in units backed by donor cores. Gated with the donor for the same
+    # reason console_saturation.cpp is: without it the includes cannot resolve.
+    target_sources(dusk-studio-tests PRIVATE
+        builtin_reverb_unit.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/builtin/ReverbUnit.cpp
+        builtin_delay_unit.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/builtin/DelayUnit.cpp
+        ${DUSK_PLUGINS_PATH}/plugins/tape-echo/core/TapeEchoDSP.cpp
+        builtin_tape_unit.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/builtin/TapeUnit.cpp
+        builtin_synth_unit.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/builtin/SynthUnit.cpp
+        ${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core/MultiSynthDSP.cpp)
+    foreach(_verbSource IN ITEMS
+            DattorroPlateVintage DattorroTank DiffusionStage DuskVerbEngine
+            EarlyReflections FDNReverb NonLinearEngine OctaveGEQDesign
+            OutputDiffusion QuadTank ReverseRoomEngine ShimmerEngine
+            SixAPTankEngine SpringEngine)
+        target_sources(dusk-studio-tests PRIVATE
+            ${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp/${_verbSource}.cpp)
+    endforeach()
+    target_include_directories(dusk-studio-tests SYSTEM PRIVATE
+        ${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp
+        ${DUSK_PLUGINS_PATH}/plugins/tape-echo/core
+        ${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core)
+    target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_DONOR_UNITS=1)
 endif()
 
 # The Dear ImGui widget kit and one console strip drawn through it, headlessly: no
@@ -610,13 +637,15 @@ if(DUSK_PLUGINS_PATH)
         comp_timing.cpp
         bus_stereo_link.cpp
         tape_hysteresis.cpp
-        tape_core_ab.cpp
+        tape_core_regression.cpp
         bus_strip.cpp
         mastering_chain.cpp
         mastering_digital_eq.cpp
         # The mastering stage's native panels draw the chain through the widget kit, so
         # their headless suite needs the kit as well as the donor DSP this block gates.
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:imgui_mastering_views.cpp>
+        $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:imgui_builtin_unit_view.cpp>
+        $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/BuiltinUnitView.cpp>
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringEqView.cpp>
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringLimiterView.cpp>
         dsp_stereo_oversampler.cpp
@@ -625,6 +654,9 @@ if(DUSK_PLUGINS_PATH)
         comp_core_ab.cpp
         smoke_brickwall_limiter.cpp
         dsp_loudness_meter.cpp
+        master_tape_alignment.cpp
+        ${CMAKE_SOURCE_DIR}/src/dsp/MasterBus.cpp
+        ${CMAKE_SOURCE_DIR}/src/dsp/MasterTape.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/BusStrip.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasteringChain.cpp
@@ -636,34 +668,7 @@ if(DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/shared/LEDMeter.cpp"
-        # tape_core_ab.cpp A/Bs the framework-free core against the JUCE donor,
-        # so both sides link here. The donor's createEditor() pulls its editor
-        # and GUI widgets in behind it.
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/core/TapeMachineDSP.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/PluginProcessor.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/PluginEditor.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/ImprovedTapeEmulation.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI/AnalogVUMeter.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI/TapeReelComponent.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI/TapeMachineLookAndFeel.cpp")
-
-    # Same createPluginFilter rename the main app applies - both donors define
-    # it as their plugin entry point and neither is ever called here.
-    set_source_files_properties(
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/PluginProcessor.cpp"
-        PROPERTIES
-        COMPILE_DEFINITIONS "createPluginFilter=createTapeMachinePluginFilter")
-
-    # Required only here: the tests compile TapeMachine's GUI/AnalogVUMeter.cpp
-    # alongside multi-comp's, and both declare a global AnalogVUMeter. Renaming
-    # the multi-comp one in-translation-unit keeps the donor untouched. The app
-    # no longer links TapeMachine's editor, so it does not need this.
-    set_source_files_properties(
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
-        PROPERTIES
-        COMPILE_DEFINITIONS "AnalogVUMeter=MultiCompAnalogVUMeter")
+        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/core/TapeMachineDSP.cpp")
 
     # projucer-shim satisfies BritishEQProcessor.h's `#include <JuceHeader.h>`
     # (the donor EQ under A/B test in eq_british_ab.cpp); the shim pulls in a

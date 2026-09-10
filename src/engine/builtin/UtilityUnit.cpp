@@ -13,10 +13,10 @@ constexpr float kMinGainDb = -60.0f;
 
 const ParamInfo kUtilityParams[] =
 {
-    { "gain_db",  "Gain",     kMinGainDb, 24.0f,  0.0f   },
-    { "polarity", "Polarity", 0.0f,       1.0f,   0.0f   },
-    { "width",    "Width",    0.0f,       200.0f, 100.0f },
-    { "mono",     "Mono",     0.0f,       1.0f,   0.0f   },
+    { "gain_db",  "Gain",     "Level", "dB", kMinGainDb, 24.0f,  0.0f,   ParamKind::Continuous },
+    { "polarity", "Polarity", "Level", "",   0.0f,       1.0f,   0.0f,   ParamKind::Toggle     },
+    { "width",    "Width",    "Image", "%",  0.0f,       200.0f, 100.0f, ParamKind::Continuous },
+    { "mono",     "Mono",     "Image", "",   0.0f,       1.0f,   0.0f,   ParamKind::Toggle     },
 };
 
 constexpr double kRampSeconds = 0.02;
@@ -41,7 +41,8 @@ void UtilityUnit::prepare (double sampleRate, int)
     polarity.setCurrentAndTargetValue (getParam (kPolarityInvert) >= 0.5f ? -1.0f : 1.0f);
 }
 
-void UtilityUnit::process (float* left, float* right, int numFrames) noexcept
+void UtilityUnit::process (float* left, float* right, int numFrames,
+                           const dusk::MidiBuffer*) noexcept
 {
     dusk::audio::ScopedNoDenormals noDenormals;
 

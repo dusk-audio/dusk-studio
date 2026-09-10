@@ -238,7 +238,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | --- | --------------------- | ------------------------------------------------------------------------------------------------ |
 | 1   | Program EQ            | Tube-saturated low + high program EQ. Click the left status light to bypass/engage, click **EQ** to open the editor, or right-click anywhere for the EQ menu (reset, open editor). |
 | 2   | Master bus compressor | Identical DSP to the bus comp, typically used slower. Click the left status light to bypass/engage, click **COMP** to open the editor, or right-click anywhere for the COMP menu (reset, open editor). |
-| 3   | Tape saturation       | Reel-to-reel model. Oversampling follows the global Effect Oversampling setting (Audio settings). Click the left status light to bypass/engage, click **TAPE** to open the editor, or right-click anywhere for the TAPE menu. |
+| 3   | Tape saturation       | Reel-to-reel model, anti-aliased internally at a fixed rate rather than following the global Effect Oversampling setting. Click the left status light to bypass/engage, click **TAPE** to open the editor, or right-click anywhere for the TAPE menu. |
 | 4   | Master fader          | −∞ to +12 dB.                                                                                    |
 | 5   | Mono                  | Sums L+R to mono on both legs for phase / single-speaker checks.                                 |
 | 6   | Peak meters           | Post-output L/R.                                                                                 |
@@ -494,7 +494,7 @@ All seven are saved with the session, so a project that syncs to an external clo
 
 ### Advanced
 
-- **Effect oversampling**: 1×, 2×, or 4×. Defaults to 1× (native). Raises the internal sample rate of every channel EQ and compressor, every bus EQ and compressor, the master EQ and compressor, and the mastering EQ and compressor. Reduces aliasing on saturation stages at the cost of CPU — roughly 2-3× the mix-engine CPU at 4×, and needs a buffer of 256 samples or more at 48 kHz. Tape saturation follows this same setting.
+- **Effect oversampling**: 1×, 2×, or 4×. Defaults to 1× (native). Raises the internal sample rate of every channel EQ and compressor, every bus EQ and compressor, the master EQ and compressor, and the mastering EQ and compressor. Reduces aliasing on saturation stages at the cost of CPU — roughly 2-3× the mix-engine CPU at 4×, and needs a buffer of 256 samples or more at 48 kHz. The master tape is the exception: it anti-aliases locally at a fixed internal rate and ignores this setting.
 - **Multicore DSP**: spreads the per-block DSP of the 24 channel strips across several CPU cores instead of running them all on the single audio thread. **Auto** (default) uses *cores − 2* worker threads on machines with 4 or more cores — leaving one core for the interface and one for the operating system — and falls back to single-core on smaller machines. **Off** forces the single-core path; you can also pin an explicit worker count. This is a **per-machine** setting: it is stored on this computer and is **not** saved in the session, so a project made on a many-core workstation will not overload a smaller machine (a 4-core Raspberry Pi 5, say) when you open it there. The bus, aux, and master stages always run on the audio thread; only the channel strips fan out, and on a quad-core machine that heavy strip work runs roughly three times faster. Hosted plugins on those strips process on the worker threads too; in the unlikely event a specific plugin misbehaves with this enabled, switch it Off.
 - **Recording offset**: a manual correction, in samples, subtracted from where each newly recorded audio take is placed on the timeline. Use it when your monitoring path adds a round-trip delay that isn't already reported — analog converters, an external effects loop, or a plugin that under-reports its latency — so what you played lands back in time instead of slightly late. A positive value pulls takes earlier; the take is never moved before sample 0 — a take that would land entirely before it is discarded with a warning. It affects **audio** takes only — MIDI is captured with no converter delay and is left where it was played. **To calibrate**: route your interface's output back into an input (a physical loopback cable, or the same converter you monitor through), record the metronome click for a few bars, then open the take in the audio editor and read off, in samples, how far the recorded click sits after the beat it should land on. Enter that number here. The value is **per-machine** — it describes this desk's I/O latency, not the session — and applies to the next take, no restart needed.
 - **Run self-test**: runs Dusk Studio's headless audio engine against a synthetic test signal and reports pass/fail. The suite includes a determinism check that the multicore mix matches the single-core mix sample-for-sample (within floating-point rounding). As with the bindings panel, the settings panel steps out of the way while the self-test is open and comes back when you close it.
@@ -928,7 +928,7 @@ Models a small reel-to-reel tape machine.
 - **Bypass / engage**: click the left status light to toggle the tape stage in or out of the signal path.
 - **Open the editor**: click the **TAPE** label, or right-click anywhere on the split button and choose **Open editor…**, to open the tape-machine modal editor: machine, tape speed and formulation, signal path, EQ standard and calibration, plus input drive, bias, high/low-pass filters, wow, flutter, noise, and output level, plus **Auto cal** (calibrates bias for the selected tape type and speed — disables the Bias knob) and **Auto comp** (matches output level to input so drive changes don't change loudness — overrides Output). Touching any control engages the tape stage.
 
-- **Oversampling**: tape oversampling follows the engine-wide **Effect Oversampling** setting in the Audio Device panel — it is not a per-stage toggle.
+- **Oversampling**: the tape engine anti-aliases locally around each of its nonlinear stages and runs a fixed internal rate, so the engine-wide **Effect Oversampling** setting in the Audio Device panel no longer changes it. That setting still drives every other oversampled stage. The tape stage reports a constant 56 samples of latency, which delay compensation covers.
 
 ![The tape-machine editor.](docs/images/fx-03-tape.png)
 
@@ -1599,7 +1599,87 @@ A clean gain and stereo-image tool. Reach for it to trim a level without touchin
 
 The controls are applied in the order polarity, width, mono, gain. Every one of them is smoothed over 20 milliseconds, so moving a control never clicks. At its defaults the unit passes audio through unchanged and adds no latency.
 
-Utility has no editor window yet, so its controls are not adjustable from the interface in this release. It loads, processes, saves and reloads; the panel follows.
+![The Utility unit's editor.](docs/images/bi-01-utility.png)
+
+### Reverb
+
+An algorithmic reverb with sixteen tanks, from tight plates through chambers and halls to spring, gated, reverse and shimmer. Mix defaults to 0, so a freshly loaded Reverb passes audio through untouched until you dial some in.
+
+| Control | Range | Default | What it does |
+|---|---|---|---|
+| Mix | 0 to 1 | 0 | Dry to wet. At 0 the unit is a bit-exact passthrough. |
+| Algorithm | 16 tanks | Hall | Which reverb engine runs. Switching clears the tails. |
+| Decay | 0.2 s to 30 s | 2 s | How long the tail takes to fall away. |
+| Size | 0 to 1 | 0.5 | The size of the modelled space. |
+| Pre-Delay | 0 ms to 250 ms | 20 ms | Silence between the dry sound and the start of the tail. |
+| Damping | 0.1 to 1.5 | 0.7 | How fast the top end decays relative to the rest. Below 1 darkens the tail. |
+| Width | 0 to 2 | 1 | Stereo width of the wet signal only. |
+| Lo Cut | 5 Hz to 500 Hz | 20 Hz | High-pass on the tail, to keep the low end clear. |
+| Hi Cut | 1 kHz to 20 kHz | 12 kHz | Low-pass on the tail. |
+
+The reverb is causal and reports no latency.
+
+![The Reverb unit's editor.](docs/images/bi-02-reverb.png)
+
+### Tape Echo
+
+A three-head tape echo with a spring tank, modelled on the classic transport: the record EQ and the tape saturation sit inside the feedback loop, so each repeat darkens and compresses rather than simply getting quieter. Echo and Reverb default to 0, so the unit is a passthrough until you turn one up.
+
+| Control | Range | Default | What it does |
+|---|---|---|---|
+| Echo | 0 to 1 | 0 | Level of the three playback heads. |
+| Dry | 0 to 1 | 1 | Level of the untouched input. |
+| Reverb | 0 to 1 | 0 | Level of the spring tank. Audible in head modes 5 to 12. |
+| Head Mode | 1 to 12 | 1 | The twelve-position selector: which of the three heads are active. |
+| Repeat Rate | 0 to 1 | 0.5 | Motor speed. 0 is the longest delay (177 ms), 1 the shortest (69 ms). |
+| Intensity | 0 to 1 | 0.4 | Feedback. Above about 0.75 the loop self-oscillates, which is the point. |
+| Input | 0 to 1 | 0.5 | Preamp drive into the tape. Higher saturates. |
+| Wow & Flutter | 0 to 1 | 0.5 | Transport instability. A real transport is never perfect, so some is always present. |
+| Tape Age | 0 to 1 | 0 | Worn tape: hiss, extra wow, high-frequency loss and level wobble. |
+| Bass / Treble | −1 to +1 | 0 | Shelves on the echo path only. The dry and reverb paths are untouched. |
+
+The unit reports no latency. Its preamp runs its own fixed oversampling, whose delay is compensated internally.
+
+![The Tape Echo unit's editor.](docs/images/bi-03-tape-echo.png)
+
+### Tape
+
+Per-channel tape colour, running the same Tape Machine engine as the master bus. Two decks, four speeds, four tape formulations and both EQ standards.
+
+| Control | Range | Default | What it does |
+|---|---|---|---|
+| Machine | Swiss / American | Swiss | Which deck is modelled. |
+| Speed | 7.5 / 15 / 30 / 3.75 IPS | 15 IPS | Tape speed. Slower is warmer and less extended. |
+| Tape | four formulations | the first | Tape formulation. Each has its own saturation character and headroom. |
+| Path | Repro / Sync / Input / Thru | Repro | Which head the signal comes off. **Thru** is a bit-exact passthrough, the way pulling the tape out would be. |
+| EQ | NAB / CCIR | NAB | Replay equalisation standard. |
+| Input | −12 dB to +12 dB | 0 dB | Level onto the tape. This is the drive control. |
+| Bias | 0% to 100% | 50% | Bias current. 50 is optimal; away from it loses top end and adds distortion. |
+| Calibration | +3 / +6 / +7.5 / +9 dB | +3 dB | Reference fluxivity. |
+| Output | −12 dB to +12 dB | 0 dB | Level off the tape. |
+| Low Cut / High Cut | 20 Hz to 500 Hz / 3 kHz to 20 kHz | 20 Hz / 20 kHz | Filters on the output. |
+| Wow / Flutter / Noise | 0% to 100% | 0% | Transport instability and tape hiss. |
+| Auto Cal / Auto Comp | Off / On | On | Level compensation, so changing speed or calibration does not change loudness. |
+
+The Tape unit reports **56 samples** of latency on every path except Thru, where it reports none because Thru does not enter the filters that cost it. Delay compensation covers the difference either way.
+
+![The Tape unit's editor.](docs/images/bi-04-tape.png)
+
+### Sunset
+
+A polyphonic synthesiser: six engines (Cosmos, Oracle, Mono, Modular, Prism and Acid), two oscillators plus sub and noise, a resonant filter, two envelopes, unison and glide. It is an **instrument**, so it appears only on a MIDI track's picker, and loading it converts an audio track to MIDI the way a soundfont does.
+
+The editor exposes the two dozen controls a player reaches for, grouped as Global, Oscillators, Filter and Envelopes. The engine carries a great many more, which stay at the values its own init patch sets.
+
+It responds to note velocity, pitch bend, the mod wheel, the sustain pedal and channel and polyphonic aftertouch, and it stops cleanly when the transport does.
+
+![The Sunset instrument's editor.](docs/images/bi-05-sunset.png)
+
+### Editing a unit
+
+Click a loaded unit's insert slot, or right-click it and choose **Open editor**. The editor opens as a panel over a dimmed window, exactly like the compressor editor. Press **Esc**, click outside it, or click the slot again to dismiss it. On an aux lane the editor opens as the same panel rather than inline.
+
+**MIDI Learn** works on a built-in unit the way it does on a plugin: move the control you want in the unit's editor, then right-click the slot and choose **MIDI Learn last-touched parameter**.
 
 ## Opening the editor
 

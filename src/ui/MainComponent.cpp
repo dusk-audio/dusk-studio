@@ -1214,11 +1214,27 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     // panel cannot be dismissed from the keyboard at all. Answering here works
     // wherever the key lands, and lands on the same close path as clicking
     // outside the panel.
-    if (code == juce::KeyPress::escapeKey
-        && audioSettingsWindow != nullptr && audioSettingsWindow->isOpen())
+    // The built-in unit editor is another such child, hosted by the strip that
+    // owns the slot, so the same branch closes whichever one is showing.
+    if (code == juce::KeyPress::escapeKey)
     {
-        closeAudioSettings();
-        return true;
+        if (audioSettingsWindow != nullptr && audioSettingsWindow->isOpen())
+        {
+            closeAudioSettings();
+            return true;
+        }
+        if (consoleView != nullptr)
+        {
+            for (int t = 0; t < Session::kNumTracks; ++t)
+            {
+                auto* const strip = consoleView->getStripComponent (t);
+                if (strip != nullptr && strip->isBuiltinEditorOpen())
+                {
+                    strip->closeBuiltinEditorPopup();
+                    return true;
+                }
+            }
+        }
     }
    #endif
     const bool noMods  = ! cmd && ! shift && ! mods.isAltDown();

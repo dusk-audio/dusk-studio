@@ -433,14 +433,18 @@ void BounceEngine::run()
     }
 
     // PDC lead-in: cross-track compensation delays the master mix by the
-    // deepest track latency, and the master-stage aux PDC delays it again by
-    // the deepest aux-lane latency. Render that many extra samples and discard
-    // them up front so the file isn't shifted. The MasteringChain path bypasses
-    // the channel strips and aux lanes, so it carries no lead-in.
+    // deepest track latency, the master-stage aux PDC delays it again by the
+    // deepest aux-lane latency, and the master tape stage holds its own
+    // constant delay whether or not it is engaged. Render that many extra
+    // samples and discard them up front so the file isn't shifted. The
+    // MasteringChain path bypasses the channel strips and aux lanes, but it
+    // still runs the master, so it carries the tape's share alone.
+    const std::int64_t masterTapeLead = (std::int64_t) engine.getMasterTapeLatencySamples();
     const std::int64_t leadIn = (renderMode == Mode::MasteringChain)
-                                 ? 0
+                                 ? masterTapeLead
                                  : (std::int64_t) engine.getAggregatePdcLatencySamples()
-                                     + (std::int64_t) engine.getMasterDryPdcTargetSamples();
+                                     + (std::int64_t) engine.getMasterDryPdcTargetSamples()
+                                     + masterTapeLead;
     const std::int64_t toRender = totalSamples + leadIn;
 
     std::int64_t done    = 0;   // samples processed through the engine
@@ -599,9 +603,12 @@ void BounceEngine::clearAllStemTaps()
 std::int64_t BounceEngine::leadInFor (StemTarget::Kind kind) const
 {
     const auto trackLead = (std::int64_t) engine.getAggregatePdcLatencySamples();
+    // Track and bus stems are captured before the master, so they miss both the
+    // master-stage aux delay and the tape stage's own.
     if (kind == StemTarget::Kind::Track || kind == StemTarget::Kind::Bus)
         return trackLead;
-    return trackLead + (std::int64_t) engine.getMasterDryPdcTargetSamples();
+    return trackLead + (std::int64_t) engine.getMasterDryPdcTargetSamples()
+         + (std::int64_t) engine.getMasterTapeLatencySamples();
 }
 
 bool BounceEngine::runStemsMode()

@@ -1,21 +1,41 @@
 #pragma once
 
+#include "../../foundation/MidiBuffer.h"
+
 #include <algorithm>
 #include <atomic>
 #include <vector>
 
 namespace duskstudio::builtin
 {
+// What kind of control a parameter wants. A unit's editor is generic, so the
+// shape of each row comes from here rather than from a per-unit panel.
+enum class ParamKind
+{
+    Continuous,   // a slider, formatted with the suffix
+    Toggle,       // off / on, stored as 0 or 1
+    Choice,       // one of `choices`, stored as the index
+};
+
 // One control of a built-in unit. The id is the session-persistent key (the
 // index is not: reordering or inserting a parameter must not silently rebind a
-// saved value), the name is what a diagnostic or a binding list shows.
+// saved value), the name is what a diagnostic, a binding list and the editor
+// show. `section` groups rows under a heading; parameters carrying the same
+// section must be contiguous.
+//
+// Aggregate on purpose: a unit declares its whole surface as one static table.
 struct ParamInfo
 {
     const char* id;
     const char* name;
+    const char* section;
+    const char* suffix;
     float minValue;
     float maxValue;
     float defaultValue;
+    ParamKind kind = ParamKind::Continuous;
+    const char* const* choices = nullptr;   // Choice only
+    int choiceCount = 0;                    // Choice only
 };
 
 // A DSP unit compiled into the app and reachable from an insert slot through
@@ -63,8 +83,11 @@ public:
 
     virtual int latencySamples() const noexcept { return 0; }
 
-    // Audio thread. Stereo, in place.
-    virtual void process (float* left, float* right, int numFrames) noexcept = 0;
+    // Audio thread. Stereo, in place. `midi` carries the block's events for a
+    // unit that consumes them and is null for an effect insert, which the mixer
+    // never routes MIDI to; an effect unit ignores it.
+    virtual void process (float* left, float* right, int numFrames,
+                          const dusk::MidiBuffer* midi) noexcept = 0;
 
 protected:
     // Audio thread.

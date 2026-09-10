@@ -95,7 +95,7 @@ Every open issue, one bucket each.
 | 313 | [Platform] Replace remaining core utilities and application services | post-1.0 | Framework-removal campaign. |
 | 314 | [Final gate] Remove the framework from CMake, CI, packaging, tests, docs | post-1.0 | Framework-removal campaign. |
 | 320 | Route macOS builds to the dusk-mac-air self-hosted runner | post-1.0 | Cost optimisation with no user-visible effect, and the runner is offline. |
-| 340 | Change Tape Machine to use the Tape Machine 2 plugin | post-1.0 | Swaps donor DSP for DAF-ported V2 DSP, which reduces framework coupling. |
+| 340 | Change Tape Machine to use the Tape Machine 2 plugin | 1.0 | The built-in colour insert (#75) runs this core, and the master bus cannot run a different one from the same donor path. Landed with a tone regression pinning the new voicing. |
 | 341 | Change EQ DSP to 4K-EQ-2 DSP | post-1.0 | Same. Also a tone change to a shipped signal path, which is not a 1.0 risk to take. |
 | 342 | Change compressors to use Multi-Comp-2 DSP | post-1.0 | Same. |
 | 442 | ASan+UBSan and Raspberry Pi jobs are not required checks | 1.0 | Two jobs can go red without blocking a merge. A 1.0 tag needs both gating. |
@@ -306,12 +306,15 @@ release.
 ## Out of scope for 1.0
 
 - Anything whose main effect is reducing framework coupling. The whole
-  H-series (#294 through #314) is deferred. So are #340, #341 and #342,
-  because swapping donor DSP for DAF-ported V2 DSP reduces coupling and
-  changes the tone of shipped signal paths at the same time.
-- Any change to the DAF, DAF-Widgets, pugl or DPF-Widgets repositories.
-  Consuming them, which is how the native notepad UI is already built, stays.
-  Modifying them does not happen before 1.0.
+  H-series (#294 through #314) is deferred. So are #341 and #342, because
+  swapping donor DSP for DAF-ported V2 DSP reduces coupling and changes the
+  tone of shipped signal paths at the same time. #340 is the exception and is
+  in: the built-in colour insert needs the Tape Machine 2 core, and the master
+  bus cannot run a different core from the same donor path.
+- The DAF, DAF-Widgets, pugl and DPF-Widgets repositories are consumed, not
+  reworked. Consuming them is how the native notepad UI and the built-in unit
+  editors are built. A change to one of them lands only when a 1.0 feature
+  needs it, on a branch, re-pinned deliberately, never as a refactor.
 - Downloadable SFZ: the online catalog, downloads, archive extraction and the
   libcurl and libarchive dependencies (#74, #252, #253, #254). Only the
   offline browser (#535) is in.

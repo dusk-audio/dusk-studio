@@ -24,6 +24,7 @@ int paramIndex (const NativeBuiltinSlot& slot, const char* id)
 {
     for (int i = 0; i < slot.paramCount(); ++i)
         if (std::string (slot.paramInfo (i)->id) == id) return i;
+    FAIL ("no parameter with id " << id);
     return -1;
 }
 
@@ -258,6 +259,52 @@ TEST_CASE ("built-in unit state round-trips through the slot")
         REQUIRE (other.loadUnit ("dusk.builtin.utility", kSampleRate, kBlock, error));
         REQUIRE_FALSE (other.loadState ({ 0x01, 0x02, 0x03 }));
     }
+}
+
+TEST_CASE ("a state blob written before the parameter tables were reordered still loads",
+           "[builtin][state]")
+{
+    // The editor work reordered several units' tables so their controls group
+    // into sections. The blob is keyed by parameter id, not index, which is
+    // what makes that safe; this is the literal bytes an earlier build wrote.
+    const std::string legacy =
+        R"({"id":"dusk.builtin.utility","params":{"gain_db":-4.5,"mono":1.0,)"
+        R"("polarity":1.0,"width":150.0},"version":1})";
+
+    NativeBuiltinSlot slot;
+    std::string error;
+    REQUIRE (slot.loadUnit ("dusk.builtin.utility", kSampleRate, kBlock, error));
+    REQUIRE (slot.loadState (std::vector<std::uint8_t> (legacy.begin(), legacy.end())));
+
+    auto value = [&slot] (const char* id)
+    {
+        return slot.getParamValue (paramIndex (slot, id));
+    };
+    REQUIRE_THAT (value ("gain_db"),  WithinAbs (-4.5, 1e-6));
+    REQUIRE_THAT (value ("width"),    WithinAbs (150.0, 1e-6));
+    REQUIRE_THAT (value ("polarity"), WithinAbs (1.0, 1e-6));
+    REQUIRE_THAT (value ("mono"),     WithinAbs (1.0, 1e-6));
+}
+
+TEST_CASE ("an id from a newer build leaves the slot empty rather than failing loudly",
+           "[builtin][state]")
+{
+    // A session written by a build with more units in the registry. The slot
+    // has to come back empty with a reason the caller can report, not throw and
+    // not half-load.
+    NativeBuiltinSlot slot;
+    std::string error;
+    REQUIRE_FALSE (slot.loadUnit ("dusk.builtin.from-the-future", kSampleRate, kBlock, error));
+    REQUIRE (error.find ("dusk.builtin.from-the-future") != std::string::npos);
+    REQUIRE_FALSE (slot.isLoaded());
+    REQUIRE (slot.paramCount() == 0);
+    REQUIRE (slot.getLatencySamples() == 0);
+
+    // And it still processes: an empty slot is silence, not a crash.
+    std::vector<float> l ((size_t) kBlock, 0.5f), r ((size_t) kBlock, 0.5f);
+    slot.processStereo (l.data(), r.data(), l.data(), r.data(), kBlock);
+    for (int i = 0; i < kBlock; ++i)
+        REQUIRE (l[(size_t) i] == 0.0f);
 }
 
 TEST_CASE ("a bypassed built-in slot passes dry audio and reports no latency")

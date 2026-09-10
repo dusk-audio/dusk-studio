@@ -23,7 +23,14 @@ public:
     // oversamplingFactor: 1, 2 or 4. Applied before the core's prepare so
     // latencySamples() is correct immediately after this returns.
     void prepare (double sampleRate, int blockSize, int oversamplingFactor);
+
+    // The processing paths' delay, resolved in prepare and constant for its
+    // life. The core reports zero while its signal path is a passthrough; the
+    // master aligns to the processing figure at all times so a path change
+    // never moves the mix, and isPassthroughPath() says when the core is
+    // handing the input straight back.
     int  latencySamples() const noexcept;
+    bool isPassthroughPath() const noexcept;
 
     void pushParameters (const TapeParams& p) noexcept;
     void processInPlace (float* L, float* R, int numSamples) noexcept;

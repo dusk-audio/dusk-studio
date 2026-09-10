@@ -207,6 +207,8 @@ public:
         if (isNativeAuLoaded (slotIdx))
             return nativeAuSlots[(size_t) slotIdx].lastTouchedParamIndex();
 #endif
+        if (isBuiltinLoaded (slotIdx))
+            return builtinSlots[(size_t) slotIdx].lastTouchedParamIndex();
         return slots[(size_t) slotIdx].getLastTouchedParamIndex();
     }
 

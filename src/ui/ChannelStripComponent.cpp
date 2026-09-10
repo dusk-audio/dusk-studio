@@ -6,6 +6,7 @@
 #include "ChannelEqEditor.h"
 #if DUSKSTUDIO_HAS_NATIVE_UI
  #include "NativeEditorEmbedScale.h"
+ #include "imgui/BuiltinUnitView.h"
  #include "imgui/ChannelCompView.h"
  #include "imgui/DuskPanelWindow.h"
 #endif
@@ -155,30 +156,29 @@ void enableValueLabel (juce::Slider& k, const juce::String& suffix, int decimals
 // Format a frequency in Hz, switching to "1.2k" notation above 1 kHz and
 // dropping a trailing ".0" so integer kHz values stay short ("2k", "8k")
 // instead of "2.0k" / "8.0k". Tight-strip-friendly.
-inline juce::String formatFrequency (double hz)
+inline std::string formatFrequency (double hz)
 {
     if (hz >= 1000.0)
     {
         const double khz = hz / 1000.0;
         if (std::abs (khz - std::round (khz)) < 0.05)
-            return juce::String ((int) std::round (khz)) + "k";
-        return juce::String (khz, 1) + "k";
+            return dusk::text::format ("%dk", (int) std::round (khz));
+        return dusk::text::format ("%.1fk", khz);
     }
-    return juce::String ((int) std::round (hz));
+    return dusk::text::format ("%d", (int) std::round (hz));
 }
 
 // Format an EQ band gain in dB, dropping ".0" on integer values so "0" / "-2"
 // / "+12" fit in narrow textboxes instead of "0.0" / "-2.0" / "+12.0".
-inline juce::String formatBandGain (double db)
+inline std::string formatBandGain (double db)
 {
     const double rounded = std::round (db);
     if (std::abs (db - rounded) < 0.05)
     {
         const int idb = (int) rounded;
-        if (idb > 0) return "+" + juce::String (idb);
-        return juce::String (idb);
+        return dusk::text::format (idb > 0 ? "+%d" : "%d", idb);
     }
-    return juce::String (db, 1);
+    return dusk::text::format ("%.1f", db);
 }
 } // namespace
 
@@ -1337,9 +1337,8 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     pluginSlotButton.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xffd0c0e0));
     pluginSlotButton.setTooltip (juce::CharPointer_UTF8 (
         "Empty: click to pick a built-in unit or a plugin (VST3 / CLAP / LV2 / AU), "
-        "or an External Hardware Insert. Loaded plugin: click to toggle the "
-        "editor; right-click for Replace / Remove. Loaded built-in unit: no "
-        "editor yet; right-click for Replace / Remove. Hardware insert: click "
+        "or an External Hardware Insert. Loaded insert: click to toggle the "
+        "editor; right-click for Replace / Remove. Hardware insert: click "
         "to open the routing editor."));
     pluginSlotButton.onClick = [this]
     {
@@ -1353,10 +1352,11 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
             togglePluginEditor();
             return;
         }
-        // A built-in unit has no editor yet, so a click on its occupied slot
-        // does nothing rather than reopening the picker over a loaded insert.
         if (engine.getChannelStrip (trackIndex).isBuiltinLoaded())
+        {
+            openBuiltinEditorPopup();
             return;
+        }
         // Empty slot may already be in Hardware mode (user picked HW
         // earlier, then clicked the slot again to revisit routing).
         // Route straight to the HW editor instead of showing the
@@ -1469,6 +1469,8 @@ ChannelStripComponent::~ChannelStripComponent()
     // deferred message-loop tick is involved, so a quit with it open is safe here.
     compEditorWindow.reset();
     compEditorDim.reset();
+    builtinEditorWindow.reset();
+    builtinEditorDim.reset();
    #endif
     ioConfigModal.closeAndDeleteBodyNow();
     // FreezeDialog's destructor cancels a BounceEngine render against the
@@ -2060,6 +2062,8 @@ void ChannelStripComponent::unloadPluginSlot()
         auto& builtinStrip = engine.getChannelStrip (trackIndex);
         if (builtinStrip.isBuiltinLoaded())
         {
+            // The editor's view holds the slot by reference, so it goes first.
+            closeBuiltinEditorPopup();
             engine.suspendProcessing();
             builtinStrip.unloadBuiltin();
             builtinStrip.insertMode.store (ChannelStrip::kInsertPlugin,
@@ -2119,13 +2123,10 @@ void ChannelStripComponent::showPluginSlotMenu()
     {
         // Editor toggle headline so right-click ALSO becomes a way to open
         // the plugin GUI (some users find right-click more discoverable).
-        // A built-in unit has no editor, so the item would be inert.
-        if (! engine.getChannelStrip (trackIndex).isBuiltinLoaded())
-        {
-            const bool editorOpen = isPluginEditorOpen();
-            menu.addItem (2001, editorOpen ? "Close editor" : "Open editor");
-            menu.addSeparator();
-        }
+        const bool builtinLoaded = engine.getChannelStrip (trackIndex).isBuiltinLoaded();
+        const bool editorOpen = builtinLoaded ? isBuiltinEditorOpen() : isPluginEditorOpen();
+        menu.addItem (2001, editorOpen ? "Close editor" : "Open editor");
+        menu.addSeparator();
         menu.addItem (2002, "Replace insert...");
         menu.addItem (2003, "Remove plugin");
         // Crash/auto-bypass recovery is a JUCE-slot concept (native hosts run
@@ -2176,7 +2177,12 @@ void ChannelStripComponent::showPluginSlotMenu()
             if (self == nullptr || result <= 0) return;
             switch (result)
             {
-                case 2001: self->togglePluginEditor();             break;
+                case 2001:
+                    if (self->engine.getChannelStrip (self->trackIndex).isBuiltinLoaded())
+                        self->openBuiltinEditorPopup();
+                    else
+                        self->togglePluginEditor();
+                    break;
                 case 2002: self->openPluginPicker(); break;
                 case 2003: self->unloadPluginSlot();               break;
                 case 2006: self->openHardwareInsertEditor();       break;
@@ -2227,6 +2233,15 @@ bool ChannelStripComponent::insertSlotOccupied() const
 
 void ChannelStripComponent::refreshPluginSlotButton()
 {
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    // Every load and unload path lands here, so this is the one place that has
+    // to notice the editor is showing a unit the slot no longer holds. The
+    // view holds the slot by reference.
+    if (builtinEditorWindow != nullptr && builtinEditorWindow->isOpen()
+        && ! engine.getChannelStrip (trackIndex).isBuiltinLoaded())
+        closeBuiltinEditorPopup();
+   #endif
+
     // Before any of the per-rung early-returns below: a clone / undo replay can
     // destroy or replace an instance without going through the UI, and the editors
     // hold a reference to it on a live timer.
@@ -2404,23 +2419,21 @@ void ChannelStripComponent::refreshPluginSlotButton()
         // when both are - and the label falls back to "HW (unrouted)" when
         // neither side has audio routing.
         const auto routing = track.hardwareInsert.routing.current();
-        auto formatPair = [] (int l, int r) -> juce::String
+        auto formatPair = [] (int l, int r) -> std::string
         {
             if (l < 0 && r < 0) return {};
-            if (r < 0)          return juce::String (l + 1);                       // mono
-            if (l < 0)          return juce::String (r + 1);                       // mono on R only
-            if (l == r)         return juce::String (l + 1);                       // same channel both
-            return juce::String (l + 1) + "-" + juce::String (r + 1);              // stereo pair
+            if (r < 0)          return dusk::text::format ("%d", l + 1);   // mono
+            if (l < 0)          return dusk::text::format ("%d", r + 1);   // mono on R only
+            if (l == r)         return dusk::text::format ("%d", l + 1);   // same channel both
+            return dusk::text::format ("%d-%d", l + 1, r + 1);             // stereo pair
         };
         const auto out = formatPair (routing.outputChL, routing.outputChR);
         const auto in  = formatPair (routing.inputChL,  routing.inputChR);
-        if (out.isEmpty() && in.isEmpty())
+        if (out.empty() && in.empty())
             label = "HW (unrouted)";
         else
-            label = juce::String ("HW: out ")
-                  + (out.isNotEmpty() ? out : juce::String ("-"))
-                  + " / in "
-                  + (in .isNotEmpty() ? in  : juce::String ("-"));
+            label = "HW: out " + (out.empty() ? std::string ("-") : out)
+                  + " / in "   + (in.empty()  ? std::string ("-") : in);
     }
     else
     {
@@ -3429,6 +3442,8 @@ void ChannelStripComponent::loadBuiltinForChannel (const std::string& unitId)
     remoteForeignEmbed.reset();
    #endif
 
+    closeBuiltinEditorPopup();
+
     std::string err;
     engine.suspendProcessing();
     const bool ok = strip.loadBuiltin (unitId, err);
@@ -4000,6 +4015,140 @@ void ChannelStripComponent::closeCompEditorPopup()
    #if DUSKSTUDIO_HAS_NATIVE_UI
     if (compEditorWindow != nullptr && compEditorWindow->isOpen())
         compEditorWindow->close();
+   #endif
+}
+
+void ChannelStripComponent::closeBuiltinEditorPopup()
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (builtinEditorWindow != nullptr && builtinEditorWindow->isOpen())
+        builtinEditorWindow->close();
+   #endif
+}
+
+bool ChannelStripComponent::isBuiltinEditorOpen() const noexcept
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return builtinEditorWindow != nullptr && builtinEditorWindow->isOpen();
+   #else
+    return false;
+   #endif
+}
+
+void ChannelStripComponent::openBuiltinEditorForCapture (const std::string& capturePath)
+{
+    openBuiltinEditorPopup();
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (builtinEditorWindow != nullptr && builtinEditorWindow->isOpen())
+        builtinEditorWindow->captureNextFrameTo (capturePath);
+   #else
+    (void) capturePath;
+   #endif
+}
+
+void ChannelStripComponent::openBuiltinEditorPopup()
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    showDuskAlert (*this, "Built-in unit",
+                   "The built-in unit editor needs the native UI, which this build "
+                   "was made without.");
+   #else
+    auto& strip = engine.getChannelStrip (trackIndex);
+    if (! strip.isBuiltinLoaded())
+        return;
+
+    if (builtinEditorWindow != nullptr && builtinEditorWindow->isOpen())
+    {
+        builtinEditorWindow->close();
+        return;
+    }
+
+    closeCompEditorPopup();
+    if (eqEditorModal.isOpen())  eqEditorModal.close();
+    if (auxEditorModal.isOpen()) auxEditorModal.close();
+
+    auto* topLevel = getTopLevelComponent();
+    if (topLevel == nullptr) topLevel = this;
+    const auto parentHandle = embedscale::nativeParentHandle (*topLevel);
+    if (parentHandle == 0)
+    {
+        showDuskAlert (*topLevel, "Built-in unit",
+                       "The editor cannot open: the main window is not ready.");
+        return;
+    }
+
+    if (auto hook = EmbeddedModal::beforeModalShown())
+        hook();
+
+    if (builtinEditorWindow == nullptr)
+    {
+        builtinEditorWindow = std::make_unique<imgui::DuskPanelWindow> (
+            "dusk-studio-builtin-editor", "builtin-editor", "Built-in unit");
+
+        // Raw `this`: the strip owns the window, and the window's teardown drops
+        // the host's callbacks before anything can fire (see the compressor
+        // editor above).
+        imgui::DuskPanelWindow::Callbacks callbacks;
+        callbacks.dismissed = [this] { closeBuiltinEditorPopup(); };
+        callbacks.closed = [this]
+        {
+            builtinEditorDim.reset();
+            builtinEditorHider.restore();
+            if (auto* target = EmbeddedModal::focusRestoreTarget().getComponent())
+                target->grabKeyboardFocus();
+        };
+        callbacks.shortcut = [] (imgui::ShellShortcut shortcut)
+        {
+            return dispatchShellShortcut (shortcut);
+        };
+        callbacks.geometry = [this]
+        {
+            auto* const top = getTopLevelComponent();
+            if (top == nullptr || builtinEditorWindow == nullptr)
+                return imgui::DuskPanelWindow::Geometry {};
+
+            const auto plate = builtinEditorWindow->plateSize();
+            const auto bounds = embedscale::centredChildBounds (*top, plate.width,
+                                                                plate.height);
+            if (builtinEditorDim != nullptr)
+            {
+                builtinEditorDim->setBounds (top->getLocalBounds());
+                builtinEditorDim->setNativeChildArea (bounds.expanded (1));
+            }
+            const auto g = embedscale::childGeometryFor (*top, bounds);
+            return imgui::DuskPanelWindow::Geometry { g.x, g.y, g.width, g.height, g.scale };
+        };
+        builtinEditorWindow->setCallbacks (std::move (callbacks));
+    }
+
+    auto& slot = strip.getBuiltinSlot();
+    builtinEditorWindow->setView (imgui::makeBuiltinUnitView (
+        slot, slot.displayName(),
+        [&slot] (int paramIndex) { slot.noteParamTouched (paramIndex); },
+        /*inlineInStage*/ false));
+
+    const auto plate = builtinEditorWindow->plateSize();
+    const auto logical = embedscale::centredChildBounds (*topLevel, plate.width, plate.height);
+
+    builtinEditorDim = std::make_unique<DimOverlay> (builtinEditorWindow->dimAlpha());
+    builtinEditorDim->setBounds (topLevel->getLocalBounds());
+    builtinEditorDim->setNativeChildArea (logical.expanded (1));
+    builtinEditorDim->onClick = [this] { closeBuiltinEditorPopup(); };
+    topLevel->addAndMakeVisible (builtinEditorDim.get());
+    builtinEditorHider.hideUnder (*topLevel, { builtinEditorDim.get() });
+
+    const auto geometry = embedscale::childGeometryFor (*topLevel, logical);
+    if (! builtinEditorWindow->open (parentHandle,
+                                     { geometry.x, geometry.y, geometry.width,
+                                       geometry.height, geometry.scale }))
+    {
+        builtinEditorDim.reset();
+        builtinEditorHider.restore();
+        const auto& why = builtinEditorWindow->lastOpenFailure();
+        showDuskAlert (*topLevel, "Built-in unit",
+                       why.empty() ? "The editor cannot open on this display backend."
+                                   : why.c_str());
+    }
    #endif
 }
 

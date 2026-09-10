@@ -247,6 +247,7 @@ public:
 #if DUSKSTUDIO_HAS_NATIVE_AU
         if (isNativeAuLoaded()) return nativeAuSlot.lastTouchedParamIndex();
 #endif
+        if (isBuiltinLoaded()) return builtinSlot.lastTouchedParamIndex();
         return pluginSlot.getLastTouchedParamIndex();
     }
 

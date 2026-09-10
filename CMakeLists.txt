@@ -590,6 +590,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         src/ui/imgui/AudioSettingsView.cpp
         src/ui/imgui/ChannelCompView.cpp
         src/ui/imgui/MasteringEqView.cpp
+        src/ui/imgui/BuiltinUnitView.cpp
         src/ui/imgui/MasteringLimiterView.cpp
         src/ui/imgui/PanelControls.cpp
         src/ui/imgui/StartupView.cpp
@@ -1349,7 +1350,10 @@ if(DEFINED DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/HardwareEmulation"
         "${DUSK_PLUGINS_PATH}/plugins/tape-echo/Source/DSP"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source")
+        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source"
+        "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp"
+        "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core"
+        "${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core")
 
     # Compile multi-comp's processor + editor + shared LEDMeter so
     # UniversalCompressor links cleanly. Editor sources are linked but not
@@ -1361,7 +1365,26 @@ if(DEFINED DUSK_PLUGINS_PATH)
     # MasterTape.cpp lives here rather than in the main source list: it is the
     # only translation unit that includes the TapeMachine core, which exists
     # only under DUSK_PLUGINS_PATH.
+    # DuskVerb's reverb engine backs the built-in Reverb unit. The donor's
+    # src/dsp is framework-free and depends on nothing but the standard
+    # library, so it compiles straight in.
+    set(DUSKSTUDIO_DUSKVERB_SOURCES "")
+    foreach(_verbSource IN ITEMS
+            DattorroPlateVintage DattorroTank DiffusionStage DuskVerbEngine
+            EarlyReflections FDNReverb NonLinearEngine OctaveGEQDesign
+            OutputDiffusion QuadTank ReverseRoomEngine ShimmerEngine
+            SixAPTankEngine SpringEngine)
+        list(APPEND DUSKSTUDIO_DUSKVERB_SOURCES
+            "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp/${_verbSource}.cpp")
+    endforeach()
+
     target_sources(DuskStudio PRIVATE
+        src/engine/builtin/ReverbUnit.cpp
+        src/engine/builtin/DelayUnit.cpp
+        src/engine/builtin/TapeUnit.cpp
+        src/engine/builtin/SynthUnit.cpp
+        "${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core/MultiSynthDSP.cpp"
+        "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core/TapeEchoDSP.cpp"
         src/dsp/MasterTape.cpp
         "${DUSKSTUDIO_COMPRESSOR_CORE_SOURCE}"
         "${DUSKSTUDIO_DONOR_DSP_DIR}/FourKEQDSP.cpp"
@@ -1370,9 +1393,15 @@ if(DEFINED DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/shared/LEDMeter.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/core/TapeMachineDSP.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI/TapeReelComponent.cpp")
+        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI/TapeReelComponent.cpp"
+        ${DUSKSTUDIO_DUSKVERB_SOURCES})
 
-    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_DUSK_DSP=1)
+    # DUSKSTUDIO_HAS_DUSK_DSP gates the donor's framework-era processors as
+    # well as its cores; DUSKSTUDIO_HAS_DONOR_UNITS gates only the built-in
+    # units, so the narrow-link test target can enable those alone.
+    target_compile_definitions(DuskStudio PRIVATE
+        DUSKSTUDIO_HAS_DUSK_DSP=1
+        DUSKSTUDIO_HAS_DONOR_UNITS=1)
 endif()
 
 # Sfizz native sampler engine (BSD-2-Clause). Vendored as a git
