@@ -30,6 +30,7 @@ int paramIndex (const NativeBuiltinSlot& slot, const char* id)
 {
     for (int i = 0; i < slot.paramCount(); ++i)
         if (std::string (slot.paramInfo (i)->id) == id) return i;
+    FAIL ("no parameter with id " << id);
     return -1;
 }
 

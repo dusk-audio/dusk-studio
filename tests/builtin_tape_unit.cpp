@@ -20,11 +20,13 @@ namespace
 constexpr double kSampleRate = 48000.0;
 constexpr int    kBlock      = 256;
 constexpr int    kThruPath   = 3;
+constexpr double kPi         = 3.14159265358979323846;   // M_PI is non-standard
 
 int paramIndex (const NativeBuiltinSlot& slot, const char* id)
 {
     for (int i = 0; i < slot.paramCount(); ++i)
         if (std::string (slot.paramInfo (i)->id) == id) return i;
+    FAIL ("no parameter with id " << id);
     return -1;
 }
 
@@ -40,7 +42,7 @@ void fillTone (std::vector<float>& l, std::vector<float>& r, int startSample)
     for (size_t i = 0; i < l.size(); ++i)
     {
         const double t = (double) (startSample + (int) i) / kSampleRate;
-        const float v = (float) (0.4 * std::sin (2.0 * M_PI * 440.0 * t));
+        const float v = (float) (0.4 * std::sin (2.0 * kPi * 440.0 * t));
         l[i] = v;
         r[i] = v * 0.9f;
     }
