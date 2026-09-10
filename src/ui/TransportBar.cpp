@@ -691,20 +691,24 @@ void TransportBar::forwardTap()
         engine.jumpToNextMarker();
 }
 
-void TransportBar::refreshInputNotice()
+void TransportBar::refreshDeviceNotice()
 {
     // Exactly zero, not "unknown": before a device has started there is no
     // evidence either way and the bar should stay quiet.
     const bool noInput = engine.getSession().deviceCaptureChannels.load (
                              std::memory_order_relaxed) == 0;
-    if (noInput == noCaptureInput) return;
-    noCaptureInput = noInput;
+    // No input is the one that stops the next thing the user tries, so it wins
+    // when a backend fallback is also standing.
+    auto wanted = noInput ? std::string ("No input device. Choose one in Settings > Audio.")
+                          : engine.backendFallbackNotice();
+    if (wanted == deviceNotice) return;
+    deviceNotice = std::move (wanted);
     repaint();
 }
 
 void TransportBar::timerCallback()
 {
-    refreshInputNotice();
+    refreshDeviceNotice();
 
     // 10x scrub. Once a REW / FFWD button has been held past
     // kHoldThresholdMs, advance the playhead by (sr * kScrubMultiplier *
@@ -1083,19 +1087,19 @@ void TransportBar::paint (juce::Graphics& g)
     g.setColour (juce::Colour (0xff2a2a32));
     g.drawRect (getLocalBounds(), 1);
 
-    if (! noCaptureInput) return;
+    if (deviceNotice.empty()) return;
 
     // The bar's own row is full, so the notice takes the gap the transport
-    // leaves in the middle rather than overlapping a control.
-    static constexpr int kNoticeW = 330;
+    // leaves in the middle rather than overlapping a control. Wide enough for
+    // the longest line either notice produces; a narrow window clamps it.
+    static constexpr int kNoticeW = 380;
     auto notice = getLocalBounds().withSizeKeepingCentre (
         std::min (kNoticeW, getWidth()), std::min (20, getHeight() - 6));
     g.setColour (kNoInputBackground);
     g.fillRoundedRectangle (notice.toFloat(), 3.0f);
     g.setColour (kNoInputText);
     g.setFont (kNoticeFont);
-    g.drawText ("No input device. Choose one in Settings > Audio.",
-                notice, kNoticeJustification, false);
+    g.drawText (deviceNotice.c_str(), notice, kNoticeJustification, false);
 }
 
 void TransportBar::resized()

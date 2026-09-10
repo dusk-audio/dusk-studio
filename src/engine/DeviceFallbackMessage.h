@@ -68,4 +68,27 @@ inline std::string startupDeviceMessage (bool opened,
            "device in the other app, then open Audio Settings and select one.";
     return msg;
 }
+
+// One-line transport-bar notice for a startup open that could not use the
+// preferred backend. Empty string = nothing to say. Separate from
+// startupDeviceMessage above because this one is not an alert: the session is
+// working, and the user is only being told which backend it is working on -
+// silently landing on a fallback is how someone ends up wondering why their
+// interface is missing from a list that never had it.
+//
+//   initError        : what the device-manager init reported (empty = clean).
+//   preferredBackend : the first backend the platform registers (the one the
+//                      app uses when it has the choice).
+//   actualBackend    : the backend that ended up open (empty = none did).
+inline std::string backendFallbackNotice (const std::string& initError,
+                                          const std::string& preferredBackend,
+                                          const std::string& actualBackend)
+{
+    if (initError.empty() || preferredBackend.empty() || actualBackend.empty())
+        return {};
+    if (preferredBackend == actualBackend)
+        return {};
+    return preferredBackend + " unavailable - using " + actualBackend
+         + ". Change it in Settings > Audio.";
+}
 } // namespace duskstudio

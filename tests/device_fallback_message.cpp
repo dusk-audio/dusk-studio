@@ -5,6 +5,7 @@
 
 #include <string>
 
+using duskstudio::backendFallbackNotice;
 using duskstudio::startupDeviceMessage;
 using duskstudio::device::DeviceIdentity;
 using dusk::text::contains;
@@ -104,4 +105,41 @@ TEST_CASE ("startupDeviceMessage: nothing opened -> silent-session warning", "[a
         REQUIRE (containsIgnoreCase (m, "soundfonts cannot be loaded"));
         REQUIRE_FALSE (contains (m, "\"\""));   // no empty-quoted device name
     }
+}
+
+// The backend-fallback notice is the transport bar's one line when the startup
+// open could not use the preferred backend. Same reason for testing the pure
+// seam: choosing a backend needs a real graph, deciding what to say does not.
+
+TEST_CASE ("backendFallbackNotice: a clean init says nothing", "[audio][device]")
+{
+    REQUIRE (backendFallbackNotice ("", "PipeWire", "ALSA").empty());
+}
+
+TEST_CASE ("backendFallbackNotice: the preferred backend opening says nothing",
+           "[audio][device]")
+{
+    // An error that did not cost the preferred backend is not the user's problem.
+    REQUIRE (backendFallbackNotice ("device \"HDMI 0\" is busy", "PipeWire", "PipeWire").empty());
+}
+
+TEST_CASE ("backendFallbackNotice: a fallback names both backends", "[audio][device]")
+{
+    const auto m = backendFallbackNotice ("PipeWire delivered no usable quantum (0)",
+                                          "PipeWire", "ALSA");
+    REQUIRE_FALSE (m.empty());
+    REQUIRE (contains (m, "PipeWire"));
+    REQUIRE (contains (m, "ALSA"));
+    REQUIRE (containsIgnoreCase (m, "Settings"));
+    // The bar has one line to spend.
+    REQUIRE (m.find ('\n') == std::string::npos);
+}
+
+TEST_CASE ("backendFallbackNotice: an unknown backend on either side says nothing",
+           "[audio][device]")
+{
+    // Nothing opened, or the platform registered no types: the silent-session
+    // alert covers that case and the bar would only be guessing.
+    REQUIRE (backendFallbackNotice ("no device", "PipeWire", "").empty());
+    REQUIRE (backendFallbackNotice ("no device", "", "ALSA").empty());
 }

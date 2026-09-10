@@ -120,6 +120,9 @@ public:
             [this]
             {
                 engine.clearDeviceFallbackHold();
+                // An explicit pick settles the backend question, so the bar's
+                // startup fallback notice has said all it has to say.
+                engine.clearBackendFallbackNotice();
                 populateMainOutput();
             });
 

@@ -224,7 +224,7 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         const auto savedCapture = session.deviceCaptureChannels.load (
             std::memory_order_relaxed);
         session.deviceCaptureChannels.store (0, std::memory_order_relaxed);
-        transportBar->refreshInputNotice();
+        transportBar->refreshDeviceNotice();
         snapshotComponent (transportBar.get(), outDir, "rec-02-no-input-notice.png", 250);
         session.deviceCaptureChannels.store (savedCapture, std::memory_order_relaxed);
     }

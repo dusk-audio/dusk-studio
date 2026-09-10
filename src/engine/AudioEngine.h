@@ -295,6 +295,16 @@ public:
     // startup fallback and immediately persists the user's explicit choice.
     void clearDeviceFallbackHold();
 
+    // One line for the transport bar when the startup open could not use the
+    // preferred backend. Empty when it did. Unlike consumeStartupDeviceMessage
+    // this is not drained by reading: the bar polls it, and it stands until the
+    // user picks a device, because the fallback stands until then too.
+    const std::string& backendFallbackNotice() const noexcept
+    {
+        return backendFallbackNotice_;
+    }
+    void clearBackendFallbackNotice() noexcept { backendFallbackNotice_.clear(); }
+
     // Marker jumps clamp to known points - no overshoot past zero or
     // past the last marker. Message-thread only.
     void jumpToPrevMarker();
@@ -964,6 +974,11 @@ private:
     // Set once in the constructor by the busy-device fallback; drained by
     // consumeStartupDeviceMessage() after construction. Message-thread only.
     juce::String        startupDeviceMessage_;
+
+    // Non-empty while the startup open landed on a backend other than the
+    // platform's preferred one. Read by the transport bar every timer tick and
+    // cleared when the user picks a device. Message-thread only.
+    std::string         backendFallbackNotice_;
 
     DeviceLostAlertSink onDeviceLostAlert_;
     RecordBlockedSink   onRecordBlocked_;

@@ -624,10 +624,20 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     if (const auto stateFile = audioDeviceStateFile(); stateFile.existsAsFile())
         savedDeviceState = stateFile.loadFileAsString().toStdString();
 
+    // The order the backends were registered in IS the preference order, so the
+    // first one is what the app uses when it has the choice. Captured before
+    // initialise because a failed open moves the current type off it.
+    std::string preferredBackend;
+    if (const auto types = deviceManager.getAvailableDeviceTypes(); ! types.empty())
+        if (types.front() != nullptr)
+            preferredBackend = types.front()->getTypeName();
+
+    std::string deviceInitError;
     if (const auto err = deviceManager.initialise (16, 2, savedDeviceState,
                                                    /*selectDefaultOnFailure*/ true);
         ! err.empty())
     {
+        deviceInitError = err;
         std::fprintf (stderr,
                       "[Dusk Studio/AudioEngine] device-manager init reported: %s\n",
                       err.c_str());
@@ -752,6 +762,15 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
         }
         startupDeviceMessage_ = duskstudio::startupDeviceMessage (
             opened, savedDevice, liveDevice);
+
+        // Falling back across backends is invisible otherwise: the session works,
+        // so nothing alerts, and the only record is a line on stderr the user
+        // never sees. The bar carries it until they pick a device.
+        backendFallbackNotice_ = duskstudio::backendFallbackNotice (
+            deviceInitError, preferredBackend, liveDevice.backendName);
+        if (! backendFallbackNotice_.empty())
+            std::fprintf (stderr, "[Dusk Studio/AudioEngine] %s\n",
+                          backendFallbackNotice_.c_str());
     }
 
     // First launch only. The default pick, and the cross-backend fallback above
