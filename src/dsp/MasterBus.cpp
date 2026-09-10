@@ -297,10 +297,11 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
 
     const bool blending = tapeMix.isSmoothing();
     const bool runTape  = tapeOn || blending;            // wet needed this block
-    const bool alignDry = tapeLatencySamples > 0;        // tape adds latency (2×/4×)
+    const bool alignDry = tapeLatencySamples > 0;        // the tape core's own delay
 
-    // At 1x (no latency), fully faded out -> the dry passes through untouched
-    // and the whole stage is free.
+    // The tape core reports a constant latency at every oversampling factor, so
+    // the dry alignment below runs whenever a tape is prepared. A core that
+    // reported none would let a faded-out stage cost nothing.
     if (runTape || alignDry)
     {
         for (int offset = 0; offset < numSamples; offset += tapeMaxBlock)
@@ -309,10 +310,10 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
             float* Lc = L + offset;
             float* Rc = R + offset;
 
-            // Capture the dry (pre-tape) signal. With tape latency present we
-            // push it through a matching delay - fed EVERY block so the ring
-            // stays warm -> seamless next toggle. At 0 latency a plain copy
-            // suffices and is only needed while blending.
+            // Capture the dry (pre-tape) signal and push it through a matching
+            // delay, fed EVERY block so the ring stays warm and the next toggle
+            // is seamless. The plain-copy branch is what a zero-latency core
+            // would take, and is only needed while blending.
             if (alignDry)
             {
                 for (int i = 0; i < n; ++i)

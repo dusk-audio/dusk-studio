@@ -105,6 +105,14 @@ private:
     dusk::audio::IntDelayLine tapeDryDelayR;
     int tapeLatencySamples = 0;
 
+public:
+    // The master's own delay, which the tape stage holds whether the tape is
+    // engaged or not so re-engaging it never jumps the timing. A render has to
+    // trim it, the same way it trims the track and aux compensation.
+    int getTapeLatencySamples() const noexcept { return tapeLatencySamples; }
+
+private:
+
     // VU-RMS smoother state - 300 ms tau on the audio thread, the VU standard
     // integration time the analog meter on the master strip is calibrated to.
     double sampleRateForMeter = 44100.0;

@@ -439,6 +439,13 @@ public:
         return masterDryPdcTarget.load (std::memory_order_relaxed);
     }
 
+    // The master tape's constant delay. Anything rendered through the master
+    // carries it, so a bounce trims it alongside the other two.
+    int getMasterTapeLatencySamples() const noexcept
+    {
+        return master.getTapeLatencySamples();
+    }
+
     // Offline-render only - call with the audio callback DETACHED. The
     // in-callback relatch of the master-stage PDC is gated on a stopped
     // transport, which an offline drive never satisfies (it forces Playing
