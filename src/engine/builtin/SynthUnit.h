@@ -30,10 +30,6 @@ public:
     void process (float* left, float* right, int numFrames,
                   const dusk::MidiBuffer* midi) noexcept override;
 
-    // Message thread. Silences every sounding voice, for a slot being torn down
-    // while notes are held.
-    void releaseAllNotes() noexcept;
-
 private:
     enum ParamIndex
     {

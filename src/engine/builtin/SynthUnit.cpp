@@ -85,11 +85,6 @@ void SynthUnit::prepare (double sampleRate, int maxBlockFrames)
     core->reset();
 }
 
-void SynthUnit::releaseAllNotes() noexcept
-{
-    core->allSoundOff();
-}
-
 void SynthUnit::applyMidi (const dusk::MidiBuffer& midi) noexcept
 {
     for (const auto meta : midi)
