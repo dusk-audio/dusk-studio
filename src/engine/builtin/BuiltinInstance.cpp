@@ -164,9 +164,9 @@ bool BuiltinInstance::loadState (const std::vector<std::uint8_t>& in)
     const auto& params = dusk::json::child (root, "params");
     for (int i = 0; i < unit->paramCount(); ++i)
     {
-        const auto& info = unit->paramInfo (i);
-        unit->setParam (i, (float) dusk::json::getDouble (params, info.id,
-                                                          (double) info.defaultValue));
+        const auto& p = unit->paramInfo (i);
+        unit->setParam (i, (float) dusk::json::getDouble (params, p.id,
+                                                          (double) p.defaultValue));
     }
     return true;
 }

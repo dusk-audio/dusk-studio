@@ -315,6 +315,42 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     }
 #endif
 
+    if (builtinSlot.isLoaded())
+    {
+        const auto unitName = builtinSlot.displayName();
+        std::string err;
+        const bool loaded = builtinSlot.reactivate (
+            preparedSampleRate, preparedBlockSize, err);
+        const auto reason = hosting::enforceReactivationPolicy (
+            loaded, err, [&] { builtinSlot.quarantineAfterFailedReactivation(); });
+        const bool wasFailed = builtinRestoreFailed.exchange (
+            ! reason.empty(), std::memory_order_relaxed);
+        if (! reason.empty() && ! wasFailed)
+            nativeRestoreFailures.push_back ({ "built-in", unitName, reason });
+    }
+    else if (! pendingBuiltinId.empty())
+    {
+        if (! isNativeClapLoaded() && ! isNativeLv2Loaded() && ! isNativeVst3Loaded()
+            && ! isNativeAuLoaded() && ! isNativeMultisampleLoaded())
+        {
+            const auto& unitId = pendingBuiltinId;
+            const bool stateWasSupplied = ! pendingBuiltinState.empty();
+            std::string err;
+            const bool loaded = builtinSlot.loadUnit (
+                unitId, preparedSampleRate, preparedBlockSize, err);
+            const bool stateAccepted = ! stateWasSupplied
+                || (loaded && builtinSlot.loadState (pendingBuiltinState));
+            const auto reason = hosting::enforceRestorePolicy (
+                loaded, stateWasSupplied, stateAccepted, err, pendingBuiltinState.size(),
+                [&] { builtinSlot.unload(); });
+            builtinRestoreFailed.store (! reason.empty(), std::memory_order_relaxed);
+            if (! reason.empty())
+                nativeRestoreFailures.push_back ({ "built-in", unitId, reason });
+        }
+        pendingBuiltinId.clear();
+        pendingBuiltinState.clear();
+    }
+
     // Oversampling: wrap (EQ + Comp) in a Dusk Studio-side oversampler when the
     // user picks 2× / 4× in Audio Settings. The EQ's always-on console
     // saturation and the comp's saturation alias hard at native rate; the wrap
@@ -604,6 +640,7 @@ bool ChannelStrip::loadNativeClap (const juce::File& path, std::string& errorOut
     unloadNativeVst3();
     unloadNativeAu();
     unloadNativeMultisample();
+    unloadBuiltin();
     pluginSlot.unload();
     const bool ok = nativeClapSlot.load (std::filesystem::u8path (path.getFullPathName().toStdString()),
                                          preparedSampleRate, preparedBlockSize, errorOut, pluginId.toStdString());
@@ -643,6 +680,7 @@ bool ChannelStrip::loadNativeLv2 (const juce::File& path, std::string& errorOut,
     unloadNativeVst3();
     unloadNativeAu();
     unloadNativeMultisample();
+    unloadBuiltin();
     pluginSlot.unload();
     const bool ok = nativeLv2Slot.load (std::filesystem::u8path (path.getFullPathName().toStdString()),
                                         preparedSampleRate, preparedBlockSize, errorOut, pluginId.toStdString());
@@ -682,6 +720,7 @@ bool ChannelStrip::loadNativeVst3 (const juce::File& path, std::string& errorOut
     unloadNativeLv2();
     unloadNativeAu();
     unloadNativeMultisample();
+    unloadBuiltin();
     pluginSlot.unload();
     const bool ok = nativeVst3Slot.load (std::filesystem::u8path (path.getFullPathName().toStdString()),
                                          preparedSampleRate, preparedBlockSize, errorOut, pluginId.toStdString());
@@ -717,6 +756,7 @@ bool ChannelStrip::loadNativeAu (const juce::String& identifier, std::string& er
     unloadNativeLv2();
     unloadNativeVst3();
     unloadNativeMultisample();
+    unloadBuiltin();
     pluginSlot.unload();
     const auto stableId = identifier.toStdString();
     const bool ok = nativeAuSlot.load (std::filesystem::u8path (stableId),
@@ -755,6 +795,7 @@ bool ChannelStrip::loadNativeMultisample (const juce::File& soundfont, std::stri
     unloadNativeLv2();
     unloadNativeVst3();
     unloadNativeAu();
+    unloadBuiltin();
     pluginSlot.unload();
     const bool ok = nativeMultisampleSlot.load (
         std::filesystem::u8path (soundfont.getFullPathName().toStdString()),
@@ -791,6 +832,7 @@ bool ChannelStrip::commitNativeMultisample (NativeMultisampleSlot::PrimedLoad pr
     unloadNativeLv2();
     unloadNativeVst3();
     unloadNativeAu();
+    unloadBuiltin();
     pluginSlot.unload();
     const bool ok = nativeMultisampleSlot.commit (std::move (primed), preparedBlockSize);
     // A user-initiated load always ends any "failed restore" state (see loadNativeClap).
@@ -805,6 +847,39 @@ void ChannelStrip::setPendingNativeMultisample (const juce::File& soundfont,
     pendingMultisampleState = std::move (state);
 }
 #endif
+
+bool ChannelStrip::loadBuiltin (const std::string& unitId, std::string& errorOut)
+{
+    if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
+    { errorOut = "channel strip not prepared"; return false; }
+    // One host per insert - see loadNativeClap.
+    unloadNativeClap();
+    unloadNativeLv2();
+    unloadNativeVst3();
+    unloadNativeAu();
+    unloadNativeMultisample();
+    pluginSlot.unload();
+    const bool ok = builtinSlot.loadUnit (unitId, preparedSampleRate,
+                                          preparedBlockSize, errorOut);
+    // A user-initiated load always ends any "failed restore" state (see loadNativeClap).
+    builtinRestoreFailed.store (false, std::memory_order_relaxed);
+    return ok;
+}
+
+void ChannelStrip::unloadBuiltin() noexcept
+{
+    builtinSlot.unload();
+    builtinRestoreFailed.store (false, std::memory_order_relaxed);
+    pendingBuiltinId.clear();
+    pendingBuiltinState.clear();
+}
+
+void ChannelStrip::setPendingBuiltin (std::string unitId,
+                                      std::vector<uint8_t> state) noexcept
+{
+    pendingBuiltinId    = std::move (unitId);
+    pendingBuiltinState = std::move (state);
+}
 
 void ChannelStrip::relatchPdcIfDrained (float blockPeakAbs, int numSamples) noexcept
 {
@@ -876,6 +951,7 @@ bool ChannelStrip::hasLoadedMidiConsumer() const noexcept
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     if (nativeMultisampleSlot.isLoaded()) return true;
 #endif
+    if (builtinSlot.isLoaded()) return true;
     return pluginSlot.isLoaded();
 }
 
@@ -1186,6 +1262,17 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             }
             else
 #endif
+            if (builtinSlot.isLoaded())
+            {
+                // Same stereo-only mono fold as the CLAP branch above.
+                std::memcpy (insertScratchR.data(), tempMono.data(), sizeof (float) * (size_t) numSamples);
+                builtinSlot.processStereo (tempMono.data(), insertScratchR.data(),
+                                           tempMono.data(), insertScratchR.data(), numSamples);
+                for (int i = 0; i < numSamples; ++i)
+                    tempMono[(size_t) i] = 0.5f
+                        * (tempMono[(size_t) i] + insertScratchR[(size_t) i]);
+            }
+            else
             {
                 pluginMidiScratch.clear();
                 pluginSlot.processMonoBlock (tempMono.data(), numSamples, pluginMidiScratch);
@@ -1360,14 +1447,10 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             // tick the smoother to keep its state in sync in case the
             // track later flips to audio mode. A native host owns the slot
             // when loaded - same precedence as the effect-insert path.
-#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3 \
-    || DUSKSTUDIO_HAS_NATIVE_AU \
-    || DUSKSTUDIO_HAS_MULTISAMPLE
             // Bridge the block's MIDI into dusk once for whichever native host
             // runs. This is the last hop before the instrument, so a torn copy
             // here is a hung note: the bridge is whole-block-or-nothing.
             dusk::copyEventsWhole (trackMidi, nativeMidiScratch);
-#endif
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
             if (nativeClapSlot.isLoaded())
                 nativeClapSlot.processStereo (L, R, L, R, numSamples, &nativeMidiScratch);
@@ -1393,6 +1476,9 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 nativeMultisampleSlot.processStereo (L, R, L, R, numSamples, &nativeMidiScratch);
             else
 #endif
+            if (builtinSlot.isLoaded())
+                builtinSlot.processStereo (L, R, L, R, numSamples, &nativeMidiScratch);
+            else
             pluginSlot.processStereoBlock (L, R, numSamples, trackMidi);
             for (int i = 0; i < numSamples; ++i)
                 activeInsertGain.getNextValue();
@@ -1439,6 +1525,9 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                     nativeAuSlot.processStereo (L, R, L, R, numSamples);
                 else
 #endif
+                if (builtinSlot.isLoaded())
+                    builtinSlot.processStereo (L, R, L, R, numSamples);
+                else
                 {
                     pluginMidiScratch.clear();
                     pluginSlot.processStereoBlock (L, R, numSamples, pluginMidiScratch);

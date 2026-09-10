@@ -208,6 +208,46 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
     }
 #endif
 
+    for (int s = 0; s < kMaxPlugins; ++s)
+    {
+        auto& bs = builtinSlots[(size_t) s];
+        if (bs.isLoaded())
+        {
+            const auto unitName = bs.displayName();
+            std::string err;
+            const bool loaded = bs.reactivate (preparedSampleRate, preparedBlockSize, err);
+            const auto reason = hosting::enforceReactivationPolicy (
+                loaded, err, [&] { bs.quarantineAfterFailedReactivation(); });
+            const bool wasFailed = builtinRestoreFailed[(size_t) s].exchange (
+                ! reason.empty(), std::memory_order_relaxed);
+            if (! reason.empty() && ! wasFailed)
+                nativeRestoreFailures.push_back ({ "built-in", unitName, reason, s });
+        }
+        else if (! pendingBuiltinId[(size_t) s].empty())
+        {
+            if (! isNativeClapLoaded (s) && ! isNativeLv2Loaded (s)
+                && ! isNativeVst3Loaded (s) && ! isNativeAuLoaded (s))
+            {
+                const auto& unitId = pendingBuiltinId[(size_t) s];
+                const bool stateWasSupplied = ! pendingBuiltinState[(size_t) s].empty();
+                std::string err;
+                const bool loaded = bs.loadUnit (
+                    unitId, preparedSampleRate, preparedBlockSize, err);
+                const bool stateAccepted = ! stateWasSupplied
+                    || (loaded && bs.loadState (pendingBuiltinState[(size_t) s]));
+                const auto reason = hosting::enforceRestorePolicy (
+                    loaded, stateWasSupplied, stateAccepted, err,
+                    pendingBuiltinState[(size_t) s].size(), [&] { bs.unload(); });
+                builtinRestoreFailed[(size_t) s].store (! reason.empty(),
+                                                        std::memory_order_relaxed);
+                if (! reason.empty())
+                    nativeRestoreFailures.push_back ({ "built-in", unitId, reason, s });
+            }
+            pendingBuiltinId[(size_t) s].clear();
+            pendingBuiltinState[(size_t) s].clear();
+        }
+    }
+
     constexpr double rampSeconds = 0.020;
     returnGain.reset (sampleRate, rampSeconds);
     returnGain.setCurrentAndTargetValue (1.0f);
@@ -260,6 +300,7 @@ bool AuxLaneStrip::loadNativeClap (int slotIdx, const juce::File& path, std::str
     unloadNativeLv2 (slotIdx);
     unloadNativeVst3 (slotIdx);
     unloadNativeAu (slotIdx);
+    unloadBuiltin (slotIdx);
     slots[(size_t) slotIdx].unload();
     const bool ok = nativeClapSlots[(size_t) slotIdx].load (std::filesystem::u8path (path.getFullPathName().toStdString()),
                                                             preparedSampleRate, preparedBlockSize, errorOut, pluginId.toStdString());
@@ -301,6 +342,7 @@ bool AuxLaneStrip::loadNativeLv2 (int slotIdx, const juce::File& path, std::stri
     unloadNativeClap (slotIdx);
     unloadNativeVst3 (slotIdx);
     unloadNativeAu (slotIdx);
+    unloadBuiltin (slotIdx);
     slots[(size_t) slotIdx].unload();
     const bool ok = nativeLv2Slots[(size_t) slotIdx].load (std::filesystem::u8path (path.getFullPathName().toStdString()),
                                                            preparedSampleRate, preparedBlockSize, errorOut, pluginId.toStdString());
@@ -342,6 +384,7 @@ bool AuxLaneStrip::loadNativeVst3 (int slotIdx, const juce::File& path, std::str
     unloadNativeClap (slotIdx);
     unloadNativeLv2 (slotIdx);
     unloadNativeAu (slotIdx);
+    unloadBuiltin (slotIdx);
     slots[(size_t) slotIdx].unload();
     const bool ok = nativeVst3Slots[(size_t) slotIdx].load (std::filesystem::u8path (path.getFullPathName().toStdString()),
                                                             preparedSampleRate, preparedBlockSize, errorOut, pluginId.toStdString());
@@ -380,6 +423,7 @@ bool AuxLaneStrip::loadNativeAu (int slotIdx, const juce::String& identifier,
     unloadNativeClap (slotIdx);
     unloadNativeLv2 (slotIdx);
     unloadNativeVst3 (slotIdx);
+    unloadBuiltin (slotIdx);
     slots[(size_t) slotIdx].unload();
     const auto stableId = identifier.toStdString();
     const bool ok = nativeAuSlots[(size_t) slotIdx].load (
@@ -407,6 +451,41 @@ void AuxLaneStrip::setPendingNativeAu (int slotIdx,
     pendingAuState[(size_t) slotIdx] = std::move (state);
 }
 #endif
+
+bool AuxLaneStrip::loadBuiltin (int slotIdx, const std::string& unitId,
+                                std::string& errorOut)
+{
+    jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
+    if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
+    { errorOut = "aux lane not prepared"; return false; }
+    // One host per slot - see loadNativeClap.
+    unloadNativeClap (slotIdx);
+    unloadNativeLv2 (slotIdx);
+    unloadNativeVst3 (slotIdx);
+    unloadNativeAu (slotIdx);
+    slots[(size_t) slotIdx].unload();
+    const bool ok = builtinSlots[(size_t) slotIdx].loadUnit (
+        unitId, preparedSampleRate, preparedBlockSize, errorOut);
+    builtinRestoreFailed[(size_t) slotIdx].store (false, std::memory_order_relaxed);
+    return ok;
+}
+
+void AuxLaneStrip::unloadBuiltin (int slotIdx) noexcept
+{
+    jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
+    builtinSlots[(size_t) slotIdx].unload();
+    builtinRestoreFailed[(size_t) slotIdx].store (false, std::memory_order_relaxed);
+    pendingBuiltinId[(size_t) slotIdx].clear();
+    pendingBuiltinState[(size_t) slotIdx].clear();
+}
+
+void AuxLaneStrip::setPendingBuiltin (int slotIdx, std::string unitId,
+                                      std::vector<uint8_t> state) noexcept
+{
+    jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
+    pendingBuiltinId[(size_t) slotIdx]    = std::move (unitId);
+    pendingBuiltinState[(size_t) slotIdx] = std::move (state);
+}
 
 void AuxLaneStrip::updateGainTarget() noexcept
 {
@@ -522,6 +601,9 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
                 nativeAuSlots[sIdx].processStereo (L, R, L, R, numSamples);
             else
 #endif
+            if (builtinSlots[sIdx].isLoaded())
+                builtinSlots[sIdx].processStereo (L, R, L, R, numSamples);
+            else
                 slots[sIdx].processStereoBlock (L, R, numSamples, pluginMidiScratch);
         }
         else if (activeInsertMode[sIdx] == kInsertHardware)
