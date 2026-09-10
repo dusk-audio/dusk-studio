@@ -5,6 +5,7 @@
 #include "../foundation/MessageThread.h"
 
 #include <string>
+#include <string_view>
 #include <array>
 
 namespace duskstudio

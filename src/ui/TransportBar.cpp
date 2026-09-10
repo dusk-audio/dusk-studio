@@ -698,11 +698,13 @@ void TransportBar::refreshDeviceNotice()
     const bool noInput = engine.getSession().deviceCaptureChannels.load (
                              std::memory_order_relaxed) == 0;
     // No input is the one that stops the next thing the user tries, so it wins
-    // when a backend fallback is also standing.
-    auto wanted = noInput ? std::string ("No input device. Choose one in Settings > Audio.")
-                          : engine.backendFallbackNotice();
+    // when a backend fallback is also standing. Views, not strings: this runs
+    // at the timer rate and the notice changes almost never.
+    const std::string_view wanted =
+        noInput ? std::string_view ("No input device. Choose one in Settings > Audio.")
+                : std::string_view (engine.backendFallbackNotice());
     if (wanted == deviceNotice) return;
-    deviceNotice = std::move (wanted);
+    deviceNotice.assign (wanted.data(), wanted.size());
     repaint();
 }
 
@@ -1090,16 +1092,17 @@ void TransportBar::paint (juce::Graphics& g)
     if (deviceNotice.empty()) return;
 
     // The bar's own row is full, so the notice takes the gap the transport
-    // leaves in the middle rather than overlapping a control. Wide enough for
-    // the longest line either notice produces; a narrow window clamps it.
-    static constexpr int kNoticeW = 380;
+    // leaves in the middle rather than overlapping a control. Fitted rather than
+    // clipped: the backend line's length depends on two backend names, so no
+    // fixed width is right for every pair.
+    static constexpr int kNoticeW = 330;
     auto notice = getLocalBounds().withSizeKeepingCentre (
         std::min (kNoticeW, getWidth()), std::min (20, getHeight() - 6));
     g.setColour (kNoInputBackground);
     g.fillRoundedRectangle (notice.toFloat(), 3.0f);
     g.setColour (kNoInputText);
     g.setFont (kNoticeFont);
-    g.drawText (deviceNotice.c_str(), notice, kNoticeJustification, false);
+    g.drawFittedText (deviceNotice.c_str(), notice, kNoticeJustification, 1);
 }
 
 void TransportBar::resized()
