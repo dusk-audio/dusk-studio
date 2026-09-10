@@ -13,24 +13,40 @@ namespace
 // The subset of the donor's parameter table a channel insert wants. Ranges and
 // choice counts are the donor's; the advanced repro-head and program-band trims
 // are left at their defaults.
+const char* const kMachines[]    = { "Swiss", "American" };
+const char* const kSpeeds[]      = { "7.5 IPS", "15 IPS", "30 IPS", "3.75 IPS" };
+const char* const kTapes[]       = { "456", "GP9", "900", "250" };
+const char* const kPaths[]       = { "Repro", "Sync", "Input", "Thru" };
+const char* const kEqStandards[] = { "NAB", "CCIR" };
+const char* const kCalibrations[]= { "+3 dB", "+6 dB", "+7.5 dB", "+9 dB" };
+
+template <int N>
+constexpr int countOf (const char* const (&)[N]) { return N; }
+
 const ParamInfo kTapeParams[] =
 {
-    { "machine",     "Machine",      0.0f,     1.0f,     0.0f     },
-    { "speed",       "Speed",        0.0f,     3.0f,     1.0f     },
-    { "type",        "Tape",         0.0f,     3.0f,     0.0f     },
-    { "signal_path", "Path",         0.0f,     3.0f,     0.0f     },
-    { "eq_standard", "EQ",           0.0f,     1.0f,     0.0f     },
-    { "input",       "Input",      -12.0f,    12.0f,     0.0f     },
-    { "bias",        "Bias",         0.0f,   100.0f,    50.0f     },
-    { "calibration", "Calibration",  0.0f,     3.0f,     0.0f     },
-    { "output",      "Output",     -12.0f,    12.0f,     0.0f     },
-    { "hpf",         "Low Cut",     20.0f,   500.0f,    20.0f     },
-    { "lpf",         "High Cut",  3000.0f, 20000.0f, 20000.0f     },
-    { "wow",         "Wow",          0.0f,   100.0f,     0.0f     },
-    { "flutter",     "Flutter",      0.0f,   100.0f,     0.0f     },
-    { "noise",       "Noise",        0.0f,   100.0f,     0.0f     },
-    { "auto_cal",    "Auto Cal",     0.0f,     1.0f,     1.0f     },
-    { "auto_comp",   "Auto Comp",    0.0f,     1.0f,     1.0f     },
+    { "machine",     "Machine",     "Transport", "",   0.0f,  1.0f, 0.0f, ParamKind::Choice,
+      kMachines, countOf (kMachines) },
+    { "speed",       "Speed",       "Transport", "",   0.0f,  3.0f, 1.0f, ParamKind::Choice,
+      kSpeeds, countOf (kSpeeds) },
+    { "type",        "Tape",        "Transport", "",   0.0f,  3.0f, 0.0f, ParamKind::Choice,
+      kTapes, countOf (kTapes) },
+    { "signal_path", "Path",        "Transport", "",   0.0f,  3.0f, 0.0f, ParamKind::Choice,
+      kPaths, countOf (kPaths) },
+    { "eq_standard", "EQ",          "Transport", "",   0.0f,  1.0f, 0.0f, ParamKind::Choice,
+      kEqStandards, countOf (kEqStandards) },
+    { "input",       "Input",       "Level",     "dB", -12.0f, 12.0f, 0.0f, ParamKind::Continuous },
+    { "bias",        "Bias",        "Level",     "%",   0.0f, 100.0f, 50.0f, ParamKind::Continuous },
+    { "calibration", "Calibration", "Level",     "",    0.0f,  3.0f,  0.0f, ParamKind::Choice,
+      kCalibrations, countOf (kCalibrations) },
+    { "output",      "Output",      "Level",     "dB", -12.0f, 12.0f, 0.0f, ParamKind::Continuous },
+    { "hpf",         "Low Cut",     "Tone",      "Hz",  20.0f, 500.0f, 20.0f, ParamKind::Continuous },
+    { "lpf",         "High Cut",    "Tone",      "Hz", 3000.0f, 20000.0f, 20000.0f, ParamKind::Continuous },
+    { "wow",         "Wow",         "Transport Noise", "%", 0.0f, 100.0f, 0.0f, ParamKind::Continuous },
+    { "flutter",     "Flutter",     "Transport Noise", "%", 0.0f, 100.0f, 0.0f, ParamKind::Continuous },
+    { "noise",       "Noise",       "Transport Noise", "%", 0.0f, 100.0f, 0.0f, ParamKind::Continuous },
+    { "auto_cal",    "Auto Cal",    "Transport Noise", "",  0.0f, 1.0f, 1.0f, ParamKind::Toggle },
+    { "auto_comp",   "Auto Comp",   "Transport Noise", "",  0.0f, 1.0f, 1.0f, ParamKind::Toggle },
 };
 
 int choice (float v) noexcept { return (int) (v + 0.5f); }

@@ -12,46 +12,58 @@ namespace
 {
 // Ranges and defaults are the donor's own parameter table, so a freshly loaded
 // unit is its init patch.
+const char* const kModes[] = { "Cosmos", "Oracle", "Mono", "Modular", "Prism", "Acid" };
+const char* const kWaves[] = { "Saw", "Square", "Triangle", "Sine", "Noise" };
+
+template <int N>
+constexpr int countOf (const char* const (&)[N]) { return N; }
+
 const ParamInfo kSynthParams[] =
 {
-    { "mode",          "Mode",          0.0f,     5.0f,     0.0f    },
-    { "master_vol",    "Volume",      -60.0f,     6.0f,     0.0f    },
-    { "master_tune",   "Tune",       -100.0f,   100.0f,     0.0f    },
-    { "osc1_wave",     "Osc 1 Wave",    0.0f,     4.0f,     0.0f    },
-    { "osc1_level",    "Osc 1 Level",   0.0f,     1.0f,     1.0f    },
-    { "osc2_wave",     "Osc 2 Wave",    0.0f,     4.0f,     0.0f    },
-    { "osc2_level",    "Osc 2 Level",   0.0f,     1.0f,     0.8f    },
-    { "osc2_detune",   "Osc 2 Detune", -50.0f,   50.0f,     7.0f    },
-    { "osc2_semi",     "Osc 2 Semi",   -24.0f,   24.0f,     0.0f    },
-    { "sub_level",     "Sub",           0.0f,     1.0f,     0.5f    },
-    { "noise_level",   "Noise",         0.0f,     1.0f,     0.0f    },
-    { "cutoff",        "Cutoff",       20.0f, 20000.0f,  8000.0f    },
-    { "resonance",     "Resonance",     0.0f,     1.0f,     0.3f    },
-    { "filter_env",    "Filter Env",   -1.0f,     1.0f,     0.5f    },
-    { "amp_attack",    "Amp A",         0.001f,  10.0f,     0.01f   },
-    { "amp_decay",     "Amp D",         0.001f,  10.0f,     0.2f    },
-    { "amp_sustain",   "Amp S",         0.0f,     1.0f,     0.8f    },
-    { "amp_release",   "Amp R",         0.001f,  10.0f,     0.3f    },
-    { "filt_attack",   "Filt A",        0.001f,  10.0f,     0.01f   },
-    { "filt_decay",    "Filt D",        0.001f,  10.0f,     0.3f    },
-    { "filt_sustain",  "Filt S",        0.0f,     1.0f,     0.4f    },
-    { "filt_release",  "Filt R",        0.001f,  10.0f,     0.5f    },
-    { "unison_voices", "Unison",        1.0f,     8.0f,     1.0f    },
-    { "unison_detune", "Unison Detune", 0.0f,    50.0f,    10.0f    },
-    { "portamento",    "Glide",         0.0f,     2.0f,     0.0f    },
-    { "pb_range",      "PB Range",      1.0f,    24.0f,     2.0f    },
+    { "mode",          "Mode",          "Global", "",   0.0f,   5.0f,   0.0f,  ParamKind::Choice,
+      kModes, countOf (kModes) },
+    { "master_vol",    "Volume",        "Global", "dB", -60.0f, 6.0f,   0.0f,  ParamKind::Continuous },
+    { "master_tune",   "Tune",          "Global", "ct", -100.0f, 100.0f, 0.0f, ParamKind::Continuous },
+    { "pb_range",      "PB Range",      "Global", "st", 1.0f,  24.0f,   2.0f,  ParamKind::Continuous },
+    { "portamento",    "Glide",         "Global", "s",  0.0f,   2.0f,   0.0f,  ParamKind::Continuous },
+    { "unison_voices", "Unison",        "Global", "",   1.0f,   8.0f,   1.0f,  ParamKind::Continuous },
+    { "unison_detune", "Unison Detune", "Global", "ct", 0.0f,  50.0f,  10.0f,  ParamKind::Continuous },
+
+    { "osc1_wave",     "Osc 1 Wave",    "Oscillators", "", 0.0f, 4.0f, 0.0f, ParamKind::Choice,
+      kWaves, countOf (kWaves) },
+    { "osc1_level",    "Osc 1 Level",   "Oscillators", "", 0.0f, 1.0f, 1.0f, ParamKind::Continuous },
+    { "osc2_wave",     "Osc 2 Wave",    "Oscillators", "", 0.0f, 4.0f, 0.0f, ParamKind::Choice,
+      kWaves, countOf (kWaves) },
+    { "osc2_level",    "Osc 2 Level",   "Oscillators", "",   0.0f,  1.0f, 0.8f, ParamKind::Continuous },
+    { "osc2_detune",   "Osc 2 Detune",  "Oscillators", "ct", -50.0f, 50.0f, 7.0f, ParamKind::Continuous },
+    { "osc2_semi",     "Osc 2 Semi",    "Oscillators", "st", -24.0f, 24.0f, 0.0f, ParamKind::Continuous },
+    { "sub_level",     "Sub",           "Oscillators", "",   0.0f,  1.0f, 0.5f, ParamKind::Continuous },
+    { "noise_level",   "Noise",         "Oscillators", "",   0.0f,  1.0f, 0.0f, ParamKind::Continuous },
+
+    { "cutoff",        "Cutoff",        "Filter", "Hz", 20.0f, 20000.0f, 8000.0f, ParamKind::Continuous },
+    { "resonance",     "Resonance",     "Filter", "",    0.0f,     1.0f,    0.3f, ParamKind::Continuous },
+    { "filter_env",    "Filter Env",    "Filter", "",   -1.0f,     1.0f,    0.5f, ParamKind::Continuous },
+
+    { "amp_attack",    "Amp A",         "Envelopes", "s", 0.001f, 10.0f, 0.01f, ParamKind::Continuous },
+    { "amp_decay",     "Amp D",         "Envelopes", "s", 0.001f, 10.0f, 0.2f,  ParamKind::Continuous },
+    { "amp_sustain",   "Amp S",         "Envelopes", "",  0.0f,    1.0f, 0.8f,  ParamKind::Continuous },
+    { "amp_release",   "Amp R",         "Envelopes", "s", 0.001f, 10.0f, 0.3f,  ParamKind::Continuous },
+    { "filt_attack",   "Filt A",        "Envelopes", "s", 0.001f, 10.0f, 0.01f, ParamKind::Continuous },
+    { "filt_decay",    "Filt D",        "Envelopes", "s", 0.001f, 10.0f, 0.3f,  ParamKind::Continuous },
+    { "filt_sustain",  "Filt S",        "Envelopes", "",  0.0f,    1.0f, 0.4f,  ParamKind::Continuous },
+    { "filt_release",  "Filt R",        "Envelopes", "s", 0.001f, 10.0f, 0.5f,  ParamKind::Continuous },
 };
 
 // The unit's parameter order onto the core's flat index.
 constexpr int kCoreIndex[] =
 {
-    msynth::pMode, msynth::pMasterVol, msynth::pMasterTune,
+    msynth::pMode, msynth::pMasterVol, msynth::pMasterTune, msynth::pPbRange,
+    msynth::pPortaTime, msynth::pUnisonVoices, msynth::pUnisonDetune,
     msynth::pOsc1Wave, msynth::pOsc1Level, msynth::pOsc2Wave, msynth::pOsc2Level,
     msynth::pOsc2Detune, msynth::pOsc2Semi, msynth::pSubLevel, msynth::pNoiseLevel,
     msynth::pFilterCutoff, msynth::pFilterRes, msynth::pFilterEnvAmt,
     msynth::pAmpA, msynth::pAmpD, msynth::pAmpS, msynth::pAmpR,
     msynth::pFiltA, msynth::pFiltD, msynth::pFiltS, msynth::pFiltR,
-    msynth::pUnisonVoices, msynth::pUnisonDetune, msynth::pPortaTime, msynth::pPbRange,
 };
 static_assert (sizeof (kCoreIndex) / sizeof (kCoreIndex[0])
                    == sizeof (kSynthParams) / sizeof (kSynthParams[0]),

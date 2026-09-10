@@ -11,17 +11,25 @@ namespace duskstudio::builtin
 {
 namespace
 {
+const char* const kAlgorithms[] =
+{
+    "Plate", "Vintage Plate", "Smooth Plate", "Chamber", "Studio", "Spring",
+    "Gated", "Shimmer", "Vintage Hall", "Reverse", "Hall", "Sparse",
+    "Dense Hall", "Composite", "Parallel", "Room",
+};
+
 const ParamInfo kReverbParams[] =
 {
-    { "mix",       "Mix",       0.0f,    1.0f,     0.0f    },
-    { "algorithm", "Algorithm", 0.0f,   15.0f,    10.0f    },
-    { "decay",     "Decay",     0.2f,   30.0f,     2.0f    },
-    { "size",      "Size",      0.0f,    1.0f,     0.5f    },
-    { "predelay",  "Pre-Delay", 0.0f,  250.0f,    20.0f    },
-    { "damping",   "Damping",   0.1f,    1.5f,     0.7f    },
-    { "width",     "Width",     0.0f,    2.0f,     1.0f    },
-    { "lo_cut",    "Lo Cut",    5.0f,  500.0f,    20.0f    },
-    { "hi_cut",    "Hi Cut", 1000.0f, 20000.0f, 12000.0f   },
+    { "mix",       "Mix",       "Blend", "",   0.0f,    1.0f,     0.0f,   ParamKind::Continuous },
+    { "algorithm", "Algorithm", "Tank",  "",   0.0f,   15.0f,    10.0f,   ParamKind::Choice,
+      kAlgorithms, (int) (sizeof (kAlgorithms) / sizeof (kAlgorithms[0])) },
+    { "decay",     "Decay",     "Tank",  "s",  0.2f,   30.0f,     2.0f,   ParamKind::Continuous },
+    { "size",      "Size",      "Tank",  "",   0.0f,    1.0f,     0.5f,   ParamKind::Continuous },
+    { "predelay",  "Pre-Delay", "Tank",  "ms", 0.0f,  250.0f,    20.0f,   ParamKind::Continuous },
+    { "damping",   "Damping",   "Tone",  "",   0.1f,    1.5f,     0.7f,   ParamKind::Continuous },
+    { "width",     "Width",     "Tone",  "",   0.0f,    2.0f,     1.0f,   ParamKind::Continuous },
+    { "lo_cut",    "Lo Cut",    "Tone",  "Hz", 5.0f,  500.0f,    20.0f,   ParamKind::Continuous },
+    { "hi_cut",    "Hi Cut",    "Tone",  "Hz", 1000.0f, 20000.0f, 12000.0f, ParamKind::Continuous },
 };
 
 constexpr double kMixRampSeconds = 0.02;

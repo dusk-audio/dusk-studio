@@ -644,6 +644,8 @@ if(DUSK_PLUGINS_PATH)
         # The mastering stage's native panels draw the chain through the widget kit, so
         # their headless suite needs the kit as well as the donor DSP this block gates.
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:imgui_mastering_views.cpp>
+        $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:imgui_builtin_unit_view.cpp>
+        $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/BuiltinUnitView.cpp>
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringEqView.cpp>
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringLimiterView.cpp>
         dsp_stereo_oversampler.cpp

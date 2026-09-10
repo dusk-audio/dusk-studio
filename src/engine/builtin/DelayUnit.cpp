@@ -13,19 +13,25 @@ namespace
 // Ranges and defaults are the donor's own parameter table, except that Echo and
 // Reverb default to zero: an insert is transparent until the user asks for
 // something, the same rule the Reverb unit's Mix follows.
+const char* const kModes[] =
+{
+    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12",
+};
+
 const ParamInfo kDelayParams[] =
 {
-    { "echo",        "Echo",          0.0f,  1.0f,  0.0f },
-    { "dry",         "Dry",           0.0f,  1.0f,  1.0f },
-    { "repeat_rate", "Repeat Rate",   0.0f,  1.0f,  0.5f },
-    { "intensity",   "Intensity",     0.0f,  1.0f,  0.4f },
-    { "mode",        "Mode",          1.0f, 12.0f,  1.0f },
-    { "reverb",      "Reverb",        0.0f,  1.0f,  0.0f },
-    { "bass",        "Bass",         -1.0f,  1.0f,  0.0f },
-    { "treble",      "Treble",       -1.0f,  1.0f,  0.0f },
-    { "input",       "Input",         0.0f,  1.0f,  0.5f },
-    { "wow_flutter", "Wow & Flutter", 0.0f,  1.0f,  0.5f },
-    { "tape_age",    "Tape Age",      0.0f,  1.0f,  0.0f },
+    { "echo",        "Echo",          "Mix",  "", 0.0f,  1.0f, 0.0f, ParamKind::Continuous },
+    { "dry",         "Dry",           "Mix",  "", 0.0f,  1.0f, 1.0f, ParamKind::Continuous },
+    { "reverb",      "Reverb",        "Mix",  "", 0.0f,  1.0f, 0.0f, ParamKind::Continuous },
+    { "mode",        "Head Mode",     "Tape", "", 1.0f, 12.0f, 1.0f, ParamKind::Choice,
+      kModes, (int) (sizeof (kModes) / sizeof (kModes[0])) },
+    { "repeat_rate", "Repeat Rate",   "Tape", "", 0.0f,  1.0f, 0.5f, ParamKind::Continuous },
+    { "intensity",   "Intensity",     "Tape", "", 0.0f,  1.0f, 0.4f, ParamKind::Continuous },
+    { "input",       "Input",         "Tape", "", 0.0f,  1.0f, 0.5f, ParamKind::Continuous },
+    { "wow_flutter", "Wow & Flutter", "Tape", "", 0.0f,  1.0f, 0.5f, ParamKind::Continuous },
+    { "tape_age",    "Tape Age",      "Tape", "", 0.0f,  1.0f, 0.0f, ParamKind::Continuous },
+    { "bass",        "Bass",          "Tone", "", -1.0f, 1.0f, 0.0f, ParamKind::Continuous },
+    { "treble",      "Treble",        "Tone", "", -1.0f, 1.0f, 0.0f, ParamKind::Continuous },
 };
 } // namespace
 

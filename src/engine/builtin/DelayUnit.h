@@ -32,8 +32,8 @@ public:
 private:
     enum ParamIndex
     {
-        kEchoLevel = 0, kDryLevel, kRepeatRate, kIntensity, kMode,
-        kReverbLevel, kBass, kTreble, kInputGain, kWowFlutter, kTapeAge,
+        kEchoLevel = 0, kDryLevel, kReverbLevel, kMode, kRepeatRate,
+        kIntensity, kInputGain, kWowFlutter, kTapeAge, kBass, kTreble,
         kNumParams
     };
 

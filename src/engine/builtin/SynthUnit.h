@@ -37,13 +37,13 @@ public:
 private:
     enum ParamIndex
     {
-        kMode = 0, kMasterVolDb, kMasterTuneCents,
+        kMode = 0, kMasterVolDb, kMasterTuneCents, kPitchBendRange, kPortamento,
+        kUnisonVoices, kUnisonDetuneCents,
         kOsc1Wave, kOsc1Level, kOsc2Wave, kOsc2Level, kOsc2DetuneCents, kOsc2Semi,
         kSubLevel, kNoiseLevel,
         kFilterCutoffHz, kFilterRes, kFilterEnvAmt,
         kAmpAttack, kAmpDecay, kAmpSustain, kAmpRelease,
         kFiltAttack, kFiltDecay, kFiltSustain, kFiltRelease,
-        kUnisonVoices, kUnisonDetuneCents, kPortamento, kPitchBendRange,
         kNumParams
     };
 
