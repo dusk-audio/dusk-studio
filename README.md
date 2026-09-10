@@ -72,7 +72,7 @@ GPL source on this repo, so building it yourself costs you nothing but compile t
 | macOS DMG (unsigned, ad-hoc) | Working (CI publishes to private releases repo on tag) |
 | Deeper a11y (full screen-reader labels + keyboard-only mixer nav) | Floor only |
 
-The C++ suite declares 1050 Catch2 test cases across 195 test source files. Linux
+The C++ suite declares 1051 Catch2 test cases across 196 test source files. Linux
 (amd64 + arm64) and macOS builds run on every push; Windows tests run on every
 push + PR; Linux ThreadSanitizer runs on every PR + push.
 
@@ -124,7 +124,7 @@ src/
   session/     # Session model + JSON serialisation
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
   util/        # Native log storage + CrashHandler signal reports
-tests/         # 1050 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
+tests/         # 1051 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME, macOS bundle — for tarball + DMG builds
 DuskStudio.md  # authoritative product spec
 MANUAL.md      # end-user manual (Pandoc-buildable to PDF via docs/build-pdf.sh)

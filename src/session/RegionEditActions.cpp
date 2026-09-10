@@ -475,6 +475,11 @@ struct CloneTrackAction::Impl
     std::vector<uint8_t> auState;
 #endif
 
+    // Built-in unit id and parameter state. Same offline-preserving contract as
+    // the Audio Unit pair above.
+    std::string          builtinUnitId;
+    std::vector<uint8_t> builtinState;
+
     // Region / MIDI region content.
     std::vector<AudioRegion> regions;
     std::vector<MidiRegion>  midiRegions;
@@ -695,6 +700,8 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
     if (strip.isNativeMultisampleLoaded())
         liveNativeCaptured = true;
 #endif
+    if (strip.isBuiltinLoaded())
+        liveNativeCaptured = true;
 
     // With no live owner, preserve one offline reference using the same
     // precedence as session restore. This is what makes AU clone/undo safe
@@ -738,6 +745,29 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
 #endif
     }
 #endif
+
+    {
+        auto& builtinSlot = engine.getStrip (idx).getBuiltinSlot();
+        if (builtinSlot.isLoaded())
+        {
+            s.builtinUnitId = builtinSlot.getPluginId();
+            if (! builtinSlot.saveState (s.builtinState) || s.builtinState.empty())
+            {
+                s.builtinState = dusk::base64::decode (
+                    t.builtinStateBase64.data(), t.builtinStateBase64.size());
+                hosting::retainStateForLiveIdentity (
+                    { "builtin", t.builtinUnitId, {} },
+                    { "builtin", builtinSlot.getPluginId(), {} },
+                    s.builtinState);
+            }
+        }
+        else if (! t.builtinUnitId.empty())
+        {
+            s.builtinUnitId = t.builtinUnitId;
+            s.builtinState  = dusk::base64::decode (
+                t.builtinStateBase64.data(), t.builtinStateBase64.size());
+        }
+    }
 
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     auto& msSlot = engine.getStrip (idx).getNativeMultisampleSlot();
@@ -981,6 +1011,39 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
         }
     }
 #endif
+
+    // Same "after the JUCE replay" rule as the multisample block below: a
+    // built-in load evicts every other host on the insert.
+    {
+        auto& strip = engine.getStrip (idx);
+        if (! s.builtinUnitId.empty())
+        {
+            engine.suspendProcessing();
+            std::string builtinErr;
+            bool loaded = strip.loadBuiltin (s.builtinUnitId, builtinErr);
+            if (loaded && ! s.builtinState.empty())
+                loaded = strip.getBuiltinSlot().loadState (s.builtinState);
+            engine.resumeProcessing();
+            if (! loaded)
+                strip.markBuiltinRestoreFailed();
+            t.builtinUnitId = s.builtinUnitId;
+            t.builtinStateBase64 = s.builtinState.empty()
+                ? std::string()
+                : dusk::base64::encode (s.builtinState.data(), s.builtinState.size());
+            t.pluginDescriptor.reset();
+            t.pluginLegacyDescriptionXml.clear();
+            t.pluginStateBase64.clear();
+        }
+        else
+        {
+            const bool wasLoaded = strip.isBuiltinLoaded();
+            if (wasLoaded) engine.suspendProcessing();
+            strip.unloadBuiltin();
+            if (wasLoaded) engine.resumeProcessing();
+            t.builtinUnitId.clear();
+            t.builtinStateBase64.clear();
+        }
+    }
 
 #if DUSKSTUDIO_HAS_MULTISAMPLE
     // After the JUCE replay: a multisample load evicts the JUCE slot, so doing

@@ -78,6 +78,7 @@ add_executable(dusk-studio-tests
     base64_decode.cpp
     legacy_state_base64.cpp
     session_round_trip.cpp
+    session_builtin_insert_roundtrip.cpp
     session_tape_migration.cpp
     session_freeze_roundtrip.cpp
     session_region_bounds.cpp
