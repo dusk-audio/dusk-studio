@@ -1,6 +1,9 @@
 #include "BuiltinRegistry.h"
 
 #include "UtilityUnit.h"
+#if DUSKSTUDIO_HAS_DONOR_UNITS
+ #include "ReverbUnit.h"
+#endif
 
 namespace duskstudio::builtin
 {
@@ -10,6 +13,10 @@ const std::vector<UnitInfo>& registry()
     {
         { "dusk.builtin.utility", "Utility", "Fx|Utility", false,
           [] () -> std::unique_ptr<BuiltinUnit> { return std::make_unique<UtilityUnit>(); } },
+#if DUSKSTUDIO_HAS_DONOR_UNITS
+        { "dusk.builtin.reverb", "Reverb", "Fx|Reverb", false,
+          [] () -> std::unique_ptr<BuiltinUnit> { return std::make_unique<ReverbUnit>(); } },
+#endif
     };
     return units;
 }

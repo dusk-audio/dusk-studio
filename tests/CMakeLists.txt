@@ -291,6 +291,23 @@ if(DUSK_PLUGINS_PATH)
     target_include_directories(dusk-studio-tests SYSTEM PRIVATE
         ${DUSK_PLUGINS_PATH}/plugins/multi-q
         ${DUSK_PLUGINS_PATH}/plugins/shared)
+
+    # Built-in units backed by donor cores. Gated with the donor for the same
+    # reason console_saturation.cpp is: without it the includes cannot resolve.
+    target_sources(dusk-studio-tests PRIVATE
+        builtin_reverb_unit.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/builtin/ReverbUnit.cpp)
+    foreach(_verbSource IN ITEMS
+            DattorroPlateVintage DattorroTank DiffusionStage DuskVerbEngine
+            EarlyReflections FDNReverb NonLinearEngine OctaveGEQDesign
+            OutputDiffusion QuadTank ReverseRoomEngine ShimmerEngine
+            SixAPTankEngine SpringEngine)
+        target_sources(dusk-studio-tests PRIVATE
+            ${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp/${_verbSource}.cpp)
+    endforeach()
+    target_include_directories(dusk-studio-tests SYSTEM PRIVATE
+        ${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp)
+    target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_DONOR_UNITS=1)
 endif()
 
 # The Dear ImGui widget kit and one console strip drawn through it, headlessly: no
