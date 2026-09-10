@@ -205,9 +205,19 @@ TEST_CASE ("TapeMachineDSP holds its tone across a fixed render", "[tape][regres
 
     // Measured from this core. A failure here is a tone change: either it was
     // intended, and these move with it in the same commit, or it was not.
+    //
+    // The two are not equally sensitive, and the difference matters when
+    // reading a failure. Auto Comp exists to hold output level against drive,
+    // so peak barely moves with it: a whole dB of extra input gain shifts peak
+    // by 0.07 percent and RMS by 1.6 percent. RMS at a tenth of a percent is
+    // therefore the drive detector, tripping at roughly 0.06 dB; peak at two
+    // tenths is the guard on gross scaling and clipping, which is the failure
+    // RMS alone could miss. Neither is tight enough to trip on the
+    // fused-multiply-add and libm differences between the compilers and
+    // architectures this suite runs on.
     INFO ("peak " << m.peak << " rms " << m.rms);
     REQUIRE_THAT (m.peak, Catch::Matchers::WithinRel (0.679183, 0.002));
-    REQUIRE_THAT (m.rms,  Catch::Matchers::WithinRel (0.107245, 0.002));
+    REQUIRE_THAT (m.rms,  Catch::Matchers::WithinRel (0.107245, 0.001));
 }
 
 TEST_CASE ("TapeMachineDSP ignores the oversampling choice", "[tape][regression]")
