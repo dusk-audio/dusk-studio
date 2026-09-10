@@ -5346,8 +5346,17 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
         case kMenuSettingsQuickstart:
         {
             const auto quickstart = locateQuickstartDocument();
-            if (! quickstart.empty())
-                duskstudio::platform::openPathInDefaultApp (quickstart);
+            if (quickstart.empty()) break;
+
+            if (! duskstudio::platform::openPathInDefaultApp (quickstart))
+            {
+                // Nothing was launched, so say where the file is rather than
+                // leaving a menu click that silently did nothing.
+                const auto message = "Dusk Studio could not hand this file to a "
+                                     "default application: " + quickstart.string()
+                                   + ". Open it from there by hand.";
+                showDuskAlert (*this, "Could not open the quickstart", message.c_str());
+            }
             break;
         }
         case kMenuSettingsAbout:
