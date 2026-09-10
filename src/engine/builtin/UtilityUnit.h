@@ -18,7 +18,8 @@ public:
     UtilityUnit();
 
     void prepare (double sampleRate, int maxBlockFrames) override;
-    void process (float* left, float* right, int numFrames) noexcept override;
+    void process (float* left, float* right, int numFrames,
+                  const dusk::MidiBuffer* midi) noexcept override;
 
 private:
     enum ParamIndex { kGainDb = 0, kPolarityInvert, kWidth, kMonoSum, kNumParams };

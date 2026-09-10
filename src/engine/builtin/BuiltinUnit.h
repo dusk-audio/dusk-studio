@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../../foundation/MidiBuffer.h"
+
 #include <algorithm>
 #include <atomic>
 #include <vector>
@@ -63,8 +65,11 @@ public:
 
     virtual int latencySamples() const noexcept { return 0; }
 
-    // Audio thread. Stereo, in place.
-    virtual void process (float* left, float* right, int numFrames) noexcept = 0;
+    // Audio thread. Stereo, in place. `midi` carries the block's events for a
+    // unit that consumes them and is null for an effect insert, which the mixer
+    // never routes MIDI to; an effect unit ignores it.
+    virtual void process (float* left, float* right, int numFrames,
+                          const dusk::MidiBuffer* midi) noexcept = 0;
 
 protected:
     // Audio thread.

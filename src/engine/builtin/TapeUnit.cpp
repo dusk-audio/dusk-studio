@@ -61,7 +61,8 @@ int TapeUnit::latencySamples() const noexcept
     return core != nullptr ? core->latencySamples() : 0;
 }
 
-void TapeUnit::process (float* left, float* right, int numFrames) noexcept
+void TapeUnit::process (float* left, float* right, int numFrames,
+                        const dusk::MidiBuffer*) noexcept
 {
     dusk::audio::ScopedNoDenormals noDenormals;
 

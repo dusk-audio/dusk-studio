@@ -128,7 +128,7 @@ void BuiltinInstance::processBlock (const hosting::PortBuffers& io) noexcept
         std::memcpy (outR, io.mainIn[1], bytes);
     }
 
-    unit->process (outL, outR, io.numFrames);
+    unit->process (outL, outR, io.numFrames, io.midiIn);
 }
 
 bool BuiltinInstance::saveState (std::vector<std::uint8_t>& out) const

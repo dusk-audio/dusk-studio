@@ -41,7 +41,8 @@ void UtilityUnit::prepare (double sampleRate, int)
     polarity.setCurrentAndTargetValue (getParam (kPolarityInvert) >= 0.5f ? -1.0f : 1.0f);
 }
 
-void UtilityUnit::process (float* left, float* right, int numFrames) noexcept
+void UtilityUnit::process (float* left, float* right, int numFrames,
+                           const dusk::MidiBuffer*) noexcept
 {
     dusk::audio::ScopedNoDenormals noDenormals;
 

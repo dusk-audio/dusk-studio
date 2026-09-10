@@ -301,7 +301,10 @@ if(DUSK_PLUGINS_PATH)
         ${CMAKE_SOURCE_DIR}/src/engine/builtin/DelayUnit.cpp
         ${DUSK_PLUGINS_PATH}/plugins/tape-echo/core/TapeEchoDSP.cpp
         builtin_tape_unit.cpp
-        ${CMAKE_SOURCE_DIR}/src/engine/builtin/TapeUnit.cpp)
+        ${CMAKE_SOURCE_DIR}/src/engine/builtin/TapeUnit.cpp
+        builtin_synth_unit.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/builtin/SynthUnit.cpp
+        ${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core/MultiSynthDSP.cpp)
     foreach(_verbSource IN ITEMS
             DattorroPlateVintage DattorroTank DiffusionStage DuskVerbEngine
             EarlyReflections FDNReverb NonLinearEngine OctaveGEQDesign
@@ -312,7 +315,8 @@ if(DUSK_PLUGINS_PATH)
     endforeach()
     target_include_directories(dusk-studio-tests SYSTEM PRIVATE
         ${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp
-        ${DUSK_PLUGINS_PATH}/plugins/tape-echo/core)
+        ${DUSK_PLUGINS_PATH}/plugins/tape-echo/core
+        ${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_DONOR_UNITS=1)
 endif()
 

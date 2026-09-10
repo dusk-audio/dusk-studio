@@ -90,7 +90,8 @@ void ReverbUnit::pushChangedParams() noexcept
           [this] (float v) { engine->setHiCut (v); });
 }
 
-void ReverbUnit::process (float* left, float* right, int numFrames) noexcept
+void ReverbUnit::process (float* left, float* right, int numFrames,
+                          const dusk::MidiBuffer*) noexcept
 {
     dusk::audio::ScopedNoDenormals noDenormals;
 

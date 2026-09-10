@@ -1351,7 +1351,8 @@ if(DEFINED DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source"
         "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp"
-        "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core")
+        "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core"
+        "${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core")
 
     # Compile multi-comp's processor + editor + shared LEDMeter so
     # UniversalCompressor links cleanly. Editor sources are linked but not
@@ -1380,6 +1381,8 @@ if(DEFINED DUSK_PLUGINS_PATH)
         src/engine/builtin/ReverbUnit.cpp
         src/engine/builtin/DelayUnit.cpp
         src/engine/builtin/TapeUnit.cpp
+        src/engine/builtin/SynthUnit.cpp
+        "${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core/MultiSynthDSP.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core/TapeEchoDSP.cpp"
         src/dsp/MasterTape.cpp
         "${DUSKSTUDIO_COMPRESSOR_CORE_SOURCE}"

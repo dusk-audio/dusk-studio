@@ -44,7 +44,8 @@ void DelayUnit::prepare (double sampleRate, int maxBlockFrames)
     core->reset();
 }
 
-void DelayUnit::process (float* left, float* right, int numFrames) noexcept
+void DelayUnit::process (float* left, float* right, int numFrames,
+                         const dusk::MidiBuffer*) noexcept
 {
     dusk::audio::ScopedNoDenormals noDenormals;
 

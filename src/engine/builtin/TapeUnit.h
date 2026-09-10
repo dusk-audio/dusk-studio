@@ -25,7 +25,8 @@ public:
 
     void prepare (double sampleRate, int maxBlockFrames) override;
     int  latencySamples() const noexcept override;
-    void process (float* left, float* right, int numFrames) noexcept override;
+    void process (float* left, float* right, int numFrames,
+                  const dusk::MidiBuffer* midi) noexcept override;
 
 private:
     enum ParamIndex
