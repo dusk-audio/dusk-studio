@@ -344,7 +344,7 @@ Any modern multi-core CPU (Intel, AMD, or Apple Silicon) is sufficient for a 24-
 
 ## Installing Dusk Studio
 
-The binaries shipped via Patreon and GitHub Sponsors are **unsigned by design** — Dusk Studio uses no Apple Developer ID and no Windows Authenticode certificate, and neither is planned. The result: macOS Gatekeeper and Windows SmartScreen will warn you on first launch. The warning is expected and the bypass is quick — under 30 seconds per OS — but it is required the first time.
+The binaries shipped via Patreon and GitHub Sponsors before 1.0 are **unsigned** - they carry no Apple Developer ID and no Windows Authenticode certificate. Signing both is part of 1.0. Until a signed release lands, the result is unchanged: macOS Gatekeeper and Windows SmartScreen will warn you on first launch. The warning is expected and the bypass is quick — under 30 seconds per OS — but it is required the first time.
 
 The source on GitHub is GPL-3.0; anyone who prefers to skip the warning can build from source.
 
@@ -421,7 +421,15 @@ Get-FileHash -Algorithm SHA256 dusk-studio-*-Windows-x64.msi
 # Compare against that file's line in the published SHA256SUMS.
 ```
 
-Verification protects against a bit-flipped download or a man-in-the-middle attack on the release attachment. It does NOT verify authorship; that's what the (currently absent) code-signing certificate would do.
+From 1.0 on, `SHA256SUMS` ships with a detached OpenPGP signature, `SHA256SUMS.asc`, and the public key that made it is published with the release. Import that key once, then check the signature before you check the hashes:
+
+```bash
+gpg --verify SHA256SUMS.asc SHA256SUMS
+```
+
+The checksums tell you the download arrived intact. The signature is what tells you the checksums came from us, so a signature that does not verify matters more than a hash that does.
+
+Verification protects against a bit-flipped download or a man-in-the-middle attack on the release attachment.
 
 ## First launch
 
@@ -449,6 +457,7 @@ Open **Settings → Audio…** to choose your audio device. The panel is divided
 - **Active output channels**: the master mix uses outputs 1-2. If your interface has more outputs, tick the extra pairs here to open them — each pair then becomes selectable as an aux lane's **Output** (a headphone / cue feed). Off by default; the master stays stereo until you enable more.
 - **Main output**: which physical pair the master mix goes to. **1-2 (default)** in most rigs; move it to another pair (e.g. when you want outputs 1-2 free for a control-room or cue feed). Only pairs the device currently has open are listed. If an aux lane is routed to the same pair as the master, the two sum on that pair.
 - **Rescan devices**: re-enumerates every backend and every MIDI port, useful if you plugged in a USB interface after launch. MIDI controllers on Linux do not need it — see [MIDI hot-plug](#midi-hot-plug).
+- **First launch only**: with nothing saved yet, Dusk Studio picks an input device alongside the output when the backend offers one, so recording works without a trip to this panel first. It never touches a configuration you have already made: if you chose no input on purpose, it stays that way.
 
 ### Control surface
 
