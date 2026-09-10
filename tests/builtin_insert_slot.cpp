@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "engine/builtin/BuiltinScanRows.h"
 #include "engine/builtin/NativeBuiltinSlot.h"
 
 #include <cmath>
@@ -52,6 +53,27 @@ TEST_CASE ("built-in registry resolves units by id")
     // that cannot load.
     for (const auto& unit : registry())
         REQUIRE (createUnit (unit.id) != nullptr);
+}
+
+TEST_CASE ("built-in picker rows are filtered by slot kind")
+{
+    const auto effects     = descriptorRows (/*instruments*/ false);
+    const auto instruments = descriptorRows (/*instruments*/ true);
+
+    // An instrument row reaching an effect picker would let the user load a
+    // MIDI-driven unit onto an aux return, where nothing feeds it notes.
+    for (const auto& row : effects)
+    {
+        REQUIRE_FALSE (row.isInstrument);
+        REQUIRE (row.formatName == kFormatName);
+        REQUIRE (row.backend == duskstudio::PluginBackend::Native);
+        REQUIRE (findUnit (row.location) != nullptr);
+    }
+    for (const auto& row : instruments)
+        REQUIRE (row.isInstrument);
+
+    REQUIRE (effects.size() + instruments.size() == registry().size());
+    REQUIRE_FALSE (effects.empty());
 }
 
 TEST_CASE ("built-in slot loads a unit without touching disk")
