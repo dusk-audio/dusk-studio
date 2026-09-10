@@ -421,9 +421,12 @@ Get-FileHash -Algorithm SHA256 dusk-studio-*-Windows-x64.msi
 # Compare against that file's line in the published SHA256SUMS.
 ```
 
-From 1.0 on, `SHA256SUMS` ships with a detached OpenPGP signature, `SHA256SUMS.asc`, and the public key that made it is published with the release. Import that key once, then check the signature before you check the hashes:
+From 1.0 on, `SHA256SUMS` ships with a detached OpenPGP signature, `SHA256SUMS.asc`, and the public key that made it is published with the release. Before you import the key, check its fingerprint against a copy that did not travel with the download: the same key is kept in the source repository at `packaging/release-signing.pub`, and its fingerprint is printed on the project site. Import only if the two agree, then check the signature before you check the hashes:
 
 ```bash
+gpg --show-keys --with-fingerprint release-signing.pub
+# Compare the fingerprint line with the one published on the project site.
+gpg --import release-signing.pub
 gpg --verify SHA256SUMS.asc SHA256SUMS
 ```
 

@@ -79,18 +79,20 @@ inline std::string startupDeviceMessage (bool opened,
 //   hadSavedIntent   : the launch restored a persisted setup. startupDeviceMessage
 //                      above owns that case, and a user who chose ALSA on purpose
 //                      must not be told it is a fallback on every launch.
-//   initError        : what the device-manager init reported (empty = clean).
 //   preferredBackend : the first backend the platform registers (the one the
 //                      app uses when it has the choice).
 //   actualBackend    : the backend that ended up open (empty = none did).
+//
+// The init's error string is deliberately not an input: a backend that
+// enumerates nothing is skipped without one, and that silent skip is exactly
+// the case the notice exists for.
 inline std::string backendFallbackNotice (bool hadSavedIntent,
-                                          const std::string& initError,
                                           const std::string& preferredBackend,
                                           const std::string& actualBackend)
 {
     if (hadSavedIntent)
         return {};
-    if (initError.empty() || preferredBackend.empty() || actualBackend.empty())
+    if (preferredBackend.empty() || actualBackend.empty())
         return {};
     if (preferredBackend == actualBackend)
         return {};
