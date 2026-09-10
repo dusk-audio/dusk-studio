@@ -1644,13 +1644,13 @@ The unit reports no latency. Its preamp runs its own fixed oversampling, whose d
 
 ### Tape
 
-Per-channel tape colour, running the same Tape Machine engine as the master bus. Two decks (Swiss and American), four speeds, four tape formulations and both EQ standards.
+Per-channel tape colour, running the same Tape Machine engine as the master bus. Two decks, four speeds, four tape formulations and both EQ standards.
 
 | Control | Range | Default | What it does |
 |---|---|---|---|
 | Machine | Swiss / American | Swiss | Which deck is modelled. |
 | Speed | 7.5 / 15 / 30 / 3.75 IPS | 15 IPS | Tape speed. Slower is warmer and less extended. |
-| Tape | 456 / GP9 / 900 / 250 | 456 | Tape formulation. |
+| Tape | four formulations | the first | Tape formulation. Each has its own saturation character and headroom. |
 | Path | Repro / Sync / Input / Thru | Repro | Which head the signal comes off. **Thru** is a bit-exact passthrough, the way pulling the tape out would be. |
 | EQ | NAB / CCIR | NAB | Replay equalisation standard. |
 | Input | −12 dB to +12 dB | 0 dB | Level onto the tape. This is the drive control. |
