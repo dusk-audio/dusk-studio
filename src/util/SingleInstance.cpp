@@ -68,6 +68,7 @@ struct Listener
 {
     std::thread thread;
     std::atomic<int> listenFd { -1 };
+    std::atomic<int> ownerFd { -1 };
     std::atomic<bool> unlinked { false };
     int wakeFds[2] = { -1, -1 };
     std::string socketPath;
@@ -235,6 +236,47 @@ int acceptPeer (int fd)
 #endif
 }
 
+// Liveness has to be something a launch can observe directly, because a connect
+// result cannot carry it: macOS answers ECONNREFUSED both for a primary that
+// died and for one whose listen backlog is momentarily full, and acting on the
+// second as though it were the first deletes a live primary's socket and elects
+// a second one over the same session directory. The owner lock is held by the
+// primary for its whole life, so the kernel drops it on a crash and no stale
+// file can outlive the process the way the socket entry does.
+//
+// This is deliberately not the SlotLock: that one is a short critical section
+// every launch takes and releases around mutations of the slot entry, and a
+// launch waiting on it would block forever if it doubled as the liveness mark.
+// Like that lock's file, this one is never unlinked: removing it while a launch
+// holds it open leaves that launch locking an unlinked inode while another
+// locks a fresh one at the same name, and both then read the slot as theirs.
+std::string ownerLockPath (const std::string& socketPath)
+{
+    return socketPath + ".owner";
+}
+
+int takeOwnerLock (const std::string& socketPath)
+{
+    const int fd = ::open (ownerLockPath (socketPath).c_str(),
+                           O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    if (fd < 0) return -1;
+    if (::flock (fd, LOCK_EX | LOCK_NB) == 0) return fd;
+    ::close (fd);
+    return -1;
+}
+
+// Fails closed: a lock we cannot open or cannot reason about reads as owned, so
+// the caller leaves the slot entry alone rather than clearing one that may
+// still be serving.
+bool ownerLockIsFree (const std::string& socketPath)
+{
+    const int fd = takeOwnerLock (socketPath);
+    if (fd < 0) return false;
+    ::flock (fd, LOCK_UN);
+    ::close (fd);
+    return true;
+}
+
 // The invariant every launch relies on: the directory entry at the slot path is
 // created, made listenable, and removed only under this lock. A stat before the
 // unlink cannot stand in for it, because the entry can be replaced between the
@@ -286,14 +328,8 @@ private:
     int fd = -1;
 };
 
-// Closing the listening fd is what makes a later launch fall back to acting as
-// primary; leaving it bound but unserviced would strand every launch after it.
-// Both exchanges keep this safe to call from the listener thread and from
-// release() without double-closing.
-void teardown (Listener& l)
+void unlinkOwnSocket (Listener& l)
 {
-    const int fd = l.listenFd.exchange (-1);
-    if (fd >= 0) ::close (fd);
     if (l.unlinked.exchange (true) || ! l.socketIdentified) return;
 
     const SlotLock lock (l.socketPath);
@@ -309,6 +345,25 @@ void teardown (Listener& l)
     if (named.st_dev == l.socketDev && named.st_ino == l.socketIno)
         ::unlink (l.socketPath.c_str());
 }
+
+// Closing the listening fd is what makes a later launch fall back to acting as
+// primary; leaving it bound but unserviced would strand every launch after it.
+// The exchanges keep this safe to call from the listener thread and from
+// release() without double-closing.
+void teardown (Listener& l)
+{
+    const int fd = l.listenFd.exchange (-1);
+    if (fd >= 0) ::close (fd);
+    unlinkOwnSocket (l);
+
+    // Dropping the advisory lock is what tells the next launch the slot is
+    // free, so it happens after the entry this process bound is gone. The
+    // reverse order offers a window where the slot reads as owned by nobody
+    // while a socket nothing is listening on is still sitting at the path.
+    const int owner = l.ownerFd.exchange (-1);
+    if (owner >= 0) ::close (owner);
+}
+
 
 bool peerIsThisUser (int fd)
 {
@@ -495,12 +550,21 @@ bool startListener (int fd, const std::string& path,
 {
     if (::listen (fd, 8) != 0) return false;
 
+    // Taken before the slot is served and held for the life of the process. A
+    // launch that cannot mark itself the owner must not become one: the mark is
+    // the only thing that stops the next launch reading a refused connect as an
+    // abandoned slot and clearing this one.
+    const int owner = takeOwnerLock (path);
+    if (owner < 0) return false;
+
     auto* l = new Listener();
     if (! makeWakePipe (l->wakeFds))
     {
+        ::close (owner);
         delete l;
         return false;
     }
+    l->ownerFd.store (owner);
     l->listenFd.store (fd);
     l->socketPath = path;
     struct stat bound {};
@@ -520,7 +584,7 @@ bool startListener (int fd, const std::string& path,
 // cannot change under us: Orphaned is the only state that permits an unlink.
 enum class Slot { Vacant, Live, Orphaned, Unknown };
 
-Slot probeSlot (const sockaddr_un& addr, socklen_t len)
+Slot probeSlot (const std::string& path, const sockaddr_un& addr, socklen_t len)
 {
     const int fd = openSocket (true);
     if (fd < 0) return Slot::Unknown;
@@ -529,8 +593,7 @@ Slot probeSlot (const sockaddr_un& addr, socklen_t len)
     if (::connect (fd, (const sockaddr*) &addr, len) != 0)
     {
         result = errno;
-        if (result == EINPROGRESS || result == EALREADY || result == EINTR
-            || result == EAGAIN || result == EWOULDBLOCK)
+        if (result == EINPROGRESS || result == EALREADY || result == EINTR)
         {
             const auto deadline = std::chrono::steady_clock::now()
                                 + std::chrono::milliseconds (kProbeBudgetMs);
@@ -547,9 +610,15 @@ Slot probeSlot (const sockaddr_un& addr, socklen_t len)
     ::close (fd);
 
     if (result == 0) return Slot::Live;
-    if (result == ECONNREFUSED) return Slot::Orphaned;
+    // A Unix-domain connect answers EAGAIN when the backlog is full, which only
+    // a listening socket can be, so this is the one refusal-shaped error that
+    // proves the slot is occupied rather than abandoned. Linux reports it that
+    // way; macOS reports a full backlog as ECONNREFUSED, which is why a refusal
+    // is never enough on its own to call the slot abandoned.
+    if (result == EAGAIN || result == EWOULDBLOCK) return Slot::Live;
     if (result == ENOENT) return Slot::Vacant;
-    return Slot::Unknown;
+    if (result != ECONNREFUSED) return Slot::Unknown;
+    return ownerLockIsFree (path) ? Slot::Orphaned : Slot::Live;
 }
 
 // An unattached instance is otherwise indistinguishable from a normal launch
@@ -611,9 +680,14 @@ Handoff handOver (const sockaddr_un& addr, socklen_t len, const std::string& pay
         else
         {
             connectErr = errno;
+            // Only EINPROGRESS and its relatives mean a connect is under way.
+            // EAGAIN from a Unix-domain connect means the backlog is full and
+            // nothing was started: poll() then answers POLLOUT|POLLHUP for a
+            // socket that never connected, SO_ERROR is clear because no error
+            // was ever recorded, and the write that follows fails ENOTCONN -
+            // costing the launch the command line it was carrying.
             if (connectErr == EINPROGRESS || connectErr == EALREADY
-                || connectErr == EINTR || connectErr == EAGAIN
-                || connectErr == EWOULDBLOCK)
+                || connectErr == EINTR)
             {
                 const int revents = pollUntil (fd, POLLOUT, deadline);
                 if ((revents & POLLNVAL) == 0 && revents != 0)
@@ -658,7 +732,8 @@ Handoff handOver (const sockaddr_un& addr, socklen_t len, const std::string& pay
                                           : Handoff::Submitted;
         }
         ::close (fd);
-        if (connectErr != ECONNREFUSED)
+        const bool backlogFull = connectErr == EAGAIN || connectErr == EWOULDBLOCK;
+        if (connectErr != ECONNREFUSED && ! backlogFull)
         {
             failureErrno = connectErr;
             return Handoff::Failed;
@@ -667,8 +742,17 @@ Handoff handOver (const sockaddr_un& addr, socklen_t len, const std::string& pay
         // A simultaneous primary may have bound but not reached listen() yet.
         // Retry refusals only long enough to cover the bind-to-listen race.
         // A dead primary should not add the full delivery timeout to startup.
-        if (std::chrono::steady_clock::now() >= refusalDeadline) break;
-        std::this_thread::sleep_for (std::chrono::milliseconds (25));
+        // A full backlog is the opposite case - it proves someone is listening,
+        // so it is worth the whole delivery budget - and it must never be
+        // reported as a refusal, which is what licenses unlinking the slot.
+        if (std::chrono::steady_clock::now() < (backlogFull ? deadline : refusalDeadline))
+        {
+            std::this_thread::sleep_for (std::chrono::milliseconds (25));
+            continue;
+        }
+        if (! backlogFull) break;
+        failureErrno = connectErr;
+        return Handoff::Failed;
     }
     return Handoff::Refused;
 }
@@ -694,10 +778,12 @@ bool acquire (const std::string& payload, std::function<void (std::string)> onCo
             const SlotLock lock (path);
             if (lock.isHeld())
             {
-                // A refusal seen here is final: a live primary completed
-                // listen() before it released the lock, and nothing can create
-                // or remove the entry while we hold it.
-                const Slot state = probeSlot (addr, len);
+                // Nothing can create or remove the entry while we hold the
+                // lock, so this verdict holds for as long as the branch below
+                // acts on it. A refusal alone is not one of the answers that
+                // licenses acting: only the owner lock separates a slot whose
+                // process is gone from one that is merely refusing.
+                const Slot state = probeSlot (path, addr, len);
                 if (state == Slot::Orphaned && ::unlink (path.c_str()) != 0 && errno != ENOENT)
                 {
                     reportUnattached ("the socket a crashed instance left behind could not "
