@@ -2,6 +2,10 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #import <AppKit/AppKit.h>   // NSCursor (hide/unhide) - not pulled in transitively
 
+#include <mach-o/dyld.h>
+
+#include <string>
+
 // Native counterparts to the Linux windowing operations. A peer's native
 // handle is its NSView; the containing NSWindow owns activation and ordering.
 // The remaining operations are intentionally small platform hooks:
@@ -11,6 +15,25 @@
 
 namespace duskstudio::platform
 {
+std::filesystem::path executableDirectory()
+{
+    std::uint32_t size = 0;
+    _NSGetExecutablePath (nullptr, &size);   // sets the size it needs
+    if (size == 0) return {};
+
+    std::string buffer (size, '\0');
+    if (_NSGetExecutablePath (buffer.data(), &size) != 0) return {};
+
+    return std::filesystem::path (buffer.c_str()).parent_path();
+}
+
+bool openPathInDefaultApp (const std::filesystem::path& path)
+{
+    NSString* const native = [NSString stringWithUTF8String: path.c_str()];
+    if (native == nil) return false;
+    return [[NSWorkspace sharedWorkspace] openURL: [NSURL fileURLWithPath: native]] == YES;
+}
+
 namespace
 {
 // Wraps a parent-process juce::AudioProcessorEditor (created from

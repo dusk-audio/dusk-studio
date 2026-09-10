@@ -60,6 +60,7 @@
 #include "../foundation/PlanarBuffer.h"
 #include "../foundation/Text.h"
 #include <algorithm>
+#include <filesystem>
 
 namespace duskstudio
 {
@@ -5068,7 +5069,35 @@ enum MenuItemId
     kMenuSettingsAbout = 2002,
     kMenuSettingsShortcuts = 2003,
     kMenuSettingsSupporters = 2004,
+    kMenuSettingsQuickstart = 2005,
 };
+
+// The quickstart document as the packagers place it: at the install root, one
+// level above the executable on Linux and Windows, and three above it inside a
+// macOS bundle, which is also where the repo's own copy sits relative to a
+// build run out of the tree. packaging/contents.txt names it .md on all three
+// platforms; .txt is accepted so a packager renaming it does not silently turn
+// the menu entry off.
+std::filesystem::path locateQuickstartDocument()
+{
+    const auto exeDir = duskstudio::platform::executableDirectory();
+    if (exeDir.empty()) return {};
+
+    const std::filesystem::path roots[] = {
+        exeDir.parent_path(),
+        exeDir,
+        exeDir.parent_path() / "Resources",
+        exeDir.parent_path().parent_path().parent_path(),
+    };
+
+    std::error_code ec;
+    for (const auto& root : roots)
+        for (const char* name : { "QUICKSTART.md", "QUICKSTART.txt" })
+            if (std::filesystem::is_regular_file (root / name, ec))
+                return root / name;
+
+    return {};
+}
 }
 
 juce::StringArray MainComponent::getMenuBarNames()
@@ -5185,6 +5214,13 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
     {
         menu.addItem (kMenuSettingsAudio, "Settings...");
         menu.addItem (kMenuSettingsShortcuts, "Keyboard Shortcuts  (?)");
+        // Disabled rather than hidden when the document is not installed, and
+        // it says why in the label: a menu item has nowhere to put a tooltip,
+        // and an alert for a missing help file is worse than the gap.
+        const bool quickstartInstalled = ! locateQuickstartDocument().empty();
+        menu.addItem (kMenuSettingsQuickstart,
+                      quickstartInstalled ? "Quickstart" : "Quickstart  (not installed)",
+                      quickstartInstalled);
         menu.addSeparator();
        #if DUSKSTUDIO_HAS_PATREON_CREDITS
         menu.addItem (kMenuSettingsSupporters, "Supporters");
@@ -5307,6 +5343,22 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
             break;
         }
        #endif
+        case kMenuSettingsQuickstart:
+        {
+            const auto quickstart = locateQuickstartDocument();
+            if (quickstart.empty()) break;
+
+            if (! duskstudio::platform::openPathInDefaultApp (quickstart))
+            {
+                // Nothing was launched, so say where the file is rather than
+                // leaving a menu click that silently did nothing.
+                const auto message = "Dusk Studio could not hand this file to a "
+                                     "default application: " + quickstart.string()
+                                   + ". Open it from there by hand.";
+                showDuskAlert (*this, "Could not open the quickstart", message.c_str());
+            }
+            break;
+        }
         case kMenuSettingsAbout:
         {
             // Pull the version string from the JUCE_APPLICATION_VERSION_STRING

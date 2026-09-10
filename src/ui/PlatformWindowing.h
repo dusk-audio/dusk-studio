@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <filesystem>
 #include <functional>
 
 // Forward-decl in the juce namespace so createInProcessEditorHost's
@@ -18,6 +19,16 @@ class AudioProcessorEditor;
 
 namespace duskstudio::platform
 {
+// The directory the running executable sits in. Package layouts arrange the
+// user-facing documents around it, so a caller resolves those from here rather
+// than from the working directory, which is wherever the launcher happened to
+// be. Empty if the platform would not say.
+std::filesystem::path executableDirectory();
+
+// Hand a path to the desktop's default handler for its type. False when
+// nothing could be launched; the caller decides what to say about it.
+bool openPathInDefaultApp (const std::filesystem::path& path);
+
 // Cross-platform window-management primitives. Per-platform
 // implementations live in PlatformWindowing_{Linux,Mac,Windows}.{cpp,mm}.
 // Callsites stay platform-agnostic; only this header is included.

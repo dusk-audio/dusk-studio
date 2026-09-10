@@ -10,13 +10,88 @@
 
 #include <X11/Xproto.h>
 
+#include <fcntl.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#include <cerrno>
+
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
+#include <system_error>
 
 namespace duskstudio::platform
 {
+std::filesystem::path executableDirectory()
+{
+    std::error_code ec;
+    const auto exe = std::filesystem::read_symlink ("/proc/self/exe", ec);
+    if (ec) return {};
+    return exe.parent_path();
+}
+
+bool openPathInDefaultApp (const std::filesystem::path& path)
+{
+    // The grandchild has no other way to report a failed exec, and the caller
+    // needs to tell "no handler" from "launched". CLOEXEC closes this pipe when
+    // the exec takes, so an empty read is success and any bytes are the errno
+    // that stopped it.
+    int fds[2] {};
+    if (::pipe2 (fds, O_CLOEXEC) != 0)
+        return false;
+
+    // Double fork so the viewer is reparented to init: the app never waits on
+    // it, and a single fork would leave a zombie for the life of the session.
+    const auto middle = ::fork();
+    if (middle < 0)
+    {
+        ::close (fds[0]);
+        ::close (fds[1]);
+        return false;
+    }
+
+    if (middle == 0)
+    {
+        // Async-signal-safe calls only from here to the exec.
+        ::close (fds[0]);
+        const auto grandchild = ::fork();
+
+        if (grandchild == 0)
+        {
+            ::setsid();
+            ::execlp ("xdg-open", "xdg-open", path.c_str(), (char*) nullptr);
+            const int failure = errno;
+            (void) ::write (fds[1], &failure, sizeof (failure));
+            ::_exit (127);
+        }
+
+        if (grandchild < 0)
+        {
+            const int failure = errno;
+            (void) ::write (fds[1], &failure, sizeof (failure));
+        }
+
+        ::close (fds[1]);
+        ::_exit (0);
+    }
+
+    // The grandchild owns the only remaining write end once this closes, so the
+    // read below cannot block on our own copy.
+    ::close (fds[1]);
+
+    int status = 0;
+    while (::waitpid (middle, &status, 0) < 0 && errno == EINTR)
+        continue;
+
+    int failure = 0;
+    const auto reported = ::read (fds[0], &failure, sizeof (failure));
+    ::close (fds[0]);
+
+    return reported == 0;
+}
+
 #if DUSKSTUDIO_JUCE_HAS_WAYLAND
 using juce::WaylandSymbols;
 using juce::WaylandWindowSystem;
