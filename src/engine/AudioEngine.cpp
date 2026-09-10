@@ -767,7 +767,8 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
         // so nothing alerts, and the only record is a line on stderr the user
         // never sees. The bar carries it until they pick a device.
         backendFallbackNotice_ = duskstudio::backendFallbackNotice (
-            deviceInitError, preferredBackend, liveDevice.backendName);
+            ! savedDeviceState.empty(), deviceInitError, preferredBackend,
+            liveDevice.backendName);
         if (! backendFallbackNotice_.empty())
             std::fprintf (stderr, "[Dusk Studio/AudioEngine] %s\n",
                           backendFallbackNotice_.c_str());
