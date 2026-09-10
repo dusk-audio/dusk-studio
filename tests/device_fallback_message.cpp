@@ -113,19 +113,19 @@ TEST_CASE ("startupDeviceMessage: nothing opened -> silent-session warning", "[a
 
 TEST_CASE ("backendFallbackNotice: a clean init says nothing", "[audio][device]")
 {
-    REQUIRE (backendFallbackNotice ("", "PipeWire", "ALSA").empty());
+    REQUIRE (backendFallbackNotice (false, "", "PipeWire", "ALSA").empty());
 }
 
 TEST_CASE ("backendFallbackNotice: the preferred backend opening says nothing",
            "[audio][device]")
 {
     // An error that did not cost the preferred backend is not the user's problem.
-    REQUIRE (backendFallbackNotice ("device \"HDMI 0\" is busy", "PipeWire", "PipeWire").empty());
+    REQUIRE (backendFallbackNotice (false, "device \"HDMI 0\" is busy", "PipeWire", "PipeWire").empty());
 }
 
 TEST_CASE ("backendFallbackNotice: a fallback names both backends", "[audio][device]")
 {
-    const auto m = backendFallbackNotice ("PipeWire delivered no usable quantum (0)",
+    const auto m = backendFallbackNotice (false, "PipeWire delivered no usable quantum (0)",
                                           "PipeWire", "ALSA");
     REQUIRE_FALSE (m.empty());
     REQUIRE (contains (m, "PipeWire"));
@@ -140,6 +140,15 @@ TEST_CASE ("backendFallbackNotice: an unknown backend on either side says nothin
 {
     // Nothing opened, or the platform registered no types: the silent-session
     // alert covers that case and the bar would only be guessing.
-    REQUIRE (backendFallbackNotice ("no device", "PipeWire", "").empty());
-    REQUIRE (backendFallbackNotice ("no device", "", "ALSA").empty());
+    REQUIRE (backendFallbackNotice (false, "no device", "PipeWire", "").empty());
+    REQUIRE (backendFallbackNotice (false, "no device", "", "ALSA").empty());
+}
+
+TEST_CASE ("backendFallbackNotice: a restored setup is startupDeviceMessage's to report",
+           "[audio][device]")
+{
+    // Someone who chose ALSA on purpose would otherwise be told it was a
+    // fallback every single launch.
+    REQUIRE (backendFallbackNotice (true, "PipeWire delivered no usable quantum (0)",
+                                    "PipeWire", "ALSA").empty());
 }
