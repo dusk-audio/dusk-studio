@@ -95,20 +95,22 @@ private:
     // tail from the last time the wrap ran.
     bool prevWrapActive { false };
 
-    // Dry-path PDC for the tape crossfade. Tape adds its own oversampler
-    // latency when engaged (0 at 1×); delaying the dry by the same amount keeps
-    // the on/off blend phase-coherent (no comb mid-fade) and seamless (no
-    // timing jump at the fade ends). Resolved in prepare from the core's
-    // reported latency; max sized to it. Fed every block at >0 latency so the
-    // ring stays warm for the next toggle - a constant, sub-ms master latency.
+    // Dry-path PDC for the tape crossfade. Tape carries its own delay when
+    // engaged; delaying the dry by the same amount keeps the on/off blend
+    // phase-coherent (no comb mid-fade) and seamless (no timing jump at the
+    // fade ends). Resolved in prepare from the core's processing-path figure,
+    // which is what the master holds on every path, and max sized to it. Fed
+    // every block so the ring stays warm for the next toggle - a constant,
+    // sub-ms master latency.
     dusk::audio::IntDelayLine tapeDryDelayL;
     dusk::audio::IntDelayLine tapeDryDelayR;
     int tapeLatencySamples = 0;
 
 public:
     // The master's own delay, which the tape stage holds whether the tape is
-    // engaged or not so re-engaging it never jumps the timing. A render has to
-    // trim it, the same way it trims the track and aux compensation.
+    // engaged or not, and on a passthrough signal path, so nothing the user
+    // changes there jumps the timing. A render has to trim it, the same way it
+    // trims the track and aux compensation.
     int getTapeLatencySamples() const noexcept { return tapeLatencySamples; }
 
 private:

@@ -295,6 +295,14 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
     }
     tapeMix.setTargetValue (tapeTarget);
 
+    // A passthrough path (Thru) hands the input straight back with no delay, so
+    // running it would put the master's output ahead of the latency it reports.
+    // The delayed dry is that same signal, aligned, and a blend between two
+    // identical signals has nothing to fade.
+    const bool passthrough = tape.isPassthroughPath();
+    if (passthrough)
+        tapeMix.setCurrentAndTargetValue (tapeTarget);
+
     const bool blending = tapeMix.isSmoothing();
     const bool runTape  = tapeOn || blending;            // wet needed this block
     const bool alignDry = tapeLatencySamples > 0;        // the tape core's own delay
@@ -335,9 +343,9 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
 
             const float* dryL = tapeDryL.data();
             const float* dryR = tapeDryR.data();
-            if (! runTape)
+            if (! runTape || passthrough)
             {
-                // Fully off but latency-compensated -> emit the delayed dry so
+                // Fully off, or on a passthrough path -> emit the delayed dry so
                 // master latency stays constant (no timing jump on re-engage).
                 std::copy (dryL, dryL + n, Lc);
                 std::copy (dryR, dryR + n, Rc);

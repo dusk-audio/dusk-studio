@@ -654,6 +654,9 @@ if(DUSK_PLUGINS_PATH)
         comp_core_ab.cpp
         smoke_brickwall_limiter.cpp
         dsp_loudness_meter.cpp
+        master_tape_alignment.cpp
+        ${CMAKE_SOURCE_DIR}/src/dsp/MasterBus.cpp
+        ${CMAKE_SOURCE_DIR}/src/dsp/MasterTape.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/BusStrip.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasteringChain.cpp
