@@ -41,7 +41,25 @@ that will carry a signed 1.0.
   compensation, and saves and restores its settings with the session and
   through Clone Track and its undo. The first unit is **Utility**: gain,
   polarity invert, stereo width and mono sum, all smoothed over 20 ms and
-  transparent at their defaults. Per-unit editor panels follow.
+  transparent at their defaults.
+- **The built-in suite is complete: five units.** **Utility** (gain, polarity,
+  width, mono), **Reverb** (sixteen tanks from plate to shimmer), **Tape Echo**
+  (three-head tape delay with a spring tank), **Tape** (per-channel tape colour
+  on the same engine as the master bus) and **Sunset** (a six-engine polyphonic
+  synthesiser, the instrument a MIDI track can reach with nothing installed).
+  Each has an editor: click a loaded unit's slot, or right-click it and choose
+  Open editor. MIDI Learn binds to a built-in unit's controls the way it does
+  to a plugin's.
+
+### Changed
+
+- **The master tape runs the Tape Machine 2 engine** (#340). It is voiced
+  differently from the engine it replaces, and it anti-aliases locally around
+  each nonlinear stage at a fixed internal rate, so the engine-wide **Effect
+  Oversampling** setting no longer changes it; that setting still drives every
+  other oversampled stage. The tape stage now reports a constant 56 samples of
+  latency, which delay compensation covers, where it previously reported none
+  at 1x.
 
 ### Changed
 
