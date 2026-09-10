@@ -875,6 +875,10 @@ struct Track
     // Soundfont path (.sfz / .sf2) - the multisample rung has no plugin id.
     juce::String nativeMultisamplePath;
     juce::String nativeMultisampleStateBase64;
+    // Built-in unit: the registry id is the whole identity, and the state blob
+    // carries its parameter values.
+    std::string builtinUnitId;
+    std::string builtinStateBase64;
 
     // Track freeze (MIDI tracks): the instrument + pre-fader strip is rendered
     // to a WAV, the plugin is bypassed to free CPU, and playback reads the WAV
@@ -1029,10 +1033,10 @@ struct AuxLane
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> pluginStateBase64;
 
     // Native host alternatives to the JUCE plugin above. A slot is JUCE /
-    // native-CLAP / native-LV2 / native-VST3 / native-AU / hardware / empty -
-    // at most one host per slot (precedence CLAP > LV2 > VST3 > AU if several
-    // native identities are somehow set). Always present so builds without a
-    // given host round-trip its fields untouched.
+    // native-CLAP / native-LV2 / native-VST3 / native-AU / built-in / hardware /
+    // empty - at most one host per slot (precedence CLAP > LV2 > VST3 > AU >
+    // built-in if several native identities are somehow set). Always present so
+    // builds without a given host round-trip its fields untouched.
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeClapPath;
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeClapPluginId;
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeClapStateBase64;
@@ -1044,6 +1048,8 @@ struct AuxLane
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeVst3StateBase64;
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeAuIdentifier;
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeAuStateBase64;
+    std::array<std::string, AuxLaneParams::kMaxLanePlugins> builtinUnitId;
+    std::array<std::string, AuxLaneParams::kMaxLanePlugins> builtinStateBase64;
 
     std::array<HardwareInsertParams, AuxLaneParams::kMaxLanePlugins> hardwareInserts;
 };
