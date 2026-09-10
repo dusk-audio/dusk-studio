@@ -96,8 +96,8 @@ Every open issue, one bucket each.
 | 314 | [Final gate] Remove the framework from CMake, CI, packaging, tests, docs | post-1.0 | Framework-removal campaign. |
 | 320 | Route macOS builds to the dusk-mac-air self-hosted runner | post-1.0 | Cost optimisation with no user-visible effect, and the runner is offline. |
 | 340 | Change Tape Machine to use the Tape Machine 2 plugin | 1.0 | The built-in colour insert (#75) runs this core, and the master bus cannot run a different one from the same donor path. Landed with a tone regression pinning the new voicing. |
-| 341 | Change EQ DSP to 4K-EQ-2 DSP | post-1.0 | Same. Also a tone change to a shipped signal path, which is not a 1.0 risk to take. |
-| 342 | Change compressors to use Multi-Comp-2 DSP | post-1.0 | Same. |
+| 341 | Change EQ DSP to 4K-EQ-2 DSP | 1.0 | Marc's call, 1.0 ships the current EQ. Landed with a tone regression pinning the new voicing. |
+| 342 | Change compressors to use Multi-Comp-2 DSP | 1.0 | Marc's call, 1.0 ships on the Multi-Comp 2 core; blocked on the donor core, prerequisites in #586. |
 | 442 | ASan+UBSan and Raspberry Pi jobs are not required checks | 1.0 | Two jobs can go red without blocking a merge. A 1.0 tag needs both gating. |
 | 500 | CloneTrackAction native-insert clone and undo has no coverage | 1.0 | A shipped clone and undo path with no automated test. |
 | 501 | Inline non-modal editor status in the aux slot area | post-1.0 | The unprompted modal was already removed by #459; the remaining alerts are click-initiated. What is left is additive inline status, absorbed by the aux GUI port. |
@@ -113,6 +113,7 @@ Every open issue, one bucket each.
 | 534 | Define the 1.0 package contents and verify all three packagers | 1.0 | Three packagers grown separately, no shared contract. Matters once the plugin suite ships. |
 | 535 | Local instrument browser for soundfonts on disk | 1.0 | The offline half of the SFZ work, with no network, catalog or archive code. |
 | 536 | Walk the demo path on packaged builds and file what it snags on | 1.0 | Individual demo-path bugs have been fixed one at a time. Nobody has walked the whole path on a shipped build. |
+| 586 | Multi-Comp 2 donor prerequisites | 1.0 | What the donor core needs before #342 can be built against it. |
 
 Nothing was bucketed `wontfix`.
 
@@ -167,6 +168,8 @@ the follow-ups are known before the schedule is committed.
 | CloneTrackAction coverage | 500 | 3-4 | `tests/`, self-test leg |
 | Milestone-6 audit residues | 503 | 4-6 | `src/util/SingleInstance.cpp`, `src/engine/PluginSlot.cpp`, `src/ui/ChannelStripComponent.cpp` |
 | Windows self-test harness child resolution | 504 | 2-3 | `src/DuskStudioApp.cpp`, `src/engine/PluginManager.h` |
+| Channel and bus EQ on the 4K EQ 2 core | 341 | 4-6 | donor shared DSP, `src/dsp/ChannelStrip.*`, `src/dsp/BusStrip.*`, `tests/` |
+| Compressors on the Multi-Comp 2 core (blocked on #586) | 342 | - | donor shared DSP, `src/dsp/`, `tests/` |
 
 The two 75 items are sequential. The rest of stage 3 is independent of both.
 
@@ -306,11 +309,13 @@ release.
 ## Out of scope for 1.0
 
 - Anything whose main effect is reducing framework coupling. The whole
-  H-series (#294 through #314) is deferred. So are #341 and #342, because
-  swapping donor DSP for DAF-ported V2 DSP reduces coupling and changes the
-  tone of shipped signal paths at the same time. #340 is the exception and is
-  in: the built-in colour insert needs the Tape Machine 2 core, and the master
-  bus cannot run a different core from the same donor path.
+  H-series (#294 through #314) is deferred. The three donor-core moves are not
+  in that class and are all in 1.0: #340 because the built-in colour insert
+  needs the Tape Machine 2 core and the master bus cannot run a different core
+  from the same donor path, and #341 and #342 because 1.0 ships the V2 tone
+  rather than shipping one voicing and replacing it in the first point release.
+  Each lands with a tone regression pinning the new voicing. #342 waits on the
+  donor prerequisites in #586.
 - The DAF, DAF-Widgets, pugl and DPF-Widgets repositories are consumed, not
   reworked. Consuming them is how the native notepad UI and the built-in unit
   editors are built. A change to one of them lands only when a 1.0 feature

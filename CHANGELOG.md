@@ -60,9 +60,12 @@ that will carry a signed 1.0.
   other oversampled stage. The tape stage now reports a constant 56 samples of
   latency, which delay compensation covers, where it previously reported none
   at 1x.
-
-### Changed
-
+- **The channel strips and the buses run the 4K EQ 2 engine** (#341). Its band
+  curves, filter slopes and console character are calibrated against
+  measurements of the hardware at each marked position, so it is voiced
+  differently from the engine it replaces while the controls, their ranges and
+  their defaults are unchanged. The console character stage no longer adds a
+  noise floor, so a silent channel stays silent through it.
 - **Arming a track with no input is refused, and says why.** ARM no longer
   lights on an audio track while the open device offers no capture channels,
   because the recording that followed wrote nothing and said nothing. The
