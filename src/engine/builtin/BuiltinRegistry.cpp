@@ -8,7 +8,8 @@ const std::vector<UnitInfo>& registry()
 {
     static const std::vector<UnitInfo> units
     {
-        { "dusk.builtin.utility", "Utility", "Fx|Utility", false },
+        { "dusk.builtin.utility", "Utility", "Fx|Utility", false,
+          [] () -> std::unique_ptr<BuiltinUnit> { return std::make_unique<UtilityUnit>(); } },
     };
     return units;
 }
@@ -22,7 +23,7 @@ const UnitInfo* findUnit (const std::string& id)
 
 std::unique_ptr<BuiltinUnit> createUnit (const std::string& id)
 {
-    if (id == "dusk.builtin.utility") return std::make_unique<UtilityUnit>();
-    return nullptr;
+    const auto* unit = findUnit (id);
+    return unit != nullptr && unit->create != nullptr ? unit->create() : nullptr;
 }
 } // namespace duskstudio::builtin

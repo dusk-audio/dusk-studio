@@ -33,7 +33,8 @@ struct BuiltinSlotTraits
 };
 
 // Built-in insert slot - the shared NativeInsertSlot plus the unit's parameter
-// surface, which an editor and the MIDI-binding drain both drive.
+// surface (message thread; the audio thread reads it through relaxed atomics
+// inside the unit).
 class NativeBuiltinSlot final : public hosting::NativeInsertSlot<BuiltinSlotTraits>
 {
 public:
@@ -60,14 +61,5 @@ public:
         { return instance != nullptr ? instance->getParamValue (index) : 0.0f; }
     void setParamValue (int index, float value) noexcept
         { if (instance != nullptr) instance->setParamValue (index, value); }
-
-protected:
-    // MIDI binding: 0..1 fraction -> the parameter's own min..max range.
-    void applyParamBinding (uint32_t paramIndex, float frac) override
-    {
-        const auto* p = paramInfo ((int) paramIndex);
-        if (p == nullptr) return;
-        setParamValue ((int) paramIndex, p->minValue + frac * (p->maxValue - p->minValue));
-    }
 };
 } // namespace duskstudio::builtin

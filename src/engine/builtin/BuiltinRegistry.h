@@ -9,13 +9,15 @@
 namespace duskstudio::builtin
 {
 // A unit in the built-in suite. `id` is the stable session key and the picker
-// row's location; it never changes once a session can hold it.
+// row's location; it never changes once a session can hold it. The factory
+// lives here so the registry is the only place a new unit is declared.
 struct UnitInfo
 {
     const char* id;
     const char* name;
     const char* category;
     bool isInstrument;
+    std::unique_ptr<BuiltinUnit> (*create)();
 };
 
 // The suite, in picker order. Compiled in, so it is identical on every

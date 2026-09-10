@@ -13,10 +13,10 @@ constexpr float kMinGainDb = -60.0f;
 
 const ParamInfo kUtilityParams[] =
 {
-    { "gain_db",  "Gain",     "dB", kMinGainDb, 24.0f,  0.0f,   false },
-    { "polarity", "Polarity", "",   0.0f,       1.0f,   0.0f,   true  },
-    { "width",    "Width",    "%",  0.0f,       200.0f, 100.0f, false },
-    { "mono",     "Mono",     "",   0.0f,       1.0f,   0.0f,   true  },
+    { "gain_db",  "Gain",     kMinGainDb, 24.0f,  0.0f   },
+    { "polarity", "Polarity", 0.0f,       1.0f,   0.0f   },
+    { "width",    "Width",    0.0f,       200.0f, 100.0f },
+    { "mono",     "Mono",     0.0f,       1.0f,   0.0f   },
 };
 
 constexpr double kRampSeconds = 0.02;
@@ -29,11 +29,10 @@ UtilityUnit::UtilityUnit()
 
 void UtilityUnit::prepare (double sampleRate, int)
 {
-    const double sr = sampleRate > 0.0 ? sampleRate : 48000.0;
-    gain    .reset (sr, kRampSeconds);
-    width   .reset (sr, kRampSeconds);
-    monoSum .reset (sr, kRampSeconds);
-    polarity.reset (sr, kRampSeconds);
+    gain    .reset (sampleRate, kRampSeconds);
+    width   .reset (sampleRate, kRampSeconds);
+    monoSum .reset (sampleRate, kRampSeconds);
+    polarity.reset (sampleRate, kRampSeconds);
 
     const float db = getParam (kGainDb);
     gain.setCurrentAndTargetValue (db <= kMinGainDb ? 0.0f : dusk::audio::decibelsToGain (db));

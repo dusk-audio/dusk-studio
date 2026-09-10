@@ -15,8 +15,7 @@ namespace duskstudio::builtin
 // A built-in unit presented to the mixer as a native plug-in instance, so an
 // insert slot drives it through exactly the path a scanned CLAP / LV2 / VST3
 // takes. There is no shared library and no negotiation: the port layout is the
-// insert's own stereo pair (or a stereo source for an instrument unit), and
-// create() cannot fail once the bundle resolved.
+// insert's own stereo pair, or a stereo source for an instrument unit.
 //
 // Threading matches INativeInstance: create / activate / deactivate /
 // reactivate / saveState / loadState are message-thread, processBlock is the
@@ -40,7 +39,6 @@ public:
     bool loadState (const std::vector<std::uint8_t>& in) override;
     int  getLatencySamples() const noexcept override;
 
-    const std::string& unitId() const noexcept { return id; }
     std::string displayName() const { return info != nullptr ? info->name : std::string(); }
 
     // Message thread. The parameter surface an editor and the session drive.
