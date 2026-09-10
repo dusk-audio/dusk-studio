@@ -813,6 +813,25 @@ void AuxLaneComponent::refreshSlotControls (int i)
     }
 #endif
 
+    if (strip.isBuiltinLoaded (i))
+    {
+        const auto name = strip.getBuiltinSlot (i).displayName();
+        const bool offline = strip.builtinReloadFailed (i);
+        const auto label = nativeLabel (name, offline);
+        setNativeTooltip (offline);
+        if (label != ui.displayedName)
+        {
+            ui.displayedName = label;
+            ui.openOrAddButton.setButtonText (label);
+            resized();
+        }
+        ui.bypassButton.setVisible (true);
+        ui.bypassButton.setToggleState (strip.getBuiltinSlot (i).isBypassed(),
+                                        juce::dontSendNotification);
+        ui.removeButton.setVisible (true);
+        return;
+    }
+
     // A failed load can leave no live instance. Keep the saved native reference
     // visible as an offline row so the user can replace or remove it explicitly.
     if (strip.nativeInsertRestoreFailed (i))
@@ -837,6 +856,8 @@ void AuxLaneComponent::refreshSlotControls (int i)
         if (strip.nativeAuReloadFailed (i))
             name = lane.nativeAuIdentifier[(size_t) i];
 #endif
+        if (strip.builtinReloadFailed (i))
+            name = lane.builtinUnitId[(size_t) i];
         if (name.isEmpty()) name = "native plug-in";
         const auto label = nativeLabel (name, true);
         setNativeTooltip (true);
@@ -945,6 +966,11 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
             self->loadNativeAuForSlot (slotIdx, componentId);
     };
 #endif
+    auto onBuiltin = [safe, slotIdx] (const std::string& unitId)
+    {
+        if (auto* self = safe.getComponent())
+            self->loadBuiltinForSlot (slotIdx, unitId);
+    };
     pluginpicker::openPickerMenu (strip.getPluginSlot (slotIdx),
                                     slots[(size_t) slotIdx].openOrAddButton,
                                     [safe, slotIdx]
@@ -962,7 +988,8 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
                                                 self->strip.isNativeClapLoaded (slotIdx)
                                                 || self->strip.isNativeLv2Loaded (slotIdx)
                                                 || self->strip.isNativeVst3Loaded (slotIdx)
-                                                || self->strip.isNativeAuLoaded (slotIdx);
+                                                || self->strip.isNativeAuLoaded (slotIdx)
+                                                || self->strip.isBuiltinLoaded (slotIdx);
                                             if (self->strip.getPluginSlot (slotIdx).isLoaded()
                                                 && (hadLiveNative
                                                     || self->strip.nativeInsertRestoreFailed (
@@ -977,6 +1004,7 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
                                                 self->strip.unloadNativeLv2 (slotIdx);
                                                 self->strip.unloadNativeVst3 (slotIdx);
                                                 self->strip.unloadNativeAu (slotIdx);
+                                                self->strip.unloadBuiltin (slotIdx);
                                                 if (hadLiveNative) self->engine.resumeProcessing();
                                                 self->lane.nativeClapPath[(size_t) slotIdx].clear();
                                                 self->lane.nativeClapPluginId[(size_t) slotIdx].clear();
@@ -989,6 +1017,8 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
                                                 self->lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
                                                 self->lane.nativeAuIdentifier[(size_t) slotIdx].clear();
                                                 self->lane.nativeAuStateBase64[(size_t) slotIdx].clear();
+                                                self->lane.builtinUnitId[(size_t) slotIdx].clear();
+                                                self->lane.builtinStateBase64[(size_t) slotIdx].clear();
                                             }
 
                                             self->refreshSlotControls (slotIdx);
@@ -1007,7 +1037,8 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
                                     std::move (onLv2),
                                     std::move (onVst3),
                                     {},
-                                    std::move (onAu));
+                                    std::move (onAu),
+                                    std::move (onBuiltin));
 }
 
 void AuxLaneComponent::openHardwareInsertEditor (int slotIdx)
@@ -1022,7 +1053,8 @@ void AuxLaneComponent::openHardwareInsertEditor (int slotIdx)
         const bool hadLiveNative = strip.isNativeClapLoaded (slotIdx)
                                 || strip.isNativeLv2Loaded (slotIdx)
                                 || strip.isNativeVst3Loaded (slotIdx)
-                                || strip.isNativeAuLoaded (slotIdx);
+                                || strip.isNativeAuLoaded (slotIdx)
+                                || strip.isBuiltinLoaded (slotIdx);
         if (hadLiveNative) engine.suspendProcessing();
         detachClapEditorForSlot (slotIdx);
         detachLv2EditorForSlot (slotIdx);
@@ -1032,6 +1064,7 @@ void AuxLaneComponent::openHardwareInsertEditor (int slotIdx)
         strip.unloadNativeLv2 (slotIdx);
         strip.unloadNativeVst3 (slotIdx);
         strip.unloadNativeAu (slotIdx);
+        strip.unloadBuiltin (slotIdx);
         if (hadLiveNative) engine.resumeProcessing();
         lane.nativeClapPath[(size_t) slotIdx].clear();
         lane.nativeClapPluginId[(size_t) slotIdx].clear();
@@ -1044,6 +1077,8 @@ void AuxLaneComponent::openHardwareInsertEditor (int slotIdx)
         lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
         lane.nativeAuIdentifier[(size_t) slotIdx].clear();
         lane.nativeAuStateBase64[(size_t) slotIdx].clear();
+        lane.builtinUnitId[(size_t) slotIdx].clear();
+        lane.builtinStateBase64[(size_t) slotIdx].clear();
     }
 
     // Flip the lane's slot to Hardware mode immediately so the audio
@@ -1079,7 +1114,8 @@ void AuxLaneComponent::unloadSlot (int slotIdx)
         const bool hadLiveNative = self->strip.isNativeClapLoaded (slotIdx)
                                 || self->strip.isNativeLv2Loaded (slotIdx)
                                 || self->strip.isNativeVst3Loaded (slotIdx)
-                                || self->strip.isNativeAuLoaded (slotIdx);
+                                || self->strip.isNativeAuLoaded (slotIdx)
+                                || self->strip.isBuiltinLoaded (slotIdx);
         const bool hadNativeReference = hadLiveNative
                                      || self->strip.nativeInsertRestoreFailed (slotIdx);
         if (hadLiveNative) self->engine.suspendProcessing();
@@ -1096,6 +1132,7 @@ void AuxLaneComponent::unloadSlot (int slotIdx)
             self->strip.unloadNativeLv2 (slotIdx);
             self->strip.unloadNativeVst3 (slotIdx);
             self->strip.unloadNativeAu (slotIdx);
+            self->strip.unloadBuiltin (slotIdx);
             if (hadLiveNative) self->engine.resumeProcessing();
             self->lane.nativeClapPath[(size_t) slotIdx].clear();
             self->lane.nativeClapPluginId[(size_t) slotIdx].clear();
@@ -1108,6 +1145,8 @@ void AuxLaneComponent::unloadSlot (int slotIdx)
             self->lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
             self->lane.nativeAuIdentifier[(size_t) slotIdx].clear();
             self->lane.nativeAuStateBase64[(size_t) slotIdx].clear();
+            self->lane.builtinUnitId[(size_t) slotIdx].clear();
+            self->lane.builtinStateBase64[(size_t) slotIdx].clear();
         }
         // Clear the model's enabled flag so any consumer that polls
         // lane.hardwareInserts[slotIdx].enabled sees a disabled slot
@@ -1392,6 +1431,58 @@ void AuxLaneComponent::loadNativeAuForSlot (int slotIdx, const juce::String& com
 }
 #endif // DUSKSTUDIO_HAS_NATIVE_AU
 
+void AuxLaneComponent::loadBuiltinForSlot (int slotIdx, const std::string& unitId)
+{
+    if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return;
+
+    detachEditorForSlot (slotIdx);
+    detachHardwareInsertForSlot (slotIdx);
+    detachClapEditorForSlot (slotIdx);
+    detachLv2EditorForSlot (slotIdx);
+    detachVst3EditorForSlot (slotIdx);
+    detachAuEditorForSlot (slotIdx);
+
+    std::string err;
+    engine.suspendProcessing();
+    const bool ok = strip.loadBuiltin (slotIdx, unitId, err);
+    if (ok)
+        strip.insertMode[(size_t) slotIdx].store (AuxLaneStrip::kInsertPlugin,
+                                                  std::memory_order_release);
+    engine.resumeProcessing();
+
+    // loadBuiltin evicts every other host on the slot before it can fail, so
+    // clear all of them either way (matches loadNativeAuForSlot).
+    lane.pluginDescriptor[(size_t) slotIdx].reset();
+    lane.pluginLegacyDescriptionXml[(size_t) slotIdx].clear();
+    lane.pluginStateBase64[(size_t) slotIdx].clear();
+    lane.nativeClapPath[(size_t) slotIdx].clear();
+    lane.nativeClapPluginId[(size_t) slotIdx].clear();
+    lane.nativeClapStateBase64[(size_t) slotIdx].clear();
+    lane.nativeLv2Path[(size_t) slotIdx].clear();
+    lane.nativeLv2PluginId[(size_t) slotIdx].clear();
+    lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
+    lane.nativeVst3Path[(size_t) slotIdx].clear();
+    lane.nativeVst3PluginId[(size_t) slotIdx].clear();
+    lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
+    lane.nativeAuIdentifier[(size_t) slotIdx].clear();
+    lane.nativeAuStateBase64[(size_t) slotIdx].clear();
+    lane.builtinUnitId[(size_t) slotIdx].clear();
+    lane.builtinStateBase64[(size_t) slotIdx].clear();
+
+    if (! ok)
+    {
+        std::fprintf (stderr, "[aux builtin] load failed: %s\n", err.c_str());
+        showDuskAlert (*this, "Couldn't load built-in unit", unitId + ":\n" + err);
+        refreshSlotControls (slotIdx);
+        rebuildSlots();
+        return;
+    }
+
+    lane.builtinUnitId[(size_t) slotIdx] = strip.getBuiltinSlot (slotIdx).getPluginId();
+    refreshSlotControls (slotIdx);
+    rebuildSlots();
+}
+
 void AuxLaneComponent::detachClapEditorForSlot (int slotIdx)
 {
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
@@ -1400,7 +1491,7 @@ void AuxLaneComponent::detachClapEditorForSlot (int slotIdx)
     removeChildComponent (ui.clapEditor.get());
     ui.clapEditor.reset();
 #else
-    juce::ignoreUnused (slotIdx);
+    (void) slotIdx;
 #endif
 }
 
@@ -1412,7 +1503,7 @@ void AuxLaneComponent::detachLv2EditorForSlot (int slotIdx)
     removeChildComponent (ui.lv2Editor.get());
     ui.lv2Editor.reset();
 #else
-    juce::ignoreUnused (slotIdx);
+    (void) slotIdx;
 #endif
 }
 
@@ -1424,7 +1515,7 @@ void AuxLaneComponent::detachVst3EditorForSlot (int slotIdx)
     removeChildComponent (ui.vst3Editor.get());
     ui.vst3Editor.reset();
 #else
-    juce::ignoreUnused (slotIdx);
+    (void) slotIdx;
 #endif
 }
 
@@ -1436,7 +1527,7 @@ void AuxLaneComponent::detachAuEditorForSlot (int slotIdx)
     removeChildComponent (ui.auEditor.get());
     ui.auEditor.reset();
 #else
-    juce::ignoreUnused (slotIdx);
+    (void) slotIdx;
 #endif
 }
 
@@ -1584,7 +1675,8 @@ void AuxLaneComponent::layoutEditorForSlot (int slotIdx)
     const int mode = strip.insertMode[(size_t) slotIdx].load (std::memory_order_relaxed);
     if (slot.isLoaded() || slot.isOffline() || mode == AuxLaneStrip::kInsertHardware
         || strip.isNativeClapLoaded (slotIdx) || strip.isNativeLv2Loaded (slotIdx)
-        || strip.isNativeVst3Loaded (slotIdx) || strip.isNativeAuLoaded (slotIdx))
+        || strip.isNativeVst3Loaded (slotIdx) || strip.isNativeAuLoaded (slotIdx)
+        || strip.isBuiltinLoaded (slotIdx))
         center.removeFromTop (kSlotHeaderH + 4);
 
     if (center.isEmpty()) return;

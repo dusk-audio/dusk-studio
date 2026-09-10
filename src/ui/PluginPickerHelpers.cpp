@@ -5,6 +5,7 @@
 #include "PluginPickerPanel.h"
 #include "../engine/PluginManager.h"
 #include "../engine/PluginSlot.h"
+#include "../engine/builtin/BuiltinScanRows.h"
 #include <algorithm>
 #if DUSKSTUDIO_HAS_MULTISAMPLE
  #include "../engine/multisample/AriaBank.h"
@@ -399,7 +400,8 @@ void openPickerMenu (PluginSlot& slot,
                       std::function<void (const juce::File&, const juce::String&)> onPickNativeLv2,
                       std::function<void (const juce::File&, const juce::String&)> onPickNativeVst3,
                       std::function<void (const juce::File&)> onPickSoundfont,
-                      std::function<void (const juce::String&)> onPickNativeAu)
+                      std::function<void (const juce::String&)> onPickNativeAu,
+                      std::function<void (const std::string&)> onPickBuiltin)
 {
     auto& manager = slot.getManagerForUi();
 
@@ -478,6 +480,16 @@ void openPickerMenu (PluginSlot& slot,
                              std::make_move_iterator (native.end()));
     }
 
+    // The built-in suite needs no scan and is never absent, so its rows go in
+    // whenever the surface can host them.
+    if (onPickBuiltin)
+    {
+        auto rows = builtin::descriptorRows (kind == PluginKind::Instruments);
+        descriptions.insert (descriptions.end(),
+                             std::make_move_iterator (rows.begin()),
+                             std::make_move_iterator (rows.end()));
+    }
+
     auto* parent = target.getTopLevelComponent();
     if (parent == nullptr) parent = &target;
 
@@ -498,7 +510,8 @@ void openPickerMenu (PluginSlot& slot,
 
     cb.onScan = [closeModal, slotPtr, safeTarget, safeParent, onChange, kind,
                   onPickHardwareInsert, onPickNativeClap, onPickNativeLv2,
-                  onPickNativeVst3, onPickNativeAu, onPickSoundfont]() mutable
+                  onPickNativeVst3, onPickNativeAu, onPickSoundfont,
+                  onPickBuiltin]() mutable
     {
         closeModal();
 
@@ -509,7 +522,7 @@ void openPickerMenu (PluginSlot& slot,
         // on top), making the result message invisible.
         auto reopenPicker = [slotPtr, safeTarget, onChange, kind, onPickHardwareInsert,
                               onPickNativeClap, onPickNativeLv2, onPickNativeVst3,
-                              onPickNativeAu, onPickSoundfont]() mutable
+                              onPickNativeAu, onPickSoundfont, onPickBuiltin]() mutable
         {
             if (auto* t = safeTarget.getComponent())
                 openPickerMenu (*slotPtr, *t, std::move (onChange), kind, { -1, -1 },
@@ -518,7 +531,8 @@ void openPickerMenu (PluginSlot& slot,
                                   std::move (onPickNativeLv2),
                                   std::move (onPickNativeVst3),
                                   std::move (onPickSoundfont),
-                                  std::move (onPickNativeAu));
+                                  std::move (onPickNativeAu),
+                                  std::move (onPickBuiltin));
         };
         runScanModal (slotPtr->getManagerForUi(), safeParent.getComponent(),
                        std::move (reopenPicker));
@@ -561,7 +575,7 @@ void openPickerMenu (PluginSlot& slot,
 
     cb.onPickPlugin = [closeModal, slotPtr, safeTarget, safeParent, onChange, kind,
                        onPickNativeClap, onPickNativeLv2, onPickNativeVst3,
-                       onPickNativeAu]
+                       onPickNativeAu, onPickBuiltin]
                         (const PluginDescriptor& desc) mutable
     {
         closeModal();
@@ -580,6 +594,12 @@ void openPickerMenu (PluginSlot& slot,
             if (desc.formatName == "AudioUnit")
             {
                 if (onPickNativeAu) onPickNativeAu (juce::String (desc.location));
+                return;
+            }
+            // Built-in rows carry a registry id, not a path, for the same reason.
+            if (desc.formatName == builtin::kFormatName)
+            {
+                if (onPickBuiltin) onPickBuiltin (desc.location);
                 return;
             }
             const juce::File bundle (desc.location);
@@ -778,7 +798,8 @@ void openInsertChooser (PluginSlot& slot,
                          std::function<void (const juce::File&, const juce::String&)> onPickNativeLv2,
                          std::function<void (const juce::File&, const juce::String&)> onPickNativeVst3,
                          std::function<void (const juce::File&)> onPickSoundfont,
-                         std::function<void (const juce::String&)> onPickNativeAu)
+                         std::function<void (const juce::String&)> onPickNativeAu,
+                         std::function<void (const std::string&)> onPickBuiltin)
 {
     auto* parent = target.getTopLevelComponent();
     if (parent == nullptr) parent = &target;
@@ -817,7 +838,7 @@ void openInsertChooser (PluginSlot& slot,
 
     auto onPlugin = [closeChooser, slotPtr, safeTarget, onChange, kind,
                      onPickNativeClap, onPickNativeLv2, onPickNativeVst3,
-                     onPickNativeAu]() mutable
+                     onPickNativeAu, onPickBuiltin]() mutable
     {
         closeChooser();
         if (auto* t = safeTarget.getComponent())
@@ -828,7 +849,8 @@ void openInsertChooser (PluginSlot& slot,
                               std::move (onPickNativeLv2),
                               std::move (onPickNativeVst3),
                               /*onPickSoundfont*/ {},
-                              std::move (onPickNativeAu));
+                              std::move (onPickNativeAu),
+                              std::move (onPickBuiltin));
     };
 
     auto onCancel = closeChooser;

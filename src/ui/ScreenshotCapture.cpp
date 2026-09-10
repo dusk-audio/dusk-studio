@@ -22,6 +22,7 @@
 #include "MidiBindingsPanel.h"
 #include "HardwareInsertEditor.h"
 #include "PluginPickerPanel.h"
+#include "../engine/builtin/BuiltinScanRows.h"
 #include "multisample/SfzLibraryPanel.h"
 #include "BounceDialog.h"
 #include "../engine/BounceEngine.h"
@@ -32,6 +33,7 @@
 #include "../engine/AudioEngine.h"
 
 #include <algorithm>
+#include <iterator>
 
 namespace duskstudio
 {
@@ -422,6 +424,10 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
             mk ("ZamComp",         "Zam Audio",       "Dynamics"),
             mk ("x42 Convolver",   "Robin Gareus",    "Reverb")
         };
+        auto builtinRows = builtin::descriptorRows (/*instruments*/ false);
+        descs.insert (descs.end(),
+                      std::make_move_iterator (builtinRows.begin()),
+                      std::make_move_iterator (builtinRows.end()));
         PluginPickerPanel::Callbacks cb;   // all null - display only
         PluginPickerPanel pp (descs, PluginPickerPanel::Kind::Effects, cb);
         modalShot (pp, 480, 560, "pl-01-plugin-picker.png", 300);
