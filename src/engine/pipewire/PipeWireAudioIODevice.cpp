@@ -37,6 +37,10 @@ namespace
 // the data thread allocation-free across any legal quantum.
 constexpr int kMaxQuantum = 8192;
 
+// How long open() waits for the graph to run its first cycle after the filter
+// reaches STREAMING. See the wait in open() for the measurement behind it.
+constexpr int kQuantumWaitMs = 2000;
+
 // pw_init refcounts internally; the once-flag just keeps a first-use race
 // between the type ctor, a device open and a bare runSelfTest() off the global.
 void ensurePipeWireInit()
@@ -533,12 +537,26 @@ std::string PipeWireAudioIODevice::open (const device::ChannelSet& inputChannels
     // every block to silence. A quantum above maxQuantum is itself dropped by
     // onProcess, so treat "no usable quantum" as a failed open rather than
     // silently keeping the requested size.
-    for (int t = 0; t < 100 && negotiatedQuantum.load (std::memory_order_relaxed) == 0; ++t)
-        std::this_thread::sleep_for (std::chrono::milliseconds (2));
-    const int nq = negotiatedQuantum.load (std::memory_order_relaxed);
+    //
+    // STREAMING says our node was started, not that the graph has run a cycle:
+    // the elected driver may still be a device node waking from suspend, which
+    // WirePlumber only resumes once our links go active. On PipeWire 1.4.6 the
+    // first cycle lands 1-10 ms after STREAMING against a device that is already
+    // running and 267-270 ms against one resuming from suspend, which is the
+    // case on a launch with no saved device to reopen. A budget between those
+    // two fails only there. The deadline is generous because it costs time only
+    // when the graph really is not running, and the connect handshake above
+    // already allows longer.
+    const auto quantumDeadline = std::chrono::steady_clock::now()
+                               + std::chrono::milliseconds (kQuantumWaitMs);
+    while (negotiatedQuantum.load (std::memory_order_acquire) == 0
+           && std::chrono::steady_clock::now() < quantumDeadline)
+        std::this_thread::sleep_for (std::chrono::milliseconds (1));
+    const int nq = negotiatedQuantum.load (std::memory_order_acquire);
     if (nq <= 0 || nq > maxQuantum)
     {
-        lastError = "PipeWire delivered no usable quantum (" + std::to_string (nq) + ")";
+        lastError = "PipeWire delivered no usable quantum (" + std::to_string (nq)
+                  + ") in " + std::to_string (kQuantumWaitMs) + "ms";
         close();
         return lastError;
     }
@@ -735,7 +753,9 @@ void PipeWireAudioIODevice::onProcess (struct spa_io_position* position) noexcep
     if (n == 0)
         return;
 
-    negotiatedQuantum.store ((int) n, std::memory_order_relaxed);
+    // Release: open() reads this to size the block the engine prepares for, so
+    // the cycle's port setup must be visible to it once the value is.
+    negotiatedQuantum.store ((int) n, std::memory_order_release);
 
     // Count one xrun per recovery episode: increment on the rising edge of the
     // XRUN_RECOVER flag, not on every cycle it stays set (a recovery can span
