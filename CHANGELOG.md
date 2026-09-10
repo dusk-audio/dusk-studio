@@ -75,6 +75,20 @@ that will carry a signed 1.0.
   that includes a vendor chunk in its track count made the reader run past the
   end of the file and fail the whole import, discarding tracks it had already
   parsed. It keeps what it read, which is what the previous reader did.
+- **First launch on a PipeWire desktop no longer falls back to ALSA.** With no
+  saved device the elected driver is still waking from suspend when the node
+  starts streaming, and the first graph cycle lands about 270 ms later. The open
+  waited 200 ms and gave up, and the fallback then stuck in the saved
+  configuration. The wait now outlasts a cold device, and when the app does
+  fall back off the preferred backend the transport bar says so.
+- **The PipeWire default device follows the system default.** The first device
+  offered was the first non-monitor node in registry order, which could be an
+  interface the desktop does not use. The backend now reads PipeWire's own
+  default sink and source, keeps the old order as a fallback, and never
+  defaults the input to a monitor.
+- **The transport bar's device notice is readable in a banked session.** The
+  bank buttons were drawn over it. It now has a row of its own under the
+  controls that exists only while a notice stands.
 - **Faders report mute to a screen reader.** A fader could speak a finite gain
   while the signal was already hard-muted, and text set to `-INF dB` was read
   back as 0 dB. The manual's Linux screen-reader claims are corrected to match
