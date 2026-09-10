@@ -22,6 +22,12 @@ add_executable(dusk-studio-tests
     hosting_port_layout.cpp
     hosting_insert_adapter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/hosting/InsertAdapter.cpp
+    # Built-in insert rung: registry, the Utility unit and the slot that
+    # presents it to the mixer.
+    builtin_insert_slot.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/builtin/BuiltinInstance.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/builtin/BuiltinRegistry.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/builtin/UtilityUnit.cpp
     sfz_catalog.cpp
     sfz_library_scan.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/sfz/SfzLibrary.cpp
