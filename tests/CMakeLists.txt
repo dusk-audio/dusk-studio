@@ -650,6 +650,7 @@ if(DUSK_PLUGINS_PATH)
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringLimiterView.cpp>
         dsp_stereo_oversampler.cpp
         eq_british_ab.cpp
+        eq_core_regression.cpp
         tube_multiq_ab.cpp
         comp_core_ab.cpp
         smoke_brickwall_limiter.cpp

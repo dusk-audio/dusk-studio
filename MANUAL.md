@@ -771,6 +771,8 @@ Each knob is a rotary slider. Drag up to increase, down to decrease. Use a verti
 
 EQ in Dusk Studio does **not cramp** near Nyquist; the British EQ does its own internal pre-warping and benefits further when the global oversampling is raised.
 
+The band curves, the filter slopes and the console character are calibrated against measurements of the hardware at each marked position, so a setting reads as the console's own rather than as a textbook filter at the same frequency. The console character is always on, at a fixed light amount, whether the EQ section is engaged or not; a silent channel stays silent through it.
+
 ## Compressor
 
 ![The channel compressor editor in VCA mode.](docs/images/fx-02-comp.png)

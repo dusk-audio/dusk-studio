@@ -62,7 +62,7 @@ jobs:
         shell: bash
         env:
           DONOR_REPO: https://github.com/dusk-audio/dusk-audio-plugins.git
-          DONOR_REV: a08bba29f81bfcb123f47045d2ca9cc2e0a0b075
+          DONOR_REV: 9024271a848426c692da3cc38e3f2f1451c579af
         run: |
           set -euo pipefail
           git init -q "${RUNNER_TEMP}/plugins"

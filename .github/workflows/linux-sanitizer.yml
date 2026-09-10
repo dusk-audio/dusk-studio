@@ -23,7 +23,7 @@ concurrency:
 
 env:
   # Both sanitizer jobs must compile the same donor snapshot.
-  DONOR_REV: a08bba29f81bfcb123f47045d2ca9cc2e0a0b075
+  DONOR_REV: 9024271a848426c692da3cc38e3f2f1451c579af
 
 jobs:
   tsan-tests:
