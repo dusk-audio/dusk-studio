@@ -299,7 +299,9 @@ if(DUSK_PLUGINS_PATH)
         ${CMAKE_SOURCE_DIR}/src/engine/builtin/ReverbUnit.cpp
         builtin_delay_unit.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/builtin/DelayUnit.cpp
-        ${DUSK_PLUGINS_PATH}/plugins/tape-echo/core/TapeEchoDSP.cpp)
+        ${DUSK_PLUGINS_PATH}/plugins/tape-echo/core/TapeEchoDSP.cpp
+        builtin_tape_unit.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/builtin/TapeUnit.cpp)
     foreach(_verbSource IN ITEMS
             DattorroPlateVintage DattorroTank DiffusionStage DuskVerbEngine
             EarlyReflections FDNReverb NonLinearEngine OctaveGEQDesign

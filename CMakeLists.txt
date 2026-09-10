@@ -1379,6 +1379,7 @@ if(DEFINED DUSK_PLUGINS_PATH)
     target_sources(DuskStudio PRIVATE
         src/engine/builtin/ReverbUnit.cpp
         src/engine/builtin/DelayUnit.cpp
+        src/engine/builtin/TapeUnit.cpp
         "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core/TapeEchoDSP.cpp"
         src/dsp/MasterTape.cpp
         "${DUSKSTUDIO_COMPRESSOR_CORE_SOURCE}"
