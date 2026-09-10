@@ -8,6 +8,7 @@
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <string>
 #include <type_traits>
 #include <vector>
 #include "AtomicSnapshot.h"
