@@ -2043,7 +2043,8 @@ void AuxLaneComponent::resized()
     // mode - would never get bounds and the user couldn't dismiss
     // the HW insert.
     const bool nativeLoaded = strip.isNativeClapLoaded (0) || strip.isNativeLv2Loaded (0)
-                           || strip.isNativeVst3Loaded (0) || strip.isNativeAuLoaded (0);
+                           || strip.isNativeVst3Loaded (0) || strip.isNativeAuLoaded (0)
+                           || strip.isBuiltinLoaded (0);
     if (slot0.isLoaded() || slot0.isOffline() || hardware || nativeLoaded
         || strip.nativeInsertRestoreFailed (0))
     {
