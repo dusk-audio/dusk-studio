@@ -1337,9 +1337,8 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     pluginSlotButton.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xffd0c0e0));
     pluginSlotButton.setTooltip (juce::CharPointer_UTF8 (
         "Empty: click to pick a built-in unit or a plugin (VST3 / CLAP / LV2 / AU), "
-        "or an External Hardware Insert. Loaded plugin: click to toggle the "
-        "editor; right-click for Replace / Remove. Loaded built-in unit: no "
-        "editor yet; right-click for Replace / Remove. Hardware insert: click "
+        "or an External Hardware Insert. Loaded insert: click to toggle the "
+        "editor; right-click for Replace / Remove. Hardware insert: click "
         "to open the routing editor."));
     pluginSlotButton.onClick = [this]
     {
