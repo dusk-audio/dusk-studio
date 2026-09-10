@@ -2118,9 +2118,13 @@ void ChannelStripComponent::showPluginSlotMenu()
     {
         // Editor toggle headline so right-click ALSO becomes a way to open
         // the plugin GUI (some users find right-click more discoverable).
-        const bool editorOpen = isPluginEditorOpen();
-        menu.addItem (2001, editorOpen ? "Close editor" : "Open editor");
-        menu.addSeparator();
+        // A built-in unit has no editor, so the item would be inert.
+        if (! engine.getChannelStrip (trackIndex).isBuiltinLoaded())
+        {
+            const bool editorOpen = isPluginEditorOpen();
+            menu.addItem (2001, editorOpen ? "Close editor" : "Open editor");
+            menu.addSeparator();
+        }
         menu.addItem (2002, "Replace insert...");
         menu.addItem (2003, "Remove plugin");
         // Crash/auto-bypass recovery is a JUCE-slot concept (native hosts run

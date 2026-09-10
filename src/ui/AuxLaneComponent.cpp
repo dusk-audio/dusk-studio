@@ -406,6 +406,11 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
             }
             else
 #endif
+            if (strip.isBuiltinLoaded (i))
+            {
+                strip.getBuiltinSlot (i).setBypassed (on);
+            }
+            else
             {
                 auto& slotRef = strip.getPluginSlot (i);
                 slotRef.setBypassed (on);
