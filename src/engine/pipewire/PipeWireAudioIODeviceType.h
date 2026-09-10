@@ -43,6 +43,10 @@ private:
     std::vector<std::string> inputNames, outputNames;
     std::vector<std::string> inputIds, outputIds;   // PW_KEY_NODE_NAME, index-aligned with the *Names arrays
     std::vector<int>         inputChans, outputChans; // audio.channels, index-aligned with the *Names arrays
+    // Raw "default" metadata values from the last scan, as the graph publishes
+    // them (JSON objects naming a node). Empty when there is no session manager.
+    std::string defaultSinkValue, defaultSourceValue;
+
     bool hasScanned = false;
 
     PipeWireAudioIODeviceType (const PipeWireAudioIODeviceType&) = delete;
