@@ -225,8 +225,17 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
             std::memory_order_relaxed);
         session.deviceCaptureChannels.store (0, std::memory_order_relaxed);
         transportBar->refreshInputNotice();
-        snapshotComponent (transportBar.get(), outDir, "rec-02-no-input-notice.png", 250);
+        // Snapshot the bar's area off this component, not the bar itself: the
+        // bank buttons that share the row are siblings of the bar, and a
+        // component snapshot cannot contain them. A figure taken from the bar
+        // alone shows a layout nobody sees.
+        settle (250);
+        writePng (createComponentSnapshot (transportBar->getBounds(), true),
+                  outDir.getChildFile ("rec-02-no-input-notice.png"));
         session.deviceCaptureChannels.store (savedCapture, std::memory_order_relaxed);
+        // The notice row changes the window's layout, so put it back before the
+        // next figure rather than leaving every later snapshot shifted down.
+        transportBar->refreshInputNotice();
     }
     if (consoleView != nullptr)
     {
