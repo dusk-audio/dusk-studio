@@ -427,6 +427,12 @@ public:
     // can be neither seen nor clicked.
     void closeCompEditorPopup();
 
+    // Same reason again: the built-in unit editor is another native child, and
+    // the shell has to be able to close it and to ask whether it is open.
+    void closeBuiltinEditorPopup();
+    bool isBuiltinEditorOpen() const noexcept;
+    void openBuiltinEditorForCapture (const std::string& capturePath);
+
 private:
 
     bool compactMode = false;
@@ -446,13 +452,20 @@ private:
     // graphics resource and most strips never open one.
    #if DUSKSTUDIO_HAS_NATIVE_UI
     std::unique_ptr<imgui::DuskPanelWindow> compEditorWindow;
+    // The built-in unit editor, hosted exactly as the compressor editor is: one
+    // native child over a dim, dismissed by Escape, a click outside or the same
+    // slot control that opened it.
+    std::unique_ptr<imgui::DuskPanelWindow> builtinEditorWindow;
     // The child is an opaque native surface, so the dim behind it is a JUCE sibling
     // exactly as the session notepad arranges it, and it owns the click-outside.
     std::unique_ptr<DimOverlay> compEditorDim;
     PluginEditorHider compEditorHider;
+    std::unique_ptr<DimOverlay> builtinEditorDim;
+    PluginEditorHider builtinEditorHider;
    #endif
     void openEqEditorPopup();
     void openCompEditorPopup();
+    void openBuiltinEditorPopup();
     void openAuxEditorPopup();
     void setAuxSectionVisible (bool visible);
 

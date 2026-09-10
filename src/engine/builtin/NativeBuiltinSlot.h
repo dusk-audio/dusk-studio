@@ -4,6 +4,7 @@
 #include "BuiltinInstance.h"
 #include "../hosting/NativeInsertSlot.h"
 
+#include <atomic>
 #include <string>
 
 namespace duskstudio::builtin
@@ -43,6 +44,7 @@ public:
     bool loadUnit (const std::string& unitId, double sampleRate, int maxBlock,
                    std::string& errorOut)
     {
+        lastTouched.store (-1, std::memory_order_relaxed);
         return load (std::filesystem::u8path (unitId), sampleRate, maxBlock,
                      errorOut, unitId);
     }
@@ -61,5 +63,26 @@ public:
         { return instance != nullptr ? instance->getParamValue (index) : 0.0f; }
     void setParamValue (int index, float value) noexcept
         { if (instance != nullptr) instance->setParamValue (index, value); }
+
+    // MIDI Learn: the control the user moved last in this unit's editor, or -1
+    // when none has been touched since it loaded. Written by the editor on the
+    // message thread, read by the learn resolver on the same thread.
+    int lastTouchedParamIndex() const noexcept
+        { return lastTouched.load (std::memory_order_relaxed); }
+    void noteParamTouched (int index) noexcept
+        { lastTouched.store (index, std::memory_order_relaxed); }
+
+protected:
+    // MIDI binding: a 0..1 fraction maps onto the parameter's own range.
+    void applyParamBinding (uint32_t paramIndex, float frac) override
+    {
+        const auto* p = paramInfo ((int) paramIndex);
+        if (p == nullptr) return;
+        setParamValue ((int) paramIndex,
+                       p->minValue + frac * (p->maxValue - p->minValue));
+    }
+
+private:
+    std::atomic<int> lastTouched { -1 };
 };
 } // namespace duskstudio::builtin

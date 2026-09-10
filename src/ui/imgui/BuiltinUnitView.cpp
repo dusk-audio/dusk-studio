@@ -33,6 +33,12 @@ constexpr unsigned int kPanelBorder = 0x3a3a46ff;
 constexpr unsigned int kTitleText   = 0xf0f0f4ff;
 constexpr unsigned int kAccent      = 0x9080c0ff;
 
+// The palette constants above are RGBA; Dear ImGui packs ABGR.
+ImU32 rgba (unsigned int hex)
+{
+    return IM_COL32 ((hex >> 24) & 0xff, (hex >> 16) & 0xff, (hex >> 8) & 0xff, hex & 0xff);
+}
+
 constexpr int kMaxRowsPerColumn = 13;
 
 // A column is one section's rows plus its heading. Sections are laid out into
@@ -178,10 +184,19 @@ void BuiltinUnitViewImpl::drawRow (dw::Context& ctx, ImVec2 at, int paramIndex)
             // Two decimals reads wrong on a frequency and right on a ratio, so
             // the precision follows the span rather than the unit.
             const float span = info->maxValue - info->minValue;
+            // The suffix is literal text inside a printf format, so a percent
+            // sign in it has to be escaped or it eats the following character.
+            char suffix[16] = {};
+            for (int in = 0, out = 0; info->suffix[in] != '\0' && out < 14; ++in)
+            {
+                suffix[out++] = info->suffix[in];
+                if (info->suffix[in] == '%') suffix[out++] = '%';
+            }
+
             char format[32];
-            if (span >= 500.0f)      std::snprintf (format, sizeof (format), "%%.0f %s", info->suffix);
-            else if (span >= 10.0f)  std::snprintf (format, sizeof (format), "%%.1f %s", info->suffix);
-            else                     std::snprintf (format, sizeof (format), "%%.2f %s", info->suffix);
+            if (span >= 500.0f)      std::snprintf (format, sizeof (format), "%%.0f %s", suffix);
+            else if (span >= 10.0f)  std::snprintf (format, sizeof (format), "%%.1f %s", suffix);
+            else                     std::snprintf (format, sizeof (format), "%%.2f %s", suffix);
 
             const auto result = formSlider (ctx, id, tl, br, value,
                                             info->minValue, info->maxValue, format);
@@ -200,15 +215,15 @@ void BuiltinUnitViewImpl::draw (dw::Context& ctx, ImVec2 origin, ImVec2 size)
     auto& dl = *ImGui::GetWindowDrawList();
     const ImVec2 br { origin.x + size.x, origin.y + size.y };
 
-    dl.AddRectFilled (origin, br, kPanelFill, 6.0f);
-    dl.AddRect (origin, br, kPanelBorder, 6.0f);
+    dl.AddRectFilled (origin, br, rgba (kPanelFill), 6.0f);
+    dl.AddRect (origin, br, rgba (kPanelBorder), 6.0f);
 
     ScopedFormStyle style (ctx);
 
     const ImVec2 header { origin.x + kOuterInset, origin.y + kOuterInset };
-    dl.AddText (header, kTitleText, title.c_str());
+    dl.AddText (header, rgba (kTitleText), title.c_str());
     dl.AddLine ({ origin.x + kOuterInset, header.y + kHeaderH - 4.0f },
-                { br.x - kOuterInset, header.y + kHeaderH - 4.0f }, kAccent);
+                { br.x - kOuterInset, header.y + kHeaderH - 4.0f }, rgba (kAccent));
 
     const float columnW = kLabelW + kLabelGap + kControlW;
     float x = origin.x + kOuterInset;

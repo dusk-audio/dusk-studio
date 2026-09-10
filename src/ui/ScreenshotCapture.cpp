@@ -597,6 +597,52 @@ void MainComponent::captureNativePanels (std::string outDir)
             if (auto* strip0 = self.consoleView->getStripComponent (0))
                 strip0->closeCompEditorForCapture();
     } });
+    // One figure per built-in unit, each loaded onto track 1's insert and shot
+    // through the same panel window the user opens.
+    {
+        static const char* const kUnits[][2] =
+        {
+            { "dusk.builtin.utility", "bi-01-utility" },
+            { "dusk.builtin.reverb",  "bi-02-reverb"  },
+            { "dusk.builtin.delay",   "bi-03-tape-echo" },
+            { "dusk.builtin.tape",    "bi-04-tape"    },
+            { "dusk.builtin.synth",   "bi-05-sunset"  },
+        };
+        for (const auto& unit : kUnits)
+        {
+            const std::string id = unit[0];
+            const std::string name = unit[1];
+            steps->push_back ({ 400, [outDir, id] (MainComponent& self)
+            {
+                std::string err;
+                self.engine.suspendProcessing();
+                const bool loaded = self.engine.getChannelStrip (0).loadBuiltin (id, err);
+                self.engine.resumeProcessing();
+                if (! loaded)
+                    std::fprintf (stderr, "[capture] built-in %s: %s\n",
+                                  id.c_str(), err.c_str());
+            } });
+            steps->push_back ({ 400, [outDir, name] (MainComponent& self)
+            {
+                if (auto* strip0 = self.consoleView != nullptr
+                                 ? self.consoleView->getStripComponent (0) : nullptr)
+                    strip0->openBuiltinEditorForCapture (outDir + "/" + name + ".ppm");
+            } });
+            steps->push_back ({ 1500, [] (MainComponent& self)
+            {
+                if (auto* strip0 = self.consoleView != nullptr
+                                 ? self.consoleView->getStripComponent (0) : nullptr)
+                    strip0->closeBuiltinEditorPopup();
+            } });
+        }
+        steps->push_back ({ 400, [] (MainComponent& self)
+        {
+            self.engine.suspendProcessing();
+            self.engine.getChannelStrip (0).unloadBuiltin();
+            self.engine.resumeProcessing();
+        } });
+    }
+
     steps->push_back ({ 400, [outDir] (MainComponent& self)
     {
         self.openVirtualKeyboardForCapture (outDir + "/vkb-01-virtual-keyboard.ppm");

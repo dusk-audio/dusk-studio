@@ -8,11 +8,14 @@
 #include <string>
 #include "../session/Session.h"
 #include "DuskComboBox.h"
+#include "EmbeddedModal.h"
 #include "NativeEditorOwner.h"
 #include "../engine/device/ChannelSet.h"
 
 namespace duskstudio
 {
+namespace imgui { class DuskPanelWindow; }
+
 class AuxLaneStrip;
 class AudioEngine;
 class HardwareInsertEditor;
@@ -88,6 +91,17 @@ private:
     // Built-in unit rung. No editor yet, so the slot header and the picker are
     // the whole UI surface.
     void loadBuiltinForSlot (int slotIdx, const std::string& unitId);
+    // The built-in unit editor. The other native editors on this lane embed
+    // inline because they are XEmbed JUCE components; a Dusk panel is a
+    // framework child window, so it opens as a modal over the lane exactly as
+    // the channel strip's does.
+    void openBuiltinEditorForSlot (int slotIdx);
+    void closeBuiltinEditor();
+    bool isBuiltinEditorOpen() const noexcept;
+    std::unique_ptr<imgui::DuskPanelWindow> builtinEditorWindow;
+    std::unique_ptr<DimOverlay> builtinEditorDim;
+    PluginEditorHider builtinEditorHider;
+    int builtinEditorSlot = -1;
     // Stubbed (no-op body) off Linux so the many callers don't each need a guard.
     void detachClapEditorForSlot (int slotIdx);
     void detachLv2EditorForSlot (int slotIdx);

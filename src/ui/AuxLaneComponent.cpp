@@ -18,6 +18,9 @@
 #include "HardwareInsertEditor.h"
 #include "PlatformWindowing.h"
 #include "PluginPickerHelpers.h"
+#include "imgui/BuiltinUnitView.h"
+#include "imgui/DuskPanelWindow.h"
+#include "NativeEditorEmbedScale.h"
 #include "../foundation/Text.h"
 #include "../dsp/AuxLaneStrip.h"
 #include "../dsp/OutputPairRouting.h"
@@ -360,6 +363,11 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
         s.openOrAddButton.addMouseListener (this, false);   // right-click -> MIDI Learn
         s.openOrAddButton.onClick = [this, i]
         {
+            if (strip.isBuiltinLoaded (i))
+            {
+                openBuiltinEditorForSlot (i);
+                return;
+            }
             auto& slotRef = strip.getPluginSlot (i);
             if (slotRef.isLoaded() || strip.isNativeClapLoaded (i) || strip.isNativeLv2Loaded (i)
                 || strip.isNativeVst3Loaded (i) || strip.isNativeAuLoaded (i))
@@ -677,6 +685,13 @@ void AuxLaneComponent::captureWritePoint (AutomationParam param, float denormVal
 
 void AuxLaneComponent::refreshSlotControls (int i)
 {
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    // Every load and unload path lands here, so this is where the editor has to
+    // notice the slot no longer holds the unit its view points at.
+    if (builtinEditorSlot == i && isBuiltinEditorOpen() && ! strip.isBuiltinLoaded (i))
+        closeBuiltinEditor();
+   #endif
+
     auto& slotRef = strip.getPluginSlot (i);
     auto& ui      = slots[(size_t) i];
     auto nativeLabel = [] (const juce::String& name, bool offline)
@@ -1445,6 +1460,7 @@ void AuxLaneComponent::loadBuiltinForSlot (int slotIdx, const std::string& unitI
     detachLv2EditorForSlot (slotIdx);
     detachVst3EditorForSlot (slotIdx);
     detachAuEditorForSlot (slotIdx);
+    closeBuiltinEditor();
 
     std::string err;
     engine.suspendProcessing();
@@ -1485,6 +1501,123 @@ void AuxLaneComponent::loadBuiltinForSlot (int slotIdx, const std::string& unitI
     lane.builtinUnitId[(size_t) slotIdx] = strip.getBuiltinSlot (slotIdx).getPluginId();
     refreshSlotControls (slotIdx);
     rebuildSlots();
+}
+
+void AuxLaneComponent::closeBuiltinEditor()
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (builtinEditorWindow != nullptr && builtinEditorWindow->isOpen())
+        builtinEditorWindow->close();
+   #endif
+    builtinEditorSlot = -1;
+}
+
+bool AuxLaneComponent::isBuiltinEditorOpen() const noexcept
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    return builtinEditorWindow != nullptr && builtinEditorWindow->isOpen();
+   #else
+    return false;
+   #endif
+}
+
+void AuxLaneComponent::openBuiltinEditorForSlot (int slotIdx)
+{
+   #if ! DUSKSTUDIO_HAS_NATIVE_UI
+    (void) slotIdx;
+    showDuskAlert (*this, "Built-in unit",
+                   "The built-in unit editor needs the native UI, which this build "
+                   "was made without.");
+   #else
+    if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return;
+    if (! strip.isBuiltinLoaded (slotIdx)) return;
+
+    if (isBuiltinEditorOpen() && builtinEditorSlot == slotIdx)
+    {
+        closeBuiltinEditor();
+        return;
+    }
+    closeBuiltinEditor();
+
+    auto* topLevel = getTopLevelComponent();
+    if (topLevel == nullptr) topLevel = this;
+    const auto parentHandle = embedscale::nativeParentHandle (*topLevel);
+    if (parentHandle == 0)
+    {
+        showDuskAlert (*topLevel, "Built-in unit",
+                       "The editor cannot open: the main window is not ready.");
+        return;
+    }
+
+    if (auto hook = EmbeddedModal::beforeModalShown())
+        hook();
+
+    if (builtinEditorWindow == nullptr)
+    {
+        builtinEditorWindow = std::make_unique<imgui::DuskPanelWindow> (
+            "dusk-studio-aux-builtin-editor", "aux-builtin-editor", "Built-in unit");
+
+        imgui::DuskPanelWindow::Callbacks callbacks;
+        callbacks.dismissed = [this] { closeBuiltinEditor(); };
+        callbacks.closed = [this]
+        {
+            builtinEditorDim.reset();
+            builtinEditorHider.restore();
+            builtinEditorSlot = -1;
+            if (auto* target = EmbeddedModal::focusRestoreTarget().getComponent())
+                target->grabKeyboardFocus();
+        };
+        callbacks.geometry = [this]
+        {
+            auto* const top = getTopLevelComponent();
+            if (top == nullptr || builtinEditorWindow == nullptr)
+                return imgui::DuskPanelWindow::Geometry {};
+
+            const auto plate = builtinEditorWindow->plateSize();
+            const auto bounds = embedscale::centredChildBounds (*top, plate.width,
+                                                                plate.height);
+            if (builtinEditorDim != nullptr)
+            {
+                builtinEditorDim->setBounds (top->getLocalBounds());
+                builtinEditorDim->setNativeChildArea (bounds.expanded (1));
+            }
+            const auto g = embedscale::childGeometryFor (*top, bounds);
+            return imgui::DuskPanelWindow::Geometry { g.x, g.y, g.width, g.height, g.scale };
+        };
+        builtinEditorWindow->setCallbacks (std::move (callbacks));
+    }
+
+    auto& slot = strip.getBuiltinSlot (slotIdx);
+    builtinEditorWindow->setView (imgui::makeBuiltinUnitView (
+        slot, slot.displayName(),
+        [&slot] (int paramIndex) { slot.noteParamTouched (paramIndex); },
+        /*inlineInStage*/ false));
+
+    const auto plate = builtinEditorWindow->plateSize();
+    const auto logical = embedscale::centredChildBounds (*topLevel, plate.width, plate.height);
+
+    builtinEditorDim = std::make_unique<DimOverlay> (builtinEditorWindow->dimAlpha());
+    builtinEditorDim->setBounds (topLevel->getLocalBounds());
+    builtinEditorDim->setNativeChildArea (logical.expanded (1));
+    builtinEditorDim->onClick = [this] { closeBuiltinEditor(); };
+    topLevel->addAndMakeVisible (builtinEditorDim.get());
+    builtinEditorHider.hideUnder (*topLevel, { builtinEditorDim.get() });
+
+    const auto geometry = embedscale::childGeometryFor (*topLevel, logical);
+    if (! builtinEditorWindow->open (parentHandle,
+                                     { geometry.x, geometry.y, geometry.width,
+                                       geometry.height, geometry.scale }))
+    {
+        builtinEditorDim.reset();
+        builtinEditorHider.restore();
+        const auto& why = builtinEditorWindow->lastOpenFailure();
+        showDuskAlert (*topLevel, "Built-in unit",
+                       why.empty() ? "The editor cannot open on this display backend."
+                                   : why.c_str());
+        return;
+    }
+    builtinEditorSlot = slotIdx;
+   #endif
 }
 
 void AuxLaneComponent::detachClapEditorForSlot (int slotIdx)
