@@ -8,14 +8,14 @@
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
   #include <dsp/FourKEQDSP.hpp>
-  #include <core/UniversalCompressorDSP.hpp>
+  #include "CompressorCore.h"
 #endif
 
 namespace duskstudio
 {
 // Phase 1a aux bus: 3-band EQ -> bus compressor -> pan -> fader -> meter.
 // EQ uses FourKEQDSP's LF / LM / HF bands (with the LM band exposed as MID and
-// the HM band fixed-zero). Comp uses UniversalCompressorDSP's Bus mode. Both
+// the HM band fixed-zero). Comp uses the donor MultiComp core's Bus mode. Both
 // cores are framework-free donor DSP; their parameter setters are atomic, so
 // updateEqParameters / updateCompParameters write lock-free from the audio
 // thread.
@@ -53,10 +53,9 @@ private:
     // change - see the ChannelStrip equivalent.
     struct EqGains { float lf = 0.0f, mid = 0.0f, hf = 0.0f; };
     EqGains lastEqGains {};
-    duskaudio::UniversalCompressorDSP busComp;
-    // Max samples per busComp.processBlock call (the oversampled prepare block
-    // size - the core degrades to dry passthrough beyond it); the process
-    // chunk loops split anything larger.
+    CompressorCore busComp;
+    // Preserve the app's prepared-block call boundary when its outer
+    // oversampler expands a host block. The donor can also chunk internally.
     int compMaxBlock = 0;
 
     // Per-bus Dusk Studio-side oversampler wrapping the comp. Its saturation

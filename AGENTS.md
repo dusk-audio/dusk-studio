@@ -1,4 +1,4 @@
-# Dusk Studio — instructions for Claude
+# Dusk Studio — instructions for Codex
 
 Dusk Studio is a portastudio-style DAW for Linux, C++17. It is being actively de-JUCE'd (see **De-JUCE — no new JUCE** below; read it before writing any new code). The authoritative spec is [DuskStudio.md](DuskStudio.md). Read it before changing anything non-trivial.
 
@@ -12,7 +12,7 @@ Dusk Studio is a portastudio-style DAW for Linux, C++17. It is being actively de
 
 ## De-JUCE — no new JUCE (READ FIRST)
 
-Dusk Studio is being re-platformed to remove **all** JUCE by 1.0, incrementally, tower by tower (campaign map + tower order in [docs/dejuce-campaign.md](docs/dejuce-campaign.md); live state in the [de-JUCE roadmap memory](../../.claude/projects/-home-marc-projects-DuskStudio/memory/project_dejuce_roadmap.md)). Much of the code documented below still uses `juce::` — that is the *migration surface*, not a pattern to copy. **New code must not add JUCE.** Reach for the JUCE-free seam first; fall back to `juce::` only inside a file that is already coupled and has no seam yet.
+Dusk Studio is being re-platformed to remove **all** JUCE by 1.0, incrementally, tower by tower (campaign map + tower order in [docs/dejuce-campaign.md](docs/dejuce-campaign.md); live state in the [de-JUCE roadmap memory](../../.Codex/projects/-home-marc-projects-DuskStudio/memory/project_dejuce_roadmap.md)). Much of the code documented below still uses `juce::` — that is the *migration surface*, not a pattern to copy. **New code must not add JUCE.** Reach for the JUCE-free seam first; fall back to `juce::` only inside a file that is already coupled and has no seam yet.
 
 **The gate.** [tools/juce-gate.sh](tools/juce-gate.sh) (CI, via `linux-build.yml`) is a ratchet over `src/`, enforcing three one-way rules against `tools/juce-allowlist.txt` (`path<TAB>count`, one line per coupled file):
 - A *clean* file that gains `juce::`/`<juce_` and isn't listed **fails the build**.
@@ -79,7 +79,7 @@ Single canonical build dir on both OSes: `build/` (app) and `build-tests/` (Catc
 | Linux | `build/`  | `build-tests/`   | `../JUCE-wayland` (plugdata-team fork)   | `../plugins` (`DONOR_REV` pin) |
 
 CMake auto-detects:
-- **JUCE** — on Linux it prefers `../JUCE-wayland` if present, falls back to `../JUCE`. The wayland fork has 5 local commits Dusk Studio depends on (XEmbed mapping, X11-on-Wayland fix, peer-creation latch — see [memory](../../.claude/projects/-home-marc-projects-Dusk Studio/memory/linux_juce_wayland_pin.md)) and a divergent `addDefaultFormatsToManager` free function.
+- **JUCE** — on Linux it prefers `../JUCE-wayland` if present, falls back to `../JUCE`. The wayland fork has 5 local commits Dusk Studio depends on (XEmbed mapping, X11-on-Wayland fix, peer-creation latch — see [memory](../../.Codex/projects/-home-marc-projects-Dusk Studio/memory/linux_juce_wayland_pin.md)) and a divergent `addDefaultFormatsToManager` free function.
 - **Plugins** — the donor is a single checkout at `../plugins`. Release-compatible builds use the `DONOR_REV` shared by the build and release workflows because donor `main` does not contain the required framework-free compressor core. Auto-detected from the sibling `../plugins` directory; override with `-DDUSK_PLUGINS_PATH=/path/to/plugins`. If `../plugins` is on another revision when you build, you build against *that* revision's DSP and layout. Follow the platform build guide to fetch and detach at the pin. (The former `../plugins-main` worktree was removed; the repo is consolidated to one directory. Do NOT add a second donor worktree for routine builds.)
 
 The upstream-vs-fork `addDefaultFormats` API split is hidden behind [src/engine/JuceCompat.h](src/engine/JuceCompat.h) — call `duskstudio::juce_compat::addDefaultFormats(fm)` and the `#if defined(__linux__)` lives in one place. Don't sprinkle new platform `#ifdef`s into call sites.
@@ -208,7 +208,7 @@ If a change touches a unit that has tests, those tests must pass. If it touches 
 
 ## Git
 
-- Never add a `Co-Authored-By: Claude` (or any Claude/Anthropic) trailer to commits. Commits are authored by the user only.
+- Never add a `Co-Authored-By: Codex` (or any Codex/Anthropic) trailer to commits. Commits are authored by the user only.
 - Commits should be small and reviewable. Phase boundaries are natural commit boundaries.
 - Don't `git push` without explicit instruction. Don't force-push to `main` ever.
 

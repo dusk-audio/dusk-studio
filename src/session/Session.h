@@ -1053,12 +1053,13 @@ struct AuxLane
 // same character it had when the settings lived in the plugin state blob.
 struct TapeParams
 {
-    std::atomic<int>   machine     { 0 };      // 0 Swiss 800, 1 Classic 102
-    std::atomic<int>   speed       { 1 };      // 0 7.5, 1 15, 2 30 IPS
-    std::atomic<int>   type        { 0 };      // 0 456, 1 GP9, 2 911, 3 250
+    std::atomic<int>   machine     { 0 };      // 0 Swiss, 1 American
+    std::atomic<int>   speed       { 1 };      // 0 7.5, 1 15, 2 30, 3 3.75 IPS
+    std::atomic<int>   type        { 0 };      // 0 456, 1 GP9, 2 900, 3 250
     std::atomic<int>   signalPath  { 0 };      // 0 Repro, 1 Sync, 2 Input, 3 Thru
-    std::atomic<int>   eqStandard  { 0 };      // 0 NAB, 1 CCIR, 2 AES
-    std::atomic<int>   calibration { 0 };      // 0..3 -> +0/+3/+6/+9 dB
+    std::atomic<int>   eqStandard  { 0 };      // 0 NAB, 1 CCIR
+    std::atomic<int>   calibration { 0 };      // 0..3 -> +3/+6/+7.5/+9 dB
+    std::atomic<int>   headWidth   { 1 };      // 0 1/4", 1 1/2", 2 1"; American only
 
     std::atomic<float> inputGainDb  { 0.0f };      // -12..+12; also sets tape drive
     std::atomic<float> bias         { 50.0f };     // 0..100 %, ignored while autoCal
@@ -1069,8 +1070,28 @@ struct TapeParams
     std::atomic<float> flutter      { 3.0f };      // 0..100 %
     std::atomic<float> outputGainDb { 0.0f };      // -12..+12, ignored while autoComp
 
-    std::atomic<bool>  autoCal  { true };
-    std::atomic<bool>  autoComp { true };
+    // Current TM2 front-panel and Advanced-page controls.
+    std::atomic<bool>  autoCal           { true };
+    std::atomic<bool>  noiseEnabled      { false };
+    std::atomic<bool>  autoComp          { true };
+    std::atomic<bool>  crosstalk         { true };
+    std::atomic<bool>  wowFlutterEnabled { true };
+    std::atomic<bool>  transformer       { true };
+    std::atomic<float> reproLfDb          { 0.0f };
+    std::atomic<float> reproLmfDb         { 0.0f };
+    std::atomic<float> reproHmfDb         { 0.0f };
+    std::atomic<float> reproHfDb          { 0.0f };
+
+    // Hidden factory-preset calibration data. These remain session state so a
+    // preset selected in TM2's DAF UI survives save/reload without changing its
+    // fitted response.
+    std::atomic<float> levelHmfTrimDb { 0.0f };
+    std::atomic<float> levelHfTrimDb  { 0.0f };
+    std::atomic<float> lpQ            { 0.707f };
+    std::atomic<float> progHmfTrimDb  { 0.0f };
+    std::atomic<float> progHfTrimDb   { 0.0f };
+    std::atomic<float> reproSubBellDb { 0.0f };
+    std::atomic<float> progLfTrimDb   { 0.0f };
 };
 
 struct MasterBusParams

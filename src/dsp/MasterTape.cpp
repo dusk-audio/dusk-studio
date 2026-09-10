@@ -15,11 +15,12 @@ struct MasterTape::Impl
 MasterTape::MasterTape() : impl (std::make_unique<Impl>()) {}
 MasterTape::~MasterTape() = default;
 
-void MasterTape::prepare (double sampleRate, int blockSize, int oversamplingFactor)
+void MasterTape::prepare (double sampleRate, int blockSize)
 {
-    impl->core.setOversampling ((oversamplingFactor == 4) ? 2
-                              : (oversamplingFactor == 2) ? 1
-                                                          : 0);
+    // TapeMachineDSP retains its old oversampling choice only for state
+    // round-tripping. Its presets and nonlinear stages are jointly tuned at 2x,
+    // so make that compatibility contract explicit at the application seam.
+    impl->core.setOversampling (1);
     impl->core.prepare (sampleRate, std::max (1, blockSize));
     impl->core.reset();
 }
@@ -38,16 +39,32 @@ void MasterTape::pushParameters (const TapeParams& p) noexcept
     c.setSignalPath   (p.signalPath.load   (std::memory_order_relaxed));
     c.setEqStandard   (p.eqStandard.load   (std::memory_order_relaxed));
     c.setCalibration  (p.calibration.load  (std::memory_order_relaxed));
+    c.setHeadWidth    (p.headWidth.load    (std::memory_order_relaxed));
     c.setInputGainDb  (p.inputGainDb.load  (std::memory_order_relaxed));
     c.setBias         (p.bias.load         (std::memory_order_relaxed));
     c.setHighpassHz   (p.highpassHz.load   (std::memory_order_relaxed));
     c.setLowpassHz    (p.lowpassHz.load    (std::memory_order_relaxed));
     c.setNoiseAmount  (p.noiseAmount.load  (std::memory_order_relaxed));
+    c.setNoiseEnabled (p.noiseEnabled.load (std::memory_order_relaxed));
     c.setWow          (p.wow.load          (std::memory_order_relaxed));
     c.setFlutter      (p.flutter.load      (std::memory_order_relaxed));
     c.setOutputGainDb (p.outputGainDb.load (std::memory_order_relaxed));
     c.setAutoCal      (p.autoCal.load      (std::memory_order_relaxed));
     c.setAutoComp     (p.autoComp.load     (std::memory_order_relaxed));
+    c.setCrosstalk        (p.crosstalk.load         (std::memory_order_relaxed));
+    c.setWowFlutterEnabled(p.wowFlutterEnabled.load (std::memory_order_relaxed));
+    c.setTransformer      (p.transformer.load       (std::memory_order_relaxed));
+    c.setReproLf       (p.reproLfDb.load          (std::memory_order_relaxed));
+    c.setReproLmf      (p.reproLmfDb.load         (std::memory_order_relaxed));
+    c.setReproHmf      (p.reproHmfDb.load         (std::memory_order_relaxed));
+    c.setReproHf       (p.reproHfDb.load          (std::memory_order_relaxed));
+    c.setLevelHmfTrim  (p.levelHmfTrimDb.load     (std::memory_order_relaxed));
+    c.setLevelHfTrim   (p.levelHfTrimDb.load      (std::memory_order_relaxed));
+    c.setLpQ           (p.lpQ.load                 (std::memory_order_relaxed));
+    c.setProgHmfTrim   (p.progHmfTrimDb.load      (std::memory_order_relaxed));
+    c.setProgHfTrim    (p.progHfTrimDb.load       (std::memory_order_relaxed));
+    c.setReproSubBell  (p.reproSubBellDb.load     (std::memory_order_relaxed));
+    c.setProgLfTrim    (p.progLfTrimDb.load       (std::memory_order_relaxed));
 }
 
 void MasterTape::processInPlace (float* L, float* R, int numSamples) noexcept

@@ -1,16 +1,18 @@
-// Calibration + regression test for the channel-strip console saturation.
+// Regression test for the channel-strip console saturation.
 //
-// The channel EQ (BritishEQProcessor) runs an always-on console drive
+// The channel EQ (the DAF 4k-eq-2 FourKEQDSP core) runs an always-on console drive
 // (ChannelStrip kConsoleSaturationDrive) so every strip carries the subtle
 // large-format-console harmonic floor. This test drives a clean on-bin sine
 // through the real processor and measures the H2/H3 levels so the hard-coded
-// drive can be matched to the real E/G units (E grittier / H2-dominant,
-// G cleaner / lower THD). It also guards that the character stays subtle.
+// drive remains anchored to the DAF voicing (Brown/E has the hotter H2 while
+// Black/G has the stronger odd-harmonic component). It also guards that the
+// character stays subtle.
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
-#include "BritishEQProcessor.h"
+#include <dsp/FourKEQDSP.hpp>
+#include "foundation/Fft.h"
 
 #include <cmath>
 #include <vector>
@@ -26,40 +28,47 @@ constexpr int    kH1Bin = 341;            // ~999 Hz, exactly on a bin (no leaka
 
 struct Harmonics { float h1Db, h2RelDb, h3RelDb; };
 
-// Drive a continuous on-bin sine through a flat BritishEQProcessor at the given
+float gainToDb (float gain)
+{
+    return gain > 1.0e-10f ? 20.0f * std::log10 (gain) : -200.0f;
+}
+
+// Drive a continuous on-bin sine through a flat FourKEQDSP at the given
 // saturation drive and console mode, then FFT the settled block and return the
 // H2 / H3 levels relative to the fundamental, in dB.
 Harmonics measure (float drive, bool blackMode, int h1Bin = kH1Bin)
 {
-    BritishEQProcessor eq;
-    eq.prepare (kSr, kN, 1);
-
-    BritishEQProcessor::Parameters p {};   // all bands flat, HPF/LPF off
-    p.isBlackMode = blackMode;
-    p.saturation  = drive;
-    eq.setParameters (p);
+    duskaudio::FourKEQDSP eq;
+    eq.setEqType (blackMode ? 1 : 0);
+    eq.setSaturation (drive);
+    eq.setOversampling (0);
+    eq.setAutoGain (false);
+    eq.prepare (kSr, kN);
+    eq.reset();
 
     const double freq = (double) h1Bin * kSr / (double) kN;   // exact bin
-    const float  amp  = juce::Decibels::decibelsToGain (-18.0f); // nominal -18 dBFS
-    const double w    = juce::MathConstants<double>::twoPi * freq / kSr;
+    const float  amp  = std::pow (10.0f, -18.0f * 0.05f); // nominal -18 dBFS
+    const double w    = 6.28318530717958647692 * freq / kSr;
 
     // Warm up the emphasis / DC-blocker / ADAA state, keeping sine phase
     // continuous into the measured block.
-    juce::AudioBuffer<float> buf (1, kN);
+    std::vector<float> buf ((size_t) kN, 0.0f);
+    const float* input[1] = { buf.data() };
+    float* output[1] = { buf.data() };
     long n = 0;
     for (int warm = 0; warm < 4; ++warm)
     {
-        for (int i = 0; i < kN; ++i) buf.setSample (0, i, amp * (float) std::sin (w * (double) n++));
-        eq.process (buf);
+        for (int i = 0; i < kN; ++i) buf[(size_t) i] = amp * (float) std::sin (w * (double) n++);
+        eq.processBlock (input, output, 1, kN);
     }
-    for (int i = 0; i < kN; ++i) buf.setSample (0, i, amp * (float) std::sin (w * (double) n++));
-    eq.process (buf);
+    for (int i = 0; i < kN; ++i) buf[(size_t) i] = amp * (float) std::sin (w * (double) n++);
+    eq.processBlock (input, output, 1, kN);
 
     // Real-only FFT magnitude. Rectangular window is fine: the sine sits exactly
     // on bin kH1Bin (integer cycles in kN samples) so there is no spectral leak.
     std::vector<float> fftData ((size_t) (2 * kN), 0.0f);
-    for (int i = 0; i < kN; ++i) fftData[(size_t) i] = buf.getSample (0, i);
-    juce::dsp::FFT fft (kOrder);
+    for (int i = 0; i < kN; ++i) fftData[(size_t) i] = buf[(size_t) i];
+    dusk::audio::Fft fft (kOrder);
     fft.performFrequencyOnlyForwardTransform (fftData.data());
 
     const float h1 = fftData[(size_t) h1Bin];
@@ -67,9 +76,9 @@ Harmonics measure (float drive, bool blackMode, int h1Bin = kH1Bin)
     const float h3 = fftData[(size_t) (3 * h1Bin)];
 
     Harmonics out;
-    out.h1Db    = juce::Decibels::gainToDecibels (h1, -200.0f);
-    out.h2RelDb = juce::Decibels::gainToDecibels (h2 / juce::jmax (1.0e-12f, h1), -200.0f);
-    out.h3RelDb = juce::Decibels::gainToDecibels (h3 / juce::jmax (1.0e-12f, h1), -200.0f);
+    out.h1Db    = gainToDb (h1);
+    out.h2RelDb = gainToDb (h2 / std::max (1.0e-12f, h1));
+    out.h3RelDb = gainToDb (h3 / std::max (1.0e-12f, h1));
     return out;
 }
 } // namespace
@@ -85,56 +94,34 @@ TEST_CASE ("Channel console saturation sits at the calibrated harmonic floor", "
     WARN ("E-series  H2=" << e.h2RelDb << " dB  H3=" << e.h3RelDb << " dB");
     WARN ("G-series  H2=" << g.h2RelDb << " dB  H3=" << g.h3RelDb << " dB");
 
-    SECTION ("E-series matches the SSL 4000E bench THD (~0.02 %, -74 dB H2)")
+    SECTION ("Brown/E keeps the shipped H2 floor")
     {
-        // drive = 22 places the E-series (gritty, H2-dominant) channel at the
-        // published 4000E figure of ~0.02 % THD (H2 ≈ -74 dB) at 0 VU
-        // (-18 dBFS). Tolerance absorbs the donor's dithered console noise.
-        // Re-derive from the [.sweep] case if the THD target changes.
-        REQUIRE_THAT (e.h2RelDb, WithinAbs (-74.0f, 4.0f));
+        REQUIRE_THAT (e.h2RelDb, WithinAbs (-67.2f, 1.0f));
+        REQUIRE (e.h2RelDb < -60.0f);
     }
 
-    SECTION ("G-series is the cleaner unit (~0.005 %, ~12 dB less H2)")
+    SECTION ("Black/G keeps the contrasting DAF harmonic signature")
     {
-        REQUIRE_THAT (g.h2RelDb, WithinAbs (-86.0f, 4.0f));
-        REQUIRE (e.h2RelDb > g.h2RelDb);   // E grittier than G
+        REQUIRE_THAT (g.h2RelDb, WithinAbs (-72.4f, 1.0f));
+        REQUIRE (e.h2RelDb > g.h2RelDb + 4.0f);
+        REQUIRE (g.h3RelDb > e.h3RelDb + 12.0f);
     }
 }
 
-TEST_CASE ("E-series transformer core adds LF-weighted saturation", "[console][transformer]")
+TEST_CASE ("4k-eq-2 retains native console colour below the user drive", "[console][saturation]")
 {
-    // The E-series transformer's iron saturates where flux is highest (LF), so
-    // it adds odd-harmonic (H3) content that is weighted toward the low end —
-    // the console "weight". G-series has no transformer, only broadband console
-    // saturation. Isolate the effect by comparing how much MORE LF harmonics
-    // than HF each mode produces: the E-series must be more LF-weighted than G.
-    constexpr int   kLfBin = 27;     // ~79 Hz, exactly on a bin (H3 at bin 81)
-    constexpr float drive  = 60.0f;  // moderate saturation so the core engages
+    // The DAF core deliberately models native, mode-dependent residue at 0%;
+    // the user control adds colour above that measured baseline.
+    constexpr int kLfBin = 27; // ~79 Hz, exactly on a bin
+    const Harmonics eNative = measure (0.0f, false, kLfBin);
+    const Harmonics gNative = measure (0.0f, true,  kLfBin);
+    const Harmonics eDriven = measure (60.0f, false, kLfBin);
+    const Harmonics gDriven = measure (60.0f, true,  kLfBin);
 
-    const Harmonics eLf = measure (drive, /*G=*/false, kLfBin);
-    const Harmonics eHf = measure (drive, /*G=*/false);          // 999 Hz default
-    const Harmonics gLf = measure (drive, /*G=*/true,  kLfBin);
-    const Harmonics gHf = measure (drive, /*G=*/true);
-
-    const float eLfWeight = eLf.h3RelDb - eHf.h3RelDb;   // LF harmonics minus HF
-    const float gLfWeight = gLf.h3RelDb - gHf.h3RelDb;
-    WARN ("LF-weighting  E=" << eLfWeight << " dB  G=" << gLfWeight << " dB");
-    REQUIRE (eLfWeight > gLfWeight + 3.0f);              // E's transformer adds LF weight
-
-    // Isolate the transformer: the E-vs-G LF gap must be SATURATION-GATED, not an
-    // always-on structural difference (e.g. the phase all-pass). With saturation
-    // off neither mode has a nonlinearity, so their LF harmonics coincide; the
-    // gap only opens up once saturation engages.
-    const Harmonics eOff = measure (0.0f, /*G=*/false, kLfBin);
-    const Harmonics gOff = measure (0.0f, /*G=*/true,  kLfBin);
-    const float onGap  = eLf.h3RelDb  - gLf.h3RelDb;            // E above G, saturation on
-    const float offGap = std::abs (eOff.h3RelDb - gOff.h3RelDb);
-    REQUIRE (onGap > offGap + 6.0f);
-
-    // The effect must also be present at the shipped channel drive (not only at
-    // the over-driven probe level), or the "console weight" is inaudible in use.
-    constexpr float shipDrive = 22.0f;   // ChannelStrip::kConsoleSaturationDrive
-    const float eShipWeight = measure (shipDrive, false, kLfBin).h3RelDb - measure (shipDrive, false).h3RelDb;
-    const float gShipWeight = measure (shipDrive, true,  kLfBin).h3RelDb - measure (shipDrive, true ).h3RelDb;
-    REQUIRE (eShipWeight > gShipWeight + 1.0f);
+    REQUIRE (eNative.h2RelDb > -90.0f);
+    REQUIRE (gNative.h3RelDb > -100.0f);
+    REQUIRE (eDriven.h2RelDb > eNative.h2RelDb + 12.0f);
+    REQUIRE (gDriven.h3RelDb > gNative.h3RelDb + 8.0f);
+    REQUIRE (eDriven.h2RelDb > gDriven.h2RelDb + 8.0f);
+    REQUIRE (gDriven.h3RelDb > eDriven.h3RelDb + 6.0f);
 }

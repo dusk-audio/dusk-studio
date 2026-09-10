@@ -521,7 +521,7 @@ endif()
 
 target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_TESTS=1)
 
-# UniversalCompressor (multi-comp donor) tests — gated on the donor being
+# MultiComp and other donor-DSP tests — gated on the donor being
 # available. Mirrors the main app's DUSK_PLUGINS_PATH wiring exactly so the
 # tests link against the same DSP code paths the channel strip uses.
 if(DUSK_PLUGINS_PATH)
@@ -550,40 +550,16 @@ if(DUSK_PLUGINS_PATH)
         ${CMAKE_SOURCE_DIR}/src/dsp/MasteringChain.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasteringDigitalEq.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/LoudnessMeter.cpp
+        ${CMAKE_SOURCE_DIR}/src/dsp/MasterTape.cpp
         "${DUSKSTUDIO_DONOR_DSP_DIR}/FourKEQDSP.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
         "${DUSKSTUDIO_COMPRESSOR_CORE_SOURCE}"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/shared/LEDMeter.cpp"
-        # tape_core_ab.cpp A/Bs the framework-free core against the JUCE donor,
-        # so both sides link here. The donor's createEditor() pulls its editor
-        # and GUI widgets in behind it.
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/core/TapeMachineDSP.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/PluginProcessor.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/PluginEditor.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/ImprovedTapeEmulation.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI/AnalogVUMeter.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI/TapeReelComponent.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI/TapeMachineLookAndFeel.cpp")
-
-    # Same createPluginFilter rename the main app applies - both donors define
-    # it as their plugin entry point and neither is ever called here.
-    set_source_files_properties(
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/PluginProcessor.cpp"
-        PROPERTIES
-        COMPILE_DEFINITIONS "createPluginFilter=createTapeMachinePluginFilter")
-
-    # Required only here: the tests compile TapeMachine's GUI/AnalogVUMeter.cpp
-    # alongside multi-comp's, and both declare a global AnalogVUMeter. Renaming
-    # the multi-comp one in-translation-unit keeps the donor untouched. The app
-    # no longer links TapeMachine's editor, so it does not need this.
-    set_source_files_properties(
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
-        PROPERTIES
-        COMPILE_DEFINITIONS "AnalogVUMeter=MultiCompAnalogVUMeter")
+        # tape_core_ab.cpp compares Dusk's MasterTape adapter directly with the
+        # authoritative framework-free core; no TapeMachine JUCE shell or GUI.
+        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/core/TapeMachineDSP.cpp")
 
     # projucer-shim satisfies BritishEQProcessor.h's `#include <JuceHeader.h>`
     # (the donor EQ under A/B test in eq_british_ab.cpp); the shim pulls in a
@@ -599,9 +575,12 @@ if(DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/HardwareEmulation"
         "${DUSKSTUDIO_DONOR_DSP_DIR}"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI")
+        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine")
+
+    # tape_hysteresis.cpp alone exercises the donor's header-only legacy
+    # primitive; keep that JUCE-era Source include out of every other test TU.
+    set_source_files_properties(tape_hysteresis.cpp PROPERTIES
+        INCLUDE_DIRECTORIES "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source")
 
     # Modules referenced only transitively by the projucer-shim umbrella header.
     target_link_libraries(dusk-studio-tests PRIVATE

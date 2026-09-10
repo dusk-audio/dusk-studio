@@ -1,8 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
-#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
-#include "UniversalCompressor.h"          // JUCE donor (ground truth)
-#include "UniversalCompressorDSP.hpp"      // duskaudio:: JUCE-free core
+#include "dsp/CompressorCore.h"
+#include "engine/CompModeMap.h"
 
 #include <cmath>
 #include <cstdint>
@@ -10,21 +9,20 @@
 #include <string>
 #include <vector>
 
-// A/B parity: the JUCE-free duskaudio::UniversalCompressorDSP must match the JUCE
-// UniversalCompressor sample-for-sample when both are driven exactly as Dusk
-// Studio's channel strips drive the donor (setMinimalProcessing(false),
-// setInternalOversamplingEnabled(false), oversampling param left at its 2x
-// default, noise forced off, raw APVTS atoms written before every processBlock).
-// JUCE output is the reference; the core is a verbatim transcription, so any
-// nonzero diff is a genuine slip to hunt down.
+// Adapter parity: Dusk's CompressorCore is compared sample-for-sample with the
+// authoritative framework-free MultiCompDSP while both receive the parameter
+// contract used by Dusk's channel, bus and master strips. The raw core reference
+// explicitly selects 1x internal processing and disables analog noise, matching
+// the adapter's constructor/prepare policy. This catches mapping drift without
+// treating the deliberately re-voiced DAF core as a transcription of the old
+// JUCE implementation.
 
 namespace
 {
 constexpr double kTwoPi = 6.28318530717958647692;
 
-// Per-sample audio tolerance. Transcription is verbatim -> expect 0.0f.
+// Both sides execute the same core with the same inputs -> expect exact parity.
 constexpr float kAudioTol = 1.0e-7f;
-// GR meter is a dB read-back through the same block-delay ring on both sides.
 constexpr float kGrTol = 1.0e-6f;
 
 inline float lin (float db) { return std::pow (10.0f, db * 0.05f); }
@@ -82,8 +80,8 @@ void makeSignal (std::vector<float>& L, std::vector<float>& R,
     }
 }
 
-// Everything Dusk drives on the donor. Defaults mirror the JUCE APVTS defaults
-// so an unset field is identical on both sides.
+// Everything Dusk drives on the donor. Defaults mirror the app's parameter
+// contract so an unset field is identical on both sides.
 struct CompParams
 {
     int   mode = 0;
@@ -91,15 +89,12 @@ struct CompParams
     float mix = 100.0f;
     bool  autoMakeup = false;
     float scHp = 0.0f;
-    float stereoLink = 100.0f;
-    int   stereoLinkMode = 0;
-
     float optoPeakReduction = 0.0f, optoGain = 50.0f;
     bool  optoLimit = false;
 
     float fetInput = 0.0f, fetOutput = 0.0f, fetAttack = 0.2f, fetRelease = 400.0f;
-    float fetThreshold = -10.0f, fetTransient = 0.0f;
-    int   fetRatio = 0, fetCurveMode = 0;
+    float fetThreshold = -10.0f;
+    int   fetRatio = 0;
 
     float vcaThreshold = 0.0f, vcaRatio = 4.0f, vcaAttack = 1.0f, vcaRelease = 100.0f, vcaOutput = 0.0f;
     bool  vcaOverEasy = false;
@@ -109,62 +104,53 @@ struct CompParams
     int   busRatio = 0, busAttack = 2, busRelease = 1;
 };
 
-void applyJuce (UniversalCompressor& c, const CompParams& p)
+void applyReference (duskaudio::MultiCompDSP& c, const CompParams& p)
 {
-    auto& a = c.getParameters();
-    auto set = [&] (const char* id, float v)
-    {
-        if (auto* atom = a.getRawParameterValue (id))
-            atom->store (v, std::memory_order_relaxed);
-    };
-    set ("mode", (float) p.mode);
-    set ("bypass", p.bypass ? 1.0f : 0.0f);
-    set ("mix", p.mix);
-    set ("auto_makeup", p.autoMakeup ? 1.0f : 0.0f);
-    set ("sidechain_hp", p.scHp);
-    set ("stereo_link", p.stereoLink);
-    set ("stereo_link_mode", (float) p.stereoLinkMode);
-    set ("noise_enable", 0.0f);   // Dusk forces analog noise off
+    using Parameter = duskaudio::MultiCompDSP::Parameter;
+    auto set = [&] (Parameter parameter, float value)
+        { c.setParameter (parameter, value); };
 
-    set ("opto_peak_reduction", p.optoPeakReduction);
-    set ("opto_gain", p.optoGain);
-    set ("opto_limit", p.optoLimit ? 1.0f : 0.0f);
+    c.setMode (p.mode);
+    c.setBypass (p.bypass);
+    c.setMix (p.mix);
+    set (Parameter::AutoMakeup, p.autoMakeup ? 1.0f : 0.0f);
+    set (Parameter::SidechainHP, p.scHp);
 
-    set ("fet_input", p.fetInput);
-    set ("fet_output", p.fetOutput);
-    set ("fet_attack", p.fetAttack);
-    set ("fet_release", p.fetRelease);
-    set ("fet_ratio", (float) p.fetRatio);
-    set ("fet_threshold", p.fetThreshold);
-    set ("fet_curve_mode", (float) p.fetCurveMode);
-    set ("fet_transient", p.fetTransient);
+    set (Parameter::OptoPeakReduction, p.optoPeakReduction);
+    const float optoGainDb = duskstudio::comp::optoGainPctToMakeupDb (p.optoGain);
+    set (Parameter::OptoGain, duskaudio::optoGainDbToKnob (optoGainDb));
+    set (Parameter::OptoLimit, p.optoLimit ? 1.0f : 0.0f);
 
-    set ("vca_threshold", p.vcaThreshold);
-    set ("vca_ratio", p.vcaRatio);
-    set ("vca_attack", p.vcaAttack);
-    set ("vca_release", p.vcaRelease);
-    set ("vca_output", p.vcaOutput);
-    set ("vca_overeasy", p.vcaOverEasy ? 1.0f : 0.0f);
-    set ("vca_detector_mode", (float) p.vcaDetectorMode);
+    set (Parameter::FetInput, p.fetInput);
+    set (Parameter::FetOutput, p.fetOutput);
+    set (Parameter::FetAttack, p.fetAttack);
+    set (Parameter::FetRelease, p.fetRelease);
+    set (Parameter::FetRatio, static_cast<float> (p.fetRatio));
+    set (Parameter::FetThreshold, p.fetThreshold);
 
-    set ("bus_threshold", p.busThreshold);
-    set ("bus_ratio", (float) p.busRatio);
-    set ("bus_attack", (float) p.busAttack);
-    set ("bus_release", (float) p.busRelease);
-    set ("bus_makeup", p.busMakeup);
-    set ("bus_mix", p.busMix);
+    set (Parameter::VcaThreshold, p.vcaThreshold);
+    set (Parameter::VcaRatio, p.vcaRatio);
+    set (Parameter::VcaAttack, p.vcaAttack);
+    set (Parameter::VcaRelease, p.vcaRelease);
+    set (Parameter::VcaOutput, p.vcaOutput);
+    set (Parameter::VcaOverEasy, p.vcaOverEasy ? 1.0f : 0.0f);
+    set (Parameter::VcaClassicDetector, p.vcaDetectorMode != 0 ? 1.0f : 0.0f);
+
+    set (Parameter::BusThreshold, p.busThreshold);
+    set (Parameter::BusRatio, static_cast<float> (p.busRatio));
+    set (Parameter::BusAttack, static_cast<float> (p.busAttack));
+    set (Parameter::BusRelease, static_cast<float> (p.busRelease));
+    set (Parameter::BusMakeup, p.busMakeup);
+    set (Parameter::BusMix, p.busMix);
 }
 
-void applyCore (duskaudio::UniversalCompressorDSP& c, const CompParams& p)
+void applyCore (duskstudio::CompressorCore& c, const CompParams& p)
 {
     c.setMode (p.mode);
     c.setBypass (p.bypass);
     c.setMix (p.mix);
     c.setAutoMakeup (p.autoMakeup);
     c.setSidechainHp (p.scHp);
-    c.setStereoLink (p.stereoLink);
-    c.setStereoLinkMode (p.stereoLinkMode);
-
     c.setOptoPeakReduction (p.optoPeakReduction);
     c.setOptoGain (p.optoGain);
     c.setOptoLimit (p.optoLimit);
@@ -175,9 +161,6 @@ void applyCore (duskaudio::UniversalCompressorDSP& c, const CompParams& p)
     c.setFetRelease (p.fetRelease);
     c.setFetRatio (p.fetRatio);
     c.setFetThreshold (p.fetThreshold);
-    c.setFetCurveMode (p.fetCurveMode);
-    c.setFetTransient (p.fetTransient);
-
     c.setVcaThreshold (p.vcaThreshold);
     c.setVcaRatio (p.vcaRatio);
     c.setVcaAttack (p.vcaAttack);
@@ -196,18 +179,15 @@ void applyCore (duskaudio::UniversalCompressorDSP& c, const CompParams& p)
 
 using ParamHook = std::function<void (CompParams&, int /*blockIdx*/)>;
 
-// Drive the JUCE donor exactly like ChannelStrip: 2/2 play config, prepare at
-// prepBlock, then feed `chunk`-sized blocks (params written before each).
-void runJuce (const std::vector<float>& inL, const std::vector<float>& inR,
-              std::vector<float>& outL, std::vector<float>& outR, std::vector<float>& gr,
-              double sr, int prepBlock, int chunk, int nch,
-              const CompParams& base, const ParamHook& hook)
+void runReference (const std::vector<float>& inL, const std::vector<float>& inR,
+                   std::vector<float>& outL, std::vector<float>& outR, std::vector<float>& gr,
+                   double sr, int prepBlock, int chunk, int nch,
+                   const CompParams& base, const ParamHook& hook)
 {
-    UniversalCompressor c;
-    c.setMinimalProcessing (false);
-    c.setInternalOversamplingEnabled (false);
-    c.setPlayConfigDetails (2, 2, sr, prepBlock);
-    c.prepareToPlay (sr, prepBlock);
+    duskaudio::MultiCompDSP c;
+    c.setOversampling (0);
+    c.setParameter (duskaudio::MultiCompDSP::Parameter::NoiseEnable, 0.0f);
+    c.prepare (sr, prepBlock);
     c.reset();
 
     const int total = (int) inL.size();
@@ -215,28 +195,23 @@ void runJuce (const std::vector<float>& inL, const std::vector<float>& inR,
     outR.assign ((size_t) total, 0.0f);
     gr.clear();
 
-    juce::MidiBuffer midi;
+    std::vector<float> tL ((size_t) chunk, 0.0f), tR ((size_t) chunk, 0.0f);
     int blk = 0;
     for (int off = 0; off < total; off += chunk, ++blk)
     {
         const int n = std::min (chunk, total - off);
         CompParams p = base;
         if (hook) hook (p, blk);
-        applyJuce (c, p);
+        applyReference (c, p);
 
-        juce::AudioBuffer<float> buf (nch, n);
-        for (int i = 0; i < n; ++i)
-        {
-            buf.setSample (0, i, inL[(size_t) (off + i)]);
-            if (nch > 1) buf.setSample (1, i, inR[(size_t) (off + i)]);
-        }
-        midi.clear();
-        c.processBlock (buf, midi);
+        const float* inP[2]  = { &inL[(size_t) off], nch > 1 ? &inR[(size_t) off] : &inL[(size_t) off] };
+        float*       outP[2] = { tL.data(), tR.data() };
+        c.processBlock (inP, outP, nch, n);
 
         for (int i = 0; i < n; ++i)
         {
-            outL[(size_t) (off + i)] = buf.getSample (0, i);
-            outR[(size_t) (off + i)] = nch > 1 ? buf.getSample (1, i) : buf.getSample (0, i);
+            outL[(size_t) (off + i)] = tL[(size_t) i];
+            outR[(size_t) (off + i)] = nch > 1 ? tR[(size_t) i] : tL[(size_t) i];
         }
         gr.push_back (c.getGainReduction());
     }
@@ -247,7 +222,7 @@ void runCore (const std::vector<float>& inL, const std::vector<float>& inR,
               double sr, int prepBlock, int chunk, int nch,
               const CompParams& base, const ParamHook& hook)
 {
-    duskaudio::UniversalCompressorDSP c;
+    duskstudio::CompressorCore c;
     c.prepare (sr, prepBlock);
     c.reset();
 
@@ -300,22 +275,22 @@ float grMaxDiff (const std::vector<float>& a, const std::vector<float>& b)
     return d;
 }
 
-// Full A/B for one param set + signal. REQUIREs audio (and GR) parity and
-// surfaces the actual diffs via UNSCOPED_INFO so a slip prints its magnitude.
-void checkAB (const std::string& label, const CompParams& base,
-              double sr, int block, double seconds, int nch,
-              uint32_t seed, bool asym, const ParamHook& hook = nullptr)
+// Full adapter/reference run for one parameter set + signal. REQUIREs audio
+// and GR parity, surfacing actual diffs when a mapping slips.
+void checkParity (const std::string& label, const CompParams& base,
+                  double sr, int block, double seconds, int nch,
+                  uint32_t seed, bool asym, const ParamHook& hook = nullptr)
 {
     const int total = (int) (seconds * sr);
     std::vector<float> inL, inR;
     makeSignal (inL, inR, total, sr, seed, asym);
 
-    std::vector<float> jL, jR, jGr, cL, cR, cGr;
-    runJuce (inL, inR, jL, jR, jGr, sr, block, block, nch, base, hook);
+    std::vector<float> rL, rR, rGr, cL, cR, cGr;
+    runReference (inL, inR, rL, rR, rGr, sr, block, block, nch, base, hook);
     runCore (inL, inR, cL, cR, cGr, sr, block, block, nch, base, hook);
 
-    const float aDiff = audioMaxDiff (jL, jR, cL, cR);
-    const float gDiff = grMaxDiff (jGr, cGr);
+    const float aDiff = audioMaxDiff (rL, rR, cL, cR);
+    const float gDiff = grMaxDiff (rGr, cGr);
     UNSCOPED_INFO (label << ": audioMaxDiff=" << aDiff << "  grMaxDiff=" << gDiff);
     REQUIRE (aDiff <= kAudioTol);
     REQUIRE (gDiff <= kGrTol);
@@ -325,20 +300,20 @@ void checkAB (const std::string& label, const CompParams& base,
 //==============================================================================
 // 1. Opto (mode 0)
 //==============================================================================
-TEST_CASE ("comp A/B: Opto matches JUCE", "[compab]")
+TEST_CASE ("comp adapter: Opto matches raw donor core", "[compab]")
 {
     CompParams p; p.mode = 0;
 
     SECTION ("peak-reduction / gain / limit sweep (48k)")
     {
         for (float pr : { 20.0f, 60.0f, 90.0f })
-            for (float g : { 50.0f, 65.0f })
+            for (float g : { 0.0f, 50.0f, 65.0f, 100.0f })
                 for (bool lim : { false, true })
                 {
                     p.optoPeakReduction = pr; p.optoGain = g; p.optoLimit = lim;
-                    checkAB ("opto pr=" + std::to_string ((int) pr) + " g=" + std::to_string ((int) g)
-                             + " lim=" + std::to_string (lim),
-                             p, 48000.0, 512, 3.0, 2, 0xA11CE, false);
+                    checkParity ("opto pr=" + std::to_string ((int) pr) + " g=" + std::to_string ((int) g)
+                                 + " lim=" + std::to_string (lim),
+                                 p, 48000.0, 512, 3.0, 2, 0xA11CE, false);
                 }
     }
 
@@ -346,14 +321,14 @@ TEST_CASE ("comp A/B: Opto matches JUCE", "[compab]")
     {
         p.optoPeakReduction = 80.0f; p.optoGain = 55.0f;
         for (double sr : { 44100.0, 48000.0, 96000.0 })
-            checkAB ("opto sr=" + std::to_string ((int) sr), p, sr, 512, 3.0, 2, 0x0470, false);
+            checkParity ("opto sr=" + std::to_string ((int) sr), p, sr, 512, 3.0, 2, 0x0470, false);
     }
 }
 
 //==============================================================================
 // 2. FET (mode 1)
 //==============================================================================
-TEST_CASE ("comp A/B: FET matches JUCE", "[compab]")
+TEST_CASE ("comp adapter: FET matches raw donor core", "[compab]")
 {
     CompParams p; p.mode = 1;
 
@@ -365,9 +340,9 @@ TEST_CASE ("comp A/B: FET matches JUCE", "[compab]")
                 {
                     p.fetRatio = ratio; p.fetInput = 12.0f; p.fetOutput = -3.0f;
                     p.fetAttack = atk; p.fetRelease = rel; p.fetThreshold = -18.0f;
-                    checkAB ("fet ratio=" + std::to_string (ratio) + " atk=" + std::to_string (atk)
-                             + " rel=" + std::to_string (rel),
-                             p, 48000.0, 512, 2.0, 2, 0xFE7, false);
+                    checkParity ("fet ratio=" + std::to_string (ratio) + " atk=" + std::to_string (atk)
+                                 + " rel=" + std::to_string (rel),
+                                 p, 48000.0, 512, 2.0, 2, 0xFE7, false);
                 }
     }
 
@@ -376,20 +351,14 @@ TEST_CASE ("comp A/B: FET matches JUCE", "[compab]")
         p.fetRatio = 4; p.fetInput = 24.0f; p.fetOutput = 0.0f;
         p.fetAttack = 0.1f; p.fetRelease = 300.0f; p.fetThreshold = -30.0f;
         for (double sr : { 44100.0, 48000.0, 96000.0 })
-            checkAB ("fet allbuttons sr=" + std::to_string ((int) sr), p, sr, 512, 2.5, 2, 0xB77, false);
-    }
-
-    SECTION ("curve mode Measured")
-    {
-        p.fetRatio = 4; p.fetCurveMode = 1; p.fetInput = 20.0f; p.fetThreshold = -28.0f;
-        checkAB ("fet measured curve", p, 48000.0, 512, 2.0, 2, 0xC0FFEE, false);
+            checkParity ("fet allbuttons sr=" + std::to_string ((int) sr), p, sr, 512, 2.5, 2, 0xB77, false);
     }
 }
 
 //==============================================================================
 // 3. VCA (mode 2)
 //==============================================================================
-TEST_CASE ("comp A/B: VCA matches JUCE", "[compab]")
+TEST_CASE ("comp adapter: VCA matches raw donor core", "[compab]")
 {
     CompParams p; p.mode = 2; p.vcaRatio = 4.0f;
 
@@ -399,8 +368,8 @@ TEST_CASE ("comp A/B: VCA matches JUCE", "[compab]")
             for (float toff : { -6.0f, -5.0f, -2.5f, 0.0f, 2.5f, 5.0f, 6.0f })
             {
                 p.vcaOverEasy = oe; p.vcaThreshold = toff;
-                checkAB ("vca oe=" + std::to_string (oe) + " thr=" + std::to_string (toff),
-                         p, 48000.0, 512, 1.6, 2, 0x0CA, false);
+                checkParity ("vca oe=" + std::to_string (oe) + " thr=" + std::to_string (toff),
+                             p, 48000.0, 512, 1.6, 2, 0x0CA, false);
             }
     }
 
@@ -411,22 +380,22 @@ TEST_CASE ("comp A/B: VCA matches JUCE", "[compab]")
             for (double sr : { 44100.0, 48000.0, 96000.0 })
             {
                 p.vcaDetectorMode = det;
-                checkAB ("vca det=" + std::to_string (det) + " sr=" + std::to_string ((int) sr),
-                         p, sr, 512, 1.6, 2, 0xD37, false);
+                checkParity ("vca det=" + std::to_string (det) + " sr=" + std::to_string ((int) sr),
+                             p, sr, 512, 1.6, 2, 0xD37, false);
             }
     }
 
     SECTION ("fast-attack overshoot")
     {
         p.vcaThreshold = -28.0f; p.vcaRatio = 20.0f; p.vcaAttack = 0.1f; p.vcaRelease = 30.0f;
-        checkAB ("vca fast attack", p, 48000.0, 512, 1.6, 2, 0xFA57, false);
+        checkParity ("vca fast attack", p, 48000.0, 512, 1.6, 2, 0xFA57, false);
     }
 }
 
 //==============================================================================
 // 4. Bus (mode 3)
 //==============================================================================
-TEST_CASE ("comp A/B: Bus matches JUCE", "[compab]")
+TEST_CASE ("comp adapter: Bus matches raw donor core", "[compab]")
 {
     CompParams p; p.mode = 3;
 
@@ -436,19 +405,15 @@ TEST_CASE ("comp A/B: Bus matches JUCE", "[compab]")
             for (int rel : { 0, 1, 4 })
             {
                 p.busThreshold = -12.0f; p.busRatio = 1; p.busAttack = atk; p.busRelease = rel;
-                checkAB ("bus atk=" + std::to_string (atk) + " rel=" + std::to_string (rel),
-                         p, 48000.0, 512, 2.0, 2, 0xB5, false);
+                checkParity ("bus atk=" + std::to_string (atk) + " rel=" + std::to_string (rel),
+                             p, 48000.0, 512, 2.0, 2, 0xB5, false);
             }
     }
 
-    SECTION ("stereo link default / explicit 0.0 / 0.5 / 1.0 with asymmetric L-R")
+    SECTION ("default fully-linked path with asymmetric L-R")
     {
         p.busThreshold = -15.0f; p.busRatio = 2; p.busAttack = 2; p.busRelease = 1;
-        for (float link : { 0.0f, 50.0f, 100.0f })
-        {
-            p.stereoLink = link;
-            checkAB ("bus link=" + std::to_string ((int) link), p, 48000.0, 512, 2.0, 2, 0xA57, true);
-        }
+        checkParity ("bus link=100", p, 48000.0, 512, 2.0, 2, 0xA57, true);
     }
 
     SECTION ("makeup hot input + postGain ordering + bus_mix on linked path")
@@ -457,46 +422,45 @@ TEST_CASE ("comp A/B: Bus matches JUCE", "[compab]")
         for (float mix : { 40.0f, 100.0f })
         {
             p.busMix = mix;
-            checkAB ("bus makeup mix=" + std::to_string ((int) mix), p, 48000.0, 512, 2.0, 2, 0x60, true);
+            checkParity ("bus makeup mix=" + std::to_string ((int) mix), p, 48000.0, 512, 2.0, 2, 0x60, true);
         }
     }
 
     SECTION ("mono 1ch (non-linked path)")
     {
         p.busThreshold = -15.0f; p.busRatio = 1;
-        checkAB ("bus mono", p, 48000.0, 512, 1.6, 1, 0x0110, false);
+        checkParity ("bus mono", p, 48000.0, 512, 1.6, 1, 0x0110, false);
     }
 }
 
 //==============================================================================
 // 5. Bypass toggle: delayed-dry parity through the transition + un-bypass fade
 //==============================================================================
-TEST_CASE ("comp A/B: bypass toggle + un-bypass fade", "[compab]")
+TEST_CASE ("comp adapter: bypass toggle and fade match raw donor core", "[compab]")
 {
     CompParams base; base.mode = 1; base.fetRatio = 2; base.fetInput = 12.0f;
     base.fetThreshold = -20.0f; base.autoMakeup = true;
 
-    // active blocks 0-9, bypass 10-24 (60-sample delayed dry), active again 25+
-    // (5 ms fade + auto-makeup accumulator reset).
+    // Active blocks 0-9, bypass 10-24 through the core's delayed-dry path,
+    // then active again from block 25 through its bypass ramp.
     auto hook = [] (CompParams& p, int blk) { p.bypass = (blk >= 10 && blk < 25); };
-    checkAB ("bypass toggle", base, 48000.0, 512, 3.0, 2, 0xB1FA, false, hook);
+    checkParity ("bypass toggle", base, 48000.0, 512, 3.0, 2, 0xB1FA, false, hook);
 }
 
 //==============================================================================
 // 6. Partial mix (dry-ring parity)
 //==============================================================================
-TEST_CASE ("comp A/B: partial mix dry ring", "[compab]")
+TEST_CASE ("comp adapter: partial mix matches raw donor core", "[compab]")
 {
     CompParams p; p.mode = 1; p.fetRatio = 1; p.fetInput = 10.0f; p.fetThreshold = -18.0f;
     p.mix = 40.0f;
-    checkAB ("fet mix=40", p, 48000.0, 512, 2.0, 2, 0x4140, false);
+    checkParity ("fet mix=40", p, 48000.0, 512, 2.0, 2, 0x4140, false);
 }
 
 //==============================================================================
-// 7. Block-size invariance: 64 / 160 / 1024 chunking, both sides, audio only
-//    (GR meter delay is measured in BLOCKS, so it legitimately differs by chunk).
+// 7. Block-size invariance: 64 / 160 / 1024 chunking, both sides, audio only.
 //==============================================================================
-TEST_CASE ("comp A/B: block-size invariance", "[compab]")
+TEST_CASE ("comp adapter: block-size invariance matches raw donor core", "[compab]")
 {
     CompParams p; p.mode = 1; p.fetRatio = 2; p.fetInput = 14.0f; p.fetThreshold = -20.0f;
 
@@ -506,69 +470,70 @@ TEST_CASE ("comp A/B: block-size invariance", "[compab]")
     std::vector<float> inL, inR;
     makeSignal (inL, inR, total, sr, 0xB10C, false);
 
-    std::vector<float> jRefL, jRefR, cRefL, cRefR, dummyGr;
-    runJuce (inL, inR, jRefL, jRefR, dummyGr, sr, prepBlock, prepBlock, 2, p, nullptr);
+    std::vector<float> rRefL, rRefR, cRefL, cRefR, dummyGr;
+    runReference (inL, inR, rRefL, rRefR, dummyGr, sr, prepBlock, prepBlock, 2, p, nullptr);
     runCore (inL, inR, cRefL, cRefR, dummyGr, sr, prepBlock, prepBlock, 2, p, nullptr);
 
     for (int chunk : { 64, 160, 1024 })
     {
-        std::vector<float> jL, jR, cL, cR;
-        runJuce (inL, inR, jL, jR, dummyGr, sr, prepBlock, chunk, 2, p, nullptr);
+        std::vector<float> rL, rR, cL, cR;
+        runReference (inL, inR, rL, rR, dummyGr, sr, prepBlock, chunk, 2, p, nullptr);
         runCore (inL, inR, cL, cR, dummyGr, sr, prepBlock, chunk, 2, p, nullptr);
 
-        const float jSelf = audioMaxDiff (jL, jR, jRefL, jRefR);
+        const float rSelf = audioMaxDiff (rL, rR, rRefL, rRefR);
         const float cSelf = audioMaxDiff (cL, cR, cRefL, cRefR);
-        const float cross = audioMaxDiff (jL, jR, cL, cR);
-        UNSCOPED_INFO ("chunk=" << chunk << " jSelf=" << jSelf << " cSelf=" << cSelf << " cross=" << cross);
-        REQUIRE (jSelf <= kAudioTol);
+        const float cross = audioMaxDiff (rL, rR, cL, cR);
+        UNSCOPED_INFO ("chunk=" << chunk << " refSelf=" << rSelf
+                       << " adapterSelf=" << cSelf << " cross=" << cross);
+        REQUIRE (rSelf <= kAudioTol);
         REQUIRE (cSelf <= kAudioTol);
         REQUIRE (cross <= kAudioTol);
     }
 }
 
 //==============================================================================
-// 8. GR meter parity (block-delay behaviour) — explicit, deep compression.
+// 8. GR meter parity — explicit, deep compression.
 //==============================================================================
-TEST_CASE ("comp A/B: GR meter block-delay parity", "[compab]")
+TEST_CASE ("comp adapter: GR meter matches raw donor core", "[compab]")
 {
     const double sr = 48000.0;
-    const int block = 500;   // 60/500 -> ceil = 1 block delay
+    const int block = 500;
     const int total = (int) (2.0 * sr);
     std::vector<float> inL, inR;
     makeSignal (inL, inR, total, sr, 0x6DAA, false);
 
     CompParams p; p.mode = 2; p.vcaThreshold = -24.0f; p.vcaRatio = 10.0f;
 
-    std::vector<float> jL, jR, jGr, cL, cR, cGr;
-    runJuce (inL, inR, jL, jR, jGr, sr, block, block, 2, p, nullptr);
+    std::vector<float> rL, rR, rGr, cL, cR, cGr;
+    runReference (inL, inR, rL, rR, rGr, sr, block, block, 2, p, nullptr);
     runCore (inL, inR, cL, cR, cGr, sr, block, block, 2, p, nullptr);
 
-    const float gDiff = grMaxDiff (jGr, cGr);
-    UNSCOPED_INFO ("GR block-delay maxDiff=" << gDiff << " (blocks=" << jGr.size() << ")");
-    REQUIRE (jGr.size() == cGr.size());
+    const float gDiff = grMaxDiff (rGr, cGr);
+    UNSCOPED_INFO ("GR maxDiff=" << gDiff << " (blocks=" << rGr.size() << ")");
+    REQUIRE (rGr.size() == cGr.size());
     REQUIRE (gDiff <= kGrTol);
 }
 
 //==============================================================================
 // 9. Auto-makeup on/off (FET + VCA). Opto forces gain internally when on.
 //==============================================================================
-TEST_CASE ("comp A/B: auto-makeup FET + VCA", "[compab]")
+TEST_CASE ("comp adapter: auto-makeup matches raw donor core", "[compab]")
 {
     SECTION ("FET auto-makeup on")
     {
         CompParams p; p.mode = 1; p.fetRatio = 3; p.fetInput = 18.0f; p.fetThreshold = -24.0f;
         p.autoMakeup = true;
-        checkAB ("fet auto-makeup", p, 48000.0, 512, 2.5, 2, 0xA07, false);
+        checkParity ("fet auto-makeup", p, 48000.0, 512, 2.5, 2, 0xA07, false);
     }
     SECTION ("VCA auto-makeup on")
     {
         CompParams p; p.mode = 2; p.vcaThreshold = -26.0f; p.vcaRatio = 8.0f;
         p.autoMakeup = true;
-        checkAB ("vca auto-makeup", p, 48000.0, 512, 2.5, 2, 0xA08, false);
+        checkParity ("vca auto-makeup", p, 48000.0, 512, 2.5, 2, 0xA08, false);
     }
     SECTION ("Opto auto-makeup on (internal gain)")
     {
         CompParams p; p.mode = 0; p.optoPeakReduction = 75.0f; p.autoMakeup = true;
-        checkAB ("opto auto-makeup", p, 48000.0, 512, 3.0, 2, 0xA09, false);
+        checkParity ("opto auto-makeup", p, 48000.0, 512, 3.0, 2, 0xA09, false);
     }
 }

@@ -39,7 +39,7 @@
   // double-OS. The EQ likewise runs 1x internally inside that same wrap (its
   // console saturation is the only saturating stage and the wrap band-limits it).
   #include <dsp/FourKEQDSP.hpp>
-  #include <core/UniversalCompressorDSP.hpp>
+  #include "CompressorCore.h"
 #endif
 
 namespace duskstudio
@@ -465,13 +465,13 @@ private:
     };
     EqSnapshot lastEqParams {};
 
-    duskaudio::UniversalCompressorDSP compressor;
+    CompressorCore compressor;
 
     // 20 ms ramps for continuous params so knob drags don't zipper.
     // Discrete params (mode, bypass, LIMIT, FET ratio) bypass. Their per-chunk
-    // published values feed the core's atomic setters (no APVTS atoms to cache
-    // - the core does not port the donor's analog-hiss stage, so the old
-    // noise_enable force-off is unnecessary).
+    // published values feed the core's atomic setters (no APVTS atoms to
+    // cache). CompressorCore keeps the donor's optional analog-noise stage
+    // disabled for Dusk's built-in channel path.
     dusk::audio::SmoothedValue<float> smoothedOptoPeakRed;
     dusk::audio::SmoothedValue<float> smoothedOptoGain;
     dusk::audio::SmoothedValue<float> smoothedFetInput;

@@ -117,7 +117,7 @@ jobs:
         # clone breaks configure. Bump every workflow's DONOR_REV together.
         env:
           DONOR_REPO: https://github.com/dusk-audio/dusk-audio-plugins.git
-          DONOR_REV: 0a1b17f8e9dbecd26bf78dd45704c6c149e4b2ea
+          DONOR_REV: 00e3dc10f4a26931da823eca425dc9860d5e1737
         run: |
           set -euo pipefail
           git init -q "${RUNNER_TEMP}/plugins-main"

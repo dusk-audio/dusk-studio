@@ -397,9 +397,7 @@ endif()
 
 if(DEFINED DUSK_PLUGINS_PATH)
     # Locate the donor's framework-free shared DSP surface by its API marker,
-    # not by the donor repository's historical directory spelling. This keeps
-    # Dusk Studio independent of framework-era naming while the 0.13 branch
-    # remains pinned to the audio behavior covered by its A/B tests.
+    # not by the donor repository's historical directory spelling.
     file(GLOB _duskstudio_donor_dsp_candidates LIST_DIRECTORIES true
         "${DUSK_PLUGINS_PATH}/plugins/shared-*/dsp")
     set(_duskstudio_compatible_donor_dsp_dirs "")
@@ -424,11 +422,10 @@ if(DEFINED DUSK_PLUGINS_PATH)
         "${DUSKSTUDIO_DONOR_DSP_DIR}" DIRECTORY)
 
     set(DUSKSTUDIO_COMPRESSOR_CORE_SOURCE
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core/UniversalCompressorDSP.cpp")
+        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core/MultiCompDSP.cpp")
     if(NOT EXISTS "${DUSKSTUDIO_COMPRESSOR_CORE_SOURCE}")
         message(FATAL_ERROR
-            "Dusk plugins donor lacks the 0.13-compatible compressor core; "
-            "use the revision pinned by the build workflows")
+            "Dusk plugins donor lacks the framework-free MultiComp core")
     endif()
 endif()
 
@@ -1337,7 +1334,7 @@ if(DEFINED DUSK_PLUGINS_PATH)
     # UniversalCompressor links cleanly. Editor sources are linked but not
     # invoked from Dusk Studio's UI — they exist only because UniversalCompressor's
     # createEditor() references them. The framework-free cores
-    # (UniversalCompressorDSP / FourKEQDSP) are the de-JUCE'd donors BusStrip
+    # (MultiCompDSP / FourKEQDSP) are the de-JUCE'd donors BusStrip
     # uses directly.
     #
     # MasterTape.cpp lives here rather than in the main source list: it is the

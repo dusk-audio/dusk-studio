@@ -152,8 +152,9 @@ inline std::unique_ptr<juce::XmlElement> parseProcessorStateBlob (const std::str
 
 // One-way migration of that blob into TapeParams. Choice parameters store
 // their index in the same "value" attribute floats use. The donor's dead
-// "saturation" / "noiseEnabled" params and the engine-owned "oversampling" /
-// "bypass" are deliberately not modelled and fall through.
+// "saturation" param is dropped; its likewise DSP-dead "noiseEnabled" stays
+// modelled for DAF preset/state fidelity. Engine-owned "oversampling" and
+// "bypass" deliberately fall through.
 inline void migrateTapeStateBlob (const std::string& base64, TapeParams& t)
 {
     const auto xml = parseProcessorStateBlob (base64);
@@ -178,21 +179,37 @@ inline void migrateTapeStateBlob (const std::string& base64, TapeParams& t)
         if (! std::isfinite (v)) continue;
 
         if      (id == "tapeMachine")   storeInt   (t.machine,     v, 1);
-        else if (id == "tapeSpeed")     storeInt   (t.speed,       v, 2);
+        else if (id == "tapeSpeed")     storeInt   (t.speed,       v, 3);
         else if (id == "tapeType")      storeInt   (t.type,        v, 3);
         else if (id == "signalPath")    storeInt   (t.signalPath,  v, 3);
-        else if (id == "eqStandard")    storeInt   (t.eqStandard,  v, 2);
+        else if (id == "eqStandard")    storeInt   (t.eqStandard,  v, 1);
         else if (id == "calibration")   storeInt   (t.calibration, v, 3);
+        else if (id == "headWidth")     storeInt   (t.headWidth,   v, 2);
         else if (id == "inputGain")     storeFloat (t.inputGainDb,  v, -12.0f, 12.0f);
         else if (id == "bias")          storeFloat (t.bias,         v, 0.0f, 100.0f);
         else if (id == "highpassFreq")  storeFloat (t.highpassHz,   v, 20.0f, 500.0f);
         else if (id == "lowpassFreq")   storeFloat (t.lowpassHz,    v, 3000.0f, 20000.0f);
         else if (id == "noiseAmount")   storeFloat (t.noiseAmount,  v, 0.0f, 100.0f);
+        else if (id == "noiseEnabled")  t.noiseEnabled.store (v >= 0.5f);
         else if (id == "wowAmount")     storeFloat (t.wow,          v, 0.0f, 100.0f);
         else if (id == "flutterAmount") storeFloat (t.flutter,      v, 0.0f, 100.0f);
         else if (id == "outputGain")    storeFloat (t.outputGainDb, v, -12.0f, 12.0f);
         else if (id == "autoCal")       t.autoCal.store  (v >= 0.5f);
         else if (id == "autoComp")      t.autoComp.store (v >= 0.5f);
+        else if (id == "crosstalk")     t.crosstalk.store (v >= 0.5f);
+        else if (id == "wowFlutterOn")  t.wowFlutterEnabled.store (v >= 0.5f);
+        else if (id == "transformer")   t.transformer.store (v >= 0.5f);
+        else if (id == "reproLF")       storeFloat (t.reproLfDb,          v, -12.0f, 12.0f);
+        else if (id == "reproLMF")      storeFloat (t.reproLmfDb,         v, -12.0f, 12.0f);
+        else if (id == "reproHMF")      storeFloat (t.reproHmfDb,         v, -12.0f, 12.0f);
+        else if (id == "reproHF")       storeFloat (t.reproHfDb,          v, -12.0f, 12.0f);
+        else if (id == "levelHmfTrim")  storeFloat (t.levelHmfTrimDb,     v, -24.0f, 24.0f);
+        else if (id == "levelHfTrim")   storeFloat (t.levelHfTrimDb,      v, -24.0f, 24.0f);
+        else if (id == "lpQ")           storeFloat (t.lpQ,                v,   0.5f,  2.5f);
+        else if (id == "progHmfTrim")   storeFloat (t.progHmfTrimDb,      v, -24.0f, 24.0f);
+        else if (id == "progHfTrim")    storeFloat (t.progHfTrimDb,       v, -24.0f, 24.0f);
+        else if (id == "reproSubBell")  storeFloat (t.reproSubBellDb,     v, -12.0f, 12.0f);
+        else if (id == "progLfTrim")    storeFloat (t.progLfTrimDb,       v, -24.0f, 24.0f);
     }
 }
 
@@ -1732,16 +1749,32 @@ juce::String SessionSerializer::serialize (const Session& s)
         tape["signal_path"]   = t.signalPath.load();
         tape["eq_standard"]   = t.eqStandard.load();
         tape["calibration"]   = t.calibration.load();
+        tape["head_width"]    = t.headWidth.load();
         tape["input_gain_db"] = t.inputGainDb.load();
         tape["bias"]          = t.bias.load();
         tape["highpass_hz"]   = t.highpassHz.load();
         tape["lowpass_hz"]    = t.lowpassHz.load();
         tape["noise_amount"]  = t.noiseAmount.load();
+        tape["noise_enabled"] = t.noiseEnabled.load();
         tape["wow"]           = t.wow.load();
         tape["flutter"]       = t.flutter.load();
         tape["output_gain_db"] = t.outputGainDb.load();
         tape["auto_cal"]      = t.autoCal.load();
         tape["auto_comp"]     = t.autoComp.load();
+        tape["crosstalk"]     = t.crosstalk.load();
+        tape["wow_flutter_enabled"] = t.wowFlutterEnabled.load();
+        tape["transformer"]   = t.transformer.load();
+        tape["repro_lf_db"]   = t.reproLfDb.load();
+        tape["repro_lmf_db"]  = t.reproLmfDb.load();
+        tape["repro_hmf_db"]  = t.reproHmfDb.load();
+        tape["repro_hf_db"]   = t.reproHfDb.load();
+        tape["level_hmf_trim_db"] = t.levelHmfTrimDb.load();
+        tape["level_hf_trim_db"]  = t.levelHfTrimDb.load();
+        tape["lp_q"]              = t.lpQ.load();
+        tape["prog_hmf_trim_db"]  = t.progHmfTrimDb.load();
+        tape["prog_hf_trim_db"]   = t.progHfTrimDb.load();
+        tape["repro_sub_bell_db"] = t.reproSubBellDb.load();
+        tape["prog_lf_trim_db"]   = t.progLfTrimDb.load();
         master["tape"] = std::move (tape);
     }
 
@@ -2270,21 +2303,37 @@ bool SessionSerializer::load (Session& s, const File& source)
                 return jlimit (lo, hi, (float) d);
             };
             t.machine.store      (std::clamp (json::getInt (tape, "machine",     0), 0, 1));
-            t.speed.store        (std::clamp (json::getInt (tape, "speed",       1), 0, 2));
+            t.speed.store        (std::clamp (json::getInt (tape, "speed",       1), 0, 3));
             t.type.store         (std::clamp (json::getInt (tape, "type",        0), 0, 3));
             t.signalPath.store   (std::clamp (json::getInt (tape, "signal_path", 0), 0, 3));
-            t.eqStandard.store   (std::clamp (json::getInt (tape, "eq_standard", 0), 0, 2));
+            t.eqStandard.store   (std::clamp (json::getInt (tape, "eq_standard", 0), 0, 1));
             t.calibration.store  (std::clamp (json::getInt (tape, "calibration", 0), 0, 3));
+            t.headWidth.store    (std::clamp (json::getInt (tape, "head_width",  1), 0, 2));
             t.inputGainDb.store  (tapeFloat ("input_gain_db",      0.0f, -12.0f, 12.0f));
             t.bias.store         (tapeFloat ("bias",              50.0f,   0.0f, 100.0f));
             t.highpassHz.store   (tapeFloat ("highpass_hz",       20.0f,  20.0f, 500.0f));
             t.lowpassHz.store    (tapeFloat ("lowpass_hz",     20000.0f, 3000.0f, 20000.0f));
             t.noiseAmount.store  (tapeFloat ("noise_amount",       0.0f,   0.0f, 100.0f));
+            t.noiseEnabled.store (json::getBool (tape, "noise_enabled", false));
             t.wow.store          (tapeFloat ("wow",                7.0f,   0.0f, 100.0f));
             t.flutter.store      (tapeFloat ("flutter",            3.0f,   0.0f, 100.0f));
             t.outputGainDb.store (tapeFloat ("output_gain_db",     0.0f, -12.0f, 12.0f));
             t.autoCal.store      (json::getBool (tape, "auto_cal",  true));
             t.autoComp.store     (json::getBool (tape, "auto_comp", true));
+            t.crosstalk.store         (json::getBool (tape, "crosstalk", true));
+            t.wowFlutterEnabled.store (json::getBool (tape, "wow_flutter_enabled", true));
+            t.transformer.store       (json::getBool (tape, "transformer", true));
+            t.reproLfDb.store      (tapeFloat ("repro_lf_db",           0.0f, -12.0f, 12.0f));
+            t.reproLmfDb.store     (tapeFloat ("repro_lmf_db",          0.0f, -12.0f, 12.0f));
+            t.reproHmfDb.store     (tapeFloat ("repro_hmf_db",          0.0f, -12.0f, 12.0f));
+            t.reproHfDb.store      (tapeFloat ("repro_hf_db",           0.0f, -12.0f, 12.0f));
+            t.levelHmfTrimDb.store (tapeFloat ("level_hmf_trim_db",     0.0f, -24.0f, 24.0f));
+            t.levelHfTrimDb.store  (tapeFloat ("level_hf_trim_db",      0.0f, -24.0f, 24.0f));
+            t.lpQ.store            (tapeFloat ("lp_q",                0.707f,   0.5f,  2.5f));
+            t.progHmfTrimDb.store  (tapeFloat ("prog_hmf_trim_db",      0.0f, -24.0f, 24.0f));
+            t.progHfTrimDb.store   (tapeFloat ("prog_hf_trim_db",       0.0f, -24.0f, 24.0f));
+            t.reproSubBellDb.store (tapeFloat ("repro_sub_bell_db",     0.0f, -12.0f, 12.0f));
+            t.progLfTrimDb.store   (tapeFloat ("prog_lf_trim_db",       0.0f, -24.0f, 24.0f));
 
             // Sessions written before the "tape" object carry the settings in
             // the legacy plugin-state blob. Migrate once; the next save drops

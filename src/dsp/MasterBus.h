@@ -11,7 +11,7 @@
 #if DUSKSTUDIO_HAS_DUSK_DSP
   #include "MasterTape.h"                    // TapeMachine - master tape emulation (framework-free donor core)
   #include <core/MultiQTube.hpp>             // multi-q - Pultec-style Tube EQ (framework-free donor core)
-  #include <core/UniversalCompressorDSP.hpp> // multi-comp - Bus mode master comp (framework-free donor core)
+  #include "CompressorCore.h"
 #endif
 
 namespace duskstudio
@@ -24,9 +24,10 @@ class MasterBus
 public:
     MasterBus();
 
-    // oversamplingFactor: 1 = native (default), 2 = 2× ox, 4 = 4× ox. Affects
-    // the bus compressor's internal oversampling toggle and the tape sat
-    // oversampler's stage count. Other values are clamped to 1.
+    // oversamplingFactor: 1 = native (default), 2 = 2×, 4 = 4×. Drives the
+    // application oversampler around the tube EQ and bus compressor; the
+    // compressor's internal oversampler stays off and tape keeps its tuned 2×
+    // path. Other values are clamped to 1.
     void prepare (double sampleRate, int blockSize, int oversamplingFactor = 1);
     void bind (const MasterBusParams& params) noexcept;
 
@@ -56,10 +57,10 @@ private:
     std::vector<float>          tapeDryL;
     std::vector<float>          tapeDryR;
     duskaudio::MultiQTube             tubeEQ;
-    duskaudio::UniversalCompressorDSP busComp;
-    // Max samples per busComp.processBlock call (the oversampled prepare block
-    // size - the core degrades to dry passthrough beyond it); the process chunk
-    // loop splits anything larger. The tube EQ has no block-size limit.
+    CompressorCore busComp;
+    // Preserve the app's prepared-block call boundary when its outer
+    // oversampler expands a host block. The donor can also chunk internally;
+    // the tube EQ has no block-size limit.
     int compMaxBlock = 0;
 
     void updateEqParameters() noexcept;
@@ -68,15 +69,13 @@ private:
 
     int currentOxFactor      = 1;     // 1, 2 or 4 - set in prepare(); drives the
                                        // Dusk Studio-side oversampler around (TubeEQ
-                                       // + comp) and the tape core's own oversampling
-                                       // factor. The comp core's internal
-                                       // oversampling path is never engaged because
-                                       // the Dusk Studio-side wrap handles it.
+                                       // + comp). The comp core's internal path stays
+                                       // off; tape independently keeps its tuned 2×.
 
     // Master oversampler around (TubeEQ + bus comp). Both stages saturate (tube
     // + comp) and alias at native rate; running them at oversampled rate inside
-    // this wrap suppresses it. The tape core has its own internal oversampling
-    // so it's processed at native rate AFTER this wrap.
+    // this wrap suppresses it. The tape core owns a separate fixed 2× path, so
+    // it receives the base-rate signal AFTER this wrap.
     dusk::audio::StereoOversampler oversampler;
 
     // When EQ + comp are both bypassed the oversampler is skipped. Its FIR round
@@ -95,8 +94,8 @@ private:
     // tail from the last time the wrap ran.
     bool prevWrapActive { false };
 
-    // Dry-path PDC for the tape crossfade. Tape adds its own oversampler
-    // latency when engaged (0 at 1×); delaying the dry by the same amount keeps
+    // Dry-path PDC for the tape crossfade. Tape's fixed 2× active path adds
+    // oversampler latency; delaying the dry by the same amount keeps
     // the on/off blend phase-coherent (no comb mid-fade) and seamless (no
     // timing jump at the fade ends). Resolved in prepare from the core's
     // reported latency; max sized to it. Fed every block at >0 latency so the

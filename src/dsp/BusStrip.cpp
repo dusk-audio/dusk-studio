@@ -91,9 +91,8 @@ void BusStrip::prepare (double sampleRate, int blockSize, int oversamplingFactor
     busComp.setMix (100.0f);
     busComp.setBusMix (100.0f);
     busComp.setAutoMakeup (false);
-    // No injected analog hiss under signal: the core does not port the donor's
-    // noise stage, so no explicit force-off is needed here (the JUCE donors in
-    // MasterBus::bindCompParams still store noise_enable = 0).
+    // CompressorCore pins the donor's optional analog-noise stage off and
+    // disables its internal oversampler; this strip owns the outer OS policy.
     busComp.prepare (prepSr, prepBs);
     busComp.reset();
     compMaxBlock = prepBs;

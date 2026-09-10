@@ -18,8 +18,8 @@ namespace comp
 // cannot drift apart: a value written into the wrong mode's domain is
 // either inaudible - the param that mode never reads - or wildly off.
 //
-// Every range below is the donor's, taken from UniversalCompressorDSP.hpp's
-// setter contracts, not from what some knob happens to sweep.
+// Every range below is Dusk's persisted control contract, checked against the
+// current donor MultiCompDSP parameter clamps rather than inferred from a UI.
 //
 // applyTrackComp*Db / trackComp*Db are exact inverses, and the binding frac
 // pairs sitting on them are the shape FaderBindingMap.h uses for fader
@@ -41,12 +41,15 @@ namespace comp
 // convention. Callable from the audio thread (McuReceiver, the binding
 // apply and read-back) and the message thread alike.
 
-// Makeup. Opto's GAIN is the donor's 0..100 hardware dial - 50 is unity,
-// one unit is 0.8 dB, so the span is +/-40 dB. FET and VCA carry dB
-// straight over their -20..20 output params.
+// Makeup. Dusk preserves the legacy Opto 0..100 session dial: 50 is unity and
+// one unit is 0.8 dB. CompressorCore converts that dB target through the DAF
+// core's measured hardware taper. The measured output element plateaus at
+// +37.702 dB, so the compatibility range above that point intentionally maps
+// to the same plateau. FET and VCA carry dB straight over their -20..20 output
+// parameters.
 constexpr float kOptoGainUnityPct = 50.0f;
 constexpr float kOptoGainPctPerDb =  1.25f;   // 1 / 0.8 dB per dial unit
-constexpr float kOptoMakeupMaxDb  = 40.0f;    // Opto dial span
+constexpr float kOptoMakeupMaxDb  = 40.0f;    // persisted compatibility span
 constexpr float kOutMakeupMaxDb   = 20.0f;    // FET / VCA output params
 
 // Threshold. The donor gives Opto no threshold at all - the optical cell's

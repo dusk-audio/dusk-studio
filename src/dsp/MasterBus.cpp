@@ -30,10 +30,8 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
                        ? oversamplingFactor : 1;
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
-    // The tape core's own oversampling follows the global Audio Settings factor
-    // (Session::oversamplingFactor).
     tapeMaxBlock = std::max (1, blockSize);
-    tape.prepare (sampleRate, tapeMaxBlock, currentOxFactor);
+    tape.prepare (sampleRate, tapeMaxBlock);
     tapeDryL.resize ((size_t) tapeMaxBlock);
     tapeDryR.resize ((size_t) tapeMaxBlock);
 
@@ -43,8 +41,8 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
     tapeMix.reset (sampleRate, 0.020);
     tapeMixPrimed = false;
 
-    // Resolve the tape's engaged latency (0 at 1×) now that prepare() has
-    // set it from the factor above, and size the dry delay to match so the
+    // Resolve the tape's fixed-2× active-path latency now that prepare() has
+    // configured the core, and size the dry delay to match so the
     // crossfade is phase-coherent and bit-perfect.
     tapeLatencySamples = std::max (0, tape.latencySamples());
     {
@@ -61,8 +59,8 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
     // saturation that aliases at native rate; the wrap moves them to
     // oversampled rate. The comp core's internal oversampling path is never
     // engaged because Dusk Studio does the up/downsample around the chain.
-    // The tape core has its own internal oversampling (set above) so it
-    // processes at native rate AFTER this wrap.
+    // The tape core has its own fixed 2× processing path, so it receives the
+    // base-rate signal AFTER this wrap.
     const int bsClamped = std::max (1, blockSize);
     oversampler.setFactor (currentOxFactor);
     oversampler.prepare (bsClamped);
@@ -87,8 +85,8 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
     busComp.setMix (100.0f);
     busComp.setBusMix (100.0f);
     busComp.setAutoMakeup (false);
-    // The core does not port the donor's analog-noise stage, so no explicit
-    // force-off is needed - the master chain stays clean under signal.
+    // CompressorCore pins the donor's optional analog-noise stage off and
+    // disables its internal oversampler; this bus owns the outer OS policy.
     busComp.prepare (prepSr, prepBs);
     busComp.reset();
     compMaxBlock = prepBs;
@@ -192,7 +190,7 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
     updateCompParameters();
 
     // The master tube EQ and bus comp are the only saturating stages inside
-    // this wrap (the tape core oversamples internally, below). When BOTH are bypassed
+    // this wrap (the tape core runs its fixed 2× path below). When BOTH are bypassed
     // the up/downsample round-trip is pure waste - both donors would just pass
     // the signal through dry - so we skip the oversampler entirely.
     const bool eqOn   = paramsRef != nullptr
@@ -281,8 +279,8 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
     if (paramsRef != nullptr)
         tape.pushParameters (paramsRef->tape);
 
-    // The tape core handles its own internal oversampling (factor set in
-    // prepare()). It hard-bypasses (early-returns, no ramp), so we own the
+    // The tape core handles its own fixed tuned-2× processing. It hard-bypasses
+    // (early-returns, no ramp), so we own the
     // on/off crossfade here: blend the dry (pre-tape) signal against the wet
     // output over 20 ms. Tape is run only while audible - fully on, or still
     // fading - so a disengaged tape costs ~nothing. Chunked to tapeMaxBlock
@@ -297,10 +295,10 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
 
     const bool blending = tapeMix.isSmoothing();
     const bool runTape  = tapeOn || blending;            // wet needed this block
-    const bool alignDry = tapeLatencySamples > 0;        // tape adds latency (2×/4×)
+    const bool alignDry = tapeLatencySamples > 0;        // fixed-2× active-path latency
 
-    // At 1x (no latency), fully faded out -> the dry passes through untouched
-    // and the whole stage is free.
+    // If the core reports no latency, fully faded out -> the dry passes through
+    // untouched and the whole stage is free.
     if (runTape || alignDry)
     {
         for (int offset = 0; offset < numSamples; offset += tapeMaxBlock)
@@ -358,8 +356,8 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
     // Master mute + mono-sum live alongside the fader gain: same loop,
     // no extra pass over the buffer. Both are read once at block top
     // (relaxed: UI clicks are message-thread, one-block stale read is
-    // benign). Mute zeros L+R + bypasses the meter writes since a
-    // muted bus's RMS smoothing should also fall to silence cleanly.
+    // benign). Mute zeros L+R; the unconditional meter accumulation then
+    // observes silence and lets the RMS smoothing fall cleanly.
     const bool muteOn = paramsRef != nullptr
                        && paramsRef->mute.load (std::memory_order_relaxed);
     const bool monoOn = paramsRef != nullptr

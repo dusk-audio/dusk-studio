@@ -1,452 +1,376 @@
 #include <catch2/catch_test_macros.hpp>
-#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
-#include "PluginProcessor.h"            // JUCE donor (ground truth)
-#include <core/TapeMachineDSP.hpp>      // duskaudio:: JUCE-free core
+#include "dsp/MasterTape.h"
+#include "session/Session.h"
+#include <core/TapeMachineDSP.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <limits>
 #include <vector>
 
-// A/B parity: duskaudio::TapeMachineDSP against the JUCE TapeMachineAudioProcessor
-// it was transcribed from, driven the way MasterBus drives it (all 16 live params
-// pushed before the render, in-place stereo processing).
-//
-// At 1x the port's oversampler is a transparent passthrough, so the two chains
-// are the same arithmetic and the null is exact. At 2x/4x the port swaps JUCE's
-// equiripple half-band FIR for the shared polyphase half-band (core PORT_NOTES
-// 3.1) - a deliberate re-voice, so only a bounded residual is expected there.
-//
-// Wow / flutter / noise stay at zero throughout: their generators are seeded
-// from std::random_device in the donor and from fixed constants in the port
-// (PORT_NOTES 3.5), so any nonzero setting is unnullable by construction.
+// Contract test for Dusk's framework-free MasterTape adapter against the
+// authoritative DAF TapeMachineDSP. The donor's old JUCE processor is no
+// longer part of the application or this test: MasterTape is intentionally a
+// thin parameter/lifecycle seam around the current core.
 
 namespace
 {
 constexpr double kSampleRate = 48000.0;
-constexpr int    kBlock      = 256;
-// Silence blocks before the measured signal: the donor's input/output
-// juce::dsp::Gain stages start at unity and ramp to target over 20 ms * factor,
-// while the port snaps them in prepare(). Feeding silence until both have
-// settled removes the difference without perturbing any state (silence in ->
-// silence out, and the hysteresis loop stays at the origin).
-constexpr int    kWarmupBlocks = 32;
-constexpr int    kSignalBlocks = 24;
+constexpr int kBlock = 256;
+constexpr int kBlocks = 16;
+constexpr float kExactTolerance = 1.0e-12f;
 
 struct Rng
 {
-    std::uint32_t s;
+    std::uint32_t state;
+
     float next() noexcept
     {
-        s = s * 1664525u + 1013904223u;
-        return (float) ((s >> 8) & 0xFFFFFF) / (float) 0x1000000 * 2.0f - 1.0f;
+        state = state * 1664525u + 1013904223u;
+        return static_cast<float> ((state >> 8) & 0xFFFFFF) /
+                   static_cast<float> (0x1000000) * 2.0f - 1.0f;
     }
 };
 
-// Deterministic stereo program: sustained partials, 0.11 s level steps and
-// periodic transients, so the hysteresis loop, the head bump and the soft
-// limiter all see real movement rather than a steady sine. withTransients=false
-// drops the clicks; see the 2x/4x test for why that matters there.
-void makeSignal (std::vector<float>& L, std::vector<float>& R, int total,
-                 bool withTransients)
+void makeSignal (std::vector<float>& left, std::vector<float>& right)
 {
-    L.assign ((size_t) total, 0.0f);
-    R.assign ((size_t) total, 0.0f);
-    Rng rng { 0x1234567u };
+    const int total = kBlocks * kBlock;
+    left.resize (static_cast<size_t> (total));
+    right.resize (static_cast<size_t> (total));
 
-    constexpr double kTwoPi = 6.28318530717958647692;
+    Rng rng { 0x1234567u };
+    constexpr double twoPi = 6.28318530717958647692;
     double p1 = 0.0, p2 = 0.0, p3 = 0.0;
-    const int clickPeriod = std::max (1, (int) (kSampleRate * 0.09));
-    const int clickLen    = std::max (1, (int) (kSampleRate * 0.0008));
-    const float segAmp[5] = { 0.12f, 0.5f, 0.25f, 0.7f, 0.05f };
+    const int clickPeriod = static_cast<int> (kSampleRate * 0.09);
+    const int clickLength = static_cast<int> (kSampleRate * 0.0008);
+    const float segmentAmplitude[5] = { 0.12f, 0.5f, 0.25f, 0.7f, 0.05f };
 
     for (int i = 0; i < total; ++i)
     {
-        const double t = (double) i / kSampleRate;
-        const float a = segAmp[(int) (t / 0.11) % 5];
+        const double time = static_cast<double> (i) / kSampleRate;
+        const float amplitude = segmentAmplitude[static_cast<int> (time / 0.011) % 5];
+        const float signalLeft = 0.6f * static_cast<float> (std::sin (p1))
+                               + 0.3f * static_cast<float> (std::sin (p2))
+                               + 0.2f * static_cast<float> (std::sin (p3));
+        const float signalRight = 0.55f * static_cast<float> (std::sin (p1 + 0.7))
+                                + 0.32f * static_cast<float> (std::sin (p2 * 1.01))
+                                + 0.18f * static_cast<float> (std::sin (p3));
+        p1 += twoPi * 90.0 / kSampleRate;
+        p2 += twoPi * 610.0 / kSampleRate;
+        p3 += twoPi * 2350.0 / kSampleRate;
 
-        const float sL = 0.6f * (float) std::sin (p1) + 0.3f * (float) std::sin (p2)
-                       + 0.2f * (float) std::sin (p3);
-        const float sR = 0.55f * (float) std::sin (p1 + 0.7) + 0.32f * (float) std::sin (p2 * 1.01)
-                       + 0.18f * (float) std::sin (p3);
-        p1 += kTwoPi * 90.0 / kSampleRate;
-        p2 += kTwoPi * 610.0 / kSampleRate;
-        p3 += kTwoPi * 2350.0 / kSampleRate;
+        float transient = 0.0f;
+        if ((i % clickPeriod) < clickLength)
+            transient = rng.next() > 0.0f ? 0.55f : -0.55f;
 
-        float clk = 0.0f;
-        if (withTransients && (i % clickPeriod) < clickLen)
-            clk = rng.next() > 0.0f ? 0.55f : -0.55f;
-
-        L[(size_t) i] = a * sL + clk;
-        R[(size_t) i] = a * sR + clk * 0.8f;
+        left[static_cast<size_t> (i)] = amplitude * signalLeft + transient;
+        right[static_cast<size_t> (i)] = amplitude * signalRight + transient * 0.8f;
     }
-}
-
-void makeInput (std::vector<float>& L, std::vector<float>& R, bool withTransients)
-{
-    const int warmup = kWarmupBlocks * kBlock;
-    const int total  = warmup + kSignalBlocks * kBlock;
-    std::vector<float> sigL, sigR;
-    makeSignal (sigL, sigR, total - warmup, withTransients);
-    L.assign ((size_t) total, 0.0f);
-    R.assign ((size_t) total, 0.0f);
-    std::copy (sigL.begin(), sigL.end(), L.begin() + warmup);
-    std::copy (sigR.begin(), sigR.end(), R.begin() + warmup);
-}
-
-// The donor starts a juce::Timer in its constructor (host latency reporting),
-// which needs a live MessageManager. Leaked on purpose: tearing the initialiser
-// down between test cases would race that timer thread.
-//
-// Spinning up a JUCE message loop inside a test is a deliberate exception,
-// confined to this donor-parity file: the JUCE donor processor needs a message
-// thread for its APVTS and timers, the Dusk core needs none. Every case that
-// touches the donor is gated on DUSK_PLUGINS_PATH and tagged [tape][ab], so the
-// loop never exists in a build that does not compile the donor.
-void ensureMessageLoop()
-{
-    static auto* keepAlive = new juce::ScopedJuceInitialiser_GUI();
-    (void) keepAlive;
-}
-
-void setParam (juce::AudioProcessorValueTreeState& apvts, const char* id, float value)
-{
-    auto* p = dynamic_cast<juce::RangedAudioParameter*> (apvts.getParameter (id));
-    REQUIRE (p != nullptr);
-    p->setValueNotifyingHost (p->convertTo0to1 (value));
 }
 
 struct Settings
 {
-    int   machine = 0, speed = 1, type = 0, signalPath = 0, eqStandard = 0, calibration = 0;
-    float inputGainDb = 0.0f, bias = 50.0f, highpassHz = 20.0f, lowpassHz = 20000.0f;
-    float noiseAmount = 0.0f, wow = 0.0f, flutter = 0.0f, outputGainDb = 0.0f;
-    bool  autoCal = true, autoComp = true;
+    int machine = 0;
+    int speed = 1;
+    int type = 0;
+    int signalPath = 0;
+    int eqStandard = 0;
+    int calibration = 0;
+    int headWidth = 1;
+    float inputGainDb = 0.0f;
+    float bias = 50.0f;
+    float highpassHz = 20.0f;
+    float lowpassHz = 20000.0f;
+    float noiseAmount = 0.0f;
+    float wow = 7.0f;
+    float flutter = 3.0f;
+    float outputGainDb = 0.0f;
+    bool autoCal = true;
+    bool noiseEnabled = false;
+    bool autoComp = true;
+    bool crosstalk = true;
+    bool wowFlutterEnabled = true;
+    bool transformer = true;
+    float reproLfDb = 0.0f;
+    float reproLmfDb = 0.0f;
+    float reproHmfDb = 0.0f;
+    float reproHfDb = 0.0f;
+    float levelHmfTrimDb = 0.0f;
+    float levelHfTrimDb = 0.0f;
+    float lpQ = 0.707f;
+    float progHmfTrimDb = 0.0f;
+    float progHfTrimDb = 0.0f;
+    float reproSubBellDb = 0.0f;
+    float progLfTrimDb = 0.0f;
 };
 
-void applyToDonor (TapeMachineAudioProcessor& proc, const Settings& s, int osChoice)
+void applyToParams (duskstudio::TapeParams& params, const Settings& settings)
 {
-    auto& apvts = proc.getAPVTS();
-    setParam (apvts, "tapeMachine",   (float) s.machine);
-    setParam (apvts, "tapeSpeed",     (float) s.speed);
-    setParam (apvts, "tapeType",      (float) s.type);
-    setParam (apvts, "signalPath",    (float) s.signalPath);
-    setParam (apvts, "eqStandard",    (float) s.eqStandard);
-    setParam (apvts, "calibration",   (float) s.calibration);
-    setParam (apvts, "inputGain",     s.inputGainDb);
-    setParam (apvts, "bias",          s.bias);
-    setParam (apvts, "highpassFreq",  s.highpassHz);
-    setParam (apvts, "lowpassFreq",   s.lowpassHz);
-    setParam (apvts, "noiseAmount",   s.noiseAmount);
-    setParam (apvts, "wowAmount",     s.wow);
-    setParam (apvts, "flutterAmount", s.flutter);
-    setParam (apvts, "outputGain",    s.outputGainDb);
-    setParam (apvts, "autoCal",       s.autoCal ? 1.0f : 0.0f);
-    setParam (apvts, "autoComp",      s.autoComp ? 1.0f : 0.0f);
-    setParam (apvts, "oversampling",  (float) osChoice);
+    constexpr auto order = std::memory_order_relaxed;
+    params.machine.store (settings.machine, order);
+    params.speed.store (settings.speed, order);
+    params.type.store (settings.type, order);
+    params.signalPath.store (settings.signalPath, order);
+    params.eqStandard.store (settings.eqStandard, order);
+    params.calibration.store (settings.calibration, order);
+    params.headWidth.store (settings.headWidth, order);
+    params.inputGainDb.store (settings.inputGainDb, order);
+    params.bias.store (settings.bias, order);
+    params.highpassHz.store (settings.highpassHz, order);
+    params.lowpassHz.store (settings.lowpassHz, order);
+    params.noiseAmount.store (settings.noiseAmount, order);
+    params.noiseEnabled.store (settings.noiseEnabled, order);
+    params.wow.store (settings.wow, order);
+    params.flutter.store (settings.flutter, order);
+    params.outputGainDb.store (settings.outputGainDb, order);
+    params.autoCal.store (settings.autoCal, order);
+    params.autoComp.store (settings.autoComp, order);
+    params.crosstalk.store (settings.crosstalk, order);
+    params.wowFlutterEnabled.store (settings.wowFlutterEnabled, order);
+    params.transformer.store (settings.transformer, order);
+    params.reproLfDb.store (settings.reproLfDb, order);
+    params.reproLmfDb.store (settings.reproLmfDb, order);
+    params.reproHmfDb.store (settings.reproHmfDb, order);
+    params.reproHfDb.store (settings.reproHfDb, order);
+    params.levelHmfTrimDb.store (settings.levelHmfTrimDb, order);
+    params.levelHfTrimDb.store (settings.levelHfTrimDb, order);
+    params.lpQ.store (settings.lpQ, order);
+    params.progHmfTrimDb.store (settings.progHmfTrimDb, order);
+    params.progHfTrimDb.store (settings.progHfTrimDb, order);
+    params.reproSubBellDb.store (settings.reproSubBellDb, order);
+    params.progLfTrimDb.store (settings.progLfTrimDb, order);
 }
 
-void applyToCore (duskaudio::TapeMachineDSP& core, const Settings& s, int osChoice)
+void applyToCore (duskaudio::TapeMachineDSP& core, const Settings& settings)
 {
-    core.setTapeMachine  (s.machine);
-    core.setTapeSpeed    (s.speed);
-    core.setTapeType     (s.type);
-    core.setSignalPath   (s.signalPath);
-    core.setEqStandard   (s.eqStandard);
-    core.setCalibration  (s.calibration);
-    core.setInputGainDb  (s.inputGainDb);
-    core.setBias         (s.bias);
-    core.setHighpassHz   (s.highpassHz);
-    core.setLowpassHz    (s.lowpassHz);
-    core.setNoiseAmount  (s.noiseAmount);
-    core.setWow          (s.wow);
-    core.setFlutter      (s.flutter);
-    core.setOutputGainDb (s.outputGainDb);
-    core.setAutoCal      (s.autoCal);
-    core.setAutoComp     (s.autoComp);
-    core.setOversampling (osChoice);
+    core.setTapeMachine (settings.machine);
+    core.setTapeSpeed (settings.speed);
+    core.setTapeType (settings.type);
+    core.setSignalPath (settings.signalPath);
+    core.setEqStandard (settings.eqStandard);
+    core.setCalibration (settings.calibration);
+    core.setHeadWidth (settings.headWidth);
+    core.setInputGainDb (settings.inputGainDb);
+    core.setBias (settings.bias);
+    core.setHighpassHz (settings.highpassHz);
+    core.setLowpassHz (settings.lowpassHz);
+    core.setNoiseAmount (settings.noiseAmount);
+    core.setNoiseEnabled (settings.noiseEnabled);
+    core.setWow (settings.wow);
+    core.setFlutter (settings.flutter);
+    core.setOutputGainDb (settings.outputGainDb);
+    core.setAutoCal (settings.autoCal);
+    core.setAutoComp (settings.autoComp);
+    core.setCrosstalk (settings.crosstalk);
+    core.setWowFlutterEnabled (settings.wowFlutterEnabled);
+    core.setTransformer (settings.transformer);
+    core.setReproLf (settings.reproLfDb);
+    core.setReproLmf (settings.reproLmfDb);
+    core.setReproHmf (settings.reproHmfDb);
+    core.setReproHf (settings.reproHfDb);
+    core.setLevelHmfTrim (settings.levelHmfTrimDb);
+    core.setLevelHfTrim (settings.levelHfTrimDb);
+    core.setLpQ (settings.lpQ);
+    core.setProgHmfTrim (settings.progHmfTrimDb);
+    core.setProgHfTrim (settings.progHfTrimDb);
+    core.setReproSubBell (settings.reproSubBellDb);
+    core.setProgLfTrim (settings.progLfTrimDb);
 }
 
 struct Render
 {
-    std::vector<float> L, R;
+    std::vector<float> left;
+    std::vector<float> right;
     int latency = 0;
 };
 
-Render renderDonor (const Settings& s, int osChoice,
-                    const std::vector<float>& inL, const std::vector<float>& inR)
+Render renderAdapter (const Settings& settings,
+                      const std::vector<float>& inputLeft,
+                      const std::vector<float>& inputRight)
 {
-    ensureMessageLoop();
-    TapeMachineAudioProcessor proc;
-    proc.setPlayConfigDetails (2, 2, kSampleRate, kBlock);
-    applyToDonor (proc, s, osChoice);
-    proc.prepareToPlay (kSampleRate, kBlock);
+    duskstudio::MasterTape tape;
+    tape.prepare (kSampleRate, kBlock);
 
-    Render out;
-    out.L = inL;
-    out.R = inR;
-    out.latency = proc.getLatencySamples();
+    duskstudio::TapeParams params;
+    applyToParams (params, settings);
+    tape.pushParameters (params);
 
-    juce::AudioBuffer<float> buf (2, kBlock);
-    juce::MidiBuffer midi;
-    for (int off = 0; off < (int) inL.size(); off += kBlock)
+    Render output { inputLeft, inputRight, tape.latencySamples() };
+    for (int offset = 0; offset < static_cast<int> (output.left.size()); offset += kBlock)
     {
-        const int n = std::min (kBlock, (int) inL.size() - off);
-        buf.setSize (2, n, false, false, true);
-        buf.copyFrom (0, 0, out.L.data() + off, n);
-        buf.copyFrom (1, 0, out.R.data() + off, n);
-        midi.clear();
-        proc.processBlock (buf, midi);
-        std::copy_n (buf.getReadPointer (0), n, out.L.data() + off);
-        std::copy_n (buf.getReadPointer (1), n, out.R.data() + off);
+        const int count = std::min (kBlock, static_cast<int> (output.left.size()) - offset);
+        tape.processInPlace (output.left.data() + offset, output.right.data() + offset, count);
     }
-    return out;
+    return output;
 }
 
-Render renderCore (const Settings& s, int osChoice,
-                   const std::vector<float>& inL, const std::vector<float>& inR)
+Render renderCore (const Settings& settings, int storedOversamplingChoice,
+                   const std::vector<float>& inputLeft,
+                   const std::vector<float>& inputRight)
 {
     duskaudio::TapeMachineDSP core;
-    applyToCore (core, s, osChoice);
+    core.setOversampling (storedOversamplingChoice);
     core.prepare (kSampleRate, kBlock);
     core.reset();
+    applyToCore (core, settings);
 
-    Render out;
-    out.L = inL;
-    out.R = inR;
-    out.latency = core.latencySamples();
-
-    for (int off = 0; off < (int) inL.size(); off += kBlock)
+    Render output { inputLeft, inputRight, core.latencySamples() };
+    for (int offset = 0; offset < static_cast<int> (output.left.size()); offset += kBlock)
     {
-        const int n = std::min (kBlock, (int) inL.size() - off);
-        float* lr[2] = { out.L.data() + off, out.R.data() + off };
-        core.processBlock (lr, lr, 2, n);
+        const int count = std::min (kBlock, static_cast<int> (output.left.size()) - offset);
+        float* channels[2] = { output.left.data() + offset, output.right.data() + offset };
+        core.processBlock (channels, channels, 2, count);
     }
-    return out;
+    return output;
 }
 
-// Peak |donor - core| over the measured region, each side shifted by its own
-// reported latency.
-float peakResidual (const Render& donor, const Render& core, int firstSample)
+float peakDifference (const Render& first, const Render& second)
 {
-    const int total = (int) donor.L.size();
-    const int lead  = std::max (donor.latency, core.latency) + 1;
-    float worst = 0.0f;
-    for (int i = firstSample; i + lead < total; ++i)
-    {
-        worst = std::max (worst, std::abs (donor.L[(size_t) (i + donor.latency)]
-                                         - core.L[(size_t) (i + core.latency)]));
-        worst = std::max (worst, std::abs (donor.R[(size_t) (i + donor.latency)]
-                                         - core.R[(size_t) (i + core.latency)]));
-    }
-    return worst;
-}
+    REQUIRE (first.left.size() == second.left.size());
+    REQUIRE (first.right.size() == second.right.size());
 
-// Same, but resampling the core onto the donor's timeline. The two half-band
-// designs do not share a group delay and neither delay lands on a whole sample
-// (the port's 4x latency is literally 26.5), so an integer shift leaves a
-// sub-sample offset that dominates everything else - it alone accounts for
-// -25 dB of residual-to-signal at 2x versus -48 dB once removed. The window is
-// searched rather than hard-coded so this stays a residual measurement; the
-// latency values themselves are pinned by their own test below.
-float peakResidualSubSample (const Render& donor, const Render& core, int firstSample)
-{
-    const int total = (int) donor.L.size();
-    const int lead  = std::max (donor.latency, core.latency) + 2;
-    const double centre = core.latency - donor.latency;
-    float best = std::numeric_limits<float>::max();
-
-    for (int k = -30; k <= 30; ++k)
+    float peak = 0.0f;
+    for (size_t i = 0; i < first.left.size(); ++i)
     {
-        const double shift = centre + k * 0.05;
-        const int    base  = (int) std::floor (shift);
-        const float  frac  = (float) (shift - base);
-        float worst = 0.0f;
-        for (int i = firstSample; i + lead < total; ++i)
-        {
-            const size_t j = (size_t) (i + base);
-            const float cL = core.L[j] * (1.0f - frac) + core.L[j + 1] * frac;
-            const float cR = core.R[j] * (1.0f - frac) + core.R[j + 1] * frac;
-            worst = std::max (worst, std::abs (donor.L[(size_t) i] - cL));
-            worst = std::max (worst, std::abs (donor.R[(size_t) i] - cR));
-        }
-        best = std::min (best, worst);
+        peak = std::max (peak, std::abs (first.left[i] - second.left[i]));
+        peak = std::max (peak, std::abs (first.right[i] - second.right[i]));
     }
-    return best;
+    return peak;
 }
 } // namespace
 
-using Catch::Matchers::WithinAbs;
-
-TEST_CASE ("TapeMachineDSP nulls against the JUCE donor at 1x", "[tape][ab][regression][issue-383]")
+TEST_CASE ("MasterTape matches the current DAF TapeMachine core", "[tape][ab][regression][issue-383]")
 {
-    std::vector<float> inL, inR;
-    makeInput (inL, inR, true);
+    std::vector<float> inputLeft, inputRight;
+    makeSignal (inputLeft, inputRight);
 
-    Settings s;
-    // Measured peak |diff|: 2e-7 .. 5e-7 for every setting below except hot
-    // drive, where the float-vs-double coefficient ULP the port documents
-    // (PORT_NOTES 2a) gets amplified through the hysteresis loop to 8e-6 on
-    // gcc/x86-64 and to 2.7e-4 on clang/arm64, which contracts the FMAs in the
-    // two implementations differently. The looser tolerance covers both: at
-    // 5e-4 the residual is still more than 60 dB below the program peak.
-    float tol = 1.0e-6f;
-    SECTION ("unity drive")        { s.inputGainDb = 0.0f; }
-    SECTION ("hot drive")          { s.inputGainDb = 9.0f; tol = 5.0e-4f; }
-    SECTION ("manual output gain") { s.autoComp = false; s.outputGainDb = -4.0f; }
-    SECTION ("Classic 102, 30 IPS, CCIR")
+    Settings settings;
+    SECTION ("default Dusk tape state") {}
+    SECTION ("hot drive") { settings.inputGainDb = 9.0f; }
+    SECTION ("manual output gain")
     {
-        s.machine = 1; s.speed = 2; s.eqStandard = 1; s.type = 2;
+        settings.autoComp = false;
+        settings.outputGainDb = -4.0f;
     }
-    SECTION ("Sync path, manual bias, tone filters engaged")
+    SECTION ("Classic 102 at 30 IPS with CCIR EQ")
     {
-        s.signalPath = 1; s.autoCal = false; s.bias = 72.0f;
-        s.highpassHz = 80.0f; s.lowpassHz = 12000.0f;
+        settings.machine = 1;
+        settings.speed = 2;
+        settings.eqStandard = 1;
+        settings.type = 2;
     }
-    SECTION ("Input path, +6 dB calibration") { s.signalPath = 2; s.calibration = 2; }
+    SECTION ("Sync path with manual bias and filters")
+    {
+        settings.signalPath = 1;
+        settings.autoCal = false;
+        settings.bias = 72.0f;
+        settings.highpassHz = 80.0f;
+        settings.lowpassHz = 12000.0f;
+    }
+    SECTION ("deterministic modulation and noise")
+    {
+        settings.noiseAmount = 12.0f;
+        settings.noiseEnabled = true;
+        settings.wow = 18.0f;
+        settings.flutter = 9.0f;
+    }
+    SECTION ("current TM2 American and factory-calibration surface")
+    {
+        settings.machine = 1;
+        settings.speed = 3;
+        settings.type = 1;
+        settings.headWidth = 2;
+        settings.crosstalk = false;
+        settings.wowFlutterEnabled = false;
+        settings.transformer = false;
+        settings.reproLfDb = 2.5f;
+        settings.reproLmfDb = -1.5f;
+        settings.reproHmfDb = 3.0f;
+        settings.reproHfDb = -2.0f;
+        settings.levelHmfTrimDb = 4.0f;
+        settings.levelHfTrimDb = -3.0f;
+        settings.lpQ = 1.35f;
+        settings.progHmfTrimDb = 2.0f;
+        settings.progHfTrimDb = -1.0f;
+        settings.reproSubBellDb = 1.75f;
+        settings.progLfTrimDb = 3.25f;
+    }
 
-    const auto donor = renderDonor (s, 0, inL, inR);
-    const auto core  = renderCore  (s, 0, inL, inR);
+    const Render adapter = renderAdapter (settings, inputLeft, inputRight);
+    const Render core = renderCore (settings, 1, inputLeft, inputRight);
 
-    REQUIRE (donor.latency == 0);
-    REQUIRE (core.latency == 0);
-    REQUIRE_THAT (peakResidual (donor, core, kWarmupBlocks * kBlock), WithinAbs (0.0f, tol));
+    const float difference = peakDifference (adapter, core);
+    REQUIRE (adapter.latency == core.latency);
+    INFO ("peak adapter/core difference: " << difference);
+    REQUIRE (difference <= kExactTolerance);
 }
 
-TEST_CASE ("TapeMachineDSP tracks the JUCE donor within tolerance at 2x and 4x", "[tape][ab]")
+TEST_CASE ("TapeMachine stays on its tuned 2x path for legacy oversampling choices", "[tape][ab]")
 {
-    // Bounded residual, not a null: the half-band designs differ (PORT_NOTES
-    // 3.1). Measured sub-sample-aligned peak |diff| on this program - 6.2e-3 at
-    // 2x, 7.0e-3 at 4x, i.e. -48 dB and -51 dB residual-to-signal. Tolerance is
-    // ~2x the measurement so a real regression in the tape chain shows up
-    // without the test being knife-edge.
-    //
-    // Transients are deliberately off here. The port's half-band is the shorter
-    // filter (23 vs 49 base-rate samples of latency at 2x) with a correspondingly
-    // wider transition band, so click energy near Nyquist is treated completely
-    // differently by the two - a bare up/down round trip through them differs by
-    // -9 dB on click-laden material with no tape in the loop at all. That is the
-    // documented re-voice, not something this test can bound usefully.
-    std::vector<float> inL, inR;
-    makeInput (inL, inR, false);
+    std::vector<float> inputLeft, inputRight;
+    makeSignal (inputLeft, inputRight);
+    const Settings settings;
+    const Render reference = renderCore (settings, 1, inputLeft, inputRight);
 
-    Settings s;
-    int osChoice = 1;
-    SECTION ("2x") { osChoice = 1; }
-    SECTION ("4x") { osChoice = 2; }
+    // The current donor intentionally ignores its retained 1x/2x/4x state and
+    // always runs the factory-preset-calibrated 2x path.
+    REQUIRE (reference.latency == 56);
+    for (int storedChoice = 0; storedChoice <= 2; ++storedChoice)
+    {
+        const Render core = renderCore (settings, storedChoice, inputLeft, inputRight);
+        INFO ("stored donor choice " << storedChoice);
+        REQUIRE (core.latency == reference.latency);
+        REQUIRE (peakDifference (core, reference) <= kExactTolerance);
+    }
 
-    const auto donor = renderDonor (s, osChoice, inL, inR);
-    const auto core  = renderCore  (s, osChoice, inL, inR);
-
-    REQUIRE_THAT (peakResidualSubSample (donor, core, kWarmupBlocks * kBlock),
-                  WithinAbs (0.0f, 1.5e-2f));
+    const Render adapter = renderAdapter (settings, inputLeft, inputRight);
+    REQUIRE (adapter.latency == reference.latency);
+    REQUIRE (peakDifference (adapter, reference) <= kExactTolerance);
 }
 
-TEST_CASE ("TapeMachineDSP latency is stable per oversampling factor", "[tape][ab]")
+TEST_CASE ("MasterTape passes silence through as silence", "[tape]")
 {
-    // The port does NOT inherit the donor's latency: JUCE's equiripple half-band
-    // reports 0 / 49 / 60 base-rate samples at 1x / 2x / 4x, the port's polyphase
-    // half-band 0 / 23 / 27 (26.5 rounded). Only the core's numbers are asserted -
-    // MasterBus sizes its tape-crossfade dry delay from the core's own report, so
-    // the master stays internally consistent whatever the donor does. The donor's
-    // figures are reference values, reported when they drift rather than pinned.
-    ensureMessageLoop();
-    const int expectedCore[]   = { 0, 23, 27 };
-    const int referenceDonor[] = { 0, 49, 60 };
+    const std::vector<float> silence (static_cast<size_t> (kBlocks * kBlock), 0.0f);
+    Settings settings;
+    settings.inputGainDb = 9.0f;
 
-    for (int osChoice = 0; osChoice <= 2; ++osChoice)
-    {
-        Settings s;
-        TapeMachineAudioProcessor proc;
-        proc.setPlayConfigDetails (2, 2, kSampleRate, kBlock);
-        applyToDonor (proc, s, osChoice);
-        proc.prepareToPlay (kSampleRate, kBlock);
-
-        duskaudio::TapeMachineDSP core;
-        applyToCore (core, s, osChoice);
-        core.prepare (kSampleRate, kBlock);
-
-        INFO ("oversampling choice " << osChoice);
-        REQUIRE (core.latencySamples() == expectedCore[osChoice]);
-
-        const int donorLatency = proc.getLatencySamples();
-        if (donorLatency != referenceDonor[osChoice])
-            WARN ("donor latency at oversampling choice " << osChoice << " is "
-                  << donorLatency << ", reference " << referenceDonor[osChoice]);
-    }
+    const Render output = renderAdapter (settings, silence, silence);
+    REQUIRE (std::all_of (output.left.begin(), output.left.end(),
+                          [] (float value) { return std::abs (value) <= kExactTolerance; }));
+    REQUIRE (std::all_of (output.right.begin(), output.right.end(),
+                          [] (float value) { return std::abs (value) <= kExactTolerance; }));
 }
 
-TEST_CASE ("TapeMachineDSP passes silence through as silence", "[tape]")
+TEST_CASE ("MasterTape exposes the donor's zero-latency Thru path", "[tape]")
 {
-    for (int osChoice = 0; osChoice <= 2; ++osChoice)
-    {
-        Settings s;
-        s.inputGainDb = 9.0f;   // heavy drive: the tape core must still stay at rest
-        duskaudio::TapeMachineDSP core;
-        applyToCore (core, s, osChoice);
-        core.prepare (kSampleRate, kBlock);
-        core.reset();
+    std::vector<float> inputLeft, inputRight;
+    makeSignal (inputLeft, inputRight);
+    Settings settings;
+    settings.signalPath = 3;
+    settings.inputGainDb = 9.0f;
 
-        std::vector<float> L ((size_t) kBlock, 0.0f), R ((size_t) kBlock, 0.0f);
-        int   badBlock = -1, badSample = -1;
-        char  badChannel = 'L';
-        float badValue = 0.0f;
-        for (int b = 0; b < 16 && badBlock < 0; ++b)
-        {
-            float* lr[2] = { L.data(), R.data() };
-            core.processBlock (lr, lr, 2, kBlock);
-            for (int i = 0; i < kBlock; ++i)
-            {
-                if (std::abs (L[(size_t) i]) > 1.0e-9f)
-                {
-                    badBlock = b; badSample = i; badChannel = 'L'; badValue = L[(size_t) i];
-                    break;
-                }
-                if (std::abs (R[(size_t) i]) > 1.0e-9f)
-                {
-                    badBlock = b; badSample = i; badChannel = 'R'; badValue = R[(size_t) i];
-                    break;
-                }
-            }
-        }
-        INFO ("oversampling choice " << osChoice << ", block " << badBlock
-              << ", sample " << badSample << ", channel " << badChannel
-              << ", value " << badValue);
-        REQUIRE (badBlock == -1);
-    }
+    const Render output = renderAdapter (settings, inputLeft, inputRight);
+    const Render input { inputLeft, inputRight, 0 };
+    REQUIRE (output.latency == 0);
+    REQUIRE (peakDifference (output, input) <= kExactTolerance);
 }
 
-TEST_CASE ("TapeMachineDSP bypass is a sample-exact passthrough", "[tape]")
+TEST_CASE ("MasterTape forwards the donor output meters", "[tape]")
 {
-    std::vector<float> sigL, sigR;
-    makeSignal (sigL, sigR, kBlock * 4, true);
+    std::vector<float> left, right;
+    makeSignal (left, right);
 
-    Settings s;
-    s.inputGainDb = 6.0f;
-    duskaudio::TapeMachineDSP core;
-    applyToCore (core, s, 2);
-    core.prepare (kSampleRate, kBlock);
-    core.reset();
-    core.setBypass (true);
+    duskstudio::MasterTape tape;
+    tape.prepare (kSampleRate, kBlock);
+    duskstudio::TapeParams params;
+    tape.pushParameters (params);
+    for (int offset = 0; offset < static_cast<int> (left.size()); offset += kBlock)
+        tape.processInPlace (left.data() + offset, right.data() + offset, kBlock);
 
-    auto L = sigL, R = sigR;
-    for (int off = 0; off < (int) sigL.size(); off += kBlock)
-    {
-        float* lr[2] = { L.data() + off, R.data() + off };
-        core.processBlock (lr, lr, 2, kBlock);
-    }
-
-    size_t badIndex = sigL.size();
-    char   badChannel = 'L';
-    float  got = 0.0f, expected = 0.0f;
-    for (size_t i = 0; i < sigL.size(); ++i)
-    {
-        if (L[i] != sigL[i]) { badIndex = i; badChannel = 'L'; got = L[i]; expected = sigL[i]; break; }
-        if (R[i] != sigR[i]) { badIndex = i; badChannel = 'R'; got = R[i]; expected = sigR[i]; break; }
-    }
-    INFO ("sample " << badIndex << ", channel " << badChannel
-          << ", got " << got << ", expected " << expected);
-    REQUIRE (badIndex == sigL.size());
+    const auto vu = tape.getVu();
+    REQUIRE (std::isfinite (vu.outL));
+    REQUIRE (std::isfinite (vu.outR));
+    REQUIRE (vu.outL > 0.0f);
+    REQUIRE (vu.outR > 0.0f);
 }

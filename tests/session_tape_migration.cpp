@@ -63,7 +63,7 @@ TEST_CASE ("SessionSerializer migrates the legacy tape_state blob", "[session][s
     const juce::String xml =
         "<Parameters>"
           "<PARAM id=\"tapeMachine\" value=\"1.0\"/>"
-          "<PARAM id=\"tapeSpeed\" value=\"2.0\"/>"
+          "<PARAM id=\"tapeSpeed\" value=\"3.0\"/>"
           "<PARAM id=\"tapeType\" value=\"3.0\"/>"
           "<PARAM id=\"signalPath\" value=\"1.0\"/>"
           "<PARAM id=\"eqStandard\" value=\"2.0\"/>"
@@ -81,7 +81,22 @@ TEST_CASE ("SessionSerializer migrates the legacy tape_state blob", "[session][s
           "<PARAM id=\"outputGain\" value=\"-2.5\"/>"
           "<PARAM id=\"autoComp\" value=\"0.0\"/>"
           "<PARAM id=\"oversampling\" value=\"2.0\"/>"
+          "<PARAM id=\"headWidth\" value=\"2.0\"/>"
+          "<PARAM id=\"crosstalk\" value=\"0.0\"/>"
+          "<PARAM id=\"wowFlutterOn\" value=\"0.0\"/>"
+          "<PARAM id=\"transformer\" value=\"0.0\"/>"
           "<PARAM id=\"bypass\" value=\"0.0\"/>"
+          "<PARAM id=\"reproLF\" value=\"2.5\"/>"
+          "<PARAM id=\"reproLMF\" value=\"-1.5\"/>"
+          "<PARAM id=\"reproHMF\" value=\"3.0\"/>"
+          "<PARAM id=\"reproHF\" value=\"-2.0\"/>"
+          "<PARAM id=\"levelHmfTrim\" value=\"4.0\"/>"
+          "<PARAM id=\"levelHfTrim\" value=\"-3.0\"/>"
+          "<PARAM id=\"lpQ\" value=\"1.35\"/>"
+          "<PARAM id=\"progHmfTrim\" value=\"2.0\"/>"
+          "<PARAM id=\"progHfTrim\" value=\"-1.0\"/>"
+          "<PARAM id=\"reproSubBell\" value=\"1.75\"/>"
+          "<PARAM id=\"progLfTrim\" value=\"3.25\"/>"
         "</Parameters>";
 
     const juce::String legacy =
@@ -94,11 +109,14 @@ TEST_CASE ("SessionSerializer migrates the legacy tape_state blob", "[session][s
 
     const auto& t = s.master().tape;
     REQUIRE (t.machine.load() == 1);
-    REQUIRE (t.speed.load() == 2);
+    REQUIRE (t.speed.load() == 3);
     REQUIRE (t.type.load() == 3);
     REQUIRE (t.signalPath.load() == 1);
-    REQUIRE (t.eqStandard.load() == 2);
+    // The retired editor exposed AES at index 2; current TM2 has NAB/CCIR, so
+    // stale index 2 canonicalizes to the donor's highest valid choice (CCIR).
+    REQUIRE (t.eqStandard.load() == 1);
     REQUIRE (t.calibration.load() == 2);
+    REQUIRE (t.headWidth.load() == 2);
     REQUIRE_THAT (t.inputGainDb.load(),  WithinAbs (5.5f, 1.0e-5f));
     REQUIRE_THAT (t.bias.load(),         WithinAbs (71.5f, 1.0e-5f));
     REQUIRE_THAT (t.highpassHz.load(),   WithinAbs (85.0f, 1.0e-5f));
@@ -108,7 +126,22 @@ TEST_CASE ("SessionSerializer migrates the legacy tape_state blob", "[session][s
     REQUIRE_THAT (t.flutter.load(),      WithinAbs (9.0f, 1.0e-5f));
     REQUIRE_THAT (t.outputGainDb.load(), WithinAbs (-2.5f, 1.0e-5f));
     REQUIRE_FALSE (t.autoCal.load());
+    REQUIRE (t.noiseEnabled.load());
     REQUIRE_FALSE (t.autoComp.load());
+    REQUIRE_FALSE (t.crosstalk.load());
+    REQUIRE_FALSE (t.wowFlutterEnabled.load());
+    REQUIRE_FALSE (t.transformer.load());
+    REQUIRE_THAT (t.reproLfDb.load(),          WithinAbs (2.5f, 1.0e-5f));
+    REQUIRE_THAT (t.reproLmfDb.load(),         WithinAbs (-1.5f, 1.0e-5f));
+    REQUIRE_THAT (t.reproHmfDb.load(),         WithinAbs (3.0f, 1.0e-5f));
+    REQUIRE_THAT (t.reproHfDb.load(),          WithinAbs (-2.0f, 1.0e-5f));
+    REQUIRE_THAT (t.levelHmfTrimDb.load(),     WithinAbs (4.0f, 1.0e-5f));
+    REQUIRE_THAT (t.levelHfTrimDb.load(),      WithinAbs (-3.0f, 1.0e-5f));
+    REQUIRE_THAT (t.lpQ.load(),                WithinAbs (1.35f, 1.0e-5f));
+    REQUIRE_THAT (t.progHmfTrimDb.load(),      WithinAbs (2.0f, 1.0e-5f));
+    REQUIRE_THAT (t.progHfTrimDb.load(),       WithinAbs (-1.0f, 1.0e-5f));
+    REQUIRE_THAT (t.reproSubBellDb.load(),     WithinAbs (1.75f, 1.0e-5f));
+    REQUIRE_THAT (t.progLfTrimDb.load(),       WithinAbs (3.25f, 1.0e-5f));
     REQUIRE (s.master().tapeEnabled.load());
 
     SECTION ("saving drops the blob and the values survive a plain round-trip")
@@ -119,10 +152,27 @@ TEST_CASE ("SessionSerializer migrates the legacy tape_state blob", "[session][s
         Session b;
         REQUIRE (SessionSerializer::load (b, target));
         REQUIRE (b.master().tape.machine.load() == 1);
+        REQUIRE (b.master().tape.speed.load() == 3);
         REQUIRE (b.master().tape.signalPath.load() == 1);
+        REQUIRE (b.master().tape.eqStandard.load() == 1);
+        REQUIRE (b.master().tape.headWidth.load() == 2);
         REQUIRE_THAT (b.master().tape.inputGainDb.load(), WithinAbs (5.5f, 1.0e-5f));
         REQUIRE_THAT (b.master().tape.lowpassHz.load(),   WithinAbs (11000.0f, 1.0e-3f));
+        REQUIRE (b.master().tape.noiseEnabled.load());
         REQUIRE_FALSE (b.master().tape.autoComp.load());
+        REQUIRE_FALSE (b.master().tape.crosstalk.load());
+        REQUIRE_FALSE (b.master().tape.wowFlutterEnabled.load());
+        REQUIRE_FALSE (b.master().tape.transformer.load());
+        REQUIRE_THAT (b.master().tape.reproLfDb.load(),
+                      WithinAbs (2.5f, 1.0e-5f));
+        REQUIRE_THAT (b.master().tape.levelHmfTrimDb.load(),
+                      WithinAbs (4.0f, 1.0e-5f));
+        REQUIRE_THAT (b.master().tape.lpQ.load(),
+                      WithinAbs (1.35f, 1.0e-5f));
+        REQUIRE_THAT (b.master().tape.reproSubBellDb.load(),
+                      WithinAbs (1.75f, 1.0e-5f));
+        REQUIRE_THAT (b.master().tape.progLfTrimDb.load(),
+                      WithinAbs (3.25f, 1.0e-5f));
         REQUIRE (b.master().tapeEnabled.load());
     }
 
@@ -144,9 +194,15 @@ TEST_CASE ("SessionSerializer migrates the legacy tape_state blob", "[session][s
         // rather than keeping whatever the reused Session held.
         REQUIRE (d.master().tape.signalPath.load() == 0);
         REQUIRE (d.master().tape.speed.load() == 1);
+        REQUIRE (d.master().tape.headWidth.load() == 1);
         REQUIRE_THAT (d.master().tape.wow.load(), WithinAbs (7.0f, 1.0e-5f));
         REQUIRE_THAT (d.master().tape.inputGainDb.load(), WithinAbs (0.0f, 1.0e-5f));
         REQUIRE (d.master().tape.autoCal.load());
+        REQUIRE_FALSE (d.master().tape.noiseEnabled.load());
+        REQUIRE (d.master().tape.crosstalk.load());
+        REQUIRE (d.master().tape.wowFlutterEnabled.load());
+        REQUIRE (d.master().tape.transformer.load());
+        REQUIRE_THAT (d.master().tape.lpQ.load(), WithinAbs (0.707f, 1.0e-5f));
     }
 
     SECTION ("a corrupt blob leaves the defaults intact")

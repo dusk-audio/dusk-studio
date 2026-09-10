@@ -6,11 +6,9 @@ namespace duskstudio
 {
 struct TapeParams;
 
-// Owner for the framework-free TapeMachine core. The core's header and
-// multi-comp's UniversalCompressor core both define the same duskaudio:: math
-// helpers (kPiD, kTwoPiF, dbToGain, ...), so the two headers cannot appear in
-// one translation unit. MasterBus needs both stages, so the tape core stays
-// confined to MasterTape.cpp behind this interface.
+// Owner for the framework-free TapeMachine core. Its large donor header and
+// implementation details stay confined to MasterTape.cpp, leaving MasterBus
+// dependent only on this stable application interface.
 //
 // Every method below forwards straight to the core: prepare allocates,
 // everything else is lock-free and safe on the audio thread.
@@ -20,9 +18,9 @@ public:
     MasterTape();
     ~MasterTape();
 
-    // oversamplingFactor: 1, 2 or 4. Applied before the core's prepare so
-    // latencySamples() is correct immediately after this returns.
-    void prepare (double sampleRate, int blockSize, int oversamplingFactor);
+    // The current donor is calibrated and pinned to its tuned 2x path; prepare
+    // establishes that DSP and latency without exposing the legacy state choice.
+    void prepare (double sampleRate, int blockSize);
     int  latencySamples() const noexcept;
 
     void pushParameters (const TapeParams& p) noexcept;

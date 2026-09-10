@@ -1,7 +1,7 @@
 # De-JUCE — plugin-hosting tower (campaign plan)
 
 Status: **H1a-c merged (PR #114); H3 merged (PR #118); H4 merged (PR #119,
-`3c5c901`); H5 scout complete; H5a ready on `dejuce/hosting-h5a`; H1d blocked on donor
+`3c5c901`); H5 scout complete; H5a ready on `dejuce/hosting-h5a`; H1d unblocked by donor
 consolidation; H2 blocked on the donor multiband port.** Marc's call on
 2026-07-26 reversed the 2026-07-01 keep-JUCE-fallback decision: the JUCE
 plugin-hosting path gets deleted entirely; native hosting must cover CLAP and
@@ -25,14 +25,20 @@ merges. Read `docs/dejuce-campaign.md` + the memory ledger first.
   UniversalCompressor (Multiband) replaced by JUCE-free cores + native UI.
 - DuskMultisampleProcessor re-homed off juce::AudioPluginInstance.
 
-## Ground truth (2026-07-26 scouts)
+## Ground truth (updated 2026-08-31)
 
-- Strips/buses already run JUCE-free donor cores: FourKEQDSP (the 4k-eq-2
-  core — adopted in PR #55 with a deliberate sonic re-baseline; "use
-  4k-eq-2" is DONE), UniversalCompressorDSP (Opto/FET/VCA/Bus),
-  MultiQTube. Build points at the `plugins-multicomp-core` worktree
-  (DUSK_PLUGINS_PATH in both build caches) — its core scope is LOCKED and
-  excludes Multiband.
+- Strips/buses already run JUCE-free donor cores: FourKEQDSP (the DAF
+  4k-eq-2 core — adopted in PR #55 with a deliberate sonic re-baseline;
+  "use 4k-eq-2" is DONE), MultiCompDSP (Opto/FET/VCA/Bus through Dusk's
+  CompressorCore adapter), and MultiQTube. MultiCompDSP is the current DAF
+  product core, not the deleted bit-exact UniversalCompressorDSP
+  transcription: its hardware profiles, smoothing and Opto measured taper are
+  a deliberate sonic re-baseline. Dusk preserves its session/control contract,
+  disables donor noise and internal oversampling, and tests the adapter
+  sample-for-sample against the raw DAF core. The legacy Opto +/-40 dB control
+  range is retained; the measured donor output plateaus at +37.702 dB, so its
+  upper 2.298 dB intentionally aliases to that ceiling. All workflows and build
+  guides now pin the consolidated donor revision `00e3dc10f4a26931da823eca425dc9860d5e1737`.
 - Remaining JUCE donor in-app: UniversalCompressor mode 7 Multiband
   (MasteringChain bindCompParams + MasteringView's embedded donor
   MultibandCompressorPanel writing mb_*).
@@ -66,14 +72,15 @@ merges. Read `docs/dejuce-campaign.md` + the memory ledger first.
 
 - **H1 — TapeMachine2 swap (Dusk Studio). DONE on `dejuce/hosting`.**
   MasterBus hosts TapeMachineDSP through the `MasterTape` wrapper
-  (prepare/processInPlace/latencySamples, oversampling set in prepare, the
+  (prepare/processInPlace/latencySamples, fixed tuned-2× processing established
+  in prepare, the
   on/off crossfade owned by MasterBus); tape settings live in session JSON
   as plain values with one-way migration from the old getStateInformation
   blob, and the AudioEngine state/playhead sites are gone. Native
   `src/ui/TapePanel.{h,cpp}` replaces TapeMachineModalEditor; the donor
   TapeMachine sources left the app build. A/B null test in
-  `tests/tape_core_ab.cpp`. Remaining: H1d (TM2 DAF UI embed) once the donor
-  is consolidated - see
+  `tests/tape_core_ab.cpp`. Remaining: H1d (TM2 DAF UI embed); its donor
+  consolidation prerequisite is complete - see
   [dejuce-hosting-h1-tape.md](dejuce-hosting-h1-tape.md).
 - **H2 — Mastering multiband (donor first, then Dusk Studio).** Donor:
   port Multiband mode into a JUCE-free core (extend
@@ -127,9 +134,6 @@ gates H2's app half, not the other phases.
 - Marc bench: tape null-listen, multiband null-listen, mac/win native
   hosting with real third-party plugins, AU with stock Apple units.
 - Windows LV2 is deferred beyond H5; H5c ships CLAP/VST3 only.
-- DUSK_PLUGINS_PATH still points at the plugins-multicomp-core worktree;
-  donor consolidation (merge core work to donor main, retire worktree,
-  repoint) should happen at H2's donor step.
 
 ## Resume phrase
 
