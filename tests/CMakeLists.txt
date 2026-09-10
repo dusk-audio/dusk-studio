@@ -631,7 +631,7 @@ if(DUSK_PLUGINS_PATH)
         comp_timing.cpp
         bus_stereo_link.cpp
         tape_hysteresis.cpp
-        tape_core_ab.cpp
+        tape_core_regression.cpp
         bus_strip.cpp
         mastering_chain.cpp
         mastering_digital_eq.cpp
@@ -657,34 +657,7 @@ if(DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/shared/LEDMeter.cpp"
-        # tape_core_ab.cpp A/Bs the framework-free core against the JUCE donor,
-        # so both sides link here. The donor's createEditor() pulls its editor
-        # and GUI widgets in behind it.
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/core/TapeMachineDSP.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/PluginProcessor.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/PluginEditor.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/ImprovedTapeEmulation.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI/AnalogVUMeter.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI/TapeReelComponent.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI/TapeMachineLookAndFeel.cpp")
-
-    # Same createPluginFilter rename the main app applies - both donors define
-    # it as their plugin entry point and neither is ever called here.
-    set_source_files_properties(
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/PluginProcessor.cpp"
-        PROPERTIES
-        COMPILE_DEFINITIONS "createPluginFilter=createTapeMachinePluginFilter")
-
-    # Required only here: the tests compile TapeMachine's GUI/AnalogVUMeter.cpp
-    # alongside multi-comp's, and both declare a global AnalogVUMeter. Renaming
-    # the multi-comp one in-translation-unit keeps the donor untouched. The app
-    # no longer links TapeMachine's editor, so it does not need this.
-    set_source_files_properties(
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
-        PROPERTIES
-        COMPILE_DEFINITIONS "AnalogVUMeter=MultiCompAnalogVUMeter")
+        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/core/TapeMachineDSP.cpp")
 
     # projucer-shim satisfies BritishEQProcessor.h's `#include <JuceHeader.h>`
     # (the donor EQ under A/B test in eq_british_ab.cpp); the shim pulls in a
