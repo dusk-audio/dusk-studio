@@ -1823,9 +1823,14 @@ void MainComponent::resized()
     juce::Rectangle<int> rowBounds;
     if (! inFullscreenView && transportBar != nullptr)
     {
-        rowBounds = area.removeFromTop (kRowH);
-        transportBar->setBounds (rowBounds);
+        // A device notice gets a row of its own beneath the controls: the bank
+        // buttons below are laid out across the middle of the control row and
+        // drawn after the bar, so a notice sharing that row is covered by them.
+        // The row grows while one stands and shrinks back when it clears.
+        const int noticeH = transportBar->noticeRowHeight();
+        transportBar->setBounds (area.removeFromTop (kRowH + noticeH));
         transportBar->setHintVisible (false);
+        rowBounds = transportBar->getBounds().withHeight (kRowH);
     }
     else
     {

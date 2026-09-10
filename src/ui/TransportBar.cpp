@@ -19,6 +19,7 @@ const juce::Colour kNoInputBackground { 0xff3a2020 };
 const juce::Colour kNoInputText       { 0xffe0a0a0 };
 const juce::Font   kNoticeFont        { juce::FontOptions (11.5f) };
 constexpr auto     kNoticeJustification = juce::Justification::centred;
+constexpr int      kNoticeMaxW          = 480;
 } // namespace
 
 namespace
@@ -705,6 +706,13 @@ void TransportBar::refreshDeviceNotice()
                 : std::string_view (engine.backendFallbackNotice());
     if (wanted == deviceNotice) return;
     deviceNotice.assign (wanted.data(), wanted.size());
+    // The notice has a row of its own, so appearing and clearing changes the
+    // bar's height; the parent owns that and everything stacked under it, and
+    // its relayout brings this bar's own controls with it.
+    if (auto* parent = getParentComponent())
+        parent->resized();
+    else
+        resized();
     repaint();
 }
 
@@ -1089,25 +1097,30 @@ void TransportBar::paint (juce::Graphics& g)
     g.setColour (juce::Colour (0xff2a2a32));
     g.drawRect (getLocalBounds(), 1);
 
-    if (deviceNotice.empty()) return;
+    const int noticeH = noticeRowHeight();
+    if (noticeH == 0) return;
 
-    // The bar's own row is full, so the notice takes the gap the transport
-    // leaves in the middle rather than overlapping a control. Fitted rather than
-    // clipped: the backend line's length depends on two backend names, so no
-    // fixed width is right for every pair.
-    static constexpr int kNoticeW = 330;
-    auto notice = getLocalBounds().withSizeKeepingCentre (
-        std::min (kNoticeW, getWidth()), std::min (20, getHeight() - 6));
+    // Its own row under the controls. The bar's middle is where the parent lays
+    // the bank buttons out, and they are drawn after this, so a notice there is
+    // covered by them at every width that needs banking.
+    auto row = getLocalBounds().removeFromBottom (noticeH);
+    auto notice = row.withSizeKeepingCentre (
+        std::min (kNoticeMaxW, std::max (0, row.getWidth() - 16)),
+        std::max (0, noticeH - 4));
     g.setColour (kNoInputBackground);
     g.fillRoundedRectangle (notice.toFloat(), 3.0f);
     g.setColour (kNoInputText);
     g.setFont (kNoticeFont);
+    // Fitted, not clipped: the line's length is not fixed once more than one
+    // notice can stand here.
     g.drawFittedText (deviceNotice.c_str(), notice, kNoticeJustification, 1);
 }
 
 void TransportBar::resized()
 {
-    auto area = getLocalBounds().reduced (8, 6);
+    auto controls = getLocalBounds();
+    controls.removeFromBottom (noticeRowHeight());
+    auto area = controls.reduced (8, 6);
 
     constexpr int kBtnDia = 36;
     constexpr int kBtnGap = 4;

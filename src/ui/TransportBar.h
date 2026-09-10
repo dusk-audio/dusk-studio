@@ -50,6 +50,14 @@ public:
     // because it sleeps between frames rather than pumping the message loop.
     void refreshDeviceNotice();
 
+    // Height of the notice row at the bottom of the bar, 0 when nothing is
+    // standing. The parent adds this to the row it gives the bar, and keeps its
+    // own overlays (bank buttons, header cluster) in the controls above it.
+    int noticeRowHeight() const noexcept { return deviceNotice.empty() ? 0 : kNoticeRowH; }
+
+    // A notice row deep enough for one line of the bar's 11.5px notice font.
+    static constexpr int kNoticeRowH = 22;
+
     void paint (juce::Graphics&) override;
     void resized() override;
     // Catches right-clicks routed up from child buttons via
