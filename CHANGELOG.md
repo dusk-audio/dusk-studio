@@ -86,6 +86,9 @@ that will carry a signed 1.0.
   interface the desktop does not use. The backend now reads PipeWire's own
   default sink and source, keeps the old order as a fallback, and never
   defaults the input to a monitor.
+- **Escape closes the audio settings panel on Windows.** The panel never
+  receives keyboard input there, so the main window now answers Escape for it,
+  the same way clicking outside already did.
 - **The transport bar's device notice is readable in a banked session.** The
   bank buttons were drawn over it. It now has a row of its own under the
   controls that exists only while a notice stands.
