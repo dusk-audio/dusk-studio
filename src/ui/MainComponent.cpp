@@ -1206,6 +1206,21 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     if (code >= 'a' && code <= 'z') code -= ('a' - 'A');
     const bool cmd     = mods.isCommandDown();   // Ctrl on Linux/Windows, Cmd on macOS
     const bool shift   = mods.isShiftDown();
+
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    // The audio settings panel is a native child window with its own Escape
+    // handling, which only runs when that window has the keyboard. On Windows
+    // it never takes focus, so every key reaches this handler instead and the
+    // panel cannot be dismissed from the keyboard at all. Answering here works
+    // wherever the key lands, and lands on the same close path as clicking
+    // outside the panel.
+    if (code == juce::KeyPress::escapeKey
+        && audioSettingsWindow != nullptr && audioSettingsWindow->isOpen())
+    {
+        closeAudioSettings();
+        return true;
+    }
+   #endif
     const bool noMods  = ! cmd && ! shift && ! mods.isAltDown();
 
     // Edit-mode shortcuts (Ardour-style). 'G' picks Grab Mode so the
@@ -1823,9 +1838,14 @@ void MainComponent::resized()
     juce::Rectangle<int> rowBounds;
     if (! inFullscreenView && transportBar != nullptr)
     {
-        rowBounds = area.removeFromTop (kRowH);
-        transportBar->setBounds (rowBounds);
+        // A device notice gets a row of its own beneath the controls: the bank
+        // buttons below are laid out across the middle of the control row and
+        // drawn after the bar, so a notice sharing that row is covered by them.
+        // The row grows while one stands and shrinks back when it clears.
+        const int noticeH = transportBar->noticeRowHeight();
+        transportBar->setBounds (area.removeFromTop (kRowH + noticeH));
         transportBar->setHintVisible (false);
+        rowBounds = transportBar->getBounds().withHeight (kRowH);
     }
     else
     {

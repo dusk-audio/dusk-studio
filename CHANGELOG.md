@@ -5,6 +5,98 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
+## [Unreleased]
+
+Work towards 1.0: the first five minutes of using Dusk Studio, offline
+instrument browsing, quitting cleanly by any route, and the release pipeline
+that will carry a signed 1.0.
+
+### Added
+
+- **A one-page quickstart, and a menu item that opens it.** `QUICKSTART.md`
+  ships inside every package and **Settings > Quickstart** hands it to whatever
+  your system uses for text. The item greys out and says so when the file is not
+  installed beside the app.
+- **The first session is created from a template.** Choosing **New** in the
+  startup dialog offers Blank, Band, Beats and Singer-Songwriter, the same set
+  as **File > New from template**, instead of always starting blank.
+- **An offline library for installed instruments.** **Library...** in the
+  soundfont editor lists the `.sfz` and `.sf2` files already on the machine, so
+  loading one does not mean remembering where it lives. The scan is
+  depth-capped, survives symlink loops, can be cancelled, and reports roots it
+  could not read rather than dropping them. It never reaches the network.
+- **First launch picks an input device.** With nothing saved yet, a backend that
+  offers a capture device gets one selected alongside the output, so recording
+  works without visiting Settings first. An existing configuration is never
+  touched.
+- **Releases carry a signed checksum file.** `SHA256SUMS` now ships with a
+  detached OpenPGP signature beside it, and the manual documents the verify
+  command. A tag cannot publish without it.
+
+### Changed
+
+- **Arming a track with no input is refused, and says why.** ARM no longer
+  lights on an audio track while the open device offers no capture channels,
+  because the recording that followed wrote nothing and said nothing. The
+  transport bar carries the reason. A device change that takes the inputs away
+  disarms audio tracks and raises the same message.
+- **The bounce dialog keeps the file name readable.** A path too long for the
+  line is shortened in the middle rather than cut off at the right-hand edge,
+  the whole path is on the line's tooltip, and **Copy path** puts it on the
+  clipboard.
+- **Waveforms are drawn from Dusk-owned peak data.** The mastering overview and
+  the region editor both render from peaks generated in the background instead
+  of JUCE's thumbnail cache. Short files keep fine detail, sample-level
+  zoom reads exact column ranges, and the paint path performs no file reads.
+  Clicking to seek works while a file is still loading.
+
+### Fixed
+
+- **Logging out no longer skips the unsaved-changes prompt.** A termination
+  signal, a logout or a shutdown runs the same staged shutdown as **File >
+  Quit**, so the prompt appears and plugin child processes are not left to be
+  reaped.
+- **A session that has never been saved is not dirty because it autosaved.**
+  Creating a session no longer asks whether to save changes that were never
+  made.
+- **Keyboard shortcuts work without clicking the window first.** Any launch that
+  shows no startup dialog left the window with nothing focused, and every
+  shortcut in the manual was dead until the user happened to click the canvas.
+- **A plugin loaded out of process is not killed moments later.** The sandbox
+  child was spawned from a worker thread that exits as soon as the load
+  reports success, and on Linux the child's parent-death signal fires when that
+  thread exits rather than when the application does.
+- **Opening a session while Dusk Studio is running always reaches the running
+  copy.** Simultaneous launches could each conclude they were the only one, and
+  on macOS a launch that could not reach the running copy started a second
+  window and its session was the one that lost work. The slot is claimed with an
+  owner lock rather than inferred from a refusal.
+- **MIDI files whose header over-counts their tracks import again.** A header
+  that includes a vendor chunk in its track count made the reader run past the
+  end of the file and fail the whole import, discarding tracks it had already
+  parsed. It keeps what it read, which is what the previous reader did.
+- **First launch on a PipeWire desktop no longer falls back to ALSA.** With no
+  saved device the elected driver is still waking from suspend when the node
+  starts streaming, and the first graph cycle lands about 270 ms later. The open
+  waited 200 ms and gave up, and the fallback then stuck in the saved
+  configuration. The wait now outlasts a cold device, and when the app does
+  fall back off the preferred backend the transport bar says so.
+- **The PipeWire default device follows the system default.** The first device
+  offered was the first non-monitor node in registry order, which could be an
+  interface the desktop does not use. The backend now reads PipeWire's own
+  default sink and source, keeps the old order as a fallback, and never
+  defaults the input to a monitor.
+- **Escape closes the audio settings panel on Windows.** The panel never
+  receives keyboard input there, so the main window now answers Escape for it,
+  the same way clicking outside already did.
+- **The transport bar's device notice is readable in a banked session.** The
+  bank buttons were drawn over it. It now has a row of its own under the
+  controls that exists only while a notice stands.
+- **Faders report mute to a screen reader.** A fader could speak a finite gain
+  while the signal was already hard-muted, and text set to `-INF dB` was read
+  back as 0 dB. The manual's Linux screen-reader claims are corrected to match
+  what is implemented.
+
 ## [0.13.3] - 2026-09-05
 
 This release hardens session and plugin recovery, transport MIDI cleanup,

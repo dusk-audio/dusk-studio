@@ -3,6 +3,9 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../engine/AudioEngine.h"
 #include "../foundation/MessageThread.h"
+
+#include <string>
+#include <string_view>
 #include <array>
 
 namespace duskstudio
@@ -42,10 +45,18 @@ public:
     explicit TransportBar (AudioEngine& engineRef);
     ~TransportBar() override;
 
-    // Re-reads the device's capture width and repaints if it changed. The
-    // timer calls this; the capture harness calls it directly, because it
-    // sleeps between frames rather than pumping the message loop.
-    void refreshInputNotice();
+    // Re-reads what the bar should say about the audio device and repaints if
+    // it changed. The timer calls this; the capture harness calls it directly,
+    // because it sleeps between frames rather than pumping the message loop.
+    void refreshDeviceNotice();
+
+    // Height of the notice row at the bottom of the bar, 0 when nothing is
+    // standing. The parent adds this to the row it gives the bar, and keeps its
+    // own overlays (bank buttons, header cluster) in the controls above it.
+    int noticeRowHeight() const noexcept { return deviceNotice.empty() ? 0 : kNoticeRowH; }
+
+    // A notice row deep enough for one line of the bar's 11.5px notice font.
+    static constexpr int kNoticeRowH = 22;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -112,11 +123,12 @@ private:
 
     AudioEngine& engine;
 
-    // Set from the timer when the open device reports no capture channels, so
-    // the bar can say why arming does nothing instead of leaving the user to
-    // discover it by recording silence. Not a modal: it also appears when a
-    // device change takes the inputs away, where there is no click to answer.
-    bool noCaptureInput = false;
+    // Set from the timer: what the bar should say about the audio device, or
+    // empty for nothing. Covers an open device with no capture channels (why
+    // arming does nothing) and a startup that fell back off the preferred
+    // backend. Not a modal: both also arrive on a device change, where there is
+    // no click to answer.
+    std::string deviceNotice;
     TransportIconButton stopButton   { "Stop",     TransportIconButton::Icon::Stop,
                                         juce::Colour (0xffd0d0d0) };
     TransportIconButton rewButton    { "Rewind",   TransportIconButton::Icon::Rewind,

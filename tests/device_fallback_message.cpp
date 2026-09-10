@@ -5,6 +5,7 @@
 
 #include <string>
 
+using duskstudio::backendFallbackNotice;
 using duskstudio::startupDeviceMessage;
 using duskstudio::device::DeviceIdentity;
 using dusk::text::contains;
@@ -104,4 +105,49 @@ TEST_CASE ("startupDeviceMessage: nothing opened -> silent-session warning", "[a
         REQUIRE (containsIgnoreCase (m, "soundfonts cannot be loaded"));
         REQUIRE_FALSE (contains (m, "\"\""));   // no empty-quoted device name
     }
+}
+
+// The backend-fallback notice is the transport bar's one line when the startup
+// open could not use the preferred backend. Same reason for testing the pure
+// seam: choosing a backend needs a real graph, deciding what to say does not.
+
+TEST_CASE ("backendFallbackNotice: a silent skip off the preferred backend still speaks",
+           "[audio][device]")
+{
+    // A backend that enumerates nothing is passed over with no error at all.
+    REQUIRE_FALSE (backendFallbackNotice (false, "PipeWire", "ALSA").empty());
+}
+
+TEST_CASE ("backendFallbackNotice: the preferred backend opening says nothing",
+           "[audio][device]")
+{
+    REQUIRE (backendFallbackNotice (false, "PipeWire", "PipeWire").empty());
+}
+
+TEST_CASE ("backendFallbackNotice: a fallback names both backends", "[audio][device]")
+{
+    const auto m = backendFallbackNotice (false, "PipeWire", "ALSA");
+    REQUIRE_FALSE (m.empty());
+    REQUIRE (contains (m, "PipeWire"));
+    REQUIRE (contains (m, "ALSA"));
+    REQUIRE (containsIgnoreCase (m, "Settings"));
+    // The bar has one line to spend.
+    REQUIRE (m.find ('\n') == std::string::npos);
+}
+
+TEST_CASE ("backendFallbackNotice: an unknown backend on either side says nothing",
+           "[audio][device]")
+{
+    // Nothing opened, or the platform registered no types: the silent-session
+    // alert covers that case and the bar would only be guessing.
+    REQUIRE (backendFallbackNotice (false, "PipeWire", "").empty());
+    REQUIRE (backendFallbackNotice (false, "", "ALSA").empty());
+}
+
+TEST_CASE ("backendFallbackNotice: a restored setup is startupDeviceMessage's to report",
+           "[audio][device]")
+{
+    // Someone who chose ALSA on purpose would otherwise be told it was a
+    // fallback every single launch.
+    REQUIRE (backendFallbackNotice (true, "PipeWire", "ALSA").empty());
 }
