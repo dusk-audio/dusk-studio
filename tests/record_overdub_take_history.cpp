@@ -76,11 +76,13 @@ const AudioRegion& regionFor (const Session& session, const juce::File& file)
 }
 
 void requireTake (const TakeRef& take, const juce::File& file,
-                  std::int64_t sourceOffset, std::int64_t length)
+                  std::int64_t sourceOffset, std::int64_t length,
+                  std::int64_t timelineOffset = 0)
 {
     CHECK (take.file == file);
     CHECK (take.sourceOffset == sourceOffset);
     CHECK (take.lengthInSamples == length);
+    CHECK (take.timelineOffset == timelineOffset);
 }
 } // namespace
 
@@ -166,32 +168,82 @@ TEST_CASE ("An overdub keeps what it covers of every region in its take history"
     }
 }
 
-TEST_CASE ("A take that begins later in the song than the overdub is kept as it was, last",
+TEST_CASE ("A retake that starts earlier brings the older take back where it was",
            "[recording][recordmanager][takes]")
 {
-    const auto temp = makeSessionDir ("dusk-overdub-unanchored-");
+    const auto temp = makeSessionDir ("dusk-overdub-earlier-");
     Session session;
     prepareTrack (session, temp.dir);
 
-    AudioRegion anchored;
-    anchored.file = temp.dir.getChildFile ("anchored.wav");
-    anchored.timelineStart = 1000;
-    anchored.lengthInSamples = 500;
-    anchored.sourceOffset = 1000;
-    AudioRegion late;
-    late.file = temp.dir.getChildFile ("late.wav");
-    late.timelineStart = 2000;
-    late.lengthInSamples = 500;
-    session.track (0).regions = { anchored, late };
+    const auto take1 = recordTake (session, 5000, 5000);
+    const auto take2 = recordTake (session, 3000, 9000);
 
-    const auto take = recordTake (session, 500, 2500);
-    const auto& current = regionFor (session, take);
-    REQUIRE (current.previousTakes.size() == 2);
+    const auto& retake = regionFor (session, take2);
+    REQUIRE (session.track (0).regions.size() == 1);
+    REQUIRE (retake.previousTakes.size() == 1);
+    requireTake (retake.previousTakes[0], take1, 0, 5000, 2000);
 
-    // The earlier region's file has audio at 500, so it anchors there; the
-    // later one's starts at 2000 and is kept as it was, after it.
-    requireTake (current.previousTakes[0], anchored.file, 500, 1000);
-    requireTake (current.previousTakes[1], late.file, 0, 500);
+    auto popped = retake;
+    REQUIRE (popAudioTake (popped));
+    CHECK (popped.file == take1);
+    CHECK (popped.timelineStart == 5000);
+    CHECK (popped.lengthInSamples == 5000);
+    CHECK (popped.sourceOffset == 0);
+}
+
+TEST_CASE ("A take whose head was trimmed off comes back without it",
+           "[recording][recordmanager][takes]")
+{
+    const auto temp = makeSessionDir ("dusk-overdub-trimmed-");
+    Session session;
+    prepareTrack (session, temp.dir);
+
+    const auto take1 = recordTake (session, 0, 10000);
+    {
+        auto& trimmed = session.track (0).regions.front();
+        moveRegionStartKeepingTakes (trimmed, 2000);
+        trimmed.sourceOffset = 2000;
+        trimmed.lengthInSamples = 8000;
+    }
+    const auto take2 = recordTake (session, 1000, 11000);
+
+    const auto& retake = regionFor (session, take2);
+    REQUIRE (retake.previousTakes.size() == 1);
+    requireTake (retake.previousTakes[0], take1, 2000, 8000, 1000);
+
+    auto popped = retake;
+    REQUIRE (popAudioTake (popped));
+    CHECK (popped.timelineStart == 2000);
+    CHECK (popped.sourceOffset == 2000);
+    CHECK (popped.lengthInSamples == 8000);
+}
+
+TEST_CASE ("An overdub over the head of a later take keeps that head where it was",
+           "[recording][recordmanager][takes]")
+{
+    const auto temp = makeSessionDir ("dusk-overdub-head-");
+    Session session;
+    prepareTrack (session, temp.dir);
+
+    const auto take1 = recordTake (session, 1000, 1000);
+    const auto take2 = recordTake (session, 500, 1000);
+
+    const auto& remainder = regionFor (session, take1);
+    CHECK (remainder.timelineStart == 1500 - kFade);
+
+    const auto& retake = regionFor (session, take2);
+    REQUIRE (retake.previousTakes.size() == 1);
+    requireTake (retake.previousTakes[0], take1, 0, 500, 500);
+
+    // Popped back in, take 1's head meets its remainder with the fades the
+    // overdub left on both sides of that seam.
+    auto popped = retake;
+    REQUIRE (popAudioTake (popped));
+    CHECK (popped.timelineStart == 1000);
+    CHECK (popped.timelineStart + popped.lengthInSamples == 1500);
+    CHECK (popped.sourceOffset - popped.timelineStart
+           == remainder.sourceOffset - remainder.timelineStart);
+    CHECK (popped.fadeOutSamples == remainder.fadeInSamples);
 }
 
 TEST_CASE ("Overdub take history stops at eight takes", "[recording][recordmanager][takes]")
@@ -213,4 +265,48 @@ TEST_CASE ("Overdub take history stops at eight takes", "[recording][recordmanag
     REQUIRE (current.previousTakes.size() == 8);
     CHECK (current.previousTakes.front().file == stacked.file);
     CHECK (current.previousTakes.back().file == stacked.previousTakes[6].file);
+}
+
+TEST_CASE ("A MIDI retake that starts earlier brings the older take back where it was",
+           "[recording][recordmanager][takes][midi]")
+{
+    const auto temp = makeSessionDir ("dusk-overdub-midi-");
+    Session session;
+    session.setSessionDirectory (temp.dir);
+    session.track (0).mode.store ((int) Track::Mode::Midi, std::memory_order_relaxed);
+    session.setTrackArmed (0, true);
+
+    session.track (0).midiRegions.mutate ([] (std::vector<MidiRegion>& v)
+    {
+        MidiRegion older;
+        older.timelineStart   = 48000;
+        older.lengthInSamples = 24000;
+        older.lengthInTicks   = 480;
+        older.notes = { { 1, 60, 90, 0, 240 } };
+        v.push_back (std::move (older));
+    });
+
+    RecordManager manager (session);
+    REQUIRE (manager.startRecording (48000.0, 24000, 0));
+    dusk::MidiBuffer block;
+    const std::uint8_t noteOn[]  { 0x90, 64, 100 };
+    const std::uint8_t noteOff[] { 0x80, 64, 0 };
+    block.addEvent (noteOn, 3, 0);
+    block.addEvent (noteOff, 3, 200);
+    manager.writeMidiBlock (0, block, 0);
+    manager.stopRecording (24000 + 96000);
+
+    const auto regions = session.track (0).midiRegions.current();
+    REQUIRE (regions.size() == 1);
+    const auto& retake = regions.front();
+    CHECK (retake.timelineStart == 24000);
+    REQUIRE (retake.previousTakes.size() == 1);
+    CHECK (retake.previousTakes[0].timelineOffset == 24000);
+
+    auto popped = retake;
+    REQUIRE (popMidiTake (popped));
+    CHECK (popped.timelineStart == 48000);
+    CHECK (popped.lengthInTicks == 480);
+    REQUIRE (popped.notes.size() == 1);
+    CHECK (popped.notes[0].noteNumber == 60);
 }

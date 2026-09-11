@@ -1706,7 +1706,7 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
             d = std::max (d, -drag.origSourceOffset);
             d = std::max (d, -drag.origTimelineStart);
             d = std::min (d, drag.origLength - kMinLengthSamples);
-            r.timelineStart   = drag.origTimelineStart + d;
+            moveRegionStartKeepingTakes (r, drag.origTimelineStart + d);
             r.lengthInSamples = drag.origLength        - d;
             r.sourceOffset    = drag.origSourceOffset  + d;
             break;
@@ -2016,7 +2016,10 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
         // the region, which is idempotent - the user sees no glitch.
         AudioRegion afterState  = regions[(size_t) drag.regionIdx];
         AudioRegion beforeState = afterState;
-        beforeState.timelineStart   = drag.origTimelineStart;
+        if (drag.op == RegionOp::TrimStart)
+            moveRegionStartKeepingTakes (beforeState, drag.origTimelineStart);
+        else
+            beforeState.timelineStart = drag.origTimelineStart;
         beforeState.lengthInSamples = drag.origLength;
         beforeState.sourceOffset    = drag.origSourceOffset;
         beforeState.fadeInSamples   = drag.origFadeIn;

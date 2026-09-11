@@ -74,10 +74,10 @@ that will carry a signed 1.0.
   stop that comes from MIDI clock or MTC chase leaves the playhead where the
   master stopped.
 - **Delete on a take stack removes only the top take** (#595). The take under
-  it shows again in the same place, and Delete on the last take removes the
-  region. Cmd+Z restores either. **Delete region** on the right-click menu and
-  **Cut** still take the whole stack. MIDI regions with earlier takes behave
-  the same way.
+  it shows again where it was in the song, at its own start and length, and
+  Delete on the last take removes the region. Cmd+Z restores either. **Delete
+  region** on the right-click menu and **Cut** still take the whole stack. MIDI
+  regions with earlier takes behave the same way.
 - **Arming a track with no input is refused, and says why.** ARM no longer
   lights on an audio track while the open device offers no capture channels,
   because the recording that followed wrote nothing and said nothing. The
@@ -110,11 +110,13 @@ that will carry a signed 1.0.
 - **An overdub keeps every take it covers** (#594). Recording over part of an
   older region used to trim it without saving the covered part anywhere, so the
   earlier take could not be swapped back. The new region's take history now
-  holds the covered part of the regions under it, and of their own takes,
-  lined up with the new take's start so a swap puts each back in place. The
-  exception is an older take that starts later in the song than the new one
-  with no audio before its own start; the manual's Take history section says
-  what happens to it.
+  holds the covered part of every region under it, and of their own takes. Each
+  take keeps its own place in the song, so a swap puts it back exactly where it
+  was, including an older take that started later than the new one, without
+  bringing back audio that had been trimmed off. MIDI takes are placed the same
+  way. Take history entries carry an optional `timeline_offset` in
+  `session.json`; sessions without it load as before, and older builds ignore
+  it.
 - **Logging out no longer skips the unsaved-changes prompt.** A termination
   signal, a logout or a shutdown runs the same staged shutdown as **File >
   Quit**, so the prompt appears and plugin child processes are not left to be

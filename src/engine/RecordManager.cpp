@@ -26,82 +26,75 @@ void trimTakeHistory (Region& region) noexcept
         region.previousTakes.resize ((size_t) kMaxTakesPerRegion);
 }
 
-// Re-anchors a take that played from `anchor` so it plays from `newStart`
-// instead, clipped to end by `newEnd`. Empty when the take holds no audio at
-// newStart: it begins later in the song than the new region does. An empty
-// take stays empty rather than growing into the file's earlier audio.
-std::optional<TakeRef> takeAnchoredAt (const TakeRef& take, std::int64_t anchor,
-                                        std::int64_t newStart, std::int64_t newEnd)
+// The part of a take playing from `takeStart` that falls inside [from, to),
+// with its offset measured from `anchor`. Empty when none of it falls inside.
+std::optional<TakeRef> takePartWithin (const TakeRef& take, std::int64_t takeStart,
+                                        std::int64_t from, std::int64_t to,
+                                        std::int64_t anchor)
 {
-    const auto sourceOffset = take.sourceOffset + (newStart - anchor);
-    const auto end = std::min (anchor + take.lengthInSamples, newEnd);
-    if (take.lengthInSamples <= 0 || sourceOffset < 0 || end <= newStart)
+    const auto start = std::max (takeStart, from);
+    const auto end   = std::min (takeStart + take.lengthInSamples, to);
+    if (end <= start)
         return std::nullopt;
-    auto anchored = take;
-    anchored.sourceOffset = sourceOffset;
-    anchored.lengthInSamples = end - newStart;
-    return anchored;
+    auto part = take;
+    part.sourceOffset    = take.sourceOffset + (start - takeStart);
+    part.lengthInSamples = end - start;
+    part.timelineOffset  = start - anchor;
+    return part;
 }
 
-// Appends what the new region covers of every existing region to its take
-// history: the covered part of the take on top and of the takes under it,
-// re-anchored to the new region's start. A swap or a Delete then brings each
-// back in place, crossfading against the trimmed remainder the way the
-// original did. Regions later in the track's list, the more recent ones, go
-// first, so the take that was on top surfaces next. One file at one offset
-// is one take however many regions it arrives through. A take that begins
-// later in the song than the new region has no audio at its start to anchor
-// to; a region swallowed whole keeps such takes as they were, at the back.
+// Appends to the new region's take history the part it covers of every take
+// under it: each covered region's take on top and the takes in that region's
+// own history, each kept where it was in the song, so a swap or a Delete
+// brings it back exactly there without exposing audio no region played.
+// Regions later in the track's list, the more recent ones, go first, so the
+// take that was on top surfaces next. Parts of one file that line up in time
+// and meet are one take.
 void appendCoveredTakes (AudioRegion& region, const std::vector<AudioRegion>& existing)
 {
     const auto newStart = region.timelineStart;
     const auto newEnd   = newStart + region.lengthInSamples;
-    std::vector<TakeRef> anchored;
-    std::vector<TakeRef> unanchored;
+    std::vector<TakeRef> covered;
+
+    const auto add = [&covered] (TakeRef part)
+    {
+        const auto origin  = part.sourceOffset - part.timelineOffset;
+        const auto partEnd = part.timelineOffset + part.lengthInSamples;
+        const auto same = std::find_if (covered.begin(), covered.end(),
+            [&part, origin, partEnd] (const TakeRef& t)
+            {
+                return t.file == part.file
+                    && t.sourceOffset - t.timelineOffset == origin
+                    && part.timelineOffset <= t.timelineOffset + t.lengthInSamples
+                    && t.timelineOffset <= partEnd;
+            });
+        if (same == covered.end())
+        {
+            covered.push_back (std::move (part));
+            return;
+        }
+        const auto start = std::min (same->timelineOffset, part.timelineOffset);
+        const auto end   = std::max (same->timelineOffset + same->lengthInSamples, partEnd);
+        same->timelineOffset  = start;
+        same->sourceOffset    = origin + start;
+        same->lengthInSamples = end - start;
+    };
 
     for (auto it = existing.rbegin(); it != existing.rend(); ++it)
     {
         const auto exStart = it->timelineStart;
-        const auto exEnd   = exStart + it->lengthInSamples;
-        if (exEnd <= newStart || exStart >= newEnd) continue;
+        if (exStart + it->lengthInSamples <= newStart || exStart >= newEnd) continue;
 
-        const bool swallowed  = exStart >= newStart && exEnd <= newEnd;
-        const auto coveredEnd = std::min (exEnd, newEnd);
-        const auto consider = [&] (const TakeRef& take, bool onTop)
-        {
-            // An older take under a region the new one only partly covers must
-            // reach the end of the covered part, or swapping it in would open
-            // a gap beside that region's remainder.
-            const bool reaches = onTop || swallowed
-                              || exStart + take.lengthInSamples >= coveredEnd;
-            const auto candidate = takeAnchoredAt (take, exStart, newStart, newEnd);
-            if (candidate.has_value() && reaches)
-            {
-                const auto same = std::find_if (anchored.begin(), anchored.end(),
-                    [&candidate] (const TakeRef& t)
-                    {
-                        return t.file == candidate->file
-                            && t.sourceOffset == candidate->sourceOffset;
-                    });
-                if (same == anchored.end())
-                    anchored.push_back (*candidate);
-                else
-                    same->lengthInSamples = std::max (same->lengthInSamples,
-                                                      candidate->lengthInSamples);
-            }
-            else if (swallowed)
-            {
-                unanchored.push_back (take);
-            }
-        };
-
-        consider (makeAudioTakeRef (*it), true);
+        if (auto part = takePartWithin (makeAudioTakeRef (*it), exStart,
+                                        newStart, newEnd, newStart))
+            add (std::move (*part));
         for (const auto& deeper : it->previousTakes)
-            consider (deeper, false);
+            if (auto part = takePartWithin (deeper, exStart + deeper.timelineOffset,
+                                            newStart, newEnd, newStart))
+                add (std::move (*part));
     }
 
-    region.previousTakes.insert (region.previousTakes.end(), anchored.begin(), anchored.end());
-    region.previousTakes.insert (region.previousTakes.end(), unanchored.begin(), unanchored.end());
+    region.previousTakes.insert (region.previousTakes.end(), covered.begin(), covered.end());
     trimTakeHistory (region);
 }
 
@@ -129,12 +122,14 @@ bool sameAudioTake (const TakeRef& a, const TakeRef& b) noexcept
 {
     return a.file == b.file && a.sourceOffset == b.sourceOffset
         && a.lengthInSamples == b.lengthInSamples
+        && a.timelineOffset == b.timelineOffset
         && sameProvenance (a.provenance, b.provenance);
 }
 
 bool sameMidiTake (const MidiTakeRef& a, const MidiTakeRef& b) noexcept
 {
     return a.lengthInTicks == b.lengthInTicks
+        && a.timelineOffset == b.timelineOffset
         && sameProvenance (a.provenance, b.provenance)
         && a.notes.size() == b.notes.size()
         && a.ccs.size() == b.ccs.size()
@@ -164,6 +159,22 @@ bool sameMidiRegion (const MidiRegion& a, const MidiRegion& b) noexcept
         && std::equal (a.ccs.begin(), a.ccs.end(), b.ccs.begin(), sameMidiCc)
         && std::equal (a.previousTakes.begin(), a.previousTakes.end(),
                        b.previousTakes.begin(), sameMidiTake);
+}
+
+// A MIDI region the new take swallows joins its history, together with the
+// region's own takes, each kept where it was in the song.
+void absorbMidiRegion (MidiRegion& region, MidiRegion& swallowed)
+{
+    const auto shift = swallowed.timelineStart - region.timelineStart;
+    auto top = makeMidiTakeRef (swallowed);
+    top.timelineOffset = shift;
+    region.previousTakes.push_back (std::move (top));
+    for (auto& deeper : swallowed.previousTakes)
+    {
+        deeper.timelineOffset += shift;
+        region.previousTakes.push_back (std::move (deeper));
+    }
+    trimTakeHistory (region);
 }
 
 bool sliceMidiTake (const MidiTakeRef& source,
@@ -890,10 +901,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
                                                  && existingEnd <= newEnd;
                         if (fullyContained)
                         {
-                            region.previousTakes.push_back (makeMidiTakeRef (*it));
-                            for (auto& deeper : it->previousTakes)
-                                region.previousTakes.push_back (std::move (deeper));
-                            trimTakeHistory (region);
+                            absorbMidiRegion (region, *it);
                             it = regions.erase (it);
                             continue;
                         }
@@ -913,7 +921,8 @@ void RecordManager::stopRecording (std::int64_t endSample)
                                 region.previousTakes.push_back (std::move (sliced));
                             for (const auto& deeper : it->previousTakes)
                                 if (sliceMidiTake (deeper, it->lengthInSamples,
-                                                   sliceOffset, sliceLength, sliced))
+                                                   sliceOffset - deeper.timelineOffset,
+                                                   sliceLength, sliced))
                                     region.previousTakes.push_back (std::move (sliced));
                             trimTakeHistory (region);
                         }
@@ -1009,15 +1018,13 @@ void RecordManager::stopRecording (std::int64_t endSample)
             continue;
         }
 
-        // Take-history capture, mirrors AudioRegion's fully-contained
-        // overdub absorption below. Any existing MIDI region whose
-        // timeline range sits fully inside the new take's range gets
-        // moved into the new region's previousTakes (with its own
-        // deeper history forwarded so an overdub-of-an-overdub doesn't
-        // lose grandparent takes). Partial overlaps are intentionally
-        // NOT absorbed - the user can still see / cycle to the older
-        // takes via the badge UI; partial-overlap merging would need
-        // a tick-domain split routine that's out of scope here.
+        // Take-history capture. Any existing MIDI region whose timeline
+        // range sits fully inside the new take's range gets moved into the
+        // new region's previousTakes (with its own deeper history forwarded
+        // so an overdub-of-an-overdub doesn't lose grandparent takes).
+        // Partial overlaps are intentionally NOT absorbed - MIDI regions may
+        // overlap, so the older one stays on the timeline; partial-overlap
+        // merging would need a tick-domain split routine.
         const std::int64_t newStart = region.timelineStart;
         const std::int64_t newEnd   = newStart + region.lengthInSamples;
         session.track (t).midiRegions.mutate (
@@ -1030,13 +1037,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
                     const bool fullyContained = exStart >= newStart && exEnd <= newEnd;
                     if (! fullyContained) { ++it; continue; }
 
-                    region.previousTakes.push_back (makeMidiTakeRef (*it));
-
-                    for (auto& deeper : it->previousTakes)
-                        region.previousTakes.push_back (std::move (deeper));
-
-                    trimTakeHistory (region);
-
+                    absorbMidiRegion (region, *it);
                     it = mregs.erase (it);
                 }
 
@@ -1210,7 +1211,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
                     // Right overlap only: shift start to newEnd - fade.
                     const std::int64_t newLeft = newEnd - fadeSamples;
                     it->sourceOffset    += (newLeft - exStart);
-                    it->timelineStart    = newLeft;
+                    moveRegionStartKeepingTakes (*it, newLeft);
                     it->lengthInSamples  = exEnd - newLeft;
                     it->fadeInSamples    = fadeSamples;
                     it->fadeInShape      = FadeShape::RaisedCosine;

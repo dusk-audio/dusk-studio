@@ -184,7 +184,7 @@ bool SplitRegionAction::perform()
 
     AudioRegion right = orig;
     const auto leftLen = splitAt - orig.timelineStart;
-    right.timelineStart   = splitAt;
+    moveRegionStartKeepingTakes (right, splitAt);
     right.sourceOffset    = orig.sourceOffset + leftLen;
     right.lengthInSamples = orig.lengthInSamples - leftLen;
 

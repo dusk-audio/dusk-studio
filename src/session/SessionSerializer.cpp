@@ -91,6 +91,22 @@ inline void addTakeProvenance (JObj& parent, const TakeProvenance& provenance)
     parent["take_provenance"] = std::move (value);
 }
 
+inline void addTakeOffset (JObj& take, std::int64_t timelineOffset)
+{
+    if (timelineOffset != 0)
+        take["timeline_offset"] = timelineOffset;
+}
+
+// Absent reads as 0, the region's start, which is where every take sat before
+// the offset was written. A hand-edited value is kept where the take still
+// starts at or after the timeline origin and its position stays representable.
+inline std::int64_t parseTakeOffset (const nlohmann::json& take, std::int64_t regionStart) noexcept
+{
+    const auto raw = (std::int64_t) json::getInt64 (take, "timeline_offset", 0);
+    return std::clamp<std::int64_t> (raw, -regionStart,
+                                     std::numeric_limits<std::int64_t>::max() - regionStart);
+}
+
 inline TakeProvenance parseTakeProvenance (const nlohmann::json& parent) noexcept
 {
     const auto& value = json::child (parent, "take_provenance");
@@ -726,6 +742,7 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
                 tObj["file"]          = toStd (portablePath (take.file, sessionDir));
                 tObj["source_offset"] = (std::int64_t) take.sourceOffset;
                 tObj["length"]        = (std::int64_t) take.lengthInSamples;
+                addTakeOffset (tObj, take.timelineOffset);
                 addTakeProvenance (tObj, take.provenance);
                 prior.push_back (std::move (tObj));
             }
@@ -806,6 +823,7 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
                 {
                     JObj tObj;
                     tObj["length_ticks"] = (std::int64_t) take.lengthInTicks;
+                    addTakeOffset (tObj, take.timelineOffset);
                     addTakeProvenance (tObj, take.provenance);
                     JObj tnotes = JObj::array();
                     for (const auto& n : take.notes)
@@ -1433,6 +1451,7 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
                                                                  sessionDir, missingFiles);
                     take.sourceOffset    = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (tv, "source_offset", 0));
                     take.lengthInSamples = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (tv, "length", 0));
+                    take.timelineOffset  = parseTakeOffset (tv, r.timelineStart);
                     take.provenance      = parseTakeProvenance (tv);
                     r.previousTakes.push_back (std::move (take));
                 }
@@ -1522,6 +1541,7 @@ void restoreTrack (Track& t, int trackIndex, const nlohmann::json& v,
                     if (! tv.is_object()) continue;
                     MidiTakeRef take;
                     take.lengthInTicks = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (tv, "length_ticks", 0));
+                    take.timelineOffset = parseTakeOffset (tv, r.timelineStart);
                     take.provenance = parseTakeProvenance (tv);
                     parseNotes (json::array (tv, "notes"), take.notes);
                     parseCcs   (json::array (tv, "ccs"),   take.ccs);

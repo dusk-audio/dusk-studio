@@ -273,11 +273,13 @@ struct AudioRegion : Region {
 };
 
 // Reference to a previous take of an audio region, kept on the region itself
-// so swapping takes restores the source offset/length that take was recorded with.
+// so swapping takes restores the source offset/length that take was recorded
+// with, at its own place in the song.
 struct TakeRef {
     String audioFilePath;         // relative to session directory
     int64_t sourceOffset;         // sourceOffset at the time this take was active
     int64_t sourceLength;
+    int64_t timelineOffset;       // take start relative to the region's start (0 if absent)
     int64_t recordedAt;           // ms since session start, for ordering / display
 };
 

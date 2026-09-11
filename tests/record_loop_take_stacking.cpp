@@ -314,19 +314,21 @@ TEST_CASE ("Loop punch preserves the overwritten middle of a spanning region as 
     manager.stopRecording (110);
 
     const auto& region = loopAudioRegion (session);
-    REQUIRE (region.previousTakes.size() == 2);
+    REQUIRE (region.previousTakes.size() == 3);
     REQUIRE (region.previousTakes[0].file == existing.file);
     REQUIRE (region.previousTakes[0].sourceOffset == 60);
     REQUIRE (region.previousTakes[0].lengthInSamples == 10);
+    REQUIRE (region.previousTakes[0].timelineOffset == 0);
     REQUIRE (region.previousTakes[0].provenance.capturedAtMs == 42);
     REQUIRE (region.previousTakes[1].file == existing.previousTakes[0].file);
     REQUIRE (region.previousTakes[1].sourceOffset == 20);
     REQUIRE (region.previousTakes[1].lengthInSamples == 10);
-    REQUIRE (std::none_of (region.previousTakes.begin(), region.previousTakes.end(),
-                           [&existing] (const TakeRef& take)
-    {
-        return take.file == existing.previousTakes[1].file;
-    }));
+    // An older take that ends inside the punch keeps just the part the punch
+    // covered, at its own place: swapping it in cannot misplace it.
+    REQUIRE (region.previousTakes[2].file == existing.previousTakes[1].file);
+    REQUIRE (region.previousTakes[2].sourceOffset == 15);
+    REQUIRE (region.previousTakes[2].lengthInSamples == 2);
+    REQUIRE (region.previousTakes[2].timelineOffset == 0);
     REQUIRE (session.track (0).regions.size() == 3);
 }
 

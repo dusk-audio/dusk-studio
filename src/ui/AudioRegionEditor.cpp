@@ -2169,7 +2169,7 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
             const auto delta = newSourceOffset - regionAtDragStart.sourceOffset;
             r->sourceOffset    = newSourceOffset;
             r->lengthInSamples = regionAtDragStart.lengthInSamples - delta;
-            r->timelineStart   = regionAtDragStart.timelineStart   + delta;
+            moveRegionStartKeepingTakes (*r, regionAtDragStart.timelineStart + delta);
             // Clamp fades against the new length.
             r->fadeInSamples  = jlimit<std::int64_t> (0, r->lengthInSamples, r->fadeInSamples);
             r->fadeOutSamples = jlimit<std::int64_t> (0, r->lengthInSamples - r->fadeInSamples, r->fadeOutSamples);

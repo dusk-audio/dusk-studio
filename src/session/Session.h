@@ -325,15 +325,31 @@ struct TakeProvenance
 static_assert (std::is_trivially_copyable<TakeProvenance>::value,
                "TakeProvenance must remain trivially copyable");
 
-// Take-history slot - timeline position is NOT stored so rotating
-// preserves the region's timelineStart (same spot in the song).
+// Take-history slot. timelineOffset is where the take starts in the song,
+// relative to its region's timelineStart, so a swap or a Delete puts it back
+// exactly where it was. 0 = at the region's start, which is also what an
+// entry written before the offset existed means.
 struct TakeRef
 {
     juce::File file;
     std::int64_t sourceOffset    = 0;
     std::int64_t lengthInSamples = 0;
     TakeProvenance provenance;
+    std::int64_t timelineOffset  = 0;
 };
+
+// Moves a region's start while every take in its history keeps its place in
+// the song. For edits that move only the take on top (a head trim, a split,
+// a swap); moving the whole region leaves the offsets alone so its history
+// moves with it.
+template <typename Region>
+void moveRegionStartKeepingTakes (Region& region, std::int64_t newStart) noexcept
+{
+    const auto shift = newStart - region.timelineStart;
+    region.timelineStart = newStart;
+    for (auto& take : region.previousTakes)
+        take.timelineOffset -= shift;
+}
 
 // 480 PPQN matches every modern DAW + .mid convention; high enough
 // that 64th-note triplets quantize exactly (480/24=20). BPM changes
@@ -634,12 +650,14 @@ struct MidiCc
     bool operator!= (const MidiCc& o) const noexcept { return ! (*this == o); }
 };
 
+// timelineOffset: samples from the region's timelineStart, as for TakeRef.
 struct MidiTakeRef
 {
     std::int64_t           lengthInTicks = 0;
     std::vector<MidiNote> notes;
     std::vector<MidiCc>   ccs;
     TakeProvenance provenance;
+    std::int64_t          timelineOffset = 0;
 };
 
 struct MidiRegion
@@ -684,13 +702,27 @@ inline void applyMidiTakeRef (MidiRegion& region, const MidiTakeRef& take)
     region.provenance = take.provenance;
 }
 
+// A take moved left of the timeline origin with its region comes back at 0.
+inline void placeTopTakeAt (MidiRegion& region, std::int64_t start) noexcept
+{
+    moveRegionStartKeepingTakes (region, std::max<std::int64_t> (0, start));
+}
+
+// Puts `take` on top, back where it was in the song, and leaves the take that
+// was on top in `take`, anchored where it was. `take` may sit in the region's
+// history or have been moved out of it. lengthInSamples is left for the
+// caller, which knows the tempo to convert lengthInTicks at.
 inline void swapMidiTakePayload (MidiRegion& region, MidiTakeRef& take)
 {
+    const auto oldStart  = region.timelineStart;
+    const auto takeStart = oldStart + take.timelineOffset;
     using std::swap;
     swap (region.lengthInTicks, take.lengthInTicks);
     swap (region.notes, take.notes);
     swap (region.ccs, take.ccs);
     swap (region.provenance, take.provenance);
+    placeTopTakeAt (region, takeStart);
+    take.timelineOffset = oldStart - region.timelineStart;
 }
 
 // MIDI counterpart of popAudioTake. lengthInSamples is left for the caller,
@@ -698,8 +730,11 @@ inline void swapMidiTakePayload (MidiRegion& region, MidiTakeRef& take)
 inline bool popMidiTake (MidiRegion& region)
 {
     if (region.previousTakes.empty()) return false;
-    applyMidiTakeRef (region, region.previousTakes.front());
+    const auto top = std::move (region.previousTakes.front());
     region.previousTakes.erase (region.previousTakes.begin());
+    const auto takeStart = region.timelineStart + top.timelineOffset;
+    applyMidiTakeRef (region, top);
+    placeTopTakeAt (region, takeStart);
     return true;
 }
 
@@ -799,23 +834,49 @@ inline void applyAudioTakeRef (AudioRegion& region, const TakeRef& take)
     region.provenance = take.provenance;
 }
 
+// A take moved left of the timeline origin with its region comes back with
+// the part before 0 trimmed off its head.
+inline void placeTopTakeAt (AudioRegion& region, std::int64_t start) noexcept
+{
+    if (start < 0)
+    {
+        const auto cut = std::min (-start, region.lengthInSamples);
+        region.sourceOffset    += cut;
+        region.lengthInSamples -= cut;
+        start = 0;
+    }
+    moveRegionStartKeepingTakes (region, start);
+}
+
+// Puts `take` on top, back where it was in the song, and leaves the take that
+// was on top in `take`, anchored where it was. `take` may sit in the region's
+// history or have been moved out of it. The region takes the take's start and
+// length; its fades stay as they are so a swap back restores them, and
+// playback clamps them to a shorter take.
 inline void swapAudioTakePayload (AudioRegion& region, TakeRef& take)
 {
+    const auto oldStart  = region.timelineStart;
+    const auto takeStart = oldStart + take.timelineOffset;
     using std::swap;
     swap (region.file, take.file);
     swap (region.sourceOffset, take.sourceOffset);
     swap (region.lengthInSamples, take.lengthInSamples);
     swap (region.provenance, take.provenance);
+    placeTopTakeAt (region, takeStart);
+    take.timelineOffset = oldStart - region.timelineStart;
 }
 
 // Drops the current take and brings back the one under it (the front of
-// previousTakes) in the same place. False, with the region untouched, when
-// the region is on its last take.
+// previousTakes) where it was in the song, at its own start and length.
+// False, with the region untouched, when the region is on its last take.
 inline bool popAudioTake (AudioRegion& region)
 {
     if (region.previousTakes.empty()) return false;
-    applyAudioTakeRef (region, region.previousTakes.front());
+    const auto top = std::move (region.previousTakes.front());
     region.previousTakes.erase (region.previousTakes.begin());
+    const auto takeStart = region.timelineStart + top.timelineOffset;
+    applyAudioTakeRef (region, top);
+    placeTopTakeAt (region, takeStart);
     region.fadeInSamples  = std::clamp<std::int64_t> (region.fadeInSamples, 0,
                                                       region.lengthInSamples);
     region.fadeOutSamples = std::clamp<std::int64_t> (region.fadeOutSamples, 0,

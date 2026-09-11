@@ -83,6 +83,7 @@ add_executable(dusk-studio-tests
     session_freeze_roundtrip.cpp
     session_region_bounds.cpp
     session_take_pop.cpp
+    session_take_anchor.cpp
     session_transport_bounds.cpp
     session_corrupted_recovery.cpp
     session_clamp_corrupt_values.cpp

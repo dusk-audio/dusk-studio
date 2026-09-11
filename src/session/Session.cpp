@@ -513,6 +513,10 @@ void applyTempoChange (Session& s, float newBpm, double sampleRate) noexcept
                             (double) r.timelineStart * factor);
                         r.lengthInSamples = ticksToSamples (r.lengthInTicks,
                                                               sampleRate, newBpm);
+                        // Earlier takes keep their beat, like the region.
+                        for (auto& take : r.previousTakes)
+                            take.timelineOffset = (std::int64_t) std::llround (
+                                (double) take.timelineOffset * factor);
                     }
                     else
                     {
