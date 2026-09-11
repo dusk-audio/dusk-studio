@@ -4124,8 +4124,7 @@ void ChannelStripComponent::openBuiltinEditorPopup()
     auto& slot = strip.getBuiltinSlot();
     builtinEditorWindow->setView (imgui::makeBuiltinUnitView (
         slot, slot.displayName(),
-        [&slot] (int paramIndex) { slot.noteParamTouched (paramIndex); },
-        /*inlineInStage*/ false));
+        [&slot] (int paramIndex) { slot.noteParamTouched (paramIndex); }));
 
     const auto plate = builtinEditorWindow->plateSize();
     const auto logical = embedscale::centredChildBounds (*topLevel, plate.width, plate.height);

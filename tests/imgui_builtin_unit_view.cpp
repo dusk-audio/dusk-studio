@@ -137,7 +137,7 @@ TEST_CASE ("the built-in editor draws every unit inside the size it asks for",
         REQUIRE (slot.loadUnit (id, 48000.0, 256, error));
 
         HeadlessPanel panel (scale);
-        auto view = imgui::makeBuiltinUnitView (slot, id, {}, /*inlineInStage*/ false);
+        auto view = imgui::makeBuiltinUnitView (slot, id, {});
         REQUIRE (view != nullptr);
 
         const auto design = view->preferredSize();
@@ -178,7 +178,7 @@ TEST_CASE ("the built-in editor at a display scale of 2 is the same picture doub
         std::string error;
         REQUIRE (slot.loadUnit (id, 48000.0, 256, error));
 
-        auto view = imgui::makeBuiltinUnitView (slot, id, {}, /*inlineInStage*/ false);
+        auto view = imgui::makeBuiltinUnitView (slot, id, {});
         const auto design = view->preferredSize();
 
         HeadlessPanel one (1.0f);

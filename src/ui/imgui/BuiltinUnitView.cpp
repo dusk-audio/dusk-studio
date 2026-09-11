@@ -60,9 +60,8 @@ class BuiltinUnitViewImpl final : public DuskPanelView
 {
 public:
     BuiltinUnitViewImpl (builtin::NativeBuiltinSlot& s, std::string t,
-                         std::function<void (int)> touched, bool inlineInStage)
-        : slot (s), title (std::move (t)), onTouched (std::move (touched)),
-          embedded (inlineInStage)
+                         std::function<void (int)> touched)
+        : slot (s), title (std::move (t)), onTouched (std::move (touched))
     {
         buildLayout();
     }
@@ -70,7 +69,6 @@ public:
     ImVec2 preferredSize() const override { return { bodyWidth, bodyHeight }; }
 
     float dimAlpha() const override { return 0.28f; }
-    bool  wantsPlate() const override { return ! embedded; }
     bool  takeDismissRequest() override { return std::exchange (dismissRequested, false); }
 
     void draw (dw::Context& ctx, ImVec2 origin, ImVec2 size) override;
@@ -82,7 +80,6 @@ private:
     builtin::NativeBuiltinSlot& slot;
     std::string title;
     std::function<void (int)> onTouched;
-    bool embedded = false;
     bool dismissRequested = false;
 
     std::vector<Section> sections;
@@ -251,11 +248,9 @@ void BuiltinUnitViewImpl::draw (dw::Context& ctx, ImVec2 origin, ImVec2 size)
 std::unique_ptr<DuskPanelView> makeBuiltinUnitView (
     builtin::NativeBuiltinSlot& slot,
     std::string title,
-    std::function<void (int)> onParameterTouched,
-    bool inlineInStage)
+    std::function<void (int)> onParameterTouched)
 {
     return std::make_unique<BuiltinUnitViewImpl> (slot, std::move (title),
-                                                  std::move (onParameterTouched),
-                                                  inlineInStage);
+                                                  std::move (onParameterTouched));
 }
 } // namespace duskstudio::imgui
