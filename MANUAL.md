@@ -283,7 +283,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | 2   | Region             | Audio or MIDI clip. Drag to move, drag the edges to trim.       |
 | 3   | Region edge handle | Trim handle. Hold Cmd to nudge by snap.                         |
 | 4   | Marker             | Drop with **M**, drag to move, right-click to rename or delete. |
-| 5   | Loop bracket       | Set with **[** / **]** and enable loop with **L**, or set it from the ruler's right-click menu, which turns loop on for you. |
+| 5   | Loop bracket       | Set with **[** / **]** or from the ruler's right-click menu; loop turns on once the in point sits before the out point. Drawn hollow while loop is off. |
 | 6   | Punch bracket      | Set with **Shift+[** / **Shift+]** or from the ruler's right-click menu; punch turns on once the in point sits before the out point. Drawn hollow while punch is off. |
 
 **Left-click anywhere on the timeline moves the playhead there** (the ruler or empty track space). Regions still respond to clicks — click to select, drag a body to move, drag an edge to trim — and **double-click a region to open the full editor**. Everything else (split, delete, set tempo, set loop / punch) is on the **right-click** menu.
@@ -1152,8 +1152,8 @@ When the new take begins, a 64-sample raised-cosine fade-in shapes its edge agai
 
 To repeat a section while you experiment:
 
-1. Set the loop region with the **[** and **]** keys at the desired in and out positions.
-2. Click the **Loop** button on the transport bar.
+1. Set the loop region with the **[** and **]** keys at the desired in and out positions. Loop turns on as soon as the in point sits before the out point.
+2. Check that the **Loop** button on the transport bar is lit. **L** or the button turns loop off and on again without moving the brackets.
 3. Press Play (for loop playback) or Record (for loop recording).
 
 In loop play, the transport wraps at the loop boundary indefinitely. Loop recording also wraps and creates a new take on each pass. The current pass plus up to **8 previous passes** stay attached to one range-aligned region, so you can cycle performances after stopping. A loop must be at least 128 samples long to record.
@@ -1297,7 +1297,7 @@ Loop and punch ranges show as coloured brackets in the ruler, with a tinted band
 
 A bracket is drawn solid while its mode is on. While the mode is off a set bracket stays on screen, drawn hollow and faint, so you can see at a glance that the range is set but not armed.
 
-Drag the bracket ends to adjust. The keyboard shortcuts **[** and **]** set the loop in and out at the current playhead. Hold **Shift** to set punch in and out instead. The ruler's right-click menu has **Set loop in here**, **Set loop out here**, **Set punch in here** and **Set punch out here**. Punch brackets placed with **Shift+[** / **Shift+]** or the menu, and loop brackets placed from the menu, turn their mode on once the in point sits before the out point, and off again if a new point leaves the in point at or after the out point. **Clear loop** and **Clear punch** remove the brackets and turn the mode off.
+Drag the bracket ends to adjust. The keyboard shortcuts **[** and **]** set the loop in and out at the current playhead. Hold **Shift** to set punch in and out instead. The ruler's right-click menu has **Set loop in here**, **Set loop out here**, **Set punch in here** and **Set punch out here**. Brackets placed with these keys or the menu turn their mode on once the in point sits before the out point, and off again if a new point leaves the in point at or after the out point. **Clear loop** and **Clear punch** remove the brackets and turn the mode off.
 
 ## Zoom
 
@@ -2113,8 +2113,8 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | **P**       | Toggle punch                  |
 | **C**       | Toggle metronome              |
 | **M**       | Drop marker at playhead       |
-| **[**       | Set loop start at playhead    |
-| **]**       | Set loop end at playhead      |
+| **[**       | Set loop start at playhead; arms loop once in is before out |
+| **]**       | Set loop end at playhead; arms loop once in is before out |
 | **Shift+[** | Set punch in at playhead; arms punch once in is before out |
 | **Shift+]** | Set punch out at playhead; arms punch once in is before out |
 | **K**       | Toggle virtual MIDI keyboard  |

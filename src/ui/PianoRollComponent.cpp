@@ -3149,9 +3149,9 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
                 const auto cursorTl = session.ticksToSamples (
                     session.samplesToTicks (r->timelineStart, sr) + editCursorTick, sr);
                 if (kc == '[') { if (sh) transport.placePunchRange (cursorTl, std::max (transport.getPunchOut(), cursorTl));
-                                 else    transport.setLoopRange  (cursorTl, std::max (transport.getLoopEnd(),  cursorTl)); }
+                                 else    transport.placeLoopRange  (cursorTl, std::max (transport.getLoopEnd(),  cursorTl)); }
                 else { if (sh) transport.placePunchRange (std::min (transport.getPunchIn(),   cursorTl), cursorTl);
-                       else    transport.setLoopRange  (std::min (transport.getLoopStart(), cursorTl), cursorTl); }
+                       else    transport.placeLoopRange  (std::min (transport.getLoopStart(), cursorTl), cursorTl); }
                 repaint(); return true;
             }
         }
