@@ -245,6 +245,16 @@ private:
     bool firstPerformDone = false;
 };
 
+// The Delete key on an audio region, performed on the engine's undo manager
+// inside the caller's transaction. With earlier takes under the current one
+// it pops the top take so the one under it shows again; on the last take it
+// removes the region. Returns true when a take was popped and the region
+// stays where it was.
+bool deleteTopTake (Session& session, AudioEngine& engine, int trackIdx, int regionIdx);
+
+// The same for a MIDI region.
+bool deleteTopMidiTake (Session& session, AudioEngine& engine, int trackIdx, int regionIdx);
+
 // MIDI counterpart to DeleteRegionAction. Erase/insert reshape the
 // vector, so both go through mutate() (copy + publish) - never
 // currentMutable() while the audio thread iterates the snapshot.

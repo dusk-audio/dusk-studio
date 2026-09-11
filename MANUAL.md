@@ -93,7 +93,7 @@ Hit **R** or click the transport's record button. Playback starts, the record in
 
 ![Mid-record: levels lit, region drawing in the tape strip.](docs/images/qg-04-record-rolling.png)
 
-If you do not like the take, **Cmd+Z** undoes the recording. The take is preserved in the region's take history (up to 8 takes per region) — right-click the region and pick a previous take to swap it back in.
+If you do not like the take, **Cmd+Z** undoes the recording. Record over it instead and the earlier take stays in the region's take history (up to 8 takes per region). Right-click the region and pick it from **Takes** to swap it back in, or select the new take and press **Delete** to drop it and bring back the one under it.
 
 ## Overdub
 
@@ -1185,6 +1185,8 @@ Each region keeps a stack of up to **8 previous takes**. When you record over ex
 
 One case cannot be lined up: an older take that starts later in the song than the new one and has no recorded audio before its own start. If the new take covers it completely it goes to the bottom of the stack unchanged, and swapping it in plays it from the start of the region rather than from where it was. If the new take covers only its beginning, the covered part is not kept in the stack; the rest stays on the timeline.
 
+Press **Delete** on a region with earlier takes and only its top take goes: the take under it comes back in the same place. Press **Delete** again to keep going down the stack. On the last take, **Delete** removes the region. **Cmd+Z** puts back whatever **Delete** took. To remove a region together with every take in its stack, right-click it and choose **Delete region**; **Cut** also takes the whole stack.
+
 To cycle through takes:
 
 - Press **Alt+T** for next take.
@@ -1268,7 +1270,7 @@ A right-click on any region shows a context menu:
 - **Takes** submenu (when more than one take exists on the region).
 - **Reverse region** (non-destructive: renders a reversed copy into `takes/` and points the region at it; undoable).
 - **Color**: a palette of 8 accent hues plus **Reset to track colour**.
-- **Delete**.
+- **Delete region**: removes the region with every take in its stack. The **Delete** key removes only the top take (see *Take history*).
 
 Normalize is not on this menu — it lives in the audio region editor (double-click the region).
 
@@ -1371,7 +1373,7 @@ Below the toolbar:
 - **Drag the gain line** (the dashed horizontal line through the waveform): adjusts the region's gain ±24 dB. The cursor displays the new value.
 - **Shift+drag** on the waveform: select a time range (yellow highlight).
 - **Cmd/Ctrl+]** / **Cmd/Ctrl+[**: navigate to the next / previous region on the same track without closing the modal.
-- **Delete**: delete the selected region.
+- **Delete**: with a range selected, delete the range. Otherwise delete the region's top take and bring back the take under it, or delete the region when it is on its last take.
 
 \newpage
 
@@ -2090,7 +2092,7 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | **Cmd+X**                   | Cut selected region                    |
 | **Cmd+V**                   | Paste at playhead                      |
 | **Cmd+D**                   | Duplicate selected region              |
-| **Delete** / **Backspace**  | Delete selected region                 |
+| **Delete** / **Backspace**  | Delete the selected region's top take, or the region on its last take |
 | **Cmd+E**                   | Split selected region at playhead      |
 | **Cmd+←**                   | Nudge selected region one beat earlier |
 | **Cmd+→**                   | Nudge selected region one beat later   |

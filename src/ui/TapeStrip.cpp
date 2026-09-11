@@ -4203,11 +4203,13 @@ bool TapeStrip::copySelectedRegion()
 
 bool TapeStrip::cutSelectedRegion()
 {
-    // Copy first (non-undoable side effect on the clipboard), then push a
-    // DeleteRegionAction so Cmd+Z brings the region back. The clipboard
-    // keeps the cut content even after undo - same as Logic / Pro Tools.
+    // Copy first (non-undoable side effect on the clipboard), then remove the
+    // regions so Cmd+Z brings them back. The clipboard carries each region's
+    // whole take stack, so a cut removes the stack rather than popping a take.
+    // The clipboard keeps the cut content even after undo - same as Logic /
+    // Pro Tools.
     if (! copySelectedRegion()) return false;
-    return deleteSelectedRegion();
+    return removeSelectedRegions (false);
 }
 
 bool TapeStrip::pasteAtPlayhead()
@@ -4235,6 +4237,11 @@ bool TapeStrip::pasteAtPlayhead()
 
 bool TapeStrip::deleteSelectedRegion()
 {
+    return removeSelectedRegions (true);
+}
+
+bool TapeStrip::removeSelectedRegions (bool popTopTake)
+{
     auto selection = allSelectedRegions();
     if (selection.empty())
     {
@@ -4246,9 +4253,15 @@ bool TapeStrip::deleteSelectedRegion()
         const auto regs = session.track (t).midiRegions.current();
         if (r >= (int) regs.size() || regs[(size_t) r].locked) return false;
         auto& um = engine.getUndoManager();
-        um.beginNewTransaction ("Delete MIDI region");
-        um.perform (new DeleteMidiRegionAction (session, engine, t, r));
-        clearAllSelections();
+        um.beginNewTransaction (popTopTake && ! regs[(size_t) r].previousTakes.empty()
+                                    ? "Delete take" : "Delete MIDI region");
+        bool popped = false;
+        if (popTopTake)
+            popped = deleteTopMidiTake (session, engine, t, r);
+        else
+            um.perform (new DeleteMidiRegionAction (session, engine, t, r));
+        if (! popped)
+            clearAllSelections();
         repaint();
         return true;
     }
@@ -4275,17 +4288,40 @@ bool TapeStrip::deleteSelectedRegion()
                                        : a.regionIdx > b.regionIdx;
         });
 
+    const bool popsTakes = popTopTake
+        && std::any_of (selection.begin(), selection.end(), [this] (const RegionId& id)
+           {
+               return ! session.track (id.track).regions[(size_t) id.regionIdx]
+                            .previousTakes.empty();
+           });
     auto& um = engine.getUndoManager();
-    um.beginNewTransaction (selection.size() == 1 ? "Delete region"
-                                                    : "Delete regions");
+    if (popsTakes)
+        um.beginNewTransaction (selection.size() == 1 ? "Delete take" : "Delete takes");
+    else
+        um.beginNewTransaction (selection.size() == 1 ? "Delete region" : "Delete regions");
+
+    bool removedAny = false;
     for (const auto& id : selection)
     {
         const auto& regs = session.track (id.track).regions;
         if (id.regionIdx < 0 || id.regionIdx >= (int) regs.size()) continue;
-        um.perform (new DeleteRegionAction (session, engine,
-                                              id.track, id.regionIdx));
+        if (popTopTake)
+        {
+            removedAny |= ! deleteTopTake (session, engine, id.track, id.regionIdx);
+        }
+        else
+        {
+            um.perform (new DeleteRegionAction (session, engine,
+                                                  id.track, id.regionIdx));
+            removedAny = true;
+        }
     }
-    clearAllSelections();
+
+    // A region that popped a take keeps its index, so the selection still
+    // names it and Delete again walks down its stack. Removing any region
+    // shifts the indices the selection holds.
+    if (removedAny)
+        clearAllSelections();
     repaint();
     return true;
 }

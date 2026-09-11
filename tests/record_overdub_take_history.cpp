@@ -132,6 +132,25 @@ TEST_CASE ("An overdub keeps what it covers of every region in its take history"
         requireTake (third.previousTakes[1], take1, 65, 3200 - 65);
     }
 
+    SECTION ("deleting take 3 brings take 2 back where it was")
+    {
+        auto popped = third;
+        REQUIRE (popAudioTake (popped));
+        CHECK (popped.file == take2);
+        CHECK (popped.timelineStart == 65);
+        CHECK (popped.timelineStart + popped.lengthInSamples == 2350);
+        // Same file position at the same song position as take 2's remainder,
+        // so the two crossfade over the 64 samples they share as one take.
+        CHECK (popped.sourceOffset - popped.timelineStart
+               == second.sourceOffset - second.timelineStart);
+        CHECK (popped.fadeInSamples == second.fadeOutSamples);
+
+        REQUIRE (popAudioTake (popped));
+        CHECK (popped.file == take1);
+        CHECK (popped.timelineStart + popped.lengthInSamples == 3200);
+        CHECK_FALSE (popAudioTake (popped));
+    }
+
     SECTION ("the history survives a save and reload")
     {
         const auto target = temp.dir.getChildFile ("session.json");

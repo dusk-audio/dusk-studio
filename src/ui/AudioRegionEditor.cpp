@@ -2933,7 +2933,9 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
     //   - Range active: split at both boundaries, then delete the
     //     middle slice. Region's anchor stays valid (the left slice
     //     keeps the original regionIdx) so the editor stays open.
-    //   - No range: delete the whole region (Editor closes).
+    //   - No range: a region with earlier takes loses its top take and
+    //     the one under it shows again; a region on its last take is
+    //     deleted.
     // Both routed through UndoManager - Cmd+Z reverts.
     if (k == juce::KeyPress::backspaceKey || k == juce::KeyPress::deleteKey)
     {
@@ -2976,9 +2978,9 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
         }
         auto& um = engine.getUndoManager();
 
-        // Multi-select Delete: remove every additional region first
-        // (descending index order so earlier deletes don't shift later
-        // indices), then the focused region.
+        // Multi-select Delete: every additional region first (descending
+        // index order so earlier deletes don't shift later indices), then
+        // the focused region.
         if (! additionalSelectedRegions.empty())
         {
             std::vector<int> idxs = additionalSelectedRegions;
@@ -2987,12 +2989,13 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
             idxs.erase (std::unique (idxs.begin(), idxs.end()), idxs.end());
             um.beginNewTransaction (idxs.size() > 1 ? "Delete regions" : "Delete region");
             for (int idx : idxs)
-                um.perform (new DeleteRegionAction (session, engine, trackIdx, idx));
+                deleteTopTake (session, engine, trackIdx, idx);
             reanchorOrClose();
             return true;
         }
-        um.beginNewTransaction ("Delete region");
-        um.perform (new DeleteRegionAction (session, engine, trackIdx, regionIdx));
+        um.beginNewTransaction (r != nullptr && ! r->previousTakes.empty() ? "Delete take"
+                                                                           : "Delete region");
+        deleteTopTake (session, engine, trackIdx, regionIdx);
         reanchorOrClose();
         return true;
     }

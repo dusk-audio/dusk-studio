@@ -73,6 +73,11 @@ that will carry a signed 1.0.
   quickstart says. A choice saved in Settings before this release is kept. A
   stop that comes from MIDI clock or MTC chase leaves the playhead where the
   master stopped.
+- **Delete on a take stack removes only the top take** (#595). The take under
+  it shows again in the same place, and Delete on the last take removes the
+  region. Cmd+Z restores either. **Delete region** on the right-click menu and
+  **Cut** still take the whole stack. MIDI regions with earlier takes behave
+  the same way.
 - **Arming a track with no input is refused, and says why.** ARM no longer
   lights on an audio track while the open device offers no capture channels,
   because the recording that followed wrote nothing and said nothing. The

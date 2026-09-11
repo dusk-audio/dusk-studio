@@ -380,6 +380,42 @@ bool DeleteMidiRegionAction::undo()
     return true;
 }
 
+bool deleteTopTake (Session& session, AudioEngine& engine, int trackIdx, int regionIdx)
+{
+    if (! indexValid (session, trackIdx, regionIdx)) return false;
+    const auto& before = session.track (trackIdx).regions[(size_t) regionIdx];
+    auto after = before;
+    auto& um = engine.getUndoManager();
+    if (! popAudioTake (after))
+    {
+        um.perform (new DeleteRegionAction (session, engine, trackIdx, regionIdx));
+        return false;
+    }
+    return um.perform (new RegionEditAction (session, engine, trackIdx, regionIdx,
+                                             before, after));
+}
+
+bool deleteTopMidiTake (Session& session, AudioEngine& engine, int trackIdx, int regionIdx)
+{
+    if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    const auto& regions = session.track (trackIdx).midiRegions.current();
+    if (regionIdx < 0 || regionIdx >= (int) regions.size()) return false;
+    const MidiRegion before = regions[(size_t) regionIdx];
+    auto after = before;
+    auto& um = engine.getUndoManager();
+    if (! popMidiTake (after))
+    {
+        um.perform (new DeleteMidiRegionAction (session, engine, trackIdx, regionIdx));
+        return false;
+    }
+    const double sr = engine.getCurrentSampleRate();
+    const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
+    if (sr > 0.0 && bpm > 0.0f)
+        after.lengthInSamples = ticksToSamples (after.lengthInTicks, sr, bpm);
+    return um.perform (new MidiRegionEditAction (session, engine, trackIdx, regionIdx,
+                                                 before, after));
+}
+
 // CloneTrackAction
 
 namespace

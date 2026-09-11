@@ -693,6 +693,16 @@ inline void swapMidiTakePayload (MidiRegion& region, MidiTakeRef& take)
     swap (region.provenance, take.provenance);
 }
 
+// MIDI counterpart of popAudioTake. lengthInSamples is left for the caller,
+// which knows the tempo to convert the popped take's lengthInTicks at.
+inline bool popMidiTake (MidiRegion& region)
+{
+    if (region.previousTakes.empty()) return false;
+    applyMidiTakeRef (region, region.previousTakes.front());
+    region.previousTakes.erase (region.previousTakes.begin());
+    return true;
+}
+
 // All shapes: shape(0)=0, shape(1)=1. EqualPower is constant-power for
 // crossfades. RaisedCosine has zero slope at both endpoints - the right
 // choice for very-short click-mask fades (punch in/out).
@@ -796,6 +806,21 @@ inline void swapAudioTakePayload (AudioRegion& region, TakeRef& take)
     swap (region.sourceOffset, take.sourceOffset);
     swap (region.lengthInSamples, take.lengthInSamples);
     swap (region.provenance, take.provenance);
+}
+
+// Drops the current take and brings back the one under it (the front of
+// previousTakes) in the same place. False, with the region untouched, when
+// the region is on its last take.
+inline bool popAudioTake (AudioRegion& region)
+{
+    if (region.previousTakes.empty()) return false;
+    applyAudioTakeRef (region, region.previousTakes.front());
+    region.previousTakes.erase (region.previousTakes.begin());
+    region.fadeInSamples  = std::clamp<std::int64_t> (region.fadeInSamples, 0,
+                                                      region.lengthInSamples);
+    region.fadeOutSamples = std::clamp<std::int64_t> (region.fadeOutSamples, 0,
+                                                      region.lengthInSamples - region.fadeInSamples);
+    return true;
 }
 
 struct Track

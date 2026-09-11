@@ -214,6 +214,10 @@ private:
     void showMidiRegionContextMenu (int trackIdx, int regionIdx,
                                        juce::Point<int> screenPos);
 
+    // Delete and cut share this. popTopTake: a region with earlier takes
+    // loses its top take instead of the whole stack.
+    bool removeSelectedRegions (bool popTopTake);
+
     // Undoable MIDI-region mute/lock toggle from the tape-strip menu.
     void commitMidiRegionToggle (int trackIdx, int regionIdx, const juce::String& name,
                                   std::function<void (duskstudio::MidiRegion&)> mutate);
