@@ -66,6 +66,13 @@ that will carry a signed 1.0.
   differently from the engine it replaces while the controls, their ranges and
   their defaults are unchanged. The console character stage no longer adds a
   noise floor, so a silent channel stays silent through it.
+- **Stop returns the playhead to where play or record started** (#591). It is
+  the new default for **Playhead on Stop**, so Play after a take hears the take.
+  Moving the playhead during playback moves the return point with it. Pressing
+  Stop while already stopped returns to bar 1 whatever the setting, as the
+  quickstart says. A choice saved in Settings before this release is kept. A
+  stop that comes from MIDI clock or MTC chase leaves the playhead where the
+  master stopped.
 - **Arming a track with no input is refused, and says why.** ARM no longer
   lights on an audio track while the open device offers no capture channels,
   because the recording that followed wrote nothing and said nothing. The

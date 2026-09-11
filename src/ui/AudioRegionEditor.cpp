@@ -1640,7 +1640,7 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
         // selection on top. Both the seek + the range origin honour
         // SNAP so the playhead and selection land on the grid.
         const bool bypassSnap = e.mods.isCommandDown();
-        engine.getTransport().setPlayhead (
+        engine.getTransport().locate (
             snapTimelineSampleToGrid (timelineSampleForX (e.x, waveArea), bypassSnap));
         rangeStartSample = snapFileSampleToGrid (sampleForX (e.x, waveArea), bypassSnap);
         rangeEndSample   = rangeStartSample;

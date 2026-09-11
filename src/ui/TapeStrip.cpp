@@ -1132,7 +1132,7 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
                                       const auto& m = safeThis->session.getMarkers();
                                       if (i < 0 || i >= (int) m.size()) return;
                                       safeThis->engine.getTransport()
-                                          .setPlayhead (m[(size_t) i].timelineSamples);
+                                          .locate (m[(size_t) i].timelineSamples);
                                       safeThis->repaint();
                                   });
             }
@@ -1141,7 +1141,7 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
         m.addSeparator();
         m.addItem ("Move playhead here", [&transport, clickedSample]
         {
-            transport.setPlayhead (clickedSample);
+            transport.locate (clickedSample);
         });
 
         // Tempo (ruler only) add / edit / delete a tempo-map point at the
@@ -1460,7 +1460,7 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
 
     const auto sample = snap::snapAbsoluteToGrid (
         sampleAtX (e.x), session, engine.getCurrentSampleRate());
-    engine.getTransport().setPlayhead (sample);
+    engine.getTransport().locate (sample);
     // Remember this click so a future Stop in "Return to last clicked" mode
     // lands here.
     session.lastClickedTimelineSample.store (sample, std::memory_order_relaxed);
@@ -1788,7 +1788,7 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
         {
             const auto sample = snap::snapAbsoluteToGrid (
                 std::max ((std::int64_t) 0, a), session, engine.getCurrentSampleRate());
-            engine.getTransport().setPlayhead (sample);
+            engine.getTransport().locate (sample);
             // Remember this click so a future Stop in "Return to last
             // clicked" mode lands here.
             session.lastClickedTimelineSample.store (sample, std::memory_order_relaxed);
@@ -1969,7 +1969,7 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
         {
             // Pure click on a flag -> seek to the marker.
             const auto& m = session.getMarkers()[(size_t) markerDrag.index];
-            engine.getTransport().setPlayhead (m.timelineSamples);
+            engine.getTransport().locate (m.timelineSamples);
         }
         markerDrag = {};
         repaint();
@@ -1991,7 +1991,7 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
                  && tempoDrag.index < (int) tempoDrag.orig.size())
         {
             // Pure click on a tempo marker -> seek to it.
-            engine.getTransport().setPlayhead (
+            engine.getTransport().locate (
                 tempoDrag.orig[(size_t) tempoDrag.index].timelineSamples);
         }
         tempoDrag = {};
@@ -2498,7 +2498,7 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
                     auto& tr = safeThis->engine.getTransport();
                     tr.setLoopRange (regionStart, regionEnd);
                     tr.setLoopEnabled (true);
-                    tr.setPlayhead (regionStart);
+                    tr.locate (regionStart);
                     safeThis->repaint();
                 });
     m.addItem ("Split at playhead", playheadInside,
@@ -2835,7 +2835,7 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
                     auto& tr = safeThis->engine.getTransport();
                     tr.setLoopRange (regionStart, regionEnd);
                     tr.setLoopEnabled (true);
-                    tr.setPlayhead (regionStart);
+                    tr.locate (regionStart);
                     safeThis->repaint();
                 });
 

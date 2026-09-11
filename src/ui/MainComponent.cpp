@@ -626,7 +626,7 @@ MainComponent::MainComponent()
     // Optional plugin scan on launch. Per-machine setting (AppConfig);
     // default off. Synchronous - blocks the message thread for a few
     // Push the user's persisted Stop-behavior preference into the session
-    // atom so AudioEngine::stop reads the right policy on the first Stop
+    // atom so AudioEngine::pressStop reads the right policy on the first Stop
     // after launch. The audio settings panel's combo updates this same atom
     // when the user changes the dropdown.
     session.stopBehavior.store ((int) appconfig::getStopBehavior(),
@@ -1469,13 +1469,13 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         }
         auto& transport = engine.getTransport();
         if (transport.isStopped()) engine.play();
-        else                       { engine.stop(); if (transportBar != nullptr) transportBar->notifyRecordStopped(); }
+        else                       { engine.pressStop(); if (transportBar != nullptr) transportBar->notifyRecordStopped(); }
         return true;
     }
     if (code == 'R' && noMods)
     {
         auto& transport = engine.getTransport();
-        if (transport.isRecording()) { engine.stop(); if (transportBar != nullptr) transportBar->notifyRecordStopped(); }
+        if (transport.isRecording()) { engine.pressStop(); if (transportBar != nullptr) transportBar->notifyRecordStopped(); }
         else                         engine.record();
         return true;
     }
@@ -1496,13 +1496,12 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     // - the timeline grows with the longest region.
     if (key == juce::KeyPress::homeKey)
     {
-        engine.getTransport().setPlayhead (0);
+        engine.getTransport().locate (0);
         return true;
     }
 
-    // '.' (period) -> stop transport and rewind to 0. Pro Tools / Cubase
-    // convention. Mirrors the Stop button on the transport bar with the
-    // added rewind that the bare Stop doesn't provide.
+    // '.' (period) -> stop transport and rewind to 0 whatever Playhead on
+    // Stop says. Pro Tools / Cubase convention.
     if (key.getTextCharacter() == '.' && noMods)
     {
         auto& tr = engine.getTransport();

@@ -15,6 +15,7 @@
 #include "MidiBindings.h"
 #include "SessionLayout.h"
 #include "../engine/PluginDescriptor.h"
+#include "../engine/StopBehavior.h"
 
 namespace duskstudio
 {
@@ -1380,13 +1381,10 @@ public:
     // 0=Recording, 1=Mixing, 2=Aux, 3=Mastering.
     std::atomic<int>   uiStage           { 0 };
 
-    // Tape-head behaviour on Stop, mirroring the appconfig enum:
-    //   0 = PauseInPlace (default, leave the playhead where it landed)
-    //   1 = ReturnToZero (rewind to 0 on every Stop)
-    //   2 = ReturnToLastClicked (jump to lastClickedTimelineSample)
-    // Pushed from MainComponent at startup + whenever the user changes
-    // the Settings dropdown. AudioEngine::stop reads this on Stop.
-    std::atomic<int>      stopBehavior              { 0 };
+    // A StopBehavior value. Pushed from MainComponent at startup + whenever
+    // the user changes the Settings dropdown. AudioEngine::pressStop reads
+    // this on Stop.
+    std::atomic<int>      stopBehavior              { (int) StopBehavior::ReturnToRollStart };
     // Last position the user clicked on the tape-strip ruler (samples).
     // -1 = never clicked / unknown - engine treats as PauseInPlace fall-
     // back when ReturnToLastClicked is selected.
