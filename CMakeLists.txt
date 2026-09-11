@@ -594,6 +594,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         src/ui/imgui/MasteringEqView.cpp
         src/ui/imgui/BuiltinLaneView.cpp
         src/ui/imgui/BuiltinUnitView.cpp
+        src/ui/imgui/DafEditorHost.cpp
         src/ui/imgui/MasteringLimiterView.cpp
         src/ui/imgui/PanelControls.cpp
         src/ui/imgui/StartupView.cpp
@@ -1409,6 +1410,11 @@ if(DEFINED DUSK_PLUGINS_PATH)
     # definition of each shared filter. STATIC_BUILD keeps DAF from defining a
     # DllMain or calling dladdr in an executable, and DUSK_CRASHLOG_NO_INSTALL
     # keeps the plug-in's crash handler out of Dusk Studio's process.
+    #
+    # The same sources build twice: once with the plug-in's editor and once
+    # without. The editor drags in DGL and Dear ImGui, which a headless consumer
+    # has no use for and the test binary already compiles for itself, so the
+    # tests link the plain library and the app links the one with the editor.
     if(DUSKSTUDIO_DAF_SOURCE_DIR)
         set(_duskstudio_tape_echo_2_dir "${DUSK_PLUGINS_PATH}/plugins/tape-echo/daf-plugin")
         if(NOT EXISTS "${_duskstudio_tape_echo_2_dir}/TapeEchoPlugin.cpp")
@@ -1416,25 +1422,61 @@ if(DEFINED DUSK_PLUGINS_PATH)
                 "Dusk plugins donor lacks the Tape Echo 2 plug-in; "
                 "use the revision pinned by the build workflows")
         endif()
-        add_library(dusk_daf_tape_echo_2 STATIC
-            "${DUSKSTUDIO_DAF_SOURCE_DIR}/daf/DafPluginMain.cpp"
-            "${_duskstudio_tape_echo_2_dir}/TapeEchoPlugin.cpp"
-            "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core/TapeEchoDSP.cpp"
-            src/engine/builtin/daf/TapeEcho2.cpp)
-        target_include_directories(dusk_daf_tape_echo_2 SYSTEM PRIVATE
-            "${_duskstudio_tape_echo_2_dir}"
-            "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core"
-            "${DUSK_PLUGINS_PATH}/plugins/shared-daf"
-            "${DUSKSTUDIO_DONOR_DSP_DIR}"
-            "${DUSKSTUDIO_DAF_SOURCE_DIR}/daf")
-        target_compile_definitions(dusk_daf_tape_echo_2 PRIVATE
-            DAF_NAMESPACE=DuskTapeEcho2
-            DAF_PLUGIN_TARGET_STATIC
-            "DAF_PLUGIN_TARGET_STATIC_NAME=\"Dusk Studio\""
-            STATIC_BUILD
-            DUSK_CRASHLOG_NO_INSTALL)
-        target_compile_features(dusk_daf_tape_echo_2 PRIVATE cxx_std_17)
-        target_link_libraries(DuskStudio PRIVATE dusk_daf_tape_echo_2)
+
+        function(duskstudio_add_tape_echo_2_library target withEditor)
+            add_library("${target}" STATIC
+                "${DUSKSTUDIO_DAF_SOURCE_DIR}/daf/DafPluginMain.cpp"
+                "${_duskstudio_tape_echo_2_dir}/TapeEchoPlugin.cpp"
+                "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core/TapeEchoDSP.cpp"
+                src/engine/builtin/daf/TapeEcho2.cpp)
+            target_include_directories("${target}" SYSTEM PRIVATE
+                "${_duskstudio_tape_echo_2_dir}"
+                "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core"
+                "${DUSK_PLUGINS_PATH}/plugins/shared-daf"
+                "${DUSKSTUDIO_DONOR_DSP_DIR}"
+                "${DUSKSTUDIO_DAF_SOURCE_DIR}/daf")
+            target_compile_definitions("${target}" PRIVATE
+                DAF_NAMESPACE=DuskTapeEcho2
+                DAF_PLUGIN_TARGET_STATIC
+                "DAF_PLUGIN_TARGET_STATIC_NAME=\"Dusk Studio\""
+                STATIC_BUILD
+                DUSK_CRASHLOG_NO_INSTALL)
+            target_compile_features("${target}" PRIVATE cxx_std_17)
+
+            if(NOT withEditor)
+                return()
+            endif()
+
+            # DAF's UI entry point and the plug-in's own editor, built against the
+            # DGL and Dear ImGui the app already links so the editor and Dusk
+            # Studio's own native views share one of each.
+            target_sources("${target}" PRIVATE
+                "${DUSKSTUDIO_DAF_SOURCE_DIR}/daf/DafUIMain.cpp"
+                "${_duskstudio_tape_echo_2_dir}/TapeEchoUI.cpp")
+            if(APPLE)
+                # DAF reads the display scale through a platform helper that its own
+                # build adds beside the UI entry point. Elsewhere it is inside it.
+                target_sources("${target}" PRIVATE
+                    "${DUSKSTUDIO_DAF_SOURCE_DIR}/daf/DafUI_macOS.mm")
+            endif()
+            target_include_directories("${target}" SYSTEM PRIVATE
+                "${DUSK_PLUGINS_PATH}/plugins/shared-daf/ui"
+                "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl")
+            target_link_libraries("${target}" PRIVATE
+                dusk_native_ui
+                dgl-opengl3
+                dgl-opengl3-definitions
+                dgl-system-libs-definitions)
+            target_compile_definitions("${target}" PRIVATE DUSKSTUDIO_DAF_UNIT_EDITOR=1)
+        endfunction()
+
+        duskstudio_add_tape_echo_2_library(dusk_daf_tape_echo_2 OFF)
+        if(TARGET dusk_native_ui)
+            duskstudio_add_tape_echo_2_library(dusk_daf_tape_echo_2_ui ON)
+            target_link_libraries(DuskStudio PRIVATE dusk_daf_tape_echo_2_ui)
+        else()
+            target_link_libraries(DuskStudio PRIVATE dusk_daf_tape_echo_2)
+        endif()
         target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_DAF_UNITS=1)
     endif()
 endif()

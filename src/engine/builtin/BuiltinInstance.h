@@ -47,6 +47,29 @@ public:
     std::string displayName() const { return info != nullptr ? info->name : std::string(); }
 
     // Message thread. The parameter surface an editor and the session drive.
+    // The plug-in's own editor, for a unit that is one of Dusk's DAF plug-ins.
+    // A knob unit has none and is drawn from its parameter table instead.
+    bool hasPluginEditor() const noexcept
+        { return dafUnit != nullptr && dafUnit->hasEditor(); }
+    std::uint32_t pluginEditorWidth() const noexcept
+        { return dafUnit != nullptr ? dafUnit->editorWidth() : 0; }
+    std::uint32_t pluginEditorHeight() const noexcept
+        { return dafUnit != nullptr ? dafUnit->editorHeight() : 0; }
+    std::unique_ptr<DafEditor> createPluginEditor (std::uintptr_t nativeParent,
+                                                   std::uint32_t width, std::uint32_t height,
+                                                   double scaleFactor,
+                                                   DafEditorCallbacks callbacks,
+                                                   std::string& errorOut)
+    {
+        if (dafUnit == nullptr)
+        {
+            errorOut = "this unit has no plug-in editor.";
+            return nullptr;
+        }
+        return dafUnit->createEditor (nativeParent, width, height, scaleFactor,
+                                      std::move (callbacks), errorOut);
+    }
+
     int paramCount() const noexcept;
     const ParamInfo* paramInfo (int index) const noexcept;
     float getParamValue (int index) const noexcept;

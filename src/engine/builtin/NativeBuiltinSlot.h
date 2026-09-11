@@ -5,7 +5,10 @@
 #include "../hosting/NativeInsertSlot.h"
 
 #include <atomic>
+#include <cstdint>
+#include <memory>
 #include <string>
+#include <utility>
 
 namespace duskstudio::builtin
 {
@@ -63,6 +66,28 @@ public:
         { return instance != nullptr ? instance->getParamValue (index) : 0.0f; }
     void setParamValue (int index, float value) noexcept
         { if (instance != nullptr) instance->setParamValue (index, value); }
+
+    // The plug-in's own editor, for a unit that is one of Dusk's DAF plug-ins.
+    bool hasPluginEditor() const noexcept
+        { return instance != nullptr && instance->hasPluginEditor(); }
+    std::uint32_t pluginEditorWidth() const noexcept
+        { return instance != nullptr ? instance->pluginEditorWidth() : 0; }
+    std::uint32_t pluginEditorHeight() const noexcept
+        { return instance != nullptr ? instance->pluginEditorHeight() : 0; }
+    std::unique_ptr<DafEditor> createPluginEditor (std::uintptr_t nativeParent,
+                                                   std::uint32_t width, std::uint32_t height,
+                                                   double scaleFactor,
+                                                   DafEditorCallbacks callbacks,
+                                                   std::string& errorOut)
+    {
+        if (instance == nullptr)
+        {
+            errorOut = "no unit is loaded.";
+            return nullptr;
+        }
+        return instance->createPluginEditor (nativeParent, width, height, scaleFactor,
+                                             std::move (callbacks), errorOut);
+    }
 
     // MIDI Learn: the control the user moved last in this unit's editor, or -1
     // when none has been touched since it loaded. Written by the editor on the

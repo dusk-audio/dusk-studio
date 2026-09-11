@@ -96,6 +96,18 @@ public:
 
     int latencySamples() const noexcept override { return latency; }
 
+    // The stand-in has no editor; the editor host is covered in daf_editor_host.cpp.
+    bool hasEditor() const noexcept override { return false; }
+    std::uint32_t editorWidth() const noexcept override  { return 0; }
+    std::uint32_t editorHeight() const noexcept override { return 0; }
+    std::unique_ptr<duskstudio::builtin::DafEditor> createEditor (
+        std::uintptr_t, std::uint32_t, std::uint32_t, double,
+        duskstudio::builtin::DafEditorCallbacks, std::string& errorOut) override
+    {
+        errorOut = "the stand-in plug-in has no editor.";
+        return nullptr;
+    }
+
     std::vector<DafParamDesc> descs;
     std::array<float, kNumFakeParams> held {};
     std::vector<Write> log;

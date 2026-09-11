@@ -10,11 +10,96 @@
 
 #include "src/DafPluginInternal.hpp"
 
+#if DUSKSTUDIO_DAF_UNIT_EDITOR
+ #include "src/DafUIInternal.hpp"
+#endif
+
 #include <algorithm>
 #include <cmath>
+#include <exception>
+#include <memory>
+#include <utility>
 #include <vector>
 
 START_NAMESPACE_DAF
+
+#if DUSKSTUDIO_DAF_UNIT_EDITOR
+// The plug-in's own editor over DAF's UIExporter, which owns its window and its
+// event loop. The host places it, drives that loop and feeds it parameter values.
+class ExporterEditor final : public duskstudio::builtin::DafEditor
+{
+public:
+    ExporterEditor (duskstudio::builtin::DafEditorCallbacks hostCallbacks,
+                    const uintptr_t nativeParent, const double sampleRate, void* const dsp,
+                    const uint32_t width, const uint32_t height, const double scaleFactor)
+        : callbacks (std::move (hostCallbacks)),
+          ui (this, nativeParent, sampleRate, editParamCallback, setParamCallback,
+              nullptr, nullptr, setSizeCallback, nullptr, nullptr, dsp, scaleFactor,
+              DGL_NAMESPACE::Application::kTypeAuto, 0, 0xffffffff, "dusk-studio-daf-unit")
+    {
+        ui.setWindowSizeFromHost (width, height);
+    }
+
+    ~ExporterEditor() override { ui.quit(); }
+
+    bool setOffset (const int x, const int y) noexcept override
+    {
+        return ui.setWindowEmbeddedOffset (x, y);
+    }
+
+    void setSize (const uint32_t width, const uint32_t height) override
+    {
+        ui.setWindowSizeFromHost (width, height);
+    }
+
+    // A graphics driver that fails inside the editor's own event loop throws out
+    // of it. The host closes the editor instead of losing the application.
+    bool idle() noexcept override
+    {
+        try
+        {
+            return ui.plugin_idle();
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
+    void parameterChanged (const uint32_t index, const float value) override
+    {
+        ui.parameterChanged (index, value);
+    }
+
+    uint32_t width() const noexcept override  { return ui.getWidth(); }
+    uint32_t height() const noexcept override { return ui.getHeight(); }
+
+private:
+    static void editParamCallback (void* const ptr, const uint32_t index, const bool started)
+    {
+        auto& self = *static_cast<ExporterEditor*> (ptr);
+        if (self.callbacks.gesture)
+            self.callbacks.gesture (index, started);
+    }
+
+    static void setParamCallback (void* const ptr, const uint32_t index, const float value)
+    {
+        auto& self = *static_cast<ExporterEditor*> (ptr);
+        if (self.callbacks.parameterEdited)
+            self.callbacks.parameterEdited (index, value);
+    }
+
+    static void setSizeCallback (void* const ptr, const uint width, const uint height)
+    {
+        auto& self = *static_cast<ExporterEditor*> (ptr);
+        if (self.callbacks.sizeRequested)
+            self.callbacks.sizeRequested (width, height);
+    }
+
+    duskstudio::builtin::DafEditorCallbacks callbacks;
+    UIExporter ui;
+};
+#endif
 
 // DafPlugin over DAF's PluginExporter, the object every DAF format wrapper
 // drives. The static target builds the plug-in with no format wrapper, so this
@@ -113,7 +198,56 @@ public:
        #endif
     }
 
+    bool hasEditor() const noexcept override
+    {
+       #if DUSKSTUDIO_DAF_UNIT_EDITOR
+        return DAF_PLUGIN_HAS_UI;
+       #else
+        return false;
+       #endif
+    }
+
+    uint32_t editorWidth() const noexcept override  { return kEditorWidth; }
+    uint32_t editorHeight() const noexcept override { return kEditorHeight; }
+
+    std::unique_ptr<duskstudio::builtin::DafEditor> createEditor (
+        const uintptr_t nativeParent, const uint32_t width, const uint32_t height,
+        const double scaleFactor, duskstudio::builtin::DafEditorCallbacks callbacks,
+        std::string& errorOut) override
+    {
+       #if DUSKSTUDIO_DAF_UNIT_EDITOR
+        try
+        {
+            return std::unique_ptr<duskstudio::builtin::DafEditor> (
+                new ExporterEditor (std::move (callbacks), nativeParent,
+                                    exporter.getSampleRate(), exporter.getInstancePointer(),
+                                    width, height, scaleFactor));
+        }
+        catch (const std::exception& error)
+        {
+            errorOut = std::string ("cannot embed (") + error.what() + ").";
+        }
+        catch (...)
+        {
+            errorOut = "cannot embed.";
+        }
+       #else
+        (void) nativeParent; (void) width; (void) height; (void) scaleFactor;
+        (void) callbacks;
+        errorOut = "this build was made without the built-in unit editors.";
+       #endif
+        return nullptr;
+    }
+
 private:
+   #if defined (DAF_UI_DEFAULT_WIDTH) && defined (DAF_UI_DEFAULT_HEIGHT)
+    static constexpr uint32_t kEditorWidth  = DAF_UI_DEFAULT_WIDTH;
+    static constexpr uint32_t kEditorHeight = DAF_UI_DEFAULT_HEIGHT;
+   #else
+    static constexpr uint32_t kEditorWidth  = 0;
+    static constexpr uint32_t kEditorHeight = 0;
+   #endif
+
     // PluginExporter's constructor creates the plug-in, which reads the rate and
     // block size DAF stages in these globals. activate() replaces both.
     static void* stageConstruction() noexcept

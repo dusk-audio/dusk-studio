@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace duskstudio::builtin
@@ -48,6 +49,21 @@ public:
     const ParamInfo* paramInfo (int index) const noexcept;
     float getParamValue (int index) const noexcept;
     void  setParamValue (int index, float value) noexcept;
+
+    // The plug-in's own editor. The host drives it; the unit only builds it and
+    // says how big the plug-in wants it.
+    bool hasEditor() const noexcept { return plugin->hasEditor(); }
+    std::uint32_t editorWidth() const noexcept { return plugin->editorWidth(); }
+    std::uint32_t editorHeight() const noexcept { return plugin->editorHeight(); }
+    std::unique_ptr<DafEditor> createEditor (std::uintptr_t nativeParent,
+                                             std::uint32_t width, std::uint32_t height,
+                                             double scaleFactor,
+                                             DafEditorCallbacks callbacks,
+                                             std::string& errorOut)
+    {
+        return plugin->createEditor (nativeParent, width, height, scaleFactor,
+                                     std::move (callbacks), errorOut);
+    }
 
     static constexpr int kStateVersion = 2;
     static constexpr std::uint32_t kWriteRingSize = 1024;

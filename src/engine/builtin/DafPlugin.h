@@ -3,6 +3,7 @@
 #include "../../foundation/TransportPosition.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -25,6 +26,40 @@ struct DafParamDesc
     // A restricted enumeration: the only values the parameter takes, ascending.
     std::vector<float>       enumValues;
     std::vector<std::string> enumLabels;
+};
+
+// What a plug-in's editor tells the host as the user works it. Message thread.
+struct DafEditorCallbacks
+{
+    // A control's gesture opening and closing, which is how the host learns which
+    // parameter was touched last and when to hand keyboard focus back.
+    std::function<void (std::uint32_t index, bool started)> gesture;
+    std::function<void (std::uint32_t index, float value)> parameterEdited;
+    // The editor asking for a size of its own.
+    std::function<void (std::uint32_t width, std::uint32_t height)> sizeRequested;
+};
+
+// A plug-in's own editor, embedded in a native parent the host owns. Every call is
+// message-thread, and the editor is destroyed by releasing it.
+class DafEditor
+{
+public:
+    virtual ~DafEditor() = default;
+
+    // Place the editor inside its parent. False when the display backend cannot
+    // carry an embedded child at all, which is how native Wayland is refused.
+    virtual bool setOffset (int x, int y) noexcept = 0;
+    virtual void setSize (std::uint32_t width, std::uint32_t height) = 0;
+
+    // One turn of the editor's own event loop. False once it has quit or its
+    // graphics stack failed, and the host closes it.
+    virtual bool idle() noexcept = 0;
+
+    // Tell the editor a parameter's value, including the plug-in's output meters.
+    virtual void parameterChanged (std::uint32_t index, float value) = 0;
+
+    virtual std::uint32_t width() const noexcept = 0;
+    virtual std::uint32_t height() const noexcept = 0;
 };
 
 // One of Dusk's own DAF plug-ins compiled into the app, reached through a plain
@@ -54,6 +89,21 @@ public:
                        std::uint32_t frames) noexcept = 0;
 
     virtual int latencySamples() const noexcept = 0;
+
+    // False for a plug-in with no editor, and for a build that left the editor
+    // half out. The size is the editor's own, in its design pixels.
+    virtual bool hasEditor() const noexcept = 0;
+    virtual std::uint32_t editorWidth() const noexcept = 0;
+    virtual std::uint32_t editorHeight() const noexcept = 0;
+
+    // Null with errorOut set when there is no editor to build or the display
+    // cannot carry one.
+    virtual std::unique_ptr<DafEditor> createEditor (std::uintptr_t nativeParent,
+                                                     std::uint32_t width,
+                                                     std::uint32_t height,
+                                                     double scaleFactor,
+                                                     DafEditorCallbacks callbacks,
+                                                     std::string& errorOut) = 0;
 };
 
 // Defined by each plug-in's bridge, in the builds that compile it.
