@@ -58,6 +58,13 @@ public:
         loopStart.store (s, std::memory_order_relaxed);
         loopEnd.store   (e, std::memory_order_relaxed);
     }
+    // A loop bracket placed by hand: loop is on exactly when the pair makes a
+    // range, so in-then-out needs no separate L press.
+    void        placeLoopRange (std::int64_t s, std::int64_t e) noexcept
+    {
+        setLoopRange (s, e);
+        setLoopEnabled (e > s);
+    }
 
     // Punch-in / punch-out window. While recording with punchEnabled, the
     // audio engine only commits samples in [punchIn, punchOut) to the per-track
@@ -71,6 +78,14 @@ public:
     {
         punchIn.store  (s, std::memory_order_relaxed);
         punchOut.store (e, std::memory_order_relaxed);
+    }
+    // A punch bracket placed by hand: punch is armed exactly when the pair
+    // makes a range. A pair collapsed to one point disarms, because that
+    // range would record nothing.
+    void        placePunchRange (std::int64_t s, std::int64_t e) noexcept
+    {
+        setPunchRange (s, e);
+        setPunchEnabled (e > s);
     }
 
 private:

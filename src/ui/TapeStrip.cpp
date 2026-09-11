@@ -1040,14 +1040,14 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
         m.addItem ("Set loop in here",  [&transport, clickedSample]
         {
             const auto end = transport.getLoopEnd();
-            transport.setLoopRange (clickedSample,
-                                     end > clickedSample ? end : clickedSample);
+            transport.placeLoopRange (clickedSample,
+                                       end > clickedSample ? end : clickedSample);
         });
         m.addItem ("Set loop out here", [&transport, clickedSample]
         {
             const auto start = transport.getLoopStart();
-            transport.setLoopRange (start < clickedSample ? start : clickedSample,
-                                     clickedSample);
+            transport.placeLoopRange (start < clickedSample ? start : clickedSample,
+                                       clickedSample);
         });
         m.addItem ("Clear loop", [&transport]
         {
@@ -1056,26 +1056,17 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
         });
         m.addSeparator();
         m.addSectionHeader ("Punch");
-        // Punch arms once in and out form a range, so in-then-out records
-        // the punch without a separate P press. A pair collapsed to one
-        // point disarms instead: that range would record nothing.
-        const auto armPunchForRange = [&transport]
-        {
-            transport.setPunchEnabled (transport.getPunchOut() > transport.getPunchIn());
-        };
-        m.addItem ("Set punch in here",  [&transport, clickedSample, armPunchForRange]
+        m.addItem ("Set punch in here",  [&transport, clickedSample]
         {
             const auto end = transport.getPunchOut();
-            transport.setPunchRange (clickedSample,
-                                      end > clickedSample ? end : clickedSample);
-            armPunchForRange();
+            transport.placePunchRange (clickedSample,
+                                        end > clickedSample ? end : clickedSample);
         });
-        m.addItem ("Set punch out here", [&transport, clickedSample, armPunchForRange]
+        m.addItem ("Set punch out here", [&transport, clickedSample]
         {
             const auto start = transport.getPunchIn();
-            transport.setPunchRange (start < clickedSample ? start : clickedSample,
-                                      clickedSample);
-            armPunchForRange();
+            transport.placePunchRange (start < clickedSample ? start : clickedSample,
+                                        clickedSample);
         });
         m.addItem ("Clear punch", [&transport]
         {
@@ -1821,9 +1812,7 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
                     [safeThis = juce::Component::SafePointer<TapeStrip> (this), a, b]
                     {
                         if (safeThis == nullptr) return;
-                        auto& transport = safeThis->engine.getTransport();
-                        transport.setLoopRange (a, b);
-                        transport.setLoopEnabled (true);
+                        safeThis->engine.getTransport().placeLoopRange (a, b);
                         safeThis->rulerSelection = {};
                         safeThis->repaint();
                     });
@@ -1831,9 +1820,7 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
                     [safeThis = juce::Component::SafePointer<TapeStrip> (this), a, b]
                     {
                         if (safeThis == nullptr) return;
-                        auto& transport = safeThis->engine.getTransport();
-                        transport.setPunchRange (a, b);
-                        transport.setPunchEnabled (true);
+                        safeThis->engine.getTransport().placePunchRange (a, b);
                         safeThis->rulerSelection = {};
                         safeThis->repaint();
                     });
