@@ -1,4 +1,4 @@
-src/DuskStudioApp.cpp	116
+src/DuskStudioApp.cpp	114
 src/DuskStudioApp.h	7
 src/dsp/AuxLaneStrip.cpp	17
 src/dsp/AuxLaneStrip.h	23
@@ -99,7 +99,7 @@ src/ui/EditCursors.cpp	58
 src/ui/EditCursors.h	7
 src/ui/EditModeToolbar.cpp	48
 src/ui/EditModeToolbar.h	10
-src/ui/EmbeddedModal.h	64
+src/ui/EmbeddedModal.h	62
 src/ui/FadeCurve.h	10
 src/ui/FreezeDialog.cpp	36
 src/ui/FreezeDialog.h	9
@@ -114,7 +114,7 @@ src/ui/MainComponent.h	57
 src/ui/MasterStripComponent.cpp	330
 src/ui/MasterStripComponent.h	57
 src/ui/MasteringView.cpp	149
-src/ui/MasteringView.h	28
+src/ui/MasteringView.h	27
 src/ui/MidiBindingsPanel.cpp	49
 src/ui/MidiBindingsPanel.h	15
 src/ui/MiniTimelineStrip.cpp	19

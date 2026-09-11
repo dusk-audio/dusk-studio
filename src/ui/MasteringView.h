@@ -16,32 +16,6 @@ class MasteringPlayer;
 
 namespace imgui { class DuskPanelWindow; }
 
-#if DUSKSTUDIO_HAS_NATIVE_UI
-// A JUCE stand-in for one of the mastering stage's native panels. Its bounds are where
-// the framework child goes, and its visibility is the one thing the covering-surface
-// machinery already toggles: the tag is what makes an EmbeddedModal take a native
-// surface down and put it back, and a framework child is exactly that. DGL refuses to
-// hide a window while it is embedded, so "hidden" here means closed and reopened.
-class NativePanelProxy final : public juce::Component
-{
-public:
-    NativePanelProxy()
-    {
-        getProperties().set (kPluginEditorTag, true);
-        setInterceptsMouseClicks (false, false);
-    }
-
-    std::function<void()> onVisibilityChanged;
-
-private:
-    void visibilityChanged() override
-    {
-        if (onVisibilityChanged)
-            onVisibilityChanged();
-    }
-};
-#endif
-
 // Inline waveform above the mastering controls + playhead line
 // that follows MasteringPlayer. Click anywhere to seek.
 class WaveformDisplay final : public juce::Component, private dusk::Timer
