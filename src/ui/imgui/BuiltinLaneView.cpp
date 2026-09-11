@@ -205,6 +205,9 @@ std::vector<Group> buildGroups (const builtin::NativeBuiltinSlot& slot, unsigned
     std::vector<Group> groups;
     const int count = slot.paramCount();
     std::vector<bool> placed (static_cast<std::size_t> (std::max (0, count)), false);
+    for (int i = 0; i < count; ++i)
+        if (const auto* info = slot.paramInfo (i); info == nullptr || info->hidden)
+            placed[static_cast<std::size_t> (i)] = true;
 
     const auto indexOf = [&slot, count] (const char* id)
     {

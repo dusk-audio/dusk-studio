@@ -63,20 +63,34 @@ bool BuiltinInstance::create (const BuiltinBundle& bundle, const std::string& pl
         return false;
     }
 
+    id = info->id;
+    if (info->createPlugin != nullptr)
+    {
+        auto plugin = info->createPlugin();
+        if (plugin == nullptr)
+        {
+            errorOut = "no plug-in for built-in unit '" + id + "'";
+            return false;
+        }
+        dafUnit = std::make_unique<DafUnitInstance> (id, std::move (plugin));
+        return true;
+    }
+
     unit = createUnit (info->id);
     if (unit == nullptr)
     {
-        errorOut = "no factory for built-in unit '" + std::string (info->id) + "'";
+        errorOut = "no factory for built-in unit '" + id + "'";
         return false;
     }
 
-    id = info->id;
     layout = makeLayout (info->isInstrument);
     return true;
 }
 
 bool BuiltinInstance::activate (double sampleRate, int maxBlockFrames, std::string& errorOut)
 {
+    if (dafUnit != nullptr)
+        return dafUnit->activate (sampleRate, maxBlockFrames, errorOut);
     if (unit == nullptr)
     {
         errorOut = "no unit";
@@ -95,12 +109,19 @@ bool BuiltinInstance::activate (double sampleRate, int maxBlockFrames, std::stri
 
 void BuiltinInstance::deactivate()
 {
+    if (dafUnit != nullptr)
+    {
+        dafUnit->deactivate();
+        return;
+    }
     active.store (false, std::memory_order_release);
     preparedBlockFrames = 0;
 }
 
 bool BuiltinInstance::reactivate (double sampleRate, int maxBlockFrames, std::string& errorOut)
 {
+    if (dafUnit != nullptr)
+        return dafUnit->reactivate (sampleRate, maxBlockFrames, errorOut);
     // The unit keeps its parameters across a re-prepare, so a rate change costs
     // nothing but the smoother re-seed inside prepare().
     active.store (false, std::memory_order_release);
@@ -109,6 +130,11 @@ bool BuiltinInstance::reactivate (double sampleRate, int maxBlockFrames, std::st
 
 void BuiltinInstance::processBlock (const hosting::PortBuffers& io) noexcept
 {
+    if (dafUnit != nullptr)
+    {
+        dafUnit->processBlock (io);
+        return;
+    }
     if (! active.load (std::memory_order_acquire) || unit == nullptr)
         return;
     if (io.numFrames <= 0 || io.numFrames > preparedBlockFrames)
@@ -133,6 +159,8 @@ void BuiltinInstance::processBlock (const hosting::PortBuffers& io) noexcept
 
 bool BuiltinInstance::saveState (std::vector<std::uint8_t>& out) const
 {
+    if (dafUnit != nullptr)
+        return dafUnit->saveState (out);
     out.clear();
     if (unit == nullptr) return false;
 
@@ -152,6 +180,8 @@ bool BuiltinInstance::saveState (std::vector<std::uint8_t>& out) const
 
 bool BuiltinInstance::loadState (const std::vector<std::uint8_t>& in)
 {
+    if (dafUnit != nullptr)
+        return dafUnit->loadState (in);
     if (unit == nullptr || in.empty()) return false;
 
     const auto root = dusk::json::Json::parse (
@@ -173,13 +203,34 @@ bool BuiltinInstance::loadState (const std::vector<std::uint8_t>& in)
 
 int BuiltinInstance::getLatencySamples() const noexcept
 {
+    if (dafUnit != nullptr)
+        return dafUnit->getLatencySamples();
     if (! active.load (std::memory_order_acquire) || unit == nullptr) return 0;
     return std::max (0, unit->latencySamples());
 }
 
+int BuiltinInstance::paramCount() const noexcept
+{
+    if (dafUnit != nullptr) return dafUnit->paramCount();
+    return unit != nullptr ? unit->paramCount() : 0;
+}
+
 const ParamInfo* BuiltinInstance::paramInfo (int index) const noexcept
 {
+    if (dafUnit != nullptr) return dafUnit->paramInfo (index);
     if (unit == nullptr || index < 0 || index >= unit->paramCount()) return nullptr;
     return &unit->paramInfo (index);
+}
+
+float BuiltinInstance::getParamValue (int index) const noexcept
+{
+    if (dafUnit != nullptr) return dafUnit->getParamValue (index);
+    return unit != nullptr ? unit->getParam (index) : 0.0f;
+}
+
+void BuiltinInstance::setParamValue (int index, float value) noexcept
+{
+    if (dafUnit != nullptr) dafUnit->setParamValue (index, value);
+    else if (unit != nullptr) unit->setParam (index, value);
 }
 } // namespace duskstudio::builtin

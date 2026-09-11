@@ -52,8 +52,7 @@ struct Column
 struct Section
 {
     const char* name = nullptr;
-    int firstParam = 0;
-    int count = 0;
+    std::vector<int> params;
 };
 
 class BuiltinUnitViewImpl final : public DuskPanelView
@@ -96,18 +95,18 @@ void BuiltinUnitViewImpl::buildLayout()
     for (int i = 0; i < count; ++i)
     {
         const auto* info = slot.paramInfo (i);
-        if (info == nullptr) continue;
+        if (info == nullptr || info->hidden) continue;
         const char* name = info->section != nullptr ? info->section : "";
         if (sections.empty() || std::string (sections.back().name) != name)
-            sections.push_back ({ name, i, 0 });
-        ++sections.back().count;
+            sections.push_back ({ name, {} });
+        sections.back().params.push_back (i);
     }
 
     // Pack sections into columns without splitting one, so a tall unit grows
     // sideways rather than off the bottom of the window.
     for (int s = 0; s < (int) sections.size(); ++s)
     {
-        const int rows = sections[(size_t) s].count + 1;
+        const int rows = (int) sections[(size_t) s].params.size() + 1;
         if (columns.empty()
             || (columns.back().rowCount + rows > kMaxRowsPerColumn
                 && columns.back().sectionCount > 0))
@@ -234,7 +233,7 @@ void BuiltinUnitViewImpl::draw (dw::Context& ctx, ImVec2 origin, ImVec2 size)
             formHeading (ctx, { x, y }, columnW, ctx.s (kRowH), section.name);
             y += rowPitch;
 
-            for (int p = section.firstParam; p < section.firstParam + section.count; ++p)
+            for (const int p : section.params)
             {
                 drawRow (ctx, { x, y }, p);
                 y += rowPitch;

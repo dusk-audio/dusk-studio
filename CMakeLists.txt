@@ -683,6 +683,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/MidiTimeCodeEmitter.cpp
     src/engine/builtin/BuiltinInstance.cpp
     src/engine/builtin/BuiltinRegistry.cpp
+    src/engine/builtin/DafUnitInstance.cpp
     src/engine/builtin/UtilityUnit.cpp
     # DeviceManager: native orchestrator on Linux (DeviceManager.cpp), JUCE-wrapped
     # fallback off Linux (DeviceManagerJuce.cpp). Gated below the target_sources().
