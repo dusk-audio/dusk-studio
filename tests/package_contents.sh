@@ -87,6 +87,55 @@ fi
 grep -q "emptypath.txt:1: record has an empty path" "$WORK/err4" \
     || fail "the empty-path record was not reported with its contract line"
 
+# A link record wants a link to exactly that target, checked without following
+# it: the target lives on the machine that opens the package, not in it.
+LINKS="$WORK/links.txt"
+printf 'macos\tBundle.app\nmacos\tApplications -> /Applications\n' > "$LINKS"
+mkdir -p "$WORK/dmg/Bundle.app"
+ln -s /Applications "$WORK/dmg/Applications"
+DUSKSTUDIO_CONTENTS_CONTRACT="$LINKS" "$SCRIPT" macos "$WORK/dmg" >/dev/null \
+    || fail "an image carrying its Applications link was rejected"
+
+rm "$WORK/dmg/Applications"
+if DUSKSTUDIO_CONTENTS_CONTRACT="$LINKS" "$SCRIPT" macos "$WORK/dmg" \
+       >/dev/null 2>"$WORK/err5"; then
+    fail "an image without its Applications link was accepted"
+fi
+grep -q "Applications -> /Applications" "$WORK/err5" || fail "the missing link was not named"
+
+mkdir "$WORK/dmg/Applications"
+if DUSKSTUDIO_CONTENTS_CONTRACT="$LINKS" "$SCRIPT" macos "$WORK/dmg" \
+       >/dev/null 2>"$WORK/err6"; then
+    fail "a directory was accepted in place of the Applications link"
+fi
+grep -q "^  Applications -> /Applications$" "$WORK/err6" \
+    || fail "the directory standing in for the link was not reported"
+rmdir "$WORK/dmg/Applications"
+
+ln -s /Volumes "$WORK/dmg/Applications"
+if DUSKSTUDIO_CONTENTS_CONTRACT="$LINKS" "$SCRIPT" macos "$WORK/dmg" \
+       >/dev/null 2>"$WORK/err7"; then
+    fail "a link to the wrong target was accepted"
+fi
+grep -q "^  Applications -> /Applications$" "$WORK/err7" \
+    || fail "the link to the wrong target was not reported"
+
+printf 'windows\tApplications -> /Applications\n' > "$WORK/winlink.txt"
+if DUSKSTUDIO_CONTENTS_CONTRACT="$WORK/winlink.txt" "$SCRIPT" windows "$WORK/win" \
+       >/dev/null 2>"$WORK/err8"; then
+    fail "a link record was accepted for an MSI"
+fi
+grep -q "winlink.txt:1: an MSI extraction carries no links" "$WORK/err8" \
+    || fail "the Windows link record was not reported with its contract line"
+
+printf 'macos\tApplications -> \n' > "$WORK/halflink.txt"
+if DUSKSTUDIO_CONTENTS_CONTRACT="$WORK/halflink.txt" "$SCRIPT" macos "$WORK/dmg" \
+       >/dev/null 2>"$WORK/err9"; then
+    fail "a link record without a target was accepted"
+fi
+grep -q "halflink.txt:1: link record needs both a path and a target" "$WORK/err9" \
+    || fail "the half link record was not reported with its contract line"
+
 printf 'solaris\tApp\n' > "$WORK/unknown.txt"
 DUSKSTUDIO_CONTENTS_CONTRACT="$WORK/unknown.txt" "$SCRIPT" linux "$WORK/good" >/dev/null 2>&1 \
     && fail "an unknown platform tag was accepted"

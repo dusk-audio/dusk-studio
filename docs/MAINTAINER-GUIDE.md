@@ -771,7 +771,9 @@ jobs runs
 against the built artifact before staging it, so a packager that stops shipping
 a file fails the release rather than the user's first launch. Windows is matched
 by file name rather than path, because an MSI is a database and 7z flattens it
-on extraction. Adding a file to one package means adding its record here, and
+on extraction. A record written as `<path> -> <target>` requires a symbolic link
+to exactly that target; the DMG's `Applications -> /Applications` shortcut is
+pinned that way. Adding a file to one package means adding its record here, and
 the `package-contents-checker` ctest case covers the checker itself. Project
 templates are deliberately absent: they ship as code in
 `src/session/SessionTemplates.h` and reach the user through File -> New, so

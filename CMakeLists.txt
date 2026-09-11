@@ -378,6 +378,16 @@ if(APPLE)
                           "$<TARGET_BUNDLE_DIR:DuskStudio>"
         COMMENT "patch Info.plist + codesign DuskStudio.app (identity='${DUSKSTUDIO_CODESIGN_IDENTITY}')"
         VERBATIM)
+
+    # Settings > Quickstart looks in Contents/Resources, which travels with an
+    # app dragged out of the DMG; the image root keeps its copy for reading
+    # before the app is opened. LINK_DEPENDS relinks on an edit, so the
+    # signature above re-seals the copied file instead of going stale.
+    set(DUSKSTUDIO_QUICKSTART "${CMAKE_CURRENT_SOURCE_DIR}/QUICKSTART.md")
+    target_sources(DuskStudio PRIVATE "${DUSKSTUDIO_QUICKSTART}")
+    set_source_files_properties("${DUSKSTUDIO_QUICKSTART}" PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources)
+    set_property(TARGET DuskStudio APPEND PROPERTY LINK_DEPENDS "${DUSKSTUDIO_QUICKSTART}")
 endif()
 
 # Dusk Audio plugins repo — donor for the analog DSP cores (4K EQ filter chain,
@@ -1795,9 +1805,8 @@ endif()
 # an ad-hoc codesign (unsigned by design - no notarization).
 set(CPACK_DMG_FORMAT                "UDZO")
 set(CPACK_DMG_VOLUME_NAME           "Dusk Studio ${DUSKSTUDIO_VERSION}")
-# CPack adds an /Applications symlink by default. Keep the image's root to the
-# three release artefacts promised by the packaging contract.
-set(CPACK_DMG_DISABLE_APPLICATIONS_SYMLINK ON)
+# CPack's default /Applications link stays: it is what the app is dragged onto
+# to install, and packaging/contents.txt requires it.
 
 # Package filename platform suffix. CPack defaults to the kernel name
 # ("Darwin") on macOS and "win64" on Windows - override both to a user-facing,

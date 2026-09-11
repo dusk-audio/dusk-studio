@@ -8,6 +8,11 @@
 # Read-only. Exits non-zero listing every missing path, so one run reports the
 # whole gap rather than the first hole in it.
 #
+# A record written as `<path> -> <target>` requires <path> to be a symbolic link
+# to exactly <target>, which is how the DMG's Applications shortcut is pinned. A
+# link is checked as a link rather than followed: its target lives on the
+# machine the package is opened on, not in the package.
+#
 # Windows is matched by file name rather than path: an MSI is a database and 7z
 # flattens it on extraction, so the layout the contract records cannot be
 # checked there. The other two are checked as literal paths.
@@ -78,6 +83,18 @@ while IFS= read -r line || [[ -n "$line" ]]; do
         linux|macos|windows) ;;
         *) echo "error: ${CONTRACT}:${lineNo}: unknown platform '$recordPlatform'" >&2; exit 2 ;;
     esac
+    if [[ "$recordPath" == *" -> "* ]]; then
+        linkPath="${recordPath%% -> *}"
+        linkTarget="${recordPath#* -> }"
+        if [[ -z "${linkPath//[[:space:]]/}" || -z "${linkTarget//[[:space:]]/}" ]]; then
+            echo "error: ${CONTRACT}:${lineNo}: link record needs both a path and a target" >&2
+            exit 2
+        fi
+        if [[ "$recordPlatform" == "windows" ]]; then
+            echo "error: ${CONTRACT}:${lineNo}: an MSI extraction carries no links" >&2
+            exit 2
+        fi
+    fi
     [[ "$recordPlatform" == "$PLATFORM" ]] && expected+=("$recordPath")
 done < "$CONTRACT"
 
@@ -100,6 +117,12 @@ for path in "${expected[@]}"; do
             fi
         done < <(find "$ROOT" -type f)
         [[ $found -eq 1 ]] || missing+=("$path")
+    elif [[ "$path" == *" -> "* ]]; then
+        linkPath="${path%% -> *}"
+        linkTarget="${path#* -> }"
+        if [[ ! -L "$ROOT/$linkPath" || "$(readlink "$ROOT/$linkPath")" != "$linkTarget" ]]; then
+            missing+=("$path")
+        fi
     elif [[ ! -e "$ROOT/$path" ]]; then
         missing+=("$path")
     fi

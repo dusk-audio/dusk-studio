@@ -2,6 +2,8 @@
 #
 # One record per line: <platform><TAB><path>, where <path> is relative to the
 # package's own install root. Blank lines and lines starting with # are ignored.
+# A path written as `<path> -> <target>` must be a symbolic link to exactly
+# <target>; linux and macos only, since an MSI extraction carries no links.
 # scripts/verify-package-contents.sh reads this and the three release.yml
 # packaging jobs run it before anything is uploaded, so a packager that stops
 # shipping a file fails the release rather than the user's first launch.
@@ -38,9 +40,15 @@ windows	LICENSE
 windows	LICENSES.txt
 
 # --- Getting started ---
+# The macOS bundle carries a second copy, because the image root's is left
+# behind when only the app is dragged to Applications.
 linux	QUICKSTART.md
 macos	QUICKSTART.md
+macos	DuskStudio.app/Contents/Resources/QUICKSTART.md
 windows	QUICKSTART.md
+
+# --- macOS install shortcut: what the app is dragged onto ---
+macos	Applications -> /Applications
 
 # --- Linux desktop integration ---
 linux	install.sh
