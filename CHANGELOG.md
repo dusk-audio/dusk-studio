@@ -97,9 +97,12 @@ that will carry a signed 1.0.
   now sends unsigned-beta users to **Privacy & Security > Open Anyway** after
   the first blocked launch, and the manual uses the names of the shipped DMG
   and app bundle.
-- **Punch points set from the ruler menu now arm punch recording.** Setting the
-  in and out points separately arms punch once they form a nonzero range, so
-  the next take records between the brackets instead of capturing the full pass.
+- **Punch set from the ruler menu arms punch** (#592). **Set punch in here**
+  and **Set punch out here** turn punch on once the in point sits before the out
+  point, as dragging a range and choosing **Set punch in / out here** already
+  did, so the take lands inside the brackets instead of covering the whole
+  pass. Loop and punch brackets are drawn hollow and faint while their mode is
+  off, so a range that is set but not armed shows at a glance.
 - **Logging out no longer skips the unsaved-changes prompt.** A termination
   signal, a logout or a shutdown runs the same staged shutdown as **File >
   Quit**, so the prompt appears and plugin child processes are not left to be

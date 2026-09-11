@@ -1,4 +1,4 @@
-src/DuskStudioApp.cpp	116
+src/DuskStudioApp.cpp	114
 src/DuskStudioApp.h	7
 src/dsp/AuxLaneStrip.cpp	17
 src/dsp/AuxLaneStrip.h	23
@@ -146,7 +146,7 @@ src/ui/SystemStatusBar.cpp	31
 src/ui/SystemStatusBar.h	11
 src/ui/TapePanel.cpp	77
 src/ui/TapePanel.h	14
-src/ui/TapeStrip.cpp	351
+src/ui/TapeStrip.cpp	345
 src/ui/TapeStrip.h	53
 src/ui/TransportBar.cpp	183
 src/ui/TransportBar.h	32
