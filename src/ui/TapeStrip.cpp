@@ -1047,17 +1047,26 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
         });
         m.addSeparator();
         m.addSectionHeader ("Punch");
-        m.addItem ("Set punch in here",  [&transport, clickedSample]
+        // Punch arms once in and out form a range, so in-then-out records
+        // the punch without a separate P press. A pair collapsed to one
+        // point disarms instead: that range would record nothing.
+        const auto armPunchForRange = [&transport]
+        {
+            transport.setPunchEnabled (transport.getPunchOut() > transport.getPunchIn());
+        };
+        m.addItem ("Set punch in here",  [&transport, clickedSample, armPunchForRange]
         {
             const auto end = transport.getPunchOut();
             transport.setPunchRange (clickedSample,
                                       end > clickedSample ? end : clickedSample);
+            armPunchForRange();
         });
-        m.addItem ("Set punch out here", [&transport, clickedSample]
+        m.addItem ("Set punch out here", [&transport, clickedSample, armPunchForRange]
         {
             const auto start = transport.getPunchIn();
             transport.setPunchRange (start < clickedSample ? start : clickedSample,
                                       clickedSample);
+            armPunchForRange();
         });
         m.addItem ("Clear punch", [&transport]
         {
@@ -3675,8 +3684,10 @@ void TapeStrip::paint (juce::Graphics& g)
     // Loop / punch brackets
     // Translucent fill across the track area + a solid bar at the top so
     // the region is unambiguous even when the underlying tracks are dense.
-    // Optional `pillLabel` draws a small filled label at both endpoints,
-    // matching the in/out marker style of pro DAWs.
+    // Optional `pillLabel` draws a small label at both endpoints, matching
+    // the in/out marker style of pro DAWs. A bracket whose mode is off keeps
+    // its place but is drawn hollow and faint, so "set but not armed" reads
+    // at a glance.
     auto drawRange = [&] (std::int64_t start, std::int64_t end,
                            juce::Colour colour, bool enabled,
                            const juce::String& pillLabel)
@@ -3684,6 +3695,33 @@ void TapeStrip::paint (juce::Graphics& g)
         if (end < start) return;
         const int x0Raw = xForSample (start);
         const int x1Raw = xForSample (end);
+
+        g.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
+        const int textW = std::max (40,
+            g.getCurrentFont().getStringWidth (pillLabel) + 10);
+        const int pillH = kRulerPillBandH - 2;     // small gap above the bar
+        const int pillY = ruler.getY() + kRulerTickBandH;
+
+        // Endpoint pills sit in the pill band of the ruler, above the
+        // bracket bar, so the pill+bar reads as a single bracket shape.
+        auto drawPill = [&] (int xCentre)
+        {
+            const int pillX = jlimit (col.getX(), col.getRight() - textW,
+                                      xCentre - textW / 2);
+            const juce::Rectangle<int> r (pillX, pillY, textW, pillH);
+            if (enabled)
+            {
+                g.setColour (colour);
+                g.fillRoundedRectangle (r.toFloat(), 3.0f);
+                g.setColour (juce::Colours::white);
+            }
+            else
+            {
+                g.setColour (colour.withAlpha (0.6f));
+                g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 3.0f, 1.0f);
+            }
+            g.drawText (pillLabel, r, juce::Justification::centred, false);
+        };
 
         // Zero-width = a single in/out point set, partner not yet placed (e.g.
         // right after Shift+[ before Shift+] lands). Draw a single bracket
@@ -3694,24 +3732,11 @@ void TapeStrip::paint (juce::Graphics& g)
             if (start > 0 && x0Raw >= col.getX() && x0Raw <= col.getRight())
             {
                 constexpr int kBarH = 4;
-                g.setColour (colour.withAlpha (enabled ? 1.0f : 0.7f));
+                g.setColour (colour.withAlpha (enabled ? 1.0f : 0.45f));
                 g.fillRect (x0Raw, kRulerH, 1, getHeight() - kRulerH);        // thin stem
                 g.fillRect (x0Raw - 1, ruler.getBottom() - kBarH, 3, kBarH);  // bracket foot
                 if (pillLabel.isNotEmpty())
-                {
-                    g.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
-                    const int textW = std::max (40,
-                        g.getCurrentFont().getStringWidth (pillLabel) + 10);
-                    const int pillH = kRulerPillBandH - 2;
-                    const int pillY = ruler.getY() + kRulerTickBandH;
-                    const int pillX = jlimit (col.getX(), col.getRight() - textW,
-                                                    x0Raw - textW / 2);
-                    juce::Rectangle<int> r (pillX, pillY, textW, pillH);
-                    g.setColour (colour.withAlpha (enabled ? 1.0f : 0.7f));
-                    g.fillRoundedRectangle (r.toFloat(), 3.0f);
-                    g.setColour (juce::Colours::white);
-                    g.drawText (pillLabel, r, juce::Justification::centred, false);
-                }
+                    drawPill (x0Raw);
             }
             return;
         }
@@ -3722,40 +3747,19 @@ void TapeStrip::paint (juce::Graphics& g)
 
         // Translucent fill across the track area so the range reads as
         // "this stretch is the loop/punch zone" without competing with
-        // recorded regions. Brighter when the toggle's on.
-        g.setColour (colour.withAlpha (enabled ? 0.18f : 0.08f));
+        // recorded regions.
+        g.setColour (colour.withAlpha (enabled ? 0.18f : 0.05f));
         g.fillRect (x0, kRulerH, x1 - x0, getHeight() - kRulerH);
 
-        // Solid bracket bar across the bottom of the ruler. Full opacity
-        // when enabled; half-opacity when the bounds are set but the
+        // Solid bracket bar across the bottom of the ruler. Faint while the
         // toggle is off, so the user can still see where the range will
         // jump to when they re-enable.
         constexpr int kBarH = 4;
-        g.setColour (colour.withAlpha (enabled ? 1.0f : 0.55f));
+        g.setColour (colour.withAlpha (enabled ? 1.0f : 0.35f));
         g.fillRect (x0, ruler.getBottom() - kBarH, x1 - x0, kBarH);
 
-        // Endpoint pills - sit in the pill band of the ruler, above the
-        // bracket bar, with rounded "tail" pointing down into the bar so
-        // the pill+bar reads as a single bracket shape.
         if (pillLabel.isNotEmpty())
         {
-            g.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
-            const int textW = std::max (40,
-                g.getCurrentFont().getStringWidth (pillLabel) + 10);
-            const int pillH = kRulerPillBandH - 2;     // small gap above the bar
-            const int pillY = ruler.getY() + kRulerTickBandH;
-
-            auto drawPill = [&] (int xCentre)
-            {
-                int pillX = xCentre - textW / 2;
-                pillX = jlimit (col.getX(), col.getRight() - textW, pillX);
-                juce::Rectangle<int> r (pillX, pillY, textW, pillH);
-                g.setColour (colour.withAlpha (enabled ? 1.0f : 0.7f));
-                g.fillRoundedRectangle (r.toFloat(), 3.0f);
-                g.setColour (juce::Colours::white);
-                g.drawText (pillLabel, r, juce::Justification::centred, false);
-            };
-
             if (x0Raw >= col.getX() && x0Raw <= col.getRight()) drawPill (x0Raw);
             if (x1Raw >= col.getX() && x1Raw <= col.getRight()
                 && std::abs (x1Raw - x0Raw) > textW + 8)
