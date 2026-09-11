@@ -8,6 +8,7 @@
 #include "EditCursors.h"
 #include "EmbeddedModal.h"
 #include "FadeCurve.h"
+#include "TimelineFollow.h"
 #include "../util/StringParsing.h"
 #include <cmath>
 #include <string>
@@ -430,8 +431,11 @@ std::int64_t TapeStrip::rightmostContentSample() const noexcept
 {
     // The rightmost sample any content occupies - audio AND MIDI regions, plus
     // the playhead. Including MIDI keeps a MIDI-only session in view; an audio-
-    // only scan left its regions off-screen.
-    std::int64_t maxSample = engine.getTransport().getPlayhead();
+    // only scan left its regions off-screen. While recording the playhead is
+    // the growing take: counting it would zoom the view out under the user as
+    // the take runs, so it is left out and the view pages to follow instead.
+    const auto& transport = engine.getTransport();
+    std::int64_t maxSample = transport.isRecording() ? 0 : transport.getPlayhead();
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         for (const auto& r : session.track (t).regions)
@@ -454,15 +458,6 @@ double TapeStrip::pixelsPerSecond() const noexcept
     auto col = tracksColumnBounds();
     if (col.getWidth() <= 0) return 0.0;
     const double autoFit = (double) col.getWidth() / maxSeconds;
-
-    // While recording, force fit-to-window so the growing playhead +
-    // freshly-captured audio stay on screen instead of running off the
-    // right edge at whatever userZoomFactor was selected pre-record.
-    // User's zoom factor is preserved and re-applied the moment STOP
-    // fires (recording flag clears).
-    if (engine.getTransport().isRecording())
-        return autoFit;
-
     return autoFit * (double) jlimit (0.1f, 32.0f, userZoomFactor);
 }
 
@@ -824,16 +819,7 @@ void TapeStrip::timerCallback()
         stateChanged = true;
     }
 
-    // Force a full repaint on the Stopped <-> Recording transition so
-    // the live-recording overlay paints / clears the moment the user
-    // presses Record / Stop, not a few frames later when the playhead
-    // band-repaint catches up.
-    const bool nowRec = transport.isRecording();
-    if (nowRec != lastIsRecording)
-    {
-        lastIsRecording = nowRec;
-        stateChanged = true;
-    }
+    syncRecordingState();
 
     // Poll arm-flag changes - the user can toggle ARM from the channel
     // strip at any time, and that flips a row into / out of the visible
@@ -843,52 +829,75 @@ void TapeStrip::timerCallback()
 
     if (stateChanged) repaint();
 
-    // During recording, pixelsPerSecond auto-shrinks every frame as the
-    // playhead grows, so the bar grid + existing regions also shift -
-    // a thin-band playhead repaint isn't enough. Full repaint keeps
-    // ruler labels + region waveforms aligned with the live playhead.
-    // Stays at the timer's 30 Hz; a full-strip repaint per vblank would
-    // be needlessly heavy. Playback's band repaint lives on the vblank
+    // During recording the live take overlay grows with the playhead and the
+    // view pages to follow it, so a thin-band playhead repaint isn't enough.
+    // Stays at the timer's 30 Hz; a full-strip repaint per vblank would be
+    // needlessly heavy. Playback's band repaint lives on the vblank
     // (updatePlayheadBand).
-    if (nowRec)
+    if (transport.isRecording())
     {
         const auto now = transport.getPlayhead();
         if (now != lastPlayhead)
         {
             lastPlayhead = now;
+            followPlayhead (now);
             repaint();
         }
     }
 }
 
+void TapeStrip::syncRecordingState()
+{
+    const bool nowRec = engine.getTransport().isRecording();
+    if (nowRec == lastIsRecording) return;
+    lastIsRecording = nowRec;
+
+    // Stop has committed the take and sent the playhead wherever Playhead on
+    // Stop says. Fit-to-window (zoom <= 1) has no horizontal scroll of its
+    // own, so it drops the page it turned while recording.
+    if (! nowRec)
+    {
+        if (userZoomFactor <= 1.0f)
+            scrollSamples = 0;
+        followPlayhead (engine.getTransport().getPlayhead());
+    }
+
+    // Full repaint so the live-recording overlay paints / clears the moment
+    // the user presses Record / Stop.
+    repaint();
+}
+
+bool TapeStrip::followPlayhead (std::int64_t playhead) noexcept
+{
+    const double sr = engine.getCurrentSampleRate();
+    const double px = pixelsPerSecond();
+    const auto  col = tracksColumnBounds();
+    if (sr <= 0.0 || px <= 0.0 || col.getWidth() <= 0) return false;
+
+    const auto visible = (std::int64_t) std::llround ((double) col.getWidth() / px * sr);
+    const auto next = followPlayheadScroll (playhead, scrollSamples, visible);
+    if (next == scrollSamples) return false;
+    scrollSamples = next;
+    return true;
+}
+
 void TapeStrip::updatePlayheadBand()
 {
+    syncRecordingState();
     if (engine.getTransport().isRecording()) return; // timer's full repaint covers it
 
     const auto now = engine.getTransport().getPlayhead();
     if (now == lastPlayhead) return;
 
-    // Chase: when on and playing, if the playhead has run off the tracks column
-    // (only possible when zoomed in past fit-to-window), re-anchor the scroll so
-    // it lands at the left quarter, then full-repaint - the whole strip shifted,
-    // so the thin-band optimisation below would be wrong.
-    if (chaseEnabled && engine.getTransport().isPlaying())
+    // Chase: when on and playing, turn the page as the playhead reaches the
+    // edge of the view (only possible when zoomed in past fit-to-window), then
+    // full-repaint - the whole strip shifted, so the thin-band optimisation
+    // below would be wrong.
+    if (chaseEnabled && engine.getTransport().isPlaying() && followPlayhead (now))
     {
-        const double sr = engine.getCurrentSampleRate();
-        const double px = pixelsPerSecond();
-        const auto  col = tracksColumnBounds();
-        if (sr > 0.0 && px > 0.0 && col.getWidth() > 0)
-        {
-            const int phX = xForSample (now);
-            if (phX < col.getX() || phX > col.getRight())
-            {
-                const std::int64_t viewSamples = (std::int64_t) std::llround ((double) col.getWidth() / px * sr);
-                scrollSamples = std::max<std::int64_t> (0, now - viewSamples / 4);
-                lastPlayhead  = now;
-                repaint();
-                return;
-            }
-        }
+        lastPlayhead = now;
+        repaint();
+        return;
     }
 
     const int oldX = xForSample (lastPlayhead < 0 ? 0 : lastPlayhead);
