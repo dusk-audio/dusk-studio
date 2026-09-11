@@ -1648,7 +1648,7 @@ Dusk Audio's Tape Echo 2 plug-in, compiled into Dusk Studio and running the plug
 | Echo Rate Note | 1 to 11 | 5 | With Tempo Sync on, the note the first active head repeats at. A note the motor cannot reach at the session tempo stays at the motor's limit, as the hardware's does. |
 | Bypass | Off / On | Off | The plug-in's own bypass. On fades the effect out, passes the input through untouched and clears the tape. |
 
-The unit reports no latency. Its settings are saved with the session as the plug-in's own parameter values.
+The unit reports no latency. Its settings are saved with the session as the plug-in's own parameter values, and its editor is the plug-in's own.
 
 ### Tape
 
@@ -1685,13 +1685,17 @@ It responds to note velocity, pitch bend, the mod wheel, the sustain pedal and c
 
 ### Editing a unit
 
-On a channel insert, click the loaded unit's slot, or right-click it and choose **Open editor**. The editor opens as a panel over a dimmed window, exactly like the compressor editor. Press **Esc**, click outside it, or click the slot again to dismiss it.
+On a channel insert, click the loaded unit's slot, or right-click it and choose **Open editor**. The editor opens over a dimmed window, exactly like the compressor editor. Click outside it, or click the slot again, to dismiss it.
 
-On an aux lane there is no panel to open. The unit's controls are always on screen, filling the lane under the slot header, and they are grouped the way the unit's front panel would be: Reverb shows Tank, Tone and Mix; Tape shows Machine, Level, Tone and Transport; Utility shows Level and Image; Tape Echo 2 shows its controls as one section. The knobs grow with the lane, and in a smaller window the sections stack into more rows to keep them as large as the space allows. Only a lane too small for the smallest knobs scales the whole panel down.
+**Tape Echo 2 opens the plug-in's own editor**, the one its VST3, CLAP and AU builds show, at the size the plug-in asks for, scaled down if the window is too small to hold it. The other four units have no editor of their own, so Dusk Studio draws them from their parameter table as a panel of knobs, switch banks, drop-down lists and toggles.
 
-Drag a knob up or down to change it (hold **Shift** for finer steps), scroll over it, or double-click it to return it to its default. Tape Echo 2's **Mode** is a twelve-position switch that moves one position per scroll step. Choices with a handful of positions, such as Tape's **Speed**, are rows of buttons; Reverb's **Algorithm** is a drop-down list. A menu or dialog opened over the lane takes the controls down while it is open, and they come back when it closes.
+On an aux lane there is nothing to open: the unit's controls are always on screen, filling the lane under the slot header. Tape Echo 2 sits there as its own editor, centred and scaled down to fit the lane while keeping its shape, the way a plug-in's editor does. The knob panels are grouped the way the unit's front panel would be: Reverb shows Tank, Tone and Mix; Tape shows Machine, Level, Tone and Transport; Utility shows Level and Image. Their knobs grow with the lane, and in a smaller window the sections stack into more rows to keep them as large as the space allows. Only a lane too small for the smallest knobs scales the whole panel down.
 
-**MIDI Learn** works on a built-in unit the way it does on a plugin: move the control you want, then right-click the slot and choose **MIDI Learn last-touched parameter**. On an aux lane the slot's right-click menu calls it **MIDI Learn (this track)...**.
+On a knob panel, drag a knob up or down to change it (hold **Shift** for finer steps), scroll over it, or double-click it to return it to its default. Choices with a handful of positions, such as Tape's **Speed**, are rows of buttons; Reverb's **Algorithm** is a drop-down list. A menu or dialog opened over the lane takes the controls down while it is open, and they come back when it closes.
+
+The transport keys keep working while an editor is open. A click into a plug-in's editor gives it the keyboard, so Dusk Studio takes the keyboard back at the end of every knob move, and **Space** and **R** reach the transport again.
+
+**MIDI Learn** works on a built-in unit the way it does on a plugin: move the control you want, in its editor or on its knob panel, then right-click the slot and choose **MIDI Learn last-touched parameter**. On an aux lane the slot's right-click menu calls it **MIDI Learn (this track)...**.
 
 ## Opening the editor
 

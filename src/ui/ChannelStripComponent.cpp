@@ -4023,17 +4023,129 @@ void ChannelStripComponent::closeBuiltinEditorPopup()
    #if DUSKSTUDIO_HAS_NATIVE_UI
     if (builtinEditorWindow != nullptr && builtinEditorWindow->isOpen())
         builtinEditorWindow->close();
+    if (builtinPluginEditor != nullptr && builtinPluginEditor->isOpen())
+        builtinPluginEditor->close();
    #endif
 }
 
 bool ChannelStripComponent::isBuiltinEditorOpen() const noexcept
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    return builtinEditorWindow != nullptr && builtinEditorWindow->isOpen();
+    return (builtinEditorWindow != nullptr && builtinEditorWindow->isOpen())
+        || (builtinPluginEditor != nullptr && builtinPluginEditor->isOpen());
    #else
     return false;
    #endif
 }
+
+#if DUSKSTUDIO_HAS_NATIVE_UI
+imgui::DafEditorHost::Geometry ChannelStripComponent::builtinPluginEditorGeometry()
+{
+    auto* const topLevel = getTopLevelComponent();
+    if (topLevel == nullptr)
+        return {};
+
+    auto& slot = engine.getChannelStrip (trackIndex).getBuiltinSlot();
+    const int designWidth = (int) slot.pluginEditorWidth();
+    const int designHeight = (int) slot.pluginEditorHeight();
+    if (designWidth < 2 || designHeight < 2)
+        return {};
+
+    // The editor opens at its own size and is scaled down, never cropped, when the
+    // window cannot hold it.
+    const auto window = topLevel->getLocalBounds();
+    const double fit = std::min (
+        1.0, std::min ((double) std::max (0, window.getWidth() - 16) / designWidth,
+                       (double) std::max (0, window.getHeight() - 16) / designHeight));
+    const auto logical = embedscale::centredChildBounds (
+        *topLevel, (int) std::lround (designWidth * fit),
+        (int) std::lround (designHeight * fit));
+
+    if (builtinEditorDim != nullptr)
+    {
+        builtinEditorDim->setBounds (topLevel->getLocalBounds());
+        builtinEditorDim->setNativeChildArea (logical.expanded (1));
+    }
+
+    auto geometry = embedscale::childGeometryFor (*topLevel, logical);
+    geometry.scale *= fit;
+    return { geometry.x, geometry.y, geometry.width, geometry.height, geometry.scale };
+}
+
+void ChannelStripComponent::openBuiltinPluginEditor (std::uintptr_t parentHandle)
+{
+    auto* topLevel = getTopLevelComponent();
+    if (topLevel == nullptr)
+        topLevel = this;
+
+    if (builtinPluginEditor == nullptr)
+    {
+        builtinPluginEditor = std::make_unique<imgui::DafEditorHost> (
+            "builtin-plugin-editor", "The unit's editor",
+            imgui::firstFrameMarkerPath ("builtin-plugin-editor"));
+
+        // The strip outlives the host it owns, and the slot is the strip's, so the
+        // wiring reaches both through the engine rather than capturing either.
+        imgui::DafEditorHost::Unit unit;
+        unit.createEditor = [this] (std::uintptr_t parent, std::uint32_t width,
+                                    std::uint32_t height, double scale,
+                                    builtin::DafEditorCallbacks callbacks,
+                                    std::string& error)
+        {
+            return engine.getChannelStrip (trackIndex).getBuiltinSlot()
+                       .createPluginEditor (parent, width, height, scale,
+                                            std::move (callbacks), error);
+        };
+        unit.paramCount = [this]
+            { return engine.getChannelStrip (trackIndex).getBuiltinSlot().paramCount(); };
+        unit.paramValue = [this] (int index)
+            { return engine.getChannelStrip (trackIndex).getBuiltinSlot().getParamValue (index); };
+        unit.setParam = [this] (int index, float value)
+            { engine.getChannelStrip (trackIndex).getBuiltinSlot().setParamValue (index, value); };
+        unit.noteTouched = [this] (int index)
+            { engine.getChannelStrip (trackIndex).getBuiltinSlot().noteParamTouched (index); };
+        builtinPluginEditor->setUnit (std::move (unit));
+
+        // Raw `this`: the strip owns the host, and the host drops its callbacks
+        // before its own teardown, so none of them outlives the strip.
+        imgui::DafEditorHost::Callbacks callbacks;
+        callbacks.closed = [this]
+        {
+            builtinEditorDim.reset();
+            builtinEditorHider.restore();
+            if (auto* target = EmbeddedModal::focusRestoreTarget().getComponent())
+                target->grabKeyboardFocus();
+        };
+        // A click into the editor takes the keyboard with it, so the shell takes it
+        // back at the end of every gesture and the transport keys keep working.
+        callbacks.gestureEnded = []
+        {
+            if (auto* target = EmbeddedModal::focusRestoreTarget().getComponent())
+                target->grabKeyboardFocus();
+        };
+        callbacks.geometry = [this] { return builtinPluginEditorGeometry(); };
+        builtinPluginEditor->setCallbacks (std::move (callbacks));
+    }
+
+    builtinEditorDim = std::make_unique<DimOverlay> (0.28f);
+    builtinEditorDim->setBounds (topLevel->getLocalBounds());
+    builtinEditorDim->onClick = [this] { closeBuiltinEditorPopup(); };
+    topLevel->addAndMakeVisible (builtinEditorDim.get());
+    builtinEditorHider.hideUnder (*topLevel, { builtinEditorDim.get() });
+
+    const auto geometry = builtinPluginEditorGeometry();
+    if (geometry.width >= 2 && geometry.height >= 2
+        && builtinPluginEditor->open (parentHandle, geometry))
+        return;
+
+    builtinEditorDim.reset();
+    builtinEditorHider.restore();
+    const auto& why = builtinPluginEditor->lastOpenFailure();
+    showDuskAlert (*topLevel, "Built-in unit",
+                   why.empty() ? "The editor cannot open on this display backend."
+                               : why.c_str());
+}
+#endif
 
 void ChannelStripComponent::openBuiltinEditorForCapture (const std::string& capturePath)
 {
@@ -4062,6 +4174,11 @@ void ChannelStripComponent::openBuiltinEditorPopup()
         builtinEditorWindow->close();
         return;
     }
+    if (builtinPluginEditor != nullptr && builtinPluginEditor->isOpen())
+    {
+        builtinPluginEditor->close();
+        return;
+    }
 
     closeCompEditorPopup();
     if (eqEditorModal.isOpen())  eqEditorModal.close();
@@ -4079,6 +4196,14 @@ void ChannelStripComponent::openBuiltinEditorPopup()
 
     if (auto hook = EmbeddedModal::beforeModalShown())
         hook();
+
+    // A unit that is one of Dusk's own plug-ins opens the plug-in's own editor.
+    // The rest are drawn from their parameter table.
+    if (strip.getBuiltinSlot().hasPluginEditor())
+    {
+        openBuiltinPluginEditor (parentHandle);
+        return;
+    }
 
     if (builtinEditorWindow == nullptr)
     {

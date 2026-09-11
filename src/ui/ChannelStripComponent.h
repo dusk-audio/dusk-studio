@@ -9,6 +9,7 @@
 #include "SplitModuleButton.h"
 #include "ConsoleLayout.h"
 #include "EmbeddedModal.h"
+#include "imgui/DafEditorHost.h"
 #include "DuskComboBox.h"
 #include "NativeEditorOwner.h"
 #include "../session/Session.h"
@@ -456,6 +457,9 @@ private:
     // native child over a dim, dismissed by Escape, a click outside or the same
     // slot control that opened it.
     std::unique_ptr<imgui::DuskPanelWindow> builtinEditorWindow;
+    // A unit that is one of Dusk's own DAF plug-ins brings its own editor; the
+    // panel window above stays for the units drawn from a parameter table.
+    std::unique_ptr<imgui::DafEditorHost> builtinPluginEditor;
     // The child is an opaque native surface, so the dim behind it is a JUCE sibling
     // exactly as the session notepad arranges it, and it owns the click-outside.
     std::unique_ptr<DimOverlay> compEditorDim;
@@ -466,6 +470,12 @@ private:
     void openEqEditorPopup();
     void openCompEditorPopup();
     void openBuiltinEditorPopup();
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    void openBuiltinPluginEditor (std::uintptr_t parentHandle);
+    // Where the plug-in's editor belongs: its own size, centred, scaled down when
+    // the window cannot hold it. Also follows the dim's click-through region.
+    imgui::DafEditorHost::Geometry builtinPluginEditorGeometry();
+   #endif
     void openAuxEditorPopup();
     void setAuxSectionVisible (bool visible);
 

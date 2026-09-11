@@ -10,6 +10,7 @@
 #include "../session/Session.h"
 #include "DuskComboBox.h"
 #include "EmbeddedModal.h"
+#include "imgui/DafEditorHost.h"
 #include "NativeEditorOwner.h"
 #include "../engine/device/ChannelSet.h"
 
@@ -97,6 +98,13 @@ private:
     void scheduleBuiltinViewSync();
     void applyBuiltinViewSync();
     bool builtinViewNeedsSync (int slotIdx) const;
+#if DUSKSTUDIO_HAS_NATIVE_UI
+    // Where a slot's plug-in editor belongs: its own size, centred in the lane's
+    // editor area and scaled down when the lane is smaller than it.
+    imgui::DafEditorHost::Geometry builtinEditorGeometry (int slotIdx) const;
+    void openBuiltinEditorHostForSlot (int slotIdx, std::uintptr_t parentHandle,
+                                       const std::string& unitId);
+#endif
 #if DUSKSTUDIO_HAS_NATIVE_UI
     bool builtinSyncPending = false;
 #endif
@@ -198,6 +206,9 @@ private:
 #if DUSKSTUDIO_HAS_NATIVE_UI
         NativePanelProxy builtinProxy;
         std::unique_ptr<imgui::DuskPanelWindow> builtinWindow;
+        // A unit that is one of Dusk's own DAF plug-ins shows the plug-in's own
+        // editor here instead of the panel window above.
+        std::unique_ptr<imgui::DafEditorHost> builtinEditorHost;
         std::string builtinViewUnit;
         std::uintptr_t builtinViewParent = 0;
         bool builtinCloseRequested = false;

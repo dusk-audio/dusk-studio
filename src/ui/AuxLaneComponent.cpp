@@ -1553,7 +1553,9 @@ bool AuxLaneComponent::builtinViewNeedsSync (int slotIdx) const
    #if DUSKSTUDIO_HAS_NATIVE_UI
     const auto& ui = slots[(size_t) slotIdx];
     const bool shown = showsBuiltinView (strip, slotIdx);
-    if (ui.builtinWindow != nullptr && ui.builtinWindow->isOpen())
+    const bool live = (ui.builtinWindow != nullptr && ui.builtinWindow->isOpen())
+                   || (ui.builtinEditorHost != nullptr && ui.builtinEditorHost->isOpen());
+    if (live)
         return ! shown || strip.getBuiltinSlot (slotIdx).getPluginId() != ui.builtinViewUnit;
     // A unit whose view failed to open is not retried on every tick; the next lane
     // event or a different unit tries again.
@@ -1564,6 +1566,109 @@ bool AuxLaneComponent::builtinViewNeedsSync (int slotIdx) const
     return false;
    #endif
 }
+
+#if DUSKSTUDIO_HAS_NATIVE_UI
+imgui::DafEditorHost::Geometry AuxLaneComponent::builtinEditorGeometry (int slotIdx) const
+{
+    auto* const topLevel = getTopLevelComponent();
+    if (topLevel == nullptr)
+        return {};
+
+    const auto& ui = slots[(size_t) slotIdx];
+    const auto& slot = strip.getBuiltinSlot (slotIdx);
+    const int designWidth = (int) slot.pluginEditorWidth();
+    const int designHeight = (int) slot.pluginEditorHeight();
+    const auto area = topLevel->getLocalArea (this, ui.builtinProxy.getBounds());
+    if (designWidth < 2 || designHeight < 2 || area.getWidth() < 2 || area.getHeight() < 2)
+        return {};
+
+    // The editor keeps its own size and aspect, centred in the lane's editor area
+    // and scaled down when the lane is smaller than it.
+    const double fit = std::min (1.0, std::min ((double) area.getWidth() / designWidth,
+                                                (double) area.getHeight() / designHeight));
+    const auto logical = area.withSizeKeepingCentre (
+        (int) std::lround (designWidth * fit), (int) std::lround (designHeight * fit));
+    auto geometry = embedscale::childGeometryFor (*topLevel, logical);
+    geometry.scale *= fit;
+    return { geometry.x, geometry.y, geometry.width, geometry.height, geometry.scale };
+}
+
+void AuxLaneComponent::openBuiltinEditorHostForSlot (int slotIdx, std::uintptr_t parentHandle,
+                                                     const std::string& unitId)
+{
+    auto& ui = slots[(size_t) slotIdx];
+    // A slot holds one or the other, never both: the unit that was here before may
+    // have been drawn from its parameter table.
+    ui.builtinWindow.reset();
+    auto& host = ui.builtinEditorHost;
+    host = std::make_unique<imgui::DafEditorHost> (
+        "aux-plugin-editor", "The unit's editor",
+        imgui::firstFrameMarkerPath ("aux-plugin-editor"));
+
+    // The lane owns the host and outlives it, and the slot is the strip's, so the
+    // wiring reaches both rather than capturing either.
+    imgui::DafEditorHost::Unit unit;
+    unit.createEditor = [this, slotIdx] (std::uintptr_t parent, std::uint32_t width,
+                                         std::uint32_t height, double scale,
+                                         builtin::DafEditorCallbacks callbacks,
+                                         std::string& error)
+    {
+        return strip.getBuiltinSlot (slotIdx).createPluginEditor (
+            parent, width, height, scale, std::move (callbacks), error);
+    };
+    unit.paramCount = [this, slotIdx]
+        { return strip.getBuiltinSlot (slotIdx).paramCount(); };
+    unit.paramValue = [this, slotIdx] (int index)
+        { return strip.getBuiltinSlot (slotIdx).getParamValue (index); };
+    unit.setParam = [this, slotIdx] (int index, float value)
+        { strip.getBuiltinSlot (slotIdx).setParamValue (index, value); };
+    unit.noteTouched = [this, slotIdx] (int index)
+        { strip.getBuiltinSlot (slotIdx).noteParamTouched (index); };
+    host->setUnit (std::move (unit));
+
+    // The host is torn down before the state these reach into, and it drops them
+    // before that teardown, so they may hold the lane.
+    imgui::DafEditorHost::Callbacks callbacks;
+    callbacks.closed = [this, slotIdx]
+    {
+        auto& slotUi = slots[(size_t) slotIdx];
+        // A close the graphics driver forced keeps its unit, so the timer does not
+        // reopen into the same failure every few ticks; the next lane event does.
+        if (std::exchange (slotUi.builtinCloseRequested, false))
+            slotUi.builtinViewUnit.clear();
+        else
+            slotUi.builtinViewFailure = "The unit's editor closed after a graphics error.";
+        repaint();
+        scheduleBuiltinViewSync();
+    };
+    // A click into the editor takes the keyboard with it, so the shell takes it
+    // back at the end of every gesture and the transport keys keep working.
+    callbacks.gestureEnded = []
+    {
+        if (auto* target = EmbeddedModal::focusRestoreTarget().getComponent())
+            target->grabKeyboardFocus();
+    };
+    callbacks.geometry = [this, slotIdx] { return builtinEditorGeometry (slotIdx); };
+    host->setCallbacks (std::move (callbacks));
+
+    ui.builtinViewUnit = unitId;
+    ui.builtinViewParent = parentHandle;
+    if (host->open (parentHandle, builtinEditorGeometry (slotIdx)))
+    {
+        if (! ui.builtinViewFailure.empty())
+        {
+            ui.builtinViewFailure.clear();
+            repaint();
+        }
+        return;
+    }
+
+    ui.builtinViewFailure = host->lastOpenFailure();
+    std::fprintf (stderr, "[aux builtin] %s\n", ui.builtinViewFailure.c_str());
+    host.reset();
+    repaint();
+}
+#endif
 
 void AuxLaneComponent::applyBuiltinViewSync()
 {
@@ -1585,6 +1690,21 @@ void AuxLaneComponent::applyBuiltinViewSync()
             repaint();
         }
 
+        auto& host = ui.builtinEditorHost;
+        if (host != nullptr && host->isOpen())
+        {
+            // The plug-in's own editor, built for one unit in one native parent,
+            // exactly as the panel window below is.
+            if (! wanted || unit != ui.builtinViewUnit || parentHandle != ui.builtinViewParent)
+            {
+                ui.builtinCloseRequested = true;
+                host->close();
+            }
+            else
+                host->setGeometry (builtinEditorGeometry (i));
+            continue;
+        }
+
         auto& window = ui.builtinWindow;
         if (window != nullptr && window->isOpen())
         {
@@ -1602,6 +1722,14 @@ void AuxLaneComponent::applyBuiltinViewSync()
         if (! wanted)
             continue;
 
+        // A unit that is one of Dusk's own plug-ins shows the plug-in's editor.
+        if (strip.getBuiltinSlot (i).hasPluginEditor())
+        {
+            openBuiltinEditorHostForSlot (i, parentHandle, unit);
+            continue;
+        }
+
+        ui.builtinEditorHost.reset();
         window = std::make_unique<imgui::DuskPanelWindow> (
             "dusk-studio-aux-builtin", "aux-builtin", "Built-in unit controls");
 
