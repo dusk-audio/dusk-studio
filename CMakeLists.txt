@@ -541,6 +541,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         $<$<COMPILE_LANG_AND_ID:CXX,Clang,AppleClang>:-Wno-cpp>)
 
     add_library(dusk_native_ui STATIC
+        src/ui/imgui/AtlasImage.cpp
         src/ui/imgui/DuskImGuiHost.cpp
         src/ui/imgui/DuskTheme.cpp
         src/ui/imgui/DuskPanelWindow.cpp
