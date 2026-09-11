@@ -36,3 +36,7 @@ dusk-studio-*-Linux-*.tar.xz
 dusk-studio-*-Linux-*.AppImage
 AppDir/
 SHA256SUMS.linux
+
+# macOS release artifacts (scripts/package-macos.sh leaves them at the root)
+/dusk-studio-*-macOS-*.dmg
+/SHA256SUMS.macos
