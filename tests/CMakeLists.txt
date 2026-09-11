@@ -25,8 +25,10 @@ add_executable(dusk-studio-tests
     # Built-in insert rung: registry, the Utility unit and the slot that
     # presents it to the mixer.
     builtin_insert_slot.cpp
+    daf_unit_instance.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/builtin/BuiltinInstance.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/builtin/BuiltinRegistry.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/builtin/DafUnitInstance.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/builtin/UtilityUnit.cpp
     sfz_catalog.cpp
     sfz_library_scan.cpp

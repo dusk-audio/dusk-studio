@@ -2,6 +2,7 @@
 
 #include "BuiltinBundle.h"
 #include "BuiltinUnit.h"
+#include "DafUnitInstance.h"
 #include "../hosting/INativeInstance.h"
 
 #include <atomic>
@@ -15,7 +16,9 @@ namespace duskstudio::builtin
 // A built-in unit presented to the mixer as a native plug-in instance, so an
 // insert slot drives it through exactly the path a scanned CLAP / LV2 / VST3
 // takes. There is no shared library and no negotiation: the port layout is the
-// insert's own stereo pair, or a stereo source for an instrument unit.
+// insert's own stereo pair, or a stereo source for an instrument unit. A unit
+// that is one of Dusk's DAF plug-ins runs through a DafUnitInstance, which this
+// forwards to; everything else here is the knob-unit path.
 //
 // Threading matches INativeInstance: create / activate / deactivate /
 // reactivate / saveState / loadState are message-thread, processBlock is the
@@ -29,11 +32,13 @@ public:
     bool create (const BuiltinBundle& bundle, const std::string& pluginId,
                  std::string& errorOut);
 
-    const hosting::PortLayout& portLayout() const noexcept override { return layout; }
+    const hosting::PortLayout& portLayout() const noexcept override
+        { return dafUnit != nullptr ? dafUnit->portLayout() : layout; }
     bool activate (double sampleRate, int maxBlockFrames, std::string& errorOut) override;
     void deactivate() override;
     bool reactivate (double sampleRate, int maxBlockFrames, std::string& errorOut) override;
-    bool isActive() const noexcept override { return active.load (std::memory_order_acquire); }
+    bool isActive() const noexcept override
+        { return dafUnit != nullptr ? dafUnit->isActive() : active.load (std::memory_order_acquire); }
     void processBlock (const hosting::PortBuffers& io) noexcept override;
     bool saveState (std::vector<std::uint8_t>& out) const override;
     bool loadState (const std::vector<std::uint8_t>& in) override;
@@ -42,17 +47,16 @@ public:
     std::string displayName() const { return info != nullptr ? info->name : std::string(); }
 
     // Message thread. The parameter surface an editor and the session drive.
-    int paramCount() const noexcept { return unit != nullptr ? unit->paramCount() : 0; }
+    int paramCount() const noexcept;
     const ParamInfo* paramInfo (int index) const noexcept;
-    float getParamValue (int index) const noexcept
-        { return unit != nullptr ? unit->getParam (index) : 0.0f; }
-    void setParamValue (int index, float value) noexcept
-        { if (unit != nullptr) unit->setParam (index, value); }
+    float getParamValue (int index) const noexcept;
+    void setParamValue (int index, float value) noexcept;
 
 private:
     const UnitInfo* info = nullptr;
     std::string id;
     std::unique_ptr<BuiltinUnit> unit;
+    std::unique_ptr<DafUnitInstance> dafUnit;
     hosting::PortLayout layout;
     std::atomic<bool> active { false };
     int preparedBlockFrames = 0;
