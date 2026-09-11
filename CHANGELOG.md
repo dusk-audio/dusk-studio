@@ -103,6 +103,10 @@ that will carry a signed 1.0.
   did, so the take lands inside the brackets instead of covering the whole
   pass. Loop and punch brackets are drawn hollow and faint while their mode is
   off, so a range that is set but not armed shows at a glance.
+- **The tape strip keeps its zoom while recording** (#593). It used to zoom out
+  to at least a minute when recording started and snap back on stop, so the
+  view jumped twice per take. It now holds your zoom and turns the page when the
+  playhead reaches the right-hand edge, with or without Chase.
 - **Logging out no longer skips the unsaved-changes prompt.** A termination
   signal, a logout or a shutdown runs the same staged shutdown as **File >
   Quit**, so the prompt appears and plugin child processes are not left to be

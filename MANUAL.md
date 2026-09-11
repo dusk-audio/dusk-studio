@@ -579,7 +579,7 @@ When the timeline is expanded, a toolbar row sits directly above the tape strip:
 
 - **Snap**. Global grid snap toggle, with a resolution button beside it. When on, region drags, trims, pastes, marker / loop / punch / tempo moves snap to the chosen grid resolution.
 - **−** / **+** / **Fit**. Timeline zoom out, in, and fit-to-window.
-- **Chase**. When on, the timeline scrolls during playback to keep the playhead in view. Its launch default is set by **Follow playhead by default** in Settings.
+- **Chase**. When on, the timeline scrolls during playback to keep the playhead in view. Its launch default is set by **Follow playhead by default** in Settings. While recording the timeline always follows the playhead, Chase or not.
 
 In compact mode (window narrower than 1850 pixels), `TIMELINE` becomes `▾` and the time-format toggle hides; right-click the clock display to flip format instead.
 
@@ -1302,6 +1302,8 @@ Drag the bracket ends to adjust. The keyboard shortcuts **[** and **]** set the 
 - **−** / **=** (or **+**): zoom out, zoom in.
 - **0**: zoom to fit the entire timeline width.
 - **Cmd/Ctrl+mouse wheel** over the timeline: zoom around the cursor.
+
+Recording keeps your zoom. When the playhead reaches the right-hand edge the view turns the page, so the take you are recording stays in sight whether or not **Chase** is on. If Stop sends the playhead out of sight, the view goes back to it.
 
 ## Drag-and-drop import
 

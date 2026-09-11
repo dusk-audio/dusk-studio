@@ -126,6 +126,7 @@ add_executable(dusk-studio-tests
     session_fader_group.cpp
     transport_state_machine.cpp
     transport_stop_locate.cpp
+    timeline_follow.cpp
     loop_timeline.cpp
     generated_midi_budget.cpp
     session_mcu_roundtrip.cpp
