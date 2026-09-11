@@ -101,7 +101,7 @@ Disarm track 1. Arm track 2, pick the right input, and record over the playback 
 
 ![Tracks 1 (with a region) and 2 (mid-record) on the tape strip.](docs/images/qg-05-overdub.png)
 
-To punch in over a specific section of an already-recorded track, set the punch in and out points (**Shift+[** and **Shift+]**), engage **P** for punch mode, arm the track, and press record before the punch in point. Dusk Studio will start recording at the punch in point and stop at the punch out point automatically.
+To punch in over a specific section of an already-recorded track, set the punch in and out points (**Shift+[** and **Shift+]**). Punch turns on by itself once the in point sits before the out point. Arm the track and press record before the punch in point. Dusk Studio will start recording at the punch in point and stop at the punch out point automatically.
 
 ## Mix
 
@@ -283,8 +283,8 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | 2   | Region             | Audio or MIDI clip. Drag to move, drag the edges to trim.       |
 | 3   | Region edge handle | Trim handle. Hold Cmd to nudge by snap.                         |
 | 4   | Marker             | Drop with **M**, drag to move, right-click to rename or delete. |
-| 5   | Loop bracket       | Set with **[** / **]**; enable loop with **L**.                 |
-| 6   | Punch bracket      | Set with **Shift+[** / **Shift+]** and enable punch with **P**, or set it from the ruler's right-click menu, which enables punch for you. Drawn hollow while punch is off. |
+| 5   | Loop bracket       | Set with **[** / **]** and enable loop with **L**, or set it from the ruler's right-click menu, which turns loop on for you. |
+| 6   | Punch bracket      | Set with **Shift+[** / **Shift+]** or from the ruler's right-click menu; punch turns on once the in point sits before the out point. Drawn hollow while punch is off. |
 
 **Left-click anywhere on the timeline moves the playhead there** (the ruler or empty track space). Regions still respond to clicks — click to select, drag a body to move, drag an edge to trim — and **double-click a region to open the full editor**. Everything else (split, delete, set tempo, set loop / punch) is on the **right-click** menu.
 
@@ -1141,8 +1141,8 @@ The count-in always uses the metronome click, even if you have the click disable
 
 To overdub a specific section without erasing material before or after:
 
-1. Set the **punch in** and **punch out** points. Drag across the timeline ruler and choose **Set punch in / out here**, or right-click the ruler at each point and choose **Set punch in here** and **Set punch out here**. Either way punch turns on as soon as the in point sits before the out point. You can also press **Shift+[** and **Shift+]** at the playhead.
-2. Check that the **Punch** button on the transport bar is lit. After **Shift+[** and **Shift+]**, click it (or press **P**) to turn punch on.
+1. Set the **punch in** and **punch out** points. Drag across the timeline ruler and choose **Set punch in / out here**, or right-click the ruler at each point and choose **Set punch in here** and **Set punch out here**. You can also press **Shift+[** and **Shift+]** at the playhead. Every way turns punch on as soon as the in point sits before the out point.
+2. Check that the **Punch** button on the transport bar is lit. **P** or the button turns punch off and on again without moving the brackets.
 3. Right-click the **Punch** button to set the **pre-roll** seconds (how much existing material plays back before the punch-in) and the **post-roll** seconds (how long the transport keeps rolling past the punch-out before auto-stopping). Each has an enable toggle in the same menu, so you can switch a roll off without losing its seconds value. Post-roll defaults to 0 (off).
 4. Press Record. Playback begins at the pre-roll position. Recording begins exactly at the punch-in sample and ends exactly at the punch-out sample. The audio before and after is untouched.
 
@@ -1297,7 +1297,7 @@ Loop and punch ranges show as coloured brackets in the ruler, with a tinted band
 
 A bracket is drawn solid while its mode is on. While the mode is off a set bracket stays on screen, drawn hollow and faint, so you can see at a glance that the range is set but not armed.
 
-Drag the bracket ends to adjust. The keyboard shortcuts **[** and **]** set the loop in and out at the current playhead. Hold **Shift** to set punch in and out instead. The ruler's right-click menu has **Set punch in here** and **Set punch out here**; once the in point sits before the out point, punch turns on. Placing one so the in point no longer sits before the out point turns punch off until the pair makes a range again. **Clear punch** removes the brackets and turns punch off.
+Drag the bracket ends to adjust. The keyboard shortcuts **[** and **]** set the loop in and out at the current playhead. Hold **Shift** to set punch in and out instead. The ruler's right-click menu has **Set loop in here**, **Set loop out here**, **Set punch in here** and **Set punch out here**. Punch brackets placed with **Shift+[** / **Shift+]** or the menu, and loop brackets placed from the menu, turn their mode on once the in point sits before the out point, and off again if a new point leaves the in point at or after the out point. **Clear loop** and **Clear punch** remove the brackets and turn the mode off.
 
 ## Zoom
 
@@ -2115,8 +2115,8 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | **M**       | Drop marker at playhead       |
 | **[**       | Set loop start at playhead    |
 | **]**       | Set loop end at playhead      |
-| **Shift+[** | Set punch in at playhead      |
-| **Shift+]** | Set punch out at playhead     |
+| **Shift+[** | Set punch in at playhead; arms punch once in is before out |
+| **Shift+]** | Set punch out at playhead; arms punch once in is before out |
 | **K**       | Toggle virtual MIDI keyboard  |
 | **Shift+←/→** | Previous / next marker (Rewind / Forward tap) |
 | **B**       | Tap tempo                     |

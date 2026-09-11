@@ -95,12 +95,14 @@ that will carry a signed 1.0.
 
 ### Fixed
 
-- **Punch set from the ruler menu arms punch** (#592). **Set punch in here**
-  and **Set punch out here** turn punch on once the in point sits before the out
-  point, as dragging a range and choosing **Set punch in / out here** already
-  did, so the take lands inside the brackets instead of covering the whole
-  pass. Loop and punch brackets are drawn hollow and faint while their mode is
-  off, so a range that is set but not armed shows at a glance.
+- **Placing punch brackets arms punch** (#592). **Set punch in here** and
+  **Set punch out here** on the ruler menu, and **Shift+[** / **Shift+]**, turn
+  punch on once the in point sits before the out point, as dragging a range and
+  choosing **Set punch in / out here** already did, so the take lands inside the
+  brackets instead of covering the whole pass. **Set loop in here** and **Set
+  loop out here** turn loop on the same way. Loop and punch brackets are drawn
+  hollow and faint while their mode is off, so a range that is set but not
+  armed shows at a glance.
 - **The tape strip keeps its zoom while recording** (#593). It used to zoom out
   to at least a minute when recording started and snap back on stop, so the
   view jumped twice per take. It now holds your zoom and turns the page when the

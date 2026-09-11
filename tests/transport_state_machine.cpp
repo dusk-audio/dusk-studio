@@ -112,3 +112,39 @@ TEST_CASE ("Transport: punch range + enable round-trip", "[transport]")
     REQUIRE (t.isPunchEnabled());
     REQUIRE (t.isLoopEnabled());
 }
+
+TEST_CASE ("Transport: a punch bracket placed by hand arms punch once in is before out",
+           "[transport]")
+{
+    using duskstudio::Transport;
+
+    Transport t;
+    t.placePunchRange (5000, 5000);
+    REQUIRE_FALSE (t.isPunchEnabled());
+
+    t.placePunchRange (5000, 25000);
+    REQUIRE (t.isPunchEnabled());
+    REQUIRE (t.getPunchIn()  == 5000);
+    REQUIRE (t.getPunchOut() == 25000);
+
+    // An in point placed at the out point collapses the pair, which would
+    // record nothing, so punch goes off until the pair is a range again.
+    t.placePunchRange (25000, 25000);
+    REQUIRE_FALSE (t.isPunchEnabled());
+}
+
+TEST_CASE ("Transport: a loop bracket placed by hand turns loop on once in is before out",
+           "[transport]")
+{
+    using duskstudio::Transport;
+
+    Transport t;
+    t.placeLoopRange (1000, 1000);
+    REQUIRE_FALSE (t.isLoopEnabled());
+
+    t.placeLoopRange (1000, 9000);
+    REQUIRE (t.isLoopEnabled());
+
+    t.placeLoopRange (9000, 9000);
+    REQUIRE_FALSE (t.isLoopEnabled());
+}
