@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <new>
+#include <optional>
 #include <thread>
 #include <unordered_map>
 
@@ -11,12 +12,11 @@ namespace duskstudio
 {
 namespace
 {
-// Cap on the per-region take history. Each overdub that fully contains
-// an existing region pushes the previous take onto previousTakes; without
-// a bound, repeated punch-recording in the same spot accumulates
-// indefinitely. 8 is plenty for a portastudio retake workflow; older takes
-// get trimmed from the back (the oldest, least-likely-to-be-recalled
-// entries) when the cap is exceeded.
+// Cap on the per-region take history. Each overdub pushes what it covers
+// onto previousTakes; without a bound, repeated punch-recording in the same
+// spot accumulates indefinitely. 8 is plenty for a portastudio retake
+// workflow; older takes get trimmed from the back (the oldest, least-likely-
+// to-be-recalled entries) when the cap is exceeded.
 constexpr int kMaxTakesPerRegion = 8;
 
 template <typename Region>
@@ -24,6 +24,85 @@ void trimTakeHistory (Region& region) noexcept
 {
     if ((int) region.previousTakes.size() > kMaxTakesPerRegion)
         region.previousTakes.resize ((size_t) kMaxTakesPerRegion);
+}
+
+// Re-anchors a take that played from `anchor` so it plays from `newStart`
+// instead, clipped to end by `newEnd`. Empty when the take holds no audio at
+// newStart: it begins later in the song than the new region does. An empty
+// take stays empty rather than growing into the file's earlier audio.
+std::optional<TakeRef> takeAnchoredAt (const TakeRef& take, std::int64_t anchor,
+                                        std::int64_t newStart, std::int64_t newEnd)
+{
+    const auto sourceOffset = take.sourceOffset + (newStart - anchor);
+    const auto end = std::min (anchor + take.lengthInSamples, newEnd);
+    if (take.lengthInSamples <= 0 || sourceOffset < 0 || end <= newStart)
+        return std::nullopt;
+    auto anchored = take;
+    anchored.sourceOffset = sourceOffset;
+    anchored.lengthInSamples = end - newStart;
+    return anchored;
+}
+
+// Appends what the new region covers of every existing region to its take
+// history: the covered part of the take on top and of the takes under it,
+// re-anchored to the new region's start. A swap or a Delete then brings each
+// back in place, crossfading against the trimmed remainder the way the
+// original did. Regions later in the track's list, the more recent ones, go
+// first, so the take that was on top surfaces next. One file at one offset
+// is one take however many regions it arrives through. A take that begins
+// later in the song than the new region has no audio at its start to anchor
+// to; a region swallowed whole keeps such takes as they were, at the back.
+void appendCoveredTakes (AudioRegion& region, const std::vector<AudioRegion>& existing)
+{
+    const auto newStart = region.timelineStart;
+    const auto newEnd   = newStart + region.lengthInSamples;
+    std::vector<TakeRef> anchored;
+    std::vector<TakeRef> unanchored;
+
+    for (auto it = existing.rbegin(); it != existing.rend(); ++it)
+    {
+        const auto exStart = it->timelineStart;
+        const auto exEnd   = exStart + it->lengthInSamples;
+        if (exEnd <= newStart || exStart >= newEnd) continue;
+
+        const bool swallowed  = exStart >= newStart && exEnd <= newEnd;
+        const auto coveredEnd = std::min (exEnd, newEnd);
+        const auto consider = [&] (const TakeRef& take, bool onTop)
+        {
+            // An older take under a region the new one only partly covers must
+            // reach the end of the covered part, or swapping it in would open
+            // a gap beside that region's remainder.
+            const bool reaches = onTop || swallowed
+                              || exStart + take.lengthInSamples >= coveredEnd;
+            const auto candidate = takeAnchoredAt (take, exStart, newStart, newEnd);
+            if (candidate.has_value() && reaches)
+            {
+                const auto same = std::find_if (anchored.begin(), anchored.end(),
+                    [&candidate] (const TakeRef& t)
+                    {
+                        return t.file == candidate->file
+                            && t.sourceOffset == candidate->sourceOffset;
+                    });
+                if (same == anchored.end())
+                    anchored.push_back (*candidate);
+                else
+                    same->lengthInSamples = std::max (same->lengthInSamples,
+                                                      candidate->lengthInSamples);
+            }
+            else if (swallowed)
+            {
+                unanchored.push_back (take);
+            }
+        };
+
+        consider (makeAudioTakeRef (*it), true);
+        for (const auto& deeper : it->previousTakes)
+            consider (deeper, false);
+    }
+
+    region.previousTakes.insert (region.previousTakes.end(), anchored.begin(), anchored.end());
+    region.previousTakes.insert (region.previousTakes.end(), unanchored.begin(), unanchored.end());
+    trimTakeHistory (region);
 }
 
 bool sameProvenance (const TakeProvenance& a, const TakeProvenance& b) noexcept
@@ -1041,14 +1120,6 @@ void RecordManager::stopRecording (std::int64_t endSample)
 
         if (hasRegion)
         {
-            // Take-history capture: any existing region whose timeline range
-            // is FULLY CONTAINED within the new take's range gets absorbed
-            // into previousTakes. The user can then cycle through them via
-            // the badge UI without losing access to earlier takes.
-            //
-            // Partial overlaps (e.g. punch-in over the middle of a longer
-            // take) are not absorbed wholesale: Pass 2 retains their outer
-            // fragments and saves the overwritten compatible slice as a take.
             const std::int64_t newStart = region.timelineStart;
             const std::int64_t newEnd   = newStart + region.lengthInSamples;
             auto& regs = session.track (t).regions;
@@ -1063,29 +1134,19 @@ void RecordManager::stopRecording (std::int64_t endSample)
             const std::int64_t fadeSamples = std::max (
                 (std::int64_t) 0, std::min (kPunchFadeSamples, region.lengthInSamples / 2));
 
-            // Pass 1 - fully-contained takes get absorbed into the new
-            // region's previousTakes (no audio overlap, just history).
-            // Partial overlaps fall through to Pass 2 below.
+            // Take history first, while every covered region is still whole.
+            appendCoveredTakes (region, regs);
+
+            // Pass 1 - fully-contained regions leave the timeline; their
+            // takes live on in the new region's history.
             std::vector<AudioRegion> spawnedFragments;
-            for (auto it = regs.begin(); it != regs.end(); )
-            {
-                const auto exStart = it->timelineStart;
-                const auto exEnd   = it->timelineStart + it->lengthInSamples;
-                const bool fullyContained = exStart >= newStart && exEnd <= newEnd;
-                if (! fullyContained) { ++it; continue; }
-
-                region.previousTakes.push_back (makeAudioTakeRef (*it));
-
-                // Carry forward the displaced region's own history so we
-                // don't drop deeper takes when overdubbing repeatedly. The
-                // newly-displaced take goes first, then the older ones.
-                for (auto& deeper : it->previousTakes)
-                    region.previousTakes.push_back (std::move (deeper));
-
-                trimTakeHistory (region);
-
-                it = regs.erase (it);
-            }
+            regs.erase (std::remove_if (regs.begin(), regs.end(),
+                                        [newStart, newEnd] (const AudioRegion& ex)
+                                        {
+                                            return ex.timelineStart >= newStart
+                                                && ex.timelineStart + ex.lengthInSamples <= newEnd;
+                                        }),
+                        regs.end());
 
             // Pass 2 - partial overlaps get split / trimmed so the new
             // take's edges crossfade against the existing region's audio
@@ -1107,31 +1168,6 @@ void RecordManager::stopRecording (std::int64_t endSample)
 
                 const bool spansLeft  = exStart < newStart;
                 const bool spansRight = exEnd   > newEnd;
-                const bool containsActive = exStart <= newStart && exEnd >= newEnd;
-
-                if (containsActive)
-                {
-                    // Keep the overwritten payload as a cycle slot even when
-                    // the new partial pass shares one edge with the old take.
-                    // Deeper history is compatible only when it covers the
-                    // same source-domain slice.
-                    const auto sliceOffset = newStart - exStart;
-                    const auto sliceLength = newEnd - newStart;
-                    TakeRef middle = makeAudioTakeRef (*it);
-                    middle.sourceOffset += sliceOffset;
-                    middle.lengthInSamples = sliceLength;
-                    region.previousTakes.push_back (std::move (middle));
-                    for (const auto& deeper : it->previousTakes)
-                    {
-                        if (deeper.lengthInSamples < sliceOffset + sliceLength)
-                            continue;
-                        auto sliced = deeper;
-                        sliced.sourceOffset += sliceOffset;
-                        sliced.lengthInSamples = sliceLength;
-                        region.previousTakes.push_back (std::move (sliced));
-                    }
-                    trimTakeHistory (region);
-                }
 
                 if (spansLeft && spansRight)
                 {

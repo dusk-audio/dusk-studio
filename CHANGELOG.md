@@ -100,6 +100,14 @@ that will carry a signed 1.0.
   to at least a minute when recording started and snap back on stop, so the
   view jumped twice per take. It now holds your zoom and turns the page when the
   playhead reaches the right-hand edge, with or without Chase.
+- **An overdub keeps every take it covers** (#594). Recording over part of an
+  older region used to trim it without saving the covered part anywhere, so the
+  earlier take could not be swapped back. The new region's take history now
+  holds the covered part of the regions under it, and of their own takes,
+  lined up with the new take's start so a swap puts each back in place. The
+  exception is an older take that starts later in the song than the new one
+  with no audio before its own start; the manual's Take history section says
+  what happens to it.
 - **Logging out no longer skips the unsaved-changes prompt.** A termination
   signal, a logout or a shutdown runs the same staged shutdown as **File >
   Quit**, so the prompt appears and plugin child processes are not left to be

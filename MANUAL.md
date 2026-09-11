@@ -1181,7 +1181,9 @@ MIDI tracks do not produce separate files; their note and CC data is embedded in
 
 ## Take history
 
-Each region keeps a stack of up to **8 previous takes**. When you record a new take whose timeline range fully contains an existing region, the existing region is pushed onto that stack. Partially-overlapping takes are not absorbed — they stay visible on either side of the punch.
+Each region keeps a stack of up to **8 previous takes**. When you record over existing material, the new region's stack gets everything it covered: the covered part of every region under it, and of the takes stacked under those, each lined up to start where the new take starts. The most recent take goes to the top of the stack, next in line to come back. A region the new take covers completely leaves the timeline. One it covers only partly keeps the rest on the timeline, on either side of the punch, and crossfades into the new take.
+
+One case cannot be lined up: an older take that starts later in the song than the new one and has no recorded audio before its own start. If the new take covers it completely it goes to the bottom of the stack unchanged, and swapping it in plays it from the start of the region rather than from where it was. If the new take covers only its beginning, the covered part is not kept in the stack; the rest stays on the timeline.
 
 To cycle through takes:
 
