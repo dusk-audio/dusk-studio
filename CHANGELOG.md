@@ -55,6 +55,19 @@ that will carry a signed 1.0.
   lists and toggles sized to the room the lane has (#596). MIDI Learn binds to a
   built-in unit's controls the way it does to a plugin's.
 
+- **Tape Echo 2 brings its own editor.** A built-in unit that is one of Dusk
+  Audio's plug-ins now shows the plug-in's own editor rather than a panel of
+  knobs: over the dimmed window on a channel insert, and filling the editor area
+  on an aux lane, centred and scaled to the lane the way a plug-in's editor sits
+  there. It runs in Dusk Studio's process beside the DSP, so its meters and its
+  presets are the plug-in's own. A display that cannot carry an embedded child,
+  such as native Wayland, says so in place of the editor instead of opening a
+  window of its own. The transport keys keep working: the keyboard returns to the
+  mixer at the end of every knob move.
+- **MIDI Learn reaches a built-in unit's controls.** A learned binding on a
+  built-in insert now arrives at the unit, on a channel strip and on an aux lane
+  alike; it was resolved and stored but never applied.
+
 ### Changed
 
 - **The master tape runs the Tape Machine 2 engine** (#340). It is voiced
