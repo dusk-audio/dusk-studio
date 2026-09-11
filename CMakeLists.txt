@@ -582,6 +582,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         src/ui/imgui/AudioSettingsView.cpp
         src/ui/imgui/ChannelCompView.cpp
         src/ui/imgui/MasteringEqView.cpp
+        src/ui/imgui/BuiltinLaneView.cpp
         src/ui/imgui/BuiltinUnitView.cpp
         src/ui/imgui/MasteringLimiterView.cpp
         src/ui/imgui/PanelControls.cpp
