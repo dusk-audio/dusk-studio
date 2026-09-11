@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "ui/imgui/DuskTheme.h"
@@ -25,17 +26,20 @@ namespace
 class HeadlessPanel
 {
 public:
-    HeadlessPanel()
+    // The atlas is baked at the display scale, as DuskPanelWindow bakes it.
+    explicit HeadlessPanel (float displayScale) : scale (displayScale)
     {
         context = ImGui::CreateContext();
         ImGui::SetCurrentContext (context);
 
         auto& io = ImGui::GetIO();
-        io.DisplaySize = ImVec2 (600.0f, 400.0f);
+        io.DisplaySize = ImVec2 (600.0f * scale, 400.0f * scale);
         io.DeltaTime = 1.0f / 60.0f;
         io.IniFilename = nullptr;
         io.LogFilename = nullptr;
-        io.Fonts->AddFontDefault();
+        ImFontConfig config;
+        config.SizePixels = 13.0f * scale;
+        io.Fonts->AddFontDefault (&config);
         io.Fonts->Build();
         io.Fonts->SetTexID (static_cast<ImTextureID> (1));
 
@@ -69,7 +73,7 @@ public:
         ctx.theme = &consolePalette().widgets;
         ctx.fonts = &fonts;
         ctx.drag = &drag;
-        ctx.scale = 1.0f;
+        ctx.scale = scale;
 
         {
             const ScopedFormStyle style (ctx);
@@ -80,15 +84,24 @@ public:
         ImGui::Render();
     }
 
+    // One settings row, in the physical pixels a view at this scale lays it out in.
+    struct Row
+    {
+        ImVec2 tl, br, centre;
+    };
+    Row row() const
+    {
+        return { ImVec2 (20.0f * scale, 40.0f * scale), ImVec2 (320.0f * scale, 66.0f * scale),
+                 ImVec2 (170.0f * scale, 53.0f * scale) };
+    }
+
+    const float scale;
+
 private:
     ImGuiContext* context = nullptr;
     dw::Fonts fonts;
     dw::DragState drag;
 };
-
-constexpr ImVec2 kRowTl { 20.0f, 40.0f };
-constexpr ImVec2 kRowBr { 320.0f, 66.0f };
-constexpr ImVec2 kRowCentre { 170.0f, 53.0f };
 } // namespace
 
 TEST_CASE ("ComboModel hands formCombo pointers that survive the list growing")
@@ -125,19 +138,20 @@ TEST_CASE ("ComboModel::clear drops the previous list entirely")
 
 TEST_CASE ("formCheckbox toggles on a click inside its row")
 {
-    HeadlessPanel panel;
+    HeadlessPanel panel (GENERATE (1.0f, 2.0f));
+    const auto row = panel.row();
     bool value = false;
     bool toggled = false;
 
     const auto submit = [&] (dw::Context& ctx)
     {
-        toggled = formCheckbox (ctx, "##toggle", kRowTl, kRowBr.y - kRowTl.y,
+        toggled = formCheckbox (ctx, "##toggle", row.tl, row.br.y - row.tl.y,
                                 "Expand tape strip by default", value);
     };
 
     // Two settling frames: Dear ImGui decides what the pointer is over from the window
     // it hovered on the previous frame, so a click on the very first frame lands nowhere.
-    panel.movePointer (ImVec2 (kRowTl.x + 8.0f, kRowCentre.y));
+    panel.movePointer (ImVec2 (row.tl.x + 8.0f * panel.scale, row.centre.y));
     panel.frame (submit);
     panel.frame (submit);
     REQUIRE_FALSE (toggled);
@@ -153,17 +167,18 @@ TEST_CASE ("formCheckbox toggles on a click inside its row")
 
 TEST_CASE ("formCheckbox ignores a click outside its row")
 {
-    HeadlessPanel panel;
+    HeadlessPanel panel (GENERATE (1.0f, 2.0f));
+    const auto row = panel.row();
     bool value = false;
     bool toggled = false;
 
     const auto submit = [&] (dw::Context& ctx)
     {
-        toggled = formCheckbox (ctx, "##toggle", kRowTl, kRowBr.y - kRowTl.y, "Off",
+        toggled = formCheckbox (ctx, "##toggle", row.tl, row.br.y - row.tl.y, "Off",
                                 value);
     };
 
-    panel.movePointer (ImVec2 (500.0f, 300.0f));
+    panel.movePointer (ImVec2 (500.0f * panel.scale, 300.0f * panel.scale));
     panel.frame (submit);
     panel.frame (submit);
     panel.pressPointer (true);
@@ -177,16 +192,17 @@ TEST_CASE ("formCheckbox ignores a click outside its row")
 
 TEST_CASE ("formSlider reports the release that persists the value")
 {
-    HeadlessPanel panel;
+    HeadlessPanel panel (GENERATE (1.0f, 2.0f));
+    const auto row = panel.row();
     float value = 1.0f;
     FormSliderResult result;
 
     const auto submit = [&] (dw::Context& ctx)
     {
-        result = formSlider (ctx, "##scale", kRowTl, kRowBr, value, 0.5f, 2.0f, "%.2fx");
+        result = formSlider (ctx, "##scale", row.tl, row.br, value, 0.5f, 2.0f, "%.2fx");
     };
 
-    panel.movePointer (kRowCentre);
+    panel.movePointer (row.centre);
     panel.frame (submit);
     panel.frame (submit);
 
@@ -204,20 +220,21 @@ TEST_CASE ("formSlider reports the release that persists the value")
 
 TEST_CASE ("formSlider clamps a value dragged past the end of its range")
 {
-    HeadlessPanel panel;
+    HeadlessPanel panel (GENERATE (1.0f, 2.0f));
+    const auto row = panel.row();
     float value = 1.0f;
 
     const auto submit = [&] (dw::Context& ctx)
     {
-        formSlider (ctx, "##offset", kRowTl, kRowBr, value, -100.0f, 100.0f, "%.0f smp");
+        formSlider (ctx, "##offset", row.tl, row.br, value, -100.0f, 100.0f, "%.0f smp");
     };
 
-    panel.movePointer (kRowCentre);
+    panel.movePointer (row.centre);
     panel.frame (submit);
     panel.frame (submit);
     panel.pressPointer (true);
     panel.frame (submit);
-    panel.movePointer (ImVec2 (kRowBr.x + 400.0f, kRowCentre.y));
+    panel.movePointer (ImVec2 (row.br.x + 400.0f * panel.scale, row.centre.y));
     panel.frame (submit);
     panel.pressPointer (false);
     panel.frame (submit);
@@ -227,17 +244,18 @@ TEST_CASE ("formSlider clamps a value dragged past the end of its range")
 
 TEST_CASE ("formCombo opens on a click and reports the item picked")
 {
-    HeadlessPanel panel;
+    HeadlessPanel panel (GENERATE (1.0f, 2.0f));
+    const auto row = panel.row();
     const char* const items[] = { "(none)", "UMC1820", "Built-in Audio" };
     int selected = 0;
     bool picked = false;
 
     const auto submit = [&] (dw::Context& ctx)
     {
-        picked = formCombo (ctx, "##device", kRowTl, kRowBr, items, 3, selected);
+        picked = formCombo (ctx, "##device", row.tl, row.br, items, 3, selected);
     };
 
-    panel.movePointer (kRowCentre);
+    panel.movePointer (row.centre);
     panel.frame (submit);
     panel.frame (submit);
     REQUIRE_FALSE (picked);
@@ -250,7 +268,7 @@ TEST_CASE ("formCombo opens on a click and reports the item picked")
     // The popup is laid out under the closed combo, so its second row is one item
     // height below the first.
     const float itemHeight = ImGui::GetTextLineHeightWithSpacing();
-    panel.movePointer (ImVec2 (kRowCentre.x, kRowBr.y + itemHeight * 1.5f));
+    panel.movePointer (ImVec2 (row.centre.x, row.br.y + itemHeight * 1.5f));
     panel.frame (submit);
     panel.pressPointer (true);
     panel.frame (submit);
@@ -263,7 +281,8 @@ TEST_CASE ("formCombo opens on a click and reports the item picked")
 
 TEST_CASE ("formTooltip wraps the prose a settings row explains itself with")
 {
-    HeadlessPanel panel;
+    HeadlessPanel panel (GENERATE (1.0f, 2.0f));
+    const auto row = panel.row();
     bool value = false;
     float unwrappedWidth = 0.0f;
 
@@ -274,14 +293,14 @@ TEST_CASE ("formTooltip wraps the prose a settings row explains itself with")
 
     const auto submit = [&] (dw::Context& ctx)
     {
-        formCheckbox (ctx, "##row", kRowTl, kRowBr.y - kRowTl.y, "A settings row", value);
+        formCheckbox (ctx, "##row", row.tl, row.br.y - row.tl.y, "A settings row", value);
         formTooltip (kProse);
         unwrappedWidth = ImGui::CalcTextSize (kProse).x;
     };
 
     // A tooltip's hover test carries a stationary check and a short delay, so it takes
     // a run of frames with the pointer held still before the tip is submitted at all.
-    panel.movePointer (ImVec2 (kRowTl.x + 8.0f, kRowCentre.y));
+    panel.movePointer (ImVec2 (row.tl.x + 8.0f * panel.scale, row.centre.y));
     for (int i = 0; i < 40; ++i)
         panel.frame (submit);
 
@@ -295,18 +314,19 @@ TEST_CASE ("formTooltip wraps the prose a settings row explains itself with")
 
 TEST_CASE ("formCombo on a disabled row does not open")
 {
-    HeadlessPanel panel;
+    HeadlessPanel panel (GENERATE (1.0f, 2.0f));
+    const auto row = panel.row();
     const char* const items[] = { "44100 Hz", "48000 Hz" };
     int selected = 1;
     bool picked = false;
 
     const auto submit = [&] (dw::Context& ctx)
     {
-        picked = formCombo (ctx, "##rate", kRowTl, kRowBr, items, 2, selected,
+        picked = formCombo (ctx, "##rate", row.tl, row.br, items, 2, selected,
                             /*enabled*/ false);
     };
 
-    panel.movePointer (kRowCentre);
+    panel.movePointer (row.centre);
     panel.frame (submit);
     panel.frame (submit);
     panel.pressPointer (true);

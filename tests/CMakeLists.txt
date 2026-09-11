@@ -330,8 +330,11 @@ if(EXISTS "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui.h")
     target_sources(dusk-studio-tests PRIVATE
         imgui_widget_kit.cpp
         imgui_panel_controls.cpp
+        imgui_display_scale.cpp
+        ${CMAKE_SOURCE_DIR}/src/ui/imgui/AtlasImage.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/DuskTheme.cpp
         ${CMAKE_SOURCE_DIR}/src/ui/imgui/PanelControls.cpp
+        ${CMAKE_SOURCE_DIR}/src/ui/imgui/StartupView.cpp
         ${CMAKE_SOURCE_DIR}/tools/gui-spike/ChannelStripView.cpp
         ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk/DuskWidgets.cpp
         ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui/imgui.cpp

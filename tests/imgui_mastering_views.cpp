@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "dsp/BrickwallLimiter.h"
@@ -26,17 +27,20 @@ namespace
 class HeadlessPanel
 {
 public:
-    HeadlessPanel()
+    // The atlas is baked at the display scale, as DuskPanelWindow bakes it.
+    explicit HeadlessPanel (float displayScale) : scale (displayScale)
     {
         context = ImGui::CreateContext();
         ImGui::SetCurrentContext (context);
 
         auto& io = ImGui::GetIO();
-        io.DisplaySize = ImVec2 (700.0f, 520.0f);
+        io.DisplaySize = ImVec2 (700.0f * scale, 520.0f * scale);
         io.DeltaTime = 1.0f / 60.0f;
         io.IniFilename = nullptr;
         io.LogFilename = nullptr;
-        io.Fonts->AddFontDefault();
+        ImFontConfig config;
+        config.SizePixels = 13.0f * scale;
+        io.Fonts->AddFontDefault (&config);
         io.Fonts->Build();
         io.Fonts->SetTexID (static_cast<ImTextureID> (1));
 
@@ -68,7 +72,7 @@ public:
         ctx.theme = &imgui::consolePalette().widgets;
         ctx.fonts = &fonts;
         ctx.drag = &drag;
-        ctx.scale = 1.0f;
+        ctx.scale = scale;
 
         view.draw (ctx, ImVec2 (0.0f, 0.0f), ImGui::GetIO().DisplaySize);
         const int vertices = ctx.dl->VtxBuffer.Size;
@@ -78,15 +82,17 @@ public:
         return vertices;
     }
 
+    // Both panels inset their body by 8 design pixels and open with the section header,
+    // so this lands inside it whatever the panel is sized to.
+    ImVec2 headerPoint() const { return ImVec2 (14.0f * scale, 18.0f * scale); }
+
+    const float scale;
+
 private:
     ImGuiContext* context = nullptr;
     dw::Fonts fonts;
     dw::DragState drag;
 };
-
-// Both panels inset their body by 8 design pixels and open with the section header, so
-// this lands inside it whatever the panel is sized to.
-constexpr ImVec2 kHeaderPoint { 14.0f, 18.0f };
 
 struct EqSnapshot
 {
@@ -122,7 +128,7 @@ TEST_CASE ("the mastering EQ view draws without writing to its band parameters")
     auto& params = session.mastering();
     const EqSnapshot before (params);
 
-    HeadlessPanel panel;
+    HeadlessPanel panel (GENERATE (1.0f, 2.0f));
     // A null chain is the state before the engine has prepared: no scope to read, and
     // the response falls back to a nominal rate rather than dividing by zero.
     auto view = imgui::makeMasteringEqView (params, nullptr);
@@ -141,12 +147,12 @@ TEST_CASE ("the mastering EQ header engages the section")
     auto& params = session.mastering();
     params.eqEnabled.store (false);
 
-    HeadlessPanel panel;
+    HeadlessPanel panel (GENERATE (1.0f, 2.0f));
     auto view = imgui::makeMasteringEqView (params, nullptr);
 
     // Two settling frames: Dear ImGui decides what the pointer is over from the window
     // it hovered on the previous frame.
-    panel.movePointer (kHeaderPoint);
+    panel.movePointer (panel.headerPoint());
     panel.frame (*view);
     panel.frame (*view);
     panel.pressPointer (true);
@@ -175,7 +181,7 @@ TEST_CASE ("the mastering limiter view draws without writing to its parameters")
     const float ceiling = params.limiterCeilingDb.load();
     const int mode = params.limiterMode.load();
 
-    HeadlessPanel panel;
+    HeadlessPanel panel (GENERATE (1.0f, 2.0f));
     auto view = imgui::makeMasteringLimiterView (params, limiter);
 
     panel.movePointer (ImVec2 (-100.0f, -100.0f));
@@ -195,10 +201,10 @@ TEST_CASE ("the mastering limiter header engages the section")
     params.limiterEnabled.store (true);
     BrickwallLimiter limiter;
 
-    HeadlessPanel panel;
+    HeadlessPanel panel (GENERATE (1.0f, 2.0f));
     auto view = imgui::makeMasteringLimiterView (params, limiter);
 
-    panel.movePointer (kHeaderPoint);
+    panel.movePointer (panel.headerPoint());
     panel.frame (*view);
     panel.frame (*view);
     panel.pressPointer (true);
