@@ -485,6 +485,7 @@ public:
 #if DUSKSTUDIO_HAS_NATIVE_AU
             strip.getNativeAuSlot().drainQueuedParamBindings();
 #endif
+            strip.getBuiltinSlot().drainQueuedParamBindings();
         }
         for (int a = 0; a < Session::kNumAuxLanes; ++a)
         {
@@ -505,6 +506,7 @@ public:
 #if DUSKSTUDIO_HAS_NATIVE_AU
                 lane.getNativeAuSlot (s).drainQueuedParamBindings();
 #endif
+                lane.getBuiltinSlot (s).drainQueuedParamBindings();
             }
         }
 
@@ -4640,6 +4642,12 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                     break;
                                 }
 #endif
+                                if (strip.isBuiltinLoaded())
+                                {
+                                    strip.getBuiltinSlot()
+                                        .queueParamBinding ((uint32_t) b.paramIndex, frac);
+                                    break;
+                                }
                                 strip.getPluginSlot()
                                     .setParamNormalised (b.paramIndex, frac);
                             }
@@ -4686,6 +4694,12 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                     break;
                                 }
 #endif
+                                if (lane.isBuiltinLoaded (0))
+                                {
+                                    lane.getBuiltinSlot (0)
+                                        .queueParamBinding ((uint32_t) b.paramIndex, frac);
+                                    break;
+                                }
                                 lane.getPluginSlot (0)
                                     .setParamNormalised (b.paramIndex, frac);
                             }
