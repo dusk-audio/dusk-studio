@@ -105,7 +105,7 @@ public:
                 }
             }
         }
-        hidden_.clearQuick();
+        hidden_.clear();
     }
 
 private:
@@ -132,7 +132,7 @@ private:
                     child->getProperties().set ("dusk_modalHideCount", count + 1);
                     if (count == 0)
                         child->setVisible (false);
-                    hidden_.add (juce::Component::SafePointer<juce::Component> (child));
+                    hidden_.emplace_back (child);
                 }
                 // Tagged editor: its whole subtree hides with it, so don't
                 // recurse - a nested tagged editor would collect a redundant
@@ -143,7 +143,32 @@ private:
         }
     }
 
-    juce::Array<juce::Component::SafePointer<juce::Component>> hidden_;
+    std::vector<juce::Component::SafePointer<juce::Component>> hidden_;
+};
+
+// A JUCE stand-in for a native panel embedded in a JUCE layout. Its bounds are where
+// the framework child goes, and its visibility is the one thing the covering-surface
+// machinery already toggles: the tag is what makes an EmbeddedModal take a native
+// surface down and put it back, and a framework child is exactly that. DGL refuses to
+// hide a window while it is embedded, so "hidden" here means the owner closes the
+// child and reopens it.
+class NativePanelProxy final : public juce::Component
+{
+public:
+    NativePanelProxy()
+    {
+        getProperties().set (kPluginEditorTag, true);
+        setInterceptsMouseClicks (false, false);
+    }
+
+    std::function<void()> onVisibilityChanged;
+
+private:
+    void visibilityChanged() override
+    {
+        if (onVisibilityChanged)
+            onVisibilityChanged();
+    }
 };
 
 // Wraps the "DimOverlay + centred panel" pattern used by piano roll,
