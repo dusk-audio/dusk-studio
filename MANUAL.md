@@ -998,6 +998,8 @@ Each lane is divided into three columns:
 
 Each aux lane has one insert slot. Click **+ Plugin** to open the picker. Right-click for **Add / Replace / Remove / Edit / Configure as hardware insert**. The slot can hold a plugin or a hardware insert, mutually exclusive, with a 20 ms crossfade between modes.
 
+A plugin's own editor sits under the slot header. A built-in unit's controls fill that whole area instead; see *Editing a unit* under *Built-in insert units*.
+
 Common uses:
 
 - Reverb on aux 1.
@@ -1679,9 +1681,13 @@ It responds to note velocity, pitch bend, the mod wheel, the sustain pedal and c
 
 ### Editing a unit
 
-Click a loaded unit's insert slot, or right-click it and choose **Open editor**. The editor opens as a panel over a dimmed window, exactly like the compressor editor. Press **Esc**, click outside it, or click the slot again to dismiss it. On an aux lane the editor opens as the same panel rather than inline.
+On a channel insert, click the loaded unit's slot, or right-click it and choose **Open editor**. The editor opens as a panel over a dimmed window, exactly like the compressor editor. Press **Esc**, click outside it, or click the slot again to dismiss it.
 
-**MIDI Learn** works on a built-in unit the way it does on a plugin: move the control you want in the unit's editor, then right-click the slot and choose **MIDI Learn last-touched parameter**.
+On an aux lane there is no panel to open. The unit's controls are always on screen, filling the lane under the slot header, and they are grouped the way the unit's front panel would be: Reverb shows Tank, Tone and Mix; Tape Echo shows Heads, Tape, Tone and Mix; Tape shows Machine, Level, Tone and Transport; Utility shows Level and Image. The knobs grow with the lane, and in a smaller window the sections stack into more rows to keep them as large as the space allows. Only a lane too small for the smallest knobs scales the whole panel down.
+
+Drag a knob up or down to change it (hold **Shift** for finer steps), scroll over it, or double-click it to return it to its default. Tape Echo's **Head Mode** is a twelve-position switch that moves one position per scroll step. Choices with a handful of positions, such as Tape's **Speed**, are rows of buttons; Reverb's **Algorithm** is a drop-down list. A menu or dialog opened over the lane takes the controls down while it is open, and they come back when it closes.
+
+**MIDI Learn** works on a built-in unit the way it does on a plugin: move the control you want, then right-click the slot and choose **MIDI Learn last-touched parameter**. On an aux lane the slot's right-click menu calls it **MIDI Learn (this track)...**.
 
 ## Opening the editor
 

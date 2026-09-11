@@ -18,9 +18,11 @@
 #include "HardwareInsertEditor.h"
 #include "PlatformWindowing.h"
 #include "PluginPickerHelpers.h"
-#include "imgui/BuiltinUnitView.h"
-#include "imgui/DuskPanelWindow.h"
-#include "NativeEditorEmbedScale.h"
+#if DUSKSTUDIO_HAS_NATIVE_UI
+ #include "NativeEditorEmbedScale.h"
+ #include "imgui/BuiltinLaneView.h"
+ #include "imgui/DuskPanelWindow.h"
+#endif
 #include "../foundation/Text.h"
 #include "../dsp/AuxLaneStrip.h"
 #include "../dsp/OutputPairRouting.h"
@@ -35,6 +37,7 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <utility>
 
 namespace duskstudio
 {
@@ -79,6 +82,28 @@ juce::Colour meterColourForFrac (float frac) noexcept
     if (frac >= 0.91f) return juce::Colour (0xffd0a040);
     return juce::Colour (0xff60c060);
 }
+
+#if DUSKSTUDIO_HAS_NATIVE_UI
+// A hardware insert owns the editor area even while a unit is still loaded behind it.
+bool showsBuiltinView (const AuxLaneStrip& strip, int slotIdx)
+{
+    return strip.isBuiltinLoaded (slotIdx)
+        && strip.insertMode[(size_t) slotIdx].load (std::memory_order_relaxed)
+               != AuxLaneStrip::kInsertHardware;
+}
+
+// Where a slot's built-in view belongs, from the rectangle its proxy occupies in the lane.
+imgui::DuskPanelWindow::Geometry builtinViewGeometry (const AuxLaneComponent& lane,
+                                                      const NativePanelProxy& proxy)
+{
+    auto* const topLevel = lane.getTopLevelComponent();
+    if (topLevel == nullptr)
+        return {};
+    const auto logical = topLevel->getLocalArea (&lane, proxy.getBounds());
+    const auto g = embedscale::childGeometryFor (*topLevel, logical);
+    return { g.x, g.y, g.width, g.height, g.scale };
+}
+#endif
 } // namespace
 
 class AuxLaneComponent::StripMeter final : public juce::Component
@@ -187,10 +212,10 @@ public:
             // digit twice. User-renamed tracks pass through verbatim.
             auto nameArea = row.removeFromLeft (std::max (60, row.getWidth() / 2));
             g.setColour (sendOn ? juce::Colour (0xffe0e0e4) : juce::Colour (0xff606068));
-            const auto rawName = tr.name.trim();
-            const auto displayName = (rawName.isEmpty() || rawName == juce::String (i + 1))
-                                       ? juce::String ("Trk ") + juce::String (i + 1)
-                                       : rawName;
+            const auto number = std::to_string (i + 1);
+            const auto rawName = tr.name.trim().toStdString();
+            const auto displayName = rawName.empty() || rawName == number ? "Trk " + number
+                                                                           : rawName;
             g.drawText (displayName, nameArea.reduced (4, 0),
                         juce::Justification::centredLeft, true);
 
@@ -365,14 +390,10 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
         s.openOrAddButton.addMouseListener (this, false);   // right-click -> MIDI Learn
         s.openOrAddButton.onClick = [this, i]
         {
-            if (strip.isBuiltinLoaded (i))
-            {
-                openBuiltinEditorForSlot (i);
-                return;
-            }
             auto& slotRef = strip.getPluginSlot (i);
             if (slotRef.isLoaded() || strip.isNativeClapLoaded (i) || strip.isNativeLv2Loaded (i)
-                || strip.isNativeVst3Loaded (i) || strip.isNativeAuLoaded (i))
+                || strip.isNativeVst3Loaded (i) || strip.isNativeAuLoaded (i)
+                || strip.isBuiltinLoaded (i))
             {
                 // Keep the picker closed for loaded slots; their editors are inline.
                 return;
@@ -437,6 +458,10 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
         s.removeButton.onClick = [this, i] { unloadSlot (i); };
         addChildComponent (s.removeButton);
 
+#if DUSKSTUDIO_HAS_NATIVE_UI
+        s.builtinProxy.onVisibilityChanged = [this] { scheduleBuiltinViewSync(); };
+        addAndMakeVisible (s.builtinProxy);
+#endif
     }
 
     for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
@@ -461,13 +486,13 @@ AuxLaneComponent::~AuxLaneComponent()
     // eventually, but base-class destruction runs AFTER member
     // destruction - leaving a window for a UAF.
     stopTimer();
-    // Drop the built-in editor's native child while the dim it sits over and the
-    // hider holding the lane's other editors are still alive, the way the channel
-    // strip tears its own panels down.
-    builtinEditorWindow.reset();
-    builtinEditorDim.reset();
     for (auto& s : slots)
     {
+       #if DUSKSTUDIO_HAS_NATIVE_UI
+        // The framework child reaches back into this lane through its callbacks, so
+        // it goes down while the lane is still whole.
+        s.builtinWindow.reset();
+       #endif
         s.editor.reset();
         s.hwInsertEditor.reset();
     }
@@ -484,6 +509,9 @@ void AuxLaneComponent::timerCallback()
         // hold an abandoned editor until the next one.
         syncNativeEditorOwnersForSlot (i);
         refreshSlotControls (i);
+        // A session load swaps or clears the unit without touching the lane.
+        if (builtinViewNeedsSync (i))
+            scheduleBuiltinViewSync();
     }
     if (stripMeter != nullptr) stripMeter->repaint();
     if (sendPanel  != nullptr) sendPanel->repaint();
@@ -692,19 +720,12 @@ void AuxLaneComponent::captureWritePoint (AutomationParam param, float denormVal
 
 void AuxLaneComponent::refreshSlotControls (int i)
 {
-   #if DUSKSTUDIO_HAS_NATIVE_UI
-    // Every load and unload path lands here, so this is where the editor has to
-    // notice the slot no longer holds the unit its view points at.
-    if (builtinEditorSlot == i && isBuiltinEditorOpen() && ! strip.isBuiltinLoaded (i))
-        closeBuiltinEditor();
-   #endif
-
     auto& slotRef = strip.getPluginSlot (i);
     auto& ui      = slots[(size_t) i];
     auto nativeLabel = [] (const juce::String& name, bool offline)
     {
         return offline
-            ? juce::String (juce::CharPointer_UTF8 ("\xe2\x9a\xa0 ")) + name + " (offline)"
+            ? juce::String (std::string ("\xe2\x9a\xa0 ") + name.toStdString() + " (offline)")
             : name;
     };
     auto setNativeTooltip = [&ui] (bool offline)
@@ -927,9 +948,9 @@ void AuxLaneComponent::refreshSlotControls (int i)
         // name so the user knows what to reinstall; the slot's stashed
         // descXml + state base64 will round-trip on the next save.
         const auto offline = slotRef.getOfflineName();
-        const auto label = juce::String (juce::CharPointer_UTF8 ("\xe2\x9a\xa0 "))
-                         + (offline.isNotEmpty() ? offline : juce::String ("offline"))
-                         + " (offline)";
+        const auto label = juce::String (std::string ("\xe2\x9a\xa0 ")
+                                         + (offline.isNotEmpty() ? offline.toStdString() : "offline")
+                                         + " (offline)");
         if (label != ui.displayedName)
         {
             ui.displayedName = label;
@@ -1467,7 +1488,6 @@ void AuxLaneComponent::loadBuiltinForSlot (int slotIdx, const std::string& unitI
     detachLv2EditorForSlot (slotIdx);
     detachVst3EditorForSlot (slotIdx);
     detachAuEditorForSlot (slotIdx);
-    closeBuiltinEditor();
 
     std::string err;
     engine.suspendProcessing();
@@ -1510,120 +1530,126 @@ void AuxLaneComponent::loadBuiltinForSlot (int slotIdx, const std::string& unitI
     rebuildSlots();
 }
 
-void AuxLaneComponent::closeBuiltinEditor()
+void AuxLaneComponent::scheduleBuiltinViewSync()
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    if (builtinEditorWindow != nullptr && builtinEditorWindow->isOpen())
-        builtinEditorWindow->close();
+    if (builtinSyncPending)
+        return;
+    builtinSyncPending = true;
+    juce::Component::SafePointer<AuxLaneComponent> safe (this);
+    dusk::callAsync ([safe]
+    {
+        if (auto* self = safe.getComponent())
+        {
+            self->builtinSyncPending = false;
+            self->applyBuiltinViewSync();
+        }
+    });
    #endif
-    builtinEditorSlot = -1;
 }
 
-bool AuxLaneComponent::isBuiltinEditorOpen() const noexcept
+bool AuxLaneComponent::builtinViewNeedsSync (int slotIdx) const
 {
    #if DUSKSTUDIO_HAS_NATIVE_UI
-    return builtinEditorWindow != nullptr && builtinEditorWindow->isOpen();
+    const auto& ui = slots[(size_t) slotIdx];
+    const bool shown = showsBuiltinView (strip, slotIdx);
+    if (ui.builtinWindow != nullptr && ui.builtinWindow->isOpen())
+        return ! shown || strip.getBuiltinSlot (slotIdx).getPluginId() != ui.builtinViewUnit;
+    // A unit whose view failed to open is not retried on every tick; the next lane
+    // event or a different unit tries again.
+    return shown && strip.getBuiltinSlot (slotIdx).getPluginId() != ui.builtinViewUnit
+        && isShowing() && ui.builtinProxy.isVisible();
    #else
+    (void) slotIdx;
     return false;
    #endif
 }
 
-void AuxLaneComponent::openBuiltinEditorForSlot (int slotIdx)
+void AuxLaneComponent::applyBuiltinViewSync()
 {
-   #if ! DUSKSTUDIO_HAS_NATIVE_UI
-    (void) slotIdx;
-    showDuskAlert (*this, "Built-in unit",
-                   "The built-in unit editor needs the native UI, which this build "
-                   "was made without.");
-   #else
-    if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return;
-    if (! strip.isBuiltinLoaded (slotIdx)) return;
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    auto* const topLevel = getTopLevelComponent();
+    const auto parentHandle = topLevel != nullptr ? embedscale::nativeParentHandle (*topLevel) : 0;
 
-    if (isBuiltinEditorOpen() && builtinEditorSlot == slotIdx)
+    for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
     {
-        closeBuiltinEditor();
-        return;
-    }
-    closeBuiltinEditor();
+        auto& ui = slots[(size_t) i];
+        const bool shown = showsBuiltinView (strip, i);
+        const std::string unit = shown ? strip.getBuiltinSlot (i).getPluginId() : std::string();
+        const bool wanted = shown && parentHandle != 0 && isShowing()
+                         && ui.builtinProxy.isVisible() && ! ui.builtinProxy.getBounds().isEmpty();
 
-    auto* topLevel = getTopLevelComponent();
-    if (topLevel == nullptr) topLevel = this;
-    const auto parentHandle = embedscale::nativeParentHandle (*topLevel);
-    if (parentHandle == 0)
-    {
-        showDuskAlert (*topLevel, "Built-in unit",
-                       "The editor cannot open: the main window is not ready.");
-        return;
-    }
+        if (! shown && ! ui.builtinViewFailure.empty())
+        {
+            ui.builtinViewFailure.clear();
+            repaint();
+        }
 
-    if (auto hook = EmbeddedModal::beforeModalShown())
-        hook();
+        auto& window = ui.builtinWindow;
+        if (window != nullptr && window->isOpen())
+        {
+            // A view is built for one unit and embedded in one native parent; a close
+            // takes two pump ticks, and its closed callback runs this again after.
+            if (! wanted || unit != ui.builtinViewUnit || parentHandle != ui.builtinViewParent)
+            {
+                ui.builtinCloseRequested = true;
+                window->close();
+            }
+            else
+                window->setGeometry (builtinViewGeometry (*this, ui.builtinProxy));
+            continue;
+        }
+        if (! wanted)
+            continue;
 
-    if (builtinEditorWindow == nullptr)
-    {
-        builtinEditorWindow = std::make_unique<imgui::DuskPanelWindow> (
-            "dusk-studio-aux-builtin-editor", "aux-builtin-editor", "Built-in unit");
+        window = std::make_unique<imgui::DuskPanelWindow> (
+            "dusk-studio-aux-builtin", "aux-builtin", "Built-in unit controls");
 
         imgui::DuskPanelWindow::Callbacks callbacks;
-        callbacks.dismissed = [this] { closeBuiltinEditor(); };
-        callbacks.closed = [this]
+        callbacks.shortcut = [] (imgui::ShellShortcut shortcut)
         {
-            builtinEditorDim.reset();
-            builtinEditorHider.restore();
-            builtinEditorSlot = -1;
-            if (auto* target = EmbeddedModal::focusRestoreTarget().getComponent())
-                target->grabKeyboardFocus();
+            return dispatchShellShortcut (shortcut);
         };
-        callbacks.geometry = [this]
+        // The window is torn down first in the destructor, and none of its callbacks
+        // run during that teardown, so they may hold the lane itself.
+        callbacks.closed = [this, i]
         {
-            auto* const top = getTopLevelComponent();
-            if (top == nullptr || builtinEditorWindow == nullptr)
-                return imgui::DuskPanelWindow::Geometry {};
+            auto& slotUi = slots[(size_t) i];
+            // A close the graphics driver forced keeps its unit, so the timer does not
+            // reopen into the same failure every few ticks; the next lane event does.
+            if (std::exchange (slotUi.builtinCloseRequested, false))
+                slotUi.builtinViewUnit.clear();
+            else
+                slotUi.builtinViewFailure = "Built-in unit controls closed after a graphics error.";
+            repaint();
+            scheduleBuiltinViewSync();
+        };
+        callbacks.geometry = [this, i]
+        {
+            return builtinViewGeometry (*this, slots[(size_t) i].builtinProxy);
+        };
+        window->setCallbacks (std::move (callbacks));
 
-            const auto plate = builtinEditorWindow->plateSize();
-            const auto bounds = embedscale::centredChildBounds (*top, plate.width,
-                                                                plate.height);
-            if (builtinEditorDim != nullptr)
+        auto& slot = strip.getBuiltinSlot (i);
+        window->setView (imgui::makeBuiltinLaneView (
+            slot, [&slot] (int paramIndex) { slot.noteParamTouched (paramIndex); }));
+
+        ui.builtinViewUnit = unit;
+        ui.builtinViewParent = parentHandle;
+        if (window->open (parentHandle, builtinViewGeometry (*this, ui.builtinProxy)))
+        {
+            if (! ui.builtinViewFailure.empty())
             {
-                builtinEditorDim->setBounds (top->getLocalBounds());
-                builtinEditorDim->setNativeChildArea (bounds.expanded (1));
+                ui.builtinViewFailure.clear();
+                repaint();
             }
-            const auto g = embedscale::childGeometryFor (*top, bounds);
-            return imgui::DuskPanelWindow::Geometry { g.x, g.y, g.width, g.height, g.scale };
-        };
-        builtinEditorWindow->setCallbacks (std::move (callbacks));
+            continue;
+        }
+        ui.builtinViewFailure = window->lastOpenFailure();
+        std::fprintf (stderr, "[aux builtin] %s\n", ui.builtinViewFailure.c_str());
+        window.reset();
+        repaint();
     }
-
-    auto& slot = strip.getBuiltinSlot (slotIdx);
-    builtinEditorWindow->setView (imgui::makeBuiltinUnitView (
-        slot, slot.displayName(),
-        [&slot] (int paramIndex) { slot.noteParamTouched (paramIndex); },
-        /*inlineInStage*/ false));
-
-    const auto plate = builtinEditorWindow->plateSize();
-    const auto logical = embedscale::centredChildBounds (*topLevel, plate.width, plate.height);
-
-    builtinEditorDim = std::make_unique<DimOverlay> (builtinEditorWindow->dimAlpha());
-    builtinEditorDim->setBounds (topLevel->getLocalBounds());
-    builtinEditorDim->setNativeChildArea (logical.expanded (1));
-    builtinEditorDim->onClick = [this] { closeBuiltinEditor(); };
-    topLevel->addAndMakeVisible (builtinEditorDim.get());
-    builtinEditorHider.hideUnder (*topLevel, { builtinEditorDim.get() });
-
-    const auto geometry = embedscale::childGeometryFor (*topLevel, logical);
-    if (! builtinEditorWindow->open (parentHandle,
-                                     { geometry.x, geometry.y, geometry.width,
-                                       geometry.height, geometry.scale }))
-    {
-        builtinEditorDim.reset();
-        builtinEditorHider.restore();
-        const auto& why = builtinEditorWindow->lastOpenFailure();
-        showDuskAlert (*topLevel, "Built-in unit",
-                       why.empty() ? "The editor cannot open on this display backend."
-                                   : why.c_str());
-        return;
-    }
-    builtinEditorSlot = slotIdx;
    #endif
 }
 
@@ -1761,6 +1787,7 @@ void AuxLaneComponent::hideEditorsKeepingAlive()
         else
             ui.editor->setVisible (false);
     }
+    scheduleBuiltinViewSync();
 }
 
 void AuxLaneComponent::attachHardwareInsertForSlot (int slotIdx)
@@ -1788,6 +1815,22 @@ void AuxLaneComponent::detachHardwareInsertForSlot (int slotIdx)
 void AuxLaneComponent::layoutEditorForSlot (int slotIdx)
 {
     auto& ui = slots[(size_t) slotIdx];
+
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    // A built-in unit's view fills the area under the slot header rather than
+    // centring at a preferred size.
+    {
+        auto area = getCenterArea();
+        area.removeFromTop (kSlotHeaderH + 4);
+        if (! showsBuiltinView (strip, slotIdx))
+            area.setSize (0, 0);
+        if (ui.builtinProxy.getBounds() != area)
+        {
+            ui.builtinProxy.setBounds (area);
+            scheduleBuiltinViewSync();
+        }
+    }
+   #endif
 
     // Plugin editor and hardware-insert editor share the same center
     // area below the slot header; only one is ever attached at a time.
@@ -2059,6 +2102,7 @@ void AuxLaneComponent::rebuildSlots()
     // parentHierarchyChanged can tell a real peer change (must rebuild) from a
     // same-peer visibility/tab change (cheap keep-alive).
     lastSeenPeer = getPeer();
+    scheduleBuiltinViewSync();
 }
 
 void AuxLaneComponent::visibilityChanged()
@@ -2134,6 +2178,18 @@ void AuxLaneComponent::paint (juce::Graphics& g)
         g.setColour (juce::Colour (0xff2a2a2e));
         g.drawRoundedRectangle (stripCol.toFloat(), 4.0f, 1.0f);
     }
+
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    // The view's framework child could not open on this display, so its area says why
+    // instead of standing empty.
+    for (const auto& ui : slots)
+        if (! ui.builtinViewFailure.empty())
+        {
+            g.setColour (juce::Colour (0xff909098));
+            g.drawFittedText (ui.builtinViewFailure, ui.builtinProxy.getBounds().reduced (16),
+                              juce::Justification::centred, 4);
+        }
+   #endif
 }
 
 void AuxLaneComponent::resized()
@@ -2289,7 +2345,8 @@ void AuxLaneComponent::mouseDown (const juce::MouseEvent& e)
                          || strip.isNativeClapLoaded (i)
                          || strip.isNativeLv2Loaded (i)
                          || strip.isNativeVst3Loaded (i)
-                         || strip.isNativeAuLoaded (i);
+                         || strip.isNativeAuLoaded (i)
+                         || strip.isBuiltinLoaded (i);
         if (loaded)
             midilearn::showLearnMenu (ui.openOrAddButton, session,
                                         MidiBindingTarget::AuxPluginParam, laneIndex);
