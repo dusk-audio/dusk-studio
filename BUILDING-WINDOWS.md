@@ -65,7 +65,7 @@ The session notepad uses DAF/DGL and the in-tree Dear ImGui widget kit, pinned t
 ```cmd
 cd C:\dev
 git clone https://github.com/dusk-audio/DAF.git
-git -C DAF checkout 867183d73b8fea20892eb8de49fb8c8b108c4910
+git -C DAF checkout b818178e024a5d28e63c52528af8b2ad2a34e360
 ```
 
 Clone then check out the SHA rather than building whatever a branch points at today. Pugl and the widget kit are vendored in that checkout. The pins live in [.github/actions/clone-daf-stack/action.yml](.github/actions/clone-daf-stack/action.yml), the single source of truth for every workflow.

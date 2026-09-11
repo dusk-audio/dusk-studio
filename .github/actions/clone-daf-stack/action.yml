@@ -8,7 +8,7 @@ runs:
       shell: bash
       env:
         DAF_REPO: https://github.com/dusk-audio/DAF.git
-        DAF_REV: 867183d73b8fea20892eb8de49fb8c8b108c4910
+        DAF_REV: b818178e024a5d28e63c52528af8b2ad2a34e360
       run: |
         set -euo pipefail
         git init -q "${RUNNER_TEMP}/DAF"
