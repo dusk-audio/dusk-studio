@@ -190,8 +190,14 @@ endif()
 # The wayland fork has its own XEmbed + addDefaultFormatsToManager API that
 # Dusk Studio's source assumes on Linux; see [src/engine/JuceCompat.h](src/engine/JuceCompat.h)
 # for the API-split shim.
+#
+# A relative -DJUCE_PATH, -DDUSK_PLUGINS_PATH, -DDAF_PATH or -DDAF_WIDGETS_PATH
+# is made absolute against this source tree where it is read: the base the
+# top-level uses already resolved it against, and one that does not move when
+# CMake re-runs itself from the build directory. Left relative, tests/ resolves
+# it against tests/ and if(EXISTS) against the working directory.
 if(DEFINED JUCE_PATH)
-    set(DUSKSTUDIO_JUCE_SOURCE_DIR "${JUCE_PATH}")
+    get_filename_component(DUSKSTUDIO_JUCE_SOURCE_DIR "${JUCE_PATH}" ABSOLUTE)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux"
        AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../JUCE-wayland/CMakeLists.txt")
     set(DUSKSTUDIO_JUCE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../JUCE-wayland")
@@ -387,6 +393,7 @@ endif()
 #      against that branch. (The former ../plugins-main worktree was removed; the
 #      plugins repo is consolidated to one directory.)
 if(DEFINED DUSK_PLUGINS_PATH)
+    get_filename_component(DUSK_PLUGINS_PATH "${DUSK_PLUGINS_PATH}" ABSOLUTE)
     message(STATUS "Using Dusk plugins from: ${DUSK_PLUGINS_PATH}")
 elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../plugins/plugins/shared")
     set(DUSK_PLUGINS_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../plugins")
@@ -445,12 +452,13 @@ function(duskstudio_resolve_framework_dir outVar)
 
     foreach(pathVar IN LISTS ARG_EXPLICIT)
         if(DEFINED ${pathVar})
-            if(NOT EXISTS "${${pathVar}}/${ARG_MARKER}")
+            get_filename_component(explicitDir "${${pathVar}}" ABSOLUTE)
+            if(NOT EXISTS "${explicitDir}/${ARG_MARKER}")
                 message(FATAL_ERROR
                     "${pathVar}=${${pathVar}} has no ${ARG_MARKER} - it is not a "
                     "${ARG_LABEL} checkout.")
             endif()
-            set(${outVar} "${${pathVar}}" PARENT_SCOPE)
+            set(${outVar} "${explicitDir}" PARENT_SCOPE)
             return()
         endif()
     endforeach()
