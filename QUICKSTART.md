@@ -17,9 +17,12 @@ expected and it goes away when signed builds land.
 Run `./install.sh` if you also want it in your application menu and on your
 PATH. It installs under `~/.local` and needs no root.
 
-**macOS.** Open the DMG and drag Dusk Studio to Applications. The first time you
-open it, right-click the app and choose Open, then confirm. Double-clicking will
-refuse until you have done that once.
+**macOS.** Open the DMG and drag DuskStudio onto the Applications shortcut in its
+window. The first time you open the app, macOS refuses it. Dismiss that message,
+then open System Settings, go to Privacy & Security, scroll to the bottom and
+click Open Anyway beside the note about DuskStudio. Enter your password, then
+click Open when macOS asks once more. After that it opens normally until you
+install a newer build.
 
 **Windows.** Run the MSI. SmartScreen will warn you about an unrecognised
 publisher; choose More info, then Run anyway.

@@ -374,21 +374,21 @@ No signing dance. Linux desktops run the binary directly.
 
 macOS 14 Sonoma and 15 Sequoia ship Gatekeeper at its strictest defaults. Right-click → Open used to bypass; recent macOS releases require a trip to System Settings instead.
 
-1. Double-click the downloaded `DuskStudio.dmg` to mount it.
-2. Drag **Dusk Studio.app** to your `Applications` folder.
-3. The first time you launch the app, macOS will show: *"Dusk Studio.app cannot be opened because the developer cannot be verified."* Click **OK** to dismiss — this step is required so macOS records the block in your security log.
+1. Double-click the downloaded `dusk-studio-<version>-macOS-arm64.dmg` and accept the licence to mount it.
+2. In the window that opens, drag **DuskStudio.app** onto the **Applications** shortcut beside it.
+3. The first time you launch the app, macOS will show: *"DuskStudio.app cannot be opened because the developer cannot be verified."* Click **OK** to dismiss it. This step is required so macOS records the block in your security log.
 4. Open **System Settings → Privacy & Security**. Scroll to the bottom.
-5. You will see *"Dusk Studio.app was blocked from use because it is not from an identified developer."* Click **Open Anyway**.
+5. You will see *"DuskStudio.app was blocked from use because it is not from an identified developer."* Click **Open Anyway**.
 6. Enter your administrator password when prompted.
-7. macOS shows the warning one more time with an **Open** button — click it.
+7. macOS shows the warning one more time with an **Open** button. Click it.
 8. Subsequent launches work normally; macOS only asks once per build.
 
 If you later install a newer build (different binary hash), the bypass dance repeats once for that new build.
 
-**If the icon shows in the Dock but the app never opens (and you have to force-quit):** you are almost certainly launching it from the mounted DMG or your Downloads folder. An ad-hoc-signed app run from a quarantined location can hang at launch on Apple Silicon. Fix: make sure **Dusk Studio.app** is in `/Applications` (step 2) and launch it from there - not from the DMG. If it still hangs, clear the quarantine flag in Terminal, then launch again:
+**If the icon shows in the Dock but the app never opens (and you have to force-quit):** you are almost certainly launching it from the mounted DMG or your Downloads folder. An ad-hoc-signed app run from a quarantined location can hang at launch on Apple Silicon. Fix: make sure **DuskStudio.app** is in `/Applications` (step 2) and launch it from there - not from the DMG. If it still hangs, clear the quarantine flag in Terminal, then launch again:
 
 ```bash
-xattr -dr com.apple.quarantine "/Applications/Dusk Studio.app"
+xattr -dr com.apple.quarantine "/Applications/DuskStudio.app"
 ```
 
 ### Windows (MSI installer)
