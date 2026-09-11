@@ -1539,8 +1539,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
 
     // Loop / punch: bracket keys set the current playhead as in/out;
     // L and P toggle the corresponding mode on/off. Shift+bracket switches
-    // to punch boundaries and arms punch once in sits before out; the
-    // unshifted form sets loop boundaries.
+    // to punch boundaries; the unshifted form sets loop boundaries. Either
+    // arms its mode once in sits before out.
     auto& transport = engine.getTransport();
     // On Linux/X11 getKeyCode() returns the SHIFTED glyph (XLookupString
     // applies modifiers), so Shift+[ arrives as '{' and Shift+] as '}'.
@@ -1557,8 +1557,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         else
         {
             const auto end = transport.getLoopEnd();
-            transport.setLoopRange (playhead,
-                                      end > playhead ? end : playhead);
+            transport.placeLoopRange (playhead,
+                                        end > playhead ? end : playhead);
         }
         if (tapeStrip != nullptr) tapeStrip->repaint();
         return true;
@@ -1575,8 +1575,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         else
         {
             const auto start = transport.getLoopStart();
-            transport.setLoopRange (start < playhead ? start : playhead,
-                                      playhead);
+            transport.placeLoopRange (start < playhead ? start : playhead,
+                                        playhead);
         }
         if (tapeStrip != nullptr) tapeStrip->repaint();
         return true;

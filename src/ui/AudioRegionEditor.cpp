@@ -2766,7 +2766,7 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
                 if (kc == '[')
                 {
                     if (sh) transport.placePunchRange (cursorTl, std::max (transport.getPunchOut(), cursorTl));
-                    else    transport.setLoopRange  (cursorTl, std::max (transport.getLoopEnd(),  cursorTl));
+                    else    transport.placeLoopRange  (cursorTl, std::max (transport.getLoopEnd(),  cursorTl));
                 }
                 else
                 {
@@ -2777,7 +2777,7 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
                     auto start = sh ? transport.getPunchIn() : transport.getLoopStart();
                     if (start == 0) start = cursorTl;
                     if (sh) transport.placePunchRange (std::min (start, cursorTl), cursorTl);
-                    else    transport.setLoopRange  (std::min (start, cursorTl), cursorTl);
+                    else    transport.placeLoopRange  (std::min (start, cursorTl), cursorTl);
                 }
                 repaint();
                 return true;
