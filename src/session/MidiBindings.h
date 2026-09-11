@@ -300,6 +300,7 @@ enum class PendingTransportAction : int
     Record     = 3,
     Toggle     = 4,
     LoopToggle = 5,   // flip loop on/off (MCU Loop button)
+    SyncStop   = 6,   // the chased MIDI clock or MTC master stopped
 };
 
 // Packed into atomic<int>: target enum high bits, track index low 8.

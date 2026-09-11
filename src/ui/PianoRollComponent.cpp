@@ -2352,7 +2352,7 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
         const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
         const auto sampleOffset = session.ticksToSamples (regStartTick + tickHere, sr)
                                       - r->timelineStart;
-        engine.getTransport().setPlayhead (r->timelineStart + sampleOffset);
+        engine.getTransport().locate (r->timelineStart + sampleOffset);
 
         rangeStartTick = tickHere;
         rangeEndTick   = rangeStartTick;

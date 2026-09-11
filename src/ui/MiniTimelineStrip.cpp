@@ -183,9 +183,9 @@ void MiniTimelineStrip::mouseDown (const juce::MouseEvent& ev)
     const std::int64_t end = songEndSamples();
     const int mi = markerAtX (ev.x);
     if (mi >= 0)
-        engine.getTransport().setPlayhead (session.getMarkers()[(size_t) mi].timelineSamples);
+        engine.getTransport().locate (session.getMarkers()[(size_t) mi].timelineSamples);
     else
-        engine.getTransport().setPlayhead (sampleForX (ev.x, end));
+        engine.getTransport().locate (sampleForX (ev.x, end));
     repaint();
 }
 

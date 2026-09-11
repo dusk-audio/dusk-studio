@@ -156,7 +156,7 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 
 | #   | Name             | Description                                                                      |
 | --- | ---------------- | -------------------------------------------------------------------------------- |
-| 1   | Stop             | Halts playback or recording, returns the playhead to bar 1.                      |
+| 1   | Stop             | Halts playback or recording and returns the playhead to where play or record started. Press again to return to bar 1. |
 | 2   | Rewind           | Short press jumps to the previous marker or bar 1; hold for 10× scrub backwards. |
 | 3   | Play             | Toggles playback. Snaps to loop start if loop is on and the playhead is outside. |
 | 4   | Forward          | Short press jumps to the next marker; hold for 10× scrub forwards.               |
@@ -487,7 +487,7 @@ All seven are saved with the session, so a project that syncs to an external clo
 - **UI scale**: a global zoom factor for the entire interface. The interface previews changes live while you adjust the slider; the final value is saved per-machine when you release it.
 - **Expand tape strip by default**: show the tape strip on every session open.
 - **Follow playhead by default**: start the timeline and the audio / MIDI editors with Chase engaged, so the view scrolls to keep the playhead in sight during playback. Per-machine; takes effect on next launch.
-- **Stop behavior**: where the playhead lands when playback stops — **Stay where it is** (pause), **Return to start**, or **Return to last clicked point**.
+- **Playhead on Stop**: where the playhead lands when you press Stop. **Return to where play or record started** is the default: the playhead goes back to where playback or the take began, or to where you last moved it during playback, so Play hears the take you just made. A punch take begins at the punch-in point and a loop take at the loop start; count-in and pre-roll do not count. The other choices are **Stay where it is (pause)**, **Return to start (rewind to 0)** and **Return to last clicked point**. Pressing Stop while already stopped returns to bar 1 whatever this says. Per-machine; takes effect immediately.
 - **MIDI soft takeover (pickup)**: when on, a knob or fader bound with MIDI Learn stays dormant until the physical control crosses the parameter's current position, instead of snapping the parameter on first touch. Applies to continuous mixer targets (faders, pans, sends, EQ, comp, master); plugin-parameter bindings always track directly. Per-machine; takes effect immediately.
 - **Autosave every**: the crash-recovery autosave cadence, 15 seconds to 5 minutes (default 30 seconds). Per-machine; applies when the Settings panel closes.
 - **Scan plugins on startup**: re-run the plugin scanner every time Dusk Studio launches. Off by default; large plugin collections take 10–30 seconds to scan.
@@ -552,9 +552,12 @@ Switching into or out of MASTERING force-stops the transport. The mix engine and
 
 From left to right:
 
-- **Stop** (■). Halts playback or recording, returns the playhead to bar 1, and
-  silences held notes in hosted instruments even when their tracks are muted or
-  excluded by solo.
+- **Stop** (■). Halts playback or recording and silences held notes in hosted
+  instruments even when their tracks are muted or excluded by solo. The playhead
+  goes back to where playback or the take began, or wherever **Playhead on Stop**
+  in Settings sends it. Press Stop again while stopped to return to bar 1. A stop
+  that comes from MIDI clock or MTC chase leaves the playhead where the master
+  stopped.
 - **Rewind** (◀◀). Brief press jumps to the previous marker; if there is no previous marker, jumps to bar 1. Hold for more than 180 milliseconds to scrub backwards at 10× speed.
 - **Play** (▶). Toggles play. If loop is enabled and the playhead is outside the loop region, the playhead snaps to the loop start before playback begins.
 - **Forward** (▶▶). Brief press jumps to the next marker (no overshoot past the last one). Hold to scrub forward at 10× speed.

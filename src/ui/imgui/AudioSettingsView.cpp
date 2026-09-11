@@ -71,9 +71,12 @@ constexpr int kOversamplingFactors[] = { 1, 2, 4 };
 
 const char* const kFrameRateItems[] = { "24 fps", "25 fps", "29.97 DF", "30 fps" };
 
+// Indexed by the persisted StopBehavior value.
 const char* const kStopBehaviorItems[] = { "Stay where it is (pause)",
                                            "Return to start (rewind to 0)",
-                                           "Return to last clicked point" };
+                                           "Return to last clicked point",
+                                           "Return to where play or record started" };
+constexpr int kStopBehaviorCount = static_cast<int> (std::size (kStopBehaviorItems));
 
 const char* const kAutosaveItems[] = { "15 seconds", "30 seconds", "1 minute",
                                        "2 minutes", "5 minutes" };
@@ -142,7 +145,8 @@ public:
                 oversampling = i;
         frameRate = std::clamp (
             session.syncOutputTimeCodeFrameRate.load (std::memory_order_relaxed), 0, 3);
-        stopBehavior = std::clamp (static_cast<int> (appconfig::getStopBehavior()), 0, 2);
+        stopBehavior = std::clamp (static_cast<int> (appconfig::getStopBehavior()), 0,
+                                   kStopBehaviorCount - 1);
         // A hand-edited config value snaps to the nearest offered cadence rather than
         // leaving the dropdown blank.
         autosave = indexOfNearest (kAutosaveSeconds, 5,
@@ -454,17 +458,19 @@ private:
         {
             const float top = takeRow (kRowH);
             labelled (top, "Playhead on Stop");
-            if (staticComboAt (top, "##stop-behavior", kStopBehaviorItems, 3, stopBehavior,
-                               kComboW))
+            if (staticComboAt (top, "##stop-behavior", kStopBehaviorItems, kStopBehaviorCount,
+                               stopBehavior, kComboW))
             {
                 const auto value = static_cast<appconfig::StopBehavior> (stopBehavior);
                 appconfig::setStopBehavior (value);
                 session.stopBehavior.store (stopBehavior, std::memory_order_relaxed);
             }
-            formTooltip ("What the playhead does on Stop. \"Stay\" matches the "
-                         "commercial-DAW pause-in-place. \"Return to start\" rewinds every "
-                         "time. \"Last clicked\" jumps to the most recent ruler click so "
-                         "Stop then Play recycles a region you just auditioned.");
+            formTooltip ("What the playhead does on Stop. \"Return to where play or record "
+                         "started\" (the default) puts it back where playback or the take "
+                         "began, ready to hear the take. \"Stay\" leaves it where it "
+                         "stopped. \"Return to start\" rewinds every time. \"Last clicked\" "
+                         "jumps to the most recent ruler click. Stop while already stopped "
+                         "always returns to the start.");
         }
         {
             const float top = takeRow (kRowH);

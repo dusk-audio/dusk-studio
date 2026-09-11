@@ -23,6 +23,22 @@ public:
     std::int64_t getPlayhead() const noexcept { return playheadSamples.load (std::memory_order_relaxed); }
     void setPlayhead (std::int64_t s) noexcept { playheadSamples.store (s, std::memory_order_relaxed); }
 
+    // Where playback or the take last began from a stopped transport, leaving
+    // out count-in and pre-roll. Stop returns here under
+    // StopBehavior::ReturnToRollStart.
+    std::int64_t getRollStart() const noexcept { return rollStart.load (std::memory_order_relaxed); }
+    void setRollStart (std::int64_t s) noexcept { rollStart.store (s, std::memory_order_relaxed); }
+
+    // A seek the user asked for. During playback it also becomes the roll
+    // start, so Stop comes back to the last place the user sent the playhead.
+    // A take keeps its start: seeking while recording leaves the roll start.
+    void locate (std::int64_t s) noexcept
+    {
+        setPlayhead (s);
+        if (isPlaying())
+            setRollStart (s);
+    }
+
     // Called from the audio callback when state is Playing or Recording.
     void advancePlayhead (int numSamples) noexcept
     {
@@ -60,6 +76,7 @@ public:
 private:
     std::atomic<State>       state            { State::Stopped };
     std::atomic<std::int64_t> playheadSamples  { 0 };
+    std::atomic<std::int64_t> rollStart        { 0 };
 
     std::atomic<bool>        loopEnabled      { false };
     std::atomic<std::int64_t> loopStart        { 0 };
