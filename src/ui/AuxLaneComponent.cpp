@@ -32,6 +32,7 @@
 #include "../session/ParamEditAction.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <string>
 
@@ -178,7 +179,7 @@ public:
             g.setColour (tr.colour.withAlpha (sendOn ? 0.9f : 0.35f));
             g.fillRect (idxArea.reduced (2, 4));
             g.setColour (sendOn ? juce::Colours::white : juce::Colour (0xff707078));
-            g.drawText (juce::String (i + 1), idxArea, juce::Justification::centred, false);
+            g.drawText (std::to_string (i + 1), idxArea, juce::Justification::centred, false);
 
             // Track name. Default Dusk Studio sessions name tracks "1".."16" -
             // the colour swatch on the left already shows the index, so
@@ -196,8 +197,8 @@ public:
             // dB readout on the right.
             auto dbArea = row.removeFromRight (52);
             g.setColour (sendOn ? juce::Colour (0xffe0e0e4) : juce::Colour (0xff505058));
-            const auto dbText = sendOn ? juce::String (sendDb, 1) + " dB"
-                                       : juce::String ("-inf");
+            const auto dbText = sendOn ? dusk::text::format ("%.1f dB", static_cast<double> (sendDb))
+                                       : std::string ("-inf");
             g.drawText (dbText, dbArea, juce::Justification::centredRight, false);
 
             // Meter bar between name and dB.
@@ -210,7 +211,8 @@ public:
                 {
                     const float inFrac = dbToMeterFrac (inputDb);
                     juce::Rectangle<int> fill = meterArea;
-                    fill.setWidth (juce::roundToInt ((float) meterArea.getWidth() * inFrac));
+                    fill.setWidth (static_cast<int> (
+                        std::lround (static_cast<float> (meterArea.getWidth()) * inFrac)));
                     g.setColour (meterColourForFrac (inFrac).withAlpha (0.85f));
                     g.fillRect (fill);
                 }
@@ -229,8 +231,8 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
 {
     // Accessibility floor - screen readers announce the lane as
     // "Aux N" instead of "Component".
-    setTitle ("Aux " + juce::String (idx + 1));
-    setDescription ("Aux send/return lane " + juce::String (idx + 1));
+    setTitle ("Aux " + std::to_string (idx + 1));
+    setDescription ("Aux send/return lane " + std::to_string (idx + 1));
 
     nameLabel.setText (lane.name, juce::dontSendNotification);
     nameLabel.setJustificationType (juce::Justification::centredLeft);
@@ -442,12 +444,12 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
     rebuildSlots();
 
     // Deeper a11y - name every user-driven control on the lane.
-    const auto an = juce::String (laneIndex + 1);
+    const auto an = std::to_string (laneIndex + 1);
     returnFader .setTitle ("Aux " + an + " return fader");
     muteButton  .setTitle ("Aux " + an + " mute");
     for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
         slots[(size_t) i].openOrAddButton.setTitle (
-            "Aux " + an + " plugin slot " + juce::String (i + 1));
+            "Aux " + an + " plugin slot " + std::to_string (i + 1));
 
     startTimerHz (30);
 }
@@ -558,7 +560,7 @@ void AuxLaneComponent::populateOutputPairCombo()
         const int total = (int) device->getOutputChannelNames().size();
         for (int i = 0; i + 1 < total; i += 2)
             if (active[i] && active[i + 1])
-                outputPairCombo.addItem ("Out " + juce::String (i + 1) + "-" + juce::String (i + 2),
+                outputPairCombo.addItem (dusk::text::format ("Out %d-%d", i + 1, i + 2),
                                            outputpair::encodePair (i, i + 1));
         activeMask = active;
         lastOutputChannelCount = total;
