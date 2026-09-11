@@ -26,6 +26,8 @@ add_executable(dusk-studio-tests
     # presents it to the mixer.
     builtin_insert_slot.cpp
     daf_unit_instance.cpp
+    daf_editor_host.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/imgui/DafEditorHost.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/builtin/BuiltinInstance.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/builtin/BuiltinRegistry.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/builtin/DafUnitInstance.cpp
