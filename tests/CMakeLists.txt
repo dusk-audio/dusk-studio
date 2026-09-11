@@ -299,9 +299,6 @@ if(DUSK_PLUGINS_PATH)
     target_sources(dusk-studio-tests PRIVATE
         builtin_reverb_unit.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/builtin/ReverbUnit.cpp
-        builtin_delay_unit.cpp
-        ${CMAKE_SOURCE_DIR}/src/engine/builtin/DelayUnit.cpp
-        ${DUSK_PLUGINS_PATH}/plugins/tape-echo/core/TapeEchoDSP.cpp
         builtin_tape_unit.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/builtin/TapeUnit.cpp
         builtin_synth_unit.cpp
@@ -317,9 +314,15 @@ if(DUSK_PLUGINS_PATH)
     endforeach()
     target_include_directories(dusk-studio-tests SYSTEM PRIVATE
         ${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp
-        ${DUSK_PLUGINS_PATH}/plugins/tape-echo/core
         ${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_DONOR_UNITS=1)
+
+    # Tape Echo 2 is the app's own static library, defined beside the app.
+    if(TARGET dusk_daf_tape_echo_2)
+        target_sources(dusk-studio-tests PRIVATE builtin_tape_echo_2.cpp)
+        target_link_libraries(dusk-studio-tests PRIVATE dusk_daf_tape_echo_2)
+        target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_DAF_UNITS=1)
+    endif()
 endif()
 
 # The Dear ImGui widget kit and one console strip drawn through it, headlessly: no

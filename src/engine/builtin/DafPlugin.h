@@ -55,4 +55,7 @@ public:
 
     virtual int latencySamples() const noexcept = 0;
 };
+
+// Defined by each plug-in's bridge, in the builds that compile it.
+std::unique_ptr<DafPlugin> createTapeEcho2();
 } // namespace duskstudio::builtin

@@ -1342,7 +1342,6 @@ if(DEFINED DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source"
         "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp"
-        "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core"
         "${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core")
 
     # Compile multi-comp's processor + editor + shared LEDMeter so
@@ -1370,11 +1369,9 @@ if(DEFINED DUSK_PLUGINS_PATH)
 
     target_sources(DuskStudio PRIVATE
         src/engine/builtin/ReverbUnit.cpp
-        src/engine/builtin/DelayUnit.cpp
         src/engine/builtin/TapeUnit.cpp
         src/engine/builtin/SynthUnit.cpp
         "${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core/MultiSynthDSP.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core/TapeEchoDSP.cpp"
         src/dsp/MasterTape.cpp
         "${DUSKSTUDIO_COMPRESSOR_CORE_SOURCE}"
         "${DUSKSTUDIO_DONOR_DSP_DIR}/FourKEQDSP.cpp"
@@ -1392,6 +1389,44 @@ if(DEFINED DUSK_PLUGINS_PATH)
     target_compile_definitions(DuskStudio PRIVATE
         DUSKSTUDIO_HAS_DUSK_DSP=1
         DUSKSTUDIO_HAS_DONOR_UNITS=1)
+
+    # Built-in units that are Dusk's own DAF plug-ins, run in process. Each is a
+    # static library of the plug-in, its DSP core and DAF's static-target entry
+    # point, compiled against that plug-in's DafPluginInfo.h inside a DAF
+    # namespace of its own, so no two of them share a DAF symbol. Its bridge in
+    # src/engine/builtin/daf is the only Dusk code that sees DAF. It takes the
+    # pinned shared DSP directory like every other core, so the program holds one
+    # definition of each shared filter. STATIC_BUILD keeps DAF from defining a
+    # DllMain or calling dladdr in an executable, and DUSK_CRASHLOG_NO_INSTALL
+    # keeps the plug-in's crash handler out of Dusk Studio's process.
+    if(DUSKSTUDIO_DAF_SOURCE_DIR)
+        set(_duskstudio_tape_echo_2_dir "${DUSK_PLUGINS_PATH}/plugins/tape-echo/daf-plugin")
+        if(NOT EXISTS "${_duskstudio_tape_echo_2_dir}/TapeEchoPlugin.cpp")
+            message(FATAL_ERROR
+                "Dusk plugins donor lacks the Tape Echo 2 plug-in; "
+                "use the revision pinned by the build workflows")
+        endif()
+        add_library(dusk_daf_tape_echo_2 STATIC
+            "${DUSKSTUDIO_DAF_SOURCE_DIR}/daf/DafPluginMain.cpp"
+            "${_duskstudio_tape_echo_2_dir}/TapeEchoPlugin.cpp"
+            "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core/TapeEchoDSP.cpp"
+            src/engine/builtin/daf/TapeEcho2.cpp)
+        target_include_directories(dusk_daf_tape_echo_2 SYSTEM PRIVATE
+            "${_duskstudio_tape_echo_2_dir}"
+            "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core"
+            "${DUSK_PLUGINS_PATH}/plugins/shared-daf"
+            "${DUSKSTUDIO_DONOR_DSP_DIR}"
+            "${DUSKSTUDIO_DAF_SOURCE_DIR}/daf")
+        target_compile_definitions(dusk_daf_tape_echo_2 PRIVATE
+            DAF_NAMESPACE=DuskTapeEcho2
+            DAF_PLUGIN_TARGET_STATIC
+            "DAF_PLUGIN_TARGET_STATIC_NAME=\"Dusk Studio\""
+            STATIC_BUILD
+            DUSK_CRASHLOG_NO_INSTALL)
+        target_compile_features(dusk_daf_tape_echo_2 PRIVATE cxx_std_17)
+        target_link_libraries(DuskStudio PRIVATE dusk_daf_tape_echo_2)
+        target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_DAF_UNITS=1)
+    endif()
 endif()
 
 # Sfizz native sampler engine (BSD-2-Clause). Vendored as a git
