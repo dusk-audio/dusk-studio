@@ -181,10 +181,11 @@ public:
     // Audio thread: process stereo through the plugin, via the InsertAdapter ->
     // INativeInstance::processBlock. Clears the outputs + returns when no plugin
     // is loaded; passes audio through when bypassed. midiIn feeds instruments
-    // and MIDI-driven effects (null ok).
+    // and MIDI-driven effects, transport a tempo-synced plugin (both null ok).
     void processStereo (const float* inL, const float* inR,
                         float* outL, float* outR, int numFrames,
-                        const dusk::MidiBuffer* midiIn = nullptr) noexcept
+                        const dusk::MidiBuffer* midiIn = nullptr,
+                        const dusk::TransportPosition* transport = nullptr) noexcept
     {
         auto clearOutputs = [&]
         {
@@ -243,7 +244,7 @@ public:
         if (outR != r)  std::memcpy (outR, r, n);
 
         adapter.process (*instance, outL, outR, numFrames,
-                         nullptr, nullptr, midiIn);
+                         nullptr, nullptr, midiIn, transport);
     }
 
     // UI: the live instance for editor attach (nullptr when not loaded).

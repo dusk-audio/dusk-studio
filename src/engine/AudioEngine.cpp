@@ -5,6 +5,7 @@
 #include "PdcMath.h"
 #include "PluginStateDiagnostics.h"
 #include "RtPriority.h"
+#include "TransportSnapshot.h"
 #include "device/DefaultInputChoice.h"
 #include "hosting/NativeStateIdentity.h"
 #include "../dsp/OutputPairRouting.h"
@@ -3281,10 +3282,16 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     // position. Without this, tempo-synced LFOs / arps / delays in
     // plugins like Diva default to 120 BPM regardless of session tempo.
     for (auto& s : strips)
+    {
         s.getPluginSlot().setHostPlayHead (playHead.get());
+        s.setTransport (&blockTransport);
+    }
     for (auto& a : auxLaneStrips)
+    {
         for (int p = 0; p < AuxLaneParams::kMaxLanePlugins; ++p)
             a.getPluginSlot (p).setHostPlayHead (playHead.get());
+        a.setTransport (&blockTransport);
+    }
     masteringChain.prepare (sr, bs, oxFactor);
     masteringPlayer.prepare (bs, sr);
 
@@ -5861,6 +5868,10 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                   strips[(size_t) t].insertMode.load (std::memory_order_relaxed)
                                       == ChannelStrip::kInsertHardware };
     }
+
+    blockTransport = snapshotTransport (transport,
+                                        (double) session.tempoBpm.load (std::memory_order_acquire),
+                                        currentSampleRate.load (std::memory_order_relaxed));
 
     // DSP pass
     // Heavy per-strip DSP (the only thing that fans out). Serial path

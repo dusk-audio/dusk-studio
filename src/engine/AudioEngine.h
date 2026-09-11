@@ -18,6 +18,7 @@
 #include "../dsp/PitchDetector.h"
 #include "../foundation/IntDelayLine.h"
 #include "../foundation/MessageThread.h"
+#include "../foundation/TransportPosition.h"
 #include "MidiSyncReceiver.h"
 #include "MidiTimeCodeReceiver.h"
 #include "MidiClockEmitter.h"
@@ -588,6 +589,10 @@ private:
     // Heap-allocated so we can pass &session.tempoBpm / &currentSampleRate
     // from the ctor body, after those addresses are known.
     std::unique_ptr<DuskStudioPlayHead> playHead;
+    // The transport built-in inserts see for the current block. The audio thread
+    // rewrites it before the strip pass, and the strips (worker lanes included)
+    // read it only inside that pass.
+    dusk::TransportPosition blockTransport;
     RecordManager   recordManager   { session };
 
     std::vector<PluginLoadFailure> lastPluginLoadFailures;
