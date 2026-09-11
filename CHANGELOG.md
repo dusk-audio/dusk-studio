@@ -43,10 +43,12 @@ that will carry a signed 1.0.
   polarity invert, stereo width and mono sum, all smoothed over 20 ms and
   transparent at their defaults.
 - **The built-in suite is complete: five units.** **Utility** (gain, polarity,
-  width, mono), **Reverb** (sixteen tanks from plate to shimmer), **Tape Echo**
-  (three-head tape delay with a spring tank), **Tape** (per-channel tape colour
-  on the same engine as the master bus) and **Sunset** (a six-engine polyphonic
-  synthesiser, the instrument a MIDI track can reach with nothing installed).
+  width, mono), **Reverb** (sixteen tanks from plate to shimmer), **Tape Echo 2**
+  (the Tape Echo 2 plug-in's own DSP running inside Dusk Studio: a three-head
+  tape delay with a spring tank that syncs to the session tempo), **Tape**
+  (per-channel tape colour on the same engine as the master bus) and **Sunset**
+  (a six-engine polyphonic synthesiser, the instrument a MIDI track can reach
+  with nothing installed).
   On a channel insert, click a loaded unit's slot, or right-click it and choose
   Open editor. On an aux lane the unit's controls are always on screen, filling
   the lane under the slot header as sections of knobs, switch banks, drop-down

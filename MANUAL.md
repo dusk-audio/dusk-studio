@@ -1625,26 +1625,30 @@ The reverb is causal and reports no latency.
 
 ![The Reverb unit's editor.](docs/images/bi-02-reverb.png)
 
-### Tape Echo
+### Tape Echo 2
 
-A three-head tape echo with a spring tank, modelled on the classic transport: the record EQ and the tape saturation sit inside the feedback loop, so each repeat darkens and compresses rather than simply getting quieter. Echo and Reverb default to 0, so the unit is a passthrough until you turn one up.
+Dusk Audio's Tape Echo 2 plug-in, compiled into Dusk Studio and running the plug-in's own DSP, so a setting sounds the same here as in the plug-in. A three-head tape echo with a spring tank, modelled on the classic transport: the record EQ and the tape saturation sit inside the feedback loop, so each repeat darkens and compresses rather than simply getting quieter. It loads at the plug-in's own defaults, with Echo Volume and Mix at halfway, so a freshly loaded Tape Echo 2 echoes straight away.
 
 | Control | Range | Default | What it does |
 |---|---|---|---|
-| Echo | 0 to 1 | 0 | Level of the three playback heads. |
-| Dry | 0 to 1 | 1 | Level of the untouched input. |
-| Reverb | 0 to 1 | 0 | Level of the spring tank. Audible in head modes 5 to 12. |
-| Head Mode | 1 to 12 | 1 | The twelve-position selector: which of the three heads are active. |
-| Repeat Rate | 0 to 1 | 0.5 | Motor speed. 0 is the longest delay (177 ms), 1 the shortest (69 ms). |
-| Intensity | 0 to 1 | 0.4 | Feedback. Above about 0.75 the loop self-oscillates, which is the point. |
-| Input | 0 to 1 | 0.5 | Preamp drive into the tape. Higher saturates. |
-| Wow & Flutter | 0 to 1 | 0.5 | Transport instability. A real transport is never perfect, so some is always present. |
-| Tape Age | 0 to 1 | 0 | Worn tape: hiss, extra wow, high-frequency loss and level wobble. |
-| Bass / Treble | −1 to +1 | 0 | Shelves on the echo path only. The dry and reverb paths are untouched. |
+| Mode | 1 to 12 | 1 | The twelve-position selector: which of the three heads play, and whether the spring tank does. Modes 5 to 11 add the spring; 12 is the spring alone. |
+| Repeat Rate | 0 to 1 | 0 | Motor speed. 0 is the longest delay (177 ms on head 1), 1 the shortest (69 ms). |
+| Intensity | 0 to 1 | 0 | Feedback. Above about 0.75 the loop self-oscillates, which is the point. |
+| Echo Volume | 0 to 1 | 0.5 | Level of the playback heads. |
+| Reverb Volume | 0 to 1 | 0 | Level of the spring tank. |
+| Mix | 0 to 1 | 0.5 | Dry against wet. Both play at full level at 0.5; 0 is dry only and 1 is wet only. |
+| Input Volume | 0 to 1 | 0.5 | Preamp drive into the tape, unity at the midpoint. Higher saturates. |
+| Output Volume | 0 to 1 | 0.5 | Trim after the mix: −20 dB at 0, unity at 0.5, +20 dB at 1. |
+| Bass / Treble | −1 to +1 | 0 | Shelves on the echo path. |
+| Wow & Flutter | 0 to 1 | 0 | Transport instability. |
+| Tape Age | New / Used / Old | Used | Worn tape: hiss, extra wow, high-frequency loss and level wobble. Even new tape carries a hiss floor, around −113 dBFS. |
+| Echo Pan / Reverb Pan | 0 to 1 | 0.5 | Where the repeats and the spring sit, from left to right. |
+| Input Send | Off / On | On | Feeds the input to the tape. Off lets what is already on the tape play out, the dub move. |
+| Tempo Sync | Off / On | Off | Locks the first active head to the session tempo. |
+| Echo Rate Note | 1 to 11 | 5 | With Tempo Sync on, the note the first active head repeats at. A note the motor cannot reach at the session tempo stays at the motor's limit, as the hardware's does. |
+| Bypass | Off / On | Off | The plug-in's own bypass. On fades the effect out, passes the input through untouched and clears the tape. |
 
-The unit reports no latency. Its preamp runs its own fixed oversampling, whose delay is compensated internally.
-
-![The Tape Echo unit's editor.](docs/images/bi-03-tape-echo.png)
+The unit reports no latency. Its settings are saved with the session as the plug-in's own parameter values.
 
 ### Tape
 
@@ -1683,9 +1687,9 @@ It responds to note velocity, pitch bend, the mod wheel, the sustain pedal and c
 
 On a channel insert, click the loaded unit's slot, or right-click it and choose **Open editor**. The editor opens as a panel over a dimmed window, exactly like the compressor editor. Press **Esc**, click outside it, or click the slot again to dismiss it.
 
-On an aux lane there is no panel to open. The unit's controls are always on screen, filling the lane under the slot header, and they are grouped the way the unit's front panel would be: Reverb shows Tank, Tone and Mix; Tape Echo shows Heads, Tape, Tone and Mix; Tape shows Machine, Level, Tone and Transport; Utility shows Level and Image. The knobs grow with the lane, and in a smaller window the sections stack into more rows to keep them as large as the space allows. Only a lane too small for the smallest knobs scales the whole panel down.
+On an aux lane there is no panel to open. The unit's controls are always on screen, filling the lane under the slot header, and they are grouped the way the unit's front panel would be: Reverb shows Tank, Tone and Mix; Tape shows Machine, Level, Tone and Transport; Utility shows Level and Image; Tape Echo 2 shows its controls as one section. The knobs grow with the lane, and in a smaller window the sections stack into more rows to keep them as large as the space allows. Only a lane too small for the smallest knobs scales the whole panel down.
 
-Drag a knob up or down to change it (hold **Shift** for finer steps), scroll over it, or double-click it to return it to its default. Tape Echo's **Head Mode** is a twelve-position switch that moves one position per scroll step. Choices with a handful of positions, such as Tape's **Speed**, are rows of buttons; Reverb's **Algorithm** is a drop-down list. A menu or dialog opened over the lane takes the controls down while it is open, and they come back when it closes.
+Drag a knob up or down to change it (hold **Shift** for finer steps), scroll over it, or double-click it to return it to its default. Tape Echo 2's **Mode** is a twelve-position switch that moves one position per scroll step. Choices with a handful of positions, such as Tape's **Speed**, are rows of buttons; Reverb's **Algorithm** is a drop-down list. A menu or dialog opened over the lane takes the controls down while it is open, and they come back when it closes.
 
 **MIDI Learn** works on a built-in unit the way it does on a plugin: move the control you want, then right-click the slot and choose **MIDI Learn last-touched parameter**. On an aux lane the slot's right-click menu calls it **MIDI Learn (this track)...**.
 

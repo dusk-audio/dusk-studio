@@ -184,7 +184,7 @@ void clickAt (HeadlessLane& lane, imgui::DuskPanelView& view, ImVec2 designSize,
 }
 } // namespace
 
-TEST_CASE ("the aux lane view gives every parameter one control inside the lane",
+TEST_CASE ("the aux lane view gives every shown parameter one control inside the lane",
            "[builtin][imgui][lane]")
 {
     const float scale = GENERATE (1.0f, 2.0f);
@@ -212,13 +212,17 @@ TEST_CASE ("the aux lane view gives every parameter one control inside the lane"
         REQUIRE (drawn.inkMax.x <= size.x + stroke);
         REQUIRE (drawn.inkMax.y <= size.y + stroke);
 
+        // A hidden parameter (a plug-in's meters, its legacy controls) gets none.
         const auto& placements = view->placements();
-        REQUIRE (static_cast<int> (placements.size()) == slot.paramCount());
+        int shown = 0;
         for (int i = 0; i < slot.paramCount(); ++i)
         {
             INFO ("parameter " << slot.paramInfo (i)->id);
-            REQUIRE (placementOf (*view, i) != nullptr);
+            const bool hidden = slot.paramInfo (i)->hidden;
+            shown += hidden ? 0 : 1;
+            REQUIRE ((placementOf (*view, i) != nullptr) == ! hidden);
         }
+        REQUIRE (static_cast<int> (placements.size()) == shown);
         for (std::size_t a = 0; a < placements.size(); ++a)
         {
             const auto& p = placements[a];
