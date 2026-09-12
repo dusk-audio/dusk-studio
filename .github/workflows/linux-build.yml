@@ -132,7 +132,6 @@ jobs:
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
             -DDAF_PATH="${RUNNER_TEMP}/DAF" \
-            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets"
 
       - name: Build (Release)
         run: cmake --build build-linux -j6
@@ -170,7 +169,6 @@ jobs:
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
             -DDAF_PATH="${RUNNER_TEMP}/DAF" \
-            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets"
 
       - name: Build tests
         run: cmake --build build-tests --target dusk-studio-tests -j6

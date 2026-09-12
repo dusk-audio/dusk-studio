@@ -44,7 +44,7 @@ cmake --build build -j6
 ./build/DuskStudio_artefacts/Release/DuskStudio
 ```
 
-JUCE, the Dusk plugins repo, and the DAF stack behind the native notepad are auto-discovered from sibling directories (`../JUCE` / `../JUCE-wayland`, `../plugins`, `../DAF`, `../DAF-Widgets`). See Part 5 for what happens when discovery fails — it will, eventually, and the error messages are not always obvious.
+JUCE, the Dusk plugins repo, and the DAF stack behind the native notepad are auto-discovered from sibling directories (`../JUCE` / `../JUCE-wayland`, `../plugins`, `../DAF`). See Part 5 for what happens when discovery fails — it will, eventually, and the error messages are not always obvious.
 
 **Checkpoint:** the app launches, you can create a track, arm it, and play a click.
 
@@ -294,32 +294,29 @@ ctest --test-dir build-tests --output-on-failure
 
 ### Dependency discovery (the thing most likely to bite you)
 
-CMake auto-detects four external repos at configure time, on top of three git submodules. **Read the configure output** — it prints which paths it picked.
+CMake auto-detects three external repos at configure time, on top of three git submodules. **Read the configure output** — it prints which paths it picked.
 
 - **Submodules** (`external/clap`, `external/sfizz`, `external/vst3sdk`): clone with `--recurse-submodules`, or run `git submodule update --init --recursive`. They fail in three different ways, which is worth knowing before you debug the wrong one. Missing `external/clap` is fatal — the native CLAP host defaults ON on Linux, macOS, and Windows, and the configure stops with a "CLAP headers missing" error. Missing `external/vst3sdk` is loud but survivable: a STATUS line, native VST3 disabled, unless you explicitly asked for `-DDUSKSTUDIO_NATIVE_VST3=ON`, which turns it fatal. Missing `external/sfizz` says **nothing at all** — the block is wrapped in a bare `EXISTS` test, so SF2 / multisample support simply isn't in the binary.
 
 - **JUCE:** `-DJUCE_PATH=…` wins; else on Linux it prefers `../JUCE-wayland` (a plugdata-team fork with ~5 local commits Dusk Studio depends on — XEmbed, X11-on-Wayland fix, peer-creation latch), falling back to `../JUCE`; on macOS it uses `../JUCE` (upstream). The upstream-vs-fork API difference (`addDefaultFormatsToManager`) is hidden behind [src/engine/JuceCompat.h](../src/engine/JuceCompat.h) — call `duskstudio::juce_compat::addDefaultFormats(fm)` and never sprinkle `#ifdef __linux__` at call sites.
 - **Dusk plugins:** `-DDUSK_PLUGINS_PATH=…` wins; else `../plugins`, and that is the whole list. Check out the `DONOR_REV` shared by the build and release workflows so every build uses the same DSP and layout. Missing entirely, configure only *warns*: you get a recorder with no EQ, comp, or tape rather than a failed build, so read the configure output.
-- **DAF + DAF-Widgets** (the native UI: notepad, startup dialog, compressor editor, virtual keyboard, audio settings): `-DDAF_PATH=…` / `-DDAF_WIDGETS_PATH=…` win; else `../DAF` and `../DAF-Widgets`, then the `external/` fallbacks, which are placeholders for eventual release pinning and are not populated today. The two checks are ANDed, so missing *either* one quietly defaults `DUSKSTUDIO_ENABLE_NATIVE_UI` to OFF, announced by one easy-to-miss STATUS line (`Native UI: DAF / DAF-Widgets not found - disabled`); at runtime every native view is gone - the notepad reports *"Notepad unavailable: built without the native notepad UI"*, the compressor editor, the virtual keyboard and the audio settings panel say the same of themselves, and the startup dialog simply does not appear. Forcing `-DDUSKSTUDIO_ENABLE_NATIVE_UI=ON` without them is a configure error rather than a silent downgrade. Clone the Dusk-owned forks at the revisions CI pins — [.github/actions/clone-daf-stack/action.yml](../.github/actions/clone-daf-stack/action.yml) is the single source of truth for those pins and verifies that DAF uses the Dusk Pugl fork:
+- **DAF and its in-tree widgets** (the native UI): `-DDAF_PATH=…` wins, then
+  `../DAF`, then `external/DAF`. Without DAF and `widgets/imgui/DearImGui.hpp`,
+  `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults OFF and every native view is unavailable.
+  Forcing it ON makes missing dependencies a configure error. The single revision
+  in [.github/actions/clone-daf-stack/action.yml](../.github/actions/clone-daf-stack/action.yml)
+  pins DGL, pugl and the widget kit together.
 
 ```bash
 cd /path/to/dusk-studio
 
 git clone https://github.com/dusk-audio/DAF.git ../DAF
-git -C ../DAF checkout 50ad8c22a2f05b85be4b40e473d830d2dc91c2c2
-git -C ../DAF submodule update --init     # dgl/src/pugl-upstream
+git -C ../DAF checkout 867183d73b8fea20892eb8de49fb8c8b108c4910
 
-git clone https://github.com/dusk-audio/DAF-Widgets.git ../DAF-Widgets
-git -C ../DAF-Widgets checkout 798154e874eaaa024371f6076249398b51498142
 ```
 
-Clone then check out the SHA rather than cloning a moving branch. Both pins are
-on their forks' `main` histories today, but exact revisions keep local and CI
-builds reproducible as those branches advance.
-
-DAF's Pugl revision is carried by the Pugl branch `dusk-pin-5e2621d`, not that
-fork's `main`. Keep that branch too: DAF submodule initialization and CI require
-the pinned commit to remain reachable.
+Clone then check out the pinned SHA to keep local and CI builds reproducible.
+Pugl and the widget kit are vendored inside DAF; no extra checkout is needed.
 
 `DUSKSTUDIO_ENABLE_NATIVE_UI` is a cached `option()`, which makes the OFF sticky in a nasty way: configure a build dir before the checkouts exist, add them later, and re-running CMake in that same dir leaves the notepad off — and the STATUS line above no longer prints, because its guard also requires the deps to be missing. Use a fresh build dir after cloning, or pass `-DDUSKSTUDIO_ENABLE_NATIVE_UI=ON` to overwrite the cache entry.
 

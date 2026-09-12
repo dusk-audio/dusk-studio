@@ -22,11 +22,11 @@ Dusk Studio registers with GNOME Software / KDE Discover and double-clicking
 
 - A Release build in `build-linux/` with both the `DuskStudio` and
   `dusk-studio-plugin-host` artefacts present.
-- The DAF stack discoverable at configure time — sibling `../DAF` and
-  `../DAF-Widgets` checkouts, or `-DDAF_PATH=` / `-DDAF_WIDGETS_PATH=`. Miss
-  either and the native notepad is compiled out of the binary you are about to
+- The DAF stack discoverable at configure time — a `../DAF` checkout with
+  its in-tree `widgets/` kit, or `-DDAF_PATH=/path/to/DAF`. Without it,
+  the native notepad is compiled out of the binary you are about to
   ship, announced by nothing louder than a
-  `Native UI: DAF / DAF-Widgets not found - disabled` line in the
+  `Native UI: DAF / DAF widgets not found - disabled` line in the
   configure log. Clone instructions and the pinned revisions are in
   `BUILDING-LINUX.md` under "The native notepad".
 - The committed 256×256 icon at `packaging/DuskStudio.png` — the size the

@@ -126,7 +126,6 @@ jobs:
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
             -DDAF_PATH="${RT_UNIX}/DAF" \
-            -DDAF_WIDGETS_PATH="${RT_UNIX}/DAF-Widgets" \
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
             -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}" \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \

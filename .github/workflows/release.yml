@@ -269,7 +269,6 @@ jobs:
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
             -DDAF_PATH="${RUNNER_TEMP}/DAF" \
-            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets"
           for option in DUSKSTUDIO_ENABLE_NATIVE_UI DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_LV2 DUSKSTUDIO_NATIVE_VST3; do
             grep -q "^${option}:BOOL=ON$" build-linux/CMakeCache.txt || {
               echo "::error::${option} was not enabled in the app configure" >&2; exit 1; }
@@ -324,7 +323,6 @@ jobs:
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
             -DDAF_PATH="${RUNNER_TEMP}/DAF" \
-            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets"
           cmake --build build-tests --target dusk-studio-tests -j6
           ctest --test-dir build-tests --output-on-failure
 
@@ -554,7 +552,6 @@ jobs:
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
             -DDAF_PATH="${RT_UNIX}/DAF" \
-            -DDAF_WIDGETS_PATH="${RT_UNIX}/DAF-Widgets" \
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
             -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}" \
             -DDUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR="${MESA_SOFTGL_PATH}" \
@@ -599,7 +596,6 @@ jobs:
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
             -DDAF_PATH="${RT_UNIX}/DAF" \
-            -DDAF_WIDGETS_PATH="${RT_UNIX}/DAF-Widgets" \
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
             -DCMAKE_PREFIX_PATH="${VCPKG_PREFIX}" \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
@@ -968,7 +964,6 @@ jobs:
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
             -DDAF_PATH="${RUNNER_TEMP}/DAF" \
-            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets" \
             -DDUSKSTUDIO_CODESIGN_IDENTITY="-" \
             -DDUSKSTUDIO_ENABLE_NATIVE_UI=ON \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
@@ -1009,7 +1004,6 @@ jobs:
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
             -DDAF_PATH="${RUNNER_TEMP}/DAF" \
-            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets" \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
             -DDUSKSTUDIO_NATIVE_LV2=ON \
             -DDUSKSTUDIO_NATIVE_VST3=ON
