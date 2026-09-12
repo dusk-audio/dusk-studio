@@ -52,18 +52,17 @@ transaction on a PipeWire box.
 
 ## Repository layout
 
-Dusk Studio expects four sibling repositories alongside its own checkout:
+Dusk Studio expects three sibling repositories alongside its own checkout:
 
 ```
 ~/projects/
 ├── dusk-studio/       (this repo)
 ├── JUCE-wayland/      (plugdata-team fork, branch: wayland-juce8)
 ├── plugins/           (Dusk Audio plugins, donor DSP)
-├── DAF/               (Dusk Audio Framework — native notepad UI)
-└── DAF-Widgets/       (Dear ImGui layer for DAF)
+└── DAF/               (DAF framework, DGL, and in-tree widgets/ kit)
 ```
 
-CMake auto-discovers these. Override with `-DJUCE_PATH=...`, `-DDUSK_PLUGINS_PATH=...`, `-DDAF_PATH=...`, `-DDAF_WIDGETS_PATH=...` if you keep them elsewhere.
+CMake auto-discovers these. Override with `-DJUCE_PATH=...`, `-DDUSK_PLUGINS_PATH=...`, or `-DDAF_PATH=...` if you keep them elsewhere.
 
 ### Why the JUCE-wayland fork (Linux-only)
 
@@ -105,29 +104,22 @@ If you also keep an upstream `JUCE/` sibling for cross-OS dev, CMake prefers `JU
 
 ### The native notepad (DAF + Dear ImGui)
 
-The session notepad is Dusk Studio's first native UI window: DAF/DGL for the OpenGL surface, DAF-Widgets for the Dear ImGui layer. Both come from Dusk-owned forks so an upstream rebase can't break a build.
+The session notepad is Dusk Studio's first native UI window: DAF/DGL for the OpenGL surface and DAF's in-tree `widgets/` kit for the Dear ImGui layer.
 
 ```bash
 cd ~/projects
 git clone https://github.com/dusk-audio/DAF.git
-git -C DAF checkout 50ad8c22a2f05b85be4b40e473d830d2dc91c2c2
-git -C DAF submodule update --init
-git clone https://github.com/dusk-audio/DAF-Widgets.git
-git -C DAF-Widgets checkout 798154e874eaaa024371f6076249398b51498142
+git -C DAF checkout 64d386a8b04841aceef8c0a8d9035e8c02ce1c15
 ```
 
-Clone then check out the SHA, rather than building whatever `main` points at today: a branch tip moves and CI fetches these exact SHAs. Both checkouts end up on a detached HEAD, which is what you want here. The submodule step is not optional: DGL pulls the Dusk Pugl fork into `dgl/src/pugl-upstream`.
-
-The pinned Pugl revision is carried by `dusk-pin-5e2621d`, not Pugl's `main`.
-Do not delete that branch: a fresh DAF submodule checkout and every CI build
-depend on the commit remaining reachable.
+Clone then check out the SHA, rather than building whatever `main` points at today: a branch tip moves and CI fetches this exact SHA. Pugl and the widget kit are vendored in the DAF checkout.
 
 The pins live in [.github/actions/clone-daf-stack/action.yml](.github/actions/clone-daf-stack/action.yml), which is the single source of truth for every workflow — read them from there if it ever disagrees with the commands above.
 
-Missing either checkout, `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults to **OFF** and configure says so once, quietly:
+Without DAF and its in-tree widgets, `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults to **OFF** and configure says so once, quietly:
 
 ```text
--- Native UI: DAF / DAF-Widgets not found - disabled
+-- Native UI: DAF / DAF widgets not found - disabled
 ```
 
 The rest of the app builds and runs normally, but every native view is gone: opening the notepad reports *"Notepad unavailable: built without the native notepad UI"*, the compressor editor, the virtual keyboard and the audio settings panel say the same of themselves, and the startup dialog does not appear. Passing `-DDUSKSTUDIO_ENABLE_NATIVE_UI=ON` with a checkout missing turns that into a configure error instead of a silent downgrade.
@@ -193,8 +185,7 @@ cmake --build build-linux-debug -j6
 cmake -S . -B build-linux \
   -DJUCE_PATH=/some/other/JUCE \
   -DDUSK_PLUGINS_PATH=/some/other/plugins \
-  -DDAF_PATH=/some/other/DAF \
-  -DDAF_WIDGETS_PATH=/some/other/DAF-Widgets
+  -DDAF_PATH=/some/other/DAF
 ```
 
 ## Tests

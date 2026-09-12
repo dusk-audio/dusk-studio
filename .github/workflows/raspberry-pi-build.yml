@@ -142,7 +142,6 @@ jobs:
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
             -DDAF_PATH="${RUNNER_TEMP}/DAF" \
-            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets"
 
       - name: Build (Release)
         # GitHub-hosted ARM runner, not a memory-constrained physical Pi.
@@ -172,7 +171,6 @@ jobs:
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
             -DDAF_PATH="${RUNNER_TEMP}/DAF" \
-            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets"
 
       - name: Build tests
         run: cmake --build build-tests --target dusk-studio-tests -j6

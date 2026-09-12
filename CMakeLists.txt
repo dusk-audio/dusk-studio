@@ -477,11 +477,7 @@ duskstudio_resolve_framework_dir(DUSKSTUDIO_DAF_SOURCE_DIR
     LABEL    DAF
     EXPLICIT DAF_PATH
     SEARCH   ../DAF external/DAF)
-duskstudio_resolve_framework_dir(DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR
-    MARKER   opengl/DearImGui.hpp
-    LABEL    DAF-Widgets
-    EXPLICIT DAF_WIDGETS_PATH
-    SEARCH   ../DAF-Widgets external/DAF-Widgets)
+set(DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR "${DUSKSTUDIO_DAF_SOURCE_DIR}/widgets")
 
 # OFF drops every native view - the notepad and the GUI tower's ported dialogs and
 # panels (DUSKSTUDIO_HAS_NATIVE_UI guards their call sites) - so a configure without
@@ -490,14 +486,14 @@ duskstudio_resolve_framework_dir(DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR
 # EXPLICIT -DDUSKSTUDIO_ENABLE_NATIVE_UI=ON with them missing (what CI
 # effectively exercises by passing DAF_PATH) stays a configure error.
 set(DUSKSTUDIO_NATIVE_UI_DEPS_FOUND OFF)
-if(DUSKSTUDIO_DAF_SOURCE_DIR AND DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR)
+if(DUSKSTUDIO_DAF_SOURCE_DIR AND EXISTS "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui.hpp")
     set(DUSKSTUDIO_NATIVE_UI_DEPS_FOUND ON)
 endif()
 option(DUSKSTUDIO_ENABLE_NATIVE_UI
        "Build the native DAF/DGL + Dear ImGui views (notepad, dialogs and panels)"
        ${DUSKSTUDIO_NATIVE_UI_DEPS_FOUND})
 if(NOT DUSKSTUDIO_ENABLE_NATIVE_UI AND NOT DUSKSTUDIO_NATIVE_UI_DEPS_FOUND)
-    message(STATUS "Native UI: DAF / DAF-Widgets not found - disabled")
+    message(STATUS "Native UI: DAF / DAF widgets not found - disabled")
 endif()
 
 if(WIN32)
@@ -523,22 +519,23 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
             "clone it to ../DAF, initialise external/DAF, or configure with "
             "-DDUSKSTUDIO_ENABLE_NATIVE_UI=OFF.")
     endif()
-    if(NOT DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR)
+    if(NOT EXISTS "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui/DearImGui.hpp")
         message(FATAL_ERROR
-            "DAF-Widgets is required for the native UI. Set "
-            "-DDAF_WIDGETS_PATH=/path/to/DAF-Widgets, clone it to ../DAF-Widgets, "
-            "initialise external/DAF-Widgets, or configure with "
+            "DAF's widgets/ tree is required for the native UI. Set "
+            "-DDAF_PATH=/path/to/DAF, or configure with "
             "-DDUSKSTUDIO_ENABLE_NATIVE_UI=OFF.")
     endif()
 
     message(STATUS "Using DAF from: ${DUSKSTUDIO_DAF_SOURCE_DIR}")
-    message(STATUS "Using DAF-Widgets from: ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}")
+    message(STATUS "Using DAF widgets from: ${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}")
 
     set(DAF_LIBRARIES OFF CACHE BOOL "Build DAF's complete library set" FORCE)
     set(DAF_EXAMPLES OFF CACHE BOOL "Build DAF examples" FORCE)
     add_subdirectory("${DUSKSTUDIO_DAF_SOURCE_DIR}"
                      "${CMAKE_CURRENT_BINARY_DIR}/DAF" EXCLUDE_FROM_ALL)
     daf__add_dgl_opengl3(TRUE FALSE FALSE)
+    daf__add_widgets_dusk()
+    daf__add_widgets_imgui(dgl-opengl3)
     target_compile_options(dgl-opengl3 PRIVATE
         $<$<COMPILE_LANG_AND_ID:CXX,GNU>:-Wno-cpp;-Wno-stringop-overflow>
         $<$<COMPILE_LANG_AND_ID:CXX,Clang,AppleClang>:-Wno-cpp>)
@@ -551,31 +548,17 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         src/ui/NotepadChords.cpp
         src/ui/NotepadEditorCore.cpp
         src/ui/NotepadEditor.cpp
-        src/ui/NativeNotepadWindow.cpp
-        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp"
-        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DuskWidgets.cpp")
+        src/ui/NativeNotepadWindow.cpp)
     target_include_directories(dusk_native_ui PRIVATE
-        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl")
-
-    if(MSVC)
-        # Windows' GL header and opengl32 stop at OpenGL 1.1, and DAF-Widgets hands Dear
-        # ImGui's OpenGL3 backend a "custom loader" (DGL's OpenGL.hpp) that carries GL 3.x
-        # prototypes on Linux and macOS only - so DearImGui.cpp does not compile here at
-        # all. Force-include a loader that resolves those entry points through
-        # wglGetProcAddress, the way DGL resolves its own. The header is named without a
-        # path so cl finds it on the include path; a /FI carrying an absolute path breaks
-        # on a source tree whose path contains spaces.
-        target_sources(dusk_native_ui PRIVATE src/ui/ImGuiGlLoaderWin32.cpp)
-        target_include_directories(dusk_native_ui PRIVATE src/ui)
-        set_source_files_properties(
-            "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp"
-            PROPERTIES COMPILE_OPTIONS "/FIImGuiGlLoaderWin32.h")
-    endif()
+        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui"
+        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk")
 
     target_link_libraries(dusk_native_ui PRIVATE
         dgl-opengl3
         dgl-opengl3-definitions
-        dgl-system-libs-definitions)
+        dgl-system-libs-definitions
+        daf-widgets-imgui
+        daf-widgets-dusk)
     target_compile_features(dusk_native_ui PUBLIC cxx_std_17)
 
     target_link_libraries(DuskStudio PRIVATE dusk_native_ui)
@@ -596,7 +579,8 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         src/ui/imgui/StartupView.cpp
         src/ui/imgui/VirtualKeyboardView.cpp)
     target_include_directories(DuskStudio PRIVATE
-        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl")
+        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui"
+        "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk")
 
     # Gate spike for the GUI tower: a standalone framework application window rendering one
     # channel strip, used to measure frame cost and prove the shell. It ships with nothing,
@@ -608,21 +592,16 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         add_executable(dusk-gui-spike
             tools/gui-spike/GuiSpikeMain.cpp
             tools/gui-spike/ChannelStripView.cpp
-            src/ui/imgui/DuskTheme.cpp
-            "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DuskWidgets.cpp"
-            "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl/DearImGui.cpp")
+            src/ui/imgui/DuskTheme.cpp)
         target_include_directories(dusk-gui-spike PRIVATE
-            "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl")
-        if(MSVC)
-            # Same GL 3.x loader the notepad needs, for the same reason: DAF-Widgets hands
-            # Dear ImGui a custom loader that only carries those prototypes off Windows.
-            target_sources(dusk-gui-spike PRIVATE src/ui/ImGuiGlLoaderWin32.cpp)
-            target_include_directories(dusk-gui-spike PRIVATE src/ui)
-        endif()
+            "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui"
+            "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk")
         target_link_libraries(dusk-gui-spike PRIVATE
             dgl-opengl3
             dgl-opengl3-definitions
-            dgl-system-libs-definitions)
+            dgl-system-libs-definitions
+            daf-widgets-imgui
+            daf-widgets-dusk)
         target_compile_features(dusk-gui-spike PRIVATE cxx_std_17)
         set_target_properties(dusk-gui-spike PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/gui-spike")

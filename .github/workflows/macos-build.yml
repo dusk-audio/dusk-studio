@@ -119,7 +119,6 @@ jobs:
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
             -DDAF_PATH="${RUNNER_TEMP}/DAF" \
-            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets" \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
             -DDUSKSTUDIO_NATIVE_LV2=ON \
             -DDUSKSTUDIO_NATIVE_VST3=ON
@@ -160,7 +159,6 @@ jobs:
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
             -DDAF_PATH="${RUNNER_TEMP}/DAF" \
-            -DDAF_WIDGETS_PATH="${RUNNER_TEMP}/DAF-Widgets" \
             -DDUSKSTUDIO_NATIVE_CLAP=ON \
             -DDUSKSTUDIO_NATIVE_LV2=ON \
             -DDUSKSTUDIO_NATIVE_VST3=ON
