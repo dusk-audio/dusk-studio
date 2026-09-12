@@ -109,7 +109,7 @@ The session notepad is Dusk Studio's first native UI window: DAF/DGL for the Ope
 ```bash
 cd ~/projects
 git clone https://github.com/dusk-audio/DAF.git
-git -C DAF checkout 64d386a8b04841aceef8c0a8d9035e8c02ce1c15
+git -C DAF checkout 867183d73b8fea20892eb8de49fb8c8b108c4910
 ```
 
 Clone then check out the SHA, rather than building whatever `main` points at today: a branch tip moves and CI fetches this exact SHA. Pugl and the widget kit are vendored in the DAF checkout.
