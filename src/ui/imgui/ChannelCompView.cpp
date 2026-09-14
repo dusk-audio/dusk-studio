@@ -168,7 +168,7 @@ private:
         style.onFill = pal.compGold;
         style.offText = pal.compGold;
         style.onText = rgba (0x121214ff);
-        style.fontSize = 10.0f * scale;
+        style.fontSize = 10.0f;
 
         const bool on = strip.compEnabled.load (std::memory_order_relaxed);
         if (dw::textButton (ctx, "##comp-on", tl, br, "ON", on, style).clicked)
@@ -190,7 +190,7 @@ private:
         style.onFill = pal.compGold;
         style.offText = pal.compGold;
         style.onText = rgba (0x121214ff);
-        style.fontSize = 10.0f * scale;
+        style.fontSize = 10.0f;
 
         for (int i = 0; i < 3; ++i)
         {
@@ -214,7 +214,7 @@ private:
         style.onFill = pal.compGold;
         style.offText = pal.compGold;
         style.onText = rgba (0x121214ff);
-        style.fontSize = 10.0f * scale;
+        style.fontSize = 10.0f;
 
         const bool soft = strip.compVcaOverEasy.load (std::memory_order_relaxed);
         if (dw::textButton (ctx, "##vca-knee",

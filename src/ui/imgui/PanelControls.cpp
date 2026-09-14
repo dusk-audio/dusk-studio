@@ -207,7 +207,7 @@ bool formButton (dw::Context& ctx, const char* id, ImVec2 tl, ImVec2 br, const c
     style.offText = ctx.theme->textBright;
     style.onText = ctx.theme->textBright;
     style.font = font;
-    style.fontSize = font->FontSize;
+    style.fontSize = font->FontSize / ctx.scale;
     style.rounding = ctx.s (3.0f);
     return dw::textButton (ctx, id, tl, br, label, false, style).clicked;
 }
