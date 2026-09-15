@@ -2,6 +2,7 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "engine/builtin/BuiltinScanRows.h"
 #include "engine/builtin/NativeBuiltinSlot.h"
 #include "ui/imgui/BuiltinLaneView.h"
 #include "ui/imgui/DuskTheme.h"
@@ -99,7 +100,6 @@ public:
 
     void movePointer (ImVec2 to) { ImGui::GetIO().AddMousePosEvent (to.x, to.y); }
     void pressPointer (bool down) { ImGui::GetIO().AddMouseButtonEvent (ImGuiMouseButton_Left, down); }
-    void wheel (float notches) { ImGui::GetIO().AddMouseWheelEvent (0.0f, notches); }
 
     const float scale;
 
@@ -109,16 +109,29 @@ private:
     dw::DragState drag;
 };
 
-// The effects the aux lane's picker lists.
-const char* const kEffects[] = {
-    "dusk.builtin.utility", "dusk.builtin.reverb", "dusk.builtin.delay", "dusk.builtin.tape",
+// The test binary links the editor-free DAF libraries, so hasPluginEditor() cannot
+// distinguish the app's plug-in-editor units here. These are the effect units that
+// the native-UI app actually sends through the generic lane view.
+const char* const kGenericEffects[] = {
+    "dusk.builtin.utility", "dusk.builtin.tape",
 };
 
 // The effects and the instrument, which reaches this view only through its section
 // fallback: twenty-six parameters is the worst case the layout meets.
-const char* const kUnits[] = {
-    "dusk.builtin.utility", "dusk.builtin.reverb", "dusk.builtin.delay",
-    "dusk.builtin.tape", "dusk.builtin.synth",
+const char* const kGenericUnits[] = {
+    "dusk.builtin.utility", "dusk.builtin.tape", "dusk.builtin.synth",
+};
+
+struct PickerUnit
+{
+    const char* id;
+    const char* name;
+};
+
+// Both are DAF units whose editor-enabled app libraries report hasPluginEditor().
+const PickerUnit kPluginEditorUnits[] = {
+    { "dusk.builtin.delay", "Tape Echo 2" },
+    { "dusk.builtin.reverb", "DuskVerb 2" },
 };
 
 // The lane's editor rectangle, in design pixels: at the smallest window Dusk Studio
@@ -190,7 +203,7 @@ TEST_CASE ("the aux lane view gives every shown parameter one control inside the
     const float scale = GENERATE (1.0f, 2.0f);
     const ImVec2 lane = GENERATE (kCompactLane, kRoomyLane, kCrampedLane);
 
-    for (const char* id : kUnits)
+    for (const char* id : kGenericUnits)
     {
         INFO ("unit " << id << " at scale " << scale << ", lane " << lane.x << "x" << lane.y);
         builtin::NativeBuiltinSlot slot;
@@ -241,7 +254,7 @@ TEST_CASE ("the aux lane view at a display scale of 2 is the same picture double
            "[builtin][imgui][lane]")
 {
     const ImVec2 lane = GENERATE (kCompactLane, kRoomyLane, kCrampedLane);
-    for (const char* id : kUnits)
+    for (const char* id : kGenericUnits)
     {
         INFO ("unit " << id << ", lane " << lane.x << "x" << lane.y);
         builtin::NativeBuiltinSlot slot;
@@ -274,7 +287,7 @@ TEST_CASE ("the aux lane view's knobs stay full size down to the smallest window
     // A knob cell is its caption, the dial and its readout; 78 design pixels is a dial of
     // radius 20 drawn unshrunk, the smallest this layout calls readable.
     const ImVec2 lane = GENERATE (kCompactLane, kRoomyLane);
-    for (const char* id : kEffects)
+    for (const char* id : kGenericEffects)
     {
         INFO ("unit " << id << ", lane " << lane.x << "x" << lane.y);
         builtin::NativeBuiltinSlot slot;
@@ -303,18 +316,18 @@ TEST_CASE ("the aux lane view's controls answer the pointer", "[builtin][imgui][
     SECTION ("dragging a knob up raises its parameter")
     {
         builtin::NativeBuiltinSlot slot;
-        REQUIRE (slot.loadUnit ("dusk.builtin.reverb", 48000.0, 256, error));
+        REQUIRE (slot.loadUnit ("dusk.builtin.utility", 48000.0, 256, error));
         int touched = -1;
         auto view = imgui::makeBuiltinLaneView (slot, [&touched] (int index) { touched = index; });
         HeadlessLane lane (scale);
         lane.frame (*view, kRoomyLane);
 
-        const int mix = indexOf (slot, "mix");
-        const auto* at = placementOf (*view, mix);
+        const int gain = indexOf (slot, "gain_db");
+        const auto* at = placementOf (*view, gain);
         REQUIRE (at != nullptr);
         const ImVec2 dial = centreOf (*at);
 
-        const float before = slot.getParamValue (mix);
+        const float before = slot.getParamValue (gain);
         lane.movePointer (dial);
         lane.frame (*view, kRoomyLane);
         lane.frame (*view, kRoomyLane);
@@ -325,8 +338,8 @@ TEST_CASE ("the aux lane view's controls answer the pointer", "[builtin][imgui][
         lane.pressPointer (false);
         lane.frame (*view, kRoomyLane);
 
-        REQUIRE (slot.getParamValue (mix) > before + 0.2f);
-        REQUIRE (touched == mix);
+        REQUIRE (slot.getParamValue (gain) > before + 0.2f);
+        REQUIRE (touched == gain);
     }
 
     SECTION ("clicking a toggle flips it")
@@ -362,26 +375,20 @@ TEST_CASE ("the aux lane view's controls answer the pointer", "[builtin][imgui][
                  ImVec2 (at->tl.x + (at->br.x - at->tl.x) * 0.75f, at->br.y - 6.0f * scale));
         REQUIRE_THAT (slot.getParamValue (machine), Catch::Matchers::WithinAbs (1.0, 1.0e-6));
     }
+}
 
-    SECTION ("the wheel steps a rotary switch one position")
+TEST_CASE ("DAF units with their own editor remain in the built-in picker",
+           "[builtin][imgui][picker]")
+{
+    const auto rows = builtin::descriptorRows (/*instruments*/ false);
+    for (const auto& expected : kPluginEditorUnits)
     {
-        builtin::NativeBuiltinSlot slot;
-        REQUIRE (slot.loadUnit ("dusk.builtin.delay", 48000.0, 256, error));
-        auto view = imgui::makeBuiltinLaneView (slot, {});
-        HeadlessLane lane (scale);
-        lane.frame (*view, kRoomyLane);
-
-        const int mode = indexOf (slot, "mode");
-        const auto* at = placementOf (*view, mode);
-        REQUIRE (at != nullptr);
-        const float before = slot.getParamValue (mode);
-
-        lane.movePointer (centreOf (*at));
-        lane.frame (*view, kRoomyLane);
-        lane.frame (*view, kRoomyLane);
-        lane.wheel (1.0f);
-        lane.frame (*view, kRoomyLane);
-
-        REQUIRE_THAT (slot.getParamValue (mode), Catch::Matchers::WithinAbs (before + 1.0f, 1.0e-6));
+        INFO ("unit " << expected.id);
+        const auto row = std::find_if (rows.begin(), rows.end(), [&expected] (const auto& candidate)
+        {
+            return candidate.location == expected.id;
+        });
+        REQUIRE (row != rows.end());
+        REQUIRE (row->name == expected.name);
     }
 }

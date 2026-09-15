@@ -43,9 +43,9 @@ that will carry a signed 1.0.
   polarity invert, stereo width and mono sum, all smoothed over 20 ms and
   transparent at their defaults.
 - **The built-in suite is complete: five units.** **Utility** (gain, polarity,
-  width, mono), **Reverb** (sixteen tanks from plate to shimmer), **Tape Echo 2**
-  (the Tape Echo 2 plug-in's own DSP running inside Dusk Studio: a three-head
-  tape delay with a spring tank that syncs to the session tempo), **Tape**
+  width, mono), **DuskVerb 2** (sixteen reverb engines from plate to shimmer),
+  **Tape Echo 2** (the Tape Echo 2 plug-in's own DSP running inside Dusk Studio:
+  a three-head tape delay with a spring tank that syncs to the session tempo), **Tape**
   (per-channel tape colour on the same engine as the master bus) and **Sunset**
   (a six-engine polyphonic synthesiser, the instrument a MIDI track can reach
   with nothing installed).
@@ -54,6 +54,11 @@ that will carry a signed 1.0.
   the lane under the slot header as sections of knobs, switch banks, drop-down
   lists and toggles sized to the room the lane has (#596). MIDI Learn binds to a
   built-in unit's controls the way it does to a plugin's.
+
+- **DuskVerb 2 is now the built-in reverb.** It shows its own editor on channel
+  inserts and aux lanes, and its presets, INIT and A/B state are saved with the
+  session. Sessions using the old Reverb still load under the same unit, at
+  DuskVerb 2's defaults rather than with converted settings.
 
 - **Tape Echo 2 brings its own editor.** A built-in unit that is one of Dusk
   Audio's plug-ins now shows the plug-in's own editor rather than a panel of

@@ -34,7 +34,7 @@ public:
                     const uint32_t width, const uint32_t height, const double scaleFactor)
         : callbacks (std::move (hostCallbacks)),
           ui (this, nativeParent, sampleRate, editParamCallback, setParamCallback,
-              nullptr, nullptr, setSizeCallback, nullptr, nullptr, dsp, scaleFactor,
+              setStateCallback, nullptr, setSizeCallback, nullptr, nullptr, dsp, scaleFactor,
               DGL_NAMESPACE::Application::kTypeAuto, 0, 0xffffffff, "dusk-studio-daf-unit")
     {
         ui.setWindowSizeFromHost (width, height);
@@ -89,6 +89,14 @@ private:
             self.callbacks.parameterEdited (index, value);
     }
 
+    static void setStateCallback (void* const ptr, const char* const key,
+                                  const char* const value)
+    {
+        auto& self = *static_cast<ExporterEditor*> (ptr);
+        if (key != nullptr && value != nullptr && self.callbacks.stateEdited)
+            self.callbacks.stateEdited (key, value);
+    }
+
     static void setSizeCallback (void* const ptr, const uint width, const uint height)
     {
         auto& self = *static_cast<ExporterEditor*> (ptr);
@@ -138,6 +146,17 @@ public:
                 }
             }
         }
+
+       #if DAF_PLUGIN_WANT_STATE && DAF_PLUGIN_WANT_FULL_STATE
+        const uint32_t stateCount = exporter.getStateCount();
+        stateKeys.reserve (stateCount);
+        stateDefaults.reserve (stateCount);
+        for (uint32_t i = 0; i < stateCount; ++i)
+        {
+            stateKeys.emplace_back (exporter.getStateKey (i).buffer());
+            stateDefaults.emplace_back (exporter.getStateDefaultValue (i).buffer());
+        }
+       #endif
     }
 
     ~ExporterBridge() override { exporter.deactivateIfNeeded(); }
@@ -168,6 +187,41 @@ public:
     void setParameterValue (uint32_t index, float value) noexcept override
     {
         exporter.setParameterValue (index, value);
+    }
+
+    uint32_t getStateCount() const noexcept override
+    {
+        return (uint32_t) stateKeys.size();
+    }
+
+    const std::string& getStateKey (uint32_t index) const noexcept override
+    {
+        return stateKeys[index];
+    }
+
+    const std::string& getStateDefaultValue (uint32_t index) const noexcept override
+    {
+        return stateDefaults[index];
+    }
+
+    std::string getStateValue (const std::string& key) const override
+    {
+       #if DAF_PLUGIN_WANT_STATE && DAF_PLUGIN_WANT_FULL_STATE
+        return exporter.getStateValue (key.c_str()).buffer();
+       #else
+        (void) key;
+        return {};
+       #endif
+    }
+
+    void setState (const std::string& key, const std::string& value) override
+    {
+       #if DAF_PLUGIN_WANT_STATE
+        exporter.setState (key.c_str(), value.c_str());
+       #else
+        (void) key;
+        (void) value;
+       #endif
     }
 
     void setTimePosition (const dusk::TransportPosition& position) noexcept override
@@ -292,6 +346,8 @@ private:
 
     PluginExporter exporter;
     std::vector<duskstudio::builtin::DafParamDesc> descs;
+    std::vector<std::string> stateKeys;
+    std::vector<std::string> stateDefaults;
 };
 
 END_NAMESPACE_DAF
