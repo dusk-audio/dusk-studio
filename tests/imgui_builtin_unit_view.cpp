@@ -117,10 +117,12 @@ std::vector<float> snapshot (const builtin::NativeBuiltinSlot& slot)
     return values;
 }
 
-const char* const kUnits[] =
+// The test binary links the editor-free DAF libraries, so hasPluginEditor() cannot
+// distinguish the app's plug-in-editor units here. Keep this list to units that the
+// native-UI app actually sends through the generic parameter-table editor.
+const char* const kGenericUnits[] =
 {
-    "dusk.builtin.utility", "dusk.builtin.reverb", "dusk.builtin.delay",
-    "dusk.builtin.tape", "dusk.builtin.synth",
+    "dusk.builtin.utility", "dusk.builtin.tape", "dusk.builtin.synth",
 };
 } // namespace
 
@@ -128,7 +130,7 @@ TEST_CASE ("the built-in editor draws every unit inside the size it asks for",
            "[builtin][imgui]")
 {
     const float scale = GENERATE (1.0f, 2.0f);
-    for (const char* id : kUnits)
+    for (const char* id : kGenericUnits)
     {
         INFO ("unit " << id << " at scale " << scale);
 
@@ -171,7 +173,7 @@ TEST_CASE ("the built-in editor at a display scale of 2 is the same picture doub
     // The panel fills whatever rectangle it is given, so its ink bounds cannot tell a
     // doubled layout from rows drawn at design size in the corner of a doubled panel.
     // Where the text ends can.
-    for (const char* id : kUnits)
+    for (const char* id : kGenericUnits)
     {
         INFO ("unit " << id);
         builtin::NativeBuiltinSlot slot;
@@ -198,7 +200,7 @@ TEST_CASE ("the built-in editor keeps every parameter reachable", "[builtin][img
     // A row that the layout dropped is a control the user cannot reach, and the
     // ink bounds above would not notice it. Count the sections and rows the
     // layout has to account for instead.
-    for (const char* id : kUnits)
+    for (const char* id : kGenericUnits)
     {
         INFO ("unit " << id);
         builtin::NativeBuiltinSlot slot;
