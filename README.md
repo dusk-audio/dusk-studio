@@ -53,7 +53,7 @@ GPL source on this repo, so building it yourself costs you nothing but compile t
 | Offline bounce / mixdown export (master) | Working |
 | Single-pass stem export (tracks + buses + aux returns) | Working |
 | Realtime bounce (hardware inserts print wet) | Working |
-| Aux sends + DuskVerb 2 built-in reverb / delay returns | Working |
+| Aux sends + reverb / delay returns (built-in DuskVerb 2 reverb, Tape Echo 2 delay) | Working |
 | External hardware inserts (per channel + per aux, with auto-latency ping) | Working |
 | MIDI tracks + instrument plugins + piano roll editor | Working |
 | Audio region editor (non-destructive trim / fade / gain) + 8-take history | Working |
