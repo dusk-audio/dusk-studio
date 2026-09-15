@@ -61,11 +61,7 @@ public:
                                              std::uint32_t width, std::uint32_t height,
                                              double scaleFactor,
                                              DafEditorCallbacks callbacks,
-                                             std::string& errorOut)
-    {
-        return plugin->createEditor (nativeParent, width, height, scaleFactor,
-                                     std::move (callbacks), errorOut);
-    }
+                                             std::string& errorOut);
 
     static constexpr int kStateVersion = 3;
     static constexpr std::uint32_t kWriteRingSize = 1024;
@@ -79,6 +75,8 @@ private:
 
     // The audio thread, or the message thread while the audio thread is fenced.
     void pushAllParams() noexcept;
+    void refreshParamMirrors() noexcept;
+    void applyEditorState (const std::string& key, const std::string& value);
 
     std::string id;
     std::unique_ptr<DafPlugin> plugin;

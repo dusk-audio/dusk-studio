@@ -28,6 +28,26 @@ constexpr const char* kId    = "dusk.builtin.fake";
 
 enum FakeParam : std::uint32_t { kGain = 0, kSteps, kAge, kOn, kLegacy, kMeter, kNumFakeParams };
 
+class FakeEditor final : public DafEditor
+{
+public:
+    explicit FakeEditor (DafEditorCallbacks cb) : callbacks (std::move (cb)) {}
+
+    bool setOffset (int, int) noexcept override { return true; }
+    void setSize (std::uint32_t, std::uint32_t) override {}
+    bool idle() noexcept override { return true; }
+    void parameterChanged (std::uint32_t, float) override {}
+    std::uint32_t width() const noexcept override { return 800; }
+    std::uint32_t height() const noexcept override { return 600; }
+
+    void setState (const std::string& key, const std::string& value)
+    {
+        callbacks.stateEdited (key, value);
+    }
+
+    DafEditorCallbacks callbacks;
+};
+
 class FakePlugin final : public DafPlugin
 {
 public:
@@ -136,16 +156,16 @@ public:
 
     int latencySamples() const noexcept override { return latency; }
 
-    // The stand-in has no editor; the editor host is covered in daf_editor_host.cpp.
-    bool hasEditor() const noexcept override { return false; }
-    std::uint32_t editorWidth() const noexcept override  { return 0; }
-    std::uint32_t editorHeight() const noexcept override { return 0; }
+    bool hasEditor() const noexcept override { return true; }
+    std::uint32_t editorWidth() const noexcept override  { return 800; }
+    std::uint32_t editorHeight() const noexcept override { return 600; }
     std::unique_ptr<duskstudio::builtin::DafEditor> createEditor (
         std::uintptr_t, std::uint32_t, std::uint32_t, double,
-        duskstudio::builtin::DafEditorCallbacks, std::string& errorOut) override
+        duskstudio::builtin::DafEditorCallbacks callbacks, std::string&) override
     {
-        errorOut = "the stand-in plug-in has no editor.";
-        return nullptr;
+        auto editor = std::make_unique<FakeEditor> (std::move (callbacks));
+        liveEditor = editor.get();
+        return editor;
     }
 
     std::vector<DafParamDesc> descs;
@@ -155,6 +175,7 @@ public:
     std::vector<std::string> stateDefaults;
     std::vector<std::string> stateValues;
     std::vector<StateWrite> stateLog;
+    FakeEditor* liveEditor = nullptr;
     int activations = 0;
     bool activeNow = false;
     int transportCalls = 0;
@@ -178,6 +199,14 @@ struct Rig
         REQUIRE (unit->activate (kSampleRate, kBlock, error));
     }
 
+    FakeEditor& openEditor (DafEditorCallbacks callbacks = {})
+    {
+        std::string error;
+        editor = unit->createEditor (1, 800, 600, 1.0, std::move (callbacks), error);
+        REQUIRE (editor != nullptr);
+        return *fake->liveEditor;
+    }
+
     // One block of a constant signal; returns the left output's first sample.
     float process (float in, const dusk::TransportPosition* transport = nullptr)
     {
@@ -198,6 +227,7 @@ struct Rig
 
     FakePlugin* fake = nullptr;
     std::unique_ptr<DafUnitInstance> unit;
+    std::unique_ptr<DafEditor> editor;
     std::array<float, kBlock> inL {}, inR {}, outL {}, outR {};
 };
 
@@ -453,6 +483,53 @@ TEST_CASE ("restoring state refreshes the parameter mirrors", "[builtin][daf]")
     REQUIRE (rig.unit->loadState (blob (
         R"({"id":"dusk.builtin.fake","version":3,"state":{"brightness":"0.875","engine":"wide"},"params":{}})")));
     REQUIRE_THAT (rig.unit->getParamValue (kMeter), WithinAbs (0.875, 1e-9));
+}
+
+TEST_CASE ("an editor state write reaches the plug-in and is saved with the unit",
+           "[builtin][daf][editor]")
+{
+    Rig rig (true);
+    auto& editor = rig.openEditor();
+    editor.setState ("engine", "wide");
+
+    REQUIRE (rig.fake->stateLog.size() == 1);
+    REQUIRE (rig.fake->stateLog[0].key == "engine");
+    REQUIRE (rig.fake->stateLog[0].value == "wide");
+
+    std::vector<std::uint8_t> state;
+    REQUIRE (rig.unit->saveState (state));
+    const std::string text (state.begin(), state.end());
+    REQUIRE (text.find (R"("engine":"wide")") != std::string::npos);
+}
+
+TEST_CASE ("an editor state write refreshes the parameter mirrors",
+           "[builtin][daf][editor]")
+{
+    Rig rig (true);
+    rig.openEditor().setState ("engine", "wide");
+    REQUIRE_THAT (rig.unit->getParamValue (kGain), WithinAbs (1.75, 1e-9));
+}
+
+TEST_CASE ("an editor state write does not echo parameter edits back to the editor",
+           "[builtin][daf][editor]")
+{
+    Rig rig (true);
+    int echoedEdits = 0;
+    DafEditorCallbacks callbacks;
+    callbacks.parameterEdited = [&echoedEdits] (std::uint32_t, float) { ++echoedEdits; };
+    rig.openEditor (std::move (callbacks)).setState ("engine", "wide");
+
+    REQUIRE (echoedEdits == 0);
+    REQUIRE_THAT (rig.unit->getParamValue (kGain), WithinAbs (1.75, 1e-9));
+}
+
+TEST_CASE ("a state-free plug-in ignores editor state callbacks",
+           "[builtin][daf][editor]")
+{
+    Rig rig;
+    rig.openEditor().setState ("engine", "wide");
+    REQUIRE (rig.fake->stateLog.empty());
+    REQUIRE_THAT (rig.unit->getParamValue (kGain), WithinAbs (1.0, 1e-9));
 }
 
 TEST_CASE ("a saved state key the plug-in no longer declares is ignored",

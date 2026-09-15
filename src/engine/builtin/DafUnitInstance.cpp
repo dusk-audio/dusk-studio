@@ -121,6 +121,18 @@ DafUnitInstance::DafUnitInstance (std::string stateId, std::unique_ptr<DafPlugin
 
 DafUnitInstance::~DafUnitInstance() = default;
 
+std::unique_ptr<DafEditor> DafUnitInstance::createEditor (
+    std::uintptr_t nativeParent, std::uint32_t width, std::uint32_t height,
+    double scaleFactor, DafEditorCallbacks callbacks, std::string& errorOut)
+{
+    callbacks.stateEdited = [this] (const std::string& key, const std::string& value)
+    {
+        applyEditorState (key, value);
+    };
+    return plugin->createEditor (nativeParent, width, height, scaleFactor,
+                                 std::move (callbacks), errorOut);
+}
+
 bool DafUnitInstance::activate (double sampleRate, int maxBlockFrames, std::string& errorOut)
 {
     if (sampleRate <= 0.0 || maxBlockFrames <= 0)
@@ -193,6 +205,29 @@ void DafUnitInstance::pushAllParams() noexcept
     for (std::uint32_t i = 0; i < (std::uint32_t) params.size(); ++i)
         if (! params[i].isOutput)
             plugin->setParameterValue (i, values[i].load (std::memory_order_relaxed));
+}
+
+void DafUnitInstance::refreshParamMirrors() noexcept
+{
+    const auto count = (std::uint32_t) plugin->params().size();
+    for (std::uint32_t i = 0; i < count; ++i)
+        values[i].store (plugin->getParameterValue (i), std::memory_order_relaxed);
+}
+
+void DafUnitInstance::applyEditorState (const std::string& key, const std::string& value)
+{
+    const auto stateCount = plugin->getStateCount();
+    for (std::uint32_t i = 0; i < stateCount; ++i)
+    {
+        if (plugin->getStateKey (i) != key)
+            continue;
+
+        // Stateful built-in bridges publish editor state atomically; run() may
+        // sample it concurrently and never waits for this message-thread writer.
+        plugin->setState (key, value);
+        refreshParamMirrors();
+        return;
+    }
 }
 
 bool DafUnitInstance::saveState (std::vector<std::uint8_t>& out) const
@@ -278,9 +313,7 @@ bool DafUnitInstance::loadState (const std::vector<std::uint8_t>& in)
         plugin->setParameterValue ((std::uint32_t) i, conform (p, value));
     }
 
-    for (std::size_t i = 0; i < descs.size(); ++i)
-        values[i].store (plugin->getParameterValue ((std::uint32_t) i),
-                         std::memory_order_relaxed);
+    refreshParamMirrors();
     return true;
 }
 

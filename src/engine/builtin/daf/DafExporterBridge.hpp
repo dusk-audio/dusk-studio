@@ -34,7 +34,7 @@ public:
                     const uint32_t width, const uint32_t height, const double scaleFactor)
         : callbacks (std::move (hostCallbacks)),
           ui (this, nativeParent, sampleRate, editParamCallback, setParamCallback,
-              nullptr, nullptr, setSizeCallback, nullptr, nullptr, dsp, scaleFactor,
+              setStateCallback, nullptr, setSizeCallback, nullptr, nullptr, dsp, scaleFactor,
               DGL_NAMESPACE::Application::kTypeAuto, 0, 0xffffffff, "dusk-studio-daf-unit")
     {
         ui.setWindowSizeFromHost (width, height);
@@ -87,6 +87,14 @@ private:
         auto& self = *static_cast<ExporterEditor*> (ptr);
         if (self.callbacks.parameterEdited)
             self.callbacks.parameterEdited (index, value);
+    }
+
+    static void setStateCallback (void* const ptr, const char* const key,
+                                  const char* const value)
+    {
+        auto& self = *static_cast<ExporterEditor*> (ptr);
+        if (key != nullptr && value != nullptr && self.callbacks.stateEdited)
+            self.callbacks.stateEdited (key, value);
     }
 
     static void setSizeCallback (void* const ptr, const uint width, const uint height)
