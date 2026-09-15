@@ -83,6 +83,16 @@ that will carry a signed 1.0.
 
 ### Fixed
 
+- **A normal macOS drag install keeps the quickstart available.** The DMG has
+  an Applications shortcut, and `QUICKSTART.md` is also inside the app bundle,
+  so **Settings > Quickstart** still works after copying only the app.
+- **The macOS first-open directions match current Gatekeeper.** The quickstart
+  now sends unsigned-beta users to **Privacy & Security > Open Anyway** after
+  the first blocked launch, and the manual uses the names of the shipped DMG
+  and app bundle.
+- **Punch points set from the ruler menu now arm punch recording.** Setting the
+  in and out points separately arms punch once they form a nonzero range, so
+  the next take records between the brackets instead of capturing the full pass.
 - **Logging out no longer skips the unsaved-changes prompt.** A termination
   signal, a logout or a shutdown runs the same staged shutdown as **File >
   Quit**, so the prompt appears and plugin child processes are not left to be

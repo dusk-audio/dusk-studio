@@ -372,23 +372,23 @@ No signing dance. Linux desktops run the binary directly.
 
 ### macOS (DMG / .app)
 
-macOS 14 Sonoma and 15 Sequoia ship Gatekeeper at its strictest defaults. Right-click → Open used to bypass; recent macOS releases require a trip to System Settings instead.
+Current beta DMGs are not notarized. On recent macOS releases, the first-open approval is in System Settings rather than the app's right-click menu.
 
-1. Double-click the downloaded `DuskStudio.dmg` to mount it.
-2. Drag **Dusk Studio.app** to your `Applications` folder.
-3. The first time you launch the app, macOS will show: *"Dusk Studio.app cannot be opened because the developer cannot be verified."* Click **OK** to dismiss — this step is required so macOS records the block in your security log.
+1. Double-click the downloaded `dusk-studio-<version>-macOS-arm64.dmg` to mount it.
+2. Drag **DuskStudio.app** onto the **Applications** shortcut in the DMG window.
+3. Open **DuskStudio.app** from Applications once. If macOS blocks the unsigned beta build, dismiss the warning so it records the attempted launch.
 4. Open **System Settings → Privacy & Security**. Scroll to the bottom.
-5. You will see *"Dusk Studio.app was blocked from use because it is not from an identified developer."* Click **Open Anyway**.
-6. Enter your administrator password when prompted.
-7. macOS shows the warning one more time with an **Open** button — click it.
+5. Click **Open Anyway** for Dusk Studio.
+6. Enter your password if prompted.
+7. In the second warning, click **Open**.
 8. Subsequent launches work normally; macOS only asks once per build.
 
 If you later install a newer build (different binary hash), the bypass dance repeats once for that new build.
 
-**If the icon shows in the Dock but the app never opens (and you have to force-quit):** you are almost certainly launching it from the mounted DMG or your Downloads folder. An ad-hoc-signed app run from a quarantined location can hang at launch on Apple Silicon. Fix: make sure **Dusk Studio.app** is in `/Applications` (step 2) and launch it from there - not from the DMG. If it still hangs, clear the quarantine flag in Terminal, then launch again:
+**If the icon shows in the Dock but the app never opens (and you have to force-quit):** you are almost certainly launching it from the mounted DMG or your Downloads folder. An ad-hoc-signed app run from a quarantined location can hang at launch on Apple Silicon. Fix: make sure **DuskStudio.app** is in `/Applications` (step 2) and launch it from there - not from the DMG. If it still hangs, clear the quarantine flag in Terminal, then launch again:
 
 ```bash
-xattr -dr com.apple.quarantine "/Applications/Dusk Studio.app"
+xattr -dr com.apple.quarantine "/Applications/DuskStudio.app"
 ```
 
 ### Windows (MSI installer)
@@ -1142,6 +1142,8 @@ To overdub a specific section without erasing material before or after:
 2. Click the **Punch** button on the transport bar.
 3. Right-click the **Punch** button to set the **pre-roll** seconds (how much existing material plays back before the punch-in) and the **post-roll** seconds (how long the transport keeps rolling past the punch-out before auto-stopping). Each has an enable toggle in the same menu, so you can switch a roll off without losing its seconds value. Post-roll defaults to 0 (off).
 4. Press Record. Playback begins at the pre-roll position. Recording begins exactly at the punch-in sample and ends exactly at the punch-out sample. The audio before and after is untouched.
+
+You can also right-click the ruler to set the punch in and out points separately. Punch arms automatically once the in point is before the out point; equal points leave it off.
 
 When the new take begins, a 64-sample raised-cosine fade-in shapes its edge against the existing material. When the new take ends, a 64-sample fade-out shapes the other edge. The result is a click-free splice.
 

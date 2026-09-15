@@ -1052,12 +1052,14 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
             const auto end = transport.getPunchOut();
             transport.setPunchRange (clickedSample,
                                       end > clickedSample ? end : clickedSample);
+            transport.setPunchEnabled (transport.getPunchOut() > transport.getPunchIn());
         });
         m.addItem ("Set punch out here", [&transport, clickedSample]
         {
             const auto start = transport.getPunchIn();
             transport.setPunchRange (start < clickedSample ? start : clickedSample,
                                       clickedSample);
+            transport.setPunchEnabled (transport.getPunchOut() > transport.getPunchIn());
         });
         m.addItem ("Clear punch", [&transport]
         {

@@ -41,6 +41,38 @@ mkdir -p "$WORK/empty"
 "$SCRIPT" linux "$WORK/empty" >/dev/null 2>"$WORK/err2" && fail "an empty package was accepted"
 grep -q "missing 2 required" "$WORK/err2" || fail "did not report both gaps at once"
 
+# A macOS drag install needs the image's Applications link and a quickstart
+# inside the bundle, where it survives copying only the .app to /Applications.
+MAC_CONTRACT="$WORK/mac-contract.txt"
+cat > "$MAC_CONTRACT" <<'MAC_EOF'
+macos	Bundle.app
+macos	Applications
+macos	Bundle.app/Contents/Resources/QUICKSTART.md
+MAC_EOF
+mkdir -p "$WORK/mac/Bundle.app/Contents/Resources" "$WORK/other"
+touch "$WORK/mac/Bundle.app/Contents/Resources/QUICKSTART.md"
+ln -s "$WORK/other" "$WORK/mac/Applications"
+if DUSKSTUDIO_CONTENTS_CONTRACT="$MAC_CONTRACT" "$SCRIPT" macos "$WORK/mac" \
+       >/dev/null 2>"$WORK/mac-err"; then
+    fail "an Applications link pointing elsewhere was accepted"
+fi
+grep -q 'Applications' "$WORK/mac-err" || fail "the wrong Applications link was not named"
+
+rm "$WORK/mac/Applications"
+ln -s /Applications "$WORK/mac/Applications"
+rm "$WORK/mac/Bundle.app/Contents/Resources/QUICKSTART.md"
+mkdir "$WORK/mac/Bundle.app/Contents/Resources/QUICKSTART.md"
+if DUSKSTUDIO_CONTENTS_CONTRACT="$MAC_CONTRACT" "$SCRIPT" macos "$WORK/mac" \
+       >/dev/null 2>"$WORK/mac-err"; then
+    fail "a directory stood in for the installed quickstart"
+fi
+grep -q 'QUICKSTART.md' "$WORK/mac-err" || fail "the missing quickstart was not named"
+
+rmdir "$WORK/mac/Bundle.app/Contents/Resources/QUICKSTART.md"
+touch "$WORK/mac/Bundle.app/Contents/Resources/QUICKSTART.md"
+DUSKSTUDIO_CONTENTS_CONTRACT="$MAC_CONTRACT" "$SCRIPT" macos "$WORK/mac" >/dev/null \
+    || fail "a complete macOS package was rejected"
+
 # Windows matches by name anywhere, because 7z flattens an MSI.
 mkdir -p "$WORK/win/some/nested/dir"
 touch "$WORK/win/some/nested/dir/Binary.exe"

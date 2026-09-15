@@ -20,6 +20,7 @@
 # --- Application ---
 linux	DuskStudio/DuskStudio
 macos	DuskStudio.app
+macos	Applications
 windows	bin/DuskStudio.exe
 
 # --- Out-of-process plugin host ---
@@ -40,6 +41,7 @@ windows	LICENSES.txt
 # --- Getting started ---
 linux	QUICKSTART.md
 macos	QUICKSTART.md
+macos	DuskStudio.app/Contents/Resources/QUICKSTART.md
 windows	QUICKSTART.md
 
 # --- Linux desktop integration ---

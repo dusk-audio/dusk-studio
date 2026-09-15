@@ -1662,6 +1662,11 @@ if(WIN32 AND DUSKSTUDIO_ENABLE_NATIVE_UI
             DESTINATION bin)
 endif()
 if(APPLE)
+    # Keep a copy inside the installed bundle so Settings > Quickstart still
+    # works after the user drags only DuskStudio.app into /Applications. Install
+    # it before finalize-macos-bundle.sh signs the staged bundle.
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/QUICKSTART.md"
+            DESTINATION "DuskStudio.app/Contents/Resources")
     # Installing a bundle rewrites its Mach-O load commands, so the POST_BUILD
     # signature above is invalid by the time CPack stages the .app, and the
     # staged copy is still missing the Homebrew dylibs it links. Repair both on
@@ -1786,9 +1791,6 @@ endif()
 # an ad-hoc codesign (unsigned by design - no notarization).
 set(CPACK_DMG_FORMAT                "UDZO")
 set(CPACK_DMG_VOLUME_NAME           "Dusk Studio ${DUSKSTUDIO_VERSION}")
-# CPack adds an /Applications symlink by default. Keep the image's root to the
-# three release artefacts promised by the packaging contract.
-set(CPACK_DMG_DISABLE_APPLICATIONS_SYMLINK ON)
 
 # Package filename platform suffix. CPack defaults to the kernel name
 # ("Darwin") on macOS and "win64" on Windows - override both to a user-facing,

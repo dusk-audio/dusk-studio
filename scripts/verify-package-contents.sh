@@ -100,6 +100,14 @@ for path in "${expected[@]}"; do
             fi
         done < <(find "$ROOT" -type f)
         [[ $found -eq 1 ]] || missing+=("$path")
+    elif [[ "$PLATFORM" == "macos" && "$path" == "Applications" ]]; then
+        if [[ ! -L "$ROOT/$path" || "$(readlink "$ROOT/$path")" != "/Applications" ]]; then
+            missing+=("$path")
+        fi
+    elif [[ "$PLATFORM" == "macos" && "$path" == */Contents/Resources/QUICKSTART.md ]]; then
+        if [[ ! -f "$ROOT/$path" || -L "$ROOT/$path" ]]; then
+            missing+=("$path")
+        fi
     elif [[ ! -e "$ROOT/$path" ]]; then
         missing+=("$path")
     fi
