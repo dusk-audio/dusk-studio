@@ -1185,6 +1185,11 @@ MIDI tracks do not produce separate files; their note and CC data is embedded in
 
 Each region keeps a stack of up to **8 previous takes**. When you record a new take whose timeline range fully contains an existing region, the existing region is pushed onto that stack. Partially-overlapping takes are not absorbed — they stay visible on either side of the punch.
 
+Current limits:
+
+- When a new take covers only part of an older region, the covered part of the older region is not kept in take history. To get it back, use **Undo** (Cmd+Z / Ctrl+Z) right after recording. The audio file itself stays on disk.
+- Deleting a region deletes its whole take stack. **Undo** restores it.
+
 To cycle through takes:
 
 - Press **Alt+T** for next take.
