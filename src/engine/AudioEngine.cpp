@@ -456,12 +456,11 @@ void AudioEngine::printPerfTable()
     std::fflush (stderr);
 }
 
-#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3 \
-    || DUSKSTUDIO_HAS_NATIVE_AU
-// Message-thread drain for the native slots' MIDI-binding rings (the audio
-// thread's binding apply can't touch the instances' single-producer param
-// rings directly). 30 Hz matches PluginSlot's own drain cadence; a tick over
-// empty rings is one atomic load per slot.
+// Message-thread drain for the native and built-in slots' MIDI-binding rings (the
+// audio thread's binding apply can't touch the instances' single-producer param
+// rings directly). Built-in slots exist in every build, so the drain does too; each
+// native format's calls stay behind its own flag. 30 Hz matches PluginSlot's own
+// drain cadence; a tick over empty rings is one atomic load per slot.
 class AudioEngine::NativeParamDrain final : public dusk::Timer
 {
 public:
@@ -568,7 +567,6 @@ public:
 private:
     AudioEngine& engine;
 };
-#endif
 
 AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     : session (sessionToBindTo), desiredWorkers (std::max (0, initialWorkers))
@@ -579,10 +577,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
         perfReporter = std::make_unique<PerfReporter> (*this);
     }
 
-#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3 \
-    || DUSKSTUDIO_HAS_NATIVE_AU
     nativeParamDrain = std::make_unique<NativeParamDrain> (*this);
-#endif
 
     // Held by unique_ptr so AudioEngine.h stays free of McuReceiver /
     // McuController definitions.
@@ -5885,9 +5880,16 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                       == ChannelStrip::kInsertHardware };
     }
 
-    blockTransport = snapshotTransport (transport,
-                                        (double) session.tempoBpm.load (std::memory_order_acquire),
-                                        currentSampleRate.load (std::memory_order_relaxed));
+    {
+        // Plug-ins see the tempo in effect at the block's start, like the click;
+        // the constant session tempo when no map is published.
+        const TempoMap* tmBlock = rtTempoMap.load (std::memory_order_acquire);
+        const double blockBpm = (tmBlock != nullptr && ! tmBlock->empty())
+                                  ? (double) tmBlock->bpmAt (blockStartSamples)
+                                  : (double) session.tempoBpm.load (std::memory_order_acquire);
+        blockTransport = snapshotTransport (transport, blockBpm,
+                                            currentSampleRate.load (std::memory_order_relaxed));
+    }
 
     // DSP pass
     // Heavy per-strip DSP (the only thing that fans out). Serial path

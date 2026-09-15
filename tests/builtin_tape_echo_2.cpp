@@ -87,10 +87,11 @@ double echoArrivalMs (NativeBuiltinSlot& slot, double fromMs, double toMs,
     const int burst = (int) (0.010 * kSampleRate);
     const int total = (int) (toMs * 0.001 * kSampleRate) + kBlock;
     std::vector<float> input ((size_t) total, 0.0f), output ((size_t) total, 0.0f);
+    constexpr double kPi = 3.14159265358979323846;   // M_PI is non-standard
     for (int i = 0; i < burst; ++i)
     {
-        const double window = 0.5 - 0.5 * std::cos (2.0 * M_PI * i / (burst - 1));
-        input[(size_t) i] = (float) (0.5 * window * std::sin (2.0 * M_PI * 1000.0 * i / kSampleRate));
+        const double window = 0.5 - 0.5 * std::cos (2.0 * kPi * i / (burst - 1));
+        input[(size_t) i] = (float) (0.5 * window * std::sin (2.0 * kPi * 1000.0 * i / kSampleRate));
     }
 
     std::vector<float> l ((size_t) kBlock), r ((size_t) kBlock);
