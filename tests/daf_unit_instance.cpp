@@ -28,12 +28,33 @@ constexpr const char* kId    = "dusk.builtin.fake";
 
 enum FakeParam : std::uint32_t { kGain = 0, kSteps, kAge, kOn, kLegacy, kMeter, kNumFakeParams };
 
+class FakeEditor final : public DafEditor
+{
+public:
+    explicit FakeEditor (DafEditorCallbacks cb) : callbacks (std::move (cb)) {}
+
+    bool setOffset (int, int) noexcept override { return true; }
+    void setSize (std::uint32_t, std::uint32_t) override {}
+    bool idle() noexcept override { return true; }
+    void parameterChanged (std::uint32_t, float) override {}
+    std::uint32_t width() const noexcept override { return 800; }
+    std::uint32_t height() const noexcept override { return 600; }
+
+    void setState (const std::string& key, const std::string& value)
+    {
+        callbacks.stateEdited (key, value);
+    }
+
+    DafEditorCallbacks callbacks;
+};
+
 class FakePlugin final : public DafPlugin
 {
 public:
     struct Write { std::uint32_t index; float value; };
+    struct StateWrite { std::string key; std::string value; };
 
-    FakePlugin()
+    explicit FakePlugin (bool withStates = false)
     {
         descs.resize (kNumFakeParams);
         auto set = [this] (FakeParam i, const char* symbol, float lo, float hi, float def)
@@ -59,6 +80,13 @@ public:
 
         for (std::size_t i = 0; i < descs.size(); ++i)
             held[i] = descs[i].defaultValue;
+
+        if (withStates)
+        {
+            stateKeys = { "engine", "brightness" };
+            stateDefaults = { "clean", "0.5" };
+            stateValues = stateDefaults;
+        }
     }
 
     const std::vector<DafParamDesc>& params() const noexcept override { return descs; }
@@ -73,6 +101,38 @@ public:
     {
         held[index] = value;
         log.push_back ({ index, value });
+    }
+
+    std::uint32_t getStateCount() const noexcept override
+    {
+        return (std::uint32_t) stateKeys.size();
+    }
+    const std::string& getStateKey (std::uint32_t index) const noexcept override
+    {
+        return stateKeys[index];
+    }
+    const std::string& getStateDefaultValue (std::uint32_t index) const noexcept override
+    {
+        return stateDefaults[index];
+    }
+    std::string getStateValue (const std::string& key) const override
+    {
+        for (std::size_t i = 0; i < stateKeys.size(); ++i)
+            if (stateKeys[i] == key)
+                return stateValues[i];
+        return {};
+    }
+    void setState (const std::string& key, const std::string& value) override
+    {
+        stateLog.push_back ({ key, value });
+        for (std::size_t i = 0; i < stateKeys.size(); ++i)
+        {
+            if (stateKeys[i] != key) continue;
+            stateValues[i] = value;
+            if (key == "engine") held[kGain] = value == "wide" ? 1.75f : 1.0f;
+            if (key == "brightness") held[kMeter] = std::stof (value);
+            return;
+        }
     }
 
     void setTimePosition (const dusk::TransportPosition& position) noexcept override
@@ -96,21 +156,26 @@ public:
 
     int latencySamples() const noexcept override { return latency; }
 
-    // The stand-in has no editor; the editor host is covered in daf_editor_host.cpp.
-    bool hasEditor() const noexcept override { return false; }
-    std::uint32_t editorWidth() const noexcept override  { return 0; }
-    std::uint32_t editorHeight() const noexcept override { return 0; }
+    bool hasEditor() const noexcept override { return true; }
+    std::uint32_t editorWidth() const noexcept override  { return 800; }
+    std::uint32_t editorHeight() const noexcept override { return 600; }
     std::unique_ptr<duskstudio::builtin::DafEditor> createEditor (
         std::uintptr_t, std::uint32_t, std::uint32_t, double,
-        duskstudio::builtin::DafEditorCallbacks, std::string& errorOut) override
+        duskstudio::builtin::DafEditorCallbacks callbacks, std::string&) override
     {
-        errorOut = "the stand-in plug-in has no editor.";
-        return nullptr;
+        auto editor = std::make_unique<FakeEditor> (std::move (callbacks));
+        liveEditor = editor.get();
+        return editor;
     }
 
     std::vector<DafParamDesc> descs;
     std::array<float, kNumFakeParams> held {};
     std::vector<Write> log;
+    std::vector<std::string> stateKeys;
+    std::vector<std::string> stateDefaults;
+    std::vector<std::string> stateValues;
+    std::vector<StateWrite> stateLog;
+    FakeEditor* liveEditor = nullptr;
     int activations = 0;
     bool activeNow = false;
     int transportCalls = 0;
@@ -121,9 +186,9 @@ public:
 
 struct Rig
 {
-    Rig()
+    explicit Rig (bool withStates = false)
     {
-        auto owned = std::make_unique<FakePlugin>();
+        auto owned = std::make_unique<FakePlugin> (withStates);
         fake = owned.get();
         unit = std::make_unique<DafUnitInstance> (kId, std::move (owned));
     }
@@ -132,6 +197,14 @@ struct Rig
     {
         std::string error;
         REQUIRE (unit->activate (kSampleRate, kBlock, error));
+    }
+
+    FakeEditor& openEditor (DafEditorCallbacks callbacks = {})
+    {
+        std::string error;
+        editor = unit->createEditor (1, 800, 600, 1.0, std::move (callbacks), error);
+        REQUIRE (editor != nullptr);
+        return *fake->liveEditor;
     }
 
     // One block of a constant signal; returns the left output's first sample.
@@ -154,6 +227,7 @@ struct Rig
 
     FakePlugin* fake = nullptr;
     std::unique_ptr<DafUnitInstance> unit;
+    std::unique_ptr<DafEditor> editor;
     std::array<float, kBlock> inL {}, inR {}, outL {}, outR {};
 };
 
@@ -345,7 +419,7 @@ TEST_CASE ("a DAF unit reports the plug-in's latency only while active", "[built
     REQUIRE (rig.unit->getLatencySamples() == 0);
 }
 
-TEST_CASE ("a DAF unit's session blob is version 2, keyed by parameter symbol",
+TEST_CASE ("a plug-in without states round-trips exactly as before",
            "[builtin][daf]")
 {
     Rig saver;
@@ -360,6 +434,7 @@ TEST_CASE ("a DAF unit's session blob is version 2, keyed by parameter symbol",
     REQUIRE (text.find ("\"gain\"") != std::string::npos);
     REQUIRE (text.find ("\"legacy\"") != std::string::npos);
     REQUIRE (text.find ("\"meter\"") == std::string::npos);
+    REQUIRE (text.find ("\"state\"") == std::string::npos);
 
     Rig loader;
     loader.activate();
@@ -378,6 +453,98 @@ TEST_CASE ("a DAF unit's session blob is version 2, keyed by parameter symbol",
     }
 }
 
+TEST_CASE ("a plug-in with states saves and restores every state value",
+           "[builtin][daf]")
+{
+    Rig saver (true);
+    saver.fake->setState ("engine", "wide");
+    saver.fake->setState ("brightness", "0.875");
+    saver.unit->setParamValue (kGain, 0.4f);
+
+    std::vector<std::uint8_t> state;
+    REQUIRE (saver.unit->saveState (state));
+    const std::string text (state.begin(), state.end());
+    REQUIRE (text.find (R"("state":{"brightness":"0.875","engine":"wide"})")
+             != std::string::npos);
+
+    Rig loader (true);
+    loader.fake->stateLog.clear();
+    REQUIRE (loader.unit->loadState (state));
+    REQUIRE (loader.fake->stateLog.size() == 2);
+    REQUIRE (loader.fake->stateLog[0].key == "engine");
+    REQUIRE (loader.fake->stateLog[1].key == "brightness");
+    REQUIRE (loader.fake->getStateValue ("engine") == "wide");
+    REQUIRE (loader.fake->getStateValue ("brightness") == "0.875");
+}
+
+TEST_CASE ("restoring state refreshes the parameter mirrors", "[builtin][daf]")
+{
+    Rig rig (true);
+    REQUIRE (rig.unit->loadState (blob (
+        R"({"id":"dusk.builtin.fake","version":3,"state":{"brightness":"0.875","engine":"wide"},"params":{}})")));
+    REQUIRE_THAT (rig.unit->getParamValue (kMeter), WithinAbs (0.875, 1e-9));
+}
+
+TEST_CASE ("an editor state write reaches the plug-in and is saved with the unit",
+           "[builtin][daf][editor]")
+{
+    Rig rig (true);
+    auto& editor = rig.openEditor();
+    editor.setState ("engine", "wide");
+
+    REQUIRE (rig.fake->stateLog.size() == 1);
+    REQUIRE (rig.fake->stateLog[0].key == "engine");
+    REQUIRE (rig.fake->stateLog[0].value == "wide");
+
+    std::vector<std::uint8_t> state;
+    REQUIRE (rig.unit->saveState (state));
+    const std::string text (state.begin(), state.end());
+    REQUIRE (text.find (R"("engine":"wide")") != std::string::npos);
+}
+
+TEST_CASE ("an editor state write refreshes the parameter mirrors",
+           "[builtin][daf][editor]")
+{
+    Rig rig (true);
+    rig.openEditor().setState ("engine", "wide");
+    REQUIRE_THAT (rig.unit->getParamValue (kGain), WithinAbs (1.75, 1e-9));
+}
+
+TEST_CASE ("an editor state write does not echo parameter edits back to the editor",
+           "[builtin][daf][editor]")
+{
+    Rig rig (true);
+    int echoedEdits = 0;
+    DafEditorCallbacks callbacks;
+    callbacks.parameterEdited = [&echoedEdits] (std::uint32_t, float) { ++echoedEdits; };
+    rig.openEditor (std::move (callbacks)).setState ("engine", "wide");
+
+    REQUIRE (echoedEdits == 0);
+    REQUIRE_THAT (rig.unit->getParamValue (kGain), WithinAbs (1.75, 1e-9));
+}
+
+TEST_CASE ("a state-free plug-in ignores editor state callbacks",
+           "[builtin][daf][editor]")
+{
+    Rig rig;
+    rig.openEditor().setState ("engine", "wide");
+    REQUIRE (rig.fake->stateLog.empty());
+    REQUIRE_THAT (rig.unit->getParamValue (kGain), WithinAbs (1.0, 1e-9));
+}
+
+TEST_CASE ("a saved state key the plug-in no longer declares is ignored",
+           "[builtin][daf]")
+{
+    Rig rig (true);
+    REQUIRE (rig.unit->loadState (blob (
+        R"({"id":"dusk.builtin.fake","version":3,"state":{"removed":"value","brightness":"0.9","engine":"wide"},"params":{"gain":0.6}})")));
+    REQUIRE (rig.fake->stateLog.size() == 2);
+    REQUIRE (rig.fake->stateLog[0].key == "engine");
+    REQUIRE (rig.fake->stateLog[1].key == "brightness");
+    REQUIRE_THAT (rig.fake->held[kGain], WithinAbs (0.6, 1e-6));
+    REQUIRE_THAT (rig.unit->getParamValue (kGain), WithinAbs (0.6, 1e-6));
+}
+
 TEST_CASE ("a DAF unit restores a version-1 blob under its id as its defaults",
            "[builtin][daf]")
 {
@@ -393,6 +560,30 @@ TEST_CASE ("a DAF unit restores a version-1 blob under its id as its defaults",
                           WithinAbs (rig.unit->paramInfo (i)->defaultValue, 1e-9));
 }
 
+TEST_CASE ("a version 1 blob restores the plug-in defaults", "[builtin][daf]")
+{
+    Rig rig (true);
+    rig.fake->setState ("engine", "wide");
+    rig.fake->setState ("brightness", "0.9");
+    rig.fake->stateLog.clear();
+
+    REQUIRE (rig.unit->loadState (blob (
+        R"({"id":"dusk.builtin.fake","version":1,"params":{"gain":0.2}})")));
+    REQUIRE (rig.fake->getStateValue ("engine") == "clean");
+    REQUIRE (rig.fake->getStateValue ("brightness") == "0.5");
+    REQUIRE_THAT (rig.unit->getParamValue (kGain), WithinAbs (1.0, 1e-9));
+}
+
+TEST_CASE ("the previous parameter-only version still loads", "[builtin][daf]")
+{
+    Rig rig (true);
+    REQUIRE (rig.unit->loadState (blob (
+        R"({"id":"dusk.builtin.fake","version":2,"params":{"gain":0.6,"steps":3}})")));
+    REQUIRE_THAT (rig.unit->getParamValue (kGain), WithinAbs (0.6, 1e-6));
+    REQUIRE_THAT (rig.unit->getParamValue (kSteps), WithinAbs (3.0, 1e-9));
+    REQUIRE (rig.fake->stateLog.empty());
+}
+
 TEST_CASE ("a DAF unit refuses a blob it cannot read", "[builtin][daf]")
 {
     Rig rig;
@@ -401,8 +592,8 @@ TEST_CASE ("a DAF unit refuses a blob it cannot read", "[builtin][daf]")
     REQUIRE_FALSE (rig.unit->loadState ({}));
     REQUIRE_FALSE (rig.unit->loadState (blob ("not json")));
     REQUIRE_FALSE (rig.unit->loadState (blob (
-        R"({"id":"dusk.builtin.other","version":2,"params":{"gain":1.5}})")));
+        R"({"id":"dusk.builtin.other","version":3,"params":{"gain":1.5}})")));
     REQUIRE_FALSE (rig.unit->loadState (blob (
-        R"({"id":"dusk.builtin.fake","version":3,"params":{"gain":1.5}})")));
+        R"({"id":"dusk.builtin.fake","version":4,"params":{"gain":1.5}})")));
     REQUIRE_THAT (rig.unit->getParamValue (kGain), WithinAbs (0.3, 1e-6));
 }

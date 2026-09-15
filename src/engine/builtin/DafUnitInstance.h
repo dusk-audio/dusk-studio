@@ -26,6 +26,8 @@ namespace duskstudio::builtin
 // back what it wrote from a mirror, into which the audio thread copies the output
 // parameters after each block.
 //
+// State save/load is message-thread and must be called while the engine's process
+// gate fences the audio callback, as NativeInsertSlot requires for state access.
 // Threading otherwise matches INativeInstance.
 class DafUnitInstance final : public hosting::INativeInstance
 {
@@ -59,13 +61,9 @@ public:
                                              std::uint32_t width, std::uint32_t height,
                                              double scaleFactor,
                                              DafEditorCallbacks callbacks,
-                                             std::string& errorOut)
-    {
-        return plugin->createEditor (nativeParent, width, height, scaleFactor,
-                                     std::move (callbacks), errorOut);
-    }
+                                             std::string& errorOut);
 
-    static constexpr int kStateVersion = 2;
+    static constexpr int kStateVersion = 3;
     static constexpr std::uint32_t kWriteRingSize = 1024;
 
 private:
@@ -77,6 +75,8 @@ private:
 
     // The audio thread, or the message thread while the audio thread is fenced.
     void pushAllParams() noexcept;
+    void refreshParamMirrors() noexcept;
+    void applyEditorState (const std::string& key, const std::string& value);
 
     std::string id;
     std::unique_ptr<DafPlugin> plugin;
