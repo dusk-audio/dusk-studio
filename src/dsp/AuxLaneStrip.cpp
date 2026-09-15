@@ -606,7 +606,7 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
             else
 #endif
             if (builtinSlots[sIdx].isLoaded())
-                builtinSlots[sIdx].processStereo (L, R, L, R, numSamples);
+                builtinSlots[sIdx].processStereo (L, R, L, R, numSamples, nullptr, transport);
             else
                 slots[sIdx].processStereoBlock (L, R, numSamples, pluginMidiScratch);
         }

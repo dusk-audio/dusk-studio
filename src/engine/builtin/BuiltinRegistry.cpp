@@ -2,7 +2,6 @@
 
 #include "UtilityUnit.h"
 #if DUSKSTUDIO_HAS_DONOR_UNITS
- #include "DelayUnit.h"
  #include "ReverbUnit.h"
  #include "SynthUnit.h"
  #include "TapeUnit.h"
@@ -19,8 +18,11 @@ const std::vector<UnitInfo>& registry()
 #if DUSKSTUDIO_HAS_DONOR_UNITS
         { "dusk.builtin.reverb", "Reverb", "Fx|Reverb", false,
           [] () -> std::unique_ptr<BuiltinUnit> { return std::make_unique<ReverbUnit>(); } },
-        { "dusk.builtin.delay", "Tape Echo", "Fx|Delay", false,
-          [] () -> std::unique_ptr<BuiltinUnit> { return std::make_unique<DelayUnit>(); } },
+#endif
+#if DUSKSTUDIO_HAS_DAF_UNITS
+        { "dusk.builtin.delay", "Tape Echo 2", "Fx|Delay", false, nullptr, &createTapeEcho2 },
+#endif
+#if DUSKSTUDIO_HAS_DONOR_UNITS
         { "dusk.builtin.tape", "Tape", "Fx|Distortion", false,
           [] () -> std::unique_ptr<BuiltinUnit> { return std::make_unique<TapeUnit>(); } },
         { "dusk.builtin.synth", "Sunset", "Instrument|Synth", true,

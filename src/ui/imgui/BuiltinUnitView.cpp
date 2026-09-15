@@ -18,8 +18,6 @@ namespace dw = DuskWidgets;
 constexpr float kOuterInset   = 12.0f;
 constexpr float kHeaderH      = 24.0f;
 constexpr float kHeaderGap    = 10.0f;
-constexpr float kSectionH     = 18.0f;
-constexpr float kSectionGap   = 6.0f;
 constexpr float kRowH         = 26.0f;
 constexpr float kRowGap       = 4.0f;
 constexpr float kLabelW       = 104.0f;
@@ -54,17 +52,15 @@ struct Column
 struct Section
 {
     const char* name = nullptr;
-    int firstParam = 0;
-    int count = 0;
+    std::vector<int> params;
 };
 
 class BuiltinUnitViewImpl final : public DuskPanelView
 {
 public:
     BuiltinUnitViewImpl (builtin::NativeBuiltinSlot& s, std::string t,
-                         std::function<void (int)> touched, bool inlineInStage)
-        : slot (s), title (std::move (t)), onTouched (std::move (touched)),
-          embedded (inlineInStage)
+                         std::function<void (int)> touched)
+        : slot (s), title (std::move (t)), onTouched (std::move (touched))
     {
         buildLayout();
     }
@@ -72,7 +68,6 @@ public:
     ImVec2 preferredSize() const override { return { bodyWidth, bodyHeight }; }
 
     float dimAlpha() const override { return 0.28f; }
-    bool  wantsPlate() const override { return ! embedded; }
     bool  takeDismissRequest() override { return std::exchange (dismissRequested, false); }
 
     void draw (dw::Context& ctx, ImVec2 origin, ImVec2 size) override;
@@ -84,7 +79,6 @@ private:
     builtin::NativeBuiltinSlot& slot;
     std::string title;
     std::function<void (int)> onTouched;
-    bool embedded = false;
     bool dismissRequested = false;
 
     std::vector<Section> sections;
@@ -101,18 +95,18 @@ void BuiltinUnitViewImpl::buildLayout()
     for (int i = 0; i < count; ++i)
     {
         const auto* info = slot.paramInfo (i);
-        if (info == nullptr) continue;
+        if (info == nullptr || info->hidden) continue;
         const char* name = info->section != nullptr ? info->section : "";
         if (sections.empty() || std::string (sections.back().name) != name)
-            sections.push_back ({ name, i, 0 });
-        ++sections.back().count;
+            sections.push_back ({ name, {} });
+        sections.back().params.push_back (i);
     }
 
     // Pack sections into columns without splitting one, so a tall unit grows
     // sideways rather than off the bottom of the window.
     for (int s = 0; s < (int) sections.size(); ++s)
     {
-        const int rows = sections[(size_t) s].count + 1;
+        const int rows = (int) sections[(size_t) s].params.size() + 1;
         if (columns.empty()
             || (columns.back().rowCount + rows > kMaxRowsPerColumn
                 && columns.back().sectionCount > 0))
@@ -130,7 +124,6 @@ void BuiltinUnitViewImpl::buildLayout()
               + (float) std::max (0, (int) columns.size() - 1) * kColumnGap;
     bodyHeight = kOuterInset * 2.0f + kHeaderH + kHeaderGap
                + (float) tallest * (kRowH + kRowGap)
-               + (float) std::max (0, (int) sections.size() - 1) * 0.0f
                + kSectionSpace;
 }
 
@@ -139,10 +132,10 @@ void BuiltinUnitViewImpl::drawRow (dw::Context& ctx, ImVec2 at, int paramIndex)
     const auto* info = slot.paramInfo (paramIndex);
     if (info == nullptr) return;
 
-    formLabel (ctx, at, kLabelW, kRowH, info->name);
+    formLabel (ctx, at, ctx.s (kLabelW), ctx.s (kRowH), info->name);
 
-    const ImVec2 tl { at.x + kLabelW + kLabelGap, at.y + 2.0f };
-    const ImVec2 br { tl.x + kControlW, at.y + kRowH - 2.0f };
+    const ImVec2 tl { at.x + ctx.s (kLabelW + kLabelGap), at.y + ctx.s (2.0f) };
+    const ImVec2 br { tl.x + ctx.s (kControlW), at.y + ctx.s (kRowH - 2.0f) };
 
     char id[64];
     std::snprintf (id, sizeof (id), "##bu_%s", info->id);
@@ -154,7 +147,7 @@ void BuiltinUnitViewImpl::drawRow (dw::Context& ctx, ImVec2 at, int paramIndex)
         case builtin::ParamKind::Toggle:
         {
             bool on = value >= 0.5f;
-            if (formCheckbox (ctx, id, tl, kRowH - 4.0f, on ? "On" : "Off", on))
+            if (formCheckbox (ctx, id, tl, ctx.s (kRowH - 4.0f), on ? "On" : "Off", on))
             {
                 slot.setParamValue (paramIndex, on ? 1.0f : 0.0f);
                 if (onTouched) onTouched (paramIndex);
@@ -212,38 +205,41 @@ void BuiltinUnitViewImpl::drawRow (dw::Context& ctx, ImVec2 at, int paramIndex)
 
 void BuiltinUnitViewImpl::draw (dw::Context& ctx, ImVec2 origin, ImVec2 size)
 {
-    auto& dl = *ImGui::GetWindowDrawList();
+    auto& dl = *ctx.dl;
     const ImVec2 br { origin.x + size.x, origin.y + size.y };
 
-    dl.AddRectFilled (origin, br, rgba (kPanelFill), 6.0f);
-    dl.AddRect (origin, br, rgba (kPanelBorder), 6.0f);
+    dl.AddRectFilled (origin, br, rgba (kPanelFill), ctx.s (6.0f));
+    dl.AddRect (origin, br, rgba (kPanelBorder), ctx.s (6.0f), 0, ctx.s (1.0f));
 
     ScopedFormStyle style (ctx);
 
-    const ImVec2 header { origin.x + kOuterInset, origin.y + kOuterInset };
-    dl.AddText (header, rgba (kTitleText), title.c_str());
-    dl.AddLine ({ origin.x + kOuterInset, header.y + kHeaderH - 4.0f },
-                { br.x - kOuterInset, header.y + kHeaderH - 4.0f }, rgba (kAccent));
+    const ImVec2 header { origin.x + ctx.s (kOuterInset), origin.y + ctx.s (kOuterInset) };
+    dw::text (ctx, ctx.fonts->title, ctx.s (13.0f), header, br.x - header.x,
+              rgba (kTitleText), title.c_str(), dw::Align::left);
+    dl.AddLine ({ header.x, header.y + ctx.s (kHeaderH - 4.0f) },
+                { br.x - ctx.s (kOuterInset), header.y + ctx.s (kHeaderH - 4.0f) },
+                rgba (kAccent), ctx.s (1.0f));
 
-    const float columnW = kLabelW + kLabelGap + kControlW;
-    float x = origin.x + kOuterInset;
+    const float columnW = ctx.s (kLabelW + kLabelGap + kControlW);
+    const float rowPitch = ctx.s (kRowH + kRowGap);
+    float x = header.x;
 
     for (const auto& column : columns)
     {
-        float y = header.y + kHeaderH + kHeaderGap;
+        float y = header.y + ctx.s (kHeaderH + kHeaderGap);
         for (int s = column.firstSection; s < column.firstSection + column.sectionCount; ++s)
         {
             const auto& section = sections[(size_t) s];
-            formHeading (ctx, { x, y }, columnW, kRowH, section.name);
-            y += kRowH + kRowGap;
+            formHeading (ctx, { x, y }, columnW, ctx.s (kRowH), section.name);
+            y += rowPitch;
 
-            for (int p = section.firstParam; p < section.firstParam + section.count; ++p)
+            for (const int p : section.params)
             {
                 drawRow (ctx, { x, y }, p);
-                y += kRowH + kRowGap;
+                y += rowPitch;
             }
         }
-        x += columnW + kColumnGap;
+        x += columnW + ctx.s (kColumnGap);
     }
 }
 } // namespace
@@ -251,11 +247,9 @@ void BuiltinUnitViewImpl::draw (dw::Context& ctx, ImVec2 origin, ImVec2 size)
 std::unique_ptr<DuskPanelView> makeBuiltinUnitView (
     builtin::NativeBuiltinSlot& slot,
     std::string title,
-    std::function<void (int)> onParameterTouched,
-    bool inlineInStage)
+    std::function<void (int)> onParameterTouched)
 {
     return std::make_unique<BuiltinUnitViewImpl> (slot, std::move (title),
-                                                  std::move (onParameterTouched),
-                                                  inlineInStage);
+                                                  std::move (onParameterTouched));
 }
 } // namespace duskstudio::imgui

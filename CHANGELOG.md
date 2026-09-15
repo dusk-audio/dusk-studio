@@ -43,13 +43,30 @@ that will carry a signed 1.0.
   polarity invert, stereo width and mono sum, all smoothed over 20 ms and
   transparent at their defaults.
 - **The built-in suite is complete: five units.** **Utility** (gain, polarity,
-  width, mono), **Reverb** (sixteen tanks from plate to shimmer), **Tape Echo**
-  (three-head tape delay with a spring tank), **Tape** (per-channel tape colour
-  on the same engine as the master bus) and **Sunset** (a six-engine polyphonic
-  synthesiser, the instrument a MIDI track can reach with nothing installed).
-  Each has an editor: click a loaded unit's slot, or right-click it and choose
-  Open editor. MIDI Learn binds to a built-in unit's controls the way it does
-  to a plugin's.
+  width, mono), **Reverb** (sixteen tanks from plate to shimmer), **Tape Echo 2**
+  (the Tape Echo 2 plug-in's own DSP running inside Dusk Studio: a three-head
+  tape delay with a spring tank that syncs to the session tempo), **Tape**
+  (per-channel tape colour on the same engine as the master bus) and **Sunset**
+  (a six-engine polyphonic synthesiser, the instrument a MIDI track can reach
+  with nothing installed).
+  On a channel insert, click a loaded unit's slot, or right-click it and choose
+  Open editor. On an aux lane the unit's controls are always on screen, filling
+  the lane under the slot header as sections of knobs, switch banks, drop-down
+  lists and toggles sized to the room the lane has (#596). MIDI Learn binds to a
+  built-in unit's controls the way it does to a plugin's.
+
+- **Tape Echo 2 brings its own editor.** A built-in unit that is one of Dusk
+  Audio's plug-ins now shows the plug-in's own editor rather than a panel of
+  knobs: over the dimmed window on a channel insert, and filling the editor area
+  on an aux lane, centred and scaled to the lane the way a plug-in's editor sits
+  there. It runs in Dusk Studio's process beside the DSP, so its meters and its
+  presets are the plug-in's own. A display that cannot carry an embedded child,
+  such as native Wayland, says so in place of the editor instead of opening a
+  window of its own. The transport keys keep working: the keyboard returns to the
+  mixer at the end of every knob move.
+- **MIDI Learn reaches a built-in unit's controls.** A learned binding on a
+  built-in insert now arrives at the unit, on a channel strip and on an aux lane
+  alike; it was resolved and stored but never applied.
 
 ### Changed
 
@@ -154,6 +171,16 @@ that will carry a signed 1.0.
   while the signal was already hard-muted, and text set to `-INF dB` was read
   back as 0 dB. The manual's Linux screen-reader claims are corrected to match
   what is implemented.
+- **Button labels fit their buttons on a Retina display** (#590). The startup
+  dialog's tabs and buttons, the compressor editor's mode buttons, the virtual
+  keyboard's steppers and the settings panel's buttons (**Rescan devices**,
+  **MIDI Bindings...**, **Run Self-Test...**) drew their text at twice its size
+  on a display with a backing scale of 2. The built-in unit editor laid its rows
+  out at half size there, so its labels overlapped.
+- **A relative donor path configures the tests.** The documented
+  `-DDUSK_PLUGINS_PATH=../dusk-donor-pin` failed a tests configure with "Cannot
+  find source file". Relative `JUCE_PATH`, `DUSK_PLUGINS_PATH`, `DAF_PATH` and
+  `DAF_WIDGETS_PATH` values now resolve against the source tree.
 
 ## [0.13.3] - 2026-09-05
 

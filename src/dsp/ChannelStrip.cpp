@@ -1271,7 +1271,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 // Same stereo-only mono fold as the CLAP branch above.
                 std::memcpy (insertScratchR.data(), tempMono.data(), sizeof (float) * (size_t) numSamples);
                 builtinSlot.processStereo (tempMono.data(), insertScratchR.data(),
-                                           tempMono.data(), insertScratchR.data(), numSamples);
+                                           tempMono.data(), insertScratchR.data(), numSamples,
+                                           nullptr, transport);
                 for (int i = 0; i < numSamples; ++i)
                     tempMono[(size_t) i] = 0.5f
                         * (tempMono[(size_t) i] + insertScratchR[(size_t) i]);
@@ -1481,7 +1482,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             else
 #endif
             if (builtinSlot.isLoaded())
-                builtinSlot.processStereo (L, R, L, R, numSamples, &nativeMidiScratch);
+                builtinSlot.processStereo (L, R, L, R, numSamples, &nativeMidiScratch, transport);
             else
             pluginSlot.processStereoBlock (L, R, numSamples, trackMidi);
             for (int i = 0; i < numSamples; ++i)
@@ -1530,7 +1531,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 else
 #endif
                 if (builtinSlot.isLoaded())
-                    builtinSlot.processStereo (L, R, L, R, numSamples);
+                    builtinSlot.processStereo (L, R, L, R, numSamples, nullptr, transport);
                 else
                 {
                     pluginMidiScratch.clear();

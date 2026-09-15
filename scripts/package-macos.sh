@@ -2,8 +2,8 @@
 # Build an UNSIGNED macOS DMG. The .app is ad-hoc signed (codesign -s -,
 # which is free) — required for the bundle + its plugin-host helper to
 # launch on Apple Silicon — then wrapped in a DMG via cpack -G DragNDrop.
-# There is NO Apple Developer ID and NO notarization (by design): users
-# bypass Gatekeeper on first launch (right-click -> Open).
+# There is NO Apple Developer ID and NO notarization (by design): on first
+# launch users allow it in System Settings > Privacy & Security (Open Anyway).
 #
 # Prerequisites:
 #   • build/ already configured + built (Release). Configure with

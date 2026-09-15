@@ -21,7 +21,9 @@ enum class ParamKind
 // index is not: reordering or inserting a parameter must not silently rebind a
 // saved value), the name is what a diagnostic, a binding list and the editor
 // show. `section` groups rows under a heading; parameters carrying the same
-// section must be contiguous.
+// section must be contiguous. A hidden parameter keeps its index but no editor
+// row shows it: a plug-in's meter outputs and the parameters it keeps only so
+// old sessions still load.
 //
 // Aggregate on purpose: a unit declares its whole surface as one static table.
 struct ParamInfo
@@ -36,6 +38,7 @@ struct ParamInfo
     ParamKind kind = ParamKind::Continuous;
     const char* const* choices = nullptr;   // Choice only
     int choiceCount = 0;                    // Choice only
+    bool hidden = false;
 };
 
 // A DSP unit compiled into the app and reachable from an insert slot through

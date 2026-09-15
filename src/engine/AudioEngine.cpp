@@ -6,6 +6,7 @@
 #include "PluginStateDiagnostics.h"
 #include "RtPriority.h"
 #include "StopBehavior.h"
+#include "TransportSnapshot.h"
 #include "device/DefaultInputChoice.h"
 #include "hosting/NativeStateIdentity.h"
 #include "../dsp/OutputPairRouting.h"
@@ -455,12 +456,11 @@ void AudioEngine::printPerfTable()
     std::fflush (stderr);
 }
 
-#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3 \
-    || DUSKSTUDIO_HAS_NATIVE_AU
-// Message-thread drain for the native slots' MIDI-binding rings (the audio
-// thread's binding apply can't touch the instances' single-producer param
-// rings directly). 30 Hz matches PluginSlot's own drain cadence; a tick over
-// empty rings is one atomic load per slot.
+// Message-thread drain for the native and built-in slots' MIDI-binding rings (the
+// audio thread's binding apply can't touch the instances' single-producer param
+// rings directly). Built-in slots exist in every build, so the drain does too; each
+// native format's calls stay behind its own flag. 30 Hz matches PluginSlot's own
+// drain cadence; a tick over empty rings is one atomic load per slot.
 class AudioEngine::NativeParamDrain final : public dusk::Timer
 {
 public:
@@ -485,6 +485,7 @@ public:
 #if DUSKSTUDIO_HAS_NATIVE_AU
             strip.getNativeAuSlot().drainQueuedParamBindings();
 #endif
+            strip.getBuiltinSlot().drainQueuedParamBindings();
         }
         for (int a = 0; a < Session::kNumAuxLanes; ++a)
         {
@@ -505,6 +506,7 @@ public:
 #if DUSKSTUDIO_HAS_NATIVE_AU
                 lane.getNativeAuSlot (s).drainQueuedParamBindings();
 #endif
+                lane.getBuiltinSlot (s).drainQueuedParamBindings();
             }
         }
 
@@ -565,7 +567,6 @@ public:
 private:
     AudioEngine& engine;
 };
-#endif
 
 AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     : session (sessionToBindTo), desiredWorkers (std::max (0, initialWorkers))
@@ -576,10 +577,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
         perfReporter = std::make_unique<PerfReporter> (*this);
     }
 
-#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3 \
-    || DUSKSTUDIO_HAS_NATIVE_AU
     nativeParamDrain = std::make_unique<NativeParamDrain> (*this);
-#endif
 
     // Held by unique_ptr so AudioEngine.h stays free of McuReceiver /
     // McuController definitions.
@@ -3283,10 +3281,16 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     // position. Without this, tempo-synced LFOs / arps / delays in
     // plugins like Diva default to 120 BPM regardless of session tempo.
     for (auto& s : strips)
+    {
         s.getPluginSlot().setHostPlayHead (playHead.get());
+        s.setTransport (&blockTransport);
+    }
     for (auto& a : auxLaneStrips)
+    {
         for (int p = 0; p < AuxLaneParams::kMaxLanePlugins; ++p)
             a.getPluginSlot (p).setHostPlayHead (playHead.get());
+        a.setTransport (&blockTransport);
+    }
     masteringChain.prepare (sr, bs, oxFactor);
     masteringPlayer.prepare (bs, sr);
 
@@ -4635,6 +4639,12 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                     break;
                                 }
 #endif
+                                if (strip.isBuiltinLoaded())
+                                {
+                                    strip.getBuiltinSlot()
+                                        .queueParamBinding ((uint32_t) b.paramIndex, frac);
+                                    break;
+                                }
                                 strip.getPluginSlot()
                                     .setParamNormalised (b.paramIndex, frac);
                             }
@@ -4681,6 +4691,12 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                     break;
                                 }
 #endif
+                                if (lane.isBuiltinLoaded (0))
+                                {
+                                    lane.getBuiltinSlot (0)
+                                        .queueParamBinding ((uint32_t) b.paramIndex, frac);
+                                    break;
+                                }
                                 lane.getPluginSlot (0)
                                     .setParamNormalised (b.paramIndex, frac);
                             }
@@ -5862,6 +5878,17 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                                   stereoTrackInput || isFrozen, isFrozen,
                                   strips[(size_t) t].insertMode.load (std::memory_order_relaxed)
                                       == ChannelStrip::kInsertHardware };
+    }
+
+    {
+        // Plug-ins see the tempo in effect at the block's start, like the click;
+        // the constant session tempo when no map is published.
+        const TempoMap* tmBlock = rtTempoMap.load (std::memory_order_acquire);
+        const double blockBpm = (tmBlock != nullptr && ! tmBlock->empty())
+                                  ? (double) tmBlock->bpmAt (blockStartSamples)
+                                  : (double) session.tempoBpm.load (std::memory_order_acquire);
+        blockTransport = snapshotTransport (transport, blockBpm,
+                                            currentSampleRate.load (std::memory_order_relaxed));
     }
 
     // DSP pass

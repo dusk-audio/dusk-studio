@@ -190,8 +190,14 @@ endif()
 # The wayland fork has its own XEmbed + addDefaultFormatsToManager API that
 # Dusk Studio's source assumes on Linux; see [src/engine/JuceCompat.h](src/engine/JuceCompat.h)
 # for the API-split shim.
+#
+# A relative -DJUCE_PATH, -DDUSK_PLUGINS_PATH, -DDAF_PATH or -DDAF_WIDGETS_PATH
+# is made absolute against this source tree where it is read: the base the
+# top-level uses already resolved it against, and one that does not move when
+# CMake re-runs itself from the build directory. Left relative, tests/ resolves
+# it against tests/ and if(EXISTS) against the working directory.
 if(DEFINED JUCE_PATH)
-    set(DUSKSTUDIO_JUCE_SOURCE_DIR "${JUCE_PATH}")
+    get_filename_component(DUSKSTUDIO_JUCE_SOURCE_DIR "${JUCE_PATH}" ABSOLUTE)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux"
        AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../JUCE-wayland/CMakeLists.txt")
     set(DUSKSTUDIO_JUCE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../JUCE-wayland")
@@ -387,6 +393,7 @@ endif()
 #      against that branch. (The former ../plugins-main worktree was removed; the
 #      plugins repo is consolidated to one directory.)
 if(DEFINED DUSK_PLUGINS_PATH)
+    get_filename_component(DUSK_PLUGINS_PATH "${DUSK_PLUGINS_PATH}" ABSOLUTE)
     message(STATUS "Using Dusk plugins from: ${DUSK_PLUGINS_PATH}")
 elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../plugins/plugins/shared")
     set(DUSK_PLUGINS_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../plugins")
@@ -445,12 +452,13 @@ function(duskstudio_resolve_framework_dir outVar)
 
     foreach(pathVar IN LISTS ARG_EXPLICIT)
         if(DEFINED ${pathVar})
-            if(NOT EXISTS "${${pathVar}}/${ARG_MARKER}")
+            get_filename_component(explicitDir "${${pathVar}}" ABSOLUTE)
+            if(NOT EXISTS "${explicitDir}/${ARG_MARKER}")
                 message(FATAL_ERROR
                     "${pathVar}=${${pathVar}} has no ${ARG_MARKER} - it is not a "
                     "${ARG_LABEL} checkout.")
             endif()
-            set(${outVar} "${${pathVar}}" PARENT_SCOPE)
+            set(${outVar} "${explicitDir}" PARENT_SCOPE)
             return()
         endif()
     endforeach()
@@ -541,6 +549,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         $<$<COMPILE_LANG_AND_ID:CXX,Clang,AppleClang>:-Wno-cpp>)
 
     add_library(dusk_native_ui STATIC
+        src/ui/imgui/AtlasImage.cpp
         src/ui/imgui/DuskImGuiHost.cpp
         src/ui/imgui/DuskTheme.cpp
         src/ui/imgui/DuskPanelWindow.cpp
@@ -573,7 +582,9 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
         src/ui/imgui/AudioSettingsView.cpp
         src/ui/imgui/ChannelCompView.cpp
         src/ui/imgui/MasteringEqView.cpp
+        src/ui/imgui/BuiltinLaneView.cpp
         src/ui/imgui/BuiltinUnitView.cpp
+        src/ui/imgui/DafEditorHost.cpp
         src/ui/imgui/MasteringLimiterView.cpp
         src/ui/imgui/PanelControls.cpp
         src/ui/imgui/StartupView.cpp
@@ -663,6 +674,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/MidiTimeCodeEmitter.cpp
     src/engine/builtin/BuiltinInstance.cpp
     src/engine/builtin/BuiltinRegistry.cpp
+    src/engine/builtin/DafUnitInstance.cpp
     src/engine/builtin/UtilityUnit.cpp
     # DeviceManager: native orchestrator on Linux (DeviceManager.cpp), JUCE-wrapped
     # fallback off Linux (DeviceManagerJuce.cpp). Gated below the target_sources().
@@ -1331,7 +1343,6 @@ if(DEFINED DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source"
         "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp"
-        "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core"
         "${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core")
 
     # Compile multi-comp's processor + editor + shared LEDMeter so
@@ -1359,11 +1370,9 @@ if(DEFINED DUSK_PLUGINS_PATH)
 
     target_sources(DuskStudio PRIVATE
         src/engine/builtin/ReverbUnit.cpp
-        src/engine/builtin/DelayUnit.cpp
         src/engine/builtin/TapeUnit.cpp
         src/engine/builtin/SynthUnit.cpp
         "${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core/MultiSynthDSP.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core/TapeEchoDSP.cpp"
         src/dsp/MasterTape.cpp
         "${DUSKSTUDIO_COMPRESSOR_CORE_SOURCE}"
         "${DUSKSTUDIO_DONOR_DSP_DIR}/FourKEQDSP.cpp"
@@ -1381,6 +1390,87 @@ if(DEFINED DUSK_PLUGINS_PATH)
     target_compile_definitions(DuskStudio PRIVATE
         DUSKSTUDIO_HAS_DUSK_DSP=1
         DUSKSTUDIO_HAS_DONOR_UNITS=1)
+
+    # Built-in units that are Dusk's own DAF plug-ins, run in process. Each is a
+    # static library of the plug-in, its DSP core and DAF's static-target entry
+    # point, compiled against that plug-in's DafPluginInfo.h inside a DAF
+    # namespace of its own, so no two of them share a DAF symbol. Its bridge in
+    # src/engine/builtin/daf is the only Dusk code that sees DAF. It takes the
+    # pinned shared DSP directory like every other core, so the program holds one
+    # definition of each shared filter. STATIC_BUILD keeps DAF from defining a
+    # DllMain or calling dladdr in an executable, and DUSK_CRASHLOG_NO_INSTALL
+    # keeps the plug-in's crash handler out of Dusk Studio's process.
+    #
+    # The same sources build twice: once with the plug-in's editor and once
+    # without. The editor drags in DGL and Dear ImGui, which a headless consumer
+    # has no use for and the test binary already compiles for itself, so the
+    # tests link the plain library and the app links the one with the editor.
+    if(DUSKSTUDIO_DAF_SOURCE_DIR)
+        set(_duskstudio_tape_echo_2_dir "${DUSK_PLUGINS_PATH}/plugins/tape-echo/daf-plugin")
+        if(NOT EXISTS "${_duskstudio_tape_echo_2_dir}/TapeEchoPlugin.cpp")
+            message(FATAL_ERROR
+                "Dusk plugins donor lacks the Tape Echo 2 plug-in; "
+                "use the revision pinned by the build workflows")
+        endif()
+
+        function(duskstudio_add_tape_echo_2_library target withEditor)
+            add_library("${target}" STATIC
+                "${DUSKSTUDIO_DAF_SOURCE_DIR}/daf/DafPluginMain.cpp"
+                "${_duskstudio_tape_echo_2_dir}/TapeEchoPlugin.cpp"
+                "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core/TapeEchoDSP.cpp"
+                src/engine/builtin/daf/TapeEcho2.cpp)
+            target_include_directories("${target}" SYSTEM PRIVATE
+                "${_duskstudio_tape_echo_2_dir}"
+                "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core"
+                "${DUSK_PLUGINS_PATH}/plugins/shared-daf"
+                "${DUSKSTUDIO_DONOR_DSP_DIR}"
+                "${DUSKSTUDIO_DAF_SOURCE_DIR}/daf")
+            target_compile_definitions("${target}" PRIVATE
+                DAF_NAMESPACE=DuskTapeEcho2
+                DAF_PLUGIN_TARGET_STATIC
+                "DAF_PLUGIN_TARGET_STATIC_NAME=\"Dusk Studio\""
+                STATIC_BUILD
+                DUSK_CRASHLOG_NO_INSTALL)
+            target_compile_features("${target}" PRIVATE cxx_std_17)
+
+            if(NOT withEditor)
+                return()
+            endif()
+
+            # DAF's UI entry point and the plug-in's own editor, built against the
+            # DGL and Dear ImGui the app already links so the editor and Dusk
+            # Studio's own native views share one of each.
+            target_sources("${target}" PRIVATE
+                "${DUSKSTUDIO_DAF_SOURCE_DIR}/daf/DafUIMain.cpp"
+                "${_duskstudio_tape_echo_2_dir}/TapeEchoUI.cpp")
+            if(APPLE)
+                # DAF reads the display scale through a platform helper that its own
+                # build adds beside the UI entry point. Elsewhere it is inside it.
+                target_sources("${target}" PRIVATE
+                    "${DUSKSTUDIO_DAF_SOURCE_DIR}/daf/DafUI_macOS.mm")
+            endif()
+            target_include_directories("${target}" SYSTEM PRIVATE
+                "${DUSK_PLUGINS_PATH}/plugins/shared-daf/ui"
+                "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui"
+                "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk"
+                "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl")
+            target_link_libraries("${target}" PRIVATE
+                dusk_native_ui
+                dgl-opengl3
+                dgl-opengl3-definitions
+                dgl-system-libs-definitions)
+            target_compile_definitions("${target}" PRIVATE DUSKSTUDIO_DAF_UNIT_EDITOR=1)
+        endfunction()
+
+        duskstudio_add_tape_echo_2_library(dusk_daf_tape_echo_2 OFF)
+        if(TARGET dusk_native_ui)
+            duskstudio_add_tape_echo_2_library(dusk_daf_tape_echo_2_ui ON)
+            target_link_libraries(DuskStudio PRIVATE dusk_daf_tape_echo_2_ui)
+        else()
+            target_link_libraries(DuskStudio PRIVATE dusk_daf_tape_echo_2)
+        endif()
+        target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_DAF_UNITS=1)
+    endif()
 endif()
 
 # Sfizz native sampler engine (BSD-2-Clause). Vendored as a git

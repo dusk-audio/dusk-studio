@@ -50,10 +50,15 @@ TEST_CASE ("built-in registry resolves units by id")
     REQUIRE (createUnit ("dusk.builtin.nope") == nullptr);
     REQUIRE (createUnit ("dusk.builtin.utility") != nullptr);
 
-    // Every registered unit must be constructible, or the picker offers a row
-    // that cannot load.
+    // Every registered unit must load, or the picker offers a row that cannot.
     for (const auto& unit : registry())
-        REQUIRE (createUnit (unit.id) != nullptr);
+    {
+        NativeBuiltinSlot slot;
+        std::string error;
+        const bool loaded = slot.loadUnit (unit.id, kSampleRate, kBlock, error);
+        INFO (unit.id << ": " << error);
+        REQUIRE (loaded);
+    }
 }
 
 TEST_CASE ("built-in picker rows are filtered by slot kind")

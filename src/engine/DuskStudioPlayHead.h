@@ -2,7 +2,9 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "Transport.h"
+#include "TransportSnapshot.h"
 #include <atomic>
+#include <cmath>
 
 namespace duskstudio
 {
@@ -29,38 +31,33 @@ public:
 
     juce::Optional<PositionInfo> getPosition() const override
     {
-        PositionInfo info;
-        info.setIsPlaying   (transport.isPlaying());
-        info.setIsRecording (transport.isRecording());
-
         const double bpm = (bpmSource != nullptr)
                             ? (double) bpmSource->load (std::memory_order_relaxed)
                             : 120.0;
-        info.setBpm (bpm);
-
-        // 4/4 by default; Dusk Studio doesn't currently expose a session-wide
-        // time signature but plugins do better with a sane value than
-        // with the default 0/0.
-        info.setTimeSignature (juce::AudioPlayHead::TimeSignature { 4, 4 });
-
-        const auto playheadSamples = transport.getPlayhead();
-        info.setTimeInSamples (playheadSamples);
-
         const double sr = (sampleRateSource != nullptr)
                             ? sampleRateSource->load (std::memory_order_relaxed)
                             : 0.0;
-        if (sr > 0.0)
-            info.setTimeInSeconds ((double) playheadSamples / sr);
+        const auto position = snapshotTransport (transport, bpm, sr);
 
-        // PPQ position from samples + bpm + sample rate. ppq = beats =
-        // samples * bpm / (60 * sr). Beats-per-bar of 4 (4/4) feeds
-        // setPpqPositionOfLastBarStart for plugins that need bar-start.
+        PositionInfo info;
+        info.setIsPlaying   (position.isPlaying);
+        info.setIsRecording (position.isRecording);
+        info.setBpm (position.bpm);
+
+        // Plugins do better with 4/4 than with the default 0/0.
+        info.setTimeSignature (juce::AudioPlayHead::TimeSignature {
+            position.timeSignatureNumerator, position.timeSignatureDenominator });
+
+        info.setTimeInSamples (position.timeInSamples);
+        if (sr > 0.0)
+            info.setTimeInSeconds (position.timeInSeconds);
+
+        // Beats-per-bar of 4 feeds setPpqPositionOfLastBarStart for plugins
+        // that need bar-start.
         if (sr > 0.0 && bpm > 0.0)
         {
-            const double ppq = (double) playheadSamples * bpm / (60.0 * sr);
-            info.setPpqPosition (ppq);
-            const double barStart = std::floor (ppq / 4.0) * 4.0;
-            info.setPpqPositionOfLastBarStart (barStart);
+            info.setPpqPosition (position.ppqPosition);
+            info.setPpqPositionOfLastBarStart (std::floor (position.ppqPosition / 4.0) * 4.0);
         }
 
         return info;

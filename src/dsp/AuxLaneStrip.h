@@ -6,6 +6,7 @@
 #include <vector>
 #include "../foundation/Decibels.h"
 #include "../foundation/SmoothedValue.h"
+#include "../foundation/TransportPosition.h"
 #include "../session/Session.h"
 #include "../engine/PluginSlot.h"
 #include "../engine/hosting/NativeRestorePolicy.h"
@@ -172,6 +173,9 @@ public:
         { jassert (idx >= 0 && idx < kMaxPlugins); return builtinSlots[(size_t) idx]; }
     const builtin::NativeBuiltinSlot& getBuiltinSlot (int idx) const noexcept
         { jassert (idx >= 0 && idx < kMaxPlugins); return builtinSlots[(size_t) idx]; }
+
+    // As ChannelStrip::setTransport: engine storage, read only inside the strip pass.
+    void setTransport (const dusk::TransportPosition* position) noexcept { transport = position; }
     void setPendingBuiltin (int slotIdx, std::string unitId,
                             std::vector<uint8_t> state) noexcept;
     bool builtinReloadFailed (int slotIdx) const noexcept
@@ -232,6 +236,7 @@ private:
     std::array<PluginSlot, kMaxPlugins> slots;
     std::array<HardwareInsertSlot, kMaxPlugins> hardwareSlots;
     std::array<builtin::NativeBuiltinSlot, kMaxPlugins> builtinSlots;
+    const dusk::TransportPosition* transport = nullptr;
     std::array<std::atomic<bool>,          kMaxPlugins> builtinRestoreFailed {};
     std::array<std::string,                kMaxPlugins> pendingBuiltinId;
     std::array<std::vector<uint8_t>,       kMaxPlugins> pendingBuiltinState;

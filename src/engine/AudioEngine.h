@@ -18,6 +18,7 @@
 #include "../dsp/PitchDetector.h"
 #include "../foundation/IntDelayLine.h"
 #include "../foundation/MessageThread.h"
+#include "../foundation/TransportPosition.h"
 #include "MidiSyncReceiver.h"
 #include "MidiTimeCodeReceiver.h"
 #include "MidiClockEmitter.h"
@@ -595,6 +596,10 @@ private:
     // Heap-allocated so we can pass &session.tempoBpm / &currentSampleRate
     // from the ctor body, after those addresses are known.
     std::unique_ptr<DuskStudioPlayHead> playHead;
+    // The transport built-in inserts see for the current block. The audio thread
+    // rewrites it before the strip pass, and the strips (worker lanes included)
+    // read it only inside that pass.
+    dusk::TransportPosition blockTransport;
     RecordManager   recordManager   { session };
 
     std::vector<PluginLoadFailure> lastPluginLoadFailures;
@@ -919,13 +924,10 @@ private:
     class PerfReporter;
     std::unique_ptr<PerfReporter> perfReporter;
 
-#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3 \
-    || DUSKSTUDIO_HAS_NATIVE_AU
-    // Applies MIDI-binding writes queued by the audio thread to the native
-    // slots' parameter surfaces on the message thread (30 Hz).
+    // Applies MIDI-binding writes queued by the audio thread to the native and
+    // built-in slots' parameter surfaces on the message thread (30 Hz).
     class NativeParamDrain;
     std::unique_ptr<NativeParamDrain> nativeParamDrain;
-#endif
 
     // Process gate state (see suspendProcessing). The callback increments
     // callbacksInFlight around its body; suspend raises the flag and waits for

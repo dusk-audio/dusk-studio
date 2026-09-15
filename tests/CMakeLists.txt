@@ -25,8 +25,12 @@ add_executable(dusk-studio-tests
     # Built-in insert rung: registry, the Utility unit and the slot that
     # presents it to the mixer.
     builtin_insert_slot.cpp
+    daf_unit_instance.cpp
+    daf_editor_host.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/imgui/DafEditorHost.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/builtin/BuiltinInstance.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/builtin/BuiltinRegistry.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/builtin/DafUnitInstance.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/builtin/UtilityUnit.cpp
     sfz_catalog.cpp
     sfz_library_scan.cpp
@@ -299,9 +303,6 @@ if(DUSK_PLUGINS_PATH)
     target_sources(dusk-studio-tests PRIVATE
         builtin_reverb_unit.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/builtin/ReverbUnit.cpp
-        builtin_delay_unit.cpp
-        ${CMAKE_SOURCE_DIR}/src/engine/builtin/DelayUnit.cpp
-        ${DUSK_PLUGINS_PATH}/plugins/tape-echo/core/TapeEchoDSP.cpp
         builtin_tape_unit.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/builtin/TapeUnit.cpp
         builtin_synth_unit.cpp
@@ -317,9 +318,15 @@ if(DUSK_PLUGINS_PATH)
     endforeach()
     target_include_directories(dusk-studio-tests SYSTEM PRIVATE
         ${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp
-        ${DUSK_PLUGINS_PATH}/plugins/tape-echo/core
         ${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_DONOR_UNITS=1)
+
+    # Tape Echo 2 is the app's own static library, defined beside the app.
+    if(TARGET dusk_daf_tape_echo_2)
+        target_sources(dusk-studio-tests PRIVATE builtin_tape_echo_2.cpp)
+        target_link_libraries(dusk-studio-tests PRIVATE dusk_daf_tape_echo_2)
+        target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_DAF_UNITS=1)
+    endif()
 endif()
 
 # The Dear ImGui widget kit and one console strip drawn through it, headlessly: no
@@ -649,6 +656,8 @@ if(DUSK_PLUGINS_PATH)
         # their headless suite needs the kit as well as the donor DSP this block gates.
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:imgui_mastering_views.cpp>
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:imgui_builtin_unit_view.cpp>
+        $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:imgui_builtin_lane_view.cpp>
+        $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/BuiltinLaneView.cpp>
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/BuiltinUnitView.cpp>
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringEqView.cpp>
         $<$<BOOL:${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}>:${CMAKE_SOURCE_DIR}/src/ui/imgui/MasteringLimiterView.cpp>

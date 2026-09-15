@@ -79,9 +79,9 @@ cd ~/projects
 git clone --recurse-submodules https://github.com/dusk-audio/dusk-studio.git
 git clone --branch wayland-juce8 https://github.com/plugdata-team/JUCE.git JUCE-wayland
 git clone https://github.com/dusk-audio/dusk-audio-plugins.git plugins
-git -C plugins fetch --depth 1 origin 9024271a848426c692da3cc38e3f2f1451c579af
+git -C plugins fetch --depth 1 origin 92977f8503d0495211df13e5837f89ed95f0378f
 git -C plugins checkout --detach FETCH_HEAD
-test "$(git -C plugins rev-parse HEAD)" = 9024271a848426c692da3cc38e3f2f1451c579af || {
+test "$(git -C plugins rev-parse HEAD)" = 92977f8503d0495211df13e5837f89ed95f0378f || {
   echo "ERROR: donor checkout did not reach the pinned revision" >&2
   false
 }
@@ -109,7 +109,7 @@ The session notepad is Dusk Studio's first native UI window: DAF/DGL for the Ope
 ```bash
 cd ~/projects
 git clone https://github.com/dusk-audio/DAF.git
-git -C DAF checkout 867183d73b8fea20892eb8de49fb8c8b108c4910
+git -C DAF checkout b818178e024a5d28e63c52528af8b2ad2a34e360
 ```
 
 Clone then check out the SHA, rather than building whatever `main` points at today: a branch tip moves and CI fetches this exact SHA. Pugl and the widget kit are vendored in the DAF checkout.

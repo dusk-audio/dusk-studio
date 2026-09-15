@@ -11,6 +11,7 @@
 #include "../foundation/PlanarBuffer.h"
 #include "../foundation/SmoothedValue.h"
 #include "../foundation/StereoOversampler.h"
+#include "../foundation/TransportPosition.h"
 #include "../session/Session.h"
 #include "../engine/PluginSlot.h"
 #include "../engine/hosting/NativeRestorePolicy.h"
@@ -195,6 +196,11 @@ public:
     bool isBuiltinLoaded() const noexcept { return builtinSlot.isLoaded(); }
     builtin::NativeBuiltinSlot&       getBuiltinSlot()       noexcept { return builtinSlot; }
     const builtin::NativeBuiltinSlot& getBuiltinSlot() const noexcept { return builtinSlot; }
+
+    // The block's transport, which the built-in insert hands to a tempo-synced
+    // unit. Bound once to engine storage the audio thread rewrites before each
+    // block's strip pass; read only inside that pass.
+    void setTransport (const dusk::TransportPosition* position) noexcept { transport = position; }
     void setPendingBuiltin (std::string unitId, std::vector<uint8_t> state) noexcept;
     bool builtinReloadFailed() const noexcept
         { return builtinRestoreFailed.load (std::memory_order_relaxed); }
@@ -392,6 +398,7 @@ private:
 #endif
     builtin::NativeBuiltinSlot builtinSlot;
     std::atomic<bool>          builtinRestoreFailed { false };
+    const dusk::TransportPosition* transport = nullptr;
     HardwareInsertSlot hardwareSlot;
     std::vector<hosting::NativeRestoreFailure> nativeRestoreFailures;
 
