@@ -1451,6 +1451,8 @@ if(DEFINED DUSK_PLUGINS_PATH)
             endif()
             target_include_directories("${target}" SYSTEM PRIVATE
                 "${DUSK_PLUGINS_PATH}/plugins/shared-daf/ui"
+                "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/imgui"
+                "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/dusk"
                 "${DUSKSTUDIO_DAF_WIDGETS_SOURCE_DIR}/opengl")
             target_link_libraries("${target}" PRIVATE
                 dusk_native_ui
