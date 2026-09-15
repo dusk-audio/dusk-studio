@@ -301,29 +301,22 @@ if(DUSK_PLUGINS_PATH)
     # Built-in units backed by donor cores. Gated with the donor for the same
     # reason console_saturation.cpp is: without it the includes cannot resolve.
     target_sources(dusk-studio-tests PRIVATE
-        builtin_reverb_unit.cpp
-        ${CMAKE_SOURCE_DIR}/src/engine/builtin/ReverbUnit.cpp
         builtin_tape_unit.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/builtin/TapeUnit.cpp
         builtin_synth_unit.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/builtin/SynthUnit.cpp
         ${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core/MultiSynthDSP.cpp)
-    foreach(_verbSource IN ITEMS
-            DattorroPlateVintage DattorroTank DiffusionStage DuskVerbEngine
-            EarlyReflections FDNReverb NonLinearEngine OctaveGEQDesign
-            OutputDiffusion QuadTank ReverseRoomEngine ShimmerEngine
-            SixAPTankEngine SpringEngine)
-        target_sources(dusk-studio-tests PRIVATE
-            ${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp/${_verbSource}.cpp)
-    endforeach()
     target_include_directories(dusk-studio-tests SYSTEM PRIVATE
-        ${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp
         ${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_DONOR_UNITS=1)
 
     # DAF built-ins are the app's own static libraries, defined beside the app.
     if(TARGET dusk_daf_tape_echo_2 AND TARGET dusk_daf_duskverb_2)
-        target_sources(dusk-studio-tests PRIVATE builtin_tape_echo_2.cpp)
+        target_sources(dusk-studio-tests PRIVATE
+            builtin_tape_echo_2.cpp
+            builtin_duskverb_2.cpp)
+        target_include_directories(dusk-studio-tests SYSTEM PRIVATE
+            ${DUSK_PLUGINS_PATH}/plugins/DuskVerb/core)
         target_link_libraries(dusk-studio-tests PRIVATE
             dusk_daf_tape_echo_2
             dusk_daf_duskverb_2)
