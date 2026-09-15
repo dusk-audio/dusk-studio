@@ -160,14 +160,6 @@ that will carry a signed 1.0.
   **MIDI Bindings...**, **Run Self-Test...**) drew their text at twice its size
   on a display with a backing scale of 2. The built-in unit editor laid its rows
   out at half size there, so its labels overlapped.
-- **The macOS disk image has an Applications shortcut** (#588). Drag
-  DuskStudio onto it to install. The quickstart also travels inside the app, so
-  **Settings > Quickstart** finds it after the app has been dragged out of the
-  image; the image keeps its own copy for reading first.
-- **The quickstart's macOS first-open steps work on current macOS** (#589).
-  Right-click and Open no longer gets an app that is not notarized past
-  Gatekeeper. The quickstart now gives the System Settings route the manual
-  describes, and the manual names the files the download actually contains.
 - **A relative donor path configures the tests.** The documented
   `-DDUSK_PLUGINS_PATH=../dusk-donor-pin` failed a tests configure with "Cannot
   find source file". Relative `JUCE_PATH`, `DUSK_PLUGINS_PATH`, `DAF_PATH` and
