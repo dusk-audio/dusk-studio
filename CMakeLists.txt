@@ -1483,7 +1483,8 @@ static const unsigned int ${symbol}_len = ${_fontSize}u;
                 dusk_native_ui
                 dgl-opengl3
                 dgl-opengl3-definitions
-                dgl-system-libs-definitions)
+                dgl-system-libs-definitions
+                dgl-system-libs)
             target_compile_definitions("${target}" PRIVATE DUSKSTUDIO_DAF_UNIT_EDITOR=1)
         endfunction()
 
