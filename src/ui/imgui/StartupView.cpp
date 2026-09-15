@@ -262,7 +262,7 @@ private:
         style.onFill = rgba (0x282830ff);
         style.offText = active ? rgba (kAccent) : rgba (kTextMid);
         style.onText = rgba (kAccent);
-        style.fontSize = 11.0f * ctx.scale;
+        style.fontSize = 11.0f;
         style.rounding = 0.0f;
         return dw::textButton (ctx, id, at, ImVec2 (at.x + width, at.y + ctx.scale * kTabH),
                                label, active, style).clicked;
@@ -280,7 +280,7 @@ private:
         open.onFill = rgba (0x305a82ff);
         open.offText = rgba (kTextHi);
         open.onText = rgba (kTextHi);
-        open.fontSize = 12.0f * scale;
+        open.fontSize = 12.0f;
 
         const bool canOpen = selectedRow >= 0 && selectedRow < static_cast<int> (recents.size());
         if (! canOpen)
@@ -301,7 +301,7 @@ private:
         quit.onFill = rgba (0x2a2a30ff);
         quit.offText = rgba (kTextHi);
         quit.onText = rgba (kTextHi);
-        quit.fontSize = 12.0f * scale;
+        quit.fontSize = 12.0f;
         if (dw::textButton (ctx, "##quit",
                             ImVec2 (right - scale * kFooterButtonW, buttonTop),
                             ImVec2 (right, buttonBottom), "Quit", false, quit).clicked)
@@ -367,8 +367,8 @@ private:
             style.onFill = rgba (0x282830ff);
             style.offText = rgba (kTextMid);
             style.onText = rgba (kAccent);
-            style.fontSize = 13.0f * scale;
-            style.rounding = 2.0f * scale;
+            style.fontSize = 13.0f;
+            style.rounding = 2.0f;
 
             if (dw::textButton (ctx, ("##template-" + std::to_string (i)).c_str(),
                                 rowTl, rowBr, templateNames[(size_t) i].c_str(),

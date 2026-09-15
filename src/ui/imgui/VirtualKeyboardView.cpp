@@ -177,7 +177,7 @@ private:
         dw::ButtonStyle style;
         style.offFill = rgba (0x262630ff);
         style.offText = rgba (0xd0d0d4ff);
-        style.fontSize = 10.0f * scale;
+        style.fontSize = 10.0f;
 
         float right = origin.x + size.x;
         const auto stepper = [&] (const char* id, const char* label, int delta, bool octave)
