@@ -53,7 +53,7 @@ GPL source on this repo, so building it yourself costs you nothing but compile t
 | Offline bounce / mixdown export (master) | Working |
 | Single-pass stem export (tracks + buses + aux returns) | Working |
 | Realtime bounce (hardware inserts print wet) | Working |
-| Aux sends + reverb / delay returns | Working |
+| Aux sends + DuskVerb 2 built-in reverb / delay returns | Working |
 | External hardware inserts (per channel + per aux, with auto-latency ping) | Working |
 | MIDI tracks + instrument plugins + piano roll editor | Working |
 | Audio region editor (non-destructive trim / fade / gain) + 8-take history | Working |
@@ -72,7 +72,7 @@ GPL source on this repo, so building it yourself costs you nothing but compile t
 | macOS DMG (unsigned, ad-hoc) | Working (CI publishes to private releases repo on tag) |
 | Deeper a11y (full screen-reader labels + keyboard-only mixer nav) | Floor only |
 
-The C++ suite declares 1127 Catch2 test cases across 208 test source files. Linux
+The C++ suite declares 1138 Catch2 test cases across 208 test source files. Linux
 (amd64 + arm64) and macOS builds run on every push; Windows tests run on every
 push + PR; Linux ThreadSanitizer runs on every PR + push.
 
@@ -124,7 +124,7 @@ src/
   session/     # Session model + JSON serialisation
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
   util/        # Native log storage + CrashHandler signal reports
-tests/         # 1127 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
+tests/         # 1138 Catch2 test cases declared in C++ (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME, macOS bundle — for tarball + DMG builds
 DuskStudio.md  # authoritative product spec
 MANUAL.md      # end-user manual (Pandoc-buildable to PDF via docs/build-pdf.sh)

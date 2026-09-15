@@ -1619,25 +1619,30 @@ The controls are applied in the order polarity, width, mono, gain. Every one of 
 
 ![The Utility unit's editor.](docs/images/bi-01-utility.png)
 
-### Reverb
+### DuskVerb 2
 
-An algorithmic reverb with sixteen tanks, from tight plates through chambers and halls to spring, gated, reverse and shimmer. Mix defaults to 0, so a freshly loaded Reverb passes audio through untouched until you dial some in.
+Dusk Audio's DuskVerb 2 plug-in is Dusk Studio's built-in reverb. It combines sixteen plate, room, chamber, hall, spring, gated, reverse and shimmer engines with the plug-in's own DSP and editor, so a setting sounds the same here as in the plug-in. Controls change labels or availability where an engine needs them; click **?** in the editor for its complete engine-specific reference.
 
-| Control | Range | Default | What it does |
-|---|---|---|---|
-| Mix | 0 to 1 | 0 | Dry to wet. At 0 the unit is a bit-exact passthrough. |
-| Algorithm | 16 tanks | Hall | Which reverb engine runs. Switching clears the tails. |
-| Decay | 0.2 s to 30 s | 2 s | How long the tail takes to fall away. |
-| Size | 0 to 1 | 0.5 | The size of the modelled space. |
-| Pre-Delay | 0 ms to 250 ms | 20 ms | Silence between the dry sound and the start of the tail. |
-| Damping | 0.1 to 1.5 | 0.7 | How fast the top end decays relative to the rest. Below 1 darkens the tail. |
-| Width | 0 to 2 | 1 | Stereo width of the wet signal only. |
-| Lo Cut | 5 Hz to 500 Hz | 20 Hz | High-pass on the tail, to keep the low end clear. |
-| Hi Cut | 1 kHz to 20 kHz | 12 kHz | Low-pass on the tail. |
+| Section | Controls and ranges | What they do |
+|---|---|---|
+| Engine | **Algorithm**: 16 engines | Chooses the reverb topology. |
+| Input | **Pre-Delay**: 0 to 250 ms; **Pre-Delay Sync**: Free, 1/32, 1/16, 1/8, 1/4, 1/2 or 1/1; **Saturation**: 0 to 100% | Separates the source from the tail, optionally follows session tempo, and adds colour before the reverb. |
+| Filter | **Low Cut**: 5 to 500 Hz; **High Cut**: 1 to 20 kHz; **Mono Below**: 20 to 300 Hz; **Mono Depth**: 0 to 100% | Shapes what reaches the reverb and controls the low-frequency stereo content. |
+| Decay / Size | **Decay**: 0.2 to 30 s; **Size**: 0 to 100% | Sets the tail length and scale of the selected space. |
+| Output | **Dry / Wet**: 0 to 100%; **Width**: 0 to 200%; **Trim**: −48 to +48 dB; **Bus Mode**: Off / On | Balances and trims the output. Bus Mode makes the output fully wet without losing the Dry / Wet setting. |
+| Early Reflections | **Level**, **Size** and **Diffusion**: 0 to 100% | Sets the level, scale and density of the early reflections. Labels can vary by engine. |
+| Damping | **Bass Multiply**, **Mid Multiply**: 0.3 to 2.5; **Treble Multiply**: 0.1 to 1.5; **Low Crossover**: 200 Hz to 4 kHz; **High Crossover**: 1 to 12 kHz | Shapes how long different frequency bands decay. |
+| Modulation | **Depth**: 0 to 100%; **Rate**: 0.1 to 10 Hz | Adds movement to the tail, with engine-specific labels where applicable. |
+| Macro | **Tone**: −1 to +1; **Character**, **Duck**: 0 to 100% | Provides broad dark-to-bright, movement/grit and wet-ducking adjustments. |
+| Holds and modes | **Freeze**, **Gate**, **Tonal Correction**: Off / On | Freeze holds the tail; Gate and Tonal Correction appear on the engines that support them. |
 
-The reverb is causal and reports no latency.
+DuskVerb 2 keeps the plug-in's own defaults everywhere. Its first factory preset has **Mix (Dry / Wet) at 35%**, so a freshly loaded instance is audible. On an aux lane, turn on **Bus Mode** for a 100% wet return.
 
-![The Reverb unit's editor.](docs/images/bi-02-reverb.png)
+The unit reports zero latency. Its tail can run for up to 30 seconds, and an aux lane keeps processing for as long as its return remains audible.
+
+Presets, **INIT** and the complete **A/B** comparison state in DuskVerb 2's editor are saved with the session. Sessions saved with the old built-in Reverb still load under the same unit, but they return at DuskVerb 2's defaults; the old Reverb settings are not converted.
+
+![The DuskVerb 2 unit's editor.](docs/images/bi-02-reverb.png)
 
 ### Tape Echo 2
 
@@ -1701,15 +1706,15 @@ It responds to note velocity, pitch bend, the mod wheel, the sustain pedal and c
 
 On a channel insert, click the loaded unit's slot, or right-click it and choose **Open editor**. The editor opens over a dimmed window, exactly like the compressor editor. Click outside it, or click the slot again, to dismiss it.
 
-**Tape Echo 2 opens the plug-in's own editor**, the one its VST3, CLAP and AU builds show, at the size the plug-in asks for, scaled down if the window is too small to hold it. The other four units have no editor of their own, so Dusk Studio draws them from their parameter table as a panel of knobs, switch banks, drop-down lists and toggles.
+**DuskVerb 2 and Tape Echo 2 open their plug-ins' own editors**, the same editors their VST3, CLAP and AU builds show, at the size each plug-in asks for, scaled down if the window is too small to hold it. The other three units have no editor of their own, so Dusk Studio draws them from their parameter table as a panel of knobs, switch banks, drop-down lists and toggles.
 
-On an aux lane there is nothing to open: the unit's controls are always on screen, filling the lane under the slot header. Tape Echo 2 sits there as its own editor, centred and scaled down to fit the lane while keeping its shape, the way a plug-in's editor does. The knob panels are grouped the way the unit's front panel would be: Reverb shows Tank, Tone and Mix; Tape shows Machine, Level, Tone and Transport; Utility shows Level and Image. Their knobs grow with the lane, and in a smaller window the sections stack into more rows to keep them as large as the space allows. Only a lane too small for the smallest knobs scales the whole panel down.
+On an aux lane there is nothing to open: the unit's controls are always on screen, filling the lane under the slot header. DuskVerb 2 and Tape Echo 2 sit there as their own editors, centred and scaled down to fit the lane while keeping their shape, the way a plug-in's editor does. The knob panels are grouped the way the unit's front panel would be: Tape shows Machine, Level, Tone and Transport; Utility shows Level and Image. Their knobs grow with the lane, and in a smaller window the sections stack into more rows to keep them as large as the space allows. Only a lane too small for the smallest knobs scales the whole panel down.
 
-On a knob panel, drag a knob up or down to change it (hold **Shift** for finer steps), scroll over it, or double-click it to return it to its default. Choices with a handful of positions, such as Tape's **Speed**, are rows of buttons; Reverb's **Algorithm** is a drop-down list. A menu or dialog opened over the lane takes the controls down while it is open, and they come back when it closes.
+On a knob panel, drag a knob up or down to change it (hold **Shift** for finer steps), scroll over it, or double-click it to return it to its default. Choices with a handful of positions, such as Tape's **Speed**, are rows of buttons. A menu or dialog opened over the lane takes the controls down while it is open, and they come back when it closes.
 
 The transport keys keep working while an editor is open. A click into a plug-in's editor gives it the keyboard, so Dusk Studio takes the keyboard back at the end of every knob move, and **Space** and **R** reach the transport again.
 
-**MIDI Learn** works on a built-in unit the way it does on a plugin: move the control you want, in its editor or on its knob panel, then right-click the slot and choose **MIDI Learn last-touched parameter**. On an aux lane the slot's right-click menu calls it **MIDI Learn (this track)...**.
+**MIDI Learn** works on a built-in unit the way it does on a plugin, including every learnable control in DuskVerb 2's own editor: move the control you want, in its editor or on its knob panel, then right-click the slot and choose **MIDI Learn last-touched parameter**. On an aux lane the slot's right-click menu calls it **MIDI Learn (this track)...**.
 
 ## Opening the editor
 
