@@ -742,8 +742,14 @@ include(Catch)
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[alsa]"
     EXTRA_ARGS --allow-running-no-tests)
+# [ipc] cases start the plug-in host process and several assert on timing windows
+# (the park-timeout stub parks against a 250 ms block). Under ctest --parallel the
+# runner's cores are shared, so those windows close; run them serially.
 catch_discover_tests(dusk-studio-tests
-    TEST_SPEC "~[alsa]")
+    TEST_SPEC "~[alsa]~[ipc]")
+catch_discover_tests(dusk-studio-tests
+    TEST_SPEC "[ipc]"
+    PROPERTIES RUN_SERIAL TRUE)
 
 if(APPLE)
     target_link_libraries(dusk-studio-tests PRIVATE dusk-coremidi)

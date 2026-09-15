@@ -52,7 +52,7 @@ jobs:
       # whole wiring. Sanitizer objects are not interchangeable with the
       # Release ones, so this job carries its own cache key.
       CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_MAXSIZE: 500M
+      CCACHE_MAXSIZE: 2G
 
     steps:
       - name: Checkout Dusk Studio
@@ -163,7 +163,7 @@ jobs:
         # fix. TSan itself fires via TSAN_OPTIONS=exitcode=66 above —
         # any race makes ctest see a non-zero status and fail this step.
         run: |
-          ctest --test-dir build-tsan --output-on-failure \
+          ctest --test-dir build-tsan --output-on-failure --parallel 4 \
                 -E "VCA detector mode toggle is a no-op|FET has no GR-driven sub-bass HPF"
 
       - name: ccache stats
@@ -183,7 +183,7 @@ jobs:
       ASAN_SYMBOLIZER_PATH: /usr/bin/llvm-symbolizer
 
       CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_MAXSIZE: 500M
+      CCACHE_MAXSIZE: 2G
 
     steps:
       - name: Checkout Dusk Studio
@@ -274,7 +274,7 @@ jobs:
         # parity cases keep JUCE's message-loop initialiser alive so its timer
         # cannot race teardown. Every other test runs with leak detection on.
         run: |
-          ctest --test-dir build-asan --output-on-failure \
+          ctest --test-dir build-asan --output-on-failure --parallel 4 \
             -E '^(NativeInsertSlot bumps its generation on every identity change|AlsaAudioIODevice: wedged I/O thread leaks the device, never frees it|TapeMachineDSP nulls against the JUCE donor at 1x|TapeMachineDSP tracks the JUCE donor within tolerance at 2x and 4x|TapeMachineDSP latency is stable per oversampling factor)$'
 
       - name: Run leak-for-safety tests under ASan + UBSan

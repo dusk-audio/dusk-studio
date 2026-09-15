@@ -72,9 +72,13 @@ struct TempScope
     juce::File dir;
     TempScope()
     {
-        dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                  .getChildFile ("dusk-dpaligner-tests").getChildFile (juce::Uuid().toDashedString());
-        if (dir.createDirectory().failed()) throw std::runtime_error ("temp dir");
+        const auto parent = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                .getChildFile ("dusk-dpaligner-tests");
+        // Shared by parallel test processes; losing the race to create it is fine.
+        (void) parent.createDirectory();
+        dir = parent.getChildFile (juce::Uuid().toDashedString());
+        if (dir.createDirectory().failed() && ! dir.isDirectory())
+            throw std::runtime_error ("temp dir");
     }
     ~TempScope() { dir.deleteRecursively(); }
 };

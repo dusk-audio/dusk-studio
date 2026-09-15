@@ -169,7 +169,7 @@ jobs:
           grep -Eq '^DUSKSTUDIO_SODIUM_STATIC_LIBRARY:FILEPATH=.*/libsodium\.a$' build-tests/CMakeCache.txt || {
             echo "::error::macOS test configure did not select static libsodium" >&2; exit 1; }
           cmake --build build-tests --target dusk-studio-tests -j5
-          ctest --test-dir build-tests --output-on-failure
+          ctest --test-dir build-tests --output-on-failure --parallel 3
 
       - name: ccache stats
         if: always()
