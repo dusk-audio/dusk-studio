@@ -67,9 +67,9 @@ public:
 // is compiled against its plug-in's DafPluginInfo.h inside a DAF namespace of its
 // own, which is what lets several plug-ins share one program.
 //
-// Threading follows DAF's PluginExporter: activate / deactivate are message-thread;
-// setParameterValue, setTimePosition and run belong to the audio thread, or to the
-// message thread while the audio thread is fenced.
+// Threading follows DAF's PluginExporter: activate / deactivate and state access
+// are message-thread; setParameterValue, setTimePosition and run belong to the
+// audio thread, or to the message thread while the audio thread is fenced.
 class DafPlugin
 {
 public:
@@ -84,6 +84,13 @@ public:
 
     virtual float getParameterValue (std::uint32_t index) const noexcept = 0;
     virtual void  setParameterValue (std::uint32_t index, float value) noexcept = 0;
+
+    // Full-state access. A plug-in without DAF full state reports a count of zero.
+    virtual std::uint32_t getStateCount() const noexcept = 0;
+    virtual const std::string& getStateKey (std::uint32_t index) const noexcept = 0;
+    virtual const std::string& getStateDefaultValue (std::uint32_t index) const noexcept = 0;
+    virtual std::string getStateValue (const std::string& key) const = 0;
+    virtual void setState (const std::string& key, const std::string& value) = 0;
     virtual void  setTimePosition (const dusk::TransportPosition& position) noexcept = 0;
     virtual void  run (const float* const* inputs, float* const* outputs,
                        std::uint32_t frames) noexcept = 0;

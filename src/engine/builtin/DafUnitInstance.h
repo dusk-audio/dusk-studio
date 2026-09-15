@@ -26,6 +26,8 @@ namespace duskstudio::builtin
 // back what it wrote from a mirror, into which the audio thread copies the output
 // parameters after each block.
 //
+// State save/load is message-thread and must be called while the engine's process
+// gate fences the audio callback, as NativeInsertSlot requires for state access.
 // Threading otherwise matches INativeInstance.
 class DafUnitInstance final : public hosting::INativeInstance
 {
@@ -65,7 +67,7 @@ public:
                                      std::move (callbacks), errorOut);
     }
 
-    static constexpr int kStateVersion = 2;
+    static constexpr int kStateVersion = 3;
     static constexpr std::uint32_t kWriteRingSize = 1024;
 
 private:

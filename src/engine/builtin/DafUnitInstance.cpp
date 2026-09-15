@@ -12,6 +12,7 @@ namespace duskstudio::builtin
 namespace
 {
 constexpr const char* kSection = "Controls";
+constexpr int kParameterOnlyStateVersion = 2;
 
 // An integer parameter with at most this many positions is a switch. A wider one
 // stays a knob, whose value the plug-in rounds.
@@ -206,8 +207,20 @@ bool DafUnitInstance::saveState (std::vector<std::uint8_t>& out) const
 
     dusk::json::Json root = dusk::json::Json::object();
     root["id"] = id;
-    root["version"] = kStateVersion;
     root["params"] = std::move (params);
+
+    const auto stateCount = plugin->getStateCount();
+    root["version"] = stateCount > 0 ? kStateVersion : kParameterOnlyStateVersion;
+    if (stateCount > 0)
+    {
+        dusk::json::Json state = dusk::json::Json::object();
+        for (std::uint32_t i = 0; i < stateCount; ++i)
+        {
+            const auto& key = plugin->getStateKey (i);
+            state[key] = plugin->getStateValue (key);
+        }
+        root["state"] = std::move (state);
+    }
 
     const auto text = root.dump();
     out.assign (text.begin(), text.end());
@@ -227,20 +240,47 @@ bool DafUnitInstance::loadState (const std::vector<std::uint8_t>& in)
     // plug-in's, so it restores as the plug-in's defaults rather than as a
     // plausible-looking wrong patch.
     const int version = dusk::json::getInt (root, "version", 0);
-    if (version != 1 && version != kStateVersion)
+    if (version != 1 && version != kParameterOnlyStateVersion
+        && version != kStateVersion)
         return false;
 
-    const auto& saved = dusk::json::child (root, "params");
+    // State I/O and the parameter replay are synchronous on the message thread.
+    // Production callers hold AudioEngine's process gate, so discard writes made
+    // before this authoritative snapshot instead of letting the next block replay
+    // stale values over it.
+    writes.drain ([] (const ParamWrite&) {});
+    resyncAll.store (false, std::memory_order_relaxed);
+
+    const auto& savedState = dusk::json::child (root, "state");
+    const auto stateCount = plugin->getStateCount();
+    if (version == 1 || version == kStateVersion)
+    {
+        for (std::uint32_t i = 0; i < stateCount; ++i)
+        {
+            const auto& key = plugin->getStateKey (i);
+            const auto& fallback = plugin->getStateDefaultValue (i);
+            plugin->setState (key, version == kStateVersion
+                                       ? dusk::json::getString (savedState, key.c_str(), fallback)
+                                       : fallback);
+        }
+    }
+
+    const auto& savedParams = dusk::json::child (root, "params");
     const auto& descs = plugin->params();
     for (std::size_t i = 0; i < descs.size(); ++i)
     {
         const auto& p = descs[i];
         if (p.isOutput) continue;
-        setParamValue ((int) i, version == kStateVersion
-                                    ? dusk::json::getFiniteFloat (saved, p.symbol.c_str(),
-                                                                  p.defaultValue)
-                                    : p.defaultValue);
+        const float value = version == 1
+                          ? p.defaultValue
+                          : dusk::json::getFiniteFloat (savedParams, p.symbol.c_str(),
+                                                        p.defaultValue);
+        plugin->setParameterValue ((std::uint32_t) i, conform (p, value));
     }
+
+    for (std::size_t i = 0; i < descs.size(); ++i)
+        values[i].store (plugin->getParameterValue ((std::uint32_t) i),
+                         std::memory_order_relaxed);
     return true;
 }
 
