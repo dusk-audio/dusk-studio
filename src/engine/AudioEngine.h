@@ -283,7 +283,14 @@ public:
     }
 
     void play();
+    // Halts the transport and commits any take without moving the playhead.
+    // For stops the user did not ask for as a transport press: session
+    // switch, shutdown, bounce, external sync.
     void stop();
+    // The Stop control. A rolling transport stops and the playhead goes where
+    // the Playhead on Stop setting says; pressed while already stopped, the
+    // playhead returns to zero.
+    void pressStop();
     void record();
 
     // Message thread. Detach + reattach the audio callback so DSP re-prepares

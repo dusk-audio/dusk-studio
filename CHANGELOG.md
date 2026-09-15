@@ -83,6 +83,13 @@ that will carry a signed 1.0.
   differently from the engine it replaces while the controls, their ranges and
   their defaults are unchanged. The console character stage no longer adds a
   noise floor, so a silent channel stays silent through it.
+- **Stop returns the playhead to where play or record started** (#591). It is
+  the new default for **Playhead on Stop**, so Play after a take hears the take.
+  Moving the playhead during playback moves the return point with it. Pressing
+  Stop while already stopped returns to bar 1 whatever the setting, as the
+  quickstart says. A choice saved in Settings before this release is kept. A
+  stop that comes from MIDI clock or MTC chase leaves the playhead where the
+  master stopped.
 - **Arming a track with no input is refused, and says why.** ARM no longer
   lights on an audio track while the open device offers no capture channels,
   because the recording that followed wrote nothing and said nothing. The
@@ -107,9 +114,19 @@ that will carry a signed 1.0.
   now sends unsigned-beta users to **Privacy & Security > Open Anyway** after
   the first blocked launch, and the manual uses the names of the shipped DMG
   and app bundle.
-- **Punch points set from the ruler menu now arm punch recording.** Setting the
-  in and out points separately arms punch once they form a nonzero range, so
-  the next take records between the brackets instead of capturing the full pass.
+- **Placing loop and punch brackets arms them** (#592). **Set punch in here**
+  and **Set punch out here** on the ruler menu, and **Shift+[** / **Shift+]**,
+  turn punch on once the in point sits before the out point, as dragging a
+  range and choosing **Set punch in / out here** already did, so the take lands
+  inside the brackets instead of covering the whole pass. **[** / **]** and
+  **Set loop in here** / **Set loop out here** turn loop on the same way. A new
+  point that leaves the in point at or after the out point turns the mode off.
+  Loop and punch brackets are drawn hollow and faint while their mode is off,
+  so a range that is set but not armed shows at a glance.
+- **The tape strip keeps its zoom while recording** (#593). It used to zoom out
+  to at least a minute when recording started and snap back on stop, so the
+  view jumped twice per take. It now holds your zoom and turns the page when the
+  playhead reaches the right-hand edge, with or without Chase.
 - **Logging out no longer skips the unsaved-changes prompt.** A termination
   signal, a logout or a shutdown runs the same staged shutdown as **File >
   Quit**, so the prompt appears and plugin child processes are not left to be

@@ -1640,7 +1640,7 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
         // selection on top. Both the seek + the range origin honour
         // SNAP so the playhead and selection land on the grid.
         const bool bypassSnap = e.mods.isCommandDown();
-        engine.getTransport().setPlayhead (
+        engine.getTransport().locate (
             snapTimelineSampleToGrid (timelineSampleForX (e.x, waveArea), bypassSnap));
         rangeStartSample = snapFileSampleToGrid (sampleForX (e.x, waveArea), bypassSnap);
         rangeEndSample   = rangeStartSample;
@@ -2765,8 +2765,8 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
                 const auto cursorTl = editCursorSample + (r->timelineStart - r->sourceOffset);
                 if (kc == '[')
                 {
-                    if (sh) transport.setPunchRange (cursorTl, std::max (transport.getPunchOut(), cursorTl));
-                    else    transport.setLoopRange  (cursorTl, std::max (transport.getLoopEnd(),  cursorTl));
+                    if (sh) transport.placePunchRange (cursorTl, std::max (transport.getPunchOut(), cursorTl));
+                    else    transport.placeLoopRange  (cursorTl, std::max (transport.getLoopEnd(),  cursorTl));
                 }
                 else
                 {
@@ -2776,8 +2776,8 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
                     // synthesising a 0..cursor range.
                     auto start = sh ? transport.getPunchIn() : transport.getLoopStart();
                     if (start == 0) start = cursorTl;
-                    if (sh) transport.setPunchRange (std::min (start, cursorTl), cursorTl);
-                    else    transport.setLoopRange  (std::min (start, cursorTl), cursorTl);
+                    if (sh) transport.placePunchRange (std::min (start, cursorTl), cursorTl);
+                    else    transport.placeLoopRange  (std::min (start, cursorTl), cursorTl);
                 }
                 repaint();
                 return true;

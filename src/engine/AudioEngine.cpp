@@ -5,6 +5,7 @@
 #include "PdcMath.h"
 #include "PluginStateDiagnostics.h"
 #include "RtPriority.h"
+#include "StopBehavior.h"
 #include "TransportSnapshot.h"
 #include "device/DefaultInputChoice.h"
 #include "hosting/NativeStateIdentity.h"
@@ -1519,6 +1520,7 @@ void AudioEngine::play()
         }
     }
 
+    transport.setRollStart (transport.getPlayhead());
     playbackEngine.preparePlayback();
     transport.setState (Transport::State::Playing);
 }
@@ -1567,28 +1569,22 @@ void AudioEngine::stop()
         }
 
         playbackEngine.stopPlayback();
-
-    // Honour the user's Settings choice for Stop behaviour.
-    // 0 = PauseInPlace (leave playhead where it landed)
-    // 1 = ReturnToZero (rewind to origin)
-    // 2 = ReturnToLastClicked (jump to last ruler-click position; falls
-    //     back to pause-in-place when nothing was clicked yet).
-    // Callers that want unconditional stop+rewind (the '.' hotkey, Home
-    // key) still call setPlayhead(0) explicitly after stop().
-        const int behavior = session.stopBehavior.load (std::memory_order_relaxed);
-        if (behavior == 1)
-        {
-            transport.setPlayhead (0);
-        }
-        else if (behavior == 2)
-        {
-            const auto last = session.lastClickedTimelineSample.load (std::memory_order_relaxed);
-            if (last >= 0)
-                transport.setPlayhead (last);
-        }
     }
 
     performPendingDspRestartIfIdle();
+}
+
+void AudioEngine::pressStop()
+{
+    const bool stoppedSomething = ! transport.isStopped() || recordManager.isActive();
+    stop();
+    const auto target = playheadAfterStop (
+        stoppedSomething,
+        static_cast<StopBehavior> (session.stopBehavior.load (std::memory_order_relaxed)),
+        transport.getRollStart(),
+        session.lastClickedTimelineSample.load (std::memory_order_relaxed));
+    if (target.has_value())
+        transport.setPlayhead (*target);
 }
 
 void AudioEngine::restartDspWhenIdle()
@@ -1790,6 +1786,12 @@ void AudioEngine::record()
         }
     }
 
+    // Where the take starts, not where count-in or pre-roll rolled back to,
+    // so the next Record press after Stop lines up the same take. Record
+    // pressed during playback keeps the start playback already has.
+    if (transport.isStopped())
+        transport.setRollStart (startSample);
+
     playbackEngine.preparePlayback();  // un-armed tracks still play through
     transport.setState (Transport::State::Recording);
 }
@@ -1797,7 +1799,7 @@ void AudioEngine::record()
 void AudioEngine::jumpToPrevMarker()
 {
     const auto& markers = session.getMarkers();
-    if (markers.empty()) { transport.setPlayhead (0); return; }
+    if (markers.empty()) { transport.locate (0); return; }
     const auto cur = transport.getPlayhead();
     // Walk in reverse for the largest marker strictly before the playhead.
     // "Strictly before" so a press while sitting ON a marker steps to the
@@ -1808,7 +1810,7 @@ void AudioEngine::jumpToPrevMarker()
     {
         if (it->timelineSamples < cur) { target = it->timelineSamples; found = true; break; }
     }
-    transport.setPlayhead (found ? target : 0);
+    transport.locate (found ? target : 0);
 }
 
 void AudioEngine::jumpToNextMarker()
@@ -1818,19 +1820,19 @@ void AudioEngine::jumpToNextMarker()
     const auto cur = transport.getPlayhead();
     for (const auto& m : markers)
     {
-        if (m.timelineSamples > cur) { transport.setPlayhead (m.timelineSamples); return; }
+        if (m.timelineSamples > cur) { transport.locate (m.timelineSamples); return; }
     }
     // Past the last marker: stay where we are. Tascam-style "stops at end".
 }
 
 void AudioEngine::jumpToZero()
 {
-    transport.setPlayhead (0);
+    transport.locate (0);
 }
 
 void AudioEngine::jumpToLastRecordPoint()
 {
-    transport.setPlayhead (session.lastRecordPointSamples.load (std::memory_order_relaxed));
+    transport.locate (session.lastRecordPointSamples.load (std::memory_order_relaxed));
 }
 
 void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
@@ -3953,7 +3955,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
                 // reversed=true) doesn't drag the transport into Stop;
                 // master scrubbing back leaves Dusk Studio rolling forward.
                 session.pendingTransportAction.store (
-                    (int) PendingTransportAction::Stop,
+                    (int) PendingTransportAction::SyncStop,
                     std::memory_order_relaxed);
                 mtcDriftWindowFrames = 0;
             }
@@ -4025,7 +4027,7 @@ void AudioEngine::audioDeviceIOCallback (const float* const* inputChannelData,
             else if (! extRolling && lastExtRolling)
             {
                 session.pendingTransportAction.store (
-                    (int) PendingTransportAction::Stop,
+                    (int) PendingTransportAction::SyncStop,
                     std::memory_order_relaxed);
             }
         }
