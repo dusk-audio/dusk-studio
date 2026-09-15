@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../engine/StopBehavior.h"
+
 #include <string>
 #include <vector>
 
@@ -52,21 +54,15 @@ void setTapeStripExpandedDefault (bool expanded);
 bool getFollowPlayheadDefault();
 void setFollowPlayheadDefault (bool follow);
 
-// Tape-head behaviour on Stop. Mirrors the equivalent option in Pro Tools
-// (Operation > Transport > "Audio During Fast Forward / Rewind") and
-// Logic (Preferences > Recording > "Stop returns to playback start").
-// PauseInPlace (default, current behaviour) leaves the playhead where
-// the user stopped - pause-and-resume feels musical. ReturnToZero
-// rewinds to the timeline origin on every Stop. ReturnToLastClicked
-// jumps to the last position the user clicked on the tape strip ruler,
-// so Stop -> Play re-cycles a region the user just auditioned without
-// having to re-click. Persisted per-machine.
-enum class StopBehavior : int
-{
-    PauseInPlace        = 0,
-    ReturnToZero        = 1,
-    ReturnToLastClicked = 2,
-};
+// Tape-head behaviour on Stop. ReturnToRollStart (the default when nothing
+// is stored) puts the playhead back where play or record started, so Stop ->
+// Play hears the take just made. PauseInPlace leaves the playhead where the
+// user stopped. ReturnToZero rewinds to the timeline origin on every Stop.
+// ReturnToLastClicked jumps to the last position the user clicked on the
+// tape strip ruler, so Stop -> Play re-cycles a region the user just
+// auditioned without having to re-click. A choice the user saved keeps its
+// meaning. Persisted per-machine.
+using duskstudio::StopBehavior;
 StopBehavior getStopBehavior();
 void         setStopBehavior (StopBehavior b);
 

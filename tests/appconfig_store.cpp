@@ -158,6 +158,43 @@ TEST_CASE ("Writing one key preserves the others", "[appconfig]")
     CHECK (store.contents().find ("# a comment") != std::string::npos);
 }
 
+TEST_CASE ("An absent stop behaviour returns to where play or record started", "[appconfig]")
+{
+    const ScopedStore store { "stop-default" };
+    CHECK (duskstudio::appconfig::getStopBehavior()
+           == duskstudio::StopBehavior::ReturnToRollStart);
+}
+
+TEST_CASE ("A saved stop behaviour keeps its meaning", "[appconfig]")
+{
+    using duskstudio::StopBehavior;
+    const ScopedStore store { "stop-saved" };
+
+    SECTION ("every choice round-trips")
+    {
+        for (auto b : { StopBehavior::PauseInPlace, StopBehavior::ReturnToZero,
+                        StopBehavior::ReturnToLastClicked, StopBehavior::ReturnToRollStart })
+        {
+            duskstudio::appconfig::setStopBehavior (b);
+            CHECK (duskstudio::appconfig::getStopBehavior() == b);
+        }
+    }
+
+    SECTION ("a pause-in-place choice saved by an earlier release stays pause")
+    {
+        store.create();
+        store.write ("stop_behavior=0\n");
+        CHECK (duskstudio::appconfig::getStopBehavior() == StopBehavior::PauseInPlace);
+    }
+
+    SECTION ("a value no release wrote falls back to the default")
+    {
+        store.create();
+        store.write ("stop_behavior=9\n");
+        CHECK (duskstudio::appconfig::getStopBehavior() == StopBehavior::ReturnToRollStart);
+    }
+}
+
 TEST_CASE ("Soundfont library roots round-trip", "[appconfig]")
 {
     const ScopedStore store { "sfz-roots" };

@@ -65,7 +65,8 @@ Hit record, play, hit stop.
 
 ![Recording](docs/images/qg-04-record-rolling.png)
 
-Press stop again to return to the start, then play to hear it back.
+Stop puts the playhead back where you started recording, so press play to hear
+the take. Press stop again to return to the start of the session.
 
 ## 5. Add another part
 

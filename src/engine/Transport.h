@@ -23,6 +23,22 @@ public:
     std::int64_t getPlayhead() const noexcept { return playheadSamples.load (std::memory_order_relaxed); }
     void setPlayhead (std::int64_t s) noexcept { playheadSamples.store (s, std::memory_order_relaxed); }
 
+    // Where playback or the take last began from a stopped transport, leaving
+    // out count-in and pre-roll. Stop returns here under
+    // StopBehavior::ReturnToRollStart.
+    std::int64_t getRollStart() const noexcept { return rollStart.load (std::memory_order_relaxed); }
+    void setRollStart (std::int64_t s) noexcept { rollStart.store (s, std::memory_order_relaxed); }
+
+    // A seek the user asked for. During playback it also becomes the roll
+    // start, so Stop comes back to the last place the user sent the playhead.
+    // A take keeps its start: seeking while recording leaves the roll start.
+    void locate (std::int64_t s) noexcept
+    {
+        setPlayhead (s);
+        if (isPlaying())
+            setRollStart (s);
+    }
+
     // Called from the audio callback when state is Playing or Recording.
     void advancePlayhead (int numSamples) noexcept
     {
@@ -42,6 +58,13 @@ public:
         loopStart.store (s, std::memory_order_relaxed);
         loopEnd.store   (e, std::memory_order_relaxed);
     }
+    // A loop bracket placed by hand: loop is on exactly when the pair makes a
+    // range, so in-then-out needs no separate L press.
+    void        placeLoopRange (std::int64_t s, std::int64_t e) noexcept
+    {
+        setLoopRange (s, e);
+        setLoopEnabled (e > s);
+    }
 
     // Punch-in / punch-out window. While recording with punchEnabled, the
     // audio engine only commits samples in [punchIn, punchOut) to the per-track
@@ -56,10 +79,19 @@ public:
         punchIn.store  (s, std::memory_order_relaxed);
         punchOut.store (e, std::memory_order_relaxed);
     }
+    // A punch bracket placed by hand: punch is armed exactly when the pair
+    // makes a range. A pair collapsed to one point disarms, because that
+    // range would record nothing.
+    void        placePunchRange (std::int64_t s, std::int64_t e) noexcept
+    {
+        setPunchRange (s, e);
+        setPunchEnabled (e > s);
+    }
 
 private:
     std::atomic<State>       state            { State::Stopped };
     std::atomic<std::int64_t> playheadSamples  { 0 };
+    std::atomic<std::int64_t> rollStart        { 0 };
 
     std::atomic<bool>        loopEnabled      { false };
     std::atomic<std::int64_t> loopStart        { 0 };
