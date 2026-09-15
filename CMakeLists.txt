@@ -541,7 +541,7 @@ if(DUSKSTUDIO_ENABLE_NATIVE_UI)
     set(DAF_EXAMPLES OFF CACHE BOOL "Build DAF examples" FORCE)
     add_subdirectory("${DUSKSTUDIO_DAF_SOURCE_DIR}"
                      "${CMAKE_CURRENT_BINARY_DIR}/DAF" EXCLUDE_FROM_ALL)
-    daf__add_dgl_opengl3(TRUE FALSE FALSE)
+    daf__add_dgl_opengl3(TRUE TRUE FALSE)
     daf__add_widgets_dusk()
     daf__add_widgets_imgui(dgl-opengl3)
     target_compile_options(dgl-opengl3 PRIVATE
@@ -1355,21 +1355,7 @@ if(DEFINED DUSK_PLUGINS_PATH)
     # MasterTape.cpp lives here rather than in the main source list: it is the
     # only translation unit that includes the TapeMachine core, which exists
     # only under DUSK_PLUGINS_PATH.
-    # DuskVerb's reverb engine backs the built-in Reverb unit. The donor's
-    # src/dsp is framework-free and depends on nothing but the standard
-    # library, so it compiles straight in.
-    set(DUSKSTUDIO_DUSKVERB_SOURCES "")
-    foreach(_verbSource IN ITEMS
-            DattorroPlateVintage DattorroTank DiffusionStage DuskVerbEngine
-            EarlyReflections FDNReverb NonLinearEngine OctaveGEQDesign
-            OutputDiffusion QuadTank ReverseRoomEngine ShimmerEngine
-            SixAPTankEngine SpringEngine)
-        list(APPEND DUSKSTUDIO_DUSKVERB_SOURCES
-            "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp/${_verbSource}.cpp")
-    endforeach()
-
     target_sources(DuskStudio PRIVATE
-        src/engine/builtin/ReverbUnit.cpp
         src/engine/builtin/TapeUnit.cpp
         src/engine/builtin/SynthUnit.cpp
         "${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core/MultiSynthDSP.cpp"
@@ -1381,8 +1367,7 @@ if(DEFINED DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/shared/LEDMeter.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/core/TapeMachineDSP.cpp"
-        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI/TapeReelComponent.cpp"
-        ${DUSKSTUDIO_DUSKVERB_SOURCES})
+        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/GUI/TapeReelComponent.cpp")
 
     # DUSKSTUDIO_HAS_DUSK_DSP gates the donor's framework-era processors as
     # well as its cores; DUSKSTUDIO_HAS_DONOR_UNITS gates only the built-in
@@ -1407,34 +1392,74 @@ if(DEFINED DUSK_PLUGINS_PATH)
     # tests link the plain library and the app links the one with the editor.
     if(DUSKSTUDIO_DAF_SOURCE_DIR)
         set(_duskstudio_tape_echo_2_dir "${DUSK_PLUGINS_PATH}/plugins/tape-echo/daf-plugin")
+        set(_duskstudio_duskverb_2_dir "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/daf-plugin")
         if(NOT EXISTS "${_duskstudio_tape_echo_2_dir}/TapeEchoPlugin.cpp")
             message(FATAL_ERROR
                 "Dusk plugins donor lacks the Tape Echo 2 plug-in; "
                 "use the revision pinned by the build workflows")
         endif()
+        if(NOT EXISTS "${_duskstudio_duskverb_2_dir}/DuskVerbPlugin.cpp")
+            message(FATAL_ERROR
+                "Dusk plugins donor lacks the DuskVerb 2 plug-in; "
+                "use the revision pinned by the build workflows")
+        endif()
 
-        function(duskstudio_add_tape_echo_2_library target withEditor)
+        function(duskstudio_embed_font symbol ttf out)
+            if(NOT EXISTS "${ttf}")
+                message(FATAL_ERROR "duskstudio_embed_font(${symbol}): no such font file: ${ttf}")
+            endif()
+            get_filename_component(_fontDir "${out}" DIRECTORY)
+            file(MAKE_DIRECTORY "${_fontDir}")
+            get_filename_component(_fontName "${ttf}" NAME)
+            file(READ "${ttf}" _fontHex HEX)
+            file(SIZE "${ttf}" _fontSize)
+            string(REGEX REPLACE "(..)" "0x\\1," _fontBytes "${_fontHex}")
+            string(REGEX REPLACE "(0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,)" "\\1\n  " _fontBytes "${_fontBytes}")
+            file(WRITE "${out}.tmp"
+"// Generated from ${_fontName}; SIL Open Font License 1.1.
+static const unsigned char ${symbol}[] = {
+  ${_fontBytes}
+};
+static const unsigned int ${symbol}_len = ${_fontSize}u;
+")
+            execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${out}.tmp" "${out}")
+            file(REMOVE "${out}.tmp")
+        endfunction()
+
+        function(duskstudio_add_daf_builtin_library
+                 target withEditor pluginNamespace pluginDir bridgeSource)
+            cmake_parse_arguments(BUILTIN "" "UI_SOURCE"
+                "DSP_SOURCES;INCLUDE_DIRS;COMPILE_DEFINITIONS" ${ARGN})
+            if(BUILTIN_UNPARSED_ARGUMENTS)
+                message(FATAL_ERROR
+                    "duskstudio_add_daf_builtin_library(${target}): unknown arguments: "
+                    "${BUILTIN_UNPARSED_ARGUMENTS}")
+            endif()
             add_library("${target}" STATIC
                 "${DUSKSTUDIO_DAF_SOURCE_DIR}/daf/DafPluginMain.cpp"
-                "${_duskstudio_tape_echo_2_dir}/TapeEchoPlugin.cpp"
-                "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core/TapeEchoDSP.cpp"
-                src/engine/builtin/daf/TapeEcho2.cpp)
+                ${BUILTIN_DSP_SOURCES}
+                "${bridgeSource}")
             target_include_directories("${target}" SYSTEM PRIVATE
-                "${_duskstudio_tape_echo_2_dir}"
-                "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core"
+                "${pluginDir}"
                 "${DUSK_PLUGINS_PATH}/plugins/shared-daf"
                 "${DUSKSTUDIO_DONOR_DSP_DIR}"
-                "${DUSKSTUDIO_DAF_SOURCE_DIR}/daf")
+                "${DUSKSTUDIO_DAF_SOURCE_DIR}/daf"
+                ${BUILTIN_INCLUDE_DIRS})
             target_compile_definitions("${target}" PRIVATE
-                DAF_NAMESPACE=DuskTapeEcho2
+                "DAF_NAMESPACE=${pluginNamespace}"
                 DAF_PLUGIN_TARGET_STATIC
                 "DAF_PLUGIN_TARGET_STATIC_NAME=\"Dusk Studio\""
                 STATIC_BUILD
-                DUSK_CRASHLOG_NO_INSTALL)
+                DUSK_CRASHLOG_NO_INSTALL
+                ${BUILTIN_COMPILE_DEFINITIONS})
             target_compile_features("${target}" PRIVATE cxx_std_17)
 
             if(NOT withEditor)
                 return()
+            endif()
+            if(NOT BUILTIN_UI_SOURCE)
+                message(FATAL_ERROR
+                    "duskstudio_add_daf_builtin_library(${target}): editor source missing")
             endif()
 
             # DAF's UI entry point and the plug-in's own editor, built against the
@@ -1442,7 +1467,7 @@ if(DEFINED DUSK_PLUGINS_PATH)
             # Studio's own native views share one of each.
             target_sources("${target}" PRIVATE
                 "${DUSKSTUDIO_DAF_SOURCE_DIR}/daf/DafUIMain.cpp"
-                "${_duskstudio_tape_echo_2_dir}/TapeEchoUI.cpp")
+                "${BUILTIN_UI_SOURCE}")
             if(APPLE)
                 # DAF reads the display scale through a platform helper that its own
                 # build adds beside the UI entry point. Elsewhere it is inside it.
@@ -1462,12 +1487,103 @@ if(DEFINED DUSK_PLUGINS_PATH)
             target_compile_definitions("${target}" PRIVATE DUSKSTUDIO_DAF_UNIT_EDITOR=1)
         endfunction()
 
-        duskstudio_add_tape_echo_2_library(dusk_daf_tape_echo_2 OFF)
-        if(TARGET dusk_native_ui)
-            duskstudio_add_tape_echo_2_library(dusk_daf_tape_echo_2_ui ON)
-            target_link_libraries(DuskStudio PRIVATE dusk_daf_tape_echo_2_ui)
+        set(_duskstudio_tape_echo_2_dsp_sources
+            "${_duskstudio_tape_echo_2_dir}/TapeEchoPlugin.cpp"
+            "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core/TapeEchoDSP.cpp")
+        set(_duskstudio_tape_echo_2_includes
+            "${DUSK_PLUGINS_PATH}/plugins/tape-echo/core")
+        duskstudio_add_daf_builtin_library(
+            dusk_daf_tape_echo_2 OFF DuskTapeEcho2
+            "${_duskstudio_tape_echo_2_dir}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/builtin/daf/TapeEcho2.cpp"
+            DSP_SOURCES ${_duskstudio_tape_echo_2_dsp_sources}
+            INCLUDE_DIRS ${_duskstudio_tape_echo_2_includes}
+            UI_SOURCE "${_duskstudio_tape_echo_2_dir}/TapeEchoUI.cpp")
+
+        set(_duskstudio_duskverb_2_engine_sources "")
+        foreach(_verbSource IN ITEMS
+                FDNReverb OctaveGEQDesign DattorroTank QuadTank SixAPTankEngine
+                DiffusionStage DuskVerbEngine OutputDiffusion EarlyReflections
+                SpringEngine NonLinearEngine ShimmerEngine DattorroPlateVintage
+                ReverseRoomEngine)
+            list(APPEND _duskstudio_duskverb_2_engine_sources
+                "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src/dsp/${_verbSource}.cpp")
+        endforeach()
+        set(_duskstudio_duskverb_2_dsp_sources
+            "${_duskstudio_duskverb_2_dir}/DuskVerbPlugin.cpp"
+            "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/core/DuskVerbDSP.cpp"
+            "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/core/DuskVerbPresetEngineConfig.cpp"
+            ${_duskstudio_duskverb_2_engine_sources})
+        set(_duskstudio_duskverb_2_generated_dir
+            "${CMAKE_CURRENT_BINARY_DIR}/generated/duskverb-2")
+        duskstudio_embed_font(kDvFontSemiBold
+            "${DUSK_PLUGINS_PATH}/plugins/shared-daf/fonts/BarlowCondensed/BarlowCondensed-SemiBold.ttf"
+            "${_duskstudio_duskverb_2_generated_dir}/DuskVerbFontSemiBold.inc")
+        duskstudio_embed_font(kDvFontRegular
+            "${DUSK_PLUGINS_PATH}/plugins/shared-daf/fonts/BarlowCondensed/BarlowCondensed-Regular.ttf"
+            "${_duskstudio_duskverb_2_generated_dir}/DuskVerbFontRegular.inc")
+
+        if(MSVC)
+            set_property(SOURCE ${_duskstudio_duskverb_2_dsp_sources} APPEND PROPERTY
+                COMPILE_OPTIONS
+                "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:/O2>"
+                "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:/fp:fast>")
+            set_property(SOURCE "${_duskstudio_duskverb_2_dir}/DuskVerbPlugin.cpp"
+                APPEND PROPERTY COMPILE_OPTIONS /fp:precise)
         else()
-            target_link_libraries(DuskStudio PRIVATE dusk_daf_tape_echo_2)
+            set_property(SOURCE ${_duskstudio_duskverb_2_dsp_sources} APPEND PROPERTY
+                COMPILE_OPTIONS
+                "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:-O3>"
+                "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:-ffast-math>")
+            set_property(SOURCE "${_duskstudio_duskverb_2_dir}/DuskVerbPlugin.cpp"
+                APPEND PROPERTY COMPILE_OPTIONS -fno-finite-math-only)
+        endif()
+
+        set(_duskstudio_duskverb_2_includes
+            "${_duskstudio_duskverb_2_generated_dir}"
+            "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/core"
+            "${DUSK_PLUGINS_PATH}/plugins/DuskVerb/src"
+            "${DUSK_PLUGINS_PATH}/plugins/shared-daf/dsp"
+            "${DUSK_PLUGINS_PATH}/plugins/shared-daf/ui")
+        set(_duskstudio_duskverb_2_definitions
+            DGL_USE_FILE_BROWSER
+            DUSKVERB2_VERSION_MAJOR=0
+            DUSKVERB2_VERSION_MINOR=1
+            DUSKVERB2_VERSION_PATCH=0)
+        duskstudio_add_daf_builtin_library(
+            dusk_daf_duskverb_2 OFF DuskVerb2
+            "${_duskstudio_duskverb_2_dir}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/builtin/daf/DuskVerb2.cpp"
+            DSP_SOURCES ${_duskstudio_duskverb_2_dsp_sources}
+            INCLUDE_DIRS ${_duskstudio_duskverb_2_includes}
+            COMPILE_DEFINITIONS ${_duskstudio_duskverb_2_definitions}
+            UI_SOURCE "${_duskstudio_duskverb_2_dir}/DuskVerbUI.cpp")
+        set_target_properties(dusk_daf_duskverb_2 PROPERTIES UNITY_BUILD OFF)
+
+        if(TARGET dusk_native_ui)
+            duskstudio_add_daf_builtin_library(
+                dusk_daf_tape_echo_2_ui ON DuskTapeEcho2
+                "${_duskstudio_tape_echo_2_dir}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/builtin/daf/TapeEcho2.cpp"
+                DSP_SOURCES ${_duskstudio_tape_echo_2_dsp_sources}
+                INCLUDE_DIRS ${_duskstudio_tape_echo_2_includes}
+                UI_SOURCE "${_duskstudio_tape_echo_2_dir}/TapeEchoUI.cpp")
+            duskstudio_add_daf_builtin_library(
+                dusk_daf_duskverb_2_ui ON DuskVerb2
+                "${_duskstudio_duskverb_2_dir}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/builtin/daf/DuskVerb2.cpp"
+                DSP_SOURCES ${_duskstudio_duskverb_2_dsp_sources}
+                INCLUDE_DIRS ${_duskstudio_duskverb_2_includes}
+                COMPILE_DEFINITIONS ${_duskstudio_duskverb_2_definitions}
+                UI_SOURCE "${_duskstudio_duskverb_2_dir}/DuskVerbUI.cpp")
+            set_target_properties(dusk_daf_duskverb_2_ui PROPERTIES UNITY_BUILD OFF)
+            target_link_libraries(DuskStudio PRIVATE
+                dusk_daf_tape_echo_2_ui
+                dusk_daf_duskverb_2_ui)
+        else()
+            target_link_libraries(DuskStudio PRIVATE
+                dusk_daf_tape_echo_2
+                dusk_daf_duskverb_2)
         endif()
         target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_DAF_UNITS=1)
     endif()

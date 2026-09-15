@@ -118,4 +118,5 @@ public:
 
 // Defined by each plug-in's bridge, in the builds that compile it.
 std::unique_ptr<DafPlugin> createTapeEcho2();
+std::unique_ptr<DafPlugin> createDuskVerb2();
 } // namespace duskstudio::builtin

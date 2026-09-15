@@ -319,10 +319,12 @@ if(DUSK_PLUGINS_PATH)
         ${DUSK_PLUGINS_PATH}/plugins/sunset-circuits/core)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_DONOR_UNITS=1)
 
-    # Tape Echo 2 is the app's own static library, defined beside the app.
-    if(TARGET dusk_daf_tape_echo_2)
+    # DAF built-ins are the app's own static libraries, defined beside the app.
+    if(TARGET dusk_daf_tape_echo_2 AND TARGET dusk_daf_duskverb_2)
         target_sources(dusk-studio-tests PRIVATE builtin_tape_echo_2.cpp)
-        target_link_libraries(dusk-studio-tests PRIVATE dusk_daf_tape_echo_2)
+        target_link_libraries(dusk-studio-tests PRIVATE
+            dusk_daf_tape_echo_2
+            dusk_daf_duskverb_2)
         target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_DAF_UNITS=1)
     endif()
 endif()
