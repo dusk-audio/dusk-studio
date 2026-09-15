@@ -101,7 +101,7 @@ Disarm track 1. Arm track 2, pick the right input, and record over the playback 
 
 ![Tracks 1 (with a region) and 2 (mid-record) on the tape strip.](docs/images/qg-05-overdub.png)
 
-To punch in over a specific section of an already-recorded track, set the punch in and out points (**Shift+[** and **Shift+]**), engage **P** for punch mode, arm the track, and press record before the punch in point. Dusk Studio will start recording at the punch in point and stop at the punch out point automatically.
+To punch in over a specific section of an already-recorded track, set the punch in and out points (**Shift+[** and **Shift+]**). Punch turns on by itself once the in point sits before the out point. Arm the track and press record before the punch in point. Dusk Studio will start recording at the punch in point and stop at the punch out point automatically.
 
 ## Mix
 
@@ -156,7 +156,7 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 
 | #   | Name             | Description                                                                      |
 | --- | ---------------- | -------------------------------------------------------------------------------- |
-| 1   | Stop             | Halts playback or recording, returns the playhead to bar 1.                      |
+| 1   | Stop             | Halts playback or recording and returns the playhead to where play or record started. Press again to return to bar 1. |
 | 2   | Rewind           | Short press jumps to the previous marker or bar 1; hold for 10× scrub backwards. |
 | 3   | Play             | Toggles playback. Snaps to loop start if loop is on and the playhead is outside. |
 | 4   | Forward          | Short press jumps to the next marker; hold for 10× scrub forwards.               |
@@ -283,8 +283,8 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | 2   | Region             | Audio or MIDI clip. Drag to move, drag the edges to trim.       |
 | 3   | Region edge handle | Trim handle. Hold Cmd to nudge by snap.                         |
 | 4   | Marker             | Drop with **M**, drag to move, right-click to rename or delete. |
-| 5   | Loop bracket       | Set with **[** / **]**; enable loop with **L**.                 |
-| 6   | Punch bracket      | Set with **Shift+[** / **Shift+]**; enable punch with **P**.    |
+| 5   | Loop bracket       | Set with **[** / **]** or from the ruler's right-click menu; loop turns on once the in point sits before the out point. Drawn hollow while loop is off. |
+| 6   | Punch bracket      | Set with **Shift+[** / **Shift+]** or from the ruler's right-click menu; punch turns on once the in point sits before the out point. Drawn hollow while punch is off. |
 
 **Left-click anywhere on the timeline moves the playhead there** (the ruler or empty track space). Regions still respond to clicks — click to select, drag a body to move, drag an edge to trim — and **double-click a region to open the full editor**. Everything else (split, delete, set tempo, set loop / punch) is on the **right-click** menu.
 
@@ -487,7 +487,7 @@ All seven are saved with the session, so a project that syncs to an external clo
 - **UI scale**: a global zoom factor for the entire interface. The interface previews changes live while you adjust the slider; the final value is saved per-machine when you release it.
 - **Expand tape strip by default**: show the tape strip on every session open.
 - **Follow playhead by default**: start the timeline and the audio / MIDI editors with Chase engaged, so the view scrolls to keep the playhead in sight during playback. Per-machine; takes effect on next launch.
-- **Stop behavior**: where the playhead lands when playback stops — **Stay where it is** (pause), **Return to start**, or **Return to last clicked point**.
+- **Playhead on Stop**: where the playhead lands when you press Stop. **Return to where play or record started** is the default: the playhead goes back to where playback or the take began, or to where you last moved it during playback, so Play hears the take you just made. A punch take begins at the punch-in point and a loop take at the loop start; count-in and pre-roll do not count. The other choices are **Stay where it is (pause)**, **Return to start (rewind to 0)** and **Return to last clicked point**. Pressing Stop while already stopped returns to bar 1 whatever this says. Per-machine; takes effect immediately.
 - **MIDI soft takeover (pickup)**: when on, a knob or fader bound with MIDI Learn stays dormant until the physical control crosses the parameter's current position, instead of snapping the parameter on first touch. Applies to continuous mixer targets (faders, pans, sends, EQ, comp, master); plugin-parameter bindings always track directly. Per-machine; takes effect immediately.
 - **Autosave every**: the crash-recovery autosave cadence, 15 seconds to 5 minutes (default 30 seconds). Per-machine; applies when the Settings panel closes.
 - **Scan plugins on startup**: re-run the plugin scanner every time Dusk Studio launches. Off by default; large plugin collections take 10–30 seconds to scan.
@@ -552,9 +552,12 @@ Switching into or out of MASTERING force-stops the transport. The mix engine and
 
 From left to right:
 
-- **Stop** (■). Halts playback or recording, returns the playhead to bar 1, and
-  silences held notes in hosted instruments even when their tracks are muted or
-  excluded by solo.
+- **Stop** (■). Halts playback or recording and silences held notes in hosted
+  instruments even when their tracks are muted or excluded by solo. The playhead
+  goes back to where playback or the take began, or wherever **Playhead on Stop**
+  in Settings sends it. Press Stop again while stopped to return to bar 1. A stop
+  that comes from MIDI clock or MTC chase leaves the playhead where the master
+  stopped.
 - **Rewind** (◀◀). Brief press jumps to the previous marker; if there is no previous marker, jumps to bar 1. Hold for more than 180 milliseconds to scrub backwards at 10× speed.
 - **Play** (▶). Toggles play. If loop is enabled and the playhead is outside the loop region, the playhead snaps to the loop start before playback begins.
 - **Forward** (▶▶). Brief press jumps to the next marker (no overshoot past the last one). Hold to scrub forward at 10× speed.
@@ -576,7 +579,7 @@ When the timeline is expanded, a toolbar row sits directly above the tape strip:
 
 - **Snap**. Global grid snap toggle, with a resolution button beside it. When on, region drags, trims, pastes, marker / loop / punch / tempo moves snap to the chosen grid resolution.
 - **−** / **+** / **Fit**. Timeline zoom out, in, and fit-to-window.
-- **Chase**. When on, the timeline scrolls during playback to keep the playhead in view. Its launch default is set by **Follow playhead by default** in Settings.
+- **Chase**. When on, the timeline scrolls during playback to keep the playhead in view. Its launch default is set by **Follow playhead by default** in Settings. While recording the timeline always follows the playhead, Chase or not.
 
 In compact mode (window narrower than 1850 pixels), `TIMELINE` becomes `▾` and the time-format toggle hides; right-click the clock display to flip format instead.
 
@@ -1138,8 +1141,8 @@ The count-in always uses the metronome click, even if you have the click disable
 
 To overdub a specific section without erasing material before or after:
 
-1. Set the **punch in** and **punch out** points by clicking the timeline ruler at the desired in and out positions, holding **Shift**.
-2. Click the **Punch** button on the transport bar.
+1. Set the **punch in** and **punch out** points. Drag across the timeline ruler and choose **Set punch in / out here**, or right-click the ruler at each point and choose **Set punch in here** and **Set punch out here**. You can also press **Shift+[** and **Shift+]** at the playhead. Every way turns punch on as soon as the in point sits before the out point.
+2. Check that the **Punch** button on the transport bar is lit. **P** or the button turns punch off and on again without moving the brackets.
 3. Right-click the **Punch** button to set the **pre-roll** seconds (how much existing material plays back before the punch-in) and the **post-roll** seconds (how long the transport keeps rolling past the punch-out before auto-stopping). Each has an enable toggle in the same menu, so you can switch a roll off without losing its seconds value. Post-roll defaults to 0 (off).
 4. Press Record. Playback begins at the pre-roll position. Recording begins exactly at the punch-in sample and ends exactly at the punch-out sample. The audio before and after is untouched.
 
@@ -1151,8 +1154,8 @@ When the new take begins, a 64-sample raised-cosine fade-in shapes its edge agai
 
 To repeat a section while you experiment:
 
-1. Set the loop region with the **[** and **]** keys at the desired in and out positions.
-2. Click the **Loop** button on the transport bar.
+1. Set the loop region with the **[** and **]** keys at the desired in and out positions. Loop turns on as soon as the in point sits before the out point.
+2. Check that the **Loop** button on the transport bar is lit. **L** or the button turns loop off and on again without moving the brackets.
 3. Press Play (for loop playback) or Record (for loop recording).
 
 In loop play, the transport wraps at the loop boundary indefinitely. Loop recording also wraps and creates a new take on each pass. The current pass plus up to **8 previous passes** stay attached to one range-aligned region, so you can cycle performances after stopping. A loop must be at least 128 samples long to record.
@@ -1181,6 +1184,11 @@ MIDI tracks do not produce separate files; their note and CC data is embedded in
 ## Take history
 
 Each region keeps a stack of up to **8 previous takes**. When you record a new take whose timeline range fully contains an existing region, the existing region is pushed onto that stack. Partially-overlapping takes are not absorbed — they stay visible on either side of the punch.
+
+Current limits:
+
+- When a new take covers only part of an older region, the covered part of the older region is not kept in take history. To get it back, use **Undo** (Cmd+Z / Ctrl+Z) right after recording. The audio file itself stays on disk.
+- Deleting a region deletes its whole take stack. **Undo** restores it.
 
 To cycle through takes:
 
@@ -1285,18 +1293,22 @@ Once a song has markers, the mini timeline strip (shown below the transport when
 
 ## Loop and punch brackets
 
-When **Loop** or **Punch** is enabled, coloured brackets appear in the ruler.
+Loop and punch ranges show as coloured brackets in the ruler, with a tinted band across the tracks.
 
-- **Cyan**: loop start and loop end.
+- **Green**: loop start and loop end.
 - **Red**: punch in and punch out.
 
-Drag the bracket ends to adjust. The keyboard shortcuts **[** and **]** set the loop in and out at the current playhead. Hold **Shift** to set punch in and out instead.
+A bracket is drawn solid while its mode is on. While the mode is off a set bracket stays on screen, drawn hollow and faint, so you can see at a glance that the range is set but not armed.
+
+Drag the bracket ends to adjust. The keyboard shortcuts **[** and **]** set the loop in and out at the current playhead. Hold **Shift** to set punch in and out instead. The ruler's right-click menu has **Set loop in here**, **Set loop out here**, **Set punch in here** and **Set punch out here**. Brackets placed with these keys or the menu turn their mode on once the in point sits before the out point, and off again if a new point leaves the in point at or after the out point. **Clear loop** and **Clear punch** remove the brackets and turn the mode off.
 
 ## Zoom
 
 - **−** / **=** (or **+**): zoom out, zoom in.
 - **0**: zoom to fit the entire timeline width.
 - **Cmd/Ctrl+mouse wheel** over the timeline: zoom around the cursor.
+
+Recording keeps your zoom. When the playhead reaches the right-hand edge the view turns the page, so the take you are recording stays in sight whether or not **Chase** is on. If Stop sends the playhead out of sight, the view goes back to it.
 
 ## Drag-and-drop import
 
@@ -2104,10 +2116,10 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | **P**       | Toggle punch                  |
 | **C**       | Toggle metronome              |
 | **M**       | Drop marker at playhead       |
-| **[**       | Set loop start at playhead    |
-| **]**       | Set loop end at playhead      |
-| **Shift+[** | Set punch in at playhead      |
-| **Shift+]** | Set punch out at playhead     |
+| **[**       | Set loop start at playhead; arms loop once in is before out |
+| **]**       | Set loop end at playhead; arms loop once in is before out |
+| **Shift+[** | Set punch in at playhead; arms punch once in is before out |
+| **Shift+]** | Set punch out at playhead; arms punch once in is before out |
 | **K**       | Toggle virtual MIDI keyboard  |
 | **Shift+←/→** | Previous / next marker (Rewind / Forward tap) |
 | **B**       | Tap tempo                     |

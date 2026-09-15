@@ -243,6 +243,13 @@ private:
     void updatePlayheadBand();
     juce::VBlankAttachment vBlankAttachment;
 
+    // Handles the Stopped <-> Recording transition. Called from both the
+    // timer and the vblank, so whichever runs first after it wins.
+    void syncRecordingState();
+    // Turns the page when the playhead nears the edge of the view, keeping
+    // the zoom. True when the view scrolled.
+    bool followPlayhead (std::int64_t playhead) noexcept;
+
     // 1.0 = auto-fit-all. zoomFit resets to 1 + zeroes scroll.
     float userZoomFactor = 1.0f;
     // Leftmost visible sample when zoomed. 0 when factor == 1. Wheel +

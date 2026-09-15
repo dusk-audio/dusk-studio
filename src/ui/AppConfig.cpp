@@ -338,10 +338,10 @@ void setMidiSoftTakeover (bool on)
 StopBehavior getStopBehavior()
 {
     const auto raw = readKey (kKeyStopBehavior);
-    if (! looksNumeric (raw)) return StopBehavior::PauseInPlace;
+    if (! looksNumeric (raw)) return StopBehavior::ReturnToRollStart;
     const int v = dusk::text::getIntValue (raw);
-    if (v >= 0 && v <= 2) return (StopBehavior) v;
-    return StopBehavior::PauseInPlace;
+    if (v >= 0 && v <= (int) StopBehavior::ReturnToRollStart) return (StopBehavior) v;
+    return StopBehavior::ReturnToRollStart;
 }
 
 void setStopBehavior (StopBehavior b)

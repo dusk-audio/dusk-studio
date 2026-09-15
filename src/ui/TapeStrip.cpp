@@ -8,6 +8,7 @@
 #include "EditCursors.h"
 #include "EmbeddedModal.h"
 #include "FadeCurve.h"
+#include "TimelineFollow.h"
 #include "../util/StringParsing.h"
 #include <cmath>
 #include <string>
@@ -430,8 +431,11 @@ std::int64_t TapeStrip::rightmostContentSample() const noexcept
 {
     // The rightmost sample any content occupies - audio AND MIDI regions, plus
     // the playhead. Including MIDI keeps a MIDI-only session in view; an audio-
-    // only scan left its regions off-screen.
-    std::int64_t maxSample = engine.getTransport().getPlayhead();
+    // only scan left its regions off-screen. While recording the playhead is
+    // the growing take: counting it would zoom the view out under the user as
+    // the take runs, so it is left out and the view pages to follow instead.
+    const auto& transport = engine.getTransport();
+    std::int64_t maxSample = transport.isRecording() ? 0 : transport.getPlayhead();
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         for (const auto& r : session.track (t).regions)
@@ -454,15 +458,6 @@ double TapeStrip::pixelsPerSecond() const noexcept
     auto col = tracksColumnBounds();
     if (col.getWidth() <= 0) return 0.0;
     const double autoFit = (double) col.getWidth() / maxSeconds;
-
-    // While recording, force fit-to-window so the growing playhead +
-    // freshly-captured audio stay on screen instead of running off the
-    // right edge at whatever userZoomFactor was selected pre-record.
-    // User's zoom factor is preserved and re-applied the moment STOP
-    // fires (recording flag clears).
-    if (engine.getTransport().isRecording())
-        return autoFit;
-
     return autoFit * (double) jlimit (0.1f, 32.0f, userZoomFactor);
 }
 
@@ -824,16 +819,7 @@ void TapeStrip::timerCallback()
         stateChanged = true;
     }
 
-    // Force a full repaint on the Stopped <-> Recording transition so
-    // the live-recording overlay paints / clears the moment the user
-    // presses Record / Stop, not a few frames later when the playhead
-    // band-repaint catches up.
-    const bool nowRec = transport.isRecording();
-    if (nowRec != lastIsRecording)
-    {
-        lastIsRecording = nowRec;
-        stateChanged = true;
-    }
+    syncRecordingState();
 
     // Poll arm-flag changes - the user can toggle ARM from the channel
     // strip at any time, and that flips a row into / out of the visible
@@ -843,52 +829,75 @@ void TapeStrip::timerCallback()
 
     if (stateChanged) repaint();
 
-    // During recording, pixelsPerSecond auto-shrinks every frame as the
-    // playhead grows, so the bar grid + existing regions also shift -
-    // a thin-band playhead repaint isn't enough. Full repaint keeps
-    // ruler labels + region waveforms aligned with the live playhead.
-    // Stays at the timer's 30 Hz; a full-strip repaint per vblank would
-    // be needlessly heavy. Playback's band repaint lives on the vblank
+    // During recording the live take overlay grows with the playhead and the
+    // view pages to follow it, so a thin-band playhead repaint isn't enough.
+    // Stays at the timer's 30 Hz; a full-strip repaint per vblank would be
+    // needlessly heavy. Playback's band repaint lives on the vblank
     // (updatePlayheadBand).
-    if (nowRec)
+    if (transport.isRecording())
     {
         const auto now = transport.getPlayhead();
         if (now != lastPlayhead)
         {
             lastPlayhead = now;
+            followPlayhead (now);
             repaint();
         }
     }
 }
 
+void TapeStrip::syncRecordingState()
+{
+    const bool nowRec = engine.getTransport().isRecording();
+    if (nowRec == lastIsRecording) return;
+    lastIsRecording = nowRec;
+
+    // Stop has committed the take and sent the playhead wherever Playhead on
+    // Stop says. Fit-to-window (zoom <= 1) has no horizontal scroll of its
+    // own, so it drops the page it turned while recording.
+    if (! nowRec)
+    {
+        if (userZoomFactor <= 1.0f)
+            scrollSamples = 0;
+        followPlayhead (engine.getTransport().getPlayhead());
+    }
+
+    // Full repaint so the live-recording overlay paints / clears the moment
+    // the user presses Record / Stop.
+    repaint();
+}
+
+bool TapeStrip::followPlayhead (std::int64_t playhead) noexcept
+{
+    const double sr = engine.getCurrentSampleRate();
+    const double px = pixelsPerSecond();
+    const auto  col = tracksColumnBounds();
+    if (sr <= 0.0 || px <= 0.0 || col.getWidth() <= 0) return false;
+
+    const auto visible = (std::int64_t) std::llround ((double) col.getWidth() / px * sr);
+    const auto next = followPlayheadScroll (playhead, scrollSamples, visible);
+    if (next == scrollSamples) return false;
+    scrollSamples = next;
+    return true;
+}
+
 void TapeStrip::updatePlayheadBand()
 {
+    syncRecordingState();
     if (engine.getTransport().isRecording()) return; // timer's full repaint covers it
 
     const auto now = engine.getTransport().getPlayhead();
     if (now == lastPlayhead) return;
 
-    // Chase: when on and playing, if the playhead has run off the tracks column
-    // (only possible when zoomed in past fit-to-window), re-anchor the scroll so
-    // it lands at the left quarter, then full-repaint - the whole strip shifted,
-    // so the thin-band optimisation below would be wrong.
-    if (chaseEnabled && engine.getTransport().isPlaying())
+    // Chase: when on and playing, turn the page as the playhead reaches the
+    // edge of the view (only possible when zoomed in past fit-to-window), then
+    // full-repaint - the whole strip shifted, so the thin-band optimisation
+    // below would be wrong.
+    if (chaseEnabled && engine.getTransport().isPlaying() && followPlayhead (now))
     {
-        const double sr = engine.getCurrentSampleRate();
-        const double px = pixelsPerSecond();
-        const auto  col = tracksColumnBounds();
-        if (sr > 0.0 && px > 0.0 && col.getWidth() > 0)
-        {
-            const int phX = xForSample (now);
-            if (phX < col.getX() || phX > col.getRight())
-            {
-                const std::int64_t viewSamples = (std::int64_t) std::llround ((double) col.getWidth() / px * sr);
-                scrollSamples = std::max<std::int64_t> (0, now - viewSamples / 4);
-                lastPlayhead  = now;
-                repaint();
-                return;
-            }
-        }
+        lastPlayhead = now;
+        repaint();
+        return;
     }
 
     const int oldX = xForSample (lastPlayhead < 0 ? 0 : lastPlayhead);
@@ -1031,14 +1040,14 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
         m.addItem ("Set loop in here",  [&transport, clickedSample]
         {
             const auto end = transport.getLoopEnd();
-            transport.setLoopRange (clickedSample,
-                                     end > clickedSample ? end : clickedSample);
+            transport.placeLoopRange (clickedSample,
+                                       end > clickedSample ? end : clickedSample);
         });
         m.addItem ("Set loop out here", [&transport, clickedSample]
         {
             const auto start = transport.getLoopStart();
-            transport.setLoopRange (start < clickedSample ? start : clickedSample,
-                                     clickedSample);
+            transport.placeLoopRange (start < clickedSample ? start : clickedSample,
+                                       clickedSample);
         });
         m.addItem ("Clear loop", [&transport]
         {
@@ -1050,16 +1059,14 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
         m.addItem ("Set punch in here",  [&transport, clickedSample]
         {
             const auto end = transport.getPunchOut();
-            transport.setPunchRange (clickedSample,
-                                      end > clickedSample ? end : clickedSample);
-            transport.setPunchEnabled (transport.getPunchOut() > transport.getPunchIn());
+            transport.placePunchRange (clickedSample,
+                                        end > clickedSample ? end : clickedSample);
         });
         m.addItem ("Set punch out here", [&transport, clickedSample]
         {
             const auto start = transport.getPunchIn();
-            transport.setPunchRange (start < clickedSample ? start : clickedSample,
-                                      clickedSample);
-            transport.setPunchEnabled (transport.getPunchOut() > transport.getPunchIn());
+            transport.placePunchRange (start < clickedSample ? start : clickedSample,
+                                        clickedSample);
         });
         m.addItem ("Clear punch", [&transport]
         {
@@ -1134,7 +1141,7 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
                                       const auto& m = safeThis->session.getMarkers();
                                       if (i < 0 || i >= (int) m.size()) return;
                                       safeThis->engine.getTransport()
-                                          .setPlayhead (m[(size_t) i].timelineSamples);
+                                          .locate (m[(size_t) i].timelineSamples);
                                       safeThis->repaint();
                                   });
             }
@@ -1143,7 +1150,7 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
         m.addSeparator();
         m.addItem ("Move playhead here", [&transport, clickedSample]
         {
-            transport.setPlayhead (clickedSample);
+            transport.locate (clickedSample);
         });
 
         // Tempo (ruler only) add / edit / delete a tempo-map point at the
@@ -1462,7 +1469,7 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
 
     const auto sample = snap::snapAbsoluteToGrid (
         sampleAtX (e.x), session, engine.getCurrentSampleRate());
-    engine.getTransport().setPlayhead (sample);
+    engine.getTransport().locate (sample);
     // Remember this click so a future Stop in "Return to last clicked" mode
     // lands here.
     session.lastClickedTimelineSample.store (sample, std::memory_order_relaxed);
@@ -1790,7 +1797,7 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
         {
             const auto sample = snap::snapAbsoluteToGrid (
                 std::max ((std::int64_t) 0, a), session, engine.getCurrentSampleRate());
-            engine.getTransport().setPlayhead (sample);
+            engine.getTransport().locate (sample);
             // Remember this click so a future Stop in "Return to last
             // clicked" mode lands here.
             session.lastClickedTimelineSample.store (sample, std::memory_order_relaxed);
@@ -1805,9 +1812,7 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
                     [safeThis = juce::Component::SafePointer<TapeStrip> (this), a, b]
                     {
                         if (safeThis == nullptr) return;
-                        auto& transport = safeThis->engine.getTransport();
-                        transport.setLoopRange (a, b);
-                        transport.setLoopEnabled (true);
+                        safeThis->engine.getTransport().placeLoopRange (a, b);
                         safeThis->rulerSelection = {};
                         safeThis->repaint();
                     });
@@ -1815,9 +1820,7 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
                     [safeThis = juce::Component::SafePointer<TapeStrip> (this), a, b]
                     {
                         if (safeThis == nullptr) return;
-                        auto& transport = safeThis->engine.getTransport();
-                        transport.setPunchRange (a, b);
-                        transport.setPunchEnabled (true);
+                        safeThis->engine.getTransport().placePunchRange (a, b);
                         safeThis->rulerSelection = {};
                         safeThis->repaint();
                     });
@@ -1971,7 +1974,7 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
         {
             // Pure click on a flag -> seek to the marker.
             const auto& m = session.getMarkers()[(size_t) markerDrag.index];
-            engine.getTransport().setPlayhead (m.timelineSamples);
+            engine.getTransport().locate (m.timelineSamples);
         }
         markerDrag = {};
         repaint();
@@ -1993,7 +1996,7 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
                  && tempoDrag.index < (int) tempoDrag.orig.size())
         {
             // Pure click on a tempo marker -> seek to it.
-            engine.getTransport().setPlayhead (
+            engine.getTransport().locate (
                 tempoDrag.orig[(size_t) tempoDrag.index].timelineSamples);
         }
         tempoDrag = {};
@@ -2500,7 +2503,7 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
                     auto& tr = safeThis->engine.getTransport();
                     tr.setLoopRange (regionStart, regionEnd);
                     tr.setLoopEnabled (true);
-                    tr.setPlayhead (regionStart);
+                    tr.locate (regionStart);
                     safeThis->repaint();
                 });
     m.addItem ("Split at playhead", playheadInside,
@@ -2837,7 +2840,7 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
                     auto& tr = safeThis->engine.getTransport();
                     tr.setLoopRange (regionStart, regionEnd);
                     tr.setLoopEnabled (true);
-                    tr.setPlayhead (regionStart);
+                    tr.locate (regionStart);
                     safeThis->repaint();
                 });
 
@@ -3677,8 +3680,10 @@ void TapeStrip::paint (juce::Graphics& g)
     // Loop / punch brackets
     // Translucent fill across the track area + a solid bar at the top so
     // the region is unambiguous even when the underlying tracks are dense.
-    // Optional `pillLabel` draws a small filled label at both endpoints,
-    // matching the in/out marker style of pro DAWs.
+    // Optional `pillLabel` draws a small label at both endpoints, matching
+    // the in/out marker style of pro DAWs. A bracket whose mode is off keeps
+    // its place but is drawn hollow and faint, so "set but not armed" reads
+    // at a glance.
     auto drawRange = [&] (std::int64_t start, std::int64_t end,
                            juce::Colour colour, bool enabled,
                            const juce::String& pillLabel)
@@ -3686,6 +3691,33 @@ void TapeStrip::paint (juce::Graphics& g)
         if (end < start) return;
         const int x0Raw = xForSample (start);
         const int x1Raw = xForSample (end);
+
+        g.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
+        const int textW = std::max (40,
+            g.getCurrentFont().getStringWidth (pillLabel) + 10);
+        const int pillH = kRulerPillBandH - 2;     // small gap above the bar
+        const int pillY = ruler.getY() + kRulerTickBandH;
+
+        // Endpoint pills sit in the pill band of the ruler, above the
+        // bracket bar, so the pill+bar reads as a single bracket shape.
+        auto drawPill = [&] (int xCentre)
+        {
+            const int pillX = jlimit (col.getX(), col.getRight() - textW,
+                                      xCentre - textW / 2);
+            const juce::Rectangle<int> r (pillX, pillY, textW, pillH);
+            if (enabled)
+            {
+                g.setColour (colour);
+                g.fillRoundedRectangle (r.toFloat(), 3.0f);
+                g.setColour (juce::Colours::white);
+            }
+            else
+            {
+                g.setColour (colour.withAlpha (0.6f));
+                g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 3.0f, 1.0f);
+            }
+            g.drawText (pillLabel, r, juce::Justification::centred, false);
+        };
 
         // Zero-width = a single in/out point set, partner not yet placed (e.g.
         // right after Shift+[ before Shift+] lands). Draw a single bracket
@@ -3696,24 +3728,11 @@ void TapeStrip::paint (juce::Graphics& g)
             if (start > 0 && x0Raw >= col.getX() && x0Raw <= col.getRight())
             {
                 constexpr int kBarH = 4;
-                g.setColour (colour.withAlpha (enabled ? 1.0f : 0.7f));
+                g.setColour (colour.withAlpha (enabled ? 1.0f : 0.45f));
                 g.fillRect (x0Raw, kRulerH, 1, getHeight() - kRulerH);        // thin stem
                 g.fillRect (x0Raw - 1, ruler.getBottom() - kBarH, 3, kBarH);  // bracket foot
                 if (pillLabel.isNotEmpty())
-                {
-                    g.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
-                    const int textW = std::max (40,
-                        g.getCurrentFont().getStringWidth (pillLabel) + 10);
-                    const int pillH = kRulerPillBandH - 2;
-                    const int pillY = ruler.getY() + kRulerTickBandH;
-                    const int pillX = jlimit (col.getX(), col.getRight() - textW,
-                                                    x0Raw - textW / 2);
-                    juce::Rectangle<int> r (pillX, pillY, textW, pillH);
-                    g.setColour (colour.withAlpha (enabled ? 1.0f : 0.7f));
-                    g.fillRoundedRectangle (r.toFloat(), 3.0f);
-                    g.setColour (juce::Colours::white);
-                    g.drawText (pillLabel, r, juce::Justification::centred, false);
-                }
+                    drawPill (x0Raw);
             }
             return;
         }
@@ -3724,40 +3743,19 @@ void TapeStrip::paint (juce::Graphics& g)
 
         // Translucent fill across the track area so the range reads as
         // "this stretch is the loop/punch zone" without competing with
-        // recorded regions. Brighter when the toggle's on.
-        g.setColour (colour.withAlpha (enabled ? 0.18f : 0.08f));
+        // recorded regions.
+        g.setColour (colour.withAlpha (enabled ? 0.18f : 0.05f));
         g.fillRect (x0, kRulerH, x1 - x0, getHeight() - kRulerH);
 
-        // Solid bracket bar across the bottom of the ruler. Full opacity
-        // when enabled; half-opacity when the bounds are set but the
+        // Solid bracket bar across the bottom of the ruler. Faint while the
         // toggle is off, so the user can still see where the range will
         // jump to when they re-enable.
         constexpr int kBarH = 4;
-        g.setColour (colour.withAlpha (enabled ? 1.0f : 0.55f));
+        g.setColour (colour.withAlpha (enabled ? 1.0f : 0.35f));
         g.fillRect (x0, ruler.getBottom() - kBarH, x1 - x0, kBarH);
 
-        // Endpoint pills - sit in the pill band of the ruler, above the
-        // bracket bar, with rounded "tail" pointing down into the bar so
-        // the pill+bar reads as a single bracket shape.
         if (pillLabel.isNotEmpty())
         {
-            g.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
-            const int textW = std::max (40,
-                g.getCurrentFont().getStringWidth (pillLabel) + 10);
-            const int pillH = kRulerPillBandH - 2;     // small gap above the bar
-            const int pillY = ruler.getY() + kRulerTickBandH;
-
-            auto drawPill = [&] (int xCentre)
-            {
-                int pillX = xCentre - textW / 2;
-                pillX = jlimit (col.getX(), col.getRight() - textW, pillX);
-                juce::Rectangle<int> r (pillX, pillY, textW, pillH);
-                g.setColour (colour.withAlpha (enabled ? 1.0f : 0.7f));
-                g.fillRoundedRectangle (r.toFloat(), 3.0f);
-                g.setColour (juce::Colours::white);
-                g.drawText (pillLabel, r, juce::Justification::centred, false);
-            };
-
             if (x0Raw >= col.getX() && x0Raw <= col.getRight()) drawPill (x0Raw);
             if (x1Raw >= col.getX() && x1Raw <= col.getRight()
                 && std::abs (x1Raw - x0Raw) > textW + 8)

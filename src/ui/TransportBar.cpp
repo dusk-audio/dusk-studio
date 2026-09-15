@@ -336,7 +336,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     ffwdButton  .setTitle ("Fast forward");
 
     playButton.onClick   = [this] { engine.play();   refreshButtonStates(); };
-    stopButton.onClick   = [this] { engine.stop();   notifyRecordStopped(); refreshButtonStates(); };
+    stopButton.onClick   = [this] { engine.pressStop(); notifyRecordStopped(); refreshButtonStates(); };
     recordButton.onClick = [this]
     {
         engine.record();
@@ -454,7 +454,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
                     const double total = (bar - 1) * beatsPerBar * secondsPerBeat
                                        + (beat - 1) * secondsPerBeat
                                        + (sub  - 1) * secondsPerSub;
-                    engine.getTransport().setPlayhead (
+                    engine.getTransport().locate (
                         (std::int64_t) std::round (total * sr));
                     return;
                 }
@@ -470,14 +470,14 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
             const double mins = minStr.isEmpty() ? 0.0 : (double) minStr.getDoubleValue();
             const double secs = (double) secStr.getDoubleValue();
             const auto target = (std::int64_t) std::round ((mins * 60.0 + secs) * sr);
-            engine.getTransport().setPlayhead (std::max ((std::int64_t) 0, target));
+            engine.getTransport().locate (std::max ((std::int64_t) 0, target));
             return;
         }
 
         // Bare number = seconds.
         const double secs = (double) text.getDoubleValue();
         const auto target = (std::int64_t) std::round (secs * sr);
-        engine.getTransport().setPlayhead (std::max ((std::int64_t) 0, target));
+        engine.getTransport().locate (std::max ((std::int64_t) 0, target));
     };
     addAndMakeVisible (clockLabel);
 
@@ -723,7 +723,7 @@ void TransportBar::timerCallback()
     // 10x scrub. Once a REW / FFWD button has been held past
     // kHoldThresholdMs, advance the playhead by (sr * kScrubMultiplier *
     // tickPeriod) samples per tick. Continues until the button releases.
-    // Direct setPlayhead - scrub does NOT engage the transport so audio
+    // Direct locate - scrub does NOT engage the transport so audio
     // stays silent and the audio thread sees a "playhead jumped" event
     // (which fires the existing All Notes Off MIDI flush; safe).
     const auto nowMs = juce::Time::currentTimeMillis();
@@ -748,7 +748,7 @@ void TransportBar::timerCallback()
             lastScrubTickMs = nowMs;
             const auto delta = (std::int64_t) ((double) dtMs * 0.001 * sr * kScrubMultiplier);
             const auto cur = engine.getTransport().getPlayhead();
-            engine.getTransport().setPlayhead (std::max ((std::int64_t) 0,
+            engine.getTransport().locate (std::max ((std::int64_t) 0,
                 cur + (std::int64_t) direction * delta));
         };
 
@@ -832,7 +832,7 @@ void TransportBar::timerCallback()
 
     // Auto-punch post-roll: while recording with punch enabled and the
     // playhead has crossed punchOut + postRoll samples, auto-stop. Done
-    // here on the message thread so engine.stop()'s teardown is safe.
+    // here on the message thread so the stop's teardown is safe.
     // postRoll == 0 disables the auto-stop (matches the previous behaviour
     // where punch never auto-stopped); punch-disabled and loop recording also
     // disable it.
@@ -851,7 +851,7 @@ void TransportBar::timerCallback()
                 const auto stopAt = pOut + (std::int64_t) ((double) postRoll * sr);
                 if (engine.getTransport().getPlayhead() >= stopAt)
                 {
-                    engine.stop();
+                    engine.pressStop();
                     notifyRecordStopped();
                 }
             }
@@ -872,7 +872,7 @@ void TransportBar::timerCallback()
         if (const auto target = s.pendingTransportPlayhead.exchange (
                 (std::int64_t) -1, std::memory_order_relaxed); target >= 0)
         {
-            engine.getTransport().setPlayhead (target);
+            engine.getTransport().locate (target);
         }
 
         // Transport-action queue: a binding hit on the audio thread (which
@@ -884,11 +884,14 @@ void TransportBar::timerCallback()
         switch (pending)
         {
             case PendingTransportAction::Play:   engine.play();   break;
-            case PendingTransportAction::Stop:   engine.stop();   notifyRecordStopped(); break;
+            case PendingTransportAction::Stop:   engine.pressStop(); notifyRecordStopped(); break;
+            // The master decides where the song is, so a chase stop leaves the
+            // playhead where the master stopped it.
+            case PendingTransportAction::SyncStop: engine.stop(); notifyRecordStopped(); break;
             case PendingTransportAction::Record: engine.record(); surfaceRecordSetupFailures(); break;
             case PendingTransportAction::Toggle:
                 if (engine.getTransport().isStopped()) engine.play();
-                else                                    { engine.stop(); notifyRecordStopped(); }
+                else                                    { engine.pressStop(); notifyRecordStopped(); }
                 break;
             case PendingTransportAction::LoopToggle:
             {
