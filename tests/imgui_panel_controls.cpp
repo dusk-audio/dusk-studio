@@ -3,11 +3,14 @@
 
 #include "ui/imgui/DuskTheme.h"
 #include "ui/imgui/PanelControls.h"
+#include "ui/imgui/StartupView.h"
 
 // FindWindowByName: a tooltip is a window of its own, and its size is the only place
 // its wrapping is observable from outside a renderer.
 #include <DearImGui/imgui_internal.h>
 
+#include <algorithm>
+#include <cfloat>
 #include <string>
 
 // The settings panels' form controls, driven with no window, no GL and no compositor:
@@ -20,22 +23,32 @@ using Catch::Matchers::WithinAbs;
 namespace dw = DuskWidgets;
 using namespace duskstudio::imgui;
 
+namespace duskstudio::imgui
+{
+// The startup view's empty brand has no atlas image in this headless target.
+void AtlasImage::reserve (ImFontAtlas&, const unsigned char*, int, int) {}
+void AtlasImage::rasterise (ImFontAtlas&) {}
+void AtlasImage::draw (ImDrawList&, ImVec2, ImVec2) const {}
+}
+
 namespace
 {
 class HeadlessPanel
 {
 public:
-    HeadlessPanel()
+    explicit HeadlessPanel (float panelScale = 1.0f) : scale (panelScale)
     {
         context = ImGui::CreateContext();
         ImGui::SetCurrentContext (context);
 
         auto& io = ImGui::GetIO();
-        io.DisplaySize = ImVec2 (600.0f, 400.0f);
+        io.DisplaySize = ImVec2 (800.0f * scale, 520.0f * scale);
         io.DeltaTime = 1.0f / 60.0f;
         io.IniFilename = nullptr;
         io.LogFilename = nullptr;
-        io.Fonts->AddFontDefault();
+        ImFontConfig fontConfig;
+        fontConfig.SizePixels = 13.0f * scale;
+        io.Fonts->AddFontDefault (&fontConfig);
         io.Fonts->Build();
         io.Fonts->SetTexID (static_cast<ImTextureID> (1));
 
@@ -45,6 +58,8 @@ public:
     }
 
     ~HeadlessPanel() { ImGui::DestroyContext (context); }
+
+    ImDrawList* drawList() const { return list; }
 
     void movePointer (ImVec2 to) { ImGui::GetIO().AddMousePosEvent (to.x, to.y); }
     void pressPointer (bool down)
@@ -66,10 +81,11 @@ public:
 
         dw::Context ctx;
         ctx.dl = ImGui::GetWindowDrawList();
+        list = ctx.dl;
         ctx.theme = &consolePalette().widgets;
         ctx.fonts = &fonts;
         ctx.drag = &drag;
-        ctx.scale = 1.0f;
+        ctx.scale = scale;
 
         {
             const ScopedFormStyle style (ctx);
@@ -82,6 +98,8 @@ public:
 
 private:
     ImGuiContext* context = nullptr;
+    ImDrawList* list = nullptr;
+    float scale = 1.0f;
     dw::Fonts fonts;
     dw::DragState drag;
 };
@@ -89,7 +107,83 @@ private:
 constexpr ImVec2 kRowTl { 20.0f, 40.0f };
 constexpr ImVec2 kRowBr { 320.0f, 66.0f };
 constexpr ImVec2 kRowCentre { 170.0f, 53.0f };
+
+float textHeight (const ImDrawList& list, ImU32 colour,
+                  float minimumX = -FLT_MAX, float minimumY = -FLT_MAX)
+{
+    float top = FLT_MAX;
+    float bottom = -FLT_MAX;
+    for (const ImDrawVert& vertex : list.VtxBuffer)
+    {
+        if (vertex.col != colour || vertex.pos.x < minimumX || vertex.pos.y < minimumY)
+            continue;
+        top = std::min (top, vertex.pos.y);
+        bottom = std::max (bottom, vertex.pos.y);
+    }
+    return bottom - top;
+}
 } // namespace
+
+TEST_CASE ("formButton label uses the scaled form font once")
+{
+    for (const float scale : { 1.0f, 2.0f })
+    {
+        HeadlessPanel panel (scale);
+        panel.frame ([&] (dw::Context& ctx)
+        {
+            formButton (ctx, "##button", ImVec2 (20.0f, 40.0f),
+                        ImVec2 (320.0f, 40.0f + 36.0f * scale), "Apply");
+        });
+
+        const float height = textHeight (*panel.drawList(),
+                                         consolePalette().widgets.textBright);
+        REQUIRE (height > 13.0f * scale * 0.6f);
+        REQUIRE (height < 13.0f * scale * 1.1f);
+    }
+}
+
+TEST_CASE ("startup button labels follow context scale once")
+{
+    for (const float scale : { 1.0f, 2.0f })
+    {
+        HeadlessPanel panel (scale);
+        auto view = makeStartupView ({}, { "Blank" }, nullptr, 0, 0, {});
+        const ImVec2 preferred = view->preferredSize();
+        const auto draw = [&] (dw::Context& ctx)
+        {
+            view->draw (ctx, ImVec2 (20.0f, 20.0f),
+                        ImVec2 (preferred.x * scale, preferred.y * scale));
+        };
+        panel.frame (draw);
+
+        const float height = textHeight (*panel.drawList(),
+                                         IM_COL32 (0x80, 0xb0, 0xff, 0xff));
+        REQUIRE (height > 11.0f * scale * 0.4f);
+        REQUIRE (height < 11.0f * scale * 1.1f);
+
+        const float footerHeight = textHeight (*panel.drawList(),
+                                               IM_COL32 (0xe8, 0xe8, 0xe8, 0xff),
+                                               -FLT_MAX,
+                                               20.0f + (preferred.y - 52.0f) * scale);
+        REQUIRE (footerHeight > 12.0f * scale * 0.4f);
+        REQUIRE (footerHeight < 12.0f * scale * 1.1f);
+
+        panel.movePointer (ImVec2 (20.0f + 50.0f * scale,
+                                   20.0f + 216.0f * scale));
+        panel.frame (draw);
+        panel.frame (draw);
+        panel.pressPointer (true);
+        panel.frame (draw);
+        panel.pressPointer (false);
+        panel.frame (draw);
+
+        const float templateHeight = textHeight (*panel.drawList(),
+                                                 IM_COL32 (0xb0, 0xb0, 0xb8, 0xff),
+                                                 20.0f + 100.0f * scale);
+        REQUIRE (templateHeight > 13.0f * scale * 0.4f);
+        REQUIRE (templateHeight < 13.0f * scale * 1.1f);
+    }
+}
 
 TEST_CASE ("ComboModel hands formCombo pointers that survive the list growing")
 {
