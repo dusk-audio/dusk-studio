@@ -178,6 +178,12 @@ Don't write tests for: UI components (no JUCE message-loop / Component test harn
 2. In [tests/CMakeLists.txt](tests/CMakeLists.txt), add the new `.cpp` AND every additional `src/...` source file it pulls in (header-only deps don't need listing). Keep the source list minimal — only what's transitively reachable from the test.
 3. If the unit needs a JUCE module not yet linked (e.g. `juce_dsp` for an oversampler test), add it to `target_link_libraries(dusk-studio-tests PRIVATE ...)`.
 4. Build + run the commands above. `catch_discover_tests` registers each `TEST_CASE` with ctest automatically — no manual wiring per test.
+5. When adding, removing or renaming a `TEST_CASE`, `TEST_CASE_METHOD` or `SCENARIO`, update both README count lines: "The C++ suite declares N Catch2 test cases across M test source files." and the `tests/` tree line. Count cases and files with:
+   ```bash
+   git grep -hE '^[[:space:]]*(TEST_CASE|TEST_CASE_METHOD|SCENARIO)[[:space:]]*\(' -- 'tests/*.cpp' | wc -l
+   git grep -lE '^[[:space:]]*(TEST_CASE|TEST_CASE_METHOD|SCENARIO)[[:space:]]*\(' -- 'tests/*.cpp' | wc -l
+   ```
+   Require `ctest --test-dir build-tests -R release-mechanics-contract` to pass.
 
 ### Test style
 

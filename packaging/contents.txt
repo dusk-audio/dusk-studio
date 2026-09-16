@@ -53,9 +53,5 @@ linux	DuskStudio/share/mime/packages/DuskStudio.mime.xml
 linux	DuskStudio/share/icons/hicolor/256x256/apps/DuskStudio.png
 
 # --- Built-in plugin suite (#75) ---
-# Uncomment with the real paths when the suite ships. The slot is here so the
-# contract records that every package is expected to carry it, rather than the
-# omission being discovered on one platform after release.
-#linux	DuskStudio/plugins
-#macos	DuskStudio.app/Contents/Resources/plugins
-#windows	bin/plugins
+# Utility, DuskVerb 2, Tape Echo 2, Tape and Sunset are compiled into the binary
+# via src/engine/builtin/BuiltinRegistry.cpp; there are no separate plugin files.

@@ -836,7 +836,7 @@ jobs:
 
   macos:
     needs: preflight
-    name: Build + package unsigned DMG (macOS arm64 Release)
+    name: Build + package DMG (macOS arm64 Release)
     runs-on: macos-14
     env:
       # ccache obj cache (auto-detected by CMakeLists.txt). Stable dir for
