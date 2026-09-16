@@ -666,8 +666,9 @@ jobs:
         # Two credential shapes. A PFX is the simple one and works with any
         # certificate you hold; Azure Trusted Signing is the CI-friendly one,
         # because since June 2023 OV and EV certificates are issued on hardware
-        # tokens that a hosted runner cannot reach. Either is enough; neither on
-        # a tag is not.
+        # tokens that a hosted runner cannot reach. With neither, the MSI ships
+        # unsigned and the documented SmartScreen steps apply; signing starts
+        # the day the secrets exist.
         id: winsign
         shell: bash
         env:
@@ -679,7 +680,6 @@ jobs:
           TRUSTED_SIGNING_ENDPOINT: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
           TRUSTED_SIGNING_ACCOUNT: ${{ secrets.TRUSTED_SIGNING_ACCOUNT }}
           TRUSTED_SIGNING_PROFILE: ${{ secrets.TRUSTED_SIGNING_PROFILE }}
-          IS_TAG: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
         run: |
           set -euo pipefail
           route=none
@@ -692,11 +692,7 @@ jobs:
           fi
 
           if [[ "$route" == "none" ]]; then
-            if [[ "$IS_TAG" == "true" ]]; then
-              echo "::error::cannot publish a signed Windows build; set either the PFX secrets or the full Azure Trusted Signing set" >&2
-              exit 1
-            fi
-            echo "::notice::Windows signing secrets absent; the MSI stays unsigned (dispatch publishes nothing)"
+            echo "::notice::Windows signing secrets absent; the MSI ships unsigned"
           fi
           echo "route=$route" >> "$GITHUB_OUTPUT"
 
@@ -1040,9 +1036,9 @@ jobs:
           ctest --test-dir build-tests --output-on-failure
 
       - name: Import the Developer ID certificate
-        # A tag must not ship unsigned: Gatekeeper refuses an unnotarized DMG
-        # and the user is told the app is damaged. A dispatch publishes nothing,
-        # so it keeps the ad-hoc signature CMake already applied and says so.
+        # Without Developer ID credentials the DMG keeps the ad-hoc signature
+        # CMake already applied and ships with the documented first-open steps;
+        # the signing and notarization path below waits for the secrets.
         id: signing
         env:
           MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
@@ -1051,7 +1047,6 @@ jobs:
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
           NOTARY_KEY_P8_BASE64: ${{ secrets.NOTARY_KEY_P8_BASE64 }}
-          IS_TAG: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
         run: |
           set -euo pipefail
           missing=()
@@ -1060,11 +1055,7 @@ jobs:
             [[ -n "${!name:-}" ]] || missing+=("$name")
           done
           if [[ ${#missing[@]} -gt 0 ]]; then
-            if [[ "$IS_TAG" == "true" ]]; then
-              echo "::error::cannot publish a signed macOS build; missing: ${missing[*]}" >&2
-              exit 1
-            fi
-            echo "::notice::macOS signing secrets absent; keeping the ad-hoc signature (dispatch publishes nothing)"
+            echo "::notice::macOS signing secrets absent; the DMG ships with the ad-hoc signature"
             echo "signed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi

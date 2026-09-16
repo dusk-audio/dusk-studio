@@ -48,10 +48,11 @@ Each line below is a check somebody can run and get a yes or a no.
 
 ### Packaging
 
-- The macOS DMG is signed with a Developer ID Application certificate,
-  notarized and stapled. It launches on a clean Mac by double click.
-- The Windows MSI and both installed executables are Authenticode signed and
-  timestamped.
+- The macOS DMG is ad-hoc signed and the documented first-open steps get it
+  running on a clean Mac. The Windows MSI is unsigned and the documented
+  SmartScreen steps get it running. Neither platform gets a paid certificate
+  before the software earns one (#529 and #530, closed as not planned); the
+  release workflow signs and notarizes the moment the secrets exist.
 - `SHA256SUMS` is published with a detached signature, and the verify command
   is documented.
 - All three packages contain the documented package-contents list, verified
@@ -111,7 +112,7 @@ Every open issue, one bucket each; completed release work is marked done.
 | 507 | SIGTERM bypasses the staged shutdown | 1.0-blocker | Logout or a supervisor stop skips the unsaved-changes prompt and leaves plugin children to the reaper. |
 | 508 | Sandboxed slot loaded at runtime loses its child within 200 ms | 1.0-blocker | A shipped sandboxing feature drops the plugin on a real path. |
 | 529 | Sign and notarize the macOS DMG | closed (not planned) | Workflow signing and notarization gates exist, but Developer ID credentials are not configured. |
-| 530 | Sign the Windows MSI and its executables | 1.0-blocker | Open: workflow Authenticode gates exist, but signing credentials are not configured. |
+| 530 | Sign the Windows MSI and its executables | closed (not planned) | Workflow Authenticode path exists; no certificate until the software earns one. |
 | 531 | Publish a signed SHA256SUMS | done | Implemented and closed: signed checksums and verification. |
 | 532 | Post-download smoke test for published artifacts | done | Implemented and closed: smoke-test scripts exercise downloaded artifacts. |
 | 533 | Quickstart page linked from the app and every package | done | Implemented and closed: quickstart, app link and package copies. |
@@ -188,17 +189,16 @@ The two 75 items are sequential. The rest of stage 3 is independent of both.
 |---|---|---|---|
 | Required checks on the main ruleset | 442 | 1 | Repository settings only |
 | macOS Developer ID signing and notarization (closed as not planned; credentials absent) | 529 | - | `.github/workflows/release.yml`, repository secrets |
-| Windows Authenticode signing | 530 | 8-12 | `.github/workflows/release.yml`, repository secrets |
+| Windows Authenticode signing (closed as not planned; credentials absent) | 530 | - | `.github/workflows/release.yml`, repository secrets |
 | Signed SHA256SUMS (done; closed) | 531 | - | `.github/workflows/release.yml`, `scripts/verify-release-assets.sh` |
 | Package contents list and CI check (done; closed) | 534 | - | `scripts/package-*.sh`, `CMakeLists.txt`, workflows |
 | Quickstart page and in-app link (done; closed) | 533 | - | Docs, `src/ui/` help and startup surface, packaging |
 | Post-download smoke test (done; closed) | 532 | - | `scripts/release-smoke-test.sh`, PowerShell sibling |
 
-The signing workflow is implemented, but no signing certificates are
-configured. #530 remains open; #529 is closed as not planned. Missing signing
-secrets fail a `v*` tag. With the current credentials absent, manual dispatch
-builds keep the macOS ad-hoc signature and Windows MSI unsigned, and publish
-nothing.
+The signing workflow is implemented, but no certificates are configured and
+none are planned before the software earns them (#529 and #530 closed as not
+planned). A `v*` tag ships the ad-hoc macOS DMG and the unsigned Windows MSI;
+only the `SHA256SUMS` signature (a GPG key, no cost) is required to publish.
 
 Total, excluding the unknown follow-ups from 536 and the upper tail on 508:
 roughly 110 to 160 hours.
@@ -262,6 +262,9 @@ platform before packaging. No artifact is produced from a red suite.
 
 ### Signing and notarization
 
+The macOS and Windows rows describe what the workflow does once the
+credentials exist; 1.0 ships without them. The Linux row is required.
+
 | OS | Artifact | Requirement | Credentials |
 |---|---|---|---|
 | macOS | `.app` inside the DMG, and the DMG | Developer ID Application signature, hardened runtime, secure timestamp, notarized and stapled | Developer ID Application certificate as base64 `.p12` plus password, Apple Team ID, and an App Store Connect API key (issuer ID, key ID, `.p8`) or an Apple ID with an app-specific password |
@@ -312,9 +315,12 @@ no dry run. Do not push a `v*` tag to test anything.
   asset from #531 (implemented and closed).
 - The smoke test from #532 (implemented and closed) passes against each
   downloaded artifact.
-- macOS: `spctl --assess` reports `source=Notarized Developer ID`, and
-  `stapler validate` on the DMG exits 0.
-- Windows: `signtool verify /pa /v` exits 0 for the MSI and both executables.
+- macOS: the documented first-open steps launch the app on a clean Mac (with
+  Developer ID credentials, `spctl --assess` reports `source=Notarized
+  Developer ID` and `stapler validate` exits 0 instead).
+- Windows: the documented SmartScreen steps install and launch it (with a
+  certificate, `signtool verify /pa /v` exits 0 for the MSI and both
+  executables instead).
 - Linux: the detached signature verifies against the published public key.
 
 Do not announce until all of the above pass. A green workflow is not a

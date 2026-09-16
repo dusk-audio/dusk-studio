@@ -623,8 +623,8 @@ gh secret set WINDOWS_CERT_PASSWORD --repo dusk-audio/dusk-studio
 ```
 
 The job takes the PFX route when both of those are set, otherwise Azure when
-all six are, and fails a `v*` tag when neither set is complete. A
-`workflow_dispatch` run skips signing with a notice.
+all six are, and ships the MSI unsigned with a notice when neither set is
+complete, on a tag as on a `workflow_dispatch` run.
 
 Both executables are signed before the MSI is built, then the MSI itself:
 signing only the installer would leave the binaries it lays down unsigned, and
@@ -634,8 +634,10 @@ check that each carries a countersignature, is the acceptance step.
 
 ### macOS signing and notarization
 
-Gatekeeper refuses an unnotarized DMG, and the user is told the app is damaged
-rather than unsigned, so this is not optional for a release people install.
+Gatekeeper blocks an unnotarized DMG until the user approves it in System
+Settings, so notarization is the goal once the project pays for the Developer
+Program; until then the DMG ships ad-hoc signed with the first-open steps in
+`QUICKSTART.md`.
 
 Procuring the credentials, once:
 
@@ -673,9 +675,9 @@ keychain of its own, signs the plugin host and then the bundle with
 `--options runtime` and a secure timestamp, packages the DMG, signs that,
 submits it to the notary service and waits, staples the ticket, and requires
 `spctl --assess` to report `accepted` with `source=Notarized Developer ID`
-before anything is published. Any missing secret fails the job before
-publication. A `workflow_dispatch` run keeps the ad-hoc signature and says so,
-since it publishes nothing.
+before anything is published. With any secret missing the job keeps the
+ad-hoc signature, says so, and carries on, on a tag as on a `workflow_dispatch`
+run.
 
 ### Release signing key
 

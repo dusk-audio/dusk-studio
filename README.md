@@ -33,7 +33,7 @@ GPL source on this repo, so building it yourself costs you nothing but compile t
 
 30-day guarantee: finish a track in your first session or full refund. Founder pricing, and it rises at 1.0. Full terms in [PRICING.md](PRICING.md).
 
-**First-time launch:** beta builds are ad-hoc signed on macOS and unsigned on Windows, so Gatekeeper and SmartScreen warn the first time you open one. See [MANUAL.md § Installing Dusk Studio](MANUAL.md#installing-dusk-studio) for the 30-second bypass per OS; the Linux tarball needs no bypass. Signing certificates are not configured yet (#530).
+**First-time launch:** beta builds are ad-hoc signed on macOS and unsigned on Windows, so Gatekeeper and SmartScreen warn the first time you open one. See [MANUAL.md § Installing Dusk Studio](MANUAL.md#installing-dusk-studio) for the 30-second bypass per OS; the Linux tarball needs no bypass. No signing certificate is planned before the software earns one.
 
 ## Status
 
@@ -67,7 +67,7 @@ GPL source on this repo, so building it yourself costs you nothing but compile t
 | Mackie Control surface (tested against Tascam DP-24SD) | Working |
 | Multi-file audio + MIDI import with target-track picker | Working |
 | Session notepad (lyrics / notes + chord chart, saved as `notepad.md`) | Working |
-| Windows MSI installer (unsigned until #530) | Working (CI publishes to private releases repo on tag) |
+| Windows MSI installer (unsigned) | Working (CI publishes to private releases repo on tag) |
 | Linux tarball | Working (CI publishes to private releases repo on tag) |
 | macOS DMG (ad-hoc signed) | Working (CI publishes to private releases repo on tag) |
 | Deeper a11y (full screen-reader labels + keyboard-only mixer nav) | Floor only |
@@ -154,9 +154,9 @@ ThreadSanitizer (`linux-sanitizer.yml`) runs the Catch2 suite under TSan on
 every PR + push. Tagged releases (`v*`) run `release.yml`, which builds the
 Windows MSI, macOS DMG, Linux tarballs and manual PDF and publishes them to one
 shared release in the private releases repo. When signing secrets are
-configured it signs and notarizes the DMG and Authenticode-signs the MSI, and a
-tag fails if they are missing; a manual dispatch keeps the ad-hoc signature,
-leaves the MSI unsigned and publishes nothing.
+configured it signs and notarizes the DMG and Authenticode-signs the MSI;
+without them a tag ships the ad-hoc DMG and the unsigned MSI. A manual dispatch
+builds the same way and publishes nothing.
 
 ## License
 
