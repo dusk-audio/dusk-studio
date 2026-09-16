@@ -33,11 +33,11 @@ GPL source on this repo, so building it yourself costs you nothing but compile t
 
 30-day guarantee: finish a track in your first session or full refund. Founder pricing, and it rises at 1.0. Full terms in [PRICING.md](PRICING.md).
 
-**First-time launch:** current beta builds are unsigned, so macOS Gatekeeper and Windows SmartScreen will warn the first time you open one. See [MANUAL.md § Installing Dusk Studio](MANUAL.md#installing-dusk-studio) for the 30-second bypass per OS; the Linux tarball needs no bypass, and signed builds are a 1.0 deliverable.
+**First-time launch:** beta builds are ad-hoc signed on macOS and unsigned on Windows, so Gatekeeper and SmartScreen warn the first time you open one. See [MANUAL.md § Installing Dusk Studio](MANUAL.md#installing-dusk-studio) for the 30-second bypass per OS; the Linux tarball needs no bypass. Signing certificates are not configured yet (#530).
 
 ## Status
 
-**Beta.** Built to a production bar; released as Beta. See [CHANGELOG.md](CHANGELOG.md) for what shipped in each release and the [tags](https://github.com/dusk-audio/dusk-studio/tags) for the current version. Feature backlog effectively closed: every spec phase, Tascam DP-24SD parity, MTC + MIDI Clock sync, automatic cross-track plugin delay compensation, broad undo coverage (notes, automation, tempo, renames), portable session folders (relative audio paths, move/copy between machines), an optional out-of-process plugin sandbox with sandboxed plugin scanning on all three OSes, a true-peak mastering limiter, a piecewise tempo map (changing tempo within a song), session open-with, an update notice on launch, and the rename to Dusk Studio have shipped. Plugins host in-process by default for the most responsive editors; `DUSKSTUDIO_USE_OOP_PLUGINS=1` opts into the crash-isolating sandbox. All three OSes ship unsigned binaries (Linux tarball + Windows MSI + macOS DMG) to the private releases repo on each tag. Remaining work toward the public 1.0 is release-engineering polish, low-spec/Raspberry-Pi performance, and deeper accessibility.
+**Beta.** Built to a production bar; released as Beta. See [CHANGELOG.md](CHANGELOG.md) for what shipped in each release and the [tags](https://github.com/dusk-audio/dusk-studio/tags) for the current version. Feature backlog effectively closed: every spec phase, Tascam DP-24SD parity, MTC + MIDI Clock sync, automatic cross-track plugin delay compensation, broad undo coverage (notes, automation, tempo, renames), portable session folders (relative audio paths, move/copy between machines), an optional out-of-process plugin sandbox with sandboxed plugin scanning on all three OSes, a true-peak mastering limiter, a piecewise tempo map (changing tempo within a song), session open-with, an update notice on launch, and the rename to Dusk Studio have shipped. Plugins host in-process by default for the most responsive editors; `DUSKSTUDIO_USE_OOP_PLUGINS=1` opts into the crash-isolating sandbox. Each tag publishes a Linux tarball, a Windows MSI and a macOS DMG to the private releases repo. Remaining work toward the public 1.0 is release-engineering polish, low-spec/Raspberry-Pi performance, and deeper accessibility.
 
 | Stage | Status |
 |---|---|
@@ -67,9 +67,9 @@ GPL source on this repo, so building it yourself costs you nothing but compile t
 | Mackie Control surface (tested against Tascam DP-24SD) | Working |
 | Multi-file audio + MIDI import with target-track picker | Working |
 | Session notepad (lyrics / notes + chord chart, saved as `notepad.md`) | Working |
-| Windows MSI installer (unsigned) | Working (CI publishes to private releases repo on tag) |
+| Windows MSI installer (unsigned until #530) | Working (CI publishes to private releases repo on tag) |
 | Linux tarball | Working (CI publishes to private releases repo on tag) |
-| macOS DMG (unsigned, ad-hoc) | Working (CI publishes to private releases repo on tag) |
+| macOS DMG (ad-hoc signed) | Working (CI publishes to private releases repo on tag) |
 | Deeper a11y (full screen-reader labels + keyboard-only mixer nav) | Floor only |
 
 The C++ suite declares 1139 Catch2 test cases across 208 test source files. Linux
@@ -132,7 +132,7 @@ MANUAL.md      # end-user manual (Pandoc-buildable to PDF via docs/build-pdf.sh)
 
 ## Builds & contributing
 
-Precompiled binaries go to paying users, Linux tarball + Windows MSI + macOS DMG, all published to the private releases repo on each tag. Beta builds are unsigned; signed builds are a 1.0 deliverable. Self-build is fully supported and equivalent at the source level, with no support tier for self-builders. Pricing lives in [PRICING.md](PRICING.md).
+Precompiled binaries go to paying users, Linux tarball + Windows MSI + macOS DMG, all published to the private releases repo on each tag. Beta builds are ad-hoc signed on macOS and unsigned on Windows. Self-build is fully supported and equivalent at the source level, with no support tier for self-builders. Pricing lives in [PRICING.md](PRICING.md).
 
 Source builds require libsndfile and libsodium; MP3 bounce additionally uses
 LAME. The Linux and Windows guides list the exact package or manifest setup.
@@ -151,9 +151,12 @@ CI builds and tests on every push to `main` on Linux (Ubuntu 22.04 GCC) and
 macOS (14 Apple Silicon, Ninja + ccache). Windows tests (`windows-tests.yml`)
 exercise the Catch2 suite on every push + PR using Server 2022 MSVC. Linux
 ThreadSanitizer (`linux-sanitizer.yml`) runs the Catch2 suite under TSan on
-every PR + push. Tagged releases (`v*`) trigger the Windows MSI, macOS DMG,
-Linux tarball and manual PDF workflows; they publish the unsigned binaries and
-rendered manual to one shared release in the private releases repo.
+every PR + push. Tagged releases (`v*`) run `release.yml`, which builds the
+Windows MSI, macOS DMG, Linux tarballs and manual PDF and publishes them to one
+shared release in the private releases repo. When signing secrets are
+configured it signs and notarizes the DMG and Authenticode-signs the MSI, and a
+tag fails if they are missing; a manual dispatch keeps the ad-hoc signature,
+leaves the MSI unsigned and publishes nothing.
 
 ## License
 

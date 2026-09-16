@@ -63,7 +63,7 @@ Each line below is a check somebody can run and get a yes or a no.
 
 ## Triage
 
-Every open issue, one bucket each.
+Every open issue, one bucket each; completed release work is marked done.
 
 | # | Title | Bucket | Reason |
 |---|---|---|---|
@@ -105,15 +105,19 @@ Every open issue, one bucket each.
 | 504 | Windows IPC self-test harnesses resolve the child without .exe and hang | 1.0 | Blocks manual Windows validation. Not a CI gate. See the verdict below. |
 | 507 | SIGTERM bypasses the staged shutdown | 1.0-blocker | Logout or a supervisor stop skips the unsaved-changes prompt and leaves plugin children to the reaper. |
 | 508 | Sandboxed slot loaded at runtime loses its child within 200 ms | 1.0-blocker | A shipped sandboxing feature drops the plugin on a real path. |
-| 529 | Sign and notarize the macOS DMG | 1.0-blocker | Gatekeeper refuses an unsigned DMG. A 1.0 cannot ship a right-click-to-open install. |
-| 530 | Sign the Windows MSI and its executables | 1.0-blocker | SmartScreen blocks an unsigned MSI on download. |
-| 531 | Publish a signed SHA256SUMS | 1.0 | Checksums prove a download is intact but not that it is ours. |
-| 532 | Post-download smoke test for published artifacts | 1.0 | Nothing today proves a published artifact runs on a machine that did not build it. |
-| 533 | Quickstart page linked from the app and every package | 1.0 | The manual is a PDF. A new user needs one screen. |
-| 534 | Define the 1.0 package contents and verify all three packagers | 1.0 | Three packagers grown separately, no shared contract. Matters once the plugin suite ships. |
+| 529 | Sign and notarize the macOS DMG | closed (not planned) | Workflow signing and notarization gates exist, but Developer ID credentials are not configured. |
+| 530 | Sign the Windows MSI and its executables | 1.0-blocker | Open: workflow Authenticode gates exist, but signing credentials are not configured. |
+| 531 | Publish a signed SHA256SUMS | done | Implemented and closed: signed checksums and verification. |
+| 532 | Post-download smoke test for published artifacts | done | Implemented and closed: smoke-test scripts exercise downloaded artifacts. |
+| 533 | Quickstart page linked from the app and every package | done | Implemented and closed: quickstart, app link and package copies. |
+| 534 | Define the 1.0 package contents and verify all three packagers | done | Implemented and closed: shared contents contract and verification for all three packagers. |
 | 535 | Local instrument browser for soundfonts on disk | 1.0 | The offline half of the SFZ work, with no network, catalog or archive code. |
 | 536 | Walk the demo path on packaged builds and file what it snags on | 1.0 | Individual demo-path bugs have been fixed one at a time. Nobody has walked the whole path on a shipped build. |
 | 586 | Multi-Comp 2 donor prerequisites | 1.0 | What the donor core needs before #342 can be built against it. |
+| 605 | Self-test coverage across CI platforms | 1.0 | Self-test runs only on Linux CI; macOS, Windows and `release.yml` skip it. |
+| 606 | Built-in suite placeholder in package contract | 1.0 | The contract listed plugin files the in-binary suite never produces. |
+| 607 | Signing wording in release docs | 1.0 | README, QUICKSTART and MANUAL described all builds as unsigned after the workflow gained signing. |
+| 608 | Release-plan status drift | 1.0 | This document listed #531 to #534 as open after they shipped. |
 
 Nothing was bucketed `wontfix`.
 
@@ -178,16 +182,18 @@ The two 75 items are sequential. The rest of stage 3 is independent of both.
 | Item | Issue | Est | Touches |
 |---|---|---|---|
 | Required checks on the main ruleset | 442 | 1 | Repository settings only |
-| macOS Developer ID signing and notarization | 529 | 8-12 | `.github/workflows/release.yml`, repository secrets |
+| macOS Developer ID signing and notarization (closed as not planned; credentials absent) | 529 | - | `.github/workflows/release.yml`, repository secrets |
 | Windows Authenticode signing | 530 | 8-12 | `.github/workflows/release.yml`, repository secrets |
-| Signed SHA256SUMS | 531 | 3-4 | `.github/workflows/release.yml`, `scripts/verify-release-assets.sh` |
-| Package contents list and CI check | 534 | 6-8 | `scripts/package-*.sh`, `CMakeLists.txt`, workflows |
-| Quickstart page and in-app link | 533 | 4-6 | Docs, `src/ui/` help and startup surface, packaging |
-| Post-download smoke test | 532 | 8-12 | `scripts/release-smoke-test.sh`, PowerShell sibling |
+| Signed SHA256SUMS (done; closed) | 531 | - | `.github/workflows/release.yml`, `scripts/verify-release-assets.sh` |
+| Package contents list and CI check (done; closed) | 534 | - | `scripts/package-*.sh`, `CMakeLists.txt`, workflows |
+| Quickstart page and in-app link (done; closed) | 533 | - | Docs, `src/ui/` help and startup surface, packaging |
+| Post-download smoke test (done; closed) | 532 | - | `scripts/release-smoke-test.sh`, PowerShell sibling |
 
-529 and 530 both need credentials procured before any code is written. Start
-that procurement at the same time as stage 1, because the lead time on a
-hardware-token code-signing certificate is measured in days, not hours.
+The signing workflow is implemented, but no signing certificates are
+configured. #530 remains open; #529 is closed as not planned. Missing signing
+secrets fail a `v*` tag. With the current credentials absent, manual dispatch
+builds keep the macOS ad-hoc signature and Windows MSI unsigned, and publish
+nothing.
 
 Total, excluding the unknown follow-ups from 536 and the upper tail on 508:
 roughly 110 to 160 hours.
@@ -262,8 +268,10 @@ publish nothing, when a secret is missing on a `v*` tag.
 
 ### Package contents
 
-Per #534, every package contains: the app, `dusk-studio-plugin-host`, the
-built-in plugin suite, the quickstart link, `LICENSE` and `LICENSES.txt`, plus
+#533 and #534 are implemented and closed: the quickstart and app link ship,
+and CI verifies the shared package-contents contract. Every package contains:
+the app, `dusk-studio-plugin-host`, the built-in plugin suite compiled into the
+binary, the quickstart, `LICENSE` and `LICENSES.txt`, plus
 platform integration files where the platform has them. Project templates are
 in the app through `src/session/SessionTemplates.h` and ship as code, not as
 files. CI asserts the list per packager.
@@ -296,8 +304,9 @@ no dry run. Do not push a `v*` tag to test anything.
 
 - `scripts/verify-release-assets.sh v1.0.0` exits 0.
 - The published release carries the six existing assets plus the signature
-  asset from #531.
-- The smoke test from #532 passes against each downloaded artifact.
+  asset from #531 (implemented and closed).
+- The smoke test from #532 (implemented and closed) passes against each
+  downloaded artifact.
 - macOS: `spctl --assess` reports `source=Notarized Developer ID`, and
   `stapler validate` on the DMG exits 0.
 - Windows: `signtool verify /pa /v` exits 0 for the MSI and both executables.

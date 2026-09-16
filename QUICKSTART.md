@@ -5,8 +5,8 @@ detail on any of this, it is all in [MANUAL.md](MANUAL.md).
 
 ## 1. Install and open it
 
-The builds are not signed yet, so each system asks about that once. This is
-expected and it goes away when signed builds land.
+Beta builds are ad-hoc signed on macOS and unsigned on Windows, so each
+system asks about that once. Linux needs nothing.
 
 **Linux.** Unpack the tarball and run it in place:
 
@@ -18,7 +18,7 @@ Run `./install.sh` if you also want it in your application menu and on your
 PATH. It installs under `~/.local` and needs no root.
 
 **macOS.** Open the `dusk-studio-<version>-macOS-arm64.dmg` and drag
-`DuskStudio.app` to Applications. For an unsigned beta build, try to open the
+`DuskStudio.app` to Applications. For an ad-hoc-signed beta build, try to open the
 installed app once and dismiss the block. In **System Settings > Privacy &
 Security**, click **Open Anyway**, enter your password if asked, then click
 **Open** in the second prompt. Later launches work normally.
