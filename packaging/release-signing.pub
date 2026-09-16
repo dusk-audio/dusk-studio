@@ -1,19 +1,10 @@
-Dusk Studio release signing key
-===============================
+-----BEGIN PGP PUBLIC KEY BLOCK-----
 
-This file will hold the ASCII-armored OpenPGP public key that signs SHA256SUMS
-for every tagged release. It is a placeholder: no release has been signed yet.
-
-Until the real key is committed here, the release workflow signs SHA256SUMS and
-warns that it could not verify the signature against a committed key. Once this
-file contains the key, that verification becomes a hard check and a signature
-the key cannot verify fails the release.
-
-To verify a download:
-
-    gpg --import packaging/release-signing.pub
-    gpg --verify SHA256SUMS.asc SHA256SUMS
-    sha256sum --check SHA256SUMS
-
-Generating the key pair and uploading the secrets is documented in
-docs/MAINTAINER-GUIDE.md, Part 10, under "Release signing key".
+mDMEaqq3OhYJKwYBBAHaRw8BAQdADfxwUvIXZUYij43lfM2X6OM9IkXY2GVyaw8t
+oFnYgy+0M0R1c2sgQXVkaW8gUmVsZWFzZSBTaWduaW5nIDxyZWxlYXNlc0BkdXNr
+YXVkaW8uY29tPoiTBBMWCgA7FiEEX4CgBTsvdIHfCjA0d6iRwBtVwgYFAmqqtzoC
+GwMFCwkIBwICIgIGFQoJCAsCBBYCAwECHgcCF4AACgkQd6iRwBtVwgaJvgEArDOO
+hkXXErjvtWAsIkdjQyuR1keE6kO1y8s9yYf2bZgA/i0yn127FlqTLpNOwE3rRwKV
+iPT2ecTAuzAXhSteLTEM
+=DTCm
+-----END PGP PUBLIC KEY BLOCK-----
