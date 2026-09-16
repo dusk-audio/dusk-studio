@@ -104,7 +104,7 @@ Every open issue, one bucket each; completed release work is marked done.
 | 340 | Change Tape Machine to use the Tape Machine 2 plugin | 1.0 | The built-in colour insert (#75) runs this core, and the master bus cannot run a different one from the same donor path. Landed with a tone regression pinning the new voicing. |
 | 341 | Change EQ DSP to 4K-EQ-2 DSP | 1.0 | Marc's call, 1.0 ships the current EQ. Landed with a tone regression pinning the new voicing. |
 | 342 | Change compressors to use Multi-Comp-2 DSP | 1.0 | Marc's call, 1.0 ships on the Multi-Comp 2 core; blocked on the donor core, prerequisites in #586. |
-| 442 | ASan+UBSan and Raspberry Pi jobs are not required checks | 1.0 | Two jobs can go red without blocking a merge. A 1.0 tag needs both gating. |
+| 442 | ASan+UBSan and Raspberry Pi jobs are not required checks | done | Both are required checks on `main` now, the Pi build included. |
 | 500 | CloneTrackAction native-insert clone and undo has no coverage | 1.0 | A shipped clone and undo path with no automated test. |
 | 501 | Inline non-modal editor status in the aux slot area | post-1.0 | The unprompted modal was already removed by #459; the remaining alerts are click-initiated. What is left is additive inline status, absorbed by the aux GUI port. |
 | 503 | Small residues from the milestone-6 audits | 1.0 | Four small correctness defects in shipped single-instance and hosting code. |
@@ -187,7 +187,7 @@ The two 75 items are sequential. The rest of stage 3 is independent of both.
 
 | Item | Issue | Est | Touches |
 |---|---|---|---|
-| Required checks on the main ruleset | 442 | 1 | Repository settings only |
+| Required checks on the main ruleset (done; closed) | 442 | - | Repository settings only |
 | macOS Developer ID signing and notarization (closed as not planned; credentials absent) | 529 | - | `.github/workflows/release.yml`, repository secrets |
 | Windows Authenticode signing (closed as not planned; credentials absent) | 530 | - | `.github/workflows/release.yml`, repository secrets |
 | Signed SHA256SUMS (done; closed) | 531 | - | `.github/workflows/release.yml`, `scripts/verify-release-assets.sh` |
@@ -217,8 +217,9 @@ roughly 110 to 160 hours.
 | Windows x64 | `windows-tests.yml` | Catch2 tests (MSVC x64 Release, Windows) |
 | Coupling gate | `linux-build.yml` | De-JUCE ratchet |
 
-All seven are required checks on `main` before the 1.0 tag. Two of them are
-not required today; that is #442.
+Six of the seven are required checks on `main` (#442); the De-JUCE ratchet is
+the one still to add in the ruleset. The Raspberry Pi build stays required:
+running on a Pi is a goal, not a courtesy port.
 
 ### The test gate, and what the numbers mean
 
