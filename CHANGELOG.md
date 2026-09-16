@@ -186,6 +186,19 @@ that will carry a signed 1.0.
   `-DDUSK_PLUGINS_PATH=../dusk-donor-pin` failed a tests configure with "Cannot
   find source file". Relative `JUCE_PATH`, `DUSK_PLUGINS_PATH`, `DAF_PATH` and
   `DAF_WIDGETS_PATH` values now resolve against the source tree.
+- **The mastering EQ curve follows the band you are moving.** Dragging a
+  band's dot, double-clicking it to reset the gain, or turning a band's
+  frequency, gain or Q knob left the response curve at its old shape until the
+  view was reopened.
+- **Linux release builds configure again.** Every Linux tarball build since the
+  DAF path was added to the release workflow failed at configure with "syntax
+  error near unexpected token `do`", so a tag would have shipped without Linux
+  packages. The macOS and Windows jobs were unaffected.
+- **The Windows package check reads the MSI it extracted.** The release
+  workflow's contents check unpacked the MSI into a Git Bash temporary path
+  that the native 7-Zip resolved elsewhere, and read the contract with a
+  trailing carriage return per line, so its first real run reported every
+  required file missing from a complete installer.
 
 ## [0.13.3] - 2026-09-05
 
