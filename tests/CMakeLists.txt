@@ -518,6 +518,29 @@ if(DUSKSTUDIO_NATIVE_VST3)
         PRIVATE PROJECT_INCLUDES_VSTEDITCONTROLLER=1)
     get_target_property(DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_BUNDLE
         dusk-studio-runtime-relayout-vst3-fixture SMTG_PLUGIN_PACKAGE_PATH)
+    if(MSVC)
+        # The SDK compiles its plug-in targets with /Zi in Release. Under Ninja
+        # the fixture's translation units then race for one vc140.pdb (C1041),
+        # and sccache cannot cache /Zi objects. Embed the debug info instead.
+        get_target_property(DUSKSTUDIO_RELAYOUT_FIXTURE_OPTIONS
+            dusk-studio-runtime-relayout-vst3-fixture COMPILE_OPTIONS)
+        list(TRANSFORM DUSKSTUDIO_RELAYOUT_FIXTURE_OPTIONS REPLACE "/Zi" "/Z7")
+        set_target_properties(dusk-studio-runtime-relayout-vst3-fixture
+            PROPERTIES COMPILE_OPTIONS "${DUSKSTUDIO_RELAYOUT_FIXTURE_OPTIONS}")
+        if(NOT CMAKE_CONFIGURATION_TYPES)
+            # The SDK places the Windows bundle by looping over
+            # CMAKE_CONFIGURATION_TYPES, so with a single-config generator the
+            # module lands in VST3/ while SMTG_PLUGIN_PACKAGE_PATH, which the
+            # tests load, still names the bundle. Put it where the tests look.
+            get_target_property(DUSKSTUDIO_RELAYOUT_FIXTURE_CONTENTS
+                dusk-studio-runtime-relayout-vst3-fixture SMTG_PLUGIN_PACKAGE_CONTENTS)
+            get_target_property(DUSKSTUDIO_RELAYOUT_FIXTURE_ARCH
+                dusk-studio-runtime-relayout-vst3-fixture SMTG_WIN_ARCHITECTURE_NAME)
+            set_target_properties(dusk-studio-runtime-relayout-vst3-fixture
+                PROPERTIES LIBRARY_OUTPUT_DIRECTORY
+                    "${DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_BUNDLE}/${DUSKSTUDIO_RELAYOUT_FIXTURE_CONTENTS}/${DUSKSTUDIO_RELAYOUT_FIXTURE_ARCH}")
+        endif()
+    endif()
 
     target_sources(dusk-studio-tests PRIVATE
         vst3_bundle_load.cpp

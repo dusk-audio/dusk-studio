@@ -881,7 +881,7 @@ windows_pr_build = re.search(
 )
 assert windows_pr_build, "windows-tests.yml lost its app + test build step"
 assert re.search(
-    r"cmake --build build-tests --config Release --target "
+    r"cmake --build build-tests (?:--config Release )?--target "
     r"DuskStudio dusk-studio-tests -j4",
     windows_pr_build.group("body"),
 ), "Windows PR CI must compile both the app and test targets"
