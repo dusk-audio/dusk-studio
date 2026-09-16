@@ -57,6 +57,9 @@ expected=()
 lineNo=0
 while IFS= read -r line || [[ -n "$line" ]]; do
     lineNo=$((lineNo + 1))
+    # Git for Windows checks the contract out with CRLF by default; a trailing
+    # CR would otherwise become part of every expected name.
+    line="${line%$'\r'}"
     [[ -z "${line//[[:space:]]/}" ]] && continue
     [[ "$line" == \#* ]] && continue
     # Fail closed: a record that is not exactly <platform><TAB><path> means the
