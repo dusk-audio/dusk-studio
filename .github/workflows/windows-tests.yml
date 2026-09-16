@@ -140,14 +140,6 @@ jobs:
 
       - name: Configure tests (CMake / Ninja / MSVC x64)
         shell: bash
-        # The VST3 SDK adds /Zi to its plug-in targets in Release, and Ninja
-        # runs their translation units in parallel against one vc140.pdb
-        # (C1041). /FS serialises the PDB writes; MSBuild did that implicitly.
-        # Spelled -FS because Git Bash rewrites a leading slash in an
-        # environment value into a C:/Program Files/Git/... path.
-        env:
-          CFLAGS: -FS
-          CXXFLAGS: -FS
         run: |
           # DAF's cmake re-parses these paths, so backslashes from RUNNER_TEMP
           # become invalid \-escapes there; hand it forward slashes (same

@@ -516,6 +516,16 @@ if(DUSKSTUDIO_NATIVE_VST3)
         PRIVATE dusk-vst3-hosting)
     target_compile_definitions(dusk-studio-runtime-relayout-vst3-fixture
         PRIVATE PROJECT_INCLUDES_VSTEDITCONTROLLER=1)
+    if(MSVC)
+        # The SDK compiles its plug-in targets with /Zi in Release. Under Ninja
+        # the fixture's translation units then race for one vc140.pdb (C1041),
+        # and sccache cannot cache /Zi objects. Embed the debug info instead.
+        get_target_property(DUSKSTUDIO_RELAYOUT_FIXTURE_OPTIONS
+            dusk-studio-runtime-relayout-vst3-fixture COMPILE_OPTIONS)
+        list(TRANSFORM DUSKSTUDIO_RELAYOUT_FIXTURE_OPTIONS REPLACE "/Zi" "/Z7")
+        set_target_properties(dusk-studio-runtime-relayout-vst3-fixture
+            PROPERTIES COMPILE_OPTIONS "${DUSKSTUDIO_RELAYOUT_FIXTURE_OPTIONS}")
+    endif()
     get_target_property(DUSKSTUDIO_RUNTIME_RELAYOUT_VST3_BUNDLE
         dusk-studio-runtime-relayout-vst3-fixture SMTG_PLUGIN_PACKAGE_PATH)
 
