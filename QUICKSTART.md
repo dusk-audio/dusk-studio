@@ -18,10 +18,13 @@ Run `./install.sh` if you also want it in your application menu and on your
 PATH. It installs under `~/.local` and needs no root.
 
 **macOS.** Open the `dusk-studio-<version>-macOS-arm64.dmg` and drag
-`DuskStudio.app` to Applications. For an ad-hoc-signed beta build, try to open the
-installed app once and dismiss the block. In **System Settings > Privacy &
-Security**, click **Open Anyway**, enter your password if asked, then click
-**Open** in the second prompt. Later launches work normally.
+`DuskStudio.app` to Applications. The first launch is blocked because the
+build is not notarized: click **Done** in the "Not Opened" dialog, open
+**System Settings > Privacy & Security**, scroll to **Security** and click
+**Open Anyway** next to "DuskStudio was blocked". Click **Open Anyway** again
+in the next dialog and approve with Touch ID or your password. Allow
+microphone access when asked, or recording stays silent. Later launches open
+normally.
 
 **Windows.** Run the MSI. SmartScreen will warn you about an unrecognised
 publisher; choose More info, then Run anyway.
