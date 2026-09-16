@@ -65,6 +65,7 @@ struct TakeFolderHeader {
     bool muted, locked;
     TakeCompId activeCompId;
     bool quickSwipeEnabled;
+    std::uint64_t revision;   // bumped by every mutation of the folder, its takes or comps
 };
 ```
 
@@ -141,7 +142,7 @@ struct MidiTakeFolder {
 };
 ```
 
-`MidiDiscreteEvent` is necessary because the recorder accepts pitch bend, pressure, and program messages but currently drops them during commit (`src/engine/RecordManager.cpp:1280-1291`, `:904-907`). It should store kind/status, channel, data bytes, tick, and stable insertion order.
+`MidiDiscreteEvent` is necessary because the recorder accepts pitch bend, pressure, and program messages but currently drops them during commit (`src/engine/RecordManager.cpp:1280-1291`, `:904-907`). It should store kind/status, channel, data bytes, stable insertion order, and its position in both units: the tick in the folder's time base and the absolute sample at which it was recorded. Tempo-locked folders play, merge and persist by tick; floating folders by sample. When a merge converts a folder between modes, each event's position is recomputed from the unit that was canonical before the change through the tempo map, so the change of `timeBase` never moves an event.
 
 `Track` gains:
 
@@ -208,7 +209,7 @@ Both materializers run on the message thread. Comp/cardinality edits should init
 - **Merge into a folder comp gap:** no take is selected at record start. Recommended behavior: create a new take in that folder containing the pass and select it over the pass range. This matches “no region exists under the recording” without modifying a deliberately unselected take.
 - **Several plain MIDI regions at record start:** choose the topmost/latest inserted region, matching current hit-test and overlap precedence.
 - **Two folders with conflicting outside selections:** later/topmost folder wins only in overlapping outside ranges; non-conflicting selections from both survive.
-- **MIDI time base:** use ticks for tempo-locked folders and samples for floating folders, with an explicit `timeBase`. When absorbing mixed lock modes, preserve immediate absolute event positions and adopt the new recording’s mode for the resulting folder.
+- **MIDI time base:** use ticks for tempo-locked folders and samples for floating folders, with an explicit `timeBase`. When absorbing mixed lock modes, adopt the new recording’s mode for the resulting folder and convert the existing folder span, every `MidiCompSelection` start/end and every event position through the tempo map before changing `timeBase`, so nothing audible moves. If a session’s tempo map makes that conversion lossy for a selection boundary, reject the merge with a message rather than approximate it.
 - **Mixed audio and MIDI loop recording with Merge:** make each ordinal one transaction across all armed tracks. That makes undo remove the last musical pass coherently instead of removing MIDI while leaving its simultaneously recorded audio take.
 - **Changing MIDI Merge while recording:** disable the toggle until Stop; the captured recording plan remains immutable.
 
@@ -264,7 +265,7 @@ Loop-pass alternatives require no separate migration path: today they are serial
 
 Playback parity is required only for data v6 still contains. Migration cannot recover takes already discarded by the cap or portions already destructively sliced by #594. The regression test must render the pre-migration current region and the migrated active comp and compare samples/events exactly.
 
-Loader validation should repair duplicate/zero IDs deterministically, reject unknown selection references, coalesce selections, clamp numeric ranges, preserve silence gaps, and ensure at least one valid comp.
+Loader validation should repair duplicate/zero IDs deterministically while recording an old-to-new mapping, rewrite `activeCompId` and every `AudioCompSelection::takeId` / `MidiCompSelection::takeId` through that mapping before checking references, reject only references that remain unknown afterwards, coalesce selections, clamp numeric ranges, preserve silence gaps, and ensure at least one valid comp.
 
 ## 6. UI plan
 
@@ -339,7 +340,7 @@ Audio:
 - Produce one plain region per comp selection.
 - Preserve source offsets and 64-sample boundary fades as editable region fades.
 - Combine folder/take dB additively.
-- If compounded take/folder envelopes cannot be represented exactly by one ordinary region envelope, render only that selection’s take-local envelope; keep folder/boundary fades as region metadata. Playback parity takes precedence over a forced zero-copy implementation.
+- If the compounded take, folder and boundary envelope cannot be represented exactly by one ordinary region envelope, render that selection to a new file with the compounded envelope baked into the samples (the same renderer Flatten and Merge uses, applied to one selection) instead of leaving folder or boundary fades as metadata that plain-region playback does not apply. Playback parity takes precedence over a forced zero-copy implementation.
 
 MIDI:
 
@@ -362,7 +363,7 @@ Reuse points:
 - `BounceEngine`’s worker-thread lifecycle, progress/cancel handling, partial-file cleanup, and message-thread completion pattern (`src/engine/BounceEngine.cpp:298-365`, `src/engine/BounceEngine.h:227-250`).
 - `SessionSerializer::consolidateInto()` only for later Save As copying/repointing; it is not a renderer (`src/session/SessionSerializer.cpp:2741-2872`).
 
-This render must not drive the full mix engine: Flatten-and-Merge should bake the folder/take/comp envelopes, not channel-strip plugins, buses, or master processing. It runs on a dedicated worker, never the audio callback or message thread. On completion, return to the message thread, confirm the folder ID/revision still matches, then register `FlattenMergeTakeFolderAction`.
+This render must not drive the full mix engine: Flatten-and-Merge should bake the folder/take/comp envelopes, not channel-strip plugins, buses, or master processing. It runs on a dedicated worker, never the audio callback or message thread. The render request captures the folder ID and `header.revision` when it is queued; every folder mutation (take added or removed, selection edited, span or envelope changed, comp switched) increments `revision` on the message thread. On completion, return to the message thread and register `FlattenMergeTakeFolderAction` only if both the ID and the captured revision still match; otherwise discard the rendered file and report the stale render.
 
 ## 8. Phased implementation plan
 
