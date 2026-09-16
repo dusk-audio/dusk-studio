@@ -217,9 +217,8 @@ roughly 110 to 160 hours.
 | Windows x64 | `windows-tests.yml` | Catch2 tests (MSVC x64 Release, Windows) |
 | Coupling gate | `linux-build.yml` | De-JUCE ratchet |
 
-Six of the seven are required checks on `main` (#442); the De-JUCE ratchet is
-the one still to add in the ruleset. The Raspberry Pi build stays required:
-running on a Pi is a goal, not a courtesy port.
+All seven are required checks on `main` (#442). The Raspberry Pi build stays
+required: running on a Pi is a goal, not a courtesy port.
 
 ### The test gate, and what the numbers mean
 
