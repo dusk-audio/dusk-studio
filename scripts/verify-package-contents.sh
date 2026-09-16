@@ -57,6 +57,9 @@ expected=()
 lineNo=0
 while IFS= read -r line || [[ -n "$line" ]]; do
     lineNo=$((lineNo + 1))
+    # Git for Windows checks the contract out with CRLF by default; a trailing
+    # CR would otherwise become part of every expected name.
+    line="${line%$'\r'}"
     [[ -z "${line//[[:space:]]/}" ]] && continue
     [[ "$line" == \#* ]] && continue
     # Fail closed: a record that is not exactly <platform><TAB><path> means the
@@ -118,6 +121,10 @@ if [[ ${#missing[@]} -gt 0 ]]; then
     for path in "${missing[@]}"; do
         echo "  $path" >&2
     done
+    if [[ "$PLATFORM" == "windows" ]]; then
+        echo "extracted names under $ROOT:" >&2
+        find "$ROOT" -type f | head -40 | sed "s|^$ROOT/||; s/^/  /" >&2
+    fi
     echo "see packaging/contents.txt" >&2
     exit 1
 fi

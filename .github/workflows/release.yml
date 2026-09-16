@@ -822,7 +822,13 @@ jobs:
             echo "::error::expected exactly one MSI at the repo root, found ${#msis[@]}" >&2
             exit 1; }
           msi="${msis[0]}"
-          work="$(mktemp -d)"
+          # Not mktemp: Git Bash resolves /tmp inside its own tree, while the
+          # native 7z.exe reads -o/tmp/... against the drive root, so find
+          # would then search an empty directory. A mixed-style RUNNER_TEMP
+          # path means the same directory to both.
+          work="${RUNNER_TEMP//\\//}/msi-contents"
+          rm -rf "$work"
+          mkdir -p "$work"
           7z x -y -o"$work" "$msi" > /dev/null
           scripts/verify-package-contents.sh windows "$work"
 
