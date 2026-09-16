@@ -185,6 +185,7 @@ Don't write tests for: UI components (no JUCE message-loop / Component test harn
 - **Drive DSP through several blocks before measuring** when the unit has lookahead, smoothing, or filter state. Measuring the first block gives misleading results because envelopes / smoothers / delay lines haven't reached steady state.
 - **One concept per `TEST_CASE`.** Use `SECTION` for variations on the same setup, separate `TEST_CASE`s for unrelated scenarios.
 - **No sleeps, no threads, no real audio device.** Tests run in milliseconds and on every build.
+- **Tests run as parallel processes** (`ctest --parallel` in CI). Every test process needs its own temp directory (UUID or random suffix), and any shared parent it creates must tolerate losing the race: `juce::File::createDirectory` returns EEXIST to the loser and leaves the child uncreated, so create the parent separately and ignore that result, or retry once and check `isDirectory()`. Tests that start the plug-in host or depend on timing carry the `[ipc]` tag, which runs them serially.
 
 ### Forced verification (extends rule 4 in Agent directives)
 
