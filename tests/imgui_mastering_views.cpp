@@ -9,7 +9,9 @@
 
 #include <DuskWidgets.hpp>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <vector>
 
 // The mastering stage's two native panels drawn with no window, no GL and no
@@ -52,6 +54,9 @@ public:
     {
         ImGui::GetIO().AddMouseButtonEvent (ImGuiMouseButton_Left, down);
     }
+    void setDeltaTime (float seconds) { ImGui::GetIO().DeltaTime = seconds; }
+
+    const std::vector<ImVec2>& lastVertexPositions() const { return vertexPositions; }
 
     // Draws one frame of `view` into the whole display and returns the vertex count.
     int frame (imgui::DuskPanelView& view)
@@ -72,6 +77,10 @@ public:
 
         view.draw (ctx, ImVec2 (0.0f, 0.0f), ImGui::GetIO().DisplaySize);
         const int vertices = ctx.dl->VtxBuffer.Size;
+        vertexPositions.clear();
+        vertexPositions.reserve (static_cast<std::size_t> (vertices));
+        for (const auto& vertex : ctx.dl->VtxBuffer)
+            vertexPositions.push_back (vertex.pos);
 
         ImGui::End();
         ImGui::Render();
@@ -82,6 +91,7 @@ private:
     ImGuiContext* context = nullptr;
     dw::Fonts fonts;
     dw::DragState drag;
+    std::vector<ImVec2> vertexPositions;
 };
 
 // Both panels inset their body by 8 design pixels and open with the section header, so
@@ -164,6 +174,96 @@ TEST_CASE ("the mastering EQ view takes no plate")
     // An inline stage panel paints its own surface across the whole child; a plate would
     // frame it like a modal and inset the body by the plate margin.
     REQUIRE_FALSE (view->wantsPlate());
+}
+
+TEST_CASE ("the mastering EQ curve follows a band moved in the view")
+{
+    // The view exposes no dot placement, so the dot is found by double-clicking down the
+    // band's frequency column. These mirror MasteringEqView.cpp's layout constants
+    // (kFreqMinHz/kFreqMaxHz, kOuterInset, kHeaderH, kHeaderGap, kCurveGap and the
+    // controls-row share); if that layout changes, the gain-reset REQUIRE below fails
+    // rather than the test passing on the wrong geometry.
+    constexpr int band = 2;
+    constexpr float freqMinHz = 20.0f;
+    constexpr float freqMaxHz = 20000.0f;
+    constexpr float outerInset = 8.0f;
+    constexpr float headerHeight = 20.0f;
+    constexpr float headerGap = 4.0f;
+    constexpr float curveGap = 4.0f;
+    constexpr float panelWidth = 700.0f;
+    constexpr float panelHeight = 520.0f;
+
+    Session session;
+    auto& params = session.mastering();
+    params.eqEnabled.store (true);
+    params.eqBandGainDb[band].store (6.0f);
+
+    HeadlessPanel panel;
+    auto viewA = imgui::makeMasteringEqView (params, nullptr);
+    const ImVec2 outside (-100.0f, -100.0f);
+    panel.movePointer (outside);
+    panel.frame (*viewA);
+    panel.frame (*viewA);
+    panel.frame (*viewA);
+
+    const float plotLeft = outerInset + 1.0f;
+    const float plotRight = panelWidth - outerInset - 1.0f;
+    const float plotTop = outerInset + headerHeight + headerGap + 1.0f;
+    const float remaining = (panelHeight - outerInset)
+                          - (outerInset + headerHeight + headerGap);
+    const float controlsHeight = std::clamp (remaining * 0.48f, 130.0f, 210.0f);
+    const float plotBottom = plotTop + remaining - controlsHeight - curveGap - 2.0f;
+    const float frequency = params.eqBandFreq[band].load();
+    const float frequencyFraction = (std::log10 (frequency) - std::log10 (freqMinHz))
+                                  / (std::log10 (freqMaxHz) - std::log10 (freqMinHz));
+    const float dotX = plotLeft + frequencyFraction * (plotRight - plotLeft);
+
+    for (float y = plotTop; y <= plotBottom && params.eqBandGainDb[band].load() != 0.0f;
+         y += 4.0f)
+    {
+        panel.movePointer (ImVec2 (dotX, y));
+        panel.frame (*viewA);
+        panel.frame (*viewA);
+
+        panel.pressPointer (true);
+        panel.frame (*viewA);
+        panel.pressPointer (false);
+        panel.frame (*viewA);
+        panel.pressPointer (true);
+        panel.frame (*viewA);
+        panel.pressPointer (false);
+        panel.frame (*viewA);
+
+        if (params.eqBandGainDb[band].load() != 0.0f)
+        {
+            panel.movePointer (outside);
+            panel.setDeltaTime (1.0f);
+            panel.frame (*viewA);
+            panel.setDeltaTime (1.0f / 60.0f);
+        }
+    }
+    REQUIRE_THAT (params.eqBandGainDb[band].load(), Catch::Matchers::WithinAbs (0.0f, 0.0));
+
+    panel.movePointer (outside);
+    panel.frame (*viewA);
+    panel.frame (*viewA);
+    const std::vector<ImVec2> viewAVertices = panel.lastVertexPositions();
+
+    auto viewB = imgui::makeMasteringEqView (params, nullptr);
+    panel.frame (*viewB);
+    panel.frame (*viewB);
+    const auto& viewBVertices = panel.lastVertexPositions();
+
+    REQUIRE (viewAVertices.size() == viewBVertices.size());
+    float maximumDelta = 0.0f;
+    for (std::size_t i = 0; i < viewAVertices.size(); ++i)
+    {
+        maximumDelta = std::max (maximumDelta,
+                                 std::abs (viewAVertices[i].x - viewBVertices[i].x));
+        maximumDelta = std::max (maximumDelta,
+                                 std::abs (viewAVertices[i].y - viewBVertices[i].y));
+    }
+    REQUIRE_THAT (maximumDelta, Catch::Matchers::WithinAbs (0.0f, 1.0e-5f));
 }
 
 TEST_CASE ("the mastering limiter view draws without writing to its parameters")

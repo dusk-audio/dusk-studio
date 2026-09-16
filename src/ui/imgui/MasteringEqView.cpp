@@ -513,6 +513,7 @@ private:
             {
                 params.eqBandGainDb[band].store (0.0f, std::memory_order_relaxed);
                 gainDb[band] = 0.0f;
+                curvesDirty = true;
             }
             draggingBand = -1;
             return;
@@ -538,6 +539,9 @@ private:
                                  xToFreq (mouse.x));
         params.eqBandFreq[band].store (hz, std::memory_order_relaxed);
         freqHz[band] = hz;
+        // The cache already holds what was just stored, so rebuildBandCache() sees no
+        // change next frame: mark the curve stale here or it stays at the old shape.
+        curvesDirty = true;
     }
 
     void drawBandDots (dw::Context& ctx)
@@ -640,6 +644,7 @@ private:
             {
                 freqHz[b] = clampf (kBandRanges[b].minHz, kBandRanges[b].maxHz, result.value);
                 params.eqBandFreq[b].store (freqHz[b], std::memory_order_relaxed);
+                curvesDirty = true;
             }
 
             std::snprintf (readout, sizeof readout, "%.1f dB",
@@ -651,6 +656,7 @@ private:
             {
                 gainDb[b] = clampf (-12.0f, 12.0f, result.value);
                 params.eqBandGainDb[b].store (gainDb[b], std::memory_order_relaxed);
+                curvesDirty = true;
             }
 
             // Shelf bands hide their Q: the dial is not musically useful for the gentle
@@ -666,6 +672,7 @@ private:
             {
                 q[b] = clampf (0.3f, 6.0f, result.value);
                 params.eqBandQ[b].store (q[b], std::memory_order_relaxed);
+                curvesDirty = true;
             }
         }
     }
