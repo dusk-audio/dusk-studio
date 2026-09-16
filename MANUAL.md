@@ -376,12 +376,13 @@ Current beta DMGs are not notarized. On recent macOS releases, the first-open ap
 
 1. Double-click the downloaded `dusk-studio-<version>-macOS-arm64.dmg` to mount it.
 2. Drag **DuskStudio.app** onto the **Applications** shortcut in the DMG window.
-3. Open **DuskStudio.app** from Applications once. If macOS blocks the unsigned beta build, dismiss the warning so it records the attempted launch.
-4. Open **System Settings → Privacy & Security**. Scroll to the bottom.
-5. Click **Open Anyway** for Dusk Studio.
-6. Enter your password if prompted.
-7. In the second warning, click **Open**.
-8. Subsequent launches work normally; macOS only asks once per build.
+3. Open **DuskStudio.app** from Applications once. macOS shows *"DuskStudio" Not Opened - Apple could not verify "DuskStudio" is free of malware*. Click **Done** (not Move to Trash); the attempt is what unlocks the next step.
+4. Open **System Settings → Privacy & Security** and scroll to the **Security** section.
+5. Next to *"DuskStudio" was blocked to protect your Mac*, click **Open Anyway**.
+6. In the *Open "DuskStudio"?* dialog, click **Open Anyway**.
+7. Approve with Touch ID or an administrator password.
+8. Dusk Studio then asks for microphone access. Allow it, or recording stays silent.
+9. Subsequent launches work normally; macOS only asks once per build.
 
 If you later install a newer build (different binary hash), the bypass dance repeats once for that new build.
 

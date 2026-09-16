@@ -13,8 +13,10 @@ Hardened session and plugin recovery, sandboxed plugin hosting on all three plat
   the system; the first three are not on a stock desktop install. `README-linux.txt`
   in the tarball lists every linked library with its Debian/Ubuntu package name
   and an `apt install` line. libsodium is compiled in and needs nothing.
-- **macOS** (`.dmg`, Apple Silicon / arm64 only): unsigned. Right-click the app
-  -> Open to bypass Gatekeeper on first launch.
+- **macOS** (`.dmg`, Apple Silicon / arm64 only): ad-hoc signed, not
+  notarized. The first launch is blocked: click Done, then System Settings ->
+  Privacy & Security -> Open Anyway, Open Anyway again, and approve with Touch
+  ID or your password. Allow microphone access when asked.
 - **Windows** (`.msi`, x64): unsigned. SmartScreen may warn - choose More info
   -> Run anyway. Statically linked, no vc_redist needed. The installer includes
   a pinned Mesa llvmpipe renderer, so the notepad works in virtual machines,
