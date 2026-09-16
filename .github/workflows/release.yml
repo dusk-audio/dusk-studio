@@ -268,7 +268,7 @@ jobs:
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
-            -DDAF_PATH="${RUNNER_TEMP}/DAF" \
+            -DDAF_PATH="${RUNNER_TEMP}/DAF"
           for option in DUSKSTUDIO_ENABLE_NATIVE_UI DUSKSTUDIO_NATIVE_CLAP DUSKSTUDIO_NATIVE_LV2 DUSKSTUDIO_NATIVE_VST3; do
             grep -q "^${option}:BOOL=ON$" build-linux/CMakeCache.txt || {
               echo "::error::${option} was not enabled in the app configure" >&2; exit 1; }
@@ -322,7 +322,7 @@ jobs:
             -DDUSKSTUDIO_SODIUM_ROOT="${RUNNER_TEMP}/libsodium" \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
-            -DDAF_PATH="${RUNNER_TEMP}/DAF" \
+            -DDAF_PATH="${RUNNER_TEMP}/DAF"
           cmake --build build-tests --target dusk-studio-tests -j6
           ctest --test-dir build-tests --output-on-failure
 

@@ -150,7 +150,7 @@ jobs:
             -DDUSKSTUDIO_REQUIRE_PIPEWIRE=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
-            -DDAF_PATH="${RUNNER_TEMP}/DAF" \
+            -DDAF_PATH="${RUNNER_TEMP}/DAF"
 
       - name: Build tests (TSan)
         run: cmake --build build-tsan --target dusk-studio-tests -j6
