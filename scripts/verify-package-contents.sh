@@ -118,6 +118,10 @@ if [[ ${#missing[@]} -gt 0 ]]; then
     for path in "${missing[@]}"; do
         echo "  $path" >&2
     done
+    if [[ "$PLATFORM" == "windows" ]]; then
+        echo "extracted names under $ROOT:" >&2
+        find "$ROOT" -type f | head -40 | sed "s|^$ROOT/||; s/^/  /" >&2
+    fi
     echo "see packaging/contents.txt" >&2
     exit 1
 fi
