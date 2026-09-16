@@ -148,6 +148,16 @@ jobs:
       - name: Smoke launch (--version)
         run: build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio --version
 
+      - name: Headless self-test (DUSKSTUDIO_RUN_SELFTEST=1)
+        # Same coverage as the Linux job: full AudioEngine construction, plugin
+        # scan attempt, synthetic DSP. The runner has no GNU timeout, so the
+        # bound is perl's alarm, which survives the exec. 90 s because there is
+        # no audio device and the readiness wait burns its budget first.
+        run: |
+          perl -e 'alarm shift @ARGV; exec @ARGV' 90 \
+            env DUSKSTUDIO_RUN_SELFTEST=1 \
+            build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio
+
       - name: Configure + build + run tests
         run: |
           set -euo pipefail

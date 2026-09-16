@@ -36,7 +36,12 @@ Each line below is a check somebody can run and get a yes or a no.
   Linux arm64, macOS arm64 clang, and Windows MSVC x64.
 - All six of those jobs are required checks on `main`.
 - `tools/juce-gate.sh` passes. Counts may fall. They may not rise.
-- `scripts/run-selftest-xvfb.sh` passes on a private display.
+- `scripts/run-selftest-xvfb.sh` passes on a private display, and CI runs the
+  headless self-test on the Linux, arm64 and macOS build jobs and in the Linux
+  and macOS release jobs. The Windows jobs do not run it: the smoke test still
+  skips that leg after #504, and no CI run has shown the harness completing on
+  a Windows runner, so Windows self-test coverage stays a manual step on a real
+  desktop session until a run proves otherwise.
 - The Windows self-test harnesses run to completion instead of hanging.
 - The post-download smoke test passes against the published artifact on each
   of the three platforms.
@@ -114,7 +119,7 @@ Every open issue, one bucket each; completed release work is marked done.
 | 535 | Local instrument browser for soundfonts on disk | 1.0 | The offline half of the SFZ work, with no network, catalog or archive code. |
 | 536 | Walk the demo path on packaged builds and file what it snags on | 1.0 | Individual demo-path bugs have been fixed one at a time. Nobody has walked the whole path on a shipped build. |
 | 586 | Multi-Comp 2 donor prerequisites | 1.0 | What the donor core needs before #342 can be built against it. |
-| 605 | Self-test coverage across CI platforms | 1.0 | Self-test runs only on Linux CI; macOS, Windows and `release.yml` skip it. |
+| 605 | Self-test coverage across CI platforms | 1.0 | macOS CI and the Linux and macOS release jobs now run it; the Windows leg stays manual (see the checklist). |
 | 606 | Built-in suite placeholder in package contract | 1.0 | The contract listed plugin files the in-binary suite never produces. |
 | 607 | Signing wording in release docs | 1.0 | README, QUICKSTART and MANUAL described all builds as unsigned after the workflow gained signing. |
 | 608 | Release-plan status drift | 1.0 | This document listed #531 to #534 as open after they shipped. |

@@ -120,6 +120,7 @@ jobs:
             libxinerama-dev libxrandr-dev libxrender-dev libxss-dev
             libwebkit2gtk-4.0-dev libgl1-mesa-dev libglu1-mesa-dev
             libwayland-dev libxkbcommon-dev libdecor-0-dev
+            xvfb
             xz-utils
 
       - name: Clone JUCE (Dusk-owned Wayland mirror, pinned)
@@ -283,6 +284,14 @@ jobs:
 
       - name: Build (Release)
         run: cmake --build build-linux -j6
+
+      - name: Headless self-test (xvfb, DUSKSTUDIO_RUN_SELFTEST=1)
+        # The release gate has to prove the packaged binary brings its engine
+        # up, not only that it links. 60 s: no audio device on the runner.
+        run: |
+          timeout 60 xvfb-run --auto-servernum \
+            env DUSKSTUDIO_RUN_SELFTEST=1 \
+            build-linux/DuskStudio_artefacts/Release/DuskStudio
 
       - name: Verify libsodium is not a runtime dependency
         # libsodium-dev is installed, so a regression in the CMake selection
@@ -986,6 +995,14 @@ jobs:
         # Preserve Ninja's five-worker default on this three-core runner,
         # but keep the limit explicit so generator changes cannot unbound it.
         run: cmake --build build -j5
+
+      - name: Headless self-test (DUSKSTUDIO_RUN_SELFTEST=1)
+        # The runner has no GNU timeout; perl's alarm survives the exec and
+        # bounds the run. 90 s because there is no audio device.
+        run: |
+          perl -e 'alarm shift @ARGV; exec @ARGV' 90 \
+            env DUSKSTUDIO_RUN_SELFTEST=1 \
+            build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio
 
       - name: Verify macOS 11 sandbox helper
         run: |
