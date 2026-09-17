@@ -1672,6 +1672,8 @@ Dusk Audio's Tape Echo 2 plug-in, compiled into Dusk Studio and running the plug
 
 The unit reports no latency. Its settings are saved with the session as the plug-in's own parameter values, and its editor is the plug-in's own.
 
+![The Tape Echo 2 unit's editor.](docs/images/bi-03-tape-echo.png)
+
 ### Tape
 
 Per-channel tape colour, running the same Tape Machine engine as the master bus. Two decks, four speeds, four tape formulations and both EQ standards.

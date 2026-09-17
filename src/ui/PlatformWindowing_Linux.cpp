@@ -9,6 +9,7 @@
 #include "X11EditorTeardownError.h"
 
 #include <X11/Xproto.h>
+#include <X11/Xutil.h>
 
 #include <fcntl.h>
 #include <sys/wait.h>
@@ -16,11 +17,14 @@
 
 #include <cerrno>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
 #include <system_error>
+#include <utility>
+#include <vector>
 
 namespace duskstudio::platform
 {
@@ -160,6 +164,105 @@ int editorTeardownXErrorHandler (::Display* display, ::XErrorEvent* error)
     std::abort();
 }
 
+// Window captures read on connections of their own. The handler they rely on is
+// installed once for the process and reads only this registry, which is never
+// destroyed, so an error delivered on any thread cannot reach a capture's stack
+// frame. The only Xlib call made under the mutex is the one-time
+// XSetErrorHandler, which takes Xlib's global lock and nothing Xlib holds while
+// it runs a handler, so a handler waiting on the mutex cannot deadlock it.
+struct CaptureErrorRegistry
+{
+    std::mutex mutex;
+    std::vector<std::pair<::Display*, bool>> failedByDisplay;
+    ::XErrorHandler previous = nullptr;
+    bool installed = false;
+};
+
+CaptureErrorRegistry& captureErrors()
+{
+    static auto* const registry = new CaptureErrorRegistry();
+    return *registry;
+}
+
+int captureXErrorHandler (::Display* display, ::XErrorEvent* error)
+{
+    auto& registry = captureErrors();
+    ::XErrorHandler previous = nullptr;
+    {
+        const std::lock_guard<std::mutex> lock (registry.mutex);
+        for (auto& entry : registry.failedByDisplay)
+        {
+            if (entry.first == display)
+            {
+                entry.second = true;
+                return 0;
+            }
+        }
+        previous = registry.previous;
+    }
+    if (previous != nullptr)
+        return previous (display, error);
+
+    std::fprintf (stderr,
+                  "[Dusk Studio/X] unexpected X error beside a window capture "
+                  "(error %u, request %u)\n",
+                  error != nullptr ? static_cast<unsigned int> (error->error_code) : 0u,
+                  error != nullptr ? static_cast<unsigned int> (error->request_code) : 0u);
+    std::fflush (stderr);
+    std::abort();
+}
+
+// Registers one capture connection for its lifetime. The caller holds
+// editorTeardownTrapMutex, so the one-time install cannot interleave with a
+// teardown trap swapping the handler and then restoring over it.
+class ScopedCaptureErrorTrap
+{
+public:
+    explicit ScopedCaptureErrorTrap (::Display* captureDisplay) : display (captureDisplay)
+    {
+        auto& registry = captureErrors();
+        const std::lock_guard<std::mutex> lock (registry.mutex);
+        // Installed and published under the lock the handler takes, so an error
+        // on another connection waits for the previous handler instead of
+        // finding none and aborting.
+        if (! registry.installed)
+        {
+            registry.previous = ::XSetErrorHandler (&captureXErrorHandler);
+            registry.installed = true;
+        }
+        registry.failedByDisplay.emplace_back (display, false);
+    }
+
+    ~ScopedCaptureErrorTrap()
+    {
+        ::XSync (display, False);
+        auto& registry = captureErrors();
+        const std::lock_guard<std::mutex> lock (registry.mutex);
+        auto& entries = registry.failedByDisplay;
+        entries.erase (std::remove_if (entries.begin(), entries.end(),
+                                       [this] (const auto& entry) { return entry.first == display; }),
+                       entries.end());
+    }
+
+    ScopedCaptureErrorTrap (const ScopedCaptureErrorTrap&) = delete;
+    ScopedCaptureErrorTrap& operator= (const ScopedCaptureErrorTrap&) = delete;
+
+    // Delivers whatever the last request left queued, so a failure is seen here.
+    bool ok()
+    {
+        ::XSync (display, False);
+        auto& registry = captureErrors();
+        const std::lock_guard<std::mutex> lock (registry.mutex);
+        for (const auto& entry : registry.failedByDisplay)
+            if (entry.first == display)
+                return ! entry.second;
+        return false;
+    }
+
+private:
+    ::Display* const display;
+};
+
 // The handler is process-global but the trap it reads is a stack frame, so an
 // exception out of teardown() must not be able to leave the two mismatched.
 // The trap is fully populated before publication and never mutated while
@@ -229,6 +332,67 @@ bool hasUsableDisplay()
 }
 
 double nativeViewBackingScale (void*) { return 1.0; }
+
+bool captureNativeWindowToPpm (std::uintptr_t nativeWindow, const std::string& path)
+{
+    if (nativeWindow == 0)
+        return false;
+    auto* display = ::XOpenDisplay (nullptr);
+    if (display == nullptr)
+        return false;
+
+    ::XImage* image = nullptr;
+    {
+        const std::lock_guard<std::mutex> lock (editorTeardownTrapMutex);
+        ScopedCaptureErrorTrap errors (display);
+        ::XWindowAttributes attributes {};
+        if (::XGetWindowAttributes (display, (::Window) nativeWindow, &attributes) != 0
+            && errors.ok() && attributes.map_state == IsViewable
+            && attributes.width > 0 && attributes.height > 0)
+        {
+            image = ::XGetImage (display, (::Window) nativeWindow, 0, 0,
+                                 (unsigned) attributes.width, (unsigned) attributes.height,
+                                 AllPlanes, ZPixmap);
+            if (image != nullptr && ! errors.ok())
+            {
+                XDestroyImage (image);
+                image = nullptr;
+            }
+        }
+    }
+
+    bool written = false;
+    if (image != nullptr)
+    {
+        const auto channel = [] (unsigned long pixel, unsigned long mask)
+        {
+            if (mask == 0)
+                return (unsigned char) 0;
+            int shift = 0;
+            while (((mask >> shift) & 1ul) == 0)
+                ++shift;
+            return (unsigned char) (((pixel & mask) >> shift) * 255ul / (mask >> shift));
+        };
+
+        if (auto* file = std::fopen (path.c_str(), "wb"))
+        {
+            bool ok = std::fprintf (file, "P6\n%d %d\n255\n", image->width, image->height) > 0;
+            for (int y = 0; ok && y < image->height; ++y)
+                for (int x = 0; ok && x < image->width; ++x)
+                {
+                    const auto pixel = XGetPixel (image, x, y);
+                    const unsigned char rgb[3] { channel (pixel, image->red_mask),
+                                                 channel (pixel, image->green_mask),
+                                                 channel (pixel, image->blue_mask) };
+                    ok = std::fwrite (rgb, 1, 3, file) == 3;
+                }
+            written = (std::fclose (file) == 0) && ok;
+        }
+        XDestroyImage (image);
+    }
+    ::XCloseDisplay (display);
+    return written;
+}
 
 void runX11EditorTeardown (std::uint64_t editorWindowId,
                            const std::function<void()>& teardown)

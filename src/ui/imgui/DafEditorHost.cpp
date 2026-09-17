@@ -320,5 +320,10 @@ void DafEditorHost::close() { impl->close(); }
 
 bool DafEditorHost::isOpen() const noexcept { return impl->isOpen(); }
 
+std::uintptr_t DafEditorHost::nativeWindow() const noexcept
+{
+    return impl->editor != nullptr && ! impl->closeRequested ? impl->editor->nativeWindow() : 0;
+}
+
 void DafEditorHost::tick() { impl->tick(); }
 } // namespace duskstudio::imgui

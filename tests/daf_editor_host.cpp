@@ -63,6 +63,7 @@ public:
 
     std::uint32_t width() const noexcept override  { return sizeW; }
     std::uint32_t height() const noexcept override { return sizeH; }
+    std::uintptr_t nativeWindow() const noexcept override { return 0x5a5a; }
 
     // The editor's side: what the plug-in's UI would call.
     void edit (std::uint32_t index, float value) { callbacks.parameterEdited (index, value); }
@@ -277,6 +278,25 @@ TEST_CASE ("a plug-in editor closes over two ticks and reopens", "[builtin][daf]
     rig.host.tick();
     REQUIRE (rig.unit.editorsBuilt == 2);
     REQUIRE (rig.unit.live->idles == 1);
+}
+
+TEST_CASE ("a plug-in editor host names its editor's window only while it is open",
+           "[builtin][daf][editor]")
+{
+    Rig rig;
+    REQUIRE (rig.host.nativeWindow() == 0u);
+
+    REQUIRE (rig.host.open (kParent, rig.wanted));
+    rig.host.tick();
+    REQUIRE (rig.host.nativeWindow() == 0x5a5au);
+
+    // A window on its way down is not one to read.
+    rig.host.close();
+    REQUIRE (rig.host.nativeWindow() == 0u);
+    rig.host.tick();
+    rig.host.tick();
+    REQUIRE_FALSE (rig.host.isOpen());
+    REQUIRE (rig.host.nativeWindow() == 0u);
 }
 
 TEST_CASE ("an editor that fails inside its own pump takes itself down",

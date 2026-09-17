@@ -4158,6 +4158,24 @@ void ChannelStripComponent::openBuiltinEditorForCapture (const std::string& capt
    #endif
 }
 
+void ChannelStripComponent::captureBuiltinPluginEditor (const std::string& capturePath)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (builtinPluginEditor != nullptr && builtinPluginEditor->isOpen()
+        && ! duskstudio::platform::captureNativeWindowToPpm (
+               builtinPluginEditor->nativeWindow(), capturePath))
+    {
+        // A partial file, or one left by an earlier run, would still be
+        // converted into a manual figure.
+        std::remove (capturePath.c_str());
+        std::fprintf (stderr, "[capture] could not read the unit editor back to %s\n",
+                      capturePath.c_str());
+    }
+   #else
+    (void) capturePath;
+   #endif
+}
+
 void ChannelStripComponent::openBuiltinEditorPopup()
 {
    #if ! DUSKSTUDIO_HAS_NATIVE_UI

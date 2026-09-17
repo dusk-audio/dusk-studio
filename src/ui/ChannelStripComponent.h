@@ -433,6 +433,7 @@ public:
     void closeBuiltinEditorPopup();
     bool isBuiltinEditorOpen() const noexcept;
     void openBuiltinEditorForCapture (const std::string& capturePath);
+    void captureBuiltinPluginEditor (const std::string& capturePath);
 
 private:
 

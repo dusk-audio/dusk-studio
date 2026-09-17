@@ -93,6 +93,9 @@ public:
     // True from a successful open() until the closed callback has run.
     bool isOpen() const noexcept;
 
+    // The open editor's native window; zero while none is open.
+    std::uintptr_t nativeWindow() const noexcept;
+
     // One turn: pump the editor, push what the unit's parameters now hold, and
     // follow the caller's geometry.
     void tick();

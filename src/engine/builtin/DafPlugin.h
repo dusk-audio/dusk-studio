@@ -61,6 +61,10 @@ public:
 
     virtual std::uint32_t width() const noexcept = 0;
     virtual std::uint32_t height() const noexcept = 0;
+
+    // The editor's own native window, for reading its pixels back; zero when it
+    // has none.
+    virtual std::uintptr_t nativeWindow() const noexcept { return 0; }
 };
 
 // One of Dusk's own DAF plug-ins compiled into the app, reached through a plain

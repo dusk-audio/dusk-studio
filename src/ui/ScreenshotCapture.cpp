@@ -628,7 +628,15 @@ void MainComponent::captureNativePanels (std::string outDir)
                                  ? self.consoleView->getStripComponent (0) : nullptr)
                     strip0->openBuiltinEditorForCapture (outDir + "/" + name + ".ppm");
             } });
-            steps->push_back ({ 1500, [] (MainComponent& self)
+            // A unit with its own plug-in editor draws through a window the
+            // panel capture cannot reach, so that one is read back once painted.
+            steps->push_back ({ 1200, [outDir, name] (MainComponent& self)
+            {
+                if (auto* strip0 = self.consoleView != nullptr
+                                 ? self.consoleView->getStripComponent (0) : nullptr)
+                    strip0->captureBuiltinPluginEditor (outDir + "/" + name + ".ppm");
+            } });
+            steps->push_back ({ 300, [] (MainComponent& self)
             {
                 if (auto* strip0 = self.consoleView != nullptr
                                  ? self.consoleView->getStripComponent (0) : nullptr)

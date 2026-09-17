@@ -120,6 +120,7 @@ private:
 
 
 bool hasUsableDisplay()                                   { return true; }
+bool captureNativeWindowToPpm (std::uintptr_t, const std::string&) { return false; }
 double nativeViewBackingScale (void* nativeViewHandle)
 {
     auto* const view = static_cast<NSView*> (nativeViewHandle);
