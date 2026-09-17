@@ -421,6 +421,14 @@ TEST_CASE ("X11 editor teardown trap is unwind safe, lock free and backend check
     const auto handler = definitionBody (linuxSource, "editorTeardownXErrorHandler");
     REQUIRE (handler.find ("activeEditorTeardownTrap.load") != std::string::npos);
 
+    // An error on another connection's thread can reach the handler after the
+    // scope has gone, so what it reads outlives the scope, and the scope waits
+    // for a handler that took the pointer before it was unpublished.
+    REQUIRE (linuxSource.find ("static EditorTeardownErrorTrap storage") != std::string::npos);
+    REQUIRE (handler.find ("editorTeardownHandlersInFlight.fetch_add") != std::string::npos);
+    requireInOrder (guardDtor, "activeEditorTeardownTrap.store",
+                    "editorTeardownHandlersInFlight.load");
+
     // bringWindowToFront casts the chosen peer's handle to an X11 Window, so a
     // real wl_surface peer must never be offered as the focus target.
     const auto sibling = definitionBody (linuxSource, "pickSiblingFocusTargetPeer");

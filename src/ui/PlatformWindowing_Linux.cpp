@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <mutex>
 #include <system_error>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -130,10 +131,28 @@ struct EditorTeardownErrorTrap
 };
 
 std::atomic<EditorTeardownErrorTrap*> activeEditorTeardownTrap { nullptr };
+std::atomic<int> editorTeardownHandlersInFlight { 0 };
 std::mutex editorTeardownTrapMutex;
+
+// Process lifetime, like the capture registry below: the handler is global and
+// an error on another connection's thread can reach it after the teardown scope
+// has gone, so what it reads cannot be that scope's own storage.
+EditorTeardownErrorTrap& editorTeardownTrapStorage()
+{
+    static EditorTeardownErrorTrap storage;
+    return storage;
+}
 
 int editorTeardownXErrorHandler (::Display* display, ::XErrorEvent* error)
 {
+    // Counted around every read of the trap, so a scope that has unpublished it
+    // can wait for a handler that took the pointer first.
+    struct InFlight
+    {
+        InFlight()  { editorTeardownHandlersInFlight.fetch_add (1, std::memory_order_acq_rel); }
+        ~InFlight() { editorTeardownHandlersInFlight.fetch_sub (1, std::memory_order_acq_rel); }
+    } counted;
+
     auto* trap = activeEditorTeardownTrap.load (std::memory_order_acquire);
     if (trap != nullptr && error != nullptr && display == trap->display
         && x11::shouldSuppressEditorTeardownError (
@@ -263,13 +282,14 @@ private:
     ::Display* const display;
 };
 
-// The handler is process-global but the trap it reads is a stack frame, so an
-// exception out of teardown() must not be able to leave the two mismatched.
-// The trap is fully populated before publication and never mutated while
-// published, so the handler only ever observes a complete one.
+// The handler is process-global, so an exception out of teardown() must not be
+// able to leave the two mismatched. The trap is fully populated before
+// publication and never mutated while published, so the handler only ever
+// observes a complete one.
 struct ScopedEditorTeardownTrap
 {
     ScopedEditorTeardownTrap (::Display* display, std::uint64_t editorWindowId)
+        : trap (editorTeardownTrapStorage())
     {
         trap.display = display;
         trap.editorWindowId = editorWindowId;
@@ -284,12 +304,17 @@ struct ScopedEditorTeardownTrap
         ::XSync (trap.display, False);
         ::XSetErrorHandler (trap.previous);
         activeEditorTeardownTrap.store (nullptr, std::memory_order_release);
+        // Unpublished first, so no further handler can take the pointer, then
+        // drained: whoever took it before that is still reading the trap, and
+        // the next teardown rewrites the same storage.
+        while (editorTeardownHandlersInFlight.load (std::memory_order_acquire) != 0)
+            std::this_thread::yield();
     }
 
     ScopedEditorTeardownTrap (const ScopedEditorTeardownTrap&) = delete;
     ScopedEditorTeardownTrap& operator= (const ScopedEditorTeardownTrap&) = delete;
 
-    EditorTeardownErrorTrap trap;
+    EditorTeardownErrorTrap& trap;
 };
 
 juce::ComponentPeer* pickSiblingFocusTargetPeer (juce::Component& departing)
