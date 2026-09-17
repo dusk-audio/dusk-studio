@@ -4726,6 +4726,10 @@ void ChannelStripComponent::timerCallback()
     // just an atomic-pointer read + string compare against the cached name.
     refreshPluginSlotButton();
 
+    // A device that goes while the popup is open takes its inputs with it.
+    if (ioConfigModal.isOpen())
+        refreshInputAvailability();
+
     // A native editor that was covered during peer recreation must stay behind
     // that cover. Reopen only after every modal has gone, and consume the request
     // before attempting so a failed attach cannot retry forever.
