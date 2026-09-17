@@ -100,11 +100,12 @@ straight from the extracted tarball.
    `git tag -a vX.Y.Z -m "Dusk Studio X.Y.Z"` followed by
    `git push origin vX.Y.Z`.
 5. Wait for the `Dusk Studio release` workflow. A complete release carries
-   exactly six assets on the private `dusk-audio/dusk-studio-releases` release:
-   two Linux tarballs, one macOS DMG, one Windows MSI, `MANUAL.pdf`, and one
-   sorted `SHA256SUMS` covering all five payloads. The workflow fans every
+   exactly seven assets on the private `dusk-audio/dusk-studio-releases` release:
+   two Linux tarballs, one macOS DMG, one Windows MSI, `MANUAL.pdf`, one
+   sorted `SHA256SUMS` covering all five payloads, and its detached signature
+   `SHA256SUMS.asc`. The workflow fans every
    platform artifact into one publisher and refuses a partial asset set.
 6. Before announcing the release, run
    `scripts/verify-release-assets.sh vX.Y.Z`. Do not announce unless it reports
-   all six assets and a populated release-summary slot.
+   all seven assets and a populated release-summary slot.
 7. Pinned support note: paste `DuskStudio --version` output into any DM.

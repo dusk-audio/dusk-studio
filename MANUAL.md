@@ -396,9 +396,9 @@ xattr -dr com.apple.quarantine "/Applications/DuskStudio.app"
 
 Windows SmartScreen blocks unsigned MSIs by default. The bypass is one click but it's hidden behind a small link.
 
-1. Double-click the downloaded `DuskStudio-{version}.msi`.
+1. Double-click the downloaded `dusk-studio-<version>-Windows-x64.msi`.
 2. SmartScreen shows: *"Windows protected your PC"* with a **Don't run** button.
-3. Click the small **More info** link near the top of the dialog. SmartScreen expands to show *"App: DuskStudio-{version}.msi / Publisher: Unknown publisher"*.
+3. Click the small **More info** link near the top of the dialog. SmartScreen expands to show *"App: dusk-studio-<version>-Windows-x64.msi / Publisher: Unknown publisher"*.
 4. A new **Run anyway** button appears at the bottom — click it.
 5. The MSI installer runs normally. Accept the install location (`C:\Program Files\Dusk Studio` by default) and finish.
 6. Launch Dusk Studio from the **Start menu** (under *Dusk Studio*) or the **desktop shortcut** the installer creates.
@@ -422,9 +422,11 @@ Get-FileHash -Algorithm SHA256 dusk-studio-*-Windows-x64.msi
 # Compare against that file's line in the published SHA256SUMS.
 ```
 
-From 1.0 on, `SHA256SUMS` ships with a detached OpenPGP signature, `SHA256SUMS.asc`, and the public key that made it is published with the release. Before you import the key, check its fingerprint against a copy that did not travel with the download: the same key is kept in the source repository at `packaging/release-signing.pub`, and its fingerprint is printed on the project site. Import only if the two agree, then check the signature before you check the hashes:
+From 0.14 on, `SHA256SUMS` ships with a detached OpenPGP signature, `SHA256SUMS.asc`. The public key that made it is not a release asset: it is kept in the source repository at `packaging/release-signing.pub`, so download it from the tag that matches your release. Before you import the key, compare its fingerprint with the one printed on the project site. Import only if the two agree, then check the signature before you check the hashes:
 
 ```bash
+VERSION=0.14.0   # the release you downloaded
+curl -fsSLO "https://raw.githubusercontent.com/dusk-audio/dusk-studio/v$VERSION/packaging/release-signing.pub"
 gpg --show-keys --with-fingerprint release-signing.pub
 # Compare the fingerprint line with the one published on the project site.
 gpg --import release-signing.pub

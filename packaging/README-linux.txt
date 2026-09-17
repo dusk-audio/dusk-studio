@@ -59,8 +59,7 @@ The right-hand column is the Debian/Ubuntu package name. On those:
         libasound2 libfreetype6 libfontconfig1 libgl1 libx11-6 libxcursor1 \
         libxext6 libxrandr2 libdbus-1-3
 
-Signed SFZ catalog authentication needs nothing from the host; libsodium is
-compiled into the binary.
+libsodium is compiled into the binary and needs nothing from the host.
 
 
 LICENSE
