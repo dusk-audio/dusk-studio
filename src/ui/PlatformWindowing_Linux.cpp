@@ -132,6 +132,12 @@ struct EditorTeardownErrorTrap
 
 std::atomic<EditorTeardownErrorTrap*> activeEditorTeardownTrap { nullptr };
 std::atomic<int> editorTeardownHandlersInFlight { 0 };
+// Xlib reads the handler pointer when it dispatches, so a handler can enter
+// after a scope has unpublished its trap, or between the install and the
+// publication. It must still reach the handler that was in place outside
+// teardown rather than take the fatal path, so that one is kept for the
+// process rather than only inside the trap.
+std::atomic<::XErrorHandler> handlerBeforeEditorTeardown { nullptr };
 std::mutex editorTeardownTrapMutex;
 
 // Process lifetime, like the capture registry below: the handler is global and
@@ -168,8 +174,11 @@ int editorTeardownXErrorHandler (::Display* display, ::XErrorEvent* error)
         return 0;
     }
 
-    if (trap != nullptr && trap->previous != nullptr)
-        return trap->previous (display, error);
+    const auto previous = trap != nullptr
+                            ? trap->previous
+                            : handlerBeforeEditorTeardown.load (std::memory_order_acquire);
+    if (previous != nullptr)
+        return previous (display, error);
 
     // A null previous handler means Xlib's fatal default was active. Preserve
     // that contract rather than silently accepting an unrelated protocol bug.
@@ -293,7 +302,11 @@ struct ScopedEditorTeardownTrap
     {
         trap.display = display;
         trap.editorWindowId = editorWindowId;
-        trap.previous = ::XSetErrorHandler (&editorTeardownXErrorHandler);
+        const auto previous = ::XSetErrorHandler (&editorTeardownXErrorHandler);
+        // Reachable before the trap is published, so an error delivered on
+        // another connection in that gap delegates instead of aborting.
+        handlerBeforeEditorTeardown.store (previous, std::memory_order_release);
+        trap.previous = previous;
         activeEditorTeardownTrap.store (&trap, std::memory_order_release);
     }
 
@@ -306,7 +319,9 @@ struct ScopedEditorTeardownTrap
         activeEditorTeardownTrap.store (nullptr, std::memory_order_release);
         // Unpublished first, so no further handler can take the pointer, then
         // drained: whoever took it before that is still reading the trap, and
-        // the next teardown rewrites the same storage.
+        // the next teardown rewrites the same storage. A handler that enters
+        // after the unpublication finds no trap and delegates through
+        // handlerBeforeEditorTeardown, which outlives every scope.
         while (editorTeardownHandlersInFlight.load (std::memory_order_acquire) != 0)
             std::this_thread::yield();
     }
