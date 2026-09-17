@@ -143,6 +143,13 @@ that will carry a signed 1.0.
 - **Settings > Quickstart works after `install.sh`** (#630). The Linux installer
   now copies `QUICKSTART.md` beside the installed program; the menu item was
   greyed out as not installed.
+- **Transport keys and Escape work while a built-in unit's editor is open**
+  (#629). DuskVerb 2's and Tape Echo 2's own editors kept every key: on Linux
+  whenever the pointer rested on them, on macOS until the app was switched away
+  and back, and after any click inside one the shortcuts stayed dead until the
+  window was clicked. Keys the editor has no use for now reach Dusk Studio, so
+  Space plays and Escape closes the editor; typing in a preset name still goes
+  to the editor.
 - **A track can no longer record from an input the device does not have**
   (#633). A new session routes each track to the input with its own number, so
   on a one-input device every track after the first showed a recording and then
