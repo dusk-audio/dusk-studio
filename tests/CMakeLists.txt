@@ -762,9 +762,17 @@ include(Catch)
 # (Catch2 >= 3.0.1; v3.5.4 is pinned above) makes an all-skipped run exit 0
 # while a real failure still returns its assertion count. Scope it to the [alsa]
 # tag so an unmatched/stale filter on any other test still fails.
+#
+# They also run serially. Each case registers a sequencer client called "Dusk
+# Studio", and the identifiers the seam hands out are built from those names,
+# with an enumeration-order ordinal to tell duplicates apart. Two cases at once
+# are therefore two clients a case cannot tell apart: one resolves a port
+# belonging to the other process, and the hot-plug case counts the other's
+# client arriving as a change.
 catch_discover_tests(dusk-studio-tests
     TEST_SPEC "[alsa]"
-    EXTRA_ARGS --allow-running-no-tests)
+    EXTRA_ARGS --allow-running-no-tests
+    PROPERTIES RUN_SERIAL TRUE)
 # [ipc] cases start the plug-in host process and several assert on timing windows
 # (the park-timeout stub parks against a 250 ms block). Under ctest --parallel the
 # runner's cores are shared, so those windows close; run them serially.
