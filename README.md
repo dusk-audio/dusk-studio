@@ -254,10 +254,12 @@ runs the Catch2 suite on Server 2022 MSVC on every push and PR.
 `linux-sanitizer.yml` runs it under ThreadSanitizer and under ASan plus UBSan on
 every push and PR. A `v*` tag runs `release.yml`, which builds the Windows MSI,
 the macOS DMG, the Linux tarballs and the manual PDF, then publishes them to one
-shared release in the private releases repo. With signing secrets configured it
-signs and notarizes the DMG and Authenticode-signs the MSI; without them a tag
-ships the ad-hoc DMG and the unsigned MSI. A manual dispatch builds the same way
-and publishes nothing.
+shared release in the private releases repo. A tag needs
+`RELEASE_SIGNING_KEY` and `RELEASE_SIGNING_KEY_PASSWORD`, which sign
+`SHA256SUMS`, and fails without them. The macOS and Windows signing credentials
+are optional: with them a tag signs and notarizes the DMG and
+Authenticode-signs the MSI, without them it ships the ad-hoc DMG and the
+unsigned MSI. A manual dispatch builds the same way and publishes nothing.
 
 ## License
 
