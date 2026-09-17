@@ -158,9 +158,10 @@ reimplemented.
    audit, framework revision reconciliation and phases G0-G6 in
    [dejuce-gui-plan.md](dejuce-gui-plan.md) — read that first, this entry is
    the summary it supersedes. The fork stack is now DAF (Dusk Audio Framework):
-   the repos are `dusk-audio/DAF` and `dusk-audio/DAF-Widgets`, all future work
-   is on DAF, and the shared ImGui widget kit lives in DAF-Widgets rather than
-   the plugins repo's former shared widget directory. The spec's Naming section
+   one repository, `dusk-audio/DAF`, carrying pugl and the shared ImGui widget
+   kit in-tree; the kit left the plugins repo's former shared widget directory,
+   and Dusk Studio has consumed only that repository since #598. All future
+   work is on DAF. The spec's Naming section
    records the completed cleanup.
 
 Done since the last queue edit: events remainder (PR #112, zero gate

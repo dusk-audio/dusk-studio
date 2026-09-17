@@ -191,7 +191,7 @@ endif()
 # Dusk Studio's source assumes on Linux; see [src/engine/JuceCompat.h](src/engine/JuceCompat.h)
 # for the API-split shim.
 #
-# A relative -DJUCE_PATH, -DDUSK_PLUGINS_PATH, -DDAF_PATH or -DDAF_WIDGETS_PATH
+# A relative -DJUCE_PATH, -DDUSK_PLUGINS_PATH or -DDAF_PATH
 # is made absolute against this source tree where it is read: the base the
 # top-level uses already resolved it against, and one that does not move when
 # CMake re-runs itself from the build directory. Left relative, tests/ resolves
