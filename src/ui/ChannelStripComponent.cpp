@@ -3782,22 +3782,30 @@ private:
 };
 } // namespace
 
-void ChannelStripComponent::openIoConfigPopup()
+// Inputs the open device does not offer stay listed, greyed, so a session made
+// on a bigger interface still shows what it was set to. R's follow item pairs
+// with wherever L resolves, as Session::resolveInputRForTrack does.
+void ChannelStripComponent::refreshInputAvailability()
 {
-    if (ioConfigModal.isOpen()) { ioConfigModal.close(); return; }
-
-    // Inputs the open device does not offer stay listed, greyed, so a session
-    // made on a bigger interface still shows what it was set to.
     const int width = session.deviceCaptureChannels.load (std::memory_order_relaxed);
     const auto offered = [width] (int channel)
         { return width == Session::kCaptureWidthUnknown || (channel >= 0 && channel < width); };
+    const int leftSource = track.inputSource.load (std::memory_order_relaxed);
+    const int resolvedLeft = leftSource == -2 ? trackIndex : leftSource;
     inputSelector.setItemEnabled (1, offered (trackIndex));
-    inputSelectorR.setItemEnabled (1, offered (trackIndex + 1));
+    inputSelectorR.setItemEnabled (1, resolvedLeft >= 0 && offered (resolvedLeft + 1));
     for (int i = 0; i < 16; ++i)
     {
         inputSelector.setItemEnabled (100 + i, offered (i));
         inputSelectorR.setItemEnabled (100 + i, offered (i));
     }
+}
+
+void ChannelStripComponent::openIoConfigPopup()
+{
+    if (ioConfigModal.isOpen()) { ioConfigModal.close(); return; }
+
+    refreshInputAvailability();
 
     auto panel = std::make_unique<IoConfigPopup> (track.name, trackIndex,
                                                    modeSelector, inputSelector, inputSelectorR,
@@ -5601,6 +5609,7 @@ void ChannelStripComponent::onInputSelectorChanged()
     else if (id == 2)            src = -1;
     else if (id >= 100)          src = id - 100;
     track.inputSource.store (src, std::memory_order_relaxed);
+    refreshInputAvailability();
     refreshIoConfigButton();
 }
 
