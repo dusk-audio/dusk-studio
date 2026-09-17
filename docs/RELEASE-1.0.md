@@ -43,7 +43,6 @@ Each line below is a check somebody can run and get a yes or a no.
   skips that leg after #504, and no CI run has shown the harness completing on
   a Windows runner, so Windows self-test coverage stays a manual step on a real
   desktop session until a run proves otherwise.
-- The Windows self-test harnesses run to completion instead of hanging.
 - The post-download smoke test passes against the published artifact on each
   of the three platforms.
 
@@ -109,7 +108,7 @@ Every open issue, one bucket each; completed release work is marked done.
 | 500 | CloneTrackAction native-insert clone and undo has no coverage | 1.0 | A shipped clone and undo path with no automated test. |
 | 501 | Inline non-modal editor status in the aux slot area | post-1.0 | The unprompted modal was already removed by #459; the remaining alerts are click-initiated. What is left is additive inline status, absorbed by the aux GUI port. |
 | 503 | Small residues from the milestone-6 audits | 1.0 | Four small correctness defects in shipped single-instance and hosting code. |
-| 504 | Windows IPC self-test harnesses resolve the child without .exe and hang | 1.0 | Blocks manual Windows validation. Not a CI gate. See the verdict below. |
+| 504 | Windows IPC self-test harnesses resolve the child without .exe and hang | done | Fixed by #570. Not a CI gate. See the verdict below. |
 | 507 | SIGTERM bypasses the staged shutdown | 1.0-blocker | Logout or a supervisor stop skips the unsaved-changes prompt and leaves plugin children to the reaper. |
 | 508 | Sandboxed slot loaded at runtime loses its child within 200 ms | 1.0-blocker | A shipped sandboxing feature drops the plugin on a real path. |
 | 529 | Sign and notarize the macOS DMG | closed (not planned) | Workflow signing and notarization gates exist, but Developer ID credentials are not configured. |
@@ -138,9 +137,9 @@ are app-level environment-gated paths in `src/DuskStudioApp.cpp`. They appear
 in no workflow, no test target and no script. The Windows release gate is
 therefore unaffected by the hang.
 
-It still ships in 1.0. A maintainer validating a Windows candidate by hand
-follows a documented harness that sits forever with no output, and a missing
-child should exit with a failure code rather than wait.
+It was fixed for 1.0 by #570, which resolves the child under its real `.exe`
+name. No CI run has shown the harness completing on a Windows runner, so the
+Windows self-test stays a manual step (see Quality above).
 
 ## Work plan
 
