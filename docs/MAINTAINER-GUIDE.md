@@ -311,7 +311,7 @@ CMake auto-detects three external repos at configure time, on top of three git s
 cd /path/to/dusk-studio
 
 git clone https://github.com/dusk-audio/DAF.git ../DAF
-git -C ../DAF checkout b818178e024a5d28e63c52528af8b2ad2a34e360
+git -C ../DAF checkout 50132e025f625d8b433fc80986c25f1ddf611cc7
 
 ```
 
