@@ -143,6 +143,13 @@ that will carry a signed 1.0.
 - **Settings > Quickstart works after `install.sh`** (#630). The Linux installer
   now copies `QUICKSTART.md` beside the installed program; the menu item was
   greyed out as not installed.
+- **A track can no longer record from an input the device does not have**
+  (#633). A new session routes each track to the input with its own number, so
+  on a one-input device every track after the first showed a recording and then
+  kept nothing. ARM now refuses such a track, says which input is missing and
+  opens the track's input settings to choose one; inputs the device does not
+  offer are greyed out there, and a switch to a smaller device disarms the
+  tracks it cannot feed.
 - **A freshly loaded instrument plays straight away** (#632). Loading one onto a
   track with no MIDI input binds the on-screen keyboard as before and now turns
   on **IN** too; without it the keyboard played nothing.

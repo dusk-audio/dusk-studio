@@ -1544,9 +1544,20 @@ public:
         return deviceCaptureChannels.load (std::memory_order_relaxed) != 0;
     }
 
-    // Drops the arm on every audio track, for a device change that takes the
-    // capture channels away underneath them. Returns how many were disarmed so
-    // the caller can decide whether to say anything. Message thread only.
+    // The input an audio track would record from that the open device does not
+    // offer: the channel index when it is past the capture width, kNoInputSelected
+    // when the track is set to None, or kInputAvailable when every channel the
+    // track needs is there. A template routes each track to its own index, so on
+    // a one-input device every track after the first asks for a channel that does
+    // not exist; which input to use instead is the user's call, not ours. MIDI
+    // tracks, and a device that has not reported its width yet, are available.
+    static constexpr int kInputAvailable  = -1;
+    static constexpr int kNoInputSelected = -2;
+    int missingInputForTrack (int trackIndex) const noexcept;
+
+    // Drops the arm on every audio track that can no longer record, for a device
+    // change that takes its input away. Returns how many were disarmed so the
+    // caller can decide whether to say anything. Message thread only.
     int disarmAudioTracksWithoutInput() noexcept;
 };
 } // namespace duskstudio

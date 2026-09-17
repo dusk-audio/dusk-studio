@@ -987,13 +987,35 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
             showDuskAlert (*this, "Track is frozen", "Unfreeze this track to record.");
             return;
         }
-        session.setTrackArmed (trackIndex, armButton.getToggleState());
-        // The session refuses to arm an audio track with no capture channels.
-        // Follow it rather than leaving ARM lit over a recording that would
-        // write nothing; the transport bar carries the reason, so this stays
-        // silent instead of stacking a second alert on the same click.
+        const bool wanted = armButton.getToggleState();
+        session.setTrackArmed (trackIndex, wanted);
+        // The session refuses to arm an audio track it cannot record. Follow it
+        // rather than leaving ARM lit over a recording that would write nothing.
         armButton.setToggleState (track.recordArmed.load (std::memory_order_relaxed),
                                   juce::dontSendNotification);
+        // A device with no inputs at all is named in the transport bar. One that
+        // lacks this track's input is not, so say which and hand the choice of a
+        // replacement to the user.
+        const int missing = session.missingInputForTrack (trackIndex);
+        if (wanted && ! track.recordArmed.load (std::memory_order_relaxed)
+            && session.canArmAudioTracks() && missing != Session::kInputAvailable)
+        {
+            const std::string name = track.name.toStdString();
+            const std::string message = missing == Session::kNoInputSelected
+                ? name + " has no input selected. Choose one, then arm the track again."
+                : name + " records from In " + std::to_string (missing + 1)
+                    + ", and the audio device has "
+                    + std::to_string (session.deviceCaptureChannels.load (std::memory_order_relaxed))
+                    + " input(s). Choose an input for this track, then arm it again.";
+            auto* topLevel = getTopLevelComponent();
+            showDuskAlert (topLevel != nullptr ? *topLevel : *this,
+                           "No input for " + name, message,
+                           [safe = SafePointer<ChannelStripComponent> (this)]
+                           {
+                               if (safe != nullptr)
+                                   safe->openIoConfigPopup();
+                           });
+        }
     };
     armButton.addMouseListener (this, false);
     addAndMakeVisible (armButton);
@@ -3763,6 +3785,19 @@ private:
 void ChannelStripComponent::openIoConfigPopup()
 {
     if (ioConfigModal.isOpen()) { ioConfigModal.close(); return; }
+
+    // Inputs the open device does not offer stay listed, greyed, so a session
+    // made on a bigger interface still shows what it was set to.
+    const int width = session.deviceCaptureChannels.load (std::memory_order_relaxed);
+    const auto offered = [width] (int channel)
+        { return width == Session::kCaptureWidthUnknown || (channel >= 0 && channel < width); };
+    inputSelector.setItemEnabled (1, offered (trackIndex));
+    inputSelectorR.setItemEnabled (1, offered (trackIndex + 1));
+    for (int i = 0; i < 16; ++i)
+    {
+        inputSelector.setItemEnabled (100 + i, offered (i));
+        inputSelectorR.setItemEnabled (100 + i, offered (i));
+    }
 
     auto panel = std::make_unique<IoConfigPopup> (track.name, trackIndex,
                                                    modeSelector, inputSelector, inputSelectorR,
