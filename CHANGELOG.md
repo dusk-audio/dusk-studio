@@ -140,6 +140,9 @@ that will carry a signed 1.0.
   nothing recorded, fitting the view picked the tightest zoom, so the strip
   showed about two seconds of tape and a first take turned the page every two
   seconds. **0** (Fit) on an empty session gives the same minute.
+- **Settings > Quickstart works after `install.sh`** (#630). The Linux installer
+  now copies `QUICKSTART.md` beside the installed program; the menu item was
+  greyed out as not installed.
 - **Logging out no longer skips the unsaved-changes prompt.** A termination
   signal, a logout or a shutdown runs the same staged shutdown as **File >
   Quit**, so the prompt appears and plugin child processes are not left to be

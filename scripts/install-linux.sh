@@ -79,6 +79,9 @@ fi
 rm -rf "$OPT"
 mkdir -p "$OPT"
 cp -a "$SRC"/. "$OPT"/
+# Settings > Quickstart looks beside the executable; the tarball keeps its copy
+# at the top level, beside this script.
+cp "$SCRIPT_DIR/QUICKSTART.md" "$OPT/QUICKSTART.md"
 BIN="$OPT/DuskStudio"
 chmod +x "$BIN" "$OPT/dusk-studio-plugin-host" 2>/dev/null || true
 
