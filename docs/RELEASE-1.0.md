@@ -221,11 +221,14 @@ required: running on a Pi is a goal, not a courtesy port.
 
 ### The test gate
 
-The release criterion is not a test count. The number of registered cases is
-platform-dependent by design: some test sources compile only on Windows or
-macOS, and `release-mechanics-contract` is a shell test added only on Unix.
-The gate is that `ctest` exits 0 on every platform in the matrix above, with
-no test skipped that is not environment-gated.
+The release criterion is not a single test count. The number of registered
+cases is platform-dependent by design: some test sources compile only on
+Windows or macOS, and `release-mechanics-contract` is a shell test added only on
+Unix. The gate is two checks. `ctest` exits 0 on every platform in the matrix
+above, with no test skipped that is not environment-gated, and the `ctest -N`
+inventory on each platform carries every case that platform is expected to
+register, so a test source dropped from `tests/CMakeLists.txt` fails the gate
+instead of passing with a smaller suite.
 
 How it runs in CI:
 
