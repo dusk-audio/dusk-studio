@@ -180,6 +180,22 @@ int editorTeardownXErrorHandler (::Display* display, ::XErrorEvent* error)
     if (previous != nullptr)
         return previous (display, error);
 
+    if (trap == nullptr)
+    {
+        // Installed with nothing published: a scope is between its install and
+        // its publication, or between unpublishing and restoring, and the outer
+        // handler is not known yet. The error belongs to neither teardown nor a
+        // handler this can reach, so it stops here rather than ending the
+        // process on a window a few instructions wide.
+        std::fprintf (stderr,
+                      "[Dusk Studio/X] dropped an X error taken outside editor "
+                      "teardown (error %u, request %u)\n",
+                      error != nullptr ? static_cast<unsigned int> (error->error_code) : 0u,
+                      error != nullptr ? static_cast<unsigned int> (error->request_code) : 0u);
+        std::fflush (stderr);
+        return 0;
+    }
+
     // A null previous handler means Xlib's fatal default was active. Preserve
     // that contract rather than silently accepting an unrelated protocol bug.
     std::fprintf (stderr,
