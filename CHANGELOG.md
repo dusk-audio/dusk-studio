@@ -143,6 +143,9 @@ that will carry a signed 1.0.
 - **Settings > Quickstart works after `install.sh`** (#630). The Linux installer
   now copies `QUICKSTART.md` beside the installed program; the menu item was
   greyed out as not installed.
+- **A freshly loaded instrument plays straight away** (#632). Loading one onto a
+  track with no MIDI input binds the on-screen keyboard as before and now turns
+  on **IN** too; without it the keyboard played nothing.
 - **Logging out no longer skips the unsaved-changes prompt.** A termination
   signal, a logout or a shutdown runs the same staged shutdown as **File >
   Quit**, so the prompt appears and plugin child processes are not left to be

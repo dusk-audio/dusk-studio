@@ -3082,7 +3082,14 @@ void ChannelStripComponent::adoptInstrumentTrackDefaults()
     {
         const int vkbIdx = engine.getVirtualKeyboardInputIndex();
         if (vkbIdx >= 0)
+        {
             midiInputSelector.setSelectedId (2 + vkbIdx, juce::sendNotificationSync);
+            // IN defaults off so a live audio input cannot feed back through the
+            // master. A MIDI track's live input cannot, and without IN the
+            // keyboard just bound here plays nothing.
+            track.inputMonitor.store (true, std::memory_order_relaxed);
+            monitorButton.setToggleState (true, juce::dontSendNotification);
+        }
     }
 }
 
@@ -6795,7 +6802,7 @@ void ChannelStripComponent::resized()
         const auto& faderRange = faderSlider.getNormalisableRange();
         const float zeroFrac = (float) faderRange.convertTo0to1 (0.0);
         const int zeroY = inputMeterArea.getBottom() - 1
-                        - juce::roundToInt (zeroFrac * (float) (inputMeterArea.getHeight() - 2));
+                        - (int) std::lround (zeroFrac * (float) (inputMeterArea.getHeight() - 2));
         constexpr int kGrCaptionReserve = 10;   // matches CompMeterStrip::resized's hasCaptions branch
         const int compTop = zeroY - kGrCaptionReserve;
         auto compRect = faderCompMeterCol
