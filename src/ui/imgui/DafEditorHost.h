@@ -96,6 +96,10 @@ public:
     // The open editor's native window; zero while none is open.
     std::uintptr_t nativeWindow() const noexcept;
 
+    // True once the editor has completed a frame. Its window is mapped before
+    // that, carrying whatever the server last had there rather than the editor.
+    bool hasRenderedFrame() const noexcept;
+
     // One turn: pump the editor, push what the unit's parameters now hold, and
     // follow the caller's geometry.
     void tick();

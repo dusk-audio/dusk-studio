@@ -325,5 +325,7 @@ std::uintptr_t DafEditorHost::nativeWindow() const noexcept
     return impl->editor != nullptr && ! impl->closeRequested ? impl->editor->nativeWindow() : 0;
 }
 
+bool DafEditorHost::hasRenderedFrame() const noexcept { return impl->firstFrameConfirmed; }
+
 void DafEditorHost::tick() { impl->tick(); }
 } // namespace duskstudio::imgui
