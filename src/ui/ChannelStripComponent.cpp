@@ -1008,9 +1008,12 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
                     + std::to_string (session.deviceCaptureChannels.load (std::memory_order_relaxed))
                     + " input(s). Choose an input for this track, then arm it again.";
             auto* topLevel = getTopLevelComponent();
+            // Hoisted rather than an init-capture: MSVC resolves `this` in a
+            // nested lambda's capture initializer to the enclosing closure.
+            SafePointer<ChannelStripComponent> safe (this);
             showDuskAlert (topLevel != nullptr ? *topLevel : *this,
                            "No input for " + name, message,
-                           [safe = SafePointer<ChannelStripComponent> (this)]
+                           [safe]
                            {
                                if (safe != nullptr)
                                    safe->openIoConfigPopup();
