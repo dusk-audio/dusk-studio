@@ -39,6 +39,8 @@ windows	LICENSE
 windows	LICENSES.txt
 
 # --- Getting started ---
+# The shipped copy comes from scripts/ship-quickstart.cmake. The checker fails
+# a package whose Markdown files link a relative path the package lacks.
 linux	QUICKSTART.md
 macos	QUICKSTART.md
 macos	DuskStudio.app/Contents/Resources/QUICKSTART.md

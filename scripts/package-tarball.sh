@@ -74,7 +74,9 @@ install -m 0644 "$ICON_SRC"                         "$APPDIR/share/icons/hicolor
 # them part of any binary distribution.
 install -m 0755 scripts/install-linux.sh "$STAGE/$TOPDIR/install.sh"
 install -m 0644 packaging/README-linux.txt "$STAGE/$TOPDIR/README-linux.txt"
-install -m 0644 QUICKSTART.md              "$STAGE/$TOPDIR/QUICKSTART.md"
+cmake -DQUICKSTART_IN=QUICKSTART.md -DQUICKSTART_OUT="$STAGE/QUICKSTART.md" \
+      -DQUICKSTART_VERSION="$VERSION" -P scripts/ship-quickstart.cmake
+install -m 0644 "$STAGE/QUICKSTART.md"     "$STAGE/$TOPDIR/QUICKSTART.md"
 install -m 0644 LICENSE                    "$STAGE/$TOPDIR/LICENSE"
 install -m 0644 LICENSES.txt               "$STAGE/$TOPDIR/LICENSES.txt"
 

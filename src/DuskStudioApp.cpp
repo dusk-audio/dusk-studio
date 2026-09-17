@@ -235,6 +235,27 @@ public:
         JUCEApplication::getInstance()->systemRequestedQuit();
     }
 
+    // The window takes the keyboard for itself whenever its peer regains focus,
+    // which on X11 includes a click inside an embedded plug-in editor, and at
+    // launch. Keys that land here never reach the shortcuts on the content, so
+    // the focus goes straight on to it.
+    void focusGained (FocusChangeType) override
+    {
+        if (auto* content = getContentComponent())
+            content->grabKeyboardFocus();
+    }
+
+    // With nothing focused, which is where macOS leaves JUCE once an embedded
+    // editor's view has been first responder, a key arrives at the window
+    // rather than at any component inside it. A key the focused content passed
+    // up has already been offered to it.
+    bool keyPressed (const juce::KeyPress& key) override
+    {
+        auto* content = getContentComponent();
+        return content != nullptr && ! content->hasKeyboardFocus (true)
+            && content->keyPressed (key);
+    }
+
 private:
     int configuredMinimumWidth = 0;
     int configuredMinimumHeight = 0;
@@ -1609,14 +1630,15 @@ private:
     {
         const int numCh = 2;
         const int numFrames = (int) (sr * kContentSeconds);
+        constexpr double kPi = 3.14159265358979323846;
         dusk::audio::PlanarBuffer buf;
         if (! buf.setSize (numCh, numFrames)) return {};
         for (int n = 0; n < numFrames; ++n)
         {
             const double t   = (double) n / sr;
-            const double env = std::sin (juce::MathConstants<double>::pi * (double) n / numFrames);
-            buf.channel (0)[n] = (float) (env * 0.6 * std::sin (2.0 * juce::MathConstants<double>::pi * fL * t));
-            buf.channel (1)[n] = (float) (env * 0.6 * std::sin (2.0 * juce::MathConstants<double>::pi * fR * t));
+            const double env = std::sin (kPi * (double) n / numFrames);
+            buf.channel (0)[n] = (float) (env * 0.6 * std::sin (2.0 * kPi * fL * t));
+            buf.channel (1)[n] = (float) (env * 0.6 * std::sin (2.0 * kPi * fR * t));
         }
         file.deleteFile();
         dusk::audio::WriteSpec spec;

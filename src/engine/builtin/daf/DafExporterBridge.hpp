@@ -73,6 +73,7 @@ public:
 
     uint32_t width() const noexcept override  { return ui.getWidth(); }
     uint32_t height() const noexcept override { return ui.getHeight(); }
+    uintptr_t nativeWindow() const noexcept override { return ui.getNativeWindowHandle(); }
 
 private:
     static void editParamCallback (void* const ptr, const uint32_t index, const bool started)

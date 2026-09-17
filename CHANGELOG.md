@@ -119,6 +119,10 @@ that will carry a signed 1.0.
   now sends unsigned-beta users to **Privacy & Security > Open Anyway** after
   the first blocked launch, and the manual uses the names of the shipped DMG
   and app bundle.
+- **The quickstart's links work from an installed package** (#626). The copy
+  in every package linked the manual and its screenshots by paths that exist
+  only in the source tree. It now links them on GitHub at the release tag, and
+  the package check fails a Markdown file that links a path the package lacks.
 - **Placing loop and punch brackets arms them** (#592). **Set punch in here**
   and **Set punch out here** on the ruler menu, and **Shift+[** / **Shift+]**,
   turn punch on once the in point sits before the out point, as dragging a
@@ -132,6 +136,30 @@ that will carry a signed 1.0.
   to at least a minute when recording started and snap back on stop, so the
   view jumped twice per take. It now holds your zoom and turns the page when the
   playhead reaches the right-hand edge, with or without Chase.
+- **A new session's tape strip opens on a one-minute window** (#628). With
+  nothing recorded, fitting the view picked the tightest zoom, so the strip
+  showed about two seconds of tape and a first take turned the page every two
+  seconds. **0** (Fit) on an empty session gives the same minute.
+- **Settings > Quickstart works after `install.sh`** (#630). The Linux installer
+  now copies `QUICKSTART.md` beside the installed program; the menu item was
+  greyed out as not installed.
+- **Transport keys and Escape work while a built-in unit's editor is open**
+  (#629). DuskVerb 2's and Tape Echo 2's own editors kept every key: on Linux
+  whenever the pointer rested on them, on macOS until the app was switched away
+  and back, and after any click inside one the shortcuts stayed dead until the
+  window was clicked. Keys the editor has no use for now reach Dusk Studio, so
+  Space plays and Escape closes the editor; typing in a preset name still goes
+  to the editor.
+- **A track can no longer record from an input the device does not have**
+  (#633). A new session routes each track to the input with its own number, so
+  on a one-input device every track after the first showed a recording and then
+  kept nothing. ARM now refuses such a track, says which input is missing and
+  opens the track's input settings to choose one; inputs the device does not
+  offer are greyed out there, and a switch to a smaller device disarms the
+  tracks it cannot feed.
+- **A freshly loaded instrument plays straight away** (#632). Loading one onto a
+  track with no MIDI input binds the on-screen keyboard as before and now turns
+  on **IN** too; without it the keyboard played nothing.
 - **Logging out no longer skips the unsaved-changes prompt.** A termination
   signal, a logout or a shutdown runs the same staged shutdown as **File >
   Quit**, so the prompt appears and plugin child processes are not left to be

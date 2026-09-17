@@ -245,6 +245,7 @@ private:
     // without losing wiring / state.
     juce::TextButton ioConfigButton;
     void openIoConfigPopup();
+    void refreshInputAvailability();
     void refreshIoConfigButton();
     // PRINT only commits post-effects audio. MIDI tracks render audio
     // at playback time, not at capture, so PRINT is a no-op. Grey out
@@ -433,6 +434,7 @@ public:
     void closeBuiltinEditorPopup();
     bool isBuiltinEditorOpen() const noexcept;
     void openBuiltinEditorForCapture (const std::string& capturePath);
+    void captureBuiltinPluginEditor (const std::string& capturePath);
 
 private:
 

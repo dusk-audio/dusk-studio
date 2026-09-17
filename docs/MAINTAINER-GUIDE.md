@@ -13,7 +13,7 @@ A guide to understanding, building, debugging, and extending Dusk Studio. It ass
 
 Dusk Studio is a **deliberately constrained, portastudio-style DAW** for Linux/macOS/Windows, written in **JUCE 8 / C++17**. It is one native desktop application — no server, no web component, no database. State lives in RAM (the `Session` object) and is serialized to a single `session.json` file plus a folder of WAV takes.
 
-It is ~**85,000 lines** of C++ across `src/`, plus a large `CMakeLists.txt` (~990 lines) and 51 Catch2 test files. The DSP (EQ, compressors, tape) is **not** written here — it is shared header code pulled in from a sibling repo of Dusk Audio plugins.
+It is ~**155,000 lines** of C++ across `src/`, plus a large `CMakeLists.txt` (~2,000 lines) and over 200 Catch2 test files. The DSP (EQ, compressors, tape) is **not** written here — it is shared header code pulled in from a sibling repo of Dusk Audio plugins.
 
 The single most important mental model: **there are several threads, and the rules about what each may do are absolute.** Most bugs that look mysterious are thread-rule violations. Internalize Part 3 before you touch the audio path.
 
@@ -311,7 +311,7 @@ CMake auto-detects three external repos at configure time, on top of three git s
 cd /path/to/dusk-studio
 
 git clone https://github.com/dusk-audio/DAF.git ../DAF
-git -C ../DAF checkout b818178e024a5d28e63c52528af8b2ad2a34e360
+git -C ../DAF checkout 50132e025f625d8b433fc80986c25f1ddf611cc7
 
 ```
 
@@ -437,7 +437,7 @@ The order is load-bearing. Replace `X.Y.Z` with the release version throughout.
 Set `RELEASE_VERSION=X.Y.Z` in the shell used for the guarded commands.
 
 [`CPACK_PACKAGE_CONTACT`](../CMakeLists.txt) holds the maintainer address and
-feeds only DEB/RPM package metadata. Neither format is among the six assets the
+feeds only DEB/RPM package metadata. Neither format is among the seven assets the
 current tag workflows publish, so nothing a tagged release produces uses it.
 
 1. Finish the `## [X.Y.Z] - Unreleased` section in
@@ -793,8 +793,8 @@ A complete `vX.Y.Z` release has exactly these seven assets:
 
 The publisher downloads all five payloads into one job and refuses to publish
 unless their exact filenames are present. It writes a sorted, lowercase
-`SHA256SUMS` with five entries and verifies it locally before uploading all six
-assets together.
+`SHA256SUMS` with five entries, verifies it locally, signs it into
+`SHA256SUMS.asc`, and uploads all seven assets together.
 
 Before announcement, run
 [`scripts/verify-release-assets.sh`](../scripts/verify-release-assets.sh)
@@ -810,7 +810,7 @@ manual checks that the script cannot cover:
 
 - Confirm the populated release summary is correct for this version. The
   verifier rejects an empty slot but cannot judge editorial accuracy.
-- Confirm all six filenames exactly match the list above. Inspect the
+- Confirm all seven filenames exactly match the list above. Inspect the
   executable inside the DMG and MSI and confirm arm64 and x64 respectively;
   do not infer architecture from the filename. The DMG must carry the `.app`,
   `LICENSE` and `LICENSES.txt` and nothing else; a `share/` tree of XDG desktop

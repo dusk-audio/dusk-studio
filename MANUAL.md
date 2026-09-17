@@ -396,9 +396,9 @@ xattr -dr com.apple.quarantine "/Applications/DuskStudio.app"
 
 Windows SmartScreen blocks unsigned MSIs by default. The bypass is one click but it's hidden behind a small link.
 
-1. Double-click the downloaded `DuskStudio-{version}.msi`.
+1. Double-click the downloaded `dusk-studio-<version>-Windows-x64.msi`.
 2. SmartScreen shows: *"Windows protected your PC"* with a **Don't run** button.
-3. Click the small **More info** link near the top of the dialog. SmartScreen expands to show *"App: DuskStudio-{version}.msi / Publisher: Unknown publisher"*.
+3. Click the small **More info** link near the top of the dialog. SmartScreen expands to show *"App: dusk-studio-<version>-Windows-x64.msi / Publisher: Unknown publisher"*.
 4. A new **Run anyway** button appears at the bottom — click it.
 5. The MSI installer runs normally. Accept the install location (`C:\Program Files\Dusk Studio` by default) and finish.
 6. Launch Dusk Studio from the **Start menu** (under *Dusk Studio*) or the **desktop shortcut** the installer creates.
@@ -422,9 +422,11 @@ Get-FileHash -Algorithm SHA256 dusk-studio-*-Windows-x64.msi
 # Compare against that file's line in the published SHA256SUMS.
 ```
 
-From 1.0 on, `SHA256SUMS` ships with a detached OpenPGP signature, `SHA256SUMS.asc`, and the public key that made it is published with the release. Before you import the key, check its fingerprint against a copy that did not travel with the download: the same key is kept in the source repository at `packaging/release-signing.pub`, and its fingerprint is printed on the project site. Import only if the two agree, then check the signature before you check the hashes:
+From 0.14 on, `SHA256SUMS` ships with a detached OpenPGP signature, `SHA256SUMS.asc`. The public key that made it is not a release asset: it is kept in the source repository at `packaging/release-signing.pub`, so download it from the tag that matches your release. Before you import the key, compare its fingerprint with the one printed on the project site. Import only if the two agree, then check the signature before you check the hashes:
 
 ```bash
+VERSION=0.14.0   # the release you downloaded
+curl -fsSLO "https://raw.githubusercontent.com/dusk-audio/dusk-studio/v$VERSION/packaging/release-signing.pub"
 gpg --show-keys --with-fingerprint release-signing.pub
 # Compare the fingerprint line with the one published on the project site.
 gpg --import release-signing.pub
@@ -588,7 +590,7 @@ In compact mode (window narrower than 1850 pixels), `TIMELINE` becomes `▾` and
 
 ![The virtual MIDI keyboard, with the typing letter printed on each key it plays.](docs/images/vkb-01-virtual-keyboard.png)
 
-The ⌨ button (or **K**) opens an on-screen MIDI keyboard. It belongs to the transport bar, not to any one view: it opens in any stage, with or without the piano roll. It appears as a MIDI source called **Virtual Keyboard (Dusk Studio)** in each track's MIDI input picker, and loading an instrument onto a track with no input bound selects it automatically so the instrument is playable straight away.
+The ⌨ button (or **K**) opens an on-screen MIDI keyboard. It belongs to the transport bar, not to any one view: it opens in any stage, with or without the piano roll. It appears as a MIDI source called **Virtual Keyboard (Dusk Studio)** in each track's MIDI input picker, and loading an instrument onto a track with no input bound selects it automatically and turns on **IN**, so the instrument is playable straight away.
 
 Each key is labelled with the typing letter that plays it, and every C is labelled with its octave. **Oct -** / **Oct +** and the **Up** / **Down** arrows move the octave, **Ch -** / **Ch +** and **Left** / **Right** move the MIDI channel, and you can click or drag across the keys with the mouse for a glissando. While it is open, every letter and digit in its layout belongs to the keyboard rather than to the shortcuts — **P** and **R** play their notes instead of toggling punch and record, at any octave (shift the octave high enough that a key runs past the top of the MIDI range and it simply does nothing). Keys outside the layout still work as usual, so **Space**, **.**, **L**, **[** / **]** keep driving the transport, and **K** or **Esc** closes the keyboard.
 
@@ -721,6 +723,7 @@ This block is visible in the RECORDING stage, alongside a small **I/O** button t
 
 - **ARM**: light red when on. Marks the track for recording on the next Record press and shows its live pre-fader input level in the Recording stage; it does not make that input audible.
   - ARM refuses to light on an audio track while the open audio device offers no input channels, because a recording that follows would write nothing. The transport bar says so: **No input device. Choose one in Settings > Audio.** Pick an input there and ARM works again. A device change that takes the inputs away disarms the audio tracks and raises the same message, so ARM is never lit over a device that cannot feed it. MIDI tracks record from a MIDI input and are not affected.
+  - ARM also refuses on an audio track whose input the device does not have, or that is set to **None**. A new session routes each track to the input with its own number, so on a device with one input (a laptop microphone, say) every track after the first starts out pointing at an input that is not there. Clicking ARM on such a track says which input is missing and opens the track's input settings; choose an input, then arm it again. Inputs the current device does not offer are greyed out in that list. Switching to a device with fewer inputs disarms the tracks it cannot feed.
 - **IN**: input monitor. When on, you hear the live input through the channel strip. Useful for tracking with effects.
 - **PRINT** (empty audio track): when on, the channel's EQ, compressor, and insert are committed to the recorded file as you record. When off (the default), they are kept live, so you can tweak them after the take.
 - **FREEZE** (MIDI tracks, and audio tracks once recorded): the same button reads **FREEZE**. Click it to render the track to an audio file and bypass the DSP that produced it, to reclaim CPU — the frozen track plays back from the rendered audio with the fader, pan, and aux sends still live so you can keep mixing. The button turns to a snowflake while frozen; click it again to unfreeze (the rendered file is discarded). Frozen state is saved with the session, and a frozen track is locked — unfreeze first to edit, re-record, or change its mode.
@@ -1669,6 +1672,8 @@ Dusk Audio's Tape Echo 2 plug-in, compiled into Dusk Studio and running the plug
 | Bypass | Off / On | Off | The plug-in's own bypass. On fades the effect out, passes the input through untouched and clears the tape. |
 
 The unit reports no latency. Its settings are saved with the session as the plug-in's own parameter values, and its editor is the plug-in's own.
+
+![The Tape Echo 2 unit's editor.](docs/images/bi-03-tape-echo.png)
 
 ### Tape
 

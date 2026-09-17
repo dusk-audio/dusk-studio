@@ -85,6 +85,8 @@ printf '%s\n' \
     '### Downloads' \
     '' \
     '- **Linux** (`.tar.xz`): unsigned.' \
+    '' \
+    '    VERSION=0.0.1   # this release' \
     > "$FIXTURE/packaging/RELEASE-NOTES.md"
 
 WHITESPACE_ERROR="$SCRATCH/whitespace-notes-error.txt"
@@ -1181,13 +1183,18 @@ assert visible_summary, "release-summary slot must carry visible content"
 assert "### Downloads" in tracked_after, "tracked notes must keep the Downloads section"
 
 # The summary is script-managed: the bump replaces the whole slot with the
-# release notes verbatim and touches nothing outside it.
+# release notes verbatim, and outside it touches only the signature-check
+# VERSION= line.
 bumped_text = bumped_notes_path.read_text(encoding="utf-8")
 before, slot, after = summary_slot(bumped_text)
 assert slot == expected_notes, (slot, expected_notes)
 assert before == "", "nothing may precede the summary slot"
 assert "stale summary" not in bumped_text, "the old summary must be gone"
 assert "### Downloads" in after, "the Downloads section must survive the bump"
+assert "\n    VERSION=9.9.9   # this release\n" in after, (
+    "the signature-check VERSION= line must follow the bump"
+)
+assert "0.0.1" not in after, "the old signature-check version must be gone"
 
 # The printed handoff is the maintainer's release-day checklist. Pin its
 # load-bearing order and CI-only packaging path.
@@ -1449,7 +1456,8 @@ write_metadata_fixture() {
         > "$dir/CHANGELOG.md"
     printf '<component>\n  <releases>\n    <release version="%s" date="%s">\n    </release>\n  </releases>\n</component>\n' \
         "$app_version" "$app_date" > "$dir/packaging/DuskStudio.appdata.xml"
-    printf '<!-- summary-start -->\nSummary.\n<!-- summary-end -->\n' > "$dir/packaging/RELEASE-NOTES.md"
+    printf '<!-- summary-start -->\nSummary.\n<!-- summary-end -->\n\n    VERSION=%s   # this release\n' \
+        "$version" > "$dir/packaging/RELEASE-NOTES.md"
 }
 
 metadata_expect() {
@@ -1484,6 +1492,18 @@ metadata_expect fail "a heading dated in the future" --root "$META/future"
 write_metadata_fixture "$META/no-summary" 0.0.2 "0.0.2] - 2026-01-02" 0.0.2 2026-01-02
 printf '<!-- summary-start -->\n<!-- summary-end -->\n' > "$META/no-summary/packaging/RELEASE-NOTES.md"
 metadata_expect fail "an empty release-notes summary" --root "$META/no-summary"
+write_metadata_fixture "$META/notes-key" 0.0.2 "0.0.2] - 2026-01-02" 0.0.2 2026-01-02
+printf '\n    VERSION=0.0.2   # this release\n' >> "$META/notes-key/packaging/RELEASE-NOTES.md"
+metadata_expect pass "release notes fetching the key from this release" --root "$META/notes-key" --tag v0.0.2
+printf '<!-- summary-start -->\nSummary.\n<!-- summary-end -->\n\n    VERSION=0.0.3   # this release\n' \
+    > "$META/notes-key/packaging/RELEASE-NOTES.md"
+metadata_expect pass "release notes written ahead of an untagged tree" --root "$META/notes-key"
+metadata_expect fail "release notes fetching the key from another release" --root "$META/notes-key" --tag v0.0.2
+write_metadata_fixture "$META/notes-no-key" 0.0.2 "0.0.2] - 2026-01-02" 0.0.2 2026-01-02
+printf '<!-- summary-start -->\nSummary.\n<!-- summary-end -->\n' \
+    > "$META/notes-no-key/packaging/RELEASE-NOTES.md"
+metadata_expect pass "notes without the key fetch on an untagged tree" --root "$META/notes-no-key"
+metadata_expect fail "notes carrying no key version at a tag" --root "$META/notes-no-key" --tag v0.0.2
 
 "$PYTHON" - "$SOURCE_ROOT" <<'PY'
 import re

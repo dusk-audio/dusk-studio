@@ -1,5 +1,5 @@
 <!-- summary-start -->
-Hardened session and plugin recovery, sandboxed plugin hosting on all three platforms, transport MIDI cleanup, cross-platform launch and window fixes, and the release metadata found missing in the pre-tag audit.
+A built-in plugin suite that works on a fresh install (Utility, DuskVerb 2, Tape Echo 2, Tape and the Sunset synth), the 4K EQ 2 and Tape Machine 2 engines in the console, a one-page quickstart, an offline instrument library, a first launch that picks an input and follows the system audio default, a signed checksum file, and the fixes from walking record, overdub and bounce on all three platforms.
 <!-- summary-end -->
 
 ### Downloads
@@ -30,3 +30,14 @@ Check a download against the `SHA256SUMS` asset before installing. It covers
 every payload, so verify with `shasum -a 256 --ignore-missing -c SHA256SUMS`
 to check the ones you actually downloaded; without `--ignore-missing` the
 files you skipped are reported as failures.
+
+`SHA256SUMS.asc` is a detached OpenPGP signature over `SHA256SUMS`. The public
+key is `packaging/release-signing.pub` in the source repository; download it
+from this release's tag, compare its fingerprint with the one on the project
+site, import it, then check the signature before the hashes:
+
+    VERSION=0.14.0   # this release
+    curl -fsSLO "https://raw.githubusercontent.com/dusk-audio/dusk-studio/v$VERSION/packaging/release-signing.pub"
+    gpg --show-keys --with-fingerprint release-signing.pub
+    gpg --import release-signing.pub
+    gpg --verify SHA256SUMS.asc SHA256SUMS

@@ -987,13 +987,38 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
             showDuskAlert (*this, "Track is frozen", "Unfreeze this track to record.");
             return;
         }
-        session.setTrackArmed (trackIndex, armButton.getToggleState());
-        // The session refuses to arm an audio track with no capture channels.
-        // Follow it rather than leaving ARM lit over a recording that would
-        // write nothing; the transport bar carries the reason, so this stays
-        // silent instead of stacking a second alert on the same click.
+        const bool wanted = armButton.getToggleState();
+        session.setTrackArmed (trackIndex, wanted);
+        // The session refuses to arm an audio track it cannot record. Follow it
+        // rather than leaving ARM lit over a recording that would write nothing.
         armButton.setToggleState (track.recordArmed.load (std::memory_order_relaxed),
                                   juce::dontSendNotification);
+        // A device with no inputs at all is named in the transport bar. One that
+        // lacks this track's input is not, so say which and hand the choice of a
+        // replacement to the user.
+        const int missing = session.missingInputForTrack (trackIndex);
+        if (wanted && ! track.recordArmed.load (std::memory_order_relaxed)
+            && session.canArmAudioTracks() && missing != Session::kInputAvailable)
+        {
+            const std::string name = track.name.toStdString();
+            const std::string message = missing == Session::kNoInputSelected
+                ? name + " has no input selected. Choose one, then arm the track again."
+                : name + " records from In " + std::to_string (missing + 1)
+                    + ", and the audio device has "
+                    + std::to_string (session.deviceCaptureChannels.load (std::memory_order_relaxed))
+                    + " input(s). Choose an input for this track, then arm it again.";
+            auto* topLevel = getTopLevelComponent();
+            // Hoisted rather than an init-capture: MSVC resolves `this` in a
+            // nested lambda's capture initializer to the enclosing closure.
+            SafePointer<ChannelStripComponent> safe (this);
+            showDuskAlert (topLevel != nullptr ? *topLevel : *this,
+                           "No input for " + name, message,
+                           [safe]
+                           {
+                               if (safe != nullptr)
+                                   safe->openIoConfigPopup();
+                           });
+        }
     };
     armButton.addMouseListener (this, false);
     addAndMakeVisible (armButton);
@@ -3082,7 +3107,14 @@ void ChannelStripComponent::adoptInstrumentTrackDefaults()
     {
         const int vkbIdx = engine.getVirtualKeyboardInputIndex();
         if (vkbIdx >= 0)
+        {
             midiInputSelector.setSelectedId (2 + vkbIdx, juce::sendNotificationSync);
+            // IN defaults off so a live audio input cannot feed back through the
+            // master. A MIDI track's live input cannot, and without IN the
+            // keyboard just bound here plays nothing.
+            track.inputMonitor.store (true, std::memory_order_relaxed);
+            monitorButton.setToggleState (true, juce::dontSendNotification);
+        }
     }
 }
 
@@ -3753,9 +3785,30 @@ private:
 };
 } // namespace
 
+// Inputs the open device does not offer stay listed, greyed, so a session made
+// on a bigger interface still shows what it was set to. R's follow item pairs
+// with wherever L resolves, as Session::resolveInputRForTrack does.
+void ChannelStripComponent::refreshInputAvailability()
+{
+    const int width = session.deviceCaptureChannels.load (std::memory_order_relaxed);
+    const auto offered = [width] (int channel)
+        { return width == Session::kCaptureWidthUnknown || (channel >= 0 && channel < width); };
+    const int leftSource = track.inputSource.load (std::memory_order_relaxed);
+    const int resolvedLeft = leftSource == -2 ? trackIndex : leftSource;
+    inputSelector.setItemEnabled (1, offered (trackIndex));
+    inputSelectorR.setItemEnabled (1, resolvedLeft >= 0 && offered (resolvedLeft + 1));
+    for (int i = 0; i < 16; ++i)
+    {
+        inputSelector.setItemEnabled (100 + i, offered (i));
+        inputSelectorR.setItemEnabled (100 + i, offered (i));
+    }
+}
+
 void ChannelStripComponent::openIoConfigPopup()
 {
     if (ioConfigModal.isOpen()) { ioConfigModal.close(); return; }
+
+    refreshInputAvailability();
 
     auto panel = std::make_unique<IoConfigPopup> (track.name, trackIndex,
                                                    modeSelector, inputSelector, inputSelectorR,
@@ -4153,6 +4206,34 @@ void ChannelStripComponent::openBuiltinEditorForCapture (const std::string& capt
    #if DUSKSTUDIO_HAS_NATIVE_UI
     if (builtinEditorWindow != nullptr && builtinEditorWindow->isOpen())
         builtinEditorWindow->captureNextFrameTo (capturePath);
+   #else
+    (void) capturePath;
+   #endif
+}
+
+void ChannelStripComponent::captureBuiltinPluginEditor (const std::string& capturePath)
+{
+   #if DUSKSTUDIO_HAS_NATIVE_UI
+    if (builtinPluginEditor == nullptr || ! builtinPluginEditor->isOpen())
+        return;
+
+    // A partial file, or one left by an earlier run, would still be converted
+    // into a manual figure.
+    if (! builtinPluginEditor->hasRenderedFrame())
+    {
+        std::remove (capturePath.c_str());
+        std::fprintf (stderr, "[capture] the unit editor had not drawn a frame for %s\n",
+                      capturePath.c_str());
+        return;
+    }
+
+    if (! duskstudio::platform::captureNativeWindowToPpm (
+              builtinPluginEditor->nativeWindow(), capturePath))
+    {
+        std::remove (capturePath.c_str());
+        std::fprintf (stderr, "[capture] could not read the unit editor back to %s\n",
+                      capturePath.c_str());
+    }
    #else
     (void) capturePath;
    #endif
@@ -4644,6 +4725,10 @@ void ChannelStripComponent::timerCallback()
     // Plugin-slot button reflects the slot's current load state. Cheap -
     // just an atomic-pointer read + string compare against the cached name.
     refreshPluginSlotButton();
+
+    // A device that goes while the popup is open takes its inputs with it.
+    if (ioConfigModal.isOpen())
+        refreshInputAvailability();
 
     // A native editor that was covered during peer recreation must stay behind
     // that cover. Reopen only after every modal has gone, and consume the request
@@ -5541,6 +5626,7 @@ void ChannelStripComponent::onInputSelectorChanged()
     else if (id == 2)            src = -1;
     else if (id >= 100)          src = id - 100;
     track.inputSource.store (src, std::memory_order_relaxed);
+    refreshInputAvailability();
     refreshIoConfigButton();
 }
 
@@ -6777,7 +6863,7 @@ void ChannelStripComponent::resized()
         const auto& faderRange = faderSlider.getNormalisableRange();
         const float zeroFrac = (float) faderRange.convertTo0to1 (0.0);
         const int zeroY = inputMeterArea.getBottom() - 1
-                        - juce::roundToInt (zeroFrac * (float) (inputMeterArea.getHeight() - 2));
+                        - (int) std::lround (zeroFrac * (float) (inputMeterArea.getHeight() - 2));
         constexpr int kGrCaptionReserve = 10;   // matches CompMeterStrip::resized's hasCaptions branch
         const int compTop = zeroY - kGrCaptionReserve;
         auto compRect = faderCompMeterCol

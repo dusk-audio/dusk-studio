@@ -1,10 +1,12 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "ui/TimelineFollow.h"
 
 #include <cstdint>
 
 using duskstudio::followPlayheadScroll;
+using duskstudio::tapeStripFitZoom;
 
 namespace
 {
@@ -57,4 +59,24 @@ TEST_CASE ("A playhead left of the view brings the view back to it", "[timeline]
 TEST_CASE ("A view with no width leaves the scroll alone", "[timeline][follow]")
 {
     CHECK (followPlayheadScroll (500000, 1234, 0) == 1234);
+}
+
+TEST_CASE ("Fit on an empty tape strip keeps the unzoomed minute", "[timeline][zoom]")
+{
+    using Catch::Matchers::WithinAbs;
+
+    // Nothing to fit is the one-minute window, not the 32x clamp.
+    CHECK_THAT (tapeStripFitZoom (0.0), WithinAbs (1.0, 1e-6));
+    CHECK_THAT (tapeStripFitZoom (-1.0), WithinAbs (1.0, 1e-6));
+
+    SECTION ("content fills the strip")
+    {
+        CHECK_THAT (tapeStripFitZoom (10.0), WithinAbs (6.0, 1e-5));
+        CHECK_THAT (tapeStripFitZoom (100.0), WithinAbs (1.2, 1e-5));
+    }
+
+    SECTION ("very short content stops at the tightest zoom")
+    {
+        CHECK_THAT (tapeStripFitZoom (0.5), WithinAbs (32.0, 1e-5));
+    }
 }

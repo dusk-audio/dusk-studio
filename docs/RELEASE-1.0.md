@@ -1,7 +1,7 @@
 # Dusk Studio 1.0 release plan
 
-1.0 ships on the current framework stack. The re-platforming campaign onto the
-DAF, DAF-Widgets and pugl stack resumes after 1.0 as the 1.1+ H-series. No work
+1.0 ships on the current framework stack. The re-platforming campaign onto DAF
+resumes after 1.0 as the 1.1+ H-series. No work
 lands before 1.0 whose main effect is reducing framework coupling, unless it
 fixes a bug that blocks the release.
 
@@ -34,7 +34,8 @@ Each line below is a check somebody can run and get a yes or a no.
 
 - The full Catch2 suite passes on Linux GCC, Linux TSan, Linux ASan and UBSan,
   Linux arm64, macOS arm64 clang, and Windows MSVC x64.
-- All six of those jobs are required checks on `main`.
+- All six of those jobs, plus the De-JUCE ratchet, are required checks on
+  `main`.
 - `tools/juce-gate.sh` passes. Counts may fall. They may not rise.
 - `scripts/run-selftest-xvfb.sh` passes on a private display, and CI runs the
   headless self-test on the Linux, arm64 and macOS build jobs and in the Linux
@@ -42,7 +43,6 @@ Each line below is a check somebody can run and get a yes or a no.
   skips that leg after #504, and no CI run has shown the harness completing on
   a Windows runner, so Windows self-test coverage stays a manual step on a real
   desktop session until a run proves otherwise.
-- The Windows self-test harnesses run to completion instead of hanging.
 - The post-download smoke test passes against the published artifact on each
   of the three platforms.
 
@@ -102,13 +102,13 @@ Every open issue, one bucket each; completed release work is marked done.
 | 314 | [Final gate] Remove the framework from CMake, CI, packaging, tests, docs | post-1.0 | Framework-removal campaign. |
 | 320 | Route macOS builds to the dusk-mac-air self-hosted runner | post-1.0 | Cost optimisation with no user-visible effect, and the runner is offline. |
 | 340 | Change Tape Machine to use the Tape Machine 2 plugin | 1.0 | The built-in colour insert (#75) runs this core, and the master bus cannot run a different one from the same donor path. Landed with a tone regression pinning the new voicing. |
-| 341 | Change EQ DSP to 4K-EQ-2 DSP | 1.0 | Marc's call, 1.0 ships the current EQ. Landed with a tone regression pinning the new voicing. |
-| 342 | Change compressors to use Multi-Comp-2 DSP | 1.0 | Marc's call, 1.0 ships on the Multi-Comp 2 core; blocked on the donor core, prerequisites in #586. |
+| 341 | Change EQ DSP to 4K-EQ-2 DSP | done | Channel and bus EQ run the 4K EQ 2 core. Landed with a tone regression pinning the new voicing. |
+| 342 | Change compressors to use Multi-Comp-2 DSP | deferred (1.1) | Moved to 1.1 on 2026-09-15: the Multi-Comp 2 core is not finished in the plugins repo, so 1.0 ships the current compressor core. |
 | 442 | ASan+UBSan and Raspberry Pi jobs are not required checks | done | Both are required checks on `main` now, the Pi build included. |
 | 500 | CloneTrackAction native-insert clone and undo has no coverage | 1.0 | A shipped clone and undo path with no automated test. |
 | 501 | Inline non-modal editor status in the aux slot area | post-1.0 | The unprompted modal was already removed by #459; the remaining alerts are click-initiated. What is left is additive inline status, absorbed by the aux GUI port. |
 | 503 | Small residues from the milestone-6 audits | 1.0 | Four small correctness defects in shipped single-instance and hosting code. |
-| 504 | Windows IPC self-test harnesses resolve the child without .exe and hang | 1.0 | Blocks manual Windows validation. Not a CI gate. See the verdict below. |
+| 504 | Windows IPC self-test harnesses resolve the child without .exe and hang | done | Fixed by #570. Not a CI gate. See the verdict below. |
 | 507 | SIGTERM bypasses the staged shutdown | 1.0-blocker | Logout or a supervisor stop skips the unsaved-changes prompt and leaves plugin children to the reaper. |
 | 508 | Sandboxed slot loaded at runtime loses its child within 200 ms | 1.0-blocker | A shipped sandboxing feature drops the plugin on a real path. |
 | 529 | Sign and notarize the macOS DMG | closed (not planned) | Workflow signing and notarization gates exist, but Developer ID credentials are not configured. |
@@ -119,7 +119,7 @@ Every open issue, one bucket each; completed release work is marked done.
 | 534 | Define the 1.0 package contents and verify all three packagers | done | Implemented and closed: shared contents contract and verification for all three packagers. |
 | 535 | Local instrument browser for soundfonts on disk | 1.0 | The offline half of the SFZ work, with no network, catalog or archive code. |
 | 536 | Walk the demo path on packaged builds and file what it snags on | 1.0 | Individual demo-path bugs have been fixed one at a time. Nobody has walked the whole path on a shipped build. |
-| 586 | Multi-Comp 2 donor prerequisites | 1.0 | What the donor core needs before #342 can be built against it. |
+| 586 | Multi-Comp 2 donor prerequisites | deferred (1.1) | Moved to 1.1 with #342. |
 | 605 | Self-test coverage across CI platforms | 1.0 | macOS CI and the Linux and macOS release jobs now run it; the Windows leg stays manual (see the checklist). |
 | 606 | Built-in suite placeholder in package contract | 1.0 | The contract listed plugin files the in-binary suite never produces. |
 | 607 | Signing wording in release docs | 1.0 | README, QUICKSTART and MANUAL described all builds as unsigned after the workflow gained signing. |
@@ -137,9 +137,9 @@ are app-level environment-gated paths in `src/DuskStudioApp.cpp`. They appear
 in no workflow, no test target and no script. The Windows release gate is
 therefore unaffected by the hang.
 
-It still ships in 1.0. A maintainer validating a Windows candidate by hand
-follows a documented harness that sits forever with no output, and a missing
-child should exit with a failure code rather than wait.
+It was fixed for 1.0 by #570, which resolves the child under its real `.exe`
+name. No CI run has shown the harness completing on a Windows runner, so the
+Windows self-test stays a manual step (see Quality above).
 
 ## Work plan
 
@@ -179,7 +179,6 @@ the follow-ups are known before the schedule is committed.
 | Milestone-6 audit residues | 503 | 4-6 | `src/util/SingleInstance.cpp`, `src/engine/PluginSlot.cpp`, `src/ui/ChannelStripComponent.cpp` |
 | Windows self-test harness child resolution | 504 | 2-3 | `src/DuskStudioApp.cpp`, `src/engine/PluginManager.h` |
 | Channel and bus EQ on the 4K EQ 2 core | 341 | 4-6 | donor shared DSP, `src/dsp/ChannelStrip.*`, `src/dsp/BusStrip.*`, `tests/` |
-| Compressors on the Multi-Comp 2 core (blocked on #586) | 342 | - | donor shared DSP, `src/dsp/`, `tests/` |
 
 The two 75 items are sequential. The rest of stage 3 is independent of both.
 
@@ -220,24 +219,16 @@ roughly 110 to 160 hours.
 All seven are required checks on `main` (#442). The Raspberry Pi build stays
 required: running on a Pi is a goal, not a courtesy port.
 
-### The test gate, and what the numbers mean
+### The test gate
 
-Three different counts circulate. Only one of them is the gate.
-
-- **1001** is the number of `TEST_CASE` declarations across the 188 files in
-  `tests/`. That is a static count of the source tree. README quotes it and it
-  is correct as a statement about the source.
-- **979** is the number of Catch2 cases the binary actually declares when it is
-  built on Linux, measured with `dusk-studio-tests --list-tests`. The gap is
-  the test sources that CMake compiles only on Windows or macOS.
-- **980** is what `ctest --test-dir build-tests -N` registers on Linux: those
-  979 cases plus `release-mechanics-contract`, a shell test that exercises the
-  real release-version script against a fixture and is added only on Unix.
-
-**980 on Linux is the gate.** The number is platform-dependent by design, so
-the release criterion is not a number at all. It is that `ctest` exits 0 on
-every platform in the matrix above, with no test skipped that is not
-environment-gated.
+The release criterion is not a single test count. The number of registered
+cases is platform-dependent by design: some test sources compile only on
+Windows or macOS, and `release-mechanics-contract` is a shell test added only on
+Unix. The gate is two checks. `ctest` exits 0 on every platform in the matrix
+above, with no test skipped that is not environment-gated, and the `ctest -N`
+inventory on each platform carries every case that platform is expected to
+register, so a test source dropped from `tests/CMakeLists.txt` fails the gate
+instead of passing with a smaller suite.
 
 How it runs in CI:
 
@@ -271,8 +262,10 @@ credentials exist; 1.0 ships without them. The Linux row is required.
 | Windows | `DuskStudio.exe`, `dusk-studio-plugin-host.exe`, and the MSI | Authenticode signature with an RFC 3161 timestamp | Code-signing certificate. Since June 2023 both OV and EV are issued on hardware tokens or through a cloud service, so this is Azure Trusted Signing, a cloud HSM through a CSP, or a self-hosted runner with the token attached |
 | Linux | `SHA256SUMS` | Detached signature, public key published, verify command documented | Release signing private key and its passphrase |
 
-Every credential is a repository secret. The release job must fail, and
-publish nothing, when a secret is missing on a `v*` tag.
+Every credential is a repository secret. Only the Linux row fails closed: a
+`v*` tag without `RELEASE_SIGNING_KEY` and its passphrase fails the release job
+and publishes nothing. Missing macOS or Windows signing secrets emit a notice,
+and the tag ships the ad-hoc signed DMG and the unsigned MSI (#620).
 
 ### Package contents
 
@@ -329,17 +322,19 @@ release.
 ## Out of scope for 1.0
 
 - Anything whose main effect is reducing framework coupling. The whole
-  H-series (#294 through #314) is deferred. The three donor-core moves are not
-  in that class and are all in 1.0: #340 because the built-in colour insert
-  needs the Tape Machine 2 core and the master bus cannot run a different core
-  from the same donor path, and #341 and #342 because 1.0 ships the V2 tone
-  rather than shipping one voicing and replacing it in the first point release.
-  Each lands with a tone regression pinning the new voicing. #342 waits on the
-  donor prerequisites in #586.
-- The DAF, DAF-Widgets, pugl and DPF-Widgets repositories are consumed, not
-  reworked. Consuming them is how the native notepad UI and the built-in unit
-  editors are built. A change to one of them lands only when a 1.0 feature
-  needs it, on a branch, re-pinned deliberately, never as a refactor.
+  H-series (#294 through #314) is deferred. The donor-core moves are not in
+  that class. #340 is in 1.0 because the built-in colour insert needs the Tape
+  Machine 2 core and the master bus cannot run a different core from the same
+  donor path. #341 is in 1.0 so the EQ ships its V2 tone rather than one
+  voicing replaced in the first point release. Both landed with a tone
+  regression pinning the new voicing.
+- Compressors on the Multi-Comp 2 core (#342, with the donor prerequisites in
+  #586). The core is not finished in the plugins repo, so 1.0 ships the
+  current compressor core and the swap moves to 1.1.
+- DAF is consumed, not reworked. It is the one framework repository, with pugl
+  and the widget kit in-tree, and consuming it is how the native notepad UI and
+  the built-in unit editors are built. A change to it lands only when a 1.0
+  feature needs it, on a branch, re-pinned deliberately, never as a refactor.
 - Downloadable SFZ: the online catalog, downloads, archive extraction and the
   libcurl and libarchive dependencies (#74, #252, #253, #254). Only the
   offline browser (#535) is in.

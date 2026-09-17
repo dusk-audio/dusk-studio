@@ -76,7 +76,7 @@ TEST_CASE ("Losing the capture channels disarms the audio tracks and spares MIDI
     setMode (session, 0, Track::Mode::Mono);
     setMode (session, 1, Track::Mode::Stereo);
     setMode (session, 2, Track::Mode::Midi);
-    session.deviceCaptureChannels.store (2, std::memory_order_relaxed);
+    session.deviceCaptureChannels.store (4, std::memory_order_relaxed);
     session.setTrackArmed (0, true);
     session.setTrackArmed (1, true);
     session.setTrackArmed (2, true);
@@ -117,4 +117,81 @@ TEST_CASE ("Arming is allowed before a device has reported its capture width")
 
     CHECK (session.track (0).recordArmed.load (std::memory_order_relaxed));
     CHECK (session.canArmAudioTracks());
+}
+
+// A template routes each track to its own input number, so on a one-input
+// device the second track asked for a channel the device does not have: ARM lit,
+// recording showed a region, and Stop wrote nothing.
+TEST_CASE ("A track whose input the device does not offer cannot arm")
+{
+    Session session;
+    setMode (session, 1, Track::Mode::Mono);
+    session.deviceCaptureChannels.store (1, std::memory_order_relaxed);
+
+    CHECK (session.missingInputForTrack (1) == 1);
+    session.setTrackArmed (1, true);
+    CHECK_FALSE (session.track (1).recordArmed.load (std::memory_order_relaxed));
+
+    SECTION ("choosing an input the device has lets it arm")
+    {
+        session.track (1).inputSource.store (0, std::memory_order_relaxed);
+        CHECK (session.missingInputForTrack (1) == Session::kInputAvailable);
+        session.setTrackArmed (1, true);
+        CHECK (session.track (1).recordArmed.load (std::memory_order_relaxed));
+    }
+
+    SECTION ("an explicit input past the device is refused the same way")
+    {
+        session.track (1).inputSource.store (5, std::memory_order_relaxed);
+        CHECK (session.missingInputForTrack (1) == 5);
+        session.setTrackArmed (1, true);
+        CHECK_FALSE (session.track (1).recordArmed.load (std::memory_order_relaxed));
+    }
+}
+
+TEST_CASE ("A track set to no input cannot arm")
+{
+    Session session;
+    setMode (session, 0, Track::Mode::Mono);
+    session.deviceCaptureChannels.store (8, std::memory_order_relaxed);
+    session.track (0).inputSource.store (-1, std::memory_order_relaxed);
+
+    CHECK (session.missingInputForTrack (0) == Session::kNoInputSelected);
+    session.setTrackArmed (0, true);
+    CHECK_FALSE (session.track (0).recordArmed.load (std::memory_order_relaxed));
+}
+
+TEST_CASE ("A stereo track needs both of its inputs on the device")
+{
+    Session session;
+    setMode (session, 0, Track::Mode::Stereo);
+    session.deviceCaptureChannels.store (1, std::memory_order_relaxed);
+
+    CHECK (session.missingInputForTrack (0) == 1);
+    session.setTrackArmed (0, true);
+    CHECK_FALSE (session.track (0).recordArmed.load (std::memory_order_relaxed));
+
+    session.deviceCaptureChannels.store (2, std::memory_order_relaxed);
+    session.setTrackArmed (0, true);
+    CHECK (session.track (0).recordArmed.load (std::memory_order_relaxed));
+}
+
+TEST_CASE ("A narrower device disarms only the tracks it cannot feed")
+{
+    Session session;
+    for (int t = 0; t < 3; ++t)
+        setMode (session, t, Track::Mode::Mono);
+    session.deviceCaptureChannels.store (4, std::memory_order_relaxed);
+    for (int t = 0; t < 3; ++t)
+        session.setTrackArmed (t, true);
+    REQUIRE (session.track (2).recordArmed.load (std::memory_order_relaxed));
+
+    session.deviceCaptureChannels.store (1, std::memory_order_relaxed);
+    const int disarmed = session.disarmAudioTracksWithoutInput();
+
+    CHECK (disarmed == 2);
+    CHECK (session.track (0).recordArmed.load (std::memory_order_relaxed));
+    CHECK_FALSE (session.track (1).recordArmed.load (std::memory_order_relaxed));
+    CHECK_FALSE (session.track (2).recordArmed.load (std::memory_order_relaxed));
+    CHECK (session.anyTrackArmed());
 }

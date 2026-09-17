@@ -13,8 +13,8 @@
     matches by file name on this platform.
 
     Coverage is narrower than the Unix script by design. The headless self-test
-    leg is not run here: DUSKSTUDIO_RUN_IPC_SELFTEST hangs on Windows (#504),
-    and until that is fixed a self-test leg would be a hang rather than a check.
+    leg is not run here: #504 fixed the DUSKSTUDIO_RUN_IPC_SELFTEST hang, but no
+    Windows runner has shown that harness completing, so it stays manual.
 
 .PARAMETER Artifact
     Path to dusk-studio-X.Y.Z-Windows-x64.msi.

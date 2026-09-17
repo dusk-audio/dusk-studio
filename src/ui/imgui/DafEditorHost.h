@@ -93,6 +93,15 @@ public:
     // True from a successful open() until the closed callback has run.
     bool isOpen() const noexcept;
 
+    // The open editor's native window; zero while none is open.
+    std::uintptr_t nativeWindow() const noexcept;
+
+    // True while an editor is open and has completed a frame. Its window is
+    // mapped before that, carrying whatever the server last had there rather
+    // than the editor, and nativeWindow() is already zero once a close is asked
+    // for or the editor has gone.
+    bool hasRenderedFrame() const noexcept;
+
     // One turn: pump the editor, push what the unit's parameters now hold, and
     // follow the caller's geometry.
     void tick();
