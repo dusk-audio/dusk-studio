@@ -106,13 +106,13 @@ if DUSKSTUDIO_CONTENTS_CONTRACT="$REALISTIC" "$SCRIPT" windows "$WORK/msi" \
 fi
 grep -q "LICENSE$" "$WORK/err3" || fail "the missing LICENSE was not named"
 
-# A Markdown file's relative links must resolve inside the package; URLs and
-# anchors are not checked. Both dead links are reported in one run.
+# A Markdown file's relative links must resolve inside the package; URLs, rooted
+# paths and anchors are not checked. Both dead links are reported in one run.
 DOC_CONTRACT="$WORK/doc-contract.txt"
 printf 'linux\tQUICKSTART.md\n' > "$DOC_CONTRACT"
 mkdir -p "$WORK/doc"
 cat > "$WORK/doc/QUICKSTART.md" <<'DOC_EOF'
-See [the manual](MANUAL.md) and [a section](#where), or [ask](https://example.com/q) or [here](//example.com/q).
+See [the manual](MANUAL.md) and [a section](#where), or [ask](https://example.com/q) or [here](//example.com/q) or [docs](/documentation).
 ![Shot](docs/images/shot.png)
 DOC_EOF
 if DUSKSTUDIO_CONTENTS_CONTRACT="$DOC_CONTRACT" "$SCRIPT" linux "$WORK/doc" \

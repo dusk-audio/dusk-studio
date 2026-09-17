@@ -142,10 +142,11 @@ for path in "${expected[@]}"; do
 done
 
 # A link that resolves only in the source tree is dead once packaged, inline or
-# as a reference definition. URLs and in-page anchors are skipped; a relative
-# target must be in the package, beside the document on Linux and macOS, and by
-# file name in a flattened MSI. A target that climbs out of the package root is
-# dead even when the packaging host has a file there.
+# as a reference definition. URLs, rooted paths and in-page anchors are skipped,
+# as ship-quickstart.cmake leaves them; a relative target must be in the
+# package, beside the document on Linux and macOS, and by file name in a
+# flattened MSI. A target that climbs out of the package root is dead even when
+# the packaging host has a file there.
 deadLinks=()
 for path in "${expected[@]}"; do
     [[ "$path" == *.md ]] || continue
@@ -161,7 +162,7 @@ for path in "${expected[@]}"; do
         target="${target%>}"
         target="${target%%#*}"
         [[ -z "$target" ]] && continue
-        [[ "$target" =~ ^[A-Za-z][A-Za-z0-9+.-]*: || "$target" == //* ]] && continue
+        [[ "$target" =~ ^[A-Za-z][A-Za-z0-9+.-]*: || "$target" == /* ]] && continue
         if [[ "$PLATFORM" == "windows" ]]; then
             [[ -n "$(findWindowsFile "${target##*/}")" ]] || deadLinks+=("$path -> $target")
         else
