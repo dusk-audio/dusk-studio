@@ -136,6 +136,10 @@ that will carry a signed 1.0.
   to at least a minute when recording started and snap back on stop, so the
   view jumped twice per take. It now holds your zoom and turns the page when the
   playhead reaches the right-hand edge, with or without Chase.
+- **A new session's tape strip opens on a one-minute window** (#628). With
+  nothing recorded, fitting the view picked the tightest zoom, so the strip
+  showed about two seconds of tape and a first take turned the page every two
+  seconds. **0** (Fit) on an empty session gives the same minute.
 - **Logging out no longer skips the unsaved-changes prompt.** A termination
   signal, a logout or a shutdown runs the same staged shutdown as **File >
   Quit**, so the prompt appears and plugin child processes are not left to be

@@ -453,7 +453,7 @@ double TapeStrip::pixelsPerSecond() const noexcept
 
     // Find the rightmost sample we need to show, then add a margin so there's
     // always blank tape past the last recorded thing.
-    const double maxSeconds = std::max (60.0, (double) rightmostContentSample() / sr * 1.20);
+    const double maxSeconds = tapeStripUnzoomedSeconds ((double) rightmostContentSample() / sr);
 
     auto col = tracksColumnBounds();
     if (col.getWidth() <= 0) return 0.0;
@@ -491,27 +491,9 @@ void TapeStrip::zoomByFactor (float factor, int anchorX)
 void TapeStrip::zoomFit() noexcept
 {
     scrollSamples = 0;
-
-    // The legacy pixelsPerSecond() builds in a 60-second minimum + 20 %
-    // headroom margin, so just resetting userZoomFactor to 1.0 leaves
-    // short content squished into the left half of the strip. Compute
-    // the zoom that makes the rightmost content sample land at the
-    // column's right edge - that's the user's "fit" expectation.
     const double sr = engine.getCurrentSampleRate();
-    if (sr <= 0.0)
-    {
-        userZoomFactor = 1.0f;
-        repaint();
-        return;
-    }
-
-    const double contentSec    = (double) std::max<std::int64_t> (1, rightmostContentSample()) / sr;
-    const double autoFitBudget = std::max (60.0, contentSec * 1.20);
-    // pxPerSec at zoom 1 = col.width / autoFitBudget. We want the
-    // visible window to equal contentSec exactly, so
-    // zoom = autoFitBudget / contentSec.
-    const float fitZoom = (float) (autoFitBudget / std::max (0.001, contentSec));
-    userZoomFactor = jlimit (0.1f, 32.0f, fitZoom);
+    userZoomFactor = sr > 0.0 ? tapeStripFitZoom ((double) rightmostContentSample() / sr)
+                              : 1.0f;
     repaint();
 }
 
