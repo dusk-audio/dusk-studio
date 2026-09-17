@@ -4,7 +4,8 @@
 #   - packaging/DuskStudio.appdata.xml - prepends a new <release> entry
 #     dated today
 #   - packaging/RELEASE-NOTES.md - rewrites the summary slot of the canonical
-#     release body every tag workflow publishes
+#     release body every tag workflow publishes, and the VERSION= line of its
+#     signature-check commands
 # Then prints what to do next (git commit + tag).
 #
 # Usage:   scripts/bump-version.sh 1.0.0
@@ -202,7 +203,8 @@ if [[ -f "$NOTES_FILE" ]]; then
         SUMMARY_FILE=$(mktemp -t duskstudio-summary.XXXXXX)
         printf '%s\n' "$NOTES" > "$SUMMARY_FILE"
 
-        awk -v summary_file="$SUMMARY_FILE" -v start="$NOTES_START" -v end="$NOTES_END" '
+        awk -v summary_file="$SUMMARY_FILE" -v start="$NOTES_START" -v end="$NOTES_END" \
+            -v version="$NEW_VERSION" '
             { trimmed = $0; sub(/^[ \t]+/, "", trimmed); sub(/[ \t]+$/, "", trimmed) }
             trimmed == start {
                 print
@@ -212,6 +214,9 @@ if [[ -f "$NOTES_FILE" ]]; then
                 next
             }
             trimmed == end { inside = 0 }
+            !inside && /^[ \t]*VERSION=[0-9]+\.[0-9]+\.[0-9]+([ \t]|$)/ {
+                sub(/VERSION=[0-9]+\.[0-9]+\.[0-9]+/, "VERSION=" version)
+            }
             !inside { print }
         ' "$NOTES_FILE" > "$NOTES_FILE.tmp" \
             || { echo "error: awk failed to update $NOTES_FILE" >&2; exit 1; }

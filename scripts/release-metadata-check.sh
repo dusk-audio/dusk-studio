@@ -88,6 +88,12 @@ today="$(date -u +%F)"
 
 if [[ -n "$TAG" ]]; then
     [[ "$TAG" == "v$version" ]] || fail "tag $TAG does not match VERSION v$version"
+    # The notes are written ahead of the bump, so only the tag holds them to it.
+    for notesVersion in $(sed -nE 's/^[[:space:]]*VERSION=([0-9]+\.[0-9]+\.[0-9]+)([[:space:]].*)?$/\1/p' \
+                              "$ROOT/packaging/RELEASE-NOTES.md"); do
+        [[ "$notesVersion" == "$version" ]] \
+            || fail "packaging/RELEASE-NOTES.md fetches the signing key from v$notesVersion, tag is $TAG"
+    done
 fi
 if [[ -n "$DATE" ]]; then
     isDate "$DATE" || fail "--date '$DATE' is not YYYY-MM-DD"
