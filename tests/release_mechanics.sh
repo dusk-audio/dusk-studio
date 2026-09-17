@@ -1456,7 +1456,8 @@ write_metadata_fixture() {
         > "$dir/CHANGELOG.md"
     printf '<component>\n  <releases>\n    <release version="%s" date="%s">\n    </release>\n  </releases>\n</component>\n' \
         "$app_version" "$app_date" > "$dir/packaging/DuskStudio.appdata.xml"
-    printf '<!-- summary-start -->\nSummary.\n<!-- summary-end -->\n' > "$dir/packaging/RELEASE-NOTES.md"
+    printf '<!-- summary-start -->\nSummary.\n<!-- summary-end -->\n\n    VERSION=%s   # this release\n' \
+        "$version" > "$dir/packaging/RELEASE-NOTES.md"
 }
 
 metadata_expect() {
@@ -1498,6 +1499,11 @@ printf '<!-- summary-start -->\nSummary.\n<!-- summary-end -->\n\n    VERSION=0.
     > "$META/notes-key/packaging/RELEASE-NOTES.md"
 metadata_expect pass "release notes written ahead of an untagged tree" --root "$META/notes-key"
 metadata_expect fail "release notes fetching the key from another release" --root "$META/notes-key" --tag v0.0.2
+write_metadata_fixture "$META/notes-no-key" 0.0.2 "0.0.2] - 2026-01-02" 0.0.2 2026-01-02
+printf '<!-- summary-start -->\nSummary.\n<!-- summary-end -->\n' \
+    > "$META/notes-no-key/packaging/RELEASE-NOTES.md"
+metadata_expect pass "notes without the key fetch on an untagged tree" --root "$META/notes-no-key"
+metadata_expect fail "notes carrying no key version at a tag" --root "$META/notes-no-key" --tag v0.0.2
 
 "$PYTHON" - "$SOURCE_ROOT" <<'PY'
 import re
