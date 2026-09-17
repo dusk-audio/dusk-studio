@@ -1868,11 +1868,27 @@ if(WIN32 AND DUSKSTUDIO_ENABLE_NATIVE_UI
                 "${DUSKSTUDIO_WINDOWS_SOFTWARE_OPENGL_DIR}/libgallium_wgl.dll"
             DESTINATION bin)
 endif()
+# No package carries the manual or the screenshots QUICKSTART.md links by
+# relative path, so every package installs a copy whose links point at the
+# tagged source instead. package-tarball.sh runs the same script.
+set(DUSKSTUDIO_SHIPPED_QUICKSTART "${CMAKE_CURRENT_BINARY_DIR}/packaging/QUICKSTART.md")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}"
+            "-DQUICKSTART_IN=${CMAKE_CURRENT_SOURCE_DIR}/QUICKSTART.md"
+            "-DQUICKSTART_OUT=${DUSKSTUDIO_SHIPPED_QUICKSTART}"
+            "-DQUICKSTART_VERSION=${PROJECT_VERSION}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ship-quickstart.cmake"
+    RESULT_VARIABLE duskstudio_quickstart_rc)
+if(NOT duskstudio_quickstart_rc EQUAL 0)
+    message(FATAL_ERROR "scripts/ship-quickstart.cmake failed (${duskstudio_quickstart_rc})")
+endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+             QUICKSTART.md scripts/ship-quickstart.cmake)
 if(APPLE)
     # Keep a copy inside the installed bundle so Settings > Quickstart still
     # works after the user drags only DuskStudio.app into /Applications. Install
     # it before finalize-macos-bundle.sh signs the staged bundle.
-    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/QUICKSTART.md"
+    install(FILES "${DUSKSTUDIO_SHIPPED_QUICKSTART}"
             DESTINATION "DuskStudio.app/Contents/Resources")
     # Installing a bundle rewrites its Mach-O load commands, so the POST_BUILD
     # signature above is invalid by the time CPack stages the .app, and the
@@ -1926,12 +1942,12 @@ if(UNIX AND NOT APPLE)
     # Reachable before the app is opened, which is the point: a user who cannot
     # get a device configured has not got as far as the in-app link. The Linux
     # tarball is not CPack and stages its own copy in package-tarball.sh.
-    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/QUICKSTART.md"
+    install(FILES "${DUSKSTUDIO_SHIPPED_QUICKSTART}"
             DESTINATION share/doc/dusk-studio)
 else()
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
                   "${CMAKE_CURRENT_SOURCE_DIR}/LICENSES.txt"
-                  "${CMAKE_CURRENT_SOURCE_DIR}/QUICKSTART.md"
+                  "${DUSKSTUDIO_SHIPPED_QUICKSTART}"
             DESTINATION .)
 endif()
 # The hicolor size the .desktop Icon=DuskStudio key resolves. Committed rather

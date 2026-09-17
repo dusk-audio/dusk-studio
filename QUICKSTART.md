@@ -1,7 +1,7 @@
 # Dusk Studio quickstart
 
 Five minutes from a downloaded file to a mixed-down track. If you want the
-detail on any of this, it is all in [MANUAL.md](MANUAL.md).
+detail on any of this, it is all in [the manual](MANUAL.md).
 
 ## 1. Install and open it
 
@@ -120,7 +120,7 @@ Back up the whole folder. Everything you made is inside it.
 - **A plugin will not load.** Settings, then Settings..., and rescan. A plugin
   that crashes the scan is quarantined rather than taking the app with it.
 
-Fuller answers are in [MANUAL.md](MANUAL.md), and the
+Fuller answers are in [the manual](MANUAL.md), and the
 [Discussions](https://github.com/dusk-audio/dusk-studio/discussions) page is
 where to ask. Bug reports go in Issues, with your OS, your build number and what
 you did.

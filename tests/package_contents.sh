@@ -5,7 +5,8 @@
 
 set -euo pipefail
 
-REPO_ROOT="${1:?usage: package_contents.sh <repo-root>}"
+REPO_ROOT="${1:?usage: package_contents.sh <repo-root> <cmake>}"
+CMAKE="${2:?usage: package_contents.sh <repo-root> <cmake>}"
 SCRIPT="${REPO_ROOT}/scripts/verify-package-contents.sh"
 [[ -x "$SCRIPT" ]] || { echo "not executable: $SCRIPT" >&2; exit 1; }
 
@@ -104,6 +105,120 @@ if DUSKSTUDIO_CONTENTS_CONTRACT="$REALISTIC" "$SCRIPT" windows "$WORK/msi" \
     fail "LICENSES.txt was accepted in place of LICENSE"
 fi
 grep -q "LICENSE$" "$WORK/err3" || fail "the missing LICENSE was not named"
+
+# A Markdown file's relative links must resolve inside the package; URLs and
+# anchors are not checked. Both dead links are reported in one run.
+DOC_CONTRACT="$WORK/doc-contract.txt"
+printf 'linux\tQUICKSTART.md\n' > "$DOC_CONTRACT"
+mkdir -p "$WORK/doc"
+cat > "$WORK/doc/QUICKSTART.md" <<'DOC_EOF'
+See [the manual](MANUAL.md) and [a section](#where), or [ask](https://example.com/q) or [here](//example.com/q).
+![Shot](docs/images/shot.png)
+DOC_EOF
+if DUSKSTUDIO_CONTENTS_CONTRACT="$DOC_CONTRACT" "$SCRIPT" linux "$WORK/doc" \
+       >/dev/null 2>"$WORK/doc-err"; then
+    fail "a quickstart linking files the package lacks was accepted"
+fi
+grep -q "QUICKSTART.md -> MANUAL.md" "$WORK/doc-err" || fail "the dead manual link was not named"
+grep -q "QUICKSTART.md -> docs/images/shot.png" "$WORK/doc-err" || fail "the dead image link was not named"
+mkdir -p "$WORK/doc/docs/images"
+touch "$WORK/doc/MANUAL.md" "$WORK/doc/docs/images/shot.png"
+DUSKSTUDIO_CONTENTS_CONTRACT="$DOC_CONTRACT" "$SCRIPT" linux "$WORK/doc" >/dev/null \
+    || fail "a quickstart whose links all resolve was rejected"
+
+# A target may climb within the package, but not out of it: the packaging host
+# having a file there says nothing about the user's machine.
+touch "$WORK/outside.md"
+printf 'Also [inside](docs/../MANUAL.md).\n' >> "$WORK/doc/QUICKSTART.md"
+DUSKSTUDIO_CONTENTS_CONTRACT="$DOC_CONTRACT" "$SCRIPT" linux "$WORK/doc" >/dev/null \
+    || fail "a link that climbs but stays inside the package was rejected"
+printf 'And [outside](../outside.md).\n' >> "$WORK/doc/QUICKSTART.md"
+if DUSKSTUDIO_CONTENTS_CONTRACT="$DOC_CONTRACT" "$SCRIPT" linux "$WORK/doc" \
+       >/dev/null 2>"$WORK/doc-err"; then
+    fail "a link out of the package root was accepted"
+fi
+grep -q "QUICKSTART.md -> ../outside.md" "$WORK/doc-err" || fail "the escaping link was not named"
+
+# Reference definitions are links too.
+mkdir -p "$WORK/refs"
+cat > "$WORK/refs/QUICKSTART.md" <<'REF_EOF'
+Read [the guide][guide], then [ask][forum].
+
+[guide]: GUIDE.md
+  [forum]: <https://example.com/forum> "Forum"
+REF_EOF
+if DUSKSTUDIO_CONTENTS_CONTRACT="$DOC_CONTRACT" "$SCRIPT" linux "$WORK/refs" \
+       >/dev/null 2>"$WORK/refs-err"; then
+    fail "a reference definition to a missing file was accepted"
+fi
+grep -q "QUICKSTART.md -> GUIDE.md" "$WORK/refs-err" || fail "the dead reference definition was not named"
+grep -q "example.com" "$WORK/refs-err" && fail "a URL reference definition was reported"
+touch "$WORK/refs/GUIDE.md"
+DUSKSTUDIO_CONTENTS_CONTRACT="$DOC_CONTRACT" "$SCRIPT" linux "$WORK/refs" >/dev/null \
+    || fail "a reference definition to a packaged file was rejected"
+
+# A symlink inside the package is judged by where it lands, not by its name.
+mkdir -p "$WORK/sym"
+touch "$WORK/sym/real.md"
+ln -s real.md "$WORK/sym/inside.md"
+ln -s ../outside.md "$WORK/sym/escape.md"
+ln -s missing.md "$WORK/sym/broken.md"
+printf '[a](inside.md) [b](escape.md) [c](broken.md)\n' > "$WORK/sym/QUICKSTART.md"
+if DUSKSTUDIO_CONTENTS_CONTRACT="$DOC_CONTRACT" "$SCRIPT" linux "$WORK/sym" \
+       >/dev/null 2>"$WORK/sym-err"; then
+    fail "symlinks out of the package or to nothing were accepted"
+fi
+grep -q "QUICKSTART.md -> escape.md" "$WORK/sym-err" || fail "the escaping symlink was not named"
+grep -q "QUICKSTART.md -> broken.md" "$WORK/sym-err" || fail "the broken symlink was not named"
+grep -q "QUICKSTART.md -> inside.md" "$WORK/sym-err" && fail "a symlink inside the package was rejected"
+
+printf 'windows\tQUICKSTART.md\n' > "$WORK/win-doc-contract.txt"
+mkdir -p "$WORK/win-doc"
+printf 'Read [the licence](LICENSE).\n' > "$WORK/win-doc/CM_FP_QUICKSTART.md"
+if DUSKSTUDIO_CONTENTS_CONTRACT="$WORK/win-doc-contract.txt" "$SCRIPT" windows "$WORK/win-doc" \
+       >/dev/null 2>"$WORK/win-doc-err"; then
+    fail "a flattened MSI quickstart linking a missing file was accepted"
+fi
+grep -q "QUICKSTART.md -> LICENSE" "$WORK/win-doc-err" || fail "the dead MSI link was not named"
+touch "$WORK/win-doc/CM_FP_LICENSE"
+DUSKSTUDIO_CONTENTS_CONTRACT="$WORK/win-doc-contract.txt" "$SCRIPT" windows "$WORK/win-doc" >/dev/null \
+    || fail "a flattened MSI quickstart whose link resolves was rejected"
+
+# The real quickstart links paths no package carries, and the copy packagers
+# ship must link the tagged source for each of them instead.
+mkdir -p "$WORK/repo-doc" "$WORK/shipped-doc"
+cp "$REPO_ROOT/QUICKSTART.md" "$WORK/repo-doc/QUICKSTART.md"
+DUSKSTUDIO_CONTENTS_CONTRACT="$DOC_CONTRACT" "$SCRIPT" linux "$WORK/repo-doc" >/dev/null 2>&1 \
+    && fail "the repository quickstart has no relative links left to rewrite"
+"$CMAKE" -DQUICKSTART_IN="$REPO_ROOT/QUICKSTART.md" \
+         -DQUICKSTART_OUT="$WORK/shipped-doc/QUICKSTART.md" \
+         -DQUICKSTART_VERSION=9.8.7 -P "$REPO_ROOT/scripts/ship-quickstart.cmake" \
+    || fail "ship-quickstart.cmake failed"
+DUSKSTUDIO_CONTENTS_CONTRACT="$DOC_CONTRACT" "$SCRIPT" linux "$WORK/shipped-doc" >/dev/null \
+    || fail "the shipped quickstart still links a path the package lacks"
+rewritten=0
+while IFS= read -r url; do
+    case "$url" in
+        https://raw.githubusercontent.com/dusk-audio/dusk-studio/v9.8.7/*)
+            relative="${url#https://raw.githubusercontent.com/dusk-audio/dusk-studio/v9.8.7/}" ;;
+        https://github.com/dusk-audio/dusk-studio/blob/v9.8.7/*)
+            relative="${url#https://github.com/dusk-audio/dusk-studio/blob/v9.8.7/}" ;;
+        *) continue ;;
+    esac
+    [[ -f "$REPO_ROOT/${relative%%#*}" ]] || fail "the shipped quickstart links $url, not in the source tree"
+    rewritten=$((rewritten + 1))
+done < <(grep -oE '\]\([^)]+\)' "$WORK/shipped-doc/QUICKSTART.md" | sed 's/^](//; s/)$//')
+[[ $rewritten -gt 0 ]] || fail "the shipped quickstart links nothing at the tagged source"
+grep -q 'raw.githubusercontent.com/dusk-audio/dusk-studio/v9.8.7/docs/images/' "$WORK/shipped-doc/QUICKSTART.md" \
+    || fail "shipped quickstart images do not point at raw files"
+
+# Rooted paths are not repository paths and pass through the rewrite untouched.
+printf '[a](/documentation) [b](//example.com/x.png) [c](docs/y.png)\n' > "$WORK/rooted.md"
+"$CMAKE" -DQUICKSTART_IN="$WORK/rooted.md" -DQUICKSTART_OUT="$WORK/rooted-out.md" \
+         -DQUICKSTART_VERSION=9.8.7 -P "$REPO_ROOT/scripts/ship-quickstart.cmake" \
+    || fail "ship-quickstart.cmake failed on rooted paths"
+grep -qF '[a](/documentation) [b](//example.com/x.png) [c](https://raw.githubusercontent.com/dusk-audio/dusk-studio/v9.8.7/docs/y.png)' \
+    "$WORK/rooted-out.md" || fail "rooted paths were rewritten: $(cat "$WORK/rooted-out.md")"
 
 # A contract this cannot read must stop the release, not skip the record.
 printf 'linux only-one-field\n' > "$WORK/bad.txt"

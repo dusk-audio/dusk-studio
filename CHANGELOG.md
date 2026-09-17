@@ -119,6 +119,10 @@ that will carry a signed 1.0.
   now sends unsigned-beta users to **Privacy & Security > Open Anyway** after
   the first blocked launch, and the manual uses the names of the shipped DMG
   and app bundle.
+- **The quickstart's links work from an installed package** (#626). The copy
+  in every package linked the manual and its screenshots by paths that exist
+  only in the source tree. It now links them on GitHub at the release tag, and
+  the package check fails a Markdown file that links a path the package lacks.
 - **Placing loop and punch brackets arms them** (#592). **Set punch in here**
   and **Set punch out here** on the ruler menu, and **Shift+[** / **Shift+]**,
   turn punch on once the in point sits before the out point, as dragging a

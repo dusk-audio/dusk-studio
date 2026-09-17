@@ -799,7 +799,8 @@ if(UNIX)
         add_test(NAME package-contents-checker
             COMMAND "${DUSKSTUDIO_BASH_EXECUTABLE}"
                     "${CMAKE_CURRENT_SOURCE_DIR}/package_contents.sh"
-                    "${CMAKE_SOURCE_DIR}")
+                    "${CMAKE_SOURCE_DIR}"
+                    "${CMAKE_COMMAND}")
         add_test(NAME release-mechanics-contract
             COMMAND "${DUSKSTUDIO_BASH_EXECUTABLE}"
                     "${CMAKE_CURRENT_SOURCE_DIR}/release_mechanics.sh"

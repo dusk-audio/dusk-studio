@@ -6,7 +6,8 @@
 #   scripts/verify-package-contents.sh windows <7z extraction of the MSI>
 #
 # Read-only. Exits non-zero listing every missing path, so one run reports the
-# whole gap rather than the first hole in it.
+# whole gap rather than the first hole in it. A Markdown file in the contract
+# also fails the package when it links a relative path the package lacks.
 #
 # Windows is matched by file name rather than path: an MSI is a database and 7z
 # flattens it on extraction, so the layout the contract records cannot be
@@ -41,6 +42,39 @@ normalise() {
     printf '%s' "$1" | tr '\-' '_' | tr '[:upper:]' '[:lower:]'
 }
 
+# Print the first extracted file whose name ends in $1 at a '.' or '_' boundary.
+findWindowsFile() {
+    local name candidate base
+    name="$(normalise "$1")"
+    while IFS= read -r candidate; do
+        base="$(normalise "${candidate##*/}")"
+        if [[ "$base" == "$name" || "$base" == *".${name}" || "$base" == *"_${name}" ]]; then
+            printf '%s\n' "$candidate"
+            return
+        fi
+    done < <(find "$ROOT" -type f)
+}
+
+# Print the physical path of an existing $1, every symlink resolved including
+# the last component, or nothing when it does not exist. readlink -f and realpath
+# are not on every macOS the release runs on, so the chain is walked by hand.
+physicalPath() {
+    local path="$1" link dir hops=0
+    while [[ -L "$path" ]]; do
+        hops=$((hops + 1))
+        [[ $hops -le 40 ]] || return 0
+        link="$(readlink "$path")"
+        [[ "$link" == /* ]] || link="$(dirname "$path")/$link"
+        path="$link"
+    done
+    if [[ -d "$path" ]]; then
+        (cd "$path" 2>/dev/null && pwd -P) || true
+    elif [[ -e "$path" ]]; then
+        dir="$(cd "$(dirname "$path")" 2>/dev/null && pwd -P)" || return 0
+        printf '%s/%s\n' "$dir" "${path##*/}"
+    fi
+}
+
 [[ $# -eq 2 ]] || usage
 PLATFORM="$1"
 ROOT="$2"
@@ -52,6 +86,7 @@ esac
 
 [[ -d "$ROOT" ]] || { echo "error: package root is not a directory: $ROOT" >&2; exit 2; }
 [[ -f "$CONTRACT" ]] || { echo "error: contract not found: $CONTRACT" >&2; exit 2; }
+ROOT_PHYSICAL="$(cd "$ROOT" && pwd -P)"
 
 expected=()
 lineNo=0
@@ -92,17 +127,7 @@ fi
 missing=()
 for path in "${expected[@]}"; do
     if [[ "$PLATFORM" == "windows" ]]; then
-        name="$(normalise "${path##*/}")"
-        found=0
-        while IFS= read -r candidate; do
-            candidate="$(normalise "${candidate##*/}")"
-            if [[ "$candidate" == "$name" || "$candidate" == *".${name}" \
-                  || "$candidate" == *"_${name}" ]]; then
-                found=1
-                break
-            fi
-        done < <(find "$ROOT" -type f)
-        [[ $found -eq 1 ]] || missing+=("$path")
+        [[ -n "$(findWindowsFile "${path##*/}")" ]] || missing+=("$path")
     elif [[ "$PLATFORM" == "macos" && "$path" == "Applications" ]]; then
         if [[ ! -L "$ROOT/$path" || "$(readlink "$ROOT/$path")" != "/Applications" ]]; then
             missing+=("$path")
@@ -116,11 +141,53 @@ for path in "${expected[@]}"; do
     fi
 done
 
-if [[ ${#missing[@]} -gt 0 ]]; then
-    echo "error: ${PLATFORM} package is missing ${#missing[@]} required path(s):" >&2
-    for path in "${missing[@]}"; do
-        echo "  $path" >&2
-    done
+# A link that resolves only in the source tree is dead once packaged, inline or
+# as a reference definition. URLs and in-page anchors are skipped; a relative
+# target must be in the package, beside the document on Linux and macOS, and by
+# file name in a flattened MSI. A target that climbs out of the package root is
+# dead even when the packaging host has a file there.
+deadLinks=()
+for path in "${expected[@]}"; do
+    [[ "$path" == *.md ]] || continue
+    if [[ "$PLATFORM" == "windows" ]]; then
+        doc="$(findWindowsFile "${path##*/}")"
+    else
+        doc="$ROOT/$path"
+    fi
+    [[ -n "$doc" && -f "$doc" ]] || continue
+    while IFS= read -r target; do
+        target="${target%% *}"
+        target="${target#<}"
+        target="${target%>}"
+        target="${target%%#*}"
+        [[ -z "$target" ]] && continue
+        [[ "$target" =~ ^[A-Za-z][A-Za-z0-9+.-]*: || "$target" == //* ]] && continue
+        if [[ "$PLATFORM" == "windows" ]]; then
+            [[ -n "$(findWindowsFile "${target##*/}")" ]] || deadLinks+=("$path -> $target")
+        else
+            resolved="$(physicalPath "$(dirname "$doc")/$target")"
+            [[ -n "$resolved" && ( "$resolved" == "$ROOT_PHYSICAL" \
+                  || "$resolved" == "$ROOT_PHYSICAL"/* ) ]] \
+                || deadLinks+=("$path -> $target")
+        fi
+    done < <({ grep -oE '\]\([^)]+\)' "$doc" || true; } | sed 's/^](//; s/)$//'
+             { grep -E '^ {0,3}\[[^]]+\]:[[:space:]]*[^[:space:]]' "$doc" || true; } \
+                 | sed -E 's/^ {0,3}\[[^]]+\]:[[:space:]]*//')
+done
+
+if [[ ${#missing[@]} -gt 0 || ${#deadLinks[@]} -gt 0 ]]; then
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo "error: ${PLATFORM} package is missing ${#missing[@]} required path(s):" >&2
+        for path in "${missing[@]}"; do
+            echo "  $path" >&2
+        done
+    fi
+    if [[ ${#deadLinks[@]} -gt 0 ]]; then
+        echo "error: ${PLATFORM} package has ${#deadLinks[@]} link(s) to paths it does not carry:" >&2
+        for link in "${deadLinks[@]}"; do
+            echo "  $link" >&2
+        done
+    fi
     if [[ "$PLATFORM" == "windows" ]]; then
         echo "extracted names under $ROOT:" >&2
         find "$ROOT" -type f | head -40 | sed "s|^$ROOT/||; s/^/  /" >&2
