@@ -52,17 +52,18 @@ transaction on a PipeWire box.
 
 ## Repository layout
 
-Dusk Studio expects three sibling repositories alongside its own checkout:
+Dusk Studio expects two sibling repositories alongside its own checkout:
 
 ```
 ~/projects/
 ├── dusk-studio/       (this repo)
 ├── JUCE-wayland/      (plugdata-team fork, branch: wayland-juce8)
-├── plugins/           (Dusk Audio plugins, donor DSP)
 └── DAF/               (DAF framework, DGL, and in-tree widgets/ kit)
 ```
 
-CMake auto-discovers these. Override with `-DJUCE_PATH=...`, `-DDUSK_PLUGINS_PATH=...`, or `-DDAF_PATH=...` if you keep them elsewhere.
+CMake auto-discovers these. Override with `-DJUCE_PATH=...` or `-DDAF_PATH=...` if you keep them elsewhere.
+
+The Dusk Audio plugins repo (donor DSP) is not a sibling: configure fetches it into `build/_deps/dusk-plugins` at the commit named in [DONOR_REV](DONOR_REV), the same commit CI and every release build. That needs git and network access on the first configure. To build against your own plugins checkout instead, pass `-DDUSK_PLUGINS_PATH=/path/to/plugins`.
 
 ### Why the JUCE-wayland fork (Linux-only)
 
@@ -78,27 +79,13 @@ Cross-platform Dusk Studio source compiles against either upstream JUCE or the f
 cd ~/projects
 git clone --recurse-submodules https://github.com/dusk-audio/dusk-studio.git
 git clone --branch wayland-juce8 https://github.com/plugdata-team/JUCE.git JUCE-wayland
-git clone https://github.com/dusk-audio/dusk-audio-plugins.git plugins
-git -C plugins fetch --depth 1 origin 2693a8923388d0ca0bc4b080cade6a5187a51a51
-git -C plugins checkout --detach FETCH_HEAD
-test "$(git -C plugins rev-parse HEAD)" = 2693a8923388d0ca0bc4b080cade6a5187a51a51 || {
-  echo "ERROR: donor checkout did not reach the pinned revision" >&2
-  false
-}
 ```
 
-`--recurse-submodules` is required, not tidiness. Dusk Studio carries three: `external/clap`, `external/sfizz`, and `external/vst3sdk`. A clone without them fails configure outright on the CLAP headers (the native CLAP host defaults ON here, [CMakeLists.txt:27-33](CMakeLists.txt#L27-L33), and [CMakeLists.txt:1076-1081](CMakeLists.txt#L1076-L1081) stops the build), and a missing `external/sfizz` costs you the SF2 / multisample instrument with no diagnostic at all ([CMakeLists.txt:1163](CMakeLists.txt#L1163) simply gates on the header being there). Already cloned without them:
+`--recurse-submodules` is required, not tidiness. Dusk Studio carries three: `external/clap`, `external/dusk-fizz`, and `external/vst3sdk`. A clone without them fails configure outright on the CLAP headers (the native CLAP host defaults ON here, [CMakeLists.txt:27-33](CMakeLists.txt#L27-L33), and [CMakeLists.txt:1076-1081](CMakeLists.txt#L1076-L1081) stops the build), and a missing `external/dusk-fizz` costs you the SF2 / multisample instrument with no diagnostic at all ([CMakeLists.txt:1163](CMakeLists.txt#L1163) simply gates on the header being there). Already cloned without them:
 
 ```bash
 git submodule update --init --recursive
 ```
-
-The explicit `plugins` target on the third clone is mandatory — the repo is named `dusk-audio-plugins` on GitHub, and `../plugins` is the only sibling directory CMake checks ([CMakeLists.txt:358-367](CMakeLists.txt#L358-L367)). Get it wrong and configure prints a warning rather than failing; the build then produces a recorder with no EQ, compressor, or tape.
-
-The fetch and detached checkout are also mandatory. Dusk Studio consumes a
-framework-free compressor core that is present at the revision pinned by all
-build and release workflows but is not on the donor repository's current
-`main`. When that pin moves, update every workflow and this guide together.
 
 If you also keep an upstream `JUCE/` sibling for cross-OS dev, CMake prefers `JUCE-wayland/` on Linux and falls back to `JUCE/` only if the fork isn't there.
 
@@ -109,12 +96,9 @@ The session notepad is Dusk Studio's first native UI window: DAF/DGL for the Ope
 ```bash
 cd ~/projects
 git clone https://github.com/dusk-audio/DAF.git
-git -C DAF checkout aa6d20d03932d5149b836bc350da47757357ecf7
 ```
 
-Clone then check out the SHA, rather than building whatever `main` points at today: a branch tip moves and CI fetches this exact SHA. Pugl and the widget kit are vendored in the DAF checkout.
-
-The pins live in [.github/actions/clone-daf-stack/action.yml](.github/actions/clone-daf-stack/action.yml), which is the single source of truth for every workflow — read them from there if it ever disagrees with the commands above.
+Build against DAF `main`, the same branch CI builds; `git -C DAF pull` before building picks up its latest changes. Pugl and the widget kit are vendored in the DAF checkout.
 
 Without DAF and its in-tree widgets, `DUSKSTUDIO_ENABLE_NATIVE_UI` defaults to **OFF** and configure says so once, quietly:
 

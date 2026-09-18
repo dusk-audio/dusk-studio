@@ -383,26 +383,72 @@ endif()
 # Dusk Audio plugins repo — donor for the analog DSP cores (4K EQ filter chain,
 # FET/Opto compressor, Pultec EQ, tape saturation, console saturation, plus the
 # AnalogEmulation library). Header-only cores are picked up via the include
-# paths below; editing a header in the plugins repo automatically rebuilds
-# the affected Dusk Studio translation units. No copy / submodule bump required.
+# paths below; with -DDUSK_PLUGINS_PATH pointing at a plugins checkout, editing
+# a header there rebuilds the affected Dusk Studio translation units.
 #
 # Resolution priority:
-#   1. -DDUSK_PLUGINS_PATH (explicit override)
-#   2. sibling ../plugins — the single donor checkout, kept on main as its resting
-#      state (the stable donor API). If ../plugins is on a feature branch, you build
-#      against that branch. (The former ../plugins-main worktree was removed; the
-#      plugins repo is consolidated to one directory.)
+#   1. -DDUSK_PLUGINS_PATH (explicit override, e.g. ../plugins to try donor edits)
+#   2. the commit named in DONOR_REV, fetched into the build tree. CI and release
+#      builds use the same commit, so a default local build matches them.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/DONOR_REV" DUSKSTUDIO_DONOR_REV)
+string(STRIP "${DUSKSTUDIO_DONOR_REV}" DUSKSTUDIO_DONOR_REV)
+string(LENGTH "${DUSKSTUDIO_DONOR_REV}" _duskstudio_donor_rev_length)
+if(NOT _duskstudio_donor_rev_length EQUAL 40
+   OR NOT DUSKSTUDIO_DONOR_REV MATCHES "^[0-9a-f]+$")
+    message(FATAL_ERROR "DONOR_REV must hold one full 40-character commit hash")
+endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/DONOR_REV")
+
 if(DEFINED DUSK_PLUGINS_PATH)
     get_filename_component(DUSK_PLUGINS_PATH "${DUSK_PLUGINS_PATH}" ABSOLUTE)
     message(STATUS "Using Dusk plugins from: ${DUSK_PLUGINS_PATH}")
-elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../plugins/plugins/shared")
-    set(DUSK_PLUGINS_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../plugins")
-    message(STATUS "Using Dusk plugins from sibling directory: ${DUSK_PLUGINS_PATH}")
 else()
-    message(WARNING
-        "Dusk plugins repo not found. Dusk Studio will build but DSP cores will be "
-        "unavailable until you set -DDUSK_PLUGINS_PATH=/path/to/plugins or clone "
-        "the plugins repo to ../plugins (sibling directory).")
+    set(_duskstudio_donor_dir "${CMAKE_BINARY_DIR}/_deps/dusk-plugins")
+    find_package(Git QUIET)
+    set(_duskstudio_donor_head "")
+    if(GIT_FOUND AND EXISTS "${_duskstudio_donor_dir}/.git")
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" -C "${_duskstudio_donor_dir}" rev-parse HEAD
+            OUTPUT_VARIABLE _duskstudio_donor_head
+            OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    endif()
+    if(GIT_FOUND AND NOT _duskstudio_donor_head STREQUAL DUSKSTUDIO_DONOR_REV)
+        message(STATUS "Fetching Dusk plugins ${DUSKSTUDIO_DONOR_REV}")
+        file(MAKE_DIRECTORY "${_duskstudio_donor_dir}")
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" init -q
+            WORKING_DIRECTORY "${_duskstudio_donor_dir}"
+            RESULT_VARIABLE _duskstudio_donor_result)
+        if(_duskstudio_donor_result EQUAL 0)
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" fetch -q --depth 1
+                    https://github.com/dusk-audio/dusk-audio-plugins.git
+                    "${DUSKSTUDIO_DONOR_REV}"
+                WORKING_DIRECTORY "${_duskstudio_donor_dir}"
+                RESULT_VARIABLE _duskstudio_donor_result)
+        endif()
+        if(_duskstudio_donor_result EQUAL 0)
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" checkout -q --force --detach FETCH_HEAD
+                WORKING_DIRECTORY "${_duskstudio_donor_dir}"
+                RESULT_VARIABLE _duskstudio_donor_result)
+        endif()
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" -C "${_duskstudio_donor_dir}" rev-parse HEAD
+            OUTPUT_VARIABLE _duskstudio_donor_head
+            OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    endif()
+    if(_duskstudio_donor_head STREQUAL DUSKSTUDIO_DONOR_REV)
+        set(DUSK_PLUGINS_PATH "${_duskstudio_donor_dir}")
+        message(STATUS "Using Dusk plugins ${DUSKSTUDIO_DONOR_REV} from: ${DUSK_PLUGINS_PATH}")
+    else()
+        message(FATAL_ERROR
+            "Could not fetch Dusk plugins ${DUSKSTUDIO_DONOR_REV} (needs git and "
+            "network access to github.com/dusk-audio/dusk-audio-plugins). "
+            "Reconfigure with network access, or set "
+            "-DDUSK_PLUGINS_PATH=/path/to/plugins.")
+    endif()
 endif()
 
 if(DEFINED DUSK_PLUGINS_PATH)
@@ -438,7 +484,7 @@ if(DEFINED DUSK_PLUGINS_PATH)
     if(NOT EXISTS "${DUSKSTUDIO_COMPRESSOR_CORE_SOURCE}")
         message(FATAL_ERROR
             "Dusk plugins donor lacks the 0.13-compatible compressor core; "
-            "use the revision pinned by the build workflows")
+            "use the revision in DONOR_REV")
     endif()
 endif()
 
@@ -1591,12 +1637,12 @@ static const unsigned int ${symbol}_len = ${_fontSize}u;
 endif()
 
 # Sfizz native sampler engine (BSD-2-Clause). Vendored as a git
-# submodule under external/sfizz; built as a static library so we
+# submodule under external/dusk-fizz; built as a static library so we
 # don't ship a separate .so/.dylib + dlopen at startup. Library-only
 # build: no JACK CLI, no MIDI-file renderer, no benchmarks/tests/demos.
 # DuskMultisampleProcessor (src/engine/multisample/) wraps it as a
 # native instrument rung (hosting::INativeInstance).
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/dusk-fizz/src/sfizz.h")
     set(SFIZZ_JACK      OFF CACHE BOOL "" FORCE)
     set(SFIZZ_RENDER    OFF CACHE BOOL "" FORCE)
     set(SFIZZ_BENCHMARKS OFF CACHE BOOL "" FORCE)
@@ -1625,7 +1671,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     #      promotes the resulting -Wmissing-template-arg-list-after-
     #      template-kw warning to an error.
     set(_duskstudio_sfizz_cfg
-        "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/cmake/SfizzConfig.cmake")
+        "${CMAKE_CURRENT_SOURCE_DIR}/external/dusk-fizz/cmake/SfizzConfig.cmake")
     file(READ "${_duskstudio_sfizz_cfg}" _duskstudio_sfizz_cfg_src)
     string(REPLACE "elseif(PROJECT_SYSTEM_PROCESSOR MATCHES \"(arm.*)\")"
                    "elseif(PROJECT_SYSTEM_PROCESSOR MATCHES \"(arm.*)\" AND NOT PROJECT_SYSTEM_PROCESSOR MATCHES \"(aarch64|arm64)\")"
@@ -1639,7 +1685,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     unset(_duskstudio_sfizz_cfg)
 
     set(_duskstudio_atomic_queue_hdr
-        "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/external/atomic_queue/include/atomic_queue/atomic_queue.h")
+        "${CMAKE_CURRENT_SOURCE_DIR}/external/dusk-fizz/external/atomic_queue/include/atomic_queue/atomic_queue.h")
     file(READ "${_duskstudio_atomic_queue_hdr}" _duskstudio_aq_src)
     string(REPLACE "Base::template do_pop_any("  "Base::do_pop_any("  _duskstudio_aq_patched "${_duskstudio_aq_src}")
     string(REPLACE "Base::template do_push_any(" "Base::do_push_any(" _duskstudio_aq_patched "${_duskstudio_aq_patched}")
@@ -1657,7 +1703,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     #      replacement decimal rounds back to exactly the same float
     #      (the IEEE single just below 1.0).
     set(_duskstudio_voice_cpp
-        "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz/Voice.cpp")
+        "${CMAKE_CURRENT_SOURCE_DIR}/external/dusk-fizz/src/sfizz/Voice.cpp")
     file(READ "${_duskstudio_voice_cpp}" _duskstudio_voice_src)
     string(REPLACE "0x1.fffffep-1" "0.99999994f"
                    _duskstudio_voice_patched "${_duskstudio_voice_src}")
@@ -1675,14 +1721,14 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     # `git submodule update` after configure (restoring upstream)
     # but didn't reconfigure - the build would otherwise fail later
     # with cryptic compile errors instead of a clear up-front message.
-    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/cmake/SfizzConfig.cmake" _dsk_chk_a)
-    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/external/atomic_queue/include/atomic_queue/atomic_queue.h" _dsk_chk_b)
-    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz/Voice.cpp" _dsk_chk_c)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/external/dusk-fizz/cmake/SfizzConfig.cmake" _dsk_chk_a)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/external/dusk-fizz/external/atomic_queue/include/atomic_queue/atomic_queue.h" _dsk_chk_b)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/external/dusk-fizz/src/sfizz/Voice.cpp" _dsk_chk_c)
     if(_dsk_chk_a MATCHES "elseif\\(PROJECT_SYSTEM_PROCESSOR MATCHES \"\\(arm\\.\\*\\)\"\\)\n[ \t]*add_compile_options\\(-mfpu=neon\\)"
        OR _dsk_chk_b MATCHES "Base::template do_pop_any"
        OR _dsk_chk_c MATCHES "0x1\\.fffffep-1")
         message(FATAL_ERROR
-            "external/sfizz patches missing - the submodule was likely "
+            "external/dusk-fizz patches missing - the submodule was likely "
             "restored by `git submodule update` after configure last ran. "
             "Re-run cmake configure (the patches re-apply automatically) "
             "before building.")
@@ -1691,7 +1737,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     unset(_dsk_chk_b)
     unset(_dsk_chk_c)
 
-    add_subdirectory(external/sfizz EXCLUDE_FROM_ALL)
+    add_subdirectory(external/dusk-fizz EXCLUDE_FROM_ALL)
     target_link_libraries(DuskStudio PRIVATE sfizz::static)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_MULTISAMPLE=1)
     target_sources(DuskStudio PRIVATE

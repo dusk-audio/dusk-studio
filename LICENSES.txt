@@ -158,9 +158,9 @@ JUCE (audio framework)
 
 Dusk Audio plugins (donor DSP cores)
   Version  : dusk-audio/plugins rev 2693a8923388d0ca0bc4b080cade6a5187a51a51
-             (DONOR_REV in the build and release workflows)
+             (the DONOR_REV file at the top of the Dusk Studio source)
   License  : GPL-3.0-or-later (matches Dusk Studio)
-  Path     : ../plugins/plugins/  (sibling checkout, all platforms)
+  Path     : plugins/ in the donor checkout, fetched at configure time
   Components used:
     - multi-q      (BritishEQProcessor)
     - multi-comp   (UniversalCompressor)
@@ -175,8 +175,8 @@ Dusk Audio plugins (donor DSP cores)
 dusk-fizz (SFZ / SoundFont sampler engine — powers the multisample instrument)
   Version  : 1.2.3 lineage, submodule rev
              0bb8aae364dc648c7c55438d17c7564a5d5eaef5
-  License  : BSD-2-Clause (external/sfizz/LICENSE)
-  Path     : external/sfizz/ (git submodule, built as a static library)
+  License  : BSD-2-Clause (external/dusk-fizz/LICENSE)
+  Path     : external/dusk-fizz/ (git submodule, built as a static library)
   Fork home: https://github.com/dusk-audio/dusk-fizz (Dusk-maintained hard
              fork; the code keeps its upstream sfizz names and namespaces)
   Upstream : https://github.com/sfztools/sfizz (archived by its owner
@@ -191,48 +191,48 @@ dusk-fizz (SFZ / SoundFont sampler engine — powers the multisample instrument)
                                absl/base/config.h), submodule rev
                                c2435f8342c2d0ed8101cb43adfd605fdc52dca2,
                                Apache-2.0
-                               external/sfizz/external/abseil-cpp/LICENSE.
+                               external/dusk-fizz/external/abseil-cpp/LICENSE.
                                Vendored unconditionally by
                                sfizz_add_vendor_abseil() in
-                               external/sfizz/cmake/SfizzDeps.cmake, so it is
+                               external/dusk-fizz/cmake/SfizzDeps.cmake, so it is
                                the second Apache-2.0 component in the binary
                                after SheenBidi and carries the same section 4
                                obligation. Covered by the Apache License 2.0
                                reproduced at the foot of this file; abseil ships
                                no NOTICE file either.
-               - st_audiofile  BSD-2-Clause  external/sfizz/external/st_audiofile/LICENSE.md
-               - atomic_queue  MIT          external/sfizz/external/atomic_queue/LICENSE
-               - ghc-filesystem  MIT        external/sfizz/external/filesystem/LICENSE,
+               - st_audiofile  BSD-2-Clause  external/dusk-fizz/external/st_audiofile/LICENSE.md
+               - atomic_queue  MIT          external/dusk-fizz/external/atomic_queue/LICENSE
+               - ghc-filesystem  MIT        external/dusk-fizz/external/filesystem/LICENSE,
                                submodule rev
                                8a2edd6d92ed820521d42c94d179462bf06b5ed3
-               - jsl           BSL-1.0      external/sfizz/external/jsl/LICENSE.md
-               - ThreadPool    zlib         external/sfizz/external/threadpool/
+               - jsl           BSL-1.0      external/dusk-fizz/external/jsl/LICENSE.md
+               - ThreadPool    zlib         external/dusk-fizz/external/threadpool/
                                ThreadPool.h. The header is derived from
                                progschj/ThreadPool rev
                                9a42ec1329f259a5f4881a291db1dcb8f2ad9040
                                (Jakob Progsch, Václav Zeman, 2012). sfizz's
                                copy adds an SPDX marker, normalises whitespace,
                                and makes the stop flag volatile. It is on the
-                               production path: external/sfizz/src/sfizz/
+                               production path: external/dusk-fizz/src/sfizz/
                                FilePool.cpp:34,52,67 includes and constructs
-                               it; external/sfizz/cmake/SfizzDeps.cmake:
+                               it; external/dusk-fizz/cmake/SfizzDeps.cmake:
                                251-254 exposes the include directory; and
-                               external/sfizz/src/CMakeLists.txt:296-298 links
+                               external/dusk-fizz/src/CMakeLists.txt:296-298 links
                                sfizz::threadpool into sfizz_internal.
-               - kiss_fft      BSD-3-Clause  external/sfizz/src/external/kiss_fft/COPYING
-               - pugixml       MIT          external/sfizz/src/external/pugixml/LICENSE.md
+               - kiss_fft      BSD-3-Clause  external/dusk-fizz/src/external/kiss_fft/COPYING
+               - pugixml       MIT          external/dusk-fizz/src/external/pugixml/LICENSE.md
                - spline        BSD-3-Clause / Beer-Ware
-                               external/sfizz/src/external/spline/LICENSE and
+                               external/dusk-fizz/src/external/spline/LICENSE and
                                spline/spline.cpp
-               - tunings       MIT          external/sfizz/src/external/tunings/LICENSE.md
-               - cpuid         BSD-3-Clause external/sfizz/src/external/cpuid/LICENSE.rst
+               - tunings       MIT          external/dusk-fizz/src/external/tunings/LICENSE.md
+               - cpuid         BSD-3-Clause external/dusk-fizz/src/external/cpuid/LICENSE.rst
                                and platform/LICENSE.rst (Steinwurf ApS)
-               - hiir          WTFPL        external/sfizz/src/external/hiir/license.txt
+               - hiir          WTFPL        external/dusk-fizz/src/external/hiir/license.txt
                                (Laurent de Soras)
-               - simde         MIT / CC0    external/sfizz/external/simde/COPYING,
+               - simde         MIT / CC0    external/dusk-fizz/external/simde/COPYING,
                                submodule rev
                                2bf459d4ed6d7ed6b9f31bd9e07c91bace5009e0
-               - cephes        BSD-3-Clause external/sfizz/external/cephes/LICENSE.txt
+               - cephes        BSD-3-Clause external/dusk-fizz/external/cephes/LICENSE.txt
                                (Julien Cornebise 2013). Only chbevl.c and i0.c
                                are vendored. Moshier's original cephes carries
                                no license of its own; his emailed permission to
@@ -241,11 +241,11 @@ dusk-fizz (SFZ / SoundFont sampler engine — powers the multisample instrument)
              These four arrive one level deeper still, vendored inside
              st_audiofile. Its CMake links them only when it is not using
              libsndfile instead (the if(NOT ST_AUDIO_FILE_USE_SNDFILE) branch
-             in external/sfizz/external/st_audiofile/CMakeLists.txt), and Dusk
+             in external/dusk-fizz/external/st_audiofile/CMakeLists.txt), and Dusk
              Studio forces SFIZZ_USE_SNDFILE OFF, so the branch that links them
              is the one every build takes:
                - dr_libs       public domain / MIT-0 dual, caller's choice
-                               external/sfizz/external/st_audiofile/thirdparty/
+                               external/dusk-fizz/external/st_audiofile/thirdparty/
                                dr_libs/LICENSE, submodule rev
                                4b3d07849537ce0b71b22180c0b1335eacc6e9be
                                (David Reid 2020) — dr_wav
@@ -279,8 +279,9 @@ pffft (FFT backend behind dusk::audio::Fft — spectrum analyser, DP alignment)
              top of external/pffft/pffft.h.
 
 DAF / DGL and widgets (Dusk Audio Framework graphics layer — backs the native notepad UI)
-  Version  : dusk-audio/DAF monorepo rev aa6d20d03932d5149b836bc350da47757357ecf7
-             (CI pin DAF_REV in .github/actions/clone-daf-stack/action.yml)
+  Version  : dusk-audio/DAF main, rev @DAF_REV@
+             (release builds write the exact DAF commit they compiled in
+             here and below; .github/actions/clone-daf-stack/action.yml)
   License  : ISC — Copyright (C) 2012-2025 Filipe Coelho <falktx@falktx.com>
              (DAF/LICENSE)
   Path     : ../DAF (or -DDAF_PATH=...), with widgets/ in the same checkout.
@@ -1359,11 +1360,11 @@ For more information on this, and how to apply and follow the GNU AGPL, see
 Apache License 2.0 — covers the Apache-2.0 components in the binary:
   SheenBidi 2.9.0, Copyright (C) 2014-2025 Muhammad Tayyab Akram
   abseil-cpp LTS 20230125.3, Copyright The Abseil Authors (Google Inc.
-  per external/sfizz/external/abseil-cpp/AUTHORS)
+  per external/dusk-fizz/external/abseil-cpp/AUTHORS)
   LLVM 22.1.8 and SPIR-V Tools in the Windows Mesa fallback
 Text below is modules/juce_graphics/unicode/sheenbidi/LICENSE verbatim,
 including the blank line it opens with. abseil ships the same license at
-external/sfizz/external/abseil-cpp/LICENSE; the only differences there are that
+external/dusk-fizz/external/abseil-cpp/LICENSE; the only differences there are that
 it spells the two apache.org URLs https rather than http and that it ends with
 a trailing blank line instead of opening with one. No listed project ships an
 applicable NOTICE file, so Apache-2.0 section 4(d) adds nothing to the section
@@ -3009,7 +3010,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 --------------------------------------------------------------------------------
 sfizz 1.2.3 — BSD-2-Clause
-external/sfizz/LICENSE, submodule rev
+external/dusk-fizz/LICENSE, submodule rev
 0bb8aae364dc648c7c55438d17c7564a5d5eaef5
 --------------------------------------------------------------------------------
 
@@ -3040,7 +3041,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 The production sfizz sources carry this distinct BSD-2-Clause notice. It is
-present throughout external/sfizz/src/sfizz/, including FilePool.cpp, which is
+present throughout external/dusk-fizz/src/sfizz/, including FilePool.cpp, which is
 the translation unit that instantiates the vendored ThreadPool:
 
 Copyright (c) 2019-2020, Paul Ferrand, Andrea Zanellato
@@ -3068,7 +3069,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
 st_audiofile — BSD-2-Clause
-external/sfizz/external/st_audiofile/LICENSE.md at sfizz submodule rev
+external/dusk-fizz/external/st_audiofile/LICENSE.md at sfizz submodule rev
 0bb8aae364dc648c7c55438d17c7564a5d5eaef5
 --------------------------------------------------------------------------------
 
@@ -3100,7 +3101,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
 atomic_queue — MIT
-external/sfizz/external/atomic_queue/LICENSE at sfizz submodule rev
+external/dusk-fizz/external/atomic_queue/LICENSE at sfizz submodule rev
 0bb8aae364dc648c7c55438d17c7564a5d5eaef5
 --------------------------------------------------------------------------------
 
@@ -3128,7 +3129,7 @@ SOFTWARE.
 
 --------------------------------------------------------------------------------
 ghc-filesystem — MIT
-external/sfizz/external/filesystem/LICENSE, nested submodule rev
+external/dusk-fizz/external/filesystem/LICENSE, nested submodule rev
 8a2edd6d92ed820521d42c94d179462bf06b5ed3
 --------------------------------------------------------------------------------
 
@@ -3154,7 +3155,7 @@ SOFTWARE.
 
 --------------------------------------------------------------------------------
 jsl — Boost Software License 1.0
-external/sfizz/external/jsl/LICENSE.md at sfizz submodule rev
+external/dusk-fizz/external/jsl/LICENSE.md at sfizz submodule rev
 0bb8aae364dc648c7c55438d17c7564a5d5eaef5
 --------------------------------------------------------------------------------
 
@@ -3182,7 +3183,7 @@ FOR ANY DAMAGES OR OTHER LIABILITY, WHETHER IN CONTRACT, TORT OR OTHERWISE,
 ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
-The compiled headers under external/sfizz/external/jsl/include carry this
+The compiled headers under external/dusk-fizz/external/jsl/include carry this
 additional source attribution before the Boost Software License above:
 
 Copyright Jean Pierre Cimalando 2018-2020.
@@ -3194,7 +3195,7 @@ http://www.boost.org/LICENSE_1_0.txt)
 ThreadPool — zlib license
 COPYING at progschj/ThreadPool rev
 9a42ec1329f259a5f4881a291db1dcb8f2ad9040. sfizz vendors
-external/sfizz/external/threadpool/ThreadPool.h with the same implementation
+external/dusk-fizz/external/threadpool/ThreadPool.h with the same implementation
 plus an SPDX zlib marker, whitespace normalisation, and a volatile qualifier on
 the stop flag.
 --------------------------------------------------------------------------------
@@ -3222,7 +3223,7 @@ freely, subject to the following restrictions:
 
 --------------------------------------------------------------------------------
 kiss_fft — BSD-3-Clause
-external/sfizz/src/external/kiss_fft/COPYING at sfizz submodule rev
+external/dusk-fizz/src/external/kiss_fft/COPYING at sfizz submodule rev
 0bb8aae364dc648c7c55438d17c7564a5d5eaef5
 --------------------------------------------------------------------------------
 
@@ -3240,7 +3241,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 
 --------------------------------------------------------------------------------
 pugixml — MIT
-external/sfizz/src/external/pugixml/LICENSE.md at sfizz submodule rev
+external/dusk-fizz/src/external/pugixml/LICENSE.md at sfizz submodule rev
 0bb8aae364dc648c7c55438d17c7564a5d5eaef5
 --------------------------------------------------------------------------------
 
@@ -3280,7 +3281,7 @@ Copyright (C) 2003, by Kristen Wegner (kristen@tima.net)
 
 --------------------------------------------------------------------------------
 spline — BSD-3-Clause repository license / Beer-Ware source notice
-external/sfizz/src/external/spline/LICENSE at sfizz submodule rev
+external/dusk-fizz/src/external/spline/LICENSE at sfizz submodule rev
 0bb8aae364dc648c7c55438d17c7564a5d5eaef5
 --------------------------------------------------------------------------------
 
@@ -3320,7 +3321,7 @@ the repository-level BSD-3-Clause terms above:
 Copyright 2018 by Roland Rabien, Devin Lane
 For more information visit www.rabiensoftware.com
 
-The compiled external/sfizz/src/external/spline/spline/spline.cpp carries the
+The compiled external/dusk-fizz/src/external/spline/spline/spline.cpp carries the
 same attribution and this distinct complete Beer-Ware permission notice at
 sfizz rev 0bb8aae364dc648c7c55438d17c7564a5d5eaef5:
 
@@ -3330,7 +3331,7 @@ think this stuff is worth it, you can buy me a beer in return.
 
 --------------------------------------------------------------------------------
 tunings — MIT
-external/sfizz/src/external/tunings/LICENSE.md at sfizz submodule rev
+external/dusk-fizz/src/external/tunings/LICENSE.md at sfizz submodule rev
 0bb8aae364dc648c7c55438d17c7564a5d5eaef5
 --------------------------------------------------------------------------------
 
@@ -3344,7 +3345,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 --------------------------------------------------------------------------------
 cpuid — BSD-3-Clause
-external/sfizz/src/external/cpuid/LICENSE.rst at sfizz submodule rev
+external/dusk-fizz/src/external/cpuid/LICENSE.rst at sfizz submodule rev
 0bb8aae364dc648c7c55438d17c7564a5d5eaef5
 --------------------------------------------------------------------------------
 
@@ -3382,7 +3383,7 @@ cpuid is provided under the "BSD (3-clause) License"::
 
 --------------------------------------------------------------------------------
 cpuid platform — BSD-3-Clause
-external/sfizz/src/external/cpuid/platform/LICENSE.rst at sfizz submodule rev
+external/dusk-fizz/src/external/cpuid/platform/LICENSE.rst at sfizz submodule rev
 0bb8aae364dc648c7c55438d17c7564a5d5eaef5
 --------------------------------------------------------------------------------
 
@@ -3420,7 +3421,7 @@ platform is provided under the "BSD (3-clause) License"::
 
 --------------------------------------------------------------------------------
 hiir — WTFPL version 2
-external/sfizz/src/external/hiir/license.txt at sfizz submodule rev
+external/dusk-fizz/src/external/hiir/license.txt at sfizz submodule rev
 0bb8aae364dc648c7c55438d17c7564a5d5eaef5
 --------------------------------------------------------------------------------
 
@@ -3440,7 +3441,7 @@ external/sfizz/src/external/hiir/license.txt at sfizz submodule rev
 
 --------------------------------------------------------------------------------
 SIMDe — MIT
-external/sfizz/external/simde/COPYING, nested submodule rev
+external/dusk-fizz/external/simde/COPYING, nested submodule rev
 2bf459d4ed6d7ed6b9f31bd9e07c91bace5009e0
 --------------------------------------------------------------------------------
 
@@ -3467,7 +3468,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 --------------------------------------------------------------------------------
 SIMDe CC0-only headers — CC0-1.0 notices
-Notices in external/sfizz/external/simde/simde/ at nested submodule rev
+Notices in external/dusk-fizz/external/simde/simde/ at nested submodule rev
 2bf459d4ed6d7ed6b9f31bd9e07c91bace5009e0
 --------------------------------------------------------------------------------
 
@@ -3498,7 +3499,7 @@ SPDX-License-Identifier: CC0-1.0
 
 --------------------------------------------------------------------------------
 cephes — redistribution permission (excerpt) and BSD-3-Clause wrapper
-external/sfizz/external/cephes/LICENSE.txt at sfizz submodule rev
+external/dusk-fizz/external/cephes/LICENSE.txt at sfizz submodule rev
 0bb8aae364dc648c7c55438d17c7564a5d5eaef5
 --------------------------------------------------------------------------------
 
@@ -3539,7 +3540,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
 dr_libs — public domain / MIT-0 dual license
-external/sfizz/external/st_audiofile/thirdparty/dr_libs/LICENSE,
+external/dusk-fizz/external/st_audiofile/thirdparty/dr_libs/LICENSE,
 nested submodule rev 4b3d07849537ce0b71b22180c0b1335eacc6e9be
 --------------------------------------------------------------------------------
 
@@ -3593,7 +3594,7 @@ SOFTWARE.
 
 --------------------------------------------------------------------------------
 WavPack 5.6.6 — BSD-3-Clause
-external/sfizz/external/st_audiofile/thirdparty/wavpack/license.txt,
+external/dusk-fizz/external/st_audiofile/thirdparty/wavpack/license.txt,
 nested submodule rev 07ffb331d23c16e2d2979370441f63ea722760bc
 --------------------------------------------------------------------------------
 
@@ -3625,7 +3626,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
 libaiff — MIT
-external/sfizz/external/st_audiofile/thirdparty/libaiff/LICENSE,
+external/dusk-fizz/external/st_audiofile/thirdparty/libaiff/LICENSE,
 nested submodule rev 78864a4a2e769e426be8cfd78ae7f5f72e236c33
 --------------------------------------------------------------------------------
 
@@ -3657,7 +3658,7 @@ nested submodule rev 78864a4a2e769e426be8cfd78ae7f5f72e236c33
 
 --------------------------------------------------------------------------------
 stb_vorbis 1.22 — MIT / public domain dual license
-external/sfizz/external/st_audiofile/thirdparty/stb_vorbis/LICENSE at sfizz
+external/dusk-fizz/external/st_audiofile/thirdparty/stb_vorbis/LICENSE at sfizz
 submodule rev 0bb8aae364dc648c7c55438d17c7564a5d5eaef5
 --------------------------------------------------------------------------------
 
@@ -3799,7 +3800,7 @@ SOFTWARE.
 
 --------------------------------------------------------------------------------
 DAF / DGL — ISC
-LICENSE in the DAF monorepo rev aa6d20d03932d5149b836bc350da47757357ecf7
+LICENSE in the DAF monorepo rev @DAF_REV@
 --------------------------------------------------------------------------------
 
 Copyright (C) 2012-2025 Filipe Coelho <falktx@falktx.com>
@@ -3818,7 +3819,7 @@ PERFORMANCE OF THIS SOFTWARE.
 
 --------------------------------------------------------------------------------
 pugl — ISC
-dgl/src/pugl-upstream/COPYING in the DAF monorepo rev aa6d20d03932d5149b836bc350da47757357ecf7
+dgl/src/pugl-upstream/COPYING in the DAF monorepo rev @DAF_REV@
 --------------------------------------------------------------------------------
 
 Copyright 2011-2022 David Robillard <d@drobilla.net>
@@ -3837,7 +3838,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 DAF's dgl/src/pugl.cpp compiles common.c and internal.c, then the OpenGL and
 stub source for the selected Linux, macOS, or Windows backend. Recursing their
-headers in the DAF pugl subtree at rev aa6d20d03932d5149b836bc350da47757357ecf7
+headers in the DAF pugl subtree at rev @DAF_REV@
 produces the distinct source notices below. Every block ends with
 `SPDX-License-Identifier: ISC` and therefore uses the complete ISC permission
 and disclaimer immediately above.
@@ -3882,7 +3883,7 @@ Copyright 2012-2023 David Robillard <d@drobilla.net>
 --------------------------------------------------------------------------------
 DAF no-X11 Wayland OpenGL3 backend — ISC and MIT notices
 dgl/src/pugl.cpp HAVE_WAYLAND branch at dusk-audio/DAF rev
-aa6d20d03932d5149b836bc350da47757357ecf7
+@DAF_REV@
 --------------------------------------------------------------------------------
 
 daf__add_dgl_opengl3 defines DGL_OPENGL, so a supported Linux build without
@@ -4044,7 +4045,7 @@ DEALINGS IN THE SOFTWARE.
 --------------------------------------------------------------------------------
 NanoVG — zlib license
 dgl/src/nanovg/LICENSE.txt at dusk-audio/DAF rev
-aa6d20d03932d5149b836bc350da47757357ecf7
+@DAF_REV@
 --------------------------------------------------------------------------------
 
 Copyright (c) 2013 Mikko Mononen memon@inside.org
@@ -4068,7 +4069,7 @@ misrepresented as being the original software.
 --------------------------------------------------------------------------------
 fontstash — zlib license
 Notice at the head of dgl/src/nanovg/fontstash.h at dusk-audio/DAF rev
-aa6d20d03932d5149b836bc350da47757357ecf7
+@DAF_REV@
 --------------------------------------------------------------------------------
 
 Copyright (c) 2009-2013 Mikko Mononen memon@inside.org
@@ -4090,7 +4091,7 @@ freely, subject to the following restrictions:
 --------------------------------------------------------------------------------
 fontstash embedded UTF-8 decoder — MIT
 Notice at dgl/src/nanovg/fontstash.h:509-510 at dusk-audio/DAF rev
-aa6d20d03932d5149b836bc350da47757357ecf7. NanoVG.cpp compiles nanovg.c,
+@DAF_REV@. NanoVG.cpp compiles nanovg.c,
 which includes fontstash.h. The compiled 2010 decoder variation carries these
 exact source lines:
 
@@ -4124,7 +4125,7 @@ SOFTWARE.
 --------------------------------------------------------------------------------
 stb_truetype — MIT / public domain dual license
 Notice at the foot of dgl/src/nanovg/stb_truetype.h at dusk-audio/DAF rev
-aa6d20d03932d5149b836bc350da47757357ecf7
+@DAF_REV@
 --------------------------------------------------------------------------------
 
 ------------------------------------------------------------------------------
@@ -4170,7 +4171,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 --------------------------------------------------------------------------------
 stb_image — public-domain dedication and fallback permission
 License notice in dgl/src/nanovg/stb_image.h at dusk-audio/DAF rev
-aa6d20d03932d5149b836bc350da47757357ecf7
+@DAF_REV@
 --------------------------------------------------------------------------------
 
 This software is in the public domain. Where that dedication is not
@@ -4280,7 +4281,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 --------------------------------------------------------------------------------
 DejaVu Sans — Bitstream Vera Fonts License and Arev Fonts License
 dgl/src/resources/LICENSE-DejaVuSans.ttf.txt at dusk-audio/DAF rev
-aa6d20d03932d5149b836bc350da47757357ecf7
+@DAF_REV@
 --------------------------------------------------------------------------------
 
 Fonts are (c) Bitstream (see below). DejaVu changes are in public domain.
@@ -4384,7 +4385,7 @@ from Tavmjong Bah. For further information, contact: tavmjong @ free
 --------------------------------------------------------------------------------
 Khronos GL headers — MIT notices
 dgl/src/khronos/GL/glext.h and dgl/src/khronos/KHR/khrplatform.h at
-dusk-audio/DAF rev aa6d20d03932d5149b836bc350da47757357ecf7
+dusk-audio/DAF rev @DAF_REV@
 --------------------------------------------------------------------------------
 
 glext.h carries this exact notice:
@@ -4417,7 +4418,7 @@ MATERIALS OR THE USE OR OTHER DEALINGS IN THE MATERIALS.
 
 --------------------------------------------------------------------------------
 DAF widgets — ISC
-LICENSING.md widgets/ notice in the DAF monorepo, rev aa6d20d03932d5149b836bc350da47757357ecf7
+LICENSING.md widgets/ notice in the DAF monorepo, rev @DAF_REV@
 --------------------------------------------------------------------------------
 
 DISTRHO Plugin Framework (DPF)
@@ -4471,7 +4472,7 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 --------------------------------------------------------------------------------
 Dear ImGui 1.91.9b — MIT
-widgets/imgui/DearImGui/LICENSE.txt in the DAF monorepo rev aa6d20d03932d5149b836bc350da47757357ecf7
+widgets/imgui/DearImGui/LICENSE.txt in the DAF monorepo rev @DAF_REV@
 --------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -4498,7 +4499,7 @@ SOFTWARE.
 
 --------------------------------------------------------------------------------
 imgui-knobs — MIT
-widgets/imgui/DearImGuiKnobs/LICENSE in the DAF monorepo rev aa6d20d03932d5149b836bc350da47757357ecf7
+widgets/imgui/DearImGuiKnobs/LICENSE in the DAF monorepo rev @DAF_REV@
 --------------------------------------------------------------------------------
 
 MIT License
@@ -4525,7 +4526,7 @@ SOFTWARE.
 
 --------------------------------------------------------------------------------
 imgui_toggle — ISC-style permission grant
-widgets/imgui/DearImGuiToggle/LICENSE in the DAF monorepo rev aa6d20d03932d5149b836bc350da47757357ecf7
+widgets/imgui/DearImGuiToggle/LICENSE in the DAF monorepo rev @DAF_REV@
 --------------------------------------------------------------------------------
 
 Copyright © 2022 nitz — chris marc dailey https://cmd.wtf
@@ -4548,7 +4549,7 @@ LICENSE at bluescan/proggyfonts rev
 stream expands to 41,208 bytes. Its Adler-32 is 0x48f962f7 and its SHA-256 is
 527d2a443ce051f93f7e77b855609722b8cb220a9f104b4aa037be5c90b71324; all three
 values match that revision's ProggyClean.ttf byte for byte at
-the DAF monorepo rev aa6d20d03932d5149b836bc350da47757357ecf7.
+the DAF monorepo rev @DAF_REV@.
 --------------------------------------------------------------------------------
 
 MIT License
