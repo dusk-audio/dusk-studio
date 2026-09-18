@@ -198,11 +198,89 @@ ScenarioResult enginePlaysControlWhilePassOpen (ScenarioContext& ctx)
     return ctx.verdict();
 }
 
+void holdLane (AutomationLane& lane, AutomationParam param, float value)
+{
+    lane.publishPoints ({ { 0, normalizeAutomationValue (param, value), 120.0f } });
+}
+
+// READ plays every strip's lanes: a track's fader, pan, mute, solo and sends,
+// a bus's fader, pan and mute, an aux return's level and mute, the master
+// fader. OFF plays the controls themselves.
+ScenarioResult readPlaysTheLanes (ScenarioContext& ctx)
+{
+    using P = AutomationParam;
+    auto& session = ctx.session();
+    auto& track = session.track (0);
+    auto& strip = track.strip;
+    auto& bus = session.bus (0).strip;
+    auto& aux = session.auxLane (0).params;
+    auto& master = session.master();
+
+    const auto setModes = [&track, &bus, &aux, &master] (AutomationMode mode)
+    {
+        for (auto* m : { &track.automationMode, &bus.automationMode, &aux.automationMode, &master.automationMode })
+            m->store ((int) mode, std::memory_order_release);
+    };
+    ctx.cleanup ([&track, &strip, &bus, &aux, &master, setModes]
+    {
+        setModes (AutomationMode::Off);
+        for (auto* lanes : { &track.automationLanes, &bus.automationLanes, &aux.automationLanes, &master.automationLanes })
+            for (auto& lane : *lanes)
+                lane.publishPoints ({});
+        strip.auxSendDb[0].store (ChannelStripParams::kAuxSendOffDb, std::memory_order_relaxed);
+    });
+
+    strip.auxSendDb[0].store (-20.0f, std::memory_order_relaxed);
+    holdLane (track.automationLanes[(std::size_t) P::FaderDb], P::FaderDb, -12.0f);
+    holdLane (track.automationLanes[(std::size_t) P::Pan], P::Pan, -0.5f);
+    holdLane (track.automationLanes[(std::size_t) P::Mute], P::Mute, 1.0f);
+    holdLane (track.automationLanes[(std::size_t) P::Solo], P::Solo, 1.0f);
+    holdLane (track.automationLanes[(std::size_t) P::AuxSend1], P::AuxSend1, -6.0f);
+    holdLane (bus.automationLanes[(std::size_t) P::FaderDb], P::FaderDb, -9.0f);
+    holdLane (bus.automationLanes[(std::size_t) P::Pan], P::Pan, 0.25f);
+    holdLane (bus.automationLanes[(std::size_t) P::Mute], P::Mute, 1.0f);
+    holdLane (aux.automationLanes[(std::size_t) P::FaderDb], P::FaderDb, -15.0f);
+    holdLane (aux.automationLanes[(std::size_t) P::Mute], P::Mute, 1.0f);
+    holdLane (master.automationLanes[(std::size_t) P::FaderDb], P::FaderDb, -3.0f);
+
+    const auto check = [&ctx] (const std::string& what, float played, float wanted)
+    {
+        ctx.expect (std::abs (played - wanted) < 0.05f,
+                    what + " played " + std::to_string (played) + ", not " + std::to_string (wanted));
+    };
+    const auto on = [] (const std::atomic<bool>& b) { return b.load() ? 1.0f : 0.0f; };
+    const auto playsEverything = [&] (const std::string& mode, bool lane)
+    {
+        check (mode + ": track fader", strip.liveFaderDb.load(), lane ? -12.0f : 0.0f);
+        check (mode + ": track pan", strip.livePan.load(), lane ? -0.5f : 0.0f);
+        check (mode + ": track mute", on (strip.liveMute), lane ? 1.0f : 0.0f);
+        check (mode + ": track solo", on (strip.liveSolo), lane ? 1.0f : 0.0f);
+        check (mode + ": track send 1", strip.liveAuxSendDb[0].load(), lane ? -6.0f : -20.0f);
+        check (mode + ": bus fader", bus.liveFaderDb.load(), lane ? -9.0f : 0.0f);
+        check (mode + ": bus pan", bus.livePan.load(), lane ? 0.25f : 0.0f);
+        check (mode + ": bus mute", on (bus.liveMute), lane ? 1.0f : 0.0f);
+        check (mode + ": aux return", aux.liveReturnLevelDb.load(), lane ? -15.0f : 0.0f);
+        check (mode + ": aux mute", on (aux.liveMute), lane ? 1.0f : 0.0f);
+        check (mode + ": master fader", master.liveFaderDb.load(), lane ? -3.0f : 0.0f);
+    };
+
+    setModes (AutomationMode::Read);
+    ctx.pump (1);
+    playsEverything ("READ", true);
+    setModes (AutomationMode::Off);
+    ctx.pump (1);
+    playsEverything ("OFF", false);
+    return ctx.verdict();
+}
+
 std::optional<ScenarioResult> run (ScenarioResult (*body) (ScenarioContext&), ScenarioContext& ctx)
 {
     return body (ctx);
 }
 
+const ScenarioRegistrar readRegistrar { Scenario {
+    "automation.read_plays_the_lanes", { "automation" }, Needs::Engine, {},
+    [] (ScenarioContext& ctx) { return run (readPlaysTheLanes, ctx); } } };
 const ScenarioRegistrar writeRegistrar { Scenario {
     "automation.write_splices_its_span", { "automation" }, Needs::Engine, {},
     [] (ScenarioContext& ctx) { return run (writeSplicesItsSpan, ctx); } } };

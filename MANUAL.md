@@ -119,7 +119,7 @@ Switch to **MIXING** stage. The input block on each strip collapses into a small
 
 Mix top-down: shape EQ first, then ride the compressor, then balance with faders. Save your aux sends for finishing touches (reverb on aux 1, tape delay on aux 2, etc.).
 
-For console-style automation, click the small mode label below a fader to cycle through OFF / READ / WRITE / TOUCH. WRITE records every move while the transport rolls; TOUCH only writes while you are physically touching the control.
+For console-style automation, click the small mode label below a fader and pick OFF, READ, WRITE or TOUCH from the menu. WRITE records every move while the transport rolls; TOUCH only writes while you are physically touching the control.
 
 ## Bounce
 
@@ -847,7 +847,7 @@ A vertical fader with a range of **−∞ dB** (true mute, below −90 dB floor)
 - Click the dB readout beneath the fader to type a precise value.
 - Right-click to enter MIDI Learn mode (the next CC you move binds to this fader).
 
-The fader is automatable. The automation modes are **OFF** (no automation), **READ** (play back recorded automation), **WRITE** (record automation continuously while transport rolls), and **TOUCH** (record while you are touching the control; revert to read when you release). Click the small mode label below the fader to cycle, or right-click to pick from a menu.
+The fader is automatable. The automation modes are **OFF** (no automation), **READ** (play back recorded automation), **WRITE** (record automation continuously while transport rolls), and **TOUCH** (record while you are touching the control; revert to read when you release). Click the small mode label below the fader to pick a mode from a menu.
 
 ## Mute, Solo, Phase
 
@@ -998,7 +998,7 @@ Each lane is divided into three columns:
 - **Mute** button.
 - **Return fader**: −∞ to +12 dB. This is the level of the aux's processed output into the master.
 - **Output meter**: pre-master return level.
-- **Automation mode**: same OFF / READ / WRITE / TOUCH cycle as channel faders.
+- **Automation mode**: the same OFF / READ / WRITE / TOUCH menu as the channel faders.
 - **Output**: where this aux lane's processed mix is sent. **Master only** (default) folds it into the main mix as usual. Pick a hardware pair (Out 1-2, Out 3-4, …) to also send the lane to that physical output — a headphone / cue feed. The hardware tap is taken *before* the return fader and Mute, so those still govern only the fold into the master while the cue keeps playing. Build the cue from each channel's **pre-fader** aux send (right-click a send knob to flip it pre-fader) so riding the main mix doesn't change what the performer hears. Enable the extra outputs first in **Audio settings** (the Output menu lists whatever output pairs the device currently has open).
 
 ### Plugin chain (centre column)
@@ -1477,7 +1477,7 @@ The keyboard is a transport-bar tool rather than part of the piano roll: it open
 
 # Mixing
 
-![A fader's automation mode label, cycling READ / WRITE / TOUCH.](docs/images/mm-01-automation-modes.png)
+![A fader's automation mode label in READ, WRITE and TOUCH.](docs/images/mm-01-automation-modes.png)
 
 Mixing is the act of balancing your tracks, shaping them with EQ and dynamics, placing them in the stereo field, and gluing the whole thing together on the buses and master.
 
@@ -1520,10 +1520,10 @@ There is no PFL (pre-fader listen) or AFL (after-fader listen) mode, and no dry 
 
 ## Automation
 
-Each channel strip, each bus, and the master strip have an automation mode button below the fader. Cycle through:
+Each channel strip, each bus, and the master strip have an automation mode button below the fader. Click it to pick a mode:
 
 - **OFF**: the fader does what you do. No recording, no playback of past rides.
-- **READ**: previously recorded automation drives the fader during playback. You can move the fader to "preview" but your changes are not recorded.
+- **READ**: previously recorded automation drives the fader during playback. Nothing you do is recorded, and on channel and bus strips the automated controls are locked.
 - **WRITE**: every fader movement is recorded for as long as the transport rolls. Existing automation in the region played over is overwritten.
 - **TOUCH**: while you are touching the fader, your movement is recorded. When you let go, the automation reverts to the previously recorded value via a short ramp.
 

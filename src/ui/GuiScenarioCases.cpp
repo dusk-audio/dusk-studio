@@ -652,10 +652,11 @@ bool timesAscend (const std::vector<AutomationPoint>& points)
 }
 
 // The strips' own timers record the rides while the transport rolls. Write
-// takes the fader, pan, mute and solo; Touch records the fader while it is
+// takes the fader, pan, mute and solo; Touch records the fader and pan while
 // held and returns to the earlier ride on release; a mute click in Touch
-// records nothing; bus, master and aux return faders record like a track's;
-// a Write pass leaves the ride after where it stopped alone.
+// records nothing; a bus's fader, pan and mute, the master fader and an aux
+// return's level and mute record like a track's; a Write pass leaves the ride
+// after where it stopped alone.
 std::optional<ScenarioResult> runAutomation (GuiHost& host, ScenarioContext& ctx)
 {
     static constexpr float kDbTolerance = 0.05f;
@@ -695,11 +696,15 @@ std::optional<ScenarioResult> runAutomation (GuiHost& host, ScenarioContext& ctx
         params.faderDb.store (0.0f, std::memory_order_relaxed);
         params.pan.store (0.0f, std::memory_order_relaxed);
         params.faderTouched.store (false, std::memory_order_relaxed);
+        params.panTouched.store (false, std::memory_order_relaxed);
         params.mute.store (false, std::memory_order_relaxed);
         session.setTrackSoloed (kStripIndex, false);
         bus.faderDb.store (0.0f, std::memory_order_relaxed);
+        bus.pan.store (0.0f, std::memory_order_relaxed);
+        bus.mute.store (false, std::memory_order_relaxed);
         master.faderDb.store (0.0f, std::memory_order_relaxed);
         aux.returnLevelDb.store (0.0f, std::memory_order_relaxed);
+        aux.mute.store (false, std::memory_order_relaxed);
     });
 
     struct Marks
@@ -726,6 +731,7 @@ std::optional<ScenarioResult> runAutomation (GuiHost& host, ScenarioContext& ctx
         params.faderDb.store (-20.0f, std::memory_order_relaxed);
         params.pan.store (-0.5f, std::memory_order_relaxed);
         bus.faderDb.store (-8.0f, std::memory_order_relaxed);
+        bus.pan.store (-0.5f, std::memory_order_relaxed);
         master.faderDb.store (-2.0f, std::memory_order_relaxed);
         aux.returnLevelDb.store (-12.0f, std::memory_order_relaxed);
         roll();
@@ -735,11 +741,20 @@ std::optional<ScenarioResult> runAutomation (GuiHost& host, ScenarioContext& ctx
         params.faderDb.store (-10.0f, std::memory_order_relaxed);
         params.pan.store (0.5f, std::memory_order_relaxed);
         bus.faderDb.store (-4.0f, std::memory_order_relaxed);
+        bus.pan.store (0.5f, std::memory_order_relaxed);
+        bus.mute.store (true, std::memory_order_relaxed);
         master.faderDb.store (-4.0f, std::memory_order_relaxed);
         aux.returnLevelDb.store (-6.0f, std::memory_order_relaxed);
+        aux.mute.store (true, std::memory_order_relaxed);
         strip->clickMute();
     } });
-    steps->push_back ({ 400, [strip] { strip->clickMute(); strip->clickSolo(); } });
+    steps->push_back ({ 400, [&bus, &aux, strip]
+    {
+        strip->clickMute();
+        strip->clickSolo();
+        bus.mute.store (false, std::memory_order_relaxed);
+        aux.mute.store (false, std::memory_order_relaxed);
+    } });
     // The strips splice a pass on their first timer tick after the stop.
     steps->push_back ({ 400, [&engine] { engine.stop(); } });
     steps->push_back ({ 100, [&ctx, &params, &track, &bus, &master, &aux, lane, marks, roll]
@@ -753,18 +768,27 @@ std::optional<ScenarioResult> runAutomation (GuiHost& host, ScenarioContext& ctx
         ctx.expect (laneHolds (pan, AutomationParam::Pan, -0.5f, 0.01f)
                         && laneHolds (pan, AutomationParam::Pan, 0.5f, 0.01f),
                     "WRITE did not record both pan positions");
+        const auto onThenOff = [] (const std::vector<AutomationPoint>& points)
+        {
+            const auto on = std::find_if (points.begin(), points.end(),
+                                          [] (const AutomationPoint& p) { return p.value > 0.5f; });
+            return on != points.end()
+                && std::any_of (on, points.end(), [] (const AutomationPoint& p) { return p.value < 0.5f; });
+        };
         const auto& mute = lane (AutomationParam::Mute).pointsConst();
-        const auto on = std::find_if (mute.begin(), mute.end(),
-                                      [] (const AutomationPoint& p) { return p.value > 0.5f; });
-        ctx.expect (on != mute.end()
-                        && std::any_of (on, mute.end(), [] (const AutomationPoint& p) { return p.value < 0.5f; }),
-                    "WRITE did not record the mute going on and off");
+        ctx.expect (onThenOff (mute), "WRITE did not record the mute going on and off");
         ctx.expect (laneHolds (lane (AutomationParam::Solo).pointsConst(), AutomationParam::Solo, 1.0f, 0.1f),
                     "WRITE did not record the solo");
         const auto& busFader = bus.automationLanes[(std::size_t) AutomationParam::FaderDb].pointsConst();
         ctx.expect (laneHolds (busFader, AutomationParam::FaderDb, -8.0f, kDbTolerance)
                         && laneHolds (busFader, AutomationParam::FaderDb, -4.0f, kDbTolerance),
                     "a bus fader in WRITE did not record");
+        const auto& busPan = bus.automationLanes[(std::size_t) AutomationParam::Pan].pointsConst();
+        ctx.expect (laneHolds (busPan, AutomationParam::Pan, -0.5f, 0.01f)
+                        && laneHolds (busPan, AutomationParam::Pan, 0.5f, 0.01f),
+                    "a bus pan in WRITE did not record");
+        ctx.expect (onThenOff (bus.automationLanes[(std::size_t) AutomationParam::Mute].pointsConst()),
+                    "a bus mute in WRITE did not record going on and off");
         const auto& masterFader = master.automationLanes[(std::size_t) AutomationParam::FaderDb].pointsConst();
         ctx.expect (laneHolds (masterFader, AutomationParam::FaderDb, -2.0f, kDbTolerance)
                         && laneHolds (masterFader, AutomationParam::FaderDb, -4.0f, kDbTolerance),
@@ -773,19 +797,24 @@ std::optional<ScenarioResult> runAutomation (GuiHost& host, ScenarioContext& ctx
         ctx.expect (laneHolds (auxReturn, AutomationParam::FaderDb, -12.0f, kDbTolerance)
                         && laneHolds (auxReturn, AutomationParam::FaderDb, -6.0f, kDbTolerance),
                     "an aux return in WRITE did not record");
+        ctx.expect (onThenOff (aux.automationLanes[(std::size_t) AutomationParam::Mute].pointsConst()),
+                    "an aux mute in WRITE did not record going on and off");
         marks->muteCount = mute.size();
 
-        // Second pass, TOUCH: hold the fader for the first part only.
+        // Second pass, TOUCH: hold the fader and pan for the first part only.
         track.automationMode.store ((int) AutomationMode::Touch, std::memory_order_release);
         for (auto* mode : { &bus.automationMode, &master.automationMode, &aux.automationMode })
             mode->store ((int) AutomationMode::Off, std::memory_order_release);
         params.faderTouched.store (true, std::memory_order_relaxed);
         params.faderDb.store (-3.0f, std::memory_order_relaxed);
+        params.panTouched.store (true, std::memory_order_relaxed);
+        params.pan.store (-0.8f, std::memory_order_relaxed);
         roll();
     } });
     steps->push_back ({ 250, [&params, strip]
     {
         params.faderTouched.store (false, std::memory_order_relaxed);
+        params.panTouched.store (false, std::memory_order_relaxed);
         strip->clickMute();
     } });
     // The first pass rode -10 dB from 400 ms on.
@@ -802,6 +831,8 @@ std::optional<ScenarioResult> runAutomation (GuiHost& host, ScenarioContext& ctx
         ctx.expect (laneHolds (lane (AutomationParam::FaderDb).pointsConst(), AutomationParam::FaderDb,
                                -3.0f, kDbTolerance),
                     "TOUCH did not record the fader while it was held");
+        ctx.expect (laneHolds (lane (AutomationParam::Pan).pointsConst(), AutomationParam::Pan, -0.8f, 0.01f),
+                    "TOUCH did not record the pan while it was held");
         ctx.expect (lane (AutomationParam::Mute).pointsConst().size() == marks->muteCount,
                     "a mute click in TOUCH was recorded");
         strip->clickMute();
