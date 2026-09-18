@@ -14,9 +14,7 @@ source "${REPO_ROOT}/scripts/regress/common.sh"
 
 MAC_HOST="${DUSK_REGRESS_MAC_HOST:-marc@macbook-air.local}"
 MAC_REPO="src/dusk-studio"
-MAC_DONOR="src/plugins-main"
-MAC_DAF="src/DPF"
-MAC_DAF_WIDGETS="src/DPF-Widgets"
+MAC_DAF="src/DAF"
 JOBS="${DUSK_JOBS:-6}"
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30)
 
@@ -42,17 +40,8 @@ MAC_PREV_COMMIT=""
 MAC_PREV_SUBMODULES=""
 MAC_HOME=""
 
-DONOR_REV="$(sed -n 's/^[[:space:]]*DONOR_REV:[[:space:]]*//p' \
-    .github/workflows/release.yml | head -1)"
-[[ -n "$DONOR_REV" ]] || regress_die "could not read DONOR_REV from .github/workflows/release.yml"
-
-daf_pin() { # <var name in the composite action>
-    sed -n "s/^[[:space:]]*$1:[[:space:]]*//p" \
-        .github/actions/clone-daf-stack/action.yml | head -1
-}
-DAF_REV="$(daf_pin DAF_REV)"
-PUGL_REV="$(daf_pin PUGL_REV)"
-DAF_WIDGETS_REV="$(daf_pin DAF_WIDGETS_REV)"
+DONOR_REV="$(tr -d '[:space:]' < DONOR_REV)"
+[[ "$DONOR_REV" =~ ^[0-9a-f]{40}$ ]] || regress_die "DONOR_REV does not hold a valid commit"
 
 # mac_run <deadline seconds> <<'REMOTE' ... REMOTE
 mac_run() {
@@ -144,49 +133,46 @@ git submodule status
 REMOTE
 }
 
-leg_donor() {
-    mac_run 900 <<REMOTE
-set -euo pipefail
-cd "\$HOME/${MAC_DONOR}"
-if [[ "\$(git rev-parse HEAD)" != "${DONOR_REV}" ]]; then
-    git fetch --depth 1 origin "${DONOR_REV}"
-    git checkout -q --detach "${DONOR_REV}"
-fi
-[[ "\$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
-    echo "error: donor \$(git rev-parse HEAD) != DONOR_REV ${DONOR_REV}" >&2; exit 1; }
-echo "donor \$(git log --oneline -1)"
-REMOTE
-}
-
-# The DAF stack is best effort: the node may be offline from GitHub, and a
-# drifted DAF only matters for the native UI, not for the DSP legs below.
+# CI builds against the tip of DAF main, so the node follows it. Best effort:
+# the node may be offline from GitHub, and a DAF behind main only matters for
+# the native UI, not for the DSP legs below.
 leg_daf() {
     mac_run 900 <<REMOTE
 set -euo pipefail
-sync_pin() {
-    local dir="\$1" rev="\$2" name="\$3"
-    cd "\$HOME/\$dir"
-    local before
-    before="\$(git rev-parse HEAD)"
-    if [[ "\$before" != "\$rev" ]]; then
-        if ! git fetch --depth 1 origin "\$rev" >/dev/null 2>&1; then
-            echo "warn: \$name could not fetch \$rev (left at \${before:0:8})"
-            return 0
-        fi
-        git checkout -q --detach "\$rev"
-    fi
-    echo "\$name \$(git rev-parse --short HEAD) (was \${before:0:8})"
-}
-sync_pin "${MAC_DAF}" "${DAF_REV}" DAF
-sync_pin "${MAC_DAF_WIDGETS}" "${DAF_WIDGETS_REV}" DAF-Widgets
 cd "\$HOME/${MAC_DAF}"
-git submodule update --init --depth 1 >/dev/null 2>&1 || echo "warn: DAF submodule update failed"
-have="\$(git -C dgl/src/pugl-upstream rev-parse HEAD 2>/dev/null || echo none)"
-if [[ "\$have" == "${PUGL_REV}" ]]; then
-    echo "pugl \${have:0:8} (pinned)"
-else
-    echo "warn: pugl \${have:0:8} != pinned ${PUGL_REV}"
+before="\$(git rev-parse --short HEAD)"
+if ! git pull -q --ff-only >/dev/null 2>&1; then
+    echo "warn: DAF could not follow main (left at \${before})"
+    exit 0
 fi
+echo "DAF \$(git rev-parse --short HEAD) (was \${before})"
+REMOTE
+}
+
+# Configure fetches the donor at DONOR_REV into each tree's _deps. A cached
+# DUSK_PLUGINS_PATH would build whatever that checkout holds instead, and a
+# failure would then read as a Dusk Studio regression.
+leg_donor_check() {
+    mac_run 120 <<REMOTE
+set -euo pipefail
+cd "\$HOME/${MAC_REPO}"
+rc=0
+for dir in build build-tests; do
+    cached="\$(sed -n 's/^DUSK_PLUGINS_PATH:[^=]*=//p' "\$dir/CMakeCache.txt" | head -1)"
+    if [[ -n "\$cached" ]]; then
+        echo "error: \$dir builds the donor from DUSK_PLUGINS_PATH='\$cached', not DONOR_REV" >&2
+        rc=1
+        continue
+    fi
+    head="\$(git -C "\$dir/_deps/dusk-plugins" rev-parse HEAD 2>/dev/null || true)"
+    if [[ "\$head" != "${DONOR_REV}" ]]; then
+        echo "error: \$dir/_deps/dusk-plugins is at '\${head:-nothing}', DONOR_REV is ${DONOR_REV}" >&2
+        rc=1
+        continue
+    fi
+    echo "\$dir: donor at DONOR_REV ${DONOR_REV:0:8}"
+done
+exit "\$rc"
 REMOTE
 }
 
@@ -350,11 +336,11 @@ fi
 
 regress_leg "push-head" leg_push
 regress_leg "mac-checkout" leg_checkout
-regress_leg "donor-pin" leg_donor
-regress_leg_soft "daf-pins" leg_daf
+regress_leg_soft "daf-main" leg_daf
 
 regress_leg "configure-app" leg_configure_app
 regress_leg "configure-tests" leg_configure_tests
+regress_leg "donor-check" leg_donor_check
 regress_leg "build-app" leg_build_app
 regress_leg "build-tests" leg_build_tests
 regress_leg "ctest" leg_ctest

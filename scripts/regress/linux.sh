@@ -169,10 +169,9 @@ overrides = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")).get("name_
 if overrides:
     raise SystemExit("STOP: local Patreon name_overrides are not available to release workflows")
 PY
-    donor_rev="$(sed -nE 's/^[[:space:]]*DONOR_REV:[[:space:]]*([0-9a-f]{40})[[:space:]]*$/\1/p' \
-        .github/workflows/release.yml | head -1)"
+    donor_rev="$(tr -d '[:space:]' < DONOR_REV)"
     [[ "$donor_rev" =~ ^[0-9a-f]{40}$ ]] || {
-        echo "error: release workflow has no valid DONOR_REV" >&2
+        echo "error: DONOR_REV does not hold a valid commit" >&2
         return 1
     }
     git -C ../plugins cat-file -e "${donor_rev}^{commit}" 2>/dev/null \

@@ -625,8 +625,9 @@ deadlines are a poll loop over a completion marker.
 
 Prerequisites: an ssh key on the node, a clean `~/src/dusk-studio` working tree
 (submodule pointers may drift; tracked files may not), `~/mac-configure.sh`
-(takes the build dir as `$1` and passes `-DDAF_PATH` / `-DDAF_WIDGETS_PATH`),
-and the sibling checkouts `~/src/plugins-main`, `~/src/DPF`, `~/src/DPF-Widgets`.
+(takes the build dir as `$1` and passes `-DDAF_PATH`, no donor flag), and a
+`~/src/DAF` checkout on `main`. The donor needs no checkout of its own: configure
+fetches `DONOR_REV` into each build tree's `_deps`.
 
 The commit under test never goes through GitHub: it is pushed straight over ssh
 to `refs/heads/regress-<short sha>` in the node's checkout. The node's previous
@@ -637,9 +638,10 @@ including when a leg fails.
 |---|---|
 | `mac-preflight` | node reachable, review model unloaded from ollama (it pins several GB and a `-j6` build would swap against it), working tree clean. |
 | `push-head` / `mac-checkout` | the node builds this exact commit. `WARN` when a submodule cannot be synced to the recorded pin. |
-| `donor-pin` | `~/src/plugins-main` detached at the `DONOR_REV` in `.github/workflows/release.yml`. |
-| `daf-pins` | `~/src/DPF`, `~/src/DPF-Widgets` and the Pugl submodule moved to the revisions in `.github/actions/clone-daf-stack/action.yml`. Best effort: an unfetchable revision is a `WARN`, not a failure. The DAF checkouts are left at the pin, not put back. |
-| `configure-app` / `configure-tests` / `build-app` / `build-tests` / `ctest` | the same build and test surface as CI's macOS job. |
+| `daf-main` | `~/src/DAF` fast-forwarded to the tip of `main`, which is what CI builds against. Best effort: a node that cannot reach GitHub is a `WARN`, not a failure. DAF is left where it lands, not put back. |
+| `configure-app` / `configure-tests` | both trees configure through `~/mac-configure.sh`. |
+| `donor-check` | both trees build the donor from `DONOR_REV`: no cached `DUSK_PLUGINS_PATH`, and `_deps/dusk-plugins` at that commit. |
+| `build-app` / `build-tests` / `ctest` | the same build and test surface as CI's macOS job. |
 | `selftest` | `DUSKSTUDIO_RUN_SELFTEST=1` against the built `.app`, behind a marker-file deadline. |
 | `scenarios` | `DUSKSTUDIO_RUN_SCENARIOS=all` against the same `.app`, behind the same marker-file deadline, with `DUSKSTUDIO_FIXTURE_DIR` pointed at the node's `build-tests` tree and `tests/fixtures`. Passes only on exit 0, no `[FAIL]` line, and the terminal `=== scenarios: ` summary. Skipped cases go into the leg's note - this node builds no LV2 host, so the LV2 cases skip there and the AU scan case runs only there. |
 
