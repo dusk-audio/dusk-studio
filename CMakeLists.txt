@@ -762,6 +762,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/scenario/cases/scan_cancel_au.cpp
     src/engine/scenario/cases/scan_cancel_lv2.cpp
     src/engine/scenario/cases/takes.cpp
+    src/engine/scenario/cases/transport.cpp
     src/engine/scenario/cases/vst3_noteoff_fallback.cpp
     src/dsp/AuxLaneStrip.cpp
     src/dsp/BusStrip.cpp

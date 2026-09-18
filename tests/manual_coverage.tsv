@@ -17,8 +17,8 @@
 #
 # The ceilings record the gap and partial counts. Covering a behaviour lowers one in the
 # same change; a new gap raises one by hand, where review sees it.
-# ceiling gap 133
-# ceiling partial 56
+# ceiling gap 129
+# ceiling partial 54
 
 About this manual > What's in the box	24 tracks, fixed chain, 4 auxes, 4 buses, master, mastering, hosting, MIDI sync, MCU	n/a			inventory; each item is mapped under its own chapter
 About this manual > What it deliberately does not have	the fixed limits (24 tracks, fixed chain order, no sample editing)	n/a			scope statement; the 24-track and chain-order limits are held under The channel strip and Appendix A
@@ -103,9 +103,9 @@ The interface > The four stages	Cmd/Ctrl+1..4 change stage, plain digits change 
 The interface > The four stages	entering or leaving MASTERING stops the transport; changing stage saves and closes the notepad	gap
 The interface > The transport bar	Stop silences held notes even on muted or soloed-out tracks	auto	scenario:midi.panic_all_paths;test:muted MIDI strips still process transport panic events;test:synth unit stops on the transport's all-notes-off
 The interface > The transport bar	Stop returns the playhead per Playhead on Stop; a second Stop goes to bar 1	auto	test:Stop on a rolling transport follows the Playhead on Stop setting;test:Stop pressed while stopped returns to zero whatever the setting;test:A locate during playback becomes the point Stop returns to
-The interface > The transport bar	a chase-driven stop leaves the playhead where the master stopped	gap
+The interface > The transport bar	a chase-driven stop leaves the playhead where the master stopped	auto	scenario:transport.chase_stop_leaves_playhead
 The interface > The transport bar	Rewind and Forward tap to markers, hold to scrub at 10x	partial	test:McuReceiver: REWIND / FAST-FORWARD publish held-state on press and release;scenario:marker.rewind_forward_jump		surface press/hold state and marker jumps tested; the 180 ms hold threshold and 10x scrub are not
-The interface > The transport bar	Play snaps to loop start when outside the loop	gap
+The interface > The transport bar	Play snaps to loop start when outside the loop	auto	scenario:transport.play_snaps_to_loop_start
 The interface > The transport bar	Record needs an armed track	auto	test:An audio track cannot arm while the device offers no inputs;test:A track whose input the device does not offer cannot arm
 The interface > The transport bar	Punch right-click menu sets pre-roll and post-roll	gap
 The interface > The transport bar	metronome clicks when enabled and rolling	auto	test:Metronome: enabled + rolling emits clicks;test:Metronome: disabled + not rolling stays silent
@@ -220,16 +220,16 @@ Recording > Setting the input > MIDI hot-plug	the port list only rebuilds while 
 Recording > Arming a track	Record does nothing until a track is armed	gap
 Recording > Monitor mode	IN monitors through EQ, comp and insert	auto	scenario:engine.pipeline_selftest
 Recording > Print mode	PRINT records the processed signal; off records dry	gap
-Recording > Count-in	one bar of click before the take; playhead rolls back a bar	partial	test:LoopTimeline keeps count-in before loop start linear until loop end		count-in against a loop tested; the plain count-in and its click are not
+Recording > Count-in	one bar of click before the take; playhead rolls back a bar	auto	scenario:transport.count_in_rolls_back_a_bar;test:LoopTimeline keeps count-in before loop start linear until loop end
 Recording > Punch recording	punch arms once in is before out; P toggles	auto	test:Transport: a punch bracket placed by hand arms punch once in is before out;test:Transport: punch range + enable round-trip
-Recording > Punch recording	pre-roll plays before the punch, post-roll rolls past it	gap
+Recording > Punch recording	pre-roll plays before the punch, post-roll rolls past it	auto	scenario:transport.punch_pre_and_post_roll
 Recording > Punch recording	recording starts and stops exactly at the punch samples	auto	scenario:engine.pipeline_selftest;test:Loop capture snapshots and writes only the effective punch intersection
-Recording > Punch recording	64-sample raised-cosine fades at both punch edges	partial	test:FadeShape::RaisedCosine has zero slope at both endpoints;test:FadeShape::RaisedCosine is 0.5 at t=0.5		the fade shape is tested; its use at the punch edges is not
+Recording > Punch recording	64-sample raised-cosine fades at both punch edges	auto	scenario:transport.punch_pre_and_post_roll;test:FadeShape::RaisedCosine has zero slope at both endpoints;test:FadeShape::RaisedCosine is 0.5 at t=0.5
 Recording > Loop recording	loop turns on once in is before out; L toggles	auto	test:Transport: a loop bracket placed by hand turns loop on once in is before out;test:Transport: loop range + enable round-trip
 Recording > Loop recording	each pass becomes a take; current plus eight kept	auto	test:Loop audio stores two full passes as one spool with exact take offsets;test:Loop audio retention drops oldest passes after current plus eight prior;test:Loop audio history is newest-first capped and then retains compatible old takes;scenario:engine.pipeline_selftest
 Recording > Loop recording	with punch, each pass records only the overlap	auto	test:Loop capture snapshots and writes only the effective punch intersection;test:Loop capture plan rejects an empty effective punch intersection
 Recording > Loop recording	silent audio passes kept; empty MIDI passes dropped	auto	test:Loop audio retains a silent pass and trims latency per pass;test:Loop MIDI ignores a truly empty pass and keeps a final partial pass
-Recording > Loop recording	a loop under 128 samples does not record	gap
+Recording > Loop recording	a loop under 128 samples does not record	auto	scenario:transport.short_loop_refused
 Recording > Where files are saved	session.json plus audio/ of 24-bit WAVs named by track and time	partial	test:RecordManager writes mono input back accurately;test:RecordManager writes stereo L+R interleaving in order		sample accuracy tested; the 24-bit format and the filename pattern are not
 Recording > Where files are saved	MIDI is embedded in session.json	gap
 Recording > Take history	a take fully covering a region pushes it onto an 8-deep stack	auto	scenario:take.full_cover_pushes_onto_stack;scenario:take.stack_keeps_newest_eight;test:Loop audio history is newest-first capped and then retains compatible old takes;test:SessionSerializer round-trips active and historical take provenance
