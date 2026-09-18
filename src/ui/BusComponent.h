@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../foundation/MessageThread.h"
 #include <memory>
+#include "../session/AutomationRecorder.h"
 #include "../session/Session.h"
 #include "AnalogVuMeter.h"
 #include "CompMeterStrip.h"
@@ -91,7 +92,10 @@ private:
     void showAutoModeMenu();
     void setAutoMode (AutomationMode mode);
     void refreshAutoModeButton();
-    void captureWritePoint (AutomationParam param, float denormValue);
+    // Feeds param's WRITE / TOUCH pass while recording is true; the first
+    // call with it false splices the pass into the lane.
+    void recordAutomation (AutomationParam param, bool recording, float value);
+    AutomationPassRecorders passRecorders = makeAutomationPassRecorders();
     // Last-displayed live values so the motor-fader/pan timer only calls
     // setValue when the automated value actually moved.
     float displayedLiveFaderDb = 0.0f;

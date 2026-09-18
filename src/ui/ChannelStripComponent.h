@@ -12,6 +12,7 @@
 #include "imgui/DafEditorHost.h"
 #include "DuskComboBox.h"
 #include "NativeEditorOwner.h"
+#include "../session/AutomationRecorder.h"
 #include "../session/Session.h"
 #include "../foundation/MessageThread.h"
 
@@ -227,10 +228,10 @@ private:
     void showAutoModeMenu();
     void setAutoMode (AutomationMode mode);
     void refreshAutoModeButton();
-    // Strict ascending order - evaluateLane's binary search depends on
-    // it. Same-sample writes coalesce; loop wraparound truncates future
-    // points.
-    void captureWritePoint (AutomationParam param, float denormValue);
+    // Feeds param's WRITE / TOUCH pass while recording is true; the first
+    // call with it false splices the pass into the lane.
+    void recordAutomation (AutomationParam param, bool recording, float value);
+    AutomationPassRecorders passRecorders = makeAutomationPassRecorders();
     // Gated by small delta so the timer doesn't churn setValue when
     // manual mode just mirrors the user's setpoint.
     float displayedLiveFaderDb = 0.0f;

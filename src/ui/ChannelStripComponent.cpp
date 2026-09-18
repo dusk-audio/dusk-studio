@@ -776,13 +776,9 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         }
     };
     // Touch-mode hooks: while the user has the fader grabbed, set the
-    // strip's faderTouched flag so the audio engine routes the manual
-    // setpoint instead of the lane (and the timerCallback captures into
-    // the lane while touched). On release, the existing fader smoother's
-    // 20 ms ramp blends from manual back to lane - a fast but smooth
-    // glide. The configurable 100 ms / 500 ms / 1 s glide-back from the
-    // spec is a refinement that lands later if 20 ms feels jarring in
-    // practice.
+    // strip's faderTouched flag so the timer records the fader. On release
+    // the recorder splices the pass in with a short glide back to the
+    // earlier ride.
     faderSlider.onDragStart = [this]
     {
         track.strip.faderTouched.store (true, std::memory_order_release);
@@ -867,23 +863,11 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     {
         const bool newState = muteButton.getToggleState();
         track.strip.mute.store (newState, std::memory_order_relaxed);
-
-        // Discrete-param automation capture: a mute click in Write or
-        // Touch mode (with transport playing) writes a transition point
-        // into the lane at the current playhead. Discrete = no
-        // interpolation, no tick-based capture - the click IS the only
-        // event worth recording. WRITE only: discrete params have no
-        // `touched` flag, and the audio thread reads the discrete lane
-        // unconditionally in Touch (routeDiscrete) - so capturing in Touch
-        // would push_back into a vector the audio thread is mid-read on
-        // (data race / realloc UAF). In Write the audio reads `manual`, so
-        // the append never overlaps a lane read. (In Touch the lane already
-        // overrides the manual toggle, so the click was a no-op audibly.)
-        const int amode = track.automationMode.load (std::memory_order_relaxed);
-        const bool capturing = engine.getTransport().isPlaying()
-            && amode == (int) AutomationMode::Write;
-        if (capturing)
-            captureWritePoint (AutomationParam::Mute, newState ? 1.0f : 0.0f);
+        // The timer records mute in WRITE too; recording the click as well
+        // lands the change where it was made, not up to a tick later.
+        if (engine.getTransport().isPlaying()
+            && track.automationMode.load (std::memory_order_relaxed) == (int) AutomationMode::Write)
+            recordAutomation (AutomationParam::Mute, true, newState ? 1.0f : 0.0f);
     };
     muteButton.addMouseListener (this, false);
     addAndMakeVisible (muteButton);
@@ -899,15 +883,9 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         // liveSolo so it works with automation-overridden solos too,
         // but the counter is still updated for consistency.
         session.setTrackSoloed (trackIndex, soloButton.getToggleState());
-
-        // Discrete-param automation capture - WRITE only, same rationale as
-        // mute: the audio thread reads the discrete lane in Touch, so a
-        // Touch-mode capture would race that read.
-        const int amode = track.automationMode.load (std::memory_order_relaxed);
-        const bool capturing = engine.getTransport().isPlaying()
-            && amode == (int) AutomationMode::Write;
-        if (capturing)
-            captureWritePoint (AutomationParam::Solo, soloButton.getToggleState() ? 1.0f : 0.0f);
+        if (engine.getTransport().isPlaying()
+            && track.automationMode.load (std::memory_order_relaxed) == (int) AutomationMode::Write)
+            recordAutomation (AutomationParam::Solo, true, soloButton.getToggleState() ? 1.0f : 0.0f);
     };
     soloButton.addMouseListener (this, false);
     addAndMakeVisible (soloButton);
@@ -1481,6 +1459,8 @@ ChannelStripComponent::~ChannelStripComponent()
 {
     stopTimer();   // before derived members destruct (base Timer::~Timer is too late)
     engine.removeChangeCallback (this);
+    for (int p = 0; p < kNumAutomationParams; ++p)
+        recordAutomation ((AutomationParam) p, false, 0.0f);
 
     // If a popup editor is still open when the strip dies, destroy its body
     // NOW (synchronously) rather than via close()'s deferred callAsync: on the
@@ -5043,10 +5023,8 @@ void ChannelStripComponent::timerCallback()
                 displayedLiveFaderDb = live;
             }
 
-            const bool capturing = playing && (isWrite || (isTouch && touched));
-            if (capturing)
-                captureWritePoint (AutomationParam::FaderDb,
-                                    track.strip.faderDb.load (std::memory_order_relaxed));
+            recordAutomation (AutomationParam::FaderDb, playing && (isWrite || (isTouch && touched)),
+                              track.strip.faderDb.load (std::memory_order_relaxed));
         }
 
         // Pan animate / capture. Same shape as fader; threshold is in
@@ -5065,10 +5043,8 @@ void ChannelStripComponent::timerCallback()
                 displayedLivePan = live;
             }
 
-            const bool capturing = playing && (isWrite || (isTouch && touched));
-            if (capturing)
-                captureWritePoint (AutomationParam::Pan,
-                                    track.strip.pan.load (std::memory_order_relaxed));
+            recordAutomation (AutomationParam::Pan, playing && (isWrite || (isTouch && touched)),
+                              track.strip.pan.load (std::memory_order_relaxed));
         }
 
         // Mute / Solo - discrete params. In Off / Write modes the button
@@ -5096,6 +5072,11 @@ void ChannelStripComponent::timerCallback()
             if (soloButton.getToggleState() != effective)
                 soloButton.setToggleState (effective, juce::dontSendNotification);
         }
+        // Mute and solo are discrete, so they record in WRITE only.
+        recordAutomation (AutomationParam::Mute, playing && isWrite,
+                          track.strip.mute.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
+        recordAutomation (AutomationParam::Solo, playing && isWrite,
+                          track.strip.solo.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
         // ARM has no Live atom (no automation lane) - read recordArmed
         // directly. Needed so a MIDI-bound arm toggle reflects on screen.
         {
@@ -5137,109 +5118,29 @@ void ChannelStripComponent::timerCallback()
                 refreshAuxSendLabel (i);
             }
 
-            const bool capturing = playing && (isWrite || (isTouch && touched));
-            if (capturing)
-            {
-                const auto param = (AutomationParam) ((int) AutomationParam::AuxSend1 + i);
-                captureWritePoint (param,
-                                    track.strip.auxSendDb[(size_t) i].load (std::memory_order_relaxed));
-            }
+            recordAutomation ((AutomationParam) ((int) AutomationParam::AuxSend1 + i),
+                              playing && (isWrite || (isTouch && touched)),
+                              track.strip.auxSendDb[(size_t) i].load (std::memory_order_relaxed));
         }
     }
 }
 
-void ChannelStripComponent::captureWritePoint (AutomationParam param, float denormValue)
+void ChannelStripComponent::recordAutomation (AutomationParam param, bool recording, float value)
 {
-    // Convert denormalized value back to lane storage (0..1). Mirrors
-    // Session.cpp's denormalizeAutomation - kept here as a small switch
-    // because there are only two callers (this and a future Touch hook)
-    // and a free function isn't worth the noise.
-    auto normalize = [] (AutomationParam p, float v) -> float
+    auto& recorder = passRecorders[(size_t) param];
+    auto& lane = track.automationLanes[(size_t) param];
+    if (recording)
     {
-        switch (p)
-        {
-            case AutomationParam::FaderDb:
-            {
-                const float lo = ChannelStripParams::kFaderMinDb;
-                const float hi = ChannelStripParams::kFaderMaxDb;
-                return jlimit (0.0f, 1.0f, (v - lo) / (hi - lo));
-            }
-            case AutomationParam::Pan:
-                return jlimit (0.0f, 1.0f, (v + 1.0f) * 0.5f);
-            case AutomationParam::Mute:
-            case AutomationParam::Solo:
-                return v >= 0.5f ? 1.0f : 0.0f;
-            case AutomationParam::AuxSend1:
-            case AutomationParam::AuxSend2:
-            case AutomationParam::AuxSend3:
-            case AutomationParam::AuxSend4:
-            {
-                if (v <= ChannelStripParams::kAuxSendOffDb) return 0.0f;
-                const float lo = ChannelStripParams::kAuxSendMinDb;
-                const float hi = ChannelStripParams::kAuxSendMaxDb;
-                return jlimit (0.0f, 1.0f, (v - lo) / (hi - lo));
-            }
-            case AutomationParam::kCount: break;
-        }
-        return 0.0f;
-    };
-
-    auto& lane = track.automationLanes[(size_t) param].mutableForWritePass();  // in-place; audio does not read this lane in Write/Touch-touched
-    AutomationPoint pt;
-    pt.timeSamples   = engine.getTransport().getPlayhead();
-    pt.value         = normalize (param, denormValue);
-    pt.recordedAtBPM = session.tempoBpm.load (std::memory_order_relaxed);
-
-    // Pre-filter: drop near-identical samples close together in time
-    // (the timer fires every 33 ms; if the fader hasn't moved, those
-    // ticks are noise). Continuous params only - discrete state needs
-    // every transition. Spec: delta + max-span pre-filter. 0.001
-    // normalized = 0.1% of the lane's storage range. The
-    // pt.timeSamples >= last.timeSamples guard prevents a backward
-    // playhead jump (loop wrap / transport rewind) from sliding under
-    // the short-span cutoff and skipping the future-tail truncation
-    // block below.
-    if (isContinuousParam (param) && ! lane.empty())
-    {
-        constexpr float kDeltaEps = 0.001f;
-        constexpr std::int64_t kMaxSpanSamples = 22050;   // ~500 ms @ 44.1 k
-        const auto& last = lane.back();
-        if (std::abs (pt.value - last.value) < kDeltaEps
-            && pt.timeSamples >= last.timeSamples
-            && (pt.timeSamples - last.timeSamples) < kMaxSpanSamples)
-            return;
+        recorder.record (lane, engine.getTransport().getPlayhead(), value,
+                         session.tempoBpm.load (std::memory_order_relaxed));
     }
-
-    // Coalesce: if the most recent point is at the same timeline sample
-    // (or earlier), replace its value (don't append). This handles two
-    // cases: (a) Timer fires faster than transport advances (paused?
-    // shouldn't happen since we gated on isPlaying), (b) Time-travel
-    // backward via loop wraparound mid-Write -- subsequent appends
-    // belong AFTER the most recent timeline position, not before it.
-    // Strict ascending invariant is required by evaluateLane's binary
-    // search.
-    if (! lane.empty() && lane.back().timeSamples >= pt.timeSamples)
+    else if (recorder.active())
     {
-        // Loop wraparound case: drop the rest of the lane that's now in
-        // the future relative to playhead, so the binary-search invariant
-        // (sorted ascending) holds and the upcoming Write captures land
-        // in their natural order. Discrete params (mute / solo) keep
-        // the same rule.
-        if (lane.back().timeSamples > pt.timeSamples)
-        {
-            auto cutoff = std::lower_bound (lane.begin(), lane.end(),
-                pt.timeSamples,
-                [] (const AutomationPoint& a, std::int64_t t) { return a.timeSamples < t; });
-            lane.erase (cutoff, lane.end());
-        }
-        // Same-sample replace: keep the latest value at this exact sample.
-        if (! lane.empty() && lane.back().timeSamples == pt.timeSamples)
-        {
-            lane.back() = pt;
-            return;
-        }
+        const bool touch = track.automationMode.load (std::memory_order_relaxed) == (int) AutomationMode::Touch;
+        recorder.finish (lane, touch ? (std::int64_t) (engine.getCurrentSampleRate()
+                                                        * AutomationPassRecorder::kTouchReturnSeconds)
+                                     : 0);
     }
-    lane.push_back (pt);
 }
 
 void ChannelStripComponent::showAutoModeMenu()
@@ -5266,21 +5167,7 @@ void ChannelStripComponent::showAutoModeMenu()
 
 void ChannelStripComponent::setAutoMode (AutomationMode mode)
 {
-    // When transitioning OUT of Write or Touch, the points just appended
-    // to the lane need to be visible to the audio thread BEFORE it starts
-    // reading from the lane. The release-store on mode synchronizes those
-    // writes - any prior append to lane happens-before the audio
-    // thread's acquire-load of the new mode.
-    //
-    // Auto-thin on mode-flip would be tempting here, but the existing
-    // concurrency model partitions lane reads/writes by (mode, touched)
-    // and handleWritePassComplete rewrites lane unconditionally -
-    // there's no safe ordering relative to the audio thread acquiring
-    // the new mode (or to OTHER strips that are in Read). Thinning needs
-    // AtomicSnapshot on each lane before it can fire on mode-flip; for
-    // now the capture-time pre-filter handles the worst bloat and the
-    // safe RDP entry point is File ▸ Optimize automation, which gates
-    // on transport-stopped + every strip's mode set to Off.
+    // A pass this mode change ends is spliced on the next timer tick.
     track.automationMode.store ((int) mode, std::memory_order_release);
 
     // Read mode disables every automated control (spec: "User cannot

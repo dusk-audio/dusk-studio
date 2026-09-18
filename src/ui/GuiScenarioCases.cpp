@@ -653,8 +653,9 @@ bool timesAscend (const std::vector<AutomationPoint>& points)
 
 // The strips' own timers record the rides while the transport rolls. Write
 // takes the fader, pan, mute and solo; Touch records the fader while it is
-// held; a mute click in Touch records nothing; a bus fader records like a
-// track's.
+// held and returns to the earlier ride on release; a mute click in Touch
+// records nothing; a bus fader records like a track's; a Write pass leaves
+// the ride after where it stopped alone.
 std::optional<ScenarioResult> runAutomation (GuiHost& host, ScenarioContext& ctx)
 {
     static constexpr float kDbTolerance = 0.05f;
@@ -675,8 +676,8 @@ std::optional<ScenarioResult> runAutomation (GuiHost& host, ScenarioContext& ctx
     {
         track.automationMode.store ((int) AutomationMode::Off, std::memory_order_release);
         bus.automationMode.store ((int) AutomationMode::Off, std::memory_order_release);
-        for (auto& l : track.automationLanes) l.mutableForWritePass().clear();
-        for (auto& l : bus.automationLanes) l.mutableForWritePass().clear();
+        for (auto& l : track.automationLanes) l.publishPoints ({});
+        for (auto& l : bus.automationLanes) l.publishPoints ({});
     };
     ctx.cleanup ([&engine, &session, &params, &bus, clearAll]
     {
@@ -693,6 +694,7 @@ std::optional<ScenarioResult> runAutomation (GuiHost& host, ScenarioContext& ctx
     struct Marks
     {
         std::size_t muteCount = 0;
+        std::int64_t stoppedAt = 0;
     };
     auto marks = std::make_shared<Marks>();
     auto steps = std::make_shared<std::vector<Step>>();
@@ -722,9 +724,10 @@ std::optional<ScenarioResult> runAutomation (GuiHost& host, ScenarioContext& ctx
         strip->clickMute();
     } });
     steps->push_back ({ 400, [strip] { strip->clickMute(); strip->clickSolo(); } });
-    steps->push_back ({ 400, [&ctx, &engine, &params, &track, &bus, lane, marks, roll]
+    // The strips splice a pass on their first timer tick after the stop.
+    steps->push_back ({ 400, [&engine] { engine.stop(); } });
+    steps->push_back ({ 100, [&ctx, &params, &track, &bus, lane, marks, roll]
     {
-        engine.stop();
         const auto& fader = lane (AutomationParam::FaderDb).pointsConst();
         ctx.expect (laneHolds (fader, AutomationParam::FaderDb, -20.0f, kDbTolerance)
                         && laneHolds (fader, AutomationParam::FaderDb, -10.0f, kDbTolerance)
@@ -735,7 +738,10 @@ std::optional<ScenarioResult> runAutomation (GuiHost& host, ScenarioContext& ctx
                         && laneHolds (pan, AutomationParam::Pan, 0.5f, 0.01f),
                     "WRITE did not record both pan positions");
         const auto& mute = lane (AutomationParam::Mute).pointsConst();
-        ctx.expect (mute.size() >= 2 && mute.front().value > 0.5f && mute.back().value < 0.5f,
+        const auto on = std::find_if (mute.begin(), mute.end(),
+                                      [] (const AutomationPoint& p) { return p.value > 0.5f; });
+        ctx.expect (on != mute.end()
+                        && std::any_of (on, mute.end(), [] (const AutomationPoint& p) { return p.value < 0.5f; }),
                     "WRITE did not record the mute going on and off");
         ctx.expect (laneHolds (lane (AutomationParam::Solo).pointsConst(), AutomationParam::Solo, 1.0f, 0.1f),
                     "WRITE did not record the solo");
@@ -757,15 +763,44 @@ std::optional<ScenarioResult> runAutomation (GuiHost& host, ScenarioContext& ctx
         params.faderTouched.store (false, std::memory_order_relaxed);
         strip->clickMute();
     } });
-    steps->push_back ({ 400, [&ctx, &engine, &track, lane, marks, strip]
+    // The first pass rode -10 dB from 400 ms on.
+    steps->push_back ({ 700, [&ctx, &engine, &params]
     {
+        const float live = params.liveFaderDb.load (std::memory_order_relaxed);
+        ctx.note ("TOUCH: the fader plays " + std::to_string (live) + " dB after the release");
+        ctx.expect (std::abs (live - (-10.0f)) < 0.5f,
+                    "after TOUCH let go the fader did not return to the earlier ride (-10 dB)");
         engine.stop();
+    } });
+    steps->push_back ({ 100, [&ctx, &params, &track, lane, marks, roll, strip]
+    {
         ctx.expect (laneHolds (lane (AutomationParam::FaderDb).pointsConst(), AutomationParam::FaderDb,
                                -3.0f, kDbTolerance),
                     "TOUCH did not record the fader while it was held");
         ctx.expect (lane (AutomationParam::Mute).pointsConst().size() == marks->muteCount,
                     "a mute click in TOUCH was recorded");
         strip->clickMute();
+
+        // Third pass, WRITE over the start only.
+        track.automationMode.store ((int) AutomationMode::Write, std::memory_order_release);
+        params.faderDb.store (-15.0f, std::memory_order_relaxed);
+        roll();
+    } });
+    steps->push_back ({ 250, [&engine, marks]
+    {
+        engine.stop();
+        marks->stoppedAt = engine.getTransport().getPlayhead();
+    } });
+    steps->push_back ({ 100, [&ctx, &track, lane, marks]
+    {
+        const auto& fader = lane (AutomationParam::FaderDb).pointsConst();
+        const auto stoppedAt = marks->stoppedAt;
+        ctx.note ("third pass stopped at " + std::to_string (stoppedAt) + "; the lane ends at "
+                  + (fader.empty() ? std::string ("-") : std::to_string (fader.back().timeSamples)));
+        ctx.expect (std::any_of (fader.begin(), fader.end(),
+                                 [stoppedAt] (const AutomationPoint& p) { return p.timeSamples > stoppedAt + 4800; }),
+                    "a WRITE pass erased the automation after where it stopped");
+        ctx.expect (timesAscend (fader), "the fader lane is out of time order");
         track.automationMode.store ((int) AutomationMode::Off, std::memory_order_release);
     } });
 
