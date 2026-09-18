@@ -870,3 +870,20 @@ if(UNIX)
         message(WARNING "release-mechanics contract test skipped: bash or python3 not found")
     endif()
 endif()
+
+# Every behaviour MANUAL.md documents has a row in manual_coverage.tsv naming
+# the test that proves it, or why nothing automated can. Python only, so it
+# runs on every platform.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME manual-coverage-contract
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/manual_coverage.py"
+                "${CMAKE_SOURCE_DIR}")
+    add_test(NAME manual-coverage-checker
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/manual_coverage.py"
+                --self-test)
+else()
+    message(WARNING "manual coverage contract skipped: python3 not found")
+endif()
