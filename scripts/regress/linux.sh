@@ -189,16 +189,39 @@ PY
     return 0
 }
 
+# sandboxed <command...>: runs the command, shell functions included, with a
+# private HOME, XDG base directories and runtime dir (see sandbox_env), removed
+# afterwards.
+sandboxed() {
+    local dir rc=0
+    dir="$(mktemp -d "${TMPDIR:-/tmp}/duskstudio-regress.XXXXXX")" || return 1
+    if sandbox_env "$dir"; then
+        (
+            export "${SANDBOX_ENV[@]}"
+            unset DBUS_SESSION_BUS_ADDRESS
+            "$@"
+        ) || rc=$?
+    else
+        rc=1
+    fi
+    rm -rf "$dir"
+    return "$rc"
+}
+
+leg_selftest() {
+    sandboxed bash scripts/run-selftest-xvfb.sh "$APP_BIN"
+}
+
 leg_ipc_selftest() {
-    xvfb_run "$SELFTEST_TIMEOUT" env DUSKSTUDIO_RUN_IPC_SELFTEST=1 "$APP_BIN"
+    sandboxed xvfb_run "$SELFTEST_TIMEOUT" env DUSKSTUDIO_RUN_IPC_SELFTEST=1 "$APP_BIN"
 }
 
 leg_ipc_host_test() {
-    xvfb_run "$SELFTEST_TIMEOUT" env "DUSKSTUDIO_IPC_HOST_TEST=${VST3_PATH}" "$APP_BIN"
+    sandboxed xvfb_run "$SELFTEST_TIMEOUT" env "DUSKSTUDIO_IPC_HOST_TEST=${VST3_PATH}" "$APP_BIN"
 }
 
 leg_perf() {
-    xvfb_run "$SELFTEST_TIMEOUT" env DUSKSTUDIO_RUN_PERF_TEST=1 "$APP_BIN"
+    sandboxed xvfb_run "$SELFTEST_TIMEOUT" env DUSKSTUDIO_RUN_PERF_TEST=1 "$APP_BIN"
 }
 
 echo "Dusk Studio regression - linux"
@@ -237,7 +260,7 @@ if [[ -x "$APP_BIN" ]]; then
             regress_skip "$leg" "not run (--scenarios-only)"
         done
     else
-        regress_leg "selftest-xvfb" bash scripts/run-selftest-xvfb.sh "$APP_BIN"
+        regress_leg "selftest-xvfb" leg_selftest
         regress_leg "ipc-selftest" leg_ipc_selftest
 
         if [[ -z "$VST3_PATH" ]]; then

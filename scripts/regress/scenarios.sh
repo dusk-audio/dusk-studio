@@ -4,14 +4,18 @@
 # on its own: bash scripts/regress/scenarios.sh [--gui] [--app <binary>]
 #
 # The black-box legs run several app processes at once, so each leg gets a
-# throwaway HOME / XDG_CONFIG_HOME / XDG_RUNTIME_DIR. The runtime dir is what
+# throwaway HOME, XDG base directories and runtime dir (sandbox_env), as does
+# every other launch of the app in this file. The runtime dir is what
 # keeps the single-instance slot private: makeSocketPath in
 # src/util/SingleInstance.cpp keys the socket on $XDG_RUNTIME_DIR plus a hash of
 # DISPLAY, so a per-leg runtime dir can never hand a session to (or steal one
 # from) the maintainer's own running copy. HOME is private for the same reason
 # one level up: dusk::fs::userConfigDir() resolves $HOME/.config and ignores
 # XDG_CONFIG_HOME, so only a private HOME keeps Recent Sessions, app config and
-# crash logs out of the maintainer's profile.
+# crash logs out of the maintainer's profile. The other XDG base directories
+# move with it: a desktop session exports them as absolute paths into the real
+# home, and the libraries under the app (GL shader caches, fontconfig) write
+# there.
 #
 # Every wait takes an explicit budget in seconds. Each process gets its own
 # stdout and stderr file - merging them would make marker order meaningless.
@@ -36,6 +40,32 @@ SCENARIO_BB_LEG_NAMES=(
 # shellcheck disable=SC2034  # read by linux.sh
 SCENARIO_LEG_NAMES=(scenarios-headless "${SCENARIO_BB_LEG_NAMES[@]}")
 
+SANDBOX_ENV=()
+
+# sandbox_env <dir>: SANDBOX_ENV becomes the env assignments for a private
+# HOME, XDG base directories and runtime dir under <dir>, which must exist.
+#
+# PipeWire finds its socket through the runtime dir, and without it the engine
+# falls back to ALSA and opens the first sound card directly. So PipeWire keeps
+# the real one: the app joins the graph as an ordinary client instead of
+# grabbing the maintainer's interface.
+sandbox_env() {
+    local dir="$1"
+    local pipewire_dir="${PIPEWIRE_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-}}"
+    mkdir -p "$dir/home" "$dir/config" && mkdir -p -m 700 "$dir/runtime" || return 1
+    SANDBOX_ENV=(
+        "HOME=$dir/home"
+        "XDG_CONFIG_HOME=$dir/config"
+        "XDG_DATA_HOME=$dir/home/.local/share"
+        "XDG_CACHE_HOME=$dir/home/.cache"
+        "XDG_STATE_HOME=$dir/home/.local/state"
+        "XDG_RUNTIME_DIR=$dir/runtime"
+    )
+    if [[ -n "$pipewire_dir" ]]; then
+        SANDBOX_ENV+=("PIPEWIRE_RUNTIME_DIR=$pipewire_dir")
+    fi
+}
+
 BB_SDIR=""
 BB_LEG=""
 BB_DEADLINE=0
@@ -52,7 +82,7 @@ bb_begin() {
     BB_PID=()
     BB_EXIT=()
     BB_SDIR="$(mktemp -d "${TMPDIR:-/tmp}/duskstudio-${name}.XXXXXX")" || return 1
-    mkdir -m 700 "$BB_SDIR/runtime" "$BB_SDIR/config" "$BB_SDIR/home" || return 1
+    sandbox_env "$BB_SDIR" || return 1
     BB_DEADLINE=$((SECONDS + budget))
     return 0
 }
@@ -79,13 +109,13 @@ bb_spawn() {
     local tag="$1"
     shift
     local -A assign=()
-    local -a unsets=(WAYLAND_DISPLAY)
+    local -a unsets=(WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS)
     assign[DISPLAY]="$XVFB_DISPLAY"
-    assign[HOME]="$BB_SDIR/home"
-    assign[XDG_RUNTIME_DIR]="$BB_SDIR/runtime"
-    assign[XDG_CONFIG_HOME]="$BB_SDIR/config"
 
     local entry key value
+    for entry in "${SANDBOX_ENV[@]}"; do
+        assign["${entry%%=*}"]="${entry#*=}"
+    done
     while [[ $# -gt 0 && "$1" != "--" ]]; do
         entry="$1"
         shift
@@ -267,9 +297,26 @@ scenarios_list() {
     fi
     SCENARIOS_LIST_READ=1
     if scenarios_binary_has DUSKSTUDIO_RUN_SCENARIOS; then
-        SCENARIOS_LIST="$(xvfb_run 60 env DUSKSTUDIO_RUN_SCENARIOS=list "$APP_BIN" 2>/dev/null || true)"
+        SCENARIOS_LIST="$(sandboxed_app_run 60 list 2>/dev/null || true)"
     fi
     printf '%s' "$SCENARIOS_LIST"
+}
+
+# sandboxed_app_run <secs> <scenario spec>: the in-app suite on its own display,
+# in a sandbox that goes away with the run.
+sandboxed_app_run() {
+    local secs="$1" spec="$2" dir rc=0
+    dir="$(mktemp -d "${TMPDIR:-/tmp}/duskstudio-scenarios.XXXXXX")" || return 1
+    if sandbox_env "$dir"; then
+        xvfb_run "$secs" env -u DBUS_SESSION_BUS_ADDRESS "${SANDBOX_ENV[@]}" \
+            "DUSKSTUDIO_RUN_SCENARIOS=${spec}" \
+            "DUSKSTUDIO_FIXTURE_DIR=${REPO_ROOT}/build-tests:${REPO_ROOT}/tests/fixtures" \
+            "$APP_BIN" || rc=$?
+    else
+        rc=1
+    fi
+    rm -rf "$dir"
+    return "$rc"
 }
 
 scenarios_binary_has() {
@@ -498,8 +545,8 @@ bb_mint_oop_session() {
     mkdir -p "$dir" || return 1
     # On the leg's shared display, not through xvfb_run: that would start and
     # stop a second server and leave XVFB_DISPLAY pointing at the dead one.
-    if ! env -u WAYLAND_DISPLAY "DISPLAY=$XVFB_DISPLAY" \
-        "HOME=$BB_SDIR/home" "XDG_RUNTIME_DIR=$BB_SDIR/runtime" \
+    if ! env -u WAYLAND_DISPLAY -u DBUS_SESSION_BUS_ADDRESS "DISPLAY=$XVFB_DISPLAY" \
+        "${SANDBOX_ENV[@]}" \
         DUSKSTUDIO_RUN_SCENARIOS=session.mint_oop_fixture \
         "DUSKSTUDIO_SCENARIO_OUT=$dir/session.json" \
         "DUSKSTUDIO_FIXTURE_DIR=${REPO_ROOT}/build-tests:${REPO_ROOT}/tests/fixtures" \
@@ -568,9 +615,7 @@ scenarios_headless_leg() {
     printf '\n--- %s ---\n' "$name"
     local start=$SECONDS log rc=0
     log="$(mktemp "${TMPDIR:-/tmp}/duskstudio-${name}.XXXXXX")"
-    xvfb_run "$budget" env "DUSKSTUDIO_RUN_SCENARIOS=${spec}" \
-        "DUSKSTUDIO_FIXTURE_DIR=${REPO_ROOT}/build-tests:${REPO_ROOT}/tests/fixtures" \
-        "$APP_BIN" >"$log" 2>&1 || rc=$?
+    sandboxed_app_run "$budget" "$spec" >"$log" 2>&1 || rc=$?
     cat "$log"
     regress_scenario_leg "$name" "$((SECONDS - start))" "$log" "$rc"
     rm -f "$log"

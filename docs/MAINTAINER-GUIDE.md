@@ -564,7 +564,10 @@ Running it, always on a private display:
 
 ```bash
 source scripts/regress/common.sh; source scripts/regress/xvfb.sh
+export PIPEWIRE_RUNTIME_DIR=$XDG_RUNTIME_DIR
 export HOME=$(mktemp -d) XDG_RUNTIME_DIR=$(mktemp -d)
+export XDG_CONFIG_HOME=$HOME/.config XDG_DATA_HOME=$HOME/.local/share \
+       XDG_CACHE_HOME=$HOME/.cache XDG_STATE_HOME=$HOME/.local/state
 FIX="$PWD/build-tests:$PWD/tests/fixtures"
 APP=build/DuskStudio_artefacts/Release/DuskStudio
 xvfb_run 60  env DUSKSTUDIO_RUN_SCENARIOS=list "$APP"
@@ -580,9 +583,14 @@ that does not exist exits 2 before anything runs. The report is one line per
 scenario, `[PASS] name (ms)` / `[FAIL] name: reason (ms)` / `[SKIP] name:
 reason`, with the notes a failing scenario recorded indented underneath, then
 `=== scenarios: N pass, M fail, K skip ===`; the exit status is 0 only when
-nothing failed. The private `HOME` matters: the app reads Recent Sessions and
-the plug-in cache from `$HOME/.config`, and a scripted run must not touch
-yours.
+nothing failed, and 3 when every selected scenario skipped, since a run that
+verified nothing is not a pass. The private `HOME` matters: the app reads
+Recent Sessions and the plug-in cache from `$HOME/.config`, and a scripted
+run must not touch yours. A desktop session exports the `XDG_*_HOME`
+variables as absolute paths into the real home, so they move with it.
+`PIPEWIRE_RUNTIME_DIR` keeps the real runtime directory for PipeWire alone:
+without it the engine cannot find the PipeWire socket, falls back to ALSA and
+opens your sound card directly.
 
 A headless case gets a `ScenarioContext`: `session()` and `engine()` prepared
 offline (no device; `pump(n)` drives the audio callback itself and returns the
