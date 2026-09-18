@@ -47,7 +47,7 @@ git -C plugins checkout --detach FETCH_HEAD
 git -C plugins rev-parse HEAD | findstr /x /c:"2693a8923388d0ca0bc4b080cade6a5187a51a51" >nul || (echo ERROR: donor checkout did not reach the pinned revision & exit /b 1)
 ```
 
-`--recurse-submodules` matters: `external/sfizz` carries the SF2 / multisample instrument engine, and CMake gates it purely on the header being present ([CMakeLists.txt:1164](CMakeLists.txt#L1164)) — clone without it and the feature is gone with no diagnostic. If you already cloned flat, run `git submodule update --init --recursive`.
+`--recurse-submodules` matters: `external/dusk-fizz` carries the SF2 / multisample instrument engine, and CMake gates it purely on the header being present ([CMakeLists.txt:1164](CMakeLists.txt#L1164)) — clone without it and the feature is gone with no diagnostic. If you already cloned flat, run `git submodule update --init --recursive`.
 
 The explicit `plugins` target on the third clone is mandatory: CMake auto-discovery looks for a sibling directory named `plugins\` and nothing else ([CMakeLists.txt:383-393](CMakeLists.txt#L383-L393)). The repo itself is named `dusk-audio-plugins` on GitHub, so without the explicit target you'd get a directory CMake can't find — and it warns rather than failing, leaving you with a recorder that has no EQ, compressor, or tape.
 

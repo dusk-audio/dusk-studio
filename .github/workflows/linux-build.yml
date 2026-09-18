@@ -49,7 +49,7 @@ jobs:
       - name: Checkout Dusk Studio
         uses: actions/checkout@v7
         with:
-          # external/sfizz is a submodule; the test binary compiles
+          # external/dusk-fizz is a submodule; the test binary compiles
           # DuskMultisampleProcessor.cpp (#include <sfizz.h>), so it must
           # be present or the build fails with "sfizz.h: No such file".
           submodules: recursive

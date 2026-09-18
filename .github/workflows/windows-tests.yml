@@ -46,8 +46,8 @@ jobs:
       - name: Checkout Dusk Studio
         uses: actions/checkout@v7
         with:
-          # external/sfizz is a submodule; without recursive checkout the
-          # CMake configure step fails ("external/sfizz/src/sfizz.h not
+          # external/dusk-fizz is a submodule; without recursive checkout the
+          # CMake configure step fails ("external/dusk-fizz/src/sfizz.h not
           # found"). Nested sfizz deps (abseil, st_audiofile) also need
           # to be present for the static link to succeed.
           submodules: recursive

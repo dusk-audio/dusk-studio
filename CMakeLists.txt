@@ -1591,12 +1591,12 @@ static const unsigned int ${symbol}_len = ${_fontSize}u;
 endif()
 
 # Sfizz native sampler engine (BSD-2-Clause). Vendored as a git
-# submodule under external/sfizz; built as a static library so we
+# submodule under external/dusk-fizz; built as a static library so we
 # don't ship a separate .so/.dylib + dlopen at startup. Library-only
 # build: no JACK CLI, no MIDI-file renderer, no benchmarks/tests/demos.
 # DuskMultisampleProcessor (src/engine/multisample/) wraps it as a
 # native instrument rung (hosting::INativeInstance).
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/dusk-fizz/src/sfizz.h")
     set(SFIZZ_JACK      OFF CACHE BOOL "" FORCE)
     set(SFIZZ_RENDER    OFF CACHE BOOL "" FORCE)
     set(SFIZZ_BENCHMARKS OFF CACHE BOOL "" FORCE)
@@ -1625,7 +1625,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     #      promotes the resulting -Wmissing-template-arg-list-after-
     #      template-kw warning to an error.
     set(_duskstudio_sfizz_cfg
-        "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/cmake/SfizzConfig.cmake")
+        "${CMAKE_CURRENT_SOURCE_DIR}/external/dusk-fizz/cmake/SfizzConfig.cmake")
     file(READ "${_duskstudio_sfizz_cfg}" _duskstudio_sfizz_cfg_src)
     string(REPLACE "elseif(PROJECT_SYSTEM_PROCESSOR MATCHES \"(arm.*)\")"
                    "elseif(PROJECT_SYSTEM_PROCESSOR MATCHES \"(arm.*)\" AND NOT PROJECT_SYSTEM_PROCESSOR MATCHES \"(aarch64|arm64)\")"
@@ -1639,7 +1639,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     unset(_duskstudio_sfizz_cfg)
 
     set(_duskstudio_atomic_queue_hdr
-        "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/external/atomic_queue/include/atomic_queue/atomic_queue.h")
+        "${CMAKE_CURRENT_SOURCE_DIR}/external/dusk-fizz/external/atomic_queue/include/atomic_queue/atomic_queue.h")
     file(READ "${_duskstudio_atomic_queue_hdr}" _duskstudio_aq_src)
     string(REPLACE "Base::template do_pop_any("  "Base::do_pop_any("  _duskstudio_aq_patched "${_duskstudio_aq_src}")
     string(REPLACE "Base::template do_push_any(" "Base::do_push_any(" _duskstudio_aq_patched "${_duskstudio_aq_patched}")
@@ -1657,7 +1657,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     #      replacement decimal rounds back to exactly the same float
     #      (the IEEE single just below 1.0).
     set(_duskstudio_voice_cpp
-        "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz/Voice.cpp")
+        "${CMAKE_CURRENT_SOURCE_DIR}/external/dusk-fizz/src/sfizz/Voice.cpp")
     file(READ "${_duskstudio_voice_cpp}" _duskstudio_voice_src)
     string(REPLACE "0x1.fffffep-1" "0.99999994f"
                    _duskstudio_voice_patched "${_duskstudio_voice_src}")
@@ -1675,14 +1675,14 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     # `git submodule update` after configure (restoring upstream)
     # but didn't reconfigure - the build would otherwise fail later
     # with cryptic compile errors instead of a clear up-front message.
-    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/cmake/SfizzConfig.cmake" _dsk_chk_a)
-    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/external/atomic_queue/include/atomic_queue/atomic_queue.h" _dsk_chk_b)
-    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz/Voice.cpp" _dsk_chk_c)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/external/dusk-fizz/cmake/SfizzConfig.cmake" _dsk_chk_a)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/external/dusk-fizz/external/atomic_queue/include/atomic_queue/atomic_queue.h" _dsk_chk_b)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/external/dusk-fizz/src/sfizz/Voice.cpp" _dsk_chk_c)
     if(_dsk_chk_a MATCHES "elseif\\(PROJECT_SYSTEM_PROCESSOR MATCHES \"\\(arm\\.\\*\\)\"\\)\n[ \t]*add_compile_options\\(-mfpu=neon\\)"
        OR _dsk_chk_b MATCHES "Base::template do_pop_any"
        OR _dsk_chk_c MATCHES "0x1\\.fffffep-1")
         message(FATAL_ERROR
-            "external/sfizz patches missing - the submodule was likely "
+            "external/dusk-fizz patches missing - the submodule was likely "
             "restored by `git submodule update` after configure last ran. "
             "Re-run cmake configure (the patches re-apply automatically) "
             "before building.")
@@ -1691,7 +1691,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     unset(_dsk_chk_b)
     unset(_dsk_chk_c)
 
-    add_subdirectory(external/sfizz EXCLUDE_FROM_ALL)
+    add_subdirectory(external/dusk-fizz EXCLUDE_FROM_ALL)
     target_link_libraries(DuskStudio PRIVATE sfizz::static)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_MULTISAMPLE=1)
     target_sources(DuskStudio PRIVATE

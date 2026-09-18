@@ -667,15 +667,15 @@ SUMMARY_START = "<!-- summary-start -->"
 SUMMARY_END = "<!-- summary-end -->"
 
 sfizz_tree = subprocess.run(
-    ["git", "-C", str(source_root), "ls-tree", "HEAD", "external/sfizz"],
+    ["git", "-C", str(source_root), "ls-tree", "HEAD", "external/dusk-fizz"],
     check=True,
     capture_output=True,
     text=True,
 ).stdout.strip()
 sfizz_tree_entry = re.fullmatch(
-    r"160000 commit ([0-9a-f]{40})\texternal/sfizz", sfizz_tree
+    r"160000 commit ([0-9a-f]{40})\texternal/dusk-fizz", sfizz_tree
 )
-assert sfizz_tree_entry, "external/sfizz must be a pinned git submodule"
+assert sfizz_tree_entry, "external/dusk-fizz must be a pinned git submodule"
 sfizz_revision = sfizz_tree_entry.group(1)
 
 licenses = (source_root / "LICENSES.txt").read_text(encoding="utf-8")
@@ -685,7 +685,7 @@ sfizz_header_revision = re.search(
     re.DOTALL,
 )
 sfizz_license_revision = re.search(
-    r"external/sfizz/LICENSE,\s+submodule rev\s+([0-9a-f]{40})",
+    r"external/dusk-fizz/LICENSE,\s+submodule rev\s+([0-9a-f]{40})",
     licenses,
 )
 assert sfizz_header_revision and sfizz_license_revision, (
@@ -703,7 +703,7 @@ assert len(recorded_sfizz_revisions) == 15, (
     "release contract"
 )
 assert set(recorded_sfizz_revisions) == {sfizz_revision}, (
-    "LICENSES.txt sfizz revisions must match the external/sfizz gitlink: "
+    "LICENSES.txt sfizz revisions must match the external/dusk-fizz gitlink: "
     f"expected {sfizz_revision}, found {sorted(set(recorded_sfizz_revisions))}"
 )
 

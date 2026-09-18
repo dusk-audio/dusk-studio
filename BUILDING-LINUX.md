@@ -87,7 +87,7 @@ test "$(git -C plugins rev-parse HEAD)" = 2693a8923388d0ca0bc4b080cade6a5187a51a
 }
 ```
 
-`--recurse-submodules` is required, not tidiness. Dusk Studio carries three: `external/clap`, `external/sfizz`, and `external/vst3sdk`. A clone without them fails configure outright on the CLAP headers (the native CLAP host defaults ON here, [CMakeLists.txt:27-33](CMakeLists.txt#L27-L33), and [CMakeLists.txt:1076-1081](CMakeLists.txt#L1076-L1081) stops the build), and a missing `external/sfizz` costs you the SF2 / multisample instrument with no diagnostic at all ([CMakeLists.txt:1163](CMakeLists.txt#L1163) simply gates on the header being there). Already cloned without them:
+`--recurse-submodules` is required, not tidiness. Dusk Studio carries three: `external/clap`, `external/dusk-fizz`, and `external/vst3sdk`. A clone without them fails configure outright on the CLAP headers (the native CLAP host defaults ON here, [CMakeLists.txt:27-33](CMakeLists.txt#L27-L33), and [CMakeLists.txt:1076-1081](CMakeLists.txt#L1076-L1081) stops the build), and a missing `external/dusk-fizz` costs you the SF2 / multisample instrument with no diagnostic at all ([CMakeLists.txt:1163](CMakeLists.txt#L1163) simply gates on the header being there). Already cloned without them:
 
 ```bash
 git submodule update --init --recursive
