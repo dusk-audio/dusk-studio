@@ -127,7 +127,7 @@ When the mix is where you want it, hit **Cmd+B** to open the bounce dialog. Pick
 
 ![Bounce dialog with a destination filename.](docs/images/qg-07-bounce-dialog.png)
 
-If you want the bounce to also pass through a mastering chain (5-band EQ, multiband compressor, brickwall limiter, LUFS metering), switch to **MASTERING** stage, click **Load latest mixdown** to pull in the bounce you just made, dial the chain in, then **Export master…** to render the final file.
+If you want the bounce to also pass through a mastering chain (5-band EQ, multiband compressor, brickwall limiter, LUFS metering), switch to **MASTERING** stage, click **Load latest mixdown** to pull in the bounce you just made (it looks for `mixdown.wav`, then `bounce.wav`, the bounce dialog's default name), dial the chain in, then **Export master…** to render the final file.
 
 That is the whole loop: arm → record → overdub → mix → bounce. Everything below in this manual is a deeper reference on one of those steps.
 
@@ -264,7 +264,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 
 | #   | Name              | Description                                                                                 |
 | --- | ----------------- | ------------------------------------------------------------------------------------------- |
-| 1   | File picker       | Load any stereo WAV; **Load latest mixdown** grabs the newest bounce in the session folder. |
+| 1   | File picker       | Load any stereo WAV; **Load latest mixdown** loads `mixdown.wav` from the session folder, or `bounce.wav` if there is none. |
 | 2   | Transport         | Play / stop / loop on the loaded file. Recording is disabled in this stage.                 |
 | 3   | Waveform          | Stereo overview with the playhead.                                                          |
 | 4   | 5-band digital EQ | Low shelf / 3 peaks / high shelf, ±12 dB per band.                                          |
@@ -1029,7 +1029,7 @@ The **MASTERING** stage is a separate signal path. It does not play your tracks;
 ## Loading a mix
 
 - **Load mix…**: opens a file chooser. Pick any WAV, AIFF, FLAC, or OGG file.
-- **Load latest mixdown**: automatically loads the most recently exported bounce from the current session's bounce folder.
+- **Load latest mixdown**: loads `mixdown.wav` from the session folder (what **Mixdown** writes), or `bounce.wav`, the bounce dialog's default name, if there is no mixdown.
 
 The source file path is displayed below the buttons.
 
@@ -2091,7 +2091,7 @@ The metronome never prints in any bounce: it is a monitoring aid, mixed in after
 
 ## Where bounces go
 
-By default, bounces are written to the session folder itself (the same directory that holds `session.json`). The bounce dialog opens a file browser there so you can rename or redirect each export; **New folder…** in its bottom-left corner creates a subfolder and jumps into it, handy for keeping stem sets together. The most-recent bounce in the session folder is what the mastering stage's **Load latest mixdown** button picks up.
+By default, bounces are written to the session folder itself (the same directory that holds `session.json`). The bounce dialog opens a file browser there so you can rename or redirect each export; **New folder…** in its bottom-left corner creates a subfolder and jumps into it, handy for keeping stem sets together. The mastering stage's **Load latest mixdown** button loads `mixdown.wav` from the session folder, or `bounce.wav` if there is no mixdown; a bounce saved under any other name opens with **Load mix…** instead.
 
 \newpage
 
