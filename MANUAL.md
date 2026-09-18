@@ -1644,7 +1644,7 @@ DuskVerb 2 keeps the plug-in's own defaults everywhere. Its first factory preset
 
 The unit reports zero latency. Its tail can run for up to 30 seconds, and an aux lane keeps processing for as long as its return remains audible.
 
-Presets, **INIT** and the complete **A/B** comparison state in DuskVerb 2's editor are saved with the session. Sessions saved with the old built-in Reverb still load under the same unit, but they return at DuskVerb 2's defaults; the old Reverb settings are not converted.
+Presets and **INIT** in DuskVerb 2's editor are saved with the session, as is whichever of **A** and **B** is active when you save. The other comparison slot lasts as long as the session is open, and comes back holding the saved sound when you reopen it. Sessions saved with the old built-in Reverb still load under the same unit, but they return at DuskVerb 2's defaults; the old Reverb settings are not converted.
 
 ![The DuskVerb 2 unit's editor.](docs/images/bi-02-reverb.png)
 
