@@ -3797,6 +3797,17 @@ void ChannelStripComponent::refreshInputAvailability()
     const int resolvedLeft = leftSource == -2 ? trackIndex : leftSource;
     inputSelector.setItemEnabled (1, offered (trackIndex));
     inputSelectorR.setItemEnabled (1, resolvedLeft >= 0 && offered (resolvedLeft + 1));
+    // The item was named at construction, from the track's own index; the input
+    // it stands for moves with L, and the strip header reads this text back.
+    const std::string followR = resolvedLeft >= 0
+        ? "In " + std::to_string (resolvedLeft + 2) + " (follow)"
+        : std::string ("(follow)");
+    // Read before the rename: getSelectedId() reports nothing once the item's
+    // text and the box's own text differ, and the reselect is what repaints it.
+    const bool followShown = inputSelectorR.getSelectedId() == 1;
+    inputSelectorR.changeItemText (1, followR);
+    if (followShown)
+        inputSelectorR.setSelectedId (1, juce::dontSendNotification);
     for (int i = 0; i < 16; ++i)
     {
         inputSelector.setItemEnabled (100 + i, offered (i));
@@ -4016,13 +4027,14 @@ void ChannelStripComponent::refreshIoConfigButton()
     }
     else                  // MIDI
     {
-        const auto port = midiInputSelector.getText();
-        const auto ch   = midiChannelSelector.getText();
+        auto port = midiInputSelector.getText();
+        const auto ch = midiChannelSelector.getText();
+        if (port.isEmpty()) port = "None";
         // U+00B7 middle dot via CharPointer_UTF8 - juce::String's char*
         // ctor uses the system locale which mangles UTF-8 on Linux.
         const juce::String midDot (juce::CharPointer_UTF8 ("\xc2\xb7"));
-        text = "MIDI " + (port.isEmpty() ? juce::String ("None") : port)
-                + " " + midDot + " " + (ch.isEmpty() ? juce::String ("Omni") : ch);
+        text = "MIDI " + port + " " + midDot + " "
+                + (ch.isEmpty() ? juce::String ("Omni") : ch);
     }
     if (ioConfigButton.getButtonText() != text)
         ioConfigButton.setButtonText (text);
