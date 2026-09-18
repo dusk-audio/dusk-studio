@@ -15,7 +15,7 @@ application**: no plugin paralysis, no menu diving, no infinite-options sprawl.
 > *"Fixed signal chain, finite track count, one page per stage. You commit, you move on."*
 
 C++17 on JUCE 8, with a native layer underneath that keeps growing. On Linux the
-audio device talks straight to PipeWire (preferred) or ALSA, with USB hot-unplug
+audio device talks straight to PipeWire or ALSA, with USB hot-unplug
 recovery, and MIDI goes through the ALSA sequencer. macOS and Windows still
 reach their devices through framework adapters (CoreAudio, WASAPI and ASIO),
 with an opt-in native CoreMIDI backend on macOS. Plugin hosting (CLAP, VST3,
